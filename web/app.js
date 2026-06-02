@@ -924,11 +924,26 @@ function reflectRedact() {
   els.tbRedact.classList.toggle('active', redactMode);
 }
 
+// The pdf.js .page has a transparent border (9px), so its border-box rect is
+// larger than the rendered content. Redaction must work in the CONTENT box: that
+// is where an absolutely-positioned overlay's origin sits, and what the apply-
+// time canvas (rendered from the PDF page) covers. Using the border-box instead
+// offsets the live overlay by the border and shifts the baked redaction.
+function pageContentRect(div) {
+  const r = div.getBoundingClientRect();
+  const cs = getComputedStyle(div);
+  const bl = parseFloat(cs.borderLeftWidth) || 0, bt = parseFloat(cs.borderTopWidth) || 0;
+  const br = parseFloat(cs.borderRightWidth) || 0, bb = parseFloat(cs.borderBottomWidth) || 0;
+  return { left: r.left + bl, top: r.top + bt, width: r.width - bl - br, height: r.height - bt - bb };
+}
+
 function pageAt(x, y) {
   for (let i = 0; i < (pdfDocument?.numPages || 0); i++) {
     const pv = viewer.getPageView(i);
     const r = pv?.div?.getBoundingClientRect();
-    if (r && x >= r.left && x <= r.right && y >= r.top && y <= r.bottom) return { pv, n: i + 1, r };
+    if (r && x >= r.left && x <= r.right && y >= r.top && y <= r.bottom) {
+      return { pv, n: i + 1, r: pageContentRect(pv.div) };
+    }
   }
   return null;
 }
