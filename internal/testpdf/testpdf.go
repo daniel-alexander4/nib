@@ -6,6 +6,8 @@ package testpdf
 
 import (
 	"bytes"
+	"encoding/json"
+	"strconv"
 
 	"github.com/pdfcpu/pdfcpu/pkg/api"
 )
@@ -40,6 +42,35 @@ const formJSON = `{
 func Form() ([]byte, error) {
 	var out bytes.Buffer
 	if err := api.Create(nil, bytes.NewReader([]byte(formJSON)), &out, nil); err != nil {
+		return nil, err
+	}
+	return out.Bytes(), nil
+}
+
+// Text returns a PDF with one page per string, each drawing that string as body
+// text (Courier, so it lands in the page content stream as extractable text).
+// Tests that need known, recoverable content — e.g. proving redaction truly
+// removes it — use this.
+func Text(pages ...string) ([]byte, error) {
+	pageMap := map[string]any{}
+	for i, s := range pages {
+		pageMap[strconv.Itoa(i+1)] = map[string]any{
+			"content": map[string]any{
+				"text": []any{map[string]any{
+					"Value": s,
+					"pos":   []float64{100, 700},
+					"Font":  map[string]any{"name": "Courier", "size": 14},
+				}},
+			},
+		}
+	}
+	doc := map[string]any{"paper": "A4P", "origin": "LowerLeft", "pages": pageMap}
+	b, err := json.Marshal(doc)
+	if err != nil {
+		return nil, err
+	}
+	var out bytes.Buffer
+	if err := api.Create(nil, bytes.NewReader(b), &out, nil); err != nil {
 		return nil, err
 	}
 	return out.Bytes(), nil
