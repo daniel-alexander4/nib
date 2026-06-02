@@ -4,5 +4,10 @@
 /dist/
 *.test
 
+# local verification / scratch artifacts
+.playwright-mcp/
+tmpgen/
+overlay-*.png
+
 # OS cruft
 .DS_Store
