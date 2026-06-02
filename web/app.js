@@ -285,10 +285,22 @@ let pdfDocument = null;
 let docMeta = { canSave: false, path: '' };
 let originalName = ''; // basename of the opened file, for default export names
 
-eventBus.on('pagesinit', () => { viewer.currentScaleValue = 'page-width'; });
+let fitPageWidth = 0; // intrinsic width (pts) of the page last fit-to-width
+eventBus.on('pagesinit', () => { fitPageWidth = 0; viewer.currentScaleValue = 'page-width'; });
 eventBus.on('pagechanging', (e) => {
   els.pageNum.value = e.pageNumber;
   markCurrentThumb(e.pageNumber);
+  // In fit-width mode, re-fit to the page now in view so the pages of a mixed-
+  // size PDF each fill the width. No-op on a normal PDF (every page shares a
+  // width, so the scale never changes) and when the user has manually zoomed.
+  if (viewer.currentScaleValue === 'page-width') {
+    const vp = viewer.getPageView(e.pageNumber - 1)?.viewport;
+    const w = vp ? vp.width / vp.scale : 0;
+    if (w && Math.abs(w - fitPageWidth) > 0.5) {
+      fitPageWidth = w;
+      viewer.currentScaleValue = 'page-width';
+    }
+  }
 });
 
 // --- open / load -------------------------------------------------------------
