@@ -384,7 +384,11 @@ input.ovl-check { appearance: auto; accent-color: #1a7f37; background: transpare
   background: var(--crust); color: var(--text);
   border: 1px solid var(--surface1); border-radius: 6px; padding: 7px 9px; font: inherit;
 }
+/* Companion line under "Create a new key" — shows where the key will be written. */
+#keyChoice .pathhint { margin: -2px 0 0 26px; color: var(--subtext0); font-size: 12px; }
 #authWarn { font-size: 12px; }
+/* Separate the warning from the key-mode options so it stops reading as part of them. */
+#authForm .authnote { margin-top: 2px; padding-top: 12px; border-top: 1px solid var(--surface0); }
 
 /* toast for errors */
 #toast {

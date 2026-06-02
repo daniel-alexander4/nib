@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"os"
 	"strings"
 
 	"nib/internal/sshkey"
@@ -44,8 +45,8 @@ func (s *Server) handleKeysList(w http.ResponseWriter, r *http.Request) {
 }
 
 type addKeyRequest struct {
-	Mode    string `json:"mode"`    // "use" (read a local key path) | "paste" (an authorized_keys line)
-	KeyPath string `json:"keyPath"` // "use": key to read; "paste": where the private key lives (optional)
+	Mode    string `json:"mode"`    // "use" (read a local key path) | "paste" (an authorized_keys line) | "create" (generate a new key)
+	KeyPath string `json:"keyPath"` // "use": key to read; "paste": where the private key lives (optional); "create": where to write it (optional)
 	PubKey  string `json:"pubKey"`  // "paste": the authorized_keys line
 }
 
@@ -79,6 +80,21 @@ func (s *Server) handleKeysAdd(w http.ResponseWriter, r *http.Request) {
 		if keyPath == "" {
 			keyPath = sshkey.DefaultNewKeyPath()
 		}
+	case "create":
+		keyPath = strings.TrimSpace(req.KeyPath)
+		if keyPath == "" {
+			keyPath = sshkey.DefaultNewKeyPath()
+		}
+		pl, err := sshkey.Generate(keyPath)
+		if err != nil {
+			if errors.Is(err, os.ErrExist) {
+				httpError(w, http.StatusConflict, "a key already exists at "+keyPath+" — authorize it, or choose a different path")
+				return
+			}
+			httpError(w, http.StatusInternalServerError, "could not create key: "+err.Error())
+			return
+		}
+		pubLine = pl
 	default:
 		httpError(w, http.StatusBadRequest, "unknown mode")
 		return

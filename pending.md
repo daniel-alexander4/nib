@@ -48,6 +48,15 @@ Nib design and build.
    identity to others unless they trust the exported cert. Stripping the signature
    is detectable (absence of a valid signature), not preventable.
 
+7. **Wizard "create" has no destination field.** It always targets
+   `DefaultNewKeyPath()` (`~/.ssh/id_ed25519`) and `sshkey.Generate` refuses to
+   overwrite, so a first-run user who already has `id_ed25519` but wants a *new,
+   separate* key hits a dead-end (ErrExist, no way to pick another path until the
+   vault is unlocked and the keys dialog — which does take a path — is reachable).
+   Auto-selection avoids it in the common case (create is only pre-checked when no
+   `~/.ssh` keys exist), so this is the deliberate-pick edge only. Add a path field
+   to the wizard's create option if it bites.
+
 ## Stamp placement (M3) — switched to the pdfcpu pipeline; verify drag/resize
 
 - The pdf.js annotation-editor STAMP path was **dropped**: its `saveDocument()`
