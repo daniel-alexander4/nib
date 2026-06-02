@@ -144,7 +144,7 @@ func (s *Server) handleOpen(w http.ResponseWriter, r *http.Request) {
 	if v := s.unlockedVault(); v != nil {
 		_ = v.AddRecent(path) // best-effort; failure to record is non-fatal
 	}
-	writeJSON(w, s.docResponseLocked())
+	writeJSON(w, s.docResponse())
 }
 
 // handleUpload accepts a PDF posted from the browser file-picker. Such a
@@ -164,7 +164,7 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.setDoc(&document{path: "", data: data, sig: sign.Verify(data)})
-	resp := s.docResponseLocked()
+	resp := s.docResponse()
 	resp.Name = header.Filename
 	writeJSON(w, resp)
 }
@@ -216,7 +216,7 @@ func (s *Server) handleSave(w http.ResponseWriter, r *http.Request) {
 	doc.data = data
 	doc.sig = sign.Verify(data)
 	s.mu.Unlock()
-	writeJSON(w, s.docResponseLocked())
+	writeJSON(w, s.docResponse())
 }
 
 // --- helpers ------------------------------------------------------------------
@@ -227,9 +227,9 @@ func (s *Server) setDoc(doc *document) {
 	s.mu.Unlock()
 }
 
-// docResponseLocked builds the metadata response for the current document. It
+// docResponse builds the metadata response for the current document. It
 // takes the lock itself; callers must not hold it.
-func (s *Server) docResponseLocked() docResponse {
+func (s *Server) docResponse() docResponse {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	doc := s.doc

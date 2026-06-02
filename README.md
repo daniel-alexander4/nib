@@ -125,7 +125,7 @@ you run the binary directly — it's fully self-contained.
 
 | Variable | Effect |
 | --- | --- |
-| `NIB_ADDR` | Pin a fixed loopback address (e.g. `127.0.0.1:8791`) instead of a random port. |
+| `NIB_ADDR` | Pin a fixed loopback address (e.g. `127.0.0.1:8791`) instead of a random port. Must be loopback (`127.0.0.1`, `localhost`, or `::1`) — a non-loopback address is refused at startup. |
 | `NIB_NO_BROWSER` | Don't open a window — just serve and log the URL (headless / remote). |
 
 ---
