@@ -35,7 +35,8 @@ const els = {
   authOverlay: $('authOverlay'), authForm: $('authForm'), authTitle: $('authTitle'),
   authHint: $('authHint'), authPw: $('authPw'), migrateRow: $('migrateRow'),
   keyChoice: $('keyChoice'), keySelect: $('keySelect'), keyPath: $('keyPath'),
-  createHint: $('createHint'), authWarn: $('authWarn'),
+  createPath: $('createPath'), authWarn: $('authWarn'),
+  introOverlay: $('introOverlay'),
   authSubmit: $('authSubmit'), authError: $('authError'),
   addImageBtn: $('addImageBtn'), drawSigBtn: $('drawSigBtn'), addImageInput: $('addImageInput'),
   imageGrid: $('imageGrid'),
@@ -85,9 +86,16 @@ function syncKeyMode() {
   const mode = selectedKeyMode();
   els.keySelect.hidden = mode !== 'use';
   els.keyPath.hidden = mode !== 'path';
-  els.createHint.hidden = mode !== 'create';
+  els.createPath.hidden = mode !== 'create';
 }
 els.keyChoice.addEventListener('change', syncKeyMode);
+
+// The first-run intro popup explains the SSH key before the wizard; it stays up
+// until the user clicks the backdrop (off the card).
+let introSeen = false;
+els.introOverlay.addEventListener('click', (e) => {
+  if (e.target === els.introOverlay) { els.introOverlay.hidden = true; introSeen = true; }
+});
 
 // applyStatus drives the UI from /api/status.
 function applyStatus(st) {
@@ -129,11 +137,13 @@ function applyStatus(st) {
   els.authHint.textContent = st.state === 'migrate'
     ? 'Enter your old vault password once; Nib will re-key the vault to your SSH key.'
     : 'Choose the SSH key that unlocks Nib. No password is used.';
-  els.createHint.textContent = 'New key saved to ' + (st.defaultKeyPath || '~/.ssh/id_ed25519');
+  els.createPath.value = st.defaultKeyPath || '~/.ssh/id_ed25519';
   els.authForm.querySelector('input[value="use"]').checked = haveCandidates;
   els.authForm.querySelector('input[value="create"]').checked = !haveCandidates;
   els.authSubmit.textContent = st.state === 'migrate' ? 'Migrate' : 'Enable';
   syncKeyMode();
+  // First run only: introduce the SSH key before the user picks one.
+  if (st.state === 'setup' && !introSeen) els.introOverlay.hidden = false;
 }
 
 async function refreshStatus() {
@@ -152,6 +162,7 @@ els.authForm.addEventListener('submit', async (e) => {
   const body = { password: els.authPw.value };
   if (mode === 'create') {
     body.mode = 'create';
+    body.keyPath = els.createPath.value.trim();
   } else if (mode === 'path') {
     body.mode = 'use';
     body.keyPath = els.keyPath.value.trim();

@@ -155,6 +155,23 @@
     </div>
   </main>
 
+  <!-- First-run intro: explains what the SSH key is and protects, shown over the
+       setup wizard until the user clicks off it. -->
+  <div id="introOverlay" hidden>
+    <div class="introcard">
+      <img class="brand brand-lg" src="./nib.svg" alt="Nib" />
+      <h2>Welcome to Nib</h2>
+      <p>Nib keeps your saved signatures, images, and signing identity in an
+        <strong>encrypted vault</strong> on this computer.</p>
+      <p>The vault is locked and unlocked by an <strong>SSH key</strong> — a small
+        key file on your machine, so there's no password to remember. You can use a
+        key you already have, or let Nib create one for you.</p>
+      <p class="introwarn">That key is the only way in. Keep it safe and back it up —
+        if you lose every authorized key, the vault can't be recovered.</p>
+      <p class="introhint">Click anywhere outside this box to continue</p>
+    </div>
+  </div>
+
   <!-- First-run wizard / recovery: unlock Nib with an SSH key. -->
   <div id="authOverlay" hidden>
     <form id="authForm">
@@ -175,7 +192,7 @@
         <label><input type="radio" name="keymode" value="path" /> …a key at a specific path</label>
         <input id="keyPath" type="text" placeholder="/home/you/.ssh/id_ed25519" spellcheck="false" />
         <label><input type="radio" name="keymode" value="create" /> Create a new key for me</label>
-        <p id="createHint" class="pathhint"></p>
+        <input id="createPath" type="text" placeholder="~/.ssh/id_ed25519" spellcheck="false" />
       </div>
 
       <p class="error authnote" id="authWarn">Your SSH key becomes the only way in — if you lose it, the vault (including your signing identity) cannot be recovered.</p>

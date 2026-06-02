@@ -144,6 +144,17 @@ type enrollRequest struct {
 	Password string `json:"password"`
 }
 
+// writeKeyPrepError reports a failure to prepare the enrollment key. A path that
+// already holds a key gets a clear "choose another" message rather than a raw
+// os error, since the fix is for the user to pick a different name or location.
+func writeKeyPrepError(w http.ResponseWriter, keyPath string, err error) {
+	if errors.Is(err, os.ErrExist) {
+		httpError(w, http.StatusConflict, "a key already exists at "+keyPath+" — pick a different location or name")
+		return
+	}
+	httpError(w, http.StatusBadRequest, "could not prepare key: "+err.Error())
+}
+
 // resolveKey prepares the public-key line and key path for enrollment.
 func resolveKey(mode, keyPath string) (pubLine, path string, err error) {
 	switch mode {
@@ -179,7 +190,7 @@ func (s *Server) handleEnroll(w http.ResponseWriter, r *http.Request) {
 	}
 	pubLine, keyPath, err := resolveKey(req.Mode, req.KeyPath)
 	if err != nil {
-		httpError(w, http.StatusBadRequest, "could not prepare key: "+err.Error())
+		writeKeyPrepError(w, keyPath, err)
 		return
 	}
 	if _, err := vault.Create(s.configDir, pubLine, keyPath); err != nil {
@@ -205,7 +216,7 @@ func (s *Server) handleMigrate(w http.ResponseWriter, r *http.Request) {
 	}
 	pubLine, keyPath, err := resolveKey(req.Mode, req.KeyPath)
 	if err != nil {
-		httpError(w, http.StatusBadRequest, "could not prepare key: "+err.Error())
+		writeKeyPrepError(w, keyPath, err)
 		return
 	}
 	if _, err := vault.Migrate(s.configDir, req.Password, pubLine, keyPath); err != nil {

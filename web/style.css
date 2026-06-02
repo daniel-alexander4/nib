@@ -384,11 +384,35 @@ input.ovl-check { appearance: auto; accent-color: #1a7f37; background: transpare
   background: var(--crust); color: var(--text);
   border: 1px solid var(--surface1); border-radius: 6px; padding: 7px 9px; font: inherit;
 }
-/* Companion line under "Create a new key" — shows where the key will be written. */
-#keyChoice .pathhint { margin: -2px 0 0 26px; color: var(--subtext0); font-size: 12px; }
 #authWarn { font-size: 12px; }
 /* Separate the warning from the key-mode options so it stops reading as part of them. */
 #authForm .authnote { margin-top: 2px; padding-top: 12px; border-top: 1px solid var(--surface0); }
+
+/* First-run intro popup — sits over the setup wizard until clicked off. */
+#introOverlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(17, 17, 27, 0.7);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 200;
+}
+.introcard {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: 380px;
+  padding: 28px;
+  background: var(--mantle);
+  border: 1px solid var(--surface0);
+  border-radius: 12px;
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.55);
+}
+.introcard h2 { margin: 0; font-weight: 600; }
+.introcard p { margin: 0; color: var(--subtext0); font-size: 13px; line-height: 1.5; }
+.introcard .introwarn { color: var(--yellow); }
+.introcard .introhint { color: var(--overlay0); font-size: 12px; text-align: center; margin-top: 4px; }
 
 /* toast for errors */
 #toast {

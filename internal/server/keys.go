@@ -5,7 +5,6 @@ import (
 	"errors"
 	"io"
 	"net/http"
-	"os"
 	"strings"
 
 	"nib/internal/sshkey"
@@ -87,11 +86,7 @@ func (s *Server) handleKeysAdd(w http.ResponseWriter, r *http.Request) {
 		}
 		pl, err := sshkey.Generate(keyPath)
 		if err != nil {
-			if errors.Is(err, os.ErrExist) {
-				httpError(w, http.StatusConflict, "a key already exists at "+keyPath+" — authorize it, or choose a different path")
-				return
-			}
-			httpError(w, http.StatusInternalServerError, "could not create key: "+err.Error())
+			writeKeyPrepError(w, keyPath, err)
 			return
 		}
 		pubLine = pl
