@@ -19,6 +19,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"nib/internal/sshkey"
 	"golang.org/x/crypto/argon2"
@@ -109,8 +110,11 @@ type Contents struct {
 const maxRecent = 10
 
 // Vault is an opened (decrypted) store. It holds the content key in memory so it
-// can re-encrypt on save.
+// can re-encrypt on save. A single process serves it to concurrent HTTP
+// handlers, so mu guards every access to the mutable in-memory state (contents
+// and ssh); accessors return copies so callers never share a live slice or map.
 type Vault struct {
+	mu       sync.Mutex
 	path     string
 	key      []byte // content key
 	ssh      []Slot
@@ -282,6 +286,8 @@ type KeyInfo struct {
 
 // Keys lists the enrolled authorized keys, flagging the one in use this session.
 func (v *Vault) Keys() []KeyInfo {
+	v.mu.Lock()
+	defer v.mu.Unlock()
 	out := make([]KeyInfo, 0, len(v.ssh))
 	cur := keyID(v.current)
 	for _, s := range v.ssh {
@@ -295,6 +301,8 @@ func (v *Vault) Keys() []KeyInfo {
 // lives on the machine that holds it. The key material (type+blob, ignoring any
 // comment) must not already be enrolled.
 func (v *Vault) AddKey(pubLine, keyPath string) error {
+	v.mu.Lock()
+	defer v.mu.Unlock()
 	pubLine = strings.TrimSpace(pubLine)
 	id := keyID(pubLine)
 	if id == "" {
@@ -310,12 +318,14 @@ func (v *Vault) AddKey(pubLine, keyPath string) error {
 		return fmt.Errorf("%w: %v", ErrBadKey, err)
 	}
 	v.ssh = append(v.ssh, Slot{PubKey: pubLine, KeyPath: keyPath, Wrapped: wrapped})
-	return v.Save()
+	return v.save()
 }
 
 // RemoveKey drops the slot for pubLine. It refuses to remove the only enrolled
 // key (which would orphan the vault) or the key this session unlocked with.
 func (v *Vault) RemoveKey(pubLine string) error {
+	v.mu.Lock()
+	defer v.mu.Unlock()
 	id := keyID(pubLine)
 	idx := -1
 	for i, s := range v.ssh {
@@ -334,7 +344,7 @@ func (v *Vault) RemoveKey(pubLine string) error {
 		return ErrCurrentKey
 	}
 	v.ssh = append(v.ssh[:idx], v.ssh[idx+1:]...)
-	return v.Save()
+	return v.save()
 }
 
 // keyID returns the comparable identity of an authorized_keys line — its
@@ -363,8 +373,12 @@ func Validate(raw []byte) error {
 
 // --- contents accessors -------------------------------------------------------
 
-// Images returns the stored library images (including their data).
-func (v *Vault) Images() []Image { return v.contents.Images }
+// Images returns a copy of the stored library images (including their data).
+func (v *Vault) Images() []Image {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	return append([]Image(nil), v.contents.Images...)
+}
 
 // BuiltinImages returns the binary-shipped signatures decrypted this session
 // (empty unless a built-in key was available). They're read-only.
@@ -373,6 +387,8 @@ func (v *Vault) BuiltinImages() []Image { return v.builtinImages }
 // Image returns the image with the given id, from the stored library or the
 // built-in signatures.
 func (v *Vault) Image(id string) (Image, bool) {
+	v.mu.Lock()
+	defer v.mu.Unlock()
 	for _, img := range v.contents.Images {
 		if img.ID == id {
 			return img, true
@@ -388,14 +404,18 @@ func (v *Vault) Image(id string) (Image, bool) {
 
 // AddImage stores a new image and persists the vault.
 func (v *Vault) AddImage(name, mime string, data []byte) (Image, error) {
+	v.mu.Lock()
+	defer v.mu.Unlock()
 	img := Image{ID: newID(), Name: name, MIME: mime, Data: data}
 	v.contents.Images = append(v.contents.Images, img)
-	return img, v.Save()
+	return img, v.save()
 }
 
 // DeleteImage removes the image with the given id and persists the vault. A
 // built-in (binary-shipped) image can't be deleted.
 func (v *Vault) DeleteImage(id string) error {
+	v.mu.Lock()
+	defer v.mu.Unlock()
 	for _, img := range v.builtinImages {
 		if img.ID == id {
 			return ErrReadOnlyImage
@@ -408,11 +428,13 @@ func (v *Vault) DeleteImage(id string) error {
 		}
 	}
 	v.contents.Images = out
-	return v.Save()
+	return v.save()
 }
 
 // Identity returns the stored signing identity; ok is false if none exists yet.
 func (v *Vault) Identity() (certPEM, keyPEM []byte, ok bool) {
+	v.mu.Lock()
+	defer v.mu.Unlock()
 	if v.contents.Identity == nil {
 		return nil, nil, false
 	}
@@ -421,29 +443,47 @@ func (v *Vault) Identity() (certPEM, keyPEM []byte, ok bool) {
 
 // SetIdentity stores the signing identity and persists the vault.
 func (v *Vault) SetIdentity(certPEM, keyPEM []byte) error {
+	v.mu.Lock()
+	defer v.mu.Unlock()
 	v.contents.Identity = &Identity{CertPEM: certPEM, KeyPEM: keyPEM}
-	return v.Save()
+	return v.save()
 }
 
-// Profile returns the autofill field name -> value map (never nil).
+// Profile returns a copy of the autofill field name -> value map (never nil).
 func (v *Vault) Profile() map[string]string {
-	if v.contents.Profile == nil {
-		return map[string]string{}
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	out := make(map[string]string, len(v.contents.Profile))
+	for k, val := range v.contents.Profile {
+		out[k] = val
 	}
-	return v.contents.Profile
+	return out
 }
 
-// SetProfile replaces the autofill profile and persists the vault.
+// SetProfile replaces the autofill profile and persists the vault. The map is
+// copied so a caller that keeps mutating its own copy can't race the vault.
 func (v *Vault) SetProfile(p map[string]string) error {
-	v.contents.Profile = p
-	return v.Save()
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	cp := make(map[string]string, len(p))
+	for k, val := range p {
+		cp[k] = val
+	}
+	v.contents.Profile = cp
+	return v.save()
 }
 
-// Recent returns recently opened file paths, newest first.
-func (v *Vault) Recent() []string { return v.contents.Recent }
+// Recent returns a copy of recently opened file paths, newest first.
+func (v *Vault) Recent() []string {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	return append([]string(nil), v.contents.Recent...)
+}
 
 // AddRecent records path as the most recent file (deduped, capped) and persists.
 func (v *Vault) AddRecent(path string) error {
+	v.mu.Lock()
+	defer v.mu.Unlock()
 	out := make([]string, 0, maxRecent)
 	out = append(out, path)
 	for _, p := range v.contents.Recent {
@@ -455,7 +495,7 @@ func (v *Vault) AddRecent(path string) error {
 		}
 	}
 	v.contents.Recent = out
-	return v.Save()
+	return v.save()
 }
 
 func newID() string {
@@ -467,6 +507,13 @@ func newID() string {
 // Save encrypts the current contents with the content key and writes the vault
 // atomically, keeping the existing key slots.
 func (v *Vault) Save() error {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	return v.save()
+}
+
+// save is Save without locking, for callers that already hold v.mu.
+func (v *Vault) save() error {
 	plain, err := json.Marshal(v.contents)
 	if err != nil {
 		return err

@@ -309,6 +309,7 @@ linkService.setViewer(viewer);
 let pdfDocument = null;
 let docMeta = { canSave: false, path: '' };
 let originalName = ''; // basename of the opened file, for default export names
+let docGen = 0; // bumps on each load so a stale async render/build can bail
 
 let fitPageWidth = 0; // intrinsic width (pts) of the page last fit-to-width
 eventBus.on('pagesinit', () => { fitPageWidth = 0; viewer.currentScaleValue = 'page-width'; });
@@ -330,11 +331,21 @@ eventBus.on('pagechanging', (e) => {
 
 // --- open / load -------------------------------------------------------------
 async function setDocumentFromServer(meta) {
+  const gen = ++docGen;
   docMeta = meta;
   if (meta.name && meta.name !== '.') originalName = meta.name;
   clearOverlays();
-  const task = pdfjsLib.getDocument({ url: '/api/pdf?t=' + Date.now() });
-  pdfDocument = await task.promise;
+  let doc;
+  try {
+    doc = await pdfjsLib.getDocument({ url: '/api/pdf?t=' + Date.now() }).promise;
+  } catch (e) {
+    toast('could not render the document');
+    console.error('pdf load failed', e);
+    return;
+  }
+  if (gen !== docGen) return; // a newer load superseded this one
+
+  pdfDocument = doc;
   viewer.setDocument(pdfDocument);
   linkService.setDocument(pdfDocument, null);
 
@@ -343,8 +354,9 @@ async function setDocumentFromServer(meta) {
   els.saveBtn.disabled = false;
   els.saveBtn.title = meta.canSave ? 'Save (overwrites ' + meta.path + ')' : 'Save a copy (downloads — opened without a local path)';
   updateBadge(meta.signature);
-  buildThumbnails();
-  buildOutline();
+  // Sidebars are non-essential; a build failure must not break the load.
+  buildThumbnails(gen).catch((e) => console.error('thumbnails failed', e));
+  buildOutline(gen).catch((e) => console.error('outline failed', e));
 }
 
 async function openPath(path) {
@@ -429,9 +441,10 @@ function updateBadge(sig) {
 }
 
 // --- thumbnails sidebar ------------------------------------------------------
-async function buildThumbnails() {
+async function buildThumbnails(gen = docGen) {
   els.thumbGrid.innerHTML = '';
   for (let n = 1; n <= pdfDocument.numPages; n++) {
+    if (gen !== docGen) return; // a newer document loaded — stop rendering stale thumbs
     const page = await pdfDocument.getPage(n);
     const base = page.getViewport({ scale: 1 });
     const viewport = page.getViewport({ scale: 150 / base.width });
@@ -492,9 +505,10 @@ els.appendInput.onchange = () => {
 };
 
 // --- outline sidebar ---------------------------------------------------------
-async function buildOutline() {
+async function buildOutline(gen = docGen) {
   els.outline.innerHTML = '';
   const outline = await pdfDocument.getOutline();
+  if (gen !== docGen) return; // a newer document loaded — drop this stale outline
   if (!outline || !outline.length) {
     els.outline.innerHTML = '<div class="thumb-label">No outline</div>';
     return;

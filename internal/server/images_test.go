@@ -39,7 +39,9 @@ func addImage(t *testing.T, ts string, c *http.Client, csrf string, data []byte)
 		t.Fatalf("add image status = %d, want 200", resp.StatusCode)
 	}
 	var m imageMeta
-	json.NewDecoder(resp.Body).Decode(&m)
+	if err := json.NewDecoder(resp.Body).Decode(&m); err != nil {
+		t.Fatal(err)
+	}
 	return m
 }
 
@@ -54,17 +56,28 @@ func TestImageAddListGetDelete(t *testing.T) {
 	}
 
 	// List shows it.
-	resp, _ := c.Get(ts.URL + "/api/images")
+	resp, err := c.Get(ts.URL + "/api/images")
+	if err != nil {
+		t.Fatal(err)
+	}
 	var list []imageMeta
-	json.NewDecoder(resp.Body).Decode(&list)
+	if err := json.NewDecoder(resp.Body).Decode(&list); err != nil {
+		t.Fatal(err)
+	}
 	resp.Body.Close()
 	if len(list) != 1 || list[0].ID != m.ID {
 		t.Fatalf("list = %+v, want one image %s", list, m.ID)
 	}
 
 	// Get returns the exact bytes.
-	resp, _ = c.Get(ts.URL + "/api/images/" + m.ID)
-	got, _ := io.ReadAll(resp.Body)
+	resp, err = c.Get(ts.URL + "/api/images/" + m.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
 	resp.Body.Close()
 	if !bytes.Equal(got, pngBytes) {
 		t.Error("fetched image bytes differ from stored")
@@ -76,9 +89,14 @@ func TestImageAddListGetDelete(t *testing.T) {
 	if del.StatusCode != http.StatusNoContent {
 		t.Errorf("delete status = %d, want 204", del.StatusCode)
 	}
-	resp, _ = c.Get(ts.URL + "/api/images")
+	resp, err = c.Get(ts.URL + "/api/images")
+	if err != nil {
+		t.Fatal(err)
+	}
 	list = nil
-	json.NewDecoder(resp.Body).Decode(&list)
+	if err := json.NewDecoder(resp.Body).Decode(&list); err != nil {
+		t.Fatal(err)
+	}
 	resp.Body.Close()
 	if len(list) != 0 {
 		t.Errorf("list after delete = %+v, want empty", list)

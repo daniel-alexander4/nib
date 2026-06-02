@@ -51,10 +51,11 @@ func (s *Server) handlePages(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	sig := sign.Verify(result)
 	s.mu.Lock()
 	if s.doc != nil {
 		s.doc.data = result
-		s.doc.sig = sign.Verify(result)
+		s.doc.sig = sig
 	}
 	s.mu.Unlock()
 	writeJSON(w, s.docResponse())

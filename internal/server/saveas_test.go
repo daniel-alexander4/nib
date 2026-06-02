@@ -59,10 +59,15 @@ func TestWriteFileCreatesFolderAndListDir(t *testing.T) {
 	}
 
 	// listdir on the parent should now report the "nested" sub-folder.
-	lr, _ := c.Get(ts.URL + "/api/listdir?path=" + filepath.Dir(dir))
+	lr, err := c.Get(ts.URL + "/api/listdir?path=" + filepath.Dir(dir))
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer lr.Body.Close()
 	var info listDirResponse
-	json.NewDecoder(lr.Body).Decode(&info)
+	if err := json.NewDecoder(lr.Body).Decode(&info); err != nil {
+		t.Fatal(err)
+	}
 	found := false
 	for _, d := range info.Dirs {
 		if d == "nested" {
@@ -88,10 +93,15 @@ func TestListDirReturnsPDFFiles(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	resp, _ := c.Get(ts.URL + "/api/listdir?path=" + dir)
+	resp, err := c.Get(ts.URL + "/api/listdir?path=" + dir)
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer resp.Body.Close()
 	var info listDirResponse
-	json.NewDecoder(resp.Body).Decode(&info)
+	if err := json.NewDecoder(resp.Body).Decode(&info); err != nil {
+		t.Fatal(err)
+	}
 
 	if len(info.Files) != 2 || info.Files[0] != "B.PDF" || info.Files[1] != "a.pdf" {
 		t.Errorf("files = %v, want [B.PDF a.pdf] (case-insensitive .pdf, dotfiles hidden)", info.Files)
