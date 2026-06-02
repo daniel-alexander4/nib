@@ -16,12 +16,12 @@ encrypted vault that only your SSH key can open.
 
 ## What you can do
 
-### 🖊️ Fill any PDF — even ones without form fields
+### Fill any PDF — even ones without form fields
 Nib fills normal interactive forms (AcroForm) directly. For flat, scanned, or
 print-only forms with no fields, the **Text** tool lets you type anywhere on the
 page.
 
-### 🪄 Smart field detection
+### Smart field detection
 Press **Detect** and Nib scans the page, then drops fillable widgets where they
 belong:
 
@@ -37,16 +37,16 @@ belong:
 It's a smart proposal, not magic — move, resize, retype, or ignore anything it
 suggests.
 
-### ⭕ Circles & pills for multiple choice
+### Circles & pills for multiple choice
 Choosing an option marks it the way a person would: a **circle** around a single
 letter (or `Y`/`N`), or a **pill** around a whole word — baked cleanly into the
 PDF on save.
 
-### 🗓️ One-click stamps
+### One-click stamps
 Quick-stamps for the things you reach for most — **today's date**, **"Approved"**,
 and a **checkmark**. Drop one on, drag to place, resize to fit.
 
-### ✍️ Signatures & images, stored securely
+### Signatures & images, stored securely
 - **Draw your signature** on a pad; it's saved as a clean **transparent PNG**, so
   it sits *on* the line instead of inside a white box.
 - **Add images** by upload or URL — initials, logos, custom stamps.
@@ -54,16 +54,16 @@ and a **checkmark**. Drop one on, drag to place, resize to fit.
 - Everything lives in an **encrypted image library** inside your vault. Click to
   place, then drag and resize anywhere.
 
-### 🖍️ Annotate
+### Annotate
 **Highlight** text, **draw** freehand, and add free **text** boxes anywhere on a
 page — works on flat PDFs too.
 
-### ⬛ Real redaction
+### Real redaction
 Draw redaction boxes and press **Apply**. Nib re-renders those pages flat so the
 content underneath is **actually gone** — not just hidden behind a black
 rectangle. (Verified: a redacted page exposes no hidden text or form field.)
 
-### 🔏 Sign & finalize — tamper-evident
+### Sign & finalize — tamper-evident
 **Finalize & sign** seals the document with a certification signature from an
 identity kept in your vault, stamps a visible "Finalized {date}", and optionally
 adds a password and a trusted RFC-3161 timestamp. Any later edit breaks the
@@ -71,12 +71,12 @@ signature — that's the point. Export your public certificate so others can ver
 it's you. Every PDF you open also shows a **signature badge**: untampered,
 modified, or unsigned.
 
-### 📄 Pages & export
+### Pages & export
 Rotate, delete, **append**, and reorder pages. **Flatten** to a guaranteed-flat
 PDF, or export pages as PNGs (single or ZIP) and form data as JSON / CSV. Save
 back over the original, or as a flattened or editable copy.
 
-### 🔒 Private by design
+### Private by design
 - Binds **`127.0.0.1` only** — never reachable from the network; writes are
   guarded by a per-process CSRF token and a loopback-origin check.
 - Your image library, signing identity, autofill profile, and recent files live
