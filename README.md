@@ -97,8 +97,14 @@ go build -o nib ./cmd/nib
 ```
 The whole UI is embedded in the binary — nothing to fetch at runtime. Nib opens
 its window in your installed Chrome / Edge / Brave / Chromium (app mode), or
-falls back to a normal browser tab. The first run walks you through a one-time
-setup: pick or create the SSH key that unlocks your vault.
+falls back to a normal browser tab.
+
+The first run opens a short intro explaining what the SSH key protects, then a
+one-time setup where you either **use an SSH key you already have** or have Nib
+**create one for you** (at a path you can change — works the same on Linux,
+macOS, and Windows, no key needed up front). That key is what unlocks your
+vault, so keep it safe and back it up. You can authorize or create more keys
+later from **File → Manage authorized keys**.
 
 ### Install on Debian / Ubuntu
 ```sh
