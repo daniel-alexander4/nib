@@ -1,0 +1,38 @@
+#!/usr/bin/env bash
+# Build Nib for this machine, package it as a .deb, and install it — giving a
+# menu item under Office that kills any running instance and starts anew.
+#
+# Usage: ./install.sh [version]   (version defaults to the VERSION file)
+set -euo pipefail
+cd "$(dirname "$0")"
+
+VERSION="${1:-$(cat VERSION 2>/dev/null || echo 0.0.0)}"
+ARCH="$(dpkg --print-architecture)" # amd64 or arm64
+DEB="dist/nib_${VERSION}_${ARCH}.deb"
+mkdir -p dist
+
+echo "building nib $VERSION ($ARCH)…"
+CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X main.version=$VERSION" -o dist/nib ./cmd/nib
+
+if ! command -v nfpm >/dev/null 2>&1; then
+  echo "installing nfpm…"
+  go install github.com/goreleaser/nfpm/v2/cmd/nfpm@latest
+  export PATH="$PATH:$(go env GOPATH)/bin"
+fi
+
+echo "packaging $DEB…"
+ARCH="$ARCH" VERSION="$VERSION" \
+  nfpm package --config build/nfpm.yaml --packager deb --target "$DEB"
+
+echo "installing $DEB (sudo)…"
+# dpkg -i (not apt install ./file): no _apt sandbox warning, and it allows
+# reinstalling the same version or downgrading. Nib has no dependencies.
+sudo dpkg -i "$DEB"
+
+# Refresh the desktop/icon caches so the menu item appears without a re-login.
+sudo update-desktop-database 2>/dev/null || true
+sudo gtk-update-icon-cache -f /usr/share/icons/hicolor 2>/dev/null || true
+
+rm -f dist/nib
+echo
+echo "Installed. Look for Nib in your applications menu under Office."

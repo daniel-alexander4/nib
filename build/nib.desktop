@@ -1,0 +1,13 @@
+[Desktop Entry]
+Type=Application
+Name=Nib
+Comment=Fill, sign, and finalize PDFs
+Exec=nib --replace %f
+Icon=nib
+Terminal=false
+Categories=Office;
+MimeType=application/pdf;
+StartupNotify=true
+# Matches `chromium --class=Nib` (set in internal/browser) so the panel uses
+# this entry's themed Icon=nib instead of upscaling the page favicon.
+StartupWMClass=Nib
