@@ -41,7 +41,7 @@ func (s *Server) handleOpenURL(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.setDoc(&document{path: "", data: data, sig: sign.Verify(data)})
-	writeJSON(w, s.docResponseLocked())
+	writeJSON(w, s.docResponse())
 }
 
 // fetchPDF downloads a PDF with a size cap and timeout.

@@ -57,7 +57,7 @@ func (s *Server) handlePages(w http.ResponseWriter, r *http.Request) {
 		s.doc.sig = sign.Verify(result)
 	}
 	s.mu.Unlock()
-	writeJSON(w, s.docResponseLocked())
+	writeJSON(w, s.docResponse())
 }
 
 // splitPages parses a comma-separated page selection ("1,3,5"); empty means all.

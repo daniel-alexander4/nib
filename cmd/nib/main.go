@@ -47,10 +47,14 @@ func main() {
 	}
 
 	// Listen on a random loopback port so the app is never network-exposed.
-	// NIB_ADDR pins a fixed loopback address (handy for headless/remote runs).
+	// NIB_ADDR pins a fixed loopback port for headless/remote runs (reach it via
+	// an SSH tunnel); a non-loopback address is refused — nib is never exposed.
 	bind := os.Getenv("NIB_ADDR")
 	if bind == "" {
 		bind = "127.0.0.1:0"
+	}
+	if !loopbackBind(bind) {
+		log.Fatalf("NIB_ADDR must bind a loopback address (127.0.0.1, localhost, or ::1); got %q", bind)
 	}
 	ln, err := net.Listen("tcp", bind)
 	if err != nil {
@@ -86,6 +90,20 @@ func main() {
 	_ = srv.Close()
 }
 
+// loopbackBind reports whether addr is a host:port on the loopback interface.
+// It mirrors the loopback set the server's Host guard enforces, so the address
+// nib binds and the requests it accepts share one notion of "loopback".
+func loopbackBind(addr string) bool {
+	host, _, err := net.SplitHostPort(addr)
+	if err != nil {
+		return false
+	}
+	switch host {
+	case "127.0.0.1", "localhost", "::1":
+		return true
+	}
+	return false
+}
 
 // initialFile returns an absolute path for the optional PDF argument, or "".
 func initialFile() string {

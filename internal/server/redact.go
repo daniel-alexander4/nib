@@ -63,5 +63,5 @@ func (s *Server) handleRedact(w http.ResponseWriter, r *http.Request) {
 		s.doc.sig = sign.Verify(result)
 	}
 	s.mu.Unlock()
-	writeJSON(w, s.docResponseLocked())
+	writeJSON(w, s.docResponse())
 }
