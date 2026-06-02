@@ -31,10 +31,11 @@ const els = {
   backupBtn: $('backupBtn'), restoreInput: $('restoreInput'),
   manageKeysBtn: $('manageKeysBtn'), keysModal: $('keysModal'), keysList: $('keysList'),
   keyCandidates: $('keyCandidates'), keyPaste: $('keyPaste'), keyAddPath: $('keyAddPath'),
-  keyAddBtn: $('keyAddBtn'), keysClose: $('keysClose'),
+  keyAddBtn: $('keyAddBtn'), keyCreateBtn: $('keyCreateBtn'), keysClose: $('keysClose'),
   authOverlay: $('authOverlay'), authForm: $('authForm'), authTitle: $('authTitle'),
   authHint: $('authHint'), authPw: $('authPw'), migrateRow: $('migrateRow'),
-  keyChoice: $('keyChoice'), keySelect: $('keySelect'), keyPath: $('keyPath'), authWarn: $('authWarn'),
+  keyChoice: $('keyChoice'), keySelect: $('keySelect'), keyPath: $('keyPath'),
+  createHint: $('createHint'), authWarn: $('authWarn'),
   authSubmit: $('authSubmit'), authError: $('authError'),
   addImageBtn: $('addImageBtn'), drawSigBtn: $('drawSigBtn'), addImageInput: $('addImageInput'),
   imageGrid: $('imageGrid'),
@@ -78,6 +79,16 @@ function selectedKeyMode() {
   return els.authForm.querySelector('input[name="keymode"]:checked')?.value || 'use';
 }
 
+// syncKeyMode shows only the control that belongs to the selected key mode, so
+// each option (including "create") reads as a distinct, actionable choice.
+function syncKeyMode() {
+  const mode = selectedKeyMode();
+  els.keySelect.hidden = mode !== 'use';
+  els.keyPath.hidden = mode !== 'path';
+  els.createHint.hidden = mode !== 'create';
+}
+els.keyChoice.addEventListener('change', syncKeyMode);
+
 // applyStatus drives the UI from /api/status.
 function applyStatus(st) {
   authState = st.state;
@@ -118,9 +129,11 @@ function applyStatus(st) {
   els.authHint.textContent = st.state === 'migrate'
     ? 'Enter your old vault password once; Nib will re-key the vault to your SSH key.'
     : 'Choose the SSH key that unlocks Nib. No password is used.';
+  els.createHint.textContent = 'New key saved to ' + (st.defaultKeyPath || '~/.ssh/id_ed25519');
   els.authForm.querySelector('input[value="use"]').checked = haveCandidates;
   els.authForm.querySelector('input[value="create"]').checked = !haveCandidates;
   els.authSubmit.textContent = st.state === 'migrate' ? 'Migrate' : 'Enable';
+  syncKeyMode();
 }
 
 async function refreshStatus() {
@@ -266,6 +279,7 @@ els.keyAddBtn.onclick = () => {
   if (!pubKey) { toast('Paste a public key first'); return; }
   addKey({ mode: 'paste', pubKey, keyPath: els.keyAddPath.value.trim() });
 };
+els.keyCreateBtn.onclick = () => addKey({ mode: 'create', keyPath: els.keyAddPath.value.trim() });
 
 // --- viewer wiring -----------------------------------------------------------
 const eventBus = new EventBus();

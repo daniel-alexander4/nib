@@ -167,16 +167,18 @@
         <input id="authPw" type="password" autocomplete="current-password" />
       </label>
 
-      <!-- key choice -->
+      <!-- key choice: use a key you have (optionally at a custom path), or have
+           Nib generate one. Only the selected mode's companion control shows. -->
       <div id="keyChoice">
-        <label><input type="radio" name="keymode" value="use" checked /> Use an existing key</label>
+        <label><input type="radio" name="keymode" value="use" checked /> Use a key I already have</label>
         <select id="keySelect"></select>
-        <label><input type="radio" name="keymode" value="path" /> Key at a specific path</label>
+        <label><input type="radio" name="keymode" value="path" /> …a key at a specific path</label>
         <input id="keyPath" type="text" placeholder="/home/you/.ssh/id_ed25519" spellcheck="false" />
-        <label><input type="radio" name="keymode" value="create" /> Create a new key in ~/.ssh</label>
+        <label><input type="radio" name="keymode" value="create" /> Create a new key for me</label>
+        <p id="createHint" class="pathhint"></p>
       </div>
 
-      <p class="error" id="authWarn">Your SSH key becomes the only way in — if you lose it, the vault (including your signing identity) cannot be recovered.</p>
+      <p class="error authnote" id="authWarn">Your SSH key becomes the only way in — if you lose it, the vault (including your signing identity) cannot be recovered.</p>
       <button type="submit" id="authSubmit">Enable</button>
       <p id="authError" class="error"></p>
     </form>
@@ -281,9 +283,10 @@
       <div id="keyCandidates" class="keycands"></div>
       <label>Add a public key (an <code>authorized_keys</code> line)
         <textarea id="keyPaste" rows="3" placeholder="ssh-ed25519 AAAA… user@host"></textarea></label>
-      <label>Private-key path on that machine (optional)
+      <label>Private-key path (optional — where to read, or create, the key)
         <input id="keyAddPath" type="text" placeholder="~/.ssh/id_ed25519" spellcheck="false" /></label>
       <div class="sigbtns">
+        <button id="keyCreateBtn" title="Generate a new ed25519 key and authorize it">Create a new key</button>
         <span class="grow"></span>
         <button id="keyAddBtn" class="primary">Add key</button>
       </div>
