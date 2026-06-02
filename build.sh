@@ -1,14 +1,27 @@
 #!/usr/bin/env bash
 # Cross-compile Nib for all platforms and build Linux .deb packages.
-# Usage: ./build.sh [version]   (version defaults to "dev")
+# Usage: ./build.sh [version] [--publish]   (version defaults to the VERSION file)
 #
 # Produces a single cgo-free static binary per OS/arch in dist/, plus a .deb for
 # linux amd64/arm64 when nfpm is installed (go install
 # github.com/goreleaser/nfpm/v2/cmd/nfpm@latest).
+#
+# With --publish it also pushes the current branch and uploads the public
+# binaries to a GitHub release tagged v<version> (needs the gh CLI). build.sh
+# only ever builds the public `nib` binaries — never the embed-keys nib-sig
+# variant — so what it publishes is always safe to share.
 set -euo pipefail
 cd "$(dirname "$0")"
 
-VERSION="${1:-$(cat VERSION 2>/dev/null || echo dev)}"
+PUBLISH=0
+VERSION=""
+for arg in "$@"; do
+  case "$arg" in
+    --publish|-p) PUBLISH=1 ;;
+    *)            VERSION="$arg" ;;
+  esac
+done
+VERSION="${VERSION:-$(cat VERSION 2>/dev/null || echo dev)}"
 DIST="dist"
 rm -rf "$DIST"
 mkdir -p "$DIST"
@@ -41,3 +54,22 @@ else
 fi
 
 echo "done — artifacts in $DIST/"
+
+# Optional: publish the public binaries to a GitHub release (only with --publish).
+if [ "$PUBLISH" = "1" ]; then
+  command -v gh >/dev/null 2>&1 || { echo "gh (GitHub CLI) not found — cannot publish" >&2; exit 1; }
+  tag="v$VERSION"
+  branch="$(git rev-parse --abbrev-ref HEAD)"
+  echo "publishing $tag to GitHub from $branch…"
+  git push origin "$branch" # the tag points at this branch's tip on the remote
+  shopt -s nullglob
+  assets=("$DIST/nib-$VERSION"-* "$DIST/nib_${VERSION}_"*.deb)
+  shopt -u nullglob
+  if gh release view "$tag" >/dev/null 2>&1; then
+    gh release upload "$tag" "${assets[@]}" --clobber
+  else
+    gh release create "$tag" "${assets[@]}" \
+      --target "$branch" --title "Nib $VERSION" --notes "Nib $VERSION"
+  fi
+  echo "published $tag"
+fi
