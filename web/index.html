@@ -1,0 +1,300 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Nib</title>
+  <!-- Pre-rasterized PNG favicons: the window-manager panel upscales an SVG
+       favicon (it rasterizes once, tiny) and blurs it; sized PNGs stay sharp. -->
+  <link rel="icon" type="image/png" sizes="16x16" href="./nib-16.png" />
+  <link rel="icon" type="image/png" sizes="32x32" href="./nib-32.png" />
+  <link rel="icon" type="image/png" sizes="64x64" href="./nib-64.png" />
+  <link rel="icon" type="image/png" sizes="128x128" href="./nib-128.png" />
+  <link rel="icon" type="image/png" sizes="256x256" href="./nib-256.png" />
+  <link rel="stylesheet" href="./vendor/pdfjs/pdf_viewer.css" />
+  <link rel="stylesheet" href="./style.css" />
+</head>
+<body>
+  <header id="menubar">
+    <img class="brand" src="./nib.svg" alt="Nib" />
+
+    <div class="menu">
+      <button class="menutop">File</button>
+      <div class="dropdown">
+        <button id="openMenuItem">Open…</button>
+        <div class="menucap">Recent</div>
+        <div id="recentSlot"></div>
+        <div class="sep"></div>
+        <button id="saveBtn" title="Save (overwrites the original)" disabled>Save</button>
+        <button id="saveFlatBtn">Save flattened PDF</button>
+        <button id="saveEditableBtn">Save editable copy</button>
+        <div class="sep"></div>
+        <button id="finalizeBtn">Finalize &amp; sign…</button>
+        <div class="menucap">Export</div>
+        <button id="exportZipBtn">Pages as images (ZIP)</button>
+        <button id="exportPngBtn">Current page (PNG)</button>
+        <button id="exportFormJsonBtn">Form data (JSON)</button>
+        <button id="exportFormCsvBtn">Form data (CSV)</button>
+        <button id="exportCertBtn">Signing certificate</button>
+        <div class="sep"></div>
+        <button id="manageKeysBtn">Manage authorized keys…</button>
+        <button id="backupBtn">Back up vault</button>
+        <label class="menuitem">Restore vault…
+          <input id="restoreInput" type="file" accept=".nib" hidden /></label>
+      </div>
+    </div>
+
+    <div class="menu">
+      <button class="menutop">Edit</button>
+      <div class="dropdown">
+        <button id="textToolBtn" data-mode="FREETEXT" title="Add a text box (click on the page)">Text</button>
+        <button id="highlightToolBtn" data-mode="HIGHLIGHT" title="Highlight text">Highlight</button>
+        <button id="drawToolBtn" data-mode="INK" title="Freehand draw">Draw</button>
+        <button id="detectBtn" title="Detect blank lines to fill">Detect fields</button>
+        <div class="sep"></div>
+        <button id="redactBtn" title="Draw redaction boxes">Redact</button>
+        <button id="applyRedactBtn" title="Permanently redact marked pages">Apply redactions</button>
+        <div class="sep"></div>
+        <button id="autofillBtn">Autofill from profile</button>
+        <button id="editProfileBtn">Edit autofill profile…</button>
+      </div>
+    </div>
+
+    <div class="menu">
+      <button class="menutop">View</button>
+      <div class="dropdown">
+        <button id="toggleSidebarBtn">Hide sidebar</button>
+        <div class="sep"></div>
+        <button id="prevBtn">Previous page</button>
+        <button id="nextBtn">Next page</button>
+        <div class="menuitem idle">Page <input id="pageNum" type="number" min="1" value="1" /> <span id="pageCount">/ 0</span></div>
+        <div class="sep"></div>
+        <button id="zoomInBtn">Zoom in</button>
+        <button id="zoomOutBtn">Zoom out</button>
+        <button id="fitBtn">Fit width</button>
+        <div class="sep"></div>
+        <div class="menuitem idle"><input id="searchInput" type="search" placeholder="Find in document…" /></div>
+      </div>
+    </div>
+
+    <span class="grow"></span>
+    <span id="sigBadge" class="badge badge-none" title="Signature status">no document</span>
+  </header>
+
+  <!-- Icon toolbar mirroring the Edit menu. Mode tools carry data-mode and wire
+       themselves like their menu twins; the rest forward to the menu command. -->
+  <div id="toolbar">
+    <button class="tbicon" data-mode="FREETEXT" title="Text — add a text box">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 6V4h14v2"/><path d="M12 4v16"/><path d="M9 20h6"/></svg>
+    </button>
+    <button class="tbicon" data-mode="HIGHLIGHT" title="Highlight text">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 20h6"/><path d="M9 16l8-8 3 3-8 8H9v-3z"/></svg>
+    </button>
+    <button class="tbicon" data-mode="INK" title="Draw — freehand">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20l1-4L16 5l3 3L8 19l-4 1z"/><path d="M13.5 6.5l3 3"/></svg>
+    </button>
+    <button class="tbicon" id="tbDetect" title="Detect blank lines to fill">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8V5a1 1 0 0 1 1-1h3"/><path d="M16 4h3a1 1 0 0 1 1 1v3"/><path d="M20 16v3a1 1 0 0 1-1 1h-3"/><path d="M8 20H5a1 1 0 0 1-1-1v-3"/><path d="M8 12h8"/></svg>
+    </button>
+
+    <span class="tbsep"></span>
+
+    <button class="tbicon" id="tbRedact" title="Redact — draw redaction boxes">
+      <svg viewBox="0 0 24 24"><rect x="3" y="9" width="18" height="6" rx="1" fill="currentColor"/></svg>
+    </button>
+    <button class="tbicon" id="tbApplyRedact" title="Apply redactions — permanent">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="9" width="11" height="6" rx="1" fill="currentColor" stroke="none"/><path d="M15 12l3 3 4-6"/></svg>
+    </button>
+
+    <span class="tbsep"></span>
+
+    <button class="tbicon" id="tbAutofill" title="Autofill from profile">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 18h16"/><path d="M12 4v9"/><path d="M8.5 9.5L12 13l3.5-3.5"/></svg>
+    </button>
+    <button class="tbicon" id="tbEditProfile" title="Edit autofill profile…">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="3.5"/><path d="M5.5 19a6.5 6.5 0 0 1 13 0"/></svg>
+    </button>
+  </div>
+
+  <main id="main">
+    <aside id="sidebar">
+      <nav class="tabs">
+        <button class="tab active" data-panel="thumbs">Pages</button>
+        <button class="tab" data-panel="outline">Outline</button>
+        <button class="tab" data-panel="library">Library</button>
+      </nav>
+      <div id="thumbs" class="panel active">
+        <div class="thumbactions">
+          <button id="appendBtn" title="Append another PDF">+ Append PDF</button>
+          <input id="appendInput" type="file" accept="application/pdf" hidden />
+        </div>
+        <div id="thumbGrid"></div>
+      </div>
+      <div id="outline" class="panel"></div>
+      <div id="library" class="panel">
+        <div class="libactions">
+          <button id="addImageBtn">+ Image</button>
+          <button id="drawSigBtn">✎ Signature</button>
+        </div>
+        <div class="quickstamps">
+          <button data-stamp="check" title="Checkmark">✓</button>
+          <button data-stamp="date" title="Today's date">Date</button>
+          <button data-stamp="approved" title="Approved">Approved</button>
+        </div>
+        <p class="libhint">Click an image to place it on the current page.</p>
+        <div id="imageGrid"></div>
+        <input id="addImageInput" type="file" accept="image/png,image/jpeg" hidden />
+      </div>
+    </aside>
+
+    <div id="viewerWrap">
+      <div id="viewerContainer">
+        <div id="viewer" class="pdfViewer"></div>
+      </div>
+      <div id="empty">Open a PDF to begin.</div>
+    </div>
+  </main>
+
+  <!-- First-run wizard / recovery: unlock Nib with an SSH key. -->
+  <div id="authOverlay" hidden>
+    <form id="authForm">
+      <img class="brand brand-lg" src="./nib.svg" alt="Nib" />
+      <h2 id="authTitle">Set up Nib</h2>
+      <p id="authHint"></p>
+
+      <!-- migration: old password (shown only in migrate state) -->
+      <label id="migrateRow" hidden>Current vault password
+        <input id="authPw" type="password" autocomplete="current-password" />
+      </label>
+
+      <!-- key choice -->
+      <div id="keyChoice">
+        <label><input type="radio" name="keymode" value="use" checked /> Use an existing key</label>
+        <select id="keySelect"></select>
+        <label><input type="radio" name="keymode" value="path" /> Key at a specific path</label>
+        <input id="keyPath" type="text" placeholder="/home/you/.ssh/id_ed25519" spellcheck="false" />
+        <label><input type="radio" name="keymode" value="create" /> Create a new key in ~/.ssh</label>
+      </div>
+
+      <p class="error" id="authWarn">Your SSH key becomes the only way in — if you lose it, the vault (including your signing identity) cannot be recovered.</p>
+      <button type="submit" id="authSubmit">Enable</button>
+      <p id="authError" class="error"></p>
+    </form>
+  </div>
+
+  <!-- Finalize & sign dialog -->
+  <div id="finalizeModal" hidden>
+    <div class="sigcard">
+      <h3>Finalize &amp; sign</h3>
+      <p class="libhint">Signs the document so any later edit is detectable. A
+        visible stamp is placed at the bottom of page 1.</p>
+      <label>Watermark text <input id="fzText" type="text" value="Finalized" /></label>
+      <label><input id="fzDate" type="checkbox" checked /> Append today's date</label>
+      <label>Protect with password (optional) <input id="fzPw" type="password" placeholder="leave blank for none" /></label>
+      <label>Timestamp server URL (optional) <input id="fzTsa" type="text" placeholder="https://… RFC 3161 TSA" /></label>
+      <div class="sigbtns">
+        <span class="grow"></span>
+        <button id="fzCancel">Cancel</button>
+        <button id="fzGo" class="primary">Finalize</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Autofill profile editor -->
+  <div id="profileModal" hidden>
+    <div class="sigcard">
+      <h3>Autofill profile</h3>
+      <p class="libhint">One field per line as <code>name = value</code>. Matched
+        to form field names when you choose Autofill.</p>
+      <textarea id="profileText" rows="8" placeholder="fullName = Jane Doe&#10;email = jane@example.com"></textarea>
+      <div class="sigbtns">
+        <span class="grow"></span>
+        <button id="profileCancel">Cancel</button>
+        <button id="profileSave" class="primary">Save profile</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Open a PDF by path (browse the filesystem so the file keeps a real path:
+       it can be saved in place and is remembered in Recent) -->
+  <div id="openModal" hidden>
+    <div class="sigcard">
+      <h3>Open a PDF</h3>
+      <label>Path or URL
+        <input id="pathInput" type="text" placeholder="/path/to/file.pdf or https://…" spellcheck="false" /></label>
+      <div class="sigbtns"><span class="grow"></span><button id="openGo" class="primary">Open</button></div>
+      <div class="sep"></div>
+      <label>Folder <input id="openDir" type="text" /></label>
+      <div class="dirbrowse">
+        <button id="openUp" type="button" title="Parent folder">⬆ Up</button>
+        <span id="openHere" class="dirhere"></span>
+      </div>
+      <ul id="openList" class="dirlist"></ul>
+      <div class="sigbtns">
+        <span class="grow"></span>
+        <button id="openCancel">Cancel</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Save / Export destination dialog -->
+  <div id="saveAsModal" hidden>
+    <div class="sigcard">
+      <h3 id="saveAsTitle">Save</h3>
+      <label>File name <input id="saveAsName" type="text" /></label>
+      <label>Folder <input id="saveAsDir" type="text" /></label>
+      <div class="dirbrowse">
+        <button id="saveAsUp" type="button" title="Parent folder">⬆ Up</button>
+        <span id="saveAsHere" class="dirhere"></span>
+      </div>
+      <ul id="saveAsList" class="dirlist"></ul>
+      <div class="sigbtns">
+        <span class="grow"></span>
+        <button id="saveAsCancel">Cancel</button>
+        <button id="saveAsGo" class="primary">Save</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Signature draw pad -->
+  <div id="sigModal" hidden>
+    <div class="sigcard">
+      <h3>Draw your signature</h3>
+      <canvas id="sigCanvas" width="500" height="200"></canvas>
+      <div class="sigbtns">
+        <button id="sigClear">Clear</button>
+        <span class="grow"></span>
+        <button id="sigCancel">Cancel</button>
+        <button id="sigSave" class="primary">Save to library</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Authorized SSH keys: which keys can unlock this vault -->
+  <div id="keysModal" hidden>
+    <div class="sigcard">
+      <h3>Authorized keys</h3>
+      <p class="libhint">These SSH keys can unlock your vault. Add another to use
+        Nib from a second machine; remove one to revoke its access.</p>
+      <div id="keysList" class="keyslist"></div>
+      <div class="sep"></div>
+      <div id="keyCandidates" class="keycands"></div>
+      <label>Add a public key (an <code>authorized_keys</code> line)
+        <textarea id="keyPaste" rows="3" placeholder="ssh-ed25519 AAAA… user@host"></textarea></label>
+      <label>Private-key path on that machine (optional)
+        <input id="keyAddPath" type="text" placeholder="~/.ssh/id_ed25519" spellcheck="false" /></label>
+      <div class="sigbtns">
+        <span class="grow"></span>
+        <button id="keyAddBtn" class="primary">Add key</button>
+      </div>
+      <div class="sep"></div>
+      <div class="sigbtns">
+        <span class="grow"></span>
+        <button id="keysClose">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <script type="module" src="./app.js"></script>
+</body>
+</html>

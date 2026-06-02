@@ -1,0 +1,8 @@
+# build output
+/nib
+/nib.exe
+/dist/
+*.test
+
+# OS cruft
+.DS_Store

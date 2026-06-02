@@ -1,0 +1,25 @@
+# nfpm config for the Nib .deb. The build scripts set ARCH/VERSION in the
+# environment and stage the binary to dist/nib (nfpm expands ${ARCH}/${VERSION}
+# but not contents.src globs, so that path is literal).
+name: nib
+arch: ${ARCH}
+version: ${VERSION}
+section: utils
+priority: optional
+maintainer: Dan <daniel@alexander4.org>
+description: |
+  Nib — a local tool to fill, sign, and finalize PDFs.
+  Runs a loopback-only web app in a chromeless browser window.
+contents:
+  - src: dist/nib
+    dst: /usr/bin/nib
+    file_info:
+      mode: 0755
+  - src: build/nib.desktop
+    dst: /usr/share/applications/nib.desktop
+    file_info:
+      mode: 0644
+  - src: build/nib.svg
+    dst: /usr/share/icons/hicolor/scalable/apps/nib.svg
+    file_info:
+      mode: 0644
