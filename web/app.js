@@ -971,7 +971,9 @@ els.applyRedactBtn.onclick = async () => {
   if (!confirm('Permanently redact the marked pages? Those pages become flat images and the content under each box is removed. This cannot be undone.')) return;
 
   const bytes = await bakedBytes();
-  const doc = await pdfjsLib.getDocument({ data: bytes }).promise;
+  // pdf.js transfers the typed array to its worker, detaching `bytes`; we still
+  // need it intact to upload below, so parse a copy.
+  const doc = await pdfjsLib.getDocument({ data: bytes.slice() }).promise;
   const byPage = {};
   for (const m of redactMarks) (byPage[m.page] ||= []).push(m);
 
