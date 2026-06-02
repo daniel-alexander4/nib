@@ -40,7 +40,9 @@ func TestRecentReflectsOpen(t *testing.T) {
 	}
 	defer resp.Body.Close()
 	var recent []string
-	json.NewDecoder(resp.Body).Decode(&recent)
+	if err := json.NewDecoder(resp.Body).Decode(&recent); err != nil {
+		t.Fatal(err)
+	}
 	if len(recent) != 1 || recent[0] != path {
 		t.Errorf("recent = %v, want [%s]", recent, path)
 	}
@@ -61,10 +63,15 @@ func TestRecentKeepsPriorOpens(t *testing.T) {
 	openByPath(t, ts.URL, c, csrf, pathA)
 	openByPath(t, ts.URL, c, csrf, pathB)
 
-	resp, _ := c.Get(ts.URL + "/api/recent")
+	resp, err := c.Get(ts.URL + "/api/recent")
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer resp.Body.Close()
 	var recent []string
-	json.NewDecoder(resp.Body).Decode(&recent)
+	if err := json.NewDecoder(resp.Body).Decode(&recent); err != nil {
+		t.Fatal(err)
+	}
 	want := []string{pathB, pathA}
 	if len(recent) != 2 || recent[0] != want[0] || recent[1] != want[1] {
 		t.Errorf("recent = %v, want %v", recent, want)

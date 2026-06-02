@@ -212,9 +212,10 @@ func (s *Server) handleSave(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	sig := sign.Verify(data)
 	s.mu.Lock()
 	doc.data = data
-	doc.sig = sign.Verify(data)
+	doc.sig = sig
 	s.mu.Unlock()
 	writeJSON(w, s.docResponse())
 }
@@ -273,7 +274,7 @@ func loopbackOnly(next http.Handler) http.Handler {
 			host = h
 		}
 		switch host {
-		case "127.0.0.1", "localhost", "::1", "[::1]":
+		case "127.0.0.1", "localhost", "::1":
 			next.ServeHTTP(w, r)
 		default:
 			httpError(w, http.StatusForbidden, "loopback only")
