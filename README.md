@@ -49,8 +49,10 @@ and a **checkmark**. Drop one on, drag to place, resize to fit.
 ### Signatures & images, stored securely
 - **Draw your signature** on a pad; it's saved as a clean **transparent PNG**, so
   it sits *on* the line instead of inside a white box.
-- **Add images** by upload or URL — initials, logos, custom stamps.
-  **Transparent PNGs are recommended** so they overlay without a background.
+- **Upload a photographed or scanned signature** and Nib knocks the white paper
+  background out to transparency for you — preview it, tune the threshold, and it
+  sits *on* the page instead of inside a white box. (Add logos and other images
+  the same way; uncheck the box to keep an image's background as-is.)
 - Everything lives in an **encrypted image library** inside your vault. Click to
   place, then drag and resize anywhere.
 

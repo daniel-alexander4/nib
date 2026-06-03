@@ -297,6 +297,22 @@
     </div>
   </div>
 
+  <!-- Uploaded-image background removal -->
+  <div id="bgModal" hidden>
+    <div class="sigcard">
+      <h3>Add signature image</h3>
+      <div class="bgpreview"><canvas id="bgCanvas"></canvas></div>
+      <label><input id="bgRemove" type="checkbox" checked /> Remove white background</label>
+      <label id="bgThreshRow">Background threshold (drag left to remove more)
+        <input id="bgThresh" type="range" min="120" max="250" value="200" step="5" /></label>
+      <div class="sigbtns">
+        <span class="grow"></span>
+        <button id="bgCancel">Cancel</button>
+        <button id="bgSave" class="primary">Save to library</button>
+      </div>
+    </div>
+  </div>
+
   <!-- Authorized SSH keys: which keys can unlock this vault -->
   <div id="keysModal" hidden>
     <div class="sigcard">
