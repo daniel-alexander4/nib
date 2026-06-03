@@ -741,6 +741,13 @@ function renderBgPreview() {
 // Map luminance to alpha: pixels brighter than `threshold` go fully transparent,
 // a soft band below it ramps alpha so antialiased edges stay smooth; original RGB
 // (and any existing alpha) is preserved so colored ink survives.
+//
+// TRIPWIRE: this heuristic has no automated guard (no JS test harness in this repo;
+// the risky part is the modal/upload wiring, which is integration, not pure math).
+// It's verified by the live preview at use time. After changing this function,
+// renderBgPreview, or the bgModal upload path, re-check by hand: upload a dark-ink-
+// on-white-paper image and confirm the preview shows a transparent background with
+// the ink intact, then Save and confirm the library thumbnail is still transparent.
 function knockoutBackground(ctx, w, h, threshold) {
   const img = ctx.getImageData(0, 0, w, h);
   const d = img.data;
@@ -1088,6 +1095,12 @@ function reflectRedact() {
 // is where an absolutely-positioned overlay's origin sits, and what the apply-
 // time canvas (rendered from the PDF page) covers. Using the border-box instead
 // offsets the live overlay by the border and shifts the baked redaction.
+//
+// TRIPWIRE: the "box actually covers the secret" offset property has no automated
+// guard (it's rendered-coordinate math; a headless-browser pixel test is too
+// flaky/heavyweight for this single-binary repo). Before committing any change to
+// pageContentRect or the fraction capture/apply path, re-run the manual procedure
+// in memory/reference_redaction_visual_check.md.
 function pageContentRect(div) {
   const r = div.getBoundingClientRect();
   const cs = getComputedStyle(div);
