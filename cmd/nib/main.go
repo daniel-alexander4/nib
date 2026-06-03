@@ -62,7 +62,7 @@ func main() {
 	}
 	addr := ln.Addr().String()
 
-	srv := &http.Server{Handler: server.New(nib.WebFS(), vault.DefaultDir()).Handler()}
+	srv := &http.Server{Handler: server.New(nib.WebFS(), vault.DefaultDir(), version).Handler()}
 	go func() {
 		if err := srv.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			log.Fatalf("server error: %v", err)

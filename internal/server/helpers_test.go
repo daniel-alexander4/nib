@@ -28,7 +28,7 @@ func startServer(t *testing.T) (*httptest.Server, string) {
 	if err := os.WriteFile(pdfPath, data, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	ts := httptest.NewServer(New(os.DirFS("."), t.TempDir()).Handler())
+	ts := httptest.NewServer(New(os.DirFS("."), t.TempDir(), "test").Handler())
 	t.Cleanup(ts.Close)
 	return ts, pdfPath
 }

@@ -108,10 +108,18 @@ type statusResponse struct {
 	Candidates     []string `json:"candidates,omitempty"`     // detected ~/.ssh keys
 	DefaultKeyPath string   `json:"defaultKeyPath,omitempty"` // where a new key would be created
 	KeyPath        string   `json:"keyPath,omitempty"`        // enrolled key path (key-missing)
+	AutoUpdate     bool     `json:"autoUpdate"`               // run the startup update check (off when NIB_NO_UPDATE_CHECK is set)
 }
 
-// currentStatus describes how (and whether) the vault can be unlocked.
+// currentStatus describes how (and whether) the vault can be unlocked, stamped
+// with whether the UI should run its automatic update check.
 func (s *Server) currentStatus() statusResponse {
+	st := s.vaultStatus()
+	st.AutoUpdate = os.Getenv("NIB_NO_UPDATE_CHECK") == ""
+	return st
+}
+
+func (s *Server) vaultStatus() statusResponse {
 	if s.unlockedVault() != nil {
 		s.mu.Lock()
 		csrf := s.csrf

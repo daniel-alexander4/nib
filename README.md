@@ -121,12 +121,26 @@ Cross-compiles a static, cgo-free binary for **Linux, macOS, and Windows**
 (amd64 + arm64) into `dist/`, plus Linux `.deb` packages. On macOS and Windows
 you run the binary directly — it's fully self-contained.
 
+### Staying up to date
+At startup Nib asks GitHub for its latest release version; if a newer one exists,
+a pill appears at the top that downloads the build matching your OS and
+architecture (a `.deb` for a package install, otherwise the raw binary). You can
+also trigger it any time from **File → Check for updates…**
+
+This is the only call Nib makes on its own, and it's a **version query — no
+document data, no telemetry**: your documents never leave your computer. Set
+`NIB_NO_UPDATE_CHECK=1` to turn the automatic check off (the manual menu item
+still works). Nib only notifies and downloads — it never installs or replaces
+itself; you apply the update the way you installed (`apt` / `install.sh`, or by
+swapping the binary).
+
 ### Options
 
 | Variable | Effect |
 | --- | --- |
 | `NIB_ADDR` | Pin a fixed loopback address (e.g. `127.0.0.1:8791`) instead of a random port. Must be loopback (`127.0.0.1`, `localhost`, or `::1`) — a non-loopback address is refused at startup. |
 | `NIB_NO_BROWSER` | Don't open a window — just serve and log the URL (headless / remote). |
+| `NIB_NO_UPDATE_CHECK` | Disable the automatic startup update check (the manual **Check for updates…** still works). |
 
 ---
 

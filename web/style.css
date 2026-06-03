@@ -112,6 +112,27 @@ input[type="search"] { width: 100%; }
 .badge-valid    { background: rgba(166, 227, 161, 0.18); color: var(--green); }
 .badge-invalid  { background: rgba(243, 139, 168, 0.18); color: var(--red); }
 
+/* --- update pill (shown when a newer release is available) --- */
+#updatePill {
+  display: inline-flex;
+  align-items: stretch;
+  margin-right: 8px;
+  border-radius: 999px;
+  overflow: hidden;
+  background: var(--mauve);
+}
+#updatePill button {
+  border: none;
+  background: transparent;
+  color: var(--crust);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+#updateGet { padding: 4px 10px; }
+#updateDismiss { padding: 4px 8px 4px 4px; opacity: 0.7; }
+#updatePill button:hover { background: rgba(0, 0, 0, 0.12); }
+
 /* --- layout --- */
 #main { display: flex; flex: 1; min-height: 0; }
 
