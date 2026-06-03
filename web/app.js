@@ -43,6 +43,9 @@ const els = {
   imageGrid: $('imageGrid'),
   sigModal: $('sigModal'), sigCanvas: $('sigCanvas'),
   sigClear: $('sigClear'), sigCancel: $('sigCancel'), sigSave: $('sigSave'),
+  bgModal: $('bgModal'), bgCanvas: $('bgCanvas'), bgRemove: $('bgRemove'),
+  bgThresh: $('bgThresh'), bgThreshRow: $('bgThreshRow'),
+  bgCancel: $('bgCancel'), bgSave: $('bgSave'),
   autofillBtn: $('autofillBtn'), editProfileBtn: $('editProfileBtn'),
   saveFlatBtn: $('saveFlatBtn'), saveEditableBtn: $('saveEditableBtn'), finalizeBtn: $('finalizeBtn'),
   exportZipBtn: $('exportZipBtn'), exportPngBtn: $('exportPngBtn'),
@@ -697,13 +700,76 @@ async function loadImages() {
 els.addImageBtn.onclick = () => els.addImageInput.click();
 els.addImageInput.onchange = async () => {
   const file = els.addImageInput.files[0];
-  if (!file) return;
-  const form = new FormData();
-  form.append('file', file);
-  form.append('name', file.name);
-  const res = await apiFetch('/api/images', { method: 'POST', body: form });
-  if (res.ok) loadImages(); else toast((await res.json()).error || 'could not add image');
   els.addImageInput.value = '';
+  if (file) openBgModal(file);
+};
+
+// Uploaded-image background removal: a scanned/photographed signature sits on
+// opaque paper, which stamps as an ugly white box. Knock the near-white
+// background out to transparency client-side, preview it, then upload the
+// result through the same /api/images path the draw pad uses.
+let bgSrc = null; // { bitmap, file, name, w, h }
+async function openBgModal(file) {
+  const bitmap = await createImageBitmap(file);
+  bgSrc = { bitmap, file, name: file.name, w: bitmap.width, h: bitmap.height };
+  els.bgRemove.checked = !sourceHasAlpha(); // don't re-knock-out an already-transparent PNG
+  els.bgThresh.value = 200;
+  els.bgModal.hidden = false;
+  renderBgPreview();
+}
+function sourceHasAlpha() {
+  const { bitmap, w, h } = bgSrc;
+  const cv = document.createElement('canvas');
+  cv.width = w; cv.height = h;
+  const ctx = cv.getContext('2d');
+  ctx.drawImage(bitmap, 0, 0);
+  const d = ctx.getImageData(0, 0, w, h).data;
+  let transparent = 0;
+  for (let i = 3; i < d.length; i += 4) if (d[i] < 250) transparent++;
+  return transparent > (d.length / 4) * 0.05; // >5% already-transparent pixels
+}
+function renderBgPreview() {
+  const { bitmap, w, h } = bgSrc;
+  const cv = els.bgCanvas;
+  cv.width = w; cv.height = h;
+  const ctx = cv.getContext('2d');
+  ctx.clearRect(0, 0, w, h);
+  ctx.drawImage(bitmap, 0, 0);
+  els.bgThreshRow.style.display = els.bgRemove.checked ? '' : 'none';
+  if (els.bgRemove.checked) knockoutBackground(ctx, w, h, Number(els.bgThresh.value));
+}
+// Map luminance to alpha: pixels brighter than `threshold` go fully transparent,
+// a soft band below it ramps alpha so antialiased edges stay smooth; original RGB
+// (and any existing alpha) is preserved so colored ink survives.
+function knockoutBackground(ctx, w, h, threshold) {
+  const img = ctx.getImageData(0, 0, w, h);
+  const d = img.data;
+  const band = 40;
+  const lo = threshold - band;
+  for (let i = 0; i < d.length; i += 4) {
+    const lum = 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2];
+    let a;
+    if (lum >= threshold) a = 0;
+    else if (lum <= lo) a = 255;
+    else a = Math.round(255 * (threshold - lum) / band);
+    d[i + 3] = Math.round(d[i + 3] * a / 255);
+  }
+  ctx.putImageData(img, 0, 0);
+}
+els.bgRemove.onchange = renderBgPreview;
+els.bgThresh.oninput = renderBgPreview;
+els.bgCancel.onclick = () => { els.bgModal.hidden = true; bgSrc = null; };
+els.bgSave.onclick = async () => {
+  const removing = els.bgRemove.checked;
+  const blob = removing
+    ? await new Promise((r) => els.bgCanvas.toBlob(r, 'image/png'))
+    : bgSrc.file; // keep the original (and its format) untouched
+  const form = new FormData();
+  form.append('file', blob, removing ? 'signature.png' : bgSrc.name);
+  form.append('name', bgSrc.name);
+  const res = await apiFetch('/api/images', { method: 'POST', body: form });
+  if (res.ok) { els.bgModal.hidden = true; bgSrc = null; loadImages(); }
+  else toast((await res.json()).error || 'could not add image');
 };
 
 // Quick-stamps: render a small bitmap and place it via the same stamp path.
