@@ -41,6 +41,8 @@
         <button id="backupBtn">Back up vault</button>
         <label class="menuitem">Restore vault…
           <input id="restoreInput" type="file" accept=".nib" hidden /></label>
+        <div class="sep"></div>
+        <button id="checkUpdatesBtn">Check for updates…</button>
       </div>
     </div>
 
@@ -78,6 +80,10 @@
     </div>
 
     <span class="grow"></span>
+    <span id="updatePill" hidden>
+      <button id="updateGet" type="button" title="Download the latest version for your system"></button>
+      <button id="updateDismiss" type="button" title="Dismiss">✕</button>
+    </span>
     <span id="sigBadge" class="badge badge-none" title="Signature status">no document</span>
   </header>
 

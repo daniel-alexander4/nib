@@ -28,7 +28,8 @@ const els = {
   thumbs: $('thumbs'), thumbGrid: $('thumbGrid'), outline: $('outline'),
   appendBtn: $('appendBtn'), appendInput: $('appendInput'),
   redactBtn: $('redactBtn'), applyRedactBtn: $('applyRedactBtn'),
-  backupBtn: $('backupBtn'), restoreInput: $('restoreInput'),
+  backupBtn: $('backupBtn'), restoreInput: $('restoreInput'), checkUpdatesBtn: $('checkUpdatesBtn'),
+  updatePill: $('updatePill'), updateGet: $('updateGet'), updateDismiss: $('updateDismiss'),
   manageKeysBtn: $('manageKeysBtn'), keysModal: $('keysModal'), keysList: $('keysList'),
   keyCandidates: $('keyCandidates'), keyPaste: $('keyPaste'), keyAddPath: $('keyAddPath'),
   keyAddBtn: $('keyAddBtn'), keyCreateBtn: $('keyCreateBtn'), keysClose: $('keysClose'),
@@ -104,6 +105,8 @@ function applyStatus(st) {
     csrf = st.csrf;
     els.authOverlay.hidden = true;
     loadImages();
+    // Automatic update check, once per session, at the first usable moment.
+    if (st.autoUpdate && !updateChecked) { updateChecked = true; runUpdateCheck(true); }
     const initial = new URLSearchParams(location.search).get('open');
     if (initial && !pdfDocument) openPath(initial).catch((e) => toast('could not open: ' + e.message));
     return;
@@ -193,6 +196,45 @@ els.restoreInput.onchange = async () => {
   if (!confirm('Replace your current vault with this backup? It will only open if this machine’s SSH key is enrolled in it.')) return;
   const res = await apiFetch('/api/vault/import', { method: 'POST', body: await file.arrayBuffer() });
   if (res.ok) applyStatus(await res.json()); else toast((await res.json()).error || 'restore failed');
+};
+
+// --- update check ------------------------------------------------------------
+// Runs once at startup (when autoUpdate is set) and from "Check for updates…".
+// Notify-only: a newer release raises the menubar pill, which downloads the
+// asset for this OS/arch on click. Nib installs nothing.
+let updateChecked = false;
+let updateInfo = null; // last check result, for the pill's download action
+
+// runUpdateCheck queries the server. auto=true is the silent startup check (only
+// surfaces the pill); auto=false is the manual menu item (also toasts the result).
+async function runUpdateCheck(auto) {
+  let d;
+  try {
+    const res = await fetch('/api/update/check');
+    if (!res.ok) throw new Error();
+    d = await res.json();
+  } catch {
+    if (!auto) toast('Could not check for updates.');
+    return;
+  }
+  if (!d.updateAvailable) {
+    els.updatePill.hidden = true;
+    if (!auto) toast(d.latest ? `You’re on the latest version (v${d.current}).` : `No published releases yet (you have v${d.current}).`);
+    return;
+  }
+  updateInfo = d;
+  els.updateGet.textContent = `Update to v${d.latest} ↓`;
+  els.updatePill.hidden = false;
+  if (!auto) toast(`Nib v${d.latest} is available — click the pill to download.`);
+}
+
+els.checkUpdatesBtn.onclick = () => runUpdateCheck(false);
+els.updateDismiss.onclick = () => { els.updatePill.hidden = true; };
+els.updateGet.onclick = () => {
+  if (!updateInfo) return;
+  // A release asset serves as an attachment, so this downloads without leaving
+  // the app; the release page (fallback) opens in a new tab.
+  window.open(updateInfo.downloadUrl || updateInfo.url, '_blank', 'noopener');
 };
 
 // --- authorized keys ---------------------------------------------------------

@@ -39,6 +39,7 @@ type document struct {
 type Server struct {
 	web       fs.FS
 	configDir string // where the vault lives (os.UserConfigDir()/nib)
+	version   string // running build version, reported by the update check
 
 	mu    sync.Mutex
 	vault *vault.Vault // unlocked vault, nil until the SSH key unlocks it
@@ -47,9 +48,9 @@ type Server struct {
 }
 
 // New returns a Server serving the given UI asset tree, with its vault in
-// configDir.
-func New(web fs.FS, configDir string) *Server {
-	return &Server{web: web, configDir: configDir}
+// configDir. version is the running build, surfaced by the update check.
+func New(web fs.FS, configDir, version string) *Server {
+	return &Server{web: web, configDir: configDir, version: version}
 }
 
 // Handler builds the HTTP routes. Status and key enrollment/migration are public
@@ -60,6 +61,7 @@ func (s *Server) Handler() http.Handler {
 
 	// Public — reachable before the vault is unlocked.
 	mux.HandleFunc("GET /api/status", s.handleStatus)
+	mux.HandleFunc("GET /api/update/check", s.handleUpdateCheck)
 	mux.HandleFunc("POST /api/ssh/enroll", s.handleEnroll)
 	mux.HandleFunc("POST /api/ssh/migrate", s.handleMigrate)
 
