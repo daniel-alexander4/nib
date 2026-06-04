@@ -54,13 +54,13 @@ func GenerateIdentity(commonName string) (certPEM, keyPEM []byte, err error) {
 
 // Options controls a finalize-and-sign operation.
 type Options struct {
-	Name       string    // signer common name, recorded in the signature
-	Reason     string    // e.g. "Finalized in Nib"
-	When       time.Time // signing time
-	Appearance []byte    // optional PNG drawn as the visible signature stamp
-	Page       int       // 1-based page for the visible appearance
+	Name       string     // signer common name, recorded in the signature
+	Reason     string     // e.g. "Finalized in Nib"
+	When       time.Time  // signing time
+	Appearance []byte     // optional PNG drawn as the visible signature stamp
+	Page       int        // 1-based page for the visible appearance
 	Rect       [4]float64 // llx, lly, urx, ury in PDF points
-	TSAURL     string    // optional RFC3161 timestamp authority
+	TSAURL     string     // optional RFC3161 timestamp authority
 }
 
 // Sign applies a certification signature (DocMDP "no changes allowed") to pdf

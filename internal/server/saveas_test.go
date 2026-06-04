@@ -17,7 +17,7 @@ func TestExpandHome(t *testing.T) {
 	}
 	cases := map[string]string{
 		"~":            home,
-		"~/nib":     filepath.Join(home, "nib"),
+		"~/nib":        filepath.Join(home, "nib"),
 		"~/a/b":        filepath.Join(home, "a/b"),
 		"/abs/path":    "/abs/path",
 		"~notuser/dir": "~notuser/dir", // only a bare ~ or ~/ expands

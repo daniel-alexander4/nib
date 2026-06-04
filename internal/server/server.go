@@ -114,9 +114,9 @@ type openRequest struct {
 // The PDF bytes themselves are fetched separately from /api/pdf.
 type docResponse struct {
 	Name      string      `json:"name"`
-	Path      string      `json:"path"`       // empty => upload origin, no in-place save
-	CanSave   bool        `json:"canSave"`    // true when a save would overwrite Path
-	Signature sign.Status `json:"signature"`  // untampered / modified / unsigned
+	Path      string      `json:"path"`      // empty => upload origin, no in-place save
+	CanSave   bool        `json:"canSave"`   // true when a save would overwrite Path
+	Signature sign.Status `json:"signature"` // untampered / modified / unsigned
 }
 
 // handleOpen loads a PDF from a server-side path. Opening by path is what makes
