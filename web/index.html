@@ -328,9 +328,19 @@
   <div id="finalizeModal" hidden>
     <div class="sigcard">
       <h3>Finalize &amp; sign</h3>
-      <p class="libhint">Signs the document so any later edit is detectable. A
-        visible stamp is placed at the bottom of page 1.</p>
-      <label>Watermark text <input id="fzText" type="text" value="Finalized" /></label>
+      <p class="libhint">Signs the document so any later edit is detectable, and
+        draws a watermark across every page.</p>
+      <div class="fzfield">
+        <span class="fzlabel">Watermark</span>
+        <div class="wmpresets">
+          <button type="button" class="wmpreset" data-wm="DRAFT">DRAFT</button>
+          <button type="button" class="wmpreset" data-wm="CONFIDENTIAL">CONFIDENTIAL</button>
+          <button type="button" class="wmpreset active" data-wm="FINALIZED">FINALIZED</button>
+          <button type="button" class="wmpreset" data-wm="COPY">COPY</button>
+          <button type="button" class="wmpreset" data-wm="VOID">VOID</button>
+        </div>
+        <input id="fzText" type="text" placeholder="…or type your own" value="FINALIZED" />
+      </div>
       <label class="check"><input id="fzDate" type="checkbox" checked /> Append today's date</label>
       <label>Protect with password (optional) <input id="fzPw" type="password" placeholder="leave blank for none" /></label>
       <div class="fzfield">

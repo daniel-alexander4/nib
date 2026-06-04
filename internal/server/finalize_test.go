@@ -3,9 +3,6 @@ package server
 import (
 	"bytes"
 	"encoding/json"
-	"image"
-	"image/color"
-	"image/png"
 	"io"
 	"mime/multipart"
 	"net/http"
@@ -53,9 +50,7 @@ func TestFinalizeWithVisibleStamp(t *testing.T) {
 	mw := multipart.NewWriter(&buf)
 	fw, _ := mw.CreateFormFile("pdf", "doc.pdf")
 	fw.Write(pdf)
-	aw, _ := mw.CreateFormFile("appearance", "stamp.png")
-	aw.Write(stampPNG())
-	mw.WriteField("params", `{"reason":"Finalized in Nib"}`)
+	mw.WriteField("params", `{"reason":"Finalized in Nib","watermark":"VOID"}`)
 	mw.Close()
 
 	resp := write(t, c, csrf, http.MethodPost, ts.URL+"/api/finalize", mw.FormDataContentType(), &buf)
@@ -68,20 +63,6 @@ func TestFinalizeWithVisibleStamp(t *testing.T) {
 	if st := sign.Verify(signed); st.State != sign.Valid {
 		t.Errorf("stamped+finalized doc verify = %q, want valid", st.State)
 	}
-}
-
-// stampPNG builds a small RGBA watermark like the UI's canvas appearance: a red
-// border on a transparent background.
-func stampPNG() []byte {
-	img := image.NewRGBA(image.Rect(0, 0, 220, 44))
-	red := color.RGBA{193, 18, 31, 255}
-	for x := 0; x < 220; x++ {
-		img.Set(x, 2, red)
-		img.Set(x, 41, red)
-	}
-	var buf bytes.Buffer
-	_ = png.Encode(&buf, img)
-	return buf.Bytes()
 }
 
 func TestFinalizeRejectsBadTSAURL(t *testing.T) {
