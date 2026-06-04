@@ -139,19 +139,31 @@ func requirePublicLoopback(next http.HandlerFunc) http.HandlerFunc {
 // --- status ------------------------------------------------------------------
 
 type statusResponse struct {
-	State          string   `json:"state"` // ready | setup | migrate | key-missing
-	CSRF           string   `json:"csrf,omitempty"`
-	Candidates     []string `json:"candidates,omitempty"`     // detected ~/.ssh keys
-	DefaultKeyPath string   `json:"defaultKeyPath,omitempty"` // where a new key would be created
-	KeyPath        string   `json:"keyPath,omitempty"`        // enrolled key path (key-missing)
-	AutoUpdate     bool     `json:"autoUpdate"`               // run the startup update check (off when NIB_NO_UPDATE_CHECK is set)
+	State             string   `json:"state"` // ready | setup | migrate | key-missing
+	CSRF              string   `json:"csrf,omitempty"`
+	Candidates        []string `json:"candidates,omitempty"`     // detected ~/.ssh keys
+	DefaultKeyPath    string   `json:"defaultKeyPath,omitempty"` // where a new key would be created
+	KeyPath           string   `json:"keyPath,omitempty"`        // enrolled key path (key-missing)
+	AutoUpdate        bool     `json:"autoUpdate"`               // run the startup update check (effective: env AND user preference)
+	UpdateCheckLocked bool     `json:"updateCheckLocked"`        // NIB_NO_UPDATE_CHECK forces the check off; the UI toggle can't override it
+	ToolbarStyle      string   `json:"toolbarStyle,omitempty"`   // menus | toolbar | both (saved layout preference)
 }
 
 // currentStatus describes how (and whether) the vault can be unlocked, stamped
-// with whether the UI should run its automatic update check.
+// with the UI preferences (update check, toolbar layout). NIB_NO_UPDATE_CHECK is
+// a hard override that wins over the saved auto-update preference.
 func (s *Server) currentStatus() statusResponse {
 	st := s.vaultStatus()
-	st.AutoUpdate = os.Getenv("NIB_NO_UPDATE_CHECK") == ""
+	envAllows := os.Getenv("NIB_NO_UPDATE_CHECK") == ""
+	st.UpdateCheckLocked = !envAllows
+	st.AutoUpdate = envAllows
+	if v := s.unlockedVault(); v != nil {
+		set := v.Settings()
+		st.ToolbarStyle = set.ToolbarStyle
+		if set.DisableAutoUpdate {
+			st.AutoUpdate = false
+		}
+	}
 	return st
 }
 

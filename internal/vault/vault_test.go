@@ -72,6 +72,30 @@ func TestCreateOpenSSHRoundTrip(t *testing.T) {
 	}
 }
 
+func TestSettingsDefaultsAndRoundTrip(t *testing.T) {
+	dir := t.TempDir()
+	pub, keyPath := newKey(t)
+	v, err := Create(dir, pub, keyPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A fresh vault stores no settings: classic "menus" layout, update check on.
+	if s := v.Settings(); s.ToolbarStyle != "menus" || s.DisableAutoUpdate {
+		t.Fatalf("default settings = %+v, want {ToolbarStyle:menus DisableAutoUpdate:false}", s)
+	}
+	if err := v.SetSettings(Settings{ToolbarStyle: "both", DisableAutoUpdate: true}); err != nil {
+		t.Fatal(err)
+	}
+
+	reopened, err := OpenSSH(dir)
+	if err != nil {
+		t.Fatalf("OpenSSH: %v", err)
+	}
+	if s := reopened.Settings(); s.ToolbarStyle != "both" || !s.DisableAutoUpdate {
+		t.Errorf("settings not round-tripped: %+v", s)
+	}
+}
+
 func TestOpenSSHKeyMissing(t *testing.T) {
 	dir := t.TempDir()
 	pub, keyPath := newKey(t)
