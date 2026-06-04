@@ -78,6 +78,11 @@ Rotate, delete, **append**, and reorder pages. **Flatten** to a guaranteed-flat
 PDF, or export pages as PNGs (single or ZIP) and form data as JSON / CSV. Save
 back over the original, or as a flattened or editable copy.
 
+### Choose your layout
+Pick how the commands are presented from **⚙ Settings → Layout**: the classic
+**Menus** (File / Edit / View), a compact **Toolbar** of dropdowns and icons, or
+**Both**. The choice is saved in your vault. (Defaults to Menus.)
+
 ### Private by design
 - Binds **`127.0.0.1` only** — never reachable from the network; writes are
   guarded by a per-process CSRF token and a loopback-origin check.
@@ -106,7 +111,7 @@ one-time setup where you either **use an SSH key you already have** or have Nib
 **create one for you** (at a path you can change — works the same on Linux,
 macOS, and Windows, no key needed up front). That key is what unlocks your
 vault, so keep it safe and back it up. You can authorize or create more keys
-later from **File → Manage authorized keys**.
+later from **File → Manage authorized keys** (or **More** in the toolbar layout).
 
 ### Install on Debian / Ubuntu
 ```sh
@@ -127,12 +132,14 @@ you run the binary directly — it's fully self-contained.
 At startup Nib asks GitHub for its latest release version; if a newer one exists,
 a pill appears at the top that downloads the build matching your OS and
 architecture (a `.deb` for a package install, otherwise the raw binary). You can
-also trigger it any time from **File → Check for updates…**
+also trigger it any time from **File → Check for updates…** (or **More** in the
+toolbar layout).
 
 This is the only call Nib makes on its own, and it's a **version query — no
-document data, no telemetry**: your documents never leave your computer. Set
-`NIB_NO_UPDATE_CHECK=1` to turn the automatic check off (the manual menu item
-still works). Nib only notifies and downloads — it never installs or replaces
+document data, no telemetry**: your documents never leave your computer. Turn the
+startup check off from **⚙ Settings → Check for updates on startup** (saved in
+your vault), or set `NIB_NO_UPDATE_CHECK=1` to force it off regardless (the manual
+**Check for updates…** still works either way). Nib only notifies and downloads — it never installs or replaces
 itself; you apply the update the way you installed (`apt` / `install.sh`, or by
 swapping the binary).
 

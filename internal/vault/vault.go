@@ -99,12 +99,22 @@ type Identity struct {
 	KeyPEM  []byte `json:"key"`
 }
 
+// Settings holds the user's togglable UI preferences. Zero values are the
+// defaults: an empty ToolbarStyle means the classic "menus" layout, and a false
+// DisableAutoUpdate means the startup update check runs — so an older vault that
+// predates this struct keeps the prior behaviour with no migration.
+type Settings struct {
+	ToolbarStyle      string `json:"toolbarStyle,omitempty"`      // "menus" (default) | "toolbar" | "both"
+	DisableAutoUpdate bool   `json:"disableAutoUpdate,omitempty"` // skip the startup update check
+}
+
 // Contents is the decrypted vault payload.
 type Contents struct {
 	Images   []Image           `json:"images,omitempty"`
 	Recent   []string          `json:"recent,omitempty"` // recent file paths, newest first
 	Identity *Identity         `json:"identity,omitempty"`
 	Profile  map[string]string `json:"profile,omitempty"` // autofill field name -> value
+	Settings Settings          `json:"settings,omitempty"`
 }
 
 const maxRecent = 10
@@ -481,6 +491,26 @@ func (v *Vault) SetProfile(p map[string]string) error {
 		cp[k] = val
 	}
 	v.contents.Profile = cp
+	return v.save()
+}
+
+// Settings returns the user's UI preferences, with defaults filled in for an
+// older vault that has none stored.
+func (v *Vault) Settings() Settings {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	s := v.contents.Settings
+	if s.ToolbarStyle == "" {
+		s.ToolbarStyle = "menus"
+	}
+	return s
+}
+
+// SetSettings replaces the stored UI preferences and persists the vault.
+func (v *Vault) SetSettings(s Settings) error {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	v.contents.Settings = s
 	return v.save()
 }
 

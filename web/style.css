@@ -40,7 +40,8 @@ body { display: flex; flex-direction: column; }
   border-bottom: 1px solid var(--crust);
 }
 #menubar .brand { margin-right: 12px; }
-#menubar .grow { flex: 1; }
+/* Right-aligned always-on chrome; relocates between #menubar and #toolbar. */
+#statusCluster { margin-left: auto; display: flex; align-items: center; gap: 2px; }
 .brand { display: block; height: 26px; width: auto; }
 .brand-lg { height: 56px; align-self: center; }
 .menutop {
@@ -71,6 +72,43 @@ body { display: flex; flex-direction: column; }
 #toolbar .tbicon.active { color: var(--blue); background: var(--surface1); box-shadow: inset 0 -2px 0 var(--blue); }
 #toolbar .tbicon svg { width: 18px; height: 18px; display: block; }
 #toolbar .tbsep { width: 1px; align-self: stretch; background: var(--surface1); margin: 3px 6px; }
+/* File controls in the toolbar: a plain Open button + labeled dropdown triggers
+   (Recent/Save/Export/More). The dropdowns themselves reuse .menu/.dropdown. */
+#toolbar .tbtext, #toolbar .menutop {
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  padding: 5px 8px;
+  color: var(--subtext0);
+  font: inherit;
+  cursor: pointer;
+}
+#toolbar .tbtext:hover, #toolbar .menutop:hover, #toolbar .menu.open .menutop {
+  background: var(--surface0); color: var(--text);
+}
+#toolbar .menutop::after { content: "▾"; margin-left: 5px; opacity: 0.6; font-size: 11px; }
+/* Inline View controls in the toolbar (page indicator + find box). */
+#toolbar .tbpage { display: inline-flex; align-items: center; gap: 4px; color: var(--subtext0); font-size: 13px; }
+#toolbar .tbpage input { width: 44px; }
+#toolbar .tbfind input { width: 150px; }
+#toolbar .tbpage input, #toolbar .tbfind input {
+  background: var(--surface0); border: 1px solid var(--surface1); border-radius: 6px;
+  color: var(--text); padding: 3px 6px; font: inherit;
+}
+
+/* Layout-style toggle (Settings → Layout): show one command surface or both.
+   "menus" hides the toolbar; "toolbar" hides the whole menubar (the chrome
+   cluster moves to the toolbar, see applyStyle); "both" shows everything. */
+body[data-style="menus"] #toolbar { display: none; }
+body[data-style="toolbar"] #menubar { display: none; }
+
+/* Settings gear: its dropdown opens right-aligned so it doesn't run off-screen.
+   In the toolbar it's a plain icon trigger, with no ▾ caret like the others. */
+.menu.settings .menutop { font-size: 16px; }
+#toolbar .menu.settings .menutop::after { content: none; }
+/* Open right-aligned (.dropdown sets left:0 later in source, so match its
+   specificity to win the left/right tug-of-war). */
+.dropdown.dropdown-right { left: auto; right: 0; }
 
 button, .filebtn {
   background: var(--surface0);
@@ -246,7 +284,7 @@ input[type="search"] { width: 100%; }
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap; direction: rtl;
 }
 .dirlist {
-  list-style: none; margin: 0; padding: 4px; min-width: 380px; max-height: 200px;
+  list-style: none; margin: 0; padding: 4px; min-width: 380px; max-height: 320px;
   overflow-y: auto; border: 1px solid var(--surface0); border-radius: 6px; background: var(--crust);
 }
 .dirlist:empty::after { content: "no sub-folders"; color: var(--overlay0); font-size: 12px; padding: 6px 8px; display: block; }

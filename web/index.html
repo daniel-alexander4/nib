@@ -14,7 +14,7 @@
   <link rel="stylesheet" href="./vendor/pdfjs/pdf_viewer.css" />
   <link rel="stylesheet" href="./style.css" />
 </head>
-<body>
+<body data-style="menus">
   <header id="menubar">
     <img class="brand" src="./nib.svg" alt="Nib" />
 
@@ -23,7 +23,7 @@
       <div class="dropdown">
         <button id="openMenuItem">Open…</button>
         <div class="menucap">Recent</div>
-        <div id="recentSlot"></div>
+        <div class="recentSlot"></div>
         <div class="sep"></div>
         <button id="saveBtn" title="Save (overwrites the original)" disabled>Save</button>
         <button id="saveFlatBtn">Save flattened PDF</button>
@@ -69,27 +69,89 @@
         <div class="sep"></div>
         <button id="prevBtn">Previous page</button>
         <button id="nextBtn">Next page</button>
-        <div class="menuitem idle">Page <input id="pageNum" type="number" min="1" value="1" /> <span id="pageCount">/ 0</span></div>
+        <div class="menuitem idle">Page <input class="pageNum" type="number" min="1" value="1" /> <span class="pageCount">/ 0</span></div>
         <div class="sep"></div>
         <button id="zoomInBtn">Zoom in</button>
         <button id="zoomOutBtn">Zoom out</button>
         <button id="fitBtn">Fit width</button>
         <div class="sep"></div>
-        <div class="menuitem idle"><input id="searchInput" type="search" placeholder="Find in document…" /></div>
+        <div class="menuitem idle"><input class="searchInput" type="search" placeholder="Find in document…" /></div>
       </div>
     </div>
 
-    <span class="grow"></span>
-    <span id="updatePill" hidden>
-      <button id="updateGet" type="button" title="Download the latest version for your system"></button>
-      <button id="updateDismiss" type="button" title="Dismiss">✕</button>
-    </span>
-    <span id="sigBadge" class="badge badge-none" title="Signature status">no document</span>
+    <!-- Always-on chrome (settings gear, update pill, signature badge). Rides on
+         whichever bar is visible: applyStyle() moves it into the toolbar in the
+         "toolbar" layout, where the menubar is hidden, and back otherwise. -->
+    <div id="statusCluster">
+      <div class="menu settings">
+        <button class="menutop" title="Settings">⚙</button>
+        <div class="dropdown dropdown-right">
+          <div class="menucap">Layout</div>
+          <button class="styleOpt" data-style-val="menus">Menus</button>
+          <button class="styleOpt" data-style-val="toolbar">Toolbar</button>
+          <button class="styleOpt" data-style-val="both">Both</button>
+          <div class="sep"></div>
+          <label class="menuitem"><input id="autoUpdateChk" type="checkbox" /> Check for updates on startup</label>
+        </div>
+      </div>
+      <span id="updatePill" hidden>
+        <button id="updateGet" type="button" title="Download the latest version for your system"></button>
+        <button id="updateDismiss" type="button" title="Dismiss">✕</button>
+      </span>
+      <span id="sigBadge" class="badge badge-none" title="Signature status">no document</span>
+    </div>
   </header>
 
-  <!-- Icon toolbar mirroring the Edit menu. Mode tools carry data-mode and wire
-       themselves like their menu twins; the rest forward to the menu command. -->
+  <!-- Toolbar: a forwarding mirror of the File/Edit/View menus, shown in the
+       "toolbar" and "both" layouts. Mode tools carry data-mode (wired like their
+       menu twins); every other control carries data-forward="<menu button id>"
+       and clicks through to it. The page/find fields share .pageNum/.searchInput
+       with the View menu so the two surfaces stay in sync. -->
   <div id="toolbar">
+    <button class="tbtext" data-forward="openMenuItem">Open…</button>
+
+    <div class="menu">
+      <button class="menutop">Recent</button>
+      <div class="dropdown">
+        <div class="recentSlot"></div>
+      </div>
+    </div>
+
+    <div class="menu">
+      <button class="menutop">Save</button>
+      <div class="dropdown">
+        <button data-forward="saveBtn">Save</button>
+        <button data-forward="saveFlatBtn">Save flattened PDF</button>
+        <button data-forward="saveEditableBtn">Save editable copy</button>
+      </div>
+    </div>
+
+    <div class="menu">
+      <button class="menutop">Export</button>
+      <div class="dropdown">
+        <button data-forward="exportZipBtn">Pages as images (ZIP)</button>
+        <button data-forward="exportPngBtn">Current page (PNG)</button>
+        <button data-forward="exportFormJsonBtn">Form data (JSON)</button>
+        <button data-forward="exportFormCsvBtn">Form data (CSV)</button>
+        <button data-forward="exportCertBtn">Signing certificate</button>
+      </div>
+    </div>
+
+    <div class="menu">
+      <button class="menutop">More</button>
+      <div class="dropdown">
+        <button data-forward="finalizeBtn">Finalize &amp; sign…</button>
+        <div class="sep"></div>
+        <button data-forward="manageKeysBtn">Manage authorized keys…</button>
+        <button data-forward="backupBtn">Back up vault</button>
+        <button data-forward="restoreInput">Restore vault…</button>
+        <div class="sep"></div>
+        <button data-forward="checkUpdatesBtn">Check for updates…</button>
+      </div>
+    </div>
+
+    <span class="tbsep"></span>
+
     <button class="tbicon" data-mode="FREETEXT" title="Text — add a text box">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 6V4h14v2"/><path d="M12 4v16"/><path d="M9 20h6"/></svg>
     </button>
@@ -99,27 +161,50 @@
     <button class="tbicon" data-mode="INK" title="Draw — freehand">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20l1-4L16 5l3 3L8 19l-4 1z"/><path d="M13.5 6.5l3 3"/></svg>
     </button>
-    <button class="tbicon" id="tbDetect" title="Detect blank lines to fill">
+    <button class="tbicon" data-forward="detectBtn" title="Detect blank lines to fill">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8V5a1 1 0 0 1 1-1h3"/><path d="M16 4h3a1 1 0 0 1 1 1v3"/><path d="M20 16v3a1 1 0 0 1-1 1h-3"/><path d="M8 20H5a1 1 0 0 1-1-1v-3"/><path d="M8 12h8"/></svg>
     </button>
 
     <span class="tbsep"></span>
 
-    <button class="tbicon" id="tbRedact" title="Redact — draw redaction boxes">
+    <button class="tbicon" data-forward="redactBtn" title="Redact — draw redaction boxes">
       <svg viewBox="0 0 24 24"><rect x="3" y="9" width="18" height="6" rx="1" fill="currentColor"/></svg>
     </button>
-    <button class="tbicon" id="tbApplyRedact" title="Apply redactions — permanent">
+    <button class="tbicon" data-forward="applyRedactBtn" title="Apply redactions — permanent">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="9" width="11" height="6" rx="1" fill="currentColor" stroke="none"/><path d="M15 12l3 3 4-6"/></svg>
     </button>
 
     <span class="tbsep"></span>
 
-    <button class="tbicon" id="tbAutofill" title="Autofill from profile">
+    <button class="tbicon" data-forward="autofillBtn" title="Autofill from profile">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 18h16"/><path d="M12 4v9"/><path d="M8.5 9.5L12 13l3.5-3.5"/></svg>
     </button>
-    <button class="tbicon" id="tbEditProfile" title="Edit autofill profile…">
+    <button class="tbicon" data-forward="editProfileBtn" title="Edit autofill profile…">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="3.5"/><path d="M5.5 19a6.5 6.5 0 0 1 13 0"/></svg>
     </button>
+
+    <span class="tbsep"></span>
+
+    <button class="tbicon" data-forward="toggleSidebarBtn" title="Toggle sidebar">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16"/></svg>
+    </button>
+    <button class="tbicon" data-forward="prevBtn" title="Previous page">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 6l-6 6 6 6"/></svg>
+    </button>
+    <span class="tbpage"><input class="pageNum" type="number" min="1" value="1" /><span class="pageCount">/ 0</span></span>
+    <button class="tbicon" data-forward="nextBtn" title="Next page">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg>
+    </button>
+    <button class="tbicon" data-forward="zoomOutBtn" title="Zoom out">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/></svg>
+    </button>
+    <button class="tbicon" data-forward="fitBtn" title="Fit width">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12h16"/><path d="M7 9l-3 3 3 3"/><path d="M17 9l3 3-3 3"/></svg>
+    </button>
+    <button class="tbicon" data-forward="zoomInBtn" title="Zoom in">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14"/><path d="M5 12h14"/></svg>
+    </button>
+    <span class="tbfind"><input class="searchInput" type="search" placeholder="Find…" /></span>
   </div>
 
   <main id="main">
