@@ -170,6 +170,11 @@ input[type="search"] { width: 100%; }
 #updateGet { padding: 4px 10px; }
 #updateDismiss { padding: 4px 8px 4px 4px; opacity: 0.7; }
 #updatePill button:hover { background: rgba(0, 0, 0, 0.12); }
+/* "current version" badge: informational, not a call to action */
+#updatePill.current { background: var(--surface1); }
+#updatePill.current #updateGet { color: var(--text); cursor: default; }
+#updatePill.current #updateGet:hover { background: transparent; }
+#updatePill.current #updateDismiss { display: none; }
 
 /* --- layout --- */
 #main { display: flex; flex: 1; min-height: 0; }
