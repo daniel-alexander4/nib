@@ -228,11 +228,19 @@ async function runUpdateCheck(auto) {
     return;
   }
   if (!d.updateAvailable) {
-    els.updatePill.hidden = true;
+    // No upgrade needed: show the current version as a static badge (no
+    // download action, no dismiss) rather than hiding the pill.
+    updateInfo = null;
+    els.updatePill.classList.add('current');
+    els.updateGet.textContent = `v${d.current}`;
+    els.updateGet.title = d.latest ? `You’re on the latest version (v${d.current})` : `No published releases yet (you have v${d.current})`;
+    els.updatePill.hidden = false;
     if (!auto) toast(d.latest ? `You’re on the latest version (v${d.current}).` : `No published releases yet (you have v${d.current}).`);
     return;
   }
   updateInfo = d;
+  els.updatePill.classList.remove('current');
+  els.updateGet.title = 'Download the latest version for your system';
   els.updateGet.textContent = `Update to v${d.latest} ↓`;
   els.updatePill.hidden = false;
   if (!auto) toast(`Nib v${d.latest} is available — click the pill to download.`);
