@@ -21,8 +21,8 @@ import (
 	"strings"
 	"sync"
 
-	"nib/internal/sshkey"
 	"golang.org/x/crypto/argon2"
+	"nib/internal/sshkey"
 )
 
 // fileName is the vault's on-disk name within the app config directory.
