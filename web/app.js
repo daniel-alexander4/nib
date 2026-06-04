@@ -53,6 +53,8 @@ const els = {
   exportCertBtn: $('exportCertBtn'),
   finalizeModal: $('finalizeModal'), fzText: $('fzText'), fzDate: $('fzDate'),
   fzPw: $('fzPw'), fzTsa: $('fzTsa'), fzTsaOn: $('fzTsaOn'), fzCancel: $('fzCancel'), fzGo: $('fzGo'),
+  fzOpacity: $('fzOpacity'), fzSize: $('fzSize'), fzAngle: $('fzAngle'), fzColor: $('fzColor'),
+  fzLayer: $('fzLayer'), fzPreviewMark: $('fzPreviewMark'),
   profileModal: $('profileModal'), profileText: $('profileText'),
   profileCancel: $('profileCancel'), profileSave: $('profileSave'),
   saveAsModal: $('saveAsModal'), saveAsTitle: $('saveAsTitle'), saveAsName: $('saveAsName'),
@@ -1007,20 +1009,59 @@ els.finalizeBtn.onclick = () => { if (pdfDocument) els.finalizeModal.hidden = fa
 els.fzCancel.onclick = () => { els.finalizeModal.hidden = true; };
 // The timestamp URL is opt-in: the field stays disabled until the box is ticked.
 els.fzTsaOn.onchange = () => { els.fzTsa.disabled = !els.fzTsaOn.checked; if (els.fzTsaOn.checked) els.fzTsa.focus(); };
-// Watermark presets fill the text box; typing your own keeps only a matching preset lit.
+// Presets set the label text and its "ink" (colour / opacity / layer); angle and
+// size stay as independent geometry. Most labels are a faint mark behind the
+// content; VOID is bold red on top, since it negates the document.
+const WM_PRESETS = {
+  DRAFT: { color: '#8a8a8a', opacity: 10, layer: 'behind' },
+  CONFIDENTIAL: { color: '#8a8a8a', opacity: 10, layer: 'behind' },
+  FINALIZED: { color: '#8a8a8a', opacity: 10, layer: 'behind' },
+  COPY: { color: '#8a8a8a', opacity: 10, layer: 'behind' },
+  VOID: { color: '#cc0000', opacity: 65, layer: 'ontop' },
+};
+// drawPreview reflects the current controls onto the in-dialog mock page. It is a
+// faithful approximation of pdfcpu's render, not a pixel-exact copy.
+function drawPreview() {
+  const m = els.fzPreviewMark;
+  m.textContent = els.fzText.value.trim() || 'WATERMARK';
+  m.style.color = els.fzColor.value;
+  m.style.opacity = els.fzOpacity.value / 100;
+  m.style.fontSize = 8 + (els.fzSize.value / 100) * 32 + 'px';
+  m.style.transform = `translate(-50%, -50%) rotate(${-els.fzAngle.value}deg)`;
+  m.parentElement.classList.toggle('ontop', els.fzLayer.value === 'ontop');
+}
 const syncWmPresets = () => all('.wmpreset').forEach((b) => b.classList.toggle('active', b.dataset.wm === els.fzText.value));
-all('.wmpreset').forEach((b) => { b.onclick = () => { els.fzText.value = b.dataset.wm; syncWmPresets(); }; });
-els.fzText.oninput = syncWmPresets;
+all('.wmpreset').forEach((b) => {
+  b.onclick = () => {
+    els.fzText.value = b.dataset.wm;
+    const s = WM_PRESETS[b.dataset.wm];
+    if (s) { els.fzColor.value = s.color; els.fzOpacity.value = s.opacity; els.fzLayer.value = s.layer; }
+    syncWmPresets();
+    drawPreview();
+  };
+});
+[els.fzText, els.fzOpacity, els.fzSize, els.fzAngle, els.fzColor, els.fzLayer].forEach((el) => {
+  el.addEventListener('input', () => { syncWmPresets(); drawPreview(); });
+});
+drawPreview();
 els.fzGo.onclick = async () => {
   els.finalizeModal.hidden = true;
-  let watermark = els.fzText.value.trim();
-  if (watermark && els.fzDate.checked) watermark += ' ' + new Date().toLocaleDateString();
+  let text = els.fzText.value.trim();
+  if (text && els.fzDate.checked) text += ' ' + new Date().toLocaleDateString();
 
   const bytes = await bakedBytes();
   const form = new FormData();
   form.append('pdf', new Blob([bytes], { type: 'application/pdf' }), 'doc.pdf');
   form.append('params', JSON.stringify({
-    reason: 'Finalized in Nib', watermark,
+    reason: 'Finalized in Nib',
+    watermark: {
+      text,
+      color: els.fzColor.value,
+      opacity: els.fzOpacity.value / 100,
+      onTop: els.fzLayer.value === 'ontop',
+      scale: els.fzSize.value / 100,
+      angle: Number(els.fzAngle.value),
+    },
     tsaUrl: els.fzTsaOn.checked ? els.fzTsa.value.trim() : '', password: els.fzPw.value,
   }));
   const res = await apiFetch('/api/finalize', { method: 'POST', body: form });

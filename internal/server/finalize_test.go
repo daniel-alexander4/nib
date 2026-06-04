@@ -50,7 +50,7 @@ func TestFinalizeWithVisibleStamp(t *testing.T) {
 	mw := multipart.NewWriter(&buf)
 	fw, _ := mw.CreateFormFile("pdf", "doc.pdf")
 	fw.Write(pdf)
-	mw.WriteField("params", `{"reason":"Finalized in Nib","watermark":"VOID"}`)
+	mw.WriteField("params", `{"reason":"Finalized in Nib","watermark":{"text":"VOID","color":"#cc0000","opacity":0.65,"onTop":true,"scale":0.9,"angle":30}}`)
 	mw.Close()
 
 	resp := write(t, c, csrf, http.MethodPost, ts.URL+"/api/finalize", mw.FormDataContentType(), &buf)

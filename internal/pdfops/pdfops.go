@@ -12,6 +12,7 @@ import (
 	_ "image/jpeg" // register decoders for image.DecodeConfig
 	_ "image/png"
 	"io"
+	"regexp"
 	"strconv"
 	"strings"
 
@@ -220,21 +221,56 @@ func StampImages(pdf []byte, stamps []Stamp) ([]byte, error) {
 	return out.Bytes(), nil
 }
 
-// StampWatermark draws text as a large diagonal watermark across every page.
-// Most labels are a faint grey mark behind the content; VOID is the exception —
-// a bold red mark over the content, since it negates the document. Finalize
-// applies it before signing so the certification covers the watermark.
-func StampWatermark(pdf []byte, text string) ([]byte, error) {
+// WatermarkStyle controls how StampWatermark renders the label.
+type WatermarkStyle struct {
+	Color   string  `json:"color"`   // #RRGGBB
+	Opacity float64 `json:"opacity"` // 0..1
+	OnTop   bool    `json:"onTop"`   // over the content vs behind it
+	Scale   float64 `json:"scale"`   // page-relative size, 0..1
+	Angle   int     `json:"angle"`   // degrees
+}
+
+var hexColor = regexp.MustCompile(`^#[0-9a-fA-F]{6}$`)
+
+// sanitize clamps the style to safe ranges and a valid hex colour. The colour
+// and numbers are interpolated into the pdfcpu watermark description string, so
+// this is what stops a crafted value from injecting extra description keys.
+func (s WatermarkStyle) sanitize() WatermarkStyle {
+	if !hexColor.MatchString(s.Color) {
+		s.Color = "#8a8a8a"
+	}
+	s.Opacity = clampUnit(s.Opacity, 0.02, 1)
+	s.Scale = clampUnit(s.Scale, 0.1, 1)
+	switch {
+	case s.Angle < -90:
+		s.Angle = -90
+	case s.Angle > 90:
+		s.Angle = 90
+	}
+	return s
+}
+
+func clampUnit(v, lo, hi float64) float64 {
+	if v < lo {
+		return lo
+	}
+	if v > hi {
+		return hi
+	}
+	return v
+}
+
+// StampWatermark draws text as a large diagonal watermark across every page,
+// styled by st. Finalize applies it before signing so the certification covers
+// the watermark.
+func StampWatermark(pdf []byte, text string, st WatermarkStyle) ([]byte, error) {
 	if strings.TrimSpace(text) == "" {
 		return pdf, nil
 	}
-	onTop := false
-	desc := "fontname:Helvetica, scalefactor:0.9 rel, fillcolor:#8a8a8a, opacity:0.10, rotation:45, position:c"
-	if strings.HasPrefix(strings.ToUpper(strings.TrimSpace(text)), "VOID") {
-		onTop = true
-		desc = "fontname:Helvetica, scalefactor:0.9 rel, fillcolor:#cc0000, opacity:0.65, rotation:45, position:c"
-	}
-	wm, err := api.TextWatermark(text, desc, onTop, false, types.POINTS)
+	st = st.sanitize()
+	desc := fmt.Sprintf("fontname:Helvetica, scalefactor:%.3f rel, fillcolor:%s, opacity:%.3f, rotation:%d, position:c",
+		st.Scale, st.Color, st.Opacity, st.Angle)
+	wm, err := api.TextWatermark(text, desc, st.OnTop, false, types.POINTS)
 	if err != nil {
 		return nil, err
 	}

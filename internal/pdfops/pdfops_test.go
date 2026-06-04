@@ -142,7 +142,8 @@ func TestRedactKeepsOtherPagesVector(t *testing.T) {
 
 func TestStampWatermark(t *testing.T) {
 	pdf := threePagePDF(t)
-	out, err := StampWatermark(pdf, "DRAFT")
+	faint := WatermarkStyle{Color: "#8a8a8a", Opacity: 0.1, Scale: 0.9, Angle: 45}
+	out, err := StampWatermark(pdf, "DRAFT", faint)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -152,19 +153,37 @@ func TestStampWatermark(t *testing.T) {
 	if len(out) <= len(pdf) {
 		t.Error("watermarked PDF is not larger than the original (nothing added?)")
 	}
-	// VOID is the red-on-top variant; it must also produce a valid all-pages doc.
-	if v, err := StampWatermark(pdf, "VOID"); err != nil {
-		t.Fatalf("VOID watermark: %v", err)
+	// A bold on-top style must also produce a valid all-pages doc.
+	bold := WatermarkStyle{Color: "#cc0000", Opacity: 0.65, OnTop: true, Scale: 0.9, Angle: 30}
+	if v, err := StampWatermark(pdf, "VOID", bold); err != nil {
+		t.Fatalf("on-top watermark: %v", err)
 	} else if n, _ := PageCount(v); n != 3 {
-		t.Errorf("VOID watermarked page count = %d, want 3", n)
+		t.Errorf("on-top watermarked page count = %d, want 3", n)
 	}
 	// Empty text returns the input unchanged.
-	same, err := StampWatermark(pdf, "  ")
+	same, err := StampWatermark(pdf, "  ", faint)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !bytes.Equal(same, pdf) {
 		t.Error("stamping with empty text should return the input unchanged")
+	}
+}
+
+func TestWatermarkStyleSanitize(t *testing.T) {
+	// A colour with description-breaking characters must be rejected (so it can't
+	// inject extra pdfcpu watermark keys), and out-of-range numbers clamped.
+	got := WatermarkStyle{Color: "#000, url:evil", Opacity: 9, Scale: 0, Angle: 400}.sanitize()
+	if got.Color != "#8a8a8a" {
+		t.Errorf("bad colour = %q, want fallback #8a8a8a", got.Color)
+	}
+	if got.Opacity != 1 || got.Scale != 0.1 || got.Angle != 90 {
+		t.Errorf("clamp = {op:%v sc:%v ang:%d}, want {1 0.1 90}", got.Opacity, got.Scale, got.Angle)
+	}
+	// A valid style passes through unchanged.
+	ok := WatermarkStyle{Color: "#A1b2C3", Opacity: 0.3, Scale: 0.5, Angle: -45}.sanitize()
+	if ok.Color != "#A1b2C3" || ok.Opacity != 0.3 || ok.Scale != 0.5 || ok.Angle != -45 {
+		t.Errorf("valid style mutated: %+v", ok)
 	}
 }
 

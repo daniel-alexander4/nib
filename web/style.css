@@ -443,6 +443,26 @@ input.ovl-check { appearance: auto; accent-color: #1a7f37; background: transpare
 }
 .wmpreset:hover { background: var(--surface1); color: var(--text); }
 .wmpreset.active { background: var(--blue); color: var(--crust); border-color: var(--blue); }
+/* Watermark style controls beside a live preview over a mock white page. */
+.wmstyle { display: flex; gap: 12px; align-items: stretch; }
+.wmcontrols { display: flex; flex-direction: column; gap: 5px; flex: 1; }
+.wmrow { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 12px; color: var(--subtext0); }
+.wmrow input[type="range"] { flex: 1; max-width: 150px; }
+.wmrow input[type="color"] { width: 34px; height: 22px; padding: 0; border: 1px solid var(--surface1); border-radius: 4px; background: none; }
+.wmrow select { background: var(--crust); color: var(--text); border: 1px solid var(--surface1); border-radius: 6px; padding: 3px 6px; font: inherit; }
+.wmpreview {
+  position: relative; width: 132px; flex: none;
+  background: #fff; border: 1px solid var(--surface1); border-radius: 6px;
+  overflow: hidden; display: flex; flex-direction: column; gap: 7px; padding: 14px 10px;
+}
+.wmpreview-line { height: 4px; border-radius: 2px; background: #cacaca; position: relative; z-index: 1; }
+.wmpreview-line.short { width: 60%; }
+.wmpreview-mark {
+  position: absolute; left: 50%; top: 50%; z-index: 0;
+  white-space: nowrap; font-weight: 700; pointer-events: none;
+  transform: translate(-50%, -50%) rotate(-45deg);
+}
+.wmpreview.ontop .wmpreview-mark { z-index: 2; }
 .sigcard input[type="text"], .sigcard input[type="password"], .sigcard textarea {
   background: var(--crust); color: var(--text); border: 1px solid var(--surface1);
   border-radius: 6px; padding: 7px 9px; font: inherit; width: 360px;
