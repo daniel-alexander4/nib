@@ -3,6 +3,7 @@ package vault
 import (
 	"bufio"
 	"encoding/json"
+	"log"
 	"strings"
 
 	"nib/internal/sshkey"
@@ -73,6 +74,7 @@ func loadBuiltinSignatures() []Image {
 		}
 		var imgs []Image
 		if err := json.Unmarshal(plain, &imgs); err != nil {
+			log.Printf("warning: built-in signatures present but did not decode: %v", err)
 			return nil
 		}
 		return imgs
