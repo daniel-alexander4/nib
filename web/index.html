@@ -311,9 +311,12 @@
       <p class="libhint">Signs the document so any later edit is detectable. A
         visible stamp is placed at the bottom of page 1.</p>
       <label>Watermark text <input id="fzText" type="text" value="Finalized" /></label>
-      <label><input id="fzDate" type="checkbox" checked /> Append today's date</label>
+      <label class="check"><input id="fzDate" type="checkbox" checked /> Append today's date</label>
       <label>Protect with password (optional) <input id="fzPw" type="password" placeholder="leave blank for none" /></label>
-      <label>Timestamp server URL (optional) <input id="fzTsa" type="text" placeholder="https://… RFC 3161 TSA" /></label>
+      <div class="fzfield">
+        <label class="check"><input id="fzTsaOn" type="checkbox" /> Timestamp server URL (optional)</label>
+        <input id="fzTsa" type="text" placeholder="e.g. https://freetsa.org/tsr" disabled />
+      </div>
       <div class="sigbtns">
         <span class="grow"></span>
         <button id="fzCancel">Cancel</button>

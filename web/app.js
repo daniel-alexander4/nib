@@ -52,7 +52,7 @@ const els = {
   exportFormJsonBtn: $('exportFormJsonBtn'), exportFormCsvBtn: $('exportFormCsvBtn'),
   exportCertBtn: $('exportCertBtn'),
   finalizeModal: $('finalizeModal'), fzText: $('fzText'), fzDate: $('fzDate'),
-  fzPw: $('fzPw'), fzTsa: $('fzTsa'), fzCancel: $('fzCancel'), fzGo: $('fzGo'),
+  fzPw: $('fzPw'), fzTsa: $('fzTsa'), fzTsaOn: $('fzTsaOn'), fzCancel: $('fzCancel'), fzGo: $('fzGo'),
   profileModal: $('profileModal'), profileText: $('profileText'),
   profileCancel: $('profileCancel'), profileSave: $('profileSave'),
   saveAsModal: $('saveAsModal'), saveAsTitle: $('saveAsTitle'), saveAsName: $('saveAsName'),
@@ -1022,6 +1022,8 @@ function watermarkPNG(text) {
 
 els.finalizeBtn.onclick = () => { if (pdfDocument) els.finalizeModal.hidden = false; };
 els.fzCancel.onclick = () => { els.finalizeModal.hidden = true; };
+// The timestamp URL is opt-in: the field stays disabled until the box is ticked.
+els.fzTsaOn.onchange = () => { els.fzTsa.disabled = !els.fzTsaOn.checked; if (els.fzTsaOn.checked) els.fzTsa.focus(); };
 els.fzGo.onclick = async () => {
   els.finalizeModal.hidden = true;
   let text = els.fzText.value || 'Finalized';
@@ -1039,7 +1041,7 @@ els.fzGo.onclick = async () => {
   form.append('appearance', appearance, 'stamp.png');
   form.append('params', JSON.stringify({
     reason: 'Finalized in Nib', page: 1, rect,
-    tsaUrl: els.fzTsa.value.trim(), password: els.fzPw.value,
+    tsaUrl: els.fzTsaOn.checked ? els.fzTsa.value.trim() : '', password: els.fzPw.value,
   }));
   const res = await apiFetch('/api/finalize', { method: 'POST', body: form });
   if (!res.ok) { toast('export failed'); return; }
