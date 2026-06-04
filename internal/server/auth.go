@@ -115,6 +115,19 @@ func originIsLoopback(r *http.Request) bool {
 	return false
 }
 
+// requirePublicLoopback guards a public (pre-unlock) mutating route. No CSRF
+// token exists before the vault unlocks, so a loopback Origin is the only write
+// guard these routes can apply.
+func requirePublicLoopback(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if !originIsLoopback(r) {
+			httpError(w, http.StatusForbidden, "bad origin")
+			return
+		}
+		next(w, r)
+	}
+}
+
 // --- status ------------------------------------------------------------------
 
 type statusResponse struct {
@@ -199,10 +212,6 @@ func resolveKey(mode, keyPath string) (pubLine, path string, err error) {
 }
 
 func (s *Server) handleEnroll(w http.ResponseWriter, r *http.Request) {
-	if !originIsLoopback(r) {
-		httpError(w, http.StatusForbidden, "bad origin")
-		return
-	}
 	if vault.Exists(s.configDir) {
 		httpError(w, http.StatusConflict, "already set up")
 		return
@@ -225,10 +234,6 @@ func (s *Server) handleEnroll(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleMigrate(w http.ResponseWriter, r *http.Request) {
-	if !originIsLoopback(r) {
-		httpError(w, http.StatusForbidden, "bad origin")
-		return
-	}
 	if !vault.NeedsMigration(s.configDir) {
 		httpError(w, http.StatusConflict, "nothing to migrate")
 		return
