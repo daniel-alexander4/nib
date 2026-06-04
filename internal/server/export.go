@@ -4,7 +4,6 @@ import (
 	"archive/zip"
 	"bytes"
 	"fmt"
-	"io"
 	"net/http"
 
 	"nib/internal/pdfops"
@@ -25,13 +24,7 @@ func (s *Server) handleAssemble(w http.ResponseWriter, r *http.Request) {
 	}
 	images := make([][]byte, 0, len(parts))
 	for _, fh := range parts {
-		f, err := fh.Open()
-		if err != nil {
-			httpError(w, http.StatusBadRequest, "could not read image")
-			return
-		}
-		b, err := io.ReadAll(f)
-		f.Close()
+		b, err := readFormFile(fh)
 		if err != nil {
 			httpError(w, http.StatusBadRequest, "could not read image")
 			return
