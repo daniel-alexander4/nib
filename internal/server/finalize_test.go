@@ -37,6 +37,25 @@ func TestFinalizeSignsAndVerifies(t *testing.T) {
 	}
 }
 
+func TestFinalizeRejectsBadTSAURL(t *testing.T) {
+	ts, _ := startServer(t)
+	c, csrf := authedClient(t, ts)
+
+	pdf, _ := testpdf.Form()
+	var buf bytes.Buffer
+	mw := multipart.NewWriter(&buf)
+	fw, _ := mw.CreateFormFile("pdf", "doc.pdf")
+	fw.Write(pdf)
+	mw.WriteField("params", `{"tsaUrl":"file:///etc/passwd"}`)
+	mw.Close()
+
+	resp := write(t, c, csrf, http.MethodPost, ts.URL+"/api/finalize", mw.FormDataContentType(), &buf)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("finalize with file:// TSA = %d, want 400", resp.StatusCode)
+	}
+}
+
 func TestFormDataExport(t *testing.T) {
 	ts, path := startServer(t)
 	c, csrf := authedClient(t, ts)

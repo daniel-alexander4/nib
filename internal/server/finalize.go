@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"net/url"
 	"time"
 
 	"nib/internal/pdfops"
@@ -39,6 +40,14 @@ func (s *Server) handleFinalize(w http.ResponseWriter, r *http.Request) {
 	if raw := r.FormValue("params"); raw != "" {
 		if err := json.Unmarshal([]byte(raw), &p); err != nil {
 			httpError(w, http.StatusBadRequest, "invalid params")
+			return
+		}
+	}
+	// The timestamp authority is user-supplied and dialed by the signing library;
+	// allow only an http(s) URL through (public TSAs are commonly plain http).
+	if p.TSAURL != "" {
+		if u, err := url.Parse(p.TSAURL); err != nil || requireHTTPScheme(u) != nil {
+			httpError(w, http.StatusBadRequest, "timestamp authority must be an http(s) URL")
 			return
 		}
 	}
