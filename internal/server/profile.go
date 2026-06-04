@@ -8,7 +8,7 @@ import (
 
 // handleProfileGet returns the autofill profile (field name -> value).
 func (s *Server) handleProfileGet(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, s.unlockedVault().Profile())
+	writeJSON(w, vaultFrom(r).Profile())
 }
 
 // handleProfileSet replaces the autofill profile.
@@ -18,7 +18,7 @@ func (s *Server) handleProfileSet(w http.ResponseWriter, r *http.Request) {
 		httpError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
-	if err := s.unlockedVault().SetProfile(p); err != nil {
+	if err := vaultFrom(r).SetProfile(p); err != nil {
 		httpError(w, http.StatusInternalServerError, "could not save profile")
 		return
 	}
