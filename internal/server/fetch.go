@@ -16,6 +16,14 @@ import (
 // only http and https are ever dialed, including across redirects. These paths sit
 // behind the CSRF + loopback-origin gate, so the threat is narrow; the scheme guard
 // keeps a stray file:// (or a future custom protocol) from reaching the transport.
+//
+// TRIPWIRE: private/LAN/loopback targets are intentionally NOT blocked. Only the
+// local user can reach these endpoints (loopback bind + CSRF + origin, and
+// NIB_ADDR is loopback-enforced so nib is never network-exposed), and self-host
+// users legitimately fetch from their own network. Add connect-time IP filtering
+// (a net.Dialer.Control hook on httpFetchClient, applied across redirects) ONLY if
+// that model changes — a multi-user mode or a non-loopback bind. Don't add it as a
+// generic "SSRF fix": with no remote caller it guards nothing and breaks homelab use.
 
 // httpFetchClient follows redirects but rejects any hop that isn't http(s), and
 // caps the chain. Setting CheckRedirect overrides net/http's default 10-hop cap,
