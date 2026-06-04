@@ -94,6 +94,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/form-data", s.requireUnlocked(s.handleFormData))
 	mux.HandleFunc("GET /api/profile", s.requireUnlocked(s.handleProfileGet))
 	mux.HandleFunc("POST /api/profile", s.requireUnlocked(s.handleProfileSet))
+	mux.HandleFunc("POST /api/settings", s.requireUnlocked(s.handleSettings))
 
 	// Image library.
 	mux.HandleFunc("GET /api/images", s.requireUnlocked(s.handleImagesList))

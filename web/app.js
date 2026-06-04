@@ -18,12 +18,12 @@ pdfjsLib.GlobalWorkerOptions.workerSrc = './vendor/pdfjs/pdf.worker.min.mjs';
 // --- element handles ---------------------------------------------------------
 const $ = (id) => document.getElementById(id);
 const els = {
-  menubar: $('menubar'), openMenuItem: $('openMenuItem'), recentSlot: $('recentSlot'),
+  menubar: $('menubar'), toolbar: $('toolbar'), openMenuItem: $('openMenuItem'),
   pathInput: $('pathInput'), openGo: $('openGo'),
   textToolBtn: $('textToolBtn'), detectBtn: $('detectBtn'),
-  prevBtn: $('prevBtn'), nextBtn: $('nextBtn'), pageNum: $('pageNum'), pageCount: $('pageCount'),
+  prevBtn: $('prevBtn'), nextBtn: $('nextBtn'),
   zoomInBtn: $('zoomInBtn'), zoomOutBtn: $('zoomOutBtn'), fitBtn: $('fitBtn'),
-  searchInput: $('searchInput'), sigBadge: $('sigBadge'), saveBtn: $('saveBtn'),
+  sigBadge: $('sigBadge'), saveBtn: $('saveBtn'), statusCluster: $('statusCluster'),
   viewerWrap: $('viewerWrap'), viewerContainer: $('viewerContainer'),
   thumbs: $('thumbs'), thumbGrid: $('thumbGrid'), outline: $('outline'),
   appendBtn: $('appendBtn'), appendInput: $('appendInput'),
@@ -60,9 +60,11 @@ const els = {
   saveAsList: $('saveAsList'), saveAsCancel: $('saveAsCancel'), saveAsGo: $('saveAsGo'),
   openModal: $('openModal'), openDir: $('openDir'), openHere: $('openHere'),
   openUp: $('openUp'), openList: $('openList'), openCancel: $('openCancel'),
-  tbDetect: $('tbDetect'), tbRedact: $('tbRedact'), tbApplyRedact: $('tbApplyRedact'),
-  tbAutofill: $('tbAutofill'), tbEditProfile: $('tbEditProfile'),
+  autoUpdateChk: $('autoUpdateChk'),
 };
+
+// Controls duplicated across the menubar and toolbar are addressed by class.
+const all = (sel) => document.querySelectorAll(sel);
 
 // --- unlock: SSH key + CSRF --------------------------------------------------
 // Nib unlocks at startup from the user's SSH key. The first-run wizard
@@ -108,6 +110,11 @@ function applyStatus(st) {
     csrf = st.csrf;
     els.authOverlay.hidden = true;
     loadImages();
+    // Apply saved preferences: the toolbar layout and the auto-update toggle.
+    applyStyle(st.toolbarStyle || 'menus');
+    els.autoUpdateChk.checked = st.autoUpdate;
+    els.autoUpdateChk.disabled = st.updateCheckLocked;
+    els.autoUpdateChk.parentElement.title = st.updateCheckLocked ? 'Forced off by NIB_NO_UPDATE_CHECK' : '';
     // Automatic update check, once per session, at the first usable moment.
     if (st.autoUpdate && !updateChecked) { updateChecked = true; runUpdateCheck(true); }
     const initial = new URLSearchParams(location.search).get('open');
@@ -359,7 +366,7 @@ let docGen = 0; // bumps on each load so a stale async render/build can bail
 let fitPageWidth = 0; // intrinsic width (pts) of the page last fit-to-width
 eventBus.on('pagesinit', () => { fitPageWidth = 0; viewer.currentScaleValue = 'page-width'; });
 eventBus.on('pagechanging', (e) => {
-  els.pageNum.value = e.pageNumber;
+  all('.pageNum').forEach((i) => { i.value = e.pageNumber; });
   markCurrentThumb(e.pageNumber);
   // In fit-width mode, re-fit to the page now in view so the pages of a mixed-
   // size PDF each fill the width. No-op on a normal PDF (every page shares a
@@ -395,7 +402,7 @@ async function setDocumentFromServer(meta) {
   linkService.setDocument(pdfDocument, null);
 
   els.viewerWrap.classList.add('has-doc');
-  els.pageCount.textContent = '/ ' + pdfDocument.numPages;
+  all('.pageCount').forEach((s) => { s.textContent = '/ ' + pdfDocument.numPages; });
   els.saveBtn.disabled = false;
   els.saveBtn.title = meta.canSave ? 'Save (overwrites ' + meta.path + ')' : 'Save a copy (downloads — opened without a local path)';
   updateBadge(meta.signature);
@@ -1086,8 +1093,7 @@ els.redactBtn.onclick = () => {
 };
 // Keep both the Edit-menu and toolbar redact buttons lit while redact mode is on.
 function reflectRedact() {
-  els.redactBtn.classList.toggle('active', redactMode);
-  els.tbRedact.classList.toggle('active', redactMode);
+  all('#redactBtn, [data-forward="redactBtn"]').forEach((b) => b.classList.toggle('active', redactMode));
 }
 
 // The pdf.js .page has a transparent border (9px), so its border-box rect is
@@ -1207,17 +1213,18 @@ async function openBrowse(path) {
   els.openUp.disabled = !info.parent;
   els.openUp.dataset.parent = info.parent || '';
   els.openList.innerHTML = '';
-  for (const d of info.dirs) {
-    const li = document.createElement('li');
-    li.textContent = d;
-    li.onclick = () => openBrowse(joinPath(info.path, d));
-    els.openList.appendChild(li);
-  }
+  // PDFs first — they're what this dialog opens; folders follow for navigation.
   for (const f of (info.files || [])) {
     const li = document.createElement('li');
     li.className = 'file';
     li.textContent = f;
     li.onclick = () => { els.openModal.hidden = true; openPath(joinPath(info.path, f)); };
+    els.openList.appendChild(li);
+  }
+  for (const d of info.dirs) {
+    const li = document.createElement('li');
+    li.textContent = d;
+    li.onclick = () => openBrowse(joinPath(info.path, d));
     els.openList.appendChild(li);
   }
 }
@@ -1242,10 +1249,10 @@ els.openUp.onclick = () => { const p = els.openUp.dataset.parent; if (p) openBro
 els.openDir.onchange = () => openBrowse(els.openDir.value.trim());
 
 // --- menu bar ----------------------------------------------------------------
-// One controller for the whole bar: click a top label to open it, hover to
-// switch while another is open, click a command (or click-outside / Escape) to
-// close. Inputs inside a dropdown don't close it. The File menu refreshes its
-// Recent list each time it opens.
+// One controller for both bars (the menubar's Edit/View and the toolbar's
+// Recent/Save/Export/More): click a top label to open it, hover to switch while
+// another is open, click a command (or click-outside / Escape) to close. Inputs
+// inside a dropdown don't close it. The Recent menu refreshes its list on open.
 let openMenu = null;
 function closeMenu() {
   if (openMenu) { openMenu.classList.remove('open'); openMenu = null; }
@@ -1255,36 +1262,61 @@ function showMenu(menu) {
   closeMenu();
   menu.classList.add('open');
   openMenu = menu;
-  if (menu.contains(els.recentSlot)) refreshRecent();
+  if (menu.querySelector('.recentSlot')) refreshRecent();
 }
-els.menubar.addEventListener('click', (e) => {
+function onBarClick(e) {
   const top = e.target.closest('.menutop');
   if (top) { const m = top.parentElement; openMenu === m ? closeMenu() : showMenu(m); return; }
   if (e.target.closest('.dropdown button')) closeMenu(); // a command was chosen
-});
-els.menubar.addEventListener('mouseover', (e) => {
+}
+function onBarHover(e) {
   if (!openMenu) return;
   const top = e.target.closest('.menutop');
   if (top && top.parentElement !== openMenu) showMenu(top.parentElement);
-});
-document.addEventListener('click', (e) => { if (!e.target.closest('#menubar')) closeMenu(); });
+}
+for (const bar of [els.menubar, els.toolbar]) {
+  bar.addEventListener('click', onBarClick);
+  bar.addEventListener('mouseover', onBarHover);
+}
+// Close on any click outside an open menu — including the toolbar's edit icons.
+document.addEventListener('click', (e) => { if (!e.target.closest('.menu')) closeMenu(); });
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeMenu(); });
+
+// Settings: the layout style (menus / toolbar / both) drives a body attribute the
+// CSS keys off; the saved value is applied in applyStatus and persisted on change.
+function applyStyle(style) {
+  document.body.dataset.style = style;
+  all('.styleOpt').forEach((b) => b.classList.toggle('active', b.dataset.styleVal === style));
+  // Toolbar mode hides the menubar, so the always-on chrome rides on the toolbar.
+  (style === 'toolbar' ? els.toolbar : els.menubar).appendChild(els.statusCluster);
+}
+function saveSettings(body) {
+  apiFetch('/api/settings', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+  });
+}
+all('.styleOpt').forEach((b) => {
+  b.onclick = () => { applyStyle(b.dataset.styleVal); saveSettings({ toolbarStyle: b.dataset.styleVal }); };
+});
+els.autoUpdateChk.onchange = () => saveSettings({ checkUpdatesOnStartup: els.autoUpdateChk.checked });
 
 async function refreshRecent() {
   const res = await apiFetch('/api/recent');
   const recent = (res.ok ? await res.json() : []) || []; // tolerate a null body
-  els.recentSlot.innerHTML = '';
-  if (!recent.length) {
-    const empty = document.createElement('div');
-    empty.className = 'menuitem idle'; empty.textContent = 'No recent files';
-    els.recentSlot.appendChild(empty);
-    return;
-  }
-  for (const p of recent) {
-    const b = document.createElement('button');
-    b.textContent = p.replace(/^.*\//, ''); b.title = p;
-    b.onclick = () => openPath(p);
-    els.recentSlot.appendChild(b);
+  for (const slot of all('.recentSlot')) { // a slot in the File menu and one in the toolbar
+    slot.innerHTML = '';
+    if (!recent.length) {
+      const empty = document.createElement('div');
+      empty.className = 'menuitem idle'; empty.textContent = 'No recent files';
+      slot.appendChild(empty);
+      continue;
+    }
+    for (const p of recent) {
+      const b = document.createElement('button');
+      b.textContent = p.replace(/^.*\//, ''); b.title = p;
+      b.onclick = () => openPath(p);
+      slot.appendChild(b);
+    }
   }
 }
 
@@ -1304,13 +1336,9 @@ document.querySelectorAll('[data-mode]').forEach((b) => {
   b.onclick = () => setTool(b.dataset.mode);
 });
 
-// The icon toolbar mirrors the Edit menu. Mode tools wire themselves via
-// [data-mode] above; the one-shot commands forward to their menu button.
-els.tbDetect.onclick = () => els.detectBtn.click();
-els.tbRedact.onclick = () => els.redactBtn.click();
-els.tbApplyRedact.onclick = () => els.applyRedactBtn.click();
-els.tbAutofill.onclick = () => els.autofillBtn.click();
-els.tbEditProfile.onclick = () => els.editProfileBtn.click();
+// The toolbar mirrors the menus. Mode tools wire themselves via [data-mode]
+// above; every other toolbar control forwards to its menu twin by id.
+all('#toolbar [data-forward]').forEach((b) => { b.onclick = () => $(b.dataset.forward).click(); });
 
 // Drag-and-drop a PDF onto the window to open it (upload origin -> Save As).
 ['dragover', 'drop'].forEach((ev) => window.addEventListener(ev, (e) => e.preventDefault()));
@@ -2069,24 +2097,24 @@ els.saveBtn.onclick = save;
 
 els.prevBtn.onclick = () => { if (viewer.currentPageNumber > 1) viewer.currentPageNumber--; };
 els.nextBtn.onclick = () => { if (viewer.currentPageNumber < pdfDocument.numPages) viewer.currentPageNumber++; };
-els.pageNum.addEventListener('change', () => {
-  const n = Number(els.pageNum.value);
+all('.pageNum').forEach((input) => input.addEventListener('change', () => {
+  const n = Number(input.value);
   if (pdfDocument && n >= 1 && n <= pdfDocument.numPages) viewer.currentPageNumber = n;
-});
+}));
 els.zoomInBtn.onclick = () => { viewer.currentScale = viewer.currentScale * 1.15; };
 els.zoomOutBtn.onclick = () => { viewer.currentScale = viewer.currentScale / 1.15; };
 els.fitBtn.onclick = () => { viewer.currentScaleValue = 'page-width'; };
 
 let searchTimer;
-els.searchInput.addEventListener('input', () => {
+all('.searchInput').forEach((input) => input.addEventListener('input', () => {
   clearTimeout(searchTimer);
   searchTimer = setTimeout(() => {
     eventBus.dispatch('find', {
-      type: '', query: els.searchInput.value, caseSensitive: false,
+      type: '', query: input.value, caseSensitive: false,
       highlightAll: true, findPrevious: false,
     });
   }, 200);
-});
+}));
 
 // sidebar tabs
 document.querySelectorAll('.tab').forEach((tab) => {
