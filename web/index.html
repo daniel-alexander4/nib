@@ -108,6 +108,7 @@
        and clicks through to it. The page/find fields share .pageNum/.searchInput
        with the View menu so the two surfaces stay in sync. -->
   <div id="toolbar">
+    <span class="tbgroup">
     <button class="tbtext" data-forward="openMenuItem">Open…</button>
 
     <div class="menu">
@@ -150,7 +151,9 @@
       </div>
     </div>
 
+    </span>
     <span class="tbsep"></span>
+    <span class="tbgroup">
 
     <button class="tbicon" data-mode="FREETEXT" title="Text — add a text box">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 6V4h14v2"/><path d="M12 4v16"/><path d="M9 20h6"/></svg>
@@ -165,7 +168,9 @@
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8V5a1 1 0 0 1 1-1h3"/><path d="M16 4h3a1 1 0 0 1 1 1v3"/><path d="M20 16v3a1 1 0 0 1-1 1h-3"/><path d="M8 20H5a1 1 0 0 1-1-1v-3"/><path d="M8 12h8"/></svg>
     </button>
 
+    </span>
     <span class="tbsep"></span>
+    <span class="tbgroup">
 
     <button class="tbicon" data-forward="redactBtn" title="Redact — draw redaction boxes">
       <svg viewBox="0 0 24 24"><rect x="3" y="9" width="18" height="6" rx="1" fill="currentColor"/></svg>
@@ -174,7 +179,9 @@
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="9" width="11" height="6" rx="1" fill="currentColor" stroke="none"/><path d="M15 12l3 3 4-6"/></svg>
     </button>
 
+    </span>
     <span class="tbsep"></span>
+    <span class="tbgroup">
 
     <button class="tbicon" data-forward="autofillBtn" title="Autofill from profile">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 18h16"/><path d="M12 4v9"/><path d="M8.5 9.5L12 13l3.5-3.5"/></svg>
@@ -183,7 +190,9 @@
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="3.5"/><path d="M5.5 19a6.5 6.5 0 0 1 13 0"/></svg>
     </button>
 
+    </span>
     <span class="tbsep"></span>
+    <span class="tbgroup">
 
     <button class="tbicon" data-forward="toggleSidebarBtn" title="Toggle sidebar">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16"/></svg>
@@ -205,6 +214,7 @@
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14"/><path d="M5 12h14"/></svg>
     </button>
     <span class="tbfind"><input class="searchInput" type="search" placeholder="Find…" /></span>
+    </span>
   </div>
 
   <main id="main">
