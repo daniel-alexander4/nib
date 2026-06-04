@@ -142,7 +142,7 @@ func TestRedactKeepsOtherPagesVector(t *testing.T) {
 
 func TestStampWatermark(t *testing.T) {
 	pdf := threePagePDF(t)
-	out, err := StampWatermark(pdf, pngBytes(t, 220, 44))
+	out, err := StampWatermark(pdf, "DRAFT")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -152,13 +152,19 @@ func TestStampWatermark(t *testing.T) {
 	if len(out) <= len(pdf) {
 		t.Error("watermarked PDF is not larger than the original (nothing added?)")
 	}
-	// No image returns the input unchanged.
-	same, err := StampWatermark(pdf, nil)
+	// VOID is the red-on-top variant; it must also produce a valid all-pages doc.
+	if v, err := StampWatermark(pdf, "VOID"); err != nil {
+		t.Fatalf("VOID watermark: %v", err)
+	} else if n, _ := PageCount(v); n != 3 {
+		t.Errorf("VOID watermarked page count = %d, want 3", n)
+	}
+	// Empty text returns the input unchanged.
+	same, err := StampWatermark(pdf, "  ")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !bytes.Equal(same, pdf) {
-		t.Error("stamping with no image should return the input unchanged")
+		t.Error("stamping with empty text should return the input unchanged")
 	}
 }
 

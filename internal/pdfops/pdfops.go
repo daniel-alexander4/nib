@@ -220,15 +220,21 @@ func StampImages(pdf []byte, stamps []Stamp) ([]byte, error) {
 	return out.Bytes(), nil
 }
 
-// StampWatermark bakes png as a small image watermark in the bottom-right margin
-// of every page, sized relative to each page so it sits the same way on any page
-// size. Finalize uses it to mark the whole document before signing.
-func StampWatermark(pdf, png []byte) ([]byte, error) {
-	if len(png) == 0 {
+// StampWatermark draws text as a large diagonal watermark across every page.
+// Most labels are a faint grey mark behind the content; VOID is the exception —
+// a bold red mark over the content, since it negates the document. Finalize
+// applies it before signing so the certification covers the watermark.
+func StampWatermark(pdf []byte, text string) ([]byte, error) {
+	if strings.TrimSpace(text) == "" {
 		return pdf, nil
 	}
-	desc := "position:br, offset:-24 30, scalefactor:0.16 rel, rotation:0"
-	wm, err := api.ImageWatermarkForReader(bytes.NewReader(png), desc, true, false, types.POINTS)
+	onTop := false
+	desc := "fontname:Helvetica, scalefactor:0.9 rel, fillcolor:#8a8a8a, opacity:0.10, rotation:45, position:c"
+	if strings.HasPrefix(strings.ToUpper(strings.TrimSpace(text)), "VOID") {
+		onTop = true
+		desc = "fontname:Helvetica, scalefactor:0.9 rel, fillcolor:#cc0000, opacity:0.65, rotation:45, position:c"
+	}
+	wm, err := api.TextWatermark(text, desc, onTop, false, types.POINTS)
 	if err != nil {
 		return nil, err
 	}

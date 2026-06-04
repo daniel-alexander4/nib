@@ -1003,40 +1003,24 @@ els.exportFormCsvBtn.onclick = () => { window.location = '/api/form-data?format=
 els.exportCertBtn.onclick = () => { window.location = '/api/identity'; };
 
 // Finalize & sign.
-function watermarkPNG(text) {
-  return new Promise((resolve) => {
-    const cv = document.createElement('canvas');
-    let ctx = cv.getContext('2d');
-    ctx.font = 'bold 22px sans-serif';
-    cv.width = Math.ceil(ctx.measureText(text).width) + 24;
-    cv.height = 44;
-    ctx = cv.getContext('2d');
-    ctx.font = 'bold 22px sans-serif';
-    ctx.fillStyle = '#c1121f'; ctx.strokeStyle = '#c1121f'; ctx.lineWidth = 2;
-    ctx.strokeRect(2, 2, cv.width - 4, cv.height - 4);
-    ctx.textBaseline = 'middle';
-    ctx.fillText(text, 12, cv.height / 2);
-    cv.toBlob(resolve, 'image/png');
-  });
-}
-
 els.finalizeBtn.onclick = () => { if (pdfDocument) els.finalizeModal.hidden = false; };
 els.fzCancel.onclick = () => { els.finalizeModal.hidden = true; };
 // The timestamp URL is opt-in: the field stays disabled until the box is ticked.
 els.fzTsaOn.onchange = () => { els.fzTsa.disabled = !els.fzTsaOn.checked; if (els.fzTsaOn.checked) els.fzTsa.focus(); };
+// Watermark presets fill the text box; typing your own keeps only a matching preset lit.
+const syncWmPresets = () => all('.wmpreset').forEach((b) => b.classList.toggle('active', b.dataset.wm === els.fzText.value));
+all('.wmpreset').forEach((b) => { b.onclick = () => { els.fzText.value = b.dataset.wm; syncWmPresets(); }; });
+els.fzText.oninput = syncWmPresets;
 els.fzGo.onclick = async () => {
   els.finalizeModal.hidden = true;
-  let text = els.fzText.value || 'Finalized';
-  if (els.fzDate.checked) text += ' ' + new Date().toLocaleDateString();
+  let watermark = els.fzText.value.trim();
+  if (watermark && els.fzDate.checked) watermark += ' ' + new Date().toLocaleDateString();
 
   const bytes = await bakedBytes();
-  const appearance = await watermarkPNG(text);
-
   const form = new FormData();
   form.append('pdf', new Blob([bytes], { type: 'application/pdf' }), 'doc.pdf');
-  form.append('appearance', appearance, 'stamp.png');
   form.append('params', JSON.stringify({
-    reason: 'Finalized in Nib',
+    reason: 'Finalized in Nib', watermark,
     tsaUrl: els.fzTsaOn.checked ? els.fzTsa.value.trim() : '', password: els.fzPw.value,
   }));
   const res = await apiFetch('/api/finalize', { method: 'POST', body: form });
