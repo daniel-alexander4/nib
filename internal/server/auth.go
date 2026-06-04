@@ -54,6 +54,14 @@ func (s *Server) ensureUnlocked() {
 	if s.unlockedVault() != nil {
 		return
 	}
+	// Serialize setup+open so concurrent callers (e.g. two tabs hitting /api/status
+	// at first run) can't both run AutoSetup. setupMu is separate from s.mu so the
+	// request lock is never held across file I/O.
+	s.setupMu.Lock()
+	defer s.setupMu.Unlock()
+	if s.unlockedVault() != nil { // another caller unlocked while we waited
+		return
+	}
 	// On a trusted machine (one holding a builtin key's private half), create the
 	// vault without the first-run wizard. No-op when a vault exists or no builtin
 	// key is local — the wizard then handles setup.

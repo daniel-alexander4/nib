@@ -5,11 +5,47 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 
 	"nib/internal/sshkey"
 	"nib/internal/vault"
 )
+
+// TestEnsureUnlockedConcurrent runs ensureUnlocked from many goroutines at once
+// (as two browser tabs hitting /api/status at first run would). Under -race it
+// guards the setup+open path: setupMu serializes it and only one caller assigns
+// the vault + CSRF token.
+func TestEnsureUnlockedConcurrent(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	dir := t.TempDir()
+	keyPath := filepath.Join(t.TempDir(), "id_ed25519")
+	pub, err := sshkey.Generate(keyPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := vault.Create(dir, pub, keyPath); err != nil {
+		t.Fatal(err)
+	}
+
+	s := New(os.DirFS("."), dir, "test")
+	var wg sync.WaitGroup
+	for i := 0; i < 20; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			s.ensureUnlocked()
+		}()
+	}
+	wg.Wait()
+
+	if s.unlockedVault() == nil {
+		t.Fatal("vault not unlocked after concurrent ensureUnlocked")
+	}
+	if s.csrf == "" {
+		t.Error("no CSRF token issued")
+	}
+}
 
 // unlockedServer returns a Server holding a freshly created, unlocked vault.
 func unlockedServer(t *testing.T) (*Server, *vault.Vault) {

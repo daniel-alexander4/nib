@@ -41,6 +41,8 @@ type Server struct {
 	configDir string // where the vault lives (os.UserConfigDir()/nib)
 	version   string // running build version, reported by the update check
 
+	setupMu sync.Mutex // serializes first-run vault setup so AutoSetup runs once
+
 	mu    sync.Mutex
 	vault *vault.Vault // unlocked vault, nil until the SSH key unlocks it
 	csrf  string       // per-process CSRF token, issued when the vault unlocks
