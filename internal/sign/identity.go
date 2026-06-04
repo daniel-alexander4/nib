@@ -54,18 +54,16 @@ func GenerateIdentity(commonName string) (certPEM, keyPEM []byte, err error) {
 
 // Options controls a finalize-and-sign operation.
 type Options struct {
-	Name       string     // signer common name, recorded in the signature
-	Reason     string     // e.g. "Finalized in Nib"
-	When       time.Time  // signing time
-	Appearance []byte     // optional PNG drawn as the visible signature stamp
-	Page       int        // 1-based page for the visible appearance
-	Rect       [4]float64 // llx, lly, urx, ury in PDF points
-	TSAURL     string     // optional RFC3161 timestamp authority
+	Name   string    // signer common name, recorded in the signature
+	Reason string    // e.g. "Finalized in Nib"
+	When   time.Time // signing time
+	TSAURL string    // optional RFC3161 timestamp authority
 }
 
 // Sign applies a certification signature (DocMDP "no changes allowed") to pdf
 // using the given PEM identity. Any later edit invalidates it — that is the
-// tamper-evidence. A visible appearance is added when Options.Appearance is set.
+// tamper-evidence. The signature is invisible; callers bake any visible mark
+// into the page content before signing.
 func Sign(pdfBytes, certPEM, keyPEM []byte, opts Options) ([]byte, error) {
 	cert, signer, err := parseIdentity(certPEM, keyPEM)
 	if err != nil {
@@ -85,21 +83,6 @@ func Sign(pdfBytes, certPEM, keyPEM []byte, opts Options) ([]byte, error) {
 		Signer:          signer,
 		Certificate:     cert,
 		DigestAlgorithm: crypto.SHA256,
-	}
-	if len(opts.Appearance) > 0 {
-		page := opts.Page
-		if page < 1 {
-			page = 1
-		}
-		data.Appearance = sign.Appearance{
-			Visible:     true,
-			Page:        uint32(page),
-			LowerLeftX:  opts.Rect[0],
-			LowerLeftY:  opts.Rect[1],
-			UpperRightX: opts.Rect[2],
-			UpperRightY: opts.Rect[3],
-			Image:       opts.Appearance,
-		}
 	}
 	if opts.TSAURL != "" {
 		data.TSA = sign.TSA{URL: opts.TSAURL}

@@ -3,6 +3,9 @@ package server
 import (
 	"bytes"
 	"encoding/json"
+	"image"
+	"image/color"
+	"image/png"
 	"io"
 	"mime/multipart"
 	"net/http"
@@ -35,6 +38,49 @@ func TestFinalizeSignsAndVerifies(t *testing.T) {
 	if st := sign.Verify(signed); st.State != sign.Valid {
 		t.Errorf("finalized doc verify = %q, want valid", st.State)
 	}
+}
+
+// A visible watermark is baked into the page and the document is certified
+// invisibly — the case that used to 500 ("visible signatures are only allowed
+// for approval signatures"). The result must be a valid signed PDF.
+func TestFinalizeWithVisibleStamp(t *testing.T) {
+	ts, _ := startServer(t)
+	c, csrf := authedClient(t, ts)
+
+	pdf, _ := testpdf.Form()
+	var buf bytes.Buffer
+	mw := multipart.NewWriter(&buf)
+	fw, _ := mw.CreateFormFile("pdf", "doc.pdf")
+	fw.Write(pdf)
+	aw, _ := mw.CreateFormFile("appearance", "stamp.png")
+	aw.Write(stampPNG())
+	mw.WriteField("params", `{"reason":"Finalized in Nib","page":1,"rect":[100,36,320,80]}`)
+	mw.Close()
+
+	resp := write(t, c, csrf, http.MethodPost, ts.URL+"/api/finalize", mw.FormDataContentType(), &buf)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("finalize+stamp status = %d: %s", resp.StatusCode, body)
+	}
+	signed, _ := io.ReadAll(resp.Body)
+	if st := sign.Verify(signed); st.State != sign.Valid {
+		t.Errorf("stamped+finalized doc verify = %q, want valid", st.State)
+	}
+}
+
+// stampPNG builds a small RGBA watermark like the UI's canvas appearance: a red
+// border on a transparent background.
+func stampPNG() []byte {
+	img := image.NewRGBA(image.Rect(0, 0, 220, 44))
+	red := color.RGBA{193, 18, 31, 255}
+	for x := 0; x < 220; x++ {
+		img.Set(x, 2, red)
+		img.Set(x, 41, red)
+	}
+	var buf bytes.Buffer
+	_ = png.Encode(&buf, img)
+	return buf.Bytes()
 }
 
 func TestFinalizeRejectsBadTSAURL(t *testing.T) {

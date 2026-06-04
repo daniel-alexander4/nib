@@ -59,18 +59,23 @@ func (s *Server) handleFinalize(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Bake the visible "Finalized" watermark into the page as content, then certify
+	// invisibly: the signature covers the stamp, and an invisible certification is the
+	// only visible-mark-plus-certification combination the signing library allows.
+	if appearance, _ := formFileBytes(nil, r, "appearance"); len(appearance) > 0 {
+		pdfBytes, err = pdfops.StampImages(pdfBytes, []pdfops.Stamp{{Page: p.Page, Rect: p.Rect, PNG: appearance}})
+		if err != nil {
+			httpError(w, http.StatusInternalServerError, "could not stamp appearance")
+			return
+		}
+	}
+
 	opts := sign.Options{
 		Name:   "Nib User",
 		Reason: p.Reason,
 		When:   time.Now(),
-		Page:   p.Page,
-		Rect:   p.Rect,
 		TSAURL: p.TSAURL,
 	}
-	if appearance, _ := formFileBytes(nil, r, "appearance"); len(appearance) > 0 {
-		opts.Appearance = appearance
-	}
-
 	signed, err := sign.Sign(pdfBytes, cert, key, opts)
 	if err != nil {
 		httpError(w, http.StatusInternalServerError, "could not sign: "+err.Error())
