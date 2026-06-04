@@ -62,8 +62,8 @@ func (s *Server) Handler() http.Handler {
 	// Public — reachable before the vault is unlocked.
 	mux.HandleFunc("GET /api/status", s.handleStatus)
 	mux.HandleFunc("GET /api/update/check", s.handleUpdateCheck)
-	mux.HandleFunc("POST /api/ssh/enroll", s.handleEnroll)
-	mux.HandleFunc("POST /api/ssh/migrate", s.handleMigrate)
+	mux.HandleFunc("POST /api/ssh/enroll", requirePublicLoopback(s.handleEnroll))
+	mux.HandleFunc("POST /api/ssh/migrate", requirePublicLoopback(s.handleMigrate))
 
 	// Protected — require the vault unlocked (+ CSRF on writes).
 	mux.HandleFunc("GET /api/vault/export", s.requireUnlocked(s.handleVaultExport))
