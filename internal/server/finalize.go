@@ -25,7 +25,7 @@ type finalizeParams struct {
 // trusted timestamp, optionally password-protects it, and returns the result
 // for download. Any later edit invalidates the signature — the tamper-evidence.
 func (s *Server) handleFinalize(w http.ResponseWriter, r *http.Request) {
-	v := s.unlockedVault()
+	v := vaultFrom(r)
 	if err := r.ParseMultipartForm(maxPDFBytes); err != nil {
 		httpError(w, http.StatusBadRequest, "could not parse upload")
 		return
@@ -79,7 +79,7 @@ func (s *Server) handleFinalize(w http.ResponseWriter, r *http.Request) {
 // handleIdentity exports the user's public signing certificate (PEM), so a
 // recipient can confirm a signature came from this Nib identity.
 func (s *Server) handleIdentity(w http.ResponseWriter, r *http.Request) {
-	cert, _, err := identity(s.unlockedVault())
+	cert, _, err := identity(vaultFrom(r))
 	if err != nil {
 		httpError(w, http.StatusInternalServerError, "could not load identity")
 		return

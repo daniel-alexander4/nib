@@ -23,9 +23,9 @@ type keysResponse struct {
 	Candidates []string        `json:"candidates"`
 }
 
-// keysPayload builds the management view for the current vault.
-func (s *Server) keysPayload() keysResponse {
-	keys := s.unlockedVault().Keys()
+// keysPayload builds the management view for the given vault.
+func (s *Server) keysPayload(v *vault.Vault) keysResponse {
+	keys := v.Keys()
 	enrolled := make(map[string]bool, len(keys))
 	for _, k := range keys {
 		enrolled[k.KeyPath] = true
@@ -40,7 +40,7 @@ func (s *Server) keysPayload() keysResponse {
 }
 
 func (s *Server) handleKeysList(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, s.keysPayload())
+	writeJSON(w, s.keysPayload(vaultFrom(r)))
 }
 
 type addKeyRequest struct {
@@ -50,7 +50,7 @@ type addKeyRequest struct {
 }
 
 func (s *Server) handleKeysAdd(w http.ResponseWriter, r *http.Request) {
-	v := s.unlockedVault()
+	v := vaultFrom(r)
 	var req addKeyRequest
 	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<16)).Decode(&req); err != nil {
 		httpError(w, http.StatusBadRequest, "invalid request body")
@@ -106,7 +106,7 @@ func (s *Server) handleKeysAdd(w http.ResponseWriter, r *http.Request) {
 		httpError(w, http.StatusInternalServerError, "could not authorize key")
 		return
 	}
-	writeJSON(w, s.keysPayload())
+	writeJSON(w, s.keysPayload(vaultFrom(r)))
 }
 
 type removeKeyRequest struct {
@@ -114,7 +114,7 @@ type removeKeyRequest struct {
 }
 
 func (s *Server) handleKeysRemove(w http.ResponseWriter, r *http.Request) {
-	v := s.unlockedVault()
+	v := vaultFrom(r)
 	var req removeKeyRequest
 	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<16)).Decode(&req); err != nil {
 		httpError(w, http.StatusBadRequest, "invalid request body")
@@ -135,5 +135,5 @@ func (s *Server) handleKeysRemove(w http.ResponseWriter, r *http.Request) {
 		httpError(w, http.StatusInternalServerError, "could not remove key")
 		return
 	}
-	writeJSON(w, s.keysPayload())
+	writeJSON(w, s.keysPayload(vaultFrom(r)))
 }

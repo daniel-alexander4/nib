@@ -15,7 +15,7 @@ import (
 // history serializes as [] rather than null, so the client can treat it as a
 // list unconditionally.
 func (s *Server) handleRecent(w http.ResponseWriter, r *http.Request) {
-	recent := s.unlockedVault().Recent()
+	recent := vaultFrom(r).Recent()
 	if recent == nil {
 		recent = []string{}
 	}

@@ -143,9 +143,7 @@ func (s *Server) handleOpen(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.setDoc(&document{path: path, data: data, sig: sign.Verify(data)})
-	if v := s.unlockedVault(); v != nil {
-		_ = v.AddRecent(path) // best-effort; failure to record is non-fatal
-	}
+	_ = vaultFrom(r).AddRecent(path) // best-effort; failure to record is non-fatal
 	writeJSON(w, s.docResponse())
 }
 

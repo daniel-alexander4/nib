@@ -50,7 +50,7 @@ func (s *Server) handleBake(w http.ResponseWriter, r *http.Request) {
 			httpError(w, http.StatusBadRequest, "invalid stamps")
 			return
 		}
-		v := s.unlockedVault()
+		v := vaultFrom(r)
 		stamps := make([]pdfops.Stamp, 0, len(reqs))
 		for _, q := range reqs {
 			var png []byte
