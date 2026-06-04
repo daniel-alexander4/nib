@@ -40,21 +40,22 @@ func TestFinalizeSignsAndVerifies(t *testing.T) {
 	}
 }
 
-// A visible watermark is baked into the page and the document is certified
+// A visible watermark is baked onto every page and the document is certified
 // invisibly — the case that used to 500 ("visible signatures are only allowed
-// for approval signatures"). The result must be a valid signed PDF.
+// for approval signatures"). A multi-page doc exercises the all-pages stamp;
+// the result must be a valid signed PDF.
 func TestFinalizeWithVisibleStamp(t *testing.T) {
 	ts, _ := startServer(t)
 	c, csrf := authedClient(t, ts)
 
-	pdf, _ := testpdf.Form()
+	pdf, _ := testpdf.Text("page one", "page two")
 	var buf bytes.Buffer
 	mw := multipart.NewWriter(&buf)
 	fw, _ := mw.CreateFormFile("pdf", "doc.pdf")
 	fw.Write(pdf)
 	aw, _ := mw.CreateFormFile("appearance", "stamp.png")
 	aw.Write(stampPNG())
-	mw.WriteField("params", `{"reason":"Finalized in Nib","page":1,"rect":[100,36,320,80]}`)
+	mw.WriteField("params", `{"reason":"Finalized in Nib"}`)
 	mw.Close()
 
 	resp := write(t, c, csrf, http.MethodPost, ts.URL+"/api/finalize", mw.FormDataContentType(), &buf)
