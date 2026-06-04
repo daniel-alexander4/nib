@@ -2,7 +2,6 @@ package server
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -31,7 +30,7 @@ func (s *Server) handleOpenURL(w http.ResponseWriter, r *http.Request) {
 		httpError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
-	data, err := fetchPDF(req.URL)
+	data, err := safeFetch(req.URL, maxPDFBytes, 30*time.Second)
 	if err != nil {
 		httpError(w, http.StatusBadGateway, "could not fetch PDF")
 		return
@@ -42,23 +41,4 @@ func (s *Server) handleOpenURL(w http.ResponseWriter, r *http.Request) {
 	}
 	s.setDoc(&document{path: "", data: data, sig: sign.Verify(data)})
 	writeJSON(w, s.docResponse())
-}
-
-// fetchPDF downloads a PDF with a size cap and timeout.
-func fetchPDF(url string) ([]byte, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-	if err != nil {
-		return nil, err
-	}
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return nil, errStatus(resp.StatusCode)
-	}
-	return io.ReadAll(io.LimitReader(resp.Body, maxPDFBytes))
 }

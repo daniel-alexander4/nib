@@ -1,7 +1,6 @@
 package server
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -75,7 +74,7 @@ func (s *Server) handleImageAdd(w http.ResponseWriter, r *http.Request) {
 			httpError(w, http.StatusBadRequest, "invalid request body")
 			return
 		}
-		b, err := fetchImage(req.URL)
+		b, err := safeFetch(req.URL, maxImageBytes, 15*time.Second)
 		if err != nil {
 			httpError(w, http.StatusBadGateway, "could not fetch image")
 			return
@@ -115,26 +114,3 @@ func (s *Server) handleImageAdd(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, imageMeta{ID: img.ID, Name: img.Name, MIME: img.MIME})
 }
-
-// fetchImage downloads an image from a URL with a size cap and timeout.
-func fetchImage(url string) ([]byte, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-	defer cancel()
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-	if err != nil {
-		return nil, err
-	}
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return nil, errStatus(resp.StatusCode)
-	}
-	return io.ReadAll(io.LimitReader(resp.Body, maxImageBytes))
-}
-
-type errStatus int
-
-func (e errStatus) Error() string { return "unexpected status " + http.StatusText(int(e)) }
