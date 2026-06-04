@@ -1044,7 +1044,7 @@ els.fzGo.onclick = async () => {
     tsaUrl: els.fzTsaOn.checked ? els.fzTsa.value.trim() : '', password: els.fzPw.value,
   }));
   const res = await apiFetch('/api/finalize', { method: 'POST', body: form });
-  if (!res.ok) { toast('export failed'); return; }
+  if (!res.ok) { toast('Could not finalize'); return; }
   openSaveAs(await res.blob(), exportBase() + '-finalized.pdf', 'Save finalized PDF');
 };
 
