@@ -91,6 +91,21 @@ func TestWriteRejectsForeignOrigin(t *testing.T) {
 	}
 }
 
+func TestEnrollRejectsForeignOrigin(t *testing.T) {
+	ts, _ := startServer(t)
+	req, _ := http.NewRequest(http.MethodPost, ts.URL+"/api/ssh/enroll", bytes.NewReader([]byte("{}")))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Origin", "https://evil.example.com")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusForbidden {
+		t.Errorf("foreign-origin enroll = %d, want 403", resp.StatusCode)
+	}
+}
+
 func TestVaultExportImportRoundTrip(t *testing.T) {
 	ts, _ := startServer(t)
 	c, csrf := authedClient(t, ts)
