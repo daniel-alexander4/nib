@@ -430,7 +430,10 @@ input.ovl-check { appearance: auto; accent-color: #1a7f37; background: transpare
 
 /* modal form controls (finalize, profile) */
 .sigcard label { display: flex; flex-direction: column; gap: 4px; font-size: 13px; color: var(--subtext0); }
+/* Checkbox rows: box to the left of its text, not stacked above it. */
+.sigcard label.check { flex-direction: row; align-items: center; gap: 8px; }
 .sigcard label input[type="checkbox"] { width: auto; }
+.fzfield { display: flex; flex-direction: column; gap: 4px; }
 .sigcard input[type="text"], .sigcard input[type="password"], .sigcard textarea {
   background: var(--crust); color: var(--text); border: 1px solid var(--surface1);
   border-radius: 6px; padding: 7px 9px; font: inherit; width: 360px;
