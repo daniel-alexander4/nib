@@ -341,6 +341,26 @@
         </div>
         <input id="fzText" type="text" placeholder="…or type your own" value="FINALIZED" />
       </div>
+      <div class="wmstyle">
+        <div class="wmcontrols">
+          <label class="wmrow">Opacity <input id="fzOpacity" type="range" min="2" max="100" value="10" /></label>
+          <label class="wmrow">Size <input id="fzSize" type="range" min="30" max="100" value="90" /></label>
+          <label class="wmrow">Angle <input id="fzAngle" type="range" min="-90" max="90" value="45" /></label>
+          <label class="wmrow">Colour <input id="fzColor" type="color" value="#8a8a8a" /></label>
+          <label class="wmrow">Layer
+            <select id="fzLayer">
+              <option value="behind">Behind text</option>
+              <option value="ontop">On top</option>
+            </select>
+          </label>
+        </div>
+        <div class="wmpreview" aria-hidden="true">
+          <div class="wmpreview-line"></div>
+          <div class="wmpreview-line short"></div>
+          <div class="wmpreview-line"></div>
+          <span id="fzPreviewMark" class="wmpreview-mark">FINALIZED</span>
+        </div>
+      </div>
       <label class="check"><input id="fzDate" type="checkbox" checked /> Append today's date</label>
       <label>Protect with password (optional) <input id="fzPw" type="password" placeholder="leave blank for none" /></label>
       <div class="fzfield">
