@@ -213,12 +213,18 @@ func Migrate(dir, password, pubLine, keyPath string) (*Vault, error) {
 	if env.KDF == nil {
 		return nil, errors.New("not a password vault")
 	}
-	plain, err := decrypt(env.KDF.deriveKey(password), env.Nonce, env.Cipher)
+	// Best-effort: wipe the derived key and decrypted plaintext (which carries the
+	// signing private key) once we're done with each, to shorten their residency.
+	key := env.KDF.deriveKey(password)
+	plain, err := decrypt(key, env.Nonce, env.Cipher)
+	zero(key)
 	if err != nil {
 		return nil, ErrWrongPassword
 	}
 	var c Contents
-	if err := json.Unmarshal(plain, &c); err != nil {
+	err = json.Unmarshal(plain, &c)
+	zero(plain)
+	if err != nil {
 		return nil, fmt.Errorf("corrupt vault contents: %w", err)
 	}
 	v, err := newSealed(Path(dir), pubLine, keyPath, c)
@@ -550,6 +556,13 @@ func readEnvelope(dir string) (*envelope, error) {
 }
 
 // --- AES-256-GCM helpers ------------------------------------------------------
+
+// zero overwrites b — best-effort scrubbing of secret material before GC.
+func zero(b []byte) {
+	for i := range b {
+		b[i] = 0
+	}
+}
 
 func encrypt(key, plaintext []byte) (nonce, ciphertext []byte, err error) {
 	gcm, err := newGCM(key)
