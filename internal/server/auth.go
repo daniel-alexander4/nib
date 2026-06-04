@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/subtle"
 	"encoding/base64"
@@ -26,11 +27,25 @@ func newToken() string {
 	return base64.RawURLEncoding.EncodeToString(b)
 }
 
-// unlockedVault returns the unlocked vault, or nil when locked.
+// unlockedVault returns the unlocked vault, or nil when locked. It answers "is
+// the vault open right now?" for lifecycle and public callers; protected
+// handlers use vaultFrom instead, which is pinned to the request.
 func (s *Server) unlockedVault() *vault.Vault {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.vault
+}
+
+// vaultCtxKey carries the request-scoped vault snapshot taken by requireUnlocked.
+type vaultCtxKey struct{}
+
+// vaultFrom returns the vault a protected request was authorized against. It's
+// the snapshot requireUnlocked took (and already nil-checked), so it stays
+// non-nil even if a concurrent vault import nils s.vault mid-request. Only valid
+// inside a requireUnlocked-wrapped handler.
+func vaultFrom(r *http.Request) *vault.Vault {
+	v, _ := r.Context().Value(vaultCtxKey{}).(*vault.Vault)
+	return v
 }
 
 // ensureUnlocked tries to unlock the vault from the enrolled SSH key if it isn't
@@ -78,7 +93,7 @@ func (s *Server) requireUnlocked(next http.HandlerFunc) http.HandlerFunc {
 				return
 			}
 		}
-		next(w, r)
+		next(w, r.WithContext(context.WithValue(r.Context(), vaultCtxKey{}, v)))
 	}
 }
 

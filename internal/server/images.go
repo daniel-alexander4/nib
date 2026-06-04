@@ -23,7 +23,7 @@ type imageMeta struct {
 }
 
 func (s *Server) handleImagesList(w http.ResponseWriter, r *http.Request) {
-	v := s.unlockedVault()
+	v := vaultFrom(r)
 	out := make([]imageMeta, 0, len(v.Images())+len(v.BuiltinImages()))
 	for _, img := range v.Images() {
 		out = append(out, imageMeta{ID: img.ID, Name: img.Name, MIME: img.MIME})
@@ -35,7 +35,7 @@ func (s *Server) handleImagesList(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleImageGet(w http.ResponseWriter, r *http.Request) {
-	v := s.unlockedVault()
+	v := vaultFrom(r)
 	img, ok := v.Image(r.PathValue("id"))
 	if !ok {
 		httpError(w, http.StatusNotFound, "no such image")
@@ -47,7 +47,7 @@ func (s *Server) handleImageGet(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleImageDelete(w http.ResponseWriter, r *http.Request) {
-	v := s.unlockedVault()
+	v := vaultFrom(r)
 	if err := v.DeleteImage(r.PathValue("id")); err != nil {
 		if errors.Is(err, vault.ErrReadOnlyImage) {
 			httpError(w, http.StatusForbidden, "built-in image can't be deleted")
@@ -63,7 +63,7 @@ func (s *Server) handleImageDelete(w http.ResponseWriter, r *http.Request) {
 // fetched from a URL (server-side, like /api/open). Only PNG and JPEG are
 // accepted — a signature is ideally a transparent PNG.
 func (s *Server) handleImageAdd(w http.ResponseWriter, r *http.Request) {
-	v := s.unlockedVault()
+	v := vaultFrom(r)
 
 	var (
 		name string
