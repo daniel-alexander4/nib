@@ -1,7 +1,6 @@
 package server
 
 import (
-	"io"
 	"net/http"
 	"strconv"
 
@@ -37,13 +36,7 @@ func (s *Server) handleRedact(w http.ResponseWriter, r *http.Request) {
 			httpError(w, http.StatusBadRequest, "bad page number")
 			return
 		}
-		f, err := fh.Open()
-		if err != nil {
-			httpError(w, http.StatusBadRequest, "could not read page image")
-			return
-		}
-		b, err := io.ReadAll(f)
-		f.Close()
+		b, err := readFormFile(fh)
 		if err != nil {
 			httpError(w, http.StatusBadRequest, "could not read page image")
 			return
