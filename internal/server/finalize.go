@@ -3,6 +3,7 @@ package server
 import (
 	"encoding/json"
 	"io"
+	"mime/multipart"
 	"net/http"
 	"net/url"
 	"time"
@@ -131,6 +132,17 @@ func formFileBytes(w http.ResponseWriter, r *http.Request, field string) ([]byte
 		return nil, false
 	}
 	return data, true
+}
+
+// readFormFile reads one multipart file header fully into memory, closing it on
+// every path. Used by the handlers that iterate over many uploaded parts.
+func readFormFile(fh *multipart.FileHeader) ([]byte, error) {
+	f, err := fh.Open()
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	return io.ReadAll(f)
 }
 
 func sendDownload(w http.ResponseWriter, name, mime string, data []byte) {
