@@ -382,7 +382,11 @@ func (v *Vault) Images() []Image {
 
 // BuiltinImages returns the binary-shipped signatures decrypted this session
 // (empty unless a built-in key was available). They're read-only.
-func (v *Vault) BuiltinImages() []Image { return v.builtinImages }
+func (v *Vault) BuiltinImages() []Image {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	return append([]Image(nil), v.builtinImages...)
+}
 
 // Image returns the image with the given id, from the stored library or the
 // built-in signatures.
@@ -438,7 +442,8 @@ func (v *Vault) Identity() (certPEM, keyPEM []byte, ok bool) {
 	if v.contents.Identity == nil {
 		return nil, nil, false
 	}
-	return v.contents.Identity.CertPEM, v.contents.Identity.KeyPEM, true
+	id := v.contents.Identity
+	return append([]byte(nil), id.CertPEM...), append([]byte(nil), id.KeyPEM...), true
 }
 
 // SetIdentity stores the signing identity and persists the vault.
