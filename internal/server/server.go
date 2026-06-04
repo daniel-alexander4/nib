@@ -268,21 +268,43 @@ func writeFileAtomic(path string, data []byte) error {
 	return os.Rename(tmpName, path)
 }
 
-// loopbackOnly rejects requests whose Host is not loopback, a cheap guard
-// against another machine reaching the server. Real auth/CSRF arrives in M2.
+// loopbackOnly admits a request only when both the connecting peer and the
+// requested Host are loopback. The peer-IP check is an unspoofable socket fact
+// that self-enforces the loopback bind; the Host allowlist defends against DNS
+// rebinding, where the socket is loopback but the browser carries an attacker's
+// origin. The bind is the primary control — these are defence in depth, layered
+// on top of the per-request CSRF + origin checks the unlocked routes apply.
 func loopbackOnly(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		host := r.Host
-		if h, _, err := net.SplitHostPort(host); err == nil {
-			host = h
-		}
-		switch host {
-		case "127.0.0.1", "localhost", "::1":
-			next.ServeHTTP(w, r)
-		default:
+		if !peerIsLoopback(r.RemoteAddr) || !hostIsLoopback(r.Host) {
 			httpError(w, http.StatusForbidden, "loopback only")
+			return
 		}
+		next.ServeHTTP(w, r)
 	})
+}
+
+// peerIsLoopback reports whether the connection's remote address is a loopback IP.
+func peerIsLoopback(remoteAddr string) bool {
+	host, _, err := net.SplitHostPort(remoteAddr)
+	if err != nil {
+		host = remoteAddr
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
+}
+
+// hostIsLoopback reports whether the request's Host header names the loopback
+// interface — the set nib binds and accepts, kept in sync with loopbackBind.
+func hostIsLoopback(host string) bool {
+	if h, _, err := net.SplitHostPort(host); err == nil {
+		host = h
+	}
+	switch host {
+	case "127.0.0.1", "localhost", "::1":
+		return true
+	}
+	return false
 }
 
 func writeJSON(w http.ResponseWriter, v any) {

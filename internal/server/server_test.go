@@ -130,3 +130,38 @@ func TestLoopbackGuardRejectsForeignHost(t *testing.T) {
 		t.Errorf("foreign-host status = %d, want 403", resp.StatusCode)
 	}
 }
+
+// The loopback guard's two predicates: an unspoofable peer-IP check plus the
+// Host allowlist that blocks DNS rebinding. httptest always connects over
+// loopback, so the non-loopback peer path is only reachable as a unit test.
+func TestLoopbackPredicates(t *testing.T) {
+	for _, tc := range []struct {
+		remote string
+		want   bool
+	}{
+		{"127.0.0.1:5051", true},
+		{"[::1]:5051", true},
+		{"192.168.1.10:5051", false},
+		{"8.8.8.8:443", false},
+		{"garbage", false},
+	} {
+		if got := peerIsLoopback(tc.remote); got != tc.want {
+			t.Errorf("peerIsLoopback(%q) = %v, want %v", tc.remote, got, tc.want)
+		}
+	}
+	for _, tc := range []struct {
+		host string
+		want bool
+	}{
+		{"127.0.0.1:5051", true},
+		{"localhost:5051", true},
+		{"[::1]:5051", true},
+		{"localhost", true},
+		{"evil.example.com:5051", false},
+		{"192.168.1.10:5051", false},
+	} {
+		if got := hostIsLoopback(tc.host); got != tc.want {
+			t.Errorf("hostIsLoopback(%q) = %v, want %v", tc.host, got, tc.want)
+		}
+	}
+}

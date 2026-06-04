@@ -60,6 +60,11 @@ func main() {
 	if err != nil {
 		log.Fatalf("cannot bind %s: %v", bind, err)
 	}
+	// Backstop the loopbackBind string check: if a hostname like "localhost"
+	// resolved to a routable address (e.g. a doctored /etc/hosts), refuse to serve.
+	if tcp, ok := ln.Addr().(*net.TCPAddr); !ok || !tcp.IP.IsLoopback() {
+		log.Fatalf("refusing to serve on non-loopback address %s", ln.Addr())
+	}
 	addr := ln.Addr().String()
 
 	srv := &http.Server{Handler: server.New(nib.WebFS(), vault.DefaultDir(), version).Handler()}
