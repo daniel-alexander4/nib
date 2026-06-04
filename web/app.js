@@ -1031,16 +1031,12 @@ els.fzGo.onclick = async () => {
 
   const bytes = await bakedBytes();
   const appearance = await watermarkPNG(text);
-  const page = await pdfDocument.getPage(1);
-  const [x0, y0, x1] = page.view; // [llx, lly, urx, ury] in points
-  const w = 220, h = 44, margin = 36;
-  const rect = [x1 - margin - w, y0 + margin, x1 - margin, y0 + margin + h];
 
   const form = new FormData();
   form.append('pdf', new Blob([bytes], { type: 'application/pdf' }), 'doc.pdf');
   form.append('appearance', appearance, 'stamp.png');
   form.append('params', JSON.stringify({
-    reason: 'Finalized in Nib', page: 1, rect,
+    reason: 'Finalized in Nib',
     tsaUrl: els.fzTsaOn.checked ? els.fzTsa.value.trim() : '', password: els.fzPw.value,
   }));
   const res = await apiFetch('/api/finalize', { method: 'POST', body: form });

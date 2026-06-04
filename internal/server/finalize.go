@@ -15,11 +15,9 @@ import (
 
 // finalizeParams are the JSON options posted alongside the PDF.
 type finalizeParams struct {
-	Reason   string     `json:"reason"`
-	Page     int        `json:"page"`
-	Rect     [4]float64 `json:"rect"` // llx, lly, urx, ury (PDF points)
-	TSAURL   string     `json:"tsaUrl"`
-	Password string     `json:"password"` // optional output protection
+	Reason   string `json:"reason"`
+	TSAURL   string `json:"tsaUrl"`
+	Password string `json:"password"` // optional output protection
 }
 
 // handleFinalize signs the posted (already form-filled / flattened) PDF with a
@@ -59,11 +57,11 @@ func (s *Server) handleFinalize(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Bake the visible "Finalized" watermark into the page as content, then certify
+	// Bake the "Finalized" watermark onto every page as content, then certify
 	// invisibly: the signature covers the stamp, and an invisible certification is the
 	// only visible-mark-plus-certification combination the signing library allows.
 	if appearance, _ := formFileBytes(nil, r, "appearance"); len(appearance) > 0 {
-		pdfBytes, err = pdfops.StampImages(pdfBytes, []pdfops.Stamp{{Page: p.Page, Rect: p.Rect, PNG: appearance}})
+		pdfBytes, err = pdfops.StampWatermark(pdfBytes, appearance)
 		if err != nil {
 			httpError(w, http.StatusInternalServerError, "could not stamp appearance")
 			return

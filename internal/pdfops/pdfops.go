@@ -220,6 +220,25 @@ func StampImages(pdf []byte, stamps []Stamp) ([]byte, error) {
 	return out.Bytes(), nil
 }
 
+// StampWatermark bakes png as a small image watermark in the bottom-right margin
+// of every page, sized relative to each page so it sits the same way on any page
+// size. Finalize uses it to mark the whole document before signing.
+func StampWatermark(pdf, png []byte) ([]byte, error) {
+	if len(png) == 0 {
+		return pdf, nil
+	}
+	desc := "position:br, offset:-24 30, scalefactor:0.16 rel, rotation:0"
+	wm, err := api.ImageWatermarkForReader(bytes.NewReader(png), desc, true, false, types.POINTS)
+	if err != nil {
+		return nil, err
+	}
+	var out bytes.Buffer
+	if err := api.AddWatermarks(bytes.NewReader(pdf), &out, nil, wm, model.NewDefaultConfiguration()); err != nil {
+		return nil, err
+	}
+	return out.Bytes(), nil
+}
+
 // Encrypt password-protects a PDF with AES (user password = owner password).
 func Encrypt(pdf []byte, password string) ([]byte, error) {
 	conf := model.NewDefaultConfiguration()
