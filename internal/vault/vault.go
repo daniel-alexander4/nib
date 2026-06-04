@@ -205,7 +205,9 @@ func OpenSSH(dir string) (*Vault, error) {
 			continue
 		}
 		var c Contents
-		if err := json.Unmarshal(plain, &c); err != nil {
+		err = json.Unmarshal(plain, &c)
+		zero(plain) // scrub the decrypted plaintext (carries the signing key), as Migrate does
+		if err != nil {
 			return nil, fmt.Errorf("corrupt vault contents: %w", err)
 		}
 		return &Vault{path: Path(dir), key: key, ssh: env.SSH, current: slot.PubKey, contents: c, builtinImages: loadBuiltinSignatures()}, nil

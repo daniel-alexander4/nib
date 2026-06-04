@@ -1290,10 +1290,13 @@ function applyStyle(style) {
   // Toolbar mode hides the menubar, so the always-on chrome rides on the toolbar.
   (style === 'toolbar' ? els.toolbar : els.menubar).appendChild(els.statusCluster);
 }
-function saveSettings(body) {
-  apiFetch('/api/settings', {
-    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
-  });
+async function saveSettings(body) {
+  try {
+    const res = await apiFetch('/api/settings', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+    });
+    if (!res.ok) toast('Could not save settings');
+  } catch { toast('Could not save settings'); }
 }
 all('.styleOpt').forEach((b) => {
   b.onclick = () => { applyStyle(b.dataset.styleVal); saveSettings({ toolbarStyle: b.dataset.styleVal }); };
