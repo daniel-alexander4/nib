@@ -24,7 +24,7 @@ type finalizeParams struct {
 // watermarkParam is the label text plus its style. Empty text means no watermark.
 type watermarkParam struct {
 	Text                  string `json:"text"`
-	pdfops.WatermarkStyle        // color, opacity, onTop, scale, angle
+	pdfops.WatermarkStyle        // color, opacity, scale, angle
 }
 
 // handleFinalize signs the posted (already form-filled / flattened) PDF with a

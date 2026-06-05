@@ -225,7 +225,6 @@ func StampImages(pdf []byte, stamps []Stamp) ([]byte, error) {
 type WatermarkStyle struct {
 	Color   string  `json:"color"`   // #RRGGBB
 	Opacity float64 `json:"opacity"` // 0..1
-	OnTop   bool    `json:"onTop"`   // over the content vs behind it
 	Scale   float64 `json:"scale"`   // page-relative size, 0..1
 	Angle   int     `json:"angle"`   // degrees
 }
@@ -270,7 +269,9 @@ func StampWatermark(pdf []byte, text string, st WatermarkStyle) ([]byte, error) 
 	st = st.sanitize()
 	desc := fmt.Sprintf("fontname:Helvetica, scalefactor:%.3f rel, fillcolor:%s, opacity:%.3f, rotation:%d, position:c",
 		st.Scale, st.Color, st.Opacity, st.Angle)
-	wm, err := api.TextWatermark(text, desc, st.OnTop, false, types.POINTS)
+	// Always drawn on top: a "behind" watermark is hidden by any page with an
+	// opaque background, inconsistently per page — opacity gives the subtle look.
+	wm, err := api.TextWatermark(text, desc, true, false, types.POINTS)
 	if err != nil {
 		return nil, err
 	}

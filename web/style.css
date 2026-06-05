@@ -458,11 +458,10 @@ input.ovl-check { appearance: auto; accent-color: #1a7f37; background: transpare
 .wmpreview-line { height: 4px; border-radius: 2px; background: #cacaca; position: relative; z-index: 1; }
 .wmpreview-line.short { width: 60%; }
 .wmpreview-mark {
-  position: absolute; left: 50%; top: 50%; z-index: 0;
+  position: absolute; left: 50%; top: 50%; z-index: 2;
   white-space: nowrap; font-weight: 700; pointer-events: none;
   transform: translate(-50%, -50%) rotate(-45deg);
 }
-.wmpreview.ontop .wmpreview-mark { z-index: 2; }
 .sigcard input[type="text"], .sigcard input[type="password"], .sigcard textarea {
   background: var(--crust); color: var(--text); border: 1px solid var(--surface1);
   border-radius: 6px; padding: 7px 9px; font: inherit; width: 360px;

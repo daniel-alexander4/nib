@@ -154,9 +154,9 @@ func TestStampWatermark(t *testing.T) {
 		t.Error("watermarked PDF is not larger than the original (nothing added?)")
 	}
 	// A bold on-top style must also produce a valid all-pages doc.
-	bold := WatermarkStyle{Color: "#cc0000", Opacity: 0.65, OnTop: true, Scale: 0.9, Angle: 30}
+	bold := WatermarkStyle{Color: "#cc0000", Opacity: 0.65, Scale: 0.9, Angle: 30}
 	if v, err := StampWatermark(pdf, "VOID", bold); err != nil {
-		t.Fatalf("on-top watermark: %v", err)
+		t.Fatalf("bold watermark: %v", err)
 	} else if n, _ := PageCount(v); n != 3 {
 		t.Errorf("on-top watermarked page count = %d, want 3", n)
 	}
