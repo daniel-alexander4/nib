@@ -5,9 +5,13 @@ import (
 	"image"
 	"image/color"
 	"image/png"
+	"math"
 	"testing"
 
 	"nib/internal/testpdf"
+
+	"github.com/pdfcpu/pdfcpu/pkg/api"
+	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
 )
 
 func pngBytes(t *testing.T, w, h int) []byte {
@@ -21,13 +25,48 @@ func pngBytes(t *testing.T, w, h int) []byte {
 	return buf.Bytes()
 }
 
+// rasterPage builds a RasterPage whose image is rendered at 2× the target point
+// size, mirroring how the client rasterizes (scale 2) before upload.
+func rasterPage(t *testing.T, wPt, hPt float64) RasterPage {
+	t.Helper()
+	return RasterPage{Image: pngBytes(t, int(wPt*2), int(hPt*2)), W: wPt, H: hPt}
+}
+
 func TestImagesToPDF(t *testing.T) {
-	pdf, err := ImagesToPDF([][]byte{pngBytes(t, 100, 140), pngBytes(t, 100, 140)})
+	pdf, err := ImagesToPDF([]RasterPage{rasterPage(t, 100, 140), rasterPage(t, 100, 140)})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !bytes.HasPrefix(pdf, []byte("%PDF")) {
 		t.Errorf("ImagesToPDF did not produce a PDF: %.10q", pdf)
+	}
+}
+
+// TestImagesToPDFPageSizes pins the rasterize-2× page-size fix: a page rasterized
+// at 2× (image is double its point size) must come out at its TRUE point size,
+// not the doubled pixel size, and a mix of sizes in one call is preserved per
+// page (the merge path).
+func TestImagesToPDFPageSizes(t *testing.T) {
+	pages := []RasterPage{
+		{Image: pngBytes(t, 1224, 1584), W: 612, H: 792}, // Letter, rasterized 2×
+		{Image: pngBytes(t, 1190, 1684), W: 595, H: 842}, // A4, rasterized 2×
+	}
+	pdf, err := ImagesToPDF(pages)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dims, err := api.PageDims(bytes.NewReader(pdf), model.NewDefaultConfiguration())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(dims) != len(pages) {
+		t.Fatalf("page count = %d, want %d", len(dims), len(pages))
+	}
+	for i, p := range pages {
+		if math.Round(dims[i].Width) != math.Round(p.W) || math.Round(dims[i].Height) != math.Round(p.H) {
+			t.Errorf("page %d size = %.1f×%.1f pt, want %.0f×%.0f (raster resolution must not change the page size)",
+				i+1, dims[i].Width, dims[i].Height, p.W, p.H)
+		}
 	}
 }
 
@@ -59,7 +98,7 @@ func TestExportFormJSON(t *testing.T) {
 
 func threePagePDF(t *testing.T) []byte {
 	t.Helper()
-	pdf, err := ImagesToPDF([][]byte{pngBytes(t, 80, 110), pngBytes(t, 80, 110), pngBytes(t, 80, 110)})
+	pdf, err := ImagesToPDF([]RasterPage{rasterPage(t, 80, 110), rasterPage(t, 80, 110), rasterPage(t, 80, 110)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -116,7 +155,7 @@ func TestRedactRemovesContent(t *testing.T) {
 		t.Fatal("fixture should contain the fullName field before redaction")
 	}
 
-	redacted, err := RedactPages(original, map[int][]byte{1: pngBytes(t, 200, 280)})
+	redacted, err := RedactPages(original, map[int]RasterPage{1: rasterPage(t, 612, 792)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -131,7 +170,7 @@ func TestRedactRemovesContent(t *testing.T) {
 
 func TestRedactKeepsOtherPagesVector(t *testing.T) {
 	original := threePagePDF(t)
-	redacted, err := RedactPages(original, map[int][]byte{2: pngBytes(t, 80, 110)})
+	redacted, err := RedactPages(original, map[int]RasterPage{2: rasterPage(t, 80, 110)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -189,7 +228,7 @@ func TestWatermarkStyleSanitize(t *testing.T) {
 
 func TestStampFields(t *testing.T) {
 	// One-page PDF from a blank image, then stamp a text field and a check.
-	pdf, err := ImagesToPDF([][]byte{pngBytes(t, 400, 560)})
+	pdf, err := ImagesToPDF([]RasterPage{{Image: pngBytes(t, 400, 560), W: 400, H: 560}})
 	if err != nil {
 		t.Fatal(err)
 	}

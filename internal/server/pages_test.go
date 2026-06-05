@@ -15,13 +15,13 @@ import (
 
 func threePagePDF(t *testing.T) []byte {
 	t.Helper()
-	var pages [][]byte
+	var pages []pdfops.RasterPage
 	for i := 0; i < 3; i++ {
-		img := image.NewRGBA(image.Rect(0, 0, 80, 110))
+		img := image.NewRGBA(image.Rect(0, 0, 160, 220))
 		img.Set(0, 0, color.RGBA{0, 0, 0, 255})
 		var buf bytes.Buffer
 		png.Encode(&buf, img)
-		pages = append(pages, buf.Bytes())
+		pages = append(pages, pdfops.RasterPage{Image: buf.Bytes(), W: 80, H: 110})
 	}
 	pdf, err := pdfops.ImagesToPDF(pages)
 	if err != nil {

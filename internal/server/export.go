@@ -47,7 +47,23 @@ func (s *Server) handleAssemble(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	pdf, err := pdfops.ImagesToPDF(images)
+	ws := r.MultipartForm.Value["pageW"]
+	hs := r.MultipartForm.Value["pageH"]
+	if len(ws) != len(images) || len(hs) != len(images) {
+		httpError(w, http.StatusBadRequest, "page images and sizes must match")
+		return
+	}
+	pages := make([]pdfops.RasterPage, len(images))
+	for i, img := range images {
+		pw, ph, ok := pageSize(ws[i], hs[i])
+		if !ok {
+			httpError(w, http.StatusBadRequest, "bad page size")
+			return
+		}
+		pages[i] = pdfops.RasterPage{Image: img, W: pw, H: ph}
+	}
+
+	pdf, err := pdfops.ImagesToPDF(pages)
 	if err != nil {
 		httpError(w, http.StatusInternalServerError, "could not assemble PDF")
 		return
