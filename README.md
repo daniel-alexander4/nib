@@ -67,16 +67,19 @@ rectangle. (Verified: a redacted page exposes no hidden text or form field.)
 
 ### Sign & finalize — tamper-evident
 **Finalize & sign** seals the document with a certification signature from an
-identity kept in your vault, stamps a visible "Finalized {date}", and optionally
-adds a password and a trusted RFC-3161 timestamp. Any later edit breaks the
-signature — that's the point. Export your public certificate so others can verify
-it's you. Every PDF you open also shows a **signature badge**: untampered,
-modified, or unsigned.
+identity kept in your vault and bakes in a visible watermark — a preset like
+**DRAFT**, **CONFIDENTIAL**, **FINALIZED**, **COPY**, or **VOID** (or your own
+text), with adjustable opacity, colour, size, and angle and a live preview —
+optionally with a trusted RFC-3161 timestamp. Any later edit breaks the signature
+— that's the point. Export your public certificate so others can verify it's you.
+Every PDF you open also shows a **signature badge**: untampered, modified, or
+unsigned.
 
 ### Pages & export
-Rotate, delete, **append**, and reorder pages. **Flatten** to a guaranteed-flat
-PDF, or export pages as PNGs (single or ZIP) and form data as JSON / CSV. Save
-back over the original, or as a flattened or editable copy.
+Rotate, delete, **append**, and reorder pages — **drag a page's thumbnail** in the
+sidebar to move it where you want. **Flatten** to a guaranteed-flat PDF, or export
+pages as PNGs (single or ZIP) and form data as JSON / CSV. Save back over the
+original, or as a flattened or editable copy.
 
 ### Choose your layout
 Pick how the commands are presented from **⚙ Settings → Layout**: the classic
