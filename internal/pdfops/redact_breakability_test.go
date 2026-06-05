@@ -62,7 +62,7 @@ func TestRedactLeavesNoResidualContent(t *testing.T) {
 		t.Fatal("detection sanity failed: secret not found in the original page-1 content")
 	}
 
-	redacted, err := RedactPages(original, map[int][]byte{1: pngBytes(t, 200, 280)})
+	redacted, err := RedactPages(original, map[int]RasterPage{1: rasterPage(t, 612, 792)})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -17,25 +17,62 @@ import (
 	"strings"
 
 	"github.com/pdfcpu/pdfcpu/pkg/api"
+	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/form"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/types"
 )
 
-// ImagesToPDF builds a PDF with one image per page. It is the rasterize path for
-// flatten and image export: the client renders each page to a PNG, the server
-// assembles them into a guaranteed-flat PDF.
-func ImagesToPDF(images [][]byte) ([]byte, error) {
-	imp, err := api.Import("", types.POINTS)
-	if err != nil {
-		return nil, err
+// RasterPage is a rasterized page image plus the point size its PDF page should
+// take. The client rasterizes at 2× for crispness, so the image's pixel
+// dimensions are double the page; carrying the target size explicitly keeps the
+// physical page at its true size instead of letting pdfcpu treat 1px as 1pt.
+type RasterPage struct {
+	Image []byte
+	W, H  float64 // target page size in PDF points
+}
+
+// ImagesToPDF builds a PDF with one image per page, each page sized to its
+// RasterPage's point dimensions. It is the rasterize path for flatten and image
+// export: the client renders each page to a PNG, the server assembles them into a
+// guaranteed-flat PDF at the original physical size.
+func ImagesToPDF(pages []RasterPage) ([]byte, error) {
+	segs := make([][]byte, len(pages))
+	for i, p := range pages {
+		b, err := imageToPage(p)
+		if err != nil {
+			return nil, err
+		}
+		segs[i] = b
 	}
-	readers := make([]io.Reader, len(images))
-	for i, img := range images {
-		readers[i] = bytes.NewReader(img)
+	if len(segs) == 1 {
+		return segs[0], nil
+	}
+	readers := make([]io.ReadSeeker, len(segs))
+	for i, b := range segs {
+		readers[i] = bytes.NewReader(b)
 	}
 	var out bytes.Buffer
-	if err := api.ImportImages(nil, &out, readers, imp, nil); err != nil {
+	if err := api.MergeRaw(readers, &out, false, model.NewDefaultConfiguration()); err != nil {
+		return nil, err
+	}
+	return out.Bytes(), nil
+}
+
+// imageToPage builds a one-page PDF whose page is exactly p.W×p.H points, with the
+// image scaled to fill it. pdfcpu's default Full anchor sizes the page to the
+// image's pixel dimensions (the 2× bug); a non-Full anchor with relative scale 1
+// instead sizes the page to PageDim and fills it (the image's aspect matches the
+// page, since it was rasterized from it).
+func imageToPage(p RasterPage) ([]byte, error) {
+	imp := &pdfcpu.Import{
+		PageDim: &types.Dim{Width: p.W, Height: p.H},
+		Pos:     types.Center,
+		Scale:   1.0,
+		InpUnit: types.POINTS,
+	}
+	var out bytes.Buffer
+	if err := api.ImportImages(nil, &out, []io.Reader{bytes.NewReader(p.Image)}, imp, nil); err != nil {
 		return nil, err
 	}
 	return out.Bytes(), nil
@@ -81,11 +118,12 @@ func Append(pdf, other []byte) ([]byte, error) {
 }
 
 // RedactPages rebuilds a PDF so that each page given in raster (1-based page
-// number -> a PNG of that page with the redaction boxes already painted in) is
-// replaced by that flat image, while every other page is kept as-is. Because a
+// number -> a RasterPage: a PNG of that page with the redaction boxes already
+// painted in, plus the page's true point size) is replaced by that flat image,
+// while every other page is kept as-is. Because a
 // redacted page becomes a pure image, the underlying text/content is genuinely
 // gone — not merely covered. This is the guaranteed-removal redaction.
-func RedactPages(original []byte, raster map[int][]byte) ([]byte, error) {
+func RedactPages(original []byte, raster map[int]RasterPage) ([]byte, error) {
 	n, err := PageCount(original)
 	if err != nil {
 		return nil, err
@@ -93,8 +131,8 @@ func RedactPages(original []byte, raster map[int][]byte) ([]byte, error) {
 	segments := make([]io.ReadSeeker, 0, n)
 	for i := 1; i <= n; i++ {
 		var seg []byte
-		if png, ok := raster[i]; ok {
-			seg, err = ImagesToPDF([][]byte{png})
+		if page, ok := raster[i]; ok {
+			seg, err = ImagesToPDF([]RasterPage{page})
 		} else {
 			seg, err = Reorder(original, []string{strconv.Itoa(i)}) // extract page i, vector intact
 		}

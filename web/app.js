@@ -947,11 +947,12 @@ els.saveAsGo.onclick = async () => {
 async function renderFilledPages(scale, onlyPage) {
   const bytes = await bakedBytes();
   const doc = await pdfjsLib.getDocument({ data: bytes }).promise;
-  const blobs = [];
+  const pages = [];
   const from = onlyPage || 1;
   const to = onlyPage || doc.numPages;
   for (let n = from; n <= to; n++) {
     const page = await doc.getPage(n);
+    const base = page.getViewport({ scale: 1 }); // points: the page's true physical size
     const vp = page.getViewport({ scale });
     const cv = document.createElement('canvas');
     cv.width = vp.width; cv.height = vp.height;
@@ -959,18 +960,23 @@ async function renderFilledPages(scale, onlyPage) {
       canvasContext: cv.getContext('2d'), viewport: vp,
       annotationMode: pdfjsLib.AnnotationMode.ENABLE,
     }).promise;
-    blobs.push(await new Promise((r) => cv.toBlob(r, 'image/png')));
+    const blob = await new Promise((r) => cv.toBlob(r, 'image/png'));
+    pages.push({ blob, w: base.width, h: base.height });
   }
-  return blobs;
+  return pages;
 }
 
 // assembleBlob rasterises every (filled, stamped) page and packages it server-
 // side into a flattened image-PDF or a ZIP of PNGs. Returns the blob, or null on
 // failure.
 async function assembleBlob(format) {
-  const blobs = await renderFilledPages(2);
+  const pages = await renderFilledPages(2);
   const form = new FormData();
-  blobs.forEach((b, i) => form.append('image', b, `page-${i + 1}.png`));
+  pages.forEach((p, i) => {
+    form.append('image', p.blob, `page-${i + 1}.png`);
+    form.append('pageW', String(p.w));
+    form.append('pageH', String(p.h));
+  });
   form.append('format', format);
   const res = await apiFetch('/api/assemble', { method: 'POST', body: form });
   if (!res.ok) { toast('export failed'); return null; }
@@ -996,7 +1002,7 @@ els.saveEditableBtn.onclick = async () => {
 
 els.exportPngBtn.onclick = async () => {
   if (!pdfDocument) return;
-  const [blob] = await renderFilledPages(2, viewer.currentPageNumber);
+  const [{ blob }] = await renderFilledPages(2, viewer.currentPageNumber);
   openSaveAs(blob, exportBase() + '-page' + viewer.currentPageNumber + '.png', 'Export page (PNG)');
 };
 
@@ -1204,6 +1210,7 @@ els.applyRedactBtn.onclick = async () => {
   for (const [pageStr, marks] of Object.entries(byPage)) {
     const n = Number(pageStr);
     const page = await doc.getPage(n);
+    const base = page.getViewport({ scale: 1 }); // points: the page's true physical size
     const vp = page.getViewport({ scale: 2 });
     const cv = document.createElement('canvas');
     cv.width = vp.width; cv.height = vp.height;
@@ -1214,6 +1221,8 @@ els.applyRedactBtn.onclick = async () => {
     const blob = await new Promise((r) => cv.toBlob(r, 'image/png'));
     form.append('page', blob, `page-${n}.png`);
     form.append('pageNum', String(n));
+    form.append('pageW', String(base.width));
+    form.append('pageH', String(base.height));
   }
 
   const res = await apiFetch('/api/redact', { method: 'POST', body: form });

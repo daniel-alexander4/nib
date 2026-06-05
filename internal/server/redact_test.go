@@ -35,8 +35,10 @@ func TestRedactRemovesContent(t *testing.T) {
 	fw, _ := mw.CreateFormFile("pdf", "doc.pdf")
 	fw.Write(form)
 	iw, _ := mw.CreateFormFile("page", "page-1.png")
-	png.Encode(iw, image.NewRGBA(image.Rect(0, 0, 200, 280)))
+	png.Encode(iw, image.NewRGBA(image.Rect(0, 0, 1224, 1584)))
 	mw.WriteField("pageNum", "1")
+	mw.WriteField("pageW", "612")
+	mw.WriteField("pageH", "792")
 	mw.Close()
 
 	resp := write(t, c, csrf, http.MethodPost, ts.URL+"/api/redact", mw.FormDataContentType(), &buf)

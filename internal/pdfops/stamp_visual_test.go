@@ -23,7 +23,7 @@ func TestStampImagesVisual(t *testing.T) {
 	if err := png.Encode(&bgBuf, bg); err != nil {
 		t.Fatal(err)
 	}
-	base, err := ImagesToPDF([][]byte{bgBuf.Bytes()})
+	base, err := ImagesToPDF([]RasterPage{{Image: bgBuf.Bytes(), W: 612, H: 792}})
 	if err != nil {
 		t.Fatal(err)
 	}
