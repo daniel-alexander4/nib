@@ -6,22 +6,33 @@ import (
 	"image/color"
 	"image/png"
 	"io"
+	"math"
 	"mime/multipart"
 	"net/http"
 	"testing"
 
 	"nib/internal/pdfops"
+
+	"github.com/pdfcpu/pdfcpu/pkg/api"
+	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
 )
+
+func pageImage(t *testing.T, w, h int) []byte {
+	t.Helper()
+	img := image.NewRGBA(image.Rect(0, 0, w, h))
+	img.Set(0, 0, color.RGBA{0, 0, 0, 255})
+	var buf bytes.Buffer
+	if err := png.Encode(&buf, img); err != nil {
+		t.Fatal(err)
+	}
+	return buf.Bytes()
+}
 
 func threePagePDF(t *testing.T) []byte {
 	t.Helper()
 	var pages []pdfops.RasterPage
 	for i := 0; i < 3; i++ {
-		img := image.NewRGBA(image.Rect(0, 0, 160, 220))
-		img.Set(0, 0, color.RGBA{0, 0, 0, 255})
-		var buf bytes.Buffer
-		png.Encode(&buf, img)
-		pages = append(pages, pdfops.RasterPage{Image: buf.Bytes(), W: 80, H: 110})
+		pages = append(pages, pdfops.RasterPage{Image: pageImage(t, 160, 220), W: 80, H: 110})
 	}
 	pdf, err := pdfops.ImagesToPDF(pages)
 	if err != nil {
@@ -55,5 +66,54 @@ func TestPageDeleteUpdatesDocument(t *testing.T) {
 	pdfResp.Body.Close()
 	if n, _ := pdfops.PageCount(got); n != 2 {
 		t.Errorf("current document page count = %d, want 2", n)
+	}
+}
+
+func TestPageReorderUpdatesDocument(t *testing.T) {
+	ts, path := startServer(t)
+	c, csrf := authedClient(t, ts)
+	openByPath(t, ts.URL, c, csrf, path) // ensures a current document exists
+
+	// Three pages of distinct widths so the new order is observable, not just the
+	// page count (identical pages couldn't prove a reorder happened).
+	doc, err := pdfops.ImagesToPDF([]pdfops.RasterPage{
+		{Image: pageImage(t, 160, 220), W: 80, H: 110},
+		{Image: pageImage(t, 200, 240), W: 100, H: 120},
+		{Image: pageImage(t, 120, 180), W: 60, H: 90},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var buf bytes.Buffer
+	mw := multipart.NewWriter(&buf)
+	fw, _ := mw.CreateFormFile("pdf", "doc.pdf")
+	fw.Write(doc)
+	mw.WriteField("op", "reorder")
+	mw.WriteField("pages", "3,1,2")
+	mw.Close()
+
+	resp := write(t, c, csrf, http.MethodPost, ts.URL+"/api/pages", mw.FormDataContentType(), &buf)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("page reorder status = %d, want 200", resp.StatusCode)
+	}
+
+	pdfResp, _ := c.Get(ts.URL + "/api/pdf")
+	got, _ := io.ReadAll(pdfResp.Body)
+	pdfResp.Body.Close()
+	dims, err := api.PageDims(bytes.NewReader(got), model.NewDefaultConfiguration())
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Original widths 80,100,60 in order 3,1,2 -> 60,80,100.
+	want := []float64{60, 80, 100}
+	if len(dims) != len(want) {
+		t.Fatalf("page count = %d, want %d", len(dims), len(want))
+	}
+	for i, w := range want {
+		if math.Round(dims[i].Width) != w {
+			t.Errorf("page %d width = %.1f pt, want %.0f (reorder 3,1,2 not applied)", i+1, dims[i].Width, w)
+		}
 	}
 }

@@ -514,6 +514,7 @@ async function buildThumbnails(gen = docGen) {
     const wrap = document.createElement('div');
     wrap.className = 'thumbwrap';
     wrap.dataset.page = n;
+    wrap.draggable = true;
     const canvas = document.createElement('canvas');
     canvas.className = 'thumb';
     canvas.width = viewport.width;
@@ -544,6 +545,67 @@ function markCurrentThumb(n) {
     c.classList.toggle('current', Number(c.dataset.page) === n);
   });
 }
+
+// --- thumbnail drag-to-reorder ----------------------------------------------
+// Dragging a thumbnail live-moves it among its siblings; on drop, the new
+// thumbnail order (each .thumbwrap's original page number) is sent as a reorder.
+// A cancelled drag restores the original DOM order so a thumbnail's click target
+// never diverges from its position.
+let dragSrc = null;      // the .thumbwrap being dragged
+let dragOrig = null;     // snapshot of the grid's child order, for cancel revert
+let dragDropped = false; // a real drop committed this drag
+
+function onThumbDragStart(e) {
+  const wrap = e.target.closest('.thumbwrap');
+  if (!wrap) return;
+  dragSrc = wrap;
+  dragOrig = [...els.thumbGrid.children];
+  dragDropped = false;
+  wrap.classList.add('dragging');
+  e.dataTransfer.effectAllowed = 'move';
+  e.dataTransfer.setData('text/plain', wrap.dataset.page); // payload required to drag in Firefox
+}
+
+function onThumbDragOver(e) {
+  if (!dragSrc) return;
+  e.preventDefault(); // allow drop
+  e.dataTransfer.dropEffect = 'move';
+  const after = thumbBelow(e.clientY);
+  if (after) els.thumbGrid.insertBefore(dragSrc, after);
+  else els.thumbGrid.appendChild(dragSrc);
+}
+
+// thumbBelow returns the first thumbnail whose vertical midpoint is below the
+// cursor (where the dragged thumbnail should be inserted before), or null for end.
+function thumbBelow(y) {
+  return [...els.thumbGrid.querySelectorAll('.thumbwrap:not(.dragging)')].find((w) => {
+    const r = w.getBoundingClientRect();
+    return y < r.top + r.height / 2;
+  }) || null;
+}
+
+function onThumbDrop(e) {
+  if (!dragSrc) return;
+  e.preventDefault();
+  dragDropped = true;
+  const order = [...els.thumbGrid.querySelectorAll('.thumbwrap')].map((w) => w.dataset.page);
+  if (order.join(',') !== dragOrig.map((w) => w.dataset.page).join(',')) {
+    pageOp('reorder', { pages: order.join(',') });
+  }
+}
+
+function onThumbDragEnd() {
+  if (dragSrc) dragSrc.classList.remove('dragging');
+  if (!dragDropped && dragOrig) dragOrig.forEach((w) => els.thumbGrid.appendChild(w)); // cancelled — restore order
+  dragSrc = null;
+  dragOrig = null;
+  dragDropped = false;
+}
+
+els.thumbGrid.addEventListener('dragstart', onThumbDragStart);
+els.thumbGrid.addEventListener('dragover', onThumbDragOver);
+els.thumbGrid.addEventListener('drop', onThumbDrop);
+els.thumbGrid.addEventListener('dragend', onThumbDragEnd);
 
 // --- page operations (M7): bake edits, apply server-side, reload -------------
 async function pageOp(op, extra = {}) {
