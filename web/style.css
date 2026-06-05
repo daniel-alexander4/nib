@@ -209,7 +209,8 @@ input[type="search"] { width: 100%; }
 
 /* thumbnails */
 .thumbactions { margin-bottom: 8px; }
-.thumbwrap { position: relative; margin-bottom: 10px; text-align: center; }
+.thumbwrap { position: relative; margin-bottom: 10px; text-align: center; cursor: grab; }
+.thumbwrap.dragging { opacity: 0.4; cursor: grabbing; }
 .thumb {
   display: block;
   margin: 0 auto;
