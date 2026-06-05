@@ -320,19 +320,6 @@ func StampWatermark(pdf []byte, text string, st WatermarkStyle) ([]byte, error) 
 	return out.Bytes(), nil
 }
 
-// Encrypt password-protects a PDF with AES (user password = owner password).
-func Encrypt(pdf []byte, password string) ([]byte, error) {
-	conf := model.NewDefaultConfiguration()
-	conf.UserPW = password
-	conf.OwnerPW = password
-	conf.EncryptUsingAES = true
-	var out bytes.Buffer
-	if err := api.Encrypt(bytes.NewReader(pdf), &out, conf); err != nil {
-		return nil, err
-	}
-	return out.Bytes(), nil
-}
-
 // ExportFormJSON returns the form field data of pdf as pdfcpu's JSON.
 func ExportFormJSON(pdf []byte) ([]byte, error) {
 	var out bytes.Buffer

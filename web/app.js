@@ -52,7 +52,7 @@ const els = {
   exportFormJsonBtn: $('exportFormJsonBtn'), exportFormCsvBtn: $('exportFormCsvBtn'),
   exportCertBtn: $('exportCertBtn'),
   finalizeModal: $('finalizeModal'), fzText: $('fzText'), fzDate: $('fzDate'),
-  fzPw: $('fzPw'), fzTsa: $('fzTsa'), fzTsaOn: $('fzTsaOn'), fzCancel: $('fzCancel'), fzGo: $('fzGo'),
+  fzTsa: $('fzTsa'), fzTsaOn: $('fzTsaOn'), fzCancel: $('fzCancel'), fzGo: $('fzGo'),
   fzOpacity: $('fzOpacity'), fzSize: $('fzSize'), fzAngle: $('fzAngle'), fzColor: $('fzColor'),
   fzPreviewMark: $('fzPreviewMark'),
   profileModal: $('profileModal'), profileText: $('profileText'),
@@ -1128,7 +1128,7 @@ els.fzGo.onclick = async () => {
       scale: els.fzSize.value / 100,
       angle: Number(els.fzAngle.value),
     },
-    tsaUrl: els.fzTsaOn.checked ? els.fzTsa.value.trim() : '', password: els.fzPw.value,
+    tsaUrl: els.fzTsaOn.checked ? els.fzTsa.value.trim() : '',
   }));
   const res = await apiFetch('/api/finalize', { method: 'POST', body: form });
   if (!res.ok) { toast('Could not finalize'); return; }
