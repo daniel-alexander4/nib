@@ -7,10 +7,9 @@
 # github.com/goreleaser/nfpm/v2/cmd/nfpm@latest).
 #
 # With --publish it also pushes the current branch and uploads the public
-# binaries to a GitHub release tagged v<version> (needs the gh CLI). When the
-# maintainer's local sig source is present it additionally builds the embed-keys
-# nib-sig for linux/amd64 — but --publish only ever uploads the public `nib`
-# binaries, so what it publishes is always safe to share.
+# binaries to a GitHub release tagged v<version> (needs the gh CLI). build.sh
+# only ever builds the public `nib` binaries — never the embed-keys nib-sig
+# variant — so what it publishes is always safe to share.
 set -euo pipefail
 cd "$(dirname "$0")"
 
@@ -41,17 +40,6 @@ for t in "${targets[@]}"; do
   CGO_ENABLED=0 GOOS="$os" GOARCH="$arch" go build -trimpath \
     -ldflags "-s -w -X main.version=$VERSION" -o "$out" ./cmd/nib
 done
-
-# Local-only extra: also build the embed-keys nib-sig for linux/amd64. The
-# embedkeys tag has nothing to embed on a public clone, so the build fails there
-# and is skipped. Never published — the --publish globs below match only `nib`.
-sig="$DIST/nib-sig-$VERSION-linux-amd64"
-if CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -tags embedkeys -trimpath \
-     -ldflags "-s -w -X main.version=$VERSION" -o "$sig" ./cmd/nib 2>/dev/null; then
-  echo "built $sig (local sig variant)"
-else
-  rm -f "$sig"
-fi
 
 if command -v nfpm >/dev/null 2>&1; then
   for arch in amd64 arm64; do
