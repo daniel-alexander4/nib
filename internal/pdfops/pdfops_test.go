@@ -70,20 +70,6 @@ func TestImagesToPDFPageSizes(t *testing.T) {
 	}
 }
 
-func TestEncrypt(t *testing.T) {
-	pdf, _ := testpdf.Form()
-	enc, err := Encrypt(pdf, "hunter2")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if bytes.Equal(enc, pdf) {
-		t.Error("encrypted output is identical to input")
-	}
-	if !bytes.HasPrefix(enc, []byte("%PDF")) {
-		t.Error("encrypted output is not a PDF")
-	}
-}
-
 func TestExportFormJSON(t *testing.T) {
 	pdf, _ := testpdf.Form()
 	data, err := ExportFormJSON(pdf)

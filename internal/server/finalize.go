@@ -18,7 +18,6 @@ type finalizeParams struct {
 	Reason    string         `json:"reason"`
 	Watermark watermarkParam `json:"watermark"`
 	TSAURL    string         `json:"tsaUrl"`
-	Password  string         `json:"password"` // optional output protection
 }
 
 // watermarkParam is the label text plus its style. Empty text means no watermark.
@@ -86,13 +85,13 @@ func (s *Server) handleFinalize(w http.ResponseWriter, r *http.Request) {
 		httpError(w, http.StatusInternalServerError, "could not sign: "+err.Error())
 		return
 	}
-	if p.Password != "" {
-		signed, err = pdfops.Encrypt(signed, p.Password)
-		if err != nil {
-			httpError(w, http.StatusInternalServerError, "could not protect output")
-			return
-		}
-	}
+	// TRIPWIRE: do not password-protect the signed output here. Encrypting after
+	// signing rewrites the file and invalidates the certification signature's
+	// ByteRange (a silent tamper-evidence failure), and the current libraries have
+	// no encryption-aware signing (digitorus/pdfsign cannot sign or emit encrypted
+	// PDFs; pdfcpu's Encrypt is signature-unaware). Confidentiality and certification
+	// are mutually exclusive here — if password protection is ever wanted, it belongs
+	// in a separate, signature-free export, not bolted onto finalize.
 	sendDownload(w, "finalized.pdf", "application/pdf", signed)
 }
 
