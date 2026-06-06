@@ -43,6 +43,7 @@
           <input id="restoreInput" type="file" accept=".nib" hidden /></label>
         <div class="sep"></div>
         <button id="checkUpdatesBtn">Check for updates…</button>
+        <button id="aboutBtn">About Nib…</button>
       </div>
     </div>
 
@@ -148,6 +149,7 @@
         <button data-forward="restoreInput">Restore vault…</button>
         <div class="sep"></div>
         <button data-forward="checkUpdatesBtn">Check for updates…</button>
+        <button data-forward="aboutBtn">About Nib…</button>
       </div>
     </div>
 
@@ -476,6 +478,52 @@
       <div class="sigbtns">
         <span class="grow"></span>
         <button id="keysClose">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- About: the version, an honest plain-English account of what a Nib
+       signature does and doesn't prove, and the in-app licence / third-party
+       notices (fetched from /legal/, the same files that ship). -->
+  <div id="aboutModal" hidden>
+    <div class="sigcard aboutcard">
+      <h3 id="aboutTitle">About Nib</h3>
+
+      <div id="aboutMain">
+        <p class="aboutver">Version <span id="aboutVersion">—</span> ·
+          <a href="https://github.com/daniel-alexander4/nib" target="_blank" rel="noopener">project home</a></p>
+        <p>Nib fills, signs, and redacts PDFs entirely on this computer. Your
+          documents are never uploaded.</p>
+
+        <h4>What a Nib signature proves</h4>
+        <p>When you <strong>Finalize &amp; sign</strong>, Nib certifies the document so any
+          later change is detectable. A valid signature shows three things:</p>
+        <ul>
+          <li><strong>Tamper-evidence</strong> — the document hasn't changed since it was signed.</li>
+          <li><strong>Key-holder</strong> — it was signed by whoever holds your signing key.</li>
+          <li><strong>Time</strong> — when it was signed (independently verifiable if you add a timestamp authority).</li>
+        </ul>
+
+        <h4>What it doesn't prove</h4>
+        <p>Your signing identity is <strong>self-generated on this machine</strong> — it is
+          <strong>not</strong> vouched for by a certificate authority or any third party. So a
+          Nib signature does <strong>not</strong> establish your legal identity to someone who
+          doesn't already trust your key, and it is not a qualified electronic signature (QES).
+          It proves the document is intact and was signed by your key — not who you are to a
+          stranger.</p>
+
+        <p class="libhint">Nib is free software under the GPLv3 and bundles third-party
+          open-source components.</p>
+      </div>
+
+      <pre id="aboutDocText" class="aboutdoc" hidden></pre>
+
+      <div class="sigbtns">
+        <button id="aboutLicenseBtn">Licence (GPLv3)</button>
+        <button id="aboutNoticesBtn">Third-party notices</button>
+        <button id="aboutBackBtn" hidden>← Back</button>
+        <span class="grow"></span>
+        <button id="aboutClose">Close</button>
       </div>
     </div>
   </div>
