@@ -63,6 +63,10 @@ const els = {
   openModal: $('openModal'), openDir: $('openDir'), openHere: $('openHere'),
   openUp: $('openUp'), openList: $('openList'), openCancel: $('openCancel'),
   autoUpdateChk: $('autoUpdateChk'),
+  aboutBtn: $('aboutBtn'), aboutModal: $('aboutModal'), aboutTitle: $('aboutTitle'),
+  aboutMain: $('aboutMain'), aboutDocText: $('aboutDocText'), aboutVersion: $('aboutVersion'),
+  aboutLicenseBtn: $('aboutLicenseBtn'), aboutNoticesBtn: $('aboutNoticesBtn'),
+  aboutBackBtn: $('aboutBackBtn'), aboutClose: $('aboutClose'),
 };
 
 // Controls duplicated across the menubar and toolbar are addressed by class.
@@ -108,6 +112,7 @@ els.introOverlay.addEventListener('click', (e) => {
 // applyStatus drives the UI from /api/status.
 function applyStatus(st) {
   authState = st.state;
+  els.aboutVersion.textContent = st.version || 'dev';
   if (st.state === 'ready') {
     csrf = st.csrf;
     els.authOverlay.hidden = true;
@@ -347,6 +352,33 @@ async function removeKey(pubKey, label) {
 
 els.manageKeysBtn.onclick = () => { els.keysModal.hidden = false; loadKeys(); };
 els.keysClose.onclick = () => { els.keysModal.hidden = true; };
+
+// About dialog: explainer by default; the licence/notices buttons swap the body
+// for the embedded /legal/ document, and Back returns to the explainer.
+function showAboutMain() {
+  els.aboutTitle.textContent = 'About Nib';
+  els.aboutMain.hidden = false;
+  els.aboutDocText.hidden = true;
+  els.aboutLicenseBtn.hidden = els.aboutNoticesBtn.hidden = false;
+  els.aboutBackBtn.hidden = true;
+}
+async function showAboutDoc(title, path) {
+  els.aboutDocText.textContent = 'Loading…';
+  els.aboutTitle.textContent = title;
+  els.aboutMain.hidden = true;
+  els.aboutDocText.hidden = false;
+  els.aboutLicenseBtn.hidden = els.aboutNoticesBtn.hidden = true;
+  els.aboutBackBtn.hidden = false;
+  try {
+    const res = await fetch(path);
+    els.aboutDocText.textContent = res.ok ? await res.text() : 'Could not load document.';
+  } catch { els.aboutDocText.textContent = 'Could not load document.'; }
+}
+els.aboutBtn.onclick = () => { showAboutMain(); els.aboutModal.hidden = false; };
+els.aboutClose.onclick = () => { els.aboutModal.hidden = true; };
+els.aboutBackBtn.onclick = showAboutMain;
+els.aboutLicenseBtn.onclick = () => showAboutDoc('Licence (GPLv3)', '/legal/LICENSE');
+els.aboutNoticesBtn.onclick = () => showAboutDoc('Third-party notices', '/legal/THIRD-PARTY-NOTICES.md');
 els.keyAddBtn.onclick = () => {
   const pubKey = els.keyPaste.value.trim();
   if (!pubKey) { toast('Paste a public key first'); return; }

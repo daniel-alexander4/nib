@@ -147,6 +147,7 @@ type statusResponse struct {
 	AutoUpdate        bool     `json:"autoUpdate"`               // run the startup update check (effective: env AND user preference)
 	UpdateCheckLocked bool     `json:"updateCheckLocked"`        // NIB_NO_UPDATE_CHECK forces the check off; the UI toggle can't override it
 	ToolbarStyle      string   `json:"toolbarStyle,omitempty"`   // menus | toolbar | both (saved layout preference)
+	Version           string   `json:"version"`                  // running build, shown in the About dialog
 }
 
 // currentStatus describes how (and whether) the vault can be unlocked, stamped
@@ -154,6 +155,7 @@ type statusResponse struct {
 // a hard override that wins over the saved auto-update preference.
 func (s *Server) currentStatus() statusResponse {
 	st := s.vaultStatus()
+	st.Version = s.version
 	envAllows := os.Getenv("NIB_NO_UPDATE_CHECK") == ""
 	st.UpdateCheckLocked = !envAllows
 	st.AutoUpdate = envAllows

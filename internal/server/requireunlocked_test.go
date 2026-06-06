@@ -28,7 +28,7 @@ func TestEnsureUnlockedConcurrent(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	s := New(os.DirFS("."), dir, "test")
+	s := New(os.DirFS("."), os.DirFS("."), dir, "test")
 	var wg sync.WaitGroup
 	for i := 0; i < 20; i++ {
 		wg.Add(1)
@@ -60,7 +60,7 @@ func unlockedServer(t *testing.T) (*Server, *vault.Vault) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s := New(os.DirFS("."), dir, "test")
+	s := New(os.DirFS("."), os.DirFS("."), dir, "test")
 	s.vault = v
 	s.csrf = "test-token"
 	return s, v
@@ -101,7 +101,7 @@ func TestRequireUnlockedPinsVaultToRequest(t *testing.T) {
 // TestRequireUnlockedRejectsLocked confirms the gate still 401s when no vault is
 // open, and never reaches the handler (so vaultFrom is never nil inside one).
 func TestRequireUnlockedRejectsLocked(t *testing.T) {
-	s := New(os.DirFS("."), t.TempDir(), "test") // s.vault stays nil (locked)
+	s := New(os.DirFS("."), os.DirFS("."), t.TempDir(), "test") // s.vault stays nil (locked)
 
 	called := false
 	probe := func(w http.ResponseWriter, r *http.Request) { called = true }

@@ -195,3 +195,7 @@ engine), all under GPLv3-compatible permissive licenses (BSD, MIT, Apache-2.0).
 Their required copyright and license notices are collected in
 [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md), regenerated with
 `build/gen-notices.sh`.
+
+**File → About Nib…** shows these in-app — a plain-English account of what a Nib
+signature does and doesn't prove, plus the licence and third-party notices read
+straight from the shipped files.

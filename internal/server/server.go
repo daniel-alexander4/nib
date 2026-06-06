@@ -38,8 +38,9 @@ type document struct {
 // Server holds the embedded UI, the auth session, and the current document.
 type Server struct {
 	web       fs.FS
+	legal     fs.FS  // LICENSE + THIRD-PARTY-NOTICES.md, served read-only for the About dialog
 	configDir string // where the vault lives (os.UserConfigDir()/nib)
-	version   string // running build version, reported by the update check
+	version   string // running build version, reported by the update check and the About dialog
 
 	setupMu sync.Mutex // serializes first-run vault setup so AutoSetup runs once
 
@@ -49,10 +50,11 @@ type Server struct {
 	doc   *document    // current open PDF
 }
 
-// New returns a Server serving the given UI asset tree, with its vault in
-// configDir. version is the running build, surfaced by the update check.
-func New(web fs.FS, configDir, version string) *Server {
-	return &Server{web: web, configDir: configDir, version: version}
+// New returns a Server serving the given UI asset tree (and licence texts), with
+// its vault in configDir. version is the running build, surfaced by the update
+// check and the About dialog.
+func New(web, legal fs.FS, configDir, version string) *Server {
+	return &Server{web: web, legal: legal, configDir: configDir, version: version}
 }
 
 // Handler builds the HTTP routes. Status and key enrollment/migration are public
@@ -101,6 +103,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/images", s.requireUnlocked(s.handleImageAdd))
 	mux.HandleFunc("GET /api/images/{id}", s.requireUnlocked(s.handleImageGet))
 	mux.HandleFunc("DELETE /api/images/{id}", s.requireUnlocked(s.handleImageDelete))
+
+	// Licence texts (public, read-only) — the About dialog fetches these.
+	mux.Handle("GET /legal/", http.StripPrefix("/legal/", http.FileServerFS(s.legal)))
 
 	// Static UI (public — it renders the first-run wizard).
 	mux.Handle("/", http.FileServerFS(s.web))
