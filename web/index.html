@@ -100,6 +100,7 @@
         <button id="updateDismiss" type="button" title="Dismiss">✕</button>
       </span>
       <span id="sigBadge" class="badge badge-none" title="Signature status">no document</span>
+      <button id="sigDetailsBtn" class="badge-link" hidden title="Signature details">details</button>
     </div>
   </header>
 
@@ -382,6 +383,19 @@
         <button id="profileCancel">Cancel</button>
         <button id="profileSave" class="primary">Save profile</button>
       </div>
+    </div>
+  </div>
+
+  <!-- Signature details: per-signer integrity + how much each signing time
+       can be trusted. Read-only; opened from the badge's "details" link. -->
+  <div id="sigDetailsModal" hidden>
+    <div class="sigcard">
+      <h3>Signature details</h3>
+      <div id="sigDetailsBody" class="sigdetails"></div>
+      <p class="libhint">Nib verifies <strong>integrity</strong> — that a document is unchanged
+        since it was signed. Identities are self-generated, not vouched for by a certificate
+        authority, so a signature proves a key-holder signed it, not who they legally are.</p>
+      <div class="sigbtns"><span class="grow"></span><button id="sigDetailsClose" class="primary">Close</button></div>
     </div>
   </div>
 

@@ -73,7 +73,9 @@ text), with adjustable opacity, colour, size, and angle and a live preview —
 optionally with a trusted RFC-3161 timestamp. Any later edit breaks the signature
 — that's the point. Export your public certificate so others can verify it's you.
 Every PDF you open also shows a **signature badge**: untampered, modified, or
-unsigned.
+unsigned. Click **details** for the full picture — every signer (not just the
+first), and whether each signing time is backed by an independent timestamp
+authority or merely stated by the signer.
 
 ### Pages & export
 Rotate, delete, **append**, and reorder pages — **drag a page's thumbnail** in the
