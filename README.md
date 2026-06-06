@@ -131,6 +131,11 @@ Cross-compiles a static, cgo-free binary for **Linux, macOS, and Windows**
 (amd64 + arm64) into `dist/`, plus Linux `.deb` packages. On macOS and Windows
 you run the binary directly — it's fully self-contained.
 
+A `Makefile` wraps these: `make dist` regenerates the third-party notices and
+runs the cross-compile/package; `make install` does the same for a local
+install; `make notices` regenerates [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md)
+on its own.
+
 ### Staying up to date
 At startup Nib asks GitHub for its latest release version; if a newer one exists,
 a pill appears at the top that downloads the build matching your OS and
