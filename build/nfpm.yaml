@@ -23,3 +23,12 @@ contents:
     dst: /usr/share/icons/hicolor/scalable/apps/nib.svg
     file_info:
       mode: 0644
+  # License + third-party attribution (regenerate notices with build/gen-notices.sh).
+  - src: LICENSE
+    dst: /usr/share/doc/nib/copyright
+    file_info:
+      mode: 0644
+  - src: THIRD-PARTY-NOTICES.md
+    dst: /usr/share/doc/nib/THIRD-PARTY-NOTICES.md
+    file_info:
+      mode: 0644
