@@ -30,3 +30,20 @@ func TestWebAssetsEmbedded(t *testing.T) {
 		}
 	}
 }
+
+// The About dialog shows the GPLv3 licence and third-party attributions by
+// serving these embedded files; if either drops out of the embed the in-app
+// view (and our licence-compliance claim) silently breaks.
+func TestLegalFilesEmbedded(t *testing.T) {
+	legal := LegalFS()
+	for _, name := range []string{"LICENSE", "THIRD-PARTY-NOTICES.md"} {
+		info, err := fs.Stat(legal, name)
+		if err != nil {
+			t.Errorf("legal file %q not embedded: %v", name, err)
+			continue
+		}
+		if info.Size() == 0 {
+			t.Errorf("legal file %q is empty", name)
+		}
+	}
+}
