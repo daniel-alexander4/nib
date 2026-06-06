@@ -43,6 +43,8 @@ const els = {
   imageGrid: $('imageGrid'),
   sigModal: $('sigModal'), sigCanvas: $('sigCanvas'),
   sigClear: $('sigClear'), sigCancel: $('sigCancel'), sigSave: $('sigSave'),
+  sigDetailsBtn: $('sigDetailsBtn'), sigDetailsModal: $('sigDetailsModal'),
+  sigDetailsBody: $('sigDetailsBody'), sigDetailsClose: $('sigDetailsClose'),
   bgModal: $('bgModal'), bgCanvas: $('bgCanvas'), bgRemove: $('bgRemove'),
   bgThresh: $('bgThresh'), bgThreshRow: $('bgThreshRow'),
   bgCancel: $('bgCancel'), bgSave: $('bgSave'),
@@ -402,6 +404,7 @@ linkService.setViewer(viewer);
 
 let pdfDocument = null;
 let docMeta = { canSave: false, path: '' };
+let lastSig = null; // last verification result, for the signature-details modal
 let originalName = ''; // basename of the opened file, for default export names
 let docGen = 0; // bumps on each load so a stale async render/build can bail
 
@@ -522,17 +525,62 @@ async function save() {
 
 // --- signature badge ---------------------------------------------------------
 function updateBadge(sig) {
+  lastSig = sig;
   const b = els.sigBadge;
+  const signers = sig?.signers || [];
   const map = {
-    valid:    ['badge-valid', '✓ Untampered' + (sig.when ? ' · ' + sig.when : '')],
+    valid:    ['badge-valid', '✓ Untampered'],
     invalid:  ['badge-invalid', '⚠ Modified since signing'],
     unsigned: ['badge-unsigned', 'Unsigned'],
   };
-  const [cls, label] = map[sig?.state] || ['badge-none', 'no document'];
+  let [cls, label] = map[sig?.state] || ['badge-none', 'no document'];
+  // Deliberately no inline signing time: it may be self-asserted, and the
+  // badge can't qualify it. Time + its trust level live in the details modal.
+  if (sig?.state === 'valid' && signers.length > 1) label += ' · ' + signers.length + ' signers';
   b.className = 'badge ' + cls;
   b.textContent = label;
-  b.title = sig?.signer ? 'Signed by ' + sig.signer : label;
+  b.title = label;
+  // Details only exist for a signed document (valid or modified).
+  els.sigDetailsBtn.hidden = !signers.length;
 }
+
+// timeLabel turns a signer's time backing into honest plain English.
+function timeLabel(s) {
+  if (s.timeBacking === 'tsa') return 'Timestamped ' + s.when + ' by an independent timestamp authority';
+  if (s.timeBacking === 'self-asserted') return 'Signer states ' + s.when + ' — not independently verified';
+  return 'No signing time recorded';
+}
+
+function openSigDetails() {
+  const signers = lastSig?.signers || [];
+  if (!signers.length) return;
+  const body = els.sigDetailsBody;
+  body.innerHTML = '';
+  for (const s of signers) {
+    const row = document.createElement('div');
+    row.className = 'sigrow';
+
+    const who = document.createElement('div');
+    who.className = 'sigrow-who';
+    who.textContent = s.name || 'Unnamed signer';
+    row.appendChild(who);
+
+    const status = document.createElement('div');
+    status.className = s.valid ? 'sigrow-ok' : 'sigrow-bad';
+    status.textContent = s.valid ? '✓ Untampered' : '⚠ Modified since signing';
+    row.appendChild(status);
+
+    const time = document.createElement('div');
+    time.className = 'sigrow-time';
+    time.textContent = timeLabel(s);
+    row.appendChild(time);
+
+    body.appendChild(row);
+  }
+  els.sigDetailsModal.hidden = false;
+}
+els.sigDetailsBtn.onclick = openSigDetails;
+els.sigDetailsClose.onclick = () => { els.sigDetailsModal.hidden = true; };
 
 // --- thumbnails sidebar ------------------------------------------------------
 async function buildThumbnails(gen = docGen) {
