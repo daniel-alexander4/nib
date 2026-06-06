@@ -63,7 +63,9 @@ if [ "$PUBLISH" = "1" ]; then
   echo "publishing $tag to GitHub from $branch…"
   git push origin "$branch" # the tag points at this branch's tip on the remote
   shopt -s nullglob
-  assets=("$DIST/nib-$VERSION"-* "$DIST/nib_${VERSION}_"*.deb)
+  # Ship the GPL licence + third-party attribution alongside the binaries so the
+  # bare (non-.deb) downloads carry their required notices too.
+  assets=("$DIST/nib-$VERSION"-* "$DIST/nib_${VERSION}_"*.deb LICENSE THIRD-PARTY-NOTICES.md)
   shopt -u nullglob
   if gh release view "$tag" >/dev/null 2>&1; then
     gh release upload "$tag" "${assets[@]}" --clobber
