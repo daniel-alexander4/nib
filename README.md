@@ -184,3 +184,9 @@ Nib is free software under the **GNU General Public License v3.0** — see
 Distributed **as-is, with no warranty** of any kind, to the extent permitted by
 law (GPLv3 §§15–16). You may use, study, share, and modify it under the GPL;
 derivative works must also be released under the GPL.
+
+Nib also incorporates third-party software (Go modules and the vendored pdf.js
+engine), all under GPLv3-compatible permissive licenses (BSD, MIT, Apache-2.0).
+Their required copyright and license notices are collected in
+[THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md), regenerated with
+`build/gen-notices.sh`.
