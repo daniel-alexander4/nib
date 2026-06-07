@@ -289,6 +289,20 @@ input[type="search"] { width: 100%; }
 .sigrow-bad { font-size: 12px; color: var(--red); }
 .sigrow-time { font-size: 11px; color: var(--subtext0); }
 
+/* Hidden-content scan: each finding is a sigrow with a severity-coloured label
+   and a where/what line; the three removal methods stack as full-width buttons,
+   strongest first. */
+.scan-sev { font-size: 12px; font-weight: 600; }
+.scan-sev.high { color: var(--red); }
+.scan-sev.medium { color: var(--yellow); }
+.scan-sev.low { color: var(--subtext0); }
+.scan-detail { font-size: 12px; color: var(--text); }
+.scan-where { font-size: 11px; color: var(--subtext0); }
+.scan-empty { font-size: 13px; color: var(--green); }
+.scanmethods { display: flex; flex-direction: column; gap: 6px; }
+.scanmethods button { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; text-align: left; }
+.scanmethods .hint { font-size: 11px; color: var(--subtext0); font-weight: 400; }
+
 /* About dialog. The card sizes to whichever view is showing: the explainer is a
    narrow readable column; the licence/notices view is wider. The card is capped
    at the viewport so neither can overflow. */
