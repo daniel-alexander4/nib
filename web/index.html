@@ -402,11 +402,13 @@
         <button id="scanSafeBtn">Remove files &amp; media<span class="hint">keeps everything else</span></button>
         <button id="scanFlattenBtn">Flatten to images<span class="hint">guaranteed inert</span></button>
       </div>
-      <p class="libhint">Scanning is best-effort. <strong>Strip</strong> neutralises auto-run code,
-        scripts and risky links while keeping the page; <strong>Remove files &amp; media</strong> only
-        deletes attachments and media, leaving all else intact; <strong>Flatten</strong> turns pages
-        into images, removing everything but losing selectable text. Any removal replaces the open
-        document with a new, unsigned copy — save it to keep the result.</p>
+      <p class="libhint">Scanning is best-effort — it can't detect deliberately concealed or
+        steganographic data, so a clean result is not a guarantee. <strong>Strip</strong> neutralises
+        auto-run code, scripts and risky links while keeping the page; <strong>Remove files &amp;
+        media</strong> only deletes attachments and media, leaving all else intact;
+        <strong>Flatten</strong> turns pages into images — the one certain way to remove anything
+        hidden, at the cost of selectable text. Any removal replaces the open document with a new,
+        unsigned copy — save it to keep the result.</p>
       <div class="sigbtns"><span class="grow"></span><button id="scanClose" class="primary">Close</button></div>
     </div>
   </div>
