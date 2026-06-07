@@ -28,6 +28,7 @@ const els = {
   thumbs: $('thumbs'), thumbGrid: $('thumbGrid'), outline: $('outline'),
   appendBtn: $('appendBtn'), appendInput: $('appendInput'),
   redactBtn: $('redactBtn'), applyRedactBtn: $('applyRedactBtn'),
+  editTextBtn: $('editTextBtn'), removeOriginalsBtn: $('removeOriginalsBtn'),
   scanBtn: $('scanBtn'), scanModal: $('scanModal'), scanBody: $('scanBody'),
   scanStripBtn: $('scanStripBtn'), scanSafeBtn: $('scanSafeBtn'),
   scanFlattenBtn: $('scanFlattenBtn'), scanClose: $('scanClose'),
@@ -1467,6 +1468,208 @@ els.applyRedactBtn.onclick = async () => {
   toast('Redacted — affected pages are now flattened images');
 };
 
+// --- cover-and-replace text editing ------------------------------------------
+// Drag a box over baked-in text; Nib reads the text + its size/colour/font under
+// the box, covers it with an opaque background-coloured fill, and drops an
+// editable overlay prefilled in the recognized style. On save the cover is baked
+// under the replacement text (bakedBytes -> /api/bake). The original text stays
+// in the page (a visual edit) until "Remove originals" flattens the edited pages
+// (reusing the redaction path), which removes it for good.
+let editMode = false;
+let edStart = null, edDiv = null, edHit = null;
+
+els.editTextBtn.onclick = () => {
+  if (!pdfDocument) { toast('Open a PDF first'); return; }
+  editMode = !editMode;
+  if (editMode && redactMode) { redactMode = false; reflectRedact(); } // one box tool at a time
+  reflectEdit();
+  els.viewerContainer.style.cursor = editMode ? 'crosshair' : '';
+};
+function reflectEdit() {
+  all('#editTextBtn, [data-forward="editTextBtn"]').forEach((b) => b.classList.toggle('active', editMode));
+}
+
+els.viewerContainer.addEventListener('pointerdown', (e) => {
+  if (!editMode) return;
+  edHit = pageAt(e.clientX, e.clientY);
+  if (!edHit) return;
+  edStart = { x: e.clientX, y: e.clientY };
+  edDiv = document.createElement('div');
+  edDiv.className = 'editmark';
+  edHit.pv.div.appendChild(edDiv);
+  sizeMark(edDiv, edHit.r, edStart, edStart);
+  e.preventDefault();
+});
+els.viewerContainer.addEventListener('pointermove', (e) => {
+  if (edStart) sizeMark(edDiv, edHit.r, edStart, { x: e.clientX, y: e.clientY });
+});
+els.viewerContainer.addEventListener('pointerup', async (e) => {
+  if (!edStart) return;
+  const r = edHit.r, hit = edHit;
+  const x0 = Math.min(edStart.x, e.clientX), y0 = Math.min(edStart.y, e.clientY);
+  const fw = Math.abs(e.clientX - edStart.x) / r.width;
+  const fh = Math.abs(e.clientY - edStart.y) / r.height;
+  const fx0 = (x0 - r.left) / r.width, fy0 = (y0 - r.top) / r.height;
+  edDiv.remove();
+  edStart = null; edDiv = null; edHit = null;
+  if (fw > 0.004 && fh > 0.004) await addEdit(hit, [fx0, fy0, fx0 + fw, fy0 + fh]);
+});
+
+// addEdit reads the text run under the drawn box and its style, then builds the
+// prefilled, covered edit overlay. frac is the box in page fractions (top-left).
+async function addEdit(hit, frac) {
+  const n = hit.n, pv = hit.pv;
+  const page = await pdfDocument.getPage(n);
+  const base = page.getViewport({ scale: 1 });
+  const pageW = base.width, pageH = base.height; // PDF points
+  // Box in PDF points (bottom-left origin) for the text-overlap test.
+  const bx0 = frac[0] * pageW, bx1 = frac[2] * pageW;
+  const byTop = (1 - frac[1]) * pageH, byBot = (1 - frac[3]) * pageH; // byBot < byTop
+
+  let text = '', size = (byTop - byBot) * 0.8, font = 'Helvetica';
+  try {
+    const tc = await page.getTextContent();
+    const picked = [];
+    for (const it of tc.items) {
+      if (!it.str) continue;
+      const ix0 = it.transform[4], iy = it.transform[5];
+      const ih = it.height || Math.hypot(it.transform[2], it.transform[3]);
+      const ix1 = ix0 + it.width, iyTop = iy + ih * 0.8, iyBot = iy - ih * 0.2;
+      if (ix1 < bx0 || ix0 > bx1 || iyTop < byBot || iyBot > byTop) continue; // no overlap
+      picked.push({ str: it.str, x: ix0, y: iy, fontName: it.fontName, size: Math.hypot(it.transform[2], it.transform[3]) || ih });
+    }
+    if (picked.length) {
+      picked.sort((a, b) => (Math.abs(a.y - b.y) > 1 ? b.y - a.y : a.x - b.x)); // top-to-bottom, left-to-right
+      text = picked.map((p) => p.str).join('').replace(/\s+/g, ' ').trim();
+      const dom = picked.slice().sort((a, b) => b.str.length - a.str.length)[0]; // the dominant run sets the style
+      size = dom.size || size;
+      let name = tc.styles?.[dom.fontName]?.fontFamily || '';
+      try { if (page.commonObjs.has(dom.fontName)) name += ' ' + (page.commonObjs.get(dom.fontName)?.name || ''); } catch { /* font not resolved */ }
+      font = classifyFont(name);
+    }
+  } catch { /* image-only page: no text layer */ }
+
+  const { text: color, bg } = await samplePageColors(page, frac);
+  // Widen the cover a touch so ascenders/descenders of the original are hidden.
+  const my = 0.15 * (frac[3] - frac[1]), mx = 0.01 * (frac[2] - frac[0]);
+  const coverFrac = [Math.max(0, frac[0] - mx), Math.max(0, frac[1] - my), Math.min(1, frac[2] + mx), Math.min(1, frac[3] + my)];
+  const f = makeEditField(frac, { page: n, pageW, pageH, text, size, color, bg, font, coverFrac }, pv);
+  f.el.focus();
+  f.el.select();
+}
+
+function makeEditField(frac, opts, pv) {
+  const f = {
+    page: opts.page, frac, pageW: opts.pageW, pageH: opts.pageH, kind: 'edit',
+    font: opts.font, size: opts.size, color: opts.color, bg: opts.bg, coverFrac: opts.coverFrac,
+  };
+  const el = document.createElement('input');
+  el.type = 'text';
+  el.className = 'ovl ovl-edit';
+  el.value = opts.text || '';
+  el.style.color = opts.color;
+  el.style.background = opts.bg; // opaque: covers the original live, matching the baked cover
+  el.style.fontFamily = cssFamily(opts.font);
+  el.style.fontWeight = /Bold/.test(opts.font) ? '700' : '400';
+  el.style.fontStyle = /(Italic|Oblique)/.test(opts.font) ? 'italic' : 'normal';
+  f.el = el;
+  overlayFields.push(f);
+  layoutField(f, pv);
+  pv.div.appendChild(el);
+  return f;
+}
+
+// samplePageColors renders the page and reads, within the box, the darkest pixel
+// (the ink → replacement text colour) and the lightest (the background → cover
+// colour). White-filled first, so a transparent/white page reads white.
+async function samplePageColors(page, frac) {
+  const vp = page.getViewport({ scale: Math.min(2, 1400 / page.getViewport({ scale: 1 }).width) });
+  const cv = document.createElement('canvas');
+  cv.width = Math.ceil(vp.width); cv.height = Math.ceil(vp.height);
+  const c = cv.getContext('2d');
+  c.fillStyle = '#fff'; c.fillRect(0, 0, cv.width, cv.height);
+  await page.render({ canvasContext: c, viewport: vp }).promise;
+  const x0 = Math.max(0, Math.floor(frac[0] * cv.width)), y0 = Math.max(0, Math.floor(frac[1] * cv.height));
+  const w = Math.max(1, Math.min(cv.width - x0, Math.ceil((frac[2] - frac[0]) * cv.width)));
+  const h = Math.max(1, Math.min(cv.height - y0, Math.ceil((frac[3] - frac[1]) * cv.height)));
+  const data = c.getImageData(x0, y0, w, h).data;
+  let dl = 1e9, ll = -1, text = '#000000', bg = '#ffffff';
+  for (let i = 0; i < data.length; i += 4) {
+    const lum = 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2];
+    if (lum < dl) { dl = lum; text = rgbHex(data[i], data[i + 1], data[i + 2]); }
+    if (lum > ll) { ll = lum; bg = rgbHex(data[i], data[i + 1], data[i + 2]); }
+  }
+  return { text, bg };
+}
+const rgbHex = (r, g, b) => '#' + [r, g, b].map((v) => v.toString(16).padStart(2, '0')).join('');
+
+// coverPNG renders a solid background-coloured rectangle at the rect's aspect, so
+// the server's fit-to-rect image stamp fills it exactly.
+function coverPNG(wPts, hPts, hex) {
+  const cv = document.createElement('canvas');
+  cv.width = Math.max(2, Math.round(wPts * 2));
+  cv.height = Math.max(2, Math.round(hPts * 2));
+  const c = cv.getContext('2d');
+  c.fillStyle = hex || '#ffffff';
+  c.fillRect(0, 0, cv.width, cv.height);
+  return cv.toDataURL('image/png').split(',')[1];
+}
+
+// classifyFont maps a BaseFont/family string to the closest Base-14 core font
+// (serif→Times, mono→Courier, else Helvetica) carrying bold/italic — the MVP of
+// font recognition. Embedded-font reuse is a later, higher-fidelity tier.
+function classifyFont(name) {
+  const s = (name || '').toLowerCase();
+  const bold = /bold|black|heavy|semibold/.test(s);
+  const italic = /italic|oblique/.test(s);
+  let fam = 'Helvetica';
+  if (/courier|mono|consol/.test(s)) fam = 'Courier';
+  else if (/times|serif|roman|georgia|garamond|minion|cambria|book antiqua/.test(s) && !/sans/.test(s)) fam = 'Times';
+  if (fam === 'Times') return 'Times-' + (bold && italic ? 'BoldItalic' : bold ? 'Bold' : italic ? 'Italic' : 'Roman');
+  const suffix = bold && italic ? '-BoldOblique' : bold ? '-Bold' : italic ? '-Oblique' : '';
+  return fam + suffix; // Helvetica / Courier (+ -Bold / -Oblique / -BoldOblique)
+}
+function cssFamily(core) {
+  if (core.startsWith('Times')) return 'serif';
+  if (core.startsWith('Courier')) return 'monospace';
+  return 'sans-serif';
+}
+
+// Remove originals: flatten every edited page so the covered text is gone for
+// good. Reuses the redaction path — bake the covers + replacement text in, then
+// rasterize just those pages (no black box painted).
+els.removeOriginalsBtn.onclick = async () => {
+  const pages = [...new Set(overlayFields.filter((f) => f.kind === 'edit').map((f) => f.page))];
+  if (!pages.length) return toast('No text edits to flatten');
+  if (!confirm('Make the text edits permanent? The edited page(s) become flat images and the original text underneath is removed. This cannot be undone.')) return;
+
+  const bytes = await bakedBytes();
+  const doc = await pdfjsLib.getDocument({ data: bytes.slice() }).promise;
+  const form = new FormData();
+  form.append('pdf', new Blob([bytes], { type: 'application/pdf' }), 'doc.pdf');
+  for (const n of pages) {
+    const page = await doc.getPage(n);
+    const baseV = page.getViewport({ scale: 1 }); // points: true physical size
+    const vp = page.getViewport({ scale: 2 });
+    const cv = document.createElement('canvas');
+    cv.width = vp.width; cv.height = vp.height;
+    const ctx = cv.getContext('2d');
+    await page.render({ canvasContext: ctx, viewport: vp, annotationMode: pdfjsLib.AnnotationMode.ENABLE }).promise;
+    const blob = await new Promise((r) => cv.toBlob(r, 'image/png'));
+    form.append('page', blob, `page-${n}.png`);
+    form.append('pageNum', String(n));
+    form.append('pageW', String(baseV.width));
+    form.append('pageH', String(baseV.height));
+  }
+  const res = await apiFetch('/api/redact', { method: 'POST', body: form });
+  if (!res.ok) return toast('could not flatten edits');
+  overlayFields = overlayFields.filter((f) => { if (f.kind === 'edit' && pages.includes(f.page)) { f.el.remove(); return false; } return true; });
+  editMode = false; reflectEdit();
+  els.viewerContainer.style.cursor = '';
+  await setDocumentFromServer(await res.json());
+  toast('Edits flattened — original text removed on edited page(s)');
+};
+
 // --- open dialog -------------------------------------------------------------
 // The Open… dialog is the single open surface: type a path or URL, or browse the
 // filesystem. Browsing opens BY PATH (via openPath -> /api/open), so the file can
@@ -1631,10 +1834,11 @@ let overlayFields = []; // {page, frac:[fx0,fy0,fx1,fy1], pageW, pageH, kind, el
 let libraryImages = []; // cached /api/images list (the image-library panel)
 function clearOverlays() { overlayFields.forEach((f) => f.el.remove()); overlayFields = []; }
 // clearDetected drops only auto-detected fields (text/check/circleone), keeping
-// user-placed stamps so re-running Detect doesn't wipe a signature/quick-stamp.
+// user-placed stamps and text edits so re-running Detect doesn't wipe a
+// signature/quick-stamp or a cover-and-replace edit.
 function clearDetected() {
   overlayFields = overlayFields.filter((f) => {
-    if (f.kind === 'stamp') return true;
+    if (f.kind === 'stamp' || f.kind === 'edit') return true;
     f.el.remove();
     return false;
   });
@@ -1648,6 +1852,10 @@ function layoutField(f, pv) {
   f.el.style.width = ((f.frac[2] - f.frac[0]) * W) + 'px';
   f.el.style.height = h + 'px';
   if (f.kind === 'text') f.el.style.fontSize = Math.max(7, h * 0.72) + 'px';
+  // Edit fields carry a recognized point size; scale it to the rendered page
+  // (css px per point = rendered width / page points) so the live overlay matches
+  // the baked text instead of being sized from the box height.
+  else if (f.kind === 'edit') f.el.style.fontSize = (f.size * W / f.pageW) + 'px';
 }
 function relayoutOverlays() {
   for (const f of overlayFields) {
@@ -1668,10 +1876,30 @@ function rectPoints(f, frac) {
 }
 
 function collectFields() {
-  return overlayFields
-    .filter((f) => f.kind === 'text')
-    .map((f) => ({ page: f.page, rect: rectPoints(f, f.frac), text: f.el.value }))
-    .filter((f) => f.text.trim() !== '');
+  const out = [];
+  for (const f of overlayFields) {
+    if (f.kind === 'text' && f.el.value.trim() !== '') {
+      out.push({ page: f.page, rect: rectPoints(f, f.frac), text: f.el.value });
+    } else if (f.kind === 'edit' && f.el.value.trim() !== '') {
+      // Cover-and-replace: carry the recognized font/size/colour so the bake
+      // matches the original run. (An emptied edit is an erase — cover only.)
+      out.push({ page: f.page, rect: rectPoints(f, f.frac), text: f.el.value, font: f.font, size: f.size, color: f.color });
+    }
+  }
+  return out;
+}
+
+// collectCovers gathers the opaque fills baked under each text edit: a solid
+// background-coloured PNG over the covered run, sent so the server stamps it
+// before the replacement text (see /api/bake).
+function collectCovers() {
+  const out = [];
+  for (const f of overlayFields) {
+    if (f.kind !== 'edit') continue;
+    const rect = rectPoints(f, f.coverFrac || f.frac);
+    out.push({ page: f.page, rect, png: coverPNG(rect[2] - rect[0], rect[3] - rect[1], f.bg) });
+  }
+  return out;
 }
 
 // collectStamps gathers image stamps: placed images/quick-stamps (library id or
@@ -1701,13 +1929,15 @@ async function bakedBytes() {
   const saved = await pdfDocument.saveDocument();
   const fields = collectFields();
   const stamps = collectStamps();
-  if (!fields.length && !stamps.length) return saved;
+  const covers = collectCovers();
+  if (!fields.length && !stamps.length && !covers.length) return saved;
   const form = new FormData();
   form.append('pdf', new Blob([saved], { type: 'application/pdf' }), 'doc.pdf');
+  if (covers.length) form.append('covers', JSON.stringify(covers));
   if (fields.length) form.append('fields', JSON.stringify(fields));
   if (stamps.length) form.append('stamps', JSON.stringify(stamps));
   const res = await apiFetch('/api/bake', { method: 'POST', body: form });
-  if (!res.ok) { toast('could not apply detected fields'); return saved; }
+  if (!res.ok) { toast('could not apply edits'); return saved; }
   return new Uint8Array(await res.arrayBuffer());
 }
 

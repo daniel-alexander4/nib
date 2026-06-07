@@ -408,6 +408,22 @@ input.ovl-text {
   outline: none;
 }
 input.ovl-text:focus { background: rgba(137, 180, 250, 0.30); }
+/* cover-and-replace edit: an opaque field (its background is sampled from the
+   page so it hides the original text live) with the recognized colour/size/font
+   applied inline. A dashed ring marks it as an editable overlay, not baked text. */
+input.ovl-edit {
+  border: 0; border-radius: 0; line-height: 1; padding: 0 1px;
+  outline: 1px dashed var(--blue); outline-offset: 0;
+}
+input.ovl-edit:focus { outline-style: solid; }
+/* editmark: the box being dragged over text to select it for editing. */
+.editmark {
+  position: absolute;
+  background: rgba(137, 180, 250, 0.18);
+  border: 1px solid var(--blue);
+  z-index: 5;
+  pointer-events: none;
+}
 input.ovl-check { appearance: auto; accent-color: #1a7f37; background: transparent; cursor: pointer; padding: 0; margin: 0; }
 /* circle-one picker (incl. Y/N): a transparent hit-area over each choice; the
    picked one is ringed (a circle for a letter, a pill for a word). */
