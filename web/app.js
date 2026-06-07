@@ -547,7 +547,7 @@ function updateBadge(sig) {
 // timeLabel turns a signer's time backing into honest plain English.
 function timeLabel(s) {
   if (s.timeBacking === 'tsa') return 'Timestamped ' + s.when + ' by an independent timestamp authority';
-  if (s.timeBacking === 'self-asserted') return 'Signer states ' + s.when + ' — not independently verified';
+  if (s.timeBacking === 'self-asserted') return 'Dated ' + s.when + ' by the signer\'s own device';
   return 'No signing time recorded';
 }
 
