@@ -60,6 +60,15 @@ and a **checkmark**. Drop one on, drag to place, resize to fit.
 **Highlight** text, **draw** freehand, and add free **text** boxes anywhere on a
 page — works on flat PDFs too.
 
+### Edit existing text
+**Edit → Edit text**, then drag a box over baked-in text. Nib covers it with a
+fill sampled from the background and drops an editable box prefilled in the
+original's size, colour, and closest font (serif / sans / mono, bold, italic) —
+so a fix reads like an edit, not a patch. The page stays sharp and vector. The
+original text stays underneath (it's a visual edit) until you press **Remove
+originals**, which flattens just the edited pages so the old text is gone for
+good — or until you flatten / finalize the whole document.
+
 ### Real redaction
 Draw redaction boxes and press **Apply**. Nib re-renders those pages flat so the
 content underneath is **actually gone** — not just hidden behind a black

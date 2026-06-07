@@ -31,6 +31,35 @@ func (s *Server) handleBake(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+
+	// Covers are opaque fills baked UNDERNEATH the text — the cover half of a
+	// cover-and-replace edit. They must go on before StampFields so the
+	// replacement text lands on top of them, not behind.
+	if raw := r.FormValue("covers"); raw != "" {
+		var reqs []stampReq
+		if err := json.Unmarshal([]byte(raw), &reqs); err != nil {
+			httpError(w, http.StatusBadRequest, "invalid covers")
+			return
+		}
+		covers := make([]pdfops.Stamp, 0, len(reqs))
+		for _, q := range reqs {
+			if q.PNG == "" {
+				continue
+			}
+			b, err := base64.StdEncoding.DecodeString(q.PNG)
+			if err != nil {
+				httpError(w, http.StatusBadRequest, "invalid cover png")
+				return
+			}
+			covers = append(covers, pdfops.Stamp{Page: q.Page, Rect: q.Rect, PNG: b})
+		}
+		var err error
+		if pdfBytes, err = pdfops.StampImages(pdfBytes, covers); err != nil {
+			httpError(w, http.StatusInternalServerError, "could not stamp covers: "+err.Error())
+			return
+		}
+	}
+
 	var fields []pdfops.Field
 	if raw := r.FormValue("fields"); raw != "" {
 		if err := json.Unmarshal([]byte(raw), &fields); err != nil {

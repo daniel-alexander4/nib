@@ -155,11 +155,33 @@ func PageCount(pdf []byte) (int, error) {
 }
 
 // Field is a filled overlay field to stamp onto the page: the text (already "X"
-// for a checked box) and its rectangle in PDF points (bottom-left origin).
+// for a checked box) and its rectangle in PDF points (bottom-left origin). Font,
+// Size and Color are optional cover-and-replace overrides; left zero they keep
+// the historical auto-detected-field behaviour (Helvetica, size from the rect
+// height, black), so detected form fields are unaffected.
 type Field struct {
-	Page int        `json:"page"`
-	Rect [4]float64 `json:"rect"` // x0, y0, x1, y1
-	Text string     `json:"text"`
+	Page  int        `json:"page"`
+	Rect  [4]float64 `json:"rect"` // x0, y0, x1, y1
+	Text  string     `json:"text"`
+	Font  string     `json:"font,omitempty"`  // a Base-14 core font name; defaults to Helvetica
+	Size  float64    `json:"size,omitempty"`  // explicit point size; 0 = derive from rect height
+	Color string     `json:"color,omitempty"` // #RRGGBB; "" = black
+}
+
+// coreFonts is the Base-14 text-font allowlist StampFields will honour. The name
+// is interpolated into the pdfcpu watermark description, so an unlisted value
+// falls back to Helvetica rather than risk injecting extra description keys.
+var coreFonts = map[string]bool{
+	"Helvetica": true, "Helvetica-Bold": true, "Helvetica-Oblique": true, "Helvetica-BoldOblique": true,
+	"Times-Roman": true, "Times-Bold": true, "Times-Italic": true, "Times-BoldItalic": true,
+	"Courier": true, "Courier-Bold": true, "Courier-Oblique": true, "Courier-BoldOblique": true,
+}
+
+func coreFont(name string) string {
+	if coreFonts[name] {
+		return name
+	}
+	return "Helvetica"
 }
 
 // StampFields bakes the given overlay-field values onto the PDF as text, sized to
@@ -170,17 +192,26 @@ func StampFields(pdf []byte, fields []Field) ([]byte, error) {
 		if strings.TrimSpace(f.Text) == "" {
 			continue
 		}
-		h := f.Rect[3] - f.Rect[1]
-		pts := int(h * 0.72)
+		// An explicit Size (cover-and-replace edit) is honoured up to 144pt; with
+		// none, size is derived from the rect height as detected fields always have,
+		// capped at 48 so a tall detected box doesn't balloon the text.
+		pts, max := int(f.Size), 144
+		if pts <= 0 {
+			pts, max = int((f.Rect[3]-f.Rect[1])*0.72), 48
+		}
 		if pts < 6 {
 			pts = 8
 		}
-		if pts > 48 {
-			pts = 48
+		if pts > max {
+			pts = max
+		}
+		color := "#000000"
+		if hexColor.MatchString(f.Color) {
+			color = f.Color
 		}
 		// Anchor the text near the field's bottom-left (small inset), in points.
-		desc := fmt.Sprintf("fontname:Helvetica, points:%d, scalefactor:1 abs, position:bl, offset:%.1f %.1f, fillcolor:#000000, rotation:0",
-			pts, f.Rect[0]+2, f.Rect[1]+2)
+		desc := fmt.Sprintf("fontname:%s, points:%d, scalefactor:1 abs, position:bl, offset:%.1f %.1f, fillcolor:%s, rotation:0",
+			coreFont(f.Font), pts, f.Rect[0]+2, f.Rect[1]+2, color)
 		wm, err := api.TextWatermark(f.Text, desc, true, false, types.POINTS)
 		if err != nil {
 			return nil, err

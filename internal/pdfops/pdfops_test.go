@@ -240,3 +240,43 @@ func TestStampFields(t *testing.T) {
 		t.Error("stamping only-empty fields should return the input unchanged")
 	}
 }
+
+// TestStampFieldsStyle covers the cover-and-replace overrides: an explicit font,
+// size and colour must produce a valid PDF, and the page must stay vector (a
+// stamped text watermark, not a rasterized page).
+func TestStampFieldsStyle(t *testing.T) {
+	pdf, err := testpdf.Form() // a vector page with a real text layer
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := StampFields(pdf, []Field{
+		{Page: 1, Rect: [4]float64{72, 700, 300, 716}, Text: "Replacement", Font: "Times-BoldItalic", Size: 13, Color: "#cc0000"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.HasPrefix(out, []byte("%PDF")) || len(out) <= len(pdf) {
+		t.Fatalf("styled StampFields did not add content to a PDF")
+	}
+	// The page is still vector: its original text layer survives (the edit is an
+	// overlay, not a whole-page raster as redaction would be).
+	if before, _ := ExportFormJSON(pdf); bytes.Contains(before, []byte("fullName")) {
+		if after, _ := ExportFormJSON(out); !bytes.Contains(after, []byte("fullName")) {
+			t.Error("styled stamp rasterized the page — the form field vanished")
+		}
+	}
+}
+
+func TestCoreFont(t *testing.T) {
+	for _, name := range []string{"Times-Roman", "Courier-Bold", "Helvetica-Oblique"} {
+		if got := coreFont(name); got != name {
+			t.Errorf("coreFont(%q) = %q, want passthrough", name, got)
+		}
+	}
+	// An unlisted or injection-laden name falls back to Helvetica.
+	for _, bad := range []string{"Comic Sans", "Helvetica, opacity:0", ""} {
+		if got := coreFont(bad); got != "Helvetica" {
+			t.Errorf("coreFont(%q) = %q, want Helvetica fallback", bad, got)
+		}
+	}
+}
