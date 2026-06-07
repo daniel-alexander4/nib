@@ -394,7 +394,9 @@
       <div id="sigDetailsBody" class="sigdetails"></div>
       <p class="libhint">Nib verifies <strong>integrity</strong> — that a document is unchanged
         since it was signed. Identities are self-generated, not vouched for by a certificate
-        authority, so a signature proves a key-holder signed it, not who they legally are.</p>
+        authority, so a signature proves a key-holder signed it, not who they legally are.
+        Signing times come from the signer's own device unless a timestamp authority is
+        configured, which fixes the time independently.</p>
       <div class="sigbtns"><span class="grow"></span><button id="sigDetailsClose" class="primary">Close</button></div>
     </div>
   </div>
