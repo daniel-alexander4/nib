@@ -7,6 +7,7 @@ import (
 	"net/http"
 
 	"nib/internal/pdfops"
+	"nib/internal/sign"
 )
 
 // handleAssemble turns client-rendered page images into a download: a flattened
@@ -66,6 +67,19 @@ func (s *Server) handleAssemble(w http.ResponseWriter, r *http.Request) {
 	pdf, err := pdfops.ImagesToPDF(pages)
 	if err != nil {
 		httpError(w, http.StatusInternalServerError, "could not assemble PDF")
+		return
+	}
+	// reload=1 loads the flattened result back as the open document (the
+	// guaranteed-inert sanitize floor) instead of downloading it.
+	if r.FormValue("reload") == "1" {
+		sig := sign.Verify(pdf)
+		s.mu.Lock()
+		if s.doc != nil {
+			s.doc.data = pdf
+			s.doc.sig = sig
+		}
+		s.mu.Unlock()
+		writeJSON(w, s.docResponse())
 		return
 	}
 	sendDownload(w, "flattened.pdf", "application/pdf", pdf)
