@@ -65,6 +65,23 @@ Draw redaction boxes and press **Apply**. Nib re-renders those pages flat so the
 content underneath is **actually gone** — not just hidden behind a black
 rectangle. (Verified: a redacted page exposes no hidden text or form field.)
 
+### Scan for hidden content
+**Edit → Scan for hidden content** lists what's lurking in a PDF that you can't
+see on the page: auto-run hooks (OpenAction, additional actions), JavaScript,
+risky link/widget actions (launch a program, submit a form, open a URL),
+embedded files, optional-content layers, and metadata. Then remove it three
+ways, strongest fidelity-preserving first:
+- **Strip active content** — neutralises every auto-run hook, script and risky
+  action while keeping the page text and layout intact.
+- **Remove files & media** — deletes only embedded files and media annotations,
+  leaving all other interactivity untouched.
+- **Flatten to images** — the guaranteed-inert floor: turns every page into an
+  image so nothing active can remain (selectable text is lost).
+
+If a strip can't produce a sound document it's reported and your open document
+is left untouched, so you can step down to the next method safely. Any removal
+produces a new, **unsigned** copy — save it to keep the cleaned version.
+
 ### Sign & finalize — tamper-evident
 **Finalize & sign** seals the document with a certification signature from an
 identity kept in your vault and bakes in a visible watermark — a preset like

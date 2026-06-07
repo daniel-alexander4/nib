@@ -28,6 +28,9 @@ const els = {
   thumbs: $('thumbs'), thumbGrid: $('thumbGrid'), outline: $('outline'),
   appendBtn: $('appendBtn'), appendInput: $('appendInput'),
   redactBtn: $('redactBtn'), applyRedactBtn: $('applyRedactBtn'),
+  scanBtn: $('scanBtn'), scanModal: $('scanModal'), scanBody: $('scanBody'),
+  scanStripBtn: $('scanStripBtn'), scanSafeBtn: $('scanSafeBtn'),
+  scanFlattenBtn: $('scanFlattenBtn'), scanClose: $('scanClose'),
   backupBtn: $('backupBtn'), restoreInput: $('restoreInput'), checkUpdatesBtn: $('checkUpdatesBtn'),
   updatePill: $('updatePill'), updateGet: $('updateGet'), updateDismiss: $('updateDismiss'),
   manageKeysBtn: $('manageKeysBtn'), keysModal: $('keysModal'), keysList: $('keysList'),
@@ -581,6 +584,93 @@ function openSigDetails() {
 }
 els.sigDetailsBtn.onclick = openSigDetails;
 els.sigDetailsClose.onclick = () => { els.sigDetailsModal.hidden = true; };
+
+// --- hidden-content scan -----------------------------------------------------
+// Scan the open document for active/hidden content (auto-run hooks, scripts,
+// risky links, attachments, layers) and offer three removal methods, strongest
+// fidelity-preserving first with a guaranteed-inert flatten as the floor.
+const SEV_LABEL = { high: 'High', medium: 'Medium', low: 'Low' };
+const SEV_ORDER = { high: 0, medium: 1, low: 2 };
+
+function renderScanReport(rep) {
+  const body = els.scanBody;
+  body.innerHTML = '';
+  const findings = (rep.findings || []).slice().sort(
+    (a, b) => (SEV_ORDER[a.severity] ?? 3) - (SEV_ORDER[b.severity] ?? 3));
+  if (!findings.length) {
+    const p = document.createElement('p');
+    p.className = 'scan-empty';
+    p.textContent = '✓ No active or hidden content found.';
+    body.appendChild(p);
+    return;
+  }
+  for (const f of findings) {
+    const row = document.createElement('div');
+    row.className = 'sigrow';
+    const sev = document.createElement('div');
+    sev.className = 'scan-sev ' + f.severity;
+    sev.textContent = SEV_LABEL[f.severity] || f.severity;
+    const detail = document.createElement('div');
+    detail.className = 'scan-detail';
+    detail.textContent = f.detail;
+    const where = document.createElement('div');
+    where.className = 'scan-where';
+    where.textContent = f.page ? 'Page ' + f.page : 'Whole document';
+    row.append(sev, detail, where);
+    body.appendChild(row);
+  }
+}
+
+async function openScan() {
+  if (!pdfDocument) return toast('Open a PDF first');
+  els.scanBody.innerHTML = '<p class="scan-where">Scanning…</p>';
+  els.scanModal.hidden = false;
+  try {
+    const res = await apiFetch('/api/scan');
+    if (!res.ok) throw new Error('scan');
+    renderScanReport(await res.json());
+  } catch { els.scanModal.hidden = true; toast('scan failed'); }
+}
+els.scanBtn.onclick = openScan;
+els.scanClose.onclick = () => { els.scanModal.hidden = true; };
+
+// runSanitize applies a server-side removal (strip/safe). On success it reloads
+// the cleaned document and shows what remains; on failure it leaves the document
+// untouched and points to the next, more thorough method.
+async function runSanitize(method, stepDown) {
+  if (!pdfDocument) return;
+  const res = await apiFetch('/api/sanitize?method=' + method, { method: 'POST' });
+  if (!res.ok) return toast('removal failed');
+  const out = await res.json();
+  if (!out.ok) return toast('Could not cleanly remove it — try ' + stepDown + '.');
+  await setDocumentFromServer(out);
+  renderScanReport(out.residual);
+  const left = (out.residual.findings || []).length;
+  toast(left ? 'Cleaned — ' + left + ' item(s) remain; Flatten removes the rest'
+             : 'Cleaned — nothing hidden remains');
+}
+els.scanStripBtn.onclick = () => runSanitize('strip', 'Remove files & media, or Flatten');
+els.scanSafeBtn.onclick = () => runSanitize('safe', 'Flatten');
+
+// Flatten is the guaranteed-inert floor: rasterise every page and load the
+// flattened result back as the open document.
+els.scanFlattenBtn.onclick = async () => {
+  if (!pdfDocument) return;
+  const pages = await renderFilledPages(2);
+  const form = new FormData();
+  pages.forEach((p, i) => {
+    form.append('image', p.blob, `page-${i + 1}.png`);
+    form.append('pageW', String(p.w));
+    form.append('pageH', String(p.h));
+  });
+  form.append('format', 'pdf');
+  form.append('reload', '1');
+  const res = await apiFetch('/api/assemble', { method: 'POST', body: form });
+  if (!res.ok) return toast('flatten failed');
+  await setDocumentFromServer(await res.json());
+  renderScanReport({ findings: [] });
+  toast('Flattened — document is now inert images');
+};
 
 // --- thumbnails sidebar ------------------------------------------------------
 async function buildThumbnails(gen = docGen) {
