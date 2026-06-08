@@ -45,6 +45,14 @@ func fingerprintOf(cert *x509.Certificate) []byte {
 	return sum[:]
 }
 
+// FingerprintCert is Fingerprint for an already-parsed certificate — the same
+// SHA-256 SPKI value, exposed for the transport verifier, which works from parsed
+// peer certs. Routes through the one fingerprint source so a pin and a verified
+// peer hash identical bytes.
+func FingerprintCert(cert *x509.Certificate) []byte {
+	return fingerprintOf(cert)
+}
+
 // GenerateIdentity creates a self-signed ECDSA signing identity and returns its
 // certificate and private key as PEM. Self-signed is sufficient for Nib's
 // purpose — tamper-evidence (integrity), not third-party identity trust.
@@ -104,7 +112,7 @@ type Options struct {
 // tamper-evidence. The signature is invisible; callers bake any visible mark
 // into the page content before signing. This is the solo-Finalize path.
 func Sign(pdfBytes, certPEM, keyPEM []byte, opts Options) ([]byte, error) {
-	cert, signer, err := parseIdentity(certPEM, keyPEM)
+	cert, signer, err := ParseIdentity(certPEM, keyPEM)
 	if err != nil {
 		return nil, err
 	}
@@ -138,7 +146,7 @@ func SignApproval(pdfBytes, certPEM, keyPEM []byte, opts Options) ([]byte, error
 	if certified {
 		return nil, errors.New("document is certified (no changes allowed); it cannot be co-signed")
 	}
-	cert, signer, err := parseIdentity(certPEM, keyPEM)
+	cert, signer, err := ParseIdentity(certPEM, keyPEM)
 	if err != nil {
 		return nil, err
 	}
@@ -217,7 +225,10 @@ func hasCertificationSignature(pdf []byte) (bool, error) {
 	return false, nil
 }
 
-func parseIdentity(certPEM, keyPEM []byte) (*x509.Certificate, crypto.Signer, error) {
+// ParseIdentity decodes an identity's PEM certificate and key into a parsed
+// certificate and its signer. Exposed for the P2P transport layer, which mints a
+// short-lived child certificate signed by the identity key.
+func ParseIdentity(certPEM, keyPEM []byte) (*x509.Certificate, crypto.Signer, error) {
 	cb, _ := pem.Decode(certPEM)
 	kb, _ := pem.Decode(keyPEM)
 	if cb == nil || kb == nil {
