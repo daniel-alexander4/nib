@@ -794,7 +794,7 @@ function renderScanReport(rep) {
   if (!findings.length) {
     const p = document.createElement('p');
     p.className = 'scan-empty';
-    p.textContent = '✓ No active or hidden content found.';
+    p.textContent = '✓ No active or hidden content found — but scanning can’t catch deliberately hidden data; only Flatten is certain to remove it.';
     body.appendChild(p);
     return;
   }
