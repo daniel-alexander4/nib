@@ -33,8 +33,16 @@ func Fingerprint(certPEM []byte) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
+	return fingerprintOf(cert), nil
+}
+
+// fingerprintOf is the one place the identity fingerprint is computed: the
+// SHA-256 of the certificate's SubjectPublicKeyInfo. Both Fingerprint (from PEM)
+// and the verifier (from a parsed signer cert) route through it so a pin, an
+// attestation's accepted-peer, and a verified signer all hash the same bytes.
+func fingerprintOf(cert *x509.Certificate) []byte {
 	sum := sha256.Sum256(cert.RawSubjectPublicKeyInfo)
-	return sum[:], nil
+	return sum[:]
 }
 
 // GenerateIdentity creates a self-signed ECDSA signing identity and returns its

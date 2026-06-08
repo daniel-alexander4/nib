@@ -80,6 +80,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/peers/remove", s.requireUnlocked(s.handlePeersRemove))
 	mux.HandleFunc("POST /api/cosign/quote", s.requireUnlocked(s.handleCosignQuote))
 	mux.HandleFunc("POST /api/cosign/sign", s.requireUnlocked(s.handleCosignSign))
+	mux.HandleFunc("GET /api/attestations", s.requireUnlocked(s.handleAttestations))
 	mux.HandleFunc("POST /api/open", s.requireUnlocked(s.handleOpen))
 	mux.HandleFunc("POST /api/open-url", s.requireUnlocked(s.handleOpenURL))
 	mux.HandleFunc("GET /api/recent", s.requireUnlocked(s.handleRecent))

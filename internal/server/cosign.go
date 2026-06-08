@@ -83,6 +83,42 @@ func pinnedLabel(v *vault.Vault, fp []byte) (string, bool) {
 	return "", false
 }
 
+// attestationView is one signer's attestation for the verify-side display: the
+// p2p reading plus whether the viewer has pinned that signer's identity locally.
+type attestationView struct {
+	p2p.SignerAttestation
+	Pinned bool `json:"pinned"`
+}
+
+type attestationsResponse struct {
+	Attestations []attestationView `json:"attestations"`
+}
+
+// handleAttestations returns the co-signing attestations on the open document —
+// each signer's accepted peer, whether it cross-binds to a real co-signer
+// (Matched), and whether the viewer has pinned that signer. Read-only; the
+// signature-details modal fetches it lazily.
+func (s *Server) handleAttestations(w http.ResponseWriter, r *http.Request) {
+	v := vaultFrom(r)
+	s.mu.Lock()
+	doc := s.doc
+	s.mu.Unlock()
+	if doc == nil {
+		writeJSON(w, attestationsResponse{Attestations: []attestationView{}})
+		return
+	}
+	atts := p2p.ReadAttestations(doc.data)
+	views := make([]attestationView, 0, len(atts))
+	for _, a := range atts {
+		view := attestationView{SignerAttestation: a}
+		if fp, err := hex.DecodeString(a.Fingerprint); err == nil && len(fp) == 32 {
+			_, view.Pinned = pinnedLabel(v, fp)
+		}
+		views = append(views, view)
+	}
+	writeJSON(w, attestationsResponse{Attestations: views})
+}
+
 func (s *Server) handleCosignQuote(w http.ResponseWriter, r *http.Request) {
 	v := vaultFrom(r)
 	var p cosignParams

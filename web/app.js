@@ -698,12 +698,12 @@ function timeLabel(s) {
   return 'No signing time recorded';
 }
 
-function openSigDetails() {
+async function openSigDetails() {
   const signers = lastSig?.signers || [];
   if (!signers.length) return;
   const body = els.sigDetailsBody;
   body.innerHTML = '';
-  for (const s of signers) {
+  const rows = signers.map((s) => {
     const row = document.createElement('div');
     row.className = 'sigrow';
 
@@ -723,7 +723,8 @@ function openSigDetails() {
     row.appendChild(time);
 
     body.appendChild(row);
-  }
+    return row;
+  });
   // Document-level caution: content in a revision after the last signature is
   // covered by none. Shown whatever the per-signer verdicts (it's about the
   // whole file, not one signer); the signatures themselves stay valid.
@@ -734,6 +735,46 @@ function openSigDetails() {
     body.appendChild(note);
   }
   els.sigDetailsModal.hidden = false;
+  augmentSigDetails(rows);
+}
+
+// augmentSigDetails fetches the co-signing attestations and adds, per signer that
+// carries one, what they accept + whether it cross-binds to a real co-signer's
+// key + whether the viewer has pinned them. The parse + cross-binding are done in
+// Go (p2p); this only renders. Wording stays key-level — it confirms each party
+// attests to the other's fingerprint, not a CA-vouched identity.
+async function augmentSigDetails(rows) {
+  let atts;
+  try {
+    const res = await apiFetch('/api/attestations');
+    if (!res.ok) return;
+    atts = (await res.json()).attestations || [];
+  } catch { return; }
+  const attested = [];
+  atts.forEach((a, i) => {
+    if (!a.acceptedPeer || !rows[i]) return;
+    attested.push(a);
+    const box = document.createElement('div');
+    box.className = 'sigatt';
+    const what = document.createElement('div');
+    what.textContent = a.reason.replace(/\[SPKI:([0-9a-fA-F]{64})\]/, (_, h) => '[' + groupFingerprint(h.slice(0, 8)) + '…]');
+    box.appendChild(what);
+    const verdict = document.createElement('div');
+    if (a.matched) {
+      verdict.className = 'sigatt-ok';
+      verdict.textContent = '✓ Accepts a co-signer of this document' + (a.pinned ? ', whom you have pinned' : '');
+    } else {
+      verdict.textContent = 'The accepted peer has not co-signed this document';
+    }
+    box.appendChild(verdict);
+    rows[i].appendChild(box);
+  });
+  if (attested.length >= 2 && attested.every((a) => a.matched)) {
+    const m = document.createElement('div');
+    m.className = 'sigmutual';
+    m.textContent = '✓ Mutually co-signed — each party’s signature attests to the other’s key.';
+    els.sigDetailsBody.appendChild(m);
+  }
 }
 els.sigDetailsBtn.onclick = openSigDetails;
 els.sigDetailsClose.onclick = () => { els.sigDetailsModal.hidden = true; };
