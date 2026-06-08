@@ -541,6 +541,10 @@ function updateBadge(sig) {
   // Deliberately no inline signing time: it may be self-asserted, and the
   // badge can't qualify it. Time + its trust level live in the details modal.
   if (sig?.state === 'valid' && signers.length > 1) label += ' · ' + signers.length + ' signers';
+  // Valid signatures, but content rides after the last one, uncovered: the bare
+  // "Untampered" overstates it, so tone the badge to caution. (Invalid already
+  // dominates; the full explanation is in the details modal.)
+  if (sig?.state === 'valid' && sig?.addedAfter) { cls = 'badge-warn'; label += ' · content added after signing'; }
   b.className = 'badge ' + cls;
   b.textContent = label;
   b.title = label;
@@ -580,6 +584,15 @@ function openSigDetails() {
     row.appendChild(time);
 
     body.appendChild(row);
+  }
+  // Document-level caution: content in a revision after the last signature is
+  // covered by none. Shown whatever the per-signer verdicts (it's about the
+  // whole file, not one signer); the signatures themselves stay valid.
+  if (lastSig?.addedAfter) {
+    const note = document.createElement('div');
+    note.className = 'signote';
+    note.textContent = '⚠ Content was added after the last signature — it is not covered by any signature.';
+    body.appendChild(note);
   }
   els.sigDetailsModal.hidden = false;
 }
