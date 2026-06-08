@@ -71,12 +71,24 @@ func GenerateIdentity(commonName string) (certPEM, keyPEM []byte, err error) {
 	return certPEM, keyPEM, nil
 }
 
+// Appearance is an optional visible signature appearance: an image baked as the
+// signature's on-page widget, added in the same incremental revision as the
+// signature itself. This is the PDF-native way to attach visible content to a
+// signature — one writer, one revision — so it always renders and is always
+// covered, unlike a separately-added annotation.
+type Appearance struct {
+	Image []byte     // PNG or JPEG to draw as the widget
+	Page  int        // 1-based page to place it on
+	Rect  [4]float64 // llx, lly, urx, ury in PDF points
+}
+
 // Options controls a finalize-and-sign operation.
 type Options struct {
-	Name   string    // signer common name, recorded in the signature
-	Reason string    // e.g. "Finalized in Nib"
-	When   time.Time // signing time
-	TSAURL string    // optional RFC3161 timestamp authority
+	Name       string      // signer common name, recorded in the signature
+	Reason     string      // e.g. "Finalized in Nib"; for co-signing, carries the attestation
+	When       time.Time   // signing time
+	TSAURL     string      // optional RFC3161 timestamp authority
+	Appearance *Appearance // optional visible appearance (approval signatures only)
 }
 
 // Sign applies a certification signature (DocMDP "no changes allowed") to pdf
@@ -133,6 +145,21 @@ func SignApproval(pdfBytes, certPEM, keyPEM []byte, opts Options) ([]byte, error
 	}
 	if opts.TSAURL != "" {
 		data.TSA = sign.TSA{URL: opts.TSAURL}
+	}
+	if a := opts.Appearance; a != nil && len(a.Image) > 0 {
+		page := a.Page
+		if page < 1 {
+			page = 1
+		}
+		data.Appearance = sign.Appearance{
+			Visible:     true,
+			Page:        uint32(page),
+			LowerLeftX:  a.Rect[0],
+			LowerLeftY:  a.Rect[1],
+			UpperRightX: a.Rect[2],
+			UpperRightY: a.Rect[3],
+			Image:       a.Image,
+		}
 	}
 	return runSign(pdfBytes, data)
 }
