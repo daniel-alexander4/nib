@@ -150,3 +150,45 @@ func TestCoSignRefusesCertified(t *testing.T) {
 		t.Error("Contribute should refuse to co-sign a certified document")
 	}
 }
+
+// ReadAttestations must cross-bind: in a mutual A<->B co-signing each signer's
+// accepted peer is the other's actual fingerprint, so both are Matched; a single
+// signer whose peer hasn't co-signed yet is not Matched.
+func TestReadAttestationsCrossBinding(t *testing.T) {
+	base, err := testpdf.Form()
+	if err != nil {
+		t.Fatal(err)
+	}
+	certA, keyA, _ := sign.GenerateIdentity("Alice")
+	certB, keyB, _ := sign.GenerateIdentity("Bob")
+	fpA, fpB := fp(t, certA), fp(t, certB)
+	now := time.Date(2026, 6, 8, 12, 0, 0, 0, time.UTC)
+
+	prepared, err := PrepareDocument(base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	docA := contribute(t, prepared, certA, keyA, Attestation{
+		Signer: "Alice", AcceptedPeer: fpB, AcceptedPeerLabel: "Bob", When: now,
+	})
+
+	// Mid-flow: only Alice has signed; she accepts Bob, who isn't a co-signer yet.
+	one := ReadAttestations(docA)
+	if len(one) != 1 || one[0].Fingerprint != fpA || one[0].AcceptedPeer != fpB || one[0].Matched {
+		t.Fatalf("mid-flow attestation = %+v, want Alice(fp=%s) accepts %s, not matched", one, fpA, fpB)
+	}
+
+	docB := contribute(t, docA, certB, keyB, Attestation{
+		Signer: "Bob", AcceptedPeer: fpA, AcceptedPeerLabel: "Alice", When: now,
+	})
+	two := ReadAttestations(docB)
+	if len(two) != 2 {
+		t.Fatalf("attestations = %d, want 2", len(two))
+	}
+	if two[0].Fingerprint != fpA || two[1].Fingerprint != fpB {
+		t.Errorf("signer fingerprints wrong: %s / %s", two[0].Fingerprint, two[1].Fingerprint)
+	}
+	if !two[0].Matched || !two[1].Matched {
+		t.Errorf("mutual co-signing should cross-bind both: %+v", two)
+	}
+}
