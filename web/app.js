@@ -1926,7 +1926,14 @@ function collectStamps() {
 // bakedBytes is the canonical current document: pdf.js form/annotation edits via
 // saveDocument(), plus the auto-detected overlay fields stamped in server-side.
 async function bakedBytes() {
-  const saved = await pdfDocument.saveDocument();
+  // saveDocument() bakes pdf.js annotation-storage edits (form fills, FREETEXT/
+  // INK/HIGHLIGHT/STAMP) and warns + does a needless rewrite when storage is
+  // empty. Our overlay edits (covers/fields/stamps) bake server-side via
+  // /api/bake, so when there are no pdf.js edits, getData() is the library's
+  // prescribed lighter equivalent (raw bytes, no bake).
+  const saved = pdfDocument.annotationStorage.size > 0
+    ? await pdfDocument.saveDocument()
+    : await pdfDocument.getData();
   const fields = collectFields();
   const stamps = collectStamps();
   const covers = collectCovers();
