@@ -40,6 +40,9 @@ const els = {
   managePeersBtn: $('managePeersBtn'), peersModal: $('peersModal'), peersList: $('peersList'),
   peerSelfFp: $('peerSelfFp'), peerPaste: $('peerPaste'), peerLabel: $('peerLabel'),
   peerPinBtn: $('peerPinBtn'), peersClose: $('peersClose'),
+  cosignBtn: $('cosignBtn'), cosignModal: $('cosignModal'), cosignPeer: $('cosignPeer'),
+  cosignIntent: $('cosignIntent'), cosignNoPeers: $('cosignNoPeers'),
+  cosignCancel: $('cosignCancel'), cosignGo: $('cosignGo'),
   authOverlay: $('authOverlay'), authForm: $('authForm'), authTitle: $('authTitle'),
   authHint: $('authHint'), authPw: $('authPw'), migrateRow: $('migrateRow'),
   keyChoice: $('keyChoice'), keySelect: $('keySelect'), keyPath: $('keyPath'),
@@ -428,6 +431,72 @@ async function unpinPeer(fingerprint, label) {
 els.managePeersBtn.onclick = () => { els.peersModal.hidden = false; loadPeers(); };
 els.peersClose.onclick = () => { els.peersModal.hidden = true; };
 els.peerPinBtn.onclick = pinPeer;
+
+// --- co-sign with a peer -----------------------------------------------------
+async function openCosign() {
+  if (!pdfDocument) return;
+  const res = await apiFetch('/api/peers');
+  if (!res.ok) { toast('could not load peers'); return; }
+  const peers = (await res.json()).peers || [];
+  els.cosignPeer.innerHTML = '';
+  for (const p of peers) {
+    const o = document.createElement('option');
+    o.value = p.fingerprint;
+    o.textContent = (p.label || 'Unlabelled peer') + ' — ' + groupFingerprint(p.fingerprint.slice(0, 8)) + '…';
+    els.cosignPeer.append(o);
+  }
+  const none = peers.length === 0;
+  els.cosignNoPeers.hidden = !none;
+  els.cosignPeer.hidden = none;
+  els.cosignGo.disabled = none;
+  els.cosignModal.hidden = false;
+}
+
+// renderAttestation rasterizes the server-provided lines into a white block sized
+// to the rect's aspect — the signing library stretches the image to fill the
+// rect, so the PNG must match its width:height. The lines come from the server
+// (Go AppearanceLines), never rebuilt here, so the block can't drift from /Reason.
+async function renderAttestation(lines, rect) {
+  const w = rect[2] - rect[0], h = rect[3] - rect[1], scale = 3;
+  const cv = document.createElement('canvas');
+  cv.width = Math.round(w * scale);
+  cv.height = Math.round(h * scale);
+  const ctx = cv.getContext('2d');
+  ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, cv.width, cv.height);
+  ctx.strokeStyle = '#000'; ctx.lineWidth = scale; ctx.strokeRect(0, 0, cv.width, cv.height);
+  ctx.fillStyle = '#000'; ctx.textBaseline = 'top';
+  const pad = 4 * scale;
+  const lineH = (cv.height - 2 * pad) / lines.length;
+  ctx.font = Math.min(lineH * 0.7, 9 * scale) + 'px sans-serif';
+  lines.forEach((ln, i) => ctx.fillText(ln, pad, pad + i * lineH));
+  return await new Promise((r) => cv.toBlob(r, 'image/png'));
+}
+
+async function cosign() {
+  const fingerprint = els.cosignPeer.value;
+  if (!fingerprint) return;
+  const intent = els.cosignIntent.value;
+  els.cosignModal.hidden = true;
+  const qr = await apiFetch('/api/cosign/quote', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ fingerprint, intent }),
+  });
+  if (!qr.ok) { toast((await qr.json()).error || 'could not start co-signing'); return; }
+  const q = await qr.json();
+  const png = await renderAttestation(q.lines, q.rect);
+
+  const form = new FormData();
+  form.append('pdf', new Blob([await bakedBytes()], { type: 'application/pdf' }), 'doc.pdf');
+  form.append('params', JSON.stringify({ fingerprint, intent, when: q.when }));
+  form.append('appearance', png, 'attestation.png');
+  const sr = await apiFetch('/api/cosign/sign', { method: 'POST', body: form });
+  if (!sr.ok) { toast((await sr.json()).error || 'could not co-sign'); return; }
+  openSaveAs(await sr.blob(), exportBase() + '-cosigned.pdf', 'Save co-signed PDF');
+}
+
+els.cosignBtn.onclick = openCosign;
+els.cosignCancel.onclick = () => { els.cosignModal.hidden = true; };
+els.cosignGo.onclick = cosign;
 
 // About dialog: explainer by default; the licence/notices buttons swap the body
 // for the embedded /legal/ document, and Back returns to the explainer.
