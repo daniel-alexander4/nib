@@ -16,6 +16,7 @@ package p2p
 import (
 	"fmt"
 	"regexp"
+	"strings"
 	"time"
 
 	"nib/internal/sign"
@@ -48,11 +49,22 @@ func (a Attestation) intent() string {
 	return a.Intent
 }
 
+// safeText strips the square brackets out of user-supplied text. The /Reason
+// carries the accepted peer as a [SPKI:<hex>] token that ReadAttestations parses
+// with the FIRST match; the label is interpolated before that token, so without
+// this a crafted label (or intent) could inject a second [SPKI:...] that wins the
+// parse and misrepresents which peer was accepted. Removing brackets makes the
+// real token the only one that can appear.
+func safeText(s string) string {
+	return strings.NewReplacer("[", "", "]", "").Replace(s)
+}
+
 // reason encodes the attestation into a signature /Reason: a human sentence with
 // a machine-parseable [SPKI:<hex>] token, so it reads cleanly in any viewer's
-// signature panel yet round-trips exactly.
+// signature panel yet round-trips exactly. The user-controlled label and intent
+// are bracket-stripped so they can't forge the token (see safeText).
 func (a Attestation) reason() string {
-	return fmt.Sprintf("Accepts %s [SPKI:%s]. %s", a.AcceptedPeerLabel, a.AcceptedPeer, a.intent())
+	return fmt.Sprintf("Accepts %s [SPKI:%s]. %s", safeText(a.AcceptedPeerLabel), a.AcceptedPeer, safeText(a.intent()))
 }
 
 // AppearanceLines is the visible attestation block text, one entry per line — the
