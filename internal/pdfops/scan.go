@@ -133,8 +133,14 @@ func Scan(pdf []byte) (ScanReport, error) {
 // document/page/annotation auto-run hooks, JavaScript, optional-content layer
 // machinery, XFA, and the action on any link/widget that could run code or
 // reach outside the document, and removes embedded files. The annotations
-// themselves are kept. Because it rewrites the file, any existing signature is
-// invalidated — the result is a new, unsigned PDF.
+// themselves are kept. It never edits a content stream or an annotation
+// appearance (/AP) stream, so a page's rendering is unchanged except that
+// dropping /OCProperties reveals optional-content layers (reveal-only — content
+// is never hidden or lost), the intended hidden-content reveal; removing /XFA
+// has no effect in Nib's own view (pdf.js XFA rendering is off by default via
+// the raw getDocument API), though an XFA-capable external viewer would collapse
+// a stripped dynamic form. Because it rewrites the file, any existing signature
+// is invalidated — the result is a new, unsigned PDF.
 func StripActive(pdf []byte) ([]byte, error) {
 	return writeMutated(pdf, func(ctx *model.Context) error {
 		xt := ctx.XRefTable
