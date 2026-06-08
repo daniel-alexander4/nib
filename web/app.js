@@ -1188,6 +1188,23 @@ els.saveAsGo.onclick = async () => {
   toast('Saved to ' + meta.path);
 };
 
+// renderPageBlob rasterises one page of an already-parsed doc to a PNG at the
+// given scale, runs the optional paint hook over the canvas after rendering (used
+// to burn redaction boxes in), and returns the blob plus the page's true point
+// size. The shared atom behind renderFilledPages and flattenPages.
+async function renderPageBlob(doc, n, scale, paint) {
+  const page = await doc.getPage(n);
+  const base = page.getViewport({ scale: 1 }); // points: the page's true physical size
+  const vp = page.getViewport({ scale });
+  const cv = document.createElement('canvas');
+  cv.width = vp.width; cv.height = vp.height;
+  const ctx = cv.getContext('2d');
+  await page.render({ canvasContext: ctx, viewport: vp, annotationMode: pdfjsLib.AnnotationMode.ENABLE }).promise;
+  if (paint) paint(ctx, cv, n);
+  const blob = await new Promise((r) => cv.toBlob(r, 'image/png'));
+  return { blob, w: base.width, h: base.height };
+}
+
 // renderFilledPages rasterises the saved (form-filled, stamped) document so the
 // raster reflects every edit. Used for flatten and image export.
 async function renderFilledPages(scale, onlyPage) {
@@ -1196,20 +1213,29 @@ async function renderFilledPages(scale, onlyPage) {
   const pages = [];
   const from = onlyPage || 1;
   const to = onlyPage || doc.numPages;
-  for (let n = from; n <= to; n++) {
-    const page = await doc.getPage(n);
-    const base = page.getViewport({ scale: 1 }); // points: the page's true physical size
-    const vp = page.getViewport({ scale });
-    const cv = document.createElement('canvas');
-    cv.width = vp.width; cv.height = vp.height;
-    await page.render({
-      canvasContext: cv.getContext('2d'), viewport: vp,
-      annotationMode: pdfjsLib.AnnotationMode.ENABLE,
-    }).promise;
-    const blob = await new Promise((r) => cv.toBlob(r, 'image/png'));
-    pages.push({ blob, w: base.width, h: base.height });
-  }
+  for (let n = from; n <= to; n++) pages.push(await renderPageBlob(doc, n, scale));
   return pages;
+}
+
+// flattenPages rasterises the given pages of the saved document and posts them to
+// /api/redact, which swaps each for a flat image — destroying the vector content
+// underneath. The shared engine behind "Apply redactions" and "Remove originals";
+// the optional paint hook lets redaction burn its black boxes in before the snapshot.
+async function flattenPages(pages, paint) {
+  const bytes = await bakedBytes();
+  // pdf.js detaches the buffer it parses, but `bytes` is also uploaded as the pdf
+  // field, so render from a copy and keep the original intact for the upload.
+  const doc = await pdfjsLib.getDocument({ data: bytes.slice() }).promise;
+  const form = new FormData();
+  form.append('pdf', new Blob([bytes], { type: 'application/pdf' }), 'doc.pdf');
+  for (const n of pages) {
+    const { blob, w, h } = await renderPageBlob(doc, n, 2, paint);
+    form.append('page', blob, `page-${n}.png`);
+    form.append('pageNum', String(n));
+    form.append('pageW', String(w));
+    form.append('pageH', String(h));
+  }
+  return apiFetch('/api/redact', { method: 'POST', body: form });
 }
 
 // assembleBlob rasterises every (filled, stamped) page and packages it server-
@@ -1444,34 +1470,12 @@ els.applyRedactBtn.onclick = async () => {
   if (!redactMarks.length) return toast('Draw redaction boxes first');
   if (!confirm('Permanently redact the marked pages? Those pages become flat images and the content under each box is removed. This cannot be undone.')) return;
 
-  const bytes = await bakedBytes();
-  // pdf.js transfers the typed array to its worker, detaching `bytes`; we still
-  // need it intact to upload below, so parse a copy.
-  const doc = await pdfjsLib.getDocument({ data: bytes.slice() }).promise;
   const byPage = {};
   for (const m of redactMarks) (byPage[m.page] ||= []).push(m);
-
-  const form = new FormData();
-  form.append('pdf', new Blob([bytes], { type: 'application/pdf' }), 'doc.pdf');
-  for (const [pageStr, marks] of Object.entries(byPage)) {
-    const n = Number(pageStr);
-    const page = await doc.getPage(n);
-    const base = page.getViewport({ scale: 1 }); // points: the page's true physical size
-    const vp = page.getViewport({ scale: 2 });
-    const cv = document.createElement('canvas');
-    cv.width = vp.width; cv.height = vp.height;
-    const ctx = cv.getContext('2d');
-    await page.render({ canvasContext: ctx, viewport: vp, annotationMode: pdfjsLib.AnnotationMode.ENABLE }).promise;
+  const res = await flattenPages(Object.keys(byPage).map(Number), (ctx, cv, n) => {
     ctx.fillStyle = '#000';
-    for (const m of marks) ctx.fillRect(m.fx * cv.width, m.fy * cv.height, m.fw * cv.width, m.fh * cv.height);
-    const blob = await new Promise((r) => cv.toBlob(r, 'image/png'));
-    form.append('page', blob, `page-${n}.png`);
-    form.append('pageNum', String(n));
-    form.append('pageW', String(base.width));
-    form.append('pageH', String(base.height));
-  }
-
-  const res = await apiFetch('/api/redact', { method: 'POST', body: form });
+    for (const m of byPage[n]) ctx.fillRect(m.fx * cv.width, m.fy * cv.height, m.fw * cv.width, m.fh * cv.height);
+  });
   if (!res.ok) return toast('redaction failed');
   redactMarks = [];
   redactMode = false;
@@ -1656,25 +1660,7 @@ els.removeOriginalsBtn.onclick = async () => {
   if (!pages.length) return toast('No text edits to flatten');
   if (!confirm('Make the text edits permanent? The edited page(s) become flat images and the original text underneath is removed. This cannot be undone.')) return;
 
-  const bytes = await bakedBytes();
-  const doc = await pdfjsLib.getDocument({ data: bytes.slice() }).promise;
-  const form = new FormData();
-  form.append('pdf', new Blob([bytes], { type: 'application/pdf' }), 'doc.pdf');
-  for (const n of pages) {
-    const page = await doc.getPage(n);
-    const baseV = page.getViewport({ scale: 1 }); // points: true physical size
-    const vp = page.getViewport({ scale: 2 });
-    const cv = document.createElement('canvas');
-    cv.width = vp.width; cv.height = vp.height;
-    const ctx = cv.getContext('2d');
-    await page.render({ canvasContext: ctx, viewport: vp, annotationMode: pdfjsLib.AnnotationMode.ENABLE }).promise;
-    const blob = await new Promise((r) => cv.toBlob(r, 'image/png'));
-    form.append('page', blob, `page-${n}.png`);
-    form.append('pageNum', String(n));
-    form.append('pageW', String(baseV.width));
-    form.append('pageH', String(baseV.height));
-  }
-  const res = await apiFetch('/api/redact', { method: 'POST', body: form });
+  const res = await flattenPages(pages);
   if (!res.ok) return toast('could not flatten edits');
   overlayFields = overlayFields.filter((f) => { if (f.kind === 'edit' && pages.includes(f.page)) { f.el.remove(); return false; } return true; });
   editMode = false; reflectEdit();
