@@ -6,6 +6,7 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/sha256"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/pem"
@@ -17,6 +18,24 @@ import (
 	dpdf "github.com/digitorus/pdf"
 	"github.com/digitorus/pdfsign/sign"
 )
+
+// Fingerprint returns the SHA-256 of the certificate's SubjectPublicKeyInfo —
+// the stable pin for an identity. It hashes the public key, not the whole
+// certificate, so the pin survives any re-issue of the cert (new validity,
+// fields) as long as the signing key is the same. This is the value exchanged
+// out-of-band (QR / safety-number) to pin a peer.
+func Fingerprint(certPEM []byte) ([]byte, error) {
+	b, _ := pem.Decode(certPEM)
+	if b == nil {
+		return nil, errors.New("invalid certificate PEM")
+	}
+	cert, err := x509.ParseCertificate(b.Bytes)
+	if err != nil {
+		return nil, err
+	}
+	sum := sha256.Sum256(cert.RawSubjectPublicKeyInfo)
+	return sum[:], nil
+}
 
 // GenerateIdentity creates a self-signed ECDSA signing identity and returns its
 // certificate and private key as PEM. Self-signed is sufficient for Nib's

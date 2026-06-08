@@ -9,6 +9,7 @@
 package vault
 
 import (
+	"bytes"
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/rand"
@@ -99,6 +100,14 @@ type Identity struct {
 	KeyPEM  []byte `json:"key"`
 }
 
+// PinnedPeer is another Nib identity the user has pinned out-of-band by its
+// SHA-256 SPKI fingerprint (see sign.Fingerprint), so that peer's signatures
+// and co-signing sessions can be recognized. Label is a human name for it.
+type PinnedPeer struct {
+	Fingerprint []byte `json:"fingerprint"`
+	Label       string `json:"label,omitempty"`
+}
+
 // Settings holds the user's togglable UI preferences. Zero values are the
 // defaults: an empty ToolbarStyle means the classic "menus" layout, and a false
 // DisableAutoUpdate means the startup update check runs — so an older vault that
@@ -110,11 +119,12 @@ type Settings struct {
 
 // Contents is the decrypted vault payload.
 type Contents struct {
-	Images   []Image           `json:"images,omitempty"`
-	Recent   []string          `json:"recent,omitempty"` // recent file paths, newest first
-	Identity *Identity         `json:"identity,omitempty"`
-	Profile  map[string]string `json:"profile,omitempty"` // autofill field name -> value
-	Settings Settings          `json:"settings,omitempty"`
+	Images      []Image           `json:"images,omitempty"`
+	Recent      []string          `json:"recent,omitempty"` // recent file paths, newest first
+	Identity    *Identity         `json:"identity,omitempty"`
+	Profile     map[string]string `json:"profile,omitempty"` // autofill field name -> value
+	Settings    Settings          `json:"settings,omitempty"`
+	PinnedPeers []PinnedPeer      `json:"pinnedPeers,omitempty"`
 }
 
 const maxRecent = 10
@@ -469,6 +479,49 @@ func (v *Vault) SetIdentity(certPEM, keyPEM []byte) error {
 	v.mu.Lock()
 	defer v.mu.Unlock()
 	v.contents.Identity = &Identity{CertPEM: certPEM, KeyPEM: keyPEM}
+	return v.save()
+}
+
+// PinnedPeers returns a copy of the pinned-peer list.
+func (v *Vault) PinnedPeers() []PinnedPeer {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	out := make([]PinnedPeer, len(v.contents.PinnedPeers))
+	for i, p := range v.contents.PinnedPeers {
+		out[i] = PinnedPeer{Fingerprint: append([]byte(nil), p.Fingerprint...), Label: p.Label}
+	}
+	return out
+}
+
+// AddPinnedPeer pins a peer by fingerprint and label and persists. Re-pinning an
+// existing fingerprint updates its label rather than duplicating it.
+func (v *Vault) AddPinnedPeer(fingerprint []byte, label string) error {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	for i := range v.contents.PinnedPeers {
+		if bytes.Equal(v.contents.PinnedPeers[i].Fingerprint, fingerprint) {
+			v.contents.PinnedPeers[i].Label = label
+			return v.save()
+		}
+	}
+	v.contents.PinnedPeers = append(v.contents.PinnedPeers, PinnedPeer{
+		Fingerprint: append([]byte(nil), fingerprint...),
+		Label:       label,
+	})
+	return v.save()
+}
+
+// RemovePinnedPeer unpins the peer with the given fingerprint (no-op if absent).
+func (v *Vault) RemovePinnedPeer(fingerprint []byte) error {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	var kept []PinnedPeer
+	for _, p := range v.contents.PinnedPeers {
+		if !bytes.Equal(p.Fingerprint, fingerprint) {
+			kept = append(kept, p)
+		}
+	}
+	v.contents.PinnedPeers = kept
 	return v.save()
 }
 
