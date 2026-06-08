@@ -13,6 +13,7 @@ package sign
 import (
 	"bytes"
 
+	dpdf "github.com/digitorus/pdf"
 	"github.com/digitorus/pdfsign/verify"
 )
 
@@ -55,6 +56,13 @@ type SignerInfo struct {
 type Status struct {
 	State   State        `json:"state"`
 	Signers []SignerInfo `json:"signers,omitempty"`
+	// AddedAfter is true when the document carries content in a revision later
+	// than its most-recent signature — added after signing, covered by no
+	// signature. It does NOT make the existing signatures invalid (each still
+	// proves its own content intact); it warns that the final document is not
+	// wholly signed. In multi-party signing only content after the LAST
+	// signature is flagged — content added between signatures is expected.
+	AddedAfter bool `json:"addedAfter,omitempty"`
 }
 
 // Verify reports whether data is unsigned, signed-and-untampered, or
@@ -76,7 +84,49 @@ func Verify(data []byte) Status {
 		}
 		st.Signers = append(st.Signers, si)
 	}
+	// Best-effort: flag content appended after the most-recent signature. A
+	// parse failure here must not change the integrity verdict.
+	st.AddedAfter, _ = trailingContentAfterLastSignature(data)
 	return st
+}
+
+// trailingContentAfterLastSignature reports whether pdf has content beyond the
+// coverage of its most-recent signature — a revision appended after the last
+// signature, covered by none. Each signature's /ByteRange is
+// [start1 len1 start2 len2]; the signed content ends at start2+len2, and a
+// later (incremental) signature covers more, so the most-recent signature has
+// the largest coverage end. If the file is larger than every signature's
+// coverage, content was added after the last one. Unsigned docs report false.
+func trailingContentAfterLastSignature(pdf []byte) (bool, error) {
+	r, err := dpdf.NewReader(bytes.NewReader(pdf), int64(len(pdf)))
+	if err != nil {
+		return false, err
+	}
+	acro := r.Trailer().Key("Root").Key("AcroForm")
+	if acro.IsNull() {
+		return false, nil
+	}
+	fields := acro.Key("Fields")
+	var maxEnd int64
+	signed := false
+	for i := 0; i < fields.Len(); i++ {
+		f := fields.Index(i)
+		if f.Key("FT").Name() != "Sig" {
+			continue
+		}
+		br := f.Key("V").Key("ByteRange")
+		if br.Len() < 4 {
+			continue
+		}
+		signed = true
+		if end := br.Index(2).Int64() + br.Index(3).Int64(); end > maxEnd {
+			maxEnd = end
+		}
+	}
+	if !signed {
+		return false, nil
+	}
+	return int64(len(pdf)) > maxEnd, nil
 }
 
 // signerInfo projects a pdfsign verify.Signer onto the integrity-focused subset
