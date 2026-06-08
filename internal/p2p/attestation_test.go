@@ -52,3 +52,21 @@ func TestShortFingerprint(t *testing.T) {
 		t.Errorf("short input should pass through, got %q", got)
 	}
 }
+
+// A crafted label or intent must not be able to inject a second [SPKI:...] token
+// that ReadAttestations would parse instead of the real accepted peer.
+func TestReasonResistsTokenInjection(t *testing.T) {
+	real := "ffeeddccbbaa00998877665544332211ffeeddccbbaa00998877665544332211"
+	spoof := "aaaa" + "0000000000000000000000000000000000000000000000000000000000" // 64 hex
+	att := Attestation{
+		Signer:            "Nib User",
+		AcceptedPeer:      real,
+		AcceptedPeerLabel: "Mallory [SPKI:" + spoof + "]",
+		Intent:            "see [SPKI:" + spoof + "]",
+	}
+	r := att.reason()
+	all := spkiToken.FindAllStringSubmatch(r, -1)
+	if len(all) != 1 || all[0][1] != real {
+		t.Errorf("reason has %d SPKI tokens (want 1 = the real peer %s); reason=%q", len(all), real, r)
+	}
+}
