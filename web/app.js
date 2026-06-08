@@ -37,6 +37,9 @@ const els = {
   manageKeysBtn: $('manageKeysBtn'), keysModal: $('keysModal'), keysList: $('keysList'),
   keyCandidates: $('keyCandidates'), keyPaste: $('keyPaste'), keyAddPath: $('keyAddPath'),
   keyAddBtn: $('keyAddBtn'), keyCreateBtn: $('keyCreateBtn'), keysClose: $('keysClose'),
+  managePeersBtn: $('managePeersBtn'), peersModal: $('peersModal'), peersList: $('peersList'),
+  peerSelfFp: $('peerSelfFp'), peerPaste: $('peerPaste'), peerLabel: $('peerLabel'),
+  peerPinBtn: $('peerPinBtn'), peersClose: $('peersClose'),
   authOverlay: $('authOverlay'), authForm: $('authForm'), authTitle: $('authTitle'),
   authHint: $('authHint'), authPw: $('authPw'), migrateRow: $('migrateRow'),
   keyChoice: $('keyChoice'), keySelect: $('keySelect'), keyPath: $('keyPath'),
@@ -358,6 +361,73 @@ async function removeKey(pubKey, label) {
 
 els.manageKeysBtn.onclick = () => { els.keysModal.hidden = false; loadKeys(); };
 els.keysClose.onclick = () => { els.keysModal.hidden = true; };
+
+// --- identity & pinned peers (co-signing) ------------------------------------
+// groupFingerprint renders a 64-hex fingerprint in spaced quads so two people can
+// compare it out-of-band character by character.
+function groupFingerprint(hex) {
+  return (hex.match(/.{1,4}/g) || []).join(' ');
+}
+
+function renderPeers(data) {
+  els.peerSelfFp.textContent = groupFingerprint(data.fingerprint || '');
+  els.peersList.innerHTML = '';
+  for (const p of data.peers || []) {
+    const row = document.createElement('div');
+    row.className = 'keyrow';
+    const meta = document.createElement('div');
+    meta.className = 'keymeta';
+    const name = document.createElement('div');
+    name.className = 'keyfp';
+    name.textContent = p.label || 'Unlabelled peer';
+    const fp = document.createElement('div');
+    fp.className = 'keysub';
+    fp.textContent = groupFingerprint(p.fingerprint);
+    meta.append(name, fp);
+    const del = document.createElement('button');
+    del.className = 'keydel';
+    del.textContent = 'Unpin';
+    del.onclick = () => unpinPeer(p.fingerprint, p.label || p.fingerprint);
+    row.append(meta, del);
+    els.peersList.append(row);
+  }
+}
+
+async function loadPeers() {
+  const res = await apiFetch('/api/peers');
+  if (res.ok) renderPeers(await res.json());
+}
+
+async function pinPeer() {
+  const res = await apiFetch('/api/peers/pin', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ fingerprint: els.peerPaste.value, label: els.peerLabel.value }),
+  });
+  if (res.ok) {
+    renderPeers(await res.json());
+    els.peerPaste.value = '';
+    els.peerLabel.value = '';
+    toast('Peer pinned');
+  } else {
+    toast((await res.json()).error || 'could not pin peer');
+  }
+}
+
+async function unpinPeer(fingerprint, label) {
+  if (!confirm(`Unpin “${label}”? You'll need to compare and pin their fingerprint again to co-sign with them.`)) return;
+  const res = await apiFetch('/api/peers/remove', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ fingerprint }),
+  });
+  if (res.ok) { renderPeers(await res.json()); toast('Peer unpinned'); }
+  else toast((await res.json()).error || 'could not unpin peer');
+}
+
+els.managePeersBtn.onclick = () => { els.peersModal.hidden = false; loadPeers(); };
+els.peersClose.onclick = () => { els.peersModal.hidden = true; };
+els.peerPinBtn.onclick = pinPeer;
 
 // About dialog: explainer by default; the licence/notices buttons swap the body
 // for the embedded /legal/ document, and Back returns to the explainer.
