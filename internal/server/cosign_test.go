@@ -2,12 +2,16 @@ package server
 
 import (
 	"bytes"
+	"encoding/hex"
 	"encoding/json"
 	"io"
 	"mime/multipart"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"nib/internal/p2p"
 	"nib/internal/sign"
@@ -111,5 +115,59 @@ func TestCosignQuoteReturnsLinesAndRect(t *testing.T) {
 	}
 	if q.When == "" {
 		t.Error("quote did not return a signing time")
+	}
+}
+
+// The attestations endpoint surfaces, per signer, the cross-binding (Matched) and
+// whether the viewer has pinned that signer locally.
+func TestAttestationsEndpoint(t *testing.T) {
+	ts, _ := startServer(t)
+	c, csrf := authedClient(t, ts)
+
+	// A mutual A<->B co-signed document, built out-of-band.
+	base, _ := testpdf.Form()
+	cA, kA, _ := sign.GenerateIdentity("Alice")
+	cB, kB, _ := sign.GenerateIdentity("Bob")
+	fA, _ := sign.Fingerprint(cA)
+	fB, _ := sign.Fingerprint(cB)
+	now := time.Now()
+	prep, _ := p2p.PrepareDocument(base)
+	pa, _ := p2p.NextPlacement(prep)
+	dA, _ := p2p.Contribute(prep, cA, kA, p2p.Attestation{Signer: "Alice", AcceptedPeer: hex.EncodeToString(fB), AcceptedPeerLabel: "Bob", When: now}, tinyPNG(t), pa)
+	pb, _ := p2p.NextPlacement(dA)
+	dB, _ := p2p.Contribute(dA, cB, kB, p2p.Attestation{Signer: "Bob", AcceptedPeer: hex.EncodeToString(fA), AcceptedPeerLabel: "Alice", When: now}, tinyPNG(t), pb)
+
+	// Pin only Alice in the viewer's vault.
+	pinPeer(t, c, csrf, ts.URL, hex.EncodeToString(fA))
+
+	path := filepath.Join(t.TempDir(), "co.pdf")
+	if err := os.WriteFile(path, dB, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	resp := write(t, c, csrf, http.MethodPost, ts.URL+"/api/open", "application/json", jsonBody(openRequest{Path: path}))
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("open status = %d", resp.StatusCode)
+	}
+
+	r, err := c.Get(ts.URL + "/api/attestations")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer r.Body.Close()
+	var got attestationsResponse
+	json.NewDecoder(r.Body).Decode(&got)
+	if len(got.Attestations) != 2 {
+		t.Fatalf("attestations = %d, want 2", len(got.Attestations))
+	}
+	a, b := got.Attestations[0], got.Attestations[1]
+	if !a.Matched || !b.Matched {
+		t.Errorf("both should cross-bind: %+v / %+v", a, b)
+	}
+	if a.Signer != "Alice" || !a.Pinned {
+		t.Errorf("Alice should be pinned: %+v", a)
+	}
+	if b.Signer != "Bob" || b.Pinned {
+		t.Errorf("Bob should not be pinned: %+v", b)
 	}
 }

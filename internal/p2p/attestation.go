@@ -84,25 +84,44 @@ func (a Attestation) AppearanceLines() []string {
 // co-signed artifact.
 type SignerAttestation struct {
 	Signer       string `json:"signer"`       // signature common name
+	Fingerprint  string `json:"fingerprint"`  // hex SPKI of the signer's own cert (the identity that signed)
 	AcceptedPeer string `json:"acceptedPeer"` // hex SPKI parsed from /Reason ("" if absent)
 	Reason       string `json:"reason"`       // raw signed /Reason
 	When         string `json:"when"`         // signing time (display)
 	Valid        bool   `json:"valid"`        // this signature verifies
+	// Matched is true when the accepted peer is actually one of the other signers
+	// on this document — i.e. this signer attests to a real co-signer's key, not a
+	// claim about someone absent. For two-party mutual co-signing both are Matched.
+	Matched bool `json:"matched"`
 }
 
 // ReadAttestations returns each signer's attestation from a co-signed PDF, in
 // signature order. It reads the verified signers (so an attestation is only as
-// trustworthy as its signature) and parses the accepted-peer fingerprint from the
-// signed /Reason.
+// trustworthy as its signature), parses the accepted-peer fingerprint from the
+// signed /Reason, and cross-binds each accepted peer against the other signers'
+// actual fingerprints (Matched).
 func ReadAttestations(pdf []byte) []SignerAttestation {
 	st := sign.Verify(pdf)
 	out := make([]SignerAttestation, 0, len(st.Signers))
 	for _, s := range st.Signers {
-		sa := SignerAttestation{Signer: s.Name, Reason: s.Reason, When: s.When, Valid: s.Valid}
+		sa := SignerAttestation{Signer: s.Name, Fingerprint: s.Fingerprint, Reason: s.Reason, When: s.When, Valid: s.Valid}
 		if m := spkiToken.FindStringSubmatch(s.Reason); m != nil {
 			sa.AcceptedPeer = m[1]
 		}
 		out = append(out, sa)
+	}
+	// Cross-binding: an accepted peer counts only if some OTHER signer actually
+	// holds that fingerprint on this document.
+	for i := range out {
+		if out[i].AcceptedPeer == "" {
+			continue
+		}
+		for j := range out {
+			if j != i && out[j].Fingerprint == out[i].AcceptedPeer {
+				out[i].Matched = true
+				break
+			}
+		}
 	}
 	return out
 }
