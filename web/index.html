@@ -30,6 +30,7 @@
         <button id="saveEditableBtn">Save editable copy</button>
         <div class="sep"></div>
         <button id="finalizeBtn">Finalize &amp; sign…</button>
+        <button id="cosignBtn">Co-sign with a peer…</button>
         <div class="menucap">Export</div>
         <button id="exportZipBtn">Pages as images (ZIP)</button>
         <button id="exportPngBtn">Current page (PNG)</button>
@@ -148,6 +149,7 @@
       <button class="menutop">More</button>
       <div class="dropdown">
         <button data-forward="finalizeBtn">Finalize &amp; sign…</button>
+        <button data-forward="cosignBtn">Co-sign with a peer…</button>
         <div class="sep"></div>
         <button data-forward="manageKeysBtn">Manage authorized keys…</button>
         <button data-forward="managePeersBtn">Identity &amp; peers…</button>
@@ -559,6 +561,27 @@
       <div class="sigbtns">
         <span class="grow"></span>
         <button id="peersClose">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Co-sign: add your approval signature + a visible acceptance attestation,
+       binding it to a pinned peer. -->
+  <div id="cosignModal" hidden>
+    <div class="sigcard">
+      <h3>Co-sign with a peer</h3>
+      <p class="libhint">You sign the document and attest, in a visible block, that you accept the
+        other person's pinned identity. Pass the file to them afterward to add their signature.</p>
+      <label>Peer you're co-signing with
+        <select id="cosignPeer"></select></label>
+      <p id="cosignNoPeers" class="libhint" hidden>Pin the other person's fingerprint first, under
+        <strong>Identity &amp; peers</strong>.</p>
+      <label>What you're agreeing to
+        <textarea id="cosignIntent" rows="2">I agree to sign this document.</textarea></label>
+      <div class="sigbtns">
+        <button id="cosignCancel">Cancel</button>
+        <span class="grow"></span>
+        <button id="cosignGo" class="primary">Co-sign &amp; save…</button>
       </div>
     </div>
   </div>
