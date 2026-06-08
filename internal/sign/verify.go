@@ -12,6 +12,7 @@ package sign
 
 import (
 	"bytes"
+	"encoding/hex"
 
 	dpdf "github.com/digitorus/pdf"
 	"github.com/digitorus/pdfsign/verify"
@@ -49,8 +50,9 @@ type SignerInfo struct {
 	Name        string      `json:"name,omitempty"`   // certificate subject common name, when present
 	Valid       bool        `json:"valid"`            // this signer's byte-range hash checks out
 	When        string      `json:"when,omitempty"`   // signing time (display string), when present
-	TimeBacking TimeBacking `json:"timeBacking"`      // none / self-asserted / tsa
-	Reason      string      `json:"reason,omitempty"` // signature /Reason; for co-signing, carries the attestation
+	TimeBacking TimeBacking `json:"timeBacking"`           // none / self-asserted / tsa
+	Reason      string      `json:"reason,omitempty"`      // signature /Reason; for co-signing, carries the attestation
+	Fingerprint string      `json:"fingerprint,omitempty"` // hex SHA-256 SPKI of the signer's cert (the identity that signed)
 }
 
 // Status is the verification result surfaced to the UI.
@@ -140,6 +142,12 @@ func trailingContentAfterLastSignature(pdf []byte) (bool, error) {
 func signerInfo(s *verify.Signer) SignerInfo {
 	const layout = "2006-01-02 15:04 MST"
 	si := SignerInfo{Name: s.Name, Valid: s.ValidSignature, Reason: s.Reason}
+	// The signer's own cert is the leaf of the bundled chain; its SPKI fingerprint
+	// is the identity that signed (see fingerprintOf). Nib identities are
+	// self-signed single certs, so element 0 is the signer.
+	if len(s.Certificates) > 0 && s.Certificates[0].Certificate != nil {
+		si.Fingerprint = hex.EncodeToString(fingerprintOf(s.Certificates[0].Certificate))
+	}
 	switch {
 	case s.TimeStamp != nil && !s.TimeStamp.Time.IsZero():
 		si.TimeBacking = TSA

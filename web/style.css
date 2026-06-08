@@ -290,6 +290,9 @@ input[type="search"] { width: 100%; }
 .sigrow-bad { font-size: 12px; color: var(--red); }
 .sigrow-time { font-size: 11px; color: var(--subtext0); }
 .signote { margin-top: 10px; font-size: 12px; color: var(--yellow); line-height: 1.4; }
+.sigatt { margin-top: 4px; font-size: 11px; color: var(--subtext0); line-height: 1.4; }
+.sigatt .sigatt-ok { color: var(--green); }
+.sigmutual { margin-top: 10px; font-size: 12px; color: var(--green); }
 
 /* Hidden-content scan: each finding is a sigrow with a severity-coloured label
    and a where/what line; the three removal methods stack as full-width buttons,
