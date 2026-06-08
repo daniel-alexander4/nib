@@ -107,6 +107,18 @@ func Reorder(pdf []byte, order []string) ([]byte, error) {
 	return out.Bytes(), nil
 }
 
+// CreateFromJSON renders a brand-new PDF from a pdfcpu "create" JSON page
+// description (api.Create with no input document). Nib uses it to generate pages
+// from text it controls — currently the co-signing trust-explainer readme — as
+// crisp vector text with no extra dependency.
+func CreateFromJSON(spec []byte) ([]byte, error) {
+	var out bytes.Buffer
+	if err := api.Create(nil, bytes.NewReader(spec), &out, model.NewDefaultConfiguration()); err != nil {
+		return nil, err
+	}
+	return out.Bytes(), nil
+}
+
 // Append concatenates other after pdf (merge).
 func Append(pdf, other []byte) ([]byte, error) {
 	var out bytes.Buffer
