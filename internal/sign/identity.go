@@ -63,22 +63,17 @@ type Options struct {
 // Sign applies a certification signature (DocMDP "no changes allowed") to pdf
 // using the given PEM identity. Any later edit invalidates it — that is the
 // tamper-evidence. The signature is invisible; callers bake any visible mark
-// into the page content before signing.
+// into the page content before signing. This is the solo-Finalize path.
 func Sign(pdfBytes, certPEM, keyPEM []byte, opts Options) ([]byte, error) {
 	cert, signer, err := parseIdentity(certPEM, keyPEM)
 	if err != nil {
 		return nil, err
 	}
-
 	data := sign.SignData{
 		Signature: sign.SignDataSignature{
 			CertType:   sign.CertificationSignature,
 			DocMDPPerm: sign.DoNotAllowAnyChangesPerms,
-			Info: sign.SignDataSignatureInfo{
-				Name:   opts.Name,
-				Reason: opts.Reason,
-				Date:   opts.When,
-			},
+			Info:       sign.SignDataSignatureInfo{Name: opts.Name, Reason: opts.Reason, Date: opts.When},
 		},
 		Signer:          signer,
 		Certificate:     cert,
@@ -87,7 +82,45 @@ func Sign(pdfBytes, certPEM, keyPEM []byte, opts Options) ([]byte, error) {
 	if opts.TSAURL != "" {
 		data.TSA = sign.TSA{URL: opts.TSAURL}
 	}
+	return runSign(pdfBytes, data)
+}
 
+// SignApproval applies an approval signature to pdf. Unlike Sign it asserts no
+// DocMDP, so it does not lock the document: several parties can co-sign one PDF,
+// each adding a signature by incremental update without invalidating the others
+// (the basis of P2P / multi-signer). It refuses to co-sign a document that
+// already carries a certification ("no changes") signature — a later signature
+// would break that certification for strict validators.
+func SignApproval(pdfBytes, certPEM, keyPEM []byte, opts Options) ([]byte, error) {
+	certified, err := hasCertificationSignature(pdfBytes)
+	if err != nil {
+		return nil, err
+	}
+	if certified {
+		return nil, errors.New("document is certified (no changes allowed); it cannot be co-signed")
+	}
+	cert, signer, err := parseIdentity(certPEM, keyPEM)
+	if err != nil {
+		return nil, err
+	}
+	data := sign.SignData{
+		Signature: sign.SignDataSignature{
+			CertType: sign.ApprovalSignature,
+			Info:     sign.SignDataSignatureInfo{Name: opts.Name, Reason: opts.Reason, Date: opts.When},
+		},
+		Signer:          signer,
+		Certificate:     cert,
+		DigestAlgorithm: crypto.SHA256,
+	}
+	if opts.TSAURL != "" {
+		data.TSA = sign.TSA{URL: opts.TSAURL}
+	}
+	return runSign(pdfBytes, data)
+}
+
+// runSign performs the digitorus incremental signing of pdfBytes with the given
+// signature data and returns the signed bytes.
+func runSign(pdfBytes []byte, data sign.SignData) ([]byte, error) {
 	rdr, err := dpdf.NewReader(bytes.NewReader(pdfBytes), int64(len(pdfBytes)))
 	if err != nil {
 		return nil, fmt.Errorf("read pdf: %w", err)
@@ -97,6 +130,37 @@ func Sign(pdfBytes, certPEM, keyPEM []byte, opts Options) ([]byte, error) {
 		return nil, fmt.Errorf("sign: %w", err)
 	}
 	return out.Bytes(), nil
+}
+
+// hasCertificationSignature reports whether pdf carries a certification (DocMDP)
+// signature — the "no changes allowed" kind a later approval signature would
+// break for strict validators. Nib's own Verify is purely cryptographic and
+// does not surface the signature type, so we read it from the PDF structure:
+// an AcroForm signature field whose /V has a /Reference with /TransformMethod
+// /DocMDP. (Top-level signature fields only — the conventional placement.)
+func hasCertificationSignature(pdf []byte) (bool, error) {
+	r, err := dpdf.NewReader(bytes.NewReader(pdf), int64(len(pdf)))
+	if err != nil {
+		return false, fmt.Errorf("read pdf: %w", err)
+	}
+	acro := r.Trailer().Key("Root").Key("AcroForm")
+	if acro.IsNull() {
+		return false, nil
+	}
+	fields := acro.Key("Fields")
+	for i := 0; i < fields.Len(); i++ {
+		f := fields.Index(i)
+		if f.Key("FT").Name() != "Sig" {
+			continue
+		}
+		refs := f.Key("V").Key("Reference")
+		for j := 0; j < refs.Len(); j++ {
+			if refs.Index(j).Key("TransformMethod").Name() == "DocMDP" {
+				return true, nil
+			}
+		}
+	}
+	return false, nil
 }
 
 func parseIdentity(certPEM, keyPEM []byte) (*x509.Certificate, crypto.Signer, error) {
