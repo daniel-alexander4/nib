@@ -338,6 +338,9 @@ input[type="search"] { width: 100%; }
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .keyrow .keycur { font-size: 11px; color: var(--green); white-space: nowrap; }
 .keyrow .keydel { color: var(--red); padding: 3px 8px; }
+.peerslist { display: flex; flex-direction: column; gap: 6px; min-width: 420px; max-height: 200px; overflow-y: auto; }
+.peerslist:empty::after { content: "No peers pinned yet."; color: var(--overlay0); font-size: 12px; }
+.peerfp { font-family: ui-monospace, monospace; font-size: 12px; color: var(--text); word-break: break-all; padding: 4px 0; }
 .keycands { display: flex; flex-wrap: wrap; gap: 6px; }
 .keycands button { font-size: 12px; }
 .keycands:empty { display: none; }
