@@ -38,6 +38,7 @@
         <button id="exportCertBtn">Signing certificate</button>
         <div class="sep"></div>
         <button id="manageKeysBtn">Manage authorized keys…</button>
+        <button id="managePeersBtn">Identity &amp; peers…</button>
         <button id="backupBtn">Back up vault</button>
         <label class="menuitem">Restore vault…
           <input id="restoreInput" type="file" accept=".nib" hidden /></label>
@@ -149,6 +150,7 @@
         <button data-forward="finalizeBtn">Finalize &amp; sign…</button>
         <div class="sep"></div>
         <button data-forward="manageKeysBtn">Manage authorized keys…</button>
+        <button data-forward="managePeersBtn">Identity &amp; peers…</button>
         <button data-forward="backupBtn">Back up vault</button>
         <button data-forward="restoreInput">Restore vault…</button>
         <div class="sep"></div>
@@ -529,6 +531,34 @@
       <div class="sigbtns">
         <span class="grow"></span>
         <button id="keysClose">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Identity & peers: your signing fingerprint, and the peers you've pinned
+       out-of-band for co-signing. -->
+  <div id="peersModal" hidden>
+    <div class="sigcard">
+      <h3>Identity &amp; peers</h3>
+      <p class="libhint">Your signing fingerprint identifies you when co-signing. Share it
+        with the other person over a channel you both trust, and pin theirs below after
+        comparing — it's what each signature attests to.</p>
+      <label>Your fingerprint (share this)
+        <div id="peerSelfFp" class="peerfp"></div></label>
+      <div class="sep"></div>
+      <div id="peersList" class="peerslist"></div>
+      <label>Pin a peer's fingerprint (compare it first, over a trusted channel)
+        <textarea id="peerPaste" rows="2" placeholder="64 hex characters" spellcheck="false"></textarea></label>
+      <label>Label (a name for this peer)
+        <input id="peerLabel" type="text" placeholder="e.g. Alice" spellcheck="false" /></label>
+      <div class="sigbtns">
+        <span class="grow"></span>
+        <button id="peerPinBtn" class="primary">Pin peer</button>
+      </div>
+      <div class="sep"></div>
+      <div class="sigbtns">
+        <span class="grow"></span>
+        <button id="peersClose">Close</button>
       </div>
     </div>
   </div>
