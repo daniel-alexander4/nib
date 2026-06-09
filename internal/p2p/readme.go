@@ -48,6 +48,9 @@ var readmeParagraphs = []string{
 	"To verify: open this PDF in Nib (or another PDF signature verifier). Nib shows each signer, " +
 		"whether the document is unchanged since each signature, and whether anything was added " +
 		"after the last signature.",
+	"What is authoritative is the signature itself — who each party accepts is recorded inside their " +
+		"signature and shown in the verifier's signature details. The acceptance block printed on the " +
+		"page above is a human-readable convenience; trust the signature details, not the printed block.",
 }
 
 // readmeBody is the full text of the page, paragraphs separated by a blank line.
