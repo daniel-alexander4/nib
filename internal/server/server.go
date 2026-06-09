@@ -48,6 +48,8 @@ type Server struct {
 	vault *vault.Vault // unlocked vault, nil until the SSH key unlocks it
 	csrf  string       // per-process CSRF token, issued when the vault unlocks
 	doc   *document    // current open PDF
+
+	sess session // armed live co-signing listener (Nib's one routable surface)
 }
 
 // New returns a Server serving the given UI asset tree (and licence texts), with
@@ -81,6 +83,10 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/cosign/quote", s.requireUnlocked(s.handleCosignQuote))
 	mux.HandleFunc("POST /api/cosign/sign", s.requireUnlocked(s.handleCosignSign))
 	mux.HandleFunc("GET /api/attestations", s.requireUnlocked(s.handleAttestations))
+	mux.HandleFunc("POST /api/session/arm", s.requireUnlocked(s.handleSessionArm))
+	mux.HandleFunc("POST /api/session/disarm", s.requireUnlocked(s.handleSessionDisarm))
+	mux.HandleFunc("GET /api/session/status", s.requireUnlocked(s.handleSessionStatus))
+	mux.HandleFunc("POST /api/session/respond", s.requireUnlocked(s.handleSessionRespond))
 	mux.HandleFunc("POST /api/open", s.requireUnlocked(s.handleOpen))
 	mux.HandleFunc("POST /api/open-url", s.requireUnlocked(s.handleOpenURL))
 	mux.HandleFunc("GET /api/recent", s.requireUnlocked(s.handleRecent))

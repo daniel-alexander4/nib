@@ -1,0 +1,183 @@
+package server
+
+import (
+	"encoding/hex"
+	"encoding/json"
+	"io"
+	"net/http"
+	"testing"
+	"time"
+
+	"nib/internal/p2p"
+	"nib/internal/sign"
+	"nib/internal/testpdf"
+)
+
+func sessGet(t *testing.T, c *http.Client, url string, v any) {
+	t.Helper()
+	resp, err := c.Get(url)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("GET %s = %d", url, resp.StatusCode)
+	}
+	if err := json.NewDecoder(resp.Body).Decode(v); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func sessDecode(t *testing.T, resp *http.Response, v any) {
+	t.Helper()
+	defer resp.Body.Close()
+	if err := json.NewDecoder(resp.Body).Decode(v); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestSessionArmReceiveSign drives a full receive session end to end: this server
+// (Bob) arms for a pinned peer (Alice), Alice dials in and sends a document she
+// signed, the user accepts via /api/session/respond, and the result — doubly
+// signed — becomes Bob's open document.
+func TestSessionArmReceiveSign(t *testing.T) {
+	ts, _ := startServer(t)
+	c, csrf := authedClient(t, ts)
+
+	// Bob's own fingerprint (the receiver's vault identity).
+	var me struct {
+		Fingerprint string `json:"fingerprint"`
+	}
+	sessGet(t, c, ts.URL+"/api/peers", &me)
+	bFP := me.Fingerprint
+	bFPBytes, err := hex.DecodeString(bFP)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Alice: a remote initiator Bob has pinned.
+	aCert, aKey, err := sign.GenerateIdentity("Alice")
+	if err != nil {
+		t.Fatal(err)
+	}
+	aFPBytes, _ := sign.Fingerprint(aCert)
+	aFP := hex.EncodeToString(aFPBytes)
+	pinPeer(t, c, csrf, ts.URL, aFP)
+
+	// Arm to receive from Alice on a loopback "routable" bind.
+	var armed sessionStatus
+	sessDecode(t, write(t, c, csrf, http.MethodPost, ts.URL+"/api/session/arm", "application/json",
+		jsonBody(armRequest{Fingerprint: aFP, Bind: "127.0.0.1:0"})), &armed)
+	if !armed.Armed || armed.Address == "" {
+		t.Fatalf("arm failed: %+v", armed)
+	}
+
+	// Alice prepares + signs a doc accepting Bob, dials in, and waits for Bob to sign.
+	result := make(chan []byte, 1)
+	errc := make(chan error, 1)
+	go func() {
+		base, e := testpdf.Form()
+		if e != nil {
+			errc <- e
+			return
+		}
+		prepared, e := p2p.PrepareDocument(base)
+		if e != nil {
+			errc <- e
+			return
+		}
+		place, e := p2p.NextPlacement(prepared)
+		if e != nil {
+			errc <- e
+			return
+		}
+		att := p2p.Attestation{Signer: "Alice", AcceptedPeer: bFP, AcceptedPeerLabel: "Bob", Intent: "I agree", When: time.Now()}
+		aSigned, e := p2p.Contribute(prepared, aCert, aKey, att, nil, place)
+		if e != nil {
+			errc <- e
+			return
+		}
+		conn, e := p2p.Dial(armed.Address, aCert, aKey, bFPBytes, 10*time.Second)
+		if e != nil {
+			errc <- e
+			return
+		}
+		defer conn.Close()
+		final, e := p2p.Initiate(conn, aSigned, aFPBytes)
+		if e != nil {
+			errc <- e
+			return
+		}
+		result <- final
+	}()
+
+	// Bob's UI: poll status until the request is pending, then accept it.
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		if time.Now().After(deadline) {
+			t.Fatal("no pending request appeared")
+		}
+		select {
+		case e := <-errc:
+			t.Fatalf("initiator: %v", e)
+		default:
+		}
+		var st sessionStatus
+		sessGet(t, c, ts.URL+"/api/session/status", &st)
+		if st.Pending != nil {
+			if st.Pending.Fingerprint != aFP {
+				t.Errorf("pending peer = %s, want %s", st.Pending.Fingerprint, aFP)
+			}
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	rr := write(t, c, csrf, http.MethodPost, ts.URL+"/api/session/respond", "application/json",
+		jsonBody(map[string]any{"accept": true, "intent": "I accept"}))
+	if rr.StatusCode != http.StatusOK {
+		t.Fatalf("respond status = %d", rr.StatusCode)
+	}
+	rr.Body.Close()
+
+	// The initiator receives a doubly-signed result.
+	select {
+	case e := <-errc:
+		t.Fatalf("initiator: %v", e)
+	case final := <-result:
+		if n := len(p2p.ReadAttestations(final)); n != 2 {
+			t.Fatalf("initiator result has %d signers, want 2", n)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("initiator did not finish")
+	}
+
+	// Bob's open document is the doubly-signed result.
+	pr := write(t, c, csrf, http.MethodGet, ts.URL+"/api/pdf", "", nil)
+	pdf, _ := io.ReadAll(pr.Body)
+	pr.Body.Close()
+	if n := len(p2p.ReadAttestations(pdf)); n != 2 {
+		t.Errorf("open document has %d signers, want 2", n)
+	}
+
+	// Disarm leaves nothing listening.
+	var off sessionStatus
+	sessDecode(t, write(t, c, csrf, http.MethodPost, ts.URL+"/api/session/disarm", "application/json", nil), &off)
+	if off.Armed {
+		t.Error("still armed after disarm")
+	}
+}
+
+// TestSessionArmRejectsUnpinnedPeer confirms arming for a peer who isn't pinned is
+// refused — you can only open the listener for someone you've already pinned.
+func TestSessionArmRejectsUnpinnedPeer(t *testing.T) {
+	ts, _ := startServer(t)
+	c, csrf := authedClient(t, ts)
+
+	stranger := make([]byte, 32) // a fingerprint that was never pinned
+	resp := write(t, c, csrf, http.MethodPost, ts.URL+"/api/session/arm", "application/json",
+		jsonBody(armRequest{Fingerprint: hex.EncodeToString(stranger), Bind: "127.0.0.1:0"}))
+	resp.Body.Close()
+	if resp.StatusCode == http.StatusOK {
+		t.Error("armed for an unpinned peer")
+	}
+}

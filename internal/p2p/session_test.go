@@ -64,7 +64,8 @@ func TestSessionRoundTrip(t *testing.T) {
 			return
 		}
 		defer conn.Close()
-		recvErr <- Receive(conn.(*tls.Conn), bCert, bKey, "Alice", confirmer{accept: true, intent: "I accept"})
+		_, e := Receive(conn.(*tls.Conn), bCert, bKey, "Alice", confirmer{accept: true, intent: "I accept"})
+		recvErr <- e
 	}()
 
 	conn, err := Dial(ln.Addr().String(), aCert, aKey, bFP, 5*time.Second) // A accepts B
@@ -116,7 +117,8 @@ func TestSessionReceiverDeclines(t *testing.T) {
 			return
 		}
 		defer conn.Close()
-		recvErr <- Receive(conn.(*tls.Conn), bCert, bKey, "Alice", confirmer{accept: false})
+		_, e := Receive(conn.(*tls.Conn), bCert, bKey, "Alice", confirmer{accept: false})
+		recvErr <- e
 	}()
 
 	conn, err := Dial(ln.Addr().String(), aCert, aKey, bFP, 5*time.Second)
