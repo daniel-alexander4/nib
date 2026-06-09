@@ -76,27 +76,28 @@ func Initiate(conn *tls.Conn, mySignedPDF, myFingerprint []byte) ([]byte, error)
 // Receive runs the listening side of a session: it reads the document the connected
 // peer signed, verifies the peer is the pinned identity and accepted this user, asks
 // the Confirmer for consent and intent, contributes this user's signature, and sends
-// the result back. peerLabel is this user's pinned label for the peer (for display).
-func Receive(conn *tls.Conn, myCertPEM, myKeyPEM []byte, peerLabel string, c Confirmer) error {
+// the result back — returning the co-signed document so the receiver keeps it too.
+// peerLabel is this user's pinned label for the peer (for display).
+func Receive(conn *tls.Conn, myCertPEM, myKeyPEM []byte, peerLabel string, c Confirmer) ([]byte, error) {
 	if err := conn.Handshake(); err != nil {
-		return err
+		return nil, err
 	}
 	peerFP, err := verifiedPeerFingerprint(conn.ConnectionState())
 	if err != nil {
-		return err
+		return nil, err
 	}
 	inbound, err := readFrame(conn)
 	if err != nil {
-		return fmt.Errorf("receive document: %w", err)
+		return nil, fmt.Errorf("receive document: %w", err)
 	}
 	final, err := coSignExchange(myCertPEM, myKeyPEM, peerFP, peerLabel, inbound, c)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if err := writeFrame(conn, final); err != nil {
-		return fmt.Errorf("send co-signed document: %w", err)
+		return nil, fmt.Errorf("send co-signed document: %w", err)
 	}
-	return nil
+	return final, nil
 }
 
 // coSignExchange is the transport-agnostic core of the receiving side: given the
