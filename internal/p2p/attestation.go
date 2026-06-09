@@ -90,8 +90,10 @@ type SignerAttestation struct {
 	When         string `json:"when"`         // signing time (display)
 	Valid        bool   `json:"valid"`        // this signature verifies
 	// Matched is true when the accepted peer is actually one of the other signers
-	// on this document — i.e. this signer attests to a real co-signer's key, not a
-	// claim about someone absent. For two-party mutual co-signing both are Matched.
+	// on this document AND both signatures verify — i.e. this signer's valid
+	// signature attests to a real, valid co-signer's key, not a claim about someone
+	// absent or a tampered signature. For two-party mutual co-signing both are
+	// Matched. A broken signature attests to nothing, so it never Matches.
 	Matched bool `json:"matched"`
 }
 
@@ -110,20 +112,26 @@ func ReadAttestations(pdf []byte) []SignerAttestation {
 		}
 		out = append(out, sa)
 	}
-	// Cross-binding: an accepted peer counts only if some OTHER signer actually
-	// holds that fingerprint on this document.
-	for i := range out {
-		if out[i].AcceptedPeer == "" {
+	crossBind(out)
+	return out
+}
+
+// crossBind sets Matched on each attestation: an accepted peer counts only if some
+// OTHER signer with a VALID signature actually holds that fingerprint on this
+// document, and this signer's own signature is valid too — a tampered signature
+// attests to nothing, so it must not produce a "mutually co-signed" verdict.
+func crossBind(atts []SignerAttestation) {
+	for i := range atts {
+		if atts[i].AcceptedPeer == "" || !atts[i].Valid {
 			continue
 		}
-		for j := range out {
-			if j != i && out[j].Fingerprint == out[i].AcceptedPeer {
-				out[i].Matched = true
+		for j := range atts {
+			if j != i && atts[j].Valid && atts[j].Fingerprint == atts[i].AcceptedPeer {
+				atts[i].Matched = true
 				break
 			}
 		}
 	}
-	return out
 }
 
 // shortFingerprint renders the leading bytes of a hex fingerprint in spaced quads
