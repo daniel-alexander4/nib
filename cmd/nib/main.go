@@ -67,7 +67,8 @@ func main() {
 	}
 	addr := ln.Addr().String()
 
-	srv := &http.Server{Handler: server.New(nib.WebFS(), nib.LegalFS(), vault.DefaultDir(), version).Handler()}
+	s := server.New(nib.WebFS(), nib.LegalFS(), vault.DefaultDir(), version)
+	srv := &http.Server{Handler: s.Handler()}
 	go func() {
 		if err := srv.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			log.Fatalf("server error: %v", err)
@@ -92,6 +93,7 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
 	<-ctx.Done()
+	s.DisarmSession() // tear down any armed co-signing listener before exiting
 	_ = srv.Close()
 }
 
