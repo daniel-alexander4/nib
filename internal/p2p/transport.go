@@ -13,7 +13,6 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
-	"sync"
 	"time"
 
 	"nib/internal/sign"
@@ -30,69 +29,43 @@ const (
 	transportTTL = 15 * time.Minute
 )
 
-// VerifiedPeer carries the pinned identity confirmed during a session's TLS
-// handshake. SessionTLS returns one; its fingerprint is set — and only set — when
-// VerifyPeerCertificate accepts the peer, so an attestation's accepted-peer is
-// threaded from the cryptographically verified handshake, never a re-derived or
-// user-supplied value.
-type VerifiedPeer struct {
-	mu sync.Mutex
-	fp []byte
-}
-
-func (vp *VerifiedPeer) set(fp []byte) {
-	vp.mu.Lock()
-	vp.fp = append([]byte(nil), fp...)
-	vp.mu.Unlock()
-}
-
-// Fingerprint returns the SHA-256 SPKI of the verified peer identity, or nil if no
-// handshake has passed verification yet. Read it only after a successful handshake.
-func (vp *VerifiedPeer) Fingerprint() []byte {
-	vp.mu.Lock()
-	defer vp.mu.Unlock()
-	return append([]byte(nil), vp.fp...)
-}
-
 // SessionTLS builds the mTLS config for one co-signing session. It presents an
 // ephemeral leaf chained to this user's vault identity, and accepts the peer only
 // if the peer's identity SPKI equals pinnedSPKI (the fingerprint pinned out-of-band)
 // and the peer's leaf is freshly signed by that identity. Default chain verification
-// is disabled — the pinned-peer model replaces it — so the returned VerifiedPeer is
-// the authority on who connected.
+// is disabled — the pinned-peer model replaces it.
 //
 // The same verification runs whether this side dials or listens, so one constructor
-// serves both; pass server=true for the listening side.
-func SessionTLS(identityCertPEM, identityKeyPEM, pinnedSPKI []byte, server bool) (*tls.Config, *VerifiedPeer, error) {
+// serves both; pass server=true for the listening side. Read who actually connected
+// from the completed handshake (conn.ConnectionState().PeerCertificates) — verification
+// has passed by then, so the identity cert there is the pinned peer.
+func SessionTLS(identityCertPEM, identityKeyPEM, pinnedSPKI []byte, server bool) (*tls.Config, error) {
 	if len(pinnedSPKI) != sha256.Size {
-		return nil, nil, errors.New("pinned fingerprint must be a SHA-256 SPKI hash")
+		return nil, errors.New("pinned fingerprint must be a SHA-256 SPKI hash")
 	}
 	idCert, idKey, err := sign.ParseIdentity(identityCertPEM, identityKeyPEM)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	leaf, err := mintTransportCert(idCert, idKey)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
-	vp := &VerifiedPeer{}
 	cfg := &tls.Config{
 		Certificates: []tls.Certificate{leaf},
 		// TLS 1.3 only: the peer signs the handshake transcript with the leaf key
 		// (CertificateVerify), binding the pinned identity to THIS channel. Pinned
-		// here so grpc's applyDefaults can't fall back to 1.2's weaker binding.
+		// explicitly so a future transport that re-defaults the config (e.g. gRPC's
+		// applyDefaults) can't drop to 1.2's weaker binding.
 		MinVersion: tls.VersionTLS13,
 		// We replace chain verification with the pinned-peer check below. With this
-		// set, crypto/tls still invokes VerifyPeerCertificate (verifiedChains nil),
-		// so the callback relies solely on rawCerts.
+		// set, crypto/tls still invokes VerifyPeerCertificate (verifiedChains nil) and
+		// still records the peer's chain in ConnectionState.PeerCertificates, so the
+		// callback relies solely on rawCerts and callers read the verified peer there.
 		InsecureSkipVerify: true,
 		VerifyPeerCertificate: func(rawCerts [][]byte, _ [][]*x509.Certificate) error {
-			fp, err := verifyPinnedPeer(rawCerts, pinnedSPKI, time.Now())
-			if err != nil {
-				return err
-			}
-			vp.set(fp)
-			return nil
+			_, err := verifyPinnedPeer(rawCerts, pinnedSPKI, time.Now())
+			return err
 		},
 	}
 	if server {
@@ -100,7 +73,7 @@ func SessionTLS(identityCertPEM, identityKeyPEM, pinnedSPKI []byte, server bool)
 		// (not RequireAndVerify) because we skip the default chain check and do ours.
 		cfg.ClientAuth = tls.RequireAnyClientCert
 	}
-	return cfg, vp, nil
+	return cfg, nil
 }
 
 // verifyPinnedPeer is the pinned-peer check, run inside VerifyPeerCertificate on
