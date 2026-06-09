@@ -764,7 +764,10 @@ async function augmentSigDetails(rows) {
       verdict.className = 'sigatt-ok';
       verdict.textContent = '✓ Accepts a co-signer of this document' + (a.pinned ? ', whom you have pinned' : '');
     } else {
-      verdict.textContent = 'The accepted peer has not co-signed this document';
+      // Not matched covers both an absent peer and one whose signature is invalid,
+      // so the wording must be true in either case (the broken signer, if any, is
+      // already flagged red on its own row).
+      verdict.textContent = 'The accepted peer is not a confirmed co-signer of this document';
     }
     box.appendChild(verdict);
     rows[i].appendChild(box);
@@ -774,6 +777,12 @@ async function augmentSigDetails(rows) {
     m.className = 'sigmutual';
     m.textContent = '✓ Mutually co-signed — each party’s signature attests to the other’s key.';
     els.sigDetailsBody.appendChild(m);
+  }
+  if (attested.length) {
+    const note = document.createElement('div');
+    note.className = 'sigatt';
+    note.textContent = 'These attestations are read from the signatures themselves — the authoritative source. The block printed on the page is a human-readable convenience and could be altered by another tool.';
+    els.sigDetailsBody.appendChild(note);
   }
 }
 els.sigDetailsBtn.onclick = openSigDetails;

@@ -70,3 +70,31 @@ func TestReasonResistsTokenInjection(t *testing.T) {
 		t.Errorf("reason has %d SPKI tokens (want 1 = the real peer %s); reason=%q", len(all), real, r)
 	}
 }
+
+// crossBind must require BOTH signatures valid: a tampered (invalid) co-signature
+// attests to nothing, so it can't produce a "matched" / mutually-co-signed verdict.
+func TestCrossBindRequiresValidity(t *testing.T) {
+	A := "aaaa000000000000000000000000000000000000000000000000000000000000"
+	B := "bbbb000000000000000000000000000000000000000000000000000000000000"
+
+	// Both valid, mutual → both matched.
+	both := []SignerAttestation{
+		{Fingerprint: A, AcceptedPeer: B, Valid: true},
+		{Fingerprint: B, AcceptedPeer: A, Valid: true},
+	}
+	crossBind(both)
+	if !both[0].Matched || !both[1].Matched {
+		t.Errorf("two valid mutual sigs should both match: %+v", both)
+	}
+
+	// B's signature is invalid → A (valid) accepts an invalid peer (no match), and
+	// B itself is invalid (no match). No false "mutually co-signed".
+	bBad := []SignerAttestation{
+		{Fingerprint: A, AcceptedPeer: B, Valid: true},
+		{Fingerprint: B, AcceptedPeer: A, Valid: false},
+	}
+	crossBind(bBad)
+	if bBad[0].Matched || bBad[1].Matched {
+		t.Errorf("a tampered co-signature must not cross-bind: %+v", bBad)
+	}
+}
