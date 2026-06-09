@@ -94,11 +94,11 @@ func TestSessionHandshakeAcceptsPinnedPeer(t *testing.T) {
 	bCert, bKey := newIdentity(t) // dialer
 	aFP, bFP := fingerprint(t, aCert), fingerprint(t, bCert)
 
-	srvCfg, srvVP, err := SessionTLS(aCert, aKey, bFP, true) // A accepts B
+	srvCfg, err := SessionTLS(aCert, aKey, bFP, true) // A accepts B
 	if err != nil {
 		t.Fatal(err)
 	}
-	cliCfg, cliVP, err := SessionTLS(bCert, bKey, aFP, false) // B accepts A
+	cliCfg, err := SessionTLS(bCert, bKey, aFP, false) // B accepts A
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -110,6 +110,7 @@ func TestSessionHandshakeAcceptsPinnedPeer(t *testing.T) {
 	defer ln.Close()
 
 	srvErr := make(chan error, 1)
+	srvPeer := make(chan []byte, 1)
 	go func() {
 		conn, err := ln.Accept()
 		if err != nil {
@@ -117,7 +118,13 @@ func TestSessionHandshakeAcceptsPinnedPeer(t *testing.T) {
 			return
 		}
 		defer conn.Close()
-		srvErr <- conn.(*tls.Conn).Handshake()
+		tc := conn.(*tls.Conn)
+		if err := tc.Handshake(); err != nil {
+			srvErr <- err
+			return
+		}
+		srvErr <- nil
+		srvPeer <- peerFP(t, tc)
 	}()
 
 	conn, err := tls.Dial("tcp", ln.Addr().String(), cliCfg)
@@ -129,12 +136,24 @@ func TestSessionHandshakeAcceptsPinnedPeer(t *testing.T) {
 		t.Fatalf("server handshake failed: %v", err)
 	}
 
-	if !bytes.Equal(srvVP.Fingerprint(), bFP) {
-		t.Errorf("server verified pin = %x, want %x", srvVP.Fingerprint(), bFP)
+	// Each side sees the other's pinned identity in the completed handshake.
+	if got := peerFP(t, conn); !bytes.Equal(got, aFP) {
+		t.Errorf("client sees peer %x, want %x", got, aFP)
 	}
-	if !bytes.Equal(cliVP.Fingerprint(), aFP) {
-		t.Errorf("client verified pin = %x, want %x", cliVP.Fingerprint(), aFP)
+	if got := <-srvPeer; !bytes.Equal(got, bFP) {
+		t.Errorf("server sees peer %x, want %x", got, bFP)
 	}
+}
+
+// peerFP reads the verified peer's SPKI fingerprint from a completed handshake —
+// PeerCertificates is [leaf, identity], and verification has already passed.
+func peerFP(t *testing.T, c *tls.Conn) []byte {
+	t.Helper()
+	certs := c.ConnectionState().PeerCertificates
+	if len(certs) < 2 {
+		t.Fatalf("peer presented %d certificates, want >= 2", len(certs))
+	}
+	return sign.FingerprintCert(certs[1])
 }
 
 // TestSessionHandshakeRejectsUnpinnedPeer proves the handshake actually drops a
@@ -145,11 +164,11 @@ func TestSessionHandshakeRejectsUnpinnedPeer(t *testing.T) {
 	cCert, _ := newIdentity(t)    // the only peer A will accept
 	aFP, cFP := fingerprint(t, aCert), fingerprint(t, cCert)
 
-	srvCfg, _, err := SessionTLS(aCert, aKey, cFP, true) // A accepts only C
+	srvCfg, err := SessionTLS(aCert, aKey, cFP, true) // A accepts only C
 	if err != nil {
 		t.Fatal(err)
 	}
-	cliCfg, _, err := SessionTLS(bCert, bKey, aFP, false) // B dials A
+	cliCfg, err := SessionTLS(bCert, bKey, aFP, false) // B dials A
 	if err != nil {
 		t.Fatal(err)
 	}
