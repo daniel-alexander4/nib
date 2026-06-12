@@ -154,24 +154,42 @@ func coSignExchange(myCertPEM, myKeyPEM, peerFP []byte, peerLabel string, inboun
 	return Contribute(inbound, myCertPEM, myKeyPEM, att, appearance, place)
 }
 
-// confirmCoSigned checks the returned document carries the connected peer's valid
-// signature accepting this user — so the initiator knows the round-trip produced a
-// genuine mutual co-signature, not a tampered or substituted reply.
+// confirmCoSigned checks the returned document is a genuine mutual co-signature of
+// exactly this channel's two pinned identities: it carries the connected peer's
+// valid signature accepting this user AND this user's own valid signature accepting
+// the peer. Requiring the initiator's own signature too anchors the result to the
+// document this user signed — a peer cannot strip it and substitute a different
+// document that only it signed, since a valid signature binds to its own bytes.
 func confirmCoSigned(final, peerFP, myFP []byte) error {
-	want := hex.EncodeToString(peerFP)
+	peer, me := hex.EncodeToString(peerFP), hex.EncodeToString(myFP)
+	var gotPeer, gotMe bool
 	for _, a := range ReadAttestations(final) {
-		if a.Fingerprint != want {
-			continue
+		switch a.Fingerprint {
+		case peer:
+			if !a.Valid {
+				return errors.New("peer's returned signature does not verify")
+			}
+			if a.AcceptedPeer != me {
+				return errors.New("peer's signature does not accept you")
+			}
+			gotPeer = true
+		case me:
+			if !a.Valid {
+				return errors.New("your own signature is missing or altered in the returned document")
+			}
+			if a.AcceptedPeer != peer {
+				return errors.New("your signature in the returned document does not accept the peer")
+			}
+			gotMe = true
 		}
-		if !a.Valid {
-			return errors.New("peer's returned signature does not verify")
-		}
-		if a.AcceptedPeer != hex.EncodeToString(myFP) {
-			return errors.New("peer's signature does not accept you")
-		}
-		return nil
 	}
-	return errors.New("returned document is not co-signed by the connected peer")
+	if !gotPeer {
+		return errors.New("returned document is not co-signed by the connected peer")
+	}
+	if !gotMe {
+		return errors.New("returned document is missing your own signature")
+	}
+	return nil
 }
 
 // verifiedPeerFingerprint reads the verified peer's SPKI fingerprint from a
