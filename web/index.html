@@ -31,6 +31,7 @@
         <div class="sep"></div>
         <button id="finalizeBtn">Finalize &amp; sign…</button>
         <button id="cosignBtn">Co-sign with a peer…</button>
+        <button id="sessionRecvBtn">Receive a live co-signature…</button>
         <div class="menucap">Export</div>
         <button id="exportZipBtn">Pages as images (ZIP)</button>
         <button id="exportPngBtn">Current page (PNG)</button>
@@ -546,7 +547,10 @@
         with the other person over a channel you both trust, and pin theirs below after
         comparing — it's what each signature attests to.</p>
       <label>Your fingerprint (share this)
-        <div id="peerSelfFp" class="peerfp"></div></label>
+        <div class="fpcompare">
+          <div id="peerSelfFp" class="peerfp"></div>
+          <button id="peerSelfCopy" class="copyfp" title="Copy fingerprint">Copy</button>
+        </div></label>
       <div class="sep"></div>
       <div id="peersList" class="peerslist"></div>
       <label>Pin a peer's fingerprint (compare it first, over a trusted channel)
@@ -582,6 +586,76 @@
         <button id="cosignCancel">Cancel</button>
         <span class="grow"></span>
         <button id="cosignGo" class="primary">Co-sign &amp; save…</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Receive a live co-signature: arm a pinned-peer-only listener, review the
+       document a peer sends over the live channel, and co-sign with explicit
+       consent. The armed listener is Nib's only network-reachable surface — it
+       accepts one pinned peer and tears down after a single session. -->
+  <div id="sessionRecvModal" hidden>
+    <div class="sigcard">
+      <h3>Receive a live co-signature</h3>
+
+      <!-- Arm: choose who may connect and where to listen. -->
+      <div id="srvArm">
+        <p class="libhint">Wait for a pinned peer to connect and send you a document to co-sign
+          over a live, encrypted channel. You review it and decide before anything is signed.</p>
+        <label>Peer allowed to connect
+          <select id="srvPeer"></select></label>
+        <p id="srvNoPeers" class="libhint" hidden>Pin the other person's fingerprint first, under
+          <strong>Identity &amp; peers</strong>.</p>
+        <label>Listen on (a host:port the peer can reach)
+          <input id="srvBind" type="text" value="0.0.0.0:8443" spellcheck="false" /></label>
+        <p class="libhint">The peer reaches this address by port-forward or over a VPN you both use
+          (e.g. Tailscale). Nib runs no relay of its own.</p>
+        <label>Your fingerprint (the peer pins this)
+          <div class="fpcompare">
+            <div id="srvSelfFp" class="peerfp"></div>
+            <button id="srvSelfCopy" class="copyfp" title="Copy fingerprint">Copy</button>
+          </div></label>
+        <div class="sigbtns">
+          <button id="srvCancel">Cancel</button>
+          <span class="grow"></span>
+          <button id="srvArmGo" class="primary">Arm — wait for peer</button>
+        </div>
+      </div>
+
+      <!-- Waiting: armed, no peer connected yet. -->
+      <div id="srvWait" hidden>
+        <p>Listening on <strong id="srvWaitAddr"></strong> for <strong id="srvWaitPeer"></strong>…</p>
+        <p class="libhint">Keep this open. The session ends on its own if no one connects within a few minutes.</p>
+        <div class="sigbtns">
+          <span class="grow"></span>
+          <button id="srvDisarm">Stop waiting</button>
+        </div>
+      </div>
+
+      <!-- Consent: a peer connected and sent a document to co-sign. -->
+      <div id="srvConsent" hidden>
+        <p class="libhint">A peer connected and sent a document. Review exactly what you'll
+          co-sign, then accept or decline.</p>
+        <div class="consentid">
+          <div class="cidlabel">Pinned peer (cryptographically verified)</div>
+          <div class="cidrow"><strong id="srvPeerLabel"></strong></div>
+          <div class="fpcompare">
+            <div id="srvPeerFp" class="peerfp"></div>
+            <button id="srvPeerCopy" class="copyfp" title="Copy fingerprint">Copy</button>
+          </div>
+          <p class="libhint">This fingerprint is verified to be the peer you pinned. The statement
+            below is what they typed — bound by their signature, but their words, not Nib's.</p>
+          <div class="cidrow"><span class="cidcap">Their signed statement</span>
+            <span id="srvPeerReason"></span></div>
+        </div>
+        <div id="srvPreview" class="docpreview"></div>
+        <label>What you're agreeing to
+          <textarea id="srvIntent" rows="2">I agree to sign this document.</textarea></label>
+        <div class="sigbtns">
+          <button id="srvDecline">Decline</button>
+          <span class="grow"></span>
+          <button id="srvAccept" class="primary">Accept &amp; co-sign</button>
+        </div>
       </div>
     </div>
   </div>

@@ -43,6 +43,16 @@ const els = {
   cosignBtn: $('cosignBtn'), cosignModal: $('cosignModal'), cosignPeer: $('cosignPeer'),
   cosignIntent: $('cosignIntent'), cosignNoPeers: $('cosignNoPeers'),
   cosignCancel: $('cosignCancel'), cosignGo: $('cosignGo'),
+  peerSelfCopy: $('peerSelfCopy'),
+  sessionRecvBtn: $('sessionRecvBtn'), sessionRecvModal: $('sessionRecvModal'),
+  srvArm: $('srvArm'), srvWait: $('srvWait'), srvConsent: $('srvConsent'),
+  srvPeer: $('srvPeer'), srvNoPeers: $('srvNoPeers'), srvBind: $('srvBind'),
+  srvSelfFp: $('srvSelfFp'), srvSelfCopy: $('srvSelfCopy'),
+  srvCancel: $('srvCancel'), srvArmGo: $('srvArmGo'),
+  srvWaitAddr: $('srvWaitAddr'), srvWaitPeer: $('srvWaitPeer'), srvDisarm: $('srvDisarm'),
+  srvPeerLabel: $('srvPeerLabel'), srvPeerFp: $('srvPeerFp'), srvPeerCopy: $('srvPeerCopy'),
+  srvPeerReason: $('srvPeerReason'), srvPreview: $('srvPreview'), srvIntent: $('srvIntent'),
+  srvDecline: $('srvDecline'), srvAccept: $('srvAccept'),
   authOverlay: $('authOverlay'), authForm: $('authForm'), authTitle: $('authTitle'),
   authHint: $('authHint'), authPw: $('authPw'), migrateRow: $('migrateRow'),
   keyChoice: $('keyChoice'), keySelect: $('keySelect'), keyPath: $('keyPath'),
@@ -372,8 +382,21 @@ function groupFingerprint(hex) {
   return (hex.match(/.{1,4}/g) || []).join(' ');
 }
 
+// selfFingerprint is this identity's full hex SPKI, cached from /api/peers so the
+// Copy buttons hand the peer the exact value to pin (the grouped display has spaces).
+let selfFingerprint = '';
+
+// copyFp puts a full ungrouped fingerprint on the clipboard for out-of-band
+// comparison — the safety-number check that anchors who a live session is with.
+async function copyFp(hex) {
+  if (!hex) return;
+  try { await navigator.clipboard.writeText(hex); toast('Fingerprint copied'); }
+  catch { toast('could not copy'); }
+}
+
 function renderPeers(data) {
-  els.peerSelfFp.textContent = groupFingerprint(data.fingerprint || '');
+  selfFingerprint = data.fingerprint || '';
+  els.peerSelfFp.textContent = groupFingerprint(selfFingerprint);
   els.peersList.innerHTML = '';
   for (const p of data.peers || []) {
     const row = document.createElement('div');
@@ -387,11 +410,16 @@ function renderPeers(data) {
     fp.className = 'keysub';
     fp.textContent = groupFingerprint(p.fingerprint);
     meta.append(name, fp);
+    const copy = document.createElement('button');
+    copy.className = 'copyfp';
+    copy.textContent = 'Copy';
+    copy.title = 'Copy fingerprint';
+    copy.onclick = () => copyFp(p.fingerprint);
     const del = document.createElement('button');
     del.className = 'keydel';
     del.textContent = 'Unpin';
     del.onclick = () => unpinPeer(p.fingerprint, p.label || p.fingerprint);
-    row.append(meta, del);
+    row.append(meta, copy, del);
     els.peersList.append(row);
   }
 }
@@ -431,6 +459,7 @@ async function unpinPeer(fingerprint, label) {
 els.managePeersBtn.onclick = () => { els.peersModal.hidden = false; loadPeers(); };
 els.peersClose.onclick = () => { els.peersModal.hidden = true; };
 els.peerPinBtn.onclick = pinPeer;
+els.peerSelfCopy.onclick = () => copyFp(selfFingerprint);
 
 // --- co-sign with a peer -----------------------------------------------------
 async function openCosign() {
@@ -497,6 +526,204 @@ async function cosign() {
 els.cosignBtn.onclick = openCosign;
 els.cosignCancel.onclick = () => { els.cosignModal.hidden = true; };
 els.cosignGo.onclick = cosign;
+
+// --- receive a live co-signature ---------------------------------------------
+// Arm a pinned-peer-only listener, review the document a peer sends over the live
+// channel in an isolated preview (never the main viewer — that would discard the
+// open document's unsaved edits), and co-sign it with explicit consent. The session
+// is one-shot: it tears down after a single accept, decline, or timeout.
+let recvPoll = 0; // token; bump to invalidate any in-flight poll or preview render
+let recvStage = 'arm'; // arm | wait | consent | applying | declining
+let recvArmedLabel = ''; // the pinned label of the peer we armed for
+let recvPeerFp = ''; // the connecting peer's verified fingerprint, for the Copy button
+
+function showRecvView(which) {
+  els.srvArm.hidden = which !== 'srvArm';
+  els.srvWait.hidden = which !== 'srvWait';
+  els.srvConsent.hidden = which !== 'srvConsent';
+}
+
+async function openSessionRecv() {
+  const res = await apiFetch('/api/peers');
+  if (!res.ok) { toast('could not load peers'); return; }
+  const data = await res.json();
+  selfFingerprint = data.fingerprint || '';
+  els.srvSelfFp.textContent = groupFingerprint(selfFingerprint);
+  const peers = data.peers || [];
+  els.srvPeer.innerHTML = '';
+  for (const p of peers) {
+    const o = document.createElement('option');
+    o.value = p.fingerprint;
+    o.dataset.label = p.label || 'Unlabelled peer';
+    o.textContent = (p.label || 'Unlabelled peer') + ' — ' + groupFingerprint(p.fingerprint.slice(0, 8)) + '…';
+    els.srvPeer.append(o);
+  }
+  const none = peers.length === 0;
+  els.srvNoPeers.hidden = !none;
+  els.srvPeer.hidden = none;
+  els.srvArmGo.disabled = none;
+  els.srvIntent.value = 'I agree to sign this document.';
+  recvStage = 'arm';
+  showRecvView('srvArm');
+  els.sessionRecvModal.hidden = false;
+}
+
+async function armRecv() {
+  const opt = els.srvPeer.selectedOptions[0];
+  if (!opt) return;
+  const bind = els.srvBind.value.trim();
+  if (!bind) { toast('Enter a listen address'); return; }
+  recvArmedLabel = opt.dataset.label;
+  els.srvArmGo.disabled = true;
+  const res = await apiFetch('/api/session/arm', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ fingerprint: opt.value, bind }),
+  });
+  els.srvArmGo.disabled = false;
+  if (!res.ok) { toast((await res.json()).error || 'could not arm'); return; }
+  const st = await res.json();
+  els.srvWaitAddr.textContent = st.address || bind;
+  els.srvWaitPeer.textContent = recvArmedLabel;
+  recvStage = 'wait';
+  showRecvView('srvWait');
+  const token = ++recvPoll;
+  setTimeout(() => pollRecv(token), 1200);
+}
+
+// pollRecv drives the receive state machine off /api/session/status: a pending
+// request promotes the wait view to consent; the session disarming ends the flow
+// (reloading the open document if our accept was applied).
+async function pollRecv(token) {
+  if (token !== recvPoll) return;
+  let st;
+  try { st = await (await apiFetch('/api/session/status')).json(); }
+  catch { return; } // 401 is handled by apiFetch; anything else stops this poll
+  if (token !== recvPoll) return;
+  if (st.pending && recvStage === 'wait') {
+    recvStage = 'consent';
+    showConsent(st.pending);
+  } else if (!st.armed) {
+    if (recvStage === 'applying') { await reloadOpenDoc(); toast('Co-signed — document updated'); }
+    else if (recvStage === 'wait') toast('Session ended — no peer connected');
+    else if (recvStage === 'consent') toast('Session timed out');
+    endRecv();
+    return;
+  }
+  setTimeout(() => pollRecv(token), 1500);
+}
+
+function showConsent(pending) {
+  recvPeerFp = pending.fingerprint || '';
+  els.srvPeerLabel.textContent = recvArmedLabel || 'your pinned peer';
+  els.srvPeerFp.textContent = groupFingerprint(recvPeerFp);
+  els.srvPeerReason.textContent = pending.reason || '(none given)';
+  showRecvView('srvConsent');
+  loadPendingPreview(recvPoll);
+}
+
+// loadPendingPreview renders the received document in its own pdf.js instance,
+// entirely apart from the main viewer, so reviewing (and declining) a peer's
+// document never disturbs the open document or its unsaved edits.
+async function loadPendingPreview(token) {
+  els.srvPreview.innerHTML = '';
+  let doc;
+  try { doc = await pdfjsLib.getDocument({ url: '/api/session/pending-pdf?t=' + Date.now() }).promise; }
+  catch { if (token === recvPoll) els.srvPreview.textContent = 'could not render the document'; return; }
+  for (let i = 1; i <= doc.numPages; i++) {
+    if (token !== recvPoll) return; // modal closed mid-render
+    const page = await doc.getPage(i);
+    const base = page.getViewport({ scale: 1 });
+    const vp = page.getViewport({ scale: Math.min(1.2, 380 / base.width) });
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.ceil(vp.width);
+    canvas.height = Math.ceil(vp.height);
+    els.srvPreview.append(canvas);
+    await page.render({ canvasContext: canvas.getContext('2d'), viewport: vp }).promise;
+  }
+}
+
+async function acceptRecv() {
+  els.srvAccept.disabled = true; els.srvDecline.disabled = true;
+  const intent = els.srvIntent.value;
+  // The responder's visible block is placed server-side; the quote gives only the
+  // canonical lines, so the rendered image can't drift from the signed /Reason.
+  let appearance = '';
+  const qr = await apiFetch('/api/session/quote', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ intent }),
+  });
+  if (qr.ok) {
+    const q = await qr.json();
+    appearance = await blobToBase64(await renderAttestation(q.lines, q.rect));
+  }
+  const res = await apiFetch('/api/session/respond', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ accept: true, intent, appearance }),
+  });
+  if (!res.ok) {
+    els.srvAccept.disabled = false; els.srvDecline.disabled = false;
+    toast((await res.json()).error || 'could not co-sign');
+    return;
+  }
+  recvStage = 'applying';
+  toast('Signing…');
+  // pollRecv detects the session disarming, then reloads the co-signed document.
+}
+
+async function declineRecv() {
+  els.srvAccept.disabled = true; els.srvDecline.disabled = true;
+  recvStage = 'declining';
+  try {
+    await apiFetch('/api/session/respond', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ accept: false }),
+    });
+  } catch { /* the session tears down regardless */ }
+  toast('Declined — your document is unchanged');
+  endRecv();
+}
+
+// reloadOpenDoc refreshes the viewer after runSession applies a received co-signature
+// out of band (no response carries the new metadata, so the UI fetches it).
+async function reloadOpenDoc() {
+  try { await setDocumentFromServer(await (await apiFetch('/api/doc')).json()); }
+  catch { toast('co-signed, but could not refresh the view'); }
+}
+
+// endRecv stops polling, discards the isolated preview, and closes the modal.
+function endRecv() {
+  recvPoll++; // invalidate any in-flight poll / preview render
+  recvStage = 'arm';
+  els.srvPreview.innerHTML = '';
+  els.srvAccept.disabled = false; els.srvDecline.disabled = false;
+  els.sessionRecvModal.hidden = true;
+}
+
+// cancelRecv closes the modal, disarming a live listener first if one is up.
+async function cancelRecv() {
+  const armed = recvStage === 'wait' || recvStage === 'consent';
+  endRecv();
+  if (armed) { try { await apiFetch('/api/session/disarm', { method: 'POST' }); } catch { /* shutting down anyway */ } }
+}
+
+// blobToBase64 returns the raw base64 of a Blob (no data: prefix) for JSON upload.
+function blobToBase64(blob) {
+  return new Promise((resolve, reject) => {
+    const fr = new FileReader();
+    fr.onload = () => resolve(String(fr.result).split(',')[1] || '');
+    fr.onerror = reject;
+    fr.readAsDataURL(blob);
+  });
+}
+
+els.sessionRecvBtn.onclick = openSessionRecv;
+els.srvCancel.onclick = cancelRecv;
+els.srvDisarm.onclick = cancelRecv;
+els.srvArmGo.onclick = armRecv;
+els.srvAccept.onclick = acceptRecv;
+els.srvDecline.onclick = declineRecv;
+els.srvSelfCopy.onclick = () => copyFp(selfFingerprint);
+els.srvPeerCopy.onclick = () => copyFp(recvPeerFp);
 
 // About dialog: explainer by default; the licence/notices buttons swap the body
 // for the embedded /legal/ document, and Back returns to the explainer.
