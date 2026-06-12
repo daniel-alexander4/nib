@@ -31,6 +31,7 @@
         <div class="sep"></div>
         <button id="finalizeBtn">Finalize &amp; sign…</button>
         <button id="cosignBtn">Co-sign with a peer…</button>
+        <button id="sessionInitBtn">Co-sign live with a peer…</button>
         <button id="sessionRecvBtn">Receive a live co-signature…</button>
         <div class="menucap">Export</div>
         <button id="exportZipBtn">Pages as images (ZIP)</button>
@@ -586,6 +587,32 @@
         <button id="cosignCancel">Cancel</button>
         <span class="grow"></span>
         <button id="cosignGo" class="primary">Co-sign &amp; save…</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Co-sign live (dial side): send the open document to a pinned peer who is
+       armed to receive, co-sign in real time, and adopt the doubly-signed result.
+       Dialing an arbitrary address is safe — the pinned-peer mTLS handshake aborts
+       before any document bytes are sent unless the peer presents the pinned key. -->
+  <div id="sessionInitModal" hidden>
+    <div class="sigcard">
+      <h3>Co-sign live with a peer</h3>
+      <p class="libhint">Send the open document to a pinned peer over a live, encrypted channel and
+        co-sign it in real time. They must be waiting (armed to receive) at the address below.</p>
+      <label>Peer you're co-signing with
+        <select id="sinPeer"></select></label>
+      <p id="sinNoPeers" class="libhint" hidden>Pin the other person's fingerprint first, under
+        <strong>Identity &amp; peers</strong>.</p>
+      <label>Their address (host:port they're listening on)
+        <input id="sinAddr" type="text" placeholder="e.g. 203.0.113.4:8443" spellcheck="false" /></label>
+      <label>What you're agreeing to
+        <textarea id="sinIntent" rows="2">I agree to sign this document.</textarea></label>
+      <div id="sinProgress" class="libhint" hidden>Connecting and co-signing…</div>
+      <div class="sigbtns">
+        <button id="sinCancel">Cancel</button>
+        <span class="grow"></span>
+        <button id="sinGo" class="primary">Co-sign live</button>
       </div>
     </div>
   </div>
