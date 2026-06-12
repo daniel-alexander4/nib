@@ -167,6 +167,141 @@ func TestSessionArmReceiveSign(t *testing.T) {
 	}
 }
 
+// TestSessionDeclineLeavesOpenDoc proves a received request never replaces the open
+// document: while it's parked, the received doc is served only from
+// /api/session/pending-pdf and the open doc is untouched, and a decline leaves the
+// open doc exactly as it was (the open-doc-clobber fix).
+func TestSessionDeclineLeavesOpenDoc(t *testing.T) {
+	ts, path := startServer(t)
+	c, csrf := authedClient(t, ts)
+
+	// Bob has a document open (the test PDF, unsigned — zero attestations).
+	openByPath(t, ts.URL, c, csrf, path)
+	if n := attCount(t, c, ts.URL+"/api/pdf"); n != 0 {
+		t.Fatalf("open document has %d signers before session, want 0", n)
+	}
+
+	// Bob's own fingerprint, and a pinned remote initiator (Alice).
+	var me struct {
+		Fingerprint string `json:"fingerprint"`
+	}
+	sessGet(t, c, ts.URL+"/api/peers", &me)
+	bFPBytes, err := hex.DecodeString(me.Fingerprint)
+	if err != nil {
+		t.Fatal(err)
+	}
+	aCert, aKey, err := sign.GenerateIdentity("Alice")
+	if err != nil {
+		t.Fatal(err)
+	}
+	aFPBytes, _ := sign.Fingerprint(aCert)
+	aFP := hex.EncodeToString(aFPBytes)
+	pinPeer(t, c, csrf, ts.URL, aFP)
+
+	var armed sessionStatus
+	sessDecode(t, write(t, c, csrf, http.MethodPost, ts.URL+"/api/session/arm", "application/json",
+		jsonBody(armRequest{Fingerprint: aFP, Bind: "127.0.0.1:0"})), &armed)
+	if !armed.Armed {
+		t.Fatalf("arm failed: %+v", armed)
+	}
+
+	// Alice signs a doc accepting Bob and dials in; the round-trip will be declined.
+	errc := make(chan error, 1)
+	go func() {
+		base, e := testpdf.Form()
+		if e != nil {
+			errc <- e
+			return
+		}
+		prepared, e := p2p.PrepareDocument(base)
+		if e != nil {
+			errc <- e
+			return
+		}
+		place, e := p2p.NextPlacement(prepared)
+		if e != nil {
+			errc <- e
+			return
+		}
+		att := p2p.Attestation{Signer: "Alice", AcceptedPeer: me.Fingerprint, AcceptedPeerLabel: "Bob", Intent: "I agree", When: time.Now()}
+		aSigned, e := p2p.Contribute(prepared, aCert, aKey, att, nil, place)
+		if e != nil {
+			errc <- e
+			return
+		}
+		conn, e := p2p.Dial(armed.Address, aCert, aKey, bFPBytes, 10*time.Second)
+		if e != nil {
+			errc <- e
+			return
+		}
+		defer conn.Close()
+		if _, e := p2p.Initiate(conn, aSigned, aFPBytes); e == nil {
+			errc <- nil // a declined round-trip must surface an error to the initiator
+			return
+		}
+		errc <- nil
+	}()
+
+	// Wait for the request to park.
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		if time.Now().After(deadline) {
+			t.Fatal("no pending request appeared")
+		}
+		var st sessionStatus
+		sessGet(t, c, ts.URL+"/api/session/status", &st)
+		if st.Pending != nil {
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+
+	// While parked: the received doc is served from pending-pdf (Alice's one
+	// signature), and the open doc is still Bob's untouched, unsigned PDF.
+	if n := attCount(t, c, ts.URL+"/api/session/pending-pdf"); n != 1 {
+		t.Errorf("pending-pdf has %d signers, want 1", n)
+	}
+	if n := attCount(t, c, ts.URL+"/api/pdf"); n != 0 {
+		t.Errorf("open document changed while a request was pending: %d signers, want 0", n)
+	}
+
+	// Bob declines.
+	rr := write(t, c, csrf, http.MethodPost, ts.URL+"/api/session/respond", "application/json",
+		jsonBody(map[string]any{"accept": false}))
+	if rr.StatusCode != http.StatusOK {
+		t.Fatalf("respond status = %d", rr.StatusCode)
+	}
+	rr.Body.Close()
+	if e := <-errc; e != nil {
+		t.Fatalf("initiator: %v", e)
+	}
+
+	// After decline: the open doc is unchanged, and nothing is pending.
+	if n := attCount(t, c, ts.URL+"/api/pdf"); n != 0 {
+		t.Errorf("open document changed after decline: %d signers, want 0", n)
+	}
+	pr := write(t, c, csrf, http.MethodGet, ts.URL+"/api/session/pending-pdf", "", nil)
+	pr.Body.Close()
+	if pr.StatusCode != http.StatusNotFound {
+		t.Errorf("pending-pdf after decline = %d, want 404", pr.StatusCode)
+	}
+}
+
+// attCount fetches a PDF endpoint and returns how many attestations it carries.
+func attCount(t *testing.T, c *http.Client, url string) int {
+	t.Helper()
+	resp, err := c.Get(url)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("GET %s = %d", url, resp.StatusCode)
+	}
+	b, _ := io.ReadAll(resp.Body)
+	return len(p2p.ReadAttestations(b))
+}
+
 // TestSessionArmRejectsUnpinnedPeer confirms arming for a peer who isn't pinned is
 // refused — you can only open the listener for someone you've already pinned.
 func TestSessionArmRejectsUnpinnedPeer(t *testing.T) {
