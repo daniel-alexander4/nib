@@ -8,6 +8,7 @@ import (
 	"io"
 	"mime/multipart"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -288,6 +289,110 @@ func TestSessionDeclineLeavesOpenDoc(t *testing.T) {
 	if pr.StatusCode != http.StatusNotFound {
 		t.Errorf("pending-pdf after decline = %d, want 404", pr.StatusCode)
 	}
+}
+
+// TestSessionQuoteForPendingPeer checks the responder's appearance quote: with a
+// request parked, /api/session/quote returns this user's own visible-block lines
+// accepting the connected peer and carrying the intent the user typed, with a
+// non-degenerate rect — and with nothing pending it reports a conflict. Unlike
+// /api/cosign/quote it must not depend on an open document (there is none here).
+func TestSessionQuoteForPendingPeer(t *testing.T) {
+	ts, _ := startServer(t)
+	c, csrf := authedClient(t, ts)
+
+	// Nothing pending (and no document open) -> conflict, not a crash.
+	nq := write(t, c, csrf, http.MethodPost, ts.URL+"/api/session/quote", "application/json",
+		jsonBody(map[string]any{"intent": "x"}))
+	if nq.StatusCode != http.StatusConflict {
+		t.Errorf("quote with nothing pending = %d, want 409", nq.StatusCode)
+	}
+	nq.Body.Close()
+
+	// Park a request from a pinned peer (Alice dials Bob).
+	var me struct {
+		Fingerprint string `json:"fingerprint"`
+	}
+	sessGet(t, c, ts.URL+"/api/peers", &me)
+	bFPBytes, _ := hex.DecodeString(me.Fingerprint)
+	aCert, aKey, err := sign.GenerateIdentity("Alice")
+	if err != nil {
+		t.Fatal(err)
+	}
+	aFPBytes, _ := sign.Fingerprint(aCert)
+	aFP := hex.EncodeToString(aFPBytes)
+	pinPeer(t, c, csrf, ts.URL, aFP)
+
+	var armed sessionStatus
+	sessDecode(t, write(t, c, csrf, http.MethodPost, ts.URL+"/api/session/arm", "application/json",
+		jsonBody(armRequest{Fingerprint: aFP, Bind: "127.0.0.1:0"})), &armed)
+	if !armed.Armed {
+		t.Fatalf("arm failed: %+v", armed)
+	}
+
+	errc := make(chan error, 1)
+	go func() {
+		base, e := testpdf.Form()
+		if e != nil {
+			errc <- e
+			return
+		}
+		prepared, e := p2p.PrepareDocument(base)
+		if e != nil {
+			errc <- e
+			return
+		}
+		place, e := p2p.NextPlacement(prepared)
+		if e != nil {
+			errc <- e
+			return
+		}
+		att := p2p.Attestation{Signer: "Alice", AcceptedPeer: me.Fingerprint, AcceptedPeerLabel: "Bob", Intent: "I agree", When: time.Now()}
+		aSigned, e := p2p.Contribute(prepared, aCert, aKey, att, nil, place)
+		if e != nil {
+			errc <- e
+			return
+		}
+		conn, e := p2p.Dial(armed.Address, aCert, aKey, bFPBytes, 10*time.Second)
+		if e != nil {
+			errc <- e
+			return
+		}
+		defer conn.Close()
+		_, _ = p2p.Initiate(conn, aSigned, aFPBytes) // declined below; an error is expected
+		errc <- nil
+	}()
+
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		if time.Now().After(deadline) {
+			t.Fatal("no pending request appeared")
+		}
+		var st sessionStatus
+		sessGet(t, c, ts.URL+"/api/session/status", &st)
+		if st.Pending != nil {
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+
+	var q cosignQuote
+	sessDecode(t, write(t, c, csrf, http.MethodPost, ts.URL+"/api/session/quote", "application/json",
+		jsonBody(map[string]any{"intent": "I consent here"})), &q)
+	joined := strings.Join(q.Lines, "\n")
+	if !strings.Contains(joined, "Nib co-signing attestation") {
+		t.Errorf("quote lines missing header: %q", q.Lines)
+	}
+	if !strings.Contains(joined, "I consent here") {
+		t.Errorf("quote lines missing the typed intent: %q", q.Lines)
+	}
+	if q.Rect[2]-q.Rect[0] <= 0 || q.Rect[3]-q.Rect[1] <= 0 {
+		t.Errorf("quote rect has no area: %v", q.Rect)
+	}
+
+	// Clean up: decline, and let the initiator goroutine finish.
+	write(t, c, csrf, http.MethodPost, ts.URL+"/api/session/respond", "application/json",
+		jsonBody(map[string]any{"accept": false})).Body.Close()
+	<-errc
 }
 
 // attCount fetches a PDF endpoint and returns how many attestations it carries.
