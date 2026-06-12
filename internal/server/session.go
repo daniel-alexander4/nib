@@ -110,6 +110,18 @@ func (se *session) pendingPDF() []byte {
 	return se.pending.doc
 }
 
+// pendingFingerprint returns the hex SPKI of the peer whose request is awaiting
+// consent, or "" if none. The responder's attestation quote names this peer as the
+// accepted counterparty.
+func (se *session) pendingFingerprint() string {
+	se.mu.Lock()
+	defer se.mu.Unlock()
+	if se.pending == nil {
+		return ""
+	}
+	return se.pending.peer.Fingerprint
+}
+
 func (se *session) respond(d sessionDecision) bool {
 	se.mu.Lock()
 	p := se.pending
@@ -285,6 +297,45 @@ func (s *Server) handleSessionRespond(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, s.sess.status())
+}
+
+// handleSessionQuote returns the appearance lines for the responder's own visible
+// attestation block, accepting the peer whose request is pending. Unlike
+// /api/cosign/quote it never reads the open document: the responder's block is
+// placed server-side on the *received* document (coSignExchange recomputes the
+// placement), so the client needs only the canonical lines and a nominal rect to
+// size the rasterized image — the same single-source guarantee, without binding to
+// the wrong (open) document's page geometry.
+func (s *Server) handleSessionQuote(w http.ResponseWriter, r *http.Request) {
+	v := vaultFrom(r)
+	var req struct {
+		Intent string `json:"intent"`
+	}
+	if err := readJSON(r, &req); err != nil {
+		httpError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	fp := s.sess.pendingFingerprint()
+	if fp == "" {
+		httpError(w, http.StatusConflict, "no pending session request")
+		return
+	}
+	// The pending peer is the one the listener was armed for, so it is pinned;
+	// cosignAttestation re-checks that and names "Nib User" as the signer, exactly
+	// as coSignExchange does on accept. The nominal rect mirrors stackPlacement's
+	// constant block size (280×84 pt) — only its aspect is used, to size the PNG.
+	att, ok := s.cosignAttestation(w, v, cosignParams{Fingerprint: fp, Intent: req.Intent})
+	if !ok {
+		return
+	}
+	writeJSON(w, cosignQuote{Lines: att.AppearanceLines(), Rect: [4]float64{40, 40, 320, 124}})
+}
+
+// handleDoc returns metadata for the open document — name, path, save-ability, and
+// signature state — so the UI can refresh after the document changes out of band,
+// as it does when runSession applies a received live co-signature asynchronously.
+func (s *Server) handleDoc(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, s.docResponse())
 }
 
 // handleSessionInitiate runs the dialing side of a live co-signing session: it
