@@ -44,6 +44,10 @@ const els = {
   cosignIntent: $('cosignIntent'), cosignNoPeers: $('cosignNoPeers'),
   cosignCancel: $('cosignCancel'), cosignGo: $('cosignGo'),
   peerSelfCopy: $('peerSelfCopy'),
+  sessionInitBtn: $('sessionInitBtn'), sessionInitModal: $('sessionInitModal'),
+  sinPeer: $('sinPeer'), sinNoPeers: $('sinNoPeers'), sinAddr: $('sinAddr'),
+  sinIntent: $('sinIntent'), sinProgress: $('sinProgress'),
+  sinCancel: $('sinCancel'), sinGo: $('sinGo'),
   sessionRecvBtn: $('sessionRecvBtn'), sessionRecvModal: $('sessionRecvModal'),
   srvArm: $('srvArm'), srvWait: $('srvWait'), srvConsent: $('srvConsent'),
   srvPeer: $('srvPeer'), srvNoPeers: $('srvNoPeers'), srvBind: $('srvBind'),
@@ -526,6 +530,65 @@ async function cosign() {
 els.cosignBtn.onclick = openCosign;
 els.cosignCancel.onclick = () => { els.cosignModal.hidden = true; };
 els.cosignGo.onclick = cosign;
+
+// --- co-sign live (dial side) ------------------------------------------------
+// Send the open document to a pinned peer who is armed to receive, co-sign it in
+// real time, and adopt the doubly-signed result as the open document. The signing
+// path is shared with Track A co-sign (/api/cosign/quote on the open document, then
+// the rasterized appearance); only the transport differs.
+async function openSessionInit() {
+  if (!pdfDocument) { toast('Open a PDF first'); return; }
+  const res = await apiFetch('/api/peers');
+  if (!res.ok) { toast('could not load peers'); return; }
+  const peers = (await res.json()).peers || [];
+  els.sinPeer.innerHTML = '';
+  for (const p of peers) {
+    const o = document.createElement('option');
+    o.value = p.fingerprint;
+    o.textContent = (p.label || 'Unlabelled peer') + ' — ' + groupFingerprint(p.fingerprint.slice(0, 8)) + '…';
+    els.sinPeer.append(o);
+  }
+  const none = peers.length === 0;
+  els.sinNoPeers.hidden = !none;
+  els.sinPeer.hidden = none;
+  els.sinProgress.hidden = true;
+  els.sinGo.disabled = none;
+  els.sessionInitModal.hidden = false;
+}
+
+async function sessionInit() {
+  const fingerprint = els.sinPeer.value;
+  if (!fingerprint) return;
+  const address = els.sinAddr.value.trim();
+  if (!address) { toast('Enter the peer’s address'); return; }
+  const intent = els.sinIntent.value;
+  // Quote against the open document — correct here, since the open document is what
+  // we sign and send (unlike the receive flow, which signs the peer's document).
+  const qr = await apiFetch('/api/cosign/quote', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ fingerprint, intent }),
+  });
+  if (!qr.ok) { toast((await qr.json()).error || 'could not start co-signing'); return; }
+  const q = await qr.json();
+  const png = await renderAttestation(q.lines, q.rect);
+
+  els.sinGo.disabled = true; els.sinCancel.disabled = true; els.sinProgress.hidden = false;
+  const form = new FormData();
+  form.append('pdf', new Blob([await bakedBytes()], { type: 'application/pdf' }), 'doc.pdf');
+  form.append('params', JSON.stringify({ fingerprint, intent, when: q.when }));
+  form.append('appearance', png, 'attestation.png');
+  form.append('address', address);
+  const res = await apiFetch('/api/session/initiate', { method: 'POST', body: form });
+  els.sinGo.disabled = false; els.sinCancel.disabled = false; els.sinProgress.hidden = true;
+  if (!res.ok) { toast((await res.json()).error || 'co-signing did not complete'); return; }
+  els.sessionInitModal.hidden = true;
+  await setDocumentFromServer(await res.json());
+  toast('Co-signed live — document updated');
+}
+
+els.sessionInitBtn.onclick = openSessionInit;
+els.sinCancel.onclick = () => { els.sessionInitModal.hidden = true; };
+els.sinGo.onclick = sessionInit;
 
 // --- receive a live co-signature ---------------------------------------------
 // Arm a pinned-peer-only listener, review the document a peer sends over the live
