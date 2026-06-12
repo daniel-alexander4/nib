@@ -186,26 +186,38 @@ func (s *Server) handleCosignSign(w http.ResponseWriter, r *http.Request) {
 		httpError(w, http.StatusInternalServerError, "could not load identity")
 		return
 	}
-	// The first signer appends the readme (PrepareDocument) before signing; a
-	// later signer's document is already prepared and signed, so it is co-signed
-	// as-is by an incremental update.
-	prepared := pdfBytes
-	if sign.Verify(pdfBytes).State == sign.Unsigned {
-		prepared, err = p2p.PrepareDocument(pdfBytes)
+	signed, ok := s.buildCoSigned(w, pdfBytes, cert, key, att, appearance)
+	if !ok {
+		return
+	}
+	sendDownload(w, "co-signed.pdf", "application/pdf", signed)
+}
+
+// buildCoSigned prepares the document if needed and contributes this user's
+// signature, returning the co-signed bytes. The first signer appends the readme
+// (PrepareDocument) before signing; a later signer's document is already prepared
+// and signed, so it is co-signed as-is by an incremental update. Shared by the
+// Track A download path (/api/cosign/sign) and the live dial path
+// (/api/session/initiate). Writes the HTTP error itself and returns ok=false.
+func (s *Server) buildCoSigned(w http.ResponseWriter, pdf, cert, key []byte, att p2p.Attestation, appearance []byte) ([]byte, bool) {
+	prepared := pdf
+	if sign.Verify(pdf).State == sign.Unsigned {
+		p, err := p2p.PrepareDocument(pdf)
 		if err != nil {
 			httpError(w, http.StatusBadRequest, "could not prepare document: "+err.Error())
-			return
+			return nil, false
 		}
+		prepared = p
 	}
 	place, err := p2p.NextPlacement(prepared)
 	if err != nil {
 		httpError(w, http.StatusInternalServerError, "could not place attestation")
-		return
+		return nil, false
 	}
 	signed, err := p2p.Contribute(prepared, cert, key, att, appearance, place)
 	if err != nil {
 		httpError(w, http.StatusBadRequest, err.Error())
-		return
+		return nil, false
 	}
-	sendDownload(w, "co-signed.pdf", "application/pdf", signed)
+	return signed, true
 }

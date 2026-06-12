@@ -1,9 +1,12 @@
 package server
 
 import (
+	"bytes"
+	"crypto/tls"
 	"encoding/hex"
 	"encoding/json"
 	"io"
+	"mime/multipart"
 	"net/http"
 	"testing"
 	"time"
@@ -300,6 +303,98 @@ func attCount(t *testing.T, c *http.Client, url string) int {
 	}
 	b, _ := io.ReadAll(resp.Body)
 	return len(p2p.ReadAttestations(b))
+}
+
+// autoConfirm is the peer's consent gate in tests: it always accepts.
+type autoConfirm struct{ intent string }
+
+func (a autoConfirm) Confirm(p2p.SignerAttestation, []byte) (bool, string, []byte, error) {
+	return true, a.intent, nil, nil
+}
+
+// initiateForm builds the multipart body /api/session/initiate expects.
+func initiateForm(t *testing.T, pdf, appearance []byte, params map[string]string, address string) (*bytes.Buffer, string) {
+	t.Helper()
+	var buf bytes.Buffer
+	mw := multipart.NewWriter(&buf)
+	pf, _ := mw.CreateFormFile("pdf", "doc.pdf")
+	pf.Write(pdf)
+	af, _ := mw.CreateFormFile("appearance", "appearance.png")
+	af.Write(appearance)
+	pj, _ := json.Marshal(params)
+	mw.WriteField("params", string(pj))
+	mw.WriteField("address", address)
+	mw.Close()
+	return &buf, mw.FormDataContentType()
+}
+
+// TestSessionInitiate drives the dialing side end to end: this server (Alice) signs
+// the open document accepting a pinned peer (Bob) and dials Bob's receive listener;
+// Bob co-signs and returns the result, which becomes Alice's doubly-signed open doc.
+func TestSessionInitiate(t *testing.T) {
+	ts, _ := startServer(t)
+	c, csrf := authedClient(t, ts)
+
+	// Alice = the server (initiator); her fingerprint identifies her to the peer.
+	var me struct {
+		Fingerprint string `json:"fingerprint"`
+	}
+	sessGet(t, c, ts.URL+"/api/peers", &me)
+	aFPBytes, err := hex.DecodeString(me.Fingerprint)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Bob = a pinned peer running a receive listener that accepts Alice.
+	bCert, bKey, err := sign.GenerateIdentity("Bob")
+	if err != nil {
+		t.Fatal(err)
+	}
+	bFPBytes, _ := sign.Fingerprint(bCert)
+	bFP := hex.EncodeToString(bFPBytes)
+	pinPeer(t, c, csrf, ts.URL, bFP)
+
+	ln, err := p2p.Listen("127.0.0.1:0", bCert, bKey, aFPBytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+
+	recvErr := make(chan error, 1)
+	go func() {
+		conn, e := ln.Accept()
+		if e != nil {
+			recvErr <- e
+			return
+		}
+		defer conn.Close()
+		_, e = p2p.Receive(conn.(*tls.Conn), bCert, bKey, "Alice", autoConfirm{intent: "I accept"})
+		recvErr <- e
+	}()
+
+	// Alice initiates against Bob's listener.
+	base, err := testpdf.Form()
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, ct := initiateForm(t, base, pageImage(t, 120, 40),
+		map[string]string{"fingerprint": bFP, "intent": "I agree"}, ln.Addr().String())
+	resp := write(t, c, csrf, http.MethodPost, ts.URL+"/api/session/initiate", ct, body)
+	if resp.StatusCode != http.StatusOK {
+		b, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		t.Fatalf("initiate status = %d: %s", resp.StatusCode, b)
+	}
+	resp.Body.Close()
+
+	if e := <-recvErr; e != nil {
+		t.Fatalf("receiver: %v", e)
+	}
+
+	// The open document is now the doubly-signed result.
+	if n := attCount(t, c, ts.URL+"/api/pdf"); n != 2 {
+		t.Errorf("open document has %d signers, want 2", n)
+	}
 }
 
 // TestSessionArmRejectsUnpinnedPeer confirms arming for a peer who isn't pinned is
