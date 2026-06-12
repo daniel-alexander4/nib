@@ -103,6 +103,39 @@ unsigned. Click **details** for the full picture — every signer (not just the
 first), and whether each signing time is backed by an independent timestamp
 authority or merely stated by the signer.
 
+### Co-sign with a peer
+Two people can sign the *same* document, each attesting — in a visible block and a
+cryptographically-signed reason — that they accept the other's identity. Nib pins
+that identity by its **key fingerprint**, which you compare once over a channel you
+both trust (read it aloud on a call, or paste it across a secure chat) under
+**Identity & peers**; every fingerprint has a **Copy** button for that comparison.
+
+There are two ways to exchange the document:
+
+- **Pass the file** — you co-sign, then send the PDF to the other person (email, USB,
+  Signal); they co-sign and send it back. Nothing but the file moves, and the result
+  verifies on its own, with no server in between.
+- **Live, over an encrypted channel** — co-sign in real time without passing a file.
+  One person **arms to receive** (File → *Receive a live co-signature…*), the other
+  **dials in** (File → *Co-sign live with a peer…*). The connection is mutually
+  authenticated TLS, pinned to each other's identity key: an unpinned peer is dropped
+  at the handshake, before any document bytes are exchanged. The receiver reviews the
+  exact document and accepts or declines — nothing is signed without that consent —
+  and the session tears down after a single exchange.
+
+**Reachability for live sessions.** Nib runs no relay, rendezvous, or NAT-traversal
+infrastructure of its own (that would mean a server, and Nib has none). The dialing
+peer reaches the receiver's armed listener directly, so the receiver makes their
+chosen `host:port` reachable one of two ways:
+
+- **Port-forward** the chosen port on their router to their machine, or
+- **Share a private network** you both already trust — a VPN such as **Tailscale**
+  or **WireGuard** — and bind / dial the address it hands you.
+
+If the receiver is behind **CGNAT** (common on mobile and some ISPs), port-forwarding
+won't work — use the VPN path. The security model doesn't depend on *how* you reach
+each other: the pinned-key handshake holds over any transport.
+
 ### Pages & export
 Rotate, delete, **append**, and reorder pages — **drag a page's thumbnail** in the
 sidebar to move it where you want. **Flatten** to a guaranteed-flat PDF, or export
@@ -116,7 +149,10 @@ Pick how the commands are presented from **⚙ Settings → Layout**: the classi
 
 ### Private by design
 - Binds **`127.0.0.1` only** — never reachable from the network; writes are
-  guarded by a per-process CSRF token and a loopback-origin check.
+  guarded by a per-process CSRF token and a loopback-origin check. The one
+  deliberate exception is a **live co-signing session you arm yourself**: while
+  armed, Nib opens a single routable listener that accepts only the one peer whose
+  key you pinned, and tears it down after one exchange (see *Co-sign with a peer*).
 - Your image library, signing identity, autofill profile, and recent files live
   in one **AES-256-GCM vault**, encrypted at rest.
 - The vault is **sealed to your SSH key**: it unlocks at startup with *no
