@@ -43,6 +43,40 @@ func (c confirmer) Confirm(SignerAttestation, []byte) (bool, string, []byte, err
 	return c.accept, c.intent, nil, nil
 }
 
+// TestConfirmCoSignedRequiresBothSignatures proves the initiator-side check accepts
+// a genuine mutual co-signature but rejects a reply that carries only the peer's
+// signature — e.g. a peer who ignores the sent document, signs a different one
+// accepting the initiator, and returns that. Without the initiator's own valid
+// signature on the result, it is not the document the initiator agreed to.
+func TestConfirmCoSignedRequiresBothSignatures(t *testing.T) {
+	aCert, aKey := newIdentity(t) // initiator (Alice)
+	bCert, bKey := newIdentity(t) // peer (Bob)
+	aFP, bFP := fingerprint(t, aCert), fingerprint(t, bCert)
+
+	bAcceptsA := Attestation{Signer: "Bob", AcceptedPeer: hex.EncodeToString(aFP), AcceptedPeerLabel: "Alice", Intent: "I accept", When: time.Now()}
+
+	// Genuine mutual co-sign: Alice signs accepting Bob, Bob co-signs accepting Alice.
+	aSigned := signAsInitiator(t, aCert, aKey, bFP)
+	mutual := contribute(t, aSigned, bCert, bKey, bAcceptsA)
+	if err := confirmCoSigned(mutual, bFP, aFP); err != nil {
+		t.Errorf("genuine mutual co-sign rejected: %v", err)
+	}
+
+	// Substitution: a document Bob signed accepting Alice that Alice never signed.
+	base, err := testpdf.Form()
+	if err != nil {
+		t.Fatal(err)
+	}
+	prepared, err := PrepareDocument(base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bOnly := contribute(t, prepared, bCert, bKey, bAcceptsA)
+	if err := confirmCoSigned(bOnly, bFP, aFP); err == nil {
+		t.Error("accepted a reply missing the initiator's own signature")
+	}
+}
+
 func TestSessionRoundTrip(t *testing.T) {
 	aCert, aKey := newIdentity(t) // initiator
 	bCert, bKey := newIdentity(t) // receiver
