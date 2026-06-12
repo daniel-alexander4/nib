@@ -25,8 +25,9 @@ import (
 // or which peers it accepts without a fresh security review (P2P 12).
 
 const (
-	sessionAcceptTimeout  = 5 * time.Minute // auto-disarm if no peer connects
-	sessionConsentTimeout = 5 * time.Minute // decline if the user never responds
+	sessionAcceptTimeout  = 5 * time.Minute  // auto-disarm if no peer connects
+	sessionConsentTimeout = 5 * time.Minute  // decline if the user never responds
+	sessionDialTimeout    = 30 * time.Second // give up establishing the outbound connection
 )
 
 // session is the receive side of a live co-signing session: an armed, routable,
@@ -284,6 +285,82 @@ func (s *Server) handleSessionRespond(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, s.sess.status())
+}
+
+// handleSessionInitiate runs the dialing side of a live co-signing session: it
+// signs the open document accepting the chosen pinned peer (the same prepare+sign
+// path as Track A co-sign), dials that peer at the supplied reachable address over
+// pinned-peer mTLS, exchanges the document, verifies the peer co-signed and accepted
+// this user, and makes the doubly-signed result the open document. The appearance
+// block is rasterized client-side and uploaded, exactly like /api/cosign/sign.
+//
+// Dialing an arbitrary address is safe: the mTLS handshake aborts before any bytes
+// of the document are sent unless the address answers with the pinned peer's
+// identity, which an impostor cannot present. This endpoint is reachable only
+// behind requireUnlocked (unlocked + CSRF + loopback origin), so the dial is
+// always a deliberate local action.
+func (s *Server) handleSessionInitiate(w http.ResponseWriter, r *http.Request) {
+	v := vaultFrom(r)
+	if err := r.ParseMultipartForm(maxPDFBytes); err != nil {
+		httpError(w, http.StatusBadRequest, "could not read upload")
+		return
+	}
+	address := r.FormValue("address")
+	if address == "" {
+		httpError(w, http.StatusBadRequest, "a peer address is required")
+		return
+	}
+	pdfBytes, ok := formFileBytes(w, r, "pdf")
+	if !ok {
+		return
+	}
+	var p cosignParams
+	if raw := r.FormValue("params"); raw != "" {
+		if err := json.Unmarshal([]byte(raw), &p); err != nil {
+			httpError(w, http.StatusBadRequest, "invalid params")
+			return
+		}
+	}
+	att, ok := s.cosignAttestation(w, v, p)
+	if !ok {
+		return
+	}
+	peerFP, err := parseFingerprint(p.Fingerprint)
+	if err != nil {
+		httpError(w, http.StatusBadRequest, "not a valid fingerprint")
+		return
+	}
+	appearance, ok := formFileBytes(w, r, "appearance")
+	if !ok {
+		return
+	}
+	cert, key, err := identity(v)
+	if err != nil {
+		httpError(w, http.StatusInternalServerError, "could not load identity")
+		return
+	}
+	myFP, err := sign.Fingerprint(cert)
+	if err != nil {
+		httpError(w, http.StatusInternalServerError, "could not read own fingerprint")
+		return
+	}
+	signed, ok := s.buildCoSigned(w, pdfBytes, cert, key, att, appearance)
+	if !ok {
+		return
+	}
+	conn, err := p2p.Dial(address, cert, key, peerFP, sessionDialTimeout)
+	if err != nil {
+		httpError(w, http.StatusBadGateway, "could not connect to peer: "+err.Error())
+		return
+	}
+	defer conn.Close()
+	final, err := p2p.Initiate(conn, signed, myFP)
+	if err != nil {
+		httpError(w, http.StatusBadGateway, "co-signing did not complete: "+err.Error())
+		return
+	}
+	s.setDoc(&document{data: final, sig: sign.Verify(final)})
+	writeJSON(w, s.docResponse())
 }
 
 // DisarmSession tears down any armed listener; called on process shutdown.
