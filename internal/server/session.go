@@ -42,6 +42,7 @@ type session struct {
 // pendingReq is a received co-sign request blocked on the user's accept/decline.
 type pendingReq struct {
 	peer p2p.SignerAttestation
+	doc  []byte // the received document, served for review via /api/session/pending-pdf
 	resp chan sessionDecision
 }
 
@@ -96,6 +97,18 @@ func (se *session) clearPending() {
 	se.mu.Unlock()
 }
 
+// pendingPDF returns the received document awaiting consent, or nil if none is
+// pending. The bytes are exactly what coSignExchange will sign on accept, so the
+// review pane shows precisely what the user co-signs.
+func (se *session) pendingPDF() []byte {
+	se.mu.Lock()
+	defer se.mu.Unlock()
+	if se.pending == nil {
+		return nil
+	}
+	return se.pending.doc
+}
+
 func (se *session) respond(d sessionDecision) bool {
 	se.mu.Lock()
 	p := se.pending
@@ -128,10 +141,11 @@ func (se *session) status() sessionStatus {
 type sessionConfirmer struct{ s *Server }
 
 func (sc sessionConfirmer) Confirm(peer p2p.SignerAttestation, doc []byte) (bool, string, []byte, error) {
-	// Show the received document in the viewer so the user reviews what they sign.
-	sc.s.setDoc(&document{data: doc, sig: sign.Verify(doc)})
+	// Park the received document for review (served via /api/session/pending-pdf)
+	// rather than replacing the open document — that only changes on accept, in
+	// runSession. A declined or timed-out request leaves the open doc untouched.
 	ch := make(chan sessionDecision, 1)
-	if !sc.s.sess.setPending(&pendingReq{peer: peer, resp: ch}) {
+	if !sc.s.sess.setPending(&pendingReq{peer: peer, doc: doc, resp: ch}) {
 		return false, "", nil, errors.New("session not armed")
 	}
 	defer sc.s.sess.clearPending()
@@ -230,6 +244,20 @@ func (s *Server) handleSessionDisarm(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleSessionStatus(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, s.sess.status())
+}
+
+// handleSessionPendingPDF streams the received document awaiting consent so the UI
+// can render it for review — separate from /api/pdf (the open document), which a
+// received request never touches until the user accepts.
+func (s *Server) handleSessionPendingPDF(w http.ResponseWriter, r *http.Request) {
+	doc := s.sess.pendingPDF()
+	if doc == nil {
+		httpError(w, http.StatusNotFound, "no pending session request")
+		return
+	}
+	w.Header().Set("Content-Type", "application/pdf")
+	w.Header().Set("Cache-Control", "no-store")
+	_, _ = w.Write(doc)
 }
 
 func (s *Server) handleSessionRespond(w http.ResponseWriter, r *http.Request) {
