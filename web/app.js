@@ -81,6 +81,8 @@ const els = {
   fzTsa: $('fzTsa'), fzTsaOn: $('fzTsaOn'), fzCancel: $('fzCancel'), fzGo: $('fzGo'),
   fzOpacity: $('fzOpacity'), fzSize: $('fzSize'), fzAngle: $('fzAngle'), fzColor: $('fzColor'),
   timestampBtn: $('timestampBtn'), timestampModal: $('timestampModal'), tsCancel: $('tsCancel'), tsGo: $('tsGo'),
+  timestampVerifyBtn: $('timestampVerifyBtn'), tsVerifyModal: $('tsVerifyModal'), tvExplorerOn: $('tvExplorerOn'),
+  tvExplorer: $('tvExplorer'), tvFile: $('tvFile'), tvResult: $('tvResult'), tvCancel: $('tvCancel'), tvPick: $('tvPick'),
   fzPreviewMark: $('fzPreviewMark'),
   profileModal: $('profileModal'), profileText: $('profileText'),
   profileCancel: $('profileCancel'), profileSave: $('profileSave'),
@@ -1860,6 +1862,54 @@ els.tsGo.onclick = async () => {
   if (!res.ok) { toast('Could not reach an OpenTimestamps calendar'); return; }
   openSaveAs(await res.blob(), exportBase() + '.pdf.ots', 'Save OpenTimestamps proof');
 };
+
+// Verify an OpenTimestamps proof against the open document: pick the .ots, send it
+// with the document's bytes, and report whether (and when) it's anchored to Bitcoin.
+els.timestampVerifyBtn.onclick = () => {
+  if (!pdfDocument) return;
+  els.tvResult.hidden = true; els.tvResult.textContent = '';
+  els.tsVerifyModal.hidden = false;
+};
+els.tvCancel.onclick = () => { els.tsVerifyModal.hidden = true; };
+els.tvExplorerOn.onchange = () => { els.tvExplorer.disabled = !els.tvExplorerOn.checked; };
+els.tvPick.onclick = () => els.tvFile.click();
+els.tvFile.onchange = async () => {
+  const f = els.tvFile.files[0];
+  els.tvFile.value = '';
+  if (!f) return;
+  const bytes = await bakedBytes();
+  const form = new FormData();
+  form.append('pdf', new Blob([bytes], { type: 'application/pdf' }), 'doc.pdf');
+  form.append('ots', f, f.name);
+  if (els.tvExplorerOn.checked && els.tvExplorer.value.trim()) form.append('explorer', els.tvExplorer.value.trim());
+  els.tvResult.hidden = false;
+  els.tvResult.textContent = 'Checking…';
+  const res = await apiFetch('/api/timestamp/verify', { method: 'POST', body: form });
+  if (!res.ok) {
+    const e = await res.json().catch(() => ({}));
+    els.tvResult.textContent = '✗ ' + (e.error || 'verification failed');
+    return;
+  }
+  els.tvResult.textContent = timestampVerifyMessage(await res.json());
+};
+
+function timestampVerifyMessage(r) {
+  switch (r.state) {
+    case 'confirmed': {
+      const when = r.time ? new Date(r.time).toLocaleString() : 'a Bitcoin block';
+      const src = (r.sources || 1) > 1 ? (r.sources + ' sources') : '1 source';
+      return `✓ Existed, unaltered, by ${when} — anchored to Bitcoin block ${r.height} (confirmed by ${src}).`;
+    }
+    case 'pending':
+      return '⏳ Not yet confirmed — still waiting on a Bitcoin block. Try again in a few hours.';
+    case 'mismatch':
+      return '✗ This proof is not for the open document — its hash doesn’t match.';
+    case 'invalid':
+      return '✗ The proof does not match the Bitcoin blockchain — it may be forged or corrupt.';
+    default:
+      return 'Unexpected verification result.';
+  }
+}
 
 // Autofill: set matching form-field values from the saved profile.
 els.autofillBtn.onclick = async () => {
