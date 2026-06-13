@@ -31,6 +31,7 @@
         <div class="sep"></div>
         <button id="finalizeBtn">Finalize &amp; sign…</button>
         <button id="timestampBtn">Timestamp (OpenTimestamps)…</button>
+        <button id="timestampVerifyBtn">Verify a timestamp…</button>
         <button id="cosignBtn">Co-sign with a peer…</button>
         <button id="sessionInitBtn">Co-sign live with a peer…</button>
         <button id="sessionRecvBtn">Receive a live co-signature…</button>
@@ -153,6 +154,7 @@
       <div class="dropdown">
         <button data-forward="finalizeBtn">Finalize &amp; sign…</button>
         <button data-forward="timestampBtn">Timestamp (OpenTimestamps)…</button>
+        <button data-forward="timestampVerifyBtn">Verify a timestamp…</button>
         <button data-forward="cosignBtn">Co-sign with a peer…</button>
         <div class="sep"></div>
         <button data-forward="manageKeysBtn">Manage authorized keys…</button>
@@ -408,6 +410,26 @@
         <span class="grow"></span>
         <button id="tsCancel">Cancel</button>
         <button id="tsGo" class="primary">Create proof</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Verify an OpenTimestamps proof -->
+  <div id="tsVerifyModal" hidden>
+    <div class="sigcard">
+      <h3>Verify a timestamp</h3>
+      <p class="libhint">Check an OpenTimestamps proof (<code>.ots</code>) against the open document:
+        confirm the document is the one it was made for, and read back the Bitcoin block time it was
+        anchored at. Only a public block height is looked up over the internet — never the document or
+        its hash. The block time is confirmed against public block explorers.</p>
+      <label class="check"><input id="tvExplorerOn" type="checkbox" /> Custom block explorer (Esplora API)</label>
+      <input id="tvExplorer" type="text" placeholder="e.g. https://mempool.space/api" disabled />
+      <input id="tvFile" type="file" accept=".ots" hidden />
+      <div id="tvResult" class="sigdetails" hidden></div>
+      <div class="sigbtns">
+        <span class="grow"></span>
+        <button id="tvCancel">Close</button>
+        <button id="tvPick" class="primary">Choose .ots file…</button>
       </div>
     </div>
   </div>

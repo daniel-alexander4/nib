@@ -111,10 +111,16 @@ trust in Nib. Only a SHA-256 **hash** of the document is sent to the public
 OpenTimestamps calendar servers; the document itself never leaves your machine.
 The `.ots` is a sidecar — it never touches the PDF, so it can't disturb a
 signature — keep it alongside that exact file. The proof becomes fully verifiable
-a few hours after the next Bitcoin block confirms it, and you verify it with any
-OpenTimestamps tool (e.g. [opentimestamps.org](https://opentimestamps.org)). It
-proves *when* a document existed, not *who* wrote or signed it — that's what
-signing and co-signing are for.
+a few hours after the next Bitcoin block confirms it. It proves *when* a document
+existed, not *who* wrote or signed it — that's what signing and co-signing are for.
+
+**Verify a timestamp** checks an `.ots` against the open document right inside Nib:
+it confirms the proof is for that exact file and reports the Bitcoin block time it
+was anchored at. Only a public block height is looked up over the internet — never
+the document or its hash — and the block is confirmed against two public block
+explorers that must agree (point it at your own Esplora endpoint to verify
+trustlessly). You can also verify with any other OpenTimestamps tool
+(e.g. [opentimestamps.org](https://opentimestamps.org)) — the proof is standard.
 
 ### Co-sign with a peer
 Two people can sign the *same* document, each attesting — in a visible block and a
