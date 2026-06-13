@@ -838,6 +838,23 @@ linkService.setViewer(viewer);
 let pdfDocument = null;
 let docMeta = { canSave: false, path: '' };
 let lastSig = null; // last verification result, for the signature-details modal
+
+// Full-rewrite edits (sanitise, flatten, redact, remove-originals, page ops) drop
+// any signature the document carries. These guards keep one from being destroyed
+// unawares: signatureWarning is a caveat appended to an action's existing confirm,
+// and confirmSignatureLoss is the standalone prompt for actions that don't already
+// confirm. Both are silent on an unsigned document, so ordinary edits stay
+// frictionless; after the first such edit the result is unsigned, so they don't
+// nag on a doc that no longer has a signature to lose.
+function isSigned() {
+  return !!(lastSig && lastSig.state && lastSig.state !== 'unsigned');
+}
+function signatureWarning() {
+  return isSigned() ? '\n\nThis will also invalidate the document’s existing signature.' : '';
+}
+function confirmSignatureLoss() {
+  return !isSigned() || confirm('This document is signed. Editing it will invalidate the existing signature. Continue?');
+}
 let originalName = ''; // basename of the opened file, for default export names
 let docGen = 0; // bumps on each load so a stale async render/build can bail
 
@@ -1132,6 +1149,7 @@ els.scanClose.onclick = () => { els.scanModal.hidden = true; };
 // untouched and points to the next, more thorough method.
 async function runSanitize(method, stepDown) {
   if (!pdfDocument) return;
+  if (!confirmSignatureLoss()) return;
   const res = await apiFetch('/api/sanitize?method=' + method, { method: 'POST' });
   if (!res.ok) return toast('removal failed');
   const out = await res.json();
@@ -1149,6 +1167,7 @@ els.scanSafeBtn.onclick = () => runSanitize('safe', 'Flatten');
 // flattened result back as the open document.
 els.scanFlattenBtn.onclick = async () => {
   if (!pdfDocument) return;
+  if (!confirmSignatureLoss()) return;
   const pages = await renderFilledPages(2);
   const form = new FormData();
   pages.forEach((p, i) => {
@@ -1273,6 +1292,7 @@ els.thumbGrid.addEventListener('dragend', onThumbDragEnd);
 // --- page operations (M7): bake edits, apply server-side, reload -------------
 async function pageOp(op, extra = {}) {
   if (!pdfDocument) return;
+  if (!confirmSignatureLoss()) return;
   const bytes = await bakedBytes();
   const form = new FormData();
   form.append('pdf', new Blob([bytes], { type: 'application/pdf' }), 'doc.pdf');
@@ -1947,7 +1967,7 @@ els.viewerContainer.addEventListener('pointerup', (e) => {
 
 els.applyRedactBtn.onclick = async () => {
   if (!redactMarks.length) return toast('Draw redaction boxes first');
-  if (!confirm('Permanently redact the marked pages? Those pages become flat images and the content under each box is removed. This cannot be undone.')) return;
+  if (!confirm('Permanently redact the marked pages? Those pages become flat images and the content under each box is removed. This cannot be undone.' + signatureWarning())) return;
 
   const byPage = {};
   for (const m of redactMarks) (byPage[m.page] ||= []).push(m);
@@ -2137,7 +2157,7 @@ function cssFamily(core) {
 els.removeOriginalsBtn.onclick = async () => {
   const pages = [...new Set(overlayFields.filter((f) => f.kind === 'edit').map((f) => f.page))];
   if (!pages.length) return toast('No text edits to flatten');
-  if (!confirm('Make the text edits permanent? The edited page(s) become flat images and the original text underneath is removed. This cannot be undone.')) return;
+  if (!confirm('Make the text edits permanent? The edited page(s) become flat images and the original text underneath is removed. This cannot be undone.' + signatureWarning())) return;
 
   const res = await flattenPages(pages);
   if (!res.ok) return toast('could not flatten edits');
