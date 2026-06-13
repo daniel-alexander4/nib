@@ -30,6 +30,7 @@
         <button id="saveEditableBtn">Save editable copy</button>
         <div class="sep"></div>
         <button id="finalizeBtn">Finalize &amp; sign…</button>
+        <button id="timestampBtn">Timestamp (OpenTimestamps)…</button>
         <button id="cosignBtn">Co-sign with a peer…</button>
         <button id="sessionInitBtn">Co-sign live with a peer…</button>
         <button id="sessionRecvBtn">Receive a live co-signature…</button>
@@ -151,6 +152,7 @@
       <button class="menutop">More</button>
       <div class="dropdown">
         <button data-forward="finalizeBtn">Finalize &amp; sign…</button>
+        <button data-forward="timestampBtn">Timestamp (OpenTimestamps)…</button>
         <button data-forward="cosignBtn">Co-sign with a peer…</button>
         <div class="sep"></div>
         <button data-forward="manageKeysBtn">Manage authorized keys…</button>
@@ -385,6 +387,27 @@
         <span class="grow"></span>
         <button id="fzCancel">Cancel</button>
         <button id="fzGo" class="primary">Finalize</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- OpenTimestamps proof -->
+  <div id="timestampModal" hidden>
+    <div class="sigcard">
+      <h3>Timestamp with OpenTimestamps</h3>
+      <p class="libhint">Creates a proof (a small <code>.ots</code> file) that this exact
+        document existed, unaltered, at this moment — by anchoring it to the Bitcoin
+        blockchain. Only a SHA-256 <strong>hash</strong> of the document is sent to public
+        OpenTimestamps calendar servers over the internet; the document itself never leaves
+        your machine. Keep the <code>.ots</code> file alongside this exact PDF.</p>
+      <p class="libhint">The proof becomes fully verifiable a few hours after the next Bitcoin
+        block confirms it. Anyone can then verify it with any OpenTimestamps tool — no account,
+        no certificate, and no trust in Nib required. It proves <em>when</em> the document
+        existed, not <em>who</em> wrote or signed it.</p>
+      <div class="sigbtns">
+        <span class="grow"></span>
+        <button id="tsCancel">Cancel</button>
+        <button id="tsGo" class="primary">Create proof</button>
       </div>
     </div>
   </div>
