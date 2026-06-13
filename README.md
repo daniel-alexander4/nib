@@ -103,6 +103,19 @@ unsigned. Click **details** for the full picture — every signer (not just the
 first), and whether each signing time is backed by an independent timestamp
 authority or merely stated by the signer.
 
+### Timestamp with OpenTimestamps — prove *when*
+**Timestamp (OpenTimestamps)** creates a small `.ots` proof that anchors your
+document's hash to the Bitcoin blockchain, so anyone can later confirm the exact
+file existed, unaltered, by that time — with no certificate, no account, and no
+trust in Nib. Only a SHA-256 **hash** of the document is sent to the public
+OpenTimestamps calendar servers; the document itself never leaves your machine.
+The `.ots` is a sidecar — it never touches the PDF, so it can't disturb a
+signature — keep it alongside that exact file. The proof becomes fully verifiable
+a few hours after the next Bitcoin block confirms it, and you verify it with any
+OpenTimestamps tool (e.g. [opentimestamps.org](https://opentimestamps.org)). It
+proves *when* a document existed, not *who* wrote or signed it — that's what
+signing and co-signing are for.
+
 ### Co-sign with a peer
 Two people can sign the *same* document, each attesting — in a visible block and a
 cryptographically-signed reason — that they accept the other's identity. Nib pins
