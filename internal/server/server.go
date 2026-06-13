@@ -112,6 +112,7 @@ func (s *Server) Handler() http.Handler {
 	// Finalize / export / autofill.
 	mux.HandleFunc("POST /api/finalize", s.requireUnlocked(s.handleFinalize))
 	mux.HandleFunc("POST /api/timestamp", s.requireUnlocked(s.handleTimestamp))
+	mux.HandleFunc("POST /api/timestamp/verify", s.requireUnlocked(s.handleTimestampVerify))
 	mux.HandleFunc("GET /api/identity", s.requireUnlocked(s.handleIdentity))
 	mux.HandleFunc("POST /api/assemble", s.requireUnlocked(s.handleAssemble))
 	mux.HandleFunc("GET /api/form-data", s.requireUnlocked(s.handleFormData))
