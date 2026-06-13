@@ -80,6 +80,7 @@ const els = {
   finalizeModal: $('finalizeModal'), fzText: $('fzText'), fzDate: $('fzDate'),
   fzTsa: $('fzTsa'), fzTsaOn: $('fzTsaOn'), fzCancel: $('fzCancel'), fzGo: $('fzGo'),
   fzOpacity: $('fzOpacity'), fzSize: $('fzSize'), fzAngle: $('fzAngle'), fzColor: $('fzColor'),
+  timestampBtn: $('timestampBtn'), timestampModal: $('timestampModal'), tsCancel: $('tsCancel'), tsGo: $('tsGo'),
   fzPreviewMark: $('fzPreviewMark'),
   profileModal: $('profileModal'), profileText: $('profileText'),
   profileCancel: $('profileCancel'), profileSave: $('profileSave'),
@@ -1842,6 +1843,22 @@ els.fzGo.onclick = async () => {
   const res = await apiFetch('/api/finalize', { method: 'POST', body: form });
   if (!res.ok) { toast('Could not finalize'); return; }
   openSaveAs(await res.blob(), exportBase() + '-finalized.pdf', 'Save finalized PDF');
+};
+
+// OpenTimestamps: stamp the current document's hash into the Bitcoin blockchain
+// and save the .ots proof as a sidecar. The proof is over the same baked bytes
+// Finalize signs, so it matches what the user keeps; the PDF itself is untouched.
+els.timestampBtn.onclick = () => { if (pdfDocument) els.timestampModal.hidden = false; };
+els.tsCancel.onclick = () => { els.timestampModal.hidden = true; };
+els.tsGo.onclick = async () => {
+  els.timestampModal.hidden = true;
+  const bytes = await bakedBytes();
+  const form = new FormData();
+  form.append('pdf', new Blob([bytes], { type: 'application/pdf' }), 'doc.pdf');
+  toast('Contacting OpenTimestamps calendars…');
+  const res = await apiFetch('/api/timestamp', { method: 'POST', body: form });
+  if (!res.ok) { toast('Could not reach an OpenTimestamps calendar'); return; }
+  openSaveAs(await res.blob(), exportBase() + '.pdf.ots', 'Save OpenTimestamps proof');
 };
 
 // Autofill: set matching form-field values from the saved profile.
