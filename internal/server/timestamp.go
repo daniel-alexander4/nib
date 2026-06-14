@@ -2,6 +2,7 @@ package server
 
 import (
 	"crypto/sha256"
+	"encoding/base64"
 	"net/http"
 	"net/url"
 	"strings"
@@ -69,13 +70,17 @@ func (s *Server) handleTimestampVerify(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	out := struct {
-		State   string `json:"state"`
-		Height  uint64 `json:"height,omitempty"`
-		Time    string `json:"time,omitempty"`
-		Sources int    `json:"sources,omitempty"`
+		State    string `json:"state"`
+		Height   uint64 `json:"height,omitempty"`
+		Time     string `json:"time,omitempty"`
+		Sources  int    `json:"sources,omitempty"`
+		Upgraded string `json:"upgraded,omitempty"` // base64 .ots, present only when newly self-contained
 	}{State: res.State, Height: res.Height, Sources: res.Sources}
 	if !res.Time.IsZero() {
 		out.Time = res.Time.Format(time.RFC3339)
+	}
+	if res.Upgraded != nil {
+		out.Upgraded = base64.StdEncoding.EncodeToString(res.Upgraded)
 	}
 	writeJSON(w, out)
 }
