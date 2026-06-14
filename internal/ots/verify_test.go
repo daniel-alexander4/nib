@@ -42,8 +42,10 @@ func TestComputeOps(t *testing.T) {
 		t.Fatalf("sha256: got %x want %x", got, h[:])
 	}
 
-	if _, err := (sequence{ops: []op{{0x03, nil}}}).compute(digest); err == nil {
-		t.Fatal("expected unsupported-op error for ripemd160")
+	// sha1 (0x02) and keccak256 (0x67) remain unsupported (see the op-coverage
+	// note in verify.go); ripemd160 (0x03) is now supported — see TestComputeRIPEMD160.
+	if _, err := (sequence{ops: []op{{0x02, nil}}}).compute(digest); err == nil {
+		t.Fatal("expected unsupported-op error for sha1")
 	}
 }
 

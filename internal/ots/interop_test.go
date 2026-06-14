@@ -99,3 +99,46 @@ func TestSerializeFlattenedRealProof(t *testing.T) {
 		}
 	}
 }
+
+// TestComputeRIPEMD160 locks the ripemd160 op against the published RIPEMD-160
+// test vectors, proving compute() executes it correctly independent of any proof.
+func TestComputeRIPEMD160(t *testing.T) {
+	for _, tc := range []struct{ in, want string }{
+		{"", "9c1185a5c5e9fc54612808977ee8f548b2258d31"},
+		{"abc", "8eb208f7e05d987a9b044a8e98c6b087f15a0bfc"},
+	} {
+		got, err := (sequence{ops: []op{{tag: opRIPEMD160}}}).compute([]byte(tc.in))
+		if err != nil {
+			t.Fatalf("compute ripemd160(%q): %v", tc.in, err)
+		}
+		if hex.EncodeToString(got) != tc.want {
+			t.Fatalf("ripemd160(%q) = %s, want %s", tc.in, hex.EncodeToString(got), tc.want)
+		}
+	}
+}
+
+// TestComputeRealRipemd160Proof verifies that compute() now resolves the real,
+// Bitcoin-confirmed helloWorldOTS proof — whose path hashes with ripemd160, the
+// op Nib previously rejected. The expected merkle root is the value compute()
+// derives for the proof's Bitcoin block (height 358391), locking it against
+// regression; ripemd160's correctness itself is proven by TestComputeRIPEMD160.
+func TestComputeRealRipemd160Proof(t *testing.T) {
+	p, err := parseProof(mustB64(t, helloWorldOTS))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if len(p.seqs) != 1 {
+		t.Fatalf("want 1 sequence, got %d", len(p.seqs))
+	}
+	root, err := p.seqs[0].compute(p.digest)
+	if err != nil {
+		t.Fatalf("compute (ripemd160 path): %v", err)
+	}
+	const wantRoot = "007ee445d23ad061af4a36b809501fab1ac4f2d7e7a739817dd0cbb7ec661b8a"
+	if got := hex.EncodeToString(root); got != wantRoot {
+		t.Fatalf("merkle root = %s, want %s", got, wantRoot)
+	}
+	if p.seqs[0].height != 358391 {
+		t.Fatalf("block height = %d, want 358391", p.seqs[0].height)
+	}
+}
