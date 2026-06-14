@@ -153,6 +153,30 @@ func buildOTS(digest [32]byte, sequences [][]byte) []byte {
 	return out
 }
 
+// putVaruint encodes n as a minimal LEB128 varuint — the inverse of
+// cursor.varuint.
+func putVaruint(n uint64) []byte {
+	var b []byte
+	for {
+		x := byte(n & 0x7f)
+		n >>= 7
+		if n != 0 {
+			x |= 0x80
+		}
+		b = append(b, x)
+		if n == 0 {
+			return b
+		}
+	}
+}
+
+// appendVarbytes appends v as a varuint length prefix followed by v — the inverse
+// of cursor.varbytes.
+func appendVarbytes(b, v []byte) []byte {
+	b = append(b, putVaruint(uint64(len(v)))...)
+	return append(b, v...)
+}
+
 // validatePendingSequence confirms a calendar response is exactly one well-formed
 // sequence of operations terminating in a single pending (calendar) attestation,
 // with no trailing bytes — so a buggy or hostile calendar cannot make Nib emit a

@@ -15,30 +15,14 @@ import (
 // same shape a real calendar /digest response has.
 func pendingSeq(nonce []byte, calRef string) []byte {
 	var b []byte
-	b = append(b, 0xf0)             // append
-	b = appendVarbytes(b, nonce)    // its argument
-	b = append(b, 0x08)             // sha256
-	b = append(b, tagAttestation)   // attestation follows
-	b = append(b, pendingMagic...)  // ...a pending one
+	b = append(b, 0xf0)            // append
+	b = appendVarbytes(b, nonce)   // its argument
+	b = append(b, 0x08)            // sha256
+	b = append(b, tagAttestation)  // attestation follows
+	b = append(b, pendingMagic...) // ...a pending one
 	inner := appendVarbytes(nil, []byte(calRef))
 	b = appendVarbytes(b, inner) // outer wrapper around varbytes(ref)
 	return b
-}
-
-func appendVarbytes(b, v []byte) []byte {
-	n := uint64(len(v))
-	for {
-		x := byte(n & 0x7f)
-		n >>= 7
-		if n != 0 {
-			x |= 0x80
-		}
-		b = append(b, x)
-		if n == 0 {
-			break
-		}
-	}
-	return append(b, v...)
 }
 
 func TestValidatePendingSequence(t *testing.T) {
@@ -48,11 +32,11 @@ func TestValidatePendingSequence(t *testing.T) {
 	}
 
 	bad := map[string][]byte{
-		"empty":           {},
+		"empty":                   {},
 		"ops with no attestation": {0x08, 0x08},
-		"unknown op tag":  {0x42, tagAttestation},
+		"unknown op tag":          {0x42, tagAttestation},
 		"wrong attestation magic": append([]byte{tagAttestation}, bytes.Repeat([]byte{0x00}, 8)...),
-		"trailing data":   append(append([]byte{}, good...), 0x08),
+		"trailing data":           append(append([]byte{}, good...), 0x08),
 	}
 	for name, b := range bad {
 		if err := validatePendingSequence(b); err == nil {
