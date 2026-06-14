@@ -2612,7 +2612,8 @@ els.detectBtn.onclick = async () => {
 
   // 3. "Circle one" choices (incl. Y/N) become a circle-my-answer widget: a
   //    radio set of choices, each circled (pill around a word) when picked.
-  for (const grp of [...ynItems, ...findCircleOne(textItems)]) {
+  const choiceGroups = dedupeGroups([...ynItems, ...findCircleOne(textItems), ...findSlashTemplates(textItems), ...findPipeChoices(textItems), ...findRunChoices(textItems, cells)]);
+  for (const grp of choiceGroups) {
     const choices = snapChoices(canvas, grp.choices, grp.marker);
     const cf = choices.map((c) => ({ rect: [c.x0 / W, c.y0 / H, c.x1 / W, c.y1 / H], word: !!c.word }));
     const x0 = Math.min(...cf.map((c) => c.rect[0])), y0 = Math.min(...cf.map((c) => c.rect[1]));
@@ -2760,7 +2761,10 @@ function findCircleOne(items) {
 // x-range from a row. Choices are bounded by "junk" (underscores, colons,
 // parentheses — labels and fill-blanks) and by large horizontal gaps, so
 // "Bank Name: ___ Checking | Savings | Visa | MC" yields the four options only.
-function extractChoices(row, mx0, mx1) {
+// `markerless` trims carrier prose off the first option ("Increase my monthly
+// dues by $5 | …" → "$5"): with no marker or punctuation to bound it, the lead-in
+// would otherwise ride into choice one (see trimLeadIn).
+function extractChoices(row, mx0, mx1, markerless) {
   const words = [];
   for (const w of row.words) {
     if (/^[A-Za-z]{2,}(\/[A-Za-z]{2,})+$/.test(w.text)) { // "Male/Female" → split on /
@@ -2796,7 +2800,125 @@ function extractChoices(row, mx0, mx1) {
     const d = mx0 === Infinity ? 0 : Math.max(0, lb.x0 - mx1, mx0 - lb.x1);
     if (d < bestD) { bestD = d; best = cs; }
   }
+  if (markerless && best.length) best[0] = trimLeadIn(best[0]);
   return best.map((seg) => choiceBox(Math.min(...seg.map((w) => w.x0)), Math.max(...seg.map((w) => w.x1)), row.y, seg[0].h));
+}
+
+// trimLeadIn drops carrier words preceding the first option in a marker-free
+// list. Keep the trailing run of the first segment whose tokens share the class
+// (number/currency vs word) of the token touching the first delimiter: in
+// "Increase my monthly dues by $5" the "$5" is number-class and "by" is word-
+// class, so the run stops at "$5"; a multi-word option like "New York" (both
+// word-class) is kept whole.
+function trimLeadIn(seg) {
+  if (seg.length < 2) return seg;
+  const cls = (t) => /^[$\d]/.test(t.text) ? 'n' : /^[A-Za-z]/.test(t.text) ? 'w' : 'o';
+  const c = cls(seg[seg.length - 1]);
+  let i = seg.length - 1;
+  while (i > 0 && cls(seg[i - 1]) === c) i--;
+  return seg.slice(i);
+}
+
+// findPipeChoices locates a pipe-separated list that carries its own delimiter,
+// so no "(circle one)" cue is needed ("$5 | $10 | $25"). "|" is unambiguous — it
+// only ever separates options — so unlike a slash it is trusted on its own. Rows
+// a marker already governs are left to findCircleOne; trimLeadIn strips carrier
+// prose off the first option. Returns the same group shape as findYesNo.
+function findPipeChoices(items) {
+  const out = [];
+  for (const row of buildTextRows(items)) {
+    if (/circle\s+one/i.test(row.s) || !row.words.some((w) => w.text === '|')) continue;
+    const choices = extractChoices(row, Infinity, -Infinity, true);
+    if (choices.length >= 2) out.push({ choices, marker: null });
+  }
+  return out;
+}
+
+// splitSlash turns an "X/Y" token into its choice boxes (one per part).
+function splitSlash(w, baseY) {
+  const parts = w.text.split('/'), cw = (w.x1 - w.x0) / w.text.length;
+  const out = []; let off = 0;
+  for (const p of parts) { out.push(choiceBox(w.x0 + cw * off, w.x0 + cw * (off + p.length), baseY, w.h)); off += p.length + 1; }
+  return out;
+}
+
+// findSlashTemplates propagates a "(circle one)" decision to identical options
+// elsewhere on the page. A form writes "(circle one)" once over the first
+// "Male/Female" and means it for every later one too — so each slash-pair token a
+// marker governs becomes a template, and every matching token on the page is
+// emitted as a choice group. A slash is too ambiguous to trust alone (a bare
+// "Home/Work Phone:" is a phrase, not a choice), but an exact match to a token
+// the user already circled is safe: "Home/Work" never equals "Male/Female", so it
+// is left untouched. Returns the same group shape as findYesNo.
+function findSlashTemplates(items) {
+  const rows = buildTextRows(items);
+  const slashTok = (r) => (r && r.words.find((w) => /^[A-Za-z]{2,}(\/[A-Za-z]{2,})+$/.test(w.text))) || null;
+  const templates = new Set();
+  for (let ri = 0; ri < rows.length; ri++) {
+    if (!/circle\s+one/i.test(rows[ri].s)) continue;
+    for (const r of [rows[ri], rows[ri + 1], rows[ri - 1]]) { const w = slashTok(r); if (w) { templates.add(w.text); break; } }
+  }
+  const out = [];
+  if (!templates.size) return out;
+  for (const row of rows) for (const w of row.words) if (templates.has(w.text)) out.push({ choices: splitSlash(w, row.y), marker: null });
+  return out;
+}
+
+// findRunChoices locates a space-separated choice run with no delimiter and no
+// "(circle one)" cue — "Type of Membership: Youth Teen Adult Senior Family". The
+// signal is weak, so it is deliberately conservative: a run of >=3 short
+// capitalised words at uniform wide spacing, introduced by a colon-label (same
+// row to the left, or the row above in the same column), and clear of the
+// detected table grid so office-use column headers don't match. Returns the same
+// group shape as findYesNo.
+function findRunChoices(items, cells) {
+  const rows = buildTextRows(items);
+  const stop = /^(and|or|the|of|to|by|for|in|on|a|an|is|are)$/i;
+  const ok = (t) => /^[A-Z][A-Za-z]{1,13}$/.test(t.text) && !stop.test(t.text);
+  const labeled = (row, ri, run) => {
+    const x = run[0].x0, h = run[0].h, above = rows[ri - 1];
+    if (above && /:/.test(above.s) && above.words.some((w) => Math.abs(w.x0 - x) < h * 1.5)) return true;
+    return row.words.some((w) => w.x1 < x && /:$/.test(w.text)); // colon label left of the run
+  };
+  const out = [];
+  for (let ri = 0; ri < rows.length; ri++) {
+    const row = rows[ri];
+    if (/circle\s+one/i.test(row.s)) continue;
+    const ws = row.words;
+    for (let i = 0; i < ws.length; i++) {
+      if (!ok(ws[i])) continue;
+      let j = i; const gaps = [];
+      while (j + 1 < ws.length && ok(ws[j + 1])) { gaps.push(ws[j + 1].x0 - ws[j].x1); j++; }
+      const run = ws.slice(i, j + 1);
+      if (run.length >= 3) {
+        const gmin = Math.min(...gaps), gmax = Math.max(...gaps), h = run[0].h;
+        const inCell = cells.some((c) => run[0].x0 < c.x1 && run[run.length - 1].x1 > c.x0 && row.y > c.y0 - 2 && row.y < c.y1 + 2);
+        if (gmin > h * 0.8 && gmax < gmin * 2.6 && !inCell && labeled(row, ri, run)) {
+          out.push({ choices: run.map((w) => choiceBox(w.x0, w.x1, row.y, w.h)), marker: null });
+        }
+      }
+      i = j; // don't rescan inside the run
+    }
+  }
+  return out;
+}
+
+// dedupeGroups drops a later choice group whose box overlaps an earlier one, so
+// a row a marked and a marker-free pass both catch yields a single widget. The
+// marked / Y-N passes are listed first, so they win.
+function dedupeGroups(groups) {
+  const bbox = (g) => ({ x0: Math.min(...g.choices.map((c) => c.x0)), y0: Math.min(...g.choices.map((c) => c.y0)), x1: Math.max(...g.choices.map((c) => c.x1)), y1: Math.max(...g.choices.map((c) => c.y1)) });
+  const area = (b) => (b.x1 - b.x0) * (b.y1 - b.y0);
+  const kept = [];
+  for (const g of groups) {
+    const b = bbox(g);
+    const dup = kept.some((k) => {
+      const a = bbox(k), ix = Math.min(a.x1, b.x1) - Math.max(a.x0, b.x0), iy = Math.min(a.y1, b.y1) - Math.max(a.y0, b.y0);
+      return ix > 0 && iy > 0 && ix * iy > 0.5 * Math.min(area(a), area(b));
+    });
+    if (!dup) kept.push(g);
+  }
+  return kept;
 }
 
 // detectRegions scans a rendered page canvas for horizontal rule lines and for
