@@ -16,6 +16,8 @@ import (
 	"sync"
 	"time"
 
+	"golang.org/x/crypto/ripemd160"
+
 	"nib/internal/safe"
 )
 
@@ -49,14 +51,17 @@ const defaultMinAgree = 2
 var bitcoinMagic = []byte{0x05, 0x88, 0x96, 0x0d, 0x73, 0xd7, 0x19, 0x01}
 
 // op tags we execute. Nib's own proofs (stamped via the standard calendars) take
-// a sha256-only path to Bitcoin, so Compute supports only append/prepend/sha256;
-// other tags (sha1, ripemd160, …) are tolerated by the parser but rejected by
-// Compute. They are rare but DO occur in some third-party proofs (e.g. the
-// reference hello-world.txt.ots uses ripemd160), which Nib therefore cannot
-// verify — a known interop gap on the verify side, tracked in pending.md.
+// a sha256-only path to Bitcoin, but some third-party proofs hash with ripemd160
+// in their Bitcoin path (e.g. the reference hello-world.txt.ots), so Compute
+// handles append/prepend/sha256/ripemd160. The two remaining spec hash ops —
+// sha1 (0x02) and keccak256 (0x67) — are tolerated by the parser but still
+// rejected by Compute: neither appears in any proof we've seen, and keccak256's
+// hash semantics (legacy Keccak vs NIST SHA3 for tag 0x67) need pinning against
+// the reference before they're safe to add. Tracked in pending.md.
 const (
-	opAppend  = 0xf0
-	opPrepend = 0xf1
+	opAppend    = 0xf0
+	opPrepend   = 0xf1
+	opRIPEMD160 = 0x03
 )
 
 // VerifyResult is the outcome of checking an .ots proof against a document.
@@ -307,6 +312,10 @@ func (s sequence) compute(digest []byte) ([]byte, error) {
 		case opSHA256:
 			h := sha256.Sum256(cur)
 			cur = h[:]
+		case opRIPEMD160:
+			h := ripemd160.New()
+			h.Write(cur)
+			cur = h.Sum(nil)
 		default:
 			return nil, fmt.Errorf("proof uses unsupported operation 0x%02x", o.tag)
 		}
