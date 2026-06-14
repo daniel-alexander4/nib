@@ -48,9 +48,12 @@ const defaultMinAgree = 2
 // bitcoinMagic tags a Bitcoin block-header attestation in the .ots format.
 var bitcoinMagic = []byte{0x05, 0x88, 0x96, 0x0d, 0x73, 0xd7, 0x19, 0x01}
 
-// op tags we execute. The OTS Bitcoin path uses only append/prepend/sha256; other
-// tags (sha1, ripemd160, …) are tolerated by the parser but rejected by Compute,
-// since they never appear in a real Bitcoin attestation path.
+// op tags we execute. Nib's own proofs (stamped via the standard calendars) take
+// a sha256-only path to Bitcoin, so Compute supports only append/prepend/sha256;
+// other tags (sha1, ripemd160, …) are tolerated by the parser but rejected by
+// Compute. They are rare but DO occur in some third-party proofs (e.g. the
+// reference hello-world.txt.ots uses ripemd160), which Nib therefore cannot
+// verify — a known interop gap on the verify side, tracked in pending.md.
 const (
 	opAppend  = 0xf0
 	opPrepend = 0xf1
