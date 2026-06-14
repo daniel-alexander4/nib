@@ -31,8 +31,10 @@ belong:
   skipped).
 - **Tables** → one input per blank cell.
 - **Checkboxes** → click to check.
-- **"Circle one" choices** → `Y / N`, or option sets near a "(circle one)" note
-  (e.g. `Checking | Savings`, `Male / Female`).
+- **Circle-the-answer choices** → `Y / N`, option sets near a "(circle one)"
+  note, pipe-separated lists on their own (`$5 | $10 | $25`), a labelled run of
+  options (`Type of Membership: Youth Teen Adult …`), and repeats of a choice the
+  "(circle one)" governs (every `Male / Female` on the page, not just the first).
 
 It's a smart proposal, not magic — move, resize, retype, or ignore anything it
 suggests.
