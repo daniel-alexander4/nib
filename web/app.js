@@ -1453,7 +1453,11 @@ async function loadImages() {
     name.className = 'name';
     name.textContent = m.name;
     card.append(img, name);
-    card.onclick = (e) => { if (!e.target.closest('.del')) placeStamp('/api/images/' + m.id); };
+    card.onclick = (e) => {
+      if (e.target.closest('.del')) return;
+      const src = '/api/images/' + m.id;
+      if (fillTarget) resolveFillTarget(src); else placeStamp(src);
+    };
     // Built-in (binary-shipped) signatures are read-only — no delete control.
     if (!m.builtin) {
       const del = document.createElement('button');
@@ -1986,6 +1990,7 @@ let redStart = null, redDiv = null, redHit = null;
 
 els.redactBtn.onclick = () => {
   redactMode = !redactMode;
+  if (redactMode) setMarkerMode(null); // one placement tool at a time
   reflectRedact();
   els.viewerContainer.style.cursor = redactMode ? 'crosshair' : '';
 };
@@ -2090,6 +2095,7 @@ els.editTextBtn.onclick = () => {
   if (!pdfDocument) { toast('Open a PDF first'); return; }
   editMode = !editMode;
   if (editMode && redactMode) { redactMode = false; reflectRedact(); } // one box tool at a time
+  if (editMode) setMarkerMode(null);
   reflectEdit();
   els.viewerContainer.style.cursor = editMode ? 'crosshair' : '';
 };
@@ -2185,6 +2191,174 @@ function makeEditField(frac, opts, pv) {
   layoutField(f, pv);
   pv.div.appendChild(el);
   return f;
+}
+
+// --- sign / date / initial markers -------------------------------------------
+// Place "fill here" markers (kind 'marker') on the page, then walk through them:
+// clicking a marker fills it and auto-advances to the next. A date marker stamps
+// today's date; a sign/initial marker drops your signature/initials image (picked
+// from the Library once, then reused). Filling REPLACES the marker with an
+// ordinary image stamp (makeStamp), so markers are pure placeholders that never
+// bake — only the resulting stamps do, via the existing collectStamps path.
+//
+// These place a VISIBLE appearance for filling out a form; they are NOT a
+// cryptographic signature — that remains the separate Finalize & sign step.
+let markerMode = null;        // 'sign' | 'date' | 'initial' while armed to place
+let activeMarker = null;      // the marker highlighted as the current fill target
+let fillTarget = null;        // a sign/initial marker awaiting a Library pick
+let markerSig = null, markerInit = null; // remembered sign/initial fill sources for this session
+const MARKER_SIZES = { sign: [0.22, 0.05], date: [0.13, 0.035], initial: [0.07, 0.05] };
+const MARKER_LABELS = { sign: 'Sign', date: 'Date', initial: 'Initial' };
+
+document.querySelectorAll('.markers button').forEach((b) => {
+  b.onclick = () => { if (!pdfDocument) return toast('Open a PDF first'); setMarkerMode(markerMode === b.dataset.marker ? null : b.dataset.marker); };
+});
+function setMarkerMode(m) {
+  markerMode = m;
+  if (m) { // one placement tool at a time
+    if (redactMode) { redactMode = false; reflectRedact(); }
+    if (editMode) { editMode = false; reflectEdit(); }
+  }
+  all('.markers button').forEach((b) => b.classList.toggle('active', b.dataset.marker === m));
+  els.viewerContainer.style.cursor = m ? 'crosshair' : '';
+}
+
+// A single click on the page drops a default-sized marker centred at the click.
+els.viewerContainer.addEventListener('pointerdown', (e) => {
+  if (!markerMode) return;
+  const hit = pageAt(e.clientX, e.clientY);
+  if (!hit) return;
+  e.preventDefault();
+  const r = hit.r, [fw, fh] = MARKER_SIZES[markerMode];
+  const fx = Math.min(Math.max((e.clientX - r.left) / r.width - fw / 2, 0), 1 - fw);
+  const fy = Math.min(Math.max((e.clientY - r.top) / r.height - fh / 2, 0), 1 - fh);
+  makeMarker(markerMode, [fx, fy, fx + fw, fy + fh], hit);
+});
+
+function makeMarker(type, frac, hit) {
+  const f = { page: hit.n, frac, kind: 'marker', tagType: type };
+  const el = document.createElement('div');
+  el.className = 'ovl ovl-marker';
+  el.tabIndex = 0;
+  const label = document.createElement('span');
+  label.className = 'marker-label';
+  label.textContent = MARKER_LABELS[type];
+  const del = document.createElement('button');
+  del.className = 'marker-del'; del.textContent = '×'; del.title = 'Remove marker';
+  del.onclick = (e) => { e.stopPropagation(); removeField(f); };
+  el.append(label, del);
+  f.el = el;
+  enableMarkerGestures(f, el);
+  el.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); fillMarker(f); }
+    else if (e.key === 'Delete' || e.key === 'Backspace') removeField(f);
+  });
+  overlayFields.push(f);
+  hit.pv.div.appendChild(el);
+  layoutField(f, hit.pv);
+  return f;
+}
+
+function removeField(f) {
+  f.el.remove();
+  overlayFields = overlayFields.filter((o) => o !== f);
+  if (activeMarker === f) activeMarker = null;
+  if (fillTarget === f) fillTarget = null;
+}
+
+// enableMarkerGestures: drag repositions; a click (no drag) fills the marker.
+function enableMarkerGestures(f, el) {
+  let down = null, moved = false;
+  el.addEventListener('pointerdown', (e) => {
+    if (e.target.closest('.marker-del')) return;
+    e.preventDefault(); e.stopPropagation();
+    down = { x: e.clientX, y: e.clientY, frac: f.frac.slice() }; moved = false;
+    el.setPointerCapture(e.pointerId);
+  });
+  el.addEventListener('pointermove', (e) => {
+    if (!down) return;
+    const pv = viewer.getPageView(f.page - 1); if (!pv?.div) return;
+    const W = pv.div.clientWidth, H = pv.div.clientHeight;
+    if (Math.abs(e.clientX - down.x) + Math.abs(e.clientY - down.y) > 3) moved = true;
+    const [x0, y0, x1, y1] = down.frac, w = x1 - x0, h = y1 - y0;
+    const nx = Math.min(Math.max(x0 + (e.clientX - down.x) / W, 0), 1 - w);
+    const ny = Math.min(Math.max(y0 + (e.clientY - down.y) / H, 0), 1 - h);
+    f.frac = [nx, ny, nx + w, ny + h]; layoutField(f, pv);
+  });
+  el.addEventListener('pointerup', (e) => {
+    try { el.releasePointerCapture(e.pointerId); } catch { /* already released */ }
+    const wasDown = down; down = null;
+    if (wasDown && !moved) fillMarker(f);
+  });
+}
+
+async function fillMarker(f) {
+  if (f.kind !== 'marker') return;
+  if (f.tagType === 'date') return placeIntoMarker(f, quickStampURL('date'));
+  const src = f.tagType === 'sign' ? markerSig : markerInit;
+  if (src) return placeIntoMarker(f, src);
+  // No remembered image yet — let the user pick one from the Library; the next
+  // Library click resolves this target (resolveFillTarget) and is remembered.
+  fillTarget = f;
+  setActiveMarker(f);
+  document.querySelector('.tab[data-panel="library"]')?.click();
+  toast('Pick your ' + (f.tagType === 'sign' ? 'signature' : 'initials') + ' in the Library — it fills this marker and any others.');
+}
+
+function resolveFillTarget(src) {
+  const f = fillTarget; fillTarget = null;
+  if (!f) return;
+  if (f.tagType === 'sign') markerSig = src; else markerInit = src;
+  placeIntoMarker(f, src);
+}
+
+// placeIntoMarker swaps a marker for a real image stamp fitted inside the marker
+// box (aspect preserved), then advances to the next marker in document order.
+async function placeIntoMarker(f, src) {
+  const pv = viewer.getPageView(f.page - 1);
+  if (!pv?.div) return toast('Scroll the page into view, then try again');
+  const base = (await pdfDocument.getPage(f.page)).getViewport({ scale: 1 });
+  const next = nextMarkerAfter(f);
+  await new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => {
+      const aspect = (img.naturalWidth / img.naturalHeight) || 1;
+      const W = pv.div.clientWidth, H = pv.div.clientHeight;
+      const [x0, y0, x1, y1] = f.frac;
+      let w = x1 - x0, h = w * W / (aspect * H); // fit width, derive height by aspect
+      if (h > y1 - y0) { h = y1 - y0; w = h * aspect * H / W; } // too tall — fit height instead
+      makeStamp(src, aspect, [x0, y0, x0 + w, y0 + h], { page: f.page, pageW: base.width, pageH: base.height }, pv);
+      resolve();
+    };
+    img.onerror = () => { toast('could not load image'); resolve(); };
+    img.src = src;
+  });
+  removeField(f);
+  advanceTo(next);
+}
+
+// nextMarkerAfter returns the next unfilled marker after f in reading order
+// (page, then top-to-bottom, then left-to-right), wrapping to the first if none.
+function nextMarkerAfter(f) {
+  const markers = overlayFields.filter((o) => o.kind === 'marker' && o !== f)
+    .sort((a, b) => a.page - b.page || a.frac[1] - b.frac[1] || a.frac[0] - b.frac[0]);
+  for (const m of markers) {
+    if (m.page > f.page || (m.page === f.page && (m.frac[1] > f.frac[1] || (m.frac[1] === f.frac[1] && m.frac[0] >= f.frac[0])))) return m;
+  }
+  return markers[0] || null;
+}
+
+function advanceTo(m) {
+  if (!m) { setActiveMarker(null); return toast('All markers filled'); }
+  setActiveMarker(m);
+  m.el.scrollIntoView({ block: 'center', behavior: 'smooth' });
+  m.el.focus({ preventScroll: true });
+}
+
+function setActiveMarker(m) {
+  activeMarker?.el?.classList.remove('marker-active');
+  activeMarker = m;
+  m?.el?.classList.add('marker-active');
 }
 
 // samplePageColors renders the page and reads, within the box, the darkest pixel
@@ -2422,13 +2596,18 @@ window.addEventListener('drop', (e) => {
 // the PDF rect for stamping is frac * page dimensions.
 let overlayFields = []; // {page, frac:[fx0,fy0,fx1,fy1], pageW, pageH, kind, el}
 let libraryImages = []; // cached /api/images list (the image-library panel)
-function clearOverlays() { overlayFields.forEach((f) => f.el.remove()); overlayFields = []; }
+function clearOverlays() {
+  overlayFields.forEach((f) => f.el.remove());
+  overlayFields = [];
+  activeMarker = null; fillTarget = null; // markers are gone with the old document
+}
 // clearDetected drops only auto-detected fields (text/check/circleone), keeping
-// user-placed stamps and text edits so re-running Detect doesn't wipe a
-// signature/quick-stamp or a cover-and-replace edit.
+// user-placed stamps, text edits, and sign/date/initial markers so re-running
+// Detect doesn't wipe a signature/quick-stamp, a cover-and-replace edit, or a
+// placed marker.
 function clearDetected() {
   overlayFields = overlayFields.filter((f) => {
-    if (f.kind === 'stamp' || f.kind === 'edit') return true;
+    if (f.kind === 'stamp' || f.kind === 'edit' || f.kind === 'marker') return true;
     f.el.remove();
     return false;
   });
