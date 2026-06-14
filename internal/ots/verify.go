@@ -62,6 +62,11 @@ type VerifyResult struct {
 	Height  uint64
 	Time    time.Time
 	Sources int
+	// Upgraded is a self-contained .ots — the input proof with the calendar
+	// commitment folded into its Bitcoin attestation — set only when verification
+	// confirmed the proof AND an in-memory upgrade was performed this run, so it
+	// can be persisted and later verified without any calendar. Nil otherwise.
+	Upgraded []byte
 }
 
 // BlockSource resolves an attested Bitcoin block height to its header's merkle
@@ -90,15 +95,22 @@ func VerifyProof(ctx context.Context, client *http.Client, sources []BlockSource
 	}
 
 	var attested []sequence
+	updated := make([]sequence, 0, len(p.seqs)) // every sequence, upgraded where possible
 	pending := false
+	upgradedAny := false
 	for _, s := range p.seqs {
 		switch {
 		case s.height != 0:
 			attested = append(attested, s)
+			updated = append(updated, s)
 		case s.calURL != "":
 			pending = true
 			if up, ok, err := upgrade(ctx, client, s, p.digest); err == nil && ok {
 				attested = append(attested, up)
+				updated = append(updated, up)
+				upgradedAny = true
+			} else {
+				updated = append(updated, s) // calendar hasn't confirmed yet — keep pending
 			}
 		}
 	}
@@ -121,7 +133,47 @@ func VerifyProof(ctx context.Context, client *http.Client, sources []BlockSource
 	if !bytes.Equal(root, merkle) {
 		return &VerifyResult{State: StateInvalid}, nil
 	}
-	return &VerifyResult{State: StateConfirmed, Height: s.height, Time: t, Sources: n}, nil
+	res := &VerifyResult{State: StateConfirmed, Height: s.height, Time: t, Sources: n}
+	if upgradedAny {
+		res.Upgraded = serialize(p.digest, updated) // a now self-contained proof to persist
+	}
+	return res, nil
+}
+
+// serialize emits the .ots bytes for a proof: the standard preamble plus each
+// sequence's operations and terminating attestation, glued with the checkpoint
+// byte (via buildOTS). It is the inverse of parseProof — Nib flattens proofs into
+// independent digest-rooted sequences on parse, so re-emitting each one and
+// gluing them reproduces a valid, spec-canonical proof.
+func serialize(digest []byte, seqs []sequence) []byte {
+	parts := make([][]byte, len(seqs))
+	for i, s := range seqs {
+		parts[i] = serializeSequence(s)
+	}
+	var d [32]byte
+	copy(d[:], digest)
+	return buildOTS(d, parts)
+}
+
+// serializeSequence emits one sequence: its operations followed by a single
+// pending (calendar URL) or Bitcoin (block height) attestation.
+func serializeSequence(s sequence) []byte {
+	var b []byte
+	for _, o := range s.ops {
+		b = append(b, o.tag)
+		if o.tag == opAppend || o.tag == opPrepend {
+			b = appendVarbytes(b, o.arg)
+		}
+	}
+	b = append(b, tagAttestation)
+	if s.height != 0 {
+		b = append(b, bitcoinMagic...)
+		b = appendVarbytes(b, putVaruint(s.height))
+	} else {
+		b = append(b, pendingMagic...)
+		b = appendVarbytes(b, appendVarbytes(nil, []byte(s.calURL)))
+	}
+	return b
 }
 
 // fetchAgreedHeader queries every source concurrently and requires at least

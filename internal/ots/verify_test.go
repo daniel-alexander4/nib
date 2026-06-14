@@ -12,21 +12,6 @@ import (
 	"testing"
 )
 
-func varuint(n uint64) []byte {
-	var b []byte
-	for {
-		x := byte(n & 0x7f)
-		n >>= 7
-		if n != 0 {
-			x |= 0x80
-		}
-		b = append(b, x)
-		if n == 0 {
-			return b
-		}
-	}
-}
-
 // bitcoinSeqBytes encodes a calendar /timestamp response: ops then a Bitcoin
 // block-height attestation.
 func bitcoinSeqBytes(nonce []byte, height uint64) []byte {
@@ -36,7 +21,7 @@ func bitcoinSeqBytes(nonce []byte, height uint64) []byte {
 	b = append(b, opSHA256)
 	b = append(b, tagAttestation)
 	b = append(b, bitcoinMagic...)
-	b = appendVarbytes(b, varuint(height))
+	b = appendVarbytes(b, putVaruint(height))
 	return b
 }
 
@@ -189,5 +174,77 @@ func TestVerifyProofAgreementThreshold(t *testing.T) {
 	one := []BlockSource{NewEsplora(e1.URL, e1.Client())}
 	if _, err := VerifyProof(context.Background(), nil, one, 2, proof, digest); err == nil {
 		t.Fatal("single explorer with minAgree 2: expected error, got nil")
+	}
+}
+
+func TestVerifyProofPersistsUpgrade(t *testing.T) {
+	digest := sha256.Sum256([]byte("persist me"))
+	const height = uint64(800500)
+	blockTime := int64(1_700_500_000)
+	nonce := []byte{0x11, 0x22}
+	tailNonce := []byte{0x33, 0x44, 0x55}
+
+	commitment, _ := sequence{ops: []op{{opAppend, nonce}, {opSHA256, nil}}}.compute(digest[:])
+	root, _ := sequence{ops: []op{{opAppend, tailNonce}, {opSHA256, nil}}}.compute(commitment)
+
+	calendar := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/timestamp/"+hex.EncodeToString(commitment) {
+			w.Write(bitcoinSeqBytes(tailNonce, height))
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer calendar.Close()
+
+	hdr := make([]byte, 80)
+	copy(hdr[36:68], root)
+	binary.LittleEndian.PutUint32(hdr[68:72], uint32(blockTime))
+	explorer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasPrefix(r.URL.Path, "/block-height/"):
+			w.Write([]byte(strings.Repeat("ab", 32)))
+		case strings.HasSuffix(r.URL.Path, "/header"):
+			w.Write([]byte(hex.EncodeToString(hdr)))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer explorer.Close()
+
+	proof := buildOTS(digest, [][]byte{pendingSeq(nonce, calendar.URL)})
+	sources := []BlockSource{NewEsplora(explorer.URL, explorer.Client())}
+	res, err := VerifyProof(context.Background(), calendar.Client(), sources, 1, proof, digest)
+	if err != nil {
+		t.Fatalf("VerifyProof: %v", err)
+	}
+	if res.State != StateConfirmed {
+		t.Fatalf("expected confirmed, got %+v", res)
+	}
+	if res.Upgraded == nil {
+		t.Fatal("expected an upgraded proof to persist, got nil")
+	}
+
+	// The upgraded proof must be self-contained: no pending calendar attestation.
+	p, err := parseProof(res.Upgraded)
+	if err != nil {
+		t.Fatalf("upgraded proof does not parse: %v", err)
+	}
+	for _, s := range p.seqs {
+		if s.calURL != "" {
+			t.Fatal("upgraded proof still carries a pending calendar attestation")
+		}
+	}
+
+	// And it re-verifies to confirmed WITHOUT a calendar: nil client would panic
+	// if the upgrade path were reached, proving no calendar contact is needed.
+	res2, err := VerifyProof(context.Background(), nil, sources, 1, res.Upgraded, digest)
+	if err != nil {
+		t.Fatalf("re-verify upgraded proof: %v", err)
+	}
+	if res2.State != StateConfirmed || res2.Height != height {
+		t.Fatalf("upgraded proof did not re-verify: %+v", res2)
+	}
+	if res2.Upgraded != nil {
+		t.Fatal("re-verifying an already-complete proof should not produce a new upgrade")
 	}
 }

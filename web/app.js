@@ -82,7 +82,7 @@ const els = {
   fzOpacity: $('fzOpacity'), fzSize: $('fzSize'), fzAngle: $('fzAngle'), fzColor: $('fzColor'),
   timestampBtn: $('timestampBtn'), timestampModal: $('timestampModal'), tsCancel: $('tsCancel'), tsGo: $('tsGo'),
   timestampVerifyBtn: $('timestampVerifyBtn'), tsVerifyModal: $('tsVerifyModal'), tvExplorerOn: $('tvExplorerOn'),
-  tvExplorer: $('tvExplorer'), tvFile: $('tvFile'), tvResult: $('tvResult'), tvCancel: $('tvCancel'), tvPick: $('tvPick'),
+  tvExplorer: $('tvExplorer'), tvFile: $('tvFile'), tvResult: $('tvResult'), tvCancel: $('tvCancel'), tvPick: $('tvPick'), tvSave: $('tvSave'),
   fzPreviewMark: $('fzPreviewMark'),
   profileModal: $('profileModal'), profileText: $('profileText'),
   profileCancel: $('profileCancel'), profileSave: $('profileSave'),
@@ -1670,6 +1670,15 @@ function openSaveAs(blob, defaultName, title) {
   browseDir(''); // server resolves the empty path to the ~/nib default
 }
 
+// b64ToBlob decodes a base64 string (e.g. an upgraded .ots from the server) into
+// a Blob the save dialog can write.
+function b64ToBlob(b64, mime) {
+  const bin = atob(b64);
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  return new Blob([bytes], { type: mime });
+}
+
 els.saveAsCancel.onclick = () => { els.saveAsModal.hidden = true; saveAsBlob = null; };
 els.saveAsUp.onclick = () => { const p = els.saveAsUp.dataset.parent; if (p) browseDir(p); };
 els.saveAsDir.onchange = () => browseDir(els.saveAsDir.value.trim());
@@ -1865,12 +1874,18 @@ els.tsGo.onclick = async () => {
 
 // Verify an OpenTimestamps proof against the open document: pick the .ots, send it
 // with the document's bytes, and report whether (and when) it's anchored to Bitcoin.
+let upgradedProofB64 = null; // a now-complete .ots offered for saving after verify
 els.timestampVerifyBtn.onclick = () => {
   if (!pdfDocument) return;
   els.tvResult.hidden = true; els.tvResult.textContent = '';
+  els.tvSave.hidden = true; upgradedProofB64 = null;
   els.tsVerifyModal.hidden = false;
 };
 els.tvCancel.onclick = () => { els.tsVerifyModal.hidden = true; };
+els.tvSave.onclick = () => {
+  if (!upgradedProofB64) return;
+  openSaveAs(b64ToBlob(upgradedProofB64, 'application/octet-stream'), exportBase() + '.ots', 'Save complete proof');
+};
 els.tvExplorerOn.onchange = () => { els.tvExplorer.disabled = !els.tvExplorerOn.checked; };
 els.tvPick.onclick = () => els.tvFile.click();
 els.tvFile.onchange = async () => {
@@ -1879,6 +1894,7 @@ els.tvFile.onchange = async () => {
   if (!f) return;
   els.tvResult.hidden = false;
   els.tvResult.textContent = 'Checking…';
+  els.tvSave.hidden = true; upgradedProofB64 = null;
   try {
     const bytes = await bakedBytes();
     const form = new FormData();
@@ -1891,7 +1907,9 @@ els.tvFile.onchange = async () => {
       els.tvResult.textContent = '✗ ' + (e.error || 'verification failed');
       return;
     }
-    els.tvResult.textContent = timestampVerifyMessage(await res.json());
+    const r = await res.json();
+    els.tvResult.textContent = timestampVerifyMessage(r);
+    if (r.upgraded) { upgradedProofB64 = r.upgraded; els.tvSave.hidden = false; }
   } catch {
     els.tvResult.textContent = '✗ verification failed';
   }
