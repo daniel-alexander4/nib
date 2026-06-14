@@ -421,7 +421,9 @@
       <p class="libhint">Check an OpenTimestamps proof (<code>.ots</code>) against the open document:
         confirm the document is the one it was made for, and read back the Bitcoin block time it was
         anchored at. Only a public block height is looked up over the internet — never the document or
-        its hash. The block time is confirmed against public block explorers.</p>
+        its hash. The block is confirmed against several public block explorers, which must agree. If a
+        still-pending proof has since been confirmed, you can save the now-complete, self-contained
+        proof.</p>
       <label class="check"><input id="tvExplorerOn" type="checkbox" /> Custom block explorer (Esplora API)</label>
       <input id="tvExplorer" type="text" placeholder="e.g. https://mempool.space/api" disabled />
       <input id="tvFile" type="file" accept=".ots" hidden />
