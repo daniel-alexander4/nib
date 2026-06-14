@@ -32,9 +32,10 @@ func (s *Server) handleTimestamp(w http.ResponseWriter, r *http.Request) {
 // handleTimestampVerify checks an uploaded .ots proof against the posted document.
 // It hashes the document, confirms the proof is for it, upgrades any still-pending
 // commitment via the calendar, and validates the Bitcoin attestation against the
-// public block explorers (which must agree). Only a public block height is sent
-// outward — never the document or its hash. An optional `explorer` form value
-// overrides the default explorers with a user-supplied Esplora-API endpoint.
+// public block explorers (at least two of which must agree). Only a public block
+// height is sent outward — never the document or its hash. An optional `explorer`
+// form value overrides the default explorers with a single user-supplied
+// Esplora-API endpoint, which is then trusted on its own.
 func (s *Server) handleTimestampVerify(w http.ResponseWriter, r *http.Request) {
 	pdfBytes, ok := formFileBytes(w, r, "pdf")
 	if !ok {
@@ -45,12 +46,14 @@ func (s *Server) handleTimestampVerify(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	explorers := ots.DefaultExplorers
+	minAgree := 2 // default public set: at least two independent explorers must agree
 	if custom := strings.TrimSpace(r.FormValue("explorer")); custom != "" {
 		if u, err := url.Parse(custom); err != nil || requireHTTPScheme(u) != nil {
 			httpError(w, http.StatusBadRequest, "block explorer must be an http(s) URL")
 			return
 		}
 		explorers = []string{custom}
+		minAgree = 1 // the user's own node is trusted on its own
 	}
 	sources := make([]ots.BlockSource, len(explorers))
 	for i, e := range explorers {
@@ -58,7 +61,9 @@ func (s *Server) handleTimestampVerify(w http.ResponseWriter, r *http.Request) {
 	}
 
 	digest := sha256.Sum256(pdfBytes)
-	res, err := ots.VerifyProof(r.Context(), httpFetchClient, sources, proof, digest)
+	// untrustedFetchClient: the calendar URL fetched during an upgrade comes from
+	// the uploaded (untrusted) .ots, so it must not be allowed to reach LAN hosts.
+	res, err := ots.VerifyProof(r.Context(), untrustedFetchClient, sources, minAgree, proof, digest)
 	if err != nil {
 		httpError(w, http.StatusUnprocessableEntity, err.Error())
 		return

@@ -212,6 +212,7 @@ func OpenSSH(dir string) (*Vault, error) {
 		}
 		plain, err := decrypt(key, env.Nonce, env.Cipher)
 		if err != nil {
+			zero(key) // this slot's unwrapped content key is unused — scrub it
 			continue
 		}
 		var c Contents
