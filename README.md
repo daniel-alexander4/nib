@@ -48,6 +48,15 @@ PDF on save.
 Quick-stamps for the things you reach for most — **today's date**, **"Approved"**,
 and a **checkmark**. Drop one on, drag to place, resize to fit.
 
+### Sign / date / initial markers
+Filling a form with the same fields on every page? Drop **Sign**, **Date**, and
+**Initial** markers wherever the form asks (click the marker tool, then click the
+page). Then click each marker to fill it and Nib **jumps to the next** one: a date
+marker stamps today's date, and a sign/initial marker drops your signature or
+initials — pick them from the Library once and the rest reuse them. These place a
+*visible* signature for filling out the form; the cryptographic signature is still
+the separate **Finalize & sign** step.
+
 ### Signatures & images, stored securely
 - **Draw your signature** on a pad; it's saved as a clean **transparent PNG**, so
   it sits *on* the line instead of inside a white box.
