@@ -120,8 +120,11 @@ was anchored at. Only a public block height is looked up over the internet — n
 the document or its hash — and the block is confirmed against three public block
 explorers run by independent operators, at least two of which must agree, so no
 single explorer can spoof a result (point it at your own Esplora endpoint to
-verify trustlessly). You can also verify with any other OpenTimestamps tool
-(e.g. [opentimestamps.org](https://opentimestamps.org)) — the proof is standard.
+verify trustlessly). If the proof was still *pending* (stamped but not yet anchored
+when you last saved it), verifying it once a Bitcoin block has confirmed it lets you
+**save the now-complete proof** — a self-contained `.ots` that no longer needs any
+calendar server to verify, ever. You can also verify with any other OpenTimestamps
+tool (e.g. [opentimestamps.org](https://opentimestamps.org)) — the proof is standard.
 
 ### Co-sign with a peer
 Two people can sign the *same* document, each attesting — in a visible block and a
