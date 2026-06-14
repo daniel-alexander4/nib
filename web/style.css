@@ -248,8 +248,9 @@ input[type="search"] { width: 100%; }
 #outline a:hover { background: var(--surface0); color: var(--text); }
 
 /* image library panel */
-.libactions, .quickstamps { display: flex; gap: 6px; margin-bottom: 8px; flex-wrap: wrap; }
-.quickstamps button { padding: 4px 8px; font-size: 13px; }
+.libactions, .quickstamps, .markers { display: flex; gap: 6px; margin-bottom: 8px; flex-wrap: wrap; }
+.quickstamps button, .markers button { padding: 4px 8px; font-size: 13px; }
+.markers button.active { background: var(--surface1); box-shadow: inset 0 -2px 0 var(--blue); }
 .libhint { color: var(--subtext0); font-size: 11px; margin: 4px 0 8px; }
 #imageGrid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
 .libimg {
@@ -470,6 +471,25 @@ input.ovl-check { appearance: auto; accent-color: #1a7f37; background: transpare
   border: 1px solid var(--crust); cursor: pointer; display: none;
 }
 .ovl-stamp:hover .stamp-del, .ovl-stamp:focus .stamp-del { display: block; }
+/* sign/date/initial marker: a dashed "fill here" placeholder. Click to fill it
+   (it becomes an image stamp) and auto-advance; the active target is ringed. */
+.ovl-marker {
+  z-index: 9; cursor: pointer; touch-action: none; outline: none;
+  border: 1.5px dashed var(--blue); border-radius: 3px;
+  background: rgba(137, 180, 250, 0.12);
+  display: flex; align-items: center; justify-content: center; overflow: visible;
+}
+.ovl-marker .marker-label {
+  font-family: sans-serif; font-size: 11px; line-height: 1; color: var(--blue);
+  pointer-events: none; user-select: none; white-space: nowrap;
+}
+.ovl-marker.marker-active { border-color: var(--mauve); background: rgba(203, 166, 247, 0.20); box-shadow: 0 0 0 2px var(--mauve); }
+.ovl-marker .marker-del {
+  position: absolute; top: -10px; right: -10px; width: 18px; height: 18px; padding: 0;
+  line-height: 1; border-radius: 999px; background: var(--surface1); color: var(--red);
+  border: 1px solid var(--crust); cursor: pointer; display: none;
+}
+.ovl-marker:hover .marker-del, .ovl-marker:focus .marker-del { display: block; }
 #empty {
   position: absolute;
   inset: 0;
