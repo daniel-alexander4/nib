@@ -37,8 +37,14 @@ func (s *Server) handleAssemble(w http.ResponseWriter, r *http.Request) {
 		var buf bytes.Buffer
 		zw := zip.NewWriter(&buf)
 		for i, img := range images {
-			fw, _ := zw.Create(fmt.Sprintf("page-%02d.png", i+1))
-			_, _ = fw.Write(img)
+			fw, err := zw.Create(fmt.Sprintf("page-%02d.png", i+1))
+			if err == nil {
+				_, err = fw.Write(img)
+			}
+			if err != nil {
+				httpError(w, http.StatusInternalServerError, "could not build zip")
+				return
+			}
 		}
 		if err := zw.Close(); err != nil {
 			httpError(w, http.StatusInternalServerError, "could not build zip")
