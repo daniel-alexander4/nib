@@ -10,10 +10,13 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
+
+	"nib/internal/safe"
 )
 
 // Verification states reported to the caller.
@@ -25,13 +28,22 @@ const (
 )
 
 // DefaultExplorers are the public Esplora-API block sources used to look up an
-// attested block's header. Two are queried and required to agree, so a single
-// lying explorer can't spoof a verification. Verification sends only a public
-// block height to these — never the document or its hash.
+// attested block's header. They are run by independent operators; all are queried
+// and at least two must agree on the block (see defaultMinAgree), so a single
+// lying or compromised explorer can't spoof a verification while one being down
+// doesn't break it. Verification sends only a public block height to these —
+// never the document or its hash. A user pointing Nib at their own Esplora
+// endpoint overrides this set and is trusted on its own (minAgree 1).
 var DefaultExplorers = []string{
 	"https://blockstream.info/api",
 	"https://mempool.space/api",
+	"https://mempool.emzy.de/api",
 }
+
+// defaultMinAgree is how many of the DefaultExplorers must return the same block
+// header before a result is trusted. Two keeps the "no single explorer can spoof"
+// guarantee while tolerating one of the three being unreachable.
+const defaultMinAgree = 2
 
 // bitcoinMagic tags a Bitcoin block-header attestation in the .ots format.
 var bitcoinMagic = []byte{0x05, 0x88, 0x96, 0x0d, 0x73, 0xd7, 0x19, 0x01}
@@ -60,10 +72,15 @@ type BlockSource interface {
 
 // VerifyProof checks an .ots proof against a document digest. It confirms the
 // proof is for this document, upgrades any still-pending calendar commitments in
-// memory, then validates the Bitcoin attestation against the block sources
-// (which must agree). Network/parse failures return an error; the expected
+// memory, then validates the Bitcoin attestation against the block sources,
+// requiring at least minAgree of them to return the same block header (and any
+// that respond to agree). Network/parse failures return an error; the expected
 // outcomes are returned as a VerifyResult state.
-func VerifyProof(ctx context.Context, client *http.Client, sources []BlockSource, proofBytes []byte, docDigest [32]byte) (*VerifyResult, error) {
+//
+// client fetches the calendar URL embedded in the (untrusted) .ots during an
+// upgrade; the caller must give one that refuses non-public addresses, since that
+// URL is attacker-controllable — see internal/server untrustedFetchClient.
+func VerifyProof(ctx context.Context, client *http.Client, sources []BlockSource, minAgree int, proofBytes []byte, docDigest [32]byte) (*VerifyResult, error) {
 	p, err := parseProof(proofBytes)
 	if err != nil {
 		return nil, err
@@ -97,7 +114,7 @@ func VerifyProof(ctx context.Context, client *http.Client, sources []BlockSource
 	if err != nil {
 		return nil, err
 	}
-	merkle, t, n, err := fetchAgreedHeader(ctx, sources, s.height)
+	merkle, t, n, err := fetchAgreedHeader(ctx, sources, minAgree, s.height)
 	if err != nil {
 		return nil, err
 	}
@@ -107,10 +124,11 @@ func VerifyProof(ctx context.Context, client *http.Client, sources []BlockSource
 	return &VerifyResult{State: StateConfirmed, Height: s.height, Time: t, Sources: n}, nil
 }
 
-// fetchAgreedHeader queries every source concurrently and requires those that
-// respond to agree on the block's merkle root — one source is enough to proceed,
-// but any disagreement is treated as untrustworthy.
-func fetchAgreedHeader(ctx context.Context, sources []BlockSource, height uint64) ([]byte, time.Time, int, error) {
+// fetchAgreedHeader queries every source concurrently and requires at least
+// minAgree of them to return the same block merkle root: fewer than minAgree
+// responding is untrustworthy (can't cross-check), and any disagreement among
+// those that did respond is treated as untrustworthy too.
+func fetchAgreedHeader(ctx context.Context, sources []BlockSource, minAgree int, height uint64) ([]byte, time.Time, int, error) {
 	type res struct {
 		merkle []byte
 		t      time.Time
@@ -124,6 +142,7 @@ func fetchAgreedHeader(ctx context.Context, sources []BlockSource, height uint64
 		wg.Add(1)
 		go func(src BlockSource) {
 			defer wg.Done()
+			defer safe.Recover("ots block-header fetch")
 			m, t, err := src.BlockHeader(ctx, height)
 			if err != nil {
 				return
@@ -135,8 +154,8 @@ func fetchAgreedHeader(ctx context.Context, sources []BlockSource, height uint64
 	}
 	wg.Wait()
 
-	if len(results) == 0 {
-		return nil, time.Time{}, 0, errors.New("no block explorer responded")
+	if len(results) < minAgree {
+		return nil, time.Time{}, 0, fmt.Errorf("only %d of %d block explorers confirmed the block; need %d to agree — try again", len(results), len(sources), minAgree)
 	}
 	for _, r := range results[1:] {
 		if !bytes.Equal(r.merkle, results[0].merkle) {
@@ -158,8 +177,19 @@ func upgrade(ctx context.Context, client *http.Client, s sequence, digest []byte
 	ctx, cancel := context.WithTimeout(ctx, perCalendarTimeout)
 	defer cancel()
 
-	url := strings.TrimRight(s.calURL, "/") + "/timestamp/" + hex.EncodeToString(commitment)
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	// calURL comes from the untrusted .ots file. Reject anything but http(s) here
+	// (a defence-in-depth scheme guard); the no-private-address guard lives in the
+	// caller's client (untrustedFetchClient), which also covers redirects.
+	cu, err := url.Parse(s.calURL)
+	if err != nil {
+		return s, false, err
+	}
+	if cu.Scheme != "http" && cu.Scheme != "https" {
+		return s, false, fmt.Errorf("calendar URL has unsupported scheme %q", cu.Scheme)
+	}
+
+	reqURL := strings.TrimRight(s.calURL, "/") + "/timestamp/" + hex.EncodeToString(commitment)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, reqURL, nil)
 	if err != nil {
 		return s, false, err
 	}

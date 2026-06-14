@@ -1877,20 +1877,24 @@ els.tvFile.onchange = async () => {
   const f = els.tvFile.files[0];
   els.tvFile.value = '';
   if (!f) return;
-  const bytes = await bakedBytes();
-  const form = new FormData();
-  form.append('pdf', new Blob([bytes], { type: 'application/pdf' }), 'doc.pdf');
-  form.append('ots', f, f.name);
-  if (els.tvExplorerOn.checked && els.tvExplorer.value.trim()) form.append('explorer', els.tvExplorer.value.trim());
   els.tvResult.hidden = false;
   els.tvResult.textContent = 'Checking…';
-  const res = await apiFetch('/api/timestamp/verify', { method: 'POST', body: form });
-  if (!res.ok) {
-    const e = await res.json().catch(() => ({}));
-    els.tvResult.textContent = '✗ ' + (e.error || 'verification failed');
-    return;
+  try {
+    const bytes = await bakedBytes();
+    const form = new FormData();
+    form.append('pdf', new Blob([bytes], { type: 'application/pdf' }), 'doc.pdf');
+    form.append('ots', f, f.name);
+    if (els.tvExplorerOn.checked && els.tvExplorer.value.trim()) form.append('explorer', els.tvExplorer.value.trim());
+    const res = await apiFetch('/api/timestamp/verify', { method: 'POST', body: form });
+    if (!res.ok) {
+      const e = await res.json().catch(() => ({}));
+      els.tvResult.textContent = '✗ ' + (e.error || 'verification failed');
+      return;
+    }
+    els.tvResult.textContent = timestampVerifyMessage(await res.json());
+  } catch {
+    els.tvResult.textContent = '✗ verification failed';
   }
-  els.tvResult.textContent = timestampVerifyMessage(await res.json());
 };
 
 function timestampVerifyMessage(r) {

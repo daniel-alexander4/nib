@@ -31,6 +31,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"nib/internal/safe"
 )
 
 // DefaultCalendars are the standard public OpenTimestamps calendar servers (the
@@ -75,6 +77,7 @@ func Stamp(ctx context.Context, client *http.Client, digest [32]byte, calendars 
 		wg.Add(1)
 		go func(i int, cal string) {
 			defer wg.Done()
+			defer safe.Recover("ots calendar submit")
 			seq, err := submit(ctx, client, cal, digest)
 			if err != nil {
 				return
