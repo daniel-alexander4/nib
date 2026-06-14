@@ -117,9 +117,10 @@ existed, not *who* wrote or signed it — that's what signing and co-signing are
 **Verify a timestamp** checks an `.ots` against the open document right inside Nib:
 it confirms the proof is for that exact file and reports the Bitcoin block time it
 was anchored at. Only a public block height is looked up over the internet — never
-the document or its hash — and the block is confirmed against two public block
-explorers that must agree (point it at your own Esplora endpoint to verify
-trustlessly). You can also verify with any other OpenTimestamps tool
+the document or its hash — and the block is confirmed against three public block
+explorers run by independent operators, at least two of which must agree, so no
+single explorer can spoof a result (point it at your own Esplora endpoint to
+verify trustlessly). You can also verify with any other OpenTimestamps tool
 (e.g. [opentimestamps.org](https://opentimestamps.org)) — the proof is standard.
 
 ### Co-sign with a peer

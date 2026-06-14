@@ -118,7 +118,7 @@ func TestVerifyProofConfirmed(t *testing.T) {
 
 	proof := buildOTS(digest, [][]byte{pendingSeq(nonce, calendar.URL)})
 	sources := []BlockSource{NewEsplora(explorer.URL, explorer.Client())}
-	res, err := VerifyProof(context.Background(), calendar.Client(), sources, proof, digest)
+	res, err := VerifyProof(context.Background(), calendar.Client(), sources, 1, proof, digest)
 	if err != nil {
 		t.Fatalf("VerifyProof: %v", err)
 	}
@@ -137,15 +137,57 @@ func TestVerifyProofPendingAndMismatch(t *testing.T) {
 	defer cal.Close()
 	proof := buildOTS(digest, [][]byte{pendingSeq([]byte{0x01}, cal.URL)})
 
-	res, err := VerifyProof(context.Background(), cal.Client(), nil, proof, digest)
+	res, err := VerifyProof(context.Background(), cal.Client(), nil, 2, proof, digest)
 	if err != nil || res.State != StatePending {
 		t.Fatalf("expected pending, got %+v (err %v)", res, err)
 	}
 
 	// Same proof, wrong document digest -> mismatch (no network needed).
 	other := sha256.Sum256([]byte("a different document"))
-	res, err = VerifyProof(context.Background(), cal.Client(), nil, proof, other)
+	res, err = VerifyProof(context.Background(), cal.Client(), nil, 2, proof, other)
 	if err != nil || res.State != StateMismatch {
 		t.Fatalf("expected mismatch, got %+v (err %v)", res, err)
+	}
+}
+
+func TestVerifyProofAgreementThreshold(t *testing.T) {
+	digest := sha256.Sum256([]byte("threshold doc"))
+	const height = uint64(800001)
+	nonce := []byte{0x09, 0x08}
+	root, _ := sequence{ops: []op{{opAppend, nonce}, {opSHA256, nil}}}.compute(digest[:])
+
+	hdr := make([]byte, 80)
+	copy(hdr[36:68], root)
+	newExplorer := func() *httptest.Server {
+		return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			switch {
+			case strings.HasPrefix(r.URL.Path, "/block-height/"):
+				w.Write([]byte(strings.Repeat("ab", 32)))
+			case strings.HasSuffix(r.URL.Path, "/header"):
+				w.Write([]byte(hex.EncodeToString(hdr)))
+			default:
+				w.WriteHeader(http.StatusNotFound)
+			}
+		}))
+	}
+	e1, e2 := newExplorer(), newExplorer()
+	defer e1.Close()
+	defer e2.Close()
+
+	// Proof is already Bitcoin-attested, so VerifyProof skips the calendar upgrade
+	// (nil client) and goes straight to the explorer agreement check.
+	proof := buildOTS(digest, [][]byte{bitcoinSeqBytes(nonce, height)})
+
+	// Two explorers agree, minAgree 2 -> confirmed.
+	both := []BlockSource{NewEsplora(e1.URL, e1.Client()), NewEsplora(e2.URL, e2.Client())}
+	res, err := VerifyProof(context.Background(), nil, both, 2, proof, digest)
+	if err != nil || res.State != StateConfirmed || res.Sources != 2 {
+		t.Fatalf("two agreeing explorers: got %+v err %v", res, err)
+	}
+
+	// Only one explorer available but minAgree 2 -> refuse (can't cross-check).
+	one := []BlockSource{NewEsplora(e1.URL, e1.Client())}
+	if _, err := VerifyProof(context.Background(), nil, one, 2, proof, digest); err == nil {
+		t.Fatal("single explorer with minAgree 2: expected error, got nil")
 	}
 }

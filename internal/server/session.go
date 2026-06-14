@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"nib/internal/p2p"
+	"nib/internal/safe"
 	"nib/internal/sign"
 )
 
@@ -173,6 +174,10 @@ func (sc sessionConfirmer) Confirm(peer p2p.SignerAttestation, doc []byte) (bool
 // runSession accepts one pinned peer, co-signs with the user's consent, and makes
 // the result the open document. It always disarms on exit — one session per arm.
 func (s *Server) runSession(ln net.Listener, cert, key []byte, label string) {
+	// This goroutine handles a pinned peer's inbound document and verifies it; a
+	// panic in p2p.Receive or sign.Verify must not crash the desktop process. The
+	// defers below (disarm, Close) still run as the stack unwinds.
+	defer safe.Recover("co-sign session")
 	timer := time.AfterFunc(sessionAcceptTimeout, s.sess.disarm)
 	conn, err := ln.Accept()
 	timer.Stop()

@@ -5,8 +5,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
+	"syscall"
 	"time"
 )
 
@@ -43,6 +45,49 @@ func requireHTTPScheme(u *url.URL) error {
 		return fmt.Errorf("unsupported URL scheme %q", u.Scheme)
 	}
 	return nil
+}
+
+// blockPrivateIP is a net.Dialer.Control hook that refuses to connect to
+// loopback, private, link-local (incl. cloud-metadata 169.254.169.254) or
+// unspecified addresses. It runs at connect time on the actually-resolved IP, so
+// it also defeats DNS rebinding. Unlike the user-typed-URL paths (see the
+// TRIPWIRE above, where LAN targets are deliberately allowed), this guards URLs
+// taken from untrusted FILE content — there is no user choosing the host, so a
+// hostile file is exactly the "remote caller" that TRIPWIRE assumed didn't exist.
+func blockPrivateIP(network, address string, _ syscall.RawConn) error {
+	host, _, err := net.SplitHostPort(address)
+	if err != nil {
+		return err
+	}
+	ip := net.ParseIP(host)
+	if ip == nil {
+		return fmt.Errorf("could not parse dial address %q", address)
+	}
+	if ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsUnspecified() {
+		return fmt.Errorf("refusing to connect to non-public address %s", ip)
+	}
+	return nil
+}
+
+// untrustedFetchClient dials only public http(s) hosts, for URLs that come from
+// untrusted file content rather than the local user (e.g. the calendar URL
+// embedded in an .ots proof). The Control hook blocks non-public IPs on every
+// dial, including redirect hops; CheckRedirect re-imposes the scheme guard and
+// hop cap.
+var untrustedFetchClient = &http.Client{
+	Transport: &http.Transport{
+		DialContext: (&net.Dialer{
+			Timeout:   30 * time.Second,
+			KeepAlive: 30 * time.Second,
+			Control:   blockPrivateIP,
+		}).DialContext,
+	},
+	CheckRedirect: func(req *http.Request, via []*http.Request) error {
+		if len(via) >= 10 {
+			return errors.New("too many redirects")
+		}
+		return requireHTTPScheme(req.URL)
+	},
 }
 
 // safeFetch GETs rawURL with a size cap and timeout, refusing any non-http(s)

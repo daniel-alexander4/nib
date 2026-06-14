@@ -30,7 +30,11 @@ func (s *Server) handlePages(w http.ResponseWriter, r *http.Request) {
 	)
 	switch r.FormValue("op") {
 	case "rotate":
-		deg, _ := strconv.Atoi(r.FormValue("deg"))
+		deg, convErr := strconv.Atoi(r.FormValue("deg"))
+		if convErr != nil {
+			httpError(w, http.StatusBadRequest, "rotation must be a whole number of degrees")
+			return
+		}
 		result, err = pdfops.Rotate(pdfBytes, pages, deg)
 	case "delete":
 		result, err = pdfops.RemovePages(pdfBytes, pages)

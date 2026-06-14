@@ -73,7 +73,9 @@ func loadBuiltinSignatures() []Image {
 			continue
 		}
 		var imgs []Image
-		if err := json.Unmarshal(plain, &imgs); err != nil {
+		err = json.Unmarshal(plain, &imgs)
+		zero(plain) // scrub the decrypted bundle plaintext once parsed (or on failure)
+		if err != nil {
 			log.Printf("warning: built-in signatures present but did not decode: %v", err)
 			return nil
 		}
