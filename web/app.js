@@ -521,8 +521,7 @@ async function cosign() {
   const q = await qr.json();
   const png = await renderAttestation(q.lines, q.rect);
 
-  const form = new FormData();
-  form.append('pdf', new Blob([await bakedBytes()], { type: 'application/pdf' }), 'doc.pdf');
+  const form = await bakedForm();
   form.append('params', JSON.stringify({ fingerprint, intent, when: q.when }));
   form.append('appearance', png, 'attestation.png');
   const sr = await apiFetch('/api/cosign/sign', { method: 'POST', body: form });
@@ -576,8 +575,7 @@ async function sessionInit() {
   const png = await renderAttestation(q.lines, q.rect);
 
   els.sinGo.disabled = true; els.sinCancel.disabled = true; els.sinProgress.hidden = false;
-  const form = new FormData();
-  form.append('pdf', new Blob([await bakedBytes()], { type: 'application/pdf' }), 'doc.pdf');
+  const form = await bakedForm();
   form.append('params', JSON.stringify({ fingerprint, intent, when: q.when }));
   form.append('appearance', png, 'attestation.png');
   form.append('address', address);
@@ -1296,9 +1294,7 @@ els.thumbGrid.addEventListener('dragend', onThumbDragEnd);
 async function pageOp(op, extra = {}) {
   if (!pdfDocument) return;
   if (!confirmSignatureLoss()) return;
-  const bytes = await bakedBytes();
-  const form = new FormData();
-  form.append('pdf', new Blob([bytes], { type: 'application/pdf' }), 'doc.pdf');
+  const form = await bakedForm();
   form.append('op', op);
   if (extra.pages) form.append('pages', extra.pages);
   if (extra.deg != null) form.append('deg', String(extra.deg));
@@ -1837,9 +1833,7 @@ els.fzGo.onclick = async () => {
   let text = els.fzText.value.trim();
   if (text && els.fzDate.checked) text += ' ' + new Date().toLocaleDateString();
 
-  const bytes = await bakedBytes();
-  const form = new FormData();
-  form.append('pdf', new Blob([bytes], { type: 'application/pdf' }), 'doc.pdf');
+  const form = await bakedForm();
   form.append('params', JSON.stringify({
     reason: 'Finalized in Nib',
     watermark: {
@@ -1863,9 +1857,7 @@ els.timestampBtn.onclick = () => { if (pdfDocument) els.timestampModal.hidden = 
 els.tsCancel.onclick = () => { els.timestampModal.hidden = true; };
 els.tsGo.onclick = async () => {
   els.timestampModal.hidden = true;
-  const bytes = await bakedBytes();
-  const form = new FormData();
-  form.append('pdf', new Blob([bytes], { type: 'application/pdf' }), 'doc.pdf');
+  const form = await bakedForm();
   toast('Contacting OpenTimestamps calendars…');
   const res = await apiFetch('/api/timestamp', { method: 'POST', body: form });
   if (!res.ok) { toast('Could not reach an OpenTimestamps calendar'); return; }
@@ -1896,9 +1888,7 @@ els.tvFile.onchange = async () => {
   els.tvResult.textContent = 'Checking…';
   els.tvSave.hidden = true; upgradedProofB64 = null;
   try {
-    const bytes = await bakedBytes();
-    const form = new FormData();
-    form.append('pdf', new Blob([bytes], { type: 'application/pdf' }), 'doc.pdf');
+    const form = await bakedForm();
     form.append('ots', f, f.name);
     if (els.tvExplorerOn.checked && els.tvExplorer.value.trim()) form.append('explorer', els.tvExplorer.value.trim());
     const res = await apiFetch('/api/timestamp/verify', { method: 'POST', body: form });
@@ -2533,6 +2523,15 @@ async function bakedBytes() {
   const res = await apiFetch('/api/bake', { method: 'POST', body: form });
   if (!res.ok) { toast('could not apply edits'); return saved; }
   return new Uint8Array(await res.arrayBuffer());
+}
+
+// bakedForm builds the multipart body every endpoint that takes the current
+// document shares: the baked bytes as the "pdf" file part. Callers append their
+// own extra fields (params, ots, appearance, address, op) before sending.
+async function bakedForm() {
+  const form = new FormData();
+  form.append('pdf', new Blob([await bakedBytes()], { type: 'application/pdf' }), 'doc.pdf');
+  return form;
 }
 
 els.detectBtn.onclick = async () => {
