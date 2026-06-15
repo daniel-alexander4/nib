@@ -2239,11 +2239,30 @@ els.viewerContainer.addEventListener('pointerdown', (e) => {
   const hit = pageAt(e.clientX, e.clientY);
   if (!hit) return;
   e.preventDefault();
+  // Snap to a detected blank if the click landed on one (the primary flow: Detect,
+  // then flag each blank); otherwise free-place a default flag (the fallback).
+  const field = overlayFields.find((f) => f.kind === 'text' && f.el.contains(e.target));
+  if (field) return void convertFieldToFlag(field, markerMode);
   const r = hit.r, [fw, fh] = MARKER_SIZES[markerMode];
   const fx = Math.min(Math.max((e.clientX - r.left) / r.width - fw / 2, 0), 1 - fw);
   const fy = Math.min(Math.max((e.clientY - r.top) / r.height - fh / 2, 0), 1 - fh);
   makeMarker(markerMode, [fx, fy, fx + fw, fy + fh], hit);
 });
+
+// convertFieldToFlag turns a detected blank into a sign/date/initial flag bound to
+// that blank. It keeps the blank's horizontal span and baseline, but gives the flag
+// at least the type's default height — a detected underline is only ~15pt tall, which
+// would crush a signature, so we rise to the type's height when the blank is shorter.
+function convertFieldToFlag(field, type) {
+  const [fx0, fy0, fx1, fy1] = field.frac;
+  const fh = MARKER_SIZES[type][1];
+  const top = Math.max(0, Math.min(fy0, fy1 - fh));
+  removeField(field);
+  const f = buildMarker(type, [fx0, top, fx1, fy1], field.page);
+  const pv = viewer.getPageView(field.page - 1);
+  if (pv?.div) { pv.div.appendChild(f.el); layoutField(f, pv); }
+  return f;
+}
 
 // buildMarker creates a marker field + its DOM element and registers it, but does
 // NOT attach it to a page — relayoutOverlays places it once the page renders.
