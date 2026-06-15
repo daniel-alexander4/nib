@@ -18,6 +18,7 @@ import (
 	"path/filepath"
 	"sync"
 
+	"nib/internal/pdfops"
 	"nib/internal/sign"
 	"nib/internal/vault"
 )
@@ -100,6 +101,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/listdir", s.requireUnlocked(s.handleListDir))
 	mux.HandleFunc("POST /api/write", s.requireUnlocked(s.handleWriteFile))
 	mux.HandleFunc("POST /api/bake", s.requireUnlocked(s.handleBake))
+	mux.HandleFunc("POST /api/flags", s.requireUnlocked(s.handleFlags))
 
 	// Page operations.
 	mux.HandleFunc("POST /api/pages", s.requireUnlocked(s.handlePages))
@@ -143,10 +145,11 @@ type openRequest struct {
 // docResponse is the metadata returned after a document is opened or saved.
 // The PDF bytes themselves are fetched separately from /api/pdf.
 type docResponse struct {
-	Name      string      `json:"name"`
-	Path      string      `json:"path"`      // empty => upload origin, no in-place save
-	CanSave   bool        `json:"canSave"`   // true when a save would overwrite Path
-	Signature sign.Status `json:"signature"` // untampered / modified / unsigned
+	Name      string          `json:"name"`
+	Path      string          `json:"path"`            // empty => upload origin, no in-place save
+	CanSave   bool            `json:"canSave"`         // true when a save would overwrite Path
+	Signature sign.Status     `json:"signature"`       // untampered / modified / unsigned
+	Flags     json.RawMessage `json:"flags,omitempty"` // embedded sign/date/initial placeholders, if any
 }
 
 // handleOpen loads a PDF from a server-side path. Opening by path is what makes
@@ -262,17 +265,24 @@ func (s *Server) setDoc(doc *document) {
 // takes the lock itself; callers must not hold it.
 func (s *Server) docResponse() docResponse {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	doc := s.doc
+	s.mu.Unlock()
 	if doc == nil {
 		return docResponse{}
 	}
-	return docResponse{
+	resp := docResponse{
 		Name:      filepath.Base(doc.path),
 		Path:      doc.path,
 		CanSave:   doc.path != "",
 		Signature: doc.sig,
 	}
+	// Surface embedded signing placeholders so the recipient's UI can rebuild
+	// them on open (the read half of the flag round-trip; the write half is
+	// /api/flags). A parse failure just means "no flags" — never blocks the open.
+	if flags, err := pdfops.FlagsJSON(doc.data); err == nil && json.Valid(flags) {
+		resp.Flags = flags
+	}
+	return resp
 }
 
 // writeFileAtomic writes data to a temp file in the same directory then renames
