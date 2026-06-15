@@ -48,14 +48,21 @@ PDF on save.
 Quick-stamps for the things you reach for most — **today's date**, **"Approved"**,
 and a **checkmark**. Drop one on, drag to place, resize to fit.
 
-### Sign / date / initial markers
-Filling a form with the same fields on every page? Drop **Sign**, **Date**, and
-**Initial** markers wherever the form asks (click the marker tool, then click the
-page). Then click each marker to fill it and Nib **jumps to the next** one: a date
-marker stamps today's date, and a sign/initial marker drops your signature or
-initials — pick them from the Library once and the rest reuse them. These place a
-*visible* signature for filling out the form; the cryptographic signature is still
-the separate **Finalize & sign** step.
+### Sign / date / initial flags
+Filling a form with the same fields on every page? Plant **Sign**, **Date**, and
+**Initial** flags wherever the form asks (click the flag tool, then click the
+page). Then click each flag to fill it and Nib **jumps to the next** one: a date
+flag stamps today's date, and a sign/initial flag drops your signature or
+initials — pick them from the Library once and the rest reuse them. Each image is
+sized to fit its flag. These place a *visible* signature for filling out the form;
+the cryptographic signature is still the separate **Finalize & sign** step.
+
+**Send it to someone else to sign** (like DocuSign, without the cloud). Plant the
+flags, click **Save for signing…**, and email the saved file. The flags travel
+*inside* that one PDF — no sidecar to lose — so when the recipient opens it in
+Nib, a banner offers **Start**, walks them flag-to-flag with **Next field**, and
+ends with **Save signed document**. Send the file as-is: printing it or
+re-exporting it through another app strips the flags.
 
 ### Signatures & images, stored securely
 - **Draw your signature** on a pad; it's saved as a clean **transparent PNG**, so
