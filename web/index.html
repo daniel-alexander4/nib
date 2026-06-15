@@ -287,6 +287,7 @@
         <button class="tab active" data-panel="thumbs">Pages</button>
         <button class="tab" data-panel="outline">Outline</button>
         <button class="tab" data-panel="library">Library</button>
+        <button class="tab" data-panel="flags">Flags</button>
       </nav>
       <div id="thumbs" class="panel active">
         <div class="thumbactions">
@@ -307,16 +308,19 @@
           <button data-stamp="date" title="Today's date">Date</button>
           <button data-stamp="approved" title="Approved">Approved</button>
         </div>
-        <p class="libhint">Signing flags — run <b>Detect</b>, pick a flag, then click a blank to flag it for the other person (or click anywhere to place one freehand). Fill them here, or <b>Save for signing</b> and email the file; the recipient fills the flags.</p>
+        <p class="libhint">Click an image to place it on the current page.</p>
+        <div id="imageGrid"></div>
+        <input id="addImageInput" type="file" accept="image/png,image/jpeg" hidden />
+      </div>
+      <div id="flags" class="panel">
+        <p class="libhint">Get a <b>Sign</b> / <b>Date</b> / <b>Initial</b> flag onto every blank the other person must fill, then email them the file.</p>
+        <p class="libhint">Run <b>Detect</b> first, pick a flag, then click a blank to flag it (or click anywhere to place one freehand). A sign/initial flag pulls your image from the <b>Library</b>.</p>
         <div class="markers">
           <button data-marker="sign" title="Plant a sign-here flag">✍ Sign</button>
           <button data-marker="date" title="Plant a date flag">Date</button>
           <button data-marker="initial" title="Plant an initial flag">Initial</button>
         </div>
         <button id="saveForSigningBtn" title="Embed the flags and save a single file to email">Save for signing…</button>
-        <p class="libhint">Click an image to place it on the current page.</p>
-        <div id="imageGrid"></div>
-        <input id="addImageInput" type="file" accept="image/png,image/jpeg" hidden />
       </div>
     </aside>
 

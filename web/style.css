@@ -207,7 +207,9 @@ input[type="search"] { width: 100%; }
   border-radius: 0;
   background: transparent;
   color: var(--subtext0);
-  padding: 8px;
+  padding: 8px 2px;
+  font-size: 12px;
+  white-space: nowrap;
 }
 .tab.active { color: var(--text); border-bottom: 2px solid var(--mauve); }
 .panel { display: none; overflow: auto; padding: 8px; flex: 1; }

@@ -50,8 +50,9 @@ and a **checkmark**. Drop one on, drag to place, resize to fit.
 
 ### Sign / date / initial flags
 Filling a form with the same fields on every page? Run **Detect** to find the
-blanks, pick the **Sign**, **Date**, or **Initial** tool, then click a blank to
-flag it — the flag snaps to that line (or click anywhere to place one freehand).
+blanks, then in the **Flags** tab pick **Sign**, **Date**, or **Initial** and
+click a blank to flag it — the flag snaps to that line (or click anywhere to
+place one freehand).
 Then click each flag to fill it and Nib **jumps to the next** one: a date flag
 stamps today's date, and a sign/initial flag drops your signature or initials —
 pick them from the Library once and the rest reuse them. Each image is sized to fit
