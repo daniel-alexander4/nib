@@ -48,16 +48,18 @@ PDF on save.
 Quick-stamps for the things you reach for most — **today's date**, **"Approved"**,
 and a **checkmark**. Drop one on, drag to place, resize to fit.
 
-### Sign / date / initial flags
+### Signing flags — sign, date, initial, name, title, company
 Filling a form with the same fields on every page? Run **Detect** to find the
-blanks, then in the **Flags** tab pick **Sign**, **Date**, or **Initial** and
-click a blank to flag it — the flag snaps to that line (or click anywhere to
-place one freehand).
+blanks, then in the **Flags** tab pick **Sign**, **Date**, **Initial**, **Name**,
+**Title**, or **Company** and click a blank to flag it — the flag snaps to that
+line (or click anywhere to place one freehand).
 Then click each flag to fill it and Nib **jumps to the next** one: a date flag
-stamps today's date, and a sign/initial flag drops your signature or initials —
-pick them from the Library once and the rest reuse them. Each image is sized to fit
-its flag. These place a *visible* signature for filling out the form; the
-cryptographic signature is still the separate **Finalize & sign** step.
+stamps today's date; a sign/initial flag drops your signature or initials, picked
+from the Library once and reused; and a name/title/company flag fills from your
+**autofill profile** (add the value once under *Edit → Edit autofill profile* and
+every such flag reuses it). Each fill is sized to fit its flag. These place a
+*visible* signature for filling out the form; the cryptographic signature is still
+the separate **Finalize & sign** step.
 
 **Send it to someone else to sign** (like DocuSign, without the cloud). Plant the
 flags, click **Save for signing…**, and email the saved file. The flags travel

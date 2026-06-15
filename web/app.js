@@ -1588,6 +1588,20 @@ function quickStampURL(kind) {
   return cv.toDataURL('image/png');
 }
 
+// textStampURL renders a typed value (name/title/company flag) to a transparent
+// PNG in ink, placed through the same stamp path as a date or signature image.
+function textStampURL(text) {
+  const cv = document.createElement('canvas');
+  const ctx = cv.getContext('2d');
+  ctx.font = '36px sans-serif';
+  cv.width = Math.ceil(ctx.measureText(text).width) + 24;
+  cv.height = 56;
+  ctx.font = '36px sans-serif'; // resizing the canvas resets the context
+  ctx.fillStyle = INK; ctx.textBaseline = 'middle';
+  ctx.fillText(text, 12, 30);
+  return cv.toDataURL('image/png');
+}
+
 // Signature draw pad → transparent PNG saved to the library.
 let sigCtx = null;
 let sigDrawing = false;
@@ -1983,6 +1997,7 @@ els.profileSave.onclick = async () => {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(profile),
   });
   els.profileModal.hidden = true;
+  if (res.ok) profileCache = null; // a text flag re-reads the fresh values
   toast(res.ok ? 'Profile saved' : 'could not save profile');
 };
 
@@ -2216,8 +2231,20 @@ let markerSig = null, markerInit = null; // remembered sign/initial fill sources
 let docHadFlags = false;      // the open document arrived with embedded signing flags
 let signTotal = 0;            // flag count when the signing banner appeared, for "X of N"
 let signStarted = false;      // the recipient has hit Start, so the action is now "Next field"
-const MARKER_SIZES = { sign: [0.22, 0.05], date: [0.13, 0.035], initial: [0.07, 0.05] };
-const MARKER_LABELS = { sign: 'Sign', date: 'Date', initial: 'Initial' };
+const MARKER_SIZES = {
+  sign: [0.22, 0.05], date: [0.13, 0.035], initial: [0.07, 0.05],
+  name: [0.24, 0.035], title: [0.18, 0.035], company: [0.24, 0.035],
+};
+const MARKER_LABELS = { sign: 'Sign', date: 'Date', initial: 'Initial', name: 'Name', title: 'Title', company: 'Company' };
+// Text flags fill from the autofill profile (typed values), as sign/initial fill
+// from the Library (images) and date fills automatically — three fill sources.
+const TEXT_MARKERS = new Set(['name', 'title', 'company']);
+// Profile keys (case-insensitive) each text flag accepts, in preference order.
+const TEXT_MARKER_KEYS = {
+  name: ['name', 'full name', 'fullname'],
+  title: ['title', 'job title'],
+  company: ['company', 'organization', 'organisation', 'employer'],
+};
 
 document.querySelectorAll('.markers button').forEach((b) => {
   b.onclick = () => { if (!pdfDocument) return toast('Open a PDF first'); setMarkerMode(markerMode === b.dataset.marker ? null : b.dataset.marker); };
@@ -2332,6 +2359,7 @@ function enableMarkerGestures(f, el) {
 async function fillMarker(f) {
   if (f.kind !== 'marker') return;
   if (f.tagType === 'date') return placeIntoMarker(f, quickStampURL('date'));
+  if (TEXT_MARKERS.has(f.tagType)) return fillTextMarker(f);
   const src = f.tagType === 'sign' ? markerSig : markerInit;
   if (src) return placeIntoMarker(f, src);
   // No remembered image yet — let the user pick one from the Library; the next
@@ -2347,6 +2375,35 @@ function resolveFillTarget(src) {
   if (!f) return;
   if (f.tagType === 'sign') markerSig = src; else markerInit = src;
   placeIntoMarker(f, src);
+}
+
+// Text flags (name/title/company) draw their value from the autofill profile —
+// the same store autofill uses — so the value is typed once and reused. If the
+// profile has no matching entry, point the user at the editor (the parallel to
+// sending a sign/initial flag to the Library) and leave the flag for a retry.
+let profileCache = null; // cached /api/profile; invalidated when the editor saves
+async function loadProfile() {
+  if (profileCache) return profileCache;
+  const res = await apiFetch('/api/profile');
+  profileCache = res.ok ? await res.json() : {};
+  return profileCache;
+}
+function profileValue(profile, type) {
+  const want = TEXT_MARKER_KEYS[type] || [type];
+  for (const [k, v] of Object.entries(profile)) {
+    if (want.includes(k.trim().toLowerCase()) && String(v).trim()) return String(v).trim();
+  }
+  return '';
+}
+async function fillTextMarker(f) {
+  const v = profileValue(await loadProfile(), f.tagType);
+  if (!v) {
+    setActiveMarker(f);
+    toast('Add your ' + MARKER_LABELS[f.tagType].toLowerCase() + ' to the autofill profile, then click this flag again.');
+    els.editProfileBtn.click();
+    return;
+  }
+  placeIntoMarker(f, textStampURL(v));
 }
 
 // placeIntoMarker swaps a marker for a real image stamp fitted inside the marker
