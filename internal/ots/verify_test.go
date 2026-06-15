@@ -42,10 +42,11 @@ func TestComputeOps(t *testing.T) {
 		t.Fatalf("sha256: got %x want %x", got, h[:])
 	}
 
-	// sha1 (0x02) and keccak256 (0x67) remain unsupported (see the op-coverage
-	// note in verify.go); ripemd160 (0x03) is now supported — see TestComputeRIPEMD160.
-	if _, err := (sequence{ops: []op{{0x02, nil}}}).compute(digest); err == nil {
-		t.Fatal("expected unsupported-op error for sha1")
+	// sha1/keccak256/ripemd160 are now executed (see the Compute* vector tests);
+	// the transform ops reverse (0xf2) and hexlify (0xf3) stay deliberately
+	// unsupported, so an unknown/unexecuted tag must still surface a clear error.
+	if _, err := (sequence{ops: []op{{0xf3, nil}}}).compute(digest); err == nil {
+		t.Fatal("expected unsupported-op error for hexlify (0xf3)")
 	}
 }
 
