@@ -913,6 +913,7 @@ async function setDocumentFromServer(meta) {
   els.viewerWrap.classList.add('has-doc');
   all('.pageCount').forEach((s) => { s.textContent = '/ ' + pdfDocument.numPages; });
   els.saveBtn.disabled = false;
+  setDocControls(true);
   els.saveBtn.title = meta.canSave ? 'Save (overwrites ' + meta.path + ')' : 'Save a copy (downloads — opened without a local path)';
   updateBadge(meta.signature);
   // Sidebars are non-essential; a build failure must not break the load.
@@ -2580,6 +2581,28 @@ document.querySelectorAll('[data-mode]').forEach((b) => {
 // above; every other toolbar control forwards to its menu twin by id.
 all('#toolbar [data-forward]').forEach((b) => { b.onclick = () => $(b.dataset.forward).click(); });
 
+// Controls that act on the open document. Disabled (in both the menu and the
+// toolbar twin) until one loads, so they read as "unavailable" rather than
+// silently doing nothing. Doc-free actions — verify a timestamp, receive a
+// co-signature, identity/peers/keys, the certificate export, About — stay live.
+const DOC_REQUIRED = [
+  'saveFlatBtn', 'saveEditableBtn',
+  'exportZipBtn', 'exportPngBtn', 'exportFormJsonBtn', 'exportFormCsvBtn',
+  'textToolBtn', 'highlightToolBtn', 'drawToolBtn',
+  'detectBtn', 'editTextBtn', 'removeOriginalsBtn', 'autofillBtn',
+  'redactBtn', 'applyRedactBtn', 'scanBtn',
+  'finalizeBtn', 'timestampBtn', 'cosignBtn', 'sessionInitBtn',
+];
+function setDocControls(enabled) {
+  for (const id of DOC_REQUIRED) {
+    const b = $(id); if (b) b.disabled = !enabled;
+    all(`#toolbar [data-forward="${id}"]`).forEach((t) => { t.disabled = !enabled; });
+  }
+  // The toolbar's Text/Highlight/Draw twins wire by data-mode, not data-forward.
+  all('#toolbar [data-mode]').forEach((t) => { t.disabled = !enabled; });
+}
+setDocControls(false); // nothing open yet
+
 // Drag-and-drop a PDF onto the window to open it (upload origin -> Save As).
 ['dragover', 'drop'].forEach((ev) => window.addEventListener(ev, (e) => e.preventDefault()));
 window.addEventListener('drop', (e) => {
@@ -2953,14 +2976,25 @@ document.querySelectorAll('.tab').forEach((tab) => {
 // sidebar collapse
 function toggleSidebar() {
   const hidden = $('sidebar').classList.toggle('collapsed');
-  $('toggleSidebarBtn').textContent = hidden ? 'Show sidebar' : 'Hide sidebar';
+  // Update only the label span; the button also carries a .shortcut hint.
+  $('toggleSidebarBtn').querySelector('.lbl').textContent = hidden ? 'Show sidebar' : 'Hide sidebar';
 }
 $('toggleSidebarBtn').onclick = toggleSidebar;
 
-// keyboard: Ctrl/Cmd+S saves, Ctrl/Cmd+B toggles the sidebar
+// keyboard: Ctrl/Cmd + S save, B sidebar, O open, F find
 window.addEventListener('keydown', (e) => {
-  if ((e.ctrlKey || e.metaKey) && e.key === 's') { e.preventDefault(); save(); }
-  if ((e.ctrlKey || e.metaKey) && e.key === 'b') { e.preventDefault(); toggleSidebar(); }
+  if (!(e.ctrlKey || e.metaKey)) return;
+  if (e.key === 's') { e.preventDefault(); save(); }
+  if (e.key === 'b') { e.preventDefault(); toggleSidebar(); }
+  if (e.key === 'o') { e.preventDefault(); openOpenDialog(); }
+  if (e.key === 'f') {
+    e.preventDefault();
+    // Focus a visible search box; in menus-only layout, open the View menu first
+    // so its (otherwise hidden) Find field can take focus.
+    let s = [...all('.searchInput')].find((i) => i.offsetParent !== null);
+    if (!s) { showMenu($('viewMenu')); s = $('viewMenu').querySelector('.searchInput'); }
+    s?.focus();
+  }
 });
 
 // --- toast -------------------------------------------------------------------

@@ -86,7 +86,7 @@ content underneath is **actually gone** — not just hidden behind a black
 rectangle. (Verified: a redacted page exposes no hidden text or form field.)
 
 ### Scan for hidden content
-**Edit → Scan for hidden content** lists what's lurking in a PDF that you can't
+**Protect → Scan for hidden content** lists what's lurking in a PDF that you can't
 see on the page: auto-run hooks (OpenAction, additional actions), JavaScript,
 risky link/widget actions (launch a program, submit a form, open a URL),
 embedded files, optional-content layers, and metadata. Then remove it three
@@ -150,8 +150,8 @@ There are two ways to exchange the document:
   Signal); they co-sign and send it back. Nothing but the file moves, and the result
   verifies on its own, with no server in between.
 - **Live, over an encrypted channel** — co-sign in real time without passing a file.
-  One person **arms to receive** (File → *Receive a live co-signature…*), the other
-  **dials in** (File → *Co-sign live with a peer…*). The connection is mutually
+  One person **arms to receive** (Certify → *Receive a live co-signature…*), the other
+  **dials in** (Certify → *Co-sign live with a peer…*). The connection is mutually
   authenticated TLS, pinned to each other's identity key: an unpinned peer is dropped
   at the handshake, before any document bytes are exchanged. The receiver reviews the
   exact document and accepts or declines — nothing is signed without that consent —
@@ -212,7 +212,7 @@ one-time setup where you either **use an SSH key you already have** or have Nib
 **create one for you** (at a path you can change — works the same on Linux,
 macOS, and Windows, no key needed up front). That key is what unlocks your
 vault, so keep it safe and back it up. You can authorize or create more keys
-later from **File → Manage authorized keys** (or **More** in the toolbar layout).
+later from **Certify → Manage authorized keys** (or **Certify** in the toolbar layout).
 
 ### Install on Debian / Ubuntu
 ```sh
@@ -238,8 +238,7 @@ on its own.
 At startup Nib asks GitHub for its latest release version; if a newer one exists,
 a pill appears at the top that downloads the build matching your OS and
 architecture (a `.deb` for a package install, otherwise the raw binary). You can
-also trigger it any time from **File → Check for updates…** (or **More** in the
-toolbar layout).
+also trigger it any time from the **⚙ Settings & Help** menu → **Check for updates…**.
 
 This is the only call Nib makes on its own, and it's a **version query — no
 document data, no telemetry**: your documents never leave your computer. Turn the
@@ -294,6 +293,6 @@ Their required copyright and license notices are collected in
 [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md), regenerated with
 `build/gen-notices.sh`.
 
-**File → About Nib…** shows these in-app — a plain-English account of what a Nib
+**⚙ Settings & Help → About Nib…** shows these in-app — a plain-English account of what a Nib
 signature does and doesn't prove, plus the licence and third-party notices read
 straight from the shipped files.
