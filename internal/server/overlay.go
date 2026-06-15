@@ -112,3 +112,38 @@ func (s *Server) handleBake(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/pdf")
 	_, _ = w.Write(out)
 }
+
+// handleFlags embeds (or strips) the document's signing placeholders. A non-empty
+// "flags" form value is stored as the NibFlags property so the saved-for-signing
+// PDF carries its sign/date/initial markers to the recipient in a single file; an
+// absent/empty value strips the property, which the recipient's final save does
+// once the markers are filled (the bake preserves it, so it must go explicitly).
+func (s *Server) handleFlags(w http.ResponseWriter, r *http.Request) {
+	if err := r.ParseMultipartForm(maxPDFBytes); err != nil {
+		httpError(w, http.StatusBadRequest, "could not parse upload")
+		return
+	}
+	pdfBytes, ok := formFileBytes(w, r, "pdf")
+	if !ok {
+		return
+	}
+
+	var out []byte
+	var err error
+	if raw := r.FormValue("flags"); raw != "" {
+		if !json.Valid([]byte(raw)) {
+			httpError(w, http.StatusBadRequest, "invalid flags")
+			return
+		}
+		out, err = pdfops.SetFlags(pdfBytes, []byte(raw))
+	} else {
+		out, err = pdfops.ClearFlags(pdfBytes)
+	}
+	if err != nil {
+		httpError(w, http.StatusInternalServerError, "could not update flags: "+err.Error())
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/pdf")
+	_, _ = w.Write(out)
+}

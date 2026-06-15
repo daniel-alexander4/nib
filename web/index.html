@@ -307,12 +307,13 @@
           <button data-stamp="date" title="Today's date">Date</button>
           <button data-stamp="approved" title="Approved">Approved</button>
         </div>
-        <p class="libhint">Markers — click one, then click the page; click each marker to fill it and jump to the next.</p>
+        <p class="libhint">Signing flags — click one, then click the page to plant a flag. Fill them here, or <b>Save for signing</b> and email the file; the recipient fills the flags.</p>
         <div class="markers">
-          <button data-marker="sign" title="Place a sign-here marker">✍ Sign</button>
-          <button data-marker="date" title="Place a date marker">Date</button>
-          <button data-marker="initial" title="Place an initial marker">Initial</button>
+          <button data-marker="sign" title="Plant a sign-here flag">✍ Sign</button>
+          <button data-marker="date" title="Plant a date flag">Date</button>
+          <button data-marker="initial" title="Plant an initial flag">Initial</button>
         </div>
+        <button id="saveForSigningBtn" title="Embed the flags and save a single file to email">Save for signing…</button>
         <p class="libhint">Click an image to place it on the current page.</p>
         <div id="imageGrid"></div>
         <input id="addImageInput" type="file" accept="image/png,image/jpeg" hidden />
@@ -320,6 +321,10 @@
     </aside>
 
     <div id="viewerWrap">
+      <div id="signBanner" hidden>
+        <span id="signMsg"></span>
+        <button id="signAction" class="primary"></button>
+      </div>
       <div id="viewerContainer">
         <div id="viewer" class="pdfViewer"></div>
       </div>
