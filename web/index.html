@@ -21,20 +21,13 @@
     <div class="menu">
       <button class="menutop">File</button>
       <div class="dropdown">
-        <button id="openMenuItem">Open…</button>
+        <button id="openMenuItem">Open… <span class="shortcut">Ctrl+O</span></button>
         <div class="menucap">Recent</div>
         <div class="recentSlot"></div>
         <div class="sep"></div>
-        <button id="saveBtn" title="Save (overwrites the original)" disabled>Save</button>
+        <button id="saveBtn" title="Save (overwrites the original)" disabled>Save <span class="shortcut">Ctrl+S</span></button>
         <button id="saveFlatBtn">Save flattened PDF</button>
         <button id="saveEditableBtn">Save editable copy</button>
-        <div class="sep"></div>
-        <button id="finalizeBtn">Finalize &amp; sign…</button>
-        <button id="timestampBtn">Timestamp (OpenTimestamps)…</button>
-        <button id="timestampVerifyBtn">Verify a timestamp…</button>
-        <button id="cosignBtn">Co-sign with a peer…</button>
-        <button id="sessionInitBtn">Co-sign live with a peer…</button>
-        <button id="sessionRecvBtn">Receive a live co-signature…</button>
         <div class="menucap">Export</div>
         <button id="exportZipBtn">Pages as images (ZIP)</button>
         <button id="exportPngBtn">Current page (PNG)</button>
@@ -42,14 +35,9 @@
         <button id="exportFormCsvBtn">Form data (CSV)</button>
         <button id="exportCertBtn">Signing certificate</button>
         <div class="sep"></div>
-        <button id="manageKeysBtn">Manage authorized keys…</button>
-        <button id="managePeersBtn">Identity &amp; peers…</button>
         <button id="backupBtn">Back up vault</button>
         <label class="menuitem">Restore vault…
           <input id="restoreInput" type="file" accept=".nib" hidden /></label>
-        <div class="sep"></div>
-        <button id="checkUpdatesBtn">Check for updates…</button>
-        <button id="aboutBtn">About Nib…</button>
       </div>
     </div>
 
@@ -63,19 +51,45 @@
         <button id="editTextBtn" title="Drag a box over text to cover and replace it">Edit text</button>
         <button id="removeOriginalsBtn" title="Flatten edited pages so the original text is removed for good">Remove originals</button>
         <div class="sep"></div>
-        <button id="redactBtn" title="Draw redaction boxes">Redact</button>
-        <button id="applyRedactBtn" title="Permanently redact marked pages">Apply redactions</button>
-        <button id="scanBtn" title="Find and remove hidden code &amp; content">Scan for hidden content…</button>
-        <div class="sep"></div>
         <button id="autofillBtn">Autofill from profile</button>
         <button id="editProfileBtn">Edit autofill profile…</button>
       </div>
     </div>
 
     <div class="menu">
+      <button class="menutop">Protect</button>
+      <div class="dropdown">
+        <button id="redactBtn" title="Draw redaction boxes">Redact</button>
+        <button id="applyRedactBtn" title="Permanently redact marked pages">Apply redactions</button>
+        <div class="sep"></div>
+        <button id="scanBtn" title="Find and remove hidden code &amp; content">Scan for hidden content…</button>
+      </div>
+    </div>
+
+    <!-- Certify = cryptographic trust (signing, timestamps, co-signing, identity).
+         Kept distinct from the Library's visual signature images, which only draw a
+         picture on the page and carry no cryptographic weight. -->
+    <div class="menu">
+      <button class="menutop">Certify</button>
+      <div class="dropdown">
+        <button id="finalizeBtn" title="Add a cryptographic signature (with an optional watermark)">Finalize &amp; sign…</button>
+        <div class="sep"></div>
+        <button id="timestampBtn">Timestamp (OpenTimestamps)…</button>
+        <button id="timestampVerifyBtn">Verify a timestamp…</button>
+        <div class="sep"></div>
+        <button id="cosignBtn">Co-sign with a peer…</button>
+        <button id="sessionInitBtn">Co-sign live with a peer…</button>
+        <button id="sessionRecvBtn">Receive a live co-signature…</button>
+        <div class="sep"></div>
+        <button id="managePeersBtn">Identity &amp; peers…</button>
+        <button id="manageKeysBtn">Manage authorized keys…</button>
+      </div>
+    </div>
+
+    <div class="menu" id="viewMenu">
       <button class="menutop">View</button>
       <div class="dropdown">
-        <button id="toggleSidebarBtn">Hide sidebar</button>
+        <button id="toggleSidebarBtn"><span class="lbl">Hide sidebar</span><span class="shortcut">Ctrl+B</span></button>
         <div class="sep"></div>
         <button id="prevBtn">Previous page</button>
         <button id="nextBtn">Next page</button>
@@ -85,7 +99,7 @@
         <button id="zoomOutBtn">Zoom out</button>
         <button id="fitBtn">Fit width</button>
         <div class="sep"></div>
-        <div class="menuitem idle"><input class="searchInput" type="search" placeholder="Find in document…" /></div>
+        <div class="menuitem idle"><input class="searchInput" type="search" placeholder="Find in document… (Ctrl+F)" /></div>
       </div>
     </div>
 
@@ -94,7 +108,7 @@
          "toolbar" layout, where the menubar is hidden, and back otherwise. -->
     <div id="statusCluster">
       <div class="menu settings">
-        <button class="menutop" title="Settings">⚙</button>
+        <button class="menutop" title="Settings &amp; Help">⚙</button>
         <div class="dropdown dropdown-right">
           <div class="menucap">Layout</div>
           <button class="styleOpt" data-style-val="menus">Menus</button>
@@ -102,6 +116,9 @@
           <button class="styleOpt" data-style-val="both">Both</button>
           <div class="sep"></div>
           <label class="menuitem"><input id="autoUpdateChk" type="checkbox" /> Check for updates on startup</label>
+          <div class="sep"></div>
+          <button id="checkUpdatesBtn">Check for updates…</button>
+          <button id="aboutBtn">About Nib…</button>
         </div>
       </div>
       <span id="updatePill" hidden>
@@ -135,6 +152,9 @@
         <button data-forward="saveBtn">Save</button>
         <button data-forward="saveFlatBtn">Save flattened PDF</button>
         <button data-forward="saveEditableBtn">Save editable copy</button>
+        <div class="sep"></div>
+        <button data-forward="backupBtn">Back up vault</button>
+        <button data-forward="restoreInput">Restore vault…</button>
       </div>
     </div>
 
@@ -150,20 +170,19 @@
     </div>
 
     <div class="menu">
-      <button class="menutop">More</button>
+      <button class="menutop">Certify</button>
       <div class="dropdown">
         <button data-forward="finalizeBtn">Finalize &amp; sign…</button>
+        <div class="sep"></div>
         <button data-forward="timestampBtn">Timestamp (OpenTimestamps)…</button>
         <button data-forward="timestampVerifyBtn">Verify a timestamp…</button>
+        <div class="sep"></div>
         <button data-forward="cosignBtn">Co-sign with a peer…</button>
+        <button data-forward="sessionInitBtn">Co-sign live with a peer…</button>
+        <button data-forward="sessionRecvBtn">Receive a live co-signature…</button>
         <div class="sep"></div>
-        <button data-forward="manageKeysBtn">Manage authorized keys…</button>
         <button data-forward="managePeersBtn">Identity &amp; peers…</button>
-        <button data-forward="backupBtn">Back up vault</button>
-        <button data-forward="restoreInput">Restore vault…</button>
-        <div class="sep"></div>
-        <button data-forward="checkUpdatesBtn">Check for updates…</button>
-        <button data-forward="aboutBtn">About Nib…</button>
+        <button data-forward="manageKeysBtn">Manage authorized keys…</button>
       </div>
     </div>
 
@@ -278,6 +297,7 @@
       </div>
       <div id="outline" class="panel"></div>
       <div id="library" class="panel">
+        <p class="libhint libnote">Visual marks only — a drawn signature, initials or stamp is a picture on the page, not a cryptographic signature. Use <strong>Certify</strong> to sign.</p>
         <div class="libactions">
           <button id="addImageBtn">+ Image</button>
           <button id="drawSigBtn">✎ Signature</button>

@@ -252,6 +252,7 @@ input[type="search"] { width: 100%; }
 .quickstamps button, .markers button { padding: 4px 8px; font-size: 13px; }
 .markers button.active { background: var(--surface1); box-shadow: inset 0 -2px 0 var(--blue); }
 .libhint { color: var(--subtext0); font-size: 11px; margin: 4px 0 8px; }
+.libnote { color: var(--text); font-size: 12px; background: var(--surface0); border-left: 2px solid var(--blue); border-radius: 4px; padding: 8px; }
 #imageGrid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
 .libimg {
   position: relative;
@@ -536,6 +537,9 @@ input.ovl-check { appearance: auto; accent-color: #1a7f37; background: transpare
 .dropdown .menuitem.idle { display: flex; align-items: center; gap: 6px; color: var(--subtext0); cursor: default; }
 .dropdown .menuitem.idle input { width: 56px; }
 .dropdown .sep { height: 1px; background: var(--surface1); margin: 4px 2px; }
+/* keyboard-shortcut hint, pushed to the right edge of a dropdown command */
+.dropdown button { display: flex; align-items: center; }
+.shortcut { margin-left: auto; padding-left: 1.5em; color: var(--subtext0); font-size: 12px; }
 
 /* modal form controls (finalize, profile) */
 .sigcard label { display: flex; flex-direction: column; gap: 4px; font-size: 13px; color: var(--subtext0); }
