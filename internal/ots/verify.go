@@ -3,6 +3,7 @@ package ots
 import (
 	"bytes"
 	"context"
+	"crypto/sha1"
 	"crypto/sha256"
 	"encoding/binary"
 	"encoding/hex"
@@ -17,6 +18,7 @@ import (
 	"time"
 
 	"golang.org/x/crypto/ripemd160"
+	"golang.org/x/crypto/sha3"
 
 	"nib/internal/safe"
 )
@@ -51,17 +53,27 @@ const defaultMinAgree = 2
 var bitcoinMagic = []byte{0x05, 0x88, 0x96, 0x0d, 0x73, 0xd7, 0x19, 0x01}
 
 // op tags we execute. Nib's own proofs (stamped via the standard calendars) take
-// a sha256-only path to Bitcoin, but some third-party proofs hash with ripemd160
-// in their Bitcoin path (e.g. the reference hello-world.txt.ots), so Compute
-// handles append/prepend/sha256/ripemd160. The two remaining spec hash ops —
-// sha1 (0x02) and keccak256 (0x67) — are tolerated by the parser but still
-// rejected by Compute: neither appears in any proof we've seen, and keccak256's
-// hash semantics (legacy Keccak vs NIST SHA3 for tag 0x67) need pinning against
-// the reference before they're safe to add. Tracked in pending.md.
+// a sha256-only path to Bitcoin, but third-party proofs may hash with any of the
+// spec's crypto ops, so compute handles all four — sha256, ripemd160, sha1, and
+// keccak256 — plus append/prepend. keccak256 (tag 0x67) is the *legacy* Keccak-256
+// (Ethereum-style), not NIST SHA3-256, pinned against python-opentimestamps's
+// OpKECCAK256 (Cryptodome keccak, digest_bits=256). These hash ops are size-safe:
+// each output is ≤32 bytes and append/prepend grow only by parsed argument bytes,
+// so a proof can't blow up memory during compute.
+//
+// The parser also tolerates two transform ops, reverse (0xf2) and hexlify (0xf3),
+// that compute deliberately does NOT execute — it returns a clear "unsupported
+// operation" error instead. reverse is pending removal upstream and hexlify is
+// effectively unused; more to the point, hexlify *doubles* its input, so executing
+// it without a message-length cap (as the reference enforces) would let a tiny
+// .ots encode an exponential-size intermediate — a DoS the four hash ops can't
+// cause. If a real proof ever needs hexlify, add it with that bound, not without.
 const (
 	opAppend    = 0xf0
 	opPrepend   = 0xf1
 	opRIPEMD160 = 0x03
+	opSHA1      = 0x02
+	opKeccak256 = 0x67
 )
 
 // VerifyResult is the outcome of checking an .ots proof against a document.
@@ -314,6 +326,13 @@ func (s sequence) compute(digest []byte) ([]byte, error) {
 			cur = h[:]
 		case opRIPEMD160:
 			h := ripemd160.New()
+			h.Write(cur)
+			cur = h.Sum(nil)
+		case opSHA1:
+			h := sha1.Sum(cur)
+			cur = h[:]
+		case opKeccak256:
+			h := sha3.NewLegacyKeccak256() // legacy Keccak, not NIST SHA3-256
 			h.Write(cur)
 			cur = h.Sum(nil)
 		default:

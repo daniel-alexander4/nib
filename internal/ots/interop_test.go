@@ -117,6 +117,40 @@ func TestComputeRIPEMD160(t *testing.T) {
 	}
 }
 
+// TestComputeSHA1 locks the sha1 op against the published FIPS-180 vectors.
+func TestComputeSHA1(t *testing.T) {
+	for _, tc := range []struct{ in, want string }{
+		{"", "da39a3ee5e6b4b0d3255bfef95601890afd80709"},
+		{"abc", "a9993e364706816aba3e25717850c26c9cd0d89d"},
+	} {
+		got, err := (sequence{ops: []op{{tag: opSHA1}}}).compute([]byte(tc.in))
+		if err != nil {
+			t.Fatalf("compute sha1(%q): %v", tc.in, err)
+		}
+		if hex.EncodeToString(got) != tc.want {
+			t.Fatalf("sha1(%q) = %s, want %s", tc.in, hex.EncodeToString(got), tc.want)
+		}
+	}
+}
+
+// TestComputeKeccak256 locks the keccak256 op against the published *legacy*
+// Keccak-256 vector (the Ethereum value), which differs from NIST SHA3-256
+// (sha3("") = a7ffc6f8…434a) — so this fails loudly if the wrong variant is wired.
+func TestComputeKeccak256(t *testing.T) {
+	for _, tc := range []struct{ in, want string }{
+		{"", "c5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470"},
+		{"abc", "4e03657aea45a94fc7d47ba826c8d667c0d1e6e33a64a036ec44f58fa12d6c45"},
+	} {
+		got, err := (sequence{ops: []op{{tag: opKeccak256}}}).compute([]byte(tc.in))
+		if err != nil {
+			t.Fatalf("compute keccak256(%q): %v", tc.in, err)
+		}
+		if hex.EncodeToString(got) != tc.want {
+			t.Fatalf("keccak256(%q) = %s, want %s", tc.in, hex.EncodeToString(got), tc.want)
+		}
+	}
+}
+
 // TestComputeRealRipemd160Proof verifies that compute() now resolves the real,
 // Bitcoin-confirmed helloWorldOTS proof — whose path hashes with ripemd160, the
 // op Nib previously rejected. The expected merkle root is the value compute()
