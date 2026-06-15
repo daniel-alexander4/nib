@@ -77,7 +77,8 @@ const els = {
   introOverlay: $('introOverlay'),
   authSubmit: $('authSubmit'), authError: $('authError'),
   addImageBtn: $('addImageBtn'), drawSigBtn: $('drawSigBtn'), addImageInput: $('addImageInput'),
-  imageGrid: $('imageGrid'),
+  imageGrid: $('imageGrid'), saveForSigningBtn: $('saveForSigningBtn'),
+  signBanner: $('signBanner'), signMsg: $('signMsg'), signAction: $('signAction'),
   sigModal: $('sigModal'), sigCanvas: $('sigCanvas'),
   sigClear: $('sigClear'), sigCancel: $('sigCancel'), sigSave: $('sigSave'),
   sigDetailsBtn: $('sigDetailsBtn'), sigDetailsModal: $('sigDetailsModal'),
@@ -916,6 +917,10 @@ async function setDocumentFromServer(meta) {
   setDocControls(true);
   els.saveBtn.title = meta.canSave ? 'Save (overwrites ' + meta.path + ')' : 'Save a copy (downloads — opened without a local path)';
   updateBadge(meta.signature);
+  // Rebuild any embedded signing flags as markers and offer the signing flow.
+  docHadFlags = Array.isArray(meta.flags) && meta.flags.length > 0;
+  els.signBanner.hidden = true;
+  reconstructFlags(meta.flags);
   // Sidebars are non-essential; a build failure must not break the load.
   buildThumbnails(gen).catch((e) => console.error('thumbnails failed', e));
   buildOutline(gen).catch((e) => console.error('outline failed', e));
@@ -2208,12 +2213,16 @@ let markerMode = null;        // 'sign' | 'date' | 'initial' while armed to plac
 let activeMarker = null;      // the marker highlighted as the current fill target
 let fillTarget = null;        // a sign/initial marker awaiting a Library pick
 let markerSig = null, markerInit = null; // remembered sign/initial fill sources for this session
+let docHadFlags = false;      // the open document arrived with embedded signing flags
+let signTotal = 0;            // flag count when the signing banner appeared, for "X of N"
+let signStarted = false;      // the recipient has hit Start, so the action is now "Next field"
 const MARKER_SIZES = { sign: [0.22, 0.05], date: [0.13, 0.035], initial: [0.07, 0.05] };
 const MARKER_LABELS = { sign: 'Sign', date: 'Date', initial: 'Initial' };
 
 document.querySelectorAll('.markers button').forEach((b) => {
   b.onclick = () => { if (!pdfDocument) return toast('Open a PDF first'); setMarkerMode(markerMode === b.dataset.marker ? null : b.dataset.marker); };
 });
+els.saveForSigningBtn.onclick = () => { if (!pdfDocument) return toast('Open a PDF first'); saveForSigning(); };
 function setMarkerMode(m) {
   markerMode = m;
   if (m) { // one placement tool at a time
@@ -2236,8 +2245,11 @@ els.viewerContainer.addEventListener('pointerdown', (e) => {
   makeMarker(markerMode, [fx, fy, fx + fw, fy + fh], hit);
 });
 
-function makeMarker(type, frac, hit) {
-  const f = { page: hit.n, frac, kind: 'marker', tagType: type };
+// buildMarker creates a marker field + its DOM element and registers it, but does
+// NOT attach it to a page — relayoutOverlays places it once the page renders.
+// This lets reconstructFlags rebuild markers on pages that aren't on screen yet.
+function buildMarker(type, frac, page) {
+  const f = { page, frac, kind: 'marker', tagType: type };
   const el = document.createElement('div');
   el.className = 'ovl ovl-marker';
   el.tabIndex = 0;
@@ -2245,7 +2257,7 @@ function makeMarker(type, frac, hit) {
   label.className = 'marker-label';
   label.textContent = MARKER_LABELS[type];
   const del = document.createElement('button');
-  del.className = 'marker-del'; del.textContent = '×'; del.title = 'Remove marker';
+  del.className = 'marker-del'; del.textContent = '×'; del.title = 'Remove flag';
   del.onclick = (e) => { e.stopPropagation(); removeField(f); };
   el.append(label, del);
   f.el = el;
@@ -2255,7 +2267,12 @@ function makeMarker(type, frac, hit) {
     else if (e.key === 'Delete' || e.key === 'Backspace') removeField(f);
   });
   overlayFields.push(f);
-  hit.pv.div.appendChild(el);
+  return f;
+}
+
+function makeMarker(type, frac, hit) {
+  const f = buildMarker(type, frac, hit.n);
+  hit.pv.div.appendChild(f.el);
   layoutField(f, hit.pv);
   return f;
 }
@@ -2350,16 +2367,122 @@ function nextMarkerAfter(f) {
 }
 
 function advanceTo(m) {
-  if (!m) { setActiveMarker(null); return toast('All markers filled'); }
+  if (!m) { setActiveMarker(null); setSignBanner(); return toast('All fields filled'); }
   setActiveMarker(m);
   m.el.scrollIntoView({ block: 'center', behavior: 'smooth' });
   m.el.focus({ preventScroll: true });
+  setSignBanner();
 }
 
 function setActiveMarker(m) {
   activeMarker?.el?.classList.remove('marker-active');
   activeMarker = m;
   m?.el?.classList.add('marker-active');
+}
+
+// --- signing flags (DocuSign-style place-then-email) -------------------------
+// A preparer drops flags, saves for signing (the flags ride inside the one PDF
+// as the NibFlags property — see internal/pdfops/flags.go), and emails it. The
+// recipient's Nib rebuilds the flags on open and walks them flag-to-flag.
+
+function markerFields() { return overlayFields.filter((f) => f.kind === 'marker'); }
+
+function collectFlags() {
+  return markerFields().map((f) => ({ page: f.page, frac: f.frac, type: f.tagType }));
+}
+
+// embedFlags posts the current document to /api/flags: a non-empty set embeds the
+// placeholders; null strips them. Returns the new bytes.
+async function embedFlags(bytes, flags) {
+  const form = new FormData();
+  form.append('pdf', new Blob([bytes], { type: 'application/pdf' }), 'doc.pdf');
+  if (flags && flags.length) form.append('flags', JSON.stringify(flags));
+  const res = await apiFetch('/api/flags', { method: 'POST', body: form });
+  if (!res.ok) throw new Error('flags update failed');
+  return new Uint8Array(await res.arrayBuffer());
+}
+
+// reconstructFlags rebuilds embedded placeholders as markers on open and shows the
+// signing banner. Coordinates are clamped defensively — a hand-edited property
+// can never place a flag off-page or on a page that doesn't exist.
+function reconstructFlags(flags) {
+  if (!Array.isArray(flags)) return;
+  for (const fl of flags) {
+    if (!fl || !MARKER_LABELS[fl.type] || !Array.isArray(fl.frac) || fl.frac.length !== 4) continue;
+    const page = Math.max(1, Math.min(pdfDocument.numPages, fl.page | 0));
+    const frac = fl.frac.map((n) => Math.max(0, Math.min(1, +n || 0)));
+    buildMarker(fl.type, frac, page);
+  }
+  relayoutOverlays(); // attach flags on already-rendered pages; the rest follow on pagerendered
+  showSignBanner();
+}
+
+function firstMarker() {
+  return markerFields().sort((a, b) => a.page - b.page || a.frac[1] - b.frac[1] || a.frac[0] - b.frac[0])[0] || null;
+}
+
+function showSignBanner() {
+  signTotal = markerFields().length;
+  signStarted = false;
+  if (!signTotal) { els.signBanner.hidden = true; return; }
+  els.signBanner.hidden = false;
+  setSignBanner();
+}
+
+// setSignBanner reflects progress: before the first fill it offers Start; after,
+// it offers Next; once every flag is filled it offers to save the signed file.
+function setSignBanner() {
+  if (els.signBanner.hidden) return;
+  const remaining = markerFields().length;
+  if (!remaining) {
+    els.signMsg.textContent = signTotal ? 'All fields filled.' : 'No fields to fill.';
+    els.signAction.textContent = 'Save signed document';
+    els.signAction.onclick = saveSigned;
+    return;
+  }
+  els.signMsg.textContent = signStarted
+    ? `Field ${signTotal - remaining + 1} of ${signTotal}.`
+    : `This document has ${signTotal} field${signTotal === 1 ? '' : 's'} to fill.`;
+  els.signAction.textContent = signStarted ? 'Next field' : 'Start';
+  els.signAction.onclick = signNext;
+}
+
+function signNext() {
+  signStarted = true;
+  const from = (activeMarker && activeMarker.kind === 'marker') ? activeMarker : null;
+  advanceTo(from ? nextMarkerAfter(from) : firstMarker());
+}
+
+// saveForSigning embeds the placed flags and offers the single emailable file.
+async function saveForSigning() {
+  const flags = collectFlags();
+  if (!flags.length) return toast('Place at least one flag first (Sign / Date / Initial).');
+  els.saveBtn.disabled = true;
+  try {
+    const baked = await bakedBytes();           // bake any non-flag edits; strips a prior flag set
+    const out = await embedFlags(baked, flags); // embed the current flags
+    openSaveAs(new Blob([out], { type: 'application/pdf' }), exportBase() + '-for-signing.pdf', 'Save for signing — email this exact file');
+    toast('Saved for signing. Email this file as-is; printing or re-exporting it elsewhere drops the flags.');
+  } catch (e) {
+    toast('could not prepare the document: ' + e.message);
+  } finally {
+    els.saveBtn.disabled = !pdfDocument;
+  }
+}
+
+// saveSigned bakes the filled flags and offers the finished file. bakedBytes
+// strips the NibFlags property (docHadFlags), so the result won't reopen in
+// signing mode.
+async function saveSigned() {
+  const empty = markerFields().length;
+  if (empty && !confirm(`${empty} field${empty === 1 ? '' : 's'} still empty — save anyway?`)) return;
+  try {
+    const out = await bakedBytes();
+    openSaveAs(new Blob([out], { type: 'application/pdf' }), exportBase() + '-signed.pdf', 'Save signed PDF');
+    els.signBanner.hidden = true;
+  } catch (e) {
+    toast('could not save: ' + e.message);
+  }
 }
 
 // samplePageColors renders the page and reads, within the box, the darkest pixel
@@ -2729,15 +2852,24 @@ async function bakedBytes() {
   const fields = collectFields();
   const stamps = collectStamps();
   const covers = collectCovers();
-  if (!fields.length && !stamps.length && !covers.length) return saved;
-  const form = new FormData();
-  form.append('pdf', new Blob([saved], { type: 'application/pdf' }), 'doc.pdf');
-  if (covers.length) form.append('covers', JSON.stringify(covers));
-  if (fields.length) form.append('fields', JSON.stringify(fields));
-  if (stamps.length) form.append('stamps', JSON.stringify(stamps));
-  const res = await apiFetch('/api/bake', { method: 'POST', body: form });
-  if (!res.ok) { toast('could not apply edits'); return saved; }
-  return new Uint8Array(await res.arrayBuffer());
+  let out = saved;
+  if (fields.length || stamps.length || covers.length) {
+    const form = new FormData();
+    form.append('pdf', new Blob([saved], { type: 'application/pdf' }), 'doc.pdf');
+    if (covers.length) form.append('covers', JSON.stringify(covers));
+    if (fields.length) form.append('fields', JSON.stringify(fields));
+    if (stamps.length) form.append('stamps', JSON.stringify(stamps));
+    const res = await apiFetch('/api/bake', { method: 'POST', body: form });
+    if (!res.ok) { toast('could not apply edits'); return saved; }
+    out = new Uint8Array(await res.arrayBuffer());
+  }
+  // A document opened with embedded signing flags carries the NibFlags property,
+  // which the bake preserves — strip it from any baked output so the finished
+  // file doesn't reopen in signing mode. (Server no-op once it's already gone.)
+  if (docHadFlags) {
+    try { out = await embedFlags(out, null); } catch (e) { console.error('flag strip failed', e); }
+  }
+  return out;
 }
 
 // bakedForm builds the multipart body every endpoint that takes the current
