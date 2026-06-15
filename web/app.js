@@ -2497,7 +2497,10 @@ async function saveSigned() {
   if (empty && !confirm(`${empty} field${empty === 1 ? '' : 's'} still empty — save anyway?`)) return;
   try {
     const out = await bakedBytes();
-    openSaveAs(new Blob([out], { type: 'application/pdf' }), exportBase() + '-signed.pdf', 'Save signed PDF');
+    // Drop the "-for-signing" the preparer's save added, so the finished file is
+    // <doc>.signing.complete.pdf rather than <doc>-for-signing.signing.complete.pdf.
+    const base = exportBase().replace(/-for-signing$/i, '');
+    openSaveAs(new Blob([out], { type: 'application/pdf' }), base + '.signing.complete.pdf', 'Save signed PDF');
     els.signBanner.hidden = true;
   } catch (e) {
     toast('could not save: ' + e.message);
