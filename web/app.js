@@ -78,6 +78,7 @@ const els = {
   authSubmit: $('authSubmit'), authError: $('authError'),
   addImageBtn: $('addImageBtn'), drawSigBtn: $('drawSigBtn'), addImageInput: $('addImageInput'),
   imageGrid: $('imageGrid'), saveForSigningBtn: $('saveForSigningBtn'),
+  signCompleteBtn: $('signCompleteBtn'),
   signBanner: $('signBanner'), signMsg: $('signMsg'), signAction: $('signAction'),
   sigModal: $('sigModal'), sigCanvas: $('sigCanvas'),
   sigClear: $('sigClear'), sigCancel: $('sigCancel'), sigSave: $('sigSave'),
@@ -919,8 +920,10 @@ async function setDocumentFromServer(meta) {
   updateBadge(meta.signature);
   // Rebuild any embedded signing flags as markers and offer the signing flow.
   docHadFlags = Array.isArray(meta.flags) && meta.flags.length > 0;
+  signLocked = docHadFlags; // a received signing document opens locked, non-editable
   els.signBanner.hidden = true;
   reconstructFlags(meta.flags);
+  applySignLock();
   // Sidebars are non-essential; a build failure must not break the load.
   buildThumbnails(gen).catch((e) => console.error('thumbnails failed', e));
   buildOutline(gen).catch((e) => console.error('outline failed', e));
@@ -2229,8 +2232,16 @@ let activeMarker = null;      // the marker highlighted as the current fill targ
 let fillTarget = null;        // a sign/initial marker awaiting a Library pick
 let markerSig = null, markerInit = null; // remembered sign/initial fill sources for this session
 let docHadFlags = false;      // the open document arrived with embedded signing flags
+let signLocked = false;       // "signing marks completed": doc is signing-only, non-editable
 let signTotal = 0;            // flag count when the signing banner appeared, for "X of N"
 let signStarted = false;      // the recipient has hit Start, so the action is now "Next field"
+
+// Two gates govern what can be done to flags. flagsEditable: the preparer may place,
+// drag, and delete flags (only while unlocked). flagsFillable: a flag may be clicked
+// to fill it — true while unlocked (a preparer self-filling a form) and, even when
+// locked, on a received document (the recipient signs but can't reshape the layout).
+function flagsEditable() { return !signLocked; }
+function flagsFillable() { return !signLocked || docHadFlags; }
 const MARKER_SIZES = {
   sign: [0.22, 0.05], date: [0.13, 0.035], initial: [0.07, 0.05],
   name: [0.24, 0.035], title: [0.18, 0.035], company: [0.24, 0.035],
@@ -2250,6 +2261,71 @@ document.querySelectorAll('.markers button').forEach((b) => {
   b.onclick = () => { if (!pdfDocument) return toast('Open a PDF first'); setMarkerMode(markerMode === b.dataset.marker ? null : b.dataset.marker); };
 });
 els.saveForSigningBtn.onclick = () => { if (!pdfDocument) return toast('Open a PDF first'); saveForSigning(); };
+
+// "Signing marks completed" locks the document into signing-only mode: flag
+// placement and every content-editing tool turn off and the placed flags freeze.
+// Toggling it ("Edit marks again") restores editing. A received document (one that
+// arrived with flags) opens locked with no toggle — it is the counterparty's copy
+// and must stay non-editable; see setDocumentFromServer.
+els.signCompleteBtn.onclick = () => {
+  if (!pdfDocument) return;
+  if (!signLocked && !markerFields().length) return toast('Place at least one flag first.');
+  setSignLocked(!signLocked);
+  toast(signLocked
+    ? 'Marks locked — the document is in signing mode and can no longer be edited.'
+    : 'Editing re-enabled — you can change the flags again.');
+};
+
+// The content-editing tools (Edit + Protect menus) that signing mode switches off.
+// Certify (cryptographic signing/timestamp/co-sign), File, and View stay available —
+// they are part of, or orthogonal to, signing the document.
+const EDITING_TOOLS = [
+  'textToolBtn', 'highlightToolBtn', 'drawToolBtn', 'detectBtn',
+  'editTextBtn', 'removeOriginalsBtn', 'autofillBtn',
+  'redactBtn', 'applyRedactBtn', 'scanBtn',
+];
+function setEditingEnabled(on) {
+  for (const id of EDITING_TOOLS) {
+    const b = $(id); if (b) b.disabled = !on;
+    all(`#toolbar [data-forward="${id}"]`).forEach((t) => { t.disabled = !on; });
+  }
+  all('#toolbar [data-mode]').forEach((t) => { t.disabled = !on; }); // Text/Highlight/Draw twins
+}
+
+function setSignLocked(locked) {
+  signLocked = locked;
+  if (locked) { // leaving any active editing tool behind would be a dead, disabled mode
+    setMarkerMode(null);
+    if (redactMode) { redactMode = false; reflectRedact(); els.viewerContainer.style.cursor = ''; }
+    if (editMode) { editMode = false; reflectEdit(); els.viewerContainer.style.cursor = ''; }
+  }
+  applySignLock();
+}
+
+// applySignLock reflects signLocked across the whole UI. Safe to call whenever the
+// lock, the open document, or the flag count changes.
+function applySignLock() {
+  const open = !!pdfDocument;
+  setEditingEnabled(open && !signLocked);
+  els.viewerWrap.classList.toggle('signing-locked', signLocked);
+  reflectSignControls();
+}
+
+// reflectSignControls keeps the Flags-panel controls consistent with the role
+// (preparer vs recipient) and the lock state.
+function reflectSignControls() {
+  const open = !!pdfDocument;
+  const recipient = docHadFlags;            // opened with flags => the counterparty's copy
+  const n = markerFields().length;
+  // A recipient never prepares; a locked preparer can't place until they edit again.
+  all('.markers button').forEach((b) => { b.disabled = !open || recipient || signLocked; });
+  els.saveForSigningBtn.disabled = !open || recipient;
+  els.signCompleteBtn.hidden = !open || recipient;
+  els.signCompleteBtn.disabled = !signLocked && n === 0;
+  els.signCompleteBtn.textContent = signLocked ? 'Edit marks again' : 'Signing marks completed';
+  els.signCompleteBtn.classList.toggle('active', signLocked);
+}
+
 function setMarkerMode(m) {
   markerMode = m;
   if (m) { // one placement tool at a time
@@ -2304,15 +2380,16 @@ function buildMarker(type, frac, page) {
   label.textContent = MARKER_LABELS[type];
   const del = document.createElement('button');
   del.className = 'marker-del'; del.textContent = '×'; del.title = 'Remove flag';
-  del.onclick = (e) => { e.stopPropagation(); removeField(f); };
+  del.onclick = (e) => { e.stopPropagation(); if (flagsEditable()) removeField(f); };
   el.append(label, del);
   f.el = el;
   enableMarkerGestures(f, el);
   el.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') { e.preventDefault(); fillMarker(f); }
-    else if (e.key === 'Delete' || e.key === 'Backspace') removeField(f);
+    if (e.key === 'Enter') { e.preventDefault(); if (flagsFillable()) fillMarker(f); }
+    else if ((e.key === 'Delete' || e.key === 'Backspace') && flagsEditable()) removeField(f);
   });
   overlayFields.push(f);
+  reflectSignControls();
   return f;
 }
 
@@ -2328,19 +2405,23 @@ function removeField(f) {
   overlayFields = overlayFields.filter((o) => o !== f);
   if (activeMarker === f) activeMarker = null;
   if (fillTarget === f) fillTarget = null;
+  reflectSignControls();
 }
 
-// enableMarkerGestures: drag repositions; a click (no drag) fills the marker.
+// enableMarkerGestures: drag repositions; a click (no drag) fills the marker. Both
+// honour the signing-mode gates — a frozen flag (locked preparer copy) ignores the
+// pointer entirely; a received flag fills but can't be dragged.
 function enableMarkerGestures(f, el) {
   let down = null, moved = false;
   el.addEventListener('pointerdown', (e) => {
     if (e.target.closest('.marker-del')) return;
+    if (!flagsFillable() && !flagsEditable()) return; // frozen placeholder
     e.preventDefault(); e.stopPropagation();
     down = { x: e.clientX, y: e.clientY, frac: f.frac.slice() }; moved = false;
     el.setPointerCapture(e.pointerId);
   });
   el.addEventListener('pointermove', (e) => {
-    if (!down) return;
+    if (!down || !flagsEditable()) return; // a recipient signs but can't reshape the layout
     const pv = viewer.getPageView(f.page - 1); if (!pv?.div) return;
     const W = pv.div.clientWidth, H = pv.div.clientHeight;
     if (Math.abs(e.clientX - down.x) + Math.abs(e.clientY - down.y) > 3) moved = true;
@@ -2352,7 +2433,7 @@ function enableMarkerGestures(f, el) {
   el.addEventListener('pointerup', (e) => {
     try { el.releasePointerCapture(e.pointerId); } catch { /* already released */ }
     const wasDown = down; down = null;
-    if (wasDown && !moved) fillMarker(f);
+    if (wasDown && !moved && flagsFillable()) fillMarker(f);
   });
 }
 
@@ -2802,6 +2883,7 @@ function setDocControls(enabled) {
   }
   // The toolbar's Text/Highlight/Draw twins wire by data-mode, not data-forward.
   all('#toolbar [data-mode]').forEach((t) => { t.disabled = !enabled; });
+  reflectSignControls(); // keep the Flags-panel controls in step with open/closed
 }
 setDocControls(false); // nothing open yet
 
