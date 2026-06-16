@@ -2868,6 +2868,11 @@ all('#toolbar [data-forward]').forEach((b) => { b.onclick = () => $(b.dataset.fo
 // toolbar twin) until one loads, so they read as "unavailable" rather than
 // silently doing nothing. Doc-free actions — verify a timestamp, receive a
 // co-signature, identity/peers/keys, the certificate export, About — stay live.
+// Overlay state, declared before setDocControls(false) runs below: that call now
+// reaches reflectSignControls() -> markerFields(), which reads overlayFields, so the
+// binding must already be initialized (a `let` declared later would throw on its TDZ).
+let overlayFields = []; // {page, frac:[fx0,fy0,fx1,fy1], pageW, pageH, kind, el}
+let libraryImages = []; // cached /api/images list (the image-library panel)
 const DOC_REQUIRED = [
   'saveFlatBtn', 'saveEditableBtn',
   'exportZipBtn', 'exportPngBtn', 'exportFormJsonBtn', 'exportFormCsvBtn',
@@ -2901,8 +2906,6 @@ window.addEventListener('drop', (e) => {
 // Each field stores its rectangle as a FRACTION of the page (top-left origin),
 // so display position is just frac * actual page-div size (no scale drift) and
 // the PDF rect for stamping is frac * page dimensions.
-let overlayFields = []; // {page, frac:[fx0,fy0,fx1,fy1], pageW, pageH, kind, el}
-let libraryImages = []; // cached /api/images list (the image-library panel)
 function clearOverlays() {
   overlayFields.forEach((f) => f.el.remove());
   overlayFields = [];
