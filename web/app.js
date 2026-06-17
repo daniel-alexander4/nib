@@ -3432,8 +3432,8 @@ setMode('file');
 // sidebar collapse
 function toggleSidebar() {
   const hidden = $('sidebar').classList.toggle('collapsed');
-  // Update only the label span; the button also carries a .shortcut hint.
-  $('toggleSidebarBtn').querySelector('.lbl').textContent = hidden ? 'Show sidebar' : 'Hide sidebar';
+  // Icon-only button — reflect the state in the tooltip.
+  $('toggleSidebarBtn').title = hidden ? 'Show sidebar' : 'Hide sidebar';
 }
 $('toggleSidebarBtn').onclick = toggleSidebar;
 
