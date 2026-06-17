@@ -741,7 +741,7 @@
 
       <!-- Arm: choose who may connect and where to listen. -->
       <div id="srvArm">
-        <p class="libhint">Wait for a pinned peer to connect and send you a document to co-sign
+        <p id="srvArmHint" class="libhint">Wait for a pinned peer to connect and send you a document to co-sign
           over a live, encrypted channel. You review it and decide before anything is signed.</p>
         <label>Peer allowed to connect
           <select id="srvPeer"></select></label>
@@ -775,7 +775,7 @@
 
       <!-- Consent: a peer connected and sent a document to co-sign. -->
       <div id="srvConsent" hidden>
-        <p class="libhint">A peer connected and sent a document. Review exactly what you'll
+        <p id="srvConsentHint" class="libhint">A peer connected and sent a document. Review exactly what you'll
           co-sign, then accept or decline.</p>
         <div class="consentid">
           <div class="cidlabel">Pinned peer (cryptographically verified)</div>
