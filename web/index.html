@@ -20,8 +20,8 @@
 
     <!-- Mode tabs: the single navigation model. Selecting one swaps the
          contextual toolbar (#toolbar) and the sidebar panels (see setMode).
-         File and the settings gear stay as chrome dropdowns — they're not
-         workspaces. -->
+         File's open/save/export controls live in the View tab; the settings
+         gear is the only chrome dropdown left. -->
     <nav class="modetabs">
       <button class="modetab" data-tab="view">View</button>
       <button class="modetab" data-tab="edit">Edit</button>
@@ -29,29 +29,6 @@
       <button class="modetab" data-tab="secure">Secure</button>
       <button class="modetab" data-tab="collaborate">Collaborate</button>
     </nav>
-
-    <div class="menu">
-      <button class="menutop">File</button>
-      <div class="dropdown">
-        <button id="openMenuItem">Open… <span class="shortcut">Ctrl+O</span></button>
-        <div class="menucap">Recent</div>
-        <div class="recentSlot"></div>
-        <div class="sep"></div>
-        <button id="saveBtn" title="Save (overwrites the original)" disabled>Save <span class="shortcut">Ctrl+S</span></button>
-        <button id="saveFlatBtn">Save flattened PDF</button>
-        <button id="saveEditableBtn">Save editable copy</button>
-        <div class="menucap">Export</div>
-        <button id="exportZipBtn">Pages as images (ZIP)</button>
-        <button id="exportPngBtn">Current page (PNG)</button>
-        <button id="exportFormJsonBtn">Form data (JSON)</button>
-        <button id="exportFormCsvBtn">Form data (CSV)</button>
-        <button id="exportCertBtn">Signing certificate</button>
-        <div class="sep"></div>
-        <button id="backupBtn">Back up vault</button>
-        <label class="menuitem">Restore vault…
-          <input id="restoreInput" type="file" accept=".nib" hidden /></label>
-      </div>
-    </div>
 
     <!-- Always-on chrome: settings/identity gear, update pill, signature badge.
          Pinned to the right edge of the menubar (margin-left:auto). -->
@@ -68,6 +45,10 @@
           <div class="menucap">Identity</div>
           <button id="managePeersBtn">Identity &amp; peers…</button>
           <button id="manageKeysBtn">Manage authorized keys…</button>
+          <div class="menucap">Vault</div>
+          <button id="backupBtn">Back up vault</button>
+          <label class="menuitem">Restore vault…
+            <input id="restoreInput" type="file" accept=".nib" hidden /></label>
           <div class="sep"></div>
           <label class="menuitem"><input id="autoUpdateChk" type="checkbox" /> Check for updates on startup</label>
           <div class="sep"></div>
@@ -92,6 +73,30 @@
   <div id="toolbar">
 
     <div class="tbtab" data-tab="view">
+      <button id="openMenuItem">Open…</button>
+      <div class="menu">
+        <button class="menutop">Recent</button>
+        <div class="dropdown"><div class="recentSlot"></div></div>
+      </div>
+      <button id="saveBtn" title="Save (overwrites the original)" disabled>Save</button>
+      <div class="menu">
+        <button class="menutop">Save as</button>
+        <div class="dropdown">
+          <button id="saveFlatBtn">Save flattened PDF</button>
+          <button id="saveEditableBtn">Save editable copy</button>
+        </div>
+      </div>
+      <div class="menu">
+        <button class="menutop">Export</button>
+        <div class="dropdown">
+          <button id="exportZipBtn">Pages as images (ZIP)</button>
+          <button id="exportPngBtn">Current page (PNG)</button>
+          <button id="exportFormJsonBtn">Form data (JSON)</button>
+          <button id="exportFormCsvBtn">Form data (CSV)</button>
+          <button id="exportCertBtn">Signing certificate</button>
+        </div>
+      </div>
+      <span class="tbsep"></span>
       <button id="toggleSidebarBtn"><span class="lbl">Hide sidebar</span></button>
       <span class="tbsep"></span>
       <button id="prevBtn">Previous</button>
