@@ -62,11 +62,15 @@ every such flag reuses it). Each fill is sized to fit its flag. These place a
 the separate **Finalize & sign** step.
 
 **Send it to someone else to sign** (like DocuSign, without the cloud). Plant the
-flags, click **Save for signing…**, and email the saved file. The flags travel
-*inside* that one PDF — no sidecar to lose — so when the recipient opens it in
-Nib, a banner offers **Start**, walks them flag-to-flag with **Next field**, and
-ends with **Save signed document**. Send the file as-is: printing it or
-re-exporting it through another app strips the flags.
+flags, then click **Signing marks completed** to lock the document: flag placement
+and every editing tool switch off and the flags freeze, so the layout can't drift
+before it goes out (toggle **Edit marks again** if you still need to change it).
+Click **Save for signing…** and email the saved file. The flags travel *inside*
+that one PDF — no sidecar to lose — so when the recipient opens it in Nib it opens
+**locked in signing mode**: they can fill but not edit. A banner offers **Start**,
+walks them flag-to-flag with **Next field**, and ends with **Save signed
+document**. Send the file as-is: printing it or re-exporting it through another app
+strips the flags.
 
 ### Signatures & images, stored securely
 - **Draw your signature** on a pad; it's saved as a clean **transparent PNG**, so
