@@ -10,11 +10,13 @@ import (
 // the UI can save one toggle without resending the others.
 type settingsRequest struct {
 	ToolbarStyle          *string `json:"toolbarStyle"`
+	Appearance            *string `json:"appearance"`
 	CheckUpdatesOnStartup *bool   `json:"checkUpdatesOnStartup"`
 }
 
-// handleSettings persists the user's UI preferences (toolbar layout, auto-update
-// check) into the vault. The current values are read back via /api/status.
+// handleSettings persists the user's UI preferences (toolbar layout, appearance,
+// auto-update check) into the vault. The current values are read back via
+// /api/status.
 func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 	var req settingsRequest
 	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<16)).Decode(&req); err != nil {
@@ -29,6 +31,15 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 			cur.ToolbarStyle = *req.ToolbarStyle
 		default:
 			httpError(w, http.StatusBadRequest, "invalid toolbar style")
+			return
+		}
+	}
+	if req.Appearance != nil {
+		switch *req.Appearance {
+		case "dark", "light":
+			cur.Appearance = *req.Appearance
+		default:
+			httpError(w, http.StatusBadRequest, "invalid appearance")
 			return
 		}
 	}
