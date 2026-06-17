@@ -427,6 +427,11 @@ input[type="search"] { width: 100%; }
   background: var(--yellow); color: var(--crust); border: 1px solid var(--yellow);
 }
 #signBanner #signAction:hover { background: var(--peach); border-color: var(--peach); }
+#signBanner #signDone {
+  padding: 5px 12px; font-weight: 600; border-radius: 4px; cursor: pointer;
+  background: var(--surface1); color: var(--text); border: 1px solid var(--surface2);
+}
+#signBanner #signDone:hover { background: var(--surface2); }
 #saveForSigningBtn { display: block; width: 100%; margin: 6px 0 8px; }
 #signCompleteBtn { display: block; width: 100%; margin: 6px 0; }
 #signCompleteBtn.active { background: var(--surface1); box-shadow: inset 0 -2px 0 var(--green); }

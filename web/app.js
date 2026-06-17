@@ -84,7 +84,7 @@ const els = {
   addImageBtn: $('addImageBtn'), drawSigBtn: $('drawSigBtn'), addImageInput: $('addImageInput'),
   imageGrid: $('imageGrid'), saveForSigningBtn: $('saveForSigningBtn'),
   signCompleteBtn: $('signCompleteBtn'),
-  signBanner: $('signBanner'), signMsg: $('signMsg'), signAction: $('signAction'),
+  signBanner: $('signBanner'), signMsg: $('signMsg'), signAction: $('signAction'), signDone: $('signDone'),
   sigModal: $('sigModal'), sigCanvas: $('sigCanvas'),
   sigClear: $('sigClear'), sigCancel: $('sigCancel'), sigSave: $('sigSave'),
   sigDetailsBtn: $('sigDetailsBtn'), sigDetailsModal: $('sigDetailsModal'),
@@ -2691,7 +2691,10 @@ function showSignBanner() {
 }
 
 // setSignBanner reflects progress: before the first fill it offers Start; after,
-// it offers Next; once every flag is filled it offers to save the signed file.
+// it offers Next; once every flag is filled the primary becomes the complete-and-
+// sign action. A secondary "Finish & sign" stays available the whole time any field
+// is still unfilled, so the user is never stuck — e.g. when they place signatures
+// from the Library (which doesn't consume a flag) or simply leave a field blank.
 function setSignBanner() {
   if (els.signBanner.hidden) return;
   const remaining = markerFields().length;
@@ -2699,6 +2702,7 @@ function setSignBanner() {
     els.signMsg.textContent = signTotal ? 'All fields filled.' : 'No fields to fill.';
     els.signAction.textContent = 'Mark complete & sign';
     els.signAction.onclick = completeAndSign;
+    els.signDone.hidden = true;
     return;
   }
   els.signMsg.textContent = signStarted
@@ -2706,6 +2710,8 @@ function setSignBanner() {
     : `This document has ${signTotal} field${signTotal === 1 ? '' : 's'} to fill.`;
   els.signAction.textContent = signStarted ? 'Next field' : 'Start';
   els.signAction.onclick = signNext;
+  els.signDone.hidden = false;
+  els.signDone.onclick = completeAndSign;
 }
 
 function signNext() {
@@ -2739,7 +2745,7 @@ async function saveForSigning() {
 async function completeAndSign() {
   const empty = markerFields().length;
   if (empty && !confirm(`${empty} field${empty === 1 ? '' : 's'} still empty — complete and sign anyway?`)) return;
-  els.signAction.disabled = true;
+  els.signAction.disabled = true; els.signDone.disabled = true;
   try {
     const form = await bakedForm(); // baked, flag-stripped bytes as the "pdf" part
     form.append('params', JSON.stringify({ reason: 'Signed in Nib', watermark: { text: '' }, tsaUrl: '' }));
@@ -2753,7 +2759,7 @@ async function completeAndSign() {
   } catch (e) {
     toast('could not complete: ' + e.message);
   } finally {
-    els.signAction.disabled = false;
+    els.signAction.disabled = false; els.signDone.disabled = false;
   }
 }
 
