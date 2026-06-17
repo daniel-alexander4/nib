@@ -14,16 +14,16 @@
   <link rel="stylesheet" href="./vendor/pdfjs/pdf_viewer.css" />
   <link rel="stylesheet" href="./style.css" />
 </head>
-<body data-tab="view" data-role="originate">
+<body data-tab="file" data-role="originate">
   <header id="menubar">
     <img class="brand" src="./nib.svg" alt="Nib" />
 
     <!-- Mode tabs: the single navigation model. Selecting one swaps the
          contextual toolbar (#toolbar) and the sidebar panels (see setMode).
-         File's open/save/export controls live in the View tab; the settings
-         gear is the only chrome dropdown left. -->
+         the File tab carries open/save/export plus page navigation; the
+         settings gear is the only chrome dropdown left. -->
     <nav class="modetabs">
-      <button class="modetab" data-tab="view">View</button>
+      <button class="modetab" data-tab="file">File</button>
       <button class="modetab" data-tab="edit">Edit</button>
       <button class="modetab" data-tab="sign">Sign</button>
       <button class="modetab" data-tab="secure">Secure</button>
@@ -72,7 +72,7 @@
        living in another tab (or the File/⚙ menu). -->
   <div id="toolbar">
 
-    <div class="tbtab" data-tab="view">
+    <div class="tbtab" data-tab="file">
       <button id="openMenuItem">Open…</button>
       <div class="menu">
         <button class="menutop">Recent</button>
