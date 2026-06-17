@@ -70,8 +70,10 @@ that one PDF — no sidecar to lose — so when the recipient opens it in Nib it
 **locked in signing mode**: they can fill but not edit. A banner offers **Start**,
 walks them flag-to-flag with **Next field**, and ends with **Mark complete &
 sign** — one step that flattens the filled document and applies the recipient's
-own tamper-evident certification signature, saved as `<doc>.signed.pdf`. Send the
-file as-is: printing it or re-exporting it through another app strips the flags.
+own tamper-evident certification signature, saved as `<doc>.signed.pdf`. A
+**Finish & sign** button stays available the whole time, so they can complete
+even if they filled a flag from the Library or left one blank. Send the file
+as-is: printing it or re-exporting it through another app strips the flags.
 
 **Skip email entirely — send it Nib-to-Nib.** Instead of mailing the file,
 **Certify → Send a document to a peer…** hands it straight to a pinned peer over
