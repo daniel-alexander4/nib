@@ -120,13 +120,23 @@ body { display: flex; flex-direction: column; }
 /* One workspace's controls per .tbtab; setMode shows only the active one. */
 #toolbar .tbtab { display: none; align-items: center; flex-wrap: wrap; gap: 4px; row-gap: 3px; }
 #toolbar .tbtab.active { display: flex; }
-#toolbar button {
+/* Flat toolbar controls (direct children of a tab or a role group). The >
+   combinator keeps dropdown items out, so they keep their .dropdown styling. */
+#toolbar .tbtab > button, #toolbar .roletools > button {
   background: transparent; border: 1px solid transparent; border-radius: 6px;
   padding: 5px 9px; color: var(--subtext0); font: inherit; cursor: pointer;
 }
-#toolbar button:hover { background: var(--surface0); color: var(--text); }
-#toolbar button:disabled { opacity: 0.5; cursor: not-allowed; background: transparent; }
-#toolbar button.active { color: var(--blue); background: var(--surface1); box-shadow: inset 0 -2px 0 var(--blue); }
+#toolbar .tbtab > button:hover, #toolbar .roletools > button:hover { background: var(--surface0); color: var(--text); }
+#toolbar .tbtab > button:disabled, #toolbar .roletools > button:disabled { opacity: 0.5; cursor: not-allowed; background: transparent; }
+#toolbar .tbtab > button.active, #toolbar .roletools > button.active { color: var(--blue); background: var(--surface1); box-shadow: inset 0 -2px 0 var(--blue); }
+#toolbar #saveBtn { color: var(--blue); font-weight: 600; }
+/* Dropdown triggers in the toolbar (Recent / Save as / Export under View). */
+#toolbar .menutop {
+  background: transparent; border: 1px solid transparent; border-radius: 6px;
+  padding: 5px 9px; color: var(--subtext0); font: inherit; cursor: pointer;
+}
+#toolbar .menutop:hover, #toolbar .menu.open .menutop { background: var(--surface0); color: var(--text); }
+#toolbar .menutop::after { content: "▾"; margin-left: 5px; opacity: 0.6; font-size: 11px; }
 #toolbar .tbsep { width: 1px; align-self: stretch; background: var(--surface1); margin: 3px 6px; }
 /* Originator / receiver segmented toggle (Collaborate tab). */
 .roletoggle { display: inline-flex; border: 1px solid var(--surface1); border-radius: 6px; overflow: hidden; }
