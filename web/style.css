@@ -117,6 +117,15 @@ body { display: flex; flex-direction: column; }
   background: var(--mantle);
   border-bottom: 1px solid var(--crust);
 }
+/* Persistent icon-only sidebar toggle — first control, shown for every tab. */
+#toolbar .tbtoggle {
+  background: transparent; border: 1px solid transparent; border-radius: 6px;
+  padding: 5px; color: var(--subtext0); cursor: pointer;
+  display: inline-flex; align-items: center; justify-content: center;
+}
+#toolbar .tbtoggle:hover { background: var(--surface0); color: var(--text); }
+#toolbar .tbtoggle svg { width: 18px; height: 18px; display: block; }
+
 /* One workspace's controls per .tbtab; setMode shows only the active one. */
 #toolbar .tbtab { display: none; align-items: center; flex-wrap: wrap; gap: 4px; row-gap: 3px; }
 #toolbar .tbtab.active { display: flex; }
