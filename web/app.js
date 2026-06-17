@@ -65,7 +65,8 @@ const els = {
   ssnPeer: $('ssnPeer'), ssnNoPeers: $('ssnNoPeers'), ssnAddr: $('ssnAddr'),
   ssnProgress: $('ssnProgress'), ssnCancel: $('ssnCancel'), ssnGo: $('ssnGo'),
   sessionRecvBtn: $('sessionRecvBtn'), sessionRecvDocBtn: $('sessionRecvDocBtn'), sessionRecvModal: $('sessionRecvModal'),
-  srvTitle: $('srvTitle'), srvArm: $('srvArm'), srvWait: $('srvWait'), srvConsent: $('srvConsent'),
+  srvTitle: $('srvTitle'), srvArmHint: $('srvArmHint'), srvConsentHint: $('srvConsentHint'),
+  srvArm: $('srvArm'), srvWait: $('srvWait'), srvConsent: $('srvConsent'),
   srvPeer: $('srvPeer'), srvNoPeers: $('srvNoPeers'), srvBind: $('srvBind'),
   srvSelfFp: $('srvSelfFp'), srvSelfCopy: $('srvSelfCopy'),
   srvCancel: $('srvCancel'), srvArmGo: $('srvArmGo'),
@@ -638,6 +639,12 @@ async function openSessionRecv(mode) {
   els.srvIntentRow.hidden = receive; // a plain transfer needs no agreement statement
   els.srvReasonCap.textContent = receive ? 'What they’re sending' : 'Their signed statement';
   els.srvAccept.textContent = receive ? 'Accept & save' : 'Accept & co-sign';
+  els.srvArmHint.textContent = receive
+    ? 'Wait for a pinned peer to connect and send you a document over a live, encrypted channel. You review it and decide before it’s saved into ~/nib.'
+    : 'Wait for a pinned peer to connect and send you a document to co-sign over a live, encrypted channel. You review it and decide before anything is signed.';
+  els.srvConsentHint.textContent = receive
+    ? 'A peer connected and sent a document. Review exactly what you’ll keep, then accept to save it or decline.'
+    : 'A peer connected and sent a document. Review exactly what you’ll co-sign, then accept or decline.';
   const res = await apiFetch('/api/peers');
   if (!res.ok) { toast('could not load peers'); return; }
   const data = await res.json();
