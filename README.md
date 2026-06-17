@@ -76,7 +76,7 @@ even if they filled a flag from the Library or left one blank. Send the file
 as-is: printing it or re-exporting it through another app strips the flags.
 
 **Skip email entirely — send it Nib-to-Nib.** Instead of mailing the file,
-**Certify → Send a document to a peer…** hands it straight to a pinned peer over
+**Collaborate → Originate → Send a document to a peer…** hands it straight to a pinned peer over
 the same encrypted, no-cloud channel co-signing uses (both of you online; they
 pick **Receive a document…** first). Received files save into `~/nib` — a flagged
 document waiting for you under `to-sign/`, a finished signature under `signed/` —
@@ -113,7 +113,7 @@ content underneath is **actually gone** — not just hidden behind a black
 rectangle. (Verified: a redacted page exposes no hidden text or form field.)
 
 ### Scan for hidden content
-**Protect → Scan for hidden content** lists what's lurking in a PDF that you can't
+**Secure → Scan for hidden content** lists what's lurking in a PDF that you can't
 see on the page: auto-run hooks (OpenAction, additional actions), JavaScript,
 risky link/widget actions (launch a program, submit a form, open a URL),
 embedded files, optional-content layers, and metadata. Then remove it three
@@ -177,8 +177,8 @@ There are two ways to exchange the document:
   Signal); they co-sign and send it back. Nothing but the file moves, and the result
   verifies on its own, with no server in between.
 - **Live, over an encrypted channel** — co-sign in real time without passing a file.
-  One person **arms to receive** (Certify → *Receive a live co-signature…*), the other
-  **dials in** (Certify → *Co-sign live with a peer…*). The connection is mutually
+  One person **arms to receive** (Collaborate → Receive → *Receive a live co-signature…*), the other
+  **dials in** (Collaborate → Originate → *Co-sign live with a peer…*). The connection is mutually
   authenticated TLS, pinned to each other's identity key: an unpinned peer is dropped
   at the handshake, before any document bytes are exchanged. The receiver reviews the
   exact document and accepts or declines — nothing is signed without that consent —
@@ -244,7 +244,7 @@ one-time setup where you either **use an SSH key you already have** or have Nib
 **create one for you** (at a path you can change — works the same on Linux,
 macOS, and Windows, no key needed up front). That key is what unlocks your
 vault, so keep it safe and back it up. You can authorize or create more keys
-later from **Certify → Manage authorized keys** (or **Certify** in the toolbar layout).
+later from the **⚙ menu → Manage authorized keys…**.
 
 ### Install on Debian / Ubuntu
 ```sh

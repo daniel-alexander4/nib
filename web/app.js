@@ -167,9 +167,8 @@ function applyStatus(st) {
     csrf = st.csrf;
     els.authOverlay.hidden = true;
     loadImages();
-    // Apply saved preferences: theme, the toolbar layout, and the auto-update toggle.
+    // Apply saved preferences: theme and the auto-update toggle.
     applyAppearance(st.appearance || 'dark');
-    applyStyle(st.toolbarStyle || 'menus');
     els.autoUpdateChk.checked = st.autoUpdate;
     els.autoUpdateChk.disabled = st.updateCheckLocked;
     els.autoUpdateChk.parentElement.title = st.updateCheckLocked ? 'Forced off by NIB_NO_UPDATE_CHECK' : '';
@@ -2923,14 +2922,6 @@ for (const bar of [els.menubar, els.toolbar]) {
 document.addEventListener('click', (e) => { if (!e.target.closest('.menu')) closeMenu(); });
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeMenu(); });
 
-// Settings: the layout style (menus / toolbar / both) drives a body attribute the
-// CSS keys off; the saved value is applied in applyStatus and persisted on change.
-function applyStyle(style) {
-  document.body.dataset.style = style;
-  all('.styleOpt').forEach((b) => b.classList.toggle('active', b.dataset.styleVal === style));
-  // Toolbar mode hides the menubar, so the always-on chrome rides on the toolbar.
-  (style === 'toolbar' ? els.toolbar : els.menubar).appendChild(els.statusCluster);
-}
 async function saveSettings(body) {
   try {
     const res = await apiFetch('/api/settings', {
@@ -2939,9 +2930,6 @@ async function saveSettings(body) {
     if (!res.ok) toast('Could not save settings');
   } catch { toast('Could not save settings'); }
 }
-all('.styleOpt').forEach((b) => {
-  b.onclick = () => { applyStyle(b.dataset.styleVal); saveSettings({ toolbarStyle: b.dataset.styleVal }); };
-});
 els.autoUpdateChk.onchange = () => saveSettings({ checkUpdatesOnStartup: els.autoUpdateChk.checked });
 
 // Appearance: dark (default) or light. Drives a data attribute on <html> (not
@@ -3402,6 +3390,45 @@ document.querySelectorAll('.tab').forEach((tab) => {
   };
 });
 
+// --- mode tabs (View / Edit / Sign / Secure / Collaborate) -------------------
+// The single navigation model: each tab is a workspace. Selecting one swaps the
+// contextual toolbar (#toolbar .tbtab) and which sidebar panels are available.
+const SIDEBAR_FOR = {
+  view: ['thumbs', 'outline'],
+  edit: ['thumbs'],
+  sign: ['library'],
+  secure: ['thumbs'],
+  collaborate: ['flags'],
+};
+function syncSidebarForMode(tab) {
+  const panels = SIDEBAR_FOR[tab] || [];
+  all('.tabs .tab').forEach((t) => { t.hidden = !panels.includes(t.dataset.panel); });
+  // If the showing panel isn't valid for this mode, switch to the mode's first.
+  const active = document.querySelector('.tabs .tab.active');
+  if ((!active || active.hidden) && panels.length) {
+    document.querySelector(`.tabs .tab[data-panel="${panels[0]}"]`)?.click();
+  }
+}
+function setMode(tab) {
+  document.body.dataset.tab = tab;
+  all('.modetab').forEach((b) => b.classList.toggle('active', b.dataset.tab === tab));
+  all('#toolbar .tbtab').forEach((g) => g.classList.toggle('active', g.dataset.tab === tab));
+  syncSidebarForMode(tab);
+}
+all('.modetab').forEach((b) => { b.onclick = () => setMode(b.dataset.tab); });
+
+// Collaborate sub-mode: originate (own the document — prepare it, send it, await
+// its return) vs receive (sign what arrives and send it back). Swaps the tools.
+function setRole(role) {
+  document.body.dataset.role = role;
+  all('.roleopt').forEach((b) => b.classList.toggle('active', b.dataset.role === role));
+  all('.roletools').forEach((g) => g.classList.toggle('active', g.dataset.role === role));
+}
+all('.roleopt').forEach((b) => { b.onclick = () => setRole(b.dataset.role); });
+
+setRole('originate');
+setMode('view');
+
 // sidebar collapse
 function toggleSidebar() {
   const hidden = $('sidebar').classList.toggle('collapsed');
@@ -3418,11 +3445,9 @@ window.addEventListener('keydown', (e) => {
   if (e.key === 'o') { e.preventDefault(); openOpenDialog(); }
   if (e.key === 'f') {
     e.preventDefault();
-    // Focus a visible search box; in menus-only layout, open the View menu first
-    // so its (otherwise hidden) Find field can take focus.
-    let s = [...all('.searchInput')].find((i) => i.offsetParent !== null);
-    if (!s) { showMenu($('viewMenu')); s = $('viewMenu').querySelector('.searchInput'); }
-    s?.focus();
+    // The find box lives in the View tab's toolbar — switch there, then focus it.
+    setMode('view');
+    document.querySelector('.searchInput')?.focus();
   }
 });
 
