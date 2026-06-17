@@ -2593,8 +2593,8 @@ function setSignBanner() {
   const remaining = markerFields().length;
   if (!remaining) {
     els.signMsg.textContent = signTotal ? 'All fields filled.' : 'No fields to fill.';
-    els.signAction.textContent = 'Save signed document';
-    els.signAction.onclick = saveSigned;
+    els.signAction.textContent = 'Mark complete & sign';
+    els.signAction.onclick = completeAndSign;
     return;
   }
   els.signMsg.textContent = signStarted
@@ -2627,21 +2627,29 @@ async function saveForSigning() {
   }
 }
 
-// saveSigned bakes the filled flags and offers the finished file. bakedBytes
-// strips the NibFlags property (docHadFlags), so the result won't reopen in
-// signing mode.
-async function saveSigned() {
+// completeAndSign ends the recipient's signing flow in one step: it bakes the
+// filled flags (bakedBytes strips the NibFlags property so the file won't reopen
+// in signing mode), then applies a tamper-evident certification signature via the
+// same /api/finalize path Finalize & sign uses. The baked-then-signed file is
+// flat and frozen — any later edit breaks the signature.
+async function completeAndSign() {
   const empty = markerFields().length;
-  if (empty && !confirm(`${empty} field${empty === 1 ? '' : 's'} still empty — save anyway?`)) return;
+  if (empty && !confirm(`${empty} field${empty === 1 ? '' : 's'} still empty — complete and sign anyway?`)) return;
+  els.signAction.disabled = true;
   try {
-    const out = await bakedBytes();
-    // Drop the "-for-signing" the preparer's save added, so the finished file is
-    // <doc>.signing.complete.pdf rather than <doc>-for-signing.signing.complete.pdf.
+    const form = await bakedForm(); // baked, flag-stripped bytes as the "pdf" part
+    form.append('params', JSON.stringify({ reason: 'Signed in Nib', watermark: { text: '' }, tsaUrl: '' }));
+    const res = await apiFetch('/api/finalize', { method: 'POST', body: form });
+    if (!res.ok) { toast('Could not complete and sign'); return; }
+    // Drop the "-for-signing" the preparer's save added, so the file lands as
+    // <doc>.signed.pdf rather than <doc>-for-signing.signed.pdf.
     const base = exportBase().replace(/-for-signing$/i, '');
-    openSaveAs(new Blob([out], { type: 'application/pdf' }), base + '.signing.complete.pdf', 'Save signed PDF');
+    openSaveAs(await res.blob(), base + '.signed.pdf', 'Save completed & signed PDF');
     els.signBanner.hidden = true;
   } catch (e) {
-    toast('could not save: ' + e.message);
+    toast('could not complete: ' + e.message);
+  } finally {
+    els.signAction.disabled = false;
   }
 }
 

@@ -68,9 +68,10 @@ before it goes out (toggle **Edit marks again** if you still need to change it).
 Click **Save for signing…** and email the saved file. The flags travel *inside*
 that one PDF — no sidecar to lose — so when the recipient opens it in Nib it opens
 **locked in signing mode**: they can fill but not edit. A banner offers **Start**,
-walks them flag-to-flag with **Next field**, and ends with **Save signed
-document**. Send the file as-is: printing it or re-exporting it through another app
-strips the flags.
+walks them flag-to-flag with **Next field**, and ends with **Mark complete &
+sign** — one step that flattens the filled document and applies the recipient's
+own tamper-evident certification signature, saved as `<doc>.signed.pdf`. Send the
+file as-is: printing it or re-exporting it through another app strips the flags.
 
 ### Signatures & images, stored securely
 - **Draw your signature** on a pad; it's saved as a clean **transparent PNG**, so
