@@ -277,7 +277,7 @@ input[type="search"] { width: 100%; }
 
 /* signature draw modal */
 #sigModal, #saveAsModal, #openModal, #keysModal, #bgModal, #aboutModal, #sigDetailsModal,
-#sessionRecvModal, #sessionInitModal {
+#sessionRecvModal, #sessionInitModal, #sessionSendModal {
   position: fixed; inset: 0; z-index: 110;
   background: rgba(17, 17, 27, 0.7);
   display: flex; align-items: center; justify-content: center;

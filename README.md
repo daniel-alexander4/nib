@@ -73,6 +73,15 @@ sign** — one step that flattens the filled document and applies the recipient'
 own tamper-evident certification signature, saved as `<doc>.signed.pdf`. Send the
 file as-is: printing it or re-exporting it through another app strips the flags.
 
+**Skip email entirely — send it Nib-to-Nib.** Instead of mailing the file,
+**Certify → Send a document to a peer…** hands it straight to a pinned peer over
+the same encrypted, no-cloud channel co-signing uses (both of you online; they
+pick **Receive a document…** first). Received files save into `~/nib` — a flagged
+document waiting for you under `to-sign/`, a finished signature under `signed/` —
+so the round trip is: you send the flagged file, they fill and **Mark complete &
+sign**, they send it back, and the signed copy lands in your `~/nib/signed/`. Each
+hop needs both peers online; nothing is stored on a server in between.
+
 ### Signatures & images, stored securely
 - **Draw your signature** on a pad; it's saved as a clean **transparent PNG**, so
   it sits *on* the line instead of inside a white box.

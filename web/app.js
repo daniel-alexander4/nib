@@ -61,14 +61,18 @@ const els = {
   sinPeer: $('sinPeer'), sinNoPeers: $('sinNoPeers'), sinAddr: $('sinAddr'),
   sinIntent: $('sinIntent'), sinProgress: $('sinProgress'),
   sinCancel: $('sinCancel'), sinGo: $('sinGo'),
-  sessionRecvBtn: $('sessionRecvBtn'), sessionRecvModal: $('sessionRecvModal'),
-  srvArm: $('srvArm'), srvWait: $('srvWait'), srvConsent: $('srvConsent'),
+  sessionSendBtn: $('sessionSendBtn'), sessionSendModal: $('sessionSendModal'),
+  ssnPeer: $('ssnPeer'), ssnNoPeers: $('ssnNoPeers'), ssnAddr: $('ssnAddr'),
+  ssnProgress: $('ssnProgress'), ssnCancel: $('ssnCancel'), ssnGo: $('ssnGo'),
+  sessionRecvBtn: $('sessionRecvBtn'), sessionRecvDocBtn: $('sessionRecvDocBtn'), sessionRecvModal: $('sessionRecvModal'),
+  srvTitle: $('srvTitle'), srvArm: $('srvArm'), srvWait: $('srvWait'), srvConsent: $('srvConsent'),
   srvPeer: $('srvPeer'), srvNoPeers: $('srvNoPeers'), srvBind: $('srvBind'),
   srvSelfFp: $('srvSelfFp'), srvSelfCopy: $('srvSelfCopy'),
   srvCancel: $('srvCancel'), srvArmGo: $('srvArmGo'),
   srvWaitAddr: $('srvWaitAddr'), srvWaitPeer: $('srvWaitPeer'), srvDisarm: $('srvDisarm'),
   srvPeerLabel: $('srvPeerLabel'), srvPeerFp: $('srvPeerFp'), srvPeerCopy: $('srvPeerCopy'),
-  srvPeerReason: $('srvPeerReason'), srvPreview: $('srvPreview'), srvIntent: $('srvIntent'),
+  srvReasonCap: $('srvReasonCap'), srvPeerReason: $('srvPeerReason'), srvPreview: $('srvPreview'),
+  srvIntentRow: $('srvIntentRow'), srvIntent: $('srvIntent'),
   srvDecline: $('srvDecline'), srvAccept: $('srvAccept'),
   authOverlay: $('authOverlay'), authForm: $('authForm'), authTitle: $('authTitle'),
   authHint: $('authHint'), authPw: $('authPw'), migrateRow: $('migrateRow'),
@@ -613,6 +617,7 @@ els.sinGo.onclick = sessionInit;
 // is one-shot: it tears down after a single accept, decline, or timeout.
 let recvPoll = 0; // token; bump to invalidate any in-flight poll or preview render
 let recvStage = 'arm'; // arm | wait | consent | applying | declining
+let recvMode = 'cosign'; // cosign | receive — receive saves a one-way transfer, no signing
 let recvArmedLabel = ''; // the pinned label of the peer we armed for
 let recvPeerFp = ''; // the connecting peer's verified fingerprint, for the Copy button
 
@@ -622,7 +627,17 @@ function showRecvView(which) {
   els.srvConsent.hidden = which !== 'srvConsent';
 }
 
-async function openSessionRecv() {
+// openSessionRecv arms the receive modal in one of two modes: 'cosign' (review and
+// co-sign a peer's document) or 'receive' (accept a one-way transfer and save it to
+// ~/nib). The two share the arm/wait/consent machinery; only the consent chrome and
+// the accept action differ.
+async function openSessionRecv(mode) {
+  recvMode = mode === 'receive' ? 'receive' : 'cosign';
+  const receive = recvMode === 'receive';
+  els.srvTitle.textContent = receive ? 'Receive a document' : 'Receive a live co-signature';
+  els.srvIntentRow.hidden = receive; // a plain transfer needs no agreement statement
+  els.srvReasonCap.textContent = receive ? 'What they’re sending' : 'Their signed statement';
+  els.srvAccept.textContent = receive ? 'Accept & save' : 'Accept & co-sign';
   const res = await apiFetch('/api/peers');
   if (!res.ok) { toast('could not load peers'); return; }
   const data = await res.json();
@@ -656,7 +671,7 @@ async function armRecv() {
   els.srvArmGo.disabled = true;
   const res = await apiFetch('/api/session/arm', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ fingerprint: opt.value, bind }),
+    body: JSON.stringify({ fingerprint: opt.value, bind, mode: recvMode }),
   });
   els.srvArmGo.disabled = false;
   if (!res.ok) { toast((await res.json()).error || 'could not arm'); return; }
@@ -682,7 +697,9 @@ async function pollRecv(token) {
     recvStage = 'consent';
     showConsent(st.pending);
   } else if (!st.armed) {
-    if (recvStage === 'applying') { await reloadOpenDoc(); toast('Co-signed — document updated'); }
+    if (recvStage === 'applying' && recvMode === 'receive') {
+      toast(st.received ? 'Saved ' + st.received.path : 'Document received');
+    } else if (recvStage === 'applying') { await reloadOpenDoc(); toast('Co-signed — document updated'); }
     else if (recvStage === 'wait') toast('Session ended — no peer connected');
     else if (recvStage === 'consent') toast('Session timed out');
     endRecv();
@@ -723,6 +740,21 @@ async function loadPendingPreview(token) {
 
 async function acceptRecv() {
   els.srvAccept.disabled = true; els.srvDecline.disabled = true;
+  // A one-way transfer is just consent to keep the file — no signing, no appearance.
+  if (recvMode === 'receive') {
+    const res = await apiFetch('/api/session/respond', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ accept: true }),
+    });
+    if (!res.ok) {
+      els.srvAccept.disabled = false; els.srvDecline.disabled = false;
+      toast((await res.json()).error || 'could not accept');
+      return;
+    }
+    recvStage = 'applying';
+    toast('Saving…');
+    return; // pollRecv detects the disarm and reports where it landed
+  }
   const intent = els.srvIntent.value;
   // The responder's visible block is placed server-side; the quote gives only the
   // canonical lines, so the rendered image can't drift from the signed /Reason.
@@ -795,7 +827,8 @@ function blobToBase64(blob) {
   });
 }
 
-els.sessionRecvBtn.onclick = openSessionRecv;
+els.sessionRecvBtn.onclick = () => openSessionRecv('cosign');
+els.sessionRecvDocBtn.onclick = () => openSessionRecv('receive');
 els.srvCancel.onclick = cancelRecv;
 els.srvDisarm.onclick = cancelRecv;
 els.srvArmGo.onclick = armRecv;
@@ -803,6 +836,70 @@ els.srvAccept.onclick = acceptRecv;
 els.srvDecline.onclick = declineRecv;
 els.srvSelfCopy.onclick = () => copyFp(selfFingerprint);
 els.srvPeerCopy.onclick = () => copyFp(recvPeerFp);
+
+// --- send a document to a peer (one-way transfer) ----------------------------
+// Hand the open document to a pinned, armed peer over the live channel — they
+// review and keep it. Replaces emailing the for-signing or signed file. The
+// document goes out as the same bytes a save would: baked, with the placed flags
+// embedded when there are any (so a flagged file opens in signing mode for them).
+async function openSessionSend() {
+  if (!pdfDocument) { toast('Open a PDF first'); return; }
+  const res = await apiFetch('/api/peers');
+  if (!res.ok) { toast('could not load peers'); return; }
+  const data = await res.json();
+  const peers = data.peers || [];
+  els.ssnPeer.innerHTML = '';
+  for (const p of peers) {
+    const o = document.createElement('option');
+    o.value = p.fingerprint;
+    o.textContent = (p.label || 'Unlabelled peer') + ' — ' + groupFingerprint(p.fingerprint.slice(0, 8)) + '…';
+    els.ssnPeer.append(o);
+  }
+  const none = peers.length === 0;
+  els.ssnNoPeers.hidden = !none;
+  els.ssnPeer.hidden = none;
+  els.ssnGo.disabled = none;
+  els.ssnProgress.hidden = true;
+  els.sessionSendModal.hidden = false;
+}
+
+// sendableForm is the body /api/session/send expects: the baked document, with the
+// currently-placed flags embedded when any markers exist — the same hand-off bytes
+// "Save for signing…" produces, routed to a peer instead of a file.
+async function sendableForm() {
+  let bytes = await bakedBytes();
+  const flags = collectFlags();
+  if (flags.length) bytes = await embedFlags(bytes, flags);
+  const form = new FormData();
+  form.append('pdf', new Blob([bytes], { type: 'application/pdf' }), 'doc.pdf');
+  return form;
+}
+
+async function sendToPeer() {
+  const opt = els.ssnPeer.selectedOptions[0];
+  if (!opt) return;
+  const address = els.ssnAddr.value.trim();
+  if (!address) { toast('Enter the peer address'); return; }
+  els.ssnGo.disabled = true; els.ssnProgress.hidden = false;
+  try {
+    const form = await sendableForm();
+    form.append('fingerprint', opt.value);
+    form.append('address', address);
+    const res = await apiFetch('/api/session/send', { method: 'POST', body: form });
+    if (!res.ok) { toast((await res.json()).error || 'could not send'); return; }
+    const r = await res.json();
+    toast(r.declined ? 'The peer declined the document' : 'Sent — the peer has the document');
+    els.sessionSendModal.hidden = true;
+  } catch (e) {
+    toast('could not send: ' + e.message);
+  } finally {
+    els.ssnGo.disabled = false; els.ssnProgress.hidden = true;
+  }
+}
+
+els.sessionSendBtn.onclick = openSessionSend;
+els.ssnCancel.onclick = () => { els.sessionSendModal.hidden = true; };
+els.ssnGo.onclick = sendToPeer;
 
 // About dialog: explainer by default; the licence/notices buttons swap the body
 // for the embedded /legal/ document, and Back returns to the explainer.
@@ -2887,7 +2984,7 @@ const DOC_REQUIRED = [
   'textToolBtn', 'highlightToolBtn', 'drawToolBtn',
   'detectBtn', 'editTextBtn', 'removeOriginalsBtn', 'autofillBtn',
   'redactBtn', 'applyRedactBtn', 'scanBtn',
-  'finalizeBtn', 'timestampBtn', 'cosignBtn', 'sessionInitBtn',
+  'finalizeBtn', 'timestampBtn', 'cosignBtn', 'sessionInitBtn', 'sessionSendBtn',
 ];
 function setDocControls(enabled) {
   for (const id of DOC_REQUIRED) {
