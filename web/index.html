@@ -72,6 +72,13 @@
        living in another tab (or the File/⚙ menu). -->
   <div id="toolbar">
 
+    <!-- Sidebar toggle: a persistent, icon-only control shown first for every
+         tab (it sits outside the .tbtab groups, so it never swaps out). -->
+    <button id="toggleSidebarBtn" class="tbtoggle" title="Hide sidebar" aria-label="Toggle sidebar">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16"/></svg>
+    </button>
+    <span class="tbsep"></span>
+
     <div class="tbtab" data-tab="file">
       <button id="openMenuItem">Open…</button>
       <div class="menu">
@@ -96,8 +103,6 @@
           <button id="exportCertBtn">Signing certificate</button>
         </div>
       </div>
-      <span class="tbsep"></span>
-      <button id="toggleSidebarBtn"><span class="lbl">Hide sidebar</span></button>
       <span class="tbsep"></span>
       <button id="prevBtn">Previous</button>
       <span class="tbpage"><input class="pageNum" type="number" min="1" value="1" /><span class="pageCount">/ 0</span></span>
