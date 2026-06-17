@@ -14,9 +14,21 @@
   <link rel="stylesheet" href="./vendor/pdfjs/pdf_viewer.css" />
   <link rel="stylesheet" href="./style.css" />
 </head>
-<body data-style="menus">
+<body data-tab="view" data-role="originate">
   <header id="menubar">
     <img class="brand" src="./nib.svg" alt="Nib" />
+
+    <!-- Mode tabs: the single navigation model. Selecting one swaps the
+         contextual toolbar (#toolbar) and the sidebar panels (see setMode).
+         File and the settings gear stay as chrome dropdowns — they're not
+         workspaces. -->
+    <nav class="modetabs">
+      <button class="modetab" data-tab="view">View</button>
+      <button class="modetab" data-tab="edit">Edit</button>
+      <button class="modetab" data-tab="sign">Sign</button>
+      <button class="modetab" data-tab="secure">Secure</button>
+      <button class="modetab" data-tab="collaborate">Collaborate</button>
+    </nav>
 
     <div class="menu">
       <button class="menutop">File</button>
@@ -41,82 +53,21 @@
       </div>
     </div>
 
-    <div class="menu">
-      <button class="menutop">Edit</button>
-      <div class="dropdown">
-        <button id="textToolBtn" data-mode="FREETEXT" title="Add a text box (click on the page)">Text</button>
-        <button id="highlightToolBtn" data-mode="HIGHLIGHT" title="Highlight text">Highlight</button>
-        <button id="drawToolBtn" data-mode="INK" title="Freehand draw">Draw</button>
-        <button id="detectBtn" title="Detect blank lines to fill">Detect fields</button>
-        <button id="editTextBtn" title="Drag a box over text to cover and replace it">Edit text</button>
-        <button id="removeOriginalsBtn" title="Flatten edited pages so the original text is removed for good">Remove originals</button>
-        <div class="sep"></div>
-        <button id="autofillBtn">Autofill from profile</button>
-        <button id="editProfileBtn">Edit autofill profile…</button>
-      </div>
-    </div>
-
-    <div class="menu">
-      <button class="menutop">Protect</button>
-      <div class="dropdown">
-        <button id="redactBtn" title="Draw redaction boxes">Redact</button>
-        <button id="applyRedactBtn" title="Permanently redact marked pages">Apply redactions</button>
-        <div class="sep"></div>
-        <button id="scanBtn" title="Find and remove hidden code &amp; content">Scan for hidden content…</button>
-      </div>
-    </div>
-
-    <!-- Certify = cryptographic trust (signing, timestamps, co-signing, identity).
-         Kept distinct from the Library's visual signature images, which only draw a
-         picture on the page and carry no cryptographic weight. -->
-    <div class="menu">
-      <button class="menutop">Certify</button>
-      <div class="dropdown">
-        <button id="finalizeBtn" title="Add a cryptographic signature (with an optional watermark)">Finalize &amp; sign…</button>
-        <div class="sep"></div>
-        <button id="timestampBtn">Timestamp (OpenTimestamps)…</button>
-        <button id="timestampVerifyBtn">Verify a timestamp…</button>
-        <div class="sep"></div>
-        <button id="cosignBtn">Co-sign with a peer…</button>
-        <button id="sessionInitBtn">Co-sign live with a peer…</button>
-        <button id="sessionRecvBtn">Receive a live co-signature…</button>
-        <div class="sep"></div>
-        <button id="sessionSendBtn">Send a document to a peer…</button>
-        <button id="sessionRecvDocBtn">Receive a document…</button>
-        <div class="sep"></div>
-        <button id="managePeersBtn">Identity &amp; peers…</button>
-        <button id="manageKeysBtn">Manage authorized keys…</button>
-      </div>
-    </div>
-
-    <div class="menu" id="viewMenu">
-      <button class="menutop">View</button>
-      <div class="dropdown">
-        <button id="toggleSidebarBtn"><span class="lbl">Hide sidebar</span><span class="shortcut">Ctrl+B</span></button>
-        <div class="sep"></div>
-        <button id="prevBtn">Previous page</button>
-        <button id="nextBtn">Next page</button>
-        <div class="menuitem idle">Page <input class="pageNum" type="number" min="1" value="1" /> <span class="pageCount">/ 0</span></div>
-        <div class="sep"></div>
-        <button id="zoomInBtn">Zoom in</button>
-        <button id="zoomOutBtn">Zoom out</button>
-        <button id="fitBtn">Fit width</button>
-        <div class="sep"></div>
-        <div class="menuitem idle"><input class="searchInput" type="search" placeholder="Find in document… (Ctrl+F)" /></div>
-      </div>
-    </div>
-
-    <!-- Always-on chrome (settings gear, update pill, signature badge). Rides on
-         whichever bar is visible: applyStyle() moves it into the toolbar in the
-         "toolbar" layout, where the menubar is hidden, and back otherwise. -->
+    <!-- Always-on chrome: settings/identity gear, update pill, signature badge.
+         Pinned to the right edge of the menubar (margin-left:auto). -->
     <div id="statusCluster">
+      <!-- Appearance toggle. The icon shows the theme you'd switch TO: a sun
+           while dark (tap for light), a moon while light (tap for dark). -->
+      <button id="themeToggle" title="Switch to light theme">
+        <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>
+        <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+      </button>
       <div class="menu settings">
         <button class="menutop" title="Settings &amp; Help">⚙</button>
         <div class="dropdown dropdown-right">
-          <div class="menucap">Layout</div>
-          <button class="styleOpt" data-style-val="menus">Menus</button>
-          <button class="styleOpt" data-style-val="toolbar">Toolbar</button>
-          <button class="styleOpt" data-style-val="both">Both</button>
+          <div class="menucap">Identity</div>
+          <button id="managePeersBtn">Identity &amp; peers…</button>
+          <button id="manageKeysBtn">Manage authorized keys…</button>
           <div class="sep"></div>
           <label class="menuitem"><input id="autoUpdateChk" type="checkbox" /> Check for updates on startup</label>
           <div class="sep"></div>
@@ -133,155 +84,80 @@
     </div>
   </header>
 
-  <!-- Toolbar: a forwarding mirror of the File/Edit/View menus, shown in the
-       "toolbar" and "both" layouts. Mode tools carry data-mode (wired like their
-       menu twins); every other control carries data-forward="<menu button id>"
-       and clicks through to it. The page/find fields share .pageNum/.searchInput
-       with the View menu so the two surfaces stay in sync. -->
+  <!-- Contextual toolbar: the tools for the active mode tab. Each .tbtab holds
+       one workspace's controls; setMode shows only the active one. Buttons here
+       are the real controls (their ids drive every handler). A few cross-listed
+       actions appear as data-forward twins that click through to the real button
+       living in another tab (or the File/⚙ menu). -->
   <div id="toolbar">
-    <span class="tbgroup">
-    <button class="tbtext" data-forward="openMenuItem">Open…</button>
 
-    <div class="menu">
-      <button class="menutop">Recent</button>
-      <div class="dropdown">
-        <div class="recentSlot"></div>
-      </div>
+    <div class="tbtab" data-tab="view">
+      <button id="toggleSidebarBtn"><span class="lbl">Hide sidebar</span></button>
+      <span class="tbsep"></span>
+      <button id="prevBtn">Previous</button>
+      <span class="tbpage"><input class="pageNum" type="number" min="1" value="1" /><span class="pageCount">/ 0</span></span>
+      <button id="nextBtn">Next</button>
+      <span class="tbsep"></span>
+      <button id="zoomOutBtn">Zoom out</button>
+      <button id="fitBtn">Fit width</button>
+      <button id="zoomInBtn">Zoom in</button>
+      <span class="tbsep"></span>
+      <span class="tbfind"><input class="searchInput" type="search" placeholder="Find in document… (Ctrl+F)" /></span>
     </div>
 
-    <div class="menu">
-      <button class="menutop">Save</button>
-      <div class="dropdown">
-        <button data-forward="saveBtn">Save</button>
-        <button data-forward="saveFlatBtn">Save flattened PDF</button>
-        <button data-forward="saveEditableBtn">Save editable copy</button>
-        <div class="sep"></div>
-        <button data-forward="backupBtn">Back up vault</button>
-        <button data-forward="restoreInput">Restore vault…</button>
-      </div>
+    <div class="tbtab" data-tab="edit">
+      <button id="textToolBtn" data-mode="FREETEXT" title="Add a text box (click on the page)">Text</button>
+      <button id="highlightToolBtn" data-mode="HIGHLIGHT" title="Highlight text">Highlight</button>
+      <button id="drawToolBtn" data-mode="INK" title="Freehand draw">Draw</button>
+      <span class="tbsep"></span>
+      <button id="detectBtn" title="Detect blank lines to fill">Detect fields</button>
+      <button id="autofillBtn">Autofill from profile</button>
+      <button id="editProfileBtn">Edit autofill profile…</button>
+      <span class="tbsep"></span>
+      <button id="editTextBtn" title="Drag a box over text to cover and replace it">Edit text</button>
+      <button id="removeOriginalsBtn" title="Flatten edited pages so the original text is removed for good">Remove originals</button>
     </div>
 
-    <div class="menu">
-      <button class="menutop">Export</button>
-      <div class="dropdown">
-        <button data-forward="exportZipBtn">Pages as images (ZIP)</button>
-        <button data-forward="exportPngBtn">Current page (PNG)</button>
-        <button data-forward="exportFormJsonBtn">Form data (JSON)</button>
-        <button data-forward="exportFormCsvBtn">Form data (CSV)</button>
-        <button data-forward="exportCertBtn">Signing certificate</button>
-      </div>
+    <div class="tbtab" data-tab="sign">
+      <button id="finalizeBtn" title="Add a cryptographic signature (with an optional watermark)">Finalize &amp; sign…</button>
+      <button data-forward="exportCertBtn">Signing certificate</button>
     </div>
 
-    <div class="menu">
-      <button class="menutop">Certify</button>
-      <div class="dropdown">
-        <button data-forward="finalizeBtn">Finalize &amp; sign…</button>
-        <div class="sep"></div>
-        <button data-forward="timestampBtn">Timestamp (OpenTimestamps)…</button>
+    <div class="tbtab" data-tab="secure">
+      <button id="redactBtn" title="Draw redaction boxes">Redact</button>
+      <button id="applyRedactBtn" title="Permanently redact marked pages">Apply redactions</button>
+      <span class="tbsep"></span>
+      <button id="scanBtn" title="Find and remove hidden code &amp; content">Scan for hidden content…</button>
+      <span class="tbsep"></span>
+      <button id="timestampBtn">Timestamp (OpenTimestamps)…</button>
+      <button id="timestampVerifyBtn">Verify a timestamp…</button>
+      <span class="tbsep"></span>
+      <button data-forward="finalizeBtn">Finalize &amp; sign…</button>
+    </div>
+
+    <!-- Collaborate: pick your role first. Originate = you own the document
+         (prepare, send, await its return); Receive = you sign what arrives and
+         send it back. The toggle swaps the role-specific tool set. -->
+    <div class="tbtab" data-tab="collaborate">
+      <span class="roletoggle">
+        <button class="roleopt" data-role="originate" title="You own the document: prepare it, send it, await its return">Originate</button>
+        <button class="roleopt" data-role="receive" title="You receive a document, sign it, and send it back">Receive</button>
+      </span>
+      <span class="tbsep"></span>
+      <span class="roletools" data-role="originate">
+        <button id="sessionSendBtn">Send a document to a peer…</button>
+        <button id="sessionInitBtn">Co-sign live with a peer…</button>
+        <button id="cosignBtn">Co-sign with a peer…</button>
         <button data-forward="timestampVerifyBtn">Verify a timestamp…</button>
-        <div class="sep"></div>
-        <button data-forward="cosignBtn">Co-sign with a peer…</button>
-        <button data-forward="sessionInitBtn">Co-sign live with a peer…</button>
-        <button data-forward="sessionRecvBtn">Receive a live co-signature…</button>
-        <div class="sep"></div>
         <button data-forward="managePeersBtn">Identity &amp; peers…</button>
-        <button data-forward="manageKeysBtn">Manage authorized keys…</button>
-      </div>
+      </span>
+      <span class="roletools" data-role="receive">
+        <button id="sessionRecvDocBtn">Receive a document…</button>
+        <button id="sessionRecvBtn">Receive a live co-signature…</button>
+        <button data-forward="managePeersBtn">Identity &amp; peers…</button>
+      </span>
     </div>
 
-    </span>
-    <span class="tbsep"></span>
-    <span class="tbgroup">
-
-    <button class="tbicon" data-forward="toggleSidebarBtn" title="Toggle sidebar">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16"/></svg>
-    </button>
-
-    </span>
-    <span class="tbsep"></span>
-    <span class="tbgroup">
-
-    <button class="tbicon" data-forward="detectBtn" title="Detect blank lines to fill">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8V5a1 1 0 0 1 1-1h3"/><path d="M16 4h3a1 1 0 0 1 1 1v3"/><path d="M20 16v3a1 1 0 0 1-1 1h-3"/><path d="M8 20H5a1 1 0 0 1-1-1v-3"/><path d="M8 12h8"/></svg>
-    </button>
-
-    </span>
-    <span class="tbsep"></span>
-    <span class="tbgroup">
-
-    <button class="tbicon" data-mode="FREETEXT" title="Text — add a text box">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 6V4h14v2"/><path d="M12 4v16"/><path d="M9 20h6"/></svg>
-    </button>
-    <button class="tbicon" data-mode="HIGHLIGHT" title="Highlight text">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 20h6"/><path d="M9 16l8-8 3 3-8 8H9v-3z"/></svg>
-    </button>
-    <button class="tbicon" data-mode="INK" title="Draw — freehand">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20l1-4L16 5l3 3L8 19l-4 1z"/><path d="M13.5 6.5l3 3"/></svg>
-    </button>
-
-    </span>
-    <span class="tbsep"></span>
-    <span class="tbgroup">
-
-    <button class="tbicon" data-forward="redactBtn" title="Redact — draw redaction boxes">
-      <svg viewBox="0 0 24 24"><rect x="3" y="9" width="18" height="6" rx="1" fill="currentColor"/></svg>
-    </button>
-    <button class="tbicon" data-forward="applyRedactBtn" title="Apply redactions — permanent">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="9" width="11" height="6" rx="1" fill="currentColor" stroke="none"/><path d="M15 12l3 3 4-6"/></svg>
-    </button>
-    <button class="tbicon" data-forward="scanBtn" title="Scan for hidden content">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="M16.5 16.5L21 21"/></svg>
-    </button>
-    <button class="tbicon" data-forward="editTextBtn" title="Edit text — cover and replace">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg>
-    </button>
-    <button class="tbicon" data-forward="removeOriginalsBtn" title="Remove originals — flatten edited pages">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l9 5-9 5-9-5 9-5z"/><path d="M3 13l9 5 9-5"/></svg>
-    </button>
-
-    </span>
-    <span class="tbsep"></span>
-    <span class="tbgroup">
-
-    <button class="tbicon" data-forward="autofillBtn" title="Autofill from profile">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 18h16"/><path d="M12 4v9"/><path d="M8.5 9.5L12 13l3.5-3.5"/></svg>
-    </button>
-    <button class="tbicon" data-forward="editProfileBtn" title="Edit autofill profile…">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="3.5"/><path d="M5.5 19a6.5 6.5 0 0 1 13 0"/></svg>
-    </button>
-
-    </span>
-    <span class="tbsep"></span>
-    <span class="tbgroup">
-
-    <button class="tbicon" data-forward="prevBtn" title="Previous page">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 6l-6 6 6 6"/></svg>
-    </button>
-    <span class="tbpage"><input class="pageNum" type="number" min="1" value="1" /><span class="pageCount">/ 0</span></span>
-    <button class="tbicon" data-forward="nextBtn" title="Next page">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg>
-    </button>
-
-    </span>
-    <span class="tbsep"></span>
-    <span class="tbgroup">
-
-    <button class="tbicon" data-forward="zoomOutBtn" title="Zoom out">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/></svg>
-    </button>
-    <button class="tbicon" data-forward="fitBtn" title="Fit width">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12h16"/><path d="M7 9l-3 3 3 3"/><path d="M17 9l3 3-3 3"/></svg>
-    </button>
-    <button class="tbicon" data-forward="zoomInBtn" title="Zoom in">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14"/><path d="M5 12h14"/></svg>
-    </button>
-
-    </span>
-    <span class="tbsep"></span>
-    <span class="tbgroup">
-
-    <span class="tbfind"><input class="searchInput" type="search" placeholder="Find…" /></span>
-    </span>
   </div>
 
   <main id="main">
@@ -301,7 +177,7 @@
       </div>
       <div id="outline" class="panel"></div>
       <div id="library" class="panel">
-        <p class="libhint libnote">Visual marks only — a drawn signature, initials or stamp is a picture on the page, not a cryptographic signature. Use <strong>Certify</strong> to sign.</p>
+        <p class="libhint libnote">Visual marks only — a drawn signature, initials or stamp is a picture on the page, not a cryptographic signature. Use the <strong>Sign</strong> tab to add a cryptographic signature.</p>
         <div class="libactions">
           <button id="addImageBtn">+ Image</button>
           <button id="drawSigBtn">✎ Signature</button>

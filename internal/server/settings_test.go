@@ -54,6 +54,38 @@ func TestSettingsRejectsInvalidToolbarStyle(t *testing.T) {
 	}
 }
 
+// A valid appearance is persisted and reported back via /api/status.
+func TestSettingsPersistsAppearance(t *testing.T) {
+	ts, _ := startServer(t)
+	c, csrf := authedClient(t, ts)
+
+	resp := write(t, c, csrf, "POST", ts.URL+"/api/settings", "application/json",
+		jsonBody(map[string]any{"appearance": "light"}))
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("settings status = %d, want 200", resp.StatusCode)
+	}
+	if st := fetchStatus(t, c, ts); st.Appearance != "light" {
+		t.Fatalf("appearance = %q, want light", st.Appearance)
+	}
+}
+
+// An out-of-allowlist appearance is rejected and leaves the vault unchanged.
+func TestSettingsRejectsInvalidAppearance(t *testing.T) {
+	ts, _ := startServer(t)
+	c, csrf := authedClient(t, ts)
+
+	resp := write(t, c, csrf, "POST", ts.URL+"/api/settings", "application/json",
+		jsonBody(map[string]any{"appearance": "garbage"}))
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("settings status = %d, want 400", resp.StatusCode)
+	}
+	if st := fetchStatus(t, c, ts); st.Appearance != "dark" {
+		t.Fatalf("appearance = %q, want unchanged default dark", st.Appearance)
+	}
+}
+
 // A partial update touches only the field it carries: toggling the update check
 // must not reset a previously-saved toolbar style.
 func TestSettingsPartialUpdatePreservesOtherFields(t *testing.T) {
