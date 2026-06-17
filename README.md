@@ -208,6 +208,11 @@ Pick how the commands are presented from **⚙ Settings → Layout**: the classi
 **Menus** (File / Edit / View), a compact **Toolbar** of dropdowns and icons, or
 **Both**. The choice is saved in your vault. (Defaults to Menus.)
 
+### Dark or light
+Tap the **sun/moon** button in the top-right to switch between the dark
+(Catppuccin Mocha) and light (Catppuccin Latte) themes. The choice is saved in
+your vault. (Defaults to dark.)
+
 ### Private by design
 - Binds **`127.0.0.1` only** — never reachable from the network; writes are
   guarded by a per-process CSRF token and a loopback-origin check. The one
