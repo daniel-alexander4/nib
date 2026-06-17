@@ -5,14 +5,18 @@ import (
 	"crypto/tls"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"io"
 	"mime/multipart"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"nib/internal/p2p"
+	"nib/internal/pdfops"
 	"nib/internal/sign"
 	"nib/internal/testpdf"
 )
@@ -393,6 +397,248 @@ func TestSessionQuoteForPendingPeer(t *testing.T) {
 	write(t, c, csrf, http.MethodPost, ts.URL+"/api/session/respond", "application/json",
 		jsonBody(map[string]any{"accept": false})).Body.Close()
 	<-errc
+}
+
+// autoAccept is the peer's consent gate for a one-way transfer in tests: always accept.
+type autoAccept struct{}
+
+func (autoAccept) Accept([]byte, []byte) (bool, error) { return true, nil }
+
+// sendForm builds the multipart body /api/session/send expects.
+func sendForm(t *testing.T, pdf []byte, fp, address string) (*bytes.Buffer, string) {
+	t.Helper()
+	var buf bytes.Buffer
+	mw := multipart.NewWriter(&buf)
+	pf, _ := mw.CreateFormFile("pdf", "doc.pdf")
+	pf.Write(pdf)
+	mw.WriteField("fingerprint", fp)
+	mw.WriteField("address", address)
+	mw.Close()
+	return &buf, mw.FormDataContentType()
+}
+
+// TestSessionReceiveTransfer drives the receive side of a one-way transfer: this
+// server (Bob) arms in receive mode for a pinned peer (Alice), Alice dials in and
+// sends a flagged document, the user accepts, and the document is saved under
+// ~/nib/to-sign/ (routed by its embedded flags) with its bytes intact.
+func TestSessionReceiveTransfer(t *testing.T) {
+	ts, _ := startServer(t)
+	c, csrf := authedClient(t, ts)
+
+	var me struct {
+		Fingerprint string `json:"fingerprint"`
+	}
+	sessGet(t, c, ts.URL+"/api/peers", &me)
+	bFPBytes, _ := hex.DecodeString(me.Fingerprint)
+
+	aCert, aKey, err := sign.GenerateIdentity("Alice")
+	if err != nil {
+		t.Fatal(err)
+	}
+	aFPBytes, _ := sign.Fingerprint(aCert)
+	aFP := hex.EncodeToString(aFPBytes)
+	pinPeer(t, c, csrf, ts.URL, aFP)
+
+	var armed sessionStatus
+	sessDecode(t, write(t, c, csrf, http.MethodPost, ts.URL+"/api/session/arm", "application/json",
+		jsonBody(armRequest{Fingerprint: aFP, Bind: "127.0.0.1:0", Mode: sessionModeReceive})), &armed)
+	if !armed.Armed {
+		t.Fatalf("arm failed: %+v", armed)
+	}
+
+	base, err := testpdf.Form()
+	if err != nil {
+		t.Fatal(err)
+	}
+	flagged, err := pdfops.SetFlags(base, []byte(`[{"page":1,"frac":[0.1,0.1,0.3,0.15],"type":"sign"}]`))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	errc := make(chan error, 1)
+	go func() {
+		conn, e := p2p.Dial(armed.Address, aCert, aKey, bFPBytes, 10*time.Second)
+		if e != nil {
+			errc <- e
+			return
+		}
+		defer conn.Close()
+		errc <- p2p.SendDocument(conn, flagged)
+	}()
+
+	waitPending(t, c, ts.URL, aFP)
+	rr := write(t, c, csrf, http.MethodPost, ts.URL+"/api/session/respond", "application/json",
+		jsonBody(map[string]any{"accept": true}))
+	if rr.StatusCode != http.StatusOK {
+		t.Fatalf("respond = %d", rr.StatusCode)
+	}
+	rr.Body.Close()
+	if e := <-errc; e != nil {
+		t.Fatalf("sender: %v", e)
+	}
+
+	// The save completes just after the sender's ack; poll status for the result.
+	var done sessionStatus
+	deadline := time.Now().Add(5 * time.Second)
+	for done.Received == nil {
+		if time.Now().After(deadline) {
+			t.Fatal("no received info after accept")
+		}
+		time.Sleep(50 * time.Millisecond)
+		sessGet(t, c, ts.URL+"/api/session/status", &done)
+	}
+	if got := filepath.Base(filepath.Dir(done.Received.Path)); got != "to-sign" {
+		t.Errorf("saved under %q dir, want to-sign", got)
+	}
+	saved, err := os.ReadFile(done.Received.Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(saved, flagged) {
+		t.Error("saved bytes differ from what was sent")
+	}
+}
+
+// TestSessionReceiveTransferDecline proves a declined transfer saves nothing and tells
+// the sender it was declined.
+func TestSessionReceiveTransferDecline(t *testing.T) {
+	ts, _ := startServer(t)
+	c, csrf := authedClient(t, ts)
+
+	var me struct {
+		Fingerprint string `json:"fingerprint"`
+	}
+	sessGet(t, c, ts.URL+"/api/peers", &me)
+	bFPBytes, _ := hex.DecodeString(me.Fingerprint)
+	aCert, aKey, err := sign.GenerateIdentity("Alice")
+	if err != nil {
+		t.Fatal(err)
+	}
+	aFPBytes, _ := sign.Fingerprint(aCert)
+	aFP := hex.EncodeToString(aFPBytes)
+	pinPeer(t, c, csrf, ts.URL, aFP)
+
+	var armed sessionStatus
+	sessDecode(t, write(t, c, csrf, http.MethodPost, ts.URL+"/api/session/arm", "application/json",
+		jsonBody(armRequest{Fingerprint: aFP, Bind: "127.0.0.1:0", Mode: sessionModeReceive})), &armed)
+	if !armed.Armed {
+		t.Fatalf("arm failed: %+v", armed)
+	}
+
+	base, err := testpdf.Form()
+	if err != nil {
+		t.Fatal(err)
+	}
+	errc := make(chan error, 1)
+	go func() {
+		conn, e := p2p.Dial(armed.Address, aCert, aKey, bFPBytes, 10*time.Second)
+		if e != nil {
+			errc <- e
+			return
+		}
+		defer conn.Close()
+		errc <- p2p.SendDocument(conn, base)
+	}()
+
+	waitPending(t, c, ts.URL, aFP)
+	write(t, c, csrf, http.MethodPost, ts.URL+"/api/session/respond", "application/json",
+		jsonBody(map[string]any{"accept": false})).Body.Close()
+
+	if e := <-errc; !errors.Is(e, p2p.ErrDeclined) {
+		t.Fatalf("sender got %v, want ErrDeclined", e)
+	}
+	var st sessionStatus
+	sessGet(t, c, ts.URL+"/api/session/status", &st)
+	if st.Received != nil {
+		t.Errorf("a declined transfer reported a saved file: %+v", st.Received)
+	}
+}
+
+// TestSessionSend drives the dialing side of a one-way transfer: this server (Alice)
+// posts a document to /api/session/send and a pinned peer (Bob) receives the exact
+// bytes over a receive listener.
+func TestSessionSend(t *testing.T) {
+	ts, _ := startServer(t)
+	c, csrf := authedClient(t, ts)
+
+	var me struct {
+		Fingerprint string `json:"fingerprint"`
+	}
+	sessGet(t, c, ts.URL+"/api/peers", &me)
+	aFPBytes, _ := hex.DecodeString(me.Fingerprint)
+
+	bCert, bKey, err := sign.GenerateIdentity("Bob")
+	if err != nil {
+		t.Fatal(err)
+	}
+	bFPBytes, _ := sign.Fingerprint(bCert)
+	bFP := hex.EncodeToString(bFPBytes)
+	pinPeer(t, c, csrf, ts.URL, bFP)
+
+	ln, err := p2p.Listen("127.0.0.1:0", bCert, bKey, aFPBytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+
+	gotc := make(chan []byte, 1)
+	errc := make(chan error, 1)
+	go func() {
+		conn, e := ln.Accept()
+		if e != nil {
+			errc <- e
+			return
+		}
+		defer conn.Close()
+		doc, _, e := p2p.ReceiveDocument(conn.(*tls.Conn), autoAccept{})
+		if e != nil {
+			errc <- e
+			return
+		}
+		gotc <- doc
+	}()
+
+	base, err := testpdf.Form()
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, ct := sendForm(t, base, bFP, ln.Addr().String())
+	var res sendResult
+	sessDecode(t, write(t, c, csrf, http.MethodPost, ts.URL+"/api/session/send", ct, body), &res)
+	if !res.Sent {
+		t.Fatalf("send not confirmed: %+v", res)
+	}
+
+	select {
+	case e := <-errc:
+		t.Fatalf("receiver: %v", e)
+	case got := <-gotc:
+		if !bytes.Equal(got, base) {
+			t.Error("received bytes differ from what was sent")
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("receiver did not finish")
+	}
+}
+
+// waitPending polls session status until a request from fp is parked, or fails.
+func waitPending(t *testing.T, c *http.Client, baseURL, fp string) {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		if time.Now().After(deadline) {
+			t.Fatal("no pending request appeared")
+		}
+		var st sessionStatus
+		sessGet(t, c, baseURL+"/api/session/status", &st)
+		if st.Pending != nil {
+			if st.Pending.Fingerprint != fp {
+				t.Errorf("pending peer = %s, want %s", st.Pending.Fingerprint, fp)
+			}
+			return
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
 }
 
 // attCount fetches a PDF endpoint and returns how many attestations it carries.

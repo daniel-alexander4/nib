@@ -81,6 +81,9 @@
         <button id="sessionInitBtn">Co-sign live with a peer…</button>
         <button id="sessionRecvBtn">Receive a live co-signature…</button>
         <div class="sep"></div>
+        <button id="sessionSendBtn">Send a document to a peer…</button>
+        <button id="sessionRecvDocBtn">Receive a document…</button>
+        <div class="sep"></div>
         <button id="managePeersBtn">Identity &amp; peers…</button>
         <button id="manageKeysBtn">Manage authorized keys…</button>
       </div>
@@ -705,13 +708,36 @@
     </div>
   </div>
 
-  <!-- Receive a live co-signature: arm a pinned-peer-only listener, review the
-       document a peer sends over the live channel, and co-sign with explicit
-       consent. The armed listener is Nib's only network-reachable surface — it
-       accepts one pinned peer and tears down after a single session. -->
+  <!-- Send a document to a peer: hand the open document to a pinned, armed peer over
+       the live channel one-way — they review and keep it. Nothing is signed and
+       nothing comes back; it replaces emailing the file. -->
+  <div id="sessionSendModal" hidden>
+    <div class="sigcard">
+      <h3>Send a document to a peer</h3>
+      <p class="libhint">Hand the open document to a pinned peer over a live, encrypted channel — they
+        review it and keep it. They must choose <strong>Receive a document…</strong> first.</p>
+      <label>Peer to send to
+        <select id="ssnPeer"></select></label>
+      <p id="ssnNoPeers" class="libhint" hidden>Pin the other person's fingerprint first, under
+        <strong>Identity &amp; peers</strong>.</p>
+      <label>Their address (host:port they're listening on)
+        <input id="ssnAddr" type="text" placeholder="e.g. 203.0.113.4:8443" spellcheck="false" /></label>
+      <div id="ssnProgress" class="libhint" hidden>Connecting and sending…</div>
+      <div class="sigbtns">
+        <button id="ssnCancel">Cancel</button>
+        <span class="grow"></span>
+        <button id="ssnGo" class="primary">Send</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Receive a live co-signature OR a one-way document transfer: arm a pinned-peer-
+       only listener, review what the peer sends in an isolated preview, and either
+       co-sign it or save it. The armed listener is Nib's only network-reachable
+       surface — it accepts one pinned peer and tears down after a single session. -->
   <div id="sessionRecvModal" hidden>
     <div class="sigcard">
-      <h3>Receive a live co-signature</h3>
+      <h3 id="srvTitle">Receive a live co-signature</h3>
 
       <!-- Arm: choose who may connect and where to listen. -->
       <div id="srvArm">
@@ -760,11 +786,11 @@
           </div>
           <p class="libhint">This fingerprint is verified to be the peer you pinned. The statement
             below is what they typed — bound by their signature, but their words, not Nib's.</p>
-          <div class="cidrow"><span class="cidcap">Their signed statement</span>
+          <div class="cidrow"><span id="srvReasonCap" class="cidcap">Their signed statement</span>
             <span id="srvPeerReason"></span></div>
         </div>
         <div id="srvPreview" class="docpreview"></div>
-        <label>What you're agreeing to
+        <label id="srvIntentRow">What you're agreeing to
           <textarea id="srvIntent" rows="2">I agree to sign this document.</textarea></label>
         <div class="sigbtns">
           <button id="srvDecline">Decline</button>
