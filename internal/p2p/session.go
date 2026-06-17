@@ -100,6 +100,80 @@ func Receive(conn *tls.Conn, myCertPEM, myKeyPEM []byte, peerLabel string, c Con
 	return final, nil
 }
 
+// ackOK / ackDeclined are the one-byte receipts ReceiveDocument sends and SendDocument
+// waits for, so the sender learns the document was accepted or declined — not merely
+// delivered to the socket. An explicit declined byte distinguishes a refusal from a
+// dropped connection.
+const (
+	ackOK       = 1
+	ackDeclined = 2
+)
+
+// ErrDeclined reports that the receiving user declined a one-way document transfer.
+var ErrDeclined = errors.New("document transfer declined")
+
+// Accepter is the receiving side's consent gate for a plain document transfer. Shown
+// the verified peer's SPKI fingerprint and the document, it returns whether to accept
+// (and save) it. Unlike Confirmer this carries no signing — the document may be an
+// unsigned flagged PDF awaiting the user, not a co-signature.
+type Accepter interface {
+	Accept(peerFP, doc []byte) (accept bool, err error)
+}
+
+// SendDocument runs the dialing side of a one-way transfer: it sends the document and
+// waits for the receiver's acknowledgement that the user accepted it. Nothing is
+// signed and nothing comes back — the pinned-mTLS channel is a plain authenticated
+// courier, used to hand a flagged PDF to a peer for signing or to return the signed
+// result. The pin is enforced by the TLS config, exactly as in Initiate.
+func SendDocument(conn *tls.Conn, pdf []byte) error {
+	if err := writeFrame(conn, pdf); err != nil {
+		return fmt.Errorf("send document: %w", err)
+	}
+	ack, err := readFrame(conn)
+	if err != nil {
+		return fmt.Errorf("await receipt: %w", err)
+	}
+	switch {
+	case len(ack) == 1 && ack[0] == ackOK:
+		return nil
+	case len(ack) == 1 && ack[0] == ackDeclined:
+		return ErrDeclined
+	default:
+		return errors.New("unexpected receipt from peer")
+	}
+}
+
+// ReceiveDocument runs the listening side of a one-way transfer: it reads the document
+// the connected (TLS-pinned) peer sent, asks the Accepter for consent, and on accept
+// returns the document plus the peer's verified fingerprint after acknowledging. On
+// decline it returns ErrDeclined and sends no acknowledgement, so the sender learns
+// the document was not kept.
+func ReceiveDocument(conn *tls.Conn, a Accepter) (doc, peerFP []byte, err error) {
+	if err := conn.Handshake(); err != nil {
+		return nil, nil, err
+	}
+	peerFP, err = verifiedPeerFingerprint(conn.ConnectionState())
+	if err != nil {
+		return nil, nil, err
+	}
+	inbound, err := readFrame(conn)
+	if err != nil {
+		return nil, nil, fmt.Errorf("receive document: %w", err)
+	}
+	accept, err := a.Accept(peerFP, inbound)
+	if err != nil {
+		return nil, nil, err
+	}
+	if !accept {
+		_ = writeFrame(conn, []byte{ackDeclined}) // best-effort: tell the sender it was refused
+		return nil, nil, ErrDeclined
+	}
+	if err := writeFrame(conn, []byte{ackOK}); err != nil {
+		return nil, nil, fmt.Errorf("acknowledge receipt: %w", err)
+	}
+	return inbound, peerFP, nil
+}
+
 // coSignExchange is the transport-agnostic core of the receiving side: given the
 // document the connected (and TLS-pinned) peer signed, it verifies the peer's
 // attestation binds to this channel, gets the user's consent, contributes this
