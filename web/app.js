@@ -37,6 +37,7 @@ const els = {
   prevBtn: $('prevBtn'), nextBtn: $('nextBtn'),
   zoomInBtn: $('zoomInBtn'), zoomOutBtn: $('zoomOutBtn'), fitBtn: $('fitBtn'),
   sigBadge: $('sigBadge'), saveBtn: $('saveBtn'), statusCluster: $('statusCluster'),
+  themeToggle: $('themeToggle'),
   viewerWrap: $('viewerWrap'), viewerContainer: $('viewerContainer'),
   thumbs: $('thumbs'), thumbGrid: $('thumbGrid'), outline: $('outline'),
   appendBtn: $('appendBtn'), appendInput: $('appendInput'),
@@ -166,7 +167,8 @@ function applyStatus(st) {
     csrf = st.csrf;
     els.authOverlay.hidden = true;
     loadImages();
-    // Apply saved preferences: the toolbar layout and the auto-update toggle.
+    // Apply saved preferences: theme, the toolbar layout, and the auto-update toggle.
+    applyAppearance(st.appearance || 'dark');
     applyStyle(st.toolbarStyle || 'menus');
     els.autoUpdateChk.checked = st.autoUpdate;
     els.autoUpdateChk.disabled = st.updateCheckLocked;
@@ -2941,6 +2943,19 @@ all('.styleOpt').forEach((b) => {
   b.onclick = () => { applyStyle(b.dataset.styleVal); saveSettings({ toolbarStyle: b.dataset.styleVal }); };
 });
 els.autoUpdateChk.onchange = () => saveSettings({ checkUpdatesOnStartup: els.autoUpdateChk.checked });
+
+// Appearance: dark (default) or light. Drives a data attribute on <html> (not
+// body, where the layout attr lives) so the palette override reaches html's own
+// background; the saved value is applied in applyStatus and persisted on toggle.
+function applyAppearance(mode) {
+  document.documentElement.dataset.appearance = mode;
+  els.themeToggle.title = mode === 'light' ? 'Switch to dark theme' : 'Switch to light theme';
+}
+els.themeToggle.onclick = () => {
+  const next = document.documentElement.dataset.appearance === 'light' ? 'dark' : 'light';
+  applyAppearance(next);
+  saveSettings({ appearance: next });
+};
 
 async function refreshRecent() {
   const res = await apiFetch('/api/recent');
