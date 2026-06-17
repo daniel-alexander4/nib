@@ -3394,7 +3394,7 @@ document.querySelectorAll('.tab').forEach((tab) => {
 // The single navigation model: each tab is a workspace. Selecting one swaps the
 // contextual toolbar (#toolbar .tbtab) and which sidebar panels are available.
 const SIDEBAR_FOR = {
-  view: ['thumbs', 'outline'],
+  file: ['thumbs', 'outline'],
   edit: ['thumbs'],
   sign: ['library'],
   secure: ['thumbs'],
@@ -3427,7 +3427,7 @@ function setRole(role) {
 all('.roleopt').forEach((b) => { b.onclick = () => setRole(b.dataset.role); });
 
 setRole('originate');
-setMode('view');
+setMode('file');
 
 // sidebar collapse
 function toggleSidebar() {
@@ -3445,8 +3445,8 @@ window.addEventListener('keydown', (e) => {
   if (e.key === 'o') { e.preventDefault(); openOpenDialog(); }
   if (e.key === 'f') {
     e.preventDefault();
-    // The find box lives in the View tab's toolbar — switch there, then focus it.
-    setMode('view');
+    // The find box lives in the File tab's toolbar — switch there, then focus it.
+    setMode('file');
     document.querySelector('.searchInput')?.focus();
   }
 });
