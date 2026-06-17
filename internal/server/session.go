@@ -3,15 +3,20 @@ package server
 import (
 	"crypto/tls"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"io"
 	"net"
 	"net/http"
+	"os"
+	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
 	"nib/internal/p2p"
+	"nib/internal/pdfops"
 	"nib/internal/safe"
 	"nib/internal/sign"
 )
@@ -31,21 +36,32 @@ const (
 	sessionDialTimeout    = 30 * time.Second // give up establishing the outbound connection
 )
 
-// session is the receive side of a live co-signing session: an armed, routable,
-// pinned-peer-only listener opened on explicit request and torn down after one use.
-// All state is guarded by mu; it is independent of the Server's document lock.
+// session is the receive side of a live session: an armed, routable, pinned-peer-only
+// listener opened on explicit request and torn down after one use. It serves two
+// modes — co-signing (the peer's signed doc comes back doubly-signed) and a plain
+// one-way document transfer (the peer's doc is consented and saved to ~/nib). All
+// state is guarded by mu; it is independent of the Server's document lock.
 type session struct {
-	mu      sync.Mutex
-	ln      net.Listener // non-nil while armed
-	addr    string       // bound address, reported in status
-	pending *pendingReq  // set while a received request awaits the user's consent
+	mu       sync.Mutex
+	ln       net.Listener  // non-nil while armed
+	addr     string        // bound address, reported in status
+	pending  *pendingReq   // set while a received request awaits the user's consent
+	received *receivedInfo // last accepted transfer, read by the poller after disarm
 }
 
-// pendingReq is a received co-sign request blocked on the user's accept/decline.
+// pendingReq is a received request (a co-sign or a plain transfer) blocked on the
+// user's accept/decline. view is what the consent UI shows about the sender.
 type pendingReq struct {
-	peer p2p.SignerAttestation
+	view pendingView
 	doc  []byte // the received document, served for review via /api/session/pending-pdf
 	resp chan sessionDecision
+}
+
+// receivedInfo reports where an accepted one-way transfer was saved, so the poller
+// can tell the user once the session disarms.
+type receivedInfo struct {
+	Path string `json:"path"`
+	Peer string `json:"peer"`
 }
 
 type sessionDecision struct {
@@ -62,7 +78,14 @@ func (se *session) arm(ln net.Listener) bool {
 	}
 	se.ln = ln
 	se.addr = ln.Addr().String()
+	se.received = nil // a fresh session clears any prior transfer result
 	return true
+}
+
+func (se *session) setReceived(r *receivedInfo) {
+	se.mu.Lock()
+	se.received = r
+	se.mu.Unlock()
 }
 
 // disarm closes the listener and declines any in-flight consent. Idempotent, so it
@@ -120,7 +143,7 @@ func (se *session) pendingFingerprint() string {
 	if se.pending == nil {
 		return ""
 	}
-	return se.pending.peer.Fingerprint
+	return se.pending.view.Fingerprint
 }
 
 func (se *session) respond(d sessionDecision) bool {
@@ -141,10 +164,10 @@ func (se *session) respond(d sessionDecision) bool {
 func (se *session) status() sessionStatus {
 	se.mu.Lock()
 	defer se.mu.Unlock()
-	st := sessionStatus{Armed: se.ln != nil, Address: se.addr}
+	st := sessionStatus{Armed: se.ln != nil, Address: se.addr, Received: se.received}
 	if se.pending != nil {
-		p := se.pending.peer
-		st.Pending = &pendingView{Signer: p.Signer, Fingerprint: p.Fingerprint, AcceptedPeer: p.AcceptedPeer, Reason: p.Reason, Valid: p.Valid}
+		pv := se.pending.view
+		st.Pending = &pv
 	}
 	return st
 }
@@ -159,7 +182,8 @@ func (sc sessionConfirmer) Confirm(peer p2p.SignerAttestation, doc []byte) (bool
 	// rather than replacing the open document — that only changes on accept, in
 	// runSession. A declined or timed-out request leaves the open doc untouched.
 	ch := make(chan sessionDecision, 1)
-	if !sc.s.sess.setPending(&pendingReq{peer: peer, doc: doc, resp: ch}) {
+	view := pendingView{Signer: peer.Signer, Fingerprint: peer.Fingerprint, AcceptedPeer: peer.AcceptedPeer, Reason: peer.Reason, Valid: peer.Valid}
+	if !sc.s.sess.setPending(&pendingReq{view: view, doc: doc, resp: ch}) {
 		return false, "", nil, errors.New("session not armed")
 	}
 	defer sc.s.sess.clearPending()
@@ -171,13 +195,39 @@ func (sc sessionConfirmer) Confirm(peer p2p.SignerAttestation, doc []byte) (bool
 	}
 }
 
-// runSession accepts one pinned peer, co-signs with the user's consent, and makes
-// the result the open document. It always disarms on exit — one session per arm.
-func (s *Server) runSession(ln net.Listener, cert, key []byte, label string) {
-	// This goroutine handles a pinned peer's inbound document and verifies it; a
-	// panic in p2p.Receive or sign.Verify must not crash the desktop process. The
-	// defers below (disarm, Close) still run as the stack unwinds.
-	defer safe.Recover("co-sign session")
+// sessionAccepter is the consent bridge for a plain one-way transfer: p2p.ReceiveDocument
+// calls it after a peer sends a document; it surfaces the document for review, parks the
+// request for the UI to accept/decline, and blocks until the user responds (or the
+// timeout declines). label is this user's pinned label for the sending peer.
+type sessionAccepter struct {
+	s     *Server
+	label string
+}
+
+func (sa sessionAccepter) Accept(peerFP, doc []byte) (bool, error) {
+	ch := make(chan sessionDecision, 1)
+	view := pendingView{Signer: sa.label, Fingerprint: hex.EncodeToString(peerFP), Reason: transferReason(doc), Valid: true}
+	if !sa.s.sess.setPending(&pendingReq{view: view, doc: doc, resp: ch}) {
+		return false, errors.New("session not armed")
+	}
+	defer sa.s.sess.clearPending()
+	select {
+	case d := <-ch:
+		return d.accept, nil
+	case <-time.After(sessionConsentTimeout):
+		return false, nil
+	}
+}
+
+// runSession accepts one pinned peer and, depending on the armed mode, either
+// co-signs with the user's consent (making the result the open document) or accepts a
+// one-way document transfer and saves it under ~/nib. It always disarms on exit — one
+// session per arm.
+func (s *Server) runSession(ln net.Listener, cert, key []byte, label, mode string) {
+	// This goroutine handles a pinned peer's inbound document; a panic in the p2p or
+	// sign code must not crash the desktop process. The defers below (disarm, Close)
+	// still run as the stack unwinds.
+	defer safe.Recover("session")
 	timer := time.AfterFunc(sessionAcceptTimeout, s.sess.disarm)
 	conn, err := ln.Accept()
 	timer.Stop()
@@ -187,6 +237,14 @@ func (s *Server) runSession(ln net.Listener, cert, key []byte, label string) {
 	}
 	defer s.sess.disarm()
 	defer conn.Close()
+	if mode == sessionModeReceive {
+		doc, peerFP, err := p2p.ReceiveDocument(conn.(*tls.Conn), sessionAccepter{s: s, label: label})
+		if err != nil {
+			return // declined, timed out, or a protocol error — nothing saved
+		}
+		s.saveReceived(doc, peerFP, label)
+		return
+	}
 	final, err := p2p.Receive(conn.(*tls.Conn), cert, key, label, sessionConfirmer{s})
 	if err != nil {
 		return // declined, timed out, or a protocol error — nothing to apply
@@ -194,17 +252,89 @@ func (s *Server) runSession(ln net.Listener, cert, key []byte, label string) {
 	s.setDoc(&document{data: final, sig: sign.Verify(final)})
 }
 
+// saveReceived writes an accepted one-way transfer under ~/nib, routed by what the
+// document is: a flagged PDF (awaiting the user's signature) lands in to-sign/, an
+// already-signed one in signed/, anything else in incoming/. Best-effort — a write
+// failure leaves the user's other documents untouched and simply reports nothing.
+func (s *Server) saveReceived(doc, peerFP []byte, peerLabel string) {
+	path := filepath.Join(defaultOutputDir(), receivedSubdir(doc), receivedName(peerLabel, peerFP))
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return
+	}
+	if err := writeFileAtomic(path, doc); err != nil {
+		return
+	}
+	s.sess.setReceived(&receivedInfo{Path: path, Peer: peerLabel})
+}
+
+// receivedSubdir picks the ~/nib subdirectory for a received document from its own
+// content — the signing workflow's state travels inside the PDF, not in app state.
+func receivedSubdir(doc []byte) string {
+	if flags, _ := pdfops.FlagsJSON(doc); len(flags) > 0 {
+		return "to-sign"
+	}
+	if sign.Verify(doc).State != sign.Unsigned {
+		return "signed"
+	}
+	return "incoming"
+}
+
+// transferReason describes an incoming transfer for the consent pane, derived from
+// the document so the user knows what they're being asked to keep.
+func transferReason(doc []byte) string {
+	switch receivedSubdir(doc) {
+	case "to-sign":
+		return "wants to send you a document to sign"
+	case "signed":
+		return "is sending you a signed document"
+	default:
+		return "wants to send you a document"
+	}
+}
+
+// receivedName builds a stable, filesystem-safe name for a received document; the
+// wire carries no original filename, so the sender's label and the arrival time
+// identify it. labelSlug falls back to a short fingerprint when the label is empty
+// or unprintable.
+func receivedName(peerLabel string, peerFP []byte) string {
+	slug := labelSlug(peerLabel)
+	if slug == "" {
+		slug = hex.EncodeToString(peerFP)[:8]
+	}
+	return slug + "-" + time.Now().Format("20060102-150405") + ".pdf"
+}
+
+// labelSlug reduces a peer label to lowercase alphanumerics-and-dashes for a filename.
+func labelSlug(label string) string {
+	var b strings.Builder
+	for _, r := range strings.ToLower(label) {
+		switch {
+		case r >= 'a' && r <= 'z', r >= '0' && r <= '9':
+			b.WriteRune(r)
+		case r == ' ' || r == '-' || r == '_':
+			b.WriteRune('-')
+		}
+	}
+	return strings.Trim(b.String(), "-")
+}
+
 // --- HTTP handlers (all behind requireUnlocked: vault-unlocked, CSRF, loopback origin) ---
 
+// sessionModeReceive arms the listener to accept a one-way document transfer (save to
+// ~/nib); any other mode value co-signs.
+const sessionModeReceive = "receive"
+
 type armRequest struct {
-	Fingerprint string `json:"fingerprint"` // the single peer to accept (hex SPKI)
-	Bind        string `json:"bind"`        // host:port to bind, e.g. "0.0.0.0:8443"
+	Fingerprint string `json:"fingerprint"`    // the single peer to accept (hex SPKI)
+	Bind        string `json:"bind"`           // host:port to bind, e.g. "0.0.0.0:8443"
+	Mode        string `json:"mode,omitempty"` // "receive" for a transfer; co-sign otherwise
 }
 
 type sessionStatus struct {
-	Armed   bool         `json:"armed"`
-	Address string       `json:"address,omitempty"`
-	Pending *pendingView `json:"pending,omitempty"`
+	Armed    bool          `json:"armed"`
+	Address  string        `json:"address,omitempty"`
+	Pending  *pendingView  `json:"pending,omitempty"`
+	Received *receivedInfo `json:"received,omitempty"`
 }
 
 type pendingView struct {
@@ -251,7 +381,7 @@ func (s *Server) handleSessionArm(w http.ResponseWriter, r *http.Request) {
 		httpError(w, http.StatusConflict, "a session is already armed")
 		return
 	}
-	go s.runSession(ln, cert, key, label)
+	go s.runSession(ln, cert, key, label, req.Mode)
 	writeJSON(w, s.sess.status())
 }
 
@@ -417,6 +547,65 @@ func (s *Server) handleSessionInitiate(w http.ResponseWriter, r *http.Request) {
 	}
 	s.setDoc(&document{data: final, sig: sign.Verify(final)})
 	writeJSON(w, s.docResponse())
+}
+
+// sendResult reports the outcome of a one-way send: Sent on a confirmed receipt,
+// Declined when the peer's user declined. A transport failure is an HTTP error.
+type sendResult struct {
+	Sent     bool `json:"sent"`
+	Declined bool `json:"declined,omitempty"`
+}
+
+// handleSessionSend runs the dialing side of a one-way transfer: it dials the chosen
+// pinned peer (who must be armed to receive) at the supplied address over pinned-peer
+// mTLS and hands them the posted document — nothing is signed and nothing comes back.
+// Like initiate, the mTLS handshake aborts before any bytes flow unless the address
+// answers with the pinned peer's identity, and the endpoint is reachable only behind
+// requireUnlocked (unlocked + CSRF + loopback origin).
+func (s *Server) handleSessionSend(w http.ResponseWriter, r *http.Request) {
+	v := vaultFrom(r)
+	if err := r.ParseMultipartForm(maxPDFBytes); err != nil {
+		httpError(w, http.StatusBadRequest, "could not read upload")
+		return
+	}
+	address := r.FormValue("address")
+	if address == "" {
+		httpError(w, http.StatusBadRequest, "a peer address is required")
+		return
+	}
+	peerFP, err := parseFingerprint(r.FormValue("fingerprint"))
+	if err != nil {
+		httpError(w, http.StatusBadRequest, "not a valid fingerprint")
+		return
+	}
+	if _, ok := pinnedLabel(v, peerFP); !ok {
+		httpError(w, http.StatusBadRequest, "that peer isn't pinned — pin their fingerprint first")
+		return
+	}
+	pdfBytes, ok := formFileBytes(w, r, "pdf")
+	if !ok {
+		return
+	}
+	cert, key, err := identity(v)
+	if err != nil {
+		httpError(w, http.StatusInternalServerError, "could not load identity")
+		return
+	}
+	conn, err := p2p.Dial(address, cert, key, peerFP, sessionDialTimeout)
+	if err != nil {
+		httpError(w, http.StatusBadGateway, "could not connect to peer: "+err.Error())
+		return
+	}
+	defer conn.Close()
+	if err := p2p.SendDocument(conn, pdfBytes); err != nil {
+		if errors.Is(err, p2p.ErrDeclined) {
+			writeJSON(w, sendResult{Sent: false, Declined: true})
+			return
+		}
+		httpError(w, http.StatusBadGateway, "send did not complete: "+err.Error())
+		return
+	}
+	writeJSON(w, sendResult{Sent: true})
 }
 
 // DisarmSession tears down any armed listener; called on process shutdown.
