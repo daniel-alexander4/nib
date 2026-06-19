@@ -201,7 +201,9 @@ each other: the pinned-key handshake holds over any transport.
 Rotate, delete, **append**, and reorder pages — **drag a page's thumbnail** in the
 sidebar to move it where you want. **Flatten** to a guaranteed-flat PDF, or export
 pages as PNGs (single or ZIP) and form data as JSON / CSV. Save back over the
-original, or as a flattened or editable copy.
+original, or as a flattened or editable copy. **Print** the current document —
+fills, signatures, and all — straight from the **File** tab through your
+browser's print dialog.
 
 ### Choose your layout
 Pick how the commands are presented from **⚙ Settings → Layout**: the classic
