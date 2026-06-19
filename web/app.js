@@ -97,7 +97,7 @@ const els = {
   saveFlatBtn: $('saveFlatBtn'), saveEditableBtn: $('saveEditableBtn'), finalizeBtn: $('finalizeBtn'),
   exportZipBtn: $('exportZipBtn'), exportPngBtn: $('exportPngBtn'),
   exportFormJsonBtn: $('exportFormJsonBtn'), exportFormCsvBtn: $('exportFormCsvBtn'),
-  exportCertBtn: $('exportCertBtn'),
+  exportCertBtn: $('exportCertBtn'), printBtn: $('printBtn'),
   finalizeModal: $('finalizeModal'), fzText: $('fzText'), fzDate: $('fzDate'),
   fzTsa: $('fzTsa'), fzTsaOn: $('fzTsaOn'), fzCancel: $('fzCancel'), fzGo: $('fzGo'),
   fzOpacity: $('fzOpacity'), fzSize: $('fzSize'), fzAngle: $('fzAngle'), fzColor: $('fzColor'),
@@ -1934,6 +1934,32 @@ els.exportFormJsonBtn.onclick = () => { window.location = '/api/form-data?format
 els.exportFormCsvBtn.onclick = () => { window.location = '/api/form-data?format=csv'; };
 els.exportCertBtn.onclick = () => { window.location = '/api/identity'; };
 
+els.printBtn.onclick = async () => {
+  if (!pdfDocument) return toast('Open a PDF first');
+  // Print the real PDF bytes (WYSIWYG, vector) through the browser's own print
+  // dialog. Printing the on-screen #viewer would capture pdf.js's screen-DPI
+  // page canvases plus the app chrome, not the document — so feed the same
+  // baked bytes Save/Export use into a hidden iframe and print that. A hidden
+  // iframe (not window.open) sidesteps popup blockers; the Blob URL must outlive
+  // the print call, so it's revoked on afterprint with a timeout fallback for
+  // browsers that never fire the event.
+  let bytes;
+  try { bytes = await bakedBytes(); } catch (e) { console.error('print bake failed', e); return toast('could not prepare the document to print'); }
+  const url = URL.createObjectURL(new Blob([bytes], { type: 'application/pdf' }));
+  const frame = document.createElement('iframe');
+  frame.style.display = 'none';
+  frame.src = url;
+  let cleaned = false;
+  const cleanup = () => { if (cleaned) return; cleaned = true; URL.revokeObjectURL(url); frame.remove(); };
+  frame.onload = () => {
+    frame.contentWindow.focus();
+    frame.contentWindow.addEventListener('afterprint', cleanup);
+    frame.contentWindow.print();
+    setTimeout(cleanup, 60000);
+  };
+  document.body.appendChild(frame);
+};
+
 // Finalize & sign.
 els.finalizeBtn.onclick = () => { if (pdfDocument) els.finalizeModal.hidden = false; };
 els.fzCancel.onclick = () => { els.finalizeModal.hidden = true; };
@@ -2995,7 +3021,7 @@ all('#toolbar [data-forward]').forEach((b) => { b.onclick = () => $(b.dataset.fo
 let overlayFields = []; // {page, frac:[fx0,fy0,fx1,fy1], pageW, pageH, kind, el}
 let libraryImages = []; // cached /api/images list (the image-library panel)
 const DOC_REQUIRED = [
-  'saveFlatBtn', 'saveEditableBtn',
+  'saveFlatBtn', 'saveEditableBtn', 'printBtn',
   'exportZipBtn', 'exportPngBtn', 'exportFormJsonBtn', 'exportFormCsvBtn',
   'textToolBtn', 'highlightToolBtn', 'drawToolBtn',
   'detectBtn', 'editTextBtn', 'removeOriginalsBtn', 'autofillBtn',
