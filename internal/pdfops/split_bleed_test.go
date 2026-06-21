@@ -173,6 +173,46 @@ func TestSplitRegionsNoBleed(t *testing.T) {
 	}
 }
 
+func whitish(c color.Color) bool {
+	r, g, b, _ := c.RGBA()
+	return r>>8 > 200 && g>>8 > 200 && b>>8 > 200
+}
+
+// TestSplitRegionsStandardizePadding renders two differently-sized regions and
+// proves the output is standardized: both pages come out the same size, the
+// smaller region (red) is centred with WHITE padding at the corners, and the
+// larger region (yellow) fills its page — with no neighbour-quadrant bleed.
+func TestSplitRegionsStandardizePadding(t *testing.T) {
+	skipNoPoppler(t)
+	pdf := fourQuadrantPDF(t, 300, 400)
+	// A: small region inside the top-left (red) quadrant; B: larger region inside
+	// the bottom-right (yellow) quadrant. A=100×160, B=130×180 → standardized 130×180.
+	out, err := SplitRegions(pdf, 1, [][4]float64{{20, 220, 120, 380}, {160, 10, 290, 190}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	imgs := renderPDF(t, out, "pad") // [original, A, B]
+	if len(imgs) != 3 {
+		t.Fatalf("rendered %d pages, want 3", len(imgs))
+	}
+	a, b := imgs[1], imgs[2]
+	if a.Bounds().Size() != b.Bounds().Size() {
+		t.Fatalf("region pages not standardized: %v vs %v", a.Bounds().Size(), b.Bounds().Size())
+	}
+	ab, bb := a.Bounds(), b.Bounds()
+	if got := nearestQuad(a.At((ab.Min.X+ab.Max.X)/2, (ab.Min.Y+ab.Max.Y)/2)); got != 0 {
+		t.Errorf("small region centre quadrant %d, want 0 (red)", got)
+	}
+	for _, p := range [][2]int{{ab.Min.X + 2, ab.Min.Y + 2}, {ab.Max.X - 3, ab.Max.Y - 3}} {
+		if !whitish(a.At(p[0], p[1])) {
+			t.Errorf("small region corner (%d,%d) not white padding", p[0], p[1])
+		}
+	}
+	if got := nearestQuad(b.At((bb.Min.X+bb.Max.X)/2, (bb.Min.Y+bb.Max.Y)/2)); got != 3 {
+		t.Errorf("larger region centre quadrant %d, want 3 (yellow)", got)
+	}
+}
+
 // TestSplitRegionsRotated is the rotation-correctness guard the rescrut required:
 // the client measures rectangles in pdf.js DISPLAY space, but the server crops the
 // content stream — which is wrong unless /Rotate is flattened first. Oracle: on a
