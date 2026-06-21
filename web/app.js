@@ -184,6 +184,7 @@ function applyStatus(st) {
     // Saved highlight palette (most-recently-used colors); fall back to defaults.
     recentHlColors = (st.recentHighlightColors && st.recentHighlightColors.length)
       ? st.recentHighlightColors.slice(0, 5) : DEFAULT_HL_COLORS.slice();
+    selectedHlColor = recentHlColors[0];
     renderHlSwatches();
     els.autoUpdateChk.checked = st.autoUpdate;
     els.autoUpdateChk.disabled = st.updateCheckLocked;
@@ -1044,6 +1045,9 @@ async function setDocumentFromServer(meta) {
   pdfDocument = doc;
   viewer.setDocument(pdfDocument);
   linkService.setDocument(pdfDocument, null);
+  // A fresh document gets a new pdf.js editor manager; re-assert the chosen
+  // highlight color so it sticks across reloads (page ops) until the user changes it.
+  applyHighlightColor(selectedHlColor);
 
   els.viewerWrap.classList.add('has-doc');
   all('.pageCount').forEach((s) => { s.textContent = '/ ' + pdfDocument.numPages; });
@@ -3288,9 +3292,9 @@ function setTool(mode) {
   // Mirror the active mode onto every control bound to it (Edit menu + toolbar).
   document.querySelectorAll('[data-mode]').forEach((b) => b.classList.toggle('active', b.dataset.mode === activeTool));
   // The highlight color row is contextual — show it only while highlighting, and
-  // apply the most-recent color so the next highlight uses it (not pdf.js yellow).
+  // re-assert the selected color so the next highlight uses it (not pdf.js yellow).
   els.hlColors.hidden = activeTool !== 'HIGHLIGHT';
-  if (activeTool === 'HIGHLIGHT' && recentHlColors.length) setHighlightColor(recentHlColors[0]);
+  if (activeTool === 'HIGHLIGHT') applyHighlightColor(selectedHlColor);
 }
 document.querySelectorAll('[data-mode]').forEach((b) => {
   b.onclick = () => setTool(b.dataset.mode);
@@ -3304,6 +3308,10 @@ document.querySelectorAll('[data-mode]').forEach((b) => {
 // viewer carries no editor-params toolbar DOM.
 const DEFAULT_HL_COLORS = ['#fff066', '#93e0a3', '#8fb8ff', '#ffa6c9', '#ffb454'];
 let recentHlColors = DEFAULT_HL_COLORS.slice();
+// The color the user last chose — sticky per session/document. It only changes
+// when the user picks a new color (setHighlightColor); tool re-activation and
+// document reloads re-assert it, so a highlight color persists until changed.
+let selectedHlColor = DEFAULT_HL_COLORS[0];
 
 function applyHighlightColor(hex) {
   eventBus.dispatch('switchannotationeditorparams', {
@@ -3320,17 +3328,20 @@ function renderHlSwatches() {
     b.className = 'hlswatch';
     b.style.background = c;
     b.title = c;
-    b.classList.toggle('active', c === recentHlColors[0]);
+    b.classList.toggle('active', c === selectedHlColor);
     b.onclick = () => setHighlightColor(c);
     els.hlSwatches.appendChild(b);
   }
-  els.hlCustom.value = recentHlColors[0] || '#fff066';
+  els.hlCustom.value = selectedHlColor;
 }
 
-// setHighlightColor sets the color for new (and any selected) highlights, moves
-// it to the front of the MRU, and persists the list (server validates + caps).
+// setHighlightColor is the explicit-pick path (a swatch or the custom picker): it
+// makes hex the sticky selected color, applies it to new (and any selected)
+// highlights, moves it to the front of the MRU, and persists (server validates +
+// caps). Re-asserting the existing color elsewhere uses applyHighlightColor.
 function setHighlightColor(hex) {
   hex = hex.toLowerCase();
+  selectedHlColor = hex;
   applyHighlightColor(hex);
   recentHlColors = [hex, ...recentHlColors.filter((c) => c !== hex)].slice(0, 5);
   renderHlSwatches();
