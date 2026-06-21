@@ -181,6 +181,9 @@ function applyStatus(st) {
     els.autoUpdateChk.checked = st.autoUpdate;
     els.autoUpdateChk.disabled = st.updateCheckLocked;
     els.autoUpdateChk.parentElement.title = st.updateCheckLocked ? 'Forced off by NIB_NO_UPDATE_CHECK' : '';
+    // Always show the installed version as a badge. An update check (auto or
+    // manual) then refines it: green when confirmed latest, a CTA when behind.
+    showVersionBadge(st.version);
     // Automatic update check, once per session, at the first usable moment.
     if (st.autoUpdate && !updateChecked) { updateChecked = true; runUpdateCheck(true); }
     const initial = new URLSearchParams(location.search).get('open');
@@ -280,6 +283,19 @@ els.restoreInput.onchange = async () => {
 // asset for this OS/arch on click. Nib installs nothing.
 let updateChecked = false;
 let updateInfo = null; // last check result, for the pill's download action
+
+// showVersionBadge renders the always-on installed-version pill (no download
+// action, no dismiss) before any network check. It's neutral — not green —
+// because matching the latest release can only be claimed once a check confirms
+// it; runUpdateCheck upgrades it to the green ".latest" state or the CTA.
+function showVersionBadge(version) {
+  updateInfo = null;
+  els.updatePill.classList.add('current');
+  els.updatePill.classList.remove('latest');
+  els.updateGet.textContent = `v${version || 'dev'}`;
+  els.updateGet.title = `Installed version (v${version || 'dev'})`;
+  els.updatePill.hidden = false;
+}
 
 // runUpdateCheck queries the server. auto=true is the silent startup check (only
 // surfaces the pill); auto=false is the manual menu item (also toasts the result).
