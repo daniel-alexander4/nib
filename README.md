@@ -209,8 +209,10 @@ columns and rows, preview where the cuts land, and
 optionally resize each piece to a full page. Not a clean grid? **Split by box**
 copies regions out by hand — drag a rectangle around each region you want, then
 **Apply box split** and each is added as a new page right after the original
-(which is left untouched, so delete it later only if you want to). It's a re-crop,
-not a re-render, so every piece keeps its original quality. **Flatten** to a guaranteed-flat PDF, or
+(which is left untouched, so delete it later only if you want to). The new pages
+all come out the **same size** (the largest region's, smaller ones centred and
+padded), so the output is uniform. It's a re-crop, not a re-render, so every piece
+keeps its original quality. **Flatten** to a guaranteed-flat PDF, or
 export pages as PNGs (single or ZIP) and form data as JSON / CSV. Save back over the
 original, or as a flattened or editable copy. **Print** the current document —
 fills, signatures, and all — straight from the **File** tab through your
