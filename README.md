@@ -96,7 +96,9 @@ hop needs both peers online; nothing is stored on a server in between.
 
 ### Annotate
 **Highlight** text, **draw** freehand, and add free **text** boxes anywhere on a
-page — works on flat PDFs too.
+page — works on flat PDFs too. Highlighting is **any color**: pick one from the
+swatch row (your last five colors stay one click away) or open the picker for a
+new shade.
 
 ### Edit existing text
 **Edit → Edit text**, then drag a box over baked-in text. Nib covers it with a
