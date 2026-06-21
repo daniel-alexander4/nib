@@ -595,3 +595,64 @@ export function detectTableCells(canvas) {
   }
   return cells;
 }
+
+// detectGrid makes a BEST-EFFORT guess at how many columns and rows an imposed
+// page is laid out in, by looking for sustained whitespace "gutters" between
+// blocks of content. It only ever seeds the editable Columns/Rows inputs — it
+// never splits on its own — because gutter detection on a real scan (speckle,
+// off-white background, content touching the trim) is unreliable.
+//
+// The signal is RELATIVE, not an absolute white threshold: per column/row we sum
+// darkness (255 − luminance) and normalize to the page's peak, so an off-white
+// scan with no true white still resolves as long as the gutters are lighter than
+// the content around them.
+export function detectGrid(canvas) {
+  const w = canvas.width, h = canvas.height;
+  const data = canvas.getContext('2d').getImageData(0, 0, w, h).data;
+  return {
+    cols: countBands(inkProfile(data, w, h, true)),
+    rows: countBands(inkProfile(data, w, h, false)),
+  };
+}
+
+// inkProfile returns per-column (vertical) or per-row darkness, each normalized
+// to the page's peak so the empty/content cut is relative to this page's range.
+function inkProfile(data, w, h, vertical) {
+  const len = vertical ? w : h, span = vertical ? h : w;
+  const ink = new Float64Array(len);
+  let peak = 0;
+  for (let a = 0; a < len; a++) {
+    let sum = 0;
+    for (let b = 0; b < span; b++) {
+      const x = vertical ? a : b, y = vertical ? b : a;
+      const i = (y * w + x) * 4;
+      sum += 255 - (0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2]);
+    }
+    ink[a] = sum / span;
+    if (ink[a] > peak) peak = ink[a];
+  }
+  if (peak > 0) for (let i = 0; i < len; i++) ink[i] /= peak;
+  return ink;
+}
+
+// countBands trims the page margins to the content extent, then counts interior
+// gutters — runs of near-empty lines at least 4% of the content extent wide
+// (wider than an inter-letter gap) — and returns bands = gutters + 1, capped.
+function countBands(ink) {
+  const len = ink.length, empty = 0.06;
+  let c0 = 0, c1 = len - 1;
+  while (c0 < len && ink[c0] <= empty) c0++;
+  while (c1 > c0 && ink[c1] <= empty) c1--;
+  if (c1 <= c0) return 1;
+  const minGap = Math.max(3, (c1 - c0) * 0.04);
+  let gutters = 0, run = 0;
+  for (let i = c0; i <= c1; i++) {
+    if (ink[i] <= empty) {
+      run++;
+    } else {
+      if (run >= minGap) gutters++;
+      run = 0;
+    }
+  }
+  return Math.max(1, Math.min(8, gutters + 1));
+}
