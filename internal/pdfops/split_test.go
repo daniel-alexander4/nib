@@ -161,9 +161,11 @@ func TestSplitRegionsBasic(t *testing.T) {
 	}
 }
 
-// TestSplitRegionsArbitrary covers differently-sized, overlapping regions — the
-// whole point of hand selection (no grid constraint) — added after the original.
-func TestSplitRegionsArbitrary(t *testing.T) {
+// TestSplitRegionsStandardizes covers differently-sized, overlapping regions — the
+// whole point of hand selection — and pins that every output region page is
+// standardized to ONE size: the largest region's width × height (here 200×200,
+// from the second region), with the smaller ones centred and padded.
+func TestSplitRegionsStandardizes(t *testing.T) {
 	pdf := sizedPDF(t, 1, 200, 200)
 	out, err := SplitRegions(pdf, 1, [][4]float64{{10, 10, 110, 60}, {0, 0, 200, 200}, {50, 50, 90, 190}})
 	if err != nil {
@@ -176,8 +178,10 @@ func TestSplitRegionsArbitrary(t *testing.T) {
 	if !sizeEq(d[0], 200, 200) {
 		t.Errorf("original page = %v, want kept at 200×200", d[0])
 	}
-	if !sizeEq(d[1], 100, 50) || !sizeEq(d[2], 200, 200) || !sizeEq(d[3], 40, 140) {
-		t.Errorf("region dims = %v %v %v, want 100×50, 200×200, 40×140", d[1], d[2], d[3])
+	for i := 1; i <= 3; i++ {
+		if !sizeEq(d[i], 200, 200) {
+			t.Errorf("region page %d = %v, want standardized to 200×200", i, d[i])
+		}
 	}
 }
 
