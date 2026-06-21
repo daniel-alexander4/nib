@@ -158,16 +158,16 @@ func TestSplitRegionsNoBleed(t *testing.T) {
 		t.Fatal(err)
 	}
 	imgs := renderPDF(t, out, "page")
-	// Non-destructive: page 1 is the original; the two regions are pages 2 and 3.
-	if len(imgs) != 3 {
-		t.Fatalf("rendered %d pages, want 3 (original + 2 regions)", len(imgs))
+	// The split page is replaced by its 2 regions.
+	if len(imgs) != 2 {
+		t.Fatalf("rendered %d pages, want 2 regions", len(imgs))
 	}
-	for i, want := range []int{0, 3} { // region pages 2,3 → red (0), yellow (3)
-		img := imgs[i+1]
+	for i, want := range []int{0, 3} { // regions → red (0), yellow (3)
+		img := imgs[i]
 		for _, p := range cornersAndCentre(img.Bounds()) {
 			if got := nearestQuad(img.At(p[0], p[1])); got != want {
 				t.Errorf("region page %d at (%d,%d): quadrant %d bled in, want only %d",
-					i+2, p[0], p[1], got, want)
+					i+1, p[0], p[1], got, want)
 			}
 		}
 	}
@@ -191,11 +191,11 @@ func TestSplitRegionsStandardizePadding(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	imgs := renderPDF(t, out, "pad") // [original, A, B]
-	if len(imgs) != 3 {
-		t.Fatalf("rendered %d pages, want 3", len(imgs))
+	imgs := renderPDF(t, out, "pad") // [A, B] — the split page is replaced
+	if len(imgs) != 2 {
+		t.Fatalf("rendered %d pages, want 2", len(imgs))
 	}
-	a, b := imgs[1], imgs[2]
+	a, b := imgs[0], imgs[1]
 	if a.Bounds().Size() != b.Bounds().Size() {
 		t.Fatalf("region pages not standardized: %v vs %v", a.Bounds().Size(), b.Bounds().Size())
 	}
@@ -233,11 +233,11 @@ func TestSplitRegionsRotated(t *testing.T) {
 	}
 	truth := renderPDF(t, rotated, "truth") // poppler applies /Rotate correctly
 	mine := renderPDF(t, full, "mine")
-	// Non-destructive: mine is [original-rotated, region]; the region is page 2.
-	if len(truth) != 1 || len(mine) != 2 {
-		t.Fatalf("expected truth=1, mine=2 pages, got truth=%d mine=%d", len(truth), len(mine))
+	// The split page is replaced by its single full-page region.
+	if len(truth) != 1 || len(mine) != 1 {
+		t.Fatalf("expected truth=1, mine=1 pages, got truth=%d mine=%d", len(truth), len(mine))
 	}
-	region := mine[1]
+	region := mine[0]
 	tb, mb := truth[0].Bounds(), region.Bounds()
 	if tb.Dx() != mb.Dx() || tb.Dy() != mb.Dy() {
 		t.Fatalf("size mismatch: truth %dx%d, mine %dx%d (rotation not flattened correctly)",
