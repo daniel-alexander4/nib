@@ -40,7 +40,14 @@ func (s *Server) handlePages(w http.ResponseWriter, r *http.Request) {
 	case "delete":
 		result, err = pdfops.RemovePages(pdfBytes, pages)
 	case "reorder":
-		result, err = pdfops.Reorder(pdfBytes, pages)
+		result, err = pdfops.Collect(pdfBytes, pages)
+	case "insertblank":
+		afterPage, pErr := strconv.Atoi(r.FormValue("page"))
+		if pErr != nil {
+			httpError(w, http.StatusBadRequest, "insert needs a whole-number page")
+			return
+		}
+		result, err = pdfops.InsertBlank(pdfBytes, afterPage)
 	case "append":
 		other, ok2 := formFileBytes(w, r, "append")
 		if !ok2 {

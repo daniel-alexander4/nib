@@ -105,12 +105,28 @@ func TestPageOps(t *testing.T) {
 		t.Errorf("after remove: count = %d, want 2", n)
 	}
 
-	reordered, err := Reorder(pdf, []string{"3", "1"})
+	reordered, err := Collect(pdf, []string{"3", "1"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if n, _ := PageCount(reordered); n != 2 {
 		t.Errorf("after reorder/collect: count = %d, want 2", n)
+	}
+
+	extracted, err := Collect(pdf, []string{"2-3"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n, _ := PageCount(extracted); n != 2 {
+		t.Errorf("after extract subset: count = %d, want 2", n)
+	}
+
+	inserted, err := InsertBlank(pdf, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n, _ := PageCount(inserted); n != 4 {
+		t.Errorf("after insert blank: count = %d, want 4", n)
 	}
 
 	rotated, err := Rotate(pdf, []string{"1"}, 90)

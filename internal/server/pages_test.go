@@ -69,6 +69,66 @@ func TestPageDeleteUpdatesDocument(t *testing.T) {
 	}
 }
 
+func TestInsertBlankUpdatesDocument(t *testing.T) {
+	ts, path := startServer(t)
+	c, csrf := authedClient(t, ts)
+	openByPath(t, ts.URL, c, csrf, path)
+
+	var buf bytes.Buffer
+	mw := multipart.NewWriter(&buf)
+	fw, _ := mw.CreateFormFile("pdf", "doc.pdf")
+	fw.Write(threePagePDF(t))
+	mw.WriteField("op", "insertblank")
+	mw.WriteField("page", "2")
+	mw.Close()
+
+	resp := write(t, c, csrf, http.MethodPost, ts.URL+"/api/pages", mw.FormDataContentType(), &buf)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("insert blank status = %d, want 200", resp.StatusCode)
+	}
+
+	pdfResp, _ := c.Get(ts.URL + "/api/pdf")
+	got, _ := io.ReadAll(pdfResp.Body)
+	pdfResp.Body.Close()
+	if n, _ := pdfops.PageCount(got); n != 4 {
+		t.Errorf("current document page count = %d, want 4 (blank inserted)", n)
+	}
+}
+
+func TestExtractReturnsSubsetWithoutTouchingDocument(t *testing.T) {
+	ts, path := startServer(t)
+	c, csrf := authedClient(t, ts)
+	openByPath(t, ts.URL, c, csrf, path)
+
+	var buf bytes.Buffer
+	mw := multipart.NewWriter(&buf)
+	fw, _ := mw.CreateFormFile("pdf", "doc.pdf")
+	fw.Write(threePagePDF(t))
+	mw.WriteField("pages", "1,3")
+	mw.Close()
+
+	resp := write(t, c, csrf, http.MethodPost, ts.URL+"/api/extract", mw.FormDataContentType(), &buf)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("extract status = %d, want 200", resp.StatusCode)
+	}
+	got, _ := io.ReadAll(resp.Body)
+	if n, _ := pdfops.PageCount(got); n != 2 {
+		t.Errorf("extracted PDF page count = %d, want 2", n)
+	}
+
+	// Extract must NOT replace the open document: it operates on the posted bytes
+	// and never assigns s.doc, so /api/pdf still returns the opened fixture (1 page)
+	// rather than the 3-page payload or its 2-page subset.
+	pdfResp, _ := c.Get(ts.URL + "/api/pdf")
+	open, _ := io.ReadAll(pdfResp.Body)
+	pdfResp.Body.Close()
+	if n, _ := pdfops.PageCount(open); n != 1 {
+		t.Errorf("open document page count = %d, want 1 (extract must not mutate it)", n)
+	}
+}
+
 func TestPageReorderUpdatesDocument(t *testing.T) {
 	ts, path := startServer(t)
 	c, csrf := authedClient(t, ts)
