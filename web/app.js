@@ -35,6 +35,7 @@ const els = {
   pathInput: $('pathInput'), openGo: $('openGo'),
   textToolBtn: $('textToolBtn'), detectBtn: $('detectBtn'),
   hlColors: $('hlColors'), hlSwatches: $('hlSwatches'), hlCustom: $('hlCustom'),
+  borderBtn: $('borderBtn'), borderWidth: $('borderWidth'), borderWidthInput: $('borderWidthInput'),
   prevBtn: $('prevBtn'), nextBtn: $('nextBtn'),
   zoomInBtn: $('zoomInBtn'), zoomOutBtn: $('zoomOutBtn'), fitBtn: $('fitBtn'),
   sigBadge: $('sigBadge'), saveBtn: $('saveBtn'), statusCluster: $('statusCluster'),
@@ -1700,11 +1701,15 @@ function enableStampGestures(f, el, handle) {
       x0 = Math.min(Math.max(x0 + dx, 0), 1 - w);
       y0 = Math.min(Math.max(y0 + dy, 0), 1 - h);
       f.frac = [x0, y0, x0 + w, y0 + h];
-    } else {
+    } else if (f.aspect) {
       let nw = Math.max((x1 - x0) + dx, 12 / W);
       let nh = nw * W / (f.aspect * H); // keep image aspect (page-pixel terms)
       const k = Math.min(1, (1 - x0) / nw, (1 - y0) / nh); // clamp, preserve aspect
       f.frac = [x0, y0, x0 + nw * k, y0 + nh * k];
+    } else {
+      // No aspect lock (border boxes): each side resizes freely.
+      const nw = Math.max((x1 - x0) + dx, 12 / W), nh = Math.max((y1 - y0) + dy, 12 / H);
+      f.frac = [x0, y0, Math.min(x0 + nw, 1), Math.min(y0 + nh, 1)];
     }
     layoutField(f, pv);
   });
@@ -2355,7 +2360,7 @@ let redStart = null, redDiv = null, redHit = null;
 
 els.redactBtn.onclick = () => {
   redactMode = !redactMode;
-  if (redactMode) { setMarkerMode(null); exitSplitBox(); } // one box tool at a time
+  if (redactMode) { setMarkerMode(null); exitSplitBox(); exitBorder(); } // one box tool at a time
   reflectRedact();
   els.viewerContainer.style.cursor = redactMode ? 'crosshair' : '';
 };
@@ -2474,6 +2479,7 @@ els.splitBoxBtn.onclick = () => {
   splitBoxMode = true;
   sbPage = viewer.currentPageNumber; // regions apply to the page you start on
   setMarkerMode(null);
+  exitBorder();
   if (redactMode) { redactMode = false; reflectRedact(); }
   if (editMode) { editMode = false; reflectEdit(); }
   reflectSplitBox();
@@ -2538,7 +2544,7 @@ els.editTextBtn.onclick = () => {
   if (!pdfDocument) { toast('Open a PDF first'); return; }
   editMode = !editMode;
   if (editMode && redactMode) { redactMode = false; reflectRedact(); } // one box tool at a time
-  if (editMode) { setMarkerMode(null); exitSplitBox(); }
+  if (editMode) { setMarkerMode(null); exitSplitBox(); exitBorder(); }
   reflectEdit();
   els.viewerContainer.style.cursor = editMode ? 'crosshair' : '';
 };
@@ -2751,6 +2757,7 @@ function setMarkerMode(m) {
     if (redactMode) { redactMode = false; reflectRedact(); }
     if (editMode) { editMode = false; reflectEdit(); }
     exitSplitBox();
+    exitBorder();
   }
   all('.markers button').forEach((b) => b.classList.toggle('active', b.dataset.marker === m));
   els.viewerContainer.style.cursor = m ? 'crosshair' : '';
@@ -3289,11 +3296,13 @@ function setTool(mode) {
   viewer.annotationEditorMode = {
     mode: activeTool ? pdfjsLib.AnnotationEditorType[activeTool] : pdfjsLib.AnnotationEditorType.NONE,
   };
+  if (activeTool) exitBorder(); // Border is a Nib-side tool, not a pdf.js mode — one at a time
   // Mirror the active mode onto every control bound to it (Edit menu + toolbar).
   document.querySelectorAll('[data-mode]').forEach((b) => b.classList.toggle('active', b.dataset.mode === activeTool));
-  // The highlight color row is contextual — show it only while highlighting, and
-  // re-assert the selected color so the next highlight uses it (not pdf.js yellow).
-  els.hlColors.hidden = activeTool !== 'HIGHLIGHT';
+  // The highlight color row is contextual — show it only while highlighting (or
+  // drawing a border), and re-assert the selected color so the next highlight
+  // uses it (not pdf.js yellow).
+  reflectAnnoControls();
   if (activeTool === 'HIGHLIGHT') applyHighlightColor(selectedHlColor);
 }
 document.querySelectorAll('[data-mode]').forEach((b) => {
@@ -3350,6 +3359,120 @@ function setHighlightColor(hex) {
 
 els.hlCustom.onchange = () => setHighlightColor(els.hlCustom.value);
 
+// --- border boxes ------------------------------------------------------------
+// A "Border" is a colored outline with no fill — the unfilled sibling of a
+// highlight. pdf.js owns highlights and has no border mode, so Nib draws this
+// itself: drag a rectangle, get a draggable/resizable outline overlay (kind
+// 'box'), and on save it bakes as a transparent stroked-rectangle PNG through the
+// same /api/bake stamps path as the Y/N circle. Color comes from the shared
+// highlight palette; thickness (points) is captured per box at draw time.
+let borderMode = false;
+let bdStart = null, bdDiv = null, bdHit = null;
+
+// Show the highlight color row while highlighting OR drawing borders; the
+// thickness control only while drawing borders.
+function reflectAnnoControls() {
+  els.hlColors.hidden = !(activeTool === 'HIGHLIGHT' || borderMode);
+  els.borderWidth.hidden = !borderMode;
+}
+function reflectBorder() {
+  els.borderBtn.classList.toggle('active', borderMode);
+  reflectAnnoControls();
+}
+function exitBorder() {
+  if (!borderMode) return;
+  borderMode = false;
+  reflectBorder();
+  els.viewerContainer.style.cursor = '';
+}
+const clampWeight = (v) => Math.min(10, Math.max(1, Number(v) || 2)); // points
+
+els.borderBtn.onclick = () => {
+  if (borderMode) { exitBorder(); return; }
+  if (!pdfDocument) { toast('Open a PDF first'); return; }
+  borderMode = true;
+  setTool(null); // clear any pdf.js editor tool
+  setMarkerMode(null);
+  if (redactMode) { redactMode = false; reflectRedact(); }
+  if (editMode) { editMode = false; reflectEdit(); }
+  exitSplitBox();
+  reflectBorder();
+  els.viewerContainer.style.cursor = 'crosshair';
+};
+
+els.viewerContainer.addEventListener('pointerdown', (e) => {
+  if (!borderMode) return;
+  bdHit = pageAt(e.clientX, e.clientY);
+  if (!bdHit) return;
+  bdStart = { x: e.clientX, y: e.clientY };
+  bdDiv = document.createElement('div');
+  bdDiv.className = 'bordermark';
+  bdDiv.style.borderColor = selectedHlColor;
+  bdHit.pv.div.appendChild(bdDiv);
+  sizeMark(bdDiv, bdHit.r, bdStart, bdStart);
+  e.preventDefault();
+});
+els.viewerContainer.addEventListener('pointermove', (e) => {
+  if (bdStart) sizeMark(bdDiv, bdHit.r, bdStart, { x: e.clientX, y: e.clientY });
+});
+els.viewerContainer.addEventListener('pointerup', async (e) => {
+  if (!bdStart) return;
+  const hit = bdHit, start = bdStart;
+  bdDiv.remove();
+  bdStart = null; bdDiv = null; bdHit = null;
+  const r = hit.r;
+  const fw = Math.abs(e.clientX - start.x) / r.width;
+  const fh = Math.abs(e.clientY - start.y) / r.height;
+  if (fw < 0.01 || fh < 0.01) return; // ignore a stray click
+  const fx0 = (Math.min(start.x, e.clientX) - r.left) / r.width;
+  const fy0 = (Math.min(start.y, e.clientY) - r.top) / r.height;
+  const base = (await pdfDocument.getPage(hit.n)).getViewport({ scale: 1 }); // PDF points
+  makeBox([fx0, fy0, fx0 + fw, fy0 + fh], { page: hit.n, pageW: base.width, pageH: base.height });
+});
+
+// makeBox registers a draggable/resizable outline overlay (kind 'box'), styled
+// live with the chosen color and thickness; collectStamps bakes it via boxPNG.
+function makeBox(frac, opts) {
+  const f = { page: opts.page, frac, pageW: opts.pageW, pageH: opts.pageH, kind: 'box',
+    color: selectedHlColor, weight: clampWeight(els.borderWidthInput.value) };
+  const el = document.createElement('div');
+  el.className = 'ovl ovl-box';
+  el.tabIndex = 0;
+  el.style.borderColor = f.color;
+  const handle = document.createElement('span');
+  handle.className = 'stamp-resize';
+  const del = document.createElement('button');
+  del.className = 'stamp-del'; del.textContent = '×'; del.title = 'Remove border';
+  el.append(handle, del);
+  f.el = el;
+
+  const remove = () => { el.remove(); overlayFields = overlayFields.filter((o) => o !== f); };
+  del.onclick = (ev) => { ev.stopPropagation(); remove(); };
+  el.addEventListener('keydown', (ev) => { if (ev.key === 'Delete' || ev.key === 'Backspace') remove(); });
+  enableStampGestures(f, el, handle);
+
+  overlayFields.push(f);
+  const pv = viewer.getPageView(f.page - 1);
+  pv.div.appendChild(el);
+  layoutField(f, pv);
+}
+
+// boxPNG renders a transparent PNG with a stroked rectangle outline in hex at the
+// given pen weight (PDF points). Drawing at the rect's own point size (× super-
+// sample) means the server's scale-to-rect is uniform, so the weight stays true.
+function boxPNG(wPts, hPts, hex, weightPts) {
+  const s = 3;
+  const cv = document.createElement('canvas');
+  cv.width = Math.max(8, Math.round(wPts * s));
+  cv.height = Math.max(8, Math.round(hPts * s));
+  const c = cv.getContext('2d');
+  c.strokeStyle = hex;
+  c.lineWidth = Math.max(1, weightPts * s);
+  const m = c.lineWidth / 2; // inset by half the stroke so the border stays in the rect
+  c.strokeRect(m, m, cv.width - c.lineWidth, cv.height - c.lineWidth);
+  return cv.toDataURL('image/png').split(',')[1];
+}
+
 // The toolbar mirrors the menus. Mode tools wire themselves via [data-mode]
 // above; every other toolbar control forwards to its menu twin by id.
 all('#toolbar [data-forward]').forEach((b) => { b.onclick = () => $(b.dataset.forward).click(); });
@@ -3403,6 +3526,7 @@ function clearOverlays() {
   overlayFields = [];
   activeMarker = null; fillTarget = null; // markers are gone with the old document
   exitSplitBox(); // a pending region selection doesn't carry to a new document
+  exitBorder();   // nor a pending border-draw mode
 }
 // clearDetected drops only auto-detected fields (text/check/circleone), keeping
 // user-placed stamps, text edits, and sign/date/initial markers so re-running
@@ -3410,7 +3534,7 @@ function clearOverlays() {
 // placed marker.
 function clearDetected() {
   overlayFields = overlayFields.filter((f) => {
-    if (f.kind === 'stamp' || f.kind === 'edit' || f.kind === 'marker') return true;
+    if (f.kind === 'stamp' || f.kind === 'edit' || f.kind === 'marker' || f.kind === 'box') return true;
     f.el.remove();
     return false;
   });
@@ -3424,6 +3548,9 @@ function layoutField(f, pv) {
   f.el.style.width = ((f.frac[2] - f.frac[0]) * W) + 'px';
   f.el.style.height = h + 'px';
   if (f.kind === 'text') f.el.style.fontSize = Math.max(7, h * 0.72) + 'px';
+  // Border boxes carry a point thickness; scale it to the rendered page so the
+  // live outline matches the baked stroke (css px per point = rendered W / page W).
+  else if (f.kind === 'box') f.el.style.borderWidth = Math.max(1, f.weight * W / f.pageW) + 'px';
   // Edit fields carry a recognized point size; scale it to the rendered page
   // (css px per point = rendered width / page points) so the live overlay matches
   // the baked text instead of being sized from the box height.
@@ -3490,6 +3617,9 @@ function collectStamps() {
     } else if (f.kind === 'check' && f.el.checked) {
       const [x0, y0, x1, y1] = rectPoints(f, f.frac);
       out.push({ page: f.page, rect: [x0, y0, x1, y1], png: xPNG(x1 - x0, y1 - y0) });
+    } else if (f.kind === 'box') {
+      const rect = rectPoints(f, f.frac);
+      out.push({ page: f.page, rect, png: boxPNG(rect[2] - rect[0], rect[3] - rect[1], f.color, f.weight) });
     }
   }
   return out;
