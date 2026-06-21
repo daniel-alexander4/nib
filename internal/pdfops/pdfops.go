@@ -285,6 +285,10 @@ const (
 // source page afterwards if they only wanted the pieces. (This differs from the
 // grid SplitPage, which replaces the imposed sheet with its tiles.)
 //
+// Every new page is standardized to ONE size — the largest region's width ×
+// height — with smaller regions centred on it and padded with blank space, so the
+// output pages are uniform rather than ragged.
+//
 // Rectangles are in PDF points (bottom-left origin) in the page's DISPLAY space —
 // the same space the client (pdf.js) measures in — so the page is first
 // normalized (any /Rotate flattened, CropBox resolved) before cropping. Like the
@@ -317,9 +321,20 @@ func SplitRegions(pdf []byte, page int, rects [][4]float64) ([]byte, error) {
 		return nil, err
 	}
 
+	// Standardize the output: every region becomes a page of the same size — the
+	// largest region's width × height — with smaller regions centred and padded.
+	var pageW, pageH float64
+	for _, r := range rects {
+		if w := r[2] - r[0]; w > pageW {
+			pageW = w
+		}
+		if h := r[3] - r[1]; h > pageH {
+			pageH = h
+		}
+	}
 	tiles := make([][]byte, 0, len(rects))
 	for _, r := range rects {
-		tile, err := cropToRect(norm, r)
+		tile, err := cropToRect(norm, r, pageW, pageH)
 		if err != nil {
 			return nil, err
 		}
@@ -379,9 +394,11 @@ func normalizePage(pdf []byte) ([]byte, error) {
 }
 
 // cropToRect returns a one-page PDF: normPage cropped to rect (PDF points,
-// bottom-left origin, relative to the page's display-box origin). normPage must
-// already be rotation-flattened (see normalizePage).
-func cropToRect(normPage []byte, rect [4]float64) ([]byte, error) {
+// bottom-left origin, relative to the page's display-box origin), centred at its
+// native scale on a standardized pageW×pageH page (padded with blank space so
+// every region shares one output size). normPage must already be rotation-
+// flattened (see normalizePage).
+func cropToRect(normPage []byte, rect [4]float64, pageW, pageH float64) ([]byte, error) {
 	w, h := rect[2]-rect[0], rect[3]-rect[1]
 	if w <= 1 || h <= 1 {
 		return nil, fmt.Errorf("region too small")
@@ -399,8 +416,10 @@ func cropToRect(normPage []byte, rect [4]float64) ([]byte, error) {
 	}
 	// The client's coordinates are relative to the display-box origin; add the
 	// box's lower-left so an offset (e.g. cropped) page still maps correctly.
+	// Centre the region on the standardized page.
 	mb := attrs.MediaBox
-	if err := wrapPageToBox(ctx, d, 1, mb.LL.X+rect[0], mb.LL.Y+rect[1], w, h, 1.0); err != nil {
+	dx, dy := (pageW-w)/2, (pageH-h)/2
+	if err := wrapPageToBox(ctx, d, 1, mb.LL.X+rect[0], mb.LL.Y+rect[1], w, h, 1.0, pageW, pageH, dx, dy); err != nil {
 		return nil, err
 	}
 	var out bytes.Buffer
@@ -410,22 +429,25 @@ func cropToRect(normPage []byte, rect [4]float64) ([]byte, error) {
 	return out.Bytes(), nil
 }
 
-// wrapPageToBox rewrites page pageNr in ctx so its visible region becomes the
-// rectangle (x0,y0)–(x0+w,y0+h) of the current content, scaled by s and anchored
-// at the origin: clip to the new box, then map that sub-rectangle onto it (a
-// uniform scale about (x0,y0)). Because the box and the content scale by the same
-// factor the visible region is identical, just s× larger; the explicit clip stops
-// anything outside the rectangle (a neighbouring tile/region) from bleeding in.
-// (x0,y0,w,h) are in the page's own content coordinates.
-func wrapPageToBox(ctx *model.Context, d types.Dict, pageNr int, x0, y0, w, h, s float64) error {
+// wrapPageToBox rewrites page pageNr in ctx so it becomes a pageW×pageH page
+// showing only the source rectangle (x0,y0)–(x0+w,y0+h), scaled by s and placed
+// with its lower-left at (dx,dy). It clips to the destination rectangle and maps
+// the source sub-rectangle onto it; the explicit clip stops anything outside the
+// rectangle (a neighbouring tile/region) from bleeding in, and any area of the
+// page not covered by the placement stays blank (white) — the padding that lets
+// differently-sized regions share one standardized page size. (x0,y0,w,h) are in
+// the page's own content coordinates.
+func wrapPageToBox(ctx *model.Context, d types.Dict, pageNr int, x0, y0, w, h, s, pageW, pageH, dx, dy float64) error {
 	content, err := ctx.PageContent(d, pageNr)
 	if err != nil && err != model.ErrNoContent {
 		return err
 	}
 	if err == nil {
 		var buf bytes.Buffer
-		fmt.Fprintf(&buf, "q 0 0 %.5f %.5f re W n %.5f 0 0 %.5f %.5f %.5f cm ",
-			w*s, h*s, s, s, -s*x0, -s*y0)
+		// Clip to the destination rect, then scale by s and translate so source
+		// (x0,y0) lands at (dx,dy): point (x,y) -> (s*x + dx - s*x0, s*y + dy - s*y0).
+		fmt.Fprintf(&buf, "q %.5f %.5f %.5f %.5f re W n %.5f 0 0 %.5f %.5f %.5f cm ",
+			dx, dy, w*s, h*s, s, s, dx-s*x0, dy-s*y0)
 		buf.Write(content)
 		buf.WriteString(" Q")
 		sd, err := ctx.NewStreamDictForBuf(buf.Bytes())
@@ -441,7 +463,7 @@ func wrapPageToBox(ctx *model.Context, d types.Dict, pageNr int, x0, y0, w, h, s
 		}
 		d["Contents"] = *ref
 	}
-	box := types.NewRectangle(0, 0, w*s, h*s)
+	box := types.NewRectangle(0, 0, pageW, pageH)
 	d.Update("MediaBox", box.Array())
 	d.Delete("CropBox")
 	return nil
@@ -462,7 +484,8 @@ func scaleTiles(tiles []byte, s float64) ([]byte, error) {
 			return nil, err
 		}
 		mb := attrs.MediaBox
-		if err := wrapPageToBox(ctx, d, i, mb.LL.X, mb.LL.Y, mb.Width(), mb.Height(), s); err != nil {
+		w, h := mb.Width(), mb.Height()
+		if err := wrapPageToBox(ctx, d, i, mb.LL.X, mb.LL.Y, w, h, s, w*s, h*s, 0, 0); err != nil {
 			return nil, err
 		}
 	}
