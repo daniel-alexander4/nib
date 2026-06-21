@@ -226,9 +226,13 @@ func SplitPage(pdf []byte, page, cols, rows int, resize bool) ([]byte, error) {
 			return nil, err
 		}
 	}
+	return replacePage(pdf, page, n, tiles)
+}
 
-	// Splice the tiles in place of page p: pages[1..p-1] + tiles + pages[p+1..n].
-	// api.Collect errors on an empty range, so skip the missing side at an edge.
+// replacePage returns pdf with page p (1-based, of n total) replaced in place by
+// the pages of tiles: pages[1..p-1] + tiles + pages[p+1..n]. api.Collect errors
+// on an empty range, so the missing side at an edge is skipped.
+func replacePage(pdf []byte, page, n int, tiles []byte) ([]byte, error) {
 	segments := make([][]byte, 0, 3)
 	if page > 1 {
 		left, err := Reorder(pdf, []string{fmt.Sprintf("1-%d", page-1)})
@@ -246,6 +250,7 @@ func SplitPage(pdf []byte, page, cols, rows int, resize bool) ([]byte, error) {
 		segments = append(segments, right)
 	}
 	result := segments[0]
+	var err error
 	for _, seg := range segments[1:] {
 		if result, err = Append(result, seg); err != nil {
 			return nil, err
@@ -254,13 +259,156 @@ func SplitPage(pdf []byte, page, cols, rows int, resize bool) ([]byte, error) {
 	return result, nil
 }
 
+const (
+	maxRegions  = 64    // cap on hand-drawn split regions per page
+	maxRegionPt = 14400 // 200in — the page-dimension ceiling redaction also uses
+)
+
+// SplitRegions replaces page p (1-based) of pdf with one page per rectangle in
+// rects, in order: each output page is the page's content cropped to that
+// rectangle. Rectangles are in PDF points (bottom-left origin) in the page's
+// DISPLAY space — the same space the client (pdf.js) measures in — so the page is
+// first normalized (any /Rotate flattened, CropBox resolved) before cropping.
+// Like the grid split it is a rasterization-free re-crop; vector/text stays live,
+// and the per-region clip keeps neighbouring content from bleeding in.
+func SplitRegions(pdf []byte, page int, rects [][4]float64) ([]byte, error) {
+	if len(rects) == 0 {
+		return nil, fmt.Errorf("no regions selected")
+	}
+	if len(rects) > maxRegions {
+		return nil, fmt.Errorf("too many regions (%d, max %d)", len(rects), maxRegions)
+	}
+	n, err := PageCount(pdf)
+	if err != nil {
+		return nil, err
+	}
+	if page < 1 || page > n {
+		return nil, fmt.Errorf("page %d out of range (1-%d)", page, n)
+	}
+
+	pageOnly, err := Reorder(pdf, []string{strconv.Itoa(page)})
+	if err != nil {
+		return nil, err
+	}
+	// Normalize so the client's display-space rectangles map straight onto the
+	// content: this bakes any /Rotate into the content and resolves CropBox→
+	// MediaBox, leaving a page whose coordinate space matches what pdf.js showed.
+	norm, err := normalizePage(pageOnly)
+	if err != nil {
+		return nil, err
+	}
+
+	tiles := make([][]byte, 0, len(rects))
+	for _, r := range rects {
+		tile, err := cropToRect(norm, r)
+		if err != nil {
+			return nil, err
+		}
+		tiles = append(tiles, tile)
+	}
+	merged := tiles[0]
+	for _, t := range tiles[1:] {
+		if merged, err = Append(merged, t); err != nil {
+			return nil, err
+		}
+	}
+	return replacePage(pdf, page, n, merged)
+}
+
+// normalizePage flattens a single-page PDF's /Rotate into its content and
+// resolves CropBox→MediaBox by running it through CutPage as a trivial 1×1 cut
+// (which already does both), then dropping CutPage's outline page. The result is
+// one page in display orientation, so the client's display-space coordinates map
+// onto it directly.
+func normalizePage(pdf []byte) ([]byte, error) {
+	ctx, err := api.ReadValidateAndOptimize(bytes.NewReader(pdf), model.NewDefaultConfiguration())
+	if err != nil {
+		return nil, err
+	}
+	ctxDest, err := pdfcpu.CutPage(ctx, 1, &model.Cut{Hor: []float64{0}, Vert: []float64{0}})
+	if err != nil {
+		return nil, err
+	}
+	var buf bytes.Buffer
+	if err := api.WriteContext(ctxDest, &buf); err != nil {
+		return nil, err
+	}
+	return Reorder(buf.Bytes(), []string{"2-"}) // drop CutPage's outline page
+}
+
+// cropToRect returns a one-page PDF: normPage cropped to rect (PDF points,
+// bottom-left origin, relative to the page's display-box origin). normPage must
+// already be rotation-flattened (see normalizePage).
+func cropToRect(normPage []byte, rect [4]float64) ([]byte, error) {
+	w, h := rect[2]-rect[0], rect[3]-rect[1]
+	if w <= 1 || h <= 1 {
+		return nil, fmt.Errorf("region too small")
+	}
+	if w > maxRegionPt || h > maxRegionPt {
+		return nil, fmt.Errorf("region too large")
+	}
+	ctx, err := api.ReadValidateAndOptimize(bytes.NewReader(normPage), model.NewDefaultConfiguration())
+	if err != nil {
+		return nil, err
+	}
+	d, _, attrs, err := ctx.PageDict(1, false)
+	if err != nil {
+		return nil, err
+	}
+	// The client's coordinates are relative to the display-box origin; add the
+	// box's lower-left so an offset (e.g. cropped) page still maps correctly.
+	mb := attrs.MediaBox
+	if err := wrapPageToBox(ctx, d, 1, mb.LL.X+rect[0], mb.LL.Y+rect[1], w, h, 1.0); err != nil {
+		return nil, err
+	}
+	var out bytes.Buffer
+	if err := api.WriteContext(ctx, &out); err != nil {
+		return nil, err
+	}
+	return out.Bytes(), nil
+}
+
+// wrapPageToBox rewrites page pageNr in ctx so its visible region becomes the
+// rectangle (x0,y0)–(x0+w,y0+h) of the current content, scaled by s and anchored
+// at the origin: clip to the new box, then map that sub-rectangle onto it (a
+// uniform scale about (x0,y0)). Because the box and the content scale by the same
+// factor the visible region is identical, just s× larger; the explicit clip stops
+// anything outside the rectangle (a neighbouring tile/region) from bleeding in.
+// (x0,y0,w,h) are in the page's own content coordinates.
+func wrapPageToBox(ctx *model.Context, d types.Dict, pageNr int, x0, y0, w, h, s float64) error {
+	content, err := ctx.PageContent(d, pageNr)
+	if err != nil && err != model.ErrNoContent {
+		return err
+	}
+	if err == nil {
+		var buf bytes.Buffer
+		fmt.Fprintf(&buf, "q 0 0 %.5f %.5f re W n %.5f 0 0 %.5f %.5f %.5f cm ",
+			w*s, h*s, s, s, -s*x0, -s*y0)
+		buf.Write(content)
+		buf.WriteString(" Q")
+		sd, err := ctx.NewStreamDictForBuf(buf.Bytes())
+		if err != nil {
+			return err
+		}
+		if err := sd.Encode(); err != nil {
+			return err
+		}
+		ref, err := ctx.IndRefForNewObject(*sd)
+		if err != nil {
+			return err
+		}
+		d["Contents"] = *ref
+	}
+	box := types.NewRectangle(0, 0, w*s, h*s)
+	d.Update("MediaBox", box.Array())
+	d.Delete("CropBox")
+	return nil
+}
+
 // scaleTiles scales every page of the tiles PDF up by factor s, preserving each
 // page's visible region and normalizing it to start at the origin. Each tile's
-// content is the original page's content stream behind an offset MediaBox, so we
-// re-crop by hand: clip to the new page box, then map the tile's sub-rectangle
-// onto it (a uniform scale about the tile's lower-left). Because both the box and
-// the content scale by the same factor, the visible region is identical, just s×
-// larger; the explicit clip guarantees no neighbouring tile bleeds in.
+// content is the original page's content stream behind an offset MediaBox; the
+// shared wrapPageToBox re-crop maps the tile's whole MediaBox onto an s× page.
 func scaleTiles(tiles []byte, s float64) ([]byte, error) {
 	ctx, err := api.ReadValidateAndOptimize(bytes.NewReader(tiles), model.NewDefaultConfiguration())
 	if err != nil {
@@ -272,34 +420,9 @@ func scaleTiles(tiles []byte, s float64) ([]byte, error) {
 			return nil, err
 		}
 		mb := attrs.MediaBox
-		w, h := mb.Width()*s, mb.Height()*s
-		content, err := ctx.PageContent(d, i)
-		if err == model.ErrNoContent {
-			continue
-		}
-		if err != nil {
+		if err := wrapPageToBox(ctx, d, i, mb.LL.X, mb.LL.Y, mb.Width(), mb.Height(), s); err != nil {
 			return nil, err
 		}
-		var buf bytes.Buffer
-		fmt.Fprintf(&buf, "q 0 0 %.5f %.5f re W n %.5f 0 0 %.5f %.5f %.5f cm ",
-			w, h, s, s, -s*mb.LL.X, -s*mb.LL.Y)
-		buf.Write(content)
-		buf.WriteString(" Q")
-		sd, err := ctx.NewStreamDictForBuf(buf.Bytes())
-		if err != nil {
-			return nil, err
-		}
-		if err := sd.Encode(); err != nil {
-			return nil, err
-		}
-		ref, err := ctx.IndRefForNewObject(*sd)
-		if err != nil {
-			return nil, err
-		}
-		d["Contents"] = *ref
-		box := types.NewRectangle(0, 0, w, h)
-		d.Update("MediaBox", box.Array())
-		d.Delete("CropBox")
 	}
 	var out bytes.Buffer
 	if err := api.WriteContext(ctx, &out); err != nil {

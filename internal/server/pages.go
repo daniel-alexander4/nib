@@ -1,6 +1,7 @@
 package server
 
 import (
+	"encoding/json"
 	"net/http"
 	"strconv"
 	"strings"
@@ -56,6 +57,18 @@ func (s *Server) handlePages(w http.ResponseWriter, r *http.Request) {
 		}
 		resize := r.FormValue("resize") == "1" || r.FormValue("resize") == "true"
 		result, err = pdfops.SplitPage(pdfBytes, pageNum, cols, rows, resize)
+	case "splitrects":
+		pageNum, pErr := strconv.Atoi(r.FormValue("page"))
+		if pErr != nil {
+			httpError(w, http.StatusBadRequest, "split needs a whole-number page")
+			return
+		}
+		var rects [][4]float64
+		if uErr := json.Unmarshal([]byte(r.FormValue("rects")), &rects); uErr != nil {
+			httpError(w, http.StatusBadRequest, "could not read split regions")
+			return
+		}
+		result, err = pdfops.SplitRegions(pdfBytes, pageNum, rects)
 	default:
 		httpError(w, http.StatusBadRequest, "unknown page operation")
 		return
