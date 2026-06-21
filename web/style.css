@@ -453,7 +453,6 @@ input[type="search"] { width: 100%; }
 .splitcontrols { display: flex; align-items: flex-end; gap: 12px; }
 .splitcontrols label { flex: 0 0 auto; }
 .splitcontrols input[type="number"] { width: 64px; }
-.splitcontrols #splitSuggest { margin-left: auto; }
 .sigcard label.splitresize { flex-direction: row; align-items: center; gap: 8px; }
 .sigcard label.splitresize input[type="checkbox"] { width: auto; }
 
