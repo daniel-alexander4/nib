@@ -1443,8 +1443,9 @@ async function pageOp(op, extra = {}) {
   if (extra.resize) form.append('resize', '1');
   if (extra.rects) form.append('rects', extra.rects);
   const res = await apiFetch('/api/pages', { method: 'POST', body: form });
-  if (!res.ok) return toast('page operation failed');
+  if (!res.ok) { toast('page operation failed'); return false; }
   await setDocumentFromServer(await res.json());
+  return true;
 }
 
 els.appendBtn.onclick = () => els.appendInput.click();
@@ -2450,7 +2451,10 @@ els.applyBoxSplitBtn.onclick = async () => {
   clearSplitRects();
   reflectSplitBox();
   els.viewerContainer.style.cursor = '';
-  await pageOp('splitrects', { page, rects: JSON.stringify(rects) });
+  const ok = await pageOp('splitrects', { page, rects: JSON.stringify(rects) });
+  if (ok) toast(rects.length === 1
+    ? `Region added as a new page after page ${page} (original kept)`
+    : `${rects.length} regions added as new pages after page ${page} (original kept)`);
 };
 
 // --- cover-and-replace text editing ------------------------------------------
