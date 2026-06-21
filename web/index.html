@@ -132,6 +132,9 @@
       <button id="splitBoxBtn" title="Split a page into pieces you draw by hand">Split by box</button>
       <button id="applyBoxSplitBtn" title="Make each drawn region its own page">Apply box split</button>
       <span class="tbsep"></span>
+      <button id="extractBtn" title="Save a range of pages as a new PDF">Extract pages…</button>
+      <button id="insertBlankBtn" title="Insert a blank page after the current page">Insert blank page</button>
+      <span class="tbsep"></span>
       <button id="rotateLeftBtn" title="Rotate every page 90° counter-clockwise">Rotate all ↺</button>
       <button id="rotateRightBtn" title="Rotate every page 90° clockwise">Rotate all ↻</button>
     </div>
@@ -465,6 +468,21 @@
         <span class="grow"></span>
         <button id="saveAsCancel">Cancel</button>
         <button id="saveAsGo" class="primary">Save</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Extract a range of pages into a new PDF -->
+  <div id="extractModal" hidden>
+    <div class="sigcard">
+      <h3>Extract pages</h3>
+      <p class="libhint">Save a range of pages as a new PDF. The open document is left untouched, and each page keeps its original quality (it's a re-collect, not a re-render).</p>
+      <label>Pages <input id="extractPages" type="text" placeholder="e.g. 1-3, 5, 8" /></label>
+      <p id="extractHint" class="libhint"></p>
+      <div class="sigbtns">
+        <span class="grow"></span>
+        <button id="extractCancel">Cancel</button>
+        <button id="extractGo" class="primary">Extract…</button>
       </div>
     </div>
   </div>

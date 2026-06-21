@@ -97,11 +97,25 @@ func RemovePages(pdf []byte, pages []string) ([]byte, error) {
 	return out.Bytes(), nil
 }
 
-// Reorder keeps the pages in the exact order given (e.g. []string{"3","1","2"}),
-// which also covers deletion by omission.
-func Reorder(pdf []byte, order []string) ([]byte, error) {
+// Collect keeps only the given pages, in the exact order given (e.g.
+// []string{"3","1","2"} or a range like []string{"2-5"}). It is the single
+// page-selection primitive: reordering, deletion-by-omission, and extracting a
+// subset into a new PDF all route through it.
+func Collect(pdf []byte, order []string) ([]byte, error) {
 	var out bytes.Buffer
 	if err := api.Collect(bytes.NewReader(pdf), &out, order, nil); err != nil {
+		return nil, err
+	}
+	return out.Bytes(), nil
+}
+
+// InsertBlank inserts a blank page immediately after the given page (1-based).
+// With a nil page config the blank inherits that page's MediaBox, so the inserted
+// sheet matches its neighbour's size.
+func InsertBlank(pdf []byte, afterPage int) ([]byte, error) {
+	var out bytes.Buffer
+	sel := []string{strconv.Itoa(afterPage)}
+	if err := api.InsertPages(bytes.NewReader(pdf), &out, sel, false, nil, nil); err != nil {
 		return nil, err
 	}
 	return out.Bytes(), nil
@@ -146,7 +160,7 @@ func RedactPages(original []byte, raster map[int]RasterPage) ([]byte, error) {
 		if page, ok := raster[i]; ok {
 			seg, err = ImagesToPDF([]RasterPage{page})
 		} else {
-			seg, err = Reorder(original, []string{strconv.Itoa(i)}) // extract page i, vector intact
+			seg, err = Collect(original, []string{strconv.Itoa(i)}) // extract page i, vector intact
 		}
 		if err != nil {
 			return nil, err
@@ -213,7 +227,7 @@ func SplitPage(pdf []byte, page, cols, rows int, resize bool) ([]byte, error) {
 		return nil, err
 	}
 	// CutPage prepends a full-size outline/preview page; drop it, keep the tiles.
-	tiles, err := Reorder(tilesBuf.Bytes(), []string{"2-"})
+	tiles, err := Collect(tilesBuf.Bytes(), []string{"2-"})
 	if err != nil {
 		return nil, err
 	}
@@ -235,7 +249,7 @@ func SplitPage(pdf []byte, page, cols, rows int, resize bool) ([]byte, error) {
 func replacePage(pdf []byte, page, n int, tiles []byte) ([]byte, error) {
 	segments := make([][]byte, 0, 3)
 	if page > 1 {
-		left, err := Reorder(pdf, []string{fmt.Sprintf("1-%d", page-1)})
+		left, err := Collect(pdf, []string{fmt.Sprintf("1-%d", page-1)})
 		if err != nil {
 			return nil, err
 		}
@@ -243,7 +257,7 @@ func replacePage(pdf []byte, page, n int, tiles []byte) ([]byte, error) {
 	}
 	segments = append(segments, tiles)
 	if page < n {
-		right, err := Reorder(pdf, []string{fmt.Sprintf("%d-", page+1)})
+		right, err := Collect(pdf, []string{fmt.Sprintf("%d-", page+1)})
 		if err != nil {
 			return nil, err
 		}
@@ -286,7 +300,7 @@ func SplitRegions(pdf []byte, page int, rects [][4]float64) ([]byte, error) {
 		return nil, fmt.Errorf("page %d out of range (1-%d)", page, n)
 	}
 
-	pageOnly, err := Reorder(pdf, []string{strconv.Itoa(page)})
+	pageOnly, err := Collect(pdf, []string{strconv.Itoa(page)})
 	if err != nil {
 		return nil, err
 	}
@@ -333,7 +347,7 @@ func normalizePage(pdf []byte) ([]byte, error) {
 	if err := api.WriteContext(ctxDest, &buf); err != nil {
 		return nil, err
 	}
-	return Reorder(buf.Bytes(), []string{"2-"}) // drop CutPage's outline page
+	return Collect(buf.Bytes(), []string{"2-"}) // drop CutPage's outline page
 }
 
 // cropToRect returns a one-page PDF: normPage cropped to rect (PDF points,
