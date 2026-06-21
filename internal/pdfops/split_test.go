@@ -138,6 +138,81 @@ func TestSplitPageKeepsVectorContent(t *testing.T) {
 	}
 }
 
+// TestSplitRegionsBasic pins page-count and per-region dimensions for a
+// hand-rectangle split, and that the untouched neighbour pages survive.
+func TestSplitRegionsBasic(t *testing.T) {
+	pdf := sizedPDF(t, 3, 120, 160)
+	// Two side-by-side halves of page 2: 3 → 3 + (2-1) = 4 pages; regions 60×160.
+	out, err := SplitRegions(pdf, 2, [][4]float64{{0, 0, 60, 160}, {60, 0, 120, 160}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	d := dims(t, out)
+	if len(d) != 4 {
+		t.Fatalf("page count = %d, want 4", len(d))
+	}
+	if !sizeEq(d[0], 120, 160) || !sizeEq(d[3], 120, 160) {
+		t.Errorf("neighbour pages = %v / %v, want 120×160", d[0], d[3])
+	}
+	if !sizeEq(d[1], 60, 160) || !sizeEq(d[2], 60, 160) {
+		t.Errorf("region pages = %v / %v, want 60×160", d[1], d[2])
+	}
+}
+
+// TestSplitRegionsArbitrary covers differently-sized, overlapping regions — the
+// whole point of hand selection (no grid constraint).
+func TestSplitRegionsArbitrary(t *testing.T) {
+	pdf := sizedPDF(t, 1, 200, 200)
+	out, err := SplitRegions(pdf, 1, [][4]float64{{10, 10, 110, 60}, {0, 0, 200, 200}, {50, 50, 90, 190}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	d := dims(t, out)
+	if len(d) != 3 {
+		t.Fatalf("page count = %d, want 3", len(d))
+	}
+	if !sizeEq(d[0], 100, 50) || !sizeEq(d[1], 200, 200) || !sizeEq(d[2], 40, 140) {
+		t.Errorf("region dims = %v %v %v, want 100×50, 200×200, 40×140", d[0], d[1], d[2])
+	}
+}
+
+// TestSplitRegionsKeepsVectorContent proves a region split is a re-crop, not a
+// raster: text on the page is still live, extractable content afterwards.
+func TestSplitRegionsKeepsVectorContent(t *testing.T) {
+	pdf, err := testpdf.Text("regionMARKER")
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := SplitRegions(pdf, 1, [][4]float64{{50, 650, 400, 780}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !contentContains(t, out, "", "regionMARKER") {
+		t.Error("region split rasterized the page — text content is gone")
+	}
+}
+
+// TestSplitRegionsRejectsBadInput covers the guards.
+func TestSplitRegionsRejectsBadInput(t *testing.T) {
+	pdf := sizedPDF(t, 2, 120, 160)
+	if _, err := SplitRegions(pdf, 1, nil); err == nil {
+		t.Error("empty regions should error")
+	}
+	if _, err := SplitRegions(pdf, 5, [][4]float64{{0, 0, 50, 50}}); err == nil {
+		t.Error("out-of-range page should error")
+	}
+	if _, err := SplitRegions(pdf, 1, [][4]float64{{10, 10, 10.5, 50}}); err == nil {
+		t.Error("zero-width region should error")
+	}
+	too := make([][4]float64, maxRegions+1)
+	for i := range too {
+		too[i] = [4]float64{0, 0, 10, 10}
+	}
+	if _, err := SplitRegions(pdf, 1, too); err == nil {
+		t.Error("too many regions should error")
+	}
+}
+
 // TestSplitPageRejectsBadInput covers the guards.
 func TestSplitPageRejectsBadInput(t *testing.T) {
 	pdf := sizedPDF(t, 2, 120, 160)

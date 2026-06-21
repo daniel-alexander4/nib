@@ -108,6 +108,110 @@ func TestSplitPageNoBleed(t *testing.T) {
 	}
 }
 
+// renderPDF rasterizes every page of pdf via poppler and returns the page images
+// in page order.
+func renderPDF(t *testing.T, pdf []byte, tag string) []image.Image {
+	t.Helper()
+	dir := t.TempDir()
+	src := filepath.Join(dir, tag+".pdf")
+	if err := os.WriteFile(src, pdf, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := exec.Command("pdftoppm", "-png", "-r", "36", src, filepath.Join(dir, tag)).Run(); err != nil {
+		t.Fatalf("pdftoppm: %v", err)
+	}
+	files, _ := filepath.Glob(filepath.Join(dir, tag+"-*.png"))
+	sort.Strings(files)
+	imgs := make([]image.Image, len(files))
+	for i, f := range files {
+		imgs[i] = decodePNG(t, f)
+	}
+	return imgs
+}
+
+func skipNoPoppler(t *testing.T) {
+	t.Helper()
+	if _, err := exec.LookPath("pdftoppm"); err != nil {
+		t.Skip("pdftoppm (poppler) not installed; skipping render-based check")
+	}
+}
+
+func cornersAndCentre(b image.Rectangle) [][2]int {
+	return [][2]int{
+		{b.Min.X + 2, b.Min.Y + 2}, {b.Max.X - 3, b.Min.Y + 2},
+		{b.Min.X + 2, b.Max.Y - 3}, {b.Max.X - 3, b.Max.Y - 3},
+		{(b.Min.X + b.Max.X) / 2, (b.Min.Y + b.Max.Y) / 2},
+	}
+}
+
+// TestSplitRegionsNoBleed renders a region split of a four-quadrant page and
+// proves each output page shows ONLY the colour of its selected quadrant — the
+// per-region clip keeps the rest of the page (still in the shared content stream)
+// from bleeding in.
+func TestSplitRegionsNoBleed(t *testing.T) {
+	skipNoPoppler(t)
+	pdf := fourQuadrantPDF(t, 300, 400)
+	// Bottom-left-origin point rects: top-left quadrant (red, quad 0) and
+	// bottom-right quadrant (yellow, quad 3).
+	out, err := SplitRegions(pdf, 1, [][4]float64{{0, 200, 150, 400}, {150, 0, 300, 200}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	imgs := renderPDF(t, out, "page")
+	if len(imgs) != 2 {
+		t.Fatalf("rendered %d pages, want 2", len(imgs))
+	}
+	for idx, want := range []int{0, 3} {
+		img := imgs[idx]
+		for _, p := range cornersAndCentre(img.Bounds()) {
+			if got := nearestQuad(img.At(p[0], p[1])); got != want {
+				t.Errorf("region page %d at (%d,%d): quadrant %d bled in, want only %d",
+					idx+1, p[0], p[1], got, want)
+			}
+		}
+	}
+}
+
+// TestSplitRegionsRotated is the rotation-correctness guard the rescrut required:
+// the client measures rectangles in pdf.js DISPLAY space, but the server crops the
+// content stream — which is wrong unless /Rotate is flattened first. Oracle: on a
+// /Rotate-90 page, cropping to the FULL display rect must reproduce poppler's own
+// (correct) rendering of that page. If normalization mishandled rotation, the two
+// renderings would diverge.
+func TestSplitRegionsRotated(t *testing.T) {
+	skipNoPoppler(t)
+	base := fourQuadrantPDF(t, 300, 400)
+	rotated, err := Rotate(base, nil, 90) // sets /Rotate 90 (metadata, not baked)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A 300×400 page rotated 90° displays as 400×300.
+	full, err := SplitRegions(rotated, 1, [][4]float64{{0, 0, 400, 300}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	truth := renderPDF(t, rotated, "truth") // poppler applies /Rotate correctly
+	mine := renderPDF(t, full, "mine")
+	if len(truth) != 1 || len(mine) != 1 {
+		t.Fatalf("expected 1 page each, got truth=%d mine=%d", len(truth), len(mine))
+	}
+	tb, mb := truth[0].Bounds(), mine[0].Bounds()
+	if tb.Dx() != mb.Dx() || tb.Dy() != mb.Dy() {
+		t.Fatalf("size mismatch: truth %dx%d, mine %dx%d (rotation not flattened correctly)",
+			tb.Dx(), tb.Dy(), mb.Dx(), mb.Dy())
+	}
+	// Sample an interior grid; every point's quadrant colour must match the oracle.
+	for gy := 1; gy < 5; gy++ {
+		for gx := 1; gx < 5; gx++ {
+			x := tb.Min.X + tb.Dx()*gx/5
+			y := tb.Min.Y + tb.Dy()*gy/5
+			if nearestQuad(truth[0].At(x, y)) != nearestQuad(mine[0].At(x, y)) {
+				t.Errorf("at (%d,%d): split render disagrees with poppler's rotated render — rotation mishandled", x, y)
+			}
+		}
+	}
+}
+
 func decodePNG(t *testing.T, path string) image.Image {
 	t.Helper()
 	f, err := os.Open(path)

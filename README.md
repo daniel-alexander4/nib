@@ -204,8 +204,10 @@ on the **Edit** tab, or hover a thumbnail to rotate (either direction) or delete
 single page. Got a scanned 2-up or 4-up sheet? **Split page…**
 (on the **Edit** tab) cuts the current page into a grid of separate pages — pick the
 columns and rows (or let **Suggest** guess), preview where the cuts land, and
-optionally resize each piece to a full page. It's a re-crop, not a re-render, so
-every piece keeps its original quality. **Flatten** to a guaranteed-flat PDF, or
+optionally resize each piece to a full page. Not a clean grid? **Split by box**
+lets you draw each piece by hand — drag a rectangle around every region you want,
+then **Apply box split** and each becomes its own page. It's a re-crop, not a
+re-render, so every piece keeps its original quality. **Flatten** to a guaranteed-flat PDF, or
 export pages as PNGs (single or ZIP) and form data as JSON / CSV. Save back over the
 original, or as a flattened or editable copy. **Print** the current document —
 fills, signatures, and all — straight from the **File** tab through your
