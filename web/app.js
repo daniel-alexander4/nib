@@ -34,6 +34,7 @@ const els = {
   menubar: $('menubar'), toolbar: $('toolbar'), openMenuItem: $('openMenuItem'),
   pathInput: $('pathInput'), openGo: $('openGo'),
   textToolBtn: $('textToolBtn'), detectBtn: $('detectBtn'),
+  hlColors: $('hlColors'), hlSwatches: $('hlSwatches'), hlCustom: $('hlCustom'),
   prevBtn: $('prevBtn'), nextBtn: $('nextBtn'),
   zoomInBtn: $('zoomInBtn'), zoomOutBtn: $('zoomOutBtn'), fitBtn: $('fitBtn'),
   sigBadge: $('sigBadge'), saveBtn: $('saveBtn'), statusCluster: $('statusCluster'),
@@ -121,6 +122,9 @@ const els = {
   extractBtn: $('extractBtn'), insertBlankBtn: $('insertBlankBtn'),
   extractModal: $('extractModal'), extractPages: $('extractPages'),
   extractHint: $('extractHint'), extractCancel: $('extractCancel'), extractGo: $('extractGo'),
+  exportBookmarkSplitBtn: $('exportBookmarkSplitBtn'), bookmarkSplitModal: $('bookmarkSplitModal'),
+  bsPrefix: $('bsPrefix'), bsPreview: $('bsPreview'), bsDir: $('bsDir'), bsHere: $('bsHere'),
+  bsUp: $('bsUp'), bsList: $('bsList'), bsCancel: $('bsCancel'), bsGo: $('bsGo'),
   splitBtn: $('splitBtn'), splitModal: $('splitModal'), splitPreview: $('splitPreview'),
   splitCols: $('splitCols'), splitRows: $('splitRows'),
   splitResize: $('splitResize'), splitCancel: $('splitCancel'), splitGo: $('splitGo'),
@@ -177,6 +181,10 @@ function applyStatus(st) {
     loadImages();
     // Apply saved preferences: theme and the auto-update toggle.
     applyAppearance(st.appearance || 'dark');
+    // Saved highlight palette (most-recently-used colors); fall back to defaults.
+    recentHlColors = (st.recentHighlightColors && st.recentHighlightColors.length)
+      ? st.recentHighlightColors.slice(0, 5) : DEFAULT_HL_COLORS.slice();
+    renderHlSwatches();
     els.autoUpdateChk.checked = st.autoUpdate;
     els.autoUpdateChk.disabled = st.updateCheckLocked;
     els.autoUpdateChk.parentElement.title = st.updateCheckLocked ? 'Forced off by NIB_NO_UPDATE_CHECK' : '';
@@ -1931,20 +1939,24 @@ const joinPath = (dir, name) => dir.replace(/\/+$/, '') + '/' + name;
 
 let saveAsBlob = null; // the bytes the dialog will write on confirm
 
-async function browseDir(path) {
+// browseDir drives a folder picker. t names the four elements it writes (dir
+// input, here label, up button, list ul) so the same browser backs both the
+// Save-as dialog and the bookmark-split dialog.
+const saveAsDirEls = () => ({ dir: els.saveAsDir, here: els.saveAsHere, up: els.saveAsUp, list: els.saveAsList });
+async function browseDir(path, t = saveAsDirEls()) {
   const res = await apiFetch('/api/listdir' + (path ? '?path=' + encodeURIComponent(path) : ''));
   if (!res.ok) return;
   const info = await res.json();
-  els.saveAsDir.value = info.path;
-  els.saveAsHere.textContent = info.path;
-  els.saveAsUp.disabled = !info.parent;
-  els.saveAsUp.dataset.parent = info.parent || '';
-  els.saveAsList.innerHTML = '';
+  t.dir.value = info.path;
+  t.here.textContent = info.path;
+  t.up.disabled = !info.parent;
+  t.up.dataset.parent = info.parent || '';
+  t.list.innerHTML = '';
   for (const d of info.dirs) {
     const li = document.createElement('li');
     li.textContent = d;
-    li.onclick = () => browseDir(joinPath(info.path, d));
-    els.saveAsList.appendChild(li);
+    li.onclick = () => browseDir(joinPath(info.path, d), t);
+    t.list.appendChild(li);
   }
 }
 
@@ -1986,6 +1998,53 @@ els.saveAsGo.onclick = async () => {
   saveAsBlob = null;
   toast('Saved to ' + meta.path);
 };
+
+// --- split by bookmarks to a folder ------------------------------------------
+// Save one PDF per top-level bookmark into a chosen folder (PDFExplode-style: a
+// scored orchestration in, one file per part out). Server-side via
+// /api/split-bookmarks; the open document is left untouched.
+const bookmarkDirEls = () => ({ dir: els.bsDir, here: els.bsHere, up: els.bsUp, list: els.bsList });
+let bsOutline = []; // the current doc's top-level outline, for the preview
+
+function updateBsPreview() {
+  const titles = bsOutline.map((o) => o.title || '(untitled)');
+  const sample = titles.slice(0, 6).join(', ') + (titles.length > 6 ? ', …' : '');
+  const px = els.bsPrefix.value;
+  els.bsPreview.textContent = `${titles.length} part${titles.length === 1 ? '' : 's'}: ${sample}  —  saved as “${px}<bookmark>.pdf”`;
+}
+
+async function openBookmarkSplit() {
+  if (!pdfDocument) return;
+  const outline = await pdfDocument.getOutline();
+  if (!outline || !outline.length) { toast('This PDF has no bookmarks to split by'); return; }
+  bsOutline = outline;
+  els.bsPrefix.value = '';
+  updateBsPreview();
+  els.bookmarkSplitModal.hidden = false;
+  browseDir('', bookmarkDirEls()); // server resolves '' to ~/nib
+}
+
+async function bookmarkSplitGo() {
+  const dir = els.bsDir.value.trim().replace(/\/+$/, '');
+  if (!dir) return toast('Choose a folder');
+  const count = bsOutline.length;
+  if (!confirm(`Write ${count} file${count === 1 ? '' : 's'} to ${dir}? Files with the same name will be replaced.`)) return;
+  const form = await bakedForm();
+  form.append('dir', dir);
+  form.append('prefix', els.bsPrefix.value);
+  const res = await apiFetch('/api/split-bookmarks', { method: 'POST', body: form });
+  if (!res.ok) { toast((await res.json()).error || 'could not split'); return; }
+  const meta = await res.json();
+  els.bookmarkSplitModal.hidden = true;
+  toast(`Wrote ${meta.count} file${meta.count === 1 ? '' : 's'} to ${meta.dir}`);
+}
+
+els.exportBookmarkSplitBtn.onclick = openBookmarkSplit;
+els.bsCancel.onclick = () => { els.bookmarkSplitModal.hidden = true; };
+els.bsGo.onclick = bookmarkSplitGo;
+els.bsPrefix.oninput = updateBsPreview;
+els.bsUp.onclick = () => { const p = els.bsUp.dataset.parent; if (p) browseDir(p, bookmarkDirEls()); };
+els.bsDir.onchange = () => browseDir(els.bsDir.value.trim(), bookmarkDirEls());
 
 // renderPageBlob rasterises one page of an already-parsed doc to a PNG at the
 // given scale, runs the optional paint hook over the canvas after rendering (used
@@ -3228,10 +3287,57 @@ function setTool(mode) {
   };
   // Mirror the active mode onto every control bound to it (Edit menu + toolbar).
   document.querySelectorAll('[data-mode]').forEach((b) => b.classList.toggle('active', b.dataset.mode === activeTool));
+  // The highlight color row is contextual — show it only while highlighting, and
+  // apply the most-recent color so the next highlight uses it (not pdf.js yellow).
+  els.hlColors.hidden = activeTool !== 'HIGHLIGHT';
+  if (activeTool === 'HIGHLIGHT' && recentHlColors.length) setHighlightColor(recentHlColors[0]);
 }
 document.querySelectorAll('[data-mode]').forEach((b) => {
   b.onclick = () => setTool(b.dataset.mode);
 });
+
+// --- highlight colors --------------------------------------------------------
+// pdf.js defaults every highlight to pale yellow because Nib configures no
+// palette. We drive the color through the same eventBus param the built-in color
+// picker uses, and keep a small MRU of recent colors (persisted in the vault) so
+// the last-used five are one click away. Nib renders the swatches itself — the
+// viewer carries no editor-params toolbar DOM.
+const DEFAULT_HL_COLORS = ['#fff066', '#93e0a3', '#8fb8ff', '#ffa6c9', '#ffb454'];
+let recentHlColors = DEFAULT_HL_COLORS.slice();
+
+function applyHighlightColor(hex) {
+  eventBus.dispatch('switchannotationeditorparams', {
+    source: window,
+    type: pdfjsLib.AnnotationEditorParamsType.HIGHLIGHT_COLOR,
+    value: hex,
+  });
+}
+
+function renderHlSwatches() {
+  els.hlSwatches.replaceChildren();
+  for (const c of recentHlColors) {
+    const b = document.createElement('button');
+    b.className = 'hlswatch';
+    b.style.background = c;
+    b.title = c;
+    b.classList.toggle('active', c === recentHlColors[0]);
+    b.onclick = () => setHighlightColor(c);
+    els.hlSwatches.appendChild(b);
+  }
+  els.hlCustom.value = recentHlColors[0] || '#fff066';
+}
+
+// setHighlightColor sets the color for new (and any selected) highlights, moves
+// it to the front of the MRU, and persists the list (server validates + caps).
+function setHighlightColor(hex) {
+  hex = hex.toLowerCase();
+  applyHighlightColor(hex);
+  recentHlColors = [hex, ...recentHlColors.filter((c) => c !== hex)].slice(0, 5);
+  renderHlSwatches();
+  saveSettings({ recentHighlightColors: recentHlColors });
+}
+
+els.hlCustom.onchange = () => setHighlightColor(els.hlCustom.value);
 
 // The toolbar mirrors the menus. Mode tools wire themselves via [data-mode]
 // above; every other toolbar control forwards to its menu twin by id.
@@ -3248,7 +3354,7 @@ let overlayFields = []; // {page, frac:[fx0,fy0,fx1,fy1], pageW, pageH, kind, el
 let libraryImages = []; // cached /api/images list (the image-library panel)
 const DOC_REQUIRED = [
   'saveFlatBtn', 'saveEditableBtn', 'printBtn',
-  'exportZipBtn', 'exportPngBtn', 'exportFormJsonBtn', 'exportFormCsvBtn',
+  'exportZipBtn', 'exportPngBtn', 'exportFormJsonBtn', 'exportFormCsvBtn', 'exportBookmarkSplitBtn',
   'textToolBtn', 'highlightToolBtn', 'drawToolBtn',
   'detectBtn', 'editTextBtn', 'removeOriginalsBtn', 'autofillBtn', 'splitBtn',
   'splitBoxBtn', 'applyBoxSplitBtn', 'rotateLeftBtn', 'rotateRightBtn',
