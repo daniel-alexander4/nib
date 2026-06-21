@@ -122,6 +122,7 @@ const els = {
   splitBtn: $('splitBtn'), splitModal: $('splitModal'), splitPreview: $('splitPreview'),
   splitCols: $('splitCols'), splitRows: $('splitRows'), splitSuggest: $('splitSuggest'),
   splitResize: $('splitResize'), splitCancel: $('splitCancel'), splitGo: $('splitGo'),
+  splitBoxBtn: $('splitBoxBtn'), applyBoxSplitBtn: $('applyBoxSplitBtn'),
 };
 
 // Controls duplicated across the menubar and toolbar are addressed by class.
@@ -1437,6 +1438,7 @@ async function pageOp(op, extra = {}) {
   if (extra.cols != null) form.append('cols', String(extra.cols));
   if (extra.rows != null) form.append('rows', String(extra.rows));
   if (extra.resize) form.append('resize', '1');
+  if (extra.rects) form.append('rects', extra.rects);
   const res = await apiFetch('/api/pages', { method: 'POST', body: form });
   if (!res.ok) return toast('page operation failed');
   await setDocumentFromServer(await res.json());
@@ -2230,7 +2232,7 @@ let redStart = null, redDiv = null, redHit = null;
 
 els.redactBtn.onclick = () => {
   redactMode = !redactMode;
-  if (redactMode) setMarkerMode(null); // one placement tool at a time
+  if (redactMode) { setMarkerMode(null); exitSplitBox(); } // one box tool at a time
   reflectRedact();
   els.viewerContainer.style.cursor = redactMode ? 'crosshair' : '';
 };
@@ -2321,6 +2323,81 @@ els.applyRedactBtn.onclick = async () => {
   toast('Redacted — affected pages are now flattened images');
 };
 
+// --- split by hand-drawn regions ---------------------------------------------
+// Draw rectangles on the current page; on Apply, each becomes its own page (the
+// page cropped to that rectangle, server-side via op:'splitrects'). The regions
+// live OUTSIDE overlayFields, so the bake step never burns them in as marks.
+let splitBoxMode = false;
+let splitRects = []; // {fx, fy, fw, fh} fractions of the page (top-left origin)
+let sbStart = null, sbDiv = null, sbHit = null, sbPage = 0;
+
+function reflectSplitBox() {
+  all('#splitBoxBtn, [data-forward="splitBoxBtn"]').forEach((b) => b.classList.toggle('active', splitBoxMode));
+}
+function clearSplitRects() {
+  splitRects = [];
+  all('.splitmark').forEach((d) => d.remove());
+}
+function exitSplitBox() {
+  if (!splitBoxMode) return;
+  splitBoxMode = false;
+  clearSplitRects();
+  reflectSplitBox();
+  els.viewerContainer.style.cursor = '';
+}
+els.splitBoxBtn.onclick = () => {
+  if (splitBoxMode) { exitSplitBox(); return; }
+  if (!pdfDocument) return;
+  splitBoxMode = true;
+  sbPage = viewer.currentPageNumber; // regions apply to the page you start on
+  setMarkerMode(null);
+  if (redactMode) { redactMode = false; reflectRedact(); }
+  if (editMode) { editMode = false; reflectEdit(); }
+  reflectSplitBox();
+  els.viewerContainer.style.cursor = 'crosshair';
+};
+
+els.viewerContainer.addEventListener('pointerdown', (e) => {
+  if (!splitBoxMode) return;
+  sbHit = pageAt(e.clientX, e.clientY);
+  if (!sbHit || sbHit.n !== sbPage) return; // only the page the split started on
+  sbStart = { x: e.clientX, y: e.clientY };
+  sbDiv = document.createElement('div');
+  sbDiv.className = 'splitmark';
+  sbHit.pv.div.appendChild(sbDiv);
+  sizeMark(sbDiv, sbHit.r, sbStart, sbStart);
+  e.preventDefault();
+});
+els.viewerContainer.addEventListener('pointermove', (e) => {
+  if (sbStart) sizeMark(sbDiv, sbHit.r, sbStart, { x: e.clientX, y: e.clientY });
+});
+els.viewerContainer.addEventListener('pointerup', (e) => {
+  if (!sbStart) return;
+  const r = sbHit.r;
+  const x0 = Math.min(sbStart.x, e.clientX), y0 = Math.min(sbStart.y, e.clientY);
+  const fw = Math.abs(e.clientX - sbStart.x) / r.width;
+  const fh = Math.abs(e.clientY - sbStart.y) / r.height;
+  if (fw > 0.01 && fh > 0.01) {
+    splitRects.push({ fx: (x0 - r.left) / r.width, fy: (y0 - r.top) / r.height, fw, fh });
+  } else {
+    sbDiv.remove();
+  }
+  sbStart = null; sbDiv = null; sbHit = null;
+});
+
+els.applyBoxSplitBtn.onclick = async () => {
+  if (!splitBoxMode || !splitRects.length) return toast('Draw split regions first');
+  const page = sbPage;
+  const base = (await pdfDocument.getPage(page)).getViewport({ scale: 1 }); // PDF points
+  const f = { pageW: base.width, pageH: base.height };
+  const rects = splitRects.map((m) => rectPoints(f, [m.fx, m.fy, m.fx + m.fw, m.fy + m.fh]));
+  splitBoxMode = false;
+  clearSplitRects();
+  reflectSplitBox();
+  els.viewerContainer.style.cursor = '';
+  await pageOp('splitrects', { page, rects: JSON.stringify(rects) });
+};
+
 // --- cover-and-replace text editing ------------------------------------------
 // Drag a box over baked-in text; Nib reads the text + its size/colour/font under
 // the box, covers it with an opaque background-coloured fill, and drops an
@@ -2335,7 +2412,7 @@ els.editTextBtn.onclick = () => {
   if (!pdfDocument) { toast('Open a PDF first'); return; }
   editMode = !editMode;
   if (editMode && redactMode) { redactMode = false; reflectRedact(); } // one box tool at a time
-  if (editMode) setMarkerMode(null);
+  if (editMode) { setMarkerMode(null); exitSplitBox(); }
   reflectEdit();
   els.viewerContainer.style.cursor = editMode ? 'crosshair' : '';
 };
@@ -2547,6 +2624,7 @@ function setMarkerMode(m) {
   if (m) { // one placement tool at a time
     if (redactMode) { redactMode = false; reflectRedact(); }
     if (editMode) { editMode = false; reflectEdit(); }
+    exitSplitBox();
   }
   all('.markers button').forEach((b) => b.classList.toggle('active', b.dataset.marker === m));
   els.viewerContainer.style.cursor = m ? 'crosshair' : '';
@@ -3110,7 +3188,7 @@ const DOC_REQUIRED = [
   'exportZipBtn', 'exportPngBtn', 'exportFormJsonBtn', 'exportFormCsvBtn',
   'textToolBtn', 'highlightToolBtn', 'drawToolBtn',
   'detectBtn', 'editTextBtn', 'removeOriginalsBtn', 'autofillBtn', 'splitBtn',
-  'rotateLeftBtn', 'rotateRightBtn',
+  'splitBoxBtn', 'applyBoxSplitBtn', 'rotateLeftBtn', 'rotateRightBtn',
   'redactBtn', 'applyRedactBtn', 'scanBtn',
   'finalizeBtn', 'timestampBtn', 'cosignBtn', 'sessionInitBtn', 'sessionSendBtn',
 ];
@@ -3143,6 +3221,7 @@ function clearOverlays() {
   overlayFields.forEach((f) => f.el.remove());
   overlayFields = [];
   activeMarker = null; fillTarget = null; // markers are gone with the old document
+  exitSplitBox(); // a pending region selection doesn't carry to a new document
 }
 // clearDetected drops only auto-detected fields (text/check/circleone), keeping
 // user-placed stamps, text edits, and sign/date/initial markers so re-running
