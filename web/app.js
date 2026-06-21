@@ -298,6 +298,9 @@ async function runUpdateCheck(auto) {
     // download action, no dismiss) rather than hiding the pill.
     updateInfo = null;
     els.updatePill.classList.add('current');
+    // Green only when there's a published latest you actually match; the
+    // "no releases yet" case stays the muted informational badge.
+    els.updatePill.classList.toggle('latest', !!d.latest);
     els.updateGet.textContent = `v${d.current}`;
     els.updateGet.title = d.latest ? `You’re on the latest version (v${d.current})` : `No published releases yet (you have v${d.current})`;
     els.updatePill.hidden = false;
@@ -305,7 +308,7 @@ async function runUpdateCheck(auto) {
     return;
   }
   updateInfo = d;
-  els.updatePill.classList.remove('current');
+  els.updatePill.classList.remove('current', 'latest');
   els.updateGet.title = 'Download the latest version for your system';
   els.updateGet.textContent = `Update to v${d.latest} ↓`;
   els.updatePill.hidden = false;
