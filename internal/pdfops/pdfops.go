@@ -278,13 +278,18 @@ const (
 	maxRegionPt = 14400 // 200in — the page-dimension ceiling redaction also uses
 )
 
-// SplitRegions replaces page p (1-based) of pdf with one page per rectangle in
-// rects, in order: each output page is the page's content cropped to that
-// rectangle. Rectangles are in PDF points (bottom-left origin) in the page's
-// DISPLAY space — the same space the client (pdf.js) measures in — so the page is
-// first normalized (any /Rotate flattened, CropBox resolved) before cropping.
-// Like the grid split it is a rasterization-free re-crop; vector/text stays live,
-// and the per-region clip keeps neighbouring content from bleeding in.
+// SplitRegions adds one new page per rectangle in rects, in order, immediately
+// AFTER page p (1-based) — each new page is the source page's content cropped to
+// that rectangle. The original page (and every other page) is left untouched, so
+// "split by box" extracts regions non-destructively; the user can delete the
+// source page afterwards if they only wanted the pieces. (This differs from the
+// grid SplitPage, which replaces the imposed sheet with its tiles.)
+//
+// Rectangles are in PDF points (bottom-left origin) in the page's DISPLAY space —
+// the same space the client (pdf.js) measures in — so the page is first
+// normalized (any /Rotate flattened, CropBox resolved) before cropping. Like the
+// grid split it is a rasterization-free re-crop; vector/text stays live, and the
+// per-region clip keeps neighbouring content from bleeding in.
 func SplitRegions(pdf []byte, page int, rects [][4]float64) ([]byte, error) {
 	if len(rects) == 0 {
 		return nil, fmt.Errorf("no regions selected")
@@ -326,7 +331,30 @@ func SplitRegions(pdf []byte, page int, rects [][4]float64) ([]byte, error) {
 			return nil, err
 		}
 	}
-	return replacePage(pdf, page, n, merged)
+	return insertAfter(pdf, page, n, merged)
+}
+
+// insertAfter returns pdf with the pages of extra inserted immediately after page
+// p (1-based, of n total), leaving every original page in place and in order.
+func insertAfter(pdf []byte, page, n int, extra []byte) ([]byte, error) {
+	head, err := Collect(pdf, []string{fmt.Sprintf("1-%d", page)})
+	if err != nil {
+		return nil, err
+	}
+	result, err := Append(head, extra)
+	if err != nil {
+		return nil, err
+	}
+	if page < n {
+		tail, err := Collect(pdf, []string{fmt.Sprintf("%d-", page+1)})
+		if err != nil {
+			return nil, err
+		}
+		if result, err = Append(result, tail); err != nil {
+			return nil, err
+		}
+	}
+	return result, nil
 }
 
 // normalizePage flattens a single-page PDF's /Rotate into its content and

@@ -158,15 +158,16 @@ func TestSplitRegionsNoBleed(t *testing.T) {
 		t.Fatal(err)
 	}
 	imgs := renderPDF(t, out, "page")
-	if len(imgs) != 2 {
-		t.Fatalf("rendered %d pages, want 2", len(imgs))
+	// Non-destructive: page 1 is the original; the two regions are pages 2 and 3.
+	if len(imgs) != 3 {
+		t.Fatalf("rendered %d pages, want 3 (original + 2 regions)", len(imgs))
 	}
-	for idx, want := range []int{0, 3} {
-		img := imgs[idx]
+	for i, want := range []int{0, 3} { // region pages 2,3 → red (0), yellow (3)
+		img := imgs[i+1]
 		for _, p := range cornersAndCentre(img.Bounds()) {
 			if got := nearestQuad(img.At(p[0], p[1])); got != want {
 				t.Errorf("region page %d at (%d,%d): quadrant %d bled in, want only %d",
-					idx+1, p[0], p[1], got, want)
+					i+2, p[0], p[1], got, want)
 			}
 		}
 	}
@@ -192,10 +193,12 @@ func TestSplitRegionsRotated(t *testing.T) {
 	}
 	truth := renderPDF(t, rotated, "truth") // poppler applies /Rotate correctly
 	mine := renderPDF(t, full, "mine")
-	if len(truth) != 1 || len(mine) != 1 {
-		t.Fatalf("expected 1 page each, got truth=%d mine=%d", len(truth), len(mine))
+	// Non-destructive: mine is [original-rotated, region]; the region is page 2.
+	if len(truth) != 1 || len(mine) != 2 {
+		t.Fatalf("expected truth=1, mine=2 pages, got truth=%d mine=%d", len(truth), len(mine))
 	}
-	tb, mb := truth[0].Bounds(), mine[0].Bounds()
+	region := mine[1]
+	tb, mb := truth[0].Bounds(), region.Bounds()
 	if tb.Dx() != mb.Dx() || tb.Dy() != mb.Dy() {
 		t.Fatalf("size mismatch: truth %dx%d, mine %dx%d (rotation not flattened correctly)",
 			tb.Dx(), tb.Dy(), mb.Dx(), mb.Dy())
@@ -205,7 +208,7 @@ func TestSplitRegionsRotated(t *testing.T) {
 		for gx := 1; gx < 5; gx++ {
 			x := tb.Min.X + tb.Dx()*gx/5
 			y := tb.Min.Y + tb.Dy()*gy/5
-			if nearestQuad(truth[0].At(x, y)) != nearestQuad(mine[0].At(x, y)) {
+			if nearestQuad(truth[0].At(x, y)) != nearestQuad(region.At(x, y)) {
 				t.Errorf("at (%d,%d): split render disagrees with poppler's rotated render — rotation mishandled", x, y)
 			}
 		}

@@ -138,29 +138,31 @@ func TestSplitPageKeepsVectorContent(t *testing.T) {
 	}
 }
 
-// TestSplitRegionsBasic pins page-count and per-region dimensions for a
-// hand-rectangle split, and that the untouched neighbour pages survive.
+// TestSplitRegionsBasic pins the non-destructive insert-after behaviour: the
+// original page (and every other) is kept, and the region pages are added right
+// after it.
 func TestSplitRegionsBasic(t *testing.T) {
 	pdf := sizedPDF(t, 3, 120, 160)
-	// Two side-by-side halves of page 2: 3 → 3 + (2-1) = 4 pages; regions 60×160.
+	// Two side-by-side halves of page 2: 3 → 3 + 2 = 5 pages.
+	// Order: [p1, p2-original, region, region, p3].
 	out, err := SplitRegions(pdf, 2, [][4]float64{{0, 0, 60, 160}, {60, 0, 120, 160}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	d := dims(t, out)
-	if len(d) != 4 {
-		t.Fatalf("page count = %d, want 4", len(d))
+	if len(d) != 5 {
+		t.Fatalf("page count = %d, want 5 (originals kept + 2 regions)", len(d))
 	}
-	if !sizeEq(d[0], 120, 160) || !sizeEq(d[3], 120, 160) {
-		t.Errorf("neighbour pages = %v / %v, want 120×160", d[0], d[3])
+	if !sizeEq(d[0], 120, 160) || !sizeEq(d[1], 120, 160) || !sizeEq(d[4], 120, 160) {
+		t.Errorf("original pages must survive at full size; got %v / %v / %v", d[0], d[1], d[4])
 	}
-	if !sizeEq(d[1], 60, 160) || !sizeEq(d[2], 60, 160) {
-		t.Errorf("region pages = %v / %v, want 60×160", d[1], d[2])
+	if !sizeEq(d[2], 60, 160) || !sizeEq(d[3], 60, 160) {
+		t.Errorf("region pages = %v / %v, want 60×160 right after page 2", d[2], d[3])
 	}
 }
 
 // TestSplitRegionsArbitrary covers differently-sized, overlapping regions — the
-// whole point of hand selection (no grid constraint).
+// whole point of hand selection (no grid constraint) — added after the original.
 func TestSplitRegionsArbitrary(t *testing.T) {
 	pdf := sizedPDF(t, 1, 200, 200)
 	out, err := SplitRegions(pdf, 1, [][4]float64{{10, 10, 110, 60}, {0, 0, 200, 200}, {50, 50, 90, 190}})
@@ -168,11 +170,37 @@ func TestSplitRegionsArbitrary(t *testing.T) {
 		t.Fatal(err)
 	}
 	d := dims(t, out)
-	if len(d) != 3 {
-		t.Fatalf("page count = %d, want 3", len(d))
+	if len(d) != 4 {
+		t.Fatalf("page count = %d, want 4 (original + 3 regions)", len(d))
 	}
-	if !sizeEq(d[0], 100, 50) || !sizeEq(d[1], 200, 200) || !sizeEq(d[2], 40, 140) {
-		t.Errorf("region dims = %v %v %v, want 100×50, 200×200, 40×140", d[0], d[1], d[2])
+	if !sizeEq(d[0], 200, 200) {
+		t.Errorf("original page = %v, want kept at 200×200", d[0])
+	}
+	if !sizeEq(d[1], 100, 50) || !sizeEq(d[2], 200, 200) || !sizeEq(d[3], 40, 140) {
+		t.Errorf("region dims = %v %v %v, want 100×50, 200×200, 40×140", d[1], d[2], d[3])
+	}
+}
+
+// TestSplitRegionsKeepsOtherPages proves the split is non-destructive: every
+// original page's content survives unchanged, and the region lands after its
+// source page.
+func TestSplitRegionsKeepsOtherPages(t *testing.T) {
+	pdf, err := testpdf.Text("PAGEONE", "PAGETWO", "PAGETHREE")
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := SplitRegions(pdf, 2, [][4]float64{{50, 650, 400, 780}}) // crop of page 2
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n, _ := PageCount(out); n != 4 {
+		t.Fatalf("page count = %d, want 4 (3 originals + 1 region)", n)
+	}
+	// Originals intact and in order; region (page 3) is the crop of page 2.
+	for page, want := range map[string]string{"1": "PAGEONE", "2": "PAGETWO", "4": "PAGETHREE"} {
+		if !contentContains(t, out, page, want) {
+			t.Errorf("page %s lost its content %q — split was destructive", page, want)
+		}
 	}
 }
 
