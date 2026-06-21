@@ -86,6 +86,49 @@ func TestSettingsRejectsInvalidAppearance(t *testing.T) {
 	}
 }
 
+// Recent highlight colors round-trip through the vault, reported back by status.
+func TestSettingsPersistsHighlightColors(t *testing.T) {
+	ts, _ := startServer(t)
+	c, csrf := authedClient(t, ts)
+
+	resp := write(t, c, csrf, "POST", ts.URL+"/api/settings", "application/json",
+		jsonBody(map[string]any{"recentHighlightColors": []string{"#fff066", "#8fb8ff"}}))
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("settings status = %d, want 200", resp.StatusCode)
+	}
+	got := fetchStatus(t, c, ts).RecentHighlightColors
+	if len(got) != 2 || got[0] != "#fff066" || got[1] != "#8fb8ff" {
+		t.Fatalf("recentHighlightColors = %v, want [#fff066 #8fb8ff]", got)
+	}
+}
+
+// The server-side guard normalizes case, drops non-hex junk and duplicates, and
+// caps the stored list at five — the client owns ordering, the server bounds it.
+func TestSettingsSanitizesHighlightColors(t *testing.T) {
+	ts, _ := startServer(t)
+	c, csrf := authedClient(t, ts)
+
+	resp := write(t, c, csrf, "POST", ts.URL+"/api/settings", "application/json",
+		jsonBody(map[string]any{"recentHighlightColors": []string{
+			"#FFF066", "#fff066", "red", "#8fb8ff", "#93e0a3", "#ffa6c9", "#ffb454", "#000000",
+		}}))
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("settings status = %d, want 200", resp.StatusCode)
+	}
+	got := fetchStatus(t, c, ts).RecentHighlightColors
+	want := []string{"#fff066", "#8fb8ff", "#93e0a3", "#ffa6c9", "#ffb454"} // lowercased, deduped, junk dropped, capped at 5
+	if len(got) != len(want) {
+		t.Fatalf("recentHighlightColors = %v, want %v", got, want)
+	}
+	for i, c := range want {
+		if got[i] != c {
+			t.Fatalf("recentHighlightColors = %v, want %v", got, want)
+		}
+	}
+}
+
 // A partial update touches only the field it carries: toggling the update check
 // must not reset a previously-saved toolbar style.
 func TestSettingsPartialUpdatePreservesOtherFields(t *testing.T) {

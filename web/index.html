@@ -98,6 +98,7 @@
         <div class="dropdown">
           <button id="exportZipBtn">Pages as images (ZIP)</button>
           <button id="exportPngBtn">Current page (PNG)</button>
+          <button id="exportBookmarkSplitBtn">Split by bookmarks (to a folder)…</button>
           <button id="exportFormJsonBtn">Form data (JSON)</button>
           <button id="exportFormCsvBtn">Form data (CSV)</button>
           <button id="exportCertBtn">Signing certificate</button>
@@ -119,6 +120,10 @@
     <div class="tbtab" data-tab="edit">
       <button id="textToolBtn" data-mode="FREETEXT" title="Add a text box (click on the page)">Text</button>
       <button id="highlightToolBtn" data-mode="HIGHLIGHT" title="Highlight text">Highlight</button>
+      <span id="hlColors" class="hlcolors" hidden>
+        <span id="hlSwatches" class="hlswatches"></span>
+        <label class="hlcustom" title="Pick any highlight color"><input id="hlCustom" type="color" value="#fff066" /></label>
+      </span>
       <button id="drawToolBtn" data-mode="INK" title="Freehand draw">Draw</button>
       <span class="tbsep"></span>
       <button id="detectBtn" title="Detect blank lines to fill">Detect fields</button>
@@ -483,6 +488,27 @@
         <span class="grow"></span>
         <button id="extractCancel">Cancel</button>
         <button id="extractGo" class="primary">Extract…</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Split a bookmarked PDF into one file per top-level bookmark, into a folder -->
+  <div id="bookmarkSplitModal" hidden>
+    <div class="sigcard">
+      <h3>Split by bookmarks</h3>
+      <p class="libhint">Save one PDF per top-level bookmark into a folder — e.g. a scored orchestration split into one file per instrument. The open document is left untouched.</p>
+      <label>Filename prefix <input id="bsPrefix" type="text" placeholder="optional — e.g. “Symphony No. 5 - ”" /></label>
+      <p id="bsPreview" class="libhint"></p>
+      <label>Folder <input id="bsDir" type="text" /></label>
+      <div class="dirbrowse">
+        <button id="bsUp" type="button" title="Parent folder">⬆ Up</button>
+        <span id="bsHere" class="dirhere"></span>
+      </div>
+      <ul id="bsList" class="dirlist"></ul>
+      <div class="sigbtns">
+        <span class="grow"></span>
+        <button id="bsCancel">Cancel</button>
+        <button id="bsGo" class="primary">Split to folder…</button>
       </div>
     </div>
   </div>
