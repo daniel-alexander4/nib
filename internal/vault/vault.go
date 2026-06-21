@@ -114,9 +114,10 @@ type PinnedPeer struct {
 // startup update check runs — so an older vault that predates this struct keeps
 // the prior behaviour with no migration.
 type Settings struct {
-	ToolbarStyle      string `json:"toolbarStyle,omitempty"`      // "menus" (default) | "toolbar" | "both"
-	Appearance        string `json:"appearance,omitempty"`        // "dark" (default) | "light"
-	DisableAutoUpdate bool   `json:"disableAutoUpdate,omitempty"` // skip the startup update check
+	ToolbarStyle          string   `json:"toolbarStyle,omitempty"`          // "menus" (default) | "toolbar" | "both"
+	Appearance            string   `json:"appearance,omitempty"`            // "dark" (default) | "light"
+	DisableAutoUpdate     bool     `json:"disableAutoUpdate,omitempty"`     // skip the startup update check
+	RecentHighlightColors []string `json:"recentHighlightColors,omitempty"` // last-used highlight colors, newest first (#rrggbb)
 }
 
 // Contents is the decrypted vault payload.

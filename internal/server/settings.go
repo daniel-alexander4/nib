@@ -4,14 +4,42 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"regexp"
+	"strings"
 )
 
 // settingsRequest is a partial update — only the non-nil fields are applied, so
 // the UI can save one toggle without resending the others.
 type settingsRequest struct {
-	ToolbarStyle          *string `json:"toolbarStyle"`
-	Appearance            *string `json:"appearance"`
-	CheckUpdatesOnStartup *bool   `json:"checkUpdatesOnStartup"`
+	ToolbarStyle          *string   `json:"toolbarStyle"`
+	Appearance            *string   `json:"appearance"`
+	CheckUpdatesOnStartup *bool     `json:"checkUpdatesOnStartup"`
+	RecentHighlightColors *[]string `json:"recentHighlightColors"` // whole-list replace, newest first
+}
+
+// maxRecentHighlightColors caps the stored most-recently-used highlight palette.
+const maxRecentHighlightColors = 5
+
+var hexColorRe = regexp.MustCompile(`^#[0-9a-f]{6}$`)
+
+// sanitizeHighlightColors normalizes to lowercase #rrggbb, drops anything that
+// isn't a valid hex color, dedupes (keeping first/newest), and caps the list. The
+// client owns the MRU ordering; this is the server-side guard on what gets stored.
+func sanitizeHighlightColors(in []string) []string {
+	out := make([]string, 0, maxRecentHighlightColors)
+	seen := map[string]bool{}
+	for _, c := range in {
+		c = strings.ToLower(strings.TrimSpace(c))
+		if !hexColorRe.MatchString(c) || seen[c] {
+			continue
+		}
+		seen[c] = true
+		out = append(out, c)
+		if len(out) == maxRecentHighlightColors {
+			break
+		}
+	}
+	return out
 }
 
 // handleSettings persists the user's UI preferences (toolbar layout, appearance,
@@ -45,6 +73,9 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.CheckUpdatesOnStartup != nil {
 		cur.DisableAutoUpdate = !*req.CheckUpdatesOnStartup
+	}
+	if req.RecentHighlightColors != nil {
+		cur.RecentHighlightColors = sanitizeHighlightColors(*req.RecentHighlightColors)
 	}
 	if err := v.SetSettings(cur); err != nil {
 		httpError(w, http.StatusInternalServerError, "could not save settings")

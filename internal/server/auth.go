@@ -139,16 +139,17 @@ func requirePublicLoopback(next http.HandlerFunc) http.HandlerFunc {
 // --- status ------------------------------------------------------------------
 
 type statusResponse struct {
-	State             string   `json:"state"` // ready | setup | migrate | key-missing
-	CSRF              string   `json:"csrf,omitempty"`
-	Candidates        []string `json:"candidates,omitempty"`     // detected ~/.ssh keys
-	DefaultKeyPath    string   `json:"defaultKeyPath,omitempty"` // where a new key would be created
-	KeyPath           string   `json:"keyPath,omitempty"`        // enrolled key path (key-missing)
-	AutoUpdate        bool     `json:"autoUpdate"`               // run the startup update check (effective: env AND user preference)
-	UpdateCheckLocked bool     `json:"updateCheckLocked"`        // NIB_NO_UPDATE_CHECK forces the check off; the UI toggle can't override it
-	ToolbarStyle      string   `json:"toolbarStyle,omitempty"`   // menus | toolbar | both (saved layout preference)
-	Appearance        string   `json:"appearance,omitempty"`     // dark | light (saved theme preference)
-	Version           string   `json:"version"`                  // running build, shown in the About dialog
+	State                 string   `json:"state"` // ready | setup | migrate | key-missing
+	CSRF                  string   `json:"csrf,omitempty"`
+	Candidates            []string `json:"candidates,omitempty"`            // detected ~/.ssh keys
+	DefaultKeyPath        string   `json:"defaultKeyPath,omitempty"`        // where a new key would be created
+	KeyPath               string   `json:"keyPath,omitempty"`               // enrolled key path (key-missing)
+	AutoUpdate            bool     `json:"autoUpdate"`                      // run the startup update check (effective: env AND user preference)
+	UpdateCheckLocked     bool     `json:"updateCheckLocked"`               // NIB_NO_UPDATE_CHECK forces the check off; the UI toggle can't override it
+	ToolbarStyle          string   `json:"toolbarStyle,omitempty"`          // menus | toolbar | both (saved layout preference)
+	Appearance            string   `json:"appearance,omitempty"`            // dark | light (saved theme preference)
+	RecentHighlightColors []string `json:"recentHighlightColors,omitempty"` // last-used highlight colors, newest first
+	Version               string   `json:"version"`                         // running build, shown in the About dialog
 }
 
 // currentStatus describes how (and whether) the vault can be unlocked, stamped
@@ -164,6 +165,7 @@ func (s *Server) currentStatus() statusResponse {
 		set := v.Settings()
 		st.ToolbarStyle = set.ToolbarStyle
 		st.Appearance = set.Appearance
+		st.RecentHighlightColors = set.RecentHighlightColors
 		if set.DisableAutoUpdate {
 			st.AutoUpdate = false
 		}
