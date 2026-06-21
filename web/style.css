@@ -580,22 +580,32 @@ input.ovl-check { appearance: auto; accent-color: #1a7f37; background: transpare
 .ovl-circleone .circ-hit { position: absolute; border: 0; background: transparent; cursor: pointer; padding: 0; }
 .ovl-circleone .circ-hit:hover { background: rgba(29, 78, 216, 0.10); border-radius: 999px; }
 .ovl-circleone .circ-mark { position: absolute; border: 2px solid #1d4ed8; pointer-events: none; box-sizing: border-box; }
-/* placed image / quick-stamp: draggable, resizable, baked server-side */
+/* placed image / quick-stamp and border boxes: draggable, resizable, baked
+   server-side. The resize/delete handles are shared between both. */
 .ovl-stamp { z-index: 9; cursor: move; outline: 1px dashed transparent; touch-action: none; }
 .ovl-stamp:hover, .ovl-stamp:focus { outline-color: var(--blue); }
 .ovl-stamp img { width: 100%; height: 100%; object-fit: fill; display: block; pointer-events: none; user-select: none; }
-.ovl-stamp .stamp-resize {
+/* border box: a colored outline with no fill (the unfilled sibling of a
+   highlight). Border color + width are set inline from the field. */
+.ovl-box { z-index: 9; cursor: move; border-style: solid; border-width: 2px; background: transparent; touch-action: none; }
+.ovl-stamp .stamp-resize, .ovl-box .stamp-resize {
   position: absolute; right: -6px; bottom: -6px; width: 12px; height: 12px;
   background: var(--blue); border: 1px solid var(--crust); border-radius: 2px;
   cursor: nwse-resize; display: none;
 }
-.ovl-stamp:hover .stamp-resize, .ovl-stamp:focus .stamp-resize { display: block; }
-.ovl-stamp .stamp-del {
+.ovl-stamp:hover .stamp-resize, .ovl-stamp:focus .stamp-resize,
+.ovl-box:hover .stamp-resize, .ovl-box:focus .stamp-resize { display: block; }
+.ovl-stamp .stamp-del, .ovl-box .stamp-del {
   position: absolute; top: -10px; right: -10px; width: 18px; height: 18px; padding: 0;
   line-height: 1; border-radius: 999px; background: var(--surface1); color: var(--red);
   border: 1px solid var(--crust); cursor: pointer; display: none;
 }
-.ovl-stamp:hover .stamp-del, .ovl-stamp:focus .stamp-del { display: block; }
+.ovl-stamp:hover .stamp-del, .ovl-stamp:focus .stamp-del,
+.ovl-box:hover .stamp-del, .ovl-box:focus .stamp-del { display: block; }
+/* bordermark: the rubber-band rectangle drawn while placing a border box. */
+.bordermark { position: absolute; border: 2px solid var(--blue); background: transparent; z-index: 5; pointer-events: none; box-sizing: border-box; }
+.borderwidth { display: inline-flex; align-items: center; gap: 4px; }
+.borderwidth input { width: 3.5em; }
 /* sign/date/initial/... flag: a vertical yellow pennant standing up from the
    field's left edge, label reading top-to-bottom, with a pointed tip planted at
    the start of the blank. Brighter yellow + a dark border so it reads clearly on a
