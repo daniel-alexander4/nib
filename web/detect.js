@@ -597,21 +597,21 @@ export function detectTableCells(canvas) {
 }
 
 // detectGrid makes a BEST-EFFORT guess at how many columns and rows an imposed
-// page is laid out in, by looking for sustained whitespace "gutters" between
-// blocks of content. It only ever seeds the editable Columns/Rows inputs — it
-// never splits on its own — because gutter detection on a real scan (speckle,
-// off-white background, content touching the trim) is unreliable.
+// page is laid out in. It only ever seeds the editable Columns/Rows inputs — it
+// never splits on its own — because grid detection on a real page is unreliable.
 //
-// The signal is RELATIVE, not an absolute white threshold: per column/row we sum
-// darkness (255 − luminance) and normalize to the page's peak, so an off-white
-// scan with no true white still resolves as long as the gutters are lighter than
-// the content around them.
+// Rather than COUNT whitespace gaps (which over-counts wildly: every gap between
+// text lines reads as a gutter), it FITS small grids: for each candidate count it
+// checks whether the few lines where that grid's gutters WOULD fall are clean,
+// wide, sustained valleys, and whether every resulting cell actually carries
+// content. The smallest count whose every gutter and cell pass wins, so it errs
+// toward fewer pieces (which the user bumps up) instead of absurd over-splits.
 export function detectGrid(canvas) {
   const w = canvas.width, h = canvas.height;
   const data = canvas.getContext('2d').getImageData(0, 0, w, h).data;
   return {
-    cols: countBands(inkProfile(data, w, h, true)),
-    rows: countBands(inkProfile(data, w, h, false)),
+    cols: bestCount(inkProfile(data, w, h, true), 4),
+    rows: bestCount(inkProfile(data, w, h, false), 4),
   };
 }
 
@@ -635,24 +635,50 @@ function inkProfile(data, w, h, vertical) {
   return ink;
 }
 
-// countBands trims the page margins to the content extent, then counts interior
-// gutters — runs of near-empty lines at least 4% of the content extent wide
-// (wider than an inter-letter gap) — and returns bands = gutters + 1, capped.
-function countBands(ink) {
-  const len = ink.length, empty = 0.06;
-  let c0 = 0, c1 = len - 1;
-  while (c0 < len && ink[c0] <= empty) c0++;
-  while (c1 > c0 && ink[c1] <= empty) c1--;
-  if (c1 <= c0) return 1;
-  const minGap = Math.max(3, (c1 - c0) * 0.04);
-  let gutters = 0, run = 0;
-  for (let i = c0; i <= c1; i++) {
-    if (ink[i] <= empty) {
-      run++;
-    } else {
-      if (run >= minGap) gutters++;
-      run = 0;
-    }
+const GUTTER_T = 0.12; // a gutter line's deepest point must be <= this share of peak ink
+const CELL_MIN = 0.30; // a cell must carry at least this much ink to be real content
+
+// gutterAt reports whether a real gutter sits near fractional position f: a clean
+// valley (<=GUTTER_T) that belongs to a SUSTAINED low band at least 2% of the axis
+// wide. The width test rejects an inter-text-line gap or a thin slot beside a
+// centred label — clean but narrow, unlike a true imposition gutter.
+function gutterAt(p, f) {
+  const L = p.length;
+  const c = Math.round(f * L), win = Math.max(2, Math.round(L / 40));
+  let deepest = Infinity, at = c;
+  for (let x = c - win; x <= c + win; x++) {
+    if (x < 0 || x >= L) continue;
+    if (p[x] < deepest) { deepest = p[x]; at = x; }
   }
-  return Math.max(1, Math.min(8, gutters + 1));
+  if (deepest > GUTTER_T) return false;
+  let lo = at, hi = at;
+  while (lo > 0 && p[lo - 1] <= 2 * GUTTER_T) lo--;
+  while (hi < L - 1 && p[hi + 1] <= 2 * GUTTER_T) hi++;
+  return hi - lo >= 0.02 * L;
+}
+
+// cellInk returns the peak ink near a cell centre (fractional position f, cell
+// width 1/k) — i.e. whether that cell actually carries content.
+function cellInk(p, f, k) {
+  const L = p.length;
+  const c = Math.round(f * L), win = Math.max(2, Math.round((0.35 / k) * L));
+  let best = 0;
+  for (let x = c - win; x <= c + win; x++) {
+    if (x < 0 || x >= L) continue;
+    if (p[x] > best) best = p[x];
+  }
+  return best;
+}
+
+// bestCount returns the smallest grid count k>=2 (up to maxN) that is a real
+// division — every interior gutter is a clean wide valley AND every cell carries
+// content — else 1.
+function bestCount(p, maxN) {
+  for (let k = 2; k <= maxN; k++) {
+    let ok = true;
+    for (let i = 1; i < k && ok; i++) if (!gutterAt(p, i / k)) ok = false;
+    for (let i = 0; i < k && ok; i++) if (cellInk(p, (i + 0.5) / k, k) < CELL_MIN) ok = false;
+    if (ok) return k;
+  }
+  return 1;
 }
