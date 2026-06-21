@@ -444,6 +444,16 @@ input[type="search"] { width: 100%; }
 .sigbtns .grow { flex: 1; }
 .sigbtns .primary { background: var(--blue); color: var(--crust); border-color: var(--blue); font-weight: 600; }
 
+/* Split-page modal: a live preview of where the grid cuts fall, plus the grid controls. */
+.splitpreview { display: flex; justify-content: center; background: var(--mantle); border-radius: 6px; padding: 8px; }
+#splitPreview { max-width: 100%; max-height: 320px; background: #fff; border-radius: 4px; }
+.splitcontrols { display: flex; align-items: flex-end; gap: 12px; }
+.splitcontrols label { flex: 0 0 auto; }
+.splitcontrols input[type="number"] { width: 64px; }
+.splitcontrols #splitSuggest { margin-left: auto; }
+.sigcard label.splitresize { flex-direction: row; align-items: center; gap: 8px; }
+.sigcard label.splitresize input[type="checkbox"] { width: auto; }
+
 /* uploaded-image background-removal preview — checkerboard shows transparency */
 .bgpreview {
   display: flex; align-items: center; justify-content: center;
