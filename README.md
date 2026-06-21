@@ -199,7 +199,9 @@ each other: the pinned-key handshake holds over any transport.
 
 ### Pages & export
 Rotate, delete, **append**, and reorder pages — **drag a page's thumbnail** in the
-sidebar to move it where you want. Got a scanned 2-up or 4-up sheet? **Split page…**
+sidebar to move it where you want. Rotate every page at once with **Rotate all ↺ / ↻**
+on the **Edit** tab, or hover a thumbnail to rotate (either direction) or delete a
+single page. Got a scanned 2-up or 4-up sheet? **Split page…**
 (on the **Edit** tab) cuts the current page into a grid of separate pages — pick the
 columns and rows (or let **Suggest** guess), preview where the cuts land, and
 optionally resize each piece to a full page. It's a re-crop, not a re-render, so
