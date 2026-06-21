@@ -240,6 +240,9 @@ input[type="search"] { width: 100%; }
 #updatePill.current #updateGet { color: var(--text); cursor: default; }
 #updatePill.current #updateGet:hover { background: transparent; }
 #updatePill.current #updateDismiss { display: none; }
+/* on the latest published release: a green "you're up to date" confirmation */
+#updatePill.current.latest { background: var(--green); }
+#updatePill.current.latest #updateGet { color: var(--crust); }
 
 /* --- layout --- */
 #main { display: flex; flex: 1; min-height: 0; }
