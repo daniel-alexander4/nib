@@ -13,8 +13,10 @@ import (
 	_ "image/png"
 	"io"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/pdfcpu/pdfcpu/pkg/api"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu"
@@ -178,6 +180,111 @@ func RedactPages(original []byte, raster map[int]RasterPage) ([]byte, error) {
 // dereferences the configuration, so it must be non-nil.)
 func PageCount(pdf []byte) (int, error) {
 	return api.PageCount(bytes.NewReader(pdf), model.NewDefaultConfiguration())
+}
+
+// BookmarkPart is one output of a bookmark split: a safe base filename (no
+// directory, no extension) and the extracted PDF bytes.
+type BookmarkPart struct {
+	Name string
+	Data []byte
+}
+
+// SplitByBookmarks splits pdf into one PDF per top-level (level-1) bookmark, in
+// page order — each part runs from its bookmark's page to the page before the
+// next top-level bookmark, the last to the end of the document. Names are
+// sanitize(prefix + bookmark title), deduped. Returns an empty slice (no error)
+// when the PDF has no outline. Pages before the first bookmark belong to no part.
+//
+// Ranges are derived from the sorted PageFrom values rather than pdfcpu's
+// per-bookmark PageThru: the read path neither sorts nor enforces page order, and
+// the last bookmark's PageThru is left 0, so trusting it is fragile.
+func SplitByBookmarks(pdf []byte, prefix string) ([]BookmarkPart, error) {
+	bms, err := api.Bookmarks(bytes.NewReader(pdf), nil)
+	if err != nil {
+		return nil, err
+	}
+	if len(bms) == 0 {
+		return nil, nil
+	}
+	sort.SliceStable(bms, func(i, j int) bool { return bms[i].PageFrom < bms[j].PageFrom })
+	n, err := PageCount(pdf)
+	if err != nil {
+		return nil, err
+	}
+
+	parts := make([]BookmarkPart, 0, len(bms))
+	seen := map[string]int{}
+	for i, bm := range bms {
+		from := bm.PageFrom
+		if from < 1 {
+			continue // a bookmark whose destination didn't resolve
+		}
+		thru := n
+		if i+1 < len(bms) {
+			thru = bms[i+1].PageFrom - 1
+		}
+		if thru < from {
+			continue // two bookmarks on the same page → empty span
+		}
+		data, err := Collect(pdf, []string{fmt.Sprintf("%d-%d", from, thru)})
+		if err != nil {
+			return nil, err
+		}
+		parts = append(parts, BookmarkPart{Name: uniqueName(sanitizeFilename(prefix+bm.Title), len(parts)+1, seen), Data: data})
+	}
+	return parts, nil
+}
+
+// fnameUnsafe matches characters that are illegal or unsafe in a filename on any
+// of Linux/macOS/Windows: path separators, control bytes, and Windows-reserved
+// punctuation. winReserved matches the Windows device names that can't be files.
+var (
+	fnameUnsafe = regexp.MustCompile(`[/\\<>:"|?*\x00-\x1f\x7f]`)
+	winReserved = regexp.MustCompile(`(?i)^(con|prn|aux|nul|com[1-9]|lpt[1-9])$`)
+)
+
+// sanitizeFilename reduces an arbitrary string (a bookmark title) to a safe base
+// filename: unsafe characters become spaces and collapse, no leading/trailing
+// dots (so no hidden dotfiles and no Windows trailing-dot trimming), not a Windows
+// reserved name, capped at a length that leaves room for a dedup suffix + ".pdf".
+// Returns "" when nothing usable remains; the caller substitutes a fallback.
+func sanitizeFilename(s string) string {
+	s = fnameUnsafe.ReplaceAllString(s, " ")
+	s = strings.Join(strings.Fields(s), " ") // collapse whitespace runs, trim ends
+	s = strings.Trim(s, ".")                 // no leading/trailing dots
+	s = strings.TrimSpace(s)
+	if winReserved.MatchString(s) {
+		s = "_" + s
+	}
+	s = truncateBytes(s, 200)
+	return strings.TrimRight(s, ". ")
+}
+
+// truncateBytes caps s at max bytes without splitting a UTF-8 rune.
+func truncateBytes(s string, max int) string {
+	if len(s) <= max {
+		return s
+	}
+	for max > 0 && !utf8.RuneStart(s[max]) {
+		max--
+	}
+	return s[:max]
+}
+
+// uniqueName returns a collision-free base name for this batch: an empty name
+// becomes "bookmark-<index>", and a repeat (case-insensitively, for macOS/Windows
+// filesystems) gets a " (2)", " (3)" suffix.
+func uniqueName(base string, index int, seen map[string]int) string {
+	if base == "" {
+		base = fmt.Sprintf("bookmark-%d", index)
+	}
+	key := strings.ToLower(base)
+	if c := seen[key]; c > 0 {
+		seen[key] = c + 1
+		return fmt.Sprintf("%s (%d)", base, c+1)
+	}
+	seen[key] = 1
+	return base
 }
 
 // SplitPage splits page p (1-based) of pdf into a cols×rows grid of sub-pages in

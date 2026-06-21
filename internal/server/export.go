@@ -5,6 +5,9 @@ import (
 	"bytes"
 	"fmt"
 	"net/http"
+	"os"
+	"path/filepath"
+	"strings"
 
 	"nib/internal/pdfops"
 	"nib/internal/sign"
@@ -34,6 +37,54 @@ func (s *Server) handleExtract(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	sendDownload(w, "extract.pdf", "application/pdf", result)
+}
+
+// handleSplitBookmarks splits the posted document into one PDF per top-level
+// bookmark and writes the files into a chosen folder (like PDFExplode: a scored
+// orchestration in, one file per part out). Like extract it never touches the
+// open document. Filenames come from the bookmark titles (sanitized + deduped in
+// pdfops) with an optional prefix; each is confined to the chosen folder.
+func (s *Server) handleSplitBookmarks(w http.ResponseWriter, r *http.Request) {
+	if err := r.ParseMultipartForm(maxPDFBytes); err != nil {
+		httpError(w, http.StatusBadRequest, "could not parse upload")
+		return
+	}
+	pdfBytes, ok := formFileBytes(w, r, "pdf")
+	if !ok {
+		return
+	}
+	dir := filepath.Clean(expandHome(strings.TrimSpace(r.FormValue("dir"))))
+	if dir == "" || dir == "." || !filepath.IsAbs(dir) {
+		httpError(w, http.StatusBadRequest, "destination must be an absolute folder")
+		return
+	}
+	parts, err := pdfops.SplitByBookmarks(pdfBytes, r.FormValue("prefix"))
+	if err != nil {
+		httpError(w, http.StatusInternalServerError, "could not split: "+err.Error())
+		return
+	}
+	if len(parts) == 0 {
+		httpError(w, http.StatusBadRequest, "this PDF has no bookmarks to split by")
+		return
+	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		httpError(w, http.StatusInternalServerError, "could not create folder")
+		return
+	}
+	names := make([]string, 0, len(parts))
+	for _, p := range parts {
+		full := filepath.Join(dir, p.Name+".pdf")
+		if filepath.Dir(full) != dir { // containment: the name is title-derived
+			httpError(w, http.StatusBadRequest, "unsafe bookmark name")
+			return
+		}
+		if err := writeFileAtomic(full, p.Data); err != nil {
+			httpError(w, http.StatusInternalServerError, "could not write "+p.Name)
+			return
+		}
+		names = append(names, p.Name+".pdf")
+	}
+	writeJSON(w, map[string]any{"dir": dir, "count": len(names), "names": names})
 }
 
 // handleAssemble turns client-rendered page images into a download: a flattened

@@ -213,7 +213,15 @@ lets you split a page by hand — drag a rectangle around each region you want, 
 **Apply box split** and the page is replaced by those regions, each as its own
 page. The new pages all come out the **same size** (the largest region's, smaller
 ones centred and padded), so the output is uniform. It's a re-crop, not a
-re-render, so every piece keeps its original quality. **Flatten** to a guaranteed-flat PDF, or
+re-render, so every piece keeps its original quality.
+
+**Split by bookmarks** (File → Export) turns one bookmarked PDF into a folder of
+separate files — one per top-level bookmark, named from the bookmark with an
+optional prefix. Point it at a scored orchestration and get one PDF per
+instrument/part in seconds; pick the destination folder, and the open document is
+left untouched.
+
+**Flatten** to a guaranteed-flat PDF, or
 export pages as PNGs (single or ZIP) and form data as JSON / CSV. Save back over the
 original, or as a flattened or editable copy. **Print** the current document —
 fills, signatures, and all — straight from the **File** tab through your
