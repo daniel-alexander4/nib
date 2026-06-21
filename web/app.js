@@ -2457,8 +2457,8 @@ els.applyBoxSplitBtn.onclick = async () => {
   els.viewerContainer.style.cursor = '';
   const ok = await pageOp('splitrects', { page, rects: JSON.stringify(rects) });
   if (ok) toast(rects.length === 1
-    ? `Region added as a new page after page ${page} (original kept)`
-    : `${rects.length} regions added as new pages after page ${page} (original kept)`);
+    ? `Page ${page} replaced by 1 region`
+    : `Page ${page} split into ${rects.length} regions`);
 };
 
 // --- cover-and-replace text editing ------------------------------------------
