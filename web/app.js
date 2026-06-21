@@ -181,8 +181,8 @@ function applyStatus(st) {
     els.autoUpdateChk.checked = st.autoUpdate;
     els.autoUpdateChk.disabled = st.updateCheckLocked;
     els.autoUpdateChk.parentElement.title = st.updateCheckLocked ? 'Forced off by NIB_NO_UPDATE_CHECK' : '';
-    // Always show the installed version as a badge. An update check (auto or
-    // manual) then refines it: green when confirmed latest, a CTA when behind.
+    // Always show the installed version as a green badge. An update check, if it
+    // runs, swaps it to the download CTA only when a newer release exists.
     showVersionBadge(st.version);
     // Automatic update check, once per session, at the first usable moment.
     if (st.autoUpdate && !updateChecked) { updateChecked = true; runUpdateCheck(true); }
@@ -284,14 +284,14 @@ els.restoreInput.onchange = async () => {
 let updateChecked = false;
 let updateInfo = null; // last check result, for the pill's download action
 
-// showVersionBadge renders the always-on installed-version pill (no download
-// action, no dismiss) before any network check. It's neutral — not green —
-// because matching the latest release can only be claimed once a check confirms
-// it; runUpdateCheck upgrades it to the green ".latest" state or the CTA.
+// showVersionBadge renders the always-on installed-version pill in its green
+// "you're fine" state (no download action, no dismiss). This is the default:
+// shown on load, and whenever update checks are disabled or no update is
+// available. Only a known-available update (runUpdateCheck) replaces the green
+// badge with the download CTA.
 function showVersionBadge(version) {
   updateInfo = null;
-  els.updatePill.classList.add('current');
-  els.updatePill.classList.remove('latest');
+  els.updatePill.classList.add('current', 'latest');
   els.updateGet.textContent = `v${version || 'dev'}`;
   els.updateGet.title = `Installed version (v${version || 'dev'})`;
   els.updatePill.hidden = false;
@@ -310,17 +310,10 @@ async function runUpdateCheck(auto) {
     return;
   }
   if (!d.updateAvailable) {
-    // No upgrade needed: show the current version as a static badge (no
-    // download action, no dismiss) rather than hiding the pill.
-    updateInfo = null;
-    els.updatePill.classList.add('current');
-    // Green only when there's a published latest you actually match; the
-    // "no releases yet" case stays the muted informational badge.
-    els.updatePill.classList.toggle('latest', !!d.latest);
-    els.updateGet.textContent = `v${d.current}`;
-    els.updateGet.title = d.latest ? `You’re on the latest version (v${d.current})` : `No published releases yet (you have v${d.current})`;
-    els.updatePill.hidden = false;
-    if (!auto) toast(d.latest ? `You’re on the latest version (v${d.current}).` : `No published releases yet (you have v${d.current}).`);
+    // Up to date: the green badge, refined with a confirmed title and toast.
+    showVersionBadge(d.current);
+    els.updateGet.title = d.latest ? `You’re on the latest version (v${d.current})` : `Up to date (v${d.current})`;
+    if (!auto) toast(d.latest ? `You’re on the latest version (v${d.current}).` : `Up to date (v${d.current}).`);
     return;
   }
   updateInfo = d;
