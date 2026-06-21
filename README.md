@@ -205,7 +205,7 @@ single page. **Extract pages…** saves a range (type `1-3, 5`) as a new PDF wit
 touching the open document, and **Insert blank page** drops a fresh page — matching
 its neighbour's size — after the current one. Got a scanned 2-up or 4-up sheet? **Split page…**
 (on the **Edit** tab) cuts the current page into a grid of separate pages — pick the
-columns and rows (or let **Suggest** guess), preview where the cuts land, and
+columns and rows, preview where the cuts land, and
 optionally resize each piece to a full page. Not a clean grid? **Split by box**
 copies regions out by hand — drag a rectangle around each region you want, then
 **Apply box split** and each is added as a new page right after the original

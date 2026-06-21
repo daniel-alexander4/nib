@@ -24,7 +24,6 @@ import {
   findRunChoices,
   snapChoices,
   dedupeGroups,
-  detectGrid,
 } from './detect.js';
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = './vendor/pdfjs/pdf.worker.min.mjs';
@@ -123,7 +122,7 @@ const els = {
   extractModal: $('extractModal'), extractPages: $('extractPages'),
   extractHint: $('extractHint'), extractCancel: $('extractCancel'), extractGo: $('extractGo'),
   splitBtn: $('splitBtn'), splitModal: $('splitModal'), splitPreview: $('splitPreview'),
-  splitCols: $('splitCols'), splitRows: $('splitRows'), splitSuggest: $('splitSuggest'),
+  splitCols: $('splitCols'), splitRows: $('splitRows'),
   splitResize: $('splitResize'), splitCancel: $('splitCancel'), splitGo: $('splitGo'),
   splitBoxBtn: $('splitBoxBtn'), applyBoxSplitBtn: $('applyBoxSplitBtn'),
 };
@@ -1584,13 +1583,6 @@ els.splitCancel.onclick = () => { els.splitModal.hidden = true; };
 els.splitGo.onclick = splitGo;
 els.splitCols.oninput = drawSplitPreview;
 els.splitRows.oninput = drawSplitPreview;
-els.splitSuggest.onclick = () => {
-  if (!splitSrc) return;
-  const g = detectGrid(splitSrc);
-  els.splitCols.value = g.cols;
-  els.splitRows.value = g.rows;
-  drawSplitPreview();
-};
 
 // --- outline sidebar ---------------------------------------------------------
 async function buildOutline(gen = docGen) {
