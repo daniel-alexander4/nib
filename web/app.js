@@ -118,6 +118,7 @@ const els = {
   aboutMain: $('aboutMain'), aboutDocText: $('aboutDocText'), aboutVersion: $('aboutVersion'),
   aboutLicenseBtn: $('aboutLicenseBtn'), aboutNoticesBtn: $('aboutNoticesBtn'),
   aboutBackBtn: $('aboutBackBtn'), aboutClose: $('aboutClose'),
+  rotateLeftBtn: $('rotateLeftBtn'), rotateRightBtn: $('rotateRightBtn'),
   splitBtn: $('splitBtn'), splitModal: $('splitModal'), splitPreview: $('splitPreview'),
   splitCols: $('splitCols'), splitRows: $('splitRows'), splitSuggest: $('splitSuggest'),
   splitResize: $('splitResize'), splitCancel: $('splitCancel'), splitGo: $('splitGo'),
@@ -1337,11 +1338,13 @@ async function buildThumbnails(gen = docGen) {
 
     const acts = document.createElement('div');
     acts.className = 'thumbacts';
-    const rot = document.createElement('button'); rot.textContent = '↻'; rot.title = 'Rotate';
+    const rotL = document.createElement('button'); rotL.textContent = '↺'; rotL.title = 'Rotate left';
+    rotL.onclick = (e) => { e.stopPropagation(); pageOp('rotate', { pages: String(n), deg: 270 }); };
+    const rot = document.createElement('button'); rot.textContent = '↻'; rot.title = 'Rotate right';
     rot.onclick = (e) => { e.stopPropagation(); pageOp('rotate', { pages: String(n), deg: 90 }); };
     const del = document.createElement('button'); del.textContent = '×'; del.title = 'Delete page';
     del.onclick = (e) => { e.stopPropagation(); if (pdfDocument.numPages > 1) pageOp('delete', { pages: String(n) }); };
-    acts.append(rot, del);
+    acts.append(rotL, rot, del);
 
     const label = document.createElement('div');
     label.className = 'thumb-label';
@@ -1500,6 +1503,11 @@ async function splitGo() {
   els.splitModal.hidden = true;
   await pageOp('split', { page, cols, rows, resize: els.splitResize.checked });
 }
+
+// Rotate-all: omitting `pages` rotates every page server-side. CCW uses 270
+// (≡ −90 mod 360) so the stored /Rotate stays a non-negative multiple of 90.
+els.rotateLeftBtn.onclick = () => pageOp('rotate', { deg: 270 });
+els.rotateRightBtn.onclick = () => pageOp('rotate', { deg: 90 });
 
 els.splitBtn.onclick = openSplit;
 els.splitCancel.onclick = () => { els.splitModal.hidden = true; };
@@ -3102,6 +3110,7 @@ const DOC_REQUIRED = [
   'exportZipBtn', 'exportPngBtn', 'exportFormJsonBtn', 'exportFormCsvBtn',
   'textToolBtn', 'highlightToolBtn', 'drawToolBtn',
   'detectBtn', 'editTextBtn', 'removeOriginalsBtn', 'autofillBtn', 'splitBtn',
+  'rotateLeftBtn', 'rotateRightBtn',
   'redactBtn', 'applyRedactBtn', 'scanBtn',
   'finalizeBtn', 'timestampBtn', 'cosignBtn', 'sessionInitBtn', 'sessionSendBtn',
 ];
