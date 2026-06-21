@@ -46,6 +46,16 @@ func (s *Server) handlePages(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		result, err = pdfops.Append(pdfBytes, other)
+	case "split":
+		cols, cErr := strconv.Atoi(r.FormValue("cols"))
+		rows, rErr := strconv.Atoi(r.FormValue("rows"))
+		pageNum, pErr := strconv.Atoi(r.FormValue("page"))
+		if cErr != nil || rErr != nil || pErr != nil {
+			httpError(w, http.StatusBadRequest, "split needs whole-number page, cols and rows")
+			return
+		}
+		resize := r.FormValue("resize") == "1" || r.FormValue("resize") == "true"
+		result, err = pdfops.SplitPage(pdfBytes, pageNum, cols, rows, resize)
 	default:
 		httpError(w, http.StatusBadRequest, "unknown page operation")
 		return

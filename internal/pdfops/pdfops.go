@@ -166,6 +166,148 @@ func PageCount(pdf []byte) (int, error) {
 	return api.PageCount(bytes.NewReader(pdf), model.NewDefaultConfiguration())
 }
 
+// SplitPage splits page p (1-based) of pdf into a cols×rows grid of sub-pages in
+// reading order (top-left to bottom-right), replacing that one page with the grid
+// in place. The split is rasterization-free: pdfcpu's CutPage re-crops the
+// original content stream through per-tile MediaBoxes, so vector/text content
+// stays live and only the visible window narrows.
+//
+// When resize is true each sub-page is scaled up (uniformly, preserving aspect)
+// to fill the original page footprint — useful for print/save, where a
+// quarter-size MediaBox would otherwise print physically small. We do this by
+// hand rather than via api.Resize: CutPage's tiles carry an offset MediaBox, and
+// api.Resize scales content about the origin while leaving the box's lower-left
+// unscaled, which mis-positions every tile but the origin-anchored one.
+func SplitPage(pdf []byte, page, cols, rows int, resize bool) ([]byte, error) {
+	if cols < 1 || rows < 1 || cols*rows < 2 {
+		return nil, fmt.Errorf("split needs at least 2 sub-pages (got %d×%d)", cols, rows)
+	}
+	n, err := PageCount(pdf)
+	if err != nil {
+		return nil, err
+	}
+	if page < 1 || page > n {
+		return nil, fmt.Errorf("page %d out of range (1-%d)", page, n)
+	}
+
+	ctx, err := api.ReadValidateAndOptimize(bytes.NewReader(pdf), model.NewDefaultConfiguration())
+	if err != nil {
+		return nil, err
+	}
+	// Uniform grid: cut fractions are 0, 1/cols, 2/cols, … (the leading 0 is
+	// required when calling CutPage directly; the public api.Cut adds it for you).
+	hor := make([]float64, rows)
+	for i := range hor {
+		hor[i] = float64(i) / float64(rows)
+	}
+	vert := make([]float64, cols)
+	for j := range vert {
+		vert[j] = float64(j) / float64(cols)
+	}
+	ctxDest, err := pdfcpu.CutPage(ctx, page, &model.Cut{Hor: hor, Vert: vert})
+	if err != nil {
+		return nil, err
+	}
+	var tilesBuf bytes.Buffer
+	if err := api.WriteContext(ctxDest, &tilesBuf); err != nil {
+		return nil, err
+	}
+	// CutPage prepends a full-size outline/preview page; drop it, keep the tiles.
+	tiles, err := Reorder(tilesBuf.Bytes(), []string{"2-"})
+	if err != nil {
+		return nil, err
+	}
+	if resize {
+		s := cols
+		if rows < s {
+			s = rows
+		}
+		if tiles, err = scaleTiles(tiles, float64(s)); err != nil {
+			return nil, err
+		}
+	}
+
+	// Splice the tiles in place of page p: pages[1..p-1] + tiles + pages[p+1..n].
+	// api.Collect errors on an empty range, so skip the missing side at an edge.
+	segments := make([][]byte, 0, 3)
+	if page > 1 {
+		left, err := Reorder(pdf, []string{fmt.Sprintf("1-%d", page-1)})
+		if err != nil {
+			return nil, err
+		}
+		segments = append(segments, left)
+	}
+	segments = append(segments, tiles)
+	if page < n {
+		right, err := Reorder(pdf, []string{fmt.Sprintf("%d-", page+1)})
+		if err != nil {
+			return nil, err
+		}
+		segments = append(segments, right)
+	}
+	result := segments[0]
+	for _, seg := range segments[1:] {
+		if result, err = Append(result, seg); err != nil {
+			return nil, err
+		}
+	}
+	return result, nil
+}
+
+// scaleTiles scales every page of the tiles PDF up by factor s, preserving each
+// page's visible region and normalizing it to start at the origin. Each tile's
+// content is the original page's content stream behind an offset MediaBox, so we
+// re-crop by hand: clip to the new page box, then map the tile's sub-rectangle
+// onto it (a uniform scale about the tile's lower-left). Because both the box and
+// the content scale by the same factor, the visible region is identical, just s×
+// larger; the explicit clip guarantees no neighbouring tile bleeds in.
+func scaleTiles(tiles []byte, s float64) ([]byte, error) {
+	ctx, err := api.ReadValidateAndOptimize(bytes.NewReader(tiles), model.NewDefaultConfiguration())
+	if err != nil {
+		return nil, err
+	}
+	for i := 1; i <= ctx.PageCount; i++ {
+		d, _, attrs, err := ctx.PageDict(i, false)
+		if err != nil {
+			return nil, err
+		}
+		mb := attrs.MediaBox
+		w, h := mb.Width()*s, mb.Height()*s
+		content, err := ctx.PageContent(d, i)
+		if err == model.ErrNoContent {
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		var buf bytes.Buffer
+		fmt.Fprintf(&buf, "q 0 0 %.5f %.5f re W n %.5f 0 0 %.5f %.5f %.5f cm ",
+			w, h, s, s, -s*mb.LL.X, -s*mb.LL.Y)
+		buf.Write(content)
+		buf.WriteString(" Q")
+		sd, err := ctx.NewStreamDictForBuf(buf.Bytes())
+		if err != nil {
+			return nil, err
+		}
+		if err := sd.Encode(); err != nil {
+			return nil, err
+		}
+		ref, err := ctx.IndRefForNewObject(*sd)
+		if err != nil {
+			return nil, err
+		}
+		d["Contents"] = *ref
+		box := types.NewRectangle(0, 0, w, h)
+		d.Update("MediaBox", box.Array())
+		d.Delete("CropBox")
+	}
+	var out bytes.Buffer
+	if err := api.WriteContext(ctx, &out); err != nil {
+		return nil, err
+	}
+	return out.Bytes(), nil
+}
+
 // Field is a filled overlay field to stamp onto the page: the text (already "X"
 // for a checked box) and its rectangle in PDF points (bottom-left origin). Font,
 // Size and Color are optional cover-and-replace overrides; left zero they keep
