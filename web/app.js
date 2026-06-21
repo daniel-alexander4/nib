@@ -119,6 +119,9 @@ const els = {
   aboutLicenseBtn: $('aboutLicenseBtn'), aboutNoticesBtn: $('aboutNoticesBtn'),
   aboutBackBtn: $('aboutBackBtn'), aboutClose: $('aboutClose'),
   rotateLeftBtn: $('rotateLeftBtn'), rotateRightBtn: $('rotateRightBtn'),
+  extractBtn: $('extractBtn'), insertBlankBtn: $('insertBlankBtn'),
+  extractModal: $('extractModal'), extractPages: $('extractPages'),
+  extractHint: $('extractHint'), extractCancel: $('extractCancel'), extractGo: $('extractGo'),
   splitBtn: $('splitBtn'), splitModal: $('splitModal'), splitPreview: $('splitPreview'),
   splitCols: $('splitCols'), splitRows: $('splitRows'), splitSuggest: $('splitSuggest'),
   splitResize: $('splitResize'), splitCancel: $('splitCancel'), splitGo: $('splitGo'),
@@ -1510,6 +1513,58 @@ async function splitGo() {
 // (≡ −90 mod 360) so the stored /Rotate stays a non-negative multiple of 90.
 els.rotateLeftBtn.onclick = () => pageOp('rotate', { deg: 270 });
 els.rotateRightBtn.onclick = () => pageOp('rotate', { deg: 90 });
+
+// Insert a blank page after the page on screen — a replace-in-place mutation, so
+// it routes through pageOp like rotate/delete (the blank matches the neighbour).
+els.insertBlankBtn.onclick = () => pageOp('insertblank', { page: viewer.currentPageNumber });
+
+// --- extract a page range into a new PDF -------------------------------------
+// Unlike the page mutations above, extract derives a NEW file and hands it to
+// Save-as (openSaveAs) without touching the open document.
+// parsePageRanges turns "1-3, 5, 8" into a sorted, deduped, in-range page list;
+// returns null on any malformed or out-of-range token.
+function parsePageRanges(spec, max) {
+  const out = new Set();
+  for (const part of spec.split(',')) {
+    const s = part.trim();
+    if (!s) continue;
+    const m = s.match(/^(\d+)(?:-(\d+))?$/);
+    if (!m) return null;
+    let a = Number(m[1]);
+    let b = m[2] ? Number(m[2]) : a;
+    if (a < 1 || b < 1 || a > max || b > max) return null;
+    if (a > b) [a, b] = [b, a];
+    for (let p = a; p <= b; p++) out.add(p);
+  }
+  return [...out].sort((x, y) => x - y);
+}
+
+function openExtract() {
+  if (!pdfDocument) return;
+  const n = pdfDocument.numPages;
+  els.extractPages.value = '';
+  els.extractHint.textContent = `This document has ${n} page${n === 1 ? '' : 's'}.`;
+  els.extractModal.hidden = false;
+  els.extractPages.focus();
+}
+
+async function extractGo() {
+  const pages = parsePageRanges(els.extractPages.value, pdfDocument.numPages);
+  if (!pages || pages.length === 0) {
+    els.extractHint.textContent = 'Enter pages like "1-3, 5" within the document range.';
+    return;
+  }
+  const form = await bakedForm();
+  form.append('pages', pages.join(','));
+  const res = await apiFetch('/api/extract', { method: 'POST', body: form });
+  if (!res.ok) return toast('could not extract pages');
+  els.extractModal.hidden = true;
+  openSaveAs(await res.blob(), exportBase() + '-pages.pdf', 'Extract pages');
+}
+
+els.extractBtn.onclick = openExtract;
+els.extractCancel.onclick = () => { els.extractModal.hidden = true; };
+els.extractGo.onclick = extractGo;
 
 els.splitBtn.onclick = openSplit;
 els.splitCancel.onclick = () => { els.splitModal.hidden = true; };
@@ -3189,6 +3244,7 @@ const DOC_REQUIRED = [
   'textToolBtn', 'highlightToolBtn', 'drawToolBtn',
   'detectBtn', 'editTextBtn', 'removeOriginalsBtn', 'autofillBtn', 'splitBtn',
   'splitBoxBtn', 'applyBoxSplitBtn', 'rotateLeftBtn', 'rotateRightBtn',
+  'extractBtn', 'insertBlankBtn',
   'redactBtn', 'applyRedactBtn', 'scanBtn',
   'finalizeBtn', 'timestampBtn', 'cosignBtn', 'sessionInitBtn', 'sessionSendBtn',
 ];

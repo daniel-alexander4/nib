@@ -10,6 +10,32 @@ import (
 	"nib/internal/sign"
 )
 
+// handleExtract collects the requested pages of the posted document into a new
+// PDF and returns it as a download. Unlike the page ops in handlePages it does
+// NOT touch the open document — extracting is a derive-a-file action, like
+// flatten/export, so the result is handed back for Save-as, not adopted.
+func (s *Server) handleExtract(w http.ResponseWriter, r *http.Request) {
+	if err := r.ParseMultipartForm(maxPDFBytes); err != nil {
+		httpError(w, http.StatusBadRequest, "could not parse upload")
+		return
+	}
+	pdfBytes, ok := formFileBytes(w, r, "pdf")
+	if !ok {
+		return
+	}
+	pages := splitPages(r.FormValue("pages"))
+	if len(pages) == 0 {
+		httpError(w, http.StatusBadRequest, "select at least one page to extract")
+		return
+	}
+	result, err := pdfops.Collect(pdfBytes, pages)
+	if err != nil {
+		httpError(w, http.StatusInternalServerError, "could not extract pages: "+err.Error())
+		return
+	}
+	sendDownload(w, "extract.pdf", "application/pdf", result)
+}
+
 // handleAssemble turns client-rendered page images into a download: a flattened
 // image-PDF (the rasterize flatten / guaranteed-flat export) or a ZIP of the
 // images. The browser renders each page to a PNG; the server packages them.
