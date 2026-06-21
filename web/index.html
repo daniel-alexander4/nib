@@ -127,6 +127,8 @@
       <span class="tbsep"></span>
       <button id="editTextBtn" title="Drag a box over text to cover and replace it">Edit text</button>
       <button id="removeOriginalsBtn" title="Flatten edited pages so the original text is removed for good">Remove originals</button>
+      <span class="tbsep"></span>
+      <button id="splitBtn" title="Split an imposed page (2-up, 4-up…) into separate pages">Split page…</button>
     </div>
 
     <div class="tbtab" data-tab="sign">
@@ -458,6 +460,26 @@
         <span class="grow"></span>
         <button id="saveAsCancel">Cancel</button>
         <button id="saveAsGo" class="primary">Save</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Split an imposed page into a grid of separate pages -->
+  <div id="splitModal" hidden>
+    <div class="sigcard">
+      <h3>Split this page into a grid</h3>
+      <p class="libhint">Cut the current page into a grid of separate pages — for a scanned 2-up or 4-up sheet. Each piece keeps its original quality (it's a re-crop, not a re-render).</p>
+      <div class="splitpreview"><canvas id="splitPreview"></canvas></div>
+      <div class="splitcontrols">
+        <label>Columns <input id="splitCols" type="number" min="1" max="8" value="2" /></label>
+        <label>Rows <input id="splitRows" type="number" min="1" max="8" value="1" /></label>
+        <button id="splitSuggest" type="button" title="Best-effort: guess the grid from the page's gutters">Suggest</button>
+      </div>
+      <label class="splitresize"><input id="splitResize" type="checkbox" /> Resize each piece to a full page (for printing — bigger pages, same content)</label>
+      <div class="sigbtns">
+        <span class="grow"></span>
+        <button id="splitCancel">Cancel</button>
+        <button id="splitGo" class="primary">Split page</button>
       </div>
     </div>
   </div>

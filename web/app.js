@@ -24,6 +24,7 @@ import {
   findRunChoices,
   snapChoices,
   dedupeGroups,
+  detectGrid,
 } from './detect.js';
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = './vendor/pdfjs/pdf.worker.min.mjs';
@@ -117,6 +118,9 @@ const els = {
   aboutMain: $('aboutMain'), aboutDocText: $('aboutDocText'), aboutVersion: $('aboutVersion'),
   aboutLicenseBtn: $('aboutLicenseBtn'), aboutNoticesBtn: $('aboutNoticesBtn'),
   aboutBackBtn: $('aboutBackBtn'), aboutClose: $('aboutClose'),
+  splitBtn: $('splitBtn'), splitModal: $('splitModal'), splitPreview: $('splitPreview'),
+  splitCols: $('splitCols'), splitRows: $('splitRows'), splitSuggest: $('splitSuggest'),
+  splitResize: $('splitResize'), splitCancel: $('splitCancel'), splitGo: $('splitGo'),
 };
 
 // Controls duplicated across the menubar and toolbar are addressed by class.
@@ -1426,6 +1430,10 @@ async function pageOp(op, extra = {}) {
   if (extra.pages) form.append('pages', extra.pages);
   if (extra.deg != null) form.append('deg', String(extra.deg));
   if (extra.file) form.append('append', extra.file, 'append.pdf');
+  if (extra.page != null) form.append('page', String(extra.page));
+  if (extra.cols != null) form.append('cols', String(extra.cols));
+  if (extra.rows != null) form.append('rows', String(extra.rows));
+  if (extra.resize) form.append('resize', '1');
   const res = await apiFetch('/api/pages', { method: 'POST', body: form });
   if (!res.ok) return toast('page operation failed');
   await setDocumentFromServer(await res.json());
@@ -1435,6 +1443,75 @@ els.appendBtn.onclick = () => els.appendInput.click();
 els.appendInput.onchange = () => {
   if (els.appendInput.files[0]) pageOp('append', { file: els.appendInput.files[0] });
   els.appendInput.value = '';
+};
+
+// --- split an imposed page into a grid of separate pages ---------------------
+// The page is rendered once into an offscreen canvas; the modal shows it with
+// the proposed cut-lines drawn over it and redraws as the grid changes. Splitting
+// is a server-side re-crop (op:'split' on /api/pages); see pdfops.SplitPage.
+let splitSrc = null; // offscreen render of the page being split
+
+async function openSplit() {
+  if (!pdfDocument) return;
+  const page = await pdfDocument.getPage(viewer.currentPageNumber);
+  const base = page.getViewport({ scale: 1 });
+  const vp = page.getViewport({ scale: Math.min(2, 900 / base.width) });
+  const cv = document.createElement('canvas');
+  cv.width = Math.ceil(vp.width); cv.height = Math.ceil(vp.height);
+  const c = cv.getContext('2d');
+  c.fillStyle = '#fff'; c.fillRect(0, 0, cv.width, cv.height);
+  await page.render({ canvasContext: c, viewport: vp }).promise;
+  splitSrc = cv;
+  drawSplitPreview();
+  els.splitModal.hidden = false;
+}
+
+function splitGrid() {
+  const cols = Math.max(1, Math.min(8, parseInt(els.splitCols.value, 10) || 1));
+  const rows = Math.max(1, Math.min(8, parseInt(els.splitRows.value, 10) || 1));
+  return { cols, rows };
+}
+
+function drawSplitPreview() {
+  if (!splitSrc) return;
+  const pv = els.splitPreview;
+  pv.width = splitSrc.width; pv.height = splitSrc.height;
+  const c = pv.getContext('2d');
+  c.drawImage(splitSrc, 0, 0);
+  const { cols, rows } = splitGrid();
+  const dash = Math.max(4, pv.width / 80);
+  c.strokeStyle = '#1e66f5'; // catppuccin blue, vivid on the white page
+  c.lineWidth = Math.max(2, pv.width / 300);
+  c.setLineDash([dash, dash]);
+  for (let i = 1; i < cols; i++) {
+    const x = (pv.width * i) / cols;
+    c.beginPath(); c.moveTo(x, 0); c.lineTo(x, pv.height); c.stroke();
+  }
+  for (let j = 1; j < rows; j++) {
+    const y = (pv.height * j) / rows;
+    c.beginPath(); c.moveTo(0, y); c.lineTo(pv.width, y); c.stroke();
+  }
+}
+
+async function splitGo() {
+  const { cols, rows } = splitGrid();
+  if (cols * rows < 2) { toast('choose at least two pieces (more than one column or row)'); return; }
+  const page = viewer.currentPageNumber;
+  els.splitModal.hidden = true;
+  await pageOp('split', { page, cols, rows, resize: els.splitResize.checked });
+}
+
+els.splitBtn.onclick = openSplit;
+els.splitCancel.onclick = () => { els.splitModal.hidden = true; };
+els.splitGo.onclick = splitGo;
+els.splitCols.oninput = drawSplitPreview;
+els.splitRows.oninput = drawSplitPreview;
+els.splitSuggest.onclick = () => {
+  if (!splitSrc) return;
+  const g = detectGrid(splitSrc);
+  els.splitCols.value = g.cols;
+  els.splitRows.value = g.rows;
+  drawSplitPreview();
 };
 
 // --- outline sidebar ---------------------------------------------------------
@@ -3024,7 +3101,7 @@ const DOC_REQUIRED = [
   'saveFlatBtn', 'saveEditableBtn', 'printBtn',
   'exportZipBtn', 'exportPngBtn', 'exportFormJsonBtn', 'exportFormCsvBtn',
   'textToolBtn', 'highlightToolBtn', 'drawToolBtn',
-  'detectBtn', 'editTextBtn', 'removeOriginalsBtn', 'autofillBtn',
+  'detectBtn', 'editTextBtn', 'removeOriginalsBtn', 'autofillBtn', 'splitBtn',
   'redactBtn', 'applyRedactBtn', 'scanBtn',
   'finalizeBtn', 'timestampBtn', 'cosignBtn', 'sessionInitBtn', 'sessionSendBtn',
 ];
