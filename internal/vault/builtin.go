@@ -68,7 +68,9 @@ func loadBuiltinSignatures() []Image {
 		return nil
 	}
 	for _, p := range sshkey.Candidates() {
-		plain, err := sshkey.Unwrap(builtinSignaturesBlob, p)
+		// Promptless (passphrase nil): a passphrase-protected candidate is skipped.
+		// pubLine is unused on the nil-passphrase path, so "" is fine here.
+		plain, err := sshkey.Unwrap(builtinSignaturesBlob, p, "", nil)
 		if err != nil {
 			continue
 		}
