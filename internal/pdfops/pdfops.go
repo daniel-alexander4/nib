@@ -1187,3 +1187,17 @@ func extractImages(pdf []byte, perPage bool) ([]byte, int, error) {
 	}
 	return buf.Bytes(), count, nil
 }
+
+// Optimize losslessly shrinks a PDF: pdfcpu deduplicates repeated embedded fonts
+// and images and repacks objects into compressed object/xref streams. It does NOT
+// touch image resolution or quality — content and text render identically — so the
+// win is large on bloated/redundant PDFs (duplicated resources, old-style xref)
+// and ~nil on already-tight or image-dominated files. For real shrinkage of a
+// scan, the caller rasterizes to JPEG instead.
+func Optimize(pdf []byte) ([]byte, error) {
+	var out bytes.Buffer
+	if err := api.Optimize(bytes.NewReader(pdf), &out, model.NewDefaultConfiguration()); err != nil {
+		return nil, err
+	}
+	return out.Bytes(), nil
+}

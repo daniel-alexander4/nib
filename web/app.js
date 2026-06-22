@@ -114,6 +114,8 @@ const els = {
   bgCancel: $('bgCancel'), bgSave: $('bgSave'),
   autofillBtn: $('autofillBtn'), editProfileBtn: $('editProfileBtn'),
   saveFlatBtn: $('saveFlatBtn'), saveEditableBtn: $('saveEditableBtn'), finalizeBtn: $('finalizeBtn'),
+  reduceBtn: $('reduceBtn'), reduceModal: $('reduceModal'), reduceQuality: $('reduceQuality'), reduceQ: $('reduceQ'),
+  reduceResult: $('reduceResult'), reduceGo: $('reduceGo'), reduceSave: $('reduceSave'), reduceCancel: $('reduceCancel'),
   exportZipBtn: $('exportZipBtn'), exportPngBtn: $('exportPngBtn'),
   exportImagesBtn: $('exportImagesBtn'), exportTextBtn: $('exportTextBtn'),
   exportFormJsonBtn: $('exportFormJsonBtn'), exportFormCsvBtn: $('exportFormCsvBtn'),
@@ -2640,28 +2642,30 @@ els.psDir.onchange = () => browseDir(els.psDir.value.trim(), pageSplitDirEls());
 // given scale, runs the optional paint hook over the canvas after rendering (used
 // to burn redaction boxes in), and returns the blob plus the page's true point
 // size. The shared atom behind renderFilledPages and flattenPages.
-async function renderPageBlob(doc, n, scale, paint) {
+async function renderPageBlob(doc, n, scale, paint, mime, quality) {
   const page = await doc.getPage(n);
   const base = page.getViewport({ scale: 1 }); // points: the page's true physical size
   const vp = page.getViewport({ scale });
   const cv = document.createElement('canvas');
   cv.width = vp.width; cv.height = vp.height;
   const ctx = cv.getContext('2d');
+  if (mime === 'image/jpeg') { ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, cv.width, cv.height); } // JPEG has no alpha
   await page.render({ canvasContext: ctx, viewport: vp, annotationMode: pdfjsLib.AnnotationMode.ENABLE }).promise;
   if (paint) paint(ctx, cv, n);
-  const blob = await new Promise((r) => cv.toBlob(r, 'image/png'));
+  const blob = await new Promise((r) => cv.toBlob(r, mime || 'image/png', quality));
   return { blob, w: base.width, h: base.height };
 }
 
 // renderFilledPages rasterises the saved (form-filled, stamped) document so the
-// raster reflects every edit. Used for flatten and image export.
-async function renderFilledPages(scale, onlyPage) {
+// raster reflects every edit. Used for flatten and image export. mime/quality
+// default to PNG; "image/jpeg" + a quality drives the lossy "reduce size" path.
+async function renderFilledPages(scale, onlyPage, mime, quality) {
   const bytes = await bakedBytes();
   const doc = await pdfjsLib.getDocument({ data: bytes }).promise;
   const pages = [];
   const from = onlyPage || 1;
   const to = onlyPage || doc.numPages;
-  for (let n = from; n <= to; n++) pages.push(await renderPageBlob(doc, n, scale));
+  for (let n = from; n <= to; n++) pages.push(await renderPageBlob(doc, n, scale, null, mime, quality));
   return pages;
 }
 
@@ -2703,10 +2707,86 @@ async function assembleBlob(format) {
   return res.blob();
 }
 
+// compressBlob rasterises every page to JPEG at the given render scale (DPI) and
+// quality and assembles a much smaller image-PDF — the lossy "reduce size" path.
+// It flattens the document (text becomes images), so the caller warns and shows
+// the before/after size before saving.
+async function compressBlob(scale, quality) {
+  const pages = await renderFilledPages(scale, 0, 'image/jpeg', quality);
+  const form = new FormData();
+  pages.forEach((p, i) => {
+    form.append('image', p.blob, `page-${i + 1}.jpg`);
+    form.append('pageW', String(p.w));
+    form.append('pageH', String(p.h));
+  });
+  form.append('format', 'pdf');
+  const res = await apiFetch('/api/assemble', { method: 'POST', body: form });
+  if (!res.ok) { toast('compress failed'); return null; }
+  return res.blob();
+}
+
+function fmtBytes(n) {
+  if (n >= 1048576) return (n / 1048576).toFixed(1) + ' MB';
+  if (n >= 1024) return Math.round(n / 1024) + ' KB';
+  return n + ' B';
+}
+function sizeSummary(before, after) {
+  const pct = before > 0 ? Math.round((1 - after / before) * 100) : 0;
+  const change = pct > 0 ? pct + '% smaller' : (pct < 0 ? Math.abs(pct) + '% larger' : 'no change');
+  return fmtBytes(before) + ' → ' + fmtBytes(after) + ' (' + change + ')';
+}
+
 els.saveFlatBtn.onclick = async () => {
   if (!pdfDocument) return toast('Open a PDF first');
   const blob = await assembleBlob('pdf');
   if (blob) openSaveAs(blob, exportBase() + '-flattened.pdf', 'Save flattened PDF');
+};
+
+// Reduce file size. Renders the result, shows before→after size, and only then
+// reveals Save — so the user backs out if compress grew (or flattened) the file.
+let reduceBlob = null;
+function resetReduce() {
+  reduceBlob = null;
+  els.reduceResult.hidden = true; els.reduceResult.textContent = '';
+  els.reduceSave.hidden = true; els.reduceGo.hidden = false;
+  els.reduceModal.querySelector('input[value="optimize"]').checked = true;
+  els.reduceQuality.hidden = true;
+}
+els.reduceBtn.onclick = () => { if (!pdfDocument) return toast('Open a PDF first'); resetReduce(); els.reduceModal.hidden = false; };
+els.reduceCancel.onclick = () => { els.reduceModal.hidden = true; };
+all('input[name="reduceMode"]').forEach((r) => {
+  r.onchange = () => { els.reduceQuality.hidden = r.value !== 'compress' || !r.checked; };
+});
+els.reduceGo.onclick = async () => {
+  const mode = els.reduceModal.querySelector('input[name="reduceMode"]:checked').value;
+  els.reduceGo.disabled = true; els.reduceGo.textContent = 'Working…';
+  let blob, before, after;
+  try {
+    if (mode === 'optimize') {
+      const res = await apiFetch('/api/optimize', { method: 'POST' });
+      if (!res.ok) return toast('Could not optimize');
+      blob = await res.blob();
+      before = Number(res.headers.get('X-Original-Size')) || 0;
+      after = Number(res.headers.get('X-New-Size')) || blob.size;
+    } else {
+      const presets = { low: [96 / 72, 0.55], med: [150 / 72, 0.7], high: [220 / 72, 0.82] };
+      const [scale, q] = presets[els.reduceQ.value] || presets.med;
+      before = (await bakedBytes()).length;
+      blob = await compressBlob(scale, q);
+      if (!blob) return;
+      after = blob.size;
+    }
+  } finally { els.reduceGo.disabled = false; els.reduceGo.textContent = 'Reduce'; }
+  reduceBlob = blob;
+  els.reduceResult.textContent = sizeSummary(before, after);
+  els.reduceResult.hidden = false;
+  els.reduceGo.hidden = true;
+  els.reduceSave.hidden = false;
+};
+els.reduceSave.onclick = () => {
+  if (!reduceBlob) return;
+  els.reduceModal.hidden = true;
+  openSaveAs(reduceBlob, exportBase() + '-smaller.pdf', 'Save reduced PDF');
 };
 els.exportZipBtn.onclick = async () => {
   if (!pdfDocument) return toast('Open a PDF first');
