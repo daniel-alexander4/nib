@@ -149,7 +149,9 @@ that opens but blocks editing/printing/copying (owner-password *restrictions*),
 unrestricted document, the same as `qpdf --decrypt`. This is for a document you can
 already open or are authorized to edit — Nib only tries the password you type and
 never guesses or recovers one. Unlocking rewrites the file, so an existing digital
-signature won't survive.
+signature won't survive — and because an encrypted document can't be inspected
+until it's unlocked, Nib tells you right after if unlocking invalidated a signature
+it turned out to carry.
 
 ### Attachments
 **Secure → Attachments** lists the files embedded inside a PDF. **Extract** any
