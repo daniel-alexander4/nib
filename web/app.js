@@ -37,6 +37,7 @@ const els = {
   hlColors: $('hlColors'), hlSwatches: $('hlSwatches'), hlCustom: $('hlCustom'),
   borderBtn: $('borderBtn'), borderWidth: $('borderWidth'), borderWidthInput: $('borderWidthInput'),
   prevBtn: $('prevBtn'), nextBtn: $('nextBtn'),
+  findPrevBtn: $('findPrevBtn'), findNextBtn: $('findNextBtn'), findCount: $('findCount'),
   zoomInBtn: $('zoomInBtn'), zoomOutBtn: $('zoomOutBtn'), fitBtn: $('fitBtn'),
   sigBadge: $('sigBadge'), saveBtn: $('saveBtn'), statusCluster: $('statusCluster'),
   themeToggle: $('themeToggle'),
@@ -4177,16 +4178,47 @@ els.zoomInBtn.onclick = () => { viewer.currentScale = viewer.currentScale * 1.15
 els.zoomOutBtn.onclick = () => { viewer.currentScale = viewer.currentScale / 1.15; };
 els.fitBtn.onclick = () => { viewer.currentScaleValue = 'page-width'; };
 
+// In-document search: typing runs a fresh highlight-all find (debounced); Enter and
+// the ‹ › buttons step through the matches via pdf.js's `type:'again'` — no re-scan,
+// with query+flags held identical so the controller steps instead of falling back to
+// a fresh search.
 let searchTimer;
-all('.searchInput').forEach((input) => input.addEventListener('input', () => {
-  clearTimeout(searchTimer);
-  searchTimer = setTimeout(() => {
-    eventBus.dispatch('find', {
-      type: '', query: input.value, caseSensitive: false,
-      highlightAll: true, findPrevious: false,
-    });
-  }, 200);
-}));
+const findInput = () => document.querySelector('.searchInput');
+function runFind(again = false, previous = false) {
+  const input = findInput();
+  if (!input) return;
+  eventBus.dispatch('find', {
+    type: again ? 'again' : '', query: input.value,
+    caseSensitive: false, highlightAll: true, findPrevious: previous,
+  });
+}
+function stepFind(previous) {
+  clearTimeout(searchTimer); // drop a pending fresh search that would reset us to match 1
+  if (findInput()?.value) runFind(true, previous);
+}
+all('.searchInput').forEach((input) => {
+  input.addEventListener('input', () => {
+    clearTimeout(searchTimer);
+    searchTimer = setTimeout(() => runFind(), 200);
+  });
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); stepFind(e.shiftKey); }
+  });
+});
+els.findPrevBtn.onclick = () => stepFind(true);
+els.findNextBtn.onclick = () => stepFind(false);
+
+// "N of M" readout + prev/next enablement. updatefindcontrolstate is the ONLY event
+// the controller fires on an 'again' step (it carries the updated current match), so
+// it's the source of truth here; updatefindmatchescount only keeps the total ticking
+// up while the initial search scans a large document.
+function renderFindCount(matchesCount) {
+  const { current = 0, total = 0 } = matchesCount || {};
+  els.findCount.textContent = !findInput()?.value ? '' : total ? `${current}/${total}` : '0/0';
+  els.findPrevBtn.disabled = els.findNextBtn.disabled = total === 0;
+}
+eventBus.on('updatefindcontrolstate', ({ matchesCount }) => renderFindCount(matchesCount));
+eventBus.on('updatefindmatchescount', ({ matchesCount }) => renderFindCount(matchesCount));
 
 // sidebar tabs
 document.querySelectorAll('.tab').forEach((tab) => {
