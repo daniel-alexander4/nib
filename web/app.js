@@ -2206,7 +2206,7 @@ function makeStamp(src, aspect, frac, opts, pv) {
   el.append(img, handle, del);
   f.el = el;
 
-  const remove = () => { el.remove(); overlayFields = overlayFields.filter((o) => o !== f); };
+  const remove = () => deleteField(f);
   del.onclick = (e) => { e.stopPropagation(); remove(); };
   el.addEventListener('keydown', (e) => { if (e.key === 'Delete' || e.key === 'Backspace') remove(); });
   enableStampGestures(f, el, handle);
@@ -2214,6 +2214,7 @@ function makeStamp(src, aspect, frac, opts, pv) {
   overlayFields.push(f);
   pv.div.appendChild(el);
   layoutField(f, pv);
+  recordAdd(f);
 }
 
 // enableStampGestures wires move (anywhere on the stamp) and resize (the corner
@@ -2253,7 +2254,11 @@ function enableStampGestures(f, el, handle) {
     }
     layoutField(f, pv);
   });
-  el.addEventListener('pointerup', (e) => { mode = null; try { el.releasePointerCapture(e.pointerId); } catch { /* already released */ } });
+  el.addEventListener('pointerup', (e) => {
+    if (mode && start && f.frac.join() !== start.join()) recordMove(f, start.slice(), f.frac.slice());
+    mode = null;
+    try { el.releasePointerCapture(e.pointerId); } catch { /* already released */ }
+  });
 }
 
 async function loadImages() {
@@ -3473,6 +3478,7 @@ function makeEditField(frac, opts, pv) {
   overlayFields.push(f);
   layoutField(f, pv);
   pv.div.appendChild(el);
+  recordAdd(f);
   return f;
 }
 
@@ -3624,8 +3630,8 @@ function convertFieldToFlag(field, type) {
   const [fx0, fy0, fx1, fy1] = field.frac;
   const fh = MARKER_SIZES[type][1];
   const top = Math.max(0, Math.min(fy0, fy1 - fh));
-  removeField(field);
-  const f = buildMarker(type, [fx0, top, fx1, fy1], field.page);
+  removeField(field, false); // internal transform — not its own undo step
+  const f = buildMarker(type, [fx0, top, fx1, fy1], field.page, false);
   const pv = viewer.getPageView(field.page - 1);
   if (pv?.div) { pv.div.appendChild(f.el); layoutField(f, pv); }
   return f;
@@ -3634,7 +3640,7 @@ function convertFieldToFlag(field, type) {
 // buildMarker creates a marker field + its DOM element and registers it, but does
 // NOT attach it to a page — relayoutOverlays places it once the page renders.
 // This lets reconstructFlags rebuild markers on pages that aren't on screen yet.
-function buildMarker(type, frac, page) {
+function buildMarker(type, frac, page, record = true) {
   const f = { page, frac, kind: 'marker', tagType: type };
   const el = document.createElement('div');
   el.className = 'ovl ovl-marker';
@@ -3654,6 +3660,12 @@ function buildMarker(type, frac, page) {
   });
   overlayFields.push(f);
   reflectSignControls();
+  if (record) {
+    recordOverlayEdit({
+      undo: () => { detachField(f); reflectSignControls(); },
+      redo: () => { reattachField(f); reflectSignControls(); },
+    });
+  }
   return f;
 }
 
@@ -3664,9 +3676,14 @@ function makeMarker(type, frac, hit) {
   return f;
 }
 
-function removeField(f) {
-  f.el.remove();
-  overlayFields = overlayFields.filter((o) => o !== f);
+function removeField(f, record = true) {
+  if (record) {
+    recordOverlayEdit({
+      undo: () => { reattachField(f); reflectSignControls(); },
+      redo: () => { detachField(f); reflectSignControls(); },
+    });
+  }
+  detachField(f);
   if (activeMarker === f) activeMarker = null;
   if (fillTarget === f) fillTarget = null;
   reflectSignControls();
@@ -3697,7 +3714,8 @@ function enableMarkerGestures(f, el) {
   el.addEventListener('pointerup', (e) => {
     try { el.releasePointerCapture(e.pointerId); } catch { /* already released */ }
     const wasDown = down; down = null;
-    if (wasDown && !moved && flagsFillable()) fillMarker(f);
+    if (wasDown && moved && f.frac.join() !== wasDown.frac.join()) recordMove(f, wasDown.frac.slice(), f.frac.slice());
+    else if (wasDown && !moved && flagsFillable()) fillMarker(f);
   });
 }
 
@@ -3832,7 +3850,7 @@ function reconstructFlags(flags) {
     if (!fl || !MARKER_LABELS[fl.type] || !Array.isArray(fl.frac) || fl.frac.length !== 4) continue;
     const page = Math.max(1, Math.min(pdfDocument.numPages, fl.page | 0));
     const frac = fl.frac.map((n) => Math.max(0, Math.min(1, +n || 0)));
-    buildMarker(fl.type, frac, page);
+    buildMarker(fl.type, frac, page, false); // load on open — not an undoable edit
   }
   relayoutOverlays(); // attach flags on already-rendered pages; the rest follow on pagerendered
   showSignBanner();
@@ -4286,7 +4304,7 @@ function makeBox(frac, opts) {
   el.append(handle, del);
   f.el = el;
 
-  const remove = () => { el.remove(); overlayFields = overlayFields.filter((o) => o !== f); };
+  const remove = () => deleteField(f);
   del.onclick = (ev) => { ev.stopPropagation(); remove(); };
   el.addEventListener('keydown', (ev) => { if (ev.key === 'Delete' || ev.key === 'Backspace') remove(); });
   enableStampGestures(f, el, handle);
@@ -4295,6 +4313,7 @@ function makeBox(frac, opts) {
   const pv = viewer.getPageView(f.page - 1);
   pv.div.appendChild(el);
   layoutField(f, pv);
+  recordAdd(f);
 }
 
 // boxPNG renders a transparent PNG with a stroked rectangle outline in hex at the
@@ -4455,7 +4474,7 @@ function makeShape(frac, opts) {
   el.append(canvas, handle, del);
   f.el = el; f.canvas = canvas;
 
-  const remove = () => { el.remove(); overlayFields = overlayFields.filter((o) => o !== f); };
+  const remove = () => deleteField(f);
   del.onclick = (ev) => { ev.stopPropagation(); remove(); };
   el.addEventListener('keydown', (ev) => { if (ev.key === 'Delete' || ev.key === 'Backspace') remove(); });
   enableStampGestures(f, el, handle);
@@ -4464,6 +4483,7 @@ function makeShape(frac, opts) {
   const pv = viewer.getPageView(f.page - 1);
   pv.div.appendChild(el);
   layoutField(f, pv);
+  recordAdd(f);
 }
 
 // --- comment notes -----------------------------------------------------------
@@ -4530,7 +4550,7 @@ function makeNote(frac, opts) {
   el.append(head, ta, handle);
   f.el = el;
 
-  const remove = () => { el.remove(); overlayFields = overlayFields.filter((o) => o !== f); };
+  const remove = () => deleteField(f);
   del.onclick = (ev) => { ev.stopPropagation(); remove(); };
   enableStampGestures(f, el, handle);
 
@@ -4538,6 +4558,7 @@ function makeNote(frac, opts) {
   const pv = viewer.getPageView(f.page - 1);
   pv.div.appendChild(el);
   layoutField(f, pv);
+  recordAdd(f);
   ta.focus();
 }
 
@@ -4565,6 +4586,7 @@ all('#toolbar [data-forward]').forEach((b) => { b.onclick = () => $(b.dataset.fo
 // reaches reflectSignControls() -> markerFields(), which reads overlayFields, so the
 // binding must already be initialized (a `let` declared later would throw on its TDZ).
 let overlayFields = []; // {page, frac:[fx0,fy0,fx1,fy1], pageW, pageH, kind, el}
+let overlayHistory = { undo: [], redo: [] }; // client overlay-edit undo, drained before the server ring
 let libraryImages = []; // cached /api/images list (the image-library panel)
 const DOC_REQUIRED = [
   'saveFlatBtn', 'saveEditableBtn', 'printBtn',
@@ -4593,9 +4615,70 @@ setDocControls(false); // nothing open yet
 // canRedo, refreshed on every load); both off when no document is open.
 function reflectUndoControls(enabled) {
   const m = docMeta || {};
-  if (els.undoBtn) els.undoBtn.disabled = !(enabled && m.canUndo);
-  if (els.redoBtn) els.redoBtn.disabled = !(enabled && m.canRedo);
+  if (els.undoBtn) els.undoBtn.disabled = !(enabled && (m.canUndo || overlayHistory.undo.length));
+  if (els.redoBtn) els.redoBtn.disabled = !(enabled && (m.canRedo || overlayHistory.redo.length));
 }
+
+// --- client overlay-edit undo (P2) ------------------------------------------
+// Placing, deleting, or moving/resizing an overlay (stamp, cover-edit, border,
+// shape, note, marker) is client-only — no server op — so the server undo ring
+// never sees it. This small command stack records those edits and is drained by
+// Ctrl+Z *before* falling through to the server undo. Because every server op
+// reloads through setDocumentFromServer -> clearOverlays (which clears this
+// stack too), it only ever holds the newest run of un-baked edits, so "client
+// edits first, then server ops" is the correct chronological order for free.
+function recordOverlayEdit(cmd) {
+  overlayHistory.undo.push(cmd);
+  overlayHistory.redo = [];
+  reflectUndoControls(!!pdfDocument);
+}
+function clearOverlayHistory() { overlayHistory.undo = []; overlayHistory.redo = []; }
+// detachField/reattachField toggle a field's presence without rebuilding it — the
+// DOM element survives in the command closure, so add/delete undo is just a
+// re-attach or detach. layoutFieldNow repositions a still-attached field (moves).
+function detachField(f) {
+  f.el.remove();
+  overlayFields = overlayFields.filter((o) => o !== f);
+}
+function reattachField(f) {
+  overlayFields.push(f);
+  const pv = viewer.getPageView(f.page - 1);
+  if (pv?.div) { pv.div.appendChild(f.el); layoutField(f, pv); }
+}
+function layoutFieldNow(f) {
+  const pv = viewer.getPageView(f.page - 1);
+  if (pv?.div) layoutField(f, pv);
+}
+// recordAdd / deleteField are the recorded create/remove used by the overlay
+// factories and the per-overlay × buttons. recordMove records one command per
+// move/resize gesture. detachField alone (no record) is the bulk-wipe path.
+function recordAdd(f) {
+  recordOverlayEdit({ undo: () => detachField(f), redo: () => reattachField(f) });
+}
+function deleteField(f, record = true) {
+  if (record) recordOverlayEdit({ undo: () => reattachField(f), redo: () => detachField(f) });
+  detachField(f);
+}
+function recordMove(f, before, after) {
+  recordOverlayEdit({
+    undo: () => { f.frac = before.slice(); layoutFieldNow(f); },
+    redo: () => { f.frac = after.slice(); layoutFieldNow(f); },
+  });
+}
+function undoOverlayEdit() {
+  const c = overlayHistory.undo.pop();
+  c.undo(); overlayHistory.redo.push(c);
+  reflectUndoControls(!!pdfDocument);
+}
+function redoOverlayEdit() {
+  const c = overlayHistory.redo.pop();
+  c.redo(); overlayHistory.undo.push(c);
+  reflectUndoControls(!!pdfDocument);
+}
+// undoAny/redoAny are the single dispatch for both Ctrl+Z and the ↶/↷ buttons:
+// drain the client overlay stack first, then fall through to the server ring.
+function undoAny() { if (overlayHistory.undo.length) undoOverlayEdit(); else doUndo(); }
+function redoAny() { if (overlayHistory.redo.length) redoOverlayEdit(); else doRedo(); }
 
 // doUndo/doRedo revert or re-apply the last server-side document operation (page
 // ops, outline, sanitize, attachments). The server returns fresh doc metadata and
@@ -4612,8 +4695,8 @@ async function doRedo() {
   if (!res.ok) { toast('redo failed'); return; }
   await setDocumentFromServer(await res.json());
 }
-if (els.undoBtn) els.undoBtn.onclick = doUndo;
-if (els.redoBtn) els.redoBtn.onclick = doRedo;
+if (els.undoBtn) els.undoBtn.onclick = undoAny;
+if (els.redoBtn) els.redoBtn.onclick = redoAny;
 
 // Drag-and-drop a PDF onto the window to open it (upload origin -> Save As).
 ['dragover', 'drop'].forEach((ev) => window.addEventListener(ev, (e) => e.preventDefault()));
@@ -4638,6 +4721,7 @@ function clearOverlays() {
   exitShape();    // nor a pending shape-draw mode
   exitCrop();     // nor a pending crop-draw mode
   exitNote();     // nor a pending note-placement mode
+  clearOverlayHistory(); // a new/reloaded document resets the overlay-edit undo stack
 }
 // clearDetected drops only auto-detected fields (text/check/circleone), keeping
 // user-placed stamps, text edits, and sign/date/initial markers so re-running
@@ -5129,13 +5213,14 @@ window.addEventListener('keydown', (e) => {
     else if (e.key === '-') { e.preventDefault(); zoomOut(); }
     else if (e.key === '0') { e.preventDefault(); fitWidth(); }
     else if (e.key === 'z' || e.key === 'Z' || e.key === 'y') {
-      // Undo/redo of server-side document ops. Yield (no preventDefault) while
-      // typing, while a pdf.js annotation editor is active (its own Ctrl+Z
-      // handles FreeText/Ink/Highlight), or with a modal open.
+      // Undo/redo. Yield (no preventDefault) while typing, while a pdf.js
+      // annotation editor is active (its own Ctrl+Z handles FreeText/Ink/
+      // Highlight), or with a modal open. Otherwise drain the client overlay-edit
+      // stack first, then fall through to the server document-op undo.
       if (isTypingTarget(e.target) || activeTool ||
           document.querySelector('div[id$="Modal"]:not([hidden])')) return;
       e.preventDefault();
-      if (e.key === 'y' || e.shiftKey) doRedo(); else doUndo();
+      if (e.key === 'y' || e.shiftKey) redoAny(); else undoAny();
     }
     return;
   }
