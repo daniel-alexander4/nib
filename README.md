@@ -263,7 +263,9 @@ classic "Page 3 of 10". Going the other way, **N-up…** combines several pages 
 each sheet (2-up, 4-up, up to 16) for printing or handouts, in reading order, with
 an optional border — each sheet keeps the document's page size. **Crop…** trims
 the margins away — draw a box around the part to keep and every page (or just the
-current one) is cut down to it. It's a re-crop, not a re-render, so quality is
+current one) is cut down to it. The box is taken as a proportion of the page, so a
+document with mixed page sizes keeps the same relative region on each. It's a
+re-crop, not a re-render, so quality is
 untouched; the trimmed-off content is hidden behind the smaller page, not
 destroyed — use **Flatten** or **Redact** to remove it for good. Got a scanned 2-up
 or 4-up sheet? **Split page…**

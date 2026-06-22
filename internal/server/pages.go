@@ -95,12 +95,12 @@ func (s *Server) handlePages(w http.ResponseWriter, r *http.Request) {
 		}
 		result, err = pdfops.SplitRegions(pdfBytes, pageNum, rects)
 	case "crop":
-		var rect [4]float64
-		if uErr := json.Unmarshal([]byte(r.FormValue("rect")), &rect); uErr != nil {
+		var frac [4]float64 // keep-box as page fractions [fx, fy, fw, fh], top-left origin
+		if uErr := json.Unmarshal([]byte(r.FormValue("rect")), &frac); uErr != nil {
 			httpError(w, http.StatusBadRequest, "could not read crop region")
 			return
 		}
-		result, err = pdfops.Crop(pdfBytes, rect, pages)
+		result, err = pdfops.Crop(pdfBytes, frac, pages)
 	case "nup":
 		n, nErr := strconv.Atoi(r.FormValue("n"))
 		if nErr != nil {
