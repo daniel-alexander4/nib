@@ -237,6 +237,77 @@ func writeSplitFiles(dir string, parts []pdfops.SplitPart) int {
 	return 0
 }
 
+func cmdDecrypt(args []string) int {
+	fs := flag.NewFlagSet("nib decrypt", flag.ContinueOnError)
+	var out, passFile string
+	var inPlace bool
+	outFlag(fs, &out)
+	inPlaceFlag(fs, &inPlace)
+	fs.StringVar(&passFile, "password-file", "", "read the PDF open-password from `FILE` (else $NIB_PDF_PASSWORD; empty drops owner-only restrictions)")
+	fs.Usage = usageFunc(fs, "nib decrypt IN -o OUT [--password-file FILE]  |  nib decrypt -w FILE...", "Remove password protection (open password and/or owner restrictions). An already-unprotected PDF passes through unchanged.")
+	if code, ok := parse(fs, args); !ok {
+		return code
+	}
+	pw, err := pdfPassword(passFile)
+	if err != nil {
+		errf("%v", err)
+		return 1
+	}
+	return runTransform(fs, out, inPlace, func(b []byte) ([]byte, error) {
+		res, err := pdfops.RemovePassword(b, pw)
+		if errors.Is(err, pdfops.ErrNotEncrypted) {
+			return b, nil // already plain: pass through, so batch decrypt is idempotent
+		}
+		return res, err
+	})
+}
+
+func cmdNup(args []string) int {
+	fs := flag.NewFlagSet("nib nup", flag.ContinueOnError)
+	var out string
+	var inPlace, border bool
+	var n int
+	outFlag(fs, &out)
+	inPlaceFlag(fs, &inPlace)
+	fs.IntVar(&n, "n", 0, "pages per sheet: 2, 3, 4, 6, 8, 9, 12, or 16 (required)")
+	fs.BoolVar(&border, "border", false, "draw a thin border around each placed page")
+	fs.Usage = usageFunc(fs, "nib nup IN -o OUT --n N [--border]  |  nib nup -w FILE... --n N", "Place several pages on each sheet (2-up, 4-up, …) for printing.")
+	if code, ok := parse(fs, args); !ok {
+		return code
+	}
+	if n < 2 {
+		errf("--n must be at least 2 (2, 3, 4, 6, 8, 9, 12, or 16)")
+		return 1
+	}
+	return runTransform(fs, out, inPlace, func(b []byte) ([]byte, error) {
+		return pdfops.NUp(b, n, border)
+	})
+}
+
+func cmdPagenum(args []string) int {
+	fs := flag.NewFlagSet("nib pagenum", flag.ContinueOnError)
+	var out string
+	var inPlace, total bool
+	st := pdfops.PageNumberStyle{Start: 1, Size: 11}
+	outFlag(fs, &out)
+	inPlaceFlag(fs, &inPlace)
+	fs.StringVar(&st.Position, "position", "bc", "corner: tl/tc/tr/bl/bc/br")
+	fs.StringVar(&st.Prefix, "prefix", "", "text before the number (e.g. \"Page \" or a Bates prefix)")
+	fs.IntVar(&st.Start, "start", 1, "number printed on the first page")
+	fs.IntVar(&st.Pad, "pad", 0, "zero-pad width (e.g. 6 → 000123 for Bates)")
+	fs.IntVar(&st.Size, "size", 11, "point size")
+	fs.StringVar(&st.Color, "color", "", "hex color #RRGGBB (default black)")
+	fs.BoolVar(&total, "total", false, "append \" of N\"")
+	fs.Usage = usageFunc(fs, "nib pagenum IN -o OUT [--position br --start 1 --prefix P --pad N --total]", "Stamp running page numbers (or Bates numbering) onto every page.")
+	if code, ok := parse(fs, args); !ok {
+		return code
+	}
+	st.OfTotal = total
+	return runTransform(fs, out, inPlace, func(b []byte) ([]byte, error) {
+		return pdfops.StampPageNumbers(b, st)
+	})
+}
+
 func cmdSign(args []string) int {
 	fs := flag.NewFlagSet("nib sign", flag.ContinueOnError)
 	var out, cert, passFile, reason, name, tsa string
@@ -300,6 +371,24 @@ func passphrase(passFile string) (string, error) {
 		return v, nil
 	}
 	return "", errors.New("no passphrase: set NIB_P12_PASSWORD or use --password-file")
+}
+
+// pdfPassword sources an OPTIONAL PDF open-password, never from argv: --password-file
+// wins, else $NIB_PDF_PASSWORD, else "" (empty is valid — it drops owner-only
+// restrictions). Unlike passphrase, an absent secret is not an error: not every
+// protected PDF has an open password.
+func pdfPassword(passFile string) (string, error) {
+	if passFile != "" {
+		b, err := os.ReadFile(passFile)
+		if err != nil {
+			return "", err
+		}
+		return strings.TrimRight(string(b), "\r\n"), nil
+	}
+	if v, ok := os.LookupEnv("NIB_PDF_PASSWORD"); ok {
+		return v, nil
+	}
+	return "", nil
 }
 
 // --- verify: signature integrity ----------------------------------------------
