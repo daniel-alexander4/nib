@@ -1533,7 +1533,15 @@ els.decryptGo.onclick = async () => {
   }
   els.decryptModal.hidden = true;
   await setDocumentFromServer(out.reason === 'plain' ? docMeta : out);
-  toast('Document unlocked');
+  // Unlocking rewrites the PDF, which breaks any signature it carried. On this
+  // on-open path the user never saw the signed state (the doc couldn't render
+  // until now), so the usual confirmSignatureLoss prompt never fired — warn here
+  // instead, now that the decrypted bytes reveal the (now-invalid) signature.
+  if (out.reason !== 'plain' && out.signature?.state === 'invalid') {
+    alert('Unlocked — but this document was signed, and unlocking a password-protected PDF rewrites it, which has invalidated that signature.');
+  } else {
+    toast('Document unlocked');
+  }
 };
 els.decryptPw.addEventListener('keydown', (e) => {
   if (e.key === 'Enter') { e.preventDefault(); els.decryptGo.onclick(); }
