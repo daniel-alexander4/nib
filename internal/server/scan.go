@@ -58,6 +58,8 @@ func (s *Server) handleSanitize(w http.ResponseWriter, r *http.Request) {
 		result, err = pdfops.StripActive(doc.data)
 	case "safe":
 		result, err = pdfops.RemoveFilesAndMedia(doc.data)
+	case "metadata":
+		result, err = pdfops.StripMetadata(doc.data)
 	default:
 		httpError(w, http.StatusBadRequest, "unknown method")
 		return

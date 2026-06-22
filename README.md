@@ -119,10 +119,16 @@ rectangle. (Verified: a redacted page exposes no hidden text or form field.)
 **Secure → Scan for hidden content** lists what's lurking in a PDF that you can't
 see on the page: auto-run hooks (OpenAction, additional actions), JavaScript,
 risky link/widget actions (launch a program, submit a form, open a URL),
-embedded files, optional-content layers, and metadata. Then remove it three
+embedded files, optional-content layers, XMP metadata, and the document's
+identifying properties (author, title, creator…). Then remove it four
 ways, strongest fidelity-preserving first:
 - **Strip active content** — neutralises every auto-run hook, script and risky
   action while keeping the page text and layout intact.
+- **Strip identifying metadata** — clears the document properties (author, title,
+  creator, subject, keywords), deletes the XMP metadata, and regenerates the
+  document's tracking identifier, leaving the visible content untouched. (pdfcpu
+  re-stamps a generic producer and the current date on write, so the file names
+  Nib, not you.)
 - **Remove files & media** — deletes only embedded files and media annotations,
   leaving all other interactivity untouched.
 - **Flatten to images** — the guaranteed-inert floor: turns every page into an
