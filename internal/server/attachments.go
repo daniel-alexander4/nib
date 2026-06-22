@@ -4,7 +4,6 @@ import (
 	"net/http"
 
 	"nib/internal/pdfops"
-	"nib/internal/sign"
 )
 
 // attachmentsResponse lists the document-level embedded files.
@@ -54,13 +53,7 @@ func (s *Server) handleAttachmentAdd(w http.ResponseWriter, r *http.Request) {
 		httpError(w, http.StatusBadRequest, "could not add attachment: "+err.Error())
 		return
 	}
-	sig := sign.Verify(result)
-	s.mu.Lock()
-	if s.doc != nil {
-		s.doc.data = result
-		s.doc.sig = sig
-	}
-	s.mu.Unlock()
+	s.commitMutation(doc.data, result)
 	writeJSON(w, s.docResponse())
 }
 

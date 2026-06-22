@@ -11,7 +11,6 @@ import (
 	"strings"
 
 	"nib/internal/pdfops"
-	"nib/internal/sign"
 )
 
 // handleExtract collects the requested pages of the posted document into a new
@@ -277,13 +276,7 @@ func (s *Server) handleAssemble(w http.ResponseWriter, r *http.Request) {
 	// reload=1 loads the flattened result back as the open document (the
 	// guaranteed-inert sanitize floor) instead of downloading it.
 	if r.FormValue("reload") == "1" {
-		sig := sign.Verify(pdf)
-		s.mu.Lock()
-		if s.doc != nil {
-			s.doc.data = pdf
-			s.doc.sig = sig
-		}
-		s.mu.Unlock()
+		s.commitBarrier(pdf) // flatten makes covered/edited content unrecoverable
 		writeJSON(w, s.docResponse())
 		return
 	}

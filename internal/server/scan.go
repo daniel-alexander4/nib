@@ -5,7 +5,6 @@ import (
 	"net/http"
 
 	"nib/internal/pdfops"
-	"nib/internal/sign"
 )
 
 // handleScan reports the active and hidden content in the current document
@@ -74,13 +73,7 @@ func (s *Server) handleSanitize(w http.ResponseWriter, r *http.Request) {
 	}
 
 	residual, _ := pdfops.Scan(result)
-	sig := sign.Verify(result)
-	s.mu.Lock()
-	if s.doc != nil {
-		s.doc.data = result
-		s.doc.sig = sig
-	}
-	s.mu.Unlock()
+	s.commitMutation(doc.data, result)
 	writeJSON(w, sanitizeResponse{docResponse: s.docResponse(), Ok: true, Residual: residual})
 }
 
@@ -119,12 +112,6 @@ func (s *Server) handleDecrypt(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
-	sig := sign.Verify(result)
-	s.mu.Lock()
-	if s.doc != nil {
-		s.doc.data = result
-		s.doc.sig = sig
-	}
-	s.mu.Unlock()
+	s.commitMutation(doc.data, result)
 	writeJSON(w, decryptResponse{docResponse: s.docResponse(), Ok: true})
 }
