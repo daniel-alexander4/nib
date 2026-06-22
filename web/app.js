@@ -70,6 +70,8 @@ const els = {
   managePeersBtn: $('managePeersBtn'), peersModal: $('peersModal'), peersList: $('peersList'),
   peerSelfFp: $('peerSelfFp'), peerPaste: $('peerPaste'), peerLabel: $('peerLabel'),
   peerPinBtn: $('peerPinBtn'), peersClose: $('peersClose'),
+  extSignerStatus: $('extSignerStatus'), extP12File: $('extP12File'), extP12Pass: $('extP12Pass'),
+  extP12Import: $('extP12Import'), extP12Remove: $('extP12Remove'),
   cosignBtn: $('cosignBtn'), cosignModal: $('cosignModal'), cosignPeer: $('cosignPeer'),
   cosignIntent: $('cosignIntent'), cosignNoPeers: $('cosignNoPeers'),
   cosignCancel: $('cosignCancel'), cosignGo: $('cosignGo'),
@@ -118,6 +120,7 @@ const els = {
   finalizeModal: $('finalizeModal'), fzText: $('fzText'), fzDate: $('fzDate'),
   fzTsa: $('fzTsa'), fzTsaOn: $('fzTsaOn'), fzCancel: $('fzCancel'), fzGo: $('fzGo'),
   fzOpacity: $('fzOpacity'), fzSize: $('fzSize'), fzAngle: $('fzAngle'), fzColor: $('fzColor'),
+  fzSignAs: $('fzSignAs'), fzPassphrase: $('fzPassphrase'),
   timestampBtn: $('timestampBtn'), timestampModal: $('timestampModal'), tsCancel: $('tsCancel'), tsGo: $('tsGo'),
   timestampVerifyBtn: $('timestampVerifyBtn'), tsVerifyModal: $('tsVerifyModal'), tvExplorerOn: $('tvExplorerOn'),
   tvExplorer: $('tvExplorer'), tvFile: $('tvFile'), tvResult: $('tvResult'), tvCancel: $('tvCancel'), tvPick: $('tvPick'), tvSave: $('tvSave'),
@@ -568,7 +571,44 @@ async function unpinPeer(fingerprint, label) {
   else toast((await res.json()).error || 'could not unpin peer');
 }
 
-els.managePeersBtn.onclick = () => { els.peersModal.hidden = false; loadPeers(); };
+els.managePeersBtn.onclick = () => { els.peersModal.hidden = false; loadPeers(); loadExtSigner(); };
+
+// loadExtSigner shows the imported signing certificate (if any) and toggles the
+// Remove button. The status line reads the public cert — no passphrase needed.
+async function loadExtSigner() {
+  try {
+    const info = await (await apiFetch('/api/identity/external')).json();
+    if (info.present) {
+      const exp = info.notAfter ? ' · expires ' + new Date(info.notAfter).toLocaleDateString() : '';
+      els.extSignerStatus.textContent = 'Imported: ' + (info.subject || 'certificate') +
+        (info.issuer ? ' (issued by ' + info.issuer + ')' : '') + exp;
+      els.extP12Remove.hidden = false;
+    } else {
+      els.extSignerStatus.textContent = 'None imported — Finalize uses your Nib self-signed identity.';
+      els.extP12Remove.hidden = true;
+    }
+  } catch { els.extSignerStatus.textContent = ''; }
+}
+els.extP12Import.onclick = async () => {
+  const file = els.extP12File.files[0];
+  if (!file) return toast('Choose a .p12 / .pfx file');
+  const form = new FormData();
+  form.append('p12', file, file.name);
+  form.append('passphrase', els.extP12Pass.value);
+  const res = await apiFetch('/api/identity/external', { method: 'POST', body: form });
+  if (res.status === 401) { els.extP12Pass.focus(); return toast('Wrong passphrase, or not a PKCS#12 file'); }
+  if (!res.ok) { toast((await res.json()).error || 'Could not import certificate'); return; }
+  els.extP12Pass.value = ''; els.extP12File.value = '';
+  loadExtSigner();
+  toast('Signing certificate imported');
+};
+els.extP12Remove.onclick = async () => {
+  if (!confirm('Remove the imported signing certificate? Finalize will go back to your Nib identity.')) return;
+  const res = await apiFetch('/api/identity/external/remove', { method: 'POST' });
+  if (!res.ok) { toast('Could not remove'); return; }
+  loadExtSigner();
+  toast('Imported certificate removed');
+};
 els.peersClose.onclick = () => { els.peersModal.hidden = true; };
 els.peerPinBtn.onclick = pinPeer;
 els.peerSelfCopy.onclick = () => copyFp(selfFingerprint);
@@ -2737,8 +2777,31 @@ els.printBtn.onclick = async () => {
 };
 
 // Finalize & sign.
-els.finalizeBtn.onclick = () => { if (pdfDocument) els.finalizeModal.hidden = false; };
+els.finalizeBtn.onclick = async () => {
+  if (!pdfDocument) return;
+  await refreshSignAs();
+  els.finalizeModal.hidden = false;
+};
 els.fzCancel.onclick = () => { els.finalizeModal.hidden = true; };
+
+// refreshSignAs rebuilds the "Sign as" picker: always the native Nib identity,
+// plus an imported certificate when one is stored. The passphrase field shows
+// only while the imported cert is selected.
+async function refreshSignAs() {
+  els.fzSignAs.querySelectorAll('option[value="external"]').forEach((o) => o.remove());
+  try {
+    const info = await (await apiFetch('/api/identity/external')).json();
+    if (info.present) {
+      const o = document.createElement('option');
+      o.value = 'external';
+      o.textContent = 'Imported: ' + (info.subject || 'certificate');
+      els.fzSignAs.appendChild(o);
+    }
+  } catch { /* leave native-only */ }
+  syncSignAs();
+}
+function syncSignAs() { els.fzPassphrase.hidden = els.fzSignAs.value !== 'external'; }
+els.fzSignAs.onchange = () => { syncSignAs(); if (els.fzSignAs.value === 'external') els.fzPassphrase.focus(); };
 // The timestamp URL is opt-in: the field stays disabled until the box is ticked.
 els.fzTsaOn.onchange = () => { els.fzTsa.disabled = !els.fzTsaOn.checked; if (els.fzTsaOn.checked) els.fzTsa.focus(); };
 // Presets set the label text and its "ink" (colour / opacity); angle and size
@@ -2776,7 +2839,8 @@ all('.wmpreset').forEach((b) => {
 });
 drawPreview();
 els.fzGo.onclick = async () => {
-  els.finalizeModal.hidden = true;
+  const signAs = els.fzSignAs.value;
+  if (signAs === 'external' && !els.fzPassphrase.value) { els.fzPassphrase.focus(); return toast('Enter the certificate passphrase'); }
   let text = els.fzText.value.trim();
   if (text && els.fzDate.checked) text += ' ' + new Date().toLocaleDateString();
 
@@ -2791,9 +2855,14 @@ els.fzGo.onclick = async () => {
       angle: Number(els.fzAngle.value),
     },
     tsaUrl: els.fzTsaOn.checked ? els.fzTsa.value.trim() : '',
+    signAs,
+    passphrase: signAs === 'external' ? els.fzPassphrase.value : '',
   }));
   const res = await apiFetch('/api/finalize', { method: 'POST', body: form });
+  if (res.status === 401) { els.fzPassphrase.focus(); els.fzPassphrase.select(); return toast('Wrong certificate passphrase'); }
   if (!res.ok) { toast('Could not finalize'); return; }
+  els.finalizeModal.hidden = true;
+  els.fzPassphrase.value = '';
   openSaveAs(await res.blob(), exportBase() + '-finalized.pdf', 'Save finalized PDF');
 };
 
