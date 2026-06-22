@@ -12,6 +12,7 @@ import (
 
 	"github.com/pdfcpu/pdfcpu/pkg/api"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
+	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/types"
 )
 
 func pngBytes(t *testing.T, w, h int) []byte {
@@ -145,6 +146,74 @@ func TestPageOps(t *testing.T) {
 		t.Errorf("after append: count = %d, want 6", n)
 	}
 }
+
+// TestPageOpsMultiPageIdentity proves that a multi-page selection ("1,3") deletes
+// or rotates EXACTLY those pages and leaves the others untouched — the bulk
+// thumbnail multi-select feature relies on this, and TestPageOps only checks the
+// resulting page count, never which pages an op actually hit. Pages are built at
+// distinct, non-square sizes so a survivor (after delete) or a 90° rotation (which
+// PageDims reflects by swapping W/H) is identifiable by its dimensions alone.
+func TestPageOpsMultiPageIdentity(t *testing.T) {
+	base, err := ImagesToPDF([]RasterPage{
+		rasterPage(t, 80, 110),
+		rasterPage(t, 120, 90),
+		rasterPage(t, 200, 150),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	conf := model.NewDefaultConfiguration()
+	baseDims, err := api.PageDims(bytes.NewReader(base), conf)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Bulk delete of pages 1 and 3 must leave exactly page 2 (the 120×90 page).
+	removed, err := RemovePages(base, []string{"1", "3"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rd, err := api.PageDims(bytes.NewReader(removed), conf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rd) != 1 {
+		t.Fatalf("after delete [1,3]: count = %d, want 1", len(rd))
+	}
+	if !sameDim(rd[0], baseDims[1]) {
+		t.Errorf("after delete [1,3]: survivor = %v, want page 2 %v (pages 1 and 3 should be gone)", rd[0], baseDims[1])
+	}
+
+	// Bulk rotate of pages 1 and 3 by 90° must swap exactly those pages' dims and
+	// leave page 2 untouched.
+	rotated, err := Rotate(base, []string{"1", "3"}, 90)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rot, err := api.PageDims(bytes.NewReader(rotated), conf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rot) != 3 {
+		t.Fatalf("after rotate [1,3]: count = %d, want 3", len(rot))
+	}
+	if !sameDim(rot[0], swapDim(baseDims[0])) {
+		t.Errorf("page 1 not rotated: dims = %v, want swapped %v", rot[0], swapDim(baseDims[0]))
+	}
+	if !sameDim(rot[1], baseDims[1]) {
+		t.Errorf("page 2 should be untouched by rotate [1,3]: dims = %v, want %v", rot[1], baseDims[1])
+	}
+	if !sameDim(rot[2], swapDim(baseDims[2])) {
+		t.Errorf("page 3 not rotated: dims = %v, want swapped %v", rot[2], swapDim(baseDims[2]))
+	}
+}
+
+func sameDim(a, b types.Dim) bool {
+	const eps = 0.5
+	return math.Abs(a.Width-b.Width) < eps && math.Abs(a.Height-b.Height) < eps
+}
+
+func swapDim(d types.Dim) types.Dim { return types.Dim{Width: d.Height, Height: d.Width} }
 
 func TestRedactRemovesContent(t *testing.T) {
 	// The form fixture has a "fullName" field on page 1. Redacting that page must
