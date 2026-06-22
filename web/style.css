@@ -872,3 +872,11 @@ input.ovl-check { appearance: auto; accent-color: #1a7f37; background: transpare
   pointer-events: none;
 }
 #toast.show { opacity: 1; }
+
+/* Fillable-form field-naming modal (Save as fillable form…) */
+.fieldname-list { max-height: 50vh; overflow-y: auto; display: flex; flex-direction: column; gap: 6px; margin: 10px 0; }
+.fieldname-row { display: flex; align-items: center; gap: 10px; }
+.fieldname-row input { flex: 1; }
+.fieldname-kind { color: var(--subtext0); font-size: 12px; min-width: 52px; }
+/* highlight the page field whose modal row is focused */
+.naming-hilite { outline: 2px solid var(--blue) !important; outline-offset: 1px; }

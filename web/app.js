@@ -115,6 +115,7 @@ const els = {
   bgCancel: $('bgCancel'), bgSave: $('bgSave'),
   autofillBtn: $('autofillBtn'), editProfileBtn: $('editProfileBtn'),
   saveFlatBtn: $('saveFlatBtn'), saveEditableBtn: $('saveEditableBtn'), saveFillableBtn: $('saveFillableBtn'), finalizeBtn: $('finalizeBtn'),
+  fieldNameModal: $('fieldNameModal'), fieldNameList: $('fieldNameList'), fieldNameGo: $('fieldNameGo'), fieldNameCancel: $('fieldNameCancel'),
   reduceBtn: $('reduceBtn'), reduceModal: $('reduceModal'), reduceQuality: $('reduceQuality'), reduceQ: $('reduceQ'),
   reduceResult: $('reduceResult'), reduceGo: $('reduceGo'), reduceSave: $('reduceSave'), reduceCancel: $('reduceCancel'),
   exportZipBtn: $('exportZipBtn'), exportPngBtn: $('exportPngBtn'),
@@ -2900,10 +2901,51 @@ els.saveEditableBtn.onclick = async () => {
 
 // Save as fillable PDF: turn detected/placed text + checkbox fields into real
 // interactive AcroForm widgets (a blank form to distribute), not flattened text.
-els.saveFillableBtn.onclick = async () => {
+// "Save as fillable form…" opens a naming step: one row per authorable field with
+// an editable name (default field_N), then authors real AcroForm widgets.
+let pendingAuthor = []; // candidate fields awaiting naming in fieldNameModal
+els.saveFillableBtn.onclick = () => {
   if (!pdfDocument) return;
-  const fields = collectAuthorFields();
-  if (!fields.length) { toast('Run Detect or place text/checkbox fields first'); return; }
+  pendingAuthor = collectAuthorFields();
+  if (!pendingAuthor.length) { toast('Run Detect or place text/checkbox fields first'); return; }
+  els.fieldNameList.innerHTML = '';
+  pendingAuthor.forEach((f, i) => {
+    const row = document.createElement('label');
+    row.className = 'fieldname-row';
+    const tag = document.createElement('span');
+    tag.className = 'fieldname-kind';
+    tag.textContent = (f.kind === 'check' ? '☑' : '✎') + ' p' + f.page;
+    const inp = document.createElement('input');
+    inp.type = 'text';
+    inp.value = 'field_' + (i + 1);
+    inp.onfocus = () => f.el && f.el.classList.add('naming-hilite');
+    inp.onblur = () => f.el && f.el.classList.remove('naming-hilite');
+    row.append(tag, inp);
+    els.fieldNameList.appendChild(row);
+    f.input = inp;
+  });
+  els.fieldNameModal.hidden = false;
+};
+
+function clearNamingHilite() {
+  for (const f of pendingAuthor) if (f.el) f.el.classList.remove('naming-hilite');
+}
+
+els.fieldNameCancel.onclick = () => { els.fieldNameModal.hidden = true; clearNamingHilite(); };
+
+els.fieldNameGo.onclick = async () => {
+  els.fieldNameModal.hidden = true;
+  clearNamingHilite();
+  // Normalize names client-side so authoring never hits pdfcpu's empty/duplicate
+  // field-id errors: trim, blank → field_N, then de-dupe with a numeric suffix.
+  const seen = new Set();
+  const fields = pendingAuthor.map((f, i) => {
+    const base = (f.input.value || '').trim() || ('field_' + (i + 1));
+    let name = base;
+    for (let n = 2; seen.has(name); n++) name = base + '_' + n;
+    seen.add(name);
+    return { page: f.page, rect: f.rect, kind: f.kind, name };
+  });
   // Post the base document WITHOUT baking the overlay fields — they become widgets.
   const saved = pdfDocument.annotationStorage.size > 0
     ? await pdfDocument.saveDocument()
@@ -4881,14 +4923,16 @@ function collectFields() {
 // collectFields/collectStamps (which flatten values into the page), these become
 // live, fillable form fields; the field is emitted blank regardless of any typed
 // value, since the output is a distributable template.
+// collectAuthorFields gathers the detected/placed fields authorable as interactive
+// AcroForm widgets (text fields, checkboxes), in page order, WITHOUT names — the
+// user names them in the fillable-form modal. `el` is the live overlay (client
+// only, for the row-focus highlight); it is dropped from the server payload. Any
+// typed value is ignored: authored fields are blank (a distributable template).
 function collectAuthorFields() {
   const out = [];
-  let n = 0;
   for (const f of overlayFields) {
-    if (f.kind === 'text') {
-      out.push({ page: f.page, rect: rectPoints(f, f.frac), kind: 'text', name: 'field_' + (++n) });
-    } else if (f.kind === 'check') {
-      out.push({ page: f.page, rect: rectPoints(f, f.frac), kind: 'check', name: 'field_' + (++n) });
+    if (f.kind === 'text' || f.kind === 'check') {
+      out.push({ page: f.page, rect: rectPoints(f, f.frac), kind: f.kind, el: f.el });
     }
   }
   return out;
