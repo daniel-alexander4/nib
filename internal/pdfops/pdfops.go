@@ -1095,9 +1095,22 @@ func joinValues(vs []string) string { return strings.Join(vs, "; ") }
 // written as empty files. An image referenced on several pages is written once
 // (deduped by object number). Returns (nil, 0, nil) when there are none.
 //
-// One unrenderable-enough image (a panic pdfcpu recovers into an error) fails the
-// whole call; the caller surfaces that rather than a partial archive.
+// pdfcpu aborts the extraction on the first image it can't render, so a single
+// bad image would otherwise lose the whole archive. The fast path tries the
+// document in one pass; if that fails, it re-runs page by page so one bad image
+// only loses its own page's images, not the rest.
 func ExtractImagesZip(pdf []byte) ([]byte, int, error) {
+	if data, count, err := extractImages(pdf, false); err == nil {
+		return data, count, nil
+	}
+	return extractImages(pdf, true)
+}
+
+// extractImages builds the image ZIP. With perPage false it runs a single
+// api.ExtractImages over the whole document (fast, but one bad image aborts it).
+// With perPage true it runs one pass per page, recovering each so a page whose
+// image pdfcpu can't handle is skipped instead of sinking the whole archive.
+func extractImages(pdf []byte, perPage bool) ([]byte, int, error) {
 	var buf bytes.Buffer
 	zw := zip.NewWriter(&buf)
 	seen := map[int]bool{}
@@ -1117,9 +1130,33 @@ func ExtractImagesZip(pdf []byte) ([]byte, int, error) {
 		count++
 		return nil
 	}
-	if err := api.ExtractImages(bytes.NewReader(pdf), nil, digest, model.NewDefaultConfiguration()); err != nil {
-		return nil, 0, err
+	// run does one extraction pass over a page selection (nil = whole doc). The
+	// recover is load-bearing: api.ExtractImages only catches pdfcpu's own faults
+	// and re-panics generic ones (a missing /BitsPerComponent, etc.), which would
+	// otherwise crash the request.
+	run := func(pages []string) (err error) {
+		defer func() {
+			if r := recover(); r != nil {
+				err = fmt.Errorf("image extraction panicked: %v", r)
+			}
+		}()
+		return api.ExtractImages(bytes.NewReader(pdf), pages, digest, model.NewDefaultConfiguration())
 	}
+
+	if !perPage {
+		if err := run(nil); err != nil {
+			return nil, 0, err
+		}
+	} else {
+		n, err := PageCount(pdf)
+		if err != nil {
+			return nil, 0, err
+		}
+		for p := 1; p <= n; p++ {
+			_ = run([]string{strconv.Itoa(p)}) // skip a page whose image can't be extracted
+		}
+	}
+
 	if count == 0 {
 		return nil, 0, nil
 	}
