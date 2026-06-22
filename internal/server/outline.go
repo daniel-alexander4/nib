@@ -5,7 +5,6 @@ import (
 	"net/http"
 
 	"nib/internal/pdfops"
-	"nib/internal/sign"
 )
 
 // outlineResponse carries the document outline as a flat, leveled list.
@@ -52,12 +51,6 @@ func (s *Server) handleOutlineSet(w http.ResponseWriter, r *http.Request) {
 		httpError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	sig := sign.Verify(result)
-	s.mu.Lock()
-	if s.doc != nil {
-		s.doc.data = result
-		s.doc.sig = sig
-	}
-	s.mu.Unlock()
+	s.commitMutation(pdfBytes, result)
 	writeJSON(w, s.docResponse())
 }

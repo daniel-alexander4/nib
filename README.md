@@ -247,6 +247,13 @@ arrange them with ↑ ↓, and they merge top-to-bottom into a new document — 
 reorder individual pages across them by dragging thumbnails. It works even with
 nothing open, and the result is a new, unsigned document (Save As to keep it).
 
+Changed your mind? **↶ Undo** / **↷ Redo** (Ctrl+Z / Ctrl+Shift+Z, on the **Edit**
+tab) step back and forth through document operations — rotate, delete, reorder,
+crop, split, page numbers, outline and metadata edits — for the open document.
+History clears when you open another file or run a content-destroying step
+(redaction or flatten can't be undone). Annotation edits (text boxes, highlights,
+ink) keep pdf.js's own Ctrl+Z while you're drawing them.
+
 Rotate, delete, **append**, and reorder pages — **drag a page's thumbnail** in the
 sidebar to move it where you want. Rotate every page at once with **Rotate all ↺ / ↻**
 on the **Edit** tab, or hover a thumbnail to rotate (either direction) or delete a
