@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24">
+  <!-- Sticky-note glyph: a small page with a folded bottom-right corner. -->
+  <path d="M4 3h12l4 4v11a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z" fill="#f9e2af" stroke="#dfae3a" stroke-width="1"/>
+  <path d="M16 3v4h4z" fill="#dfae3a"/>
+  <path d="M5 9h9M5 12h9M5 15h6" stroke="#9a7d23" stroke-width="1.2" stroke-linecap="round"/>
+</svg>
