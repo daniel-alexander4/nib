@@ -114,7 +114,7 @@ const els = {
   bgThresh: $('bgThresh'), bgThreshRow: $('bgThreshRow'),
   bgCancel: $('bgCancel'), bgSave: $('bgSave'),
   autofillBtn: $('autofillBtn'), editProfileBtn: $('editProfileBtn'),
-  saveFlatBtn: $('saveFlatBtn'), saveEditableBtn: $('saveEditableBtn'), finalizeBtn: $('finalizeBtn'),
+  saveFlatBtn: $('saveFlatBtn'), saveEditableBtn: $('saveEditableBtn'), saveFillableBtn: $('saveFillableBtn'), finalizeBtn: $('finalizeBtn'),
   reduceBtn: $('reduceBtn'), reduceModal: $('reduceModal'), reduceQuality: $('reduceQuality'), reduceQ: $('reduceQ'),
   reduceResult: $('reduceResult'), reduceGo: $('reduceGo'), reduceSave: $('reduceSave'), reduceCancel: $('reduceCancel'),
   exportZipBtn: $('exportZipBtn'), exportPngBtn: $('exportPngBtn'),
@@ -2893,6 +2893,24 @@ els.saveEditableBtn.onclick = async () => {
   openSaveAs(new Blob([bytes], { type: 'application/pdf' }), exportBase() + '-editable.pdf', 'Save editable copy');
 };
 
+// Save as fillable PDF: turn detected/placed text + checkbox fields into real
+// interactive AcroForm widgets (a blank form to distribute), not flattened text.
+els.saveFillableBtn.onclick = async () => {
+  if (!pdfDocument) return;
+  const fields = collectAuthorFields();
+  if (!fields.length) { toast('Run Detect or place text/checkbox fields first'); return; }
+  // Post the base document WITHOUT baking the overlay fields — they become widgets.
+  const saved = pdfDocument.annotationStorage.size > 0
+    ? await pdfDocument.saveDocument()
+    : await pdfDocument.getData();
+  const form = new FormData();
+  form.append('pdf', new Blob([saved], { type: 'application/pdf' }), 'doc.pdf');
+  form.append('fields', JSON.stringify(fields));
+  const res = await apiFetch('/api/form/author', { method: 'POST', body: form });
+  if (!res.ok) { toast('could not create fillable form'); return; }
+  openSaveAs(await res.blob(), exportBase() + '-fillable.pdf', 'Save fillable PDF');
+};
+
 els.exportPngBtn.onclick = async () => {
   if (!pdfDocument) return;
   const [{ blob }] = await renderFilledPages(2, viewer.currentPageNumber);
@@ -4652,7 +4670,7 @@ let overlayFields = []; // {page, frac:[fx0,fy0,fx1,fy1], pageW, pageH, kind, el
 let overlayHistory = { undo: [], redo: [] }; // client overlay-edit undo, drained before the server ring
 let libraryImages = []; // cached /api/images list (the image-library panel)
 const DOC_REQUIRED = [
-  'saveFlatBtn', 'saveEditableBtn', 'printBtn',
+  'saveFlatBtn', 'saveEditableBtn', 'saveFillableBtn', 'printBtn',
   'exportZipBtn', 'exportPngBtn', 'exportFormJsonBtn', 'exportFormCsvBtn', 'exportBookmarkSplitBtn',
   'exportPageSplitBtn',
   'textToolBtn', 'highlightToolBtn', 'drawToolBtn',
@@ -4848,6 +4866,24 @@ function collectFields() {
       // Cover-and-replace: carry the recognized font/size/colour so the bake
       // matches the original run. (An emptied edit is an erase — cover only.)
       out.push({ page: f.page, rect: rectPoints(f, f.frac), text: f.el.value, font: f.font, size: f.size, color: f.color });
+    }
+  }
+  return out;
+}
+
+// collectAuthorFields gathers detected/placed fields as interactive AcroForm
+// widget specs — text fields and checkboxes, auto-named field_N. Unlike
+// collectFields/collectStamps (which flatten values into the page), these become
+// live, fillable form fields; the field is emitted blank regardless of any typed
+// value, since the output is a distributable template.
+function collectAuthorFields() {
+  const out = [];
+  let n = 0;
+  for (const f of overlayFields) {
+    if (f.kind === 'text') {
+      out.push({ page: f.page, rect: rectPoints(f, f.frac), kind: 'text', name: 'field_' + (++n) });
+    } else if (f.kind === 'check') {
+      out.push({ page: f.page, rect: rectPoints(f, f.frac), kind: 'check', name: 'field_' + (++n) });
     }
   }
   return out;

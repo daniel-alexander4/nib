@@ -39,6 +39,14 @@ belong:
 It's a smart proposal, not magic — move, resize, retype, or ignore anything it
 suggests.
 
+### Turn a flat scan into a fillable form
+Run **Detect** on a flat or scanned form, then **File → Save as → Save as fillable
+form…** to emit a real interactive **AcroForm PDF**: every detected text box and
+checkbox becomes a live, fillable field (with proper appearance streams, so it
+works in Adobe and any browser), dropped right onto the original page — the scan
+itself is untouched. The opposite of flattening: instead of baking your answers in,
+you publish a blank form for others to fill.
+
 ### Circles & pills for multiple choice
 Choosing an option marks it the way a person would: a **circle** around a single
 letter (or `Y`/`N`), or a **pill** around a whole word — baked cleanly into the
