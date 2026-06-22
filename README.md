@@ -207,7 +207,10 @@ on the **Edit** tab, or hover a thumbnail to rotate (either direction) or delete
 single page. **Shift- or Ctrl/Cmd-click thumbnails** to select several at once, then
 rotate or delete the whole selection from the bar above the thumbnails. **Extract pages…** saves a range (type `1-3, 5`) as a new PDF without
 touching the open document, and **Insert blank page** drops a fresh page — matching
-its neighbour's size — after the current one. **Page numbers…** stamps a running
+its neighbour's size — after the current one. **Duplicate page** drops a copy of the
+current page right after it, and **Insert PDF…** splices another PDF in before the
+current page (before page 1 to prepend a cover; use **+ Append PDF** for the end).
+**Page numbers…** stamps a running
 number onto every page at the corner you choose — add a prefix and a zero-pad
 width for Bates numbering (e.g. `ABC` + width 6 → `ABC000001`), or tick "of N" for
 classic "Page 3 of 10". Going the other way, **N-up…** combines several pages onto
