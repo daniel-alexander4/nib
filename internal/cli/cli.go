@@ -97,9 +97,9 @@ sign, rotate, pages, decrypt, nup, and pagenum, "-" reads a PDF from stdin or (a
 -o -) writes it to stdout, so they compose in a pipeline. Exit status is non-zero
 on failure (verify: 2 when a signature is invalid or absent).
 
-sign reads the .p12 passphrase from --password-file FILE or the NIB_P12_PASSWORD
-environment variable — never from the command line. Run "nib <command> -h" for
-a command's own flags.
+sign reads the .p12 passphrase from --password-file FILE, the NIB_P12_PASSWORD
+environment variable, or a no-echo terminal prompt — never from the command
+line. Run "nib <command> -h" for a command's own flags.
 `)
 }
 

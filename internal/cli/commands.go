@@ -14,6 +14,8 @@ import (
 	"strings"
 	"time"
 
+	"golang.org/x/term"
+
 	"nib/internal/ots"
 	"nib/internal/pdfops"
 	"nib/internal/sign"
@@ -448,7 +450,7 @@ func cmdSign(args []string) int {
 	fs.StringVar(&reason, "reason", "Signed with Nib", "signature reason")
 	fs.StringVar(&name, "name", "", "signer name (default: the certificate's common name)")
 	fs.StringVar(&tsa, "tsa", "", "RFC3161 timestamp authority `URL` to fix the signing time")
-	fs.Usage = usageFunc(fs, "nib sign IN -o OUT --cert C.p12", "Certify a PDF with an imported .p12 identity. The passphrase comes from\n--password-file or $NIB_P12_PASSWORD, never the command line.")
+	fs.Usage = usageFunc(fs, "nib sign IN -o OUT --cert C.p12", "Certify a PDF with an imported .p12 identity. The passphrase comes from\n--password-file or $NIB_P12_PASSWORD, or a no-echo terminal prompt — never the\ncommand line.")
 	if code, ok := parse(fs, args); !ok {
 		return code
 	}
@@ -501,7 +503,20 @@ func passphrase(passFile string) (string, error) {
 	if v, ok := os.LookupEnv("NIB_P12_PASSWORD"); ok {
 		return v, nil
 	}
-	return "", errors.New("no passphrase: set NIB_P12_PASSWORD or use --password-file")
+	// Last resort for an interactive run: prompt on the terminal with no echo, so
+	// the passphrase never lands in argv, an env var, or a file. Skipped when stdin
+	// isn't a terminal (piped / automation), which must use --password-file or
+	// $NIB_P12_PASSWORD. The prompt goes to stderr, keeping stdout clean for -o -.
+	if fd := int(os.Stdin.Fd()); term.IsTerminal(fd) {
+		fmt.Fprint(os.Stderr, "Passphrase for the .p12 identity: ")
+		b, err := term.ReadPassword(fd)
+		fmt.Fprintln(os.Stderr)
+		if err != nil {
+			return "", err
+		}
+		return string(b), nil
+	}
+	return "", errors.New("no passphrase: set NIB_P12_PASSWORD, use --password-file, or run in a terminal to be prompted")
 }
 
 // pdfPassword sources an OPTIONAL PDF open-password, never from argv: --password-file
