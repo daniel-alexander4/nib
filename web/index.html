@@ -145,6 +145,7 @@
       <button id="extractBtn" title="Save a range of pages as a new PDF">Extract pages…</button>
       <button id="insertBlankBtn" title="Insert a blank page after the current page">Insert blank page</button>
       <button id="pageNumBtn" title="Stamp running page numbers (or Bates numbers) onto every page">Page numbers…</button>
+      <button id="nupBtn" title="Combine several pages onto each sheet (2-up, 4-up…) for printing">N-up…</button>
       <span class="tbsep"></span>
       <button id="rotateLeftBtn" title="Rotate every page 90° counter-clockwise">Rotate all ↺</button>
       <button id="rotateRightBtn" title="Rotate every page 90° clockwise">Rotate all ↻</button>
@@ -531,6 +532,31 @@
         <span class="grow"></span>
         <button id="pnCancel">Cancel</button>
         <button id="pnGo" class="primary">Add page numbers</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- N-up: combine several pages onto each sheet (printing / handouts) -->
+  <div id="nupModal" hidden>
+    <div class="sigcard">
+      <h3>N-up — combine pages onto sheets</h3>
+      <p class="libhint">Place several pages onto each sheet, for printing or handouts. Every page is re-arranged in place, in reading order; each sheet keeps the document's page size.</p>
+      <div class="splitcontrols">
+        <label>Pages per sheet
+          <select id="nupN">
+            <option value="2" selected>2 (2-up)</option>
+            <option value="4">4 (2×2)</option>
+            <option value="6">6 (2×3)</option>
+            <option value="9">9 (3×3)</option>
+            <option value="16">16 (4×4)</option>
+          </select>
+        </label>
+        <label class="check"><input id="nupBorder" type="checkbox" checked /> Border around each page</label>
+      </div>
+      <div class="sigbtns">
+        <span class="grow"></span>
+        <button id="nupCancel">Cancel</button>
+        <button id="nupGo" class="primary">Combine pages</button>
       </div>
     </div>
   </div>

@@ -280,6 +280,38 @@ func TestStampWatermark(t *testing.T) {
 	}
 }
 
+func TestNUp(t *testing.T) {
+	// Four pages, 2-up → 2 sheets; 4-up → 1 sheet. Output must be a valid PDF.
+	pdf, err := ImagesToPDF([]RasterPage{
+		rasterPage(t, 200, 280), rasterPage(t, 200, 280),
+		rasterPage(t, 200, 280), rasterPage(t, 200, 280),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	two, err := NUp(pdf, 2, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.HasPrefix(two, []byte("%PDF")) {
+		t.Errorf("NUp did not produce a PDF: %.10q", two)
+	}
+	if n, _ := PageCount(two); n != 2 {
+		t.Errorf("4 pages 2-up = %d sheets, want 2", n)
+	}
+	four, err := NUp(pdf, 4, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n, _ := PageCount(four); n != 1 {
+		t.Errorf("4 pages 4-up = %d sheets, want 1", n)
+	}
+	// An unsupported n is rejected (pdfcpu allows 2,3,4,6,8,9,12,16).
+	if _, err := NUp(pdf, 5, true); err == nil {
+		t.Error("expected error for unsupported n=5")
+	}
+}
+
 func TestSplitBySpans(t *testing.T) {
 	pdf, err := ImagesToPDF([]RasterPage{
 		rasterPage(t, 80, 110), rasterPage(t, 80, 110), rasterPage(t, 80, 110),

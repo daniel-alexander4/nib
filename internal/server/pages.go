@@ -76,6 +76,13 @@ func (s *Server) handlePages(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		result, err = pdfops.SplitRegions(pdfBytes, pageNum, rects)
+	case "nup":
+		n, nErr := strconv.Atoi(r.FormValue("n"))
+		if nErr != nil {
+			httpError(w, http.StatusBadRequest, "n-up needs a whole number of pages per sheet")
+			return
+		}
+		result, err = pdfops.NUp(pdfBytes, n, r.FormValue("border") == "1")
 	case "pagenum":
 		start, _ := strconv.Atoi(r.FormValue("start"))
 		pad, _ := strconv.Atoi(r.FormValue("pad"))
