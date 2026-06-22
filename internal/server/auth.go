@@ -190,7 +190,14 @@ func (s *Server) vaultStatus() statusResponse {
 	if slots, err := vault.Slots(s.configDir); err == nil && len(slots) > 0 {
 		keyPath = slots[0].KeyPath
 	}
-	return statusResponse{State: "key-missing", KeyPath: keyPath}
+	// An enrolled key that's present but passphrase-protected is "key-locked" (the
+	// UI offers a passphrase prompt), distinct from a genuinely missing key. The
+	// re-attempt is cheap: parsing an encrypted key fails fast, before any decrypt.
+	state := "key-missing"
+	if _, err := vault.OpenSSH(s.configDir); errors.Is(err, vault.ErrKeyLocked) {
+		state = "key-locked"
+	}
+	return statusResponse{State: state, KeyPath: keyPath}
 }
 
 func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
@@ -282,6 +289,36 @@ func (s *Server) handleMigrate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.ensureUnlocked()
+	writeJSON(w, s.currentStatus())
+}
+
+// handleUnlock unlocks a vault whose enrolled SSH key is passphrase-protected,
+// using the passphrase the user supplied. Like enroll/migrate it runs pre-unlock
+// (no CSRF token exists yet), guarded by a loopback Origin. The passphrase is
+// used only to decrypt the key in memory for this unlock and is never persisted.
+func (s *Server) handleUnlock(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Passphrase string `json:"passphrase"`
+	}
+	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<16)).Decode(&req); err != nil {
+		httpError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	v, err := vault.OpenSSHWithPassphrase(s.configDir, []byte(req.Passphrase))
+	if err != nil {
+		if errors.Is(err, vault.ErrWrongPassphrase) {
+			httpError(w, http.StatusUnauthorized, "wrong passphrase")
+			return
+		}
+		httpError(w, http.StatusBadRequest, "could not unlock")
+		return
+	}
+	s.mu.Lock()
+	if s.vault == nil {
+		s.vault = v
+		s.csrf = newToken()
+	}
+	s.mu.Unlock()
 	writeJSON(w, s.currentStatus())
 }
 

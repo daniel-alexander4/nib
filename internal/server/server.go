@@ -71,6 +71,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/update/check", s.handleUpdateCheck)
 	mux.HandleFunc("POST /api/ssh/enroll", requirePublicLoopback(s.handleEnroll))
 	mux.HandleFunc("POST /api/ssh/migrate", requirePublicLoopback(s.handleMigrate))
+	mux.HandleFunc("POST /api/ssh/unlock", requirePublicLoopback(s.handleUnlock))
 
 	// Protected — require the vault unlocked (+ CSRF on writes).
 	mux.HandleFunc("GET /api/vault/export", s.requireUnlocked(s.handleVaultExport))
