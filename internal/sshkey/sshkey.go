@@ -70,20 +70,56 @@ func WrapMulti(secret []byte, pubLines []string) ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
-// Unwrap recovers a secret wrapped by Wrap, using the (unencrypted) private key
-// at keyPath. A passphrase-protected key fails here — Nib expects an
-// unencrypted key for promptless unlock.
-func Unwrap(wrapped []byte, keyPath string) ([]byte, error) {
+// ErrPassphraseRequired means the key at keyPath is passphrase-protected but no
+// passphrase was supplied — the caller should prompt for one and retry.
+// ErrWrongPassphrase means a passphrase was supplied but didn't decrypt the key.
+var (
+	ErrPassphraseRequired = errors.New("ssh key is passphrase-protected")
+	ErrWrongPassphrase    = errors.New("wrong passphrase")
+)
+
+// Unwrap recovers a secret wrapped by Wrap, using the private key at keyPath.
+// pubLine is the authorized_keys line the secret was wrapped to (the recipient);
+// it is needed only on the passphrase path, to build the encrypted identity.
+//
+// With passphrase nil this is the promptless startup unlock: it expects an
+// unencrypted key and returns ErrPassphraseRequired if the key turns out to be
+// passphrase-protected. With a passphrase it decrypts such a key IN MEMORY (the
+// key file stays encrypted on disk — that's the at-rest hardening), returning
+// ErrWrongPassphrase if the passphrase doesn't fit.
+func Unwrap(wrapped []byte, keyPath, pubLine string, passphrase []byte) ([]byte, error) {
 	pemBytes, err := os.ReadFile(keyPath)
 	if err != nil {
 		return nil, err
 	}
 	id, err := agessh.ParseIdentity(pemBytes)
 	if err != nil {
-		return nil, err
+		var miss *ssh.PassphraseMissingError
+		if !errors.As(err, &miss) {
+			return nil, err
+		}
+		if passphrase == nil {
+			return nil, ErrPassphraseRequired
+		}
+		// NewEncryptedSSHIdentity needs the recipient public key to match stanzas;
+		// the vault stores it alongside the slot, so use that rather than relying on
+		// a sibling .pub or the error's optional PublicKey.
+		pub, _, _, _, perr := ssh.ParseAuthorizedKey([]byte(pubLine))
+		if perr != nil {
+			return nil, perr
+		}
+		id, err = agessh.NewEncryptedSSHIdentity(pub, pemBytes, func() ([]byte, error) { return passphrase, nil })
+		if err != nil {
+			return nil, err
+		}
 	}
 	r, err := age.Decrypt(bytes.NewReader(wrapped), id)
 	if err != nil {
+		// agessh wraps a bad passphrase as this message (with %v, so no error chain
+		// to match on) before age sees it as a hard failure rather than a non-match.
+		if strings.Contains(err.Error(), "failed to decrypt SSH key file") {
+			return nil, ErrWrongPassphrase
+		}
 		return nil, err
 	}
 	return io.ReadAll(r)

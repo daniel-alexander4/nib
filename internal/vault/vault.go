@@ -37,6 +37,13 @@ var (
 	// ErrKeyMissing: a vault exists but no enrolled SSH key could unlock it
 	// (the private key file is missing, moved, or doesn't match).
 	ErrKeyMissing = errors.New("ssh key unavailable")
+	// ErrKeyLocked: the enrolled key file is present but passphrase-protected, so
+	// promptless unlock can't proceed — the caller should prompt for a passphrase
+	// and retry via OpenSSHWithPassphrase. Distinct from ErrKeyMissing so the UI
+	// offers a passphrase prompt rather than "key not found".
+	ErrKeyLocked = errors.New("ssh key is passphrase-protected")
+	// ErrWrongPassphrase: a passphrase was supplied but didn't decrypt the key.
+	ErrWrongPassphrase = errors.New("wrong passphrase")
 	// ErrNeedsMigration: the vault is the old password format.
 	ErrNeedsMigration = errors.New("vault needs migration")
 	// ErrWrongPassword: migration was given the wrong old password.
@@ -200,7 +207,21 @@ func Create(dir, pubLine, keyPath string) (*Vault, error) {
 }
 
 // OpenSSH unlocks the vault by trying each enrolled key slot's private key.
-func OpenSSH(dir string) (*Vault, error) {
+func OpenSSH(dir string) (*Vault, error) { return openSSH(dir, nil) }
+
+// OpenSSHWithPassphrase unlocks a vault whose enrolled key is passphrase-protected,
+// decrypting that key in memory with passphrase. The key file stays encrypted on
+// disk. Returns ErrWrongPassphrase if the passphrase doesn't fit.
+func OpenSSHWithPassphrase(dir string, passphrase []byte) (*Vault, error) {
+	return openSSH(dir, passphrase)
+}
+
+// openSSH unlocks via the enrolled SSH slots. passphrase nil is the promptless
+// path (unencrypted key, with the ~/.ssh candidate fallback); a non-nil passphrase
+// targets the enrolled key path only and decrypts it in memory. When no slot
+// unlocks, the most actionable reason wins: ErrWrongPassphrase, then ErrKeyLocked
+// (present but encrypted, prompt for a passphrase), else ErrKeyMissing.
+func openSSH(dir string, passphrase []byte) (*Vault, error) {
 	env, err := readEnvelope(dir)
 	if err != nil {
 		return nil, err
@@ -208,9 +229,13 @@ func OpenSSH(dir string) (*Vault, error) {
 	if env.Version < 2 || len(env.SSH) == 0 {
 		return nil, ErrNeedsMigration
 	}
+	var slotErr error
 	for _, slot := range env.SSH {
-		key, ok := unwrapSlot(slot)
+		key, ok, uerr := unwrapSlot(slot, passphrase)
 		if !ok {
+			if slotErr == nil || errors.Is(uerr, sshkey.ErrWrongPassphrase) || errors.Is(uerr, sshkey.ErrPassphraseRequired) {
+				slotErr = uerr
+			}
 			continue // no available private key for this slot — try the next
 		}
 		plain, err := decrypt(key, env.Nonce, env.Cipher)
@@ -226,7 +251,14 @@ func OpenSSH(dir string) (*Vault, error) {
 		}
 		return &Vault{path: Path(dir), key: key, ssh: env.SSH, current: slot.PubKey, contents: c, builtinImages: loadBuiltinSignatures()}, nil
 	}
-	return nil, ErrKeyMissing
+	switch {
+	case errors.Is(slotErr, sshkey.ErrWrongPassphrase):
+		return nil, ErrWrongPassphrase
+	case errors.Is(slotErr, sshkey.ErrPassphraseRequired):
+		return nil, ErrKeyLocked
+	default:
+		return nil, ErrKeyMissing
+	}
 }
 
 // Migrate converts an old password vault to an SSH-sealed one: it decrypts with
@@ -264,25 +296,38 @@ func Migrate(dir, password, pubLine, keyPath string) (*Vault, error) {
 // private-key path first, then the local ~/.ssh keys — so a builtin slot, which
 // records no path, still unlocks on a machine holding its private half. The
 // first key that decrypts wins.
-func unwrapSlot(slot Slot) ([]byte, bool) {
+func unwrapSlot(slot Slot, passphrase []byte) (key []byte, ok bool, err error) {
 	tried := map[string]bool{}
-	try := func(p string) ([]byte, bool) {
+	try := func(p string) bool {
 		if p == "" || tried[p] {
-			return nil, false
+			return false
 		}
 		tried[p] = true
-		key, err := sshkey.Unwrap(slot.Wrapped, p)
-		return key, err == nil
+		k, e := sshkey.Unwrap(slot.Wrapped, p, slot.PubKey, passphrase)
+		if e == nil {
+			key, ok = k, true
+			return true
+		}
+		// Keep the most actionable failure: a passphrase-related error beats a
+		// generic "key not found", so the caller can prompt or report precisely.
+		if err == nil || errors.Is(e, sshkey.ErrPassphraseRequired) || errors.Is(e, sshkey.ErrWrongPassphrase) {
+			err = e
+		}
+		return false
 	}
-	if key, ok := try(slot.KeyPath); ok {
-		return key, true
+	if try(slot.KeyPath) {
+		return key, true, nil
 	}
-	for _, p := range sshkey.Candidates() {
-		if key, ok := try(p); ok {
-			return key, true
+	// The ~/.ssh candidate sweep is a promptless convenience; a user-supplied
+	// passphrase is for the enrolled key path only, so don't apply it to others.
+	if passphrase == nil {
+		for _, p := range sshkey.Candidates() {
+			if try(p) {
+				return key, true, nil
+			}
 		}
 	}
-	return nil, false
+	return nil, false, err
 }
 
 // newSealed builds a Vault with a fresh content key sealed to pubLine and to
