@@ -775,6 +775,106 @@ func StampWatermark(pdf []byte, text string, st WatermarkStyle) ([]byte, error) 
 	return out.Bytes(), nil
 }
 
+// pageNumPositions is the corner allowlist for StampPageNumbers. The code is
+// interpolated into the pdfcpu watermark description, so an unlisted value must
+// never reach it (same guard rationale as coreFonts).
+var pageNumPositions = map[string]bool{
+	"tl": true, "tc": true, "tr": true,
+	"bl": true, "bc": true, "br": true,
+}
+
+// PageNumberStyle controls StampPageNumbers.
+type PageNumberStyle struct {
+	Position string // pdfcpu corner code: tl/tc/tr/bl/bc/br ("" = bc)
+	Prefix   string // text before the number, e.g. "Page " or a Bates prefix
+	Start    int    // number printed on the first page (default 1)
+	Pad      int    // zero-pad width, 0 = none (e.g. 6 → 000123 for Bates)
+	OfTotal  bool   // append " of N" (N = the number on the last page)
+	Size     int    // point size (default 11)
+	Color    string // #RRGGBB ("" = black)
+}
+
+// pageNumOffset insets the number from the chosen corner so it doesn't sit flush
+// against the page edge (points): horizontally for left/right, vertically for
+// top/bottom; centres get no horizontal nudge.
+func pageNumOffset(pos string) (x, y float64) {
+	const hx, vy = 40.0, 24.0
+	switch pos[1] {
+	case 'l':
+		x = hx
+	case 'r':
+		x = -hx
+	}
+	switch pos[0] {
+	case 't':
+		y = -vy
+	case 'b':
+		y = vy
+	}
+	return x, y
+}
+
+// StampPageNumbers bakes a running page number onto every page at a chosen
+// corner. Each page's label is formatted here (prefix + optional zero-pad + start
+// offset) and stamped as its own text watermark via the same SliceMap path as
+// StampFields, so it covers Bates numbering as well as plain "Page n of N".
+func StampPageNumbers(pdf []byte, st PageNumberStyle) ([]byte, error) {
+	n, err := PageCount(pdf)
+	if err != nil {
+		return nil, err
+	}
+	pos := st.Position
+	if !pageNumPositions[pos] {
+		pos = "bc"
+	}
+	size := st.Size
+	if size < 6 {
+		size = 11
+	}
+	if size > 72 {
+		size = 72
+	}
+	color := "#000000"
+	if hexColor.MatchString(st.Color) {
+		color = st.Color
+	}
+	start := st.Start
+	if start < 1 {
+		start = 1
+	}
+	pad := st.Pad
+	if pad < 0 {
+		pad = 0
+	}
+	if pad > 12 {
+		pad = 12
+	}
+	// A '%' in the prefix would be read as a pdfcpu placeholder token (%p/%P/…),
+	// so strip it — the number itself is formatted here, not by pdfcpu.
+	prefix := strings.ReplaceAll(st.Prefix, "%", "")
+	ox, oy := pageNumOffset(pos)
+
+	wms := map[int][]*model.Watermark{}
+	for i := 1; i <= n; i++ {
+		label := fmt.Sprintf("%s%0*d", prefix, pad, start+i-1)
+		if st.OfTotal {
+			label += " of " + strconv.Itoa(start+n-1)
+		}
+		desc := fmt.Sprintf("fontname:Helvetica, points:%d, scalefactor:1 abs, position:%s, offset:%.1f %.1f, fillcolor:%s, rotation:0",
+			size, pos, ox, oy, color)
+		wm, err := api.TextWatermark(label, desc, true, false, types.POINTS)
+		if err != nil {
+			return nil, err
+		}
+		wms[i] = append(wms[i], wm)
+	}
+	var out bytes.Buffer
+	if err := api.AddWatermarksSliceMap(bytes.NewReader(pdf), &out, wms, model.NewDefaultConfiguration()); err != nil {
+		return nil, err
+	}
+	return out.Bytes(), nil
+}
+
 // ExportFormJSON returns the form field data of pdf as pdfcpu's JSON.
 func ExportFormJSON(pdf []byte) ([]byte, error) {
 	var out bytes.Buffer
