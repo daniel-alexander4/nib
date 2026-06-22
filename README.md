@@ -445,7 +445,12 @@ straight into a script:
 nib verify contract.pdf && echo "signature intact"
 for f in *.pdf; do nib timestamp "$f"; done
 nib sanitize -w *.pdf          # scrub a whole folder in place
+nib optimize in.pdf -o - | nib sanitize - -o out.pdf   # compose in a pipeline
 ```
+
+For `optimize`, `merge`, `sanitize`, and `sign`, a filename of `-` reads a PDF
+from stdin, and `-o -` writes the result to stdout (refused when stdout is a
+terminal), so the commands chain together.
 
 `optimize` and `sanitize` take `-w`/`--in-place` to rewrite each file given
 instead of writing a single `-o` output — the batch form for a folder. Each

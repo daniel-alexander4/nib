@@ -169,6 +169,48 @@ func TestInPlaceLeavesOriginalOnError(t *testing.T) {
 	}
 }
 
+func TestPipelineStdinStdout(t *testing.T) {
+	dir := t.TempDir()
+	in := writePDF(t, dir, "in.pdf")
+
+	// "-" input: feed the PDF on stdin, write to a file.
+	stdin, err := os.Open(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	old := os.Stdin
+	os.Stdin = stdin
+	out := filepath.Join(dir, "out.pdf")
+	code := cmdOptimize([]string{"-", "-o", out})
+	os.Stdin = old
+	stdin.Close()
+	if code != 0 {
+		t.Fatalf("optimize - -o out exit = %d, want 0", code)
+	}
+	if err := pdfops.Validate(readPDF(t, out)); err != nil {
+		t.Fatalf("stdin->file output invalid: %v", err)
+	}
+
+	// "-" output: read a file, write the PDF to stdout (redirected to a file, so
+	// the terminal guard sees a regular file and allows it).
+	captured := filepath.Join(dir, "captured.pdf")
+	cf, err := os.Create(captured)
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldOut := os.Stdout
+	os.Stdout = cf
+	code = cmdSanitize([]string{in, "-o", "-"})
+	os.Stdout = oldOut
+	cf.Close()
+	if code != 0 {
+		t.Fatalf("sanitize -o - exit = %d, want 0", code)
+	}
+	if err := pdfops.Validate(readPDF(t, captured)); err != nil {
+		t.Fatalf("file->stdout output invalid: %v", err)
+	}
+}
+
 func mode(t *testing.T, path string) os.FileMode {
 	t.Helper()
 	info, err := os.Stat(path)

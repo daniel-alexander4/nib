@@ -74,8 +74,10 @@ These subcommands run headlessly, without a browser:
   nib sign IN -o OUT --cert C.p12 certify a PDF with an imported .p12 identity
   nib version                     print the version
 
-Commands that produce a PDF require -o/--out FILE. Exit status is non-zero on
-failure (verify: 2 when a signature is invalid or absent).
+Commands that produce a PDF require -o/--out FILE. For optimize, merge,
+sanitize, and sign, "-" reads a PDF from stdin or (as -o -) writes it to stdout,
+so they compose in a pipeline. Exit status is non-zero on failure (verify: 2
+when a signature is invalid or absent).
 
 sign reads the .p12 passphrase from --password-file FILE or the NIB_P12_PASSWORD
 environment variable — never from the command line. Run "nib <command> -h" for
