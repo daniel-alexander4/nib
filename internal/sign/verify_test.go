@@ -1,12 +1,16 @@
 package sign
 
 import (
+	"bytes"
 	"testing"
 	"time"
 
 	"github.com/digitorus/pdfsign/verify"
 	"github.com/digitorus/timestamp"
+	"github.com/pdfcpu/pdfcpu/pkg/api"
+	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
 
+	"nib/internal/pdfops"
 	"nib/internal/testpdf"
 )
 
@@ -61,6 +65,45 @@ func TestVerifySelfAssertedSigner(t *testing.T) {
 	}
 	if s.Name != "Jane Doe" {
 		t.Errorf("name = %q, want %q", s.Name, "Jane Doe")
+	}
+}
+
+// TestVerifyAfterDecryptStaysSigned pins the fact the on-open decrypt warning
+// relies on: encrypting a signed PDF then unlocking it rewrites the file (so the
+// signature breaks), but the signature must remain DETECTABLE as Invalid — not
+// vanish to Unsigned — so the UI can warn that unlocking dropped it. If a pdfcpu
+// upgrade ever made decrypt strip the signature dict, this catches it.
+func TestVerifyAfterDecryptStaysSigned(t *testing.T) {
+	base, err := testpdf.Form()
+	if err != nil {
+		t.Fatal(err)
+	}
+	certPEM, keyPEM, err := GenerateIdentity("Jane Doe")
+	if err != nil {
+		t.Fatal(err)
+	}
+	signed, err := Sign(base, certPEM, keyPEM, Options{Name: "Jane Doe", Reason: "Test", When: time.Now()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st := Verify(signed); st.State != Valid {
+		t.Fatalf("precondition: freshly signed doc state = %q, want %q", st.State, Valid)
+	}
+
+	conf := model.NewDefaultConfiguration()
+	conf.UserPW = "secret"
+	conf.OwnerPW = "secret"
+	var enc bytes.Buffer
+	if err := api.Encrypt(bytes.NewReader(signed), &enc, conf); err != nil {
+		t.Fatal(err)
+	}
+
+	dec, err := pdfops.RemovePassword(enc.Bytes(), "secret")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st := Verify(dec); st.State != Invalid {
+		t.Errorf("after unlock, signature state = %q, want %q (the broken signature must stay detectable so the UI can warn)", st.State, Invalid)
 	}
 }
 
