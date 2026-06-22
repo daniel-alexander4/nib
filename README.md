@@ -250,9 +250,13 @@ nothing open, and the result is a new, unsigned document (Save As to keep it).
 Changed your mind? **↶ Undo** / **↷ Redo** (Ctrl+Z / Ctrl+Shift+Z, on the **Edit**
 tab) step back and forth through document operations — rotate, delete, reorder,
 crop, split, page numbers, outline and metadata edits — for the open document.
-History clears when you open another file or run a content-destroying step
-(redaction or flatten can't be undone). Annotation edits (text boxes, highlights,
-ink) keep pdf.js's own Ctrl+Z while you're drawing them.
+The same Ctrl+Z also undoes overlays you place — a stamp, border, shape, note,
+cover-edit, or sign/date/initial flag — and dragging or resizing one, so one
+keystroke walks back your most recent change whichever kind it was. History
+clears when you open another file or run a content-destroying step (redaction or
+flatten can't be undone). While you're drawing pdf.js annotations (text boxes,
+highlights, ink) those keep pdf.js's own Ctrl+Z; typing in a field uses your
+browser's normal undo.
 
 Rotate, delete, **append**, and reorder pages — **drag a page's thumbnail** in the
 sidebar to move it where you want. Rotate every page at once with **Rotate all ↺ / ↻**
