@@ -32,6 +32,9 @@ pdfjsLib.GlobalWorkerOptions.workerSrc = './vendor/pdfjs/pdf.worker.min.mjs';
 const $ = (id) => document.getElementById(id);
 const els = {
   menubar: $('menubar'), toolbar: $('toolbar'), openMenuItem: $('openMenuItem'),
+  combineBtn: $('combineBtn'), combineModal: $('combineModal'), combineList: $('combineList'),
+  combineAddBtn: $('combineAddBtn'), combineInput: $('combineInput'),
+  combineCancel: $('combineCancel'), combineGo: $('combineGo'),
   pathInput: $('pathInput'), openGo: $('openGo'),
   textToolBtn: $('textToolBtn'), detectBtn: $('detectBtn'),
   hlColors: $('hlColors'), hlSwatches: $('hlSwatches'), hlCustom: $('hlCustom'),
@@ -1116,6 +1119,70 @@ async function openURL(url) {
   originalName = (url.split('/').pop() || '').split('?')[0] || 'document.pdf';
   await setDocumentFromServer(await res.json());
 }
+
+// --- combine several PDFs into one new document ------------------------------
+// Pick files, order them with ↑/↓, and merge top-to-bottom into a fresh document
+// (page-level reorder is then the existing thumbnail drag). Posts every file under
+// the repeated "file" field in list order; the server preserves that order.
+let combineFiles = [];
+function renderCombineList() {
+  els.combineList.innerHTML = '';
+  if (!combineFiles.length) {
+    const p = document.createElement('p');
+    p.className = 'scan-empty';
+    p.textContent = 'Add two or more PDFs to combine.';
+    els.combineList.appendChild(p);
+  }
+  combineFiles.forEach((f, i) => {
+    const row = document.createElement('div');
+    row.className = 'combinerow';
+    const meta = document.createElement('div');
+    meta.className = 'keymeta';
+    const name = document.createElement('div');
+    name.className = 'keyfp';
+    name.textContent = `${i + 1}. ${f.name}`;
+    name.title = f.name;
+    meta.appendChild(name);
+    const ctrls = document.createElement('div');
+    ctrls.className = 'combinectrls';
+    const up = document.createElement('button');
+    up.textContent = '↑'; up.title = 'Move up'; up.disabled = i === 0;
+    up.onclick = () => { [combineFiles[i - 1], combineFiles[i]] = [combineFiles[i], combineFiles[i - 1]]; renderCombineList(); };
+    const down = document.createElement('button');
+    down.textContent = '↓'; down.title = 'Move down'; down.disabled = i === combineFiles.length - 1;
+    down.onclick = () => { [combineFiles[i + 1], combineFiles[i]] = [combineFiles[i], combineFiles[i + 1]]; renderCombineList(); };
+    const del = document.createElement('button');
+    del.className = 'keydel'; del.textContent = 'Remove';
+    del.onclick = () => { combineFiles.splice(i, 1); renderCombineList(); };
+    ctrls.append(up, down, del);
+    row.append(meta, ctrls);
+    els.combineList.appendChild(row);
+  });
+  els.combineGo.disabled = combineFiles.length < 2;
+}
+els.combineBtn.onclick = () => {
+  combineFiles = [];
+  renderCombineList();
+  els.combineModal.hidden = false;
+};
+els.combineCancel.onclick = () => { els.combineModal.hidden = true; combineFiles = []; };
+els.combineAddBtn.onclick = () => els.combineInput.click();
+els.combineInput.onchange = () => {
+  for (const f of els.combineInput.files) combineFiles.push(f);
+  els.combineInput.value = '';
+  renderCombineList();
+};
+els.combineGo.onclick = async () => {
+  if (combineFiles.length < 2) return;
+  const form = new FormData();
+  for (const f of combineFiles) form.append('file', f, f.name);
+  const res = await apiFetch('/api/combine', { method: 'POST', body: form });
+  if (!res.ok) return toast('could not combine the PDFs');
+  await setDocumentFromServer(await res.json());
+  els.combineModal.hidden = true;
+  combineFiles = [];
+  toast('Combined — reorder pages by dragging thumbnails, then Save As to keep it');
+};
 
 // openSmart routes the Open box to a URL fetch or a local path open.
 function openSmart(value) {

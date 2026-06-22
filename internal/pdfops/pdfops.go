@@ -177,6 +177,28 @@ func Append(pdf, other []byte) ([]byte, error) {
 	return out.Bytes(), nil
 }
 
+// Combine merges the given PDFs into one, in the order given — each source keeps
+// its own pages and page sizes, so the result is their concatenation (which the
+// caller can then reorder page by page). A single input is returned unchanged
+// (api.MergeRaw needs at least two readers); zero inputs is an error.
+func Combine(pdfs [][]byte) ([]byte, error) {
+	if len(pdfs) == 0 {
+		return nil, fmt.Errorf("no documents to combine")
+	}
+	if len(pdfs) == 1 {
+		return pdfs[0], nil
+	}
+	readers := make([]io.ReadSeeker, len(pdfs))
+	for i, b := range pdfs {
+		readers[i] = bytes.NewReader(b)
+	}
+	var out bytes.Buffer
+	if err := api.MergeRaw(readers, &out, false, model.NewDefaultConfiguration()); err != nil {
+		return nil, err
+	}
+	return out.Bytes(), nil
+}
+
 // RedactPages rebuilds a PDF so that each page given in raster (1-based page
 // number -> a RasterPage: a PNG of that page with the redaction boxes already
 // painted in, plus the page's true point size) is replaced by that flat image,
