@@ -6,8 +6,10 @@ require (
 	filippo.io/age v1.3.1
 	github.com/digitorus/pdf v0.1.2
 	github.com/digitorus/pdfsign v0.0.0-20260407063256-85ede6424a74
+	github.com/digitorus/timestamp v0.0.0-20231217203849-220c5c2851b7
 	github.com/pdfcpu/pdfcpu v0.12.1
 	golang.org/x/crypto v0.52.0
+	software.sslmate.com/src/go-pkcs12 v0.7.2
 )
 
 require (
@@ -15,7 +17,6 @@ require (
 	filippo.io/hpke v0.4.0 // indirect
 	github.com/clipperhouse/uax29/v2 v2.7.0 // indirect
 	github.com/digitorus/pkcs7 v0.0.0-20230818184609-3a137a874352 // indirect
-	github.com/digitorus/timestamp v0.0.0-20231217203849-220c5c2851b7 // indirect
 	github.com/hhrutter/lzw v1.0.0 // indirect
 	github.com/hhrutter/pkcs7 v0.2.2 // indirect
 	github.com/hhrutter/tiff v1.0.3 // indirect

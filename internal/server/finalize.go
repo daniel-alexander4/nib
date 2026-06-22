@@ -2,6 +2,7 @@ package server
 
 import (
 	"encoding/json"
+	"errors"
 	"io"
 	"mime/multipart"
 	"net/http"
@@ -15,9 +16,11 @@ import (
 
 // finalizeParams are the JSON options posted alongside the PDF.
 type finalizeParams struct {
-	Reason    string         `json:"reason"`
-	Watermark watermarkParam `json:"watermark"`
-	TSAURL    string         `json:"tsaUrl"`
+	Reason     string         `json:"reason"`
+	Watermark  watermarkParam `json:"watermark"`
+	TSAURL     string         `json:"tsaUrl"`
+	SignAs     string         `json:"signAs"`     // "" / "native" (default) | "external"
+	Passphrase string         `json:"passphrase"` // PKCS#12 passphrase when signAs == "external"
 }
 
 // watermarkParam is the label text plus its style. Empty text means no watermark.
@@ -57,15 +60,10 @@ func (s *Server) handleFinalize(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	cert, key, err := identity(v)
-	if err != nil {
-		httpError(w, http.StatusInternalServerError, "could not load signing identity")
-		return
-	}
-
 	// Bake the watermark onto every page as content, then certify invisibly: the
 	// signature covers the mark, and an invisible certification is the only
 	// visible-mark-plus-certification combination the signing library allows.
+	var err error
 	if p.Watermark.Text != "" {
 		pdfBytes, err = pdfops.StampWatermark(pdfBytes, p.Watermark.Text, p.Watermark.WatermarkStyle)
 		if err != nil {
@@ -74,13 +72,30 @@ func (s *Server) handleFinalize(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	opts := sign.Options{
-		Name:   "Nib User",
-		Reason: p.Reason,
-		When:   time.Now(),
-		TSAURL: p.TSAURL,
+	// Sign with the native vault identity (default) or, when chosen, an imported
+	// PKCS#12 certificate decoded fresh from its passphrase for this one signature.
+	opts := sign.Options{Reason: p.Reason, When: time.Now(), TSAURL: p.TSAURL}
+	var signed []byte
+	if p.SignAs == "external" {
+		es, ok := v.ExternalSigner()
+		if !ok {
+			httpError(w, http.StatusBadRequest, "no imported signing certificate")
+			return
+		}
+		signed, err = sign.SignExternal(pdfBytes, es.P12, p.Passphrase, opts)
+		if errors.Is(err, sign.ErrWrongPassphrase) {
+			httpError(w, http.StatusUnauthorized, "wrong passphrase")
+			return
+		}
+	} else {
+		opts.Name = "Nib User"
+		cert, key, ierr := identity(v)
+		if ierr != nil {
+			httpError(w, http.StatusInternalServerError, "could not load signing identity")
+			return
+		}
+		signed, err = sign.Sign(pdfBytes, cert, key, opts)
 	}
-	signed, err := sign.Sign(pdfBytes, cert, key, opts)
 	if err != nil {
 		httpError(w, http.StatusInternalServerError, "could not sign: "+err.Error())
 		return
