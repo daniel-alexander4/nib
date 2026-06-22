@@ -257,6 +257,11 @@ page. The new pages all come out the **same size** (the largest region's, smalle
 ones centred and padded), so the output is uniform. It's a re-crop, not a
 re-render, so every piece keeps its original quality.
 
+**Edit the outline** — the **Outline** panel (sidebar, File tab) lists a PDF's
+bookmarks; **Edit outline…** opens an editor to author them: add a bookmark for any
+page, rename, delete, and indent to nest (chapters → sections). Bookmarks stay in
+page order and jump to the top of their page; saving replaces the document's outline.
+
 **Split by bookmarks** (File → Export) turns one bookmarked PDF into a folder of
 separate files — one per top-level bookmark, named from the bookmark with an
 optional prefix. Point it at a scored orchestration and get one PDF per
