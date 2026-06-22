@@ -57,6 +57,8 @@ const els = {
   scanFlattenBtn: $('scanFlattenBtn'), scanClose: $('scanClose'),
   attachBtn: $('attachBtn'), attachmentsModal: $('attachmentsModal'), attachBody: $('attachBody'),
   attachAddBtn: $('attachAddBtn'), attachInput: $('attachInput'), attachClose: $('attachClose'),
+  decryptBtn: $('decryptBtn'), decryptModal: $('decryptModal'), decryptPw: $('decryptPw'),
+  decryptGo: $('decryptGo'), decryptCancel: $('decryptCancel'), decryptError: $('decryptError'),
   backupBtn: $('backupBtn'), restoreInput: $('restoreInput'), checkUpdatesBtn: $('checkUpdatesBtn'),
   updatePill: $('updatePill'), updateGet: $('updateGet'), updateDismiss: $('updateDismiss'),
   manageKeysBtn: $('manageKeysBtn'), keysModal: $('keysModal'), keysList: $('keysList'),
@@ -1061,6 +1063,9 @@ async function setDocumentFromServer(meta) {
   try {
     doc = await pdfjsLib.getDocument({ url: '/api/pdf?t=' + Date.now() }).promise;
   } catch (e) {
+    // An encrypted PDF needs its open password before pdf.js can render it; prompt
+    // for it and unlock the working copy rather than dead-end on a generic error.
+    if (e && e.name === 'PasswordException') { openDecryptPrompt(); return; }
     toast('could not render the document');
     console.error('pdf load failed', e);
     return;
@@ -1412,6 +1417,58 @@ async function runSanitize(method, stepDown) {
 els.scanStripBtn.onclick = () => runSanitize('strip', 'Remove files & media, or Flatten');
 els.scanMetaBtn.onclick = () => runSanitize('metadata', 'Flatten');
 els.scanSafeBtn.onclick = () => runSanitize('safe', 'Flatten');
+
+// --- remove password protection ----------------------------------------------
+// Two entry points, one /api/decrypt: the Secure-tab button (an open document —
+// owner-only restrictions, or a no-op on a plain doc; empty password) and the
+// on-open prompt below (a PDF that won't render without its open password). The
+// server replaces the working copy with the decrypted bytes; only the supplied
+// password is tried — Nib never guesses one.
+async function postDecrypt(password) {
+  const res = await apiFetch('/api/decrypt', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: 'password=' + encodeURIComponent(password),
+  });
+  if (!res.ok) { toast('could not remove protection'); return null; }
+  return res.json();
+}
+
+els.decryptBtn.onclick = async () => {
+  if (!pdfDocument) return toast('Open a PDF first');
+  if (!confirmSignatureLoss()) return;
+  const out = await postDecrypt(''); // an open doc decrypts with the empty user password
+  if (!out) return;
+  if (out.reason === 'plain') return toast('This document isn’t password-protected');
+  if (out.reason === 'password') return openDecryptPrompt(); // shouldn't occur for an open doc
+  await setDocumentFromServer(out);
+  toast('Password protection removed');
+};
+
+// openDecryptPrompt collects the open password when a PDF can't render without it.
+function openDecryptPrompt() {
+  els.decryptError.hidden = true;
+  els.decryptPw.value = '';
+  els.decryptModal.hidden = false;
+  els.decryptPw.focus();
+}
+els.decryptCancel.onclick = () => { els.decryptModal.hidden = true; };
+els.decryptGo.onclick = async () => {
+  const out = await postDecrypt(els.decryptPw.value);
+  if (!out) return;
+  if (out.reason === 'password') {
+    els.decryptError.textContent = 'Incorrect password — try again.';
+    els.decryptError.hidden = false;
+    els.decryptPw.select();
+    return;
+  }
+  els.decryptModal.hidden = true;
+  await setDocumentFromServer(out.reason === 'plain' ? docMeta : out);
+  toast('Document unlocked');
+};
+els.decryptPw.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') { e.preventDefault(); els.decryptGo.onclick(); }
+});
 
 // Flatten is the guaranteed-inert floor: rasterise every page and load the
 // flattened result back as the open document.
@@ -3971,7 +4028,7 @@ const DOC_REQUIRED = [
   'detectBtn', 'editTextBtn', 'removeOriginalsBtn', 'autofillBtn', 'splitBtn',
   'splitBoxBtn', 'applyBoxSplitBtn', 'rotateLeftBtn', 'rotateRightBtn',
   'extractBtn', 'insertBlankBtn', 'duplicatePageBtn', 'insertPdfBtn', 'pageNumBtn', 'nupBtn', 'cropBtn',
-  'redactBtn', 'applyRedactBtn', 'scanBtn', 'attachBtn',
+  'redactBtn', 'applyRedactBtn', 'scanBtn', 'attachBtn', 'decryptBtn',
   'finalizeBtn', 'timestampBtn', 'cosignBtn', 'sessionInitBtn', 'sessionSendBtn',
 ];
 function setDocControls(enabled) {

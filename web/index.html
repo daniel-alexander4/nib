@@ -169,6 +169,7 @@
       <span class="tbsep"></span>
       <button id="scanBtn" title="Find and remove hidden code &amp; content">Scan for hidden content…</button>
       <button id="attachBtn" title="View, extract, or add embedded file attachments">Attachments…</button>
+      <button id="decryptBtn" title="Remove an open password or owner restrictions from a PDF you can open">Remove password protection…</button>
       <span class="tbsep"></span>
       <button id="timestampBtn">Timestamp (OpenTimestamps)…</button>
       <button id="timestampVerifyBtn">Verify a timestamp…</button>
@@ -441,6 +442,24 @@
         hidden, at the cost of selectable text. Any removal replaces the open document with a new,
         unsigned copy — save it to keep the result.</p>
       <div class="sigbtns"><span class="grow"></span><button id="scanClose" class="primary">Close</button></div>
+    </div>
+  </div>
+
+  <!-- Remove password protection: unlock a PDF the user can open / is authorized to
+       edit. The modal collects the open password when a PDF won't render without one;
+       owner-only restrictions are stripped without a prompt via the Secure button. -->
+  <div id="decryptModal" hidden>
+    <div class="sigcard">
+      <h3>Password-protected PDF</h3>
+      <p>This PDF needs a password to open. Enter it to unlock the document — the working
+        copy becomes unprotected so you can view and edit it (saving keeps it unprotected).</p>
+      <label>Password
+        <input id="decryptPw" type="password" autocomplete="off" />
+      </label>
+      <div id="decryptError" class="error" hidden></div>
+      <p class="libhint">Nib only tries the password you type — it never guesses or recovers one.
+        Unlocking rewrites the file, so an existing digital signature won't survive.</p>
+      <div class="sigbtns"><button id="decryptCancel">Cancel</button><span class="grow"></span><button id="decryptGo" class="primary">Unlock</button></div>
     </div>
   </div>
 

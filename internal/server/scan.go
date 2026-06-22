@@ -1,6 +1,7 @@
 package server
 
 import (
+	"errors"
 	"net/http"
 
 	"nib/internal/pdfops"
@@ -81,4 +82,49 @@ func (s *Server) handleSanitize(w http.ResponseWriter, r *http.Request) {
 	}
 	s.mu.Unlock()
 	writeJSON(w, sanitizeResponse{docResponse: s.docResponse(), Ok: true, Residual: residual})
+}
+
+// decryptResponse reports a remove-password attempt: the usual document metadata,
+// whether it succeeded, and — when it didn't — why ("password" = wrong or missing
+// password, so the UI reprompts; "plain" = the document wasn't protected).
+type decryptResponse struct {
+	docResponse
+	Ok     bool   `json:"ok"`
+	Reason string `json:"reason,omitempty"`
+}
+
+// handleDecrypt removes password protection — an open password and/or owner
+// restriction flags — from the current document, replacing the working copy with
+// the decrypted bytes. The password arrives in the request body; an empty one
+// still drops owner-only restrictions. Only the supplied password is tried (no
+// cracking), so a wrong/missing one returns reason "password" and an already
+// unprotected document returns reason "plain", both leaving the document as-is.
+func (s *Server) handleDecrypt(w http.ResponseWriter, r *http.Request) {
+	s.mu.Lock()
+	doc := s.doc
+	s.mu.Unlock()
+	if doc == nil {
+		httpError(w, http.StatusNotFound, "no document open")
+		return
+	}
+	result, err := pdfops.RemovePassword(doc.data, r.FormValue("password"))
+	if err != nil {
+		switch {
+		case errors.Is(err, pdfops.ErrWrongPassword):
+			writeJSON(w, decryptResponse{docResponse: s.docResponse(), Reason: "password"})
+		case errors.Is(err, pdfops.ErrNotEncrypted):
+			writeJSON(w, decryptResponse{docResponse: s.docResponse(), Reason: "plain"})
+		default:
+			httpError(w, http.StatusInternalServerError, "could not remove protection")
+		}
+		return
+	}
+	sig := sign.Verify(result)
+	s.mu.Lock()
+	if s.doc != nil {
+		s.doc.data = result
+		s.doc.sig = sig
+	}
+	s.mu.Unlock()
+	writeJSON(w, decryptResponse{docResponse: s.docResponse(), Ok: true})
 }
