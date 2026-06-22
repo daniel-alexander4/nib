@@ -10,6 +10,7 @@ import (
 	"math/big"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -220,6 +221,94 @@ func TestPagenum(t *testing.T) {
 	}
 	if err := pdfops.Validate(readPDF(t, out)); err != nil {
 		t.Fatalf("page-numbered output invalid: %v", err)
+	}
+}
+
+// captureStdout runs fn with os.Stdout redirected to a temp file and returns what
+// it printed plus the exit code — for asserting the report/list commands' output.
+func captureStdout(t *testing.T, fn func() int) (string, int) {
+	t.Helper()
+	f, err := os.CreateTemp(t.TempDir(), "out-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	old := os.Stdout
+	os.Stdout = f
+	code := fn()
+	os.Stdout = old
+	f.Close()
+	b, err := os.ReadFile(f.Name())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(b), code
+}
+
+func TestAttachments(t *testing.T) {
+	dir := t.TempDir()
+	base := readPDF(t, writePDF(t, dir, "base.pdf", "a", "b"))
+	withAtt, err := pdfops.AddAttachment(base, "notes.txt", []byte("hello attached"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	in := filepath.Join(dir, "withatt.pdf")
+	mustWrite(t, in, withAtt)
+
+	if out, code := captureStdout(t, func() int { return cmdAttachments([]string{in}) }); code != 0 || !strings.Contains(out, "notes.txt") {
+		t.Fatalf("attachments list: code=%d out=%q, want 0 + notes.txt", code, out)
+	}
+	if out, code := captureStdout(t, func() int { return cmdAttachments([]string{in, "--json"}) }); code != 0 || !strings.Contains(out, `"name":"notes.txt"`) {
+		t.Fatalf("attachments --json: code=%d out=%q", code, out)
+	}
+
+	// extract round-trips the exact bytes.
+	ex := filepath.Join(dir, "out.txt")
+	if code := cmdAttachments([]string{in, "--extract", "notes.txt", "-o", ex}); code != 0 {
+		t.Fatalf("attachments --extract exit = %d, want 0", code)
+	}
+	if got := readPDF(t, ex); string(got) != "hello attached" {
+		t.Errorf("extracted bytes = %q, want %q", got, "hello attached")
+	}
+	if code := cmdAttachments([]string{in, "--extract", "nope.txt", "-o", ex}); code != 1 {
+		t.Errorf("extract of a missing name exit = %d, want 1", code)
+	}
+
+	// add a second file, then the listing shows both.
+	af := filepath.Join(dir, "extra.txt")
+	mustWrite(t, af, []byte("more"))
+	added := filepath.Join(dir, "added.pdf")
+	if code := cmdAttachments([]string{in, "--add", af, "-o", added}); code != 0 {
+		t.Fatalf("attachments --add exit = %d, want 0", code)
+	}
+	if aa, _ := pdfops.Attachments(readPDF(t, added)); len(aa) != 2 {
+		t.Errorf("after add: %d attachments, want 2", len(aa))
+	}
+}
+
+func TestOutline(t *testing.T) {
+	dir := t.TempDir()
+	base := readPDF(t, writePDF(t, dir, "base.pdf", "a", "b", "c"))
+	withBm, err := pdfops.SetOutline(base, []pdfops.OutlineItem{
+		{Title: "Intro", Page: 1, Level: 0},
+		{Title: "Body", Page: 2, Level: 0},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	in := filepath.Join(dir, "bm.pdf")
+	mustWrite(t, in, withBm)
+
+	if out, code := captureStdout(t, func() int { return cmdOutline([]string{in}) }); code != 0 || !strings.Contains(out, "Intro") || !strings.Contains(out, "Body") {
+		t.Fatalf("outline list: code=%d out=%q", code, out)
+	}
+
+	// A bookmark-less PDF lists nothing and exits 0 (rescrut: api.Bookmarks → nil,nil).
+	plain := writePDF(t, dir, "plain.pdf", "x")
+	if out, code := captureStdout(t, func() int { return cmdOutline([]string{plain}) }); code != 0 {
+		t.Fatalf("outline on a bookmark-less PDF exit = %d, want 0 (out %q)", code, out)
+	}
+	if out, code := captureStdout(t, func() int { return cmdOutline([]string{plain, "--json"}) }); code != 0 || strings.TrimSpace(out) != "[]" {
+		t.Errorf("outline --json on a bookmark-less PDF = %q (code %d), want []", out, code)
 	}
 }
 
