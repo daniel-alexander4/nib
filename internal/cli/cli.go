@@ -57,6 +57,7 @@ var commands = map[string]func([]string) int{
 	"merge":     cmdMerge,
 	"sanitize":  cmdSanitize,
 	"sign":      cmdSign,
+	"watch":     cmdWatch,
 }
 
 func printUsage(w *os.File) {
@@ -72,6 +73,7 @@ These subcommands run headlessly, without a browser:
   nib merge IN... -o OUT          concatenate PDFs into one
   nib sanitize IN -o OUT          strip metadata and active content (JS, actions)
   nib sign IN -o OUT --cert C.p12 certify a PDF with an imported .p12 identity
+  nib watch DIR --do OP           run timestamp/optimize/sanitize on each new PDF
   nib version                     print the version
 
 Commands that produce a PDF require -o/--out FILE. For optimize, merge,

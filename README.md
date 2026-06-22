@@ -433,6 +433,7 @@ isn't a known command (a PDF path, or nothing) still opens the app as usual.
 | `nib merge IN… -o OUT` | Concatenate PDFs, in order, into one. |
 | `nib sanitize IN -o OUT` | Strip identifying metadata and active content — JavaScript, auto-actions, embedded files (or `-w FILE…`). |
 | `nib sign IN -o OUT --cert ID.p12` | Certify a PDF with an imported `.p12` identity. |
+| `nib watch DIR --do OP` | Run `timestamp`/`optimize`/`sanitize` on each PDF added to `DIR`, until interrupted. |
 | `nib version` | Print the version. |
 
 Commands that produce a PDF write it to `-o`/`--out`; `timestamp` writes a
@@ -460,8 +461,14 @@ a failure never corrupts it) and preserves the file's permissions.
 `nib sign` reads the certificate passphrase from `--password-file FILE` or the
 `NIB_P12_PASSWORD` environment variable — never from the command line, where it
 would be visible to other processes. Add `--tsa URL` to fix the signing time
-with an RFC3161 timestamp authority. Run `nib <command> -h` for a command's own
-flags.
+with an RFC3161 timestamp authority.
+
+`nib watch DIR --do timestamp|optimize|sanitize` runs that operation on each PDF
+dropped into `DIR` and keeps running until you stop it (Ctrl-C) — the "process
+my inbox" / scheduled-job workflow. It polls (no background file-watching
+dependency), waits for each file to finish copying before acting, and handles
+each file once. `timestamp` writes a `.ots` sidecar; `optimize`/`sanitize`
+rewrite in place. Run `nib <command> -h` for a command's own flags.
 
 ---
 
