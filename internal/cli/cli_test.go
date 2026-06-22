@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bytes"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -11,6 +12,9 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/pdfcpu/pdfcpu/pkg/api"
+	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
 
 	"nib/internal/pdfops"
 	"nib/internal/sign"
@@ -129,6 +133,94 @@ func countPDFs(t *testing.T, dir string) int {
 		}
 	}
 	return n
+}
+
+// encryptPDF builds an AES-encrypted copy of pdf via pdfcpu (the fixture for the
+// decrypt tests), mirroring pdfops/decrypt_test.go.
+func encryptPDF(t *testing.T, pdf []byte, userPW, ownerPW string) []byte {
+	t.Helper()
+	var out bytes.Buffer
+	if err := api.Encrypt(bytes.NewReader(pdf), &out, model.NewAESConfiguration(userPW, ownerPW, 256)); err != nil {
+		t.Fatal(err)
+	}
+	return out.Bytes()
+}
+
+func mustWrite(t *testing.T, path string, data []byte) {
+	t.Helper()
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestDecrypt(t *testing.T) {
+	dir := t.TempDir()
+	plain := readPDF(t, writePDF(t, dir, "plain.pdf", "a", "b", "c"))
+
+	// Open-password protected → unlock with the right password from a file.
+	enc := filepath.Join(dir, "enc.pdf")
+	mustWrite(t, enc, encryptPDF(t, plain, "open123", "owner456"))
+	pwf := filepath.Join(dir, "pw.txt")
+	mustWrite(t, pwf, []byte("open123\n"))
+	out := filepath.Join(dir, "out.pdf")
+	if code := cmdDecrypt([]string{enc, "-o", out, "--password-file", pwf}); code != 0 {
+		t.Fatalf("decrypt with correct password exit = %d, want 0", code)
+	}
+	if err := pdfops.Validate(readPDF(t, out)); err != nil {
+		t.Fatalf("decrypted output invalid: %v", err)
+	}
+
+	// Wrong password → exit 1.
+	bad := filepath.Join(dir, "bad.txt")
+	mustWrite(t, bad, []byte("nope"))
+	if code := cmdDecrypt([]string{enc, "-o", out, "--password-file", bad}); code != 1 {
+		t.Errorf("decrypt with wrong password exit = %d, want 1", code)
+	}
+
+	// Already-plain PDF → pass through unchanged, exit 0 (batch-idempotent).
+	pin := writePDF(t, dir, "p2.pdf", "x")
+	pout := filepath.Join(dir, "p2out.pdf")
+	if code := cmdDecrypt([]string{pin, "-o", pout}); code != 0 {
+		t.Fatalf("decrypt of a plain PDF exit = %d, want 0 (idempotent pass-through)", code)
+	}
+	if err := pdfops.Validate(readPDF(t, pout)); err != nil {
+		t.Fatalf("passed-through output invalid: %v", err)
+	}
+
+	// Owner-only restrictions drop with an empty password (no --password-file).
+	owner := filepath.Join(dir, "owner.pdf")
+	mustWrite(t, owner, encryptPDF(t, plain, "", "owner456"))
+	oout := filepath.Join(dir, "oout.pdf")
+	if code := cmdDecrypt([]string{owner, "-o", oout}); code != 0 {
+		t.Fatalf("decrypt owner-only (empty password) exit = %d, want 0", code)
+	}
+}
+
+func TestNup(t *testing.T) {
+	dir := t.TempDir()
+	in := writePDF(t, dir, "in.pdf", "a", "b", "c", "d")
+	out := filepath.Join(dir, "out.pdf")
+	if code := cmdNup([]string{in, "-o", out, "--n", "2"}); code != 0 {
+		t.Fatalf("nup exit = %d, want 0", code)
+	}
+	if n, _ := pdfops.PageCount(readPDF(t, out)); n != 2 { // 4 pages 2-up → 2 sheets
+		t.Errorf("4-page 2-up → %d sheets, want 2", n)
+	}
+	if code := cmdNup([]string{in, "-o", out}); code != 1 { // missing --n
+		t.Errorf("nup without --n exit = %d, want 1", code)
+	}
+}
+
+func TestPagenum(t *testing.T) {
+	dir := t.TempDir()
+	in := writePDF(t, dir, "in.pdf", "a", "b")
+	out := filepath.Join(dir, "out.pdf")
+	if code := cmdPagenum([]string{in, "-o", out, "--prefix", "ABC", "--pad", "4"}); code != 0 {
+		t.Fatalf("pagenum exit = %d, want 0", code)
+	}
+	if err := pdfops.Validate(readPDF(t, out)); err != nil {
+		t.Fatalf("page-numbered output invalid: %v", err)
+	}
 }
 
 func TestRunDispatch(t *testing.T) {
