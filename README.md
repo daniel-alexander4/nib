@@ -251,6 +251,13 @@ original, or as a flattened or editable copy. **Print** the current document —
 fills, signatures, and all — straight from the **File** tab through your
 browser's print dialog.
 
+**Pull the contents out** (File → Export): **Document text (.txt)** dumps the
+document's text layer to a plain-text file, and **Embedded images (ZIP)** bundles
+the pictures inside the PDF into a zip — JPEGs come out as-is, other images are
+re-encoded as PNG/TIFF. Text extraction reads the existing text layer, so a
+scanned (image-only) page has nothing to give and contributes nothing (there's no
+OCR), and complex multi-column layouts may not preserve reading order.
+
 ### Find in the document
 Type in the **Find** box (or press **Ctrl/Cmd+F**) to highlight every match. Step
 through them with the **‹ ›** buttons or **Enter** / **Shift+Enter**, and the
