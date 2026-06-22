@@ -129,6 +129,42 @@ func TestExtractReturnsSubsetWithoutTouchingDocument(t *testing.T) {
 	}
 }
 
+func TestCropUpdatesDocument(t *testing.T) {
+	ts, path := startServer(t)
+	c, csrf := authedClient(t, ts)
+	openByPath(t, ts.URL, c, csrf, path)
+
+	var buf bytes.Buffer
+	mw := multipart.NewWriter(&buf)
+	fw, _ := mw.CreateFormFile("pdf", "doc.pdf")
+	fw.Write(threePagePDF(t)) // three 80×110pt pages
+	mw.WriteField("op", "crop")
+	mw.WriteField("rect", "[10,10,70,90]") // display-space points → a 60×80 window
+	mw.Close()
+
+	resp := write(t, c, csrf, http.MethodPost, ts.URL+"/api/pages", mw.FormDataContentType(), &buf)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("crop status = %d, want 200", resp.StatusCode)
+	}
+
+	pdfResp, _ := c.Get(ts.URL + "/api/pdf")
+	got, _ := io.ReadAll(pdfResp.Body)
+	pdfResp.Body.Close()
+	dims, err := api.PageDims(bytes.NewReader(got), model.NewDefaultConfiguration())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(dims) != 3 {
+		t.Fatalf("page count = %d, want 3 (crop must not add or drop pages)", len(dims))
+	}
+	for i, d := range dims { // every page trimmed to the 60×80 crop window
+		if math.Round(d.Width) != 60 || math.Round(d.Height) != 80 {
+			t.Errorf("page %d is %.0f×%.0f pt, want 60×80 (crop window)", i+1, d.Width, d.Height)
+		}
+	}
+}
+
 func TestPageReorderUpdatesDocument(t *testing.T) {
 	ts, path := startServer(t)
 	c, csrf := authedClient(t, ts)
