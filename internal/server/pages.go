@@ -54,6 +54,24 @@ func (s *Server) handlePages(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		result, err = pdfops.Append(pdfBytes, other)
+	case "insertpdf":
+		beforePage, pErr := strconv.Atoi(r.FormValue("page"))
+		if pErr != nil {
+			httpError(w, http.StatusBadRequest, "insert needs a whole-number page")
+			return
+		}
+		other, ok2 := formFileBytes(w, r, "append") // the secondary PDF reuses the append file field
+		if !ok2 {
+			return
+		}
+		result, err = pdfops.InsertPDF(pdfBytes, other, beforePage)
+	case "duplicate":
+		pageNum, pErr := strconv.Atoi(r.FormValue("page"))
+		if pErr != nil {
+			httpError(w, http.StatusBadRequest, "duplicate needs a whole-number page")
+			return
+		}
+		result, err = pdfops.DuplicatePage(pdfBytes, pageNum)
 	case "split":
 		cols, cErr := strconv.Atoi(r.FormValue("cols"))
 		rows, rErr := strconv.Atoi(r.FormValue("rows"))

@@ -165,6 +165,107 @@ func TestCropUpdatesDocument(t *testing.T) {
 	}
 }
 
+func TestDuplicateUpdatesDocument(t *testing.T) {
+	ts, path := startServer(t)
+	c, csrf := authedClient(t, ts)
+	openByPath(t, ts.URL, c, csrf, path)
+
+	// Distinct widths so the duplicated page is identifiable by dimension.
+	doc, err := pdfops.ImagesToPDF([]pdfops.RasterPage{
+		{Image: pageImage(t, 160, 220), W: 80, H: 110},
+		{Image: pageImage(t, 200, 240), W: 100, H: 120},
+		{Image: pageImage(t, 120, 180), W: 60, H: 90},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var buf bytes.Buffer
+	mw := multipart.NewWriter(&buf)
+	fw, _ := mw.CreateFormFile("pdf", "doc.pdf")
+	fw.Write(doc)
+	mw.WriteField("op", "duplicate")
+	mw.WriteField("page", "2") // duplicate the 100-wide page
+	mw.Close()
+
+	resp := write(t, c, csrf, http.MethodPost, ts.URL+"/api/pages", mw.FormDataContentType(), &buf)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("duplicate status = %d, want 200", resp.StatusCode)
+	}
+
+	pdfResp, _ := c.Get(ts.URL + "/api/pdf")
+	got, _ := io.ReadAll(pdfResp.Body)
+	pdfResp.Body.Close()
+	dims, err := api.PageDims(bytes.NewReader(got), model.NewDefaultConfiguration())
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []float64{80, 100, 100, 60} // page 2 (100) now appears twice, in place
+	if len(dims) != len(want) {
+		t.Fatalf("page count = %d, want %d", len(dims), len(want))
+	}
+	for i, w := range want {
+		if math.Round(dims[i].Width) != w {
+			t.Errorf("page %d width = %.1f, want %.0f (duplicate page 2 not applied)", i+1, dims[i].Width, w)
+		}
+	}
+}
+
+func TestInsertPDFUpdatesDocument(t *testing.T) {
+	ts, path := startServer(t)
+	c, csrf := authedClient(t, ts)
+	openByPath(t, ts.URL, c, csrf, path)
+
+	doc, err := pdfops.ImagesToPDF([]pdfops.RasterPage{
+		{Image: pageImage(t, 160, 220), W: 80, H: 110},
+		{Image: pageImage(t, 200, 240), W: 100, H: 120},
+		{Image: pageImage(t, 120, 180), W: 60, H: 90},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	insert, err := pdfops.ImagesToPDF([]pdfops.RasterPage{
+		{Image: pageImage(t, 80, 120), W: 40, H: 60},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var buf bytes.Buffer
+	mw := multipart.NewWriter(&buf)
+	fw, _ := mw.CreateFormFile("pdf", "doc.pdf")
+	fw.Write(doc)
+	af, _ := mw.CreateFormFile("append", "insert.pdf") // secondary PDF reuses the append field
+	af.Write(insert)
+	mw.WriteField("op", "insertpdf")
+	mw.WriteField("page", "2") // insert BEFORE page 2
+	mw.Close()
+
+	resp := write(t, c, csrf, http.MethodPost, ts.URL+"/api/pages", mw.FormDataContentType(), &buf)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("insertpdf status = %d, want 200", resp.StatusCode)
+	}
+
+	pdfResp, _ := c.Get(ts.URL + "/api/pdf")
+	got, _ := io.ReadAll(pdfResp.Body)
+	pdfResp.Body.Close()
+	dims, err := api.PageDims(bytes.NewReader(got), model.NewDefaultConfiguration())
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []float64{80, 40, 100, 60} // inserted 40-wide page lands before the 100-wide page 2
+	if len(dims) != len(want) {
+		t.Fatalf("page count = %d, want %d", len(dims), len(want))
+	}
+	for i, w := range want {
+		if math.Round(dims[i].Width) != w {
+			t.Errorf("page %d width = %.1f, want %.0f (insert before page 2 not applied)", i+1, dims[i].Width, w)
+		}
+	}
+}
+
 func TestPageReorderUpdatesDocument(t *testing.T) {
 	ts, path := startServer(t)
 	c, csrf := authedClient(t, ts)
