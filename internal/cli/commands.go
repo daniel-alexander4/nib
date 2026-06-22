@@ -7,6 +7,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 	"time"
@@ -72,7 +73,7 @@ func cmdMerge(args []string) int {
 	}
 	pdfs := make([][]byte, 0, fs.NArg())
 	for _, p := range fs.Args() {
-		b, err := os.ReadFile(p)
+		b, err := readInput(p)
 		if err != nil {
 			errf("%v", err)
 			return 1
@@ -113,7 +114,7 @@ func cmdSign(args []string) int {
 		errf("%v", err)
 		return 1
 	}
-	pdf, err := os.ReadFile(in)
+	pdf, err := readInput(in)
 	if err != nil {
 		errf("%v", err)
 		return 1
@@ -374,25 +375,55 @@ func transformInPlace(files []string, fn func([]byte) ([]byte, error)) int {
 	return worst
 }
 
-// transform reads in, applies fn, and writes the result to out.
+// transform reads in, applies fn, and writes the result to out. in and out may
+// be "-" for stdin / stdout, so commands compose in a pipeline.
 func transform(in, out string, fn func([]byte) ([]byte, error)) int {
-	data, err := os.ReadFile(in)
+	data, err := readInput(in)
 	if err != nil {
 		errf("%v", err)
 		return 1
 	}
 	res, err := fn(data)
 	if err != nil {
-		errf("%s: %v", in, err)
+		errf("%s: %v", inputName(in), err)
 		return 1
 	}
 	return writeOut(out, res)
 }
 
 func writeOut(out string, data []byte) int {
-	if err := os.WriteFile(out, data, 0o644); err != nil {
+	if err := writeOutput(out, data); err != nil {
 		errf("%v", err)
 		return 1
 	}
 	return 0
+}
+
+// readInput reads a PDF from path, or from stdin when path is "-".
+func readInput(path string) ([]byte, error) {
+	if path == "-" {
+		return io.ReadAll(os.Stdin)
+	}
+	return os.ReadFile(path)
+}
+
+// writeOutput writes data to out, or to stdout when out is "-". It refuses to
+// dump a PDF onto a terminal, where the raw bytes would be unreadable garbage.
+func writeOutput(out string, data []byte) error {
+	if out == "-" {
+		if info, err := os.Stdout.Stat(); err == nil && info.Mode()&os.ModeCharDevice != 0 {
+			return errors.New("refusing to write a PDF to the terminal; redirect with > or pass -o FILE")
+		}
+		_, err := os.Stdout.Write(data)
+		return err
+	}
+	return os.WriteFile(out, data, 0o644)
+}
+
+// inputName labels an input in messages: "-" reads as "<stdin>".
+func inputName(path string) string {
+	if path == "-" {
+		return "<stdin>"
+	}
+	return path
 }
