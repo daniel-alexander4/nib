@@ -139,7 +139,9 @@ func TestCropUpdatesDocument(t *testing.T) {
 	fw, _ := mw.CreateFormFile("pdf", "doc.pdf")
 	fw.Write(threePagePDF(t)) // three 80×110pt pages
 	mw.WriteField("op", "crop")
-	mw.WriteField("rect", "[10,10,70,90]") // display-space points → a 60×80 window
+	// Keep-box as page fractions [fx, fy, fw, fh], top-left origin: on an 80×110pt
+	// page this is a 60×80pt window (fw=60/80, fh=80/110).
+	mw.WriteField("rect", "[0.125,0.18181818181818182,0.75,0.7272727272727273]")
 	mw.Close()
 
 	resp := write(t, c, csrf, http.MethodPost, ts.URL+"/api/pages", mw.FormDataContentType(), &buf)
