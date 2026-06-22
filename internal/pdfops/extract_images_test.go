@@ -48,6 +48,30 @@ func TestExtractImagesZip(t *testing.T) {
 	}
 }
 
+// TestExtractImagesPerPage drives the resilient fallback path directly: the
+// per-page loop must extract every image and dedup across pages exactly like the
+// whole-doc pass (it's what runs when one bad image aborts the fast path).
+func TestExtractImagesPerPage(t *testing.T) {
+	pdf, err := ImagesToPDF([]RasterPage{rasterPage(t, 100, 140), rasterPage(t, 90, 120)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, count, err := extractImages(pdf, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if count != 2 {
+		t.Fatalf("per-page extraction got %d images, want 2", count)
+	}
+	zr, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(zr.File) != 2 {
+		t.Fatalf("zip has %d entries, want 2", len(zr.File))
+	}
+}
+
 // TestExtractImagesZipNone: a document with no embedded raster images yields no
 // archive and a zero count (not an empty zip), so the handler can say "none".
 func TestExtractImagesZipNone(t *testing.T) {
