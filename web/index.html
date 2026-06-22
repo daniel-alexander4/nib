@@ -669,6 +669,20 @@
     </div>
   </div>
 
+  <!-- Name the fields when saving a detected form as a fillable AcroForm PDF -->
+  <div id="fieldNameModal" hidden>
+    <div class="sigcard">
+      <h3>Name the form fields</h3>
+      <p class="libhint">Each detected text box and checkbox becomes a real fillable field. Name them so the collected data is meaningful — the defaults work too. Focus a row to highlight that field on the page.</p>
+      <div id="fieldNameList" class="fieldname-list"></div>
+      <div class="sigbtns">
+        <span class="grow"></span>
+        <button id="fieldNameCancel">Cancel</button>
+        <button id="fieldNameGo" class="primary">Save fillable PDF…</button>
+      </div>
+    </div>
+  </div>
+
   <!-- N-up: combine several pages onto each sheet (printing / handouts) -->
   <div id="nupModal" hidden>
     <div class="sigcard">
