@@ -445,6 +445,9 @@ isn't a known command (a PDF path, or nothing) still opens the app as usual.
 | `nib rotate IN -o OUT --deg N` | Rotate pages by 90/180/270° (`--pages 1-3,5` to limit; or `-w FILE…`). |
 | `nib pages IN -o OUT --keep SEL` | Keep/reorder pages (`--keep 1-3,5`) or delete them (`--remove 2,4`). |
 | `nib split IN --out-dir DIR …` | Burst into one file per chunk (`--every N`), range (`--ranges 1-3,4-8`), or `--bookmarks`. |
+| `nib decrypt IN -o OUT` | Remove password protection / owner restrictions (`--password-file FILE` or `$NIB_PDF_PASSWORD`; already-plain PDFs pass through). |
+| `nib nup IN -o OUT --n N` | Place N pages per sheet — 2/4/6/9/16… (`--border` for outlines). |
+| `nib pagenum IN -o OUT` | Stamp running page numbers or Bates numbering (`--prefix ABC --pad 6 --position br --total`). |
 | `nib watch DIR --do OP` | Run `timestamp`/`optimize`/`sanitize` on each PDF added to `DIR`, until interrupted. |
 | `nib version` | Print the version. |
 
@@ -461,7 +464,7 @@ nib sanitize -w *.pdf          # scrub a whole folder in place
 nib optimize in.pdf -o - | nib sanitize - -o out.pdf   # compose in a pipeline
 ```
 
-For `optimize`, `merge`, `sanitize`, `sign`, `rotate`, and `pages`, a filename of `-` reads a PDF
+For `optimize`, `merge`, `sanitize`, `sign`, `rotate`, `pages`, `decrypt`, `nup`, and `pagenum`, a filename of `-` reads a PDF
 from stdin, and `-o -` writes the result to stdout (refused when stdout is a
 terminal), so the commands chain together.
 
