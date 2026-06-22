@@ -42,7 +42,13 @@ func (s *Server) handleOCR(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	result, err := pdfops.StampTextLayer(doc.data, words)
-	if err != nil || pdfops.Validate(result) != nil {
+	if err != nil {
+		log.Printf("ocr: stamp failed (%d words): %v", len(words), err)
+		httpError(w, http.StatusUnprocessableEntity, "could not add the text layer")
+		return
+	}
+	if verr := pdfops.Validate(result); verr != nil {
+		log.Printf("ocr: stamped output failed validation (%d words): %v", len(words), verr)
 		httpError(w, http.StatusUnprocessableEntity, "could not add the text layer")
 		return
 	}
