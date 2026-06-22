@@ -258,7 +258,8 @@ Rotate, delete, **append**, and reorder pages — **drag a page's thumbnail** in
 sidebar to move it where you want. Rotate every page at once with **Rotate all ↺ / ↻**
 on the **Edit** tab, or hover a thumbnail to rotate (either direction) or delete a
 single page. **Shift- or Ctrl/Cmd-click thumbnails** to select several at once, then
-rotate or delete the whole selection from the bar above the thumbnails. **Extract pages…** saves a range (type `1-3, 5`) as a new PDF without
+rotate, delete, or **move the whole selection to the front or back** (⤒ / ⤓) from the
+bar above the thumbnails. **Extract pages…** saves a range (type `1-3, 5`) as a new PDF without
 touching the open document, and **Insert blank page** drops a fresh page — matching
 its neighbour's size — after the current one. **Duplicate page** drops a copy of the
 current page right after it, and **Insert PDF…** splices another PDF in before the
