@@ -29,13 +29,14 @@ func TestStampTextLayerSearchable(t *testing.T) {
 		{Page: 1, Rect: [4]float64{50, 80, 250, 92}, Text: "“smart”"},
 		{Page: 1, Rect: [4]float64{50, 60, 200, 72}, Text: "em—dash"},
 		{Page: 1, Rect: [4]float64{50, 40, 200, 52}, Text: "more…"},
+		{Page: 1, Rect: [4]float64{50, 20, 200, 32}, Text: "50%"}, // bare % must survive as a literal, not a pdfcpu placeholder
 	}
 	out, err := StampTextLayer(base, words)
 	if err != nil {
 		t.Fatalf("StampTextLayer: %v", err)
 	}
 	txt := pdfToText(t, out)
-	for _, want := range []string{"Hello", "café", "“smart”", "em—dash", "more…"} {
+	for _, want := range []string{"Hello", "café", "“smart”", "em—dash", "more…", "50%"} {
 		if !strings.Contains(txt, want) {
 			t.Errorf("extracted text missing %q (Unicode lost?)\n--- pdftotext gave ---\n%s", want, txt)
 		}
@@ -113,6 +114,10 @@ func TestStampTextLayerUnicode(t *testing.T) {
 		"Façade", "€2,775.97", "“smart”", "em—dash", "en–dash", "ellipsis…",
 		"§", "№", "½", "Δ", "†", "°C", "±0.5%", "mixed™€§Δ†",
 		"a\tb", "nul\x00byte", "back\\slash", "paren()", "\U0001F642", "", "   ",
+		// bare % is a pdfcpu placeholder introducer — a lone "%" or a trailing %
+		// used to collapse the watermark text to empty and panic (nil bbox). These
+		// pin the %→%% escape that StampTextLayer now applies.
+		"%", "%%", "50%", "%P", "%p", "%v", "%t", "C++%", "a%b%c",
 	}
 	var words []Word
 	for i, tk := range toks {
