@@ -119,6 +119,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/identity", s.requireUnlocked(s.handleIdentity))
 	mux.HandleFunc("POST /api/assemble", s.requireUnlocked(s.handleAssemble))
 	mux.HandleFunc("POST /api/extract", s.requireUnlocked(s.handleExtract))
+	mux.HandleFunc("POST /api/extract-images", s.requireUnlocked(s.handleExtractImages))
 	mux.HandleFunc("POST /api/split-bookmarks", s.requireUnlocked(s.handleSplitBookmarks))
 	mux.HandleFunc("POST /api/split-pages", s.requireUnlocked(s.handleSplitPages))
 	mux.HandleFunc("GET /api/form-data", s.requireUnlocked(s.handleFormData))

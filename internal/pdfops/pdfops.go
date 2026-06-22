@@ -4,6 +4,7 @@
 package pdfops
 
 import (
+	"archive/zip"
 	"bytes"
 	"encoding/csv"
 	"encoding/json"
@@ -1083,3 +1084,47 @@ func ExportFormCSV(pdf []byte) ([]byte, error) {
 }
 
 func joinValues(vs []string) string { return strings.Join(vs, "; ") }
+
+// ExtractImagesZip extracts the embedded raster images from pdf and returns them
+// bundled as a ZIP, plus the number of images written. The bytes come straight
+// from pdfcpu: a non-CMYK JPEG or a JPEG-2000 stream is the original embedded
+// data (.jpg / .jpx), while every other kind (Flate/LZW/CCITT/raw rasters and
+// CMYK JPEGs) is re-encoded by pdfcpu to PNG or TIFF — so this is "the images as
+// usable files", not always the byte-for-byte originals. Images pdfcpu can't
+// render (JBIG2, exotic colorspaces) and inline images are skipped rather than
+// written as empty files. An image referenced on several pages is written once
+// (deduped by object number). Returns (nil, 0, nil) when there are none.
+//
+// One unrenderable-enough image (a panic pdfcpu recovers into an error) fails the
+// whole call; the caller surfaces that rather than a partial archive.
+func ExtractImagesZip(pdf []byte) ([]byte, int, error) {
+	var buf bytes.Buffer
+	zw := zip.NewWriter(&buf)
+	seen := map[int]bool{}
+	count := 0
+	digest := func(img model.Image, _ bool, _ int) error {
+		if img.Reader == nil || img.FileType == "" || seen[img.ObjNr] {
+			return nil // unsupported/empty render, or a repeat of one already written
+		}
+		seen[img.ObjNr] = true
+		fw, err := zw.Create(fmt.Sprintf("image-%03d-obj%d.%s", count+1, img.ObjNr, img.FileType))
+		if err != nil {
+			return err
+		}
+		if _, err := io.Copy(fw, img); err != nil {
+			return err
+		}
+		count++
+		return nil
+	}
+	if err := api.ExtractImages(bytes.NewReader(pdf), nil, digest, model.NewDefaultConfiguration()); err != nil {
+		return nil, 0, err
+	}
+	if count == 0 {
+		return nil, 0, nil
+	}
+	if err := zw.Close(); err != nil {
+		return nil, 0, err
+	}
+	return buf.Bytes(), count, nil
+}
