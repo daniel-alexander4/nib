@@ -177,6 +177,16 @@ body { display: flex; flex-direction: column; }
   background: var(--surface0); border: 1px solid var(--surface1); border-radius: 6px;
   color: var(--text); padding: 3px 6px; font: inherit;
 }
+/* Find group: input + ‹ › step buttons + an "N of M" readout, kept as one unit.
+   The buttons aren't direct children of .tbtab, so they need their own styling. */
+#toolbar .tbfind { display: inline-flex; align-items: center; gap: 4px; }
+#toolbar .tbfind button {
+  background: transparent; border: 1px solid transparent; border-radius: 6px;
+  padding: 3px 8px; color: var(--subtext0); font: inherit; cursor: pointer;
+}
+#toolbar .tbfind button:hover:not(:disabled) { background: var(--surface0); color: var(--text); }
+#toolbar .tbfind button:disabled { opacity: 0.4; cursor: not-allowed; }
+#toolbar .findcount { color: var(--subtext0); font-size: 13px; min-width: 32px; }
 
 /* Settings gear: its dropdown opens right-aligned so it doesn't run off-screen. */
 .menu.settings .menutop { font-size: 16px; }

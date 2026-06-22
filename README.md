@@ -245,6 +245,11 @@ original, or as a flattened or editable copy. **Print** the current document —
 fills, signatures, and all — straight from the **File** tab through your
 browser's print dialog.
 
+### Find in the document
+Type in the **Find** box (or press **Ctrl/Cmd+F**) to highlight every match. Step
+through them with the **‹ ›** buttons or **Enter** / **Shift+Enter**, and the
+readout next to the box shows which match you're on out of the total (`3/12`).
+
 ### Choose your layout
 Pick how the commands are presented from **⚙ Settings → Layout**: the classic
 **Menus** (File / Edit / View), a compact **Toolbar** of dropdowns and icons, or
