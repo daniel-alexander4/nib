@@ -33,6 +33,12 @@ type Word struct {
 // copy-pasteable: this is the standard "searchable PDF" / OCR layer. The text is a
 // real (...) Tj run (not glyph outlines), so pdftotext and pdf.js Find recover it.
 func StampTextLayer(pdf []byte, words []Word) ([]byte, error) {
+	// api.TextWatermark below validates the Roboto user font against pdfcpu's
+	// in-memory font registry, which is only populated the first time a default
+	// config is built (it installs + loads the bundled Roboto). Force that now,
+	// before the per-word TextWatermark calls — otherwise a process whose first
+	// font op is OCR rejects Roboto with "unsupported".
+	model.NewDefaultConfiguration()
 	wms := map[int][]*model.Watermark{}
 	for _, w := range words {
 		if strings.TrimSpace(w.Text) == "" {
