@@ -633,20 +633,31 @@ input.ovl-check { appearance: auto; accent-color: #1a7f37; background: transpare
 /* border box: a colored outline with no fill (the unfilled sibling of a
    highlight). Border color + width are set inline from the field. */
 .ovl-box { z-index: 9; cursor: move; border-style: solid; border-width: 2px; background: transparent; touch-action: none; }
-.ovl-stamp .stamp-resize, .ovl-box .stamp-resize, .ovl-note .stamp-resize {
+.ovl-stamp .stamp-resize, .ovl-box .stamp-resize, .ovl-note .stamp-resize, .ovl-shape .stamp-resize {
   position: absolute; right: -6px; bottom: -6px; width: 12px; height: 12px;
   background: var(--blue); border: 1px solid var(--crust); border-radius: 2px;
   cursor: nwse-resize; display: none;
 }
 .ovl-stamp:hover .stamp-resize, .ovl-stamp:focus .stamp-resize,
-.ovl-box:hover .stamp-resize, .ovl-box:focus .stamp-resize { display: block; }
-.ovl-stamp .stamp-del, .ovl-box .stamp-del, .ovl-note .stamp-del {
+.ovl-box:hover .stamp-resize, .ovl-box:focus .stamp-resize,
+.ovl-shape:hover .stamp-resize, .ovl-shape:focus .stamp-resize { display: block; }
+.ovl-stamp .stamp-del, .ovl-box .stamp-del, .ovl-note .stamp-del, .ovl-shape .stamp-del {
   position: absolute; top: -10px; right: -10px; width: 18px; height: 18px; padding: 0;
   line-height: 1; border-radius: 999px; background: var(--surface1); color: var(--red);
   border: 1px solid var(--crust); cursor: pointer; display: none; z-index: 1;
 }
 .ovl-stamp:hover .stamp-del, .ovl-stamp:focus .stamp-del,
-.ovl-box:hover .stamp-del, .ovl-box:focus .stamp-del { display: block; }
+.ovl-box:hover .stamp-del, .ovl-box:focus .stamp-del,
+.ovl-shape:hover .stamp-del, .ovl-shape:focus .stamp-del { display: block; }
+/* ovl-shape: a drawn line/arrow/rectangle/ellipse, rendered to a canvas and
+   baked as a PNG stamp. The canvas fills the overlay; gestures hit the overlay. */
+.ovl-shape { z-index: 9; cursor: move; touch-action: none; outline: 1px dashed transparent; }
+.ovl-shape:hover, .ovl-shape:focus { outline-color: var(--blue); }
+.ovl-shape .shapecanvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; pointer-events: none; }
+.shapemark { position: absolute; pointer-events: none; z-index: 10; }
+.shapeopts { display: inline-flex; align-items: center; gap: 3px; }
+.shapetype { padding: 1px 6px; min-width: 24px; }
+.shapetype.active { background: var(--blue); color: var(--crust); }
 /* ovl-note: a comment card (icon header + textarea); bakes to a /Text sticky note. */
 .ovl-note { z-index: 9; display: flex; flex-direction: column; overflow: hidden; cursor: move;
   background: var(--surface0); border: 1px solid var(--surface1); border-radius: 6px;
