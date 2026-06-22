@@ -441,6 +441,9 @@ isn't a known command (a PDF path, or nothing) still opens the app as usual.
 | `nib merge IN… -o OUT` | Concatenate PDFs, in order, into one. |
 | `nib sanitize IN -o OUT` | Strip identifying metadata and active content — JavaScript, auto-actions, embedded files (or `-w FILE…`). |
 | `nib sign IN -o OUT --cert ID.p12` | Certify a PDF with an imported `.p12` identity. |
+| `nib rotate IN -o OUT --deg N` | Rotate pages by 90/180/270° (`--pages 1-3,5` to limit; or `-w FILE…`). |
+| `nib pages IN -o OUT --keep SEL` | Keep/reorder pages (`--keep 1-3,5`) or delete them (`--remove 2,4`). |
+| `nib split IN --out-dir DIR …` | Burst into one file per chunk (`--every N`), range (`--ranges 1-3,4-8`), or `--bookmarks`. |
 | `nib watch DIR --do OP` | Run `timestamp`/`optimize`/`sanitize` on each PDF added to `DIR`, until interrupted. |
 | `nib version` | Print the version. |
 
@@ -457,7 +460,7 @@ nib sanitize -w *.pdf          # scrub a whole folder in place
 nib optimize in.pdf -o - | nib sanitize - -o out.pdf   # compose in a pipeline
 ```
 
-For `optimize`, `merge`, `sanitize`, and `sign`, a filename of `-` reads a PDF
+For `optimize`, `merge`, `sanitize`, `sign`, `rotate`, and `pages`, a filename of `-` reads a PDF
 from stdin, and `-o -` writes the result to stdout (refused when stdout is a
 terminal), so the commands chain together.
 
