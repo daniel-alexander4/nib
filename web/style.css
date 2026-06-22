@@ -582,6 +582,15 @@ input.ovl-edit:focus { outline-style: solid; }
   z-index: 5;
   pointer-events: none;
 }
+/* cropmark: the single keep-rectangle drawn for "Crop"; everything outside it is
+   trimmed away. Solid border (vs splitmark's dashed) marks it as "keep this". */
+.cropmark {
+  position: absolute;
+  background: rgba(30, 102, 245, 0.08);
+  border: 2px solid var(--blue);
+  z-index: 5;
+  pointer-events: none;
+}
 input.ovl-check { appearance: auto; accent-color: #1a7f37; background: transparent; cursor: pointer; padding: 0; margin: 0; }
 /* circle-one picker (incl. Y/N): a transparent hit-area over each choice; the
    picked one is ringed (a circle for a letter, a pill for a word). */

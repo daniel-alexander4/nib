@@ -146,6 +146,7 @@
       <button id="insertBlankBtn" title="Insert a blank page after the current page">Insert blank page</button>
       <button id="pageNumBtn" title="Stamp running page numbers (or Bates numbers) onto every page">Page numbers…</button>
       <button id="nupBtn" title="Combine several pages onto each sheet (2-up, 4-up…) for printing">N-up…</button>
+      <button id="cropBtn" title="Draw a box to crop every page (or just this one) down to that area">Crop…</button>
       <span class="tbsep"></span>
       <button id="rotateLeftBtn" title="Rotate every page 90° counter-clockwise">Rotate all ↺</button>
       <button id="rotateRightBtn" title="Rotate every page 90° clockwise">Rotate all ↻</button>
@@ -557,6 +558,22 @@
         <span class="grow"></span>
         <button id="nupCancel">Cancel</button>
         <button id="nupGo" class="primary">Combine pages</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Crop: trim every page (or just the current one) to a drawn box -->
+  <div id="cropModal" hidden>
+    <div class="sigcard">
+      <h3>Crop to the box</h3>
+      <p class="libhint">Each page is trimmed to the rectangle you drew. Cropping <em>hides</em> the content outside the box — it stays in the file behind the smaller page. To remove it for good, use Flatten or Redact.</p>
+      <div class="splitcontrols">
+        <label class="check"><input id="cropAllPages" type="checkbox" checked /> Apply to all pages (otherwise just this page)</label>
+      </div>
+      <div class="sigbtns">
+        <span class="grow"></span>
+        <button id="cropCancel">Cancel</button>
+        <button id="cropGo" class="primary">Crop</button>
       </div>
     </div>
   </div>

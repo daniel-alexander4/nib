@@ -131,6 +131,8 @@ const els = {
   pnPrefix: $('pnPrefix'), pnTotal: $('pnTotal'), pnPreview: $('pnPreview'),
   pnCancel: $('pnCancel'), pnGo: $('pnGo'),
   nupBtn: $('nupBtn'), nupModal: $('nupModal'), nupN: $('nupN'), nupBorder: $('nupBorder'),
+  cropBtn: $('cropBtn'), cropModal: $('cropModal'), cropAllPages: $('cropAllPages'),
+  cropCancel: $('cropCancel'), cropGo: $('cropGo'),
   nupCancel: $('nupCancel'), nupGo: $('nupGo'),
   exportBookmarkSplitBtn: $('exportBookmarkSplitBtn'), bookmarkSplitModal: $('bookmarkSplitModal'),
   bsPrefix: $('bsPrefix'), bsPreview: $('bsPreview'), bsDir: $('bsDir'), bsHere: $('bsHere'),
@@ -1529,6 +1531,7 @@ async function pageOp(op, extra = {}) {
   if (extra.rows != null) form.append('rows', String(extra.rows));
   if (extra.resize) form.append('resize', '1');
   if (extra.rects) form.append('rects', extra.rects);
+  if (extra.rect) form.append('rect', extra.rect);
   if (extra.position) form.append('position', extra.position);
   if (extra.prefix != null) form.append('prefix', extra.prefix);
   if (extra.start != null) form.append('start', String(extra.start));
@@ -2559,7 +2562,7 @@ let redStart = null, redDiv = null, redHit = null;
 
 els.redactBtn.onclick = () => {
   redactMode = !redactMode;
-  if (redactMode) { setMarkerMode(null); exitSplitBox(); exitBorder(); } // one box tool at a time
+  if (redactMode) { setMarkerMode(null); exitSplitBox(); exitBorder(); exitCrop(); } // one box tool at a time
   reflectRedact();
   els.viewerContainer.style.cursor = redactMode ? 'crosshair' : '';
 };
@@ -2679,6 +2682,7 @@ els.splitBoxBtn.onclick = () => {
   sbPage = viewer.currentPageNumber; // regions apply to the page you start on
   setMarkerMode(null);
   exitBorder();
+  exitCrop();
   if (redactMode) { redactMode = false; reflectRedact(); }
   if (editMode) { editMode = false; reflectEdit(); }
   reflectSplitBox();
@@ -2729,6 +2733,89 @@ els.applyBoxSplitBtn.onclick = async () => {
     : `Page ${page} split into ${rects.length} regions`);
 };
 
+// --- crop: trim pages down to a drawn box ------------------------------------
+// Draw ONE keep-rectangle on the current page; on confirm, every page (or just
+// this one) is trimmed to it server-side via op:'crop' → pdfops.Crop. Like the
+// split regions, the mark lives OUTSIDE overlayFields so the bake never burns it
+// in. Reuses the same display-space → PDF-points conversion (rectPoints) as Split
+// by box; the server flattens any /Rotate before cropping.
+let cropMode = false;
+let cropRect = null; // {fx, fy, fw, fh} fraction of the page (top-left origin)
+let cropStart = null, cropDiv = null, cropHit = null, cropPage = 0;
+
+function reflectCrop() {
+  all('#cropBtn, [data-forward="cropBtn"]').forEach((b) => b.classList.toggle('active', cropMode));
+}
+function clearCropRect() {
+  cropRect = null;
+  all('.cropmark').forEach((d) => d.remove());
+}
+function exitCrop() {
+  if (!cropMode) return;
+  cropMode = false;
+  clearCropRect();
+  els.cropModal.hidden = true;
+  reflectCrop();
+  els.viewerContainer.style.cursor = '';
+}
+els.cropBtn.onclick = () => {
+  if (cropMode) { exitCrop(); return; }
+  if (!pdfDocument) return;
+  cropMode = true;
+  cropPage = viewer.currentPageNumber; // the box is measured in this page's space
+  setMarkerMode(null);
+  exitBorder();
+  exitSplitBox();
+  if (redactMode) { redactMode = false; reflectRedact(); }
+  if (editMode) { editMode = false; reflectEdit(); }
+  reflectCrop();
+  els.viewerContainer.style.cursor = 'crosshair';
+  toast('Draw the area to keep, then confirm');
+};
+
+els.viewerContainer.addEventListener('pointerdown', (e) => {
+  if (!cropMode) return;
+  cropHit = pageAt(e.clientX, e.clientY);
+  if (!cropHit || cropHit.n !== cropPage) return; // measure on the page you started on
+  clearCropRect(); // a single keep-rectangle: a fresh draw replaces the old one
+  cropStart = { x: e.clientX, y: e.clientY };
+  cropDiv = document.createElement('div');
+  cropDiv.className = 'cropmark';
+  cropHit.pv.div.appendChild(cropDiv);
+  sizeMark(cropDiv, cropHit.r, cropStart, cropStart);
+  e.preventDefault();
+});
+els.viewerContainer.addEventListener('pointermove', (e) => {
+  if (cropStart) sizeMark(cropDiv, cropHit.r, cropStart, { x: e.clientX, y: e.clientY });
+});
+els.viewerContainer.addEventListener('pointerup', (e) => {
+  if (!cropStart) return;
+  const r = cropHit.r;
+  const x0 = Math.min(cropStart.x, e.clientX), y0 = Math.min(cropStart.y, e.clientY);
+  const fw = Math.abs(e.clientX - cropStart.x) / r.width;
+  const fh = Math.abs(e.clientY - cropStart.y) / r.height;
+  cropStart = null; cropHit = null;
+  if (fw > 0.01 && fh > 0.01) {
+    cropRect = { fx: (x0 - r.left) / r.width, fy: (y0 - r.top) / r.height, fw, fh };
+    els.cropModal.hidden = false; // confirm: all-pages choice + the honest note
+  } else if (cropDiv) {
+    cropDiv.remove(); cropDiv = null;
+  }
+});
+
+els.cropCancel.onclick = () => { els.cropModal.hidden = true; clearCropRect(); }; // stay in crop mode for a redraw
+els.cropGo.onclick = async () => {
+  if (!cropRect) { els.cropModal.hidden = true; return; }
+  const page = cropPage;
+  const base = (await pdfDocument.getPage(page)).getViewport({ scale: 1 }); // PDF points
+  const f = { pageW: base.width, pageH: base.height };
+  const rect = rectPoints(f, [cropRect.fx, cropRect.fy, cropRect.fx + cropRect.fw, cropRect.fy + cropRect.fh]);
+  const allPages = els.cropAllPages.checked;
+  exitCrop();
+  const ok = await pageOp('crop', { rect: JSON.stringify(rect), pages: allPages ? '' : String(page) });
+  if (ok) toast(allPages ? 'All pages cropped to the box' : `Page ${page} cropped to the box`);
+};
+
 // --- cover-and-replace text editing ------------------------------------------
 // Drag a box over baked-in text; Nib reads the text + its size/colour/font under
 // the box, covers it with an opaque background-coloured fill, and drops an
@@ -2743,7 +2830,7 @@ els.editTextBtn.onclick = () => {
   if (!pdfDocument) { toast('Open a PDF first'); return; }
   editMode = !editMode;
   if (editMode && redactMode) { redactMode = false; reflectRedact(); } // one box tool at a time
-  if (editMode) { setMarkerMode(null); exitSplitBox(); exitBorder(); }
+  if (editMode) { setMarkerMode(null); exitSplitBox(); exitBorder(); exitCrop(); }
   reflectEdit();
   els.viewerContainer.style.cursor = editMode ? 'crosshair' : '';
 };
@@ -2957,6 +3044,7 @@ function setMarkerMode(m) {
     if (editMode) { editMode = false; reflectEdit(); }
     exitSplitBox();
     exitBorder();
+    exitCrop();
   }
   all('.markers button').forEach((b) => b.classList.toggle('active', b.dataset.marker === m));
   els.viewerContainer.style.cursor = m ? 'crosshair' : '';
@@ -3595,6 +3683,7 @@ els.borderBtn.onclick = () => {
   if (redactMode) { redactMode = false; reflectRedact(); }
   if (editMode) { editMode = false; reflectEdit(); }
   exitSplitBox();
+  exitCrop();
   reflectBorder();
   els.viewerContainer.style.cursor = 'crosshair';
 };
@@ -3692,7 +3781,7 @@ const DOC_REQUIRED = [
   'textToolBtn', 'highlightToolBtn', 'drawToolBtn',
   'detectBtn', 'editTextBtn', 'removeOriginalsBtn', 'autofillBtn', 'splitBtn',
   'splitBoxBtn', 'applyBoxSplitBtn', 'rotateLeftBtn', 'rotateRightBtn',
-  'extractBtn', 'insertBlankBtn', 'pageNumBtn', 'nupBtn',
+  'extractBtn', 'insertBlankBtn', 'pageNumBtn', 'nupBtn', 'cropBtn',
   'redactBtn', 'applyRedactBtn', 'scanBtn',
   'finalizeBtn', 'timestampBtn', 'cosignBtn', 'sessionInitBtn', 'sessionSendBtn',
 ];
@@ -3727,6 +3816,7 @@ function clearOverlays() {
   activeMarker = null; fillTarget = null; // markers are gone with the old document
   exitSplitBox(); // a pending region selection doesn't carry to a new document
   exitBorder();   // nor a pending border-draw mode
+  exitCrop();     // nor a pending crop-draw mode
 }
 // clearDetected drops only auto-detected fields (text/check/circleone), keeping
 // user-placed stamps, text edits, and sign/date/initial markers so re-running
