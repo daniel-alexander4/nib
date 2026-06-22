@@ -169,6 +169,17 @@ func PublicKeyLine(keyPath string) (string, error) {
 	}
 	raw, err := ssh.ParseRawPrivateKey(b)
 	if err != nil {
+		// An encrypted OpenSSH-format key carries its public half in cleartext, so
+		// ssh surfaces it on the error — enough to derive the line without the
+		// passphrase (which is only needed later, at unlock). Legacy PEM-encrypted
+		// keys don't embed it, so point the user at ssh-keygen to materialize a .pub.
+		var miss *ssh.PassphraseMissingError
+		if errors.As(err, &miss) {
+			if miss.PublicKey != nil {
+				return strings.TrimSpace(string(ssh.MarshalAuthorizedKey(miss.PublicKey))), nil
+			}
+			return "", errors.New("key is passphrase-protected and has no public (.pub) file; run 'ssh-keygen -y -f " + keyPath + "' to create one")
+		}
 		return "", err
 	}
 	signer, err := ssh.NewSignerFromKey(raw)
