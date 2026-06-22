@@ -61,9 +61,11 @@ var commands = map[string]func([]string) int{
 	"rotate":    cmdRotate,
 	"pages":     cmdPages,
 	"split":     cmdSplit,
-	"decrypt":   cmdDecrypt,
-	"nup":       cmdNup,
-	"pagenum":   cmdPagenum,
+	"decrypt":     cmdDecrypt,
+	"nup":         cmdNup,
+	"pagenum":     cmdPagenum,
+	"attachments": cmdAttachments,
+	"outline":     cmdOutline,
 }
 
 func printUsage(w *os.File) {
@@ -85,6 +87,8 @@ These subcommands run headlessly, without a browser:
   nib decrypt IN -o OUT           remove password protection / owner restrictions
   nib nup IN -o OUT --n N         place N pages per sheet (2/4/6/9/16…)
   nib pagenum IN -o OUT           stamp running page numbers / Bates numbering
+  nib attachments IN [--json]     list embedded files (--extract NAME / --add FILE)
+  nib outline IN [--json]         list the document's bookmark outline
   nib watch DIR --do OP           run timestamp/optimize/sanitize on each new PDF
   nib version                     print the version
 
