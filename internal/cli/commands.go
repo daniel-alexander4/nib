@@ -308,6 +308,137 @@ func cmdPagenum(args []string) int {
 	})
 }
 
+// cmdAttachments lists embedded files (default), extracts one to -o, or embeds one
+// and writes a new PDF to -o. One mode at a time; single input PDF (— for stdin).
+func cmdAttachments(args []string) int {
+	fs := flag.NewFlagSet("nib attachments", flag.ContinueOnError)
+	var out, extract, add, name string
+	var asJSON bool
+	outFlag(fs, &out)
+	fs.BoolVar(&asJSON, "json", false, "emit the listing as JSON (list mode only)")
+	fs.StringVar(&extract, "extract", "", "extract the embedded file named `NAME` to -o")
+	fs.StringVar(&add, "add", "", "embed `FILE` as an attachment, writing a new PDF to -o")
+	fs.StringVar(&name, "name", "", "attachment name for --add (default: the file's basename)")
+	fs.Usage = usageFunc(fs, "nib attachments IN [--json]  |  --extract NAME -o OUT  |  --add FILE [--name N] -o OUT", "List, extract, or add embedded file attachments.")
+	if code, ok := parse(fs, args); !ok {
+		return code
+	}
+	if extract != "" && add != "" {
+		errf("give only one of --extract or --add")
+		return 1
+	}
+	if fs.NArg() != 1 {
+		errf("expected one input PDF, got %d", fs.NArg())
+		return 1
+	}
+	pdf, err := readInput(fs.Arg(0))
+	if err != nil {
+		errf("%v", err)
+		return 1
+	}
+	switch {
+	case extract != "":
+		if out == "" {
+			errf("missing -o/--out (where to write the extracted file)")
+			return 1
+		}
+		data, err := pdfops.ExtractAttachment(pdf, extract)
+		if err != nil {
+			errf("%v", err)
+			return 1
+		}
+		return writeOut(out, data)
+	case add != "":
+		if out == "" {
+			errf("missing -o/--out (the output PDF)")
+			return 1
+		}
+		data, err := os.ReadFile(add)
+		if err != nil {
+			errf("%v", err)
+			return 1
+		}
+		nm := name
+		if nm == "" {
+			nm = filepath.Base(add)
+		}
+		res, err := pdfops.AddAttachment(pdf, nm, data)
+		if err != nil {
+			errf("%v", err)
+			return 1
+		}
+		return writeOut(out, res)
+	default: // list
+		aa, err := pdfops.Attachments(pdf)
+		if err != nil {
+			errf("%v", err)
+			return 1
+		}
+		if asJSON {
+			if aa == nil {
+				aa = []pdfops.AttachmentInfo{}
+			}
+			b, _ := json.Marshal(aa)
+			fmt.Println(string(b))
+			return 0
+		}
+		if len(aa) == 0 {
+			fmt.Println("(no attachments)")
+			return 0
+		}
+		for _, a := range aa {
+			if a.Desc != "" {
+				fmt.Printf("%s — %s\n", a.Name, a.Desc)
+			} else {
+				fmt.Println(a.Name)
+			}
+		}
+		return 0
+	}
+}
+
+// cmdOutline prints the document's bookmark outline, indented by nesting level
+// (or as JSON). A bookmark-less PDF prints nothing and exits 0.
+func cmdOutline(args []string) int {
+	fs := flag.NewFlagSet("nib outline", flag.ContinueOnError)
+	var asJSON bool
+	fs.BoolVar(&asJSON, "json", false, "emit the outline as JSON")
+	fs.Usage = usageFunc(fs, "nib outline IN [--json]", "List the document's bookmark outline.")
+	if code, ok := parse(fs, args); !ok {
+		return code
+	}
+	if fs.NArg() != 1 {
+		errf("expected one input PDF, got %d", fs.NArg())
+		return 1
+	}
+	pdf, err := readInput(fs.Arg(0))
+	if err != nil {
+		errf("%v", err)
+		return 1
+	}
+	items, err := pdfops.Outline(pdf)
+	if err != nil {
+		errf("%v", err)
+		return 1
+	}
+	if asJSON {
+		if items == nil {
+			items = []pdfops.OutlineItem{}
+		}
+		b, _ := json.Marshal(items)
+		fmt.Println(string(b))
+		return 0
+	}
+	if len(items) == 0 {
+		fmt.Println("(no bookmarks)")
+		return 0
+	}
+	for _, it := range items {
+		fmt.Printf("%s%s (p %d)\n", strings.Repeat("  ", it.Level), it.Title, it.Page)
+	}
+	return 0
+}
+
 func cmdSign(args []string) int {
 	fs := flag.NewFlagSet("nib sign", flag.ContinueOnError)
 	var out, cert, passFile, reason, name, tsa string
