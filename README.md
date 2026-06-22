@@ -250,6 +250,14 @@ Type in the **Find** box (or press **Ctrl/Cmd+F**) to highlight every match. Ste
 through them with the **‹ ›** buttons or **Enter** / **Shift+Enter**, and the
 readout next to the box shows which match you're on out of the total (`3/12`).
 
+### Keyboard shortcuts
+- **PageUp / PageDown** — previous / next page; **Home / End** — first / last page.
+- **Ctrl/Cmd + + / − / 0** — zoom in / out / fit to width.
+- **Ctrl/Cmd + S** save, **+O** open, **+F** find, **+B** toggle the sidebar.
+
+Navigation keys stand down while you're typing in a field or a dialog is open, so
+they never get in the way of editing.
+
 ### Choose your layout
 Pick how the commands are presented from **⚙ Settings → Layout**: the classic
 **Menus** (File / Edit / View), a compact **Toolbar** of dropdowns and icons, or

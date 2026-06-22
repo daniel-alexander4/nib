@@ -4168,15 +4168,24 @@ function shapePNG(wPts, hPts, pill) {
 }
 els.saveBtn.onclick = save;
 
-els.prevBtn.onclick = () => { if (viewer.currentPageNumber > 1) viewer.currentPageNumber--; };
-els.nextBtn.onclick = () => { if (viewer.currentPageNumber < pdfDocument.numPages) viewer.currentPageNumber++; };
+// Page navigation + zoom: the toolbar buttons and the keyboard shortcuts share
+// these, so the bounds logic lives in one place.
+function prevPage() { if (pdfDocument && viewer.currentPageNumber > 1) viewer.currentPageNumber--; }
+function nextPage() { if (pdfDocument && viewer.currentPageNumber < pdfDocument.numPages) viewer.currentPageNumber++; }
+function firstPage() { if (pdfDocument) viewer.currentPageNumber = 1; }
+function lastPage() { if (pdfDocument) viewer.currentPageNumber = pdfDocument.numPages; }
+function zoomIn() { viewer.currentScale = viewer.currentScale * 1.15; }
+function zoomOut() { viewer.currentScale = viewer.currentScale / 1.15; }
+function fitWidth() { viewer.currentScaleValue = 'page-width'; }
+els.prevBtn.onclick = prevPage;
+els.nextBtn.onclick = nextPage;
 all('.pageNum').forEach((input) => input.addEventListener('change', () => {
   const n = Number(input.value);
   if (pdfDocument && n >= 1 && n <= pdfDocument.numPages) viewer.currentPageNumber = n;
 }));
-els.zoomInBtn.onclick = () => { viewer.currentScale = viewer.currentScale * 1.15; };
-els.zoomOutBtn.onclick = () => { viewer.currentScale = viewer.currentScale / 1.15; };
-els.fitBtn.onclick = () => { viewer.currentScaleValue = 'page-width'; };
+els.zoomInBtn.onclick = zoomIn;
+els.zoomOutBtn.onclick = zoomOut;
+els.fitBtn.onclick = fitWidth;
 
 // In-document search: typing runs a fresh highlight-all find (debounced); Enter and
 // the ‹ › buttons step through the matches via pdf.js's `type:'again'` — no re-scan,
@@ -4278,18 +4287,40 @@ function toggleSidebar() {
 }
 $('toggleSidebarBtn').onclick = toggleSidebar;
 
-// keyboard: Ctrl/Cmd + S save, B sidebar, O open, F find
+// True when focus is in a text-entry surface, so plain-key shortcuts don't hijack
+// typing. isContentEditable (not the attribute) is load-bearing: pdf.js's FreeText
+// editor is a contenteditable <div>; AcroForm and overlay fields are real inputs.
+function isTypingTarget(el) {
+  if (!el) return false;
+  if (el.isContentEditable) return true;
+  return /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName);
+}
+
+// keyboard shortcuts. Ctrl/Cmd combos: S save, B sidebar, O open, F find,
+// +/-/0 zoom in/out/fit. Plain keys (PageUp/Down, Home/End) page-navigate — but
+// only when not typing and no modal is up. Every dialog is a `*Modal` div hidden
+// via [hidden]; keep that naming so the guard below keeps catching them.
 window.addEventListener('keydown', (e) => {
-  if (!(e.ctrlKey || e.metaKey)) return;
-  if (e.key === 's') { e.preventDefault(); save(); }
-  if (e.key === 'b') { e.preventDefault(); toggleSidebar(); }
-  if (e.key === 'o') { e.preventDefault(); openOpenDialog(); }
-  if (e.key === 'f') {
-    e.preventDefault();
-    // The find box lives in the File tab's toolbar — switch there, then focus it.
-    setMode('file');
-    document.querySelector('.searchInput')?.focus();
+  if (e.ctrlKey || e.metaKey) {
+    if (e.key === 's') { e.preventDefault(); save(); }
+    else if (e.key === 'b') { e.preventDefault(); toggleSidebar(); }
+    else if (e.key === 'o') { e.preventDefault(); openOpenDialog(); }
+    else if (e.key === 'f') {
+      e.preventDefault();
+      // The find box lives in the File tab's toolbar — switch there, then focus it.
+      setMode('file');
+      document.querySelector('.searchInput')?.focus();
+    } else if (e.key === '=' || e.key === '+') { e.preventDefault(); zoomIn(); }
+    else if (e.key === '-') { e.preventDefault(); zoomOut(); }
+    else if (e.key === '0') { e.preventDefault(); fitWidth(); }
+    return;
   }
+  if (!pdfDocument || isTypingTarget(e.target)) return;
+  if (document.querySelector('div[id$="Modal"]:not([hidden])')) return;
+  if (e.key === 'PageDown') { e.preventDefault(); nextPage(); }
+  else if (e.key === 'PageUp') { e.preventDefault(); prevPage(); }
+  else if (e.key === 'Home') { e.preventDefault(); firstPage(); }
+  else if (e.key === 'End') { e.preventDefault(); lastPage(); }
 });
 
 // --- toast -------------------------------------------------------------------
