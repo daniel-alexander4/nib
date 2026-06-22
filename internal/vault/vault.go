@@ -127,14 +127,28 @@ type Settings struct {
 	RecentHighlightColors []string `json:"recentHighlightColors,omitempty"` // last-used highlight colors, newest first (#rrggbb)
 }
 
+// ExternalSigner is an imported PKCS#12 signing identity (the user's own /
+// CA-issued certificate) used ONLY for solo Finalize signing — never as the peer
+// identity (which stays the native self-signed key). The .p12 is stored exactly
+// as imported (still passphrase-encrypted); the passphrase is supplied per sign
+// and never persisted, so the private key is never at rest in decrypted form.
+// CertPEM/ChainPEM hold the public certificate and chain, captured at import for
+// display.
+type ExternalSigner struct {
+	P12      []byte `json:"p12"`
+	CertPEM  []byte `json:"cert"`
+	ChainPEM []byte `json:"chain,omitempty"`
+}
+
 // Contents is the decrypted vault payload.
 type Contents struct {
-	Images      []Image           `json:"images,omitempty"`
-	Recent      []string          `json:"recent,omitempty"` // recent file paths, newest first
-	Identity    *Identity         `json:"identity,omitempty"`
-	Profile     map[string]string `json:"profile,omitempty"` // autofill field name -> value
-	Settings    Settings          `json:"settings,omitempty"`
-	PinnedPeers []PinnedPeer      `json:"pinnedPeers,omitempty"`
+	Images         []Image           `json:"images,omitempty"`
+	Recent         []string          `json:"recent,omitempty"` // recent file paths, newest first
+	Identity       *Identity         `json:"identity,omitempty"`
+	ExternalSigner *ExternalSigner   `json:"externalSigner,omitempty"`
+	Profile        map[string]string `json:"profile,omitempty"` // autofill field name -> value
+	Settings       Settings          `json:"settings,omitempty"`
+	PinnedPeers    []PinnedPeer      `json:"pinnedPeers,omitempty"`
 }
 
 const maxRecent = 10
@@ -528,6 +542,38 @@ func (v *Vault) SetIdentity(certPEM, keyPEM []byte) error {
 	v.mu.Lock()
 	defer v.mu.Unlock()
 	v.contents.Identity = &Identity{CertPEM: certPEM, KeyPEM: keyPEM}
+	return v.save()
+}
+
+// ExternalSigner returns a copy of the imported PKCS#12 signing identity, if any.
+func (v *Vault) ExternalSigner() (*ExternalSigner, bool) {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	if v.contents.ExternalSigner == nil {
+		return nil, false
+	}
+	e := v.contents.ExternalSigner
+	return &ExternalSigner{
+		P12:      append([]byte(nil), e.P12...),
+		CertPEM:  append([]byte(nil), e.CertPEM...),
+		ChainPEM: append([]byte(nil), e.ChainPEM...),
+	}, true
+}
+
+// SetExternalSigner stores the imported PKCS#12 bundle (as imported) and its
+// captured public certificate/chain, and persists the vault.
+func (v *Vault) SetExternalSigner(p12, certPEM, chainPEM []byte) error {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	v.contents.ExternalSigner = &ExternalSigner{P12: p12, CertPEM: certPEM, ChainPEM: chainPEM}
+	return v.save()
+}
+
+// ClearExternalSigner removes the imported signing identity and persists.
+func (v *Vault) ClearExternalSigner() error {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	v.contents.ExternalSigner = nil
 	return v.save()
 }
 
