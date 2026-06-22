@@ -53,6 +53,7 @@ const els = {
   thumbSelBar: $('thumbSelBar'), thumbSelCount: $('thumbSelCount'),
   selRotateLeftBtn: $('selRotateLeftBtn'), selRotateRightBtn: $('selRotateRightBtn'),
   selDeleteBtn: $('selDeleteBtn'), selClearBtn: $('selClearBtn'),
+  selMoveFrontBtn: $('selMoveFrontBtn'), selMoveBackBtn: $('selMoveBackBtn'),
   appendBtn: $('appendBtn'), appendInput: $('appendInput'),
   redactBtn: $('redactBtn'), applyRedactBtn: $('applyRedactBtn'),
   editTextBtn: $('editTextBtn'), removeOriginalsBtn: $('removeOriginalsBtn'),
@@ -1905,6 +1906,22 @@ els.selDeleteBtn.onclick = () => {
   pageOp('delete', { pages: selectedPagesParam() });
 };
 els.selClearBtn.onclick = () => clearSelection();
+// Move the selection to the front or back as a contiguous block, keeping the
+// pages' relative order. Routes through the same reorder rail as the single-page
+// drag (pageOp('reorder') → Collect), so it bakes overlays, warns on signature
+// loss, and is undoable for free. A move that wouldn't change the order is a no-op.
+function moveSelected(toFront) {
+  if (!selectedPages.size) return;
+  const selected = [...selectedPages].sort((a, b) => a - b);
+  const rest = [];
+  for (let p = 1; p <= pdfDocument.numPages; p++) if (!selectedPages.has(p)) rest.push(p);
+  const order = toFront ? [...selected, ...rest] : [...rest, ...selected];
+  const identity = Array.from({ length: pdfDocument.numPages }, (_, i) => i + 1);
+  if (order.join(',') === identity.join(',')) return; // already at that end
+  pageOp('reorder', { pages: order.join(',') });
+}
+els.selMoveFrontBtn.onclick = () => moveSelected(true);
+els.selMoveBackBtn.onclick = () => moveSelected(false);
 
 // Insert a blank page after the page on screen — a replace-in-place mutation, so
 // it routes through pageOp like rotate/delete (the blank matches the neighbour).
