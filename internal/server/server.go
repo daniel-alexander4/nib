@@ -49,6 +49,8 @@ type Server struct {
 	vault *vault.Vault // unlocked vault, nil until the SSH key unlocks it
 	csrf  string       // per-process CSRF token, issued when the vault unlocks
 	doc   *document    // current open PDF
+	undo  [][]byte     // prior document states (oldest first) for undo; see undo.go
+	redo  [][]byte     // states rolled back by undo, for redo
 
 	sess session // armed live co-signing listener (Nib's one routable surface)
 }
@@ -112,6 +114,10 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/outline", s.requireUnlocked(s.handleOutlineGet))
 	mux.HandleFunc("POST /api/outline", s.requireUnlocked(s.handleOutlineSet))
 
+	// Undo / redo of document-state operations.
+	mux.HandleFunc("POST /api/undo", s.requireUnlocked(s.handleUndo))
+	mux.HandleFunc("POST /api/redo", s.requireUnlocked(s.handleRedo))
+
 	// Hidden-content scan and sanitize.
 	mux.HandleFunc("GET /api/scan", s.requireUnlocked(s.handleScan))
 	mux.HandleFunc("POST /api/sanitize", s.requireUnlocked(s.handleSanitize))
@@ -167,6 +173,8 @@ type docResponse struct {
 	CanSave   bool            `json:"canSave"`         // true when a save would overwrite Path
 	Signature sign.Status     `json:"signature"`       // untampered / modified / unsigned
 	Flags     json.RawMessage `json:"flags,omitempty"` // embedded sign/date/initial placeholders, if any
+	CanUndo   bool            `json:"canUndo"`         // an undoable operation is on the stack
+	CanRedo   bool            `json:"canRedo"`         // an undone operation can be re-applied
 }
 
 // handleOpen loads a PDF from a server-side path. Opening by path is what makes
@@ -275,6 +283,8 @@ func (s *Server) handleSave(w http.ResponseWriter, r *http.Request) {
 func (s *Server) setDoc(doc *document) {
 	s.mu.Lock()
 	s.doc = doc
+	s.clearUndoLocked() // a fresh/replacement document starts with no history
+	s.clearRedoLocked()
 	s.mu.Unlock()
 }
 
@@ -283,6 +293,8 @@ func (s *Server) setDoc(doc *document) {
 func (s *Server) docResponse() docResponse {
 	s.mu.Lock()
 	doc := s.doc
+	canUndo := len(s.undo) > 0
+	canRedo := len(s.redo) > 0
 	s.mu.Unlock()
 	if doc == nil {
 		return docResponse{}
@@ -292,6 +304,8 @@ func (s *Server) docResponse() docResponse {
 		Path:      doc.path,
 		CanSave:   doc.path != "",
 		Signature: doc.sig,
+		CanUndo:   canUndo,
+		CanRedo:   canRedo,
 	}
 	// Surface embedded signing placeholders so the recipient's UI can rebuild
 	// them on open (the read half of the flag round-trip; the write half is

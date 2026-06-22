@@ -5,7 +5,6 @@ import (
 	"strconv"
 
 	"nib/internal/pdfops"
-	"nib/internal/sign"
 )
 
 // handleRedact replaces the marked pages with flat images (in which the
@@ -57,13 +56,7 @@ func (s *Server) handleRedact(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	sig := sign.Verify(result)
-	s.mu.Lock()
-	if s.doc != nil {
-		s.doc.data = result
-		s.doc.sig = sig
-	}
-	s.mu.Unlock()
+	s.commitBarrier(result) // redaction destroys content: no undo may resurrect it
 	writeJSON(w, s.docResponse())
 }
 

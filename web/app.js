@@ -140,6 +140,7 @@ const els = {
   aboutMain: $('aboutMain'), aboutDocText: $('aboutDocText'), aboutVersion: $('aboutVersion'),
   aboutLicenseBtn: $('aboutLicenseBtn'), aboutNoticesBtn: $('aboutNoticesBtn'),
   aboutBackBtn: $('aboutBackBtn'), aboutClose: $('aboutClose'),
+  undoBtn: $('undoBtn'), redoBtn: $('redoBtn'),
   rotateLeftBtn: $('rotateLeftBtn'), rotateRightBtn: $('rotateRightBtn'),
   extractBtn: $('extractBtn'), insertBlankBtn: $('insertBlankBtn'),
   duplicatePageBtn: $('duplicatePageBtn'),
@@ -4560,8 +4561,35 @@ function setDocControls(enabled) {
   // The toolbar's Text/Highlight/Draw twins wire by data-mode, not data-forward.
   all('#toolbar [data-mode]').forEach((t) => { t.disabled = !enabled; });
   reflectSignControls(); // keep the Flags-panel controls in step with open/closed
+  reflectUndoControls(enabled);
 }
 setDocControls(false); // nothing open yet
+
+// Undo/Redo enable from the server's per-document history flags (docMeta.canUndo/
+// canRedo, refreshed on every load); both off when no document is open.
+function reflectUndoControls(enabled) {
+  const m = docMeta || {};
+  if (els.undoBtn) els.undoBtn.disabled = !(enabled && m.canUndo);
+  if (els.redoBtn) els.redoBtn.disabled = !(enabled && m.canRedo);
+}
+
+// doUndo/doRedo revert or re-apply the last server-side document operation (page
+// ops, outline, sanitize, attachments). The server returns fresh doc metadata and
+// the view reloads through the universal setDocumentFromServer path.
+async function doUndo() {
+  if (!pdfDocument || !(docMeta && docMeta.canUndo)) return;
+  const res = await apiFetch('/api/undo', { method: 'POST' });
+  if (!res.ok) { toast('undo failed'); return; }
+  await setDocumentFromServer(await res.json());
+}
+async function doRedo() {
+  if (!pdfDocument || !(docMeta && docMeta.canRedo)) return;
+  const res = await apiFetch('/api/redo', { method: 'POST' });
+  if (!res.ok) { toast('redo failed'); return; }
+  await setDocumentFromServer(await res.json());
+}
+if (els.undoBtn) els.undoBtn.onclick = doUndo;
+if (els.redoBtn) els.redoBtn.onclick = doRedo;
 
 // Drag-and-drop a PDF onto the window to open it (upload origin -> Save As).
 ['dragover', 'drop'].forEach((ev) => window.addEventListener(ev, (e) => e.preventDefault()));
@@ -5076,6 +5104,15 @@ window.addEventListener('keydown', (e) => {
     } else if (e.key === '=' || e.key === '+') { e.preventDefault(); zoomIn(); }
     else if (e.key === '-') { e.preventDefault(); zoomOut(); }
     else if (e.key === '0') { e.preventDefault(); fitWidth(); }
+    else if (e.key === 'z' || e.key === 'Z' || e.key === 'y') {
+      // Undo/redo of server-side document ops. Yield (no preventDefault) while
+      // typing, while a pdf.js annotation editor is active (its own Ctrl+Z
+      // handles FreeText/Ink/Highlight), or with a modal open.
+      if (isTypingTarget(e.target) || activeTool ||
+          document.querySelector('div[id$="Modal"]:not([hidden])')) return;
+      e.preventDefault();
+      if (e.key === 'y' || e.shiftKey) doRedo(); else doUndo();
+    }
     return;
   }
   if (!pdfDocument || isTypingTarget(e.target)) return;
