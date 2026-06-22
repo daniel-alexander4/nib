@@ -204,7 +204,8 @@ each other: the pinned-key handshake holds over any transport.
 Rotate, delete, **append**, and reorder pages — **drag a page's thumbnail** in the
 sidebar to move it where you want. Rotate every page at once with **Rotate all ↺ / ↻**
 on the **Edit** tab, or hover a thumbnail to rotate (either direction) or delete a
-single page. **Extract pages…** saves a range (type `1-3, 5`) as a new PDF without
+single page. **Shift- or Ctrl/Cmd-click thumbnails** to select several at once, then
+rotate or delete the whole selection from the bar above the thumbnails. **Extract pages…** saves a range (type `1-3, 5`) as a new PDF without
 touching the open document, and **Insert blank page** drops a fresh page — matching
 its neighbour's size — after the current one. **Page numbers…** stamps a running
 number onto every page at the corner you choose — add a prefix and a zero-pad
