@@ -505,6 +505,75 @@ func SplitRegions(pdf []byte, page int, rects [][4]float64) ([]byte, error) {
 	return replacePage(pdf, page, n, merged)
 }
 
+// Crop reduces each target page (pages: a 1-based selection like []string{"2"};
+// nil = every page) to rect — PDF points, bottom-left origin, in the page's
+// DISPLAY space, the same convention SplitRegions uses. Each target page is
+// normalized (any /Rotate flattened, CropBox resolved) so the client's display-
+// space rectangle maps straight on, then reduced to a page the exact size of rect
+// showing only that window; pages outside the selection are kept untouched.
+//
+// Content outside the rectangle is clipped away — hidden, not destroyed (the
+// objects remain in the file behind the new, smaller MediaBox); Flatten or Redact
+// remove it permanently.
+//
+// It is a single O(N) pass: SplitRaw reads and splits the document once, each page
+// is cropped in isolation, and the pages are merged once — there is no per-page
+// re-Collect of the whole document (which would make it O(N²)).
+func Crop(pdf []byte, rect [4]float64, pages []string) ([]byte, error) {
+	w, h := rect[2]-rect[0], rect[3]-rect[1]
+	if w <= 1 || h <= 1 {
+		return nil, fmt.Errorf("crop region too small")
+	}
+	if w > maxRegionPt || h > maxRegionPt {
+		return nil, fmt.Errorf("crop region too large")
+	}
+	n, err := PageCount(pdf)
+	if err != nil {
+		return nil, err
+	}
+	targets, err := api.PagesForPageSelection(n, pages, true, false)
+	if err != nil {
+		return nil, err
+	}
+
+	spans, err := api.SplitRaw(bytes.NewReader(pdf), 1, model.NewDefaultConfiguration())
+	if err != nil {
+		return nil, err
+	}
+	segs := make([][]byte, 0, len(spans))
+	for _, ps := range spans {
+		page, err := io.ReadAll(ps.Reader)
+		if err != nil {
+			return nil, err
+		}
+		if targets[ps.From] {
+			norm, err := normalizePage(page)
+			if err != nil {
+				return nil, err
+			}
+			// pageW=w, pageH=h means cropToRect centres with zero padding, so the
+			// output page is exactly the crop window — no standardization to a
+			// larger uniform size as SplitRegions does for ragged regions.
+			if page, err = cropToRect(norm, rect, w, h); err != nil {
+				return nil, err
+			}
+		}
+		segs = append(segs, page)
+	}
+	if len(segs) == 1 {
+		return segs[0], nil // MergeRaw needs ≥2 inputs; a one-page doc is already done
+	}
+	readers := make([]io.ReadSeeker, len(segs))
+	for i, b := range segs {
+		readers[i] = bytes.NewReader(b)
+	}
+	var out bytes.Buffer
+	if err := api.MergeRaw(readers, &out, false, model.NewDefaultConfiguration()); err != nil {
+		return nil, err
+	}
+	return out.Bytes(), nil
+}
+
 // normalizePage flattens a single-page PDF's /Rotate into its content and
 // resolves CropBox→MediaBox by running it through CutPage as a trivial 1×1 cut
 // (which already does both), then dropping CutPage's outline page. The result is
