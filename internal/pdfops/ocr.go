@@ -54,7 +54,15 @@ func StampTextLayer(pdf []byte, words []Word) ([]byte, error) {
 		// description string (the parser rejects mode 3) — RenderMode is set below.
 		desc := fmt.Sprintf("fontname:%s, points:%d, scalefactor:1 abs, position:bl, offset:%.2f %.2f, rotation:0",
 			ocrFont, pts, w.Rect[0], w.Rect[1])
-		wm, err := api.TextWatermark(w.Text, desc, true, false, types.POINTS)
+		// pdfcpu's format.Text treats % as a placeholder introducer in watermark
+		// text (%p page#, %P page count, %t timestamp, %v version; %% = a literal %).
+		// Raw OCR text is full of bare % signs, and a % that isn't a valid placeholder
+		// is dropped — a lone "%" collapses to the empty string, for which pdfcpu
+		// computes a nil bounding box and panics (nil-pointer deref deep in the stamp
+		// path). Escape every % to %% so it renders as a literal % and never triggers
+		// substitution (this also stops e.g. an OCR'd "%P" turning into a page count).
+		text := strings.ReplaceAll(w.Text, "%", "%%")
+		wm, err := api.TextWatermark(text, desc, true, false, types.POINTS)
 		if err != nil {
 			return nil, err
 		}
