@@ -2713,10 +2713,15 @@ async function runOCR() {
   try {
     btn.textContent = 'Loading OCR…';
     await loadTesseract();
+    // Absolute URLs (resolved against the page): tesseract.js runs its worker from
+    // a blob: URL, and relative paths don't resolve against our origin from that
+    // context — they must be full URLs or the worker's fetches fail ("Failed to
+    // fetch") on the core wasm and the traineddata.
+    const base = new URL('./vendor/tesseract/', location.href).href;
     worker = await window.Tesseract.createWorker('eng', 1, {
-      workerPath: './vendor/tesseract/worker.min.js',
-      corePath: './vendor/tesseract/tesseract-core-simd.wasm.js',
-      langPath: './vendor/tesseract/',
+      workerPath: base + 'worker.min.js',
+      corePath: base + 'tesseract-core-simd.wasm.js',
+      langPath: base,
       gzip: true, // eng.traineddata.gz
     });
     const words = [];
