@@ -338,6 +338,16 @@ input[type="search"] { width: 100%; }
   font-size: 13px;
 }
 #outline a:hover { background: var(--surface0); color: var(--text); }
+/* "Edit outline…" button at the top of the outline panel. */
+.outline-edit { display: block; width: 100%; margin-bottom: 6px; background: var(--surface0); border: 1px solid var(--surface1); border-radius: 6px; color: var(--text); padding: 4px 8px; font: inherit; cursor: pointer; }
+.outline-edit:hover { background: var(--surface1); }
+/* Outline editor rows: title (grows) + page + indent/outdent/delete. */
+.outline-edit-list { display: flex; flex-direction: column; gap: 4px; max-height: 50vh; overflow-y: auto; margin: 8px 0; }
+.outlinerow { display: flex; align-items: center; gap: 4px; }
+.outlinerow .outline-title { flex: 1; min-width: 0; }
+.outlinerow .outline-page { width: 52px; flex: none; }
+.outlinerow input { background: var(--surface0); border: 1px solid var(--surface1); border-radius: 4px; color: var(--text); padding: 3px 5px; font: inherit; }
+.outlinerow button { flex: none; padding: 3px 7px; }
 
 /* image library panel */
 .libactions, .quickstamps, .markers { display: flex; gap: 6px; margin-bottom: 8px; flex-wrap: wrap; }
