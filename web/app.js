@@ -42,6 +42,9 @@ const els = {
   themeToggle: $('themeToggle'),
   viewerWrap: $('viewerWrap'), viewerContainer: $('viewerContainer'),
   thumbs: $('thumbs'), thumbGrid: $('thumbGrid'), outline: $('outline'),
+  thumbSelBar: $('thumbSelBar'), thumbSelCount: $('thumbSelCount'),
+  selRotateLeftBtn: $('selRotateLeftBtn'), selRotateRightBtn: $('selRotateRightBtn'),
+  selDeleteBtn: $('selDeleteBtn'), selClearBtn: $('selClearBtn'),
   appendBtn: $('appendBtn'), appendInput: $('appendInput'),
   redactBtn: $('redactBtn'), applyRedactBtn: $('applyRedactBtn'),
   editTextBtn: $('editTextBtn'), removeOriginalsBtn: $('removeOriginalsBtn'),
@@ -1352,6 +1355,7 @@ els.scanFlattenBtn.onclick = async () => {
 // --- thumbnails sidebar ------------------------------------------------------
 async function buildThumbnails(gen = docGen) {
   els.thumbGrid.innerHTML = '';
+  clearSelection(); // a rebuild means a new/edited doc — old page numbers no longer apply
   for (let n = 1; n <= pdfDocument.numPages; n++) {
     if (gen !== docGen) return; // a newer document loaded — stop rendering stale thumbs
     const page = await pdfDocument.getPage(n);
@@ -1366,7 +1370,7 @@ async function buildThumbnails(gen = docGen) {
     canvas.className = 'thumb';
     canvas.width = viewport.width;
     canvas.height = viewport.height;
-    canvas.onclick = () => { viewer.currentPageNumber = n; };
+    canvas.onclick = (e) => onThumbClick(e, n);
 
     const acts = document.createElement('div');
     acts.className = 'thumbacts';
@@ -1393,6 +1397,55 @@ function markCurrentThumb(n) {
   els.thumbGrid.querySelectorAll('.thumbwrap').forEach((c) => {
     c.classList.toggle('current', Number(c.dataset.page) === n);
   });
+}
+
+// --- thumbnail multi-select -------------------------------------------------
+// A set of selected page numbers (1-based current positions) drives the bulk
+// rotate/delete bar. The grid is rebuilt only on document load (buildThumbnails)
+// and a page op renumbers pages, so the selection is cleared on every rebuild —
+// it only ever names pages currently on screen. Bulk ops route through the same
+// pageOp rail as the per-thumbnail buttons, so they inherit the signature guard,
+// overlay bake, and reload for free.
+let selectedPages = new Set(); // page numbers selected in the grid
+let selAnchor = null;          // last clicked page, for shift-range selection
+
+// onThumbClick handles a thumbnail click with its modifier keys: shift extends a
+// range from the anchor, ctrl/cmd toggles one page, a plain click clears the
+// selection and navigates (the pre-existing behaviour).
+function onThumbClick(e, n) {
+  if (e.shiftKey && selAnchor != null) {
+    const lo = Math.min(selAnchor, n), hi = Math.max(selAnchor, n);
+    selectedPages.clear();
+    for (let p = lo; p <= hi; p++) selectedPages.add(p);
+  } else if (e.ctrlKey || e.metaKey) {
+    if (!selectedPages.delete(n)) selectedPages.add(n);
+    selAnchor = n;
+  } else {
+    selectedPages.clear();
+    selAnchor = n;
+    viewer.currentPageNumber = n;
+  }
+  markSelectedThumbs();
+}
+
+function clearSelection() {
+  selectedPages.clear();
+  selAnchor = null;
+  markSelectedThumbs();
+}
+
+function markSelectedThumbs() {
+  els.thumbGrid.querySelectorAll('.thumbwrap').forEach((c) => {
+    c.classList.toggle('selected', selectedPages.has(Number(c.dataset.page)));
+  });
+  els.thumbSelBar.hidden = selectedPages.size === 0;
+  els.thumbSelCount.textContent = selectedPages.size + ' selected';
+}
+
+// selectedPagesParam joins the selection into the comma list pageOp/the server
+// expect, in ascending page order.
+function selectedPagesParam() {
+  return [...selectedPages].sort((a, b) => a - b).join(',');
 }
 
 // --- thumbnail drag-to-reorder ----------------------------------------------
@@ -1547,6 +1600,17 @@ async function splitGo() {
 // (≡ −90 mod 360) so the stored /Rotate stays a non-negative multiple of 90.
 els.rotateLeftBtn.onclick = () => pageOp('rotate', { deg: 270 });
 els.rotateRightBtn.onclick = () => pageOp('rotate', { deg: 90 });
+
+// Bulk actions on the thumbnail multi-selection. Delete is blocked when it would
+// empty the document (mirrors the per-thumbnail "numPages > 1" guard, generalized).
+els.selRotateLeftBtn.onclick = () => { if (selectedPages.size) pageOp('rotate', { pages: selectedPagesParam(), deg: 270 }); };
+els.selRotateRightBtn.onclick = () => { if (selectedPages.size) pageOp('rotate', { pages: selectedPagesParam(), deg: 90 }); };
+els.selDeleteBtn.onclick = () => {
+  if (!selectedPages.size) return;
+  if (pdfDocument.numPages <= selectedPages.size) { toast("can't delete every page"); return; }
+  pageOp('delete', { pages: selectedPagesParam() });
+};
+els.selClearBtn.onclick = () => clearSelection();
 
 // Insert a blank page after the page on screen — a replace-in-place mutation, so
 // it routes through pageOp like rotate/delete (the blank matches the neighbour).

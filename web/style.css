@@ -287,6 +287,14 @@ input[type="search"] { width: 100%; }
 
 /* thumbnails */
 .thumbactions { margin-bottom: 8px; }
+.thumbselbar {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 4px;
+  margin-bottom: 8px; padding: 6px; border-radius: 6px;
+  background: var(--surface0);
+}
+.thumbselbar[hidden] { display: none; } /* set display:flex would otherwise override the hidden attr */
+.thumbselcount { color: var(--subtext0); font-size: 12px; margin-right: auto; }
+.thumbselbar button { padding: 3px 8px; font-size: 13px; }
 .thumbwrap { position: relative; margin-bottom: 10px; text-align: center; cursor: grab; }
 .thumbwrap.dragging { opacity: 0.4; cursor: grabbing; }
 .thumb {
@@ -298,6 +306,7 @@ input[type="search"] { width: 100%; }
   background: var(--crust);
 }
 .thumbwrap.current .thumb { border-color: var(--blue); }
+.thumbwrap.selected .thumb { border-color: var(--mauve); }
 .thumbacts {
   position: absolute; top: 2px; right: 2px;
   display: none; gap: 3px;
