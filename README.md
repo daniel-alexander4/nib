@@ -138,6 +138,12 @@ If a strip can't produce a sound document it's reported and your open document
 is left untouched, so you can step down to the next method safely. Any removal
 produces a new, **unsigned** copy — save it to keep the cleaned version.
 
+### Attachments
+**Secure → Attachments** lists the files embedded inside a PDF. **Extract** any
+one to save it out, or **Attach a file…** to embed a new one (a source file, a
+README, anything). Adding a file replaces the open document with a new, unsigned
+copy — save it to keep the attachment.
+
 ### Sign & finalize — tamper-evident
 **Finalize & sign** seals the document with a certification signature from an
 identity kept in your vault and bakes in a visible watermark — a preset like

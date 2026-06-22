@@ -52,6 +52,8 @@ const els = {
   scanBtn: $('scanBtn'), scanModal: $('scanModal'), scanBody: $('scanBody'),
   scanStripBtn: $('scanStripBtn'), scanMetaBtn: $('scanMetaBtn'), scanSafeBtn: $('scanSafeBtn'),
   scanFlattenBtn: $('scanFlattenBtn'), scanClose: $('scanClose'),
+  attachBtn: $('attachBtn'), attachmentsModal: $('attachmentsModal'), attachBody: $('attachBody'),
+  attachAddBtn: $('attachAddBtn'), attachInput: $('attachInput'), attachClose: $('attachClose'),
   backupBtn: $('backupBtn'), restoreInput: $('restoreInput'), checkUpdatesBtn: $('checkUpdatesBtn'),
   updatePill: $('updatePill'), updateGet: $('updateGet'), updateDismiss: $('updateDismiss'),
   manageKeysBtn: $('manageKeysBtn'), keysModal: $('keysModal'), keysList: $('keysList'),
@@ -1363,6 +1365,77 @@ els.scanFlattenBtn.onclick = async () => {
   await setDocumentFromServer(await res.json());
   renderScanReport({ findings: [] });
   toast('Flattened — document is now inert images');
+};
+
+// --- embedded attachments: list / extract / add ------------------------------
+// Lists the document's embedded files; each row extracts to a saved file, and
+// "Attach a file…" embeds one (a doc mutation, reloaded like the page ops).
+async function loadAttachments() {
+  els.attachBody.innerHTML = '<p class="scan-where">Loading…</p>';
+  try {
+    const res = await apiFetch('/api/attachments');
+    if (!res.ok) throw new Error('list');
+    renderAttachments((await res.json()).attachments || []);
+  } catch { els.attachBody.innerHTML = '<p class="scan-where">Could not list attachments</p>'; }
+}
+function renderAttachments(items) {
+  const body = els.attachBody;
+  body.innerHTML = '';
+  if (!items.length) {
+    const p = document.createElement('p');
+    p.className = 'scan-empty';
+    p.textContent = 'No embedded files.';
+    body.appendChild(p);
+    return;
+  }
+  for (const a of items) {
+    const row = document.createElement('div');
+    row.className = 'attachrow';
+    const meta = document.createElement('div');
+    const name = document.createElement('div');
+    name.className = 'scan-detail';
+    name.textContent = a.name;
+    meta.appendChild(name);
+    if (a.desc) {
+      const desc = document.createElement('div');
+      desc.className = 'scan-where';
+      desc.textContent = a.desc;
+      meta.appendChild(desc);
+    }
+    const btn = document.createElement('button');
+    btn.textContent = 'Extract';
+    btn.onclick = () => extractAttachment(a.name);
+    row.append(meta, btn);
+    body.appendChild(row);
+  }
+}
+async function extractAttachment(name) {
+  const form = new FormData();
+  form.append('name', name);
+  const res = await apiFetch('/api/attachments/extract', { method: 'POST', body: form });
+  if (!res.ok) return toast('extract failed');
+  openSaveAs(await res.blob(), name, 'Save attachment');
+}
+els.attachBtn.onclick = () => {
+  if (!pdfDocument) return toast('Open a PDF first');
+  els.attachmentsModal.hidden = false;
+  loadAttachments();
+};
+els.attachClose.onclick = () => { els.attachmentsModal.hidden = true; };
+els.attachAddBtn.onclick = () => els.attachInput.click();
+els.attachInput.onchange = async () => {
+  const file = els.attachInput.files[0];
+  els.attachInput.value = '';
+  if (!file) return;
+  if (!confirmSignatureLoss()) return;
+  const form = new FormData();
+  form.append('file', file, file.name);
+  form.append('name', file.name);
+  const res = await apiFetch('/api/attachments/add', { method: 'POST', body: form });
+  if (!res.ok) return toast('could not attach the file (a same-named attachment may already exist)');
+  await setDocumentFromServer(await res.json());
+  await loadAttachments();
+  toast('File attached');
 };
 
 // --- thumbnails sidebar ------------------------------------------------------
@@ -3831,7 +3904,7 @@ const DOC_REQUIRED = [
   'detectBtn', 'editTextBtn', 'removeOriginalsBtn', 'autofillBtn', 'splitBtn',
   'splitBoxBtn', 'applyBoxSplitBtn', 'rotateLeftBtn', 'rotateRightBtn',
   'extractBtn', 'insertBlankBtn', 'duplicatePageBtn', 'insertPdfBtn', 'pageNumBtn', 'nupBtn', 'cropBtn',
-  'redactBtn', 'applyRedactBtn', 'scanBtn',
+  'redactBtn', 'applyRedactBtn', 'scanBtn', 'attachBtn',
   'finalizeBtn', 'timestampBtn', 'cosignBtn', 'sessionInitBtn', 'sessionSendBtn',
 ];
 function setDocControls(enabled) {
