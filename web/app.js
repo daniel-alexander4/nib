@@ -102,6 +102,7 @@ const els = {
   autofillBtn: $('autofillBtn'), editProfileBtn: $('editProfileBtn'),
   saveFlatBtn: $('saveFlatBtn'), saveEditableBtn: $('saveEditableBtn'), finalizeBtn: $('finalizeBtn'),
   exportZipBtn: $('exportZipBtn'), exportPngBtn: $('exportPngBtn'),
+  exportImagesBtn: $('exportImagesBtn'), exportTextBtn: $('exportTextBtn'),
   exportFormJsonBtn: $('exportFormJsonBtn'), exportFormCsvBtn: $('exportFormCsvBtn'),
   exportCertBtn: $('exportCertBtn'), printBtn: $('printBtn'),
   finalizeModal: $('finalizeModal'), fzText: $('fzText'), fzDate: $('fzDate'),
@@ -2364,6 +2365,35 @@ els.exportPngBtn.onclick = async () => {
   if (!pdfDocument) return;
   const [{ blob }] = await renderFilledPages(2, viewer.currentPageNumber);
   openSaveAs(blob, exportBase() + '-page' + viewer.currentPageNumber + '.png', 'Export page (PNG)');
+};
+
+els.exportTextBtn.onclick = async () => {
+  if (!pdfDocument) return toast('Open a PDF first');
+  // Best-effort dump of the document's text layer via pdf.js. Items come in
+  // content-stream order (left as-is — re-sorting risks scrambling columns);
+  // pdf.js emits its own whitespace items for gaps, so concatenating str with a
+  // newline on each item's hasEOL gives usable text. Scanned / image-only pages
+  // have no text layer and contribute nothing (there is no OCR).
+  let out = '';
+  for (let n = 1; n <= pdfDocument.numPages; n++) {
+    let tc;
+    try { tc = await (await pdfDocument.getPage(n)).getTextContent(); }
+    catch { continue; } // image-only page: no text layer
+    for (const it of tc.items) {
+      out += it.str;
+      if (it.hasEOL) out += '\n';
+    }
+    out += '\n'; // blank line between pages
+  }
+  openSaveAs(new Blob([out], { type: 'text/plain' }), exportBase() + '.txt', 'Export text (.txt)');
+};
+
+els.exportImagesBtn.onclick = async () => {
+  if (!pdfDocument) return toast('Open a PDF first');
+  const res = await apiFetch('/api/extract-images', { method: 'POST' });
+  if (!res.ok) { toast('Could not extract images'); return; }
+  if (res.headers.get('X-Image-Count') === '0') { toast('No extractable images found'); return; }
+  openSaveAs(await res.blob(), exportBase() + '-images.zip', 'Export embedded images (ZIP)');
 };
 
 els.exportFormJsonBtn.onclick = () => { window.location = '/api/form-data?format=json'; };

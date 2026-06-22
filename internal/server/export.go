@@ -315,3 +315,27 @@ func (s *Server) handleFormData(w http.ResponseWriter, r *http.Request) {
 	}
 	sendDownload(w, "form-data.json", "application/json", data)
 }
+
+// handleExtractImages bundles the current document's embedded images into a ZIP.
+// The client fetches the bytes and saves them through the in-app picker; a
+// document with no extractable images returns 200 with X-Image-Count: 0 and an
+// empty body, so the client can say so rather than save an empty archive.
+func (s *Server) handleExtractImages(w http.ResponseWriter, r *http.Request) {
+	s.mu.Lock()
+	doc := s.doc
+	s.mu.Unlock()
+	if doc == nil {
+		httpError(w, http.StatusNotFound, "no document open")
+		return
+	}
+	data, count, err := pdfops.ExtractImagesZip(doc.data)
+	if err != nil {
+		httpError(w, http.StatusInternalServerError, "could not extract images")
+		return
+	}
+	w.Header().Set("X-Image-Count", strconv.Itoa(count))
+	if count == 0 {
+		return
+	}
+	sendDownload(w, "images.zip", "application/zip", data)
+}
