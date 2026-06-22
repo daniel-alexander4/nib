@@ -296,8 +296,9 @@
       <h2 id="authTitle">Set up Nib</h2>
       <p id="authHint"></p>
 
-      <!-- migration: old password (shown only in migrate state) -->
-      <label id="migrateRow" hidden>Current vault password
+      <!-- password/passphrase row: the old vault password (migrate state) or the
+           SSH key's passphrase (key-locked state); the label switches per state. -->
+      <label id="migrateRow" hidden><span id="authPwLabel">Current vault password</span>
         <input id="authPw" type="password" autocomplete="current-password" />
       </label>
 

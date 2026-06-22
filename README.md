@@ -319,6 +319,12 @@ your vault. (Defaults to dark.)
   password*. Authorize more than one key to use it across machines, and back it
   up / restore it fully encrypted. (Lose every authorized key and the vault is
   unrecoverable — by design.)
+- **Passphrase-protected SSH keys are supported.** If your unlock key is
+  encrypted with a passphrase, Nib prompts for it at startup and decrypts the key
+  *in memory* — the key file stays encrypted on disk, so a stolen disk plus key
+  file still can't open the vault without the passphrase. (An unencrypted key
+  keeps the no-prompt startup.) `ssh-agent` is not used: the vault is unlocked by
+  decrypting to the key, an operation agents don't perform.
 
 ---
 

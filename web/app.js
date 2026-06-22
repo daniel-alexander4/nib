@@ -92,7 +92,7 @@ const els = {
   srvIntentRow: $('srvIntentRow'), srvIntent: $('srvIntent'),
   srvDecline: $('srvDecline'), srvAccept: $('srvAccept'),
   authOverlay: $('authOverlay'), authForm: $('authForm'), authTitle: $('authTitle'),
-  authHint: $('authHint'), authPw: $('authPw'), migrateRow: $('migrateRow'),
+  authHint: $('authHint'), authPw: $('authPw'), authPwLabel: $('authPwLabel'), migrateRow: $('migrateRow'),
   keyChoice: $('keyChoice'), keySelect: $('keySelect'), keyPath: $('keyPath'),
   createPath: $('createPath'), authWarn: $('authWarn'),
   introOverlay: $('introOverlay'),
@@ -232,6 +232,20 @@ function applyStatus(st) {
   els.authError.textContent = '';
   els.authOverlay.hidden = false;
   els.migrateRow.hidden = st.state !== 'migrate';
+  els.authPwLabel.textContent = 'Current vault password';
+
+  if (st.state === 'key-locked') {
+    els.authTitle.textContent = 'Enter your key passphrase';
+    els.authHint.textContent = `The SSH key that unlocks Nib (${st.keyPath || 'your key'}) is passphrase-protected. Enter its passphrase to unlock — the key stays encrypted on disk.`;
+    els.authWarn.hidden = true;
+    els.keyChoice.hidden = true;
+    els.migrateRow.hidden = false;
+    els.authPwLabel.textContent = 'SSH key passphrase';
+    els.authPw.value = '';
+    els.authSubmit.textContent = 'Unlock';
+    els.authPw.focus();
+    return;
+  }
 
   // Populate the existing-key dropdown from detected ~/.ssh keys.
   els.keySelect.innerHTML = '';
@@ -277,6 +291,17 @@ async function refreshStatus() {
 els.authForm.addEventListener('submit', async (e) => {
   e.preventDefault();
   els.authError.textContent = '';
+  // Passphrase unlock: the enrolled key is encrypted; send only the passphrase.
+  if (authState === 'key-locked') {
+    const res = await fetch('/api/ssh/unlock', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ passphrase: els.authPw.value }),
+    });
+    const st = await res.json();
+    if (!res.ok) { els.authError.textContent = st.error || 'failed'; return; }
+    applyStatus(st);
+    return;
+  }
   const mode = selectedKeyMode();
   const body = { password: els.authPw.value };
   if (mode === 'create') {
