@@ -1743,30 +1743,37 @@ function selectedPagesParam() {
 // --- thumbnail drag-to-reorder ----------------------------------------------
 // Dragging a thumbnail live-moves it among its siblings; on drop, the new
 // thumbnail order (each .thumbwrap's original page number) is sent as a reorder.
-// A cancelled drag restores the original DOM order so a thumbnail's click target
-// never diverges from its position.
-let dragSrc = null;      // the .thumbwrap being dragged
+// Grabbing a thumbnail that's part of a multi-selection drags the whole selection
+// as one contiguous block (relative order kept). A cancelled drag restores the
+// original DOM order so a thumbnail's click target never diverges from its position.
+let dragBlock = null;    // the .thumbwrap node(s) being dragged — one, or a selected block
 let dragOrig = null;     // snapshot of the grid's child order, for cancel revert
 let dragDropped = false; // a real drop committed this drag
 
 function onThumbDragStart(e) {
   const wrap = e.target.closest('.thumbwrap');
   if (!wrap) return;
-  dragSrc = wrap;
+  // Grabbing a selected thumbnail drags the whole selection; an unselected one
+  // drags just itself. Read the block from the DOM .selected class (kept in sync
+  // with selectedPages by markSelectedThumbs), in document order.
+  const sel = [...els.thumbGrid.querySelectorAll('.thumbwrap.selected')];
+  dragBlock = wrap.classList.contains('selected') && sel.length > 1 ? sel : [wrap];
   dragOrig = [...els.thumbGrid.children];
   dragDropped = false;
-  wrap.classList.add('dragging');
+  dragBlock.forEach((w) => w.classList.add('dragging'));
   e.dataTransfer.effectAllowed = 'move';
   e.dataTransfer.setData('text/plain', wrap.dataset.page); // payload required to drag in Firefox
 }
 
 function onThumbDragOver(e) {
-  if (!dragSrc) return;
+  if (!dragBlock) return;
   e.preventDefault(); // allow drop
   e.dataTransfer.dropEffect = 'move';
-  const after = thumbBelow(e.clientY);
-  if (after) els.thumbGrid.insertBefore(dragSrc, after);
-  else els.thumbGrid.appendChild(dragSrc);
+  const after = thumbBelow(e.clientY); // never a block node — all are .dragging, which thumbBelow skips
+  for (const w of dragBlock) {
+    if (after) els.thumbGrid.insertBefore(w, after);
+    else els.thumbGrid.appendChild(w);
+  }
 }
 
 // thumbBelow returns the first thumbnail whose vertical midpoint is below the
@@ -1779,7 +1786,7 @@ function thumbBelow(y) {
 }
 
 function onThumbDrop(e) {
-  if (!dragSrc) return;
+  if (!dragBlock) return;
   e.preventDefault();
   dragDropped = true;
   const order = [...els.thumbGrid.querySelectorAll('.thumbwrap')].map((w) => w.dataset.page);
@@ -1789,9 +1796,9 @@ function onThumbDrop(e) {
 }
 
 function onThumbDragEnd() {
-  if (dragSrc) dragSrc.classList.remove('dragging');
+  if (dragBlock) dragBlock.forEach((w) => w.classList.remove('dragging'));
   if (!dragDropped && dragOrig) dragOrig.forEach((w) => els.thumbGrid.appendChild(w)); // cancelled — restore order
-  dragSrc = null;
+  dragBlock = null;
   dragOrig = null;
   dragDropped = false;
 }
