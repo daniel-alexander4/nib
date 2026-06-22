@@ -111,6 +111,7 @@ func (s *Server) Handler() http.Handler {
 	// Page operations.
 	mux.HandleFunc("POST /api/pages", s.requireUnlocked(s.handlePages))
 	mux.HandleFunc("POST /api/redact", s.requireUnlocked(s.handleRedact))
+	mux.HandleFunc("POST /api/ocr", s.requireUnlocked(s.handleOCR))
 	mux.HandleFunc("GET /api/outline", s.requireUnlocked(s.handleOutlineGet))
 	mux.HandleFunc("POST /api/outline", s.requireUnlocked(s.handleOutlineSet))
 
