@@ -92,6 +92,7 @@
         <div class="dropdown">
           <button id="saveFlatBtn">Save flattened PDF</button>
           <button id="saveEditableBtn">Save editable copy</button>
+          <button id="reduceBtn">Reduce file size…</button>
         </div>
       </div>
       <div class="menu">
@@ -373,6 +374,37 @@
         <span class="grow"></span>
         <button id="fzCancel">Cancel</button>
         <button id="fzGo" class="primary">Finalize</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Reduce file size: lossless Optimize (keeps text) or lossy Compress (flattens
+       pages to JPEG). Renders the result, shows before→after size, then saves. -->
+  <div id="reduceModal" hidden>
+    <div class="sigcard">
+      <h3>Reduce file size</h3>
+      <p class="libhint"><strong>Optimize</strong> is lossless — it removes redundant data and keeps
+        selectable text, but mostly helps bloated files (little effect on scans). <strong>Compress</strong>
+        re-renders every page as a JPEG image: big savings on scans, but it <strong>flattens the
+        document</strong> — selectable text and search are lost.</p>
+      <div class="fzfield">
+        <label class="check"><input type="radio" name="reduceMode" value="optimize" checked /> Optimize (lossless, keeps text)</label>
+        <label class="check"><input type="radio" name="reduceMode" value="compress" /> Compress (smaller, flattens to images)</label>
+      </div>
+      <div id="reduceQuality" class="fzfield" hidden>
+        <label class="fzlabel" for="reduceQ">Quality</label>
+        <select id="reduceQ">
+          <option value="low">Smallest (≈96 dpi)</option>
+          <option value="med" selected>Balanced (≈150 dpi)</option>
+          <option value="high">Higher quality (≈220 dpi)</option>
+        </select>
+      </div>
+      <div id="reduceResult" class="libhint" hidden></div>
+      <div class="sigbtns">
+        <button id="reduceCancel">Cancel</button>
+        <span class="grow"></span>
+        <button id="reduceGo" class="primary">Reduce</button>
+        <button id="reduceSave" class="primary" hidden>Save…</button>
       </div>
     </div>
   </div>

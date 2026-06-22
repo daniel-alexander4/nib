@@ -296,6 +296,13 @@ original, or as a flattened or editable copy. **Print** the current document —
 fills, signatures, and all — straight from the **File** tab through your
 browser's print dialog.
 
+**Reduce file size** (File → Save as) shrinks a PDF two ways and shows the
+before→after size before you save. **Optimize** is lossless — it strips redundant
+data and keeps selectable text, but mostly helps bloated files (little effect on
+scans). **Compress** re-renders pages as JPEG images at a chosen quality: big
+savings on scans, but it flattens the document, so selectable text and search are
+lost — best for scanned/image-heavy PDFs.
+
 **Pull the contents out** (File → Export): **Document text (.txt)** dumps the
 document's text layer to a plain-text file, and **Embedded images (ZIP)** bundles
 the pictures inside the PDF into a zip — JPEGs come out as-is, other images are
