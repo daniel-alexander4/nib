@@ -115,6 +115,15 @@ original text stays underneath (it's a visual edit) until you press **Remove
 originals**, which flattens just the edited pages so the old text is gone for
 good — or until you flatten / finalize the whole document.
 
+### OCR — make a scan searchable
+Got a scanned PDF that's just images? **Edit → OCR** reads the text on every page
+and adds an **invisible text layer** underneath the scan, so the page still looks
+exactly the same but the text is now **selectable, copyable, and findable** (and
+shows up in *Find*). The OCR runs **entirely on your machine** — the recognition
+engine is built into Nib (no install, no cloud, nothing leaves your computer) —
+so it works offline like everything else. English, with full Unicode (accents,
+quotes, dashes all come through). It's undoable, too.
+
 ### Real redaction
 Draw redaction boxes and press **Apply**. Nib re-renders those pages flat so the
 content underneath is **actually gone** — not just hidden behind a black
