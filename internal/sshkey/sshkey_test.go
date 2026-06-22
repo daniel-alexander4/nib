@@ -87,6 +87,41 @@ func encryptedKey(t *testing.T, dir, passphrase string) (keyPath, pubLine string
 	return keyPath, strings.TrimSpace(string(ssh.MarshalAuthorizedKey(sshPub)))
 }
 
+func TestPublicKeyLineEncryptedNoPub(t *testing.T) {
+	// An encrypted OpenSSH key with no .pub sibling: the line is derived from the
+	// cleartext public half the format embeds, with no passphrase. This is the
+	// enroll case that used to dead-end on "passphrase protected".
+	dir := t.TempDir()
+	keyPath, want := encryptedKey(t, dir, "hunter2")
+	got, err := PublicKeyLine(keyPath)
+	if err != nil {
+		t.Fatalf("PublicKeyLine: %v", err)
+	}
+	if got != want {
+		t.Errorf("public key line mismatch:\n got %q\nwant %q", got, want)
+	}
+}
+
+func TestPublicKeyLinePlainNoPub(t *testing.T) {
+	// An unencrypted key whose .pub was removed still resolves via the private key.
+	dir := t.TempDir()
+	keyPath := filepath.Join(dir, "id_ed25519")
+	want, err := Generate(keyPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(keyPath + ".pub"); err != nil {
+		t.Fatal(err)
+	}
+	got, err := PublicKeyLine(keyPath)
+	if err != nil {
+		t.Fatalf("PublicKeyLine: %v", err)
+	}
+	if got != want {
+		t.Errorf("public key line mismatch:\n got %q\nwant %q", got, want)
+	}
+}
+
 func TestUnwrapPassphrase(t *testing.T) {
 	dir := t.TempDir()
 	keyPath, pubLine := encryptedKey(t, dir, "hunter2")
