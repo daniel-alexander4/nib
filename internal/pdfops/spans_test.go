@@ -1,14 +1,14 @@
-package server
+package pdfops
 
 import (
 	"reflect"
 	"testing"
 )
 
-func TestSplitSpans(t *testing.T) {
+func TestPageSpans(t *testing.T) {
 	// Every N pages chunks the sequence; the last chunk is short and a single-page
 	// chunk is bare ("5", not "5-5").
-	got, err := splitSpans("every", "2", "", 5)
+	got, err := PageSpans("every", "2", "", 5)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -17,7 +17,7 @@ func TestSplitSpans(t *testing.T) {
 	}
 
 	// Custom ranges: each token becomes one file; a bare page stays bare.
-	got, err = splitSpans("ranges", "", "1-3, 4-8, 9", 9)
+	got, err = PageSpans("ranges", "", "1-3, 4-8, 9", 9)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -38,8 +38,8 @@ func TestSplitSpans(t *testing.T) {
 		{"ranges", "", "", 5},    // nothing entered
 		{"bogus", "", "", 5},     // unknown mode
 	} {
-		if _, err := splitSpans(tc.mode, tc.every, tc.ranges, tc.n); err == nil {
-			t.Errorf("splitSpans(%q,%q,%q,%d) = nil error, want error", tc.mode, tc.every, tc.ranges, tc.n)
+		if _, err := PageSpans(tc.mode, tc.every, tc.ranges, tc.n); err == nil {
+			t.Errorf("PageSpans(%q,%q,%q,%d) = nil error, want error", tc.mode, tc.every, tc.ranges, tc.n)
 		}
 	}
 }

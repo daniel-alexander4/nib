@@ -45,6 +45,92 @@ func readPDF(t *testing.T, path string) []byte {
 	return b
 }
 
+func TestRotate(t *testing.T) {
+	dir := t.TempDir()
+	in := writePDF(t, dir, "in.pdf", "a", "b")
+	out := filepath.Join(dir, "out.pdf")
+	if code := cmdRotate([]string{in, "-o", out, "--deg", "90"}); code != 0 {
+		t.Fatalf("rotate exit = %d, want 0", code)
+	}
+	if err := pdfops.Validate(readPDF(t, out)); err != nil {
+		t.Fatalf("rotated output invalid: %v", err)
+	}
+	if code := cmdRotate([]string{in, "-o", out, "--deg", "45"}); code != 1 {
+		t.Errorf("rotate --deg 45 exit = %d, want 1 (not a multiple of 90)", code)
+	}
+}
+
+func TestPagesKeepRemove(t *testing.T) {
+	dir := t.TempDir()
+	in := writePDF(t, dir, "in.pdf", "a", "b", "c", "d")
+	keep := filepath.Join(dir, "keep.pdf")
+	if code := cmdPages([]string{in, "-o", keep, "--keep", "1-2"}); code != 0 {
+		t.Fatalf("pages --keep exit = %d, want 0", code)
+	}
+	if n, _ := pdfops.PageCount(readPDF(t, keep)); n != 2 {
+		t.Errorf("--keep 1-2 → %d pages, want 2", n)
+	}
+	rem := filepath.Join(dir, "rem.pdf")
+	if code := cmdPages([]string{in, "-o", rem, "--remove", "1,2"}); code != 0 {
+		t.Fatalf("pages --remove exit = %d, want 0", code)
+	}
+	if n, _ := pdfops.PageCount(readPDF(t, rem)); n != 2 {
+		t.Errorf("--remove 1,2 of 4 → %d pages, want 2", n)
+	}
+	if code := cmdPages([]string{in, "-o", rem}); code != 1 {
+		t.Errorf("pages with neither flag exit = %d, want 1", code)
+	}
+	if code := cmdPages([]string{in, "-o", rem, "--keep", "1", "--remove", "2"}); code != 1 {
+		t.Errorf("pages with both flags exit = %d, want 1", code)
+	}
+}
+
+func TestSplit(t *testing.T) {
+	dir := t.TempDir()
+	in := writePDF(t, dir, "in.pdf", "a", "b", "c", "d", "e")
+
+	od := filepath.Join(dir, "every")
+	if code := cmdSplit([]string{in, "--out-dir", od, "--every", "2"}); code != 0 {
+		t.Fatalf("split --every exit = %d, want 0", code)
+	}
+	if got := countPDFs(t, od); got != 3 { // 1-2, 3-4, 5
+		t.Errorf("--every 2 of 5 → %d files, want 3", got)
+	}
+
+	od2 := filepath.Join(dir, "ranges")
+	if code := cmdSplit([]string{in, "--out-dir", od2, "--ranges", "1-2,3-5"}); code != 0 {
+		t.Fatalf("split --ranges exit = %d, want 0", code)
+	}
+	if got := countPDFs(t, od2); got != 2 {
+		t.Errorf("--ranges → %d files, want 2", got)
+	}
+
+	if code := cmdSplit([]string{in, "--out-dir", od2}); code != 1 {
+		t.Errorf("split with no mode exit = %d, want 1", code)
+	}
+	if code := cmdSplit([]string{in, "--out-dir", od2, "--every", "2", "--bookmarks"}); code != 1 {
+		t.Errorf("split with two modes exit = %d, want 1", code)
+	}
+	if code := cmdSplit([]string{in, "--every", "2"}); code != 1 {
+		t.Errorf("split without --out-dir exit = %d, want 1", code)
+	}
+}
+
+func countPDFs(t *testing.T, dir string) int {
+	t.Helper()
+	ents, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	n := 0
+	for _, e := range ents {
+		if filepath.Ext(e.Name()) == ".pdf" {
+			n++
+		}
+	}
+	return n
+}
+
 func TestRunDispatch(t *testing.T) {
 	if handled, _ := Run(nil, "1.2.3"); handled {
 		t.Error("empty args should not be handled (falls through to desktop boot)")
