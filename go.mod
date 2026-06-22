@@ -9,6 +9,7 @@ require (
 	github.com/digitorus/timestamp v0.0.0-20231217203849-220c5c2851b7
 	github.com/pdfcpu/pdfcpu v0.12.1
 	golang.org/x/crypto v0.52.0
+	golang.org/x/term v0.43.0
 	software.sslmate.com/src/go-pkcs12 v0.7.2
 )
 
