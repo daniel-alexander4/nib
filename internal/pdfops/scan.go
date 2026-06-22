@@ -3,6 +3,7 @@ package pdfops
 import (
 	"bytes"
 	"fmt"
+	"strings"
 
 	"github.com/pdfcpu/pdfcpu/pkg/api"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu"
@@ -101,6 +102,28 @@ func Scan(pdf []byte) (ScanReport, error) {
 		add("metadata", "low", "XMP metadata stream", 0)
 	}
 
+	// Document information dictionary: identifying properties (author, title, …).
+	// ReadContext sets only xt.Info (the indirect ref), never the convenience
+	// fields (xt.Author/Title/…, which are populated by validate, which we skip),
+	// so deref the dict and read each entry as text directly.
+	if xt.Info != nil {
+		if info := derefDict(xt, *xt.Info); info != nil {
+			for _, key := range []string{"Author", "Creator", "Title", "Subject", "Keywords"} {
+				o, ok := info.Find(key)
+				if !ok {
+					continue
+				}
+				v, err := xt.DereferenceText(o)
+				if err != nil {
+					continue
+				}
+				if v = strings.TrimSpace(v); v != "" {
+					add("info", "low", key+": "+clip(v, 80), 0)
+				}
+			}
+		}
+	}
+
 	// Page-level additional actions, attachment annotations, and link/widget actions.
 	eachPage(xt, root, func(page types.Dict, nr int) {
 		if _, ok := page.Find("AA"); ok {
@@ -190,6 +213,42 @@ func RemoveFilesAndMedia(pdf []byte) ([]byte, error) {
 		_, err := pdfcpu.RemoveAnnotations(ctx, nil, mediaTypes, nil, false)
 		return err
 	})
+}
+
+// StripMetadata removes the document's identifying metadata: it drops the whole
+// /Info dictionary (Author, Creator, Title, Subject, Keywords, …), deletes the XMP
+// /Metadata stream from the catalog and every page, and regenerates the trailer
+// /ID so the original permanent identifier no longer travels with the file.
+//
+// One residue is unavoidable through pdfcpu's writer: for PDFs older than 2.0 it
+// re-stamps a generic Producer ("pdfcpu …") and fresh CreationDate/ModDate on
+// write, so the output names the tool and the processing time — but the
+// personally identifying fields are gone. Like the other Secure-tab removals it
+// rewrites the file, so the result is a new, unsigned PDF.
+func StripMetadata(pdf []byte) ([]byte, error) {
+	return writeMutated(pdf, func(ctx *model.Context) error {
+		xt := ctx.XRefTable
+		root, err := xt.Catalog()
+		if err != nil {
+			return err
+		}
+		ctx.Info = nil // ensureInfoDict re-adds only Producer/dates for <PDF2.0; nothing reads the cleared fields
+		ctx.ID = nil   // nil forces a fresh pair; otherwise /ID[0] is preserved as a permanent tracker
+		_ = xt.DeleteDictEntry(root, "Metadata")
+		eachPage(xt, root, func(page types.Dict, _ int) {
+			_ = xt.DeleteDictEntry(page, "Metadata") // page-level XMP duplicates dc:title/creator too
+		})
+		return nil
+	})
+}
+
+// clip shortens s to at most max runes, appending an ellipsis when it truncates.
+func clip(s string, max int) string {
+	r := []rune(s)
+	if len(r) <= max {
+		return s
+	}
+	return string(r[:max]) + "…"
 }
 
 // Validate reports whether pdf parses as a structurally sound PDF. It is the

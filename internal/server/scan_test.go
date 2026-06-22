@@ -45,6 +45,28 @@ func TestScanAndSanitizeWiring(t *testing.T) {
 	}
 }
 
+// The metadata-strip method is wired through the same rail. The form fixture has
+// no identifying metadata, so this is a clean no-op that must still report ok
+// (the actual /Info //Metadata //ID removal is covered by the pdfops tests).
+func TestSanitizeMetadataMethod(t *testing.T) {
+	ts, path := startServer(t)
+	c, csrf := authedClient(t, ts)
+	openByPath(t, ts.URL, c, csrf, path)
+
+	resp := write(t, c, csrf, http.MethodPost, ts.URL+"/api/sanitize?method=metadata", "", nil)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("metadata sanitize status = %d, want 200", resp.StatusCode)
+	}
+	var out sanitizeResponse
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		t.Fatalf("sanitize response not JSON: %v", err)
+	}
+	if !out.Ok {
+		t.Error("metadata strip should report ok")
+	}
+}
+
 // An unknown removal method is a client error, not a silent no-op.
 func TestSanitizeUnknownMethod(t *testing.T) {
 	ts, path := startServer(t)
