@@ -123,6 +123,37 @@ func InsertBlank(pdf []byte, afterPage int) ([]byte, error) {
 	return out.Bytes(), nil
 }
 
+// InsertPDF inserts the pages of other immediately BEFORE page (1-based) of pdf.
+// Inserting before page 1 prepends other to the document; to add pages at the
+// very end use Append. Together with Append this covers every position. There is
+// no native pdfcpu positional merge, so it composes via splice (Collect + merge),
+// the same split-and-glue replacePage uses.
+func InsertPDF(pdf, other []byte, page int) ([]byte, error) {
+	n, err := PageCount(pdf)
+	if err != nil {
+		return nil, err
+	}
+	if page < 1 || page > n {
+		return nil, fmt.Errorf("page %d out of range (1-%d)", page, n)
+	}
+	return splice(pdf, page-1, page, n, other)
+}
+
+// DuplicatePage returns pdf with page (1-based) duplicated in place: the copy is
+// inserted immediately after the original. Collect keeps a repeated page in the
+// selection, so the selection "1-p" + "p-" emits page p twice; both ranges are
+// always non-empty for a valid page, so no edge-guarding is needed.
+func DuplicatePage(pdf []byte, page int) ([]byte, error) {
+	n, err := PageCount(pdf)
+	if err != nil {
+		return nil, err
+	}
+	if page < 1 || page > n {
+		return nil, fmt.Errorf("page %d out of range (1-%d)", page, n)
+	}
+	return Collect(pdf, []string{fmt.Sprintf("1-%d", page), fmt.Sprintf("%d-", page)})
+}
+
 // CreateFromJSON renders a brand-new PDF from a pdfcpu "create" JSON page
 // description (api.Create with no input document). Nib uses it to generate pages
 // from text it controls — currently the co-signing trust-explainer readme — as
@@ -401,21 +432,24 @@ func SplitPage(pdf []byte, page, cols, rows int, resize bool) ([]byte, error) {
 	return replacePage(pdf, page, n, tiles)
 }
 
-// replacePage returns pdf with page p (1-based, of n total) replaced in place by
-// the pages of tiles: pages[1..p-1] + tiles + pages[p+1..n]. api.Collect errors
-// on an empty range, so the missing side at an edge is skipped.
-func replacePage(pdf []byte, page, n int, tiles []byte) ([]byte, error) {
+// splice returns pdf with pages 1..leftEnd kept, then mid, then pages
+// rightStart..n. A side whose range is empty (leftEnd < 1, or rightStart > n) is
+// omitted, since api.Collect errors on an empty range. With rightStart =
+// leftEnd+2 it drops the single page between the sides (replace it with mid);
+// with rightStart = leftEnd+1 it keeps every original page (a pure insert of mid
+// at that boundary).
+func splice(pdf []byte, leftEnd, rightStart, n int, mid []byte) ([]byte, error) {
 	segments := make([][]byte, 0, 3)
-	if page > 1 {
-		left, err := Collect(pdf, []string{fmt.Sprintf("1-%d", page-1)})
+	if leftEnd >= 1 {
+		left, err := Collect(pdf, []string{fmt.Sprintf("1-%d", leftEnd)})
 		if err != nil {
 			return nil, err
 		}
 		segments = append(segments, left)
 	}
-	segments = append(segments, tiles)
-	if page < n {
-		right, err := Collect(pdf, []string{fmt.Sprintf("%d-", page+1)})
+	segments = append(segments, mid)
+	if rightStart <= n {
+		right, err := Collect(pdf, []string{fmt.Sprintf("%d-", rightStart)})
 		if err != nil {
 			return nil, err
 		}
@@ -429,6 +463,12 @@ func replacePage(pdf []byte, page, n int, tiles []byte) ([]byte, error) {
 		}
 	}
 	return result, nil
+}
+
+// replacePage returns pdf with page p (1-based, of n total) replaced in place by
+// the pages of tiles: pages[1..p-1] + tiles + pages[p+1..n].
+func replacePage(pdf []byte, page, n int, tiles []byte) ([]byte, error) {
+	return splice(pdf, page-1, page+1, n, tiles)
 }
 
 const (

@@ -124,6 +124,8 @@ const els = {
   aboutBackBtn: $('aboutBackBtn'), aboutClose: $('aboutClose'),
   rotateLeftBtn: $('rotateLeftBtn'), rotateRightBtn: $('rotateRightBtn'),
   extractBtn: $('extractBtn'), insertBlankBtn: $('insertBlankBtn'),
+  duplicatePageBtn: $('duplicatePageBtn'),
+  insertPdfBtn: $('insertPdfBtn'), insertPdfInput: $('insertPdfInput'),
   extractModal: $('extractModal'), extractPages: $('extractPages'),
   extractHint: $('extractHint'), extractCancel: $('extractCancel'), extractGo: $('extractGo'),
   pageNumBtn: $('pageNumBtn'), pageNumModal: $('pageNumModal'),
@@ -1626,6 +1628,21 @@ els.selClearBtn.onclick = () => clearSelection();
 // Insert a blank page after the page on screen — a replace-in-place mutation, so
 // it routes through pageOp like rotate/delete (the blank matches the neighbour).
 els.insertBlankBtn.onclick = () => pageOp('insertblank', { page: viewer.currentPageNumber });
+
+// Duplicate the page on screen — the copy lands right after it (replace-in-place
+// mutation, same pageOp rail as insert-blank).
+els.duplicatePageBtn.onclick = async () => {
+  if (await pageOp('duplicate', { page: viewer.currentPageNumber })) toast('Page duplicated');
+};
+
+// Insert another PDF BEFORE the page on screen (before page 1 prepends; use
+// "+ Append PDF" for the end). Reuses pageOp's `file` field (the `append` part).
+els.insertPdfBtn.onclick = () => els.insertPdfInput.click();
+els.insertPdfInput.onchange = async () => {
+  const file = els.insertPdfInput.files[0];
+  els.insertPdfInput.value = '';
+  if (file && await pageOp('insertpdf', { file, page: viewer.currentPageNumber })) toast('PDF inserted');
+};
 
 // --- extract a page range into a new PDF -------------------------------------
 // Unlike the page mutations above, extract derives a NEW file and hands it to
@@ -3781,7 +3798,7 @@ const DOC_REQUIRED = [
   'textToolBtn', 'highlightToolBtn', 'drawToolBtn',
   'detectBtn', 'editTextBtn', 'removeOriginalsBtn', 'autofillBtn', 'splitBtn',
   'splitBoxBtn', 'applyBoxSplitBtn', 'rotateLeftBtn', 'rotateRightBtn',
-  'extractBtn', 'insertBlankBtn', 'pageNumBtn', 'nupBtn', 'cropBtn',
+  'extractBtn', 'insertBlankBtn', 'duplicatePageBtn', 'insertPdfBtn', 'pageNumBtn', 'nupBtn', 'cropBtn',
   'redactBtn', 'applyRedactBtn', 'scanBtn',
   'finalizeBtn', 'timestampBtn', 'cosignBtn', 'sessionInitBtn', 'sessionSendBtn',
 ];
