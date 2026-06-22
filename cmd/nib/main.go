@@ -22,6 +22,7 @@ import (
 
 	"nib"
 	"nib/internal/browser"
+	"nib/internal/cli"
 	"nib/internal/server"
 	"nib/internal/singleton"
 	"nib/internal/vault"
@@ -33,6 +34,13 @@ var version = "dev"
 func main() {
 	log.SetFlags(0)
 	log.SetPrefix("nib: ")
+
+	// A recognized first argument is a headless subcommand: run it and exit
+	// without ever binding a port or opening a browser. Anything else (a PDF
+	// path, --replace, or no argument) falls through to the desktop boot below.
+	if handled, code := cli.Run(os.Args[1:], version); handled {
+		os.Exit(code)
+	}
 
 	replace := flag.Bool("replace", false, "terminate any other running Nib instance before starting")
 	flag.Parse()

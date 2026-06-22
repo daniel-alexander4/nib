@@ -418,6 +418,41 @@ swapping the binary).
 
 ---
 
+## Command line
+
+Beyond the desktop app, `nib` runs a handful of operations headlessly — no
+window, no server — so you can script them or batch a folder. Anything that
+isn't a known command (a PDF path, or nothing) still opens the app as usual.
+
+| Command | What it does |
+| --- | --- |
+| `nib timestamp FILE…` | Write an OpenTimestamps proof (`FILE.ots`) for each file. |
+| `nib timestamp --verify FILE…` | Check each file against its `FILE.ots` proof. |
+| `nib verify [--json] FILE…` | Report each file's signature integrity. |
+| `nib optimize IN -o OUT` | Losslessly shrink a PDF. |
+| `nib merge IN… -o OUT` | Concatenate PDFs, in order, into one. |
+| `nib sanitize IN -o OUT` | Strip identifying metadata and active content (JavaScript, auto-actions, embedded files). |
+| `nib sign IN -o OUT --cert ID.p12` | Certify a PDF with an imported `.p12` identity. |
+| `nib version` | Print the version. |
+
+Commands that produce a PDF write it to `-o`/`--out`; `timestamp` writes a
+sidecar `.ots` beside each input and `verify` prints a report. Flags may go
+before or after the file arguments. The exit status is non-zero on failure —
+`verify` returns `2` when a signature is invalid or absent — so a check drops
+straight into a script:
+
+```sh
+nib verify contract.pdf && echo "signature intact"
+for f in *.pdf; do nib timestamp "$f"; done
+```
+
+`nib sign` reads the certificate passphrase from `--password-file FILE` or the
+`NIB_P12_PASSWORD` environment variable — never from the command line, where it
+would be visible to other processes. Run `nib <command> -h` for a command's own
+flags.
+
+---
+
 ## How it works
 
 Nib is a small Go server that embeds the entire single-page UI and the
@@ -428,7 +463,8 @@ cgo, permissive dependencies only — so it builds to one portable binary per
 platform.
 
 ```
-cmd/nib          entry point — bind loopback, serve, open the window
+cmd/nib          entry point — run a headless command, or bind loopback and open the window
+internal/cli     headless subcommands (timestamp, verify, optimize, merge, sanitize, sign)
 internal/server  HTTP API + embedded UI, loopback-only guard
 internal/vault   encrypted store (AES-256-GCM, sealed to your SSH key)
 internal/pdfops  pdfcpu stamping / flattening / redaction
