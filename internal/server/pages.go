@@ -7,7 +7,6 @@ import (
 	"strings"
 
 	"nib/internal/pdfops"
-	"nib/internal/sign"
 )
 
 // handlePages applies a structural page operation (rotate, delete, reorder,
@@ -130,13 +129,7 @@ func (s *Server) handlePages(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	sig := sign.Verify(result)
-	s.mu.Lock()
-	if s.doc != nil {
-		s.doc.data = result
-		s.doc.sig = sig
-	}
-	s.mu.Unlock()
+	s.commitMutation(pdfBytes, result)
 	writeJSON(w, s.docResponse())
 }
 
