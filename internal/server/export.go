@@ -290,6 +290,27 @@ func (s *Server) handleAssemble(w http.ResponseWriter, r *http.Request) {
 	sendDownload(w, "flattened.pdf", "application/pdf", pdf)
 }
 
+// handleOptimize losslessly shrinks the current document (dedup + object-stream
+// repacking; no image/quality change) and returns the smaller copy for save-as.
+// The before/after byte sizes ride in headers so the UI can show the result.
+func (s *Server) handleOptimize(w http.ResponseWriter, r *http.Request) {
+	s.mu.Lock()
+	doc := s.doc
+	s.mu.Unlock()
+	if doc == nil {
+		httpError(w, http.StatusNotFound, "no document open")
+		return
+	}
+	result, err := pdfops.Optimize(doc.data)
+	if err != nil {
+		httpError(w, http.StatusInternalServerError, "could not optimize: "+err.Error())
+		return
+	}
+	w.Header().Set("X-Original-Size", strconv.Itoa(len(doc.data)))
+	w.Header().Set("X-New-Size", strconv.Itoa(len(result)))
+	sendDownload(w, "optimized.pdf", "application/pdf", result)
+}
+
 // handleFormData exports the current document's form fields as JSON or CSV.
 func (s *Server) handleFormData(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
