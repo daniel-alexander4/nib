@@ -2,6 +2,7 @@ package pdfops
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -240,6 +241,41 @@ func StripMetadata(pdf []byte) ([]byte, error) {
 		})
 		return nil
 	})
+}
+
+// ErrWrongPassword and ErrNotEncrypted classify the two expected failures of
+// RemovePassword so the caller can respond specifically (reprompt vs "already
+// unprotected") instead of a generic error.
+var (
+	ErrWrongPassword = errors.New("wrong password")
+	ErrNotEncrypted  = errors.New("document is not password-protected")
+)
+
+// RemovePassword strips a PDF's encryption — both an open/user password and
+// owner-password restriction flags — producing a plain, unrestricted document.
+// password is the user's open or owner password; an empty string is enough to
+// drop owner-only restrictions (where the open password is itself empty). It does
+// NOT crack anything: only the supplied password is tried, and a wrong or missing
+// one returns ErrWrongPassword. This is qpdf --decrypt-style unlocking of a
+// document the local user is authorized to edit. Because api.Decrypt rewrites the
+// file, any existing signature does not survive (the caller warns where it can).
+func RemovePassword(pdf []byte, password string) ([]byte, error) {
+	conf := model.NewDefaultConfiguration()
+	// pdfcpu validates the owner password first, then the user password, so
+	// supplying the typed secret as both accepts whichever one it actually is.
+	conf.UserPW = password
+	conf.OwnerPW = password
+	var out bytes.Buffer
+	if err := api.Decrypt(bytes.NewReader(pdf), &out, conf); err != nil {
+		if errors.Is(err, pdfcpu.ErrWrongPassword) || strings.Contains(err.Error(), "correct password") {
+			return nil, ErrWrongPassword
+		}
+		if strings.Contains(err.Error(), "not encrypted") {
+			return nil, ErrNotEncrypted
+		}
+		return nil, err
+	}
+	return out.Bytes(), nil
 }
 
 // clip shortens s to at most max runes, appending an ellipsis when it truncates.
