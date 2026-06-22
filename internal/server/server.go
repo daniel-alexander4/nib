@@ -108,6 +108,8 @@ func (s *Server) Handler() http.Handler {
 	// Page operations.
 	mux.HandleFunc("POST /api/pages", s.requireUnlocked(s.handlePages))
 	mux.HandleFunc("POST /api/redact", s.requireUnlocked(s.handleRedact))
+	mux.HandleFunc("GET /api/outline", s.requireUnlocked(s.handleOutlineGet))
+	mux.HandleFunc("POST /api/outline", s.requireUnlocked(s.handleOutlineSet))
 
 	// Hidden-content scan and sanitize.
 	mux.HandleFunc("GET /api/scan", s.requireUnlocked(s.handleScan))

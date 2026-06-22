@@ -498,6 +498,22 @@
     </div>
   </div>
 
+  <!-- Outline editor: author the bookmark tree (page-ordered, indent to nest). -->
+  <div id="outlineModal" hidden>
+    <div class="sigcard">
+      <h3>Edit outline</h3>
+      <p class="libhint">Bookmarks jump to the top of a page and are kept in page order. Indent to nest
+        (chapters → sections). Titles must be unique. Saving replaces the document's whole outline.</p>
+      <div id="outlineEditList" class="outline-edit-list"></div>
+      <div class="sigbtns">
+        <button id="outlineAddBtn">Add bookmark</button>
+        <span class="grow"></span>
+        <button id="outlineCancel">Cancel</button>
+        <button id="outlineSave" class="primary">Save outline</button>
+      </div>
+    </div>
+  </div>
+
   <!-- Signature details: per-signer integrity + how much each signing time
        can be trusted. Read-only; opened from the badge's "details" link. -->
   <div id="sigDetailsModal" hidden>
