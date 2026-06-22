@@ -56,7 +56,7 @@ const els = {
   selMoveFrontBtn: $('selMoveFrontBtn'), selMoveBackBtn: $('selMoveBackBtn'),
   appendBtn: $('appendBtn'), appendInput: $('appendInput'),
   redactBtn: $('redactBtn'), applyRedactBtn: $('applyRedactBtn'),
-  editTextBtn: $('editTextBtn'), removeOriginalsBtn: $('removeOriginalsBtn'),
+  editTextBtn: $('editTextBtn'), removeOriginalsBtn: $('removeOriginalsBtn'), ocrBtn: $('ocrBtn'),
   scanBtn: $('scanBtn'), scanModal: $('scanModal'), scanBody: $('scanBody'),
   scanStripBtn: $('scanStripBtn'), scanMetaBtn: $('scanMetaBtn'), scanSafeBtn: $('scanSafeBtn'),
   scanFlattenBtn: $('scanFlattenBtn'), scanClose: $('scanClose'),
@@ -2686,6 +2686,69 @@ async function renderPageBlob(doc, n, scale, paint, mime, quality) {
   return { blob, w: base.width, h: base.height };
 }
 
+// --- OCR: make a scanned PDF searchable --------------------------------------
+// Rasterize each page, recognize its text entirely in the browser (tesseract.js,
+// loaded from the vendored engine — nothing leaves the machine), map each word's
+// pixel box to PDF points, and bake an invisible searchable text layer on the
+// server. The scan still looks identical; its text becomes selectable + findable.
+let tesseractReady = false;
+function loadTesseract() {
+  if (tesseractReady) return Promise.resolve();
+  return new Promise((resolve, reject) => {
+    const s = document.createElement('script');
+    s.src = './vendor/tesseract/tesseract.min.js';
+    s.onload = () => { tesseractReady = true; resolve(); };
+    s.onerror = () => reject(new Error('could not load the OCR engine'));
+    document.head.appendChild(s);
+  });
+}
+
+const OCR_SCALE = 200 / 72; // ~200 DPI — a good accuracy/speed balance for OCR
+
+async function runOCR() {
+  if (!pdfDocument || !confirmSignatureLoss()) return;
+  const btn = els.ocrBtn, label = btn.textContent;
+  btn.disabled = true;
+  let worker;
+  try {
+    btn.textContent = 'Loading OCR…';
+    await loadTesseract();
+    worker = await window.Tesseract.createWorker('eng', 1, {
+      workerPath: './vendor/tesseract/worker.min.js',
+      corePath: './vendor/tesseract/tesseract-core-simd.wasm.js',
+      langPath: './vendor/tesseract/',
+      gzip: true, // eng.traineddata.gz
+    });
+    const words = [];
+    const n = pdfDocument.numPages;
+    for (let p = 1; p <= n; p++) {
+      btn.textContent = `OCR ${p}/${n}…`;
+      const { blob, h } = await renderPageBlob(pdfDocument, p, OCR_SCALE, null, 'image/png');
+      const { data } = await worker.recognize(blob);
+      for (const word of data.words || []) {
+        const t = (word.text || '').trim();
+        if (!t) continue;
+        // bbox is pixels (top-left origin) at OCR_SCALE; map to PDF points
+        // (bottom-left origin): x/scale, and flip Y about the page height h.
+        const b = word.bbox;
+        words.push({ page: p, text: t, rect: [b.x0 / OCR_SCALE, h - b.y1 / OCR_SCALE, b.x1 / OCR_SCALE, h - b.y0 / OCR_SCALE] });
+      }
+    }
+    if (!words.length) { toast('No text found to add'); return; }
+    btn.textContent = 'Saving…';
+    const res = await apiFetch('/api/ocr', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(words) });
+    if (!res.ok) { toast('Could not add the text layer'); return; }
+    await setDocumentFromServer(await res.json());
+    toast(`Added a searchable text layer (${words.length} words)`);
+  } catch (e) {
+    toast(e.message || 'OCR failed');
+  } finally {
+    if (worker) { try { await worker.terminate(); } catch { /* already gone */ } }
+    btn.disabled = false; btn.textContent = label;
+  }
+}
+if (els.ocrBtn) els.ocrBtn.onclick = runOCR;
+
 // renderFilledPages rasterises the saved (form-filled, stamped) document so the
 // raster reflects every edit. Used for flatten and image export. mime/quality
 // default to PNG; "image/jpeg" + a quality drives the lossy "reduce size" path.
@@ -4593,7 +4656,7 @@ const DOC_REQUIRED = [
   'exportZipBtn', 'exportPngBtn', 'exportFormJsonBtn', 'exportFormCsvBtn', 'exportBookmarkSplitBtn',
   'exportPageSplitBtn',
   'textToolBtn', 'highlightToolBtn', 'drawToolBtn',
-  'detectBtn', 'editTextBtn', 'removeOriginalsBtn', 'autofillBtn', 'splitBtn',
+  'detectBtn', 'editTextBtn', 'removeOriginalsBtn', 'ocrBtn', 'autofillBtn', 'splitBtn',
   'splitBoxBtn', 'applyBoxSplitBtn', 'rotateLeftBtn', 'rotateRightBtn',
   'extractBtn', 'insertBlankBtn', 'duplicatePageBtn', 'insertPdfBtn', 'pageNumBtn', 'nupBtn', 'cropBtn',
   'redactBtn', 'applyRedactBtn', 'scanBtn', 'attachBtn', 'decryptBtn',
