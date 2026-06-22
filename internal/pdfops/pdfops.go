@@ -569,11 +569,16 @@ func SplitRegions(pdf []byte, page int, rects [][4]float64) ([]byte, error) {
 }
 
 // Crop reduces each target page (pages: a 1-based selection like []string{"2"};
-// nil = every page) to rect — PDF points, bottom-left origin, in the page's
-// DISPLAY space, the same convention SplitRegions uses. Each target page is
-// normalized (any /Rotate flattened, CropBox resolved) so the client's display-
-// space rectangle maps straight on, then reduced to a page the exact size of rect
-// showing only that window; pages outside the selection are kept untouched.
+// nil = every page) to frac — the keep-box as page FRACTIONS, top-left origin:
+// [fx, fy, fw, fh] where (fx,fy) is the box's top-left corner and (fw,fh) its
+// width/height, each in 0..1. Fractions (not absolute points) so that one drawn
+// box maps to the same RELATIVE region on every page regardless of its size: on a
+// uniform document this is identical to the old absolute behaviour, and on a
+// mixed-size document each page is cropped proportionally instead of to a fixed
+// physical window that could fall off a smaller page. Each target page is
+// normalized (any /Rotate flattened, CropBox resolved) so the box maps straight
+// onto the page pdf.js showed, then reduced to a page the exact size of the
+// resolved window; pages outside the selection are kept untouched.
 //
 // Content outside the rectangle is clipped away — hidden, not destroyed (the
 // objects remain in the file behind the new, smaller MediaBox); Flatten or Redact
@@ -582,13 +587,9 @@ func SplitRegions(pdf []byte, page int, rects [][4]float64) ([]byte, error) {
 // It is a single O(N) pass: SplitRaw reads and splits the document once, each page
 // is cropped in isolation, and the pages are merged once — there is no per-page
 // re-Collect of the whole document (which would make it O(N²)).
-func Crop(pdf []byte, rect [4]float64, pages []string) ([]byte, error) {
-	w, h := rect[2]-rect[0], rect[3]-rect[1]
-	if w <= 1 || h <= 1 {
+func Crop(pdf []byte, frac [4]float64, pages []string) ([]byte, error) {
+	if frac[2] <= 0 || frac[3] <= 0 {
 		return nil, fmt.Errorf("crop region too small")
-	}
-	if w > maxRegionPt || h > maxRegionPt {
-		return nil, fmt.Errorf("crop region too large")
 	}
 	n, err := PageCount(pdf)
 	if err != nil {
@@ -611,6 +612,12 @@ func Crop(pdf []byte, rect [4]float64, pages []string) ([]byte, error) {
 		}
 		if targets[ps.From] {
 			norm, err := normalizePage(page)
+			if err != nil {
+				return nil, err
+			}
+			// Resolve the fraction box against THIS page's own display box, so
+			// differently-sized pages each keep the same relative window.
+			rect, w, h, err := resolveFracRect(norm, frac)
 			if err != nil {
 				return nil, err
 			}
@@ -656,6 +663,29 @@ func normalizePage(pdf []byte) ([]byte, error) {
 		return nil, err
 	}
 	return Collect(buf.Bytes(), []string{"2-"}) // drop CutPage's outline page
+}
+
+// resolveFracRect converts a top-left-origin fraction box [fx, fy, fw, fh] (0..1)
+// into the absolute source rectangle cropToRect expects: PDF points, bottom-left
+// origin, relative to normPage's display-box origin (cropToRect adds the box's
+// lower-left itself). normPage must already be rotation-flattened, so its MediaBox
+// dimensions match the rotation-aware viewport the client measured the fractions
+// against — making this identical to the old absolute path on a uniform document.
+// It also returns the resolved window's width and height.
+func resolveFracRect(normPage []byte, frac [4]float64) (rect [4]float64, w, h float64, err error) {
+	ctx, err := api.ReadValidateAndOptimize(bytes.NewReader(normPage), model.NewDefaultConfiguration())
+	if err != nil {
+		return rect, 0, 0, err
+	}
+	_, _, attrs, err := ctx.PageDict(1, false)
+	if err != nil {
+		return rect, 0, 0, err
+	}
+	bw, bh := attrs.MediaBox.Width(), attrs.MediaBox.Height()
+	fx, fy, fw, fh := frac[0], frac[1], frac[2], frac[3]
+	// Flip the top-left-origin fractions to bottom-left points within the box.
+	rect = [4]float64{fx * bw, (1 - (fy + fh)) * bh, (fx + fw) * bw, (1 - fy) * bh}
+	return rect, rect[2] - rect[0], rect[3] - rect[1], nil
 }
 
 // cropToRect returns a one-page PDF: normPage cropped to rect (PDF points,

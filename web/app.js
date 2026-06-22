@@ -3328,12 +3328,14 @@ els.cropCancel.onclick = () => { els.cropModal.hidden = true; clearCropRect(); }
 els.cropGo.onclick = async () => {
   if (!cropRect) { els.cropModal.hidden = true; return; }
   const page = cropPage;
-  const base = (await pdfDocument.getPage(page)).getViewport({ scale: 1 }); // PDF points
-  const f = { pageW: base.width, pageH: base.height };
-  const rect = rectPoints(f, [cropRect.fx, cropRect.fy, cropRect.fx + cropRect.fw, cropRect.fy + cropRect.fh]);
+  // Send the keep-box as page fractions (top-left origin) [fx, fy, fw, fh]; the
+  // server scales it to each target page's own size, so a mixed-size document
+  // crops proportionally instead of to a fixed window. On a uniform document this
+  // is identical to the old absolute-points path.
+  const frac = [cropRect.fx, cropRect.fy, cropRect.fw, cropRect.fh];
   const allPages = els.cropAllPages.checked;
   exitCrop();
-  const ok = await pageOp('crop', { rect: JSON.stringify(rect), pages: allPages ? '' : String(page) });
+  const ok = await pageOp('crop', { rect: JSON.stringify(frac), pages: allPages ? '' : String(page) });
   if (ok) toast(allPages ? 'All pages cropped to the box' : `Page ${page} cropped to the box`);
 };
 

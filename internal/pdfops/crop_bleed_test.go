@@ -18,6 +18,13 @@ func multiQuadrantPDF(t *testing.T, n int, w, h float64) []byte {
 	return doc
 }
 
+// Crop takes the keep-box as page fractions [fx, fy, fw, fh], top-left origin.
+// Quadrant fractions for the 2×2 colour pages built by fourQuadrantPDF:
+var (
+	fracTopLeft     = [4]float64{0, 0, 0.5, 0.5}     // quad 0 (red)
+	fracBottomRight = [4]float64{0.5, 0.5, 0.5, 0.5} // quad 3 (yellow)
+)
+
 // TestCropNoBleed crops a four-quadrant page to one quadrant and proves the
 // output page shows ONLY that quadrant's colour (the clip keeps the rest of the
 // page, still in the shared content stream, from bleeding in) and is sized exactly
@@ -25,8 +32,7 @@ func multiQuadrantPDF(t *testing.T, n int, w, h float64) []byte {
 func TestCropNoBleed(t *testing.T) {
 	skipNoPoppler(t)
 	pdf := fourQuadrantPDF(t, 300, 400)
-	// Bottom-left-origin rect over the bottom-right quadrant (yellow, quad 3).
-	out, err := Crop(pdf, [4]float64{150, 0, 300, 200}, nil)
+	out, err := Crop(pdf, fracBottomRight, nil) // bottom-right quadrant (yellow, quad 3)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -51,7 +57,7 @@ func TestCropNoBleed(t *testing.T) {
 func TestCropAllPages(t *testing.T) {
 	skipNoPoppler(t)
 	pdf := multiQuadrantPDF(t, 3, 300, 400)
-	out, err := Crop(pdf, [4]float64{0, 200, 150, 400}, nil) // top-left quadrant (red, 0)
+	out, err := Crop(pdf, fracTopLeft, nil) // top-left quadrant (red, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -68,13 +74,48 @@ func TestCropAllPages(t *testing.T) {
 	}
 }
 
+// TestCropMixedPageSizes is the proportional-crop guard: cropping a document whose
+// pages differ in size to the SAME fraction box must crop each page to the same
+// RELATIVE region — i.e. each output page is proportional to its own source size,
+// not a fixed physical window. Page 2 is twice the size of page 1, so its cropped
+// top-left quadrant must come back ~2× as large, and both must be red (quad 0).
+func TestCropMixedPageSizes(t *testing.T) {
+	skipNoPoppler(t)
+	small := fourQuadrantPDF(t, 300, 400)
+	big := fourQuadrantPDF(t, 600, 800)
+	pdf, err := Append(small, big)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := Crop(pdf, fracTopLeft, nil) // top-left quadrant of EACH page
+	if err != nil {
+		t.Fatal(err)
+	}
+	imgs := renderPDF(t, out, "mixed")
+	if len(imgs) != 2 {
+		t.Fatalf("rendered %d pages, want 2", len(imgs))
+	}
+	for i, img := range imgs {
+		for _, p := range cornersAndCentre(img.Bounds()) {
+			if got := nearestQuad(img.At(p[0], p[1])); got != 0 {
+				t.Errorf("page %d at (%d,%d): quadrant %d, want 0 (red)", i+1, p[0], p[1], got)
+			}
+		}
+	}
+	// Page 1 window = 150×200pt, page 2 = 300×400pt → page 2 must be ~2× page 1.
+	w1, w2 := imgs[0].Bounds().Dx(), imgs[1].Bounds().Dx()
+	if ratio := float64(w2) / float64(w1); ratio < 1.8 || ratio > 2.2 {
+		t.Errorf("page2/page1 width ratio = %.2f (%dpx vs %dpx), want ~2 — crop is not proportional", ratio, w2, w1)
+	}
+}
+
 // TestCropSelection crops only page 1 of a 2-page document and proves page 1 is
 // cropped (red, narrower) while page 2 is left fully untouched (all four
 // quadrants, full size).
 func TestCropSelection(t *testing.T) {
 	skipNoPoppler(t)
 	pdf := multiQuadrantPDF(t, 2, 300, 400)
-	out, err := Crop(pdf, [4]float64{0, 200, 150, 400}, []string{"1"})
+	out, err := Crop(pdf, fracTopLeft, []string{"1"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -101,9 +142,9 @@ func TestCropSelection(t *testing.T) {
 	}
 }
 
-// TestCropRotated is the rotation-correctness guard: the client measures the rect
+// TestCropRotated is the rotation-correctness guard: the client measures the box
 // in pdf.js DISPLAY space, so the server must flatten /Rotate before cropping.
-// Oracle: cropping a /Rotate-90 page to its FULL display rect must reproduce
+// Oracle: cropping a /Rotate-90 page to its FULL display box must reproduce
 // poppler's own (correct) rendering of that page.
 func TestCropRotated(t *testing.T) {
 	skipNoPoppler(t)
@@ -112,7 +153,7 @@ func TestCropRotated(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	full, err := Crop(rotated, [4]float64{0, 0, 400, 300}, nil) // 300×400 displays as 400×300
+	full, err := Crop(rotated, [4]float64{0, 0, 1, 1}, nil) // the whole display box
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -141,7 +182,7 @@ func TestCropRotated(t *testing.T) {
 // poppler needed) — the single-pass split→crop→merge must round-trip the count.
 func TestCropPageCountUnchanged(t *testing.T) {
 	pdf := multiQuadrantPDF(t, 4, 300, 400)
-	out, err := Crop(pdf, [4]float64{50, 50, 250, 350}, nil)
+	out, err := Crop(pdf, [4]float64{0.1, 0.1, 0.8, 0.8}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -154,11 +195,11 @@ func TestCropPageCountUnchanged(t *testing.T) {
 	}
 }
 
-// TestCropRejectsTinyRegion proves a degenerate (sub-point) crop window is
+// TestCropRejectsTinyRegion proves a degenerate (zero-size) crop window is
 // rejected rather than producing an empty page.
 func TestCropRejectsTinyRegion(t *testing.T) {
 	pdf := fourQuadrantPDF(t, 300, 400)
-	if _, err := Crop(pdf, [4]float64{10, 10, 10.5, 200}, nil); err == nil {
-		t.Error("expected an error for a sub-point-wide crop region")
+	if _, err := Crop(pdf, [4]float64{0.1, 0.1, 0, 0.5}, nil); err == nil {
+		t.Error("expected an error for a zero-width crop region")
 	}
 }
