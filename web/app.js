@@ -46,6 +46,8 @@ const els = {
   themeToggle: $('themeToggle'),
   viewerWrap: $('viewerWrap'), viewerContainer: $('viewerContainer'),
   thumbs: $('thumbs'), thumbGrid: $('thumbGrid'), outline: $('outline'),
+  outlineModal: $('outlineModal'), outlineEditList: $('outlineEditList'),
+  outlineAddBtn: $('outlineAddBtn'), outlineCancel: $('outlineCancel'), outlineSave: $('outlineSave'),
   thumbSelBar: $('thumbSelBar'), thumbSelCount: $('thumbSelCount'),
   selRotateLeftBtn: $('selRotateLeftBtn'), selRotateRightBtn: $('selRotateRightBtn'),
   selDeleteBtn: $('selDeleteBtn'), selClearBtn: $('selClearBtn'),
@@ -1951,10 +1953,18 @@ els.splitRows.oninput = drawSplitPreview;
 // --- outline sidebar ---------------------------------------------------------
 async function buildOutline(gen = docGen) {
   els.outline.innerHTML = '';
+  const edit = document.createElement('button');
+  edit.className = 'outline-edit';
+  edit.textContent = 'Edit outline…';
+  edit.onclick = openOutlineEditor;
+  els.outline.appendChild(edit);
   const outline = await pdfDocument.getOutline();
   if (gen !== docGen) return; // a newer document loaded — drop this stale outline
   if (!outline || !outline.length) {
-    els.outline.innerHTML = '<div class="thumb-label">No outline</div>';
+    const empty = document.createElement('div');
+    empty.className = 'thumb-label';
+    empty.textContent = 'No outline';
+    els.outline.appendChild(empty);
     return;
   }
   const render = (items, depth) => {
@@ -1969,6 +1979,82 @@ async function buildOutline(gen = docGen) {
   };
   render(outline, 0);
 }
+
+// --- outline editor ----------------------------------------------------------
+// Author the bookmark tree: a flat, page-ordered, leveled list (indent to nest).
+// Reads/writes through the server (pdfcpu), so each bookmark carries a real page
+// and what's written matches what's read. Save replaces the whole outline.
+let outlineItems = [];
+function sortOutline() { outlineItems.sort((a, b) => a.page - b.page); }
+function renderOutlineEditor() {
+  sortOutline();
+  const list = els.outlineEditList;
+  list.innerHTML = '';
+  if (!outlineItems.length) {
+    const p = document.createElement('p');
+    p.className = 'scan-empty';
+    p.textContent = 'No bookmarks yet — add one.';
+    list.appendChild(p);
+  }
+  const n = pdfDocument ? pdfDocument.numPages : 1;
+  let prev = -1;
+  outlineItems.forEach((it, i) => {
+    it.level = Math.max(0, Math.min(it.level, prev + 1)); // nesting may deepen one level at a time
+    prev = it.level;
+    const row = document.createElement('div');
+    row.className = 'outlinerow';
+    row.style.paddingLeft = it.level * 16 + 'px';
+    const title = document.createElement('input');
+    title.type = 'text'; title.className = 'outline-title'; title.value = it.title; title.placeholder = 'Bookmark title';
+    title.oninput = () => { it.title = title.value; };
+    const page = document.createElement('input');
+    page.type = 'number'; page.className = 'outline-page'; page.min = '1'; page.max = String(n); page.value = String(it.page); page.title = 'Page';
+    page.onchange = () => { it.page = Math.max(1, Math.min(n, parseInt(page.value, 10) || 1)); renderOutlineEditor(); };
+    const indent = document.createElement('button');
+    indent.textContent = '→'; indent.title = 'Nest under the bookmark above'; indent.disabled = i === 0;
+    indent.onclick = () => { it.level += 1; renderOutlineEditor(); };
+    const outdent = document.createElement('button');
+    outdent.textContent = '←'; outdent.title = 'Un-nest'; outdent.disabled = it.level === 0;
+    outdent.onclick = () => { it.level = Math.max(0, it.level - 1); renderOutlineEditor(); };
+    const del = document.createElement('button');
+    del.className = 'keydel'; del.textContent = '✕'; del.title = 'Delete';
+    del.onclick = () => { outlineItems.splice(i, 1); renderOutlineEditor(); };
+    row.append(title, page, indent, outdent, del);
+    list.appendChild(row);
+  });
+}
+async function openOutlineEditor() {
+  if (!pdfDocument) return;
+  try {
+    const res = await apiFetch('/api/outline');
+    if (!res.ok) throw new Error('outline');
+    outlineItems = ((await res.json()).items || []).map((it) => ({ title: it.title, page: it.page, level: it.level }));
+  } catch { outlineItems = []; }
+  renderOutlineEditor();
+  els.outlineModal.hidden = false;
+}
+els.outlineCancel.onclick = () => { els.outlineModal.hidden = true; };
+els.outlineAddBtn.onclick = () => {
+  outlineItems.push({ title: 'New bookmark', page: viewer.currentPageNumber || 1, level: 0 });
+  renderOutlineEditor();
+};
+els.outlineSave.onclick = async () => {
+  sortOutline();
+  const titles = new Set();
+  for (const it of outlineItems) {
+    const t = it.title.trim();
+    if (!t) return toast('Every bookmark needs a title');
+    if (titles.has(t)) return toast(`Bookmark titles must be unique: “${t}”`);
+    titles.add(t);
+  }
+  const form = await bakedForm();
+  form.append('outline', JSON.stringify(outlineItems.map((it) => ({ title: it.title.trim(), page: it.page, level: it.level }))));
+  const res = await apiFetch('/api/outline', { method: 'POST', body: form });
+  if (!res.ok) return toast((await res.json()).error || 'could not save the outline');
+  await setDocumentFromServer(await res.json());
+  els.outlineModal.hidden = true;
+  toast('Outline saved');
+};
 
 // --- image library + stamping (M3) -------------------------------------------
 // A placed image/quick-stamp becomes a Nib overlay widget — draggable and
