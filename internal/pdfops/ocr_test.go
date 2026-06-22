@@ -69,3 +69,62 @@ func pdfToText(t *testing.T, pdf []byte) string {
 	}
 	return string(out)
 }
+
+// TestStampTextLayerManyWords reproduces a real OCR run: hundreds of words per
+// page plus adversarial boxes (degenerate, off-page, inverted, special chars) —
+// the server crashed ("ERR_EMPTY_RESPONSE") on a real scan, so this hunts the panic.
+func TestStampTextLayerManyWords(t *testing.T) {
+	base, err := testpdf.Text("a", "b")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var words []Word
+	for pg := 1; pg <= 2; pg++ {
+		for i := 0; i < 600; i++ {
+			x := float64(40 + (i%8)*68)
+			y := float64(40 + (i/8)*9)
+			words = append(words, Word{Page: pg, Rect: [4]float64{x, y, x + 62, y + 8}, Text: "word"})
+		}
+	}
+	words = append(words,
+		Word{Page: 1, Rect: [4]float64{0, 0, 2, 1}, Text: "tiny"},
+		Word{Page: 1, Rect: [4]float64{600, 785, 700, 805}, Text: "offpage"},
+		Word{Page: 1, Rect: [4]float64{50, 50, 50, 50}, Text: "zeroarea"},
+		Word{Page: 1, Rect: [4]float64{50, 100, 200, 90}, Text: "inverted"},
+		Word{Page: 1, Rect: [4]float64{50, 120, 200, 132}, Text: "paren)(\\back"},
+		Word{Page: 1, Rect: [4]float64{-5, 200, 60, 212}, Text: "negx"},
+	)
+	if _, err := StampTextLayer(base, words); err != nil {
+		t.Fatalf("StampTextLayer on %d words: %v", len(words), err)
+	}
+}
+
+// TestStampTextLayerUnicode pins the Roboto-font path: real OCR output is full of
+// characters a core font would drop, and api.TextWatermark rejects the Roboto
+// user font unless the default config has loaded it — which StampTextLayer now
+// forces up front. These hard tokens (symbols, ligature-ish fractions, control
+// chars, an emoji, blanks) must all bake without error.
+func TestStampTextLayerUnicode(t *testing.T) {
+	base, err := testpdf.Text("scan")
+	if err != nil {
+		t.Fatal(err)
+	}
+	toks := []string{
+		"Façade", "€2,775.97", "“smart”", "em—dash", "en–dash", "ellipsis…",
+		"§", "№", "½", "Δ", "†", "°C", "±0.5%", "mixed™€§Δ†",
+		"a\tb", "nul\x00byte", "back\\slash", "paren()", "\U0001F642", "", "   ",
+	}
+	var words []Word
+	for i, tk := range toks {
+		x := 40.0 + float64(i%5)*100
+		y := 60.0 + float64(i/5)*14
+		words = append(words, Word{Page: 1, Rect: [4]float64{x, y, x + 90, y + 11}, Text: tk})
+	}
+	out, err := StampTextLayer(base, words)
+	if err != nil {
+		t.Fatalf("StampTextLayer on Unicode tokens: %v", err)
+	}
+	if err := Validate(out); err != nil {
+		t.Fatalf("Validate: %v", err)
+	}
+}
