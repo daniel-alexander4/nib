@@ -134,6 +134,14 @@
         <label title="Border thickness, in points">Thickness <input id="borderWidthInput" type="number" min="1" max="10" step="0.5" value="2" /> pt</label>
       </span>
       <button id="noteBtn" title="Drop a comment — a sticky note you can read on click">Note</button>
+      <button id="shapeBtn" title="Draw a line, arrow, rectangle, or ellipse">Shapes</button>
+      <span id="shapeOpts" class="shapeopts" hidden>
+        <button type="button" class="shapetype active" data-shape="line" title="Line">╱</button>
+        <button type="button" class="shapetype" data-shape="arrow" title="Arrow">↗</button>
+        <button type="button" class="shapetype" data-shape="rect" title="Rectangle">▭</button>
+        <button type="button" class="shapetype" data-shape="ellipse" title="Ellipse">◯</button>
+        <label class="check" title="Fill rectangle / ellipse"><input id="shapeFill" type="checkbox" /> Fill</label>
+      </span>
       <span class="tbsep"></span>
       <button id="detectBtn" title="Detect blank lines to fill">Detect fields</button>
       <button id="autofillBtn">Autofill from profile</button>

@@ -99,10 +99,12 @@ hop needs both peers online; nothing is stored on a server in between.
 **border** — a colored outline with no fill — anywhere on a page; works on flat
 PDFs too. Highlights and borders are **any color**: pick one from the swatch row
 (your last five colors stay one click away) or open the picker for a new shade.
-A border's thickness is yours to set, in points. Drop a **Note** to leave a
-comment — a sticky note you place, type into, and drag; on save it becomes a real
-clickable sticky-note annotation (an icon whose popup shows your text) that any
-PDF viewer can read.
+A border's thickness is yours to set, in points. Draw **Shapes** — a line, an
+arrow, a rectangle, or an ellipse (rectangles and ellipses can be filled) — in any
+colour and thickness; they bake into the page so they show in every viewer. Drop a
+**Note** to leave a comment — a sticky note you place, type into, and drag; on save
+it becomes a real clickable sticky-note annotation (an icon whose popup shows your
+text) that any PDF viewer can read.
 
 ### Edit existing text
 **Edit → Edit text**, then drag a box over baked-in text. Nib covers it with a
