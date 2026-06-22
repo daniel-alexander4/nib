@@ -85,6 +85,7 @@
         <button class="menutop">Recent</button>
         <div class="dropdown"><div class="recentSlot"></div></div>
       </div>
+      <button id="combineBtn" title="Combine several PDFs into one new document">Combine PDFs…</button>
       <button id="saveBtn" title="Save (overwrites the original)" disabled>Save</button>
       <div class="menu">
         <button class="menutop">Save as</button>
@@ -456,6 +457,24 @@
         <input id="attachInput" type="file" hidden />
         <span class="grow"></span>
         <button id="attachClose" class="primary">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Combine: merge several PDFs (in a chosen order) into one new document. -->
+  <div id="combineModal" hidden>
+    <div class="sigcard">
+      <h3>Combine PDFs</h3>
+      <p class="libhint">Add the PDFs to merge and arrange them with ↑ ↓ — they combine top-to-bottom into
+        one new document. Reorder individual pages afterward by dragging thumbnails. The result is a new,
+        unsigned document — Save As to keep it.</p>
+      <div id="combineList" class="combinelist"></div>
+      <div class="sigbtns">
+        <button id="combineAddBtn">Add files…</button>
+        <input id="combineInput" type="file" accept="application/pdf" multiple hidden />
+        <span class="grow"></span>
+        <button id="combineCancel">Cancel</button>
+        <button id="combineGo" class="primary" disabled>Combine</button>
       </div>
     </div>
   </div>

@@ -96,6 +96,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/open-url", s.requireUnlocked(s.handleOpenURL))
 	mux.HandleFunc("GET /api/recent", s.requireUnlocked(s.handleRecent))
 	mux.HandleFunc("POST /api/upload", s.requireUnlocked(s.handleUpload))
+	mux.HandleFunc("POST /api/combine", s.requireUnlocked(s.handleCombine))
 	mux.HandleFunc("GET /api/pdf", s.requireUnlocked(s.handlePDF))
 	mux.HandleFunc("GET /api/doc", s.requireUnlocked(s.handleDoc))
 	mux.HandleFunc("POST /api/save", s.requireUnlocked(s.handleSave))

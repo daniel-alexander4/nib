@@ -405,6 +405,10 @@ input[type="search"] { width: 100%; }
 /* attachrow: one embedded file — name/description on the left, Extract on the right. */
 .attachrow { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 5px 0; border-bottom: 1px solid var(--surface0); }
 .attachrow button { flex: none; }
+/* combinelist: the ordered files in the Combine modal — name on the left, ↑/↓/Remove on the right. */
+.combinelist { display: flex; flex-direction: column; gap: 4px; max-height: 40vh; overflow-y: auto; margin: 8px 0; }
+.combinerow { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 4px 0; border-bottom: 1px solid var(--surface0); }
+.combinectrls { display: flex; gap: 4px; flex: none; }
 
 /* About dialog. The card sizes to whichever view is showing: the explainer is a
    narrow readable column; the licence/notices view is wider. The card is capped

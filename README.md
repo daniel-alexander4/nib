@@ -213,6 +213,11 @@ won't work — use the VPN path. The security model doesn't depend on *how* you 
 each other: the pinned-key handshake holds over any transport.
 
 ### Pages & export
+**Combine PDFs…** (File tab) assembles several documents into one: add the files,
+arrange them with ↑ ↓, and they merge top-to-bottom into a new document — then
+reorder individual pages across them by dragging thumbnails. It works even with
+nothing open, and the result is a new, unsigned document (Save As to keep it).
+
 Rotate, delete, **append**, and reorder pages — **drag a page's thumbnail** in the
 sidebar to move it where you want. Rotate every page at once with **Rotate all ↺ / ↻**
 on the **Edit** tab, or hover a thumbnail to rotate (either direction) or delete a
