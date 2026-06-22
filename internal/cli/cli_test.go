@@ -616,6 +616,16 @@ func TestSignThenVerify(t *testing.T) {
 
 	t.Run("no passphrase", func(t *testing.T) {
 		os.Unsetenv("NIB_P12_PASSWORD")
+		// Pin stdin to a non-terminal so the interactive prompt path is skipped —
+		// otherwise an interactive `go test` (tty stdin) would block on ReadPassword.
+		devnull, err := os.Open(os.DevNull)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer devnull.Close()
+		old := os.Stdin
+		os.Stdin = devnull
+		defer func() { os.Stdin = old }()
 		if code := cmdSign([]string{in, "-o", filepath.Join(dir, "x.pdf"), "--cert", p12}); code != 1 {
 			t.Errorf("sign with no passphrase source exit = %d, want 1", code)
 		}
