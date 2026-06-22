@@ -117,6 +117,67 @@ func TestMissingOut(t *testing.T) {
 	}
 }
 
+func TestInPlaceRewritesAndKeepsMode(t *testing.T) {
+	dir := t.TempDir()
+	a := writePDF(t, dir, "a.pdf")
+	b := writePDF(t, dir, "b.pdf", "b1", "b2")
+	if err := os.Chmod(a, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(b, 0o640); err != nil {
+		t.Fatal(err)
+	}
+	if code := cmdOptimize([]string{"-w", a, b}); code != 0 {
+		t.Fatalf("optimize -w exit = %d, want 0", code)
+	}
+	for _, f := range []string{a, b} {
+		if err := pdfops.Validate(readPDF(t, f)); err != nil {
+			t.Errorf("%s invalid after in-place: %v", f, err)
+		}
+	}
+	// The rewrite must preserve each file's original permission mode, not the
+	// 0600 of the temp file it was written through.
+	if got := mode(t, a); got != 0o644 {
+		t.Errorf("a.pdf mode = %o after in-place, want 644", got)
+	}
+	if got := mode(t, b); got != 0o640 {
+		t.Errorf("b.pdf mode = %o after in-place, want 640", got)
+	}
+}
+
+func TestInPlaceRejectsOut(t *testing.T) {
+	dir := t.TempDir()
+	a := writePDF(t, dir, "a.pdf")
+	if code := cmdOptimize([]string{"-w", "-o", filepath.Join(dir, "x.pdf"), a}); code != 1 {
+		t.Errorf("optimize -w with -o exit = %d, want 1", code)
+	}
+}
+
+func TestInPlaceLeavesOriginalOnError(t *testing.T) {
+	dir := t.TempDir()
+	bad := filepath.Join(dir, "bad.pdf")
+	junk := []byte("this is not a PDF")
+	if err := os.WriteFile(bad, junk, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if code := cmdOptimize([]string{"-w", bad}); code != 1 {
+		t.Errorf("optimize -w on a non-PDF exit = %d, want 1", code)
+	}
+	// The atomic rewrite must leave the unreadable original untouched.
+	if got := readPDF(t, bad); string(got) != string(junk) {
+		t.Errorf("original modified after a failed in-place rewrite: %q", got)
+	}
+}
+
+func mode(t *testing.T, path string) os.FileMode {
+	t.Helper()
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return info.Mode().Perm()
+}
+
 func TestVerifyUnsigned(t *testing.T) {
 	dir := t.TempDir()
 	in := writePDF(t, dir, "in.pdf")

@@ -21,31 +21,27 @@ import (
 func cmdOptimize(args []string) int {
 	fs := flag.NewFlagSet("nib optimize", flag.ContinueOnError)
 	var out string
+	var inPlace bool
 	outFlag(fs, &out)
-	fs.Usage = usageFunc(fs, "nib optimize IN -o OUT", "Losslessly shrink a PDF (dedupe fonts/images, compress streams).")
+	inPlaceFlag(fs, &inPlace)
+	fs.Usage = usageFunc(fs, "nib optimize IN -o OUT  |  nib optimize -w FILE...", "Losslessly shrink a PDF (dedupe fonts/images, compress streams).")
 	if code, ok := parse(fs, args); !ok {
 		return code
 	}
-	in, code := singleInput(fs, out)
-	if code != 0 {
-		return code
-	}
-	return transform(in, out, pdfops.Optimize)
+	return runTransform(fs, out, inPlace, pdfops.Optimize)
 }
 
 func cmdSanitize(args []string) int {
 	fs := flag.NewFlagSet("nib sanitize", flag.ContinueOnError)
 	var out string
+	var inPlace bool
 	outFlag(fs, &out)
-	fs.Usage = usageFunc(fs, "nib sanitize IN -o OUT", "Strip identifying metadata and active content (JavaScript, auto-actions, embedded files).")
+	inPlaceFlag(fs, &inPlace)
+	fs.Usage = usageFunc(fs, "nib sanitize IN -o OUT  |  nib sanitize -w FILE...", "Strip identifying metadata and active content (JavaScript, auto-actions, embedded files).")
 	if code, ok := parse(fs, args); !ok {
 		return code
 	}
-	in, code := singleInput(fs, out)
-	if code != 0 {
-		return code
-	}
-	return transform(in, out, sanitize)
+	return runTransform(fs, out, inPlace, sanitize)
 }
 
 // sanitize runs both scrubs the GUI's Secure tab offers: active content first,
@@ -93,12 +89,13 @@ func cmdMerge(args []string) int {
 
 func cmdSign(args []string) int {
 	fs := flag.NewFlagSet("nib sign", flag.ContinueOnError)
-	var out, cert, passFile, reason, name string
+	var out, cert, passFile, reason, name, tsa string
 	outFlag(fs, &out)
 	fs.StringVar(&cert, "cert", "", "PKCS#12 (.p12/.pfx) identity `FILE` (required)")
 	fs.StringVar(&passFile, "password-file", "", "read the .p12 passphrase from `FILE` (else $NIB_P12_PASSWORD)")
 	fs.StringVar(&reason, "reason", "Signed with Nib", "signature reason")
 	fs.StringVar(&name, "name", "", "signer name (default: the certificate's common name)")
+	fs.StringVar(&tsa, "tsa", "", "RFC3161 timestamp authority `URL` to fix the signing time")
 	fs.Usage = usageFunc(fs, "nib sign IN -o OUT --cert C.p12", "Certify a PDF with an imported .p12 identity. The passphrase comes from\n--password-file or $NIB_P12_PASSWORD, never the command line.")
 	if code, ok := parse(fs, args); !ok {
 		return code
@@ -126,7 +123,7 @@ func cmdSign(args []string) int {
 		errf("%v", err)
 		return 1
 	}
-	signed, err := sign.SignExternal(pdf, p12, pass, sign.Options{Name: name, Reason: reason, When: time.Now().UTC()})
+	signed, err := sign.SignExternal(pdf, p12, pass, sign.Options{Name: name, Reason: reason, When: time.Now().UTC(), TSAURL: tsa})
 	if err != nil {
 		if errors.Is(err, sign.ErrWrongPassphrase) {
 			errf("wrong passphrase for %s", cert)
@@ -325,6 +322,56 @@ func singleInput(fs *flag.FlagSet, out string) (string, int) {
 		return "", 1
 	}
 	return fs.Arg(0), 0
+}
+
+// runTransform dispatches a single-output transform between its two modes: with
+// -w/--in-place it rewrites each of N files in place; otherwise it takes one
+// input and the required -o output. The two are mutually exclusive.
+func runTransform(fs *flag.FlagSet, out string, inPlace bool, fn func([]byte) ([]byte, error)) int {
+	if inPlace {
+		if out != "" {
+			errf("-o/--out cannot be combined with -w/--in-place")
+			return 1
+		}
+		if fs.NArg() == 0 {
+			errf("nothing to do: give one or more PDFs to rewrite with -w")
+			return 1
+		}
+		return transformInPlace(fs.Args(), fn)
+	}
+	in, code := singleInput(fs, out)
+	if code != 0 {
+		return code
+	}
+	return transform(in, out, fn)
+}
+
+// transformInPlace applies fn to each file and rewrites it atomically. A file
+// that fails to read or transform is reported and skipped; the rest continue,
+// and the worst per-file outcome becomes the exit code.
+func transformInPlace(files []string, fn func([]byte) ([]byte, error)) int {
+	worst := 0
+	for _, p := range files {
+		data, err := os.ReadFile(p)
+		if err != nil {
+			errf("%v", err)
+			worst = max(worst, 1)
+			continue
+		}
+		res, err := fn(data)
+		if err != nil {
+			errf("%s: %v", p, err)
+			worst = max(worst, 1)
+			continue
+		}
+		if err := writeAtomic(p, res); err != nil {
+			errf("%s: %v", p, err)
+			worst = max(worst, 1)
+			continue
+		}
+		fmt.Printf("%s: rewritten\n", p)
+	}
+	return worst
 }
 
 // transform reads in, applies fn, and writes the result to out.
