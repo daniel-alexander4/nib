@@ -50,7 +50,7 @@ const els = {
   redactBtn: $('redactBtn'), applyRedactBtn: $('applyRedactBtn'),
   editTextBtn: $('editTextBtn'), removeOriginalsBtn: $('removeOriginalsBtn'),
   scanBtn: $('scanBtn'), scanModal: $('scanModal'), scanBody: $('scanBody'),
-  scanStripBtn: $('scanStripBtn'), scanSafeBtn: $('scanSafeBtn'),
+  scanStripBtn: $('scanStripBtn'), scanMetaBtn: $('scanMetaBtn'), scanSafeBtn: $('scanSafeBtn'),
   scanFlattenBtn: $('scanFlattenBtn'), scanClose: $('scanClose'),
   backupBtn: $('backupBtn'), restoreInput: $('restoreInput'), checkUpdatesBtn: $('checkUpdatesBtn'),
   updatePill: $('updatePill'), updateGet: $('updateGet'), updateDismiss: $('updateDismiss'),
@@ -1340,6 +1340,7 @@ async function runSanitize(method, stepDown) {
              : 'Cleaned — nothing hidden remains');
 }
 els.scanStripBtn.onclick = () => runSanitize('strip', 'Remove files & media, or Flatten');
+els.scanMetaBtn.onclick = () => runSanitize('metadata', 'Flatten');
 els.scanSafeBtn.onclick = () => runSanitize('safe', 'Flatten');
 
 // Flatten is the guaranteed-inert floor: rasterise every page and load the
