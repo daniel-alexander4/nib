@@ -429,9 +429,9 @@ isn't a known command (a PDF path, or nothing) still opens the app as usual.
 | `nib timestamp FILE…` | Write an OpenTimestamps proof (`FILE.ots`) for each file. |
 | `nib timestamp --verify FILE…` | Check each file against its `FILE.ots` proof. |
 | `nib verify [--json] FILE…` | Report each file's signature integrity. |
-| `nib optimize IN -o OUT` | Losslessly shrink a PDF. |
+| `nib optimize IN -o OUT` | Losslessly shrink a PDF (or `-w FILE…` to rewrite in place). |
 | `nib merge IN… -o OUT` | Concatenate PDFs, in order, into one. |
-| `nib sanitize IN -o OUT` | Strip identifying metadata and active content (JavaScript, auto-actions, embedded files). |
+| `nib sanitize IN -o OUT` | Strip identifying metadata and active content — JavaScript, auto-actions, embedded files (or `-w FILE…`). |
 | `nib sign IN -o OUT --cert ID.p12` | Certify a PDF with an imported `.p12` identity. |
 | `nib version` | Print the version. |
 
@@ -444,11 +444,18 @@ straight into a script:
 ```sh
 nib verify contract.pdf && echo "signature intact"
 for f in *.pdf; do nib timestamp "$f"; done
+nib sanitize -w *.pdf          # scrub a whole folder in place
 ```
+
+`optimize` and `sanitize` take `-w`/`--in-place` to rewrite each file given
+instead of writing a single `-o` output — the batch form for a folder. Each
+rewrite is atomic (written through a temp file and renamed over the original, so
+a failure never corrupts it) and preserves the file's permissions.
 
 `nib sign` reads the certificate passphrase from `--password-file FILE` or the
 `NIB_P12_PASSWORD` environment variable — never from the command line, where it
-would be visible to other processes. Run `nib <command> -h` for a command's own
+would be visible to other processes. Add `--tsa URL` to fix the signing time
+with an RFC3161 timestamp authority. Run `nib <command> -h` for a command's own
 flags.
 
 ---

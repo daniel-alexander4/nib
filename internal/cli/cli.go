@@ -21,6 +21,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
@@ -137,6 +138,43 @@ func isBoolFlag(f *flag.Flag) bool {
 func outFlag(fs *flag.FlagSet, p *string) {
 	fs.StringVar(p, "o", "", "write the output PDF to `FILE` (required)")
 	fs.StringVar(p, "out", "", "write the output PDF to `FILE` (required)")
+}
+
+// inPlaceFlag registers the shared -w/--in-place flag (both spellings set p),
+// which rewrites each input file in place instead of writing to -o.
+func inPlaceFlag(fs *flag.FlagSet, p *bool) {
+	fs.BoolVar(p, "w", false, "rewrite each input file in place (batch); excludes -o")
+	fs.BoolVar(p, "in-place", false, "rewrite each input file in place (batch); excludes -o")
+}
+
+// writeAtomic replaces path with data without risking a half-written file: it
+// writes a temp file in the same directory, copies the original's permission
+// mode onto it, then renames over path (an atomic replace on every target OS).
+// A failed write or transform therefore never corrupts or relaxes the original.
+func writeAtomic(path string, data []byte) error {
+	info, err := os.Stat(path)
+	if err != nil {
+		return err
+	}
+	tmp, err := os.CreateTemp(filepath.Dir(path), ".nib-*.tmp")
+	if err != nil {
+		return err
+	}
+	tmpName := tmp.Name()
+	defer os.Remove(tmpName) // harmless no-op once the rename has consumed it
+	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	// os.CreateTemp makes the temp 0600; restore the original file's mode so an
+	// in-place rewrite doesn't silently tighten permissions.
+	if err := os.Chmod(tmpName, info.Mode().Perm()); err != nil {
+		return err
+	}
+	return os.Rename(tmpName, path)
 }
 
 // usageFunc returns a FlagSet usage that prints a one-line synopsis and help,
