@@ -133,6 +133,10 @@ const els = {
   exportBookmarkSplitBtn: $('exportBookmarkSplitBtn'), bookmarkSplitModal: $('bookmarkSplitModal'),
   bsPrefix: $('bsPrefix'), bsPreview: $('bsPreview'), bsDir: $('bsDir'), bsHere: $('bsHere'),
   bsUp: $('bsUp'), bsList: $('bsList'), bsCancel: $('bsCancel'), bsGo: $('bsGo'),
+  exportPageSplitBtn: $('exportPageSplitBtn'), pageSplitModal: $('pageSplitModal'),
+  psEvery: $('psEvery'), psRanges: $('psRanges'), psPrefix: $('psPrefix'), psPreview: $('psPreview'),
+  psDir: $('psDir'), psHere: $('psHere'), psUp: $('psUp'), psList: $('psList'),
+  psCancel: $('psCancel'), psGo: $('psGo'),
   splitBtn: $('splitBtn'), splitModal: $('splitModal'), splitPreview: $('splitPreview'),
   splitCols: $('splitCols'), splitRows: $('splitRows'),
   splitResize: $('splitResize'), splitCancel: $('splitCancel'), splitGo: $('splitGo'),
@@ -2164,6 +2168,74 @@ els.bsPrefix.oninput = updateBsPreview;
 els.bsUp.onclick = () => { const p = els.bsUp.dataset.parent; if (p) browseDir(p, bookmarkDirEls()); };
 els.bsDir.onchange = () => browseDir(els.bsDir.value.trim(), bookmarkDirEls());
 
+// --- split into files by page range / every N pages --------------------------
+// Divide the page SEQUENCE into several PDFs in a folder (distinct from the
+// imposed-page geometry split). Server-side via /api/split-pages; the open
+// document is left untouched. The preview mirrors the server's span logic
+// best-effort — the toast reports the real count written.
+const pageSplitDirEls = () => ({ dir: els.psDir, here: els.psHere, up: els.psUp, list: els.psList });
+const psMode = () => document.querySelector('input[name="psMode"]:checked').value;
+const spanLabel = (from, thru) => (from === thru ? String(from) : `${from}-${thru}`);
+
+// psSpans computes the preview/confirm span labels client-side. Range tokens that
+// are malformed or out of bounds are skipped here; the server is the real guard.
+function psSpans() {
+  const n = pdfDocument ? pdfDocument.numPages : 0;
+  const spans = [];
+  if (psMode() === 'every') {
+    const k = Math.max(1, parseInt(els.psEvery.value, 10) || 1);
+    for (let from = 1; from <= n; from += k) spans.push(spanLabel(from, Math.min(from + k - 1, n)));
+  } else {
+    for (const tok of els.psRanges.value.split(/[\s,]+/).filter(Boolean)) {
+      const m = tok.match(/^(\d+)(?:-(\d+))?$/);
+      if (!m) continue;
+      const from = +m[1], thru = m[2] ? +m[2] : from;
+      if (from >= 1 && thru >= from && thru <= n) spans.push(spanLabel(from, thru));
+    }
+  }
+  return spans;
+}
+function updatePsPreview() {
+  els.psRanges.disabled = psMode() !== 'ranges';
+  els.psEvery.disabled = psMode() !== 'every';
+  const spans = psSpans();
+  if (!spans.length) { els.psPreview.textContent = 'Enter page ranges like 1-3, 4-8.'; return; }
+  const sample = spans.slice(0, 6).join(', ') + (spans.length > 6 ? ', …' : '');
+  els.psPreview.textContent = `${spans.length} file${spans.length === 1 ? '' : 's'}: ${sample}  —  saved as “${els.psPrefix.value}<range>.pdf”`;
+}
+function openPageSplit() {
+  if (!pdfDocument) return;
+  els.psPrefix.value = '';
+  updatePsPreview();
+  els.pageSplitModal.hidden = false;
+  browseDir('', pageSplitDirEls());
+}
+async function pageSplitGo() {
+  const dir = els.psDir.value.trim().replace(/\/+$/, '');
+  if (!dir) return toast('Choose a folder');
+  const count = psSpans().length;
+  if (!count) return toast('Enter page ranges like 1-3, 4-8.');
+  if (!confirm(`Write ${count} file${count === 1 ? '' : 's'} to ${dir}? Files with the same name will be replaced.`)) return;
+  const form = await bakedForm();
+  form.append('dir', dir);
+  form.append('mode', psMode());
+  form.append('prefix', els.psPrefix.value);
+  if (psMode() === 'every') form.append('every', String(Math.max(1, parseInt(els.psEvery.value, 10) || 1)));
+  else form.append('ranges', els.psRanges.value);
+  const res = await apiFetch('/api/split-pages', { method: 'POST', body: form });
+  if (!res.ok) { toast((await res.json()).error || 'could not split'); return; }
+  const meta = await res.json();
+  els.pageSplitModal.hidden = true;
+  toast(`Wrote ${meta.count} file${meta.count === 1 ? '' : 's'} to ${meta.dir}`);
+}
+els.exportPageSplitBtn.onclick = openPageSplit;
+els.psCancel.onclick = () => { els.pageSplitModal.hidden = true; };
+els.psGo.onclick = pageSplitGo;
+['psEvery', 'psRanges', 'psPrefix'].forEach((id) => els[id].addEventListener('input', updatePsPreview));
+document.querySelectorAll('input[name="psMode"]').forEach((r) => r.addEventListener('change', updatePsPreview));
+els.psUp.onclick = () => { const p = els.psUp.dataset.parent; if (p) browseDir(p, pageSplitDirEls()); };
+els.psDir.onchange = () => browseDir(els.psDir.value.trim(), pageSplitDirEls());
+
 // renderPageBlob rasterises one page of an already-parsed doc to a PNG at the
 // given scale, runs the optional paint hook over the canvas after rendering (used
 // to burn redaction boxes in), and returns the blob plus the page's true point
@@ -3598,6 +3670,7 @@ let libraryImages = []; // cached /api/images list (the image-library panel)
 const DOC_REQUIRED = [
   'saveFlatBtn', 'saveEditableBtn', 'printBtn',
   'exportZipBtn', 'exportPngBtn', 'exportFormJsonBtn', 'exportFormCsvBtn', 'exportBookmarkSplitBtn',
+  'exportPageSplitBtn',
   'textToolBtn', 'highlightToolBtn', 'drawToolBtn',
   'detectBtn', 'editTextBtn', 'removeOriginalsBtn', 'autofillBtn', 'splitBtn',
   'splitBoxBtn', 'applyBoxSplitBtn', 'rotateLeftBtn', 'rotateRightBtn',

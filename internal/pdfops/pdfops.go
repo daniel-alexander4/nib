@@ -182,9 +182,9 @@ func PageCount(pdf []byte) (int, error) {
 	return api.PageCount(bytes.NewReader(pdf), model.NewDefaultConfiguration())
 }
 
-// BookmarkPart is one output of a bookmark split: a safe base filename (no
-// directory, no extension) and the extracted PDF bytes.
-type BookmarkPart struct {
+// SplitPart is one output file of a multi-file split (by bookmark or by page
+// span): a safe base filename (no directory, no extension) and the PDF bytes.
+type SplitPart struct {
 	Name string
 	Data []byte
 }
@@ -198,7 +198,7 @@ type BookmarkPart struct {
 // Ranges are derived from the sorted PageFrom values rather than pdfcpu's
 // per-bookmark PageThru: the read path neither sorts nor enforces page order, and
 // the last bookmark's PageThru is left 0, so trusting it is fragile.
-func SplitByBookmarks(pdf []byte, prefix string) ([]BookmarkPart, error) {
+func SplitByBookmarks(pdf []byte, prefix string) ([]SplitPart, error) {
 	bms, err := api.Bookmarks(bytes.NewReader(pdf), nil)
 	if err != nil {
 		return nil, err
@@ -212,7 +212,7 @@ func SplitByBookmarks(pdf []byte, prefix string) ([]BookmarkPart, error) {
 		return nil, err
 	}
 
-	parts := make([]BookmarkPart, 0, len(bms))
+	parts := make([]SplitPart, 0, len(bms))
 	seen := map[string]int{}
 	for i, bm := range bms {
 		from := bm.PageFrom
@@ -230,7 +230,35 @@ func SplitByBookmarks(pdf []byte, prefix string) ([]BookmarkPart, error) {
 		if err != nil {
 			return nil, err
 		}
-		parts = append(parts, BookmarkPart{Name: uniqueName(sanitizeFilename(prefix+bm.Title), len(parts)+1, seen), Data: data})
+		parts = append(parts, SplitPart{Name: uniqueName(sanitizeFilename(prefix+bm.Title), len(parts)+1, seen), Data: data})
+	}
+	return parts, nil
+}
+
+// maxSplitParts caps how many files a page-span split may produce, so a tiny
+// every-N on a huge document can't spew thousands of files.
+const maxSplitParts = 500
+
+// SplitBySpans splits pdf into one file per page-span selection in spans, in
+// order — each span is a pdfcpu page selection (e.g. "1-3" or "5"), collected
+// into its own PDF. Names are sanitize(prefix + span), deduped. This is the
+// page-sequence splitter (every-N / custom ranges); the geometry splitters are
+// SplitPage/SplitRegions, and the bookmark splitter is SplitByBookmarks.
+func SplitBySpans(pdf []byte, spans []string, prefix string) ([]SplitPart, error) {
+	if len(spans) == 0 {
+		return nil, fmt.Errorf("no page ranges given")
+	}
+	if len(spans) > maxSplitParts {
+		return nil, fmt.Errorf("too many output files (%d, max %d)", len(spans), maxSplitParts)
+	}
+	parts := make([]SplitPart, 0, len(spans))
+	seen := map[string]int{}
+	for _, span := range spans {
+		data, err := Collect(pdf, []string{span})
+		if err != nil {
+			return nil, fmt.Errorf("range %q: %w", span, err)
+		}
+		parts = append(parts, SplitPart{Name: uniqueName(sanitizeFilename(prefix+span), len(parts)+1, seen), Data: data})
 	}
 	return parts, nil
 }
