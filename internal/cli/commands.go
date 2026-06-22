@@ -9,6 +9,8 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -86,6 +88,153 @@ func cmdMerge(args []string) int {
 		return 1
 	}
 	return writeOut(out, res)
+}
+
+func cmdRotate(args []string) int {
+	fs := flag.NewFlagSet("nib rotate", flag.ContinueOnError)
+	var out, pages string
+	var inPlace bool
+	var deg int
+	outFlag(fs, &out)
+	inPlaceFlag(fs, &inPlace)
+	fs.IntVar(&deg, "deg", 0, "rotation in degrees, a non-zero multiple of 90 (90/180/270)")
+	fs.StringVar(&pages, "pages", "", "page selection to rotate, e.g. 1-3,5 (default: all)")
+	fs.Usage = usageFunc(fs, "nib rotate IN -o OUT --deg N [--pages SEL]  |  nib rotate -w FILE... --deg N", "Rotate pages by a multiple of 90 degrees.")
+	if code, ok := parse(fs, args); !ok {
+		return code
+	}
+	if deg == 0 || deg%90 != 0 {
+		errf("--deg must be a non-zero multiple of 90 (90, 180, or 270)")
+		return 1
+	}
+	sel := splitSel(pages)
+	return runTransform(fs, out, inPlace, func(b []byte) ([]byte, error) {
+		return pdfops.Rotate(b, sel, deg)
+	})
+}
+
+func cmdPages(args []string) int {
+	fs := flag.NewFlagSet("nib pages", flag.ContinueOnError)
+	var out, keep, remove string
+	var inPlace bool
+	outFlag(fs, &out)
+	inPlaceFlag(fs, &inPlace)
+	fs.StringVar(&keep, "keep", "", "keep (and reorder to) this selection, e.g. 1-3,5")
+	fs.StringVar(&remove, "remove", "", "delete this selection, e.g. 2,4")
+	fs.Usage = usageFunc(fs, "nib pages IN -o OUT (--keep SEL | --remove SEL)", "Keep/reorder pages, or delete them, by selection.")
+	if code, ok := parse(fs, args); !ok {
+		return code
+	}
+	if (keep == "") == (remove == "") {
+		errf("give exactly one of --keep or --remove")
+		return 1
+	}
+	fn := func(b []byte) ([]byte, error) { return pdfops.Collect(b, splitSel(keep)) }
+	if remove != "" {
+		fn = func(b []byte) ([]byte, error) { return pdfops.RemovePages(b, splitSel(remove)) }
+	}
+	return runTransform(fs, out, inPlace, fn)
+}
+
+func cmdSplit(args []string) int {
+	fs := flag.NewFlagSet("nib split", flag.ContinueOnError)
+	var outDir, ranges, prefix string
+	var every int
+	var bookmarks bool
+	fs.StringVar(&outDir, "out-dir", "", "write the output PDFs into this folder (required)")
+	fs.IntVar(&every, "every", 0, "split into chunks of N pages each")
+	fs.StringVar(&ranges, "ranges", "", "split at these page ranges, e.g. 1-3,4-8,9")
+	fs.BoolVar(&bookmarks, "bookmarks", false, "split at each top-level bookmark")
+	fs.StringVar(&prefix, "prefix", "", "prefix for each output file name")
+	fs.Usage = usageFunc(fs, "nib split IN --out-dir DIR (--every N | --ranges SEL | --bookmarks) [--prefix P]", "Burst a PDF into several files — one per chunk, range, or bookmark.")
+	if code, ok := parse(fs, args); !ok {
+		return code
+	}
+	if outDir == "" {
+		errf("missing --out-dir (the output folder)")
+		return 1
+	}
+	modes := 0
+	for _, on := range []bool{every > 0, ranges != "", bookmarks} {
+		if on {
+			modes++
+		}
+	}
+	if modes != 1 {
+		errf("give exactly one of --every, --ranges, or --bookmarks")
+		return 1
+	}
+	if fs.NArg() != 1 {
+		errf("expected one input PDF, got %d", fs.NArg())
+		return 1
+	}
+	b, err := readInput(fs.Arg(0))
+	if err != nil {
+		errf("%v", err)
+		return 1
+	}
+	var parts []pdfops.SplitPart
+	if bookmarks {
+		parts, err = pdfops.SplitByBookmarks(b, prefix)
+	} else {
+		n, perr := pdfops.PageCount(b)
+		if perr != nil {
+			errf("%v", perr)
+			return 1
+		}
+		mode, everyStr := "ranges", ""
+		if every > 0 {
+			mode, everyStr = "every", strconv.Itoa(every)
+		}
+		spans, serr := pdfops.PageSpans(mode, everyStr, ranges, n)
+		if serr != nil {
+			errf("%v", serr)
+			return 1
+		}
+		parts, err = pdfops.SplitBySpans(b, spans, prefix)
+	}
+	if err != nil {
+		errf("%v", err)
+		return 1
+	}
+	return writeSplitFiles(outDir, parts)
+}
+
+// splitSel turns a comma-separated page selection ("1-3,5") into pdfcpu tokens;
+// empty means all pages (nil).
+func splitSel(s string) []string {
+	var out []string
+	for _, p := range strings.Split(s, ",") {
+		if p = strings.TrimSpace(p); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+// writeSplitFiles writes each split part as <dir>/<name>.pdf, atomically and
+// confined to dir (the name is title/range-derived, so the join is re-checked, as
+// the GUI's folder split does). Returns a CLI exit code.
+func writeSplitFiles(dir string, parts []pdfops.SplitPart) int {
+	dir = filepath.Clean(dir)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		errf("%v", err)
+		return 1
+	}
+	for _, p := range parts {
+		full := filepath.Join(dir, p.Name+".pdf")
+		if filepath.Dir(full) != dir { // containment: name is user/title-derived
+			errf("unsafe file name %q", p.Name)
+			return 1
+		}
+		if err := os.WriteFile(full, p.Data, 0o644); err != nil {
+			errf("%v", err)
+			return 1
+		}
+		fmt.Println(full)
+	}
+	fmt.Printf("%d file(s) written to %s\n", len(parts), dir)
+	return 0
 }
 
 func cmdSign(args []string) int {
