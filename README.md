@@ -452,6 +452,8 @@ isn't a known command (a PDF path, or nothing) still opens the app as usual.
 | `nib decrypt IN -o OUT` | Remove password protection / owner restrictions (`--password-file FILE` or `$NIB_PDF_PASSWORD`; already-plain PDFs pass through). |
 | `nib nup IN -o OUT --n N` | Place N pages per sheet — 2/4/6/9/16… (`--border` for outlines). |
 | `nib pagenum IN -o OUT` | Stamp running page numbers or Bates numbering (`--prefix ABC --pad 6 --position br --total`). |
+| `nib attachments IN [--json]` | List embedded files; `--extract NAME -o OUT` pulls one out, `--add FILE -o OUT` embeds one. |
+| `nib outline IN [--json]` | List the document's bookmark outline (indented by level, or JSON). |
 | `nib watch DIR --do OP` | Run `timestamp`/`optimize`/`sanitize` on each PDF added to `DIR`, until interrupted. |
 | `nib version` | Print the version. |
 
