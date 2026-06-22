@@ -220,6 +220,80 @@ func mode(t *testing.T, path string) os.FileMode {
 	return info.Mode().Perm()
 }
 
+func TestWatchScanSettlesThenActsOnce(t *testing.T) {
+	dir := t.TempDir()
+	p := writePDF(t, dir, "drop.pdf")
+	seen, processed := map[string]fileState{}, map[string]bool{}
+	calls := 0
+	act := func(path string) (string, error) { calls++; return "done", nil }
+
+	// First scan only records the file (not yet settled).
+	scanOnce(dir, seen, processed, act)
+	if calls != 0 {
+		t.Fatalf("acted on first sight: calls = %d, want 0", calls)
+	}
+	// Second scan: unchanged since the first → settled → act exactly once.
+	scanOnce(dir, seen, processed, act)
+	if calls != 1 {
+		t.Fatalf("after settle: calls = %d, want 1", calls)
+	}
+	// A later scan must not reprocess (even though a real in-place op would have
+	// changed the mtime) — process-once per path.
+	if err := os.Chtimes(p, time.Now(), time.Now().Add(time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	scanOnce(dir, seen, processed, act)
+	if calls != 1 {
+		t.Fatalf("reprocessed an already-handled file: calls = %d, want 1", calls)
+	}
+}
+
+func TestWatchScanSkipsNonPDFAndUnsettled(t *testing.T) {
+	dir := t.TempDir()
+	writePDF(t, dir, "doc.pdf")
+	if err := os.WriteFile(filepath.Join(dir, "notes.txt"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	seen, processed := map[string]fileState{}, map[string]bool{}
+	var acted []string
+	act := func(path string) (string, error) { acted = append(acted, filepath.Base(path)); return "ok", nil }
+	scanOnce(dir, seen, processed, act) // record
+	scanOnce(dir, seen, processed, act) // settle → act
+	if len(acted) != 1 || acted[0] != "doc.pdf" {
+		t.Fatalf("acted on %v, want only [doc.pdf]", acted)
+	}
+}
+
+func TestWatchTransformInPlace(t *testing.T) {
+	dir := t.TempDir()
+	p := writePDF(t, dir, "in.pdf")
+	status, err := watchTransform(p, sanitize, "sanitized")
+	if err != nil {
+		t.Fatalf("watchTransform: %v", err)
+	}
+	if status != "sanitized" {
+		t.Errorf("status = %q, want sanitized", status)
+	}
+	if err := pdfops.Validate(readPDF(t, p)); err != nil {
+		t.Fatalf("rewritten file invalid: %v", err)
+	}
+}
+
+func TestWatchTimestampSkipsExisting(t *testing.T) {
+	dir := t.TempDir()
+	p := writePDF(t, dir, "in.pdf")
+	if err := os.WriteFile(p+".ots", []byte("proof"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	status, err := watchTimestamp(p) // must short-circuit before any network call
+	if err != nil {
+		t.Fatalf("watchTimestamp: %v", err)
+	}
+	if status != "skipped (.ots exists)" {
+		t.Errorf("status = %q, want skip", status)
+	}
+}
+
 func TestVerifyUnsigned(t *testing.T) {
 	dir := t.TempDir()
 	in := writePDF(t, dir, "in.pdf")
