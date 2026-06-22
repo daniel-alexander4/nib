@@ -479,10 +479,11 @@ instead of writing a single `-o` output — the batch form for a folder. Each
 rewrite is atomic (written through a temp file and renamed over the original, so
 a failure never corrupts it) and preserves the file's permissions.
 
-`nib sign` reads the certificate passphrase from `--password-file FILE` or the
-`NIB_P12_PASSWORD` environment variable — never from the command line, where it
-would be visible to other processes. Add `--tsa URL` to fix the signing time
-with an RFC3161 timestamp authority.
+`nib sign` reads the certificate passphrase from `--password-file FILE`, the
+`NIB_P12_PASSWORD` environment variable, or — when run in a terminal with neither
+set — a no-echo prompt, so it's never on the command line where other processes
+could see it. Add `--tsa URL` to fix the signing time with an RFC3161 timestamp
+authority.
 
 `nib watch DIR --do timestamp|optimize|sanitize` runs that operation on each PDF
 dropped into `DIR` and keeps running until you stop it (Ctrl-C) — the "process
