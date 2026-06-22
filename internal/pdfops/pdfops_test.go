@@ -211,6 +211,35 @@ func TestStampWatermark(t *testing.T) {
 	}
 }
 
+func TestStampPageNumbers(t *testing.T) {
+	pdf := threePagePDF(t)
+	// Bates-style: prefix + zero-pad + a corner position.
+	out, err := StampPageNumbers(pdf, PageNumberStyle{Position: "br", Prefix: "ABC", Start: 1, Pad: 6})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.HasPrefix(out, []byte("%PDF")) {
+		t.Errorf("StampPageNumbers did not produce a PDF: %.10q", out)
+	}
+	if n, _ := PageCount(out); n != 3 {
+		t.Errorf("numbered page count = %d, want 3 (all pages kept)", n)
+	}
+	if len(out) <= len(pdf) {
+		t.Error("numbered PDF is not larger than the original (nothing stamped?)")
+	}
+	// Plain "n of N" at the default centre position must also produce a valid doc.
+	if v, err := StampPageNumbers(pdf, PageNumberStyle{Start: 1, OfTotal: true}); err != nil {
+		t.Fatalf("of-total numbering: %v", err)
+	} else if n, _ := PageCount(v); n != 3 {
+		t.Errorf("of-total page count = %d, want 3", n)
+	}
+	// A bad position falls back to bc and a '%' in the prefix is stripped (it would
+	// otherwise be read as a pdfcpu placeholder token) — neither should error.
+	if _, err := StampPageNumbers(pdf, PageNumberStyle{Position: "x, url:evil", Prefix: "50% "}); err != nil {
+		t.Errorf("position fallback / prefix sanitize errored: %v", err)
+	}
+}
+
 func TestWatermarkStyleSanitize(t *testing.T) {
 	// A colour with description-breaking characters must be rejected (so it can't
 	// inject extra pdfcpu watermark keys), and out-of-range numbers clamped.

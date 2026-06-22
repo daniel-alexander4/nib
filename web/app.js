@@ -123,6 +123,10 @@ const els = {
   extractBtn: $('extractBtn'), insertBlankBtn: $('insertBlankBtn'),
   extractModal: $('extractModal'), extractPages: $('extractPages'),
   extractHint: $('extractHint'), extractCancel: $('extractCancel'), extractGo: $('extractGo'),
+  pageNumBtn: $('pageNumBtn'), pageNumModal: $('pageNumModal'),
+  pnPosition: $('pnPosition'), pnStart: $('pnStart'), pnPad: $('pnPad'),
+  pnPrefix: $('pnPrefix'), pnTotal: $('pnTotal'), pnPreview: $('pnPreview'),
+  pnCancel: $('pnCancel'), pnGo: $('pnGo'),
   exportBookmarkSplitBtn: $('exportBookmarkSplitBtn'), bookmarkSplitModal: $('bookmarkSplitModal'),
   bsPrefix: $('bsPrefix'), bsPreview: $('bsPreview'), bsDir: $('bsDir'), bsHere: $('bsHere'),
   bsUp: $('bsUp'), bsList: $('bsList'), bsCancel: $('bsCancel'), bsGo: $('bsGo'),
@@ -1466,6 +1470,11 @@ async function pageOp(op, extra = {}) {
   if (extra.rows != null) form.append('rows', String(extra.rows));
   if (extra.resize) form.append('resize', '1');
   if (extra.rects) form.append('rects', extra.rects);
+  if (extra.position) form.append('position', extra.position);
+  if (extra.prefix != null) form.append('prefix', extra.prefix);
+  if (extra.start != null) form.append('start', String(extra.start));
+  if (extra.pad != null) form.append('pad', String(extra.pad));
+  if (extra.total) form.append('total', '1');
   const res = await apiFetch('/api/pages', { method: 'POST', body: form });
   if (!res.ok) { toast('page operation failed'); return false; }
   await setDocumentFromServer(await res.json());
@@ -1590,6 +1599,42 @@ async function extractGo() {
 els.extractBtn.onclick = openExtract;
 els.extractCancel.onclick = () => { els.extractModal.hidden = true; };
 els.extractGo.onclick = extractGo;
+
+// --- page numbers / Bates ----------------------------------------------------
+// Stamp a running number onto every page, in place (op:'pagenum' on /api/pages →
+// pdfops.StampPageNumbers). The number, prefix, zero-pad and start are formatted
+// server-side; here we just gather them and show a live first/last preview.
+function pnFormat(num, start, n) {
+  const pad = Math.min(12, Math.max(0, parseInt(els.pnPad.value, 10) || 0));
+  const prefix = els.pnPrefix.value.replace(/%/g, '');
+  return prefix + String(num).padStart(pad, '0') + (els.pnTotal.checked ? ' of ' + (start + n - 1) : '');
+}
+function pnPreview() {
+  const start = Math.max(1, parseInt(els.pnStart.value, 10) || 1);
+  const n = pdfDocument ? pdfDocument.numPages : 1;
+  els.pnPreview.textContent = n === 1
+    ? `1 page → “${pnFormat(start, start, n)}”`
+    : `${n} pages → “${pnFormat(start, start, n)}” … “${pnFormat(start + n - 1, start, n)}”`;
+}
+function openPageNum() {
+  if (!pdfDocument) return;
+  pnPreview();
+  els.pageNumModal.hidden = false;
+}
+async function pageNumGo() {
+  const ok = await pageOp('pagenum', {
+    position: els.pnPosition.value,
+    prefix: els.pnPrefix.value,
+    start: Math.max(1, parseInt(els.pnStart.value, 10) || 1),
+    pad: Math.min(12, Math.max(0, parseInt(els.pnPad.value, 10) || 0)),
+    total: els.pnTotal.checked,
+  });
+  if (ok) { els.pageNumModal.hidden = true; toast('Page numbers added'); }
+}
+els.pageNumBtn.onclick = openPageNum;
+els.pnCancel.onclick = () => { els.pageNumModal.hidden = true; };
+els.pnGo.onclick = pageNumGo;
+['pnPosition', 'pnStart', 'pnPad', 'pnPrefix', 'pnTotal'].forEach((id) => els[id].addEventListener('input', pnPreview));
 
 els.splitBtn.onclick = openSplit;
 els.splitCancel.onclick = () => { els.splitModal.hidden = true; };
@@ -3492,7 +3537,7 @@ const DOC_REQUIRED = [
   'textToolBtn', 'highlightToolBtn', 'drawToolBtn',
   'detectBtn', 'editTextBtn', 'removeOriginalsBtn', 'autofillBtn', 'splitBtn',
   'splitBoxBtn', 'applyBoxSplitBtn', 'rotateLeftBtn', 'rotateRightBtn',
-  'extractBtn', 'insertBlankBtn',
+  'extractBtn', 'insertBlankBtn', 'pageNumBtn',
   'redactBtn', 'applyRedactBtn', 'scanBtn',
   'finalizeBtn', 'timestampBtn', 'cosignBtn', 'sessionInitBtn', 'sessionSendBtn',
 ];
