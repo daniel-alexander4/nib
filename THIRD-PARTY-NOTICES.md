@@ -1067,6 +1067,18 @@ at <http://www.apache.org/licenses/LICENSE-2.0>. Upstream:
 
 ---
 
+## Tesseract.js 5.1.1 (+ tesseract.js-core, eng traineddata)
+
+Vendored under `web/vendor/tesseract/` for on-device OCR (the WASM engine, its
+worker, and the English `tessdata_fast` model). Copyright the Tesseract.js
+contributors and the Tesseract OCR project, licensed under the Apache License,
+Version 2.0. The full license text is reproduced in the `golang.org/x`/pdfcpu
+sections above and at <http://www.apache.org/licenses/LICENSE-2.0>. Upstream:
+<https://github.com/naptha/tesseract.js> and
+<https://github.com/tesseract-ocr/tessdata_fast>.
+
+---
+
 ## The Go Programming Language (standard library & toolchain)
 
 Nib is built with the Go toolchain and links the Go standard library,
