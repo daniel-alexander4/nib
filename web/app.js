@@ -39,6 +39,7 @@ const els = {
   textToolBtn: $('textToolBtn'), detectBtn: $('detectBtn'),
   hlColors: $('hlColors'), hlSwatches: $('hlSwatches'), hlCustom: $('hlCustom'),
   borderBtn: $('borderBtn'), borderWidth: $('borderWidth'), borderWidthInput: $('borderWidthInput'),
+  shapeBtn: $('shapeBtn'), shapeOpts: $('shapeOpts'), shapeFill: $('shapeFill'),
   noteBtn: $('noteBtn'),
   prevBtn: $('prevBtn'), nextBtn: $('nextBtn'),
   findPrevBtn: $('findPrevBtn'), findNextBtn: $('findNextBtn'), findCount: $('findCount'),
@@ -2998,7 +2999,7 @@ let redStart = null, redDiv = null, redHit = null;
 
 els.redactBtn.onclick = () => {
   redactMode = !redactMode;
-  if (redactMode) { setMarkerMode(null); exitSplitBox(); exitBorder(); exitCrop(); exitNote(); } // one box tool at a time
+  if (redactMode) { setMarkerMode(null); exitSplitBox(); exitBorder(); exitCrop(); exitNote(); exitShape(); } // one box tool at a time
   reflectRedact();
   els.viewerContainer.style.cursor = redactMode ? 'crosshair' : '';
 };
@@ -3118,6 +3119,7 @@ els.splitBoxBtn.onclick = () => {
   sbPage = viewer.currentPageNumber; // regions apply to the page you start on
   setMarkerMode(null);
   exitBorder();
+  exitShape();
   exitCrop();
   exitNote();
   if (redactMode) { redactMode = false; reflectRedact(); }
@@ -3202,6 +3204,7 @@ els.cropBtn.onclick = () => {
   cropPage = viewer.currentPageNumber; // the box is measured in this page's space
   setMarkerMode(null);
   exitBorder();
+  exitShape();
   exitSplitBox();
   exitNote();
   if (redactMode) { redactMode = false; reflectRedact(); }
@@ -3268,7 +3271,7 @@ els.editTextBtn.onclick = () => {
   if (!pdfDocument) { toast('Open a PDF first'); return; }
   editMode = !editMode;
   if (editMode && redactMode) { redactMode = false; reflectRedact(); } // one box tool at a time
-  if (editMode) { setMarkerMode(null); exitSplitBox(); exitBorder(); exitCrop(); exitNote(); }
+  if (editMode) { setMarkerMode(null); exitSplitBox(); exitBorder(); exitCrop(); exitNote(); exitShape(); }
   reflectEdit();
   els.viewerContainer.style.cursor = editMode ? 'crosshair' : '';
 };
@@ -3482,6 +3485,7 @@ function setMarkerMode(m) {
     if (editMode) { editMode = false; reflectEdit(); }
     exitSplitBox();
     exitBorder();
+    exitShape();
     exitCrop();
     exitNote();
   }
@@ -4022,7 +4026,7 @@ function setTool(mode) {
   viewer.annotationEditorMode = {
     mode: activeTool ? pdfjsLib.AnnotationEditorType[activeTool] : pdfjsLib.AnnotationEditorType.NONE,
   };
-  if (activeTool) { exitBorder(); exitNote(); } // Nib-side tools, not pdf.js modes — one at a time
+  if (activeTool) { exitBorder(); exitNote(); exitShape(); } // Nib-side tools, not pdf.js modes — one at a time
   // Mirror the active mode onto every control bound to it (Edit menu + toolbar).
   document.querySelectorAll('[data-mode]').forEach((b) => b.classList.toggle('active', b.dataset.mode === activeTool));
   // The highlight color row is contextual — show it only while highlighting (or
@@ -4098,8 +4102,9 @@ let bdStart = null, bdDiv = null, bdHit = null;
 // Show the highlight color row while highlighting OR drawing borders; the
 // thickness control only while drawing borders.
 function reflectAnnoControls() {
-  els.hlColors.hidden = !(activeTool === 'HIGHLIGHT' || borderMode);
-  els.borderWidth.hidden = !borderMode;
+  els.hlColors.hidden = !(activeTool === 'HIGHLIGHT' || borderMode || shapeMode);
+  els.borderWidth.hidden = !(borderMode || shapeMode);
+  els.shapeOpts.hidden = !shapeMode;
 }
 function reflectBorder() {
   els.borderBtn.classList.toggle('active', borderMode);
@@ -4201,6 +4206,159 @@ function boxPNG(wPts, hPts, hex, weightPts) {
   return cv.toDataURL('image/png').split(',')[1];
 }
 
+// --- shapes: line / arrow / rectangle / ellipse ------------------------------
+// Drawn marks baked as PNG stamps (the Border path), so they render in every
+// viewer. One paintShape renderer drives the live drag preview, the persistent
+// overlay (layoutField), and the baked PNG (shapeMarkPNG).
+let shapeMode = false;
+let shapeType = 'line';
+let shStart = null, shCanvas = null, shHit = null;
+
+function reflectShape() {
+  els.shapeBtn.classList.toggle('active', shapeMode);
+  reflectAnnoControls();
+}
+function exitShape() {
+  if (!shapeMode) return;
+  shapeMode = false;
+  reflectShape();
+  els.viewerContainer.style.cursor = '';
+}
+els.shapeBtn.onclick = () => {
+  if (shapeMode) { exitShape(); return; }
+  if (!pdfDocument) { toast('Open a PDF first'); return; }
+  shapeMode = true;
+  setTool(null);
+  setMarkerMode(null);
+  if (redactMode) { redactMode = false; reflectRedact(); }
+  if (editMode) { editMode = false; reflectEdit(); }
+  exitSplitBox();
+  exitCrop();
+  exitNote();
+  exitBorder();
+  reflectShape();
+  els.viewerContainer.style.cursor = 'crosshair';
+};
+all('.shapetype').forEach((b) => {
+  b.onclick = () => { shapeType = b.dataset.shape; all('.shapetype').forEach((x) => x.classList.toggle('active', x === b)); };
+});
+
+// shapeCorners returns the bbox-relative from/to (0|1) corners matching the drag
+// direction, so a line/arrow keeps its diagonal through resize.
+function shapeCorners(start, end) {
+  const from = { x: start.x <= end.x ? 0 : 1, y: start.y <= end.y ? 0 : 1 };
+  return { from, to: { x: 1 - from.x, y: 1 - from.y } };
+}
+
+// paintShape draws the current shape into a 2D context sized w×h px, pen weight in
+// px. fill (rect/ellipse) is a translucent wash; from/to (0..1) orient line/arrow.
+function paintShape(c, w, h, type, fill, hex, weightPx, from, to) {
+  c.clearRect(0, 0, w, h);
+  c.strokeStyle = hex;
+  c.fillStyle = hex;
+  c.lineWidth = Math.max(1, weightPx);
+  c.lineJoin = 'round';
+  c.lineCap = 'round';
+  const m = c.lineWidth / 2;
+  if (type === 'rect') {
+    if (fill) { c.globalAlpha = 0.25; c.fillRect(m, m, w - c.lineWidth, h - c.lineWidth); c.globalAlpha = 1; }
+    c.strokeRect(m, m, w - c.lineWidth, h - c.lineWidth);
+  } else if (type === 'ellipse') {
+    c.beginPath();
+    c.ellipse(w / 2, h / 2, Math.max(1, w / 2 - m), Math.max(1, h / 2 - m), 0, 0, 2 * Math.PI);
+    if (fill) { c.globalAlpha = 0.25; c.fill(); c.globalAlpha = 1; }
+    c.stroke();
+  } else { // line / arrow
+    const ax = from.x * w, ay = from.y * h, bx = to.x * w, by = to.y * h;
+    c.beginPath(); c.moveTo(ax, ay); c.lineTo(bx, by); c.stroke();
+    if (type === 'arrow') {
+      const ang = Math.atan2(by - ay, bx - ax);
+      const hd = Math.max(8, c.lineWidth * 3.5);
+      c.beginPath();
+      c.moveTo(bx, by); c.lineTo(bx - hd * Math.cos(ang - Math.PI / 7), by - hd * Math.sin(ang - Math.PI / 7));
+      c.moveTo(bx, by); c.lineTo(bx - hd * Math.cos(ang + Math.PI / 7), by - hd * Math.sin(ang + Math.PI / 7));
+      c.stroke();
+    }
+  }
+}
+
+// shapeMarkPNG renders a shape to a transparent PNG at the rect's point size (×
+// supersample) for baking via StampImages — the same rail Border uses.
+function shapeMarkPNG(wPts, hPts, f) {
+  const s = 3;
+  const cv = document.createElement('canvas');
+  cv.width = Math.max(8, Math.round(wPts * s));
+  cv.height = Math.max(8, Math.round(hPts * s));
+  paintShape(cv.getContext('2d'), cv.width, cv.height, f.type, f.fill, f.color, f.weight * s, f.from, f.to);
+  return cv.toDataURL('image/png').split(',')[1];
+}
+
+els.viewerContainer.addEventListener('pointerdown', (e) => {
+  if (!shapeMode) return;
+  shHit = pageAt(e.clientX, e.clientY);
+  if (!shHit) return;
+  shStart = { x: e.clientX, y: e.clientY };
+  shCanvas = document.createElement('canvas');
+  shCanvas.className = 'shapemark';
+  shHit.pv.div.appendChild(shCanvas);
+  e.preventDefault();
+});
+els.viewerContainer.addEventListener('pointermove', (e) => {
+  if (!shStart) return;
+  const r = shHit.r;
+  const x0 = Math.min(shStart.x, e.clientX) - r.left, y0 = Math.min(shStart.y, e.clientY) - r.top;
+  shCanvas.style.left = x0 + 'px'; shCanvas.style.top = y0 + 'px';
+  shCanvas.width = Math.max(1, Math.abs(e.clientX - shStart.x));
+  shCanvas.height = Math.max(1, Math.abs(e.clientY - shStart.y));
+  const { from, to } = shapeCorners(shStart, { x: e.clientX, y: e.clientY });
+  paintShape(shCanvas.getContext('2d'), shCanvas.width, shCanvas.height, shapeType, els.shapeFill.checked, selectedHlColor, clampWeight(els.borderWidthInput.value), from, to);
+});
+els.viewerContainer.addEventListener('pointerup', async (e) => {
+  if (!shStart) return;
+  const hit = shHit, start = shStart;
+  shCanvas.remove(); shStart = null; shCanvas = null; shHit = null;
+  const r = hit.r;
+  const isLine = shapeType === 'line' || shapeType === 'arrow';
+  let fw = Math.abs(e.clientX - start.x) / r.width, fh = Math.abs(e.clientY - start.y) / r.height;
+  if (isLine ? (fw < 0.005 && fh < 0.005) : (fw < 0.01 || fh < 0.01)) return; // ignore a stray click
+  // A near-axis-aligned line still needs a non-degenerate box to hold its stroke.
+  if (isLine) { fw = Math.max(fw, 0.004); fh = Math.max(fh, 0.004); }
+  const fx0 = (Math.min(start.x, e.clientX) - r.left) / r.width;
+  const fy0 = (Math.min(start.y, e.clientY) - r.top) / r.height;
+  const { from, to } = shapeCorners(start, { x: e.clientX, y: e.clientY });
+  const base = (await pdfDocument.getPage(hit.n)).getViewport({ scale: 1 }); // PDF points
+  makeShape([fx0, fy0, fx0 + fw, fy0 + fh], { page: hit.n, pageW: base.width, pageH: base.height, type: shapeType, fill: els.shapeFill.checked, from, to });
+});
+
+// makeShape registers a draggable/resizable shape overlay (kind 'shape') whose
+// canvas redraws via layoutField; collectStamps bakes it via shapeMarkPNG.
+function makeShape(frac, opts) {
+  const f = { page: opts.page, frac, pageW: opts.pageW, pageH: opts.pageH, kind: 'shape',
+    type: opts.type, fill: opts.fill, from: opts.from, to: opts.to,
+    color: selectedHlColor, weight: clampWeight(els.borderWidthInput.value) };
+  const el = document.createElement('div');
+  el.className = 'ovl ovl-shape';
+  el.tabIndex = 0;
+  const canvas = document.createElement('canvas');
+  canvas.className = 'shapecanvas';
+  const handle = document.createElement('span');
+  handle.className = 'stamp-resize';
+  const del = document.createElement('button');
+  del.className = 'stamp-del'; del.textContent = '×'; del.title = 'Remove shape';
+  el.append(canvas, handle, del);
+  f.el = el; f.canvas = canvas;
+
+  const remove = () => { el.remove(); overlayFields = overlayFields.filter((o) => o !== f); };
+  del.onclick = (ev) => { ev.stopPropagation(); remove(); };
+  el.addEventListener('keydown', (ev) => { if (ev.key === 'Delete' || ev.key === 'Backspace') remove(); });
+  enableStampGestures(f, el, handle);
+
+  overlayFields.push(f);
+  const pv = viewer.getPageView(f.page - 1);
+  pv.div.appendChild(el);
+  layoutField(f, pv);
+}
+
 // --- comment notes -----------------------------------------------------------
 // A note is a Nib overlay (a small text card) you place, drag, and edit; at save
 // it bakes into a native /Text sticky-note annotation (a clickable icon whose
@@ -4224,6 +4382,7 @@ els.noteBtn.onclick = () => {
   exitSplitBox();
   exitCrop();
   exitBorder();
+  exitShape();
   reflectNote();
   els.viewerContainer.style.cursor = 'crosshair';
 };
@@ -4342,6 +4501,7 @@ function clearOverlays() {
   activeMarker = null; fillTarget = null; // markers are gone with the old document
   exitSplitBox(); // a pending region selection doesn't carry to a new document
   exitBorder();   // nor a pending border-draw mode
+  exitShape();    // nor a pending shape-draw mode
   exitCrop();     // nor a pending crop-draw mode
   exitNote();     // nor a pending note-placement mode
 }
@@ -4351,7 +4511,7 @@ function clearOverlays() {
 // placed marker.
 function clearDetected() {
   overlayFields = overlayFields.filter((f) => {
-    if (f.kind === 'stamp' || f.kind === 'edit' || f.kind === 'marker' || f.kind === 'box' || f.kind === 'note') return true;
+    if (f.kind === 'stamp' || f.kind === 'edit' || f.kind === 'marker' || f.kind === 'box' || f.kind === 'note' || f.kind === 'shape') return true;
     f.el.remove();
     return false;
   });
@@ -4368,6 +4528,13 @@ function layoutField(f, pv) {
   // Border boxes carry a point thickness; scale it to the rendered page so the
   // live outline matches the baked stroke (css px per point = rendered W / page W).
   else if (f.kind === 'box') f.el.style.borderWidth = Math.max(1, f.weight * W / f.pageW) + 'px';
+  // Shapes redraw their canvas to the overlay's current px size, with the pen
+  // weight scaled from points to the rendered page (so it matches the bake).
+  else if (f.kind === 'shape') {
+    f.canvas.width = Math.max(1, Math.round((f.frac[2] - f.frac[0]) * W));
+    f.canvas.height = Math.max(1, Math.round(h));
+    paintShape(f.canvas.getContext('2d'), f.canvas.width, f.canvas.height, f.type, f.fill, f.color, Math.max(1, f.weight * W / f.pageW), f.from, f.to);
+  }
   // Edit fields carry a recognized point size; scale it to the rendered page
   // (css px per point = rendered width / page points) so the live overlay matches
   // the baked text instead of being sized from the box height.
@@ -4437,6 +4604,9 @@ function collectStamps() {
     } else if (f.kind === 'box') {
       const rect = rectPoints(f, f.frac);
       out.push({ page: f.page, rect, png: boxPNG(rect[2] - rect[0], rect[3] - rect[1], f.color, f.weight) });
+    } else if (f.kind === 'shape') {
+      const rect = rectPoints(f, f.frac);
+      out.push({ page: f.page, rect, png: shapeMarkPNG(rect[2] - rect[0], rect[3] - rect[1], f) });
     }
   }
   return out;
