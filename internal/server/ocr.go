@@ -2,6 +2,7 @@ package server
 
 import (
 	"encoding/json"
+	"log"
 	"net/http"
 
 	"nib/internal/pdfops"
@@ -15,6 +16,15 @@ import (
 // but its text is selectable, copyable, and findable. It rides the undo ring like
 // any other document operation.
 func (s *Server) handleOCR(w http.ResponseWriter, r *http.Request) {
+	// A malformed scan can make pdfcpu panic deep in the stamp path; without this
+	// the http server's default recovery just drops the connection (the browser
+	// sees a bare "Failed to fetch"). Turn it into a clean, logged 422 instead.
+	defer func() {
+		if rec := recover(); rec != nil {
+			log.Printf("ocr: recovered panic: %v", rec)
+			httpError(w, http.StatusUnprocessableEntity, "could not add the text layer")
+		}
+	}()
 	s.mu.Lock()
 	doc := s.doc
 	s.mu.Unlock()
