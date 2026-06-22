@@ -280,6 +280,48 @@ func TestStampWatermark(t *testing.T) {
 	}
 }
 
+func TestSplitBySpans(t *testing.T) {
+	pdf, err := ImagesToPDF([]RasterPage{
+		rasterPage(t, 80, 110), rasterPage(t, 80, 110), rasterPage(t, 80, 110),
+		rasterPage(t, 80, 110), rasterPage(t, 80, 110),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	parts, err := SplitBySpans(pdf, []string{"1-2", "3-5"}, "part ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(parts) != 2 {
+		t.Fatalf("parts = %d, want 2", len(parts))
+	}
+	if parts[0].Name != "part 1-2" || parts[1].Name != "part 3-5" {
+		t.Errorf("names = %q, %q; want 'part 1-2', 'part 3-5'", parts[0].Name, parts[1].Name)
+	}
+	if n, _ := PageCount(parts[0].Data); n != 2 {
+		t.Errorf("part 0 pages = %d, want 2", n)
+	}
+	if n, _ := PageCount(parts[1].Data); n != 3 {
+		t.Errorf("part 1 pages = %d, want 3", n)
+	}
+
+	// An out-of-range span, the parts cap, and an empty span list are all errors.
+	if _, err := SplitBySpans(pdf, []string{"6"}, ""); err == nil {
+		t.Error("expected error for an out-of-range span")
+	}
+	over := make([]string, maxSplitParts+1)
+	for i := range over {
+		over[i] = "1"
+	}
+	if _, err := SplitBySpans(pdf, over, ""); err == nil {
+		t.Error("expected error over the parts cap")
+	}
+	if _, err := SplitBySpans(pdf, nil, ""); err == nil {
+		t.Error("expected error for no spans")
+	}
+}
+
 func TestStampPageNumbers(t *testing.T) {
 	pdf := threePagePDF(t)
 	// Bates-style: prefix + zero-pad + a corner position.

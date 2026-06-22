@@ -99,6 +99,7 @@
           <button id="exportZipBtn">Pages as images (ZIP)</button>
           <button id="exportPngBtn">Current page (PNG)</button>
           <button id="exportBookmarkSplitBtn">Split by bookmarks (to a folder)…</button>
+          <button id="exportPageSplitBtn">Split into files by page range (to a folder)…</button>
           <button id="exportFormJsonBtn">Form data (JSON)</button>
           <button id="exportFormCsvBtn">Form data (CSV)</button>
           <button id="exportCertBtn">Signing certificate</button>
@@ -551,6 +552,32 @@
         <span class="grow"></span>
         <button id="bsCancel">Cancel</button>
         <button id="bsGo" class="primary">Split to folder…</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Split a PDF into several files by page sequence: every N pages, or custom ranges -->
+  <div id="pageSplitModal" hidden>
+    <div class="sigcard">
+      <h3>Split into files by page range</h3>
+      <p class="libhint">Break this document into several PDFs by page sequence, written into a folder. This divides the page sequence — not a single page's layout. The open document is left untouched.</p>
+      <div class="splitcontrols">
+        <label class="check"><input type="radio" name="psMode" value="every" checked /> Every <input id="psEvery" type="number" min="1" value="1" /> pages</label>
+        <label class="check"><input type="radio" name="psMode" value="ranges" /> Custom ranges</label>
+      </div>
+      <label>Ranges <input id="psRanges" type="text" placeholder="e.g. 1-3, 4-8, 9-10 — each range becomes one file" disabled /></label>
+      <label>Filename prefix <input id="psPrefix" type="text" placeholder="optional — e.g. “part ”" /></label>
+      <p id="psPreview" class="libhint"></p>
+      <label>Folder <input id="psDir" type="text" /></label>
+      <div class="dirbrowse">
+        <button id="psUp" type="button" title="Parent folder">⬆ Up</button>
+        <span id="psHere" class="dirhere"></span>
+      </div>
+      <ul id="psList" class="dirlist"></ul>
+      <div class="sigbtns">
+        <span class="grow"></span>
+        <button id="psCancel">Cancel</button>
+        <button id="psGo" class="primary">Split to folder…</button>
       </div>
     </div>
   </div>
