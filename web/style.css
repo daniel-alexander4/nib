@@ -402,6 +402,9 @@ input[type="search"] { width: 100%; }
 .scanmethods { display: flex; flex-direction: column; gap: 6px; }
 .scanmethods button { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; text-align: left; }
 .scanmethods .hint { font-size: 11px; color: var(--subtext0); font-weight: 400; }
+/* attachrow: one embedded file — name/description on the left, Extract on the right. */
+.attachrow { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 5px 0; border-bottom: 1px solid var(--surface0); }
+.attachrow button { flex: none; }
 
 /* About dialog. The card sizes to whichever view is showing: the explainer is a
    narrow readable column; the licence/notices view is wider. The card is capped

@@ -111,6 +111,9 @@ func (s *Server) Handler() http.Handler {
 	// Hidden-content scan and sanitize.
 	mux.HandleFunc("GET /api/scan", s.requireUnlocked(s.handleScan))
 	mux.HandleFunc("POST /api/sanitize", s.requireUnlocked(s.handleSanitize))
+	mux.HandleFunc("GET /api/attachments", s.requireUnlocked(s.handleAttachmentsList))
+	mux.HandleFunc("POST /api/attachments/add", s.requireUnlocked(s.handleAttachmentAdd))
+	mux.HandleFunc("POST /api/attachments/extract", s.requireUnlocked(s.handleAttachmentExtract))
 
 	// Finalize / export / autofill.
 	mux.HandleFunc("POST /api/finalize", s.requireUnlocked(s.handleFinalize))
