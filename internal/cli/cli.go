@@ -61,6 +61,9 @@ var commands = map[string]func([]string) int{
 	"rotate":    cmdRotate,
 	"pages":     cmdPages,
 	"split":     cmdSplit,
+	"decrypt":   cmdDecrypt,
+	"nup":       cmdNup,
+	"pagenum":   cmdPagenum,
 }
 
 func printUsage(w *os.File) {
@@ -79,13 +82,16 @@ These subcommands run headlessly, without a browser:
   nib rotate IN -o OUT --deg N    rotate pages (90/180/270; --pages to limit)
   nib pages IN -o OUT --keep SEL  keep/reorder (or --remove) pages, e.g. 1-3,5
   nib split IN --out-dir DIR …    burst into files by --every N, --ranges, or --bookmarks
+  nib decrypt IN -o OUT           remove password protection / owner restrictions
+  nib nup IN -o OUT --n N         place N pages per sheet (2/4/6/9/16…)
+  nib pagenum IN -o OUT           stamp running page numbers / Bates numbering
   nib watch DIR --do OP           run timestamp/optimize/sanitize on each new PDF
   nib version                     print the version
 
-Commands that produce a PDF require -o/--out FILE. For optimize, merge,
-sanitize, sign, rotate, and pages, "-" reads a PDF from stdin or (as -o -) writes
-it to stdout, so they compose in a pipeline. Exit status is non-zero on failure
-(verify: 2 when a signature is invalid or absent).
+Commands that produce a PDF require -o/--out FILE. For optimize, merge, sanitize,
+sign, rotate, pages, decrypt, nup, and pagenum, "-" reads a PDF from stdin or (as
+-o -) writes it to stdout, so they compose in a pipeline. Exit status is non-zero
+on failure (verify: 2 when a signature is invalid or absent).
 
 sign reads the .p12 passphrase from --password-file FILE or the NIB_P12_PASSWORD
 environment variable — never from the command line. Run "nib <command> -h" for
