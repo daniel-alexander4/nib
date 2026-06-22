@@ -356,6 +356,11 @@
         <label class="check"><input id="fzTsaOn" type="checkbox" /> Timestamp server URL (optional)</label>
         <input id="fzTsa" type="text" placeholder="e.g. https://freetsa.org/tsr" disabled />
       </div>
+      <div class="fzfield">
+        <label class="fzlabel" for="fzSignAs">Sign as</label>
+        <select id="fzSignAs"><option value="native">Nib identity (self-signed)</option></select>
+        <input id="fzPassphrase" type="password" placeholder="Certificate passphrase" autocomplete="off" hidden />
+      </div>
       <div class="sigbtns">
         <span class="grow"></span>
         <button id="fzCancel">Cancel</button>
@@ -802,6 +807,22 @@
       <div class="sigbtns">
         <span class="grow"></span>
         <button id="peerPinBtn" class="primary">Pin peer</button>
+      </div>
+      <div class="sep"></div>
+      <label>Signing certificate
+        <div id="extSignerStatus" class="libhint"></div></label>
+      <p class="libhint">Optional: import your own certificate (PKCS#12 <code>.p12</code>/<code>.pfx</code>)
+        to sign documents with a CA-issued credential instead of Nib's self-signed identity. It's used
+        only for solo <strong>Finalize &amp; sign</strong> (you'll enter its passphrase each time) — your
+        Nib identity and pinned peers are unaffected. A verifier still needs to trust the issuing CA.</p>
+      <div class="fzfield">
+        <input id="extP12File" type="file" accept=".p12,.pfx,application/x-pkcs12" />
+        <input id="extP12Pass" type="password" placeholder="Certificate passphrase" autocomplete="off" />
+      </div>
+      <div class="sigbtns">
+        <button id="extP12Remove" hidden>Remove imported certificate</button>
+        <span class="grow"></span>
+        <button id="extP12Import" class="primary">Import certificate</button>
       </div>
       <div class="sep"></div>
       <div class="sigbtns">

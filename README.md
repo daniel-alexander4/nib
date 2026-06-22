@@ -164,6 +164,18 @@ identity kept in your vault and bakes in a visible watermark — a preset like
 text), with adjustable opacity, colour, size, and angle and a live preview —
 optionally with a trusted RFC-3161 timestamp. Any later edit breaks the signature
 — that's the point. Export your public certificate so others can verify it's you.
+
+**Sign with your own certificate.** By default Finalize uses Nib's self-signed
+identity (integrity, not third-party trust). If you have a CA-issued credential,
+import it under **⚙ → Identity & peers → Signing certificate** (a PKCS#12
+`.p12`/`.pfx` file + its passphrase); then Finalize offers a **Sign as** choice
+and signs with that certificate and its chain, so a verifier who trusts the
+issuing CA sees a trusted signature. The certificate is used only for solo
+Finalize — your Nib identity and pinned peers are untouched, and co-signing always
+uses the Nib identity. You enter the `.p12` passphrase at each signing; the key is
+never stored unencrypted. (Hardware tokens / PIV / system keystores aren't
+supported — they'd require cgo, and Nib ships as one pure-Go static binary.)
+
 Every PDF you open also shows a **signature badge**: untampered, modified, or
 unsigned. Click **details** for the full picture — every signer (not just the
 first), and whether each signing time is backed by an independent timestamp
