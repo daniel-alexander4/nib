@@ -633,20 +633,30 @@ input.ovl-check { appearance: auto; accent-color: #1a7f37; background: transpare
 /* border box: a colored outline with no fill (the unfilled sibling of a
    highlight). Border color + width are set inline from the field. */
 .ovl-box { z-index: 9; cursor: move; border-style: solid; border-width: 2px; background: transparent; touch-action: none; }
-.ovl-stamp .stamp-resize, .ovl-box .stamp-resize {
+.ovl-stamp .stamp-resize, .ovl-box .stamp-resize, .ovl-note .stamp-resize {
   position: absolute; right: -6px; bottom: -6px; width: 12px; height: 12px;
   background: var(--blue); border: 1px solid var(--crust); border-radius: 2px;
   cursor: nwse-resize; display: none;
 }
 .ovl-stamp:hover .stamp-resize, .ovl-stamp:focus .stamp-resize,
 .ovl-box:hover .stamp-resize, .ovl-box:focus .stamp-resize { display: block; }
-.ovl-stamp .stamp-del, .ovl-box .stamp-del {
+.ovl-stamp .stamp-del, .ovl-box .stamp-del, .ovl-note .stamp-del {
   position: absolute; top: -10px; right: -10px; width: 18px; height: 18px; padding: 0;
   line-height: 1; border-radius: 999px; background: var(--surface1); color: var(--red);
-  border: 1px solid var(--crust); cursor: pointer; display: none;
+  border: 1px solid var(--crust); cursor: pointer; display: none; z-index: 1;
 }
 .ovl-stamp:hover .stamp-del, .ovl-stamp:focus .stamp-del,
 .ovl-box:hover .stamp-del, .ovl-box:focus .stamp-del { display: block; }
+/* ovl-note: a comment card (icon header + textarea); bakes to a /Text sticky note. */
+.ovl-note { z-index: 9; display: flex; flex-direction: column; overflow: hidden; cursor: move;
+  background: var(--surface0); border: 1px solid var(--surface1); border-radius: 6px;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.3); touch-action: none; }
+.note-head { display: flex; align-items: center; padding: 2px 5px; background: var(--surface1); cursor: move; }
+.note-icon { font-size: 12px; }
+.note-text { flex: 1; resize: none; border: none; outline: none; background: transparent;
+  color: var(--text); font: inherit; font-size: 12px; padding: 4px; cursor: text; }
+.ovl-note:hover .stamp-resize, .ovl-note:focus-within .stamp-resize,
+.ovl-note:hover .stamp-del, .ovl-note:focus-within .stamp-del { display: block; }
 /* bordermark: the rubber-band rectangle drawn while placing a border box. */
 .bordermark { position: absolute; border: 2px solid var(--blue); background: transparent; z-index: 5; pointer-events: none; box-sizing: border-box; }
 .borderwidth { display: inline-flex; align-items: center; gap: 4px; }

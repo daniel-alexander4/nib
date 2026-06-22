@@ -39,6 +39,7 @@ const els = {
   textToolBtn: $('textToolBtn'), detectBtn: $('detectBtn'),
   hlColors: $('hlColors'), hlSwatches: $('hlSwatches'), hlCustom: $('hlCustom'),
   borderBtn: $('borderBtn'), borderWidth: $('borderWidth'), borderWidthInput: $('borderWidthInput'),
+  noteBtn: $('noteBtn'),
   prevBtn: $('prevBtn'), nextBtn: $('nextBtn'),
   findPrevBtn: $('findPrevBtn'), findNextBtn: $('findNextBtn'), findCount: $('findCount'),
   zoomInBtn: $('zoomInBtn'), zoomOutBtn: $('zoomOutBtn'), fitBtn: $('fitBtn'),
@@ -1036,6 +1037,7 @@ const viewer = new PDFViewer({
   findController,
   l10n: new GenericL10n('en-US'),
   annotationMode: pdfjsLib.AnnotationMode.ENABLE_FORMS, // render fillable fields
+  imageResourcesPath: './vendor/pdfjs/images/', // sticky-note icons resolve here (see annotation-note.svg)
 });
 linkService.setViewer(viewer);
 
@@ -2919,7 +2921,7 @@ let redStart = null, redDiv = null, redHit = null;
 
 els.redactBtn.onclick = () => {
   redactMode = !redactMode;
-  if (redactMode) { setMarkerMode(null); exitSplitBox(); exitBorder(); exitCrop(); } // one box tool at a time
+  if (redactMode) { setMarkerMode(null); exitSplitBox(); exitBorder(); exitCrop(); exitNote(); } // one box tool at a time
   reflectRedact();
   els.viewerContainer.style.cursor = redactMode ? 'crosshair' : '';
 };
@@ -3040,6 +3042,7 @@ els.splitBoxBtn.onclick = () => {
   setMarkerMode(null);
   exitBorder();
   exitCrop();
+  exitNote();
   if (redactMode) { redactMode = false; reflectRedact(); }
   if (editMode) { editMode = false; reflectEdit(); }
   reflectSplitBox();
@@ -3123,6 +3126,7 @@ els.cropBtn.onclick = () => {
   setMarkerMode(null);
   exitBorder();
   exitSplitBox();
+  exitNote();
   if (redactMode) { redactMode = false; reflectRedact(); }
   if (editMode) { editMode = false; reflectEdit(); }
   reflectCrop();
@@ -3187,7 +3191,7 @@ els.editTextBtn.onclick = () => {
   if (!pdfDocument) { toast('Open a PDF first'); return; }
   editMode = !editMode;
   if (editMode && redactMode) { redactMode = false; reflectRedact(); } // one box tool at a time
-  if (editMode) { setMarkerMode(null); exitSplitBox(); exitBorder(); exitCrop(); }
+  if (editMode) { setMarkerMode(null); exitSplitBox(); exitBorder(); exitCrop(); exitNote(); }
   reflectEdit();
   els.viewerContainer.style.cursor = editMode ? 'crosshair' : '';
 };
@@ -3402,6 +3406,7 @@ function setMarkerMode(m) {
     exitSplitBox();
     exitBorder();
     exitCrop();
+    exitNote();
   }
   all('.markers button').forEach((b) => b.classList.toggle('active', b.dataset.marker === m));
   els.viewerContainer.style.cursor = m ? 'crosshair' : '';
@@ -3940,7 +3945,7 @@ function setTool(mode) {
   viewer.annotationEditorMode = {
     mode: activeTool ? pdfjsLib.AnnotationEditorType[activeTool] : pdfjsLib.AnnotationEditorType.NONE,
   };
-  if (activeTool) exitBorder(); // Border is a Nib-side tool, not a pdf.js mode — one at a time
+  if (activeTool) { exitBorder(); exitNote(); } // Nib-side tools, not pdf.js modes — one at a time
   // Mirror the active mode onto every control bound to it (Edit menu + toolbar).
   document.querySelectorAll('[data-mode]').forEach((b) => b.classList.toggle('active', b.dataset.mode === activeTool));
   // The highlight color row is contextual — show it only while highlighting (or
@@ -4041,6 +4046,7 @@ els.borderBtn.onclick = () => {
   if (editMode) { editMode = false; reflectEdit(); }
   exitSplitBox();
   exitCrop();
+  exitNote();
   reflectBorder();
   els.viewerContainer.style.cursor = 'crosshair';
 };
@@ -4118,6 +4124,92 @@ function boxPNG(wPts, hPts, hex, weightPts) {
   return cv.toDataURL('image/png').split(',')[1];
 }
 
+// --- comment notes -----------------------------------------------------------
+// A note is a Nib overlay (a small text card) you place, drag, and edit; at save
+// it bakes into a native /Text sticky-note annotation (a clickable icon whose
+// popup shows the comment) via pdfops.AddNotes.
+let noteMode = false;
+function reflectNote() { els.noteBtn.classList.toggle('active', noteMode); }
+function exitNote() {
+  if (!noteMode) return;
+  noteMode = false;
+  reflectNote();
+  els.viewerContainer.style.cursor = '';
+}
+els.noteBtn.onclick = () => {
+  if (noteMode) { exitNote(); return; }
+  if (!pdfDocument) { toast('Open a PDF first'); return; }
+  noteMode = true;
+  setTool(null);
+  setMarkerMode(null);
+  if (redactMode) { redactMode = false; reflectRedact(); }
+  if (editMode) { editMode = false; reflectEdit(); }
+  exitSplitBox();
+  exitCrop();
+  exitBorder();
+  reflectNote();
+  els.viewerContainer.style.cursor = 'crosshair';
+};
+els.viewerContainer.addEventListener('pointerdown', async (e) => {
+  if (!noteMode) return;
+  const hit = pageAt(e.clientX, e.clientY);
+  if (!hit) return;
+  e.preventDefault();
+  const r = hit.r;
+  const fx = (e.clientX - r.left) / r.width;
+  const fy = (e.clientY - r.top) / r.height;
+  const base = (await pdfDocument.getPage(hit.n)).getViewport({ scale: 1 }); // PDF points
+  const fw = Math.min(0.3, 150 / r.width), fh = Math.min(0.2, 72 / r.height); // default card size
+  makeNote([fx, fy, Math.min(fx + fw, 1), Math.min(fy + fh, 1)], { page: hit.n, pageW: base.width, pageH: base.height });
+  exitNote(); // place one; re-click the tool for another
+});
+
+// makeNote registers a draggable note card (kind 'note') with an inline comment
+// textarea; collectNotes turns it into a /Text annotation at bake.
+function makeNote(frac, opts) {
+  const f = { page: opts.page, frac, pageW: opts.pageW, pageH: opts.pageH, kind: 'note', text: '' };
+  const el = document.createElement('div');
+  el.className = 'ovl ovl-note';
+  el.tabIndex = 0;
+  const head = document.createElement('div');
+  head.className = 'note-head';
+  const icon = document.createElement('span');
+  icon.className = 'note-icon'; icon.textContent = '🗨';
+  const del = document.createElement('button');
+  del.className = 'stamp-del'; del.textContent = '×'; del.title = 'Remove note';
+  head.append(icon, del);
+  const ta = document.createElement('textarea');
+  ta.className = 'note-text'; ta.placeholder = 'Comment…';
+  ta.addEventListener('pointerdown', (ev) => ev.stopPropagation()); // edit the text, don't drag the card
+  ta.addEventListener('input', () => { f.text = ta.value; });
+  const handle = document.createElement('span');
+  handle.className = 'stamp-resize';
+  el.append(head, ta, handle);
+  f.el = el;
+
+  const remove = () => { el.remove(); overlayFields = overlayFields.filter((o) => o !== f); };
+  del.onclick = (ev) => { ev.stopPropagation(); remove(); };
+  enableStampGestures(f, el, handle);
+
+  overlayFields.push(f);
+  const pv = viewer.getPageView(f.page - 1);
+  pv.div.appendChild(el);
+  layoutField(f, pv);
+  ta.focus();
+}
+
+// collectNotes turns each non-empty note overlay into a {page, x, y, text}: the
+// icon anchors at the card's top-left corner, in PDF points.
+function collectNotes() {
+  const out = [];
+  for (const f of overlayFields) {
+    if (f.kind !== 'note' || !f.text.trim()) continue;
+    const [x0, , , y1] = rectPoints(f, f.frac); // x0 = left, y1 = top edge (PDF points)
+    out.push({ page: f.page, x: x0, y: y1, text: f.text.trim() });
+  }
+  return out;
+}
+
 // The toolbar mirrors the menus. Mode tools wire themselves via [data-mode]
 // above; every other toolbar control forwards to its menu twin by id.
 all('#toolbar [data-forward]').forEach((b) => { b.onclick = () => $(b.dataset.forward).click(); });
@@ -4174,6 +4266,7 @@ function clearOverlays() {
   exitSplitBox(); // a pending region selection doesn't carry to a new document
   exitBorder();   // nor a pending border-draw mode
   exitCrop();     // nor a pending crop-draw mode
+  exitNote();     // nor a pending note-placement mode
 }
 // clearDetected drops only auto-detected fields (text/check/circleone), keeping
 // user-placed stamps, text edits, and sign/date/initial markers so re-running
@@ -4181,7 +4274,7 @@ function clearOverlays() {
 // placed marker.
 function clearDetected() {
   overlayFields = overlayFields.filter((f) => {
-    if (f.kind === 'stamp' || f.kind === 'edit' || f.kind === 'marker' || f.kind === 'box') return true;
+    if (f.kind === 'stamp' || f.kind === 'edit' || f.kind === 'marker' || f.kind === 'box' || f.kind === 'note') return true;
     f.el.remove();
     return false;
   });
@@ -4286,13 +4379,15 @@ async function bakedBytes() {
   const fields = collectFields();
   const stamps = collectStamps();
   const covers = collectCovers();
+  const notes = collectNotes();
   let out = saved;
-  if (fields.length || stamps.length || covers.length) {
+  if (fields.length || stamps.length || covers.length || notes.length) {
     const form = new FormData();
     form.append('pdf', new Blob([saved], { type: 'application/pdf' }), 'doc.pdf');
     if (covers.length) form.append('covers', JSON.stringify(covers));
     if (fields.length) form.append('fields', JSON.stringify(fields));
     if (stamps.length) form.append('stamps', JSON.stringify(stamps));
+    if (notes.length) form.append('notes', JSON.stringify(notes));
     const res = await apiFetch('/api/bake', { method: 'POST', body: form });
     if (!res.ok) { toast('could not apply edits'); return saved; }
     out = new Uint8Array(await res.arrayBuffer());

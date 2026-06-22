@@ -16,6 +16,34 @@ import (
 	"nib/internal/testpdf"
 )
 
+// TestBakeNotes posts a comment note and confirms the bake wires it through to
+// pdfops.AddNotes (the /Text annotation content itself is covered by the pdfops
+// test). The result must be a valid PDF.
+func TestBakeNotes(t *testing.T) {
+	ts, _ := startServer(t)
+	c, csrf := authedClient(t, ts)
+
+	pdf, _ := testpdf.Form()
+	var buf bytes.Buffer
+	mw := multipart.NewWriter(&buf)
+	fw, _ := mw.CreateFormFile("pdf", "doc.pdf")
+	fw.Write(pdf)
+	notes, _ := json.Marshal([]pdfops.Note{{Page: 1, X: 72, Y: 700, Text: "Please review"}})
+	mw.WriteField("notes", string(notes))
+	mw.Close()
+
+	resp := write(t, c, csrf, http.MethodPost, ts.URL+"/api/bake", mw.FormDataContentType(), &buf)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("bake notes status = %d: %s", resp.StatusCode, body)
+	}
+	out, _ := io.ReadAll(resp.Body)
+	if !bytes.HasPrefix(out, []byte("%PDF")) {
+		t.Error("bake notes did not return a PDF")
+	}
+}
+
 func TestBakeStampsFields(t *testing.T) {
 	ts, _ := startServer(t)
 	c, csrf := authedClient(t, ts)
