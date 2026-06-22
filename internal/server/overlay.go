@@ -109,6 +109,20 @@ func (s *Server) handleBake(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Comments bake into native /Text (sticky-note) annotations — interactive
+	// icons, not flattened images, so they go on after the image stamps.
+	if raw := r.FormValue("notes"); raw != "" {
+		var notes []pdfops.Note
+		if err := json.Unmarshal([]byte(raw), &notes); err != nil {
+			httpError(w, http.StatusBadRequest, "invalid notes")
+			return
+		}
+		if out, err = pdfops.AddNotes(out, notes); err != nil {
+			httpError(w, http.StatusInternalServerError, "could not add notes: "+err.Error())
+			return
+		}
+	}
+
 	w.Header().Set("Content-Type", "application/pdf")
 	_, _ = w.Write(out)
 }
