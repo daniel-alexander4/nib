@@ -143,6 +143,7 @@
       <span class="tbsep"></span>
       <button id="extractBtn" title="Save a range of pages as a new PDF">Extract pages…</button>
       <button id="insertBlankBtn" title="Insert a blank page after the current page">Insert blank page</button>
+      <button id="pageNumBtn" title="Stamp running page numbers (or Bates numbers) onto every page">Page numbers…</button>
       <span class="tbsep"></span>
       <button id="rotateLeftBtn" title="Rotate every page 90° counter-clockwise">Rotate all ↺</button>
       <button id="rotateRightBtn" title="Rotate every page 90° clockwise">Rotate all ↻</button>
@@ -492,6 +493,36 @@
         <span class="grow"></span>
         <button id="extractCancel">Cancel</button>
         <button id="extractGo" class="primary">Extract…</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Stamp running page numbers / Bates numbers onto every page -->
+  <div id="pageNumModal" hidden>
+    <div class="sigcard">
+      <h3>Page numbers</h3>
+      <p class="libhint">Stamp a running number onto every page. For Bates numbering, add a prefix and a zero-pad width (e.g. prefix “ABC” + width 6 → ABC000001).</p>
+      <div class="splitcontrols">
+        <label>Position
+          <select id="pnPosition">
+            <option value="bc" selected>Bottom centre</option>
+            <option value="br">Bottom right</option>
+            <option value="bl">Bottom left</option>
+            <option value="tc">Top centre</option>
+            <option value="tr">Top right</option>
+            <option value="tl">Top left</option>
+          </select>
+        </label>
+        <label>Start at <input id="pnStart" type="number" min="1" value="1" /></label>
+        <label>Zero-pad width <input id="pnPad" type="number" min="0" max="12" value="0" /></label>
+      </div>
+      <label>Prefix <input id="pnPrefix" type="text" placeholder="optional — e.g. “Page ” or a Bates prefix" /></label>
+      <label class="check"><input id="pnTotal" type="checkbox" /> Append “ of N” (total)</label>
+      <p id="pnPreview" class="libhint"></p>
+      <div class="sigbtns">
+        <span class="grow"></span>
+        <button id="pnCancel">Cancel</button>
+        <button id="pnGo" class="primary">Add page numbers</button>
       </div>
     </div>
   </div>

@@ -76,6 +76,19 @@ func (s *Server) handlePages(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		result, err = pdfops.SplitRegions(pdfBytes, pageNum, rects)
+	case "pagenum":
+		start, _ := strconv.Atoi(r.FormValue("start"))
+		pad, _ := strconv.Atoi(r.FormValue("pad"))
+		size, _ := strconv.Atoi(r.FormValue("size"))
+		result, err = pdfops.StampPageNumbers(pdfBytes, pdfops.PageNumberStyle{
+			Position: r.FormValue("position"),
+			Prefix:   r.FormValue("prefix"),
+			Start:    start,
+			Pad:      pad,
+			OfTotal:  r.FormValue("total") == "1",
+			Size:     size,
+			Color:    r.FormValue("color"),
+		})
 	default:
 		httpError(w, http.StatusBadRequest, "unknown page operation")
 		return

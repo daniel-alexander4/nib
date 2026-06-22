@@ -206,7 +206,10 @@ sidebar to move it where you want. Rotate every page at once with **Rotate all �
 on the **Edit** tab, or hover a thumbnail to rotate (either direction) or delete a
 single page. **Extract pages…** saves a range (type `1-3, 5`) as a new PDF without
 touching the open document, and **Insert blank page** drops a fresh page — matching
-its neighbour's size — after the current one. Got a scanned 2-up or 4-up sheet? **Split page…**
+its neighbour's size — after the current one. **Page numbers…** stamps a running
+number onto every page at the corner you choose — add a prefix and a zero-pad
+width for Bates numbering (e.g. `ABC` + width 6 → `ABC000001`), or tick "of N" for
+classic "Page 3 of 10". Got a scanned 2-up or 4-up sheet? **Split page…**
 (on the **Edit** tab) cuts the current page into a grid of separate pages — pick the
 columns and rows, preview where the cuts land, and
 optionally resize each piece to a full page. Not a clean grid? **Split by box**
