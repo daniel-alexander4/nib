@@ -138,6 +138,16 @@ If a strip can't produce a sound document it's reported and your open document
 is left untouched, so you can step down to the next method safely. Any removal
 produces a new, **unsigned** copy — save it to keep the cleaned version.
 
+### Remove password protection
+Open a password-protected PDF and Nib asks for the password, then **unlocks the
+working copy** so you can view and edit it — saving keeps it unprotected. For a PDF
+that opens but blocks editing/printing/copying (owner-password *restrictions*),
+**Secure → Remove password protection…** strips those flags. Both produce a plain,
+unrestricted document, the same as `qpdf --decrypt`. This is for a document you can
+already open or are authorized to edit — Nib only tries the password you type and
+never guesses or recovers one. Unlocking rewrites the file, so an existing digital
+signature won't survive.
+
 ### Attachments
 **Secure → Attachments** lists the files embedded inside a PDF. **Extract** any
 one to save it out, or **Attach a file…** to embed a new one (a source file, a
