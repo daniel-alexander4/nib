@@ -224,7 +224,10 @@ re-render, so every piece keeps its original quality.
 separate files — one per top-level bookmark, named from the bookmark with an
 optional prefix. Point it at a scored orchestration and get one PDF per
 instrument/part in seconds; pick the destination folder, and the open document is
-left untouched.
+left untouched. No bookmarks? **Split into files by page range** (File → Export)
+divides the page sequence instead — **every N pages**, or **custom ranges** like
+`1-3, 4-8, 9-10` where each range becomes its own file — into a folder, the open
+document untouched.
 
 **Flatten** to a guaranteed-flat PDF, or
 export pages as PNGs (single or ZIP) and form data as JSON / CSV. Save back over the
