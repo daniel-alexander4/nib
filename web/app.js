@@ -130,6 +130,8 @@ const els = {
   pnPosition: $('pnPosition'), pnStart: $('pnStart'), pnPad: $('pnPad'),
   pnPrefix: $('pnPrefix'), pnTotal: $('pnTotal'), pnPreview: $('pnPreview'),
   pnCancel: $('pnCancel'), pnGo: $('pnGo'),
+  nupBtn: $('nupBtn'), nupModal: $('nupModal'), nupN: $('nupN'), nupBorder: $('nupBorder'),
+  nupCancel: $('nupCancel'), nupGo: $('nupGo'),
   exportBookmarkSplitBtn: $('exportBookmarkSplitBtn'), bookmarkSplitModal: $('bookmarkSplitModal'),
   bsPrefix: $('bsPrefix'), bsPreview: $('bsPreview'), bsDir: $('bsDir'), bsHere: $('bsHere'),
   bsUp: $('bsUp'), bsList: $('bsList'), bsCancel: $('bsCancel'), bsGo: $('bsGo'),
@@ -1532,6 +1534,8 @@ async function pageOp(op, extra = {}) {
   if (extra.start != null) form.append('start', String(extra.start));
   if (extra.pad != null) form.append('pad', String(extra.pad));
   if (extra.total) form.append('total', '1');
+  if (extra.n != null) form.append('n', String(extra.n));
+  if (extra.border != null) form.append('border', extra.border ? '1' : '0');
   const res = await apiFetch('/api/pages', { method: 'POST', body: form });
   if (!res.ok) { toast('page operation failed'); return false; }
   await setDocumentFromServer(await res.json());
@@ -1703,6 +1707,20 @@ els.pageNumBtn.onclick = openPageNum;
 els.pnCancel.onclick = () => { els.pageNumModal.hidden = true; };
 els.pnGo.onclick = pageNumGo;
 ['pnPosition', 'pnStart', 'pnPad', 'pnPrefix', 'pnTotal'].forEach((id) => els[id].addEventListener('input', pnPreview));
+
+// --- N-up: combine several pages onto each sheet -----------------------------
+// Whole-document re-imposition in place (op:'nup' on /api/pages → pdfops.NUp).
+function openNup() {
+  if (!pdfDocument) return;
+  els.nupModal.hidden = false;
+}
+async function nupGo() {
+  const ok = await pageOp('nup', { n: parseInt(els.nupN.value, 10), border: els.nupBorder.checked });
+  if (ok) { els.nupModal.hidden = true; toast('Pages combined onto sheets'); }
+}
+els.nupBtn.onclick = openNup;
+els.nupCancel.onclick = () => { els.nupModal.hidden = true; };
+els.nupGo.onclick = nupGo;
 
 els.splitBtn.onclick = openSplit;
 els.splitCancel.onclick = () => { els.splitModal.hidden = true; };
@@ -3674,7 +3692,7 @@ const DOC_REQUIRED = [
   'textToolBtn', 'highlightToolBtn', 'drawToolBtn',
   'detectBtn', 'editTextBtn', 'removeOriginalsBtn', 'autofillBtn', 'splitBtn',
   'splitBoxBtn', 'applyBoxSplitBtn', 'rotateLeftBtn', 'rotateRightBtn',
-  'extractBtn', 'insertBlankBtn', 'pageNumBtn',
+  'extractBtn', 'insertBlankBtn', 'pageNumBtn', 'nupBtn',
   'redactBtn', 'applyRedactBtn', 'scanBtn',
   'finalizeBtn', 'timestampBtn', 'cosignBtn', 'sessionInitBtn', 'sessionSendBtn',
 ];

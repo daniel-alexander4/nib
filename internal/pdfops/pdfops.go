@@ -315,6 +315,29 @@ func uniqueName(base string, index int, seen map[string]int) string {
 	return base
 }
 
+// NUp places n source pages onto each output sheet (2-up, 4-up, …) in reading
+// order, restructuring the whole document in place — the inverse of the imposed-
+// page split. n must be one of pdfcpu's NUpValues (2, 3, 4, 6, 8, 9, 12, 16).
+// Each sheet keeps the document's own page size (pdfcpu falls back to page 1's
+// MediaBox because no paper size is set in the description), so a Letter document
+// stays Letter rather than being forced to the A4 default.
+func NUp(pdf []byte, n int, border bool) ([]byte, error) {
+	conf := model.NewDefaultConfiguration()
+	desc := "border:off, margin:0"
+	if border {
+		desc = "border:on, margin:3"
+	}
+	nup, err := api.PDFNUpConfig(n, desc, conf)
+	if err != nil {
+		return nil, err
+	}
+	var out bytes.Buffer
+	if err := api.NUp(bytes.NewReader(pdf), &out, nil, nil, nup, conf); err != nil {
+		return nil, err
+	}
+	return out.Bytes(), nil
+}
+
 // SplitPage splits page p (1-based) of pdf into a cols×rows grid of sub-pages in
 // reading order (top-left to bottom-right), replacing that one page with the grid
 // in place. The split is rasterization-free: pdfcpu's CutPage re-crops the

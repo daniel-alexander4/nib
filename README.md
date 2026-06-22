@@ -210,7 +210,10 @@ touching the open document, and **Insert blank page** drops a fresh page — mat
 its neighbour's size — after the current one. **Page numbers…** stamps a running
 number onto every page at the corner you choose — add a prefix and a zero-pad
 width for Bates numbering (e.g. `ABC` + width 6 → `ABC000001`), or tick "of N" for
-classic "Page 3 of 10". Got a scanned 2-up or 4-up sheet? **Split page…**
+classic "Page 3 of 10". Going the other way, **N-up…** combines several pages onto
+each sheet (2-up, 4-up, up to 16) for printing or handouts, in reading order, with
+an optional border — each sheet keeps the document's page size. Got a scanned 2-up
+or 4-up sheet? **Split page…**
 (on the **Edit** tab) cuts the current page into a grid of separate pages — pick the
 columns and rows, preview where the cuts land, and
 optionally resize each piece to a full page. Not a clean grid? **Split by box**
