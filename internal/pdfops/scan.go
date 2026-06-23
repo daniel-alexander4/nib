@@ -245,11 +245,38 @@ func StripMetadata(pdf []byte) ([]byte, error) {
 
 // ErrWrongPassword and ErrNotEncrypted classify the two expected failures of
 // RemovePassword so the caller can respond specifically (reprompt vs "already
-// unprotected") instead of a generic error.
+// unprotected") instead of a generic error. ErrAlreadyEncrypted is the inverse,
+// reported by Encrypt: pdfcpu refuses to re-encrypt an already-protected PDF, so
+// the caller can say so cleanly (e.g. skip it in a batch) rather than surface the
+// raw engine error.
 var (
-	ErrWrongPassword = errors.New("wrong password")
-	ErrNotEncrypted  = errors.New("document is not password-protected")
+	ErrWrongPassword    = errors.New("wrong password")
+	ErrNotEncrypted     = errors.New("document is not password-protected")
+	ErrAlreadyEncrypted = errors.New("document is already password-protected")
 )
+
+// Encrypt password-protects pdf with AES-256, producing a copy that needs the
+// password to open. The single password is set as both the user (open) and owner
+// password, so RemovePassword(password) reverses it exactly. password must be
+// non-empty — an empty one is rejected rather than silently producing an
+// unprotected file — and an already-encrypted input returns ErrAlreadyEncrypted
+// (pdfcpu will not re-encrypt). Like RemovePassword, api.Encrypt rewrites the
+// file, so any existing signature does not survive: protection is a separate,
+// signature-free export, never combined with signing.
+func Encrypt(pdf []byte, password string) ([]byte, error) {
+	if password == "" {
+		return nil, errors.New("a password is required to protect the document")
+	}
+	conf := model.NewAESConfiguration(password, password, 256)
+	var out bytes.Buffer
+	if err := api.Encrypt(bytes.NewReader(pdf), &out, conf); err != nil {
+		if strings.Contains(err.Error(), "this file is encrypted") {
+			return nil, ErrAlreadyEncrypted
+		}
+		return nil, err
+	}
+	return out.Bytes(), nil
+}
 
 // RemovePassword strips a PDF's encryption — both an open/user password and
 // owner-password restriction flags — producing a plain, unrestricted document.

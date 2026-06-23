@@ -65,6 +65,8 @@ const els = {
   attachAddBtn: $('attachAddBtn'), attachInput: $('attachInput'), attachClose: $('attachClose'),
   decryptBtn: $('decryptBtn'), decryptModal: $('decryptModal'), decryptPw: $('decryptPw'),
   decryptGo: $('decryptGo'), decryptCancel: $('decryptCancel'), decryptError: $('decryptError'),
+  encryptBtn: $('encryptBtn'), encryptModal: $('encryptModal'), encryptPw: $('encryptPw'),
+  encryptPw2: $('encryptPw2'), encryptGo: $('encryptGo'), encryptCancel: $('encryptCancel'), encryptError: $('encryptError'),
   backupBtn: $('backupBtn'), restoreInput: $('restoreInput'), checkUpdatesBtn: $('checkUpdatesBtn'),
   updatePill: $('updatePill'), updateGet: $('updateGet'), updateDismiss: $('updateDismiss'),
   manageKeysBtn: $('manageKeysBtn'), keysModal: $('keysModal'), keysList: $('keysList'),
@@ -1552,6 +1554,54 @@ els.decryptGo.onclick = async () => {
 };
 els.decryptPw.addEventListener('keydown', (e) => {
   if (e.key === 'Enter') { e.preventDefault(); els.decryptGo.onclick(); }
+});
+
+// --- add password protection -------------------------------------------------
+// Save a separate AES-256 protected copy via /api/encrypt. Unlike decrypt this is
+// an EXPORT, not an in-place mutation: the server returns the encrypted bytes and
+// the open working copy is left unprotected and editable (encrypted bytes can't be
+// re-rendered without the password). The password is typed twice — a typo would
+// lock the copy permanently, and Nib can't recover one.
+els.encryptBtn.onclick = () => {
+  if (!pdfDocument) return toast('Open a PDF first');
+  // The open doc is untouched — only the protected copy loses any signature — so this
+  // is a tailored warning, not the in-place confirmSignatureLoss() the editing ops use.
+  if (isSigned() && !confirm('This document is signed. The protected copy won’t carry that signature (encrypting rewrites the file); your open document is unchanged. Continue?')) return;
+  els.encryptError.hidden = true;
+  els.encryptPw.value = '';
+  els.encryptPw2.value = '';
+  els.encryptModal.hidden = false;
+  els.encryptPw.focus();
+};
+els.encryptCancel.onclick = () => { els.encryptModal.hidden = true; };
+els.encryptGo.onclick = async () => {
+  const pw = els.encryptPw.value;
+  if (!pw) {
+    els.encryptError.textContent = 'Enter a password.';
+    els.encryptError.hidden = false;
+    els.encryptPw.focus();
+    return;
+  }
+  if (pw !== els.encryptPw2.value) {
+    els.encryptError.textContent = 'The passwords don’t match.';
+    els.encryptError.hidden = false;
+    els.encryptPw2.select();
+    return;
+  }
+  const res = await apiFetch('/api/encrypt', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: 'password=' + encodeURIComponent(pw),
+  });
+  if (!res.ok) { toast('could not protect the document'); return; }
+  els.encryptModal.hidden = true;
+  openSaveAs(await res.blob(), exportBase() + '-protected.pdf', 'Save password-protected PDF');
+};
+els.encryptPw.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') { e.preventDefault(); els.encryptPw2.focus(); }
+});
+els.encryptPw2.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') { e.preventDefault(); els.encryptGo.onclick(); }
 });
 
 // Flatten is the guaranteed-inert floor: rasterise every page and load the
@@ -5003,7 +5053,7 @@ const DOC_REQUIRED = [
   'detectBtn', 'editTextBtn', 'removeOriginalsBtn', 'ocrBtn', 'ocrLang', 'autofillBtn', 'splitBtn',
   'splitBoxBtn', 'applyBoxSplitBtn', 'rotateLeftBtn', 'rotateRightBtn',
   'extractBtn', 'insertBlankBtn', 'duplicatePageBtn', 'insertPdfBtn', 'pageNumBtn', 'nupBtn', 'cropBtn',
-  'redactBtn', 'applyRedactBtn', 'scanBtn', 'attachBtn', 'decryptBtn',
+  'redactBtn', 'applyRedactBtn', 'scanBtn', 'attachBtn', 'encryptBtn', 'decryptBtn',
   'finalizeBtn', 'timestampBtn', 'cosignBtn', 'sessionInitBtn', 'sessionSendBtn',
 ];
 function setDocControls(enabled) {
