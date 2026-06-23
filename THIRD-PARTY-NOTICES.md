@@ -1067,10 +1067,11 @@ at <http://www.apache.org/licenses/LICENSE-2.0>. Upstream:
 
 ---
 
-## Tesseract.js 5.1.1 (+ tesseract.js-core, eng/fra/deu/spa/ita traineddata)
+## Tesseract.js 5.1.1 (+ tesseract.js-core, eng/fra/deu/spa/ita/rus/ukr/bul/srp/mkd/bel/ell traineddata)
 
 Vendored under `web/vendor/tesseract/` for on-device OCR (the WASM engine, its
-worker, and the English, French, German, Spanish and Italian `tessdata_fast`
+worker, and the English, French, German, Spanish, Italian, Russian, Ukrainian,
+Bulgarian, Serbian, Macedonian, Belarusian and Greek `tessdata_fast`
 models). Copyright the Tesseract.js
 contributors and the Tesseract OCR project, licensed under the Apache License,
 Version 2.0. The full license text is reproduced in the `golang.org/x`/pdfcpu
