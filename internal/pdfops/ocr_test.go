@@ -43,6 +43,42 @@ func TestStampTextLayerSearchable(t *testing.T) {
 	}
 }
 
+// TestStampTextLayerCyrillicGreek pins the coverage that lets Nib offer Cyrillic and
+// Greek OCR languages with NO extra font: pdfcpu's bundled Roboto already carries
+// those glyphs, so the invisible layer bakes and extracts correctly. Each sample
+// includes that language's characteristic letters (Ukrainian ґ/є/і/ї, Serbian
+// ђ/ј/љ/њ/ћ/џ, Macedonian ѓ/ѕ/ќ, Belarusian ў/і). A failure here means Roboto's
+// subset lacks a glyph — that language must be pulled from the picker, since the
+// drop is silent (the OCR layer would be present but textually empty for it).
+func TestStampTextLayerCyrillicGreek(t *testing.T) {
+	if _, err := exec.LookPath("pdftotext"); err != nil {
+		t.Skip("pdftotext (poppler) not installed")
+	}
+	samples := map[string]string{
+		"rus": "Привет мир",
+		"ukr": "Привіт ґ є і ї",
+		"bul": "Здравей свят",
+		"srp": "Здраво ђ ј љ њ ћ џ",
+		"mkd": "Здраво ѓ ѕ ќ",
+		"bel": "Прывітанне ў і",
+		"ell": "Γειά σου κόσμε",
+	}
+	for lang, sample := range samples {
+		base, err := testpdf.Text("scan")
+		if err != nil {
+			t.Fatal(err)
+		}
+		out, err := StampTextLayer(base, []Word{{Page: 1, Rect: [4]float64{50, 100, 300, 112}, Text: sample}})
+		if err != nil {
+			t.Errorf("%s: StampTextLayer: %v", lang, err)
+			continue
+		}
+		if txt := pdfToText(t, out); !strings.Contains(txt, sample) {
+			t.Errorf("%s: Roboto does not cover %q — extracted %q; pull this language from the picker", lang, sample, strings.TrimSpace(txt))
+		}
+	}
+}
+
 // TestStampTextLayerNoWords is a no-op pass-through (nothing to OCR on a page).
 func TestStampTextLayerNoWords(t *testing.T) {
 	base, err := testpdf.Text("x")
