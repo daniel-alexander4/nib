@@ -3742,11 +3742,17 @@ async function scanTextMatches(patterns) {
   const marks = [];
   for (let n = 1; n <= pdfDocument.numPages; n++) {
     const page = await pdfDocument.getPage(n);
+    // Match + build the box in the UNROTATED viewport, where buildTextRows' "text
+    // advances horizontally" assumption holds; vp is the rendered viewport (page
+    // /Rotate applied) the finished box is mapped back into — what the apply bake
+    // and the review overlay actually use. For a /Rotate 0 page the two are equal,
+    // so the mapping is the identity and the output is unchanged.
+    const vp0 = page.getViewport({ scale: 1, rotation: 0 });
     const vp = page.getViewport({ scale: 1 });
     let tc;
     try { tc = await page.getTextContent(); } catch { continue; } // image-only: no text
     const items = tc.items.filter((it) => it.str && it.str.trim()).map((it) => {
-      const t = pdfjsLib.Util.transform(vp.transform, it.transform);
+      const t = pdfjsLib.Util.transform(vp0.transform, it.transform);
       return { str: it.str, x: t[4], y: t[5], w: it.width, h: it.height || Math.hypot(it.transform[2], it.transform[3]) };
     });
     for (const row of buildTextRows(items)) {
@@ -3771,8 +3777,18 @@ async function scanTextMatches(patterns) {
           // redaction must over-cover, never leave an edge of the match showing.
           const bx0 = x0 - hh * 0.8, bx1 = x1 + hh * 0.8;
           const by0 = row.y - hh * 1.15, by1 = row.y + hh * 0.45; // baseline (y-down) ± ascender/descender
-          marks.push({ page: n, fx: bx0 / vp.width, fy: by0 / vp.height,
-            fw: (bx1 - bx0) / vp.width, fh: (by1 - by0) / vp.height });
+          // Map the unrotated box to the rendered viewport (vp0 → PDF → vp) so it
+          // lands on the glyphs on a rotated page; the axis-aligned bounding box of
+          // the four mapped corners is the redaction rect. Identity when /Rotate 0.
+          let rx0 = Infinity, ry0 = Infinity, rx1 = -Infinity, ry1 = -Infinity;
+          for (const p of [[bx0, by0], [bx1, by0], [bx1, by1], [bx0, by1]]) {
+            const pdf = vp0.convertToPdfPoint(p[0], p[1]);     // unrotated viewport → PDF
+            const r = vp.convertToViewportPoint(pdf[0], pdf[1]); // PDF → rendered viewport
+            rx0 = Math.min(rx0, r[0]); ry0 = Math.min(ry0, r[1]);
+            rx1 = Math.max(rx1, r[0]); ry1 = Math.max(ry1, r[1]);
+          }
+          marks.push({ page: n, fx: rx0 / vp.width, fy: ry0 / vp.height,
+            fw: (rx1 - rx0) / vp.width, fh: (ry1 - ry0) / vp.height });
         }
       }
     }
