@@ -1588,11 +1588,11 @@ els.encryptGo.onclick = async () => {
     els.encryptPw2.select();
     return;
   }
-  const res = await apiFetch('/api/encrypt', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: 'password=' + encodeURIComponent(pw),
-  });
+  // Send the current document with overlay edits baked in (the shared export path),
+  // so the protected copy reflects what's on screen, not the server's committed bytes.
+  const form = await bakedForm();
+  form.append('password', pw);
+  const res = await apiFetch('/api/encrypt', { method: 'POST', body: form });
   if (!res.ok) { toast('could not protect the document'); return; }
   els.encryptModal.hidden = true;
   openSaveAs(await res.blob(), exportBase() + '-protected.pdf', 'Save password-protected PDF');
