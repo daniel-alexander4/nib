@@ -46,9 +46,12 @@ checkbox becomes a live, fillable field (with proper appearance streams, so it
 works in Adobe and any browser), dropped right onto the original page — the scan
 itself is untouched. Need a **dropdown**? The Edit-tab **Dropdown** tool lets you
 draw one and type its choices; it's authored as a real combobox. A quick step lets
-you **name each field** (focus a row to highlight that field on the page) so the
-collected data is meaningful. The opposite of flattening: instead of baking your
-answers in, you publish a blank form for others to fill.
+you **name each field** so the collected data is meaningful — Nib pre-fills each
+name from the field's own label on the page (e.g. a box beside "First Name:" is
+named `first_name`), which you can edit (focus a row to highlight that field). On
+an image-only scan there's no text to read, so fields stay `field_N` unless you've
+run **OCR** first. The opposite of flattening: instead of baking your answers in,
+you publish a blank form for others to fill.
 
 ### Circles & pills for multiple choice
 Choosing an option marks it the way a person would: a **circle** around a single
