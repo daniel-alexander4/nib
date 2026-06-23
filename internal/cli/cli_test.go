@@ -243,6 +243,21 @@ func TestNup(t *testing.T) {
 	}
 }
 
+func TestNormalize(t *testing.T) {
+	dir := t.TempDir()
+	in := writePDF(t, dir, "in.pdf", "a", "b", "c")
+	out := filepath.Join(dir, "out.pdf")
+	if code := cmdNormalize([]string{in, "-o", out}); code != 0 {
+		t.Fatalf("normalize exit = %d, want 0", code)
+	}
+	if err := pdfops.Validate(readPDF(t, out)); err != nil {
+		t.Fatalf("normalized output invalid: %v", err)
+	}
+	if n, _ := pdfops.PageCount(readPDF(t, out)); n != 3 {
+		t.Errorf("normalize changed page count → %d, want 3", n)
+	}
+}
+
 func TestPagenum(t *testing.T) {
 	dir := t.TempDir()
 	in := writePDF(t, dir, "in.pdf", "a", "b")

@@ -127,6 +127,8 @@ func (s *Server) handlePages(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		result, err = pdfops.SetPageLabels(pdfBytes, ranges)
+	case "normalize":
+		result, err = pdfops.NormalizePageSizes(pdfBytes)
 	default:
 		httpError(w, http.StatusBadRequest, "unknown page operation")
 		return
