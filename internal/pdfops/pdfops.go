@@ -1178,6 +1178,25 @@ func SetPageLabels(pdf []byte, ranges []PageLabelRange) ([]byte, error) {
 	})
 }
 
+// SetLang sets the document's natural-language tag (catalog /Lang, a BCP 47 tag
+// like "en" or "th"). Assistive technology reads it to choose the right
+// pronunciation and voice — the WCAG "language of page" primitive. Spliced onto
+// the catalog the same way SetPageLabels attaches /PageLabels. An empty tag is
+// rejected.
+func SetLang(pdf []byte, lang string) ([]byte, error) {
+	if strings.TrimSpace(lang) == "" {
+		return nil, fmt.Errorf("no document language given")
+	}
+	return writeMutated(pdf, func(ctx *model.Context) error {
+		root, err := ctx.XRefTable.Catalog()
+		if err != nil {
+			return err
+		}
+		root["Lang"] = types.StringLiteral(lang)
+		return nil
+	})
+}
+
 // ExportFormJSON returns the form field data of pdf as pdfcpu's JSON.
 func ExportFormJSON(pdf []byte) ([]byte, error) {
 	var out bytes.Buffer

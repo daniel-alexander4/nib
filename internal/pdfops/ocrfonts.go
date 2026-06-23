@@ -24,6 +24,19 @@ var ocrFontFiles = map[string]string{
 	"NotoSansDevanagari-Regular": "fonts/NotoSansDevanagari-Regular.ttf",
 }
 
+// ocrLangBCP47 maps Nib's OCR language codes (ISO 639-2/3, as tesseract uses) to
+// the BCP 47 tags PDF's catalog /Lang wants, so an OCR'd scan can declare its
+// language for assistive technology. A code not listed here yields "" (no /Lang).
+var ocrLangBCP47 = map[string]string{
+	"eng": "en", "fra": "fr", "deu": "de", "spa": "es", "ita": "it",
+	"rus": "ru", "ukr": "uk", "bul": "bg", "srp": "sr", "mkd": "mk",
+	"bel": "be", "ell": "el", "tha": "th", "hin": "hi",
+}
+
+// OCRLangToBCP47 returns the BCP 47 language tag for an OCR language code (for
+// SetLang), or "" if the code isn't recognized.
+func OCRLangToBCP47(lang string) string { return ocrLangBCP47[lang] }
+
 // ocrFontFor returns the font a given OCR language must be stamped in. Latin,
 // Cyrillic and Greek languages fall through to Roboto (pdfcpu's bundled default);
 // Thai and Devanagari scripts use their vendored Noto face.
