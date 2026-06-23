@@ -255,6 +255,30 @@ func TestPagenum(t *testing.T) {
 	}
 }
 
+func TestPagelabels(t *testing.T) {
+	dir := t.TempDir()
+	in := writePDF(t, dir, "in.pdf", "a", "b", "c", "d") // 4 pages
+	out := filepath.Join(dir, "out.pdf")
+	if code := cmdPagelabels([]string{in, "-o", out, "--range", "1:roman-lower", "--range", "3:decimal:1:A-"}); code != 0 {
+		t.Fatalf("pagelabels exit = %d, want 0", code)
+	}
+	if err := pdfops.Validate(readPDF(t, out)); err != nil {
+		t.Fatalf("page-labelled output invalid: %v", err)
+	}
+}
+
+func TestPagelabelsBadArgs(t *testing.T) {
+	dir := t.TempDir()
+	in := writePDF(t, dir, "in.pdf", "a", "b")
+	out := filepath.Join(dir, "out.pdf")
+	if code := cmdPagelabels([]string{in, "-o", out}); code == 0 {
+		t.Fatal("expected nonzero exit with no --range")
+	}
+	if code := cmdPagelabels([]string{in, "-o", out, "--range", "1"}); code == 0 {
+		t.Fatal("expected nonzero exit for a malformed --range (missing style)")
+	}
+}
+
 // TestContinuousPagenum threads ONE Bates counter across a file set: file 1's
 // pages number from --start, file 2 continues where file 1 ended, and --total's
 // "of N" is the set's grand total — not each file's. Covers both output modes,

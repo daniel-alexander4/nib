@@ -319,7 +319,12 @@ current page (before page 1 to prepend a cover; use **+ Append PDF** for the end
 **Page numbers…** stamps a running
 number onto every page at the corner you choose — add a prefix and a zero-pad
 width for Bates numbering (e.g. `ABC` + width 6 → `ABC000001`), or tick "of N" for
-classic "Page 3 of 10". Going the other way, **N-up…** combines several pages onto
+classic "Page 3 of 10". **Page labels…** sets the document's *logical* page
+numbers — the ones a viewer shows in its page box and thumbnails, as distinct from
+ink stamped on the page — so front matter can read i, ii, iii while the body reads
+1, 2, 3. Add a range per section (from which page, what style — decimal, upper/lower
+Roman, upper/lower letters, or a prefix-only label — and where its count starts);
+pages before the first range carry no label. Going the other way, **N-up…** combines several pages onto
 each sheet (2-up, 4-up, up to 16) for printing or handouts, in reading order, with
 an optional border — each sheet keeps the document's page size. **Crop…** trims
 the margins away — draw a box around the part to keep and every page (or just the
@@ -500,6 +505,7 @@ isn't a known command (a PDF path, or nothing) still opens the app as usual.
 | `nib decrypt IN -o OUT` | Remove password protection / owner restrictions (`--password-file FILE` or `$NIB_PDF_PASSWORD`; already-plain PDFs pass through). |
 | `nib nup IN -o OUT --n N` | Place N pages per sheet — 2/4/6/9/16… (`--border` for outlines). |
 | `nib pagenum IN -o OUT` | Stamp running page numbers or Bates numbering (`--prefix ABC --pad 6 --position br --total`). `--continuous (-w \| --out-dir DIR) FILE…` threads one counter across a whole file set (multi-file Bates production). |
+| `nib pagelabels IN -o OUT` | Set logical page labels — one `--range PAGE:STYLE[:START[:PREFIX]]` per section (STYLE = `decimal`/`roman-lower`/`roman-upper`/`alpha-lower`/`alpha-upper`/`none`), e.g. `--range 1:roman-lower --range 5:decimal`. |
 | `nib attachments IN [--json]` | List embedded files; `--extract NAME -o OUT` pulls one out, `--add FILE -o OUT` embeds one. |
 | `nib outline IN [--json]` | List the document's bookmark outline (indented by level, or JSON). |
 | `nib watch DIR --do OP` | Run `timestamp`/`optimize`/`sanitize` on each PDF added to `DIR`, until interrupted. |
@@ -518,7 +524,7 @@ nib sanitize -w *.pdf          # scrub a whole folder in place
 nib optimize in.pdf -o - | nib sanitize - -o out.pdf   # compose in a pipeline
 ```
 
-For `optimize`, `merge`, `sanitize`, `sign`, `rotate`, `pages`, `encrypt`, `decrypt`, `nup`, and `pagenum`, a filename of `-` reads a PDF
+For `optimize`, `merge`, `sanitize`, `sign`, `rotate`, `pages`, `encrypt`, `decrypt`, `nup`, `pagenum`, and `pagelabels`, a filename of `-` reads a PDF
 from stdin, and `-o -` writes the result to stdout (refused when stdout is a
 terminal), so the commands chain together.
 

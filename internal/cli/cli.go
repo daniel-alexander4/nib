@@ -65,6 +65,7 @@ var commands = map[string]func([]string) int{
 	"decrypt":     cmdDecrypt,
 	"nup":         cmdNup,
 	"pagenum":     cmdPagenum,
+	"pagelabels":  cmdPagelabels,
 	"attachments": cmdAttachments,
 	"outline":     cmdOutline,
 }
@@ -90,13 +91,14 @@ These subcommands run headlessly, without a browser:
   nib nup IN -o OUT --n N         place N pages per sheet (2/4/6/9/16…)
   nib pagenum IN -o OUT           stamp running page numbers / Bates numbering
                                   (--continuous threads one counter across FILE…)
+  nib pagelabels IN -o OUT        set logical page labels (--range PAGE:STYLE[:START[:PREFIX]])
   nib attachments IN [--json]     list embedded files (--extract NAME / --add FILE)
   nib outline IN [--json]         list the document's bookmark outline
   nib watch DIR --do OP           run timestamp/optimize/sanitize on each new PDF
   nib version                     print the version
 
 Commands that produce a PDF require -o/--out FILE. For optimize, merge, sanitize,
-sign, rotate, pages, encrypt, decrypt, nup, and pagenum, "-" reads a PDF from stdin or (as
+sign, rotate, pages, encrypt, decrypt, nup, pagenum, and pagelabels, "-" reads a PDF from stdin or (as
 -o -) writes it to stdout, so they compose in a pipeline. Exit status is non-zero
 on failure (verify: 2 when a signature is invalid or absent).
 

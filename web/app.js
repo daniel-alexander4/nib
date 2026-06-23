@@ -159,6 +159,9 @@ const els = {
   pnPosition: $('pnPosition'), pnStart: $('pnStart'), pnPad: $('pnPad'),
   pnPrefix: $('pnPrefix'), pnTotal: $('pnTotal'), pnPreview: $('pnPreview'),
   pnCancel: $('pnCancel'), pnGo: $('pnGo'),
+  pageLabelsBtn: $('pageLabelsBtn'), pageLabelsModal: $('pageLabelsModal'),
+  plList: $('plList'), plAdd: $('plAdd'), plPreview: $('plPreview'),
+  plCancel: $('plCancel'), plGo: $('plGo'),
   nupBtn: $('nupBtn'), nupModal: $('nupModal'), nupN: $('nupN'), nupBorder: $('nupBorder'),
   cropBtn: $('cropBtn'), cropModal: $('cropModal'), cropAllPages: $('cropAllPages'),
   cropCancel: $('cropCancel'), cropGo: $('cropGo'),
@@ -1973,6 +1976,7 @@ async function pageOp(op, extra = {}) {
   if (extra.start != null) form.append('start', String(extra.start));
   if (extra.pad != null) form.append('pad', String(extra.pad));
   if (extra.total) form.append('total', '1');
+  if (extra.ranges) form.append('ranges', extra.ranges);
   if (extra.n != null) form.append('n', String(extra.n));
   if (extra.border != null) form.append('border', extra.border ? '1' : '0');
   const res = await apiFetch('/api/pages', { method: 'POST', body: form });
@@ -2177,6 +2181,114 @@ els.pageNumBtn.onclick = openPageNum;
 els.pnCancel.onclick = () => { els.pageNumModal.hidden = true; };
 els.pnGo.onclick = pageNumGo;
 ['pnPosition', 'pnStart', 'pnPad', 'pnPrefix', 'pnTotal'].forEach((id) => els[id].addEventListener('input', pnPreview));
+
+// --- page labels -------------------------------------------------------------
+// Author the /PageLabels number tree as a flat, page-ordered list of ranges
+// (front matter i, ii, iii then body 1, 2, 3). Each range = a start page, a
+// numbering style, a first value, and an optional prefix; pages before the first
+// range carry no label. Routes through pageOp('pagelabels') → SetPageLabels.
+const PL_STYLES = [
+  ['decimal', '1, 2, 3'],
+  ['roman-lower', 'i, ii, iii'],
+  ['roman-upper', 'I, II, III'],
+  ['alpha-lower', 'a, b, c'],
+  ['alpha-upper', 'A, B, C'],
+  ['none', 'prefix only'],
+];
+let plRanges = [];
+function toRoman(n) {
+  if (n < 1) return String(n);
+  const m = [[1000, 'M'], [900, 'CM'], [500, 'D'], [400, 'CD'], [100, 'C'], [90, 'XC'], [50, 'L'], [40, 'XL'], [10, 'X'], [9, 'IX'], [5, 'V'], [4, 'IV'], [1, 'I']];
+  let s = '';
+  for (const [v, r] of m) while (n >= v) { s += r; n -= v; }
+  return s;
+}
+function toAlpha(n) { // PDF /A,/a: 1→A … 26→Z, 27→AA, 28→AB … (repeated letter)
+  if (n < 1) return String(n);
+  return String.fromCharCode(65 + (n - 1) % 26).repeat(Math.floor((n - 1) / 26) + 1);
+}
+// plLabel renders the label `idx` pages into a range (idx 0 = its start page).
+function plLabel(style, first, idx, prefix) {
+  const v = first + idx;
+  const body = style === 'roman-lower' ? toRoman(v).toLowerCase()
+    : style === 'roman-upper' ? toRoman(v)
+    : style === 'alpha-lower' ? toAlpha(v).toLowerCase()
+    : style === 'alpha-upper' ? toAlpha(v)
+    : style === 'none' ? '' : String(v);
+  return (prefix || '') + body;
+}
+function updatePlPreview() {
+  const n = pdfDocument ? pdfDocument.numPages : 1;
+  const rs = [...plRanges].sort((a, b) => a.start - b.start);
+  els.plPreview.textContent = rs.map((r, i) => {
+    const start = Math.max(1, Math.min(r.start, n));
+    const last = Math.max(start, i + 1 < rs.length ? Math.min(rs[i + 1].start - 1, n) : n);
+    const span = start === last ? `p${start}` : `p${start}–${last}`;
+    if (r.style === 'none') return `${span}: “${r.prefix || '(none)'}”`;
+    const labels = [plLabel(r.style, r.first, 0, r.prefix)];
+    if (last > start) labels.push(plLabel(r.style, r.first, 1, r.prefix));
+    if (last > start + 1) labels.push('…', plLabel(r.style, r.first, last - start, r.prefix));
+    return `${span}: ${labels.join(', ')}`;
+  }).join('   ·   ');
+}
+function renderPageLabels() {
+  plRanges.sort((a, b) => a.start - b.start);
+  const n = pdfDocument ? pdfDocument.numPages : 1;
+  els.plList.innerHTML = '';
+  plRanges.forEach((r, i) => {
+    const row = document.createElement('div');
+    row.className = 'outlinerow';
+    const page = document.createElement('input');
+    page.type = 'number'; page.className = 'outline-page'; page.min = '1'; page.max = String(n);
+    page.value = String(r.start); page.title = 'From page';
+    page.onchange = () => { r.start = Math.max(1, Math.min(n, parseInt(page.value, 10) || 1)); renderPageLabels(); };
+    const style = document.createElement('select');
+    PL_STYLES.forEach(([val, lbl]) => {
+      const o = document.createElement('option'); o.value = val; o.textContent = lbl;
+      if (val === r.style) o.selected = true;
+      style.appendChild(o);
+    });
+    style.onchange = () => { r.style = style.value; renderPageLabels(); };
+    const first = document.createElement('input');
+    first.type = 'number'; first.className = 'outline-page'; first.min = '1';
+    first.value = String(r.first); first.title = 'Start numbering at';
+    first.onchange = () => { r.first = Math.max(1, parseInt(first.value, 10) || 1); renderPageLabels(); };
+    const prefix = document.createElement('input');
+    prefix.type = 'text'; prefix.className = 'outline-title'; prefix.placeholder = 'Prefix (optional)';
+    prefix.value = r.prefix; prefix.oninput = () => { r.prefix = prefix.value; updatePlPreview(); };
+    const del = document.createElement('button');
+    del.className = 'keydel'; del.textContent = '✕'; del.title = 'Remove range'; del.disabled = plRanges.length <= 1;
+    del.onclick = () => { plRanges.splice(i, 1); renderPageLabels(); };
+    row.append(page, style, first, prefix, del);
+    els.plList.appendChild(row);
+  });
+  updatePlPreview();
+}
+function openPageLabels() {
+  if (!pdfDocument) return;
+  plRanges = [{ start: 1, style: 'decimal', first: 1, prefix: '' }];
+  renderPageLabels();
+  els.pageLabelsModal.hidden = false;
+}
+async function pageLabelsGo() {
+  const ranges = plRanges
+    .map((r) => ({ start: Math.max(1, parseInt(r.start, 10) || 1), style: r.style, first: Math.max(1, parseInt(r.first, 10) || 1), prefix: r.prefix || '' }))
+    .sort((a, b) => a.start - b.start);
+  for (let i = 1; i < ranges.length; i++) {
+    if (ranges[i].start <= ranges[i - 1].start) { toast('each range must start on a later page than the one before'); return; }
+  }
+  const ok = await pageOp('pagelabels', { ranges: JSON.stringify(ranges) });
+  if (ok) { els.pageLabelsModal.hidden = true; toast('Page labels set'); }
+}
+els.pageLabelsBtn.onclick = openPageLabels;
+els.plCancel.onclick = () => { els.pageLabelsModal.hidden = true; };
+els.plGo.onclick = pageLabelsGo;
+els.plAdd.onclick = () => {
+  const n = pdfDocument ? pdfDocument.numPages : 1;
+  const last = plRanges.reduce((m, r) => Math.max(m, r.start), 0);
+  plRanges.push({ start: Math.min(n, last + 1), style: 'decimal', first: 1, prefix: '' });
+  renderPageLabels();
+};
 
 // --- N-up: combine several pages onto each sheet -----------------------------
 // Whole-document re-imposition in place (op:'nup' on /api/pages → pdfops.NUp).
@@ -5133,7 +5245,7 @@ const DOC_REQUIRED = [
   'textToolBtn', 'highlightToolBtn', 'drawToolBtn',
   'detectBtn', 'editTextBtn', 'removeOriginalsBtn', 'ocrBtn', 'ocrLang', 'autofillBtn', 'splitBtn',
   'splitBoxBtn', 'applyBoxSplitBtn', 'rotateLeftBtn', 'rotateRightBtn',
-  'extractBtn', 'insertBlankBtn', 'duplicatePageBtn', 'insertPdfBtn', 'pageNumBtn', 'nupBtn', 'cropBtn',
+  'extractBtn', 'insertBlankBtn', 'duplicatePageBtn', 'insertPdfBtn', 'pageNumBtn', 'pageLabelsBtn', 'nupBtn', 'cropBtn',
   'redactBtn', 'applyRedactBtn', 'scanBtn', 'attachBtn', 'encryptBtn', 'decryptBtn', 'compareBtn',
   'finalizeBtn', 'timestampBtn', 'cosignBtn', 'sessionInitBtn', 'sessionSendBtn',
 ];
