@@ -284,7 +284,7 @@ func SplitByBookmarks(pdf []byte, prefix string) ([]SplitPart, error) {
 		if err != nil {
 			return nil, err
 		}
-		parts = append(parts, SplitPart{Name: uniqueName(sanitizeFilename(prefix+bm.Title), len(parts)+1, seen), Data: data})
+		parts = append(parts, SplitPart{Name: UniqueName(SanitizeFilename(prefix+bm.Title), len(parts)+1, seen), Data: data})
 	}
 	return parts, nil
 }
@@ -295,7 +295,7 @@ const maxSplitParts = 500
 
 // SplitBySpans splits pdf into one file per page-span selection in spans, in
 // order — each span is a pdfcpu page selection (e.g. "1-3" or "5"), collected
-// into its own PDF. Names are sanitize(prefix + span), deduped. This is the
+// into its own PDF. Names are SanitizeFilename(prefix + span), deduped. This is the
 // page-sequence splitter (every-N / custom ranges); the geometry splitters are
 // SplitPage/SplitRegions, and the bookmark splitter is SplitByBookmarks.
 func SplitBySpans(pdf []byte, spans []string, prefix string) ([]SplitPart, error) {
@@ -312,7 +312,7 @@ func SplitBySpans(pdf []byte, spans []string, prefix string) ([]SplitPart, error
 		if err != nil {
 			return nil, fmt.Errorf("range %q: %w", span, err)
 		}
-		parts = append(parts, SplitPart{Name: uniqueName(sanitizeFilename(prefix+span), len(parts)+1, seen), Data: data})
+		parts = append(parts, SplitPart{Name: UniqueName(SanitizeFilename(prefix+span), len(parts)+1, seen), Data: data})
 	}
 	return parts, nil
 }
@@ -325,12 +325,13 @@ var (
 	winReserved = regexp.MustCompile(`(?i)^(con|prn|aux|nul|com[1-9]|lpt[1-9])$`)
 )
 
-// sanitizeFilename reduces an arbitrary string (a bookmark title) to a safe base
-// filename: unsafe characters become spaces and collapse, no leading/trailing
-// dots (so no hidden dotfiles and no Windows trailing-dot trimming), not a Windows
-// reserved name, capped at a length that leaves room for a dedup suffix + ".pdf".
-// Returns "" when nothing usable remains; the caller substitutes a fallback.
-func sanitizeFilename(s string) string {
+// SanitizeFilename reduces an arbitrary string (a bookmark title, or a source
+// file's base name) to a safe base filename: unsafe characters become spaces and
+// collapse, no leading/trailing dots (so no hidden dotfiles and no Windows
+// trailing-dot trimming), not a Windows reserved name, capped at a length that
+// leaves room for a dedup suffix + ".pdf". Returns "" when nothing usable remains;
+// the caller substitutes a fallback.
+func SanitizeFilename(s string) string {
 	s = fnameUnsafe.ReplaceAllString(s, " ")
 	s = strings.Join(strings.Fields(s), " ") // collapse whitespace runs, trim ends
 	s = strings.Trim(s, ".")                 // no leading/trailing dots
@@ -353,10 +354,10 @@ func truncateBytes(s string, max int) string {
 	return s[:max]
 }
 
-// uniqueName returns a collision-free base name for this batch: an empty name
+// UniqueName returns a collision-free base name for this batch: an empty name
 // becomes "bookmark-<index>", and a repeat (case-insensitively, for macOS/Windows
 // filesystems) gets a " (2)", " (3)" suffix.
-func uniqueName(base string, index int, seen map[string]int) string {
+func UniqueName(base string, index int, seen map[string]int) string {
 	if base == "" {
 		base = fmt.Sprintf("bookmark-%d", index)
 	}
@@ -1003,8 +1004,10 @@ type PageNumberStyle struct {
 	Start    int    // number printed on the first page (default 1)
 	Pad      int    // zero-pad width, 0 = none (e.g. 6 → 000123 for Bates)
 	OfTotal  bool   // append " of N" (N = the number on the last page)
-	Size     int    // point size (default 11)
-	Color    string // #RRGGBB ("" = black)
+	Total    int    // override for OfTotal's N (0 = this file's last number); a
+	// continuous multi-file run sets it to the set's grand-total last number
+	Size  int    // point size (default 11)
+	Color string // #RRGGBB ("" = black)
 }
 
 // pageNumOffset insets the number from the chosen corner so it doesn't sit flush
@@ -1071,7 +1074,11 @@ func StampPageNumbers(pdf []byte, st PageNumberStyle) ([]byte, error) {
 	for i := 1; i <= n; i++ {
 		label := fmt.Sprintf("%s%0*d", prefix, pad, start+i-1)
 		if st.OfTotal {
-			label += " of " + strconv.Itoa(start+n-1)
+			last := start + n - 1 // this file's last number…
+			if st.Total > 0 {
+				last = st.Total // …or the set's grand total in a continuous run
+			}
+			label += " of " + strconv.Itoa(last)
 		}
 		desc := fmt.Sprintf("fontname:Helvetica, points:%d, scalefactor:1 abs, position:%s, offset:%.1f %.1f, fillcolor:%s, rotation:0",
 			size, pos, ox, oy, color)
