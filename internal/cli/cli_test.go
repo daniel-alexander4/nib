@@ -279,6 +279,76 @@ func TestPagelabelsBadArgs(t *testing.T) {
 	}
 }
 
+// fillTestForm writes a fillable form (one text field "fullName") into dir.
+func fillTestForm(t *testing.T, dir string) string {
+	t.Helper()
+	base, err := testpdf.Text("x")
+	if err != nil {
+		t.Fatal(err)
+	}
+	form, err := pdfops.AuthorForm(base, []pdfops.FormField{
+		{Page: 1, Rect: [4]float64{50, 50, 250, 70}, Kind: "text", Name: "fullName"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := filepath.Join(dir, "form.pdf")
+	if err := os.WriteFile(p, form, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return p
+}
+
+func TestFill(t *testing.T) {
+	dir := t.TempDir()
+	formPath := fillTestForm(t, dir)
+
+	// single JSON fill → one PDF
+	jsonPath := filepath.Join(dir, "d.json")
+	if err := os.WriteFile(jsonPath, []byte(`{"forms":[{"textfield":[{"name":"fullName","value":"Jane"}]}]}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out := filepath.Join(dir, "out.pdf")
+	if code := cmdFill([]string{formPath, "--data", jsonPath, "-o", out}); code != 0 {
+		t.Fatalf("json fill exit = %d, want 0", code)
+	}
+	if err := pdfops.Validate(readPDF(t, out)); err != nil {
+		t.Fatalf("filled output invalid: %v", err)
+	}
+
+	// CSV mail-merge → one PDF per row
+	csvPath := filepath.Join(dir, "d.csv")
+	if err := os.WriteFile(csvPath, []byte("fullName\nJane\nJohn\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	od := filepath.Join(dir, "merged")
+	if code := cmdFill([]string{formPath, "--data", csvPath, "--out-dir", od}); code != 0 {
+		t.Fatalf("csv mail-merge exit = %d, want 0", code)
+	}
+	if n := countPDFs(t, od); n != 2 {
+		t.Fatalf("mail-merge wrote %d files, want 2", n)
+	}
+}
+
+func TestFillBadModes(t *testing.T) {
+	dir := t.TempDir()
+	formPath := fillTestForm(t, dir)
+	csvPath := filepath.Join(dir, "d.csv")
+	_ = os.WriteFile(csvPath, []byte("fullName\nJane\n"), 0o644)
+	jsonPath := filepath.Join(dir, "d.json")
+	_ = os.WriteFile(jsonPath, []byte(`{"forms":[{}]}`), 0o644)
+
+	if code := cmdFill([]string{formPath, "--data", csvPath, "-o", filepath.Join(dir, "o.pdf")}); code == 0 {
+		t.Error("CSV with -o should fail (mail-merge writes many files)")
+	}
+	if code := cmdFill([]string{formPath, "--data", jsonPath, "--out-dir", dir}); code == 0 {
+		t.Error("JSON with --out-dir should fail")
+	}
+	if code := cmdFill([]string{formPath}); code == 0 {
+		t.Error("missing --data should fail")
+	}
+}
+
 // TestContinuousPagenum threads ONE Bates counter across a file set: file 1's
 // pages number from --start, file 2 continues where file 1 ended, and --total's
 // "of N" is the set's grand total — not each file's. Covers both output modes,
