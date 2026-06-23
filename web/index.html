@@ -183,6 +183,7 @@
       <button id="insertPdfBtn" title="Insert another PDF before the current page (use + Append PDF for the end)">Insert PDF…</button>
       <input id="insertPdfInput" type="file" accept="application/pdf" hidden />
       <button id="pageNumBtn" title="Stamp running page numbers (or Bates numbers) onto every page">Page numbers…</button>
+      <button id="pageLabelsBtn" title="Set the logical page numbers a viewer shows (front matter i, ii, iii then body 1, 2, 3)">Page labels…</button>
       <button id="nupBtn" title="Combine several pages onto each sheet (2-up, 4-up…) for printing">N-up…</button>
       <button id="cropBtn" title="Draw a box to crop every page (or just this one) down to that area">Crop…</button>
       <span class="tbsep"></span>
@@ -723,6 +724,22 @@
         <span class="grow"></span>
         <button id="pnCancel">Cancel</button>
         <button id="pnGo" class="primary">Add page numbers</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Set logical page labels (the i, ii, iii / 1, 2, 3 a viewer shows) -->
+  <div id="pageLabelsModal" hidden>
+    <div class="sigcard">
+      <h3>Page labels</h3>
+      <p class="libhint">Set the logical page numbers a viewer shows in its page box and thumbnails — e.g. front matter as i, ii, iii then the body as 1, 2, 3. Add a range per section; pages before the first range carry no label.</p>
+      <div id="plList" class="fieldname-list"></div>
+      <button id="plAdd">+ Add range</button>
+      <p id="plPreview" class="libhint"></p>
+      <div class="sigbtns">
+        <span class="grow"></span>
+        <button id="plCancel">Cancel</button>
+        <button id="plGo" class="primary">Set page labels</button>
       </div>
     </div>
   </div>

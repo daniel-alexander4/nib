@@ -120,6 +120,13 @@ func (s *Server) handlePages(w http.ResponseWriter, r *http.Request) {
 			Size:     size,
 			Color:    r.FormValue("color"),
 		})
+	case "pagelabels":
+		var ranges []pdfops.PageLabelRange
+		if uErr := json.Unmarshal([]byte(r.FormValue("ranges")), &ranges); uErr != nil {
+			httpError(w, http.StatusBadRequest, "could not read page-label ranges")
+			return
+		}
+		result, err = pdfops.SetPageLabels(pdfBytes, ranges)
 	default:
 		httpError(w, http.StatusBadRequest, "unknown page operation")
 		return

@@ -416,6 +416,58 @@ func runContinuousPagenum(files []string, st pdfops.PageNumberStyle, inPlace boo
 	return writeSplitFiles(outDir, parts)
 }
 
+// rangeFlag collects repeatable --range PAGE:STYLE[:START[:PREFIX]] specs into
+// page-label ranges. Fields split on ':' (so a prefix cannot itself contain ':').
+type rangeFlag []pdfops.PageLabelRange
+
+func (rf *rangeFlag) String() string { return "" }
+
+func (rf *rangeFlag) Set(s string) error {
+	parts := strings.SplitN(s, ":", 4)
+	if len(parts) < 2 {
+		return fmt.Errorf("range %q: want PAGE:STYLE[:START[:PREFIX]]", s)
+	}
+	page, err := strconv.Atoi(parts[0])
+	if err != nil {
+		return fmt.Errorf("range %q: page must be a number", s)
+	}
+	r := pdfops.PageLabelRange{Start: page, Style: parts[1], First: 1}
+	if len(parts) >= 3 && parts[2] != "" {
+		if r.First, err = strconv.Atoi(parts[2]); err != nil {
+			return fmt.Errorf("range %q: start must be a number", s)
+		}
+	}
+	if len(parts) == 4 {
+		r.Prefix = parts[3]
+	}
+	*rf = append(*rf, r)
+	return nil
+}
+
+// cmdPagelabels sets the document's logical page labels (the i, ii, iii / 1, 2, 3
+// a viewer shows), one --range per section. Pages before the first range carry no
+// label. Single transform (pipeable, -w to rewrite in place).
+func cmdPagelabels(args []string) int {
+	fs := flag.NewFlagSet("nib pagelabels", flag.ContinueOnError)
+	var out string
+	var inPlace bool
+	var ranges rangeFlag
+	outFlag(fs, &out)
+	inPlaceFlag(fs, &inPlace)
+	fs.Var(&ranges, "range", "label range PAGE:STYLE[:START[:PREFIX]], repeatable; STYLE = decimal|roman-lower|roman-upper|alpha-lower|alpha-upper|none")
+	fs.Usage = usageFunc(fs, "nib pagelabels IN -o OUT --range 1:roman-lower --range 5:decimal", "Set logical page labels (front-matter i,ii,iii then body 1,2,3). Repeat --range per section.")
+	if code, ok := parse(fs, args); !ok {
+		return code
+	}
+	if len(ranges) == 0 {
+		errf("give at least one --range PAGE:STYLE[:START[:PREFIX]]")
+		return 1
+	}
+	return runTransform(fs, out, inPlace, func(b []byte) ([]byte, error) {
+		return pdfops.SetPageLabels(b, ranges)
+	})
+}
+
 // cmdAttachments lists embedded files (default), extracts one to -o, or embeds one
 // and writes a new PDF to -o. One mode at a time; single input PDF (— for stdin).
 func cmdAttachments(args []string) int {
