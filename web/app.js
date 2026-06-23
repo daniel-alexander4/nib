@@ -39,6 +39,8 @@ const els = {
   combineCancel: $('combineCancel'), combineGo: $('combineGo'),
   compareBtn: $('compareBtn'), compareModal: $('compareModal'), compareBody: $('compareBody'),
   compareInput: $('compareInput'), comparePick: $('comparePick'), compareClose: $('compareClose'),
+  fillCsvBtn: $('fillCsvBtn'), fillCsvModal: $('fillCsvModal'), fillCsvPick: $('fillCsvPick'),
+  fillCsvInput: $('fillCsvInput'), fillCsvStatus: $('fillCsvStatus'), fillCsvClose: $('fillCsvClose'),
   pathInput: $('pathInput'), openGo: $('openGo'),
   textToolBtn: $('textToolBtn'), detectBtn: $('detectBtn'),
   hlColors: $('hlColors'), hlSwatches: $('hlSwatches'), hlCustom: $('hlCustom'),
@@ -1326,6 +1328,38 @@ els.compareInput.onchange = async () => {
   } finally {
     other.destroy(); // free the comparison doc; only the open document stays loaded
   }
+};
+
+// --- fill from spreadsheet (CSV mail-merge) ----------------------------------
+// Surfaces `nib fill`'s CSV mail-merge in the GUI: post the open form template
+// (AcroForm fields intact — bakedBytes preserves them) plus the CSV, and the
+// server fills one PDF per row and returns them as a ZIP. Reuses pdfops.FillFormCSV
+// unchanged; the only new server code is the zip-bundling handler.
+function openFillCsv() {
+  if (!pdfDocument) return toast('Open a form first');
+  els.fillCsvStatus.textContent = '';
+  els.fillCsvModal.hidden = false;
+}
+els.fillCsvBtn.onclick = openFillCsv;
+els.fillCsvClose.onclick = () => { els.fillCsvModal.hidden = true; };
+els.fillCsvPick.onclick = () => els.fillCsvInput.click();
+els.fillCsvInput.onchange = async () => {
+  const f = els.fillCsvInput.files[0];
+  els.fillCsvInput.value = '';
+  if (!f) return;
+  els.fillCsvStatus.textContent = 'Merging…';
+  let csv;
+  try { csv = await f.text(); } catch { els.fillCsvStatus.textContent = 'Could not read that file.'; return; }
+  const form = new FormData();
+  form.append('pdf', new Blob([await bakedBytes()], { type: 'application/pdf' }), 'doc.pdf');
+  form.append('data', csv);
+  const res = await apiFetch('/api/form/fill-csv', { method: 'POST', body: form });
+  if (!res.ok) {
+    els.fillCsvStatus.textContent = 'Merge failed — does this PDF have fillable fields, and do the CSV headers match the field names?';
+    return;
+  }
+  els.fillCsvModal.hidden = true;
+  openSaveAs(await res.blob(), exportBase() + '-filled.zip', 'Save merged PDFs (ZIP)');
 };
 
 // renderCompare word-diffs the open document (a) against the chosen file (b) and
@@ -5362,7 +5396,7 @@ const DOC_REQUIRED = [
   'detectBtn', 'editTextBtn', 'removeOriginalsBtn', 'ocrBtn', 'ocrLang', 'autofillBtn', 'splitBtn',
   'splitBoxBtn', 'applyBoxSplitBtn', 'rotateLeftBtn', 'rotateRightBtn',
   'extractBtn', 'insertBlankBtn', 'duplicatePageBtn', 'insertPdfBtn', 'pageNumBtn', 'pageLabelsBtn', 'nupBtn', 'cropBtn',
-  'redactBtn', 'redactTextBtn', 'applyRedactBtn', 'scanBtn', 'attachBtn', 'encryptBtn', 'decryptBtn', 'compareBtn',
+  'redactBtn', 'redactTextBtn', 'applyRedactBtn', 'scanBtn', 'attachBtn', 'encryptBtn', 'decryptBtn', 'compareBtn', 'fillCsvBtn',
   'finalizeBtn', 'timestampBtn', 'cosignBtn', 'sessionInitBtn', 'sessionSendBtn',
 ];
 function setDocControls(enabled) {
