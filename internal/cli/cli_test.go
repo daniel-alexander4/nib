@@ -197,6 +197,36 @@ func TestDecrypt(t *testing.T) {
 	}
 }
 
+func TestEncrypt(t *testing.T) {
+	dir := t.TempDir()
+	plain := writePDF(t, dir, "plain.pdf", "a", "b", "c")
+	pwf := filepath.Join(dir, "pw.txt")
+	mustWrite(t, pwf, []byte("secret123\n"))
+
+	// Encrypt → the output needs the password; RemovePassword with it round-trips
+	// to a valid plain PDF.
+	out := filepath.Join(dir, "enc.pdf")
+	if code := cmdEncrypt([]string{plain, "-o", out, "--password-file", pwf}); code != 0 {
+		t.Fatalf("encrypt exit = %d, want 0", code)
+	}
+	enc := readPDF(t, out)
+	if err := pdfops.Validate(enc); err == nil {
+		t.Fatal("encrypted output validated without a password — encryption did not take")
+	}
+	back, err := pdfops.RemovePassword(enc, "secret123")
+	if err != nil {
+		t.Fatalf("round-trip RemovePassword: %v", err)
+	}
+	if err := pdfops.Validate(back); err != nil {
+		t.Fatalf("round-tripped output invalid: %v", err)
+	}
+
+	// No password supplied → exit 1 (encrypt requires one, unlike decrypt).
+	if code := cmdEncrypt([]string{plain, "-o", filepath.Join(dir, "x.pdf")}); code != 1 {
+		t.Errorf("encrypt with no password exit = %d, want 1", code)
+	}
+}
+
 func TestNup(t *testing.T) {
 	dir := t.TempDir()
 	in := writePDF(t, dir, "in.pdf", "a", "b", "c", "d")
