@@ -171,6 +171,14 @@ If a strip can't produce a sound document it's reported and your open document
 is left untouched, so you can step down to the next method safely. Any removal
 produces a new, **unsigned** copy — save it to keep the cleaned version.
 
+### Add password protection
+**Secure → Add password protection…** saves a separate **AES-256 encrypted copy**
+that needs the password to open (the same password opens and owns the file). You
+type it twice — Nib can't recover a forgotten one. Your open document is left
+unprotected and editable; the protection is a standalone export, never combined
+with signing (encrypting rewrites the file, so the copy won't carry a signature).
+Headless: `nib encrypt IN -o OUT --password-file FILE` (or `$NIB_PDF_PASSWORD`).
+
 ### Remove password protection
 Open a password-protected PDF and Nib asks for the password, then **unlocks the
 working copy** so you can view and edit it — saving keeps it unprotected. For a PDF
@@ -477,6 +485,7 @@ isn't a known command (a PDF path, or nothing) still opens the app as usual.
 | `nib rotate IN -o OUT --deg N` | Rotate pages by 90/180/270° (`--pages 1-3,5` to limit; or `-w FILE…`). |
 | `nib pages IN -o OUT --keep SEL` | Keep/reorder pages (`--keep 1-3,5`) or delete them (`--remove 2,4`). |
 | `nib split IN --out-dir DIR …` | Burst into one file per chunk (`--every N`), range (`--ranges 1-3,4-8`), or `--bookmarks`. |
+| `nib encrypt IN -o OUT` | Add AES-256 password protection (`--password-file FILE` or `$NIB_PDF_PASSWORD`, required; an already-encrypted PDF is reported, not re-encrypted). |
 | `nib decrypt IN -o OUT` | Remove password protection / owner restrictions (`--password-file FILE` or `$NIB_PDF_PASSWORD`; already-plain PDFs pass through). |
 | `nib nup IN -o OUT --n N` | Place N pages per sheet — 2/4/6/9/16… (`--border` for outlines). |
 | `nib pagenum IN -o OUT` | Stamp running page numbers or Bates numbering (`--prefix ABC --pad 6 --position br --total`). |
@@ -498,7 +507,7 @@ nib sanitize -w *.pdf          # scrub a whole folder in place
 nib optimize in.pdf -o - | nib sanitize - -o out.pdf   # compose in a pipeline
 ```
 
-For `optimize`, `merge`, `sanitize`, `sign`, `rotate`, `pages`, `decrypt`, `nup`, and `pagenum`, a filename of `-` reads a PDF
+For `optimize`, `merge`, `sanitize`, `sign`, `rotate`, `pages`, `encrypt`, `decrypt`, `nup`, and `pagenum`, a filename of `-` reads a PDF
 from stdin, and `-o -` writes the result to stdout (refused when stdout is a
 terminal), so the commands chain together.
 

@@ -193,6 +193,7 @@
       <span class="tbsep"></span>
       <button id="scanBtn" title="Find and remove hidden code &amp; content">Scan for hidden content…</button>
       <button id="attachBtn" title="View, extract, or add embedded file attachments">Attachments…</button>
+      <button id="encryptBtn" title="Save a password-protected copy of this document (AES-256)">Add password protection…</button>
       <button id="decryptBtn" title="Remove an open password or owner restrictions from a PDF you can open">Remove password protection…</button>
       <span class="tbsep"></span>
       <button id="timestampBtn">Timestamp (OpenTimestamps)…</button>
@@ -523,6 +524,27 @@
       <p class="libhint">Nib only tries the password you type — it never guesses or recovers one.
         Unlocking rewrites the file, so an existing digital signature won't survive.</p>
       <div class="sigbtns"><button id="decryptCancel">Cancel</button><span class="grow"></span><button id="decryptGo" class="primary">Unlock</button></div>
+    </div>
+  </div>
+
+  <!-- Add password protection. Collects a password (typed twice, since a typo would
+       lock the copy permanently — Nib never recovers passwords) and saves a separate
+       AES-256 encrypted copy; the open document is left unprotected and editable. -->
+  <div id="encryptModal" hidden>
+    <div class="sigcard">
+      <h3>Add password protection</h3>
+      <p>Save a password-protected copy of this document. The same password opens and owns the
+        file — anyone who has it can open and edit the copy. Your open document stays unprotected.</p>
+      <label>Password
+        <input id="encryptPw" type="password" autocomplete="off" />
+      </label>
+      <label>Confirm password
+        <input id="encryptPw2" type="password" autocomplete="off" />
+      </label>
+      <div id="encryptError" class="error" hidden></div>
+      <p class="libhint">Nib can't recover a forgotten password — keep it safe. Encrypting rewrites the
+        file, so an existing digital signature won't survive the protected copy.</p>
+      <div class="sigbtns"><button id="encryptCancel">Cancel</button><span class="grow"></span><button id="encryptGo" class="primary">Protect &amp; save…</button></div>
     </div>
   </div>
 
