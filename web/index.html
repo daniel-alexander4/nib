@@ -87,6 +87,7 @@
       </div>
       <button id="combineBtn" title="Combine several PDFs into one new document">Combine PDFs…</button>
       <button id="compareBtn" title="Compare this document with another PDF — see what text changed">Compare…</button>
+      <button id="fillCsvBtn" title="Mail-merge a spreadsheet onto this form — one filled PDF per row, as a ZIP">Fill from spreadsheet…</button>
       <button id="saveBtn" title="Save (overwrites the original)" disabled>Save</button>
       <div class="menu">
         <button class="menutop">Save as</button>
@@ -573,6 +574,25 @@
         <input id="attachInput" type="file" hidden />
         <span class="grow"></span>
         <button id="attachClose" class="primary">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Fill from spreadsheet: mail-merge a CSV onto the open form → ZIP of filled PDFs. -->
+  <div id="fillCsvModal" hidden>
+    <div class="sigcard">
+      <h3>Fill from spreadsheet</h3>
+      <p class="libhint">Mail-merge a CSV onto this form. The first row must be the form's <strong>field
+        names</strong> (export them via <em>File → Export → Form data (CSV)</em> to see the exact names);
+        each following row becomes one filled PDF, delivered as a ZIP. Checkbox fields take
+        true/false/yes/1. The document must have fillable fields — if it's a flat scan, run
+        <em>Save as fillable form…</em> first.</p>
+      <div id="fillCsvStatus" class="libhint"></div>
+      <div class="sigbtns">
+        <button id="fillCsvPick">Choose CSV…</button>
+        <input id="fillCsvInput" type="file" accept=".csv,text/csv" hidden />
+        <span class="grow"></span>
+        <button id="fillCsvClose" class="primary">Close</button>
       </div>
     </div>
   </div>
