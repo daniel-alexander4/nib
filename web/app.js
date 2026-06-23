@@ -1125,22 +1125,13 @@ function confirmSignatureLoss() {
 let originalName = ''; // basename of the opened file, for default export names
 let docGen = 0; // bumps on each load so a stale async render/build can bail
 
-let fitPageWidth = 0; // intrinsic width (pts) of the page last fit-to-width
-eventBus.on('pagesinit', () => { fitPageWidth = 0; viewer.currentScaleValue = 'page-width'; });
+eventBus.on('pagesinit', () => {
+  viewer.currentScaleValue = 'page-width'; // immediate fit (page 1) so there's no 100%-then-fit flash…
+  fitWidestWidth();                        // …then refine to the widest page as a locked numeric scale.
+});
 eventBus.on('pagechanging', (e) => {
   all('.pageNum').forEach((i) => { i.value = e.pageNumber; });
   markCurrentThumb(e.pageNumber);
-  // In fit-width mode, re-fit to the page now in view so the pages of a mixed-
-  // size PDF each fill the width. No-op on a normal PDF (every page shares a
-  // width, so the scale never changes) and when the user has manually zoomed.
-  if (viewer.currentScaleValue === 'page-width') {
-    const vp = viewer.getPageView(e.pageNumber - 1)?.viewport;
-    const w = vp ? vp.width / vp.scale : 0;
-    if (w && Math.abs(w - fitPageWidth) > 0.5) {
-      fitPageWidth = w;
-      viewer.currentScaleValue = 'page-width';
-    }
-  }
 });
 
 // --- open / load -------------------------------------------------------------
@@ -5927,7 +5918,28 @@ function firstPage() { if (pdfDocument) viewer.currentPageNumber = 1; }
 function lastPage() { if (pdfDocument) viewer.currentPageNumber = pdfDocument.numPages; }
 function zoomIn() { viewer.currentScale = viewer.currentScale * 1.15; }
 function zoomOut() { viewer.currentScale = viewer.currentScale / 1.15; }
-function fitWidth() { viewer.currentScaleValue = 'page-width'; }
+function fitWidth() { fitWidestWidth(); }
+// fitWidestWidth fits the WIDEST page in the document to the container width and
+// locks it as a NUMERIC scale, so a mixed-size document scrolls smoothly. A named
+// 'page-width' re-fits to whichever page scrolls into view (pdf.js recomputes it
+// against the current page), which on mixed sizes fought the scroll position and
+// trapped you at the size boundary. This mirrors pdf.js's own page-width formula
+// (pdf_viewer.mjs #setScale): scale = (clientWidth − SCROLLBAR_PADDING) / pageWidthPt;
+// Nib uses default scroll/spread, so SCROLLBAR_PADDING (40) and a factor of 1 are
+// the whole computation. Page widths must come from getPage() — at pagesinit only
+// page 1's viewport is real.
+async function fitWidestWidth() {
+  if (!pdfDocument) return;
+  const gen = docGen;
+  let maxW = 0;
+  for (let i = 1; i <= pdfDocument.numPages; i++) {
+    const w = (await pdfDocument.getPage(i)).getViewport({ scale: 1 }).width;
+    if (w > maxW) maxW = w;
+  }
+  if (gen !== docGen) return; // a newer document loaded — don't apply a stale fit
+  const avail = els.viewerContainer.clientWidth - 40; // 40 = pdf.js SCROLLBAR_PADDING
+  if (maxW > 0 && avail > 0) viewer.currentScale = avail / maxW;
+}
 els.prevBtn.onclick = prevPage;
 els.nextBtn.onclick = nextPage;
 all('.pageNum').forEach((input) => input.addEventListener('change', () => {
