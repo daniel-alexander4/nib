@@ -169,6 +169,7 @@ const els = {
   plList: $('plList'), plAdd: $('plAdd'), plPreview: $('plPreview'),
   plCancel: $('plCancel'), plGo: $('plGo'),
   nupBtn: $('nupBtn'), nupModal: $('nupModal'), nupN: $('nupN'), nupBorder: $('nupBorder'),
+  normalizeBtn: $('normalizeBtn'),
   cropBtn: $('cropBtn'), cropModal: $('cropModal'), cropAllPages: $('cropAllPages'),
   cropCancel: $('cropCancel'), cropGo: $('cropGo'),
   nupCancel: $('nupCancel'), nupGo: $('nupGo'),
@@ -2080,6 +2081,9 @@ async function splitGo() {
 // (≡ −90 mod 360) so the stored /Rotate stays a non-negative multiple of 90.
 els.rotateLeftBtn.onclick = () => pageOp('rotate', { deg: 270 });
 els.rotateRightBtn.onclick = () => pageOp('rotate', { deg: 90 });
+els.normalizeBtn.onclick = async () => {
+  if (await pageOp('normalize')) toast('Pages resized to the document’s most common size');
+};
 
 // Bulk actions on the thumbnail multi-selection. Delete is blocked when it would
 // empty the document (mirrors the per-thumbnail "numPages > 1" guard, generalized).
@@ -5419,7 +5423,7 @@ const DOC_REQUIRED = [
   'textToolBtn', 'highlightToolBtn', 'drawToolBtn',
   'detectBtn', 'editTextBtn', 'removeOriginalsBtn', 'ocrBtn', 'ocrLang', 'autofillBtn', 'splitBtn',
   'splitBoxBtn', 'applyBoxSplitBtn', 'rotateLeftBtn', 'rotateRightBtn',
-  'extractBtn', 'insertBlankBtn', 'duplicatePageBtn', 'insertPdfBtn', 'pageNumBtn', 'pageLabelsBtn', 'nupBtn', 'cropBtn',
+  'extractBtn', 'insertBlankBtn', 'duplicatePageBtn', 'insertPdfBtn', 'pageNumBtn', 'pageLabelsBtn', 'nupBtn', 'normalizeBtn', 'cropBtn',
   'redactBtn', 'redactTextBtn', 'applyRedactBtn', 'scanBtn', 'attachBtn', 'encryptBtn', 'decryptBtn', 'compareBtn', 'fillCsvBtn',
   'finalizeBtn', 'timestampBtn', 'cosignBtn', 'sessionInitBtn', 'sessionSendBtn',
 ];
