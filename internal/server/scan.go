@@ -86,18 +86,21 @@ type decryptResponse struct {
 	Reason string `json:"reason,omitempty"`
 }
 
-// handleEncrypt password-protects the current document and returns the encrypted
-// bytes as a download — it deliberately does NOT replace the working copy. Encrypted
+// handleEncrypt password-protects the posted document and returns the encrypted
+// bytes as a download — it deliberately does NOT touch the working copy. Encrypted
 // bytes can't be re-rendered without the password (the editor would land on the
 // unlock prompt), so protection is a separate, signature-free export: the open
-// document is left untouched. The password arrives in the request body and must be
-// non-empty.
+// document is left untouched. Like the other export handlers (finalize/bake) it
+// operates on the uploaded "pdf" part — the client's current, overlay-baked state —
+// not the server's committed copy, so unbaked edits are included. The password
+// arrives in the same multipart form and must be non-empty.
 func (s *Server) handleEncrypt(w http.ResponseWriter, r *http.Request) {
-	s.mu.Lock()
-	doc := s.doc
-	s.mu.Unlock()
-	if doc == nil {
-		httpError(w, http.StatusNotFound, "no document open")
+	if err := r.ParseMultipartForm(maxPDFBytes); err != nil {
+		httpError(w, http.StatusBadRequest, "could not parse upload")
+		return
+	}
+	pdfBytes, ok := formFileBytes(w, r, "pdf")
+	if !ok {
 		return
 	}
 	password := r.FormValue("password")
@@ -105,7 +108,7 @@ func (s *Server) handleEncrypt(w http.ResponseWriter, r *http.Request) {
 		httpError(w, http.StatusBadRequest, "a password is required")
 		return
 	}
-	result, err := pdfops.Encrypt(doc.data, password)
+	result, err := pdfops.Encrypt(pdfBytes, password)
 	if err != nil {
 		httpError(w, http.StatusInternalServerError, "could not protect the document")
 		return
