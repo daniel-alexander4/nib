@@ -4760,11 +4760,23 @@ all('.shapetype').forEach((b) => {
   b.onclick = () => { shapeType = b.dataset.shape; all('.shapetype').forEach((x) => x.classList.toggle('active', x === b)); };
 });
 
-// shapeCorners returns the bbox-relative from/to (0|1) corners matching the drag
-// direction, so a line/arrow keeps its diagonal through resize.
-function shapeCorners(start, end) {
-  const from = { x: start.x <= end.x ? 0 : 1, y: start.y <= end.y ? 0 : 1 };
-  return { from, to: { x: 1 - from.x, y: 1 - from.y } };
+// shapePad: the margin a line/arrow's holding box needs beyond the segment so the
+// arrowhead barbs and round stroke caps clear the box edge instead of being
+// clipped. Mirrors paintShape's head size (max(8, weight*3.5)) plus the cap.
+function shapePad(weight) { return Math.max(8, weight * 3.5) + weight; }
+
+// shapeGeom: from a drag's two endpoints (any consistent unit) and a per-axis
+// margin, return the holding box {x0,y0,w,h} grown by the margin on every side,
+// plus the segment's from/to as fractions of that grown box (tail at the start
+// corner). The endpoints sit inset, so the arrowhead has room — for diagonal
+// arrows (corner overhang) and axis-aligned ones (no room across the stroke).
+// With padX/padY 0 this is the plain drag bbox with 0|1 corners (rect/ellipse).
+function shapeGeom(ax, ay, bx, by, padX, padY) {
+  const x0 = Math.min(ax, bx) - padX, y0 = Math.min(ay, by) - padY;
+  const w = Math.abs(bx - ax) + 2 * padX, h = Math.abs(by - ay) + 2 * padY;
+  const fromX = w ? (ax <= bx ? padX / w : 1 - padX / w) : 0;
+  const fromY = h ? (ay <= by ? padY / h : 1 - padY / h) : 0;
+  return { x0, y0, w, h, from: { x: fromX, y: fromY }, to: { x: 1 - fromX, y: 1 - fromY } };
 }
 
 // paintShape draws the current shape into a 2D context sized w×h px, pen weight in
@@ -4823,12 +4835,13 @@ els.viewerContainer.addEventListener('pointerdown', (e) => {
 els.viewerContainer.addEventListener('pointermove', (e) => {
   if (!shStart) return;
   const r = shHit.r;
-  const x0 = Math.min(shStart.x, e.clientX) - r.left, y0 = Math.min(shStart.y, e.clientY) - r.top;
-  shCanvas.style.left = x0 + 'px'; shCanvas.style.top = y0 + 'px';
-  shCanvas.width = Math.max(1, Math.abs(e.clientX - shStart.x));
-  shCanvas.height = Math.max(1, Math.abs(e.clientY - shStart.y));
-  const { from, to } = shapeCorners(shStart, { x: e.clientX, y: e.clientY });
-  paintShape(shCanvas.getContext('2d'), shCanvas.width, shCanvas.height, shapeType, els.shapeFill.checked, selectedHlColor, clampWeight(els.borderWidthInput.value), from, to);
+  const w = clampWeight(els.borderWidthInput.value);
+  const isLine = shapeType === 'line' || shapeType === 'arrow';
+  const pad = isLine ? shapePad(w) : 0; // px; head/cap room (none for rect/ellipse)
+  const g = shapeGeom(shStart.x - r.left, shStart.y - r.top, e.clientX - r.left, e.clientY - r.top, pad, pad);
+  shCanvas.style.left = g.x0 + 'px'; shCanvas.style.top = g.y0 + 'px';
+  shCanvas.width = Math.max(1, Math.round(g.w)); shCanvas.height = Math.max(1, Math.round(g.h));
+  paintShape(shCanvas.getContext('2d'), shCanvas.width, shCanvas.height, shapeType, els.shapeFill.checked, selectedHlColor, w, g.from, g.to);
 });
 els.viewerContainer.addEventListener('pointerup', async (e) => {
   if (!shStart) return;
@@ -4836,15 +4849,18 @@ els.viewerContainer.addEventListener('pointerup', async (e) => {
   shCanvas.remove(); shStart = null; shCanvas = null; shHit = null;
   const r = hit.r;
   const isLine = shapeType === 'line' || shapeType === 'arrow';
-  let fw = Math.abs(e.clientX - start.x) / r.width, fh = Math.abs(e.clientY - start.y) / r.height;
+  const fw = Math.abs(e.clientX - start.x) / r.width, fh = Math.abs(e.clientY - start.y) / r.height;
   if (isLine ? (fw < 0.005 && fh < 0.005) : (fw < 0.01 || fh < 0.01)) return; // ignore a stray click
-  // A near-axis-aligned line still needs a non-degenerate box to hold its stroke.
-  if (isLine) { fw = Math.max(fw, 0.004); fh = Math.max(fh, 0.004); }
-  const fx0 = (Math.min(start.x, e.clientX) - r.left) / r.width;
-  const fy0 = (Math.min(start.y, e.clientY) - r.top) / r.height;
-  const { from, to } = shapeCorners(start, { x: e.clientX, y: e.clientY });
   const base = (await pdfDocument.getPage(hit.n)).getViewport({ scale: 1 }); // PDF points
-  makeShape([fx0, fy0, fx0 + fw, fy0 + fh], { page: hit.n, pageW: base.width, pageH: base.height, type: shapeType, fill: els.shapeFill.checked, from, to });
+  // Line/arrow: grow the holding box by an arrowhead-sized margin (in points, per
+  // axis) and inset the endpoints so the head clears the box edge; this also makes
+  // an axis-aligned line's box non-degenerate. rect/ellipse keep a tight bbox.
+  const pad = isLine ? shapePad(clampWeight(els.borderWidthInput.value)) : 0;
+  const g = shapeGeom((start.x - r.left) / r.width, (start.y - r.top) / r.height,
+                      (e.clientX - r.left) / r.width, (e.clientY - r.top) / r.height,
+                      pad / base.width, pad / base.height);
+  makeShape([g.x0, g.y0, g.x0 + g.w, g.y0 + g.h],
+    { page: hit.n, pageW: base.width, pageH: base.height, type: shapeType, fill: els.shapeFill.checked, from: g.from, to: g.to });
 });
 
 // makeShape registers a draggable/resizable shape overlay (kind 'shape') whose
