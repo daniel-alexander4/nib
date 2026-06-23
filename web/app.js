@@ -3742,7 +3742,12 @@ async function scanTextMatches(patterns) {
     const vp = page.getViewport({ scale: 1 });
     let tc;
     try { tc = await page.getTextContent(); } catch { continue; } // image-only: no text
-    const items = tc.items.filter((it) => it.str && it.str.trim()).map((it) => {
+    // Keep pdf.js's whitespace-only items (str " "): they carry the word gap between
+    // adjacent runs. Dropping them (a trim() filter) let a styled inline run abut its
+    // neighbour — "SSN " + bold "123-45-6789" → "SSN123-45-6789" — so the patterns'
+    // leading \b stopped matching and the PII leaked past the bake. The compact string
+    // still drops the synthetic inter-run boundary, so true mid-token splits rejoin.
+    const items = tc.items.filter((it) => it.str).map((it) => {
       const t = pdfjsLib.Util.transform(vp0.transform, it.transform);
       return { str: it.str, x: t[4], y: t[5], w: it.width, h: it.height || Math.hypot(it.transform[2], it.transform[3]) };
     });
