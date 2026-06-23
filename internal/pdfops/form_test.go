@@ -69,3 +69,36 @@ func TestAuthorFormDropdown(t *testing.T) {
 		t.Error("expected an error for a dropdown with no options")
 	}
 }
+
+// TestAuthorFormRadio authors a radio button group (≥2 values) and proves it
+// round-trips as a real choice field; a group with fewer than two values is
+// rejected (pdfcpu requires ≥2).
+func TestAuthorFormRadio(t *testing.T) {
+	base, err := testpdf.Text("survey")
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := AuthorForm(base, []FormField{
+		{Page: 1, Rect: [4]float64{100, 600, 220, 614}, Kind: "radio", Name: "plan", Options: []string{"Basic", "Pro", "Enterprise"}},
+	})
+	if err != nil {
+		t.Fatalf("AuthorForm radio: %v", err)
+	}
+	if err := Validate(out); err != nil {
+		t.Fatalf("authored PDF does not validate: %v", err)
+	}
+	js, _ := ExportFormJSON(out)
+	s := string(js)
+	for _, want := range []string{"plan", "Basic", "Pro", "Enterprise"} {
+		if !strings.Contains(s, want) {
+			t.Errorf("radio field/value %q missing from form export: %s", want, s)
+		}
+	}
+
+	// A radio group with fewer than two options is rejected.
+	if _, err := AuthorForm(base, []FormField{
+		{Page: 1, Rect: [4]float64{100, 600, 220, 614}, Kind: "radio", Name: "lonely", Options: []string{"only"}},
+	}); err == nil {
+		t.Error("expected an error for a radio group with <2 options")
+	}
+}

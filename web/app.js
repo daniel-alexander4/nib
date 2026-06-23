@@ -39,7 +39,7 @@ const els = {
   textToolBtn: $('textToolBtn'), detectBtn: $('detectBtn'),
   hlColors: $('hlColors'), hlSwatches: $('hlSwatches'), hlCustom: $('hlCustom'),
   borderBtn: $('borderBtn'), borderWidth: $('borderWidth'), borderWidthInput: $('borderWidthInput'),
-  dropdownBtn: $('dropdownBtn'),
+  dropdownBtn: $('dropdownBtn'), radioBtn: $('radioBtn'),
   shapeBtn: $('shapeBtn'), shapeOpts: $('shapeOpts'), shapeFill: $('shapeFill'),
   noteBtn: $('noteBtn'),
   prevBtn: $('prevBtn'), nextBtn: $('nextBtn'),
@@ -2973,7 +2973,7 @@ els.saveFillableBtn.onclick = async () => {
     row.className = 'fieldname-row';
     const tag = document.createElement('span');
     tag.className = 'fieldname-kind';
-    tag.textContent = (f.kind === 'check' ? '☑' : f.kind === 'dropdown' ? '▾' : '✎') + ' p' + f.page;
+    tag.textContent = (f.kind === 'check' ? '☑' : f.kind === 'dropdown' ? '▾' : f.kind === 'radio' ? '◉' : '✎') + ' p' + f.page;
     const inp = document.createElement('input');
     inp.type = 'text';
     inp.value = f.suggested || ('field_' + (i + 1));
@@ -3003,12 +3003,15 @@ els.fieldNameGo.onclick = async () => {
     if (f.kind === 'dropdown' && !(f.options && f.options.length)) {
       toast('Skipped a dropdown with no options'); return; // pdfcpu requires ≥1
     }
+    if (f.kind === 'radio' && !(f.options && f.options.length >= 2)) {
+      toast('Skipped a radio group with fewer than two choices'); return; // pdfcpu requires ≥2
+    }
     const base = (f.input.value || '').trim() || ('field_' + (i + 1));
     let name = base;
     for (let n = 2; seen.has(name); n++) name = base + '_' + n;
     seen.add(name);
     const spec = { page: f.page, rect: f.rect, kind: f.kind, name };
-    if (f.kind === 'dropdown') spec.options = f.options;
+    if (f.kind === 'dropdown' || f.kind === 'radio') spec.options = f.options;
     fields.push(spec);
   });
   if (!fields.length) return;
@@ -3303,7 +3306,7 @@ let redStart = null, redDiv = null, redHit = null;
 
 els.redactBtn.onclick = () => {
   redactMode = !redactMode;
-  if (redactMode) { setMarkerMode(null); exitSplitBox(); exitBorder(); exitCrop(); exitNote(); exitDropdown(); exitShape(); } // one box tool at a time
+  if (redactMode) { setMarkerMode(null); exitSplitBox(); exitBorder(); exitCrop(); exitNote(); exitDropdown(); exitRadio(); exitShape(); } // one box tool at a time
   reflectRedact();
   els.viewerContainer.style.cursor = redactMode ? 'crosshair' : '';
 };
@@ -3425,7 +3428,7 @@ els.splitBoxBtn.onclick = () => {
   exitBorder();
   exitShape();
   exitCrop();
-  exitNote(); exitDropdown();
+  exitNote(); exitDropdown(); exitRadio();
   if (redactMode) { redactMode = false; reflectRedact(); }
   if (editMode) { editMode = false; reflectEdit(); }
   reflectSplitBox();
@@ -3510,7 +3513,7 @@ els.cropBtn.onclick = () => {
   exitBorder();
   exitShape();
   exitSplitBox();
-  exitNote(); exitDropdown();
+  exitNote(); exitDropdown(); exitRadio();
   if (redactMode) { redactMode = false; reflectRedact(); }
   if (editMode) { editMode = false; reflectEdit(); }
   reflectCrop();
@@ -3577,7 +3580,7 @@ els.editTextBtn.onclick = () => {
   if (!pdfDocument) { toast('Open a PDF first'); return; }
   editMode = !editMode;
   if (editMode && redactMode) { redactMode = false; reflectRedact(); } // one box tool at a time
-  if (editMode) { setMarkerMode(null); exitSplitBox(); exitBorder(); exitCrop(); exitNote(); exitDropdown(); exitShape(); }
+  if (editMode) { setMarkerMode(null); exitSplitBox(); exitBorder(); exitCrop(); exitNote(); exitDropdown(); exitRadio(); exitShape(); }
   reflectEdit();
   els.viewerContainer.style.cursor = editMode ? 'crosshair' : '';
 };
@@ -3794,7 +3797,7 @@ function setMarkerMode(m) {
     exitBorder();
     exitShape();
     exitCrop();
-    exitNote(); exitDropdown();
+    exitNote(); exitDropdown(); exitRadio();
   }
   all('.markers button').forEach((b) => b.classList.toggle('active', b.dataset.marker === m));
   els.viewerContainer.style.cursor = m ? 'crosshair' : '';
@@ -4345,7 +4348,7 @@ function setTool(mode) {
   viewer.annotationEditorMode = {
     mode: activeTool ? pdfjsLib.AnnotationEditorType[activeTool] : pdfjsLib.AnnotationEditorType.NONE,
   };
-  if (activeTool) { exitBorder(); exitNote(); exitDropdown(); exitShape(); } // Nib-side tools, not pdf.js modes — one at a time
+  if (activeTool) { exitBorder(); exitNote(); exitDropdown(); exitRadio(); exitShape(); } // Nib-side tools, not pdf.js modes — one at a time
   // Mirror the active mode onto every control bound to it (Edit menu + toolbar).
   document.querySelectorAll('[data-mode]').forEach((b) => b.classList.toggle('active', b.dataset.mode === activeTool));
   // The highlight color row is contextual — show it only while highlighting (or
@@ -4447,7 +4450,7 @@ els.borderBtn.onclick = () => {
   if (editMode) { editMode = false; reflectEdit(); }
   exitSplitBox();
   exitCrop();
-  exitNote(); exitDropdown();
+  exitNote(); exitDropdown(); exitRadio();
   reflectBorder();
   els.viewerContainer.style.cursor = 'crosshair';
 };
@@ -4533,7 +4536,7 @@ els.dropdownBtn.onclick = () => {
   if (editMode) { editMode = false; reflectEdit(); }
   exitSplitBox();
   exitCrop();
-  exitNote(); exitDropdown(); // exitDropdown here is a no-op (we set the mode below)
+  exitNote(); exitDropdown(); exitRadio(); // exitDropdown here is a no-op (we set the mode below)
   exitBorder();
   exitShape();
   dropdownMode = true;
@@ -4604,6 +4607,100 @@ function makeDropdown(frac, opts) {
   input.focus();
 }
 
+// Radio-group tool — a sibling of the Dropdown tool. Draw a box to anchor a radio
+// group, type ≥2 comma-separated choices; "Save as fillable form…" authors a real
+// AcroForm radiobuttongroup whose buttons march to the right of the anchor, each
+// labelled with its value. (Horizontal only for now.)
+let radioMode = false;
+let rdStart = null, rdDiv = null, rdHit = null;
+function reflectRadio() { els.radioBtn.classList.toggle('active', radioMode); }
+function exitRadio() {
+  if (!radioMode) return;
+  radioMode = false;
+  reflectRadio();
+  els.viewerContainer.style.cursor = '';
+}
+els.radioBtn.onclick = () => {
+  if (radioMode) { exitRadio(); return; }
+  if (!pdfDocument) { toast('Open a PDF first'); return; }
+  radioMode = true;
+  setTool(null);
+  setMarkerMode(null);
+  if (redactMode) { redactMode = false; reflectRedact(); }
+  if (editMode) { editMode = false; reflectEdit(); }
+  exitSplitBox();
+  exitCrop();
+  exitNote(); exitDropdown();
+  exitBorder();
+  exitShape();
+  radioMode = true;
+  reflectRadio();
+  els.viewerContainer.style.cursor = 'crosshair';
+};
+els.viewerContainer.addEventListener('pointerdown', (e) => {
+  if (!radioMode) return;
+  rdHit = pageAt(e.clientX, e.clientY);
+  if (!rdHit) return;
+  rdStart = { x: e.clientX, y: e.clientY };
+  rdDiv = document.createElement('div');
+  rdDiv.className = 'bordermark';
+  rdHit.pv.div.appendChild(rdDiv);
+  sizeMark(rdDiv, rdHit.r, rdStart, rdStart);
+  e.preventDefault();
+});
+els.viewerContainer.addEventListener('pointermove', (e) => {
+  if (rdStart) sizeMark(rdDiv, rdHit.r, rdStart, { x: e.clientX, y: e.clientY });
+});
+els.viewerContainer.addEventListener('pointerup', async (e) => {
+  if (!rdStart) return;
+  const hit = rdHit, start = rdStart;
+  rdDiv.remove();
+  rdStart = null; rdDiv = null; rdHit = null;
+  const r = hit.r;
+  const fw = Math.abs(e.clientX - start.x) / r.width;
+  const fh = Math.abs(e.clientY - start.y) / r.height;
+  if (fw < 0.01 || fh < 0.01) return; // ignore a stray click
+  const fx0 = (Math.min(start.x, e.clientX) - r.left) / r.width;
+  const fy0 = (Math.min(start.y, e.clientY) - r.top) / r.height;
+  const base = (await pdfDocument.getPage(hit.n)).getViewport({ scale: 1 });
+  makeRadio([fx0, fy0, fx0 + fw, fy0 + fh], { page: hit.n, pageW: base.width, pageH: base.height });
+});
+
+// makeRadio registers a draggable/resizable radio-group overlay (kind 'radio')
+// with an inline comma-separated choices input (≥2); the options ride to the
+// server in collectAuthorFields, where each becomes a radio button value.
+function makeRadio(frac, opts) {
+  const f = { page: opts.page, frac, pageW: opts.pageW, pageH: opts.pageH, kind: 'radio' };
+  const el = document.createElement('div');
+  el.className = 'ovl ovl-radio';
+  el.tabIndex = 0;
+  const input = document.createElement('input');
+  input.className = 'dd-opts';
+  input.placeholder = 'choices: a, b, c';
+  input.addEventListener('pointerdown', (ev) => ev.stopPropagation());
+  const caret = document.createElement('span');
+  caret.className = 'dd-caret'; caret.textContent = '◉';
+  const handle = document.createElement('span');
+  handle.className = 'stamp-resize';
+  const del = document.createElement('button');
+  del.className = 'stamp-del'; del.textContent = '×'; del.title = 'Remove radio group';
+  el.append(input, caret, handle, del);
+  f.el = el; f.optsInput = input;
+
+  const remove = () => deleteField(f);
+  del.onclick = (ev) => { ev.stopPropagation(); remove(); };
+  // Delete/Backspace removes the field only when the box (not the choices input) is focused.
+  el.addEventListener('keydown', (ev) => { if ((ev.key === 'Delete' || ev.key === 'Backspace') && ev.target === el) remove(); });
+  enableStampGestures(f, el, handle);
+
+  overlayFields.push(f);
+  const pv = viewer.getPageView(f.page - 1);
+  pv.div.appendChild(el);
+  layoutField(f, pv);
+  recordAdd(f);
+  input.focus();
+}
+
 // boxPNG renders a transparent PNG with a stroked rectangle outline in hex at the
 // given pen weight (PDF points). Drawing at the rect's own point size (× super-
 // sample) means the server's scale-to-rect is uniform, so the weight stays true.
@@ -4648,7 +4745,7 @@ els.shapeBtn.onclick = () => {
   if (editMode) { editMode = false; reflectEdit(); }
   exitSplitBox();
   exitCrop();
-  exitNote(); exitDropdown();
+  exitNote(); exitDropdown(); exitRadio();
   exitBorder();
   reflectShape();
   els.viewerContainer.style.cursor = 'crosshair';
@@ -4787,7 +4884,7 @@ function exitNote() {
   els.viewerContainer.style.cursor = '';
 }
 els.noteBtn.onclick = () => {
-  if (noteMode) { exitNote(); exitDropdown(); return; }
+  if (noteMode) { exitNote(); exitDropdown(); exitRadio(); return; }
   if (!pdfDocument) { toast('Open a PDF first'); return; }
   noteMode = true;
   setTool(null);
@@ -4812,7 +4909,7 @@ els.viewerContainer.addEventListener('pointerdown', async (e) => {
   const base = (await pdfDocument.getPage(hit.n)).getViewport({ scale: 1 }); // PDF points
   const fw = Math.min(0.3, 150 / r.width), fh = Math.min(0.2, 72 / r.height); // default card size
   makeNote([fx, fy, Math.min(fx + fw, 1), Math.min(fy + fh, 1)], { page: hit.n, pageW: base.width, pageH: base.height });
-  exitNote(); exitDropdown(); // place one; re-click the tool for another
+  exitNote(); exitDropdown(); exitRadio(); // place one; re-click the tool for another
 });
 
 // makeNote registers a draggable note card (kind 'note') with an inline comment
@@ -5008,7 +5105,7 @@ function clearOverlays() {
   exitBorder();   // nor a pending border-draw mode
   exitShape();    // nor a pending shape-draw mode
   exitCrop();     // nor a pending crop-draw mode
-  exitNote(); exitDropdown();     // nor a pending note-placement mode
+  exitNote(); exitDropdown(); exitRadio();     // nor a pending note-placement mode
   clearOverlayHistory(); // a new/reloaded document resets the overlay-edit undo stack
 }
 // clearDetected drops only auto-detected fields (text/check/circleone), keeping
@@ -5093,9 +5190,9 @@ function collectAuthorFields() {
   for (const f of overlayFields) {
     if (f.kind === 'text' || f.kind === 'check') {
       out.push({ page: f.page, rect: rectPoints(f, f.frac), kind: f.kind, el: f.el });
-    } else if (f.kind === 'dropdown') {
+    } else if (f.kind === 'dropdown' || f.kind === 'radio') {
       const options = f.optsInput.value.split(',').map((s) => s.trim()).filter(Boolean);
-      out.push({ page: f.page, rect: rectPoints(f, f.frac), kind: 'dropdown', options, el: f.el });
+      out.push({ page: f.page, rect: rectPoints(f, f.frac), kind: f.kind, options, el: f.el });
     }
   }
   return out;
