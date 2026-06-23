@@ -347,6 +347,7 @@ input[type="search"] { width: 100%; }
 .outlinerow .outline-title { flex: 1; min-width: 0; }
 .outlinerow .outline-page { width: 52px; flex: none; }
 .outlinerow input { background: var(--surface0); border: 1px solid var(--surface1); border-radius: 4px; color: var(--text); padding: 3px 5px; font: inherit; }
+.outlinerow select { background: var(--surface0); border: 1px solid var(--surface1); border-radius: 4px; color: var(--text); padding: 3px 5px; font: inherit; }
 .outlinerow button { flex: none; padding: 3px 7px; }
 
 /* image library panel */
