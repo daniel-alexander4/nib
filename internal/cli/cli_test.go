@@ -9,6 +9,7 @@ import (
 	"crypto/x509/pkix"
 	"math/big"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -252,6 +253,94 @@ func TestPagenum(t *testing.T) {
 	if err := pdfops.Validate(readPDF(t, out)); err != nil {
 		t.Fatalf("page-numbered output invalid: %v", err)
 	}
+}
+
+// TestContinuousPagenum threads ONE Bates counter across a file set: file 1's
+// pages number from --start, file 2 continues where file 1 ended, and --total's
+// "of N" is the set's grand total — not each file's. Covers both output modes,
+// the start clamp, and the mode guards.
+func TestContinuousPagenum(t *testing.T) {
+	dir := t.TempDir()
+	a := writePDF(t, dir, "a.pdf", "alpha", "beta", "gamma") // 3 pages
+	b := writePDF(t, dir, "b.pdf", "delta", "epsilon")       // 2 pages
+
+	// --out-dir: copies numbered as one 1..5 run, "of 5" on every page.
+	od := filepath.Join(dir, "stamped")
+	if code := cmdPagenum([]string{a, b, "--continuous", "--out-dir", od, "--prefix", "BATES", "--pad", "4", "--total"}); code != 0 {
+		t.Fatalf("continuous --out-dir exit = %d, want 0", code)
+	}
+	if got := countPDFs(t, od); got != 2 {
+		t.Fatalf("continuous --out-dir → %d files, want 2", got)
+	}
+	for _, name := range []string{"a.pdf", "b.pdf"} {
+		if err := pdfops.Validate(readPDF(t, filepath.Join(od, name))); err != nil {
+			t.Fatalf("%s invalid: %v", name, err)
+		}
+	}
+	// Strong check (pdftotext-gated): the counter threads across the boundary.
+	if _, err := exec.LookPath("pdftotext"); err == nil {
+		atxt := pdfText(t, filepath.Join(od, "a.pdf"))
+		btxt := pdfText(t, filepath.Join(od, "b.pdf"))
+		for _, want := range []string{"BATES0001", "BATES0002", "BATES0003", "of 5"} {
+			if !strings.Contains(atxt, want) {
+				t.Errorf("file a missing %q\n--- pdftotext gave ---\n%s", want, atxt)
+			}
+		}
+		for _, want := range []string{"BATES0004", "BATES0005", "of 5"} {
+			if !strings.Contains(btxt, want) {
+				t.Errorf("file b missing %q\n--- pdftotext gave ---\n%s", want, btxt)
+			}
+		}
+	}
+
+	// -w rewrites each file in place, same continuous sequence.
+	a2 := writePDF(t, dir, "a2.pdf", "alpha", "beta", "gamma")
+	b2 := writePDF(t, dir, "b2.pdf", "delta", "epsilon")
+	if code := cmdPagenum([]string{a2, b2, "--continuous", "-w", "--prefix", "X"}); code != 0 {
+		t.Fatalf("continuous -w exit = %d, want 0", code)
+	}
+	if _, err := exec.LookPath("pdftotext"); err == nil {
+		if txt := pdfText(t, b2); !strings.Contains(txt, "X4") || !strings.Contains(txt, "X5") {
+			t.Errorf("in-place file b2 should continue at X4/X5, got:\n%s", txt)
+		}
+	}
+
+	// --start ≤ 0 clamps to 1 (clamp must live in the continuous path, so the
+	// threaded offset agrees): file b still starts at 4, no duplicate.
+	od0 := filepath.Join(dir, "start0")
+	if code := cmdPagenum([]string{a, b, "--continuous", "--out-dir", od0, "--prefix", "Z", "--start", "0"}); code != 0 {
+		t.Fatalf("continuous --start 0 exit = %d, want 0", code)
+	}
+	if _, err := exec.LookPath("pdftotext"); err == nil {
+		if txt := pdfText(t, filepath.Join(od0, "b.pdf")); !strings.Contains(txt, "Z4") || !strings.Contains(txt, "Z5") {
+			t.Errorf("--start 0 should clamp to 1 and thread to Z4/Z5, got:\n%s", txt)
+		}
+	}
+
+	// Mode guards: -o rejected; neither/both of -w and --out-dir rejected; stdin rejected.
+	if code := cmdPagenum([]string{a, "--continuous", "-o", filepath.Join(dir, "x.pdf")}); code != 1 {
+		t.Errorf("continuous with -o exit = %d, want 1", code)
+	}
+	if code := cmdPagenum([]string{a, b, "--continuous"}); code != 1 {
+		t.Errorf("continuous with no output mode exit = %d, want 1", code)
+	}
+	if code := cmdPagenum([]string{a, b, "--continuous", "-w", "--out-dir", od}); code != 1 {
+		t.Errorf("continuous with both -w and --out-dir exit = %d, want 1", code)
+	}
+	if code := cmdPagenum([]string{"-", "--continuous", "--out-dir", od}); code != 1 {
+		t.Errorf("continuous with stdin exit = %d, want 1", code)
+	}
+}
+
+// pdfText extracts a PDF's text via poppler's pdftotext, for asserting on stamped
+// content. Callers gate on exec.LookPath("pdftotext") and skip when it's absent.
+func pdfText(t *testing.T, path string) string {
+	t.Helper()
+	out, err := exec.Command("pdftotext", "-enc", "UTF-8", path, "-").Output()
+	if err != nil {
+		t.Fatalf("pdftotext %s: %v", path, err)
+	}
+	return string(out)
 }
 
 // captureStdout runs fn with os.Stdout redirected to a temp file and returns what
