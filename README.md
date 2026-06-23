@@ -139,7 +139,8 @@ exactly the same but the text is now **selectable, copyable, and findable** (and
 shows up in *Find*). The OCR runs **entirely on your machine** — the recognition
 engine is built into Nib (no install, no cloud, nothing leaves your computer) —
 so it works offline like everything else. Pick the scan's language from the
-dropdown next to the button (**English, French, German, Spanish, Italian**) for
+dropdown next to the button (**English, French, German, Spanish, Italian,
+Russian, Ukrainian, Bulgarian, Serbian, Macedonian, Belarusian, Greek**) for
 best accuracy; full Unicode comes through either way (accents, quotes, dashes).
 It's undoable, too.
 
