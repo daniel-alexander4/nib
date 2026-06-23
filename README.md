@@ -149,6 +149,16 @@ Draw redaction boxes and press **Apply**. Nib re-renders those pages flat so the
 content underneath is **actually gone** — not just hidden behind a black
 rectangle. (Verified: a redacted page exposes no hidden text or form field.)
 
+### Compare two versions
+Wondering what changed between draft v3 and v4 of a contract? **File → Compare…**
+lets you pick a second PDF and diffs its text against the open document
+**word-by-word** — removed text is struck through in red, additions are shown in
+green, inline. It compares the **text layer**, so it works on any text-based PDF
+(a scanned PDF with no text shows nothing — run **OCR** on it first, which makes
+it diffable). Like everything else it runs **entirely on your machine** — the
+second PDF never leaves your computer. Reading order follows each document's text
+stream, so it's most reliable comparing two versions produced by the same tool.
+
 ### Scan for hidden content
 **Secure → Scan for hidden content** lists what's lurking in a PDF that you can't
 see on the page: auto-run hooks (OpenAction, additional actions), JavaScript,
