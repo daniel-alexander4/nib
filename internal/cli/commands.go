@@ -468,6 +468,75 @@ func cmdPagelabels(args []string) int {
 	})
 }
 
+// cmdFill fills a PDF form from data — a single record (JSON → one PDF, -o OUT,
+// pipeable) or a CSV mail-merge (one filled PDF per row → --out-dir). The data
+// format is chosen by the --data file's extension. Filling removes any existing
+// signature, since the content changes.
+func cmdFill(args []string) int {
+	fs := flag.NewFlagSet("nib fill", flag.ContinueOnError)
+	var out, outDir, dataPath, nameCol string
+	outFlag(fs, &out)
+	fs.StringVar(&dataPath, "data", "", "form data: a .json record (single fill) or a .csv (one row → one PDF) (required)")
+	fs.StringVar(&outDir, "out-dir", "", "with a CSV: write one filled PDF per row into this folder")
+	fs.StringVar(&nameCol, "name-col", "", "with a CSV: name each output from this column's value")
+	fs.Usage = usageFunc(fs, "nib fill IN --data DATA.json -o OUT  |  nib fill IN --data DATA.csv --out-dir DIR [--name-col COL]", "Fill a form from a JSON record, or mail-merge a CSV (one filled PDF per row).")
+	if code, ok := parse(fs, args); !ok {
+		return code
+	}
+	if dataPath == "" {
+		errf("missing --data (the form-data JSON or CSV file)")
+		return 1
+	}
+	data, err := os.ReadFile(dataPath)
+	if err != nil {
+		errf("%v", err)
+		return 1
+	}
+
+	if strings.EqualFold(filepath.Ext(dataPath), ".csv") { // mail-merge
+		if out != "" {
+			errf("a CSV mail-merge writes many files: use --out-dir DIR, not -o")
+			return 1
+		}
+		if outDir == "" {
+			errf("missing --out-dir (where to write the filled PDFs)")
+			return 1
+		}
+		if fs.NArg() != 1 {
+			errf("expected one input PDF, got %d", fs.NArg())
+			return 1
+		}
+		pdf, err := readInput(fs.Arg(0))
+		if err != nil {
+			errf("%v", err)
+			return 1
+		}
+		parts, err := pdfops.FillFormCSV(pdf, data, nameCol)
+		if err != nil {
+			errf("%v", err)
+			return 1
+		}
+		return writeSplitFiles(outDir, parts)
+	}
+
+	// JSON single fill (pipeable via - / -o -).
+	if outDir != "" {
+		errf("--out-dir is for a CSV mail-merge; a JSON record fills one PDF — use -o")
+		return 1
+	}
+	if nameCol != "" {
+		errf("--name-col is only for a CSV mail-merge")
+		return 1
+	}
+	in, code := singleInput(fs, out)
+	if code != 0 {
+		return code
+	}
+	return transform(in, out, func(b []byte) ([]byte, error) {
+		return pdfops.FillFormJSON(b, data)
+	})
+}
+
 // cmdAttachments lists embedded files (default), extracts one to -o, or embeds one
 // and writes a new PDF to -o. One mode at a time; single input PDF (— for stdin).
 func cmdAttachments(args []string) int {
