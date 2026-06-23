@@ -311,6 +311,19 @@ func cmdNup(args []string) int {
 	})
 }
 
+func cmdNormalize(args []string) int {
+	fs := flag.NewFlagSet("nib normalize", flag.ContinueOnError)
+	var out string
+	var inPlace bool
+	outFlag(fs, &out)
+	inPlaceFlag(fs, &inPlace)
+	fs.Usage = usageFunc(fs, "nib normalize IN -o OUT  |  nib normalize -w FILE...", "Resize every page to the document's most common page size (scaled to fit, centred).")
+	if code, ok := parse(fs, args); !ok {
+		return code
+	}
+	return runTransform(fs, out, inPlace, pdfops.NormalizePageSizes)
+}
+
 func cmdPagenum(args []string) int {
 	fs := flag.NewFlagSet("nib pagenum", flag.ContinueOnError)
 	var out, outDir string
