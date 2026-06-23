@@ -12,12 +12,14 @@ import (
 
 // FormField is one interactive AcroForm field to author onto an existing page.
 // Rect is in PDF points, bottom-left origin (x0,y0,x1,y1) — the same space the
-// client's rectPoints produces. Kind is "text" or "check".
+// client's rectPoints produces. Kind is "text", "check", or "dropdown" (Options
+// is the dropdown's choice list; required and ignored for the other kinds).
 type FormField struct {
-	Page int        `json:"page"`
-	Rect [4]float64 `json:"rect"`
-	Kind string     `json:"kind"`
-	Name string     `json:"name"`
+	Page    int        `json:"page"`
+	Rect    [4]float64 `json:"rect"`
+	Kind    string     `json:"kind"`
+	Name    string     `json:"name"`
+	Options []string   `json:"options,omitempty"`
 }
 
 // AuthorForm adds real fillable AcroForm widgets (text fields, checkboxes) to the
@@ -53,6 +55,15 @@ func AuthorForm(pdf []byte, fields []FormField) ([]byte, error) {
 			content["checkbox"] = append(arr, map[string]any{
 				"id": f.Name, "value": false,
 				"pos": []float64{x0, y0}, "width": side,
+			})
+		case "dropdown":
+			if len(f.Options) == 0 {
+				return nil, fmt.Errorf("dropdown %q needs at least one option", f.Name)
+			}
+			arr, _ := content["combobox"].([]any)
+			content["combobox"] = append(arr, map[string]any{
+				"id": f.Name, "options": f.Options,
+				"pos": []float64{x0, y0}, "width": x1 - x0,
 			})
 		default: // text
 			arr, _ := content["textfield"].([]any)

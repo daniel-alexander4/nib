@@ -633,7 +633,7 @@ input.ovl-check { appearance: auto; accent-color: #1a7f37; background: transpare
 /* border box: a colored outline with no fill (the unfilled sibling of a
    highlight). Border color + width are set inline from the field. */
 .ovl-box { z-index: 9; cursor: move; border-style: solid; border-width: 2px; background: transparent; touch-action: none; }
-.ovl-stamp .stamp-resize, .ovl-box .stamp-resize, .ovl-note .stamp-resize, .ovl-shape .stamp-resize {
+.ovl-stamp .stamp-resize, .ovl-box .stamp-resize, .ovl-note .stamp-resize, .ovl-shape .stamp-resize, .ovl-dropdown .stamp-resize {
   position: absolute; right: -6px; bottom: -6px; width: 12px; height: 12px;
   background: var(--blue); border: 1px solid var(--crust); border-radius: 2px;
   cursor: nwse-resize; display: none;
@@ -641,7 +641,7 @@ input.ovl-check { appearance: auto; accent-color: #1a7f37; background: transpare
 .ovl-stamp:hover .stamp-resize, .ovl-stamp:focus .stamp-resize,
 .ovl-box:hover .stamp-resize, .ovl-box:focus .stamp-resize,
 .ovl-shape:hover .stamp-resize, .ovl-shape:focus .stamp-resize { display: block; }
-.ovl-stamp .stamp-del, .ovl-box .stamp-del, .ovl-note .stamp-del, .ovl-shape .stamp-del {
+.ovl-stamp .stamp-del, .ovl-box .stamp-del, .ovl-note .stamp-del, .ovl-shape .stamp-del, .ovl-dropdown .stamp-del {
   position: absolute; top: -10px; right: -10px; width: 18px; height: 18px; padding: 0;
   line-height: 1; border-radius: 999px; background: var(--surface1); color: var(--red);
   border: 1px solid var(--crust); cursor: pointer; display: none; z-index: 1;
@@ -667,7 +667,17 @@ input.ovl-check { appearance: auto; accent-color: #1a7f37; background: transpare
 .note-text { flex: 1; resize: none; border: none; outline: none; background: transparent;
   color: var(--text); font: inherit; font-size: 12px; padding: 4px; cursor: text; }
 .ovl-note:hover .stamp-resize, .ovl-note:focus-within .stamp-resize,
-.ovl-note:hover .stamp-del, .ovl-note:focus-within .stamp-del { display: block; }
+.ovl-note:hover .stamp-del, .ovl-note:focus-within .stamp-del,
+.ovl-dropdown:hover .stamp-resize, .ovl-dropdown:focus-within .stamp-resize,
+.ovl-dropdown:hover .stamp-del, .ovl-dropdown:focus-within .stamp-del { display: block; }
+/* ovl-dropdown: a placed choice field (Dropdown tool); options typed inline,
+   authored as a real AcroForm combobox via Save as fillable form. */
+.ovl-dropdown { z-index: 9; cursor: move; display: flex; align-items: center; touch-action: none;
+  background: color-mix(in srgb, var(--base) 85%, transparent);
+  border: 1px solid var(--overlay0); border-radius: 3px; }
+.ovl-dropdown .dd-opts { flex: 1; min-width: 0; height: 100%; border: none; outline: none;
+  background: transparent; color: var(--text); font: inherit; font-size: 12px; padding: 0 4px; cursor: text; }
+.ovl-dropdown .dd-caret { color: var(--subtext0); padding: 0 5px; pointer-events: none; }
 /* bordermark: the rubber-band rectangle drawn while placing a border box. */
 .bordermark { position: absolute; border: 2px solid var(--blue); background: transparent; z-index: 5; pointer-events: none; box-sizing: border-box; }
 .borderwidth { display: inline-flex; align-items: center; gap: 4px; }
