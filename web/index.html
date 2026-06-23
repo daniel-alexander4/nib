@@ -86,6 +86,7 @@
         <div class="dropdown"><div class="recentSlot"></div></div>
       </div>
       <button id="combineBtn" title="Combine several PDFs into one new document">Combine PDFs…</button>
+      <button id="compareBtn" title="Compare this document with another PDF — see what text changed">Compare…</button>
       <button id="saveBtn" title="Save (overwrites the original)" disabled>Save</button>
       <div class="menu">
         <button class="menutop">Save as</button>
@@ -568,6 +569,25 @@
         <input id="attachInput" type="file" hidden />
         <span class="grow"></span>
         <button id="attachClose" class="primary">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Compare: diff the open document's text against another PDF's. -->
+  <div id="compareModal" hidden>
+    <div class="sigcard">
+      <h3>Compare with another PDF</h3>
+      <p class="libhint">Pick a second PDF — its text is compared word-by-word against the open
+        document's, so you can see what changed between two versions (e.g. draft v3 vs v4 of a
+        contract). <span style="color:var(--red)">Removed</span> and
+        <span style="color:var(--green)">added</span> text are marked inline. This reads the text
+        layer only; a scanned PDF with no text shows nothing — run OCR on it first.</p>
+      <div id="compareBody" class="sigdetails"></div>
+      <div class="sigbtns">
+        <button id="comparePick">Choose PDF to compare…</button>
+        <input id="compareInput" type="file" accept="application/pdf" hidden />
+        <span class="grow"></span>
+        <button id="compareClose" class="primary">Close</button>
       </div>
     </div>
   </div>

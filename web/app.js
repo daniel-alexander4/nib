@@ -25,6 +25,7 @@ import {
   snapChoices,
   dedupeGroups,
 } from './detect.js';
+import { diffWords } from './vendor/diff/diff.min.mjs';
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = './vendor/pdfjs/pdf.worker.min.mjs';
 
@@ -35,6 +36,8 @@ const els = {
   combineBtn: $('combineBtn'), combineModal: $('combineModal'), combineList: $('combineList'),
   combineAddBtn: $('combineAddBtn'), combineInput: $('combineInput'),
   combineCancel: $('combineCancel'), combineGo: $('combineGo'),
+  compareBtn: $('compareBtn'), compareModal: $('compareModal'), compareBody: $('compareBody'),
+  compareInput: $('compareInput'), comparePick: $('comparePick'), compareClose: $('compareClose'),
   pathInput: $('pathInput'), openGo: $('openGo'),
   textToolBtn: $('textToolBtn'), detectBtn: $('detectBtn'),
   hlColors: $('hlColors'), hlSwatches: $('hlSwatches'), hlCustom: $('hlCustom'),
@@ -1266,6 +1269,96 @@ els.combineGo.onclick = async () => {
   combineFiles = [];
   toast('Combined — reorder pages by dragging thumbnails, then Save As to keep it');
 };
+
+// --- Compare two PDFs (text diff) -------------------------------------------
+// All client-side: pdf.js is the only place a PDF's text layer exists (the Go
+// engine can't extract text), so we read both documents' text and word-diff them
+// with jsdiff. documentText is the shared content-stream-order dump also used by
+// "Export text" — deliberately NOT geometry-sorted (re-sorting scrambles
+// columns), which keeps the diff reliable for two versions from the same producer.
+async function documentText(doc) {
+  let out = '';
+  for (let n = 1; n <= doc.numPages; n++) {
+    let tc;
+    try { tc = await (await doc.getPage(n)).getTextContent(); }
+    catch { continue; } // image-only page: no text layer
+    for (const it of tc.items) {
+      out += it.str;
+      if (it.hasEOL) out += '\n';
+    }
+    out += '\n'; // blank line between pages
+  }
+  return out;
+}
+
+function openCompare() {
+  if (!pdfDocument) return toast('Open a PDF first');
+  els.compareBody.innerHTML = '<p class="scan-where">Choose a PDF to compare against the open document.</p>';
+  els.compareModal.hidden = false;
+}
+els.compareBtn.onclick = openCompare;
+els.compareClose.onclick = () => { els.compareModal.hidden = true; };
+els.comparePick.onclick = () => els.compareInput.click();
+els.compareInput.onchange = async () => {
+  const f = els.compareInput.files[0];
+  els.compareInput.value = '';
+  if (!f) return;
+  els.compareBody.innerHTML = '<p class="scan-where">Comparing…</p>';
+  let other;
+  try {
+    const buf = new Uint8Array(await f.arrayBuffer());
+    other = await pdfjsLib.getDocument({ data: buf }).promise;
+  } catch {
+    els.compareBody.innerHTML = '<p class="scan-where">Could not read that PDF.</p>';
+    return;
+  }
+  try {
+    const a = await documentText(pdfDocument);
+    const b = await documentText(other);
+    renderCompare(a, b, f.name);
+  } finally {
+    other.destroy(); // free the comparison doc; only the open document stays loaded
+  }
+};
+
+// renderCompare word-diffs the open document (a) against the chosen file (b) and
+// paints the result inline: removed runs struck through in red, additions in
+// green, unchanged text muted. Empty text on either side means a scan with no
+// text layer — say so rather than show a bogus all-changed diff. DOM is built
+// with textContent (never innerHTML) so PDF text can't inject markup.
+function renderCompare(a, b, name) {
+  const body = els.compareBody;
+  body.textContent = '';
+  const note = (msg) => {
+    const p = document.createElement('p');
+    p.className = 'scan-where';
+    p.textContent = msg;
+    body.appendChild(p);
+  };
+  if (!a.trim() || !b.trim()) {
+    note(!a.trim()
+      ? 'The open document has no extractable text (a scan?). Run OCR on it first, then compare.'
+      : `“${name}” has no extractable text (a scan?). Run OCR on it first, then compare.`);
+    return;
+  }
+  const parts = diffWords(a, b);
+  if (!parts.some((p) => p.added || p.removed)) {
+    note('No text differences — the two documents’ text is identical.');
+    return;
+  }
+  const dels = parts.filter((p) => p.removed).length;
+  const adds = parts.filter((p) => p.added).length;
+  note(`Open document → “${name}”: ${dels} removed and ${adds} added section(s). Removed text is struck through in red, additions in green.`);
+  const pre = document.createElement('div');
+  pre.className = 'difftext';
+  for (const part of parts) {
+    const span = document.createElement('span');
+    span.textContent = part.value;
+    span.className = part.added ? 'diffadd' : part.removed ? 'diffdel' : 'diffsame';
+    pre.appendChild(span);
+  }
+  body.appendChild(pre);
+}
 
 // openSmart routes the Open box to a URL fetch or a local path open.
 function openSmart(value) {
@@ -3091,22 +3184,10 @@ els.exportPngBtn.onclick = async () => {
 
 els.exportTextBtn.onclick = async () => {
   if (!pdfDocument) return toast('Open a PDF first');
-  // Best-effort dump of the document's text layer via pdf.js. Items come in
-  // content-stream order (left as-is — re-sorting risks scrambling columns);
-  // pdf.js emits its own whitespace items for gaps, so concatenating str with a
-  // newline on each item's hasEOL gives usable text. Scanned / image-only pages
-  // have no text layer and contribute nothing (there is no OCR).
-  let out = '';
-  for (let n = 1; n <= pdfDocument.numPages; n++) {
-    let tc;
-    try { tc = await (await pdfDocument.getPage(n)).getTextContent(); }
-    catch { continue; } // image-only page: no text layer
-    for (const it of tc.items) {
-      out += it.str;
-      if (it.hasEOL) out += '\n';
-    }
-    out += '\n'; // blank line between pages
-  }
+  // Best-effort dump of the document's text layer via pdf.js (see documentText:
+  // content-stream order, hasEOL newlines; scanned pages have no text layer and
+  // contribute nothing). Compare uses the same helper so the two stay in step.
+  const out = await documentText(pdfDocument);
   openSaveAs(new Blob([out], { type: 'text/plain' }), exportBase() + '.txt', 'Export text (.txt)');
 };
 
@@ -5053,7 +5134,7 @@ const DOC_REQUIRED = [
   'detectBtn', 'editTextBtn', 'removeOriginalsBtn', 'ocrBtn', 'ocrLang', 'autofillBtn', 'splitBtn',
   'splitBoxBtn', 'applyBoxSplitBtn', 'rotateLeftBtn', 'rotateRightBtn',
   'extractBtn', 'insertBlankBtn', 'duplicatePageBtn', 'insertPdfBtn', 'pageNumBtn', 'nupBtn', 'cropBtn',
-  'redactBtn', 'applyRedactBtn', 'scanBtn', 'attachBtn', 'encryptBtn', 'decryptBtn',
+  'redactBtn', 'applyRedactBtn', 'scanBtn', 'attachBtn', 'encryptBtn', 'decryptBtn', 'compareBtn',
   'finalizeBtn', 'timestampBtn', 'cosignBtn', 'sessionInitBtn', 'sessionSendBtn',
 ];
 function setDocControls(enabled) {
