@@ -50,6 +50,62 @@ func TestStampTextLayerThaiDevanagari(t *testing.T) {
 	}
 }
 
+// TestStampTextLayerArabicHebrew is the coverage gate for the RTL scripts. It can't
+// use strings.Contains like the LTR gate: pdfcpu writes the invisible layer in
+// correct logical order with a correct /ToUnicode, but a bidi-aware extractor
+// (poppler/pdftotext) reverses RTL text on *display*, so the extracted string is
+// the sample reversed (plus U+202A/B bidi controls). We therefore assert a
+// rune-multiset round-trip — every glyph of the sample comes back — which proves
+// font coverage + extractability without depending on display order. (Nib's own
+// Find path, pdf.js getTextContent, reads the logical-order bytes directly.)
+func TestStampTextLayerArabicHebrew(t *testing.T) {
+	if _, err := exec.LookPath("pdftotext"); err != nil {
+		t.Skip("pdftotext (poppler) not installed")
+	}
+	samples := map[string]string{
+		"ara": "مرحبا بالعالم",
+		"heb": "שלום עולם",
+	}
+	for lang, sample := range samples {
+		base, err := testpdf.Text("scan")
+		if err != nil {
+			t.Fatal(err)
+		}
+		out, err := StampTextLayer(base, []Word{{Page: 1, Rect: [4]float64{50, 100, 320, 116}, Text: sample}}, lang)
+		if err != nil {
+			t.Errorf("%s: StampTextLayer: %v", lang, err)
+			continue
+		}
+		got := pdfToText(t, out)
+		if missing := missingRunes(sample, got); missing != "" {
+			t.Errorf("%s: %q did not round-trip — glyphs %q absent from extracted %q (font missing or lacks glyphs)",
+				lang, sample, missing, strings.TrimSpace(got))
+		}
+	}
+}
+
+// missingRunes returns the runes of want (ignoring spaces) that do not appear in
+// got with at least the same multiplicity — order-independent, so it tolerates the
+// bidi reversal a display-oriented extractor applies to RTL text.
+func missingRunes(want, got string) string {
+	counts := map[rune]int{}
+	for _, r := range got {
+		counts[r]++
+	}
+	var missing []rune
+	for _, r := range want {
+		if r == ' ' {
+			continue
+		}
+		if counts[r] <= 0 {
+			missing = append(missing, r)
+			continue
+		}
+		counts[r]--
+	}
+	return string(missing)
+}
+
 func TestOCRFontFor(t *testing.T) {
 	cases := map[string]string{
 		"eng": "Roboto-Regular",
@@ -58,6 +114,8 @@ func TestOCRFontFor(t *testing.T) {
 		"tha": "NotoSansThai-Regular",
 		"hin": "NotoSansDevanagari-Regular",
 		"mar": "NotoSansDevanagari-Regular",
+		"ara": "NotoSansArabic-Regular",
+		"heb": "NotoSansHebrew-Regular",
 		"":    "Roboto-Regular",
 		"zzz": "Roboto-Regular",
 	}

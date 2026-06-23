@@ -150,8 +150,9 @@ engine is built into Nib (no install, no cloud, nothing leaves your computer) â€
 so it works offline like everything else. Pick the scan's language from the
 dropdown next to the button (**English, French, German, Spanish, Italian,
 Russian, Ukrainian, Bulgarian, Serbian, Macedonian, Belarusian, Greek, Thai,
-Hindi**) for best accuracy; full Unicode comes through either way (accents,
-quotes, dashes, and non-Latin scripts). The OCR'd document also gets its
+Hindi, Arabic, Hebrew**) for best accuracy; full Unicode comes through either way
+(accents, quotes, dashes, and non-Latin scripts â€” including right-to-left Arabic
+and Hebrew, which stay searchable in logical order). The OCR'd document also gets its
 **language tag** set (PDF `/Lang`) so a screen reader announces it in the right
 voice. It's undoable, too.
 
