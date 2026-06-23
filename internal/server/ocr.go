@@ -57,6 +57,16 @@ func (s *Server) handleOCR(w http.ResponseWriter, r *http.Request) {
 		httpError(w, http.StatusUnprocessableEntity, "could not add the text layer")
 		return
 	}
+	// Declare the document's language for assistive technology (the WCAG
+	// "language of page" primitive) — an OCR'd scan now knows what it's written in.
+	// Best-effort: a failure here must not fail the OCR itself.
+	if tag := pdfops.OCRLangToBCP47(body.Lang); tag != "" {
+		if tagged, lerr := pdfops.SetLang(result, tag); lerr == nil {
+			result = tagged
+		} else {
+			log.Printf("ocr: could not set document language %q: %v", tag, lerr)
+		}
+	}
 	s.commitMutation(doc.data, result)
 	writeJSON(w, s.docResponse())
 }
