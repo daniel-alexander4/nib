@@ -24,6 +24,7 @@ import {
   findRunChoices,
   snapChoices,
   dedupeGroups,
+  buildTextRows,
 } from './detect.js';
 import { diffWords } from './vendor/diff/diff.min.mjs';
 
@@ -60,6 +61,9 @@ const els = {
   selMoveFrontBtn: $('selMoveFrontBtn'), selMoveBackBtn: $('selMoveBackBtn'),
   appendBtn: $('appendBtn'), appendInput: $('appendInput'),
   redactBtn: $('redactBtn'), applyRedactBtn: $('applyRedactBtn'),
+  redactTextBtn: $('redactTextBtn'), redactTextModal: $('redactTextModal'),
+  rtTerm: $('rtTerm'), rtSSN: $('rtSSN'), rtEmail: $('rtEmail'), rtPhone: $('rtPhone'),
+  rtCard: $('rtCard'), rtFind: $('rtFind'), rtStatus: $('rtStatus'), rtCancel: $('rtCancel'),
   editTextBtn: $('editTextBtn'), removeOriginalsBtn: $('removeOriginalsBtn'), ocrBtn: $('ocrBtn'), ocrLang: $('ocrLang'),
   scanBtn: $('scanBtn'), scanModal: $('scanModal'), scanBody: $('scanBody'),
   scanStripBtn: $('scanStripBtn'), scanMetaBtn: $('scanMetaBtn'), scanSafeBtn: $('scanSafeBtn'),
@@ -3646,6 +3650,118 @@ els.applyRedactBtn.onclick = async () => {
   toast('Redacted — affected pages are now flattened images');
 };
 
+// --- search / pattern redaction ----------------------------------------------
+// Find every occurrence of a term or PII pattern in the text layer and mark each
+// one for redaction, feeding the SAME redactMarks → applyRedact pipeline as the
+// hand-drawn boxes. All client-side: pdf.js is the only place the text layer
+// lives (the Go engine can't extract text). Marks are reviewed as boxes, then the
+// user presses Apply — the existing irreversible, true-removal bake.
+const PII_PATTERNS = {
+  // Fixed (not user-supplied), so no catastrophic-backtracking risk. Separators
+  // are optional so the common formatted and bare forms both match.
+  rtSSN: /\b\d{3}[-.\s]?\d{2}[-.\s]?\d{4}\b/g,
+  rtEmail: /\b[\w.+-]+@[\w-]+\.[\w.-]+\b/g,
+  rtPhone: /(?:\+?1[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}\b/g,
+  rtCard: /\b(?:\d[ -]?){13,16}\b/g,
+};
+function escapeRegExp(s) { return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
+
+// addGeneratedMark pushes a fraction mark (page-content, top-left — the redactMarks
+// shape) and appends a visible .redactmark box so the user can review/remove it
+// before applying. Positioned like the hand-draw path (sizeMark), via the page's
+// content rect so it lines up with the baked output.
+function addGeneratedMark(pageNum, m) {
+  redactMarks.push({ page: pageNum, ...m });
+  const pv = viewer.getPageView(pageNum - 1);
+  if (!pv?.div) return;
+  // Same basis as the hand-draw sizeMark: absolute children sit relative to the
+  // page div's content box, so the fraction maps straight to a px offset.
+  const cr = pageContentRect(pv.div);
+  const div = document.createElement('div');
+  div.className = 'redactmark';
+  div.style.left = (m.fx * cr.width) + 'px';
+  div.style.top = (m.fy * cr.height) + 'px';
+  div.style.width = (m.fw * cr.width) + 'px';
+  div.style.height = (m.fh * cr.height) + 'px';
+  pv.div.appendChild(div);
+}
+
+// scanTextMatches walks every page's text, runs each pattern over the per-row
+// reconstructed string (buildTextRows — the same per-character geometry the field
+// detectors use), and returns over-covering marks for each hit. Text runs are
+// mapped into top-left page space (like the Detect path) so the box fractions go
+// straight into redactMarks. Because pdf.js fragments a run at arbitrary points and
+// buildTextRows joins fragments with a space, a "compact" string drops those
+// injected boundary spaces (cx === NaN) so a pattern split across runs still matches.
+async function scanTextMatches(patterns) {
+  const marks = [];
+  for (let n = 1; n <= pdfDocument.numPages; n++) {
+    const page = await pdfDocument.getPage(n);
+    const vp = page.getViewport({ scale: 1 });
+    let tc;
+    try { tc = await page.getTextContent(); } catch { continue; } // image-only: no text
+    const items = tc.items.filter((it) => it.str && it.str.trim()).map((it) => {
+      const t = pdfjsLib.Util.transform(vp.transform, it.transform);
+      return { str: it.str, x: t[4], y: t[5], w: it.width, h: it.height || Math.hypot(it.transform[2], it.transform[3]) };
+    });
+    for (const row of buildTextRows(items)) {
+      let compact = ''; const map = [];
+      for (let k = 0; k < row.s.length; k++) {
+        if (Number.isNaN(row.cx[k])) continue; // injected inter-run boundary space
+        compact += row.s[k]; map.push(k);
+      }
+      for (const re of patterns) {
+        re.lastIndex = 0;
+        let m;
+        while ((m = re.exec(compact))) {
+          if (!m[0].length) { re.lastIndex++; continue; } // zero-width guard
+          const lo = map[m.index], hi = map[m.index + m[0].length - 1];
+          let x0 = Infinity, x1 = -Infinity, hh = 0;
+          for (let k = lo; k <= hi; k++) {
+            if (Number.isNaN(row.cx[k])) continue;
+            x0 = Math.min(x0, row.cx[k]); x1 = Math.max(x1, row.cx[k]); hh = Math.max(hh, row.ch[k]);
+          }
+          if (!isFinite(x0)) continue;
+          // cx are glyph centres and the advance is an estimate, so pad generously:
+          // redaction must over-cover, never leave an edge of the match showing.
+          const bx0 = x0 - hh * 0.8, bx1 = x1 + hh * 0.8;
+          const by0 = row.y - hh * 1.15, by1 = row.y + hh * 0.45; // baseline (y-down) ± ascender/descender
+          marks.push({ page: n, fx: bx0 / vp.width, fy: by0 / vp.height,
+            fw: (bx1 - bx0) / vp.width, fh: (by1 - by0) / vp.height });
+        }
+      }
+    }
+  }
+  return marks;
+}
+
+function openRedactText() {
+  if (!pdfDocument) return toast('Open a PDF first');
+  els.rtStatus.textContent = '';
+  els.redactTextModal.hidden = false;
+}
+els.redactTextBtn.onclick = openRedactText;
+els.rtCancel.onclick = () => { els.redactTextModal.hidden = true; };
+els.rtFind.onclick = async () => {
+  const patterns = [];
+  const term = els.rtTerm.value.trim();
+  if (term) patterns.push(new RegExp(escapeRegExp(term), 'gi'));
+  for (const id of ['rtSSN', 'rtEmail', 'rtPhone', 'rtCard']) {
+    if (els[id].checked) patterns.push(new RegExp(PII_PATTERNS[id].source, 'g'));
+  }
+  if (!patterns.length) { els.rtStatus.textContent = 'Enter a word/phrase or tick a pattern.'; return; }
+  els.rtStatus.textContent = 'Searching…';
+  const marks = await scanTextMatches(patterns);
+  if (!marks.length) {
+    els.rtStatus.textContent = 'No matches found in the text layer (a scan? run OCR first).';
+    return;
+  }
+  const pages = new Set(marks.map((m) => m.page));
+  for (const m of marks) addGeneratedMark(m.page, { fx: m.fx, fy: m.fy, fw: m.fw, fh: m.fh });
+  els.redactTextModal.hidden = true;
+  toast(`${marks.length} match(es) marked on ${pages.size} page(s) — review the boxes, then “Apply redactions”.`);
+};
+
 // --- split by hand-drawn regions ---------------------------------------------
 // Draw rectangles on the current page; on Apply, each becomes its own page (the
 // page cropped to that rectangle, server-side via op:'splitrects'). The regions
@@ -3993,7 +4109,7 @@ els.signCompleteBtn.onclick = () => {
 const EDITING_TOOLS = [
   'textToolBtn', 'highlightToolBtn', 'drawToolBtn', 'detectBtn',
   'editTextBtn', 'removeOriginalsBtn', 'autofillBtn',
-  'redactBtn', 'applyRedactBtn', 'scanBtn',
+  'redactBtn', 'redactTextBtn', 'applyRedactBtn', 'scanBtn',
 ];
 function setEditingEnabled(on) {
   for (const id of EDITING_TOOLS) {
@@ -5246,7 +5362,7 @@ const DOC_REQUIRED = [
   'detectBtn', 'editTextBtn', 'removeOriginalsBtn', 'ocrBtn', 'ocrLang', 'autofillBtn', 'splitBtn',
   'splitBoxBtn', 'applyBoxSplitBtn', 'rotateLeftBtn', 'rotateRightBtn',
   'extractBtn', 'insertBlankBtn', 'duplicatePageBtn', 'insertPdfBtn', 'pageNumBtn', 'pageLabelsBtn', 'nupBtn', 'cropBtn',
-  'redactBtn', 'applyRedactBtn', 'scanBtn', 'attachBtn', 'encryptBtn', 'decryptBtn', 'compareBtn',
+  'redactBtn', 'redactTextBtn', 'applyRedactBtn', 'scanBtn', 'attachBtn', 'encryptBtn', 'decryptBtn', 'compareBtn',
   'finalizeBtn', 'timestampBtn', 'cosignBtn', 'sessionInitBtn', 'sessionSendBtn',
 ];
 function setDocControls(enabled) {
