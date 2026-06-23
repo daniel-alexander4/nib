@@ -12,8 +12,8 @@ import (
 
 // FormField is one interactive AcroForm field to author onto an existing page.
 // Rect is in PDF points, bottom-left origin (x0,y0,x1,y1) — the same space the
-// client's rectPoints produces. Kind is "text", "check", or "dropdown" (Options
-// is the dropdown's choice list; required and ignored for the other kinds).
+// client's rectPoints produces. Kind is "text", "check", "dropdown", or "radio".
+// Options is the choice list for dropdown (≥1) and radio (≥2); ignored otherwise.
 type FormField struct {
 	Page    int        `json:"page"`
 	Rect    [4]float64 `json:"rect"`
@@ -65,6 +65,24 @@ func AuthorForm(pdf []byte, fields []FormField) ([]byte, error) {
 				"id": f.Name, "options": f.Options,
 				"pos": []float64{x0, y0}, "width": x1 - x0,
 			})
+		case "radio":
+			// pdfcpu's radiobuttongroup auto-lays-out the buttons from a single
+			// anchor, so the drawn box just picks the start point (lower-left);
+			// buttons march to the right, each labelled with its value. Horizontal
+			// only for now (vertical needs a separate anchor convention). pdfcpu
+			// requires ≥2 values.
+			if len(f.Options) < 2 {
+				return nil, fmt.Errorf("radio %q needs at least two options", f.Name)
+			}
+			arr, _ := content["radiobuttongroup"].([]any)
+			content["radiobuttongroup"] = append(arr, map[string]any{
+				"id": f.Name, "orientation": "hor",
+				"pos": []float64{x0, y0}, "width": y1 - y0,
+				"buttons": map[string]any{
+					"values": f.Options,
+					"label":  map[string]any{"value": "dummy", "width": 60, "gap": 4, "pos": "right"},
+				},
+			})
 		default: // text
 			arr, _ := content["textfield"].([]any)
 			content["textfield"] = append(arr, map[string]any{
@@ -75,8 +93,11 @@ func AuthorForm(pdf []byte, fields []FormField) ([]byte, error) {
 	}
 	doc := map[string]any{
 		"origin": "LowerLeft",
-		"fonts":  map[string]any{"input": map[string]any{"name": "Helvetica", "size": 10}},
-		"pages":  pages,
+		"fonts": map[string]any{
+			"input": map[string]any{"name": "Helvetica", "size": 10},
+			"label": map[string]any{"name": "Helvetica", "size": 9}, // radio button value labels
+		},
+		"pages": pages,
 	}
 	b, err := json.Marshal(doc)
 	if err != nil {
