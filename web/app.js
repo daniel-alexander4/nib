@@ -3700,25 +3700,36 @@ const PII_PATTERNS = {
 };
 function escapeRegExp(s) { return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
 
-// addGeneratedMark pushes a fraction mark (page-content, top-left — the redactMarks
-// shape) and appends a visible .redactmark box so the user can review/remove it
-// before applying. Positioned like the hand-draw path (sizeMark), via the page's
-// content rect so it lines up with the baked output.
-function addGeneratedMark(pageNum, m) {
-  redactMarks.push({ page: pageNum, ...m });
-  const pv = viewer.getPageView(pageNum - 1);
-  if (!pv?.div) return;
-  // Same basis as the hand-draw sizeMark: absolute children sit relative to the
-  // page div's content box, so the fraction maps straight to a px offset.
+// drawRedactMarks (re)draws every redaction box for one rendered page from
+// redactMarks (page-content top-left fractions → the page's live content box).
+// relayoutRedactMarks does it for all rendered pages, and both run on every
+// pagerendered/scalechanging — so marks show on EVERY marked page and reflow on
+// zoom, not just the page that was on screen when they were generated. (The boxes
+// are pure review overlays; the source of truth is redactMarks, which applyRedact
+// flattens page by page regardless of what's currently drawn.)
+function drawRedactMarks(pv, pageNum) {
+  pv.div.querySelectorAll('.redactmark').forEach((el) => el.remove());
   const cr = pageContentRect(pv.div);
-  const div = document.createElement('div');
-  div.className = 'redactmark';
-  div.style.left = (m.fx * cr.width) + 'px';
-  div.style.top = (m.fy * cr.height) + 'px';
-  div.style.width = (m.fw * cr.width) + 'px';
-  div.style.height = (m.fh * cr.height) + 'px';
-  pv.div.appendChild(div);
+  for (const m of redactMarks) {
+    if (m.page !== pageNum) continue;
+    const div = document.createElement('div');
+    div.className = 'redactmark';
+    div.style.left = (m.fx * cr.width) + 'px';
+    div.style.top = (m.fy * cr.height) + 'px';
+    div.style.width = (m.fw * cr.width) + 'px';
+    div.style.height = (m.fh * cr.height) + 'px';
+    pv.div.appendChild(div);
+  }
 }
+function relayoutRedactMarks() {
+  if (!pdfDocument) return;
+  for (let i = 0; i < pdfDocument.numPages; i++) {
+    const pv = viewer.getPageView(i);
+    if (pv?.div) drawRedactMarks(pv, i + 1);
+  }
+}
+eventBus.on('pagerendered', relayoutRedactMarks);
+eventBus.on('scalechanging', relayoutRedactMarks);
 
 // scanTextMatches walks every page's text, runs each pattern over the per-row
 // reconstructed string (buildTextRows — the same per-character geometry the field
@@ -3791,9 +3802,10 @@ els.rtFind.onclick = async () => {
     return;
   }
   const pages = new Set(marks.map((m) => m.page));
-  for (const m of marks) addGeneratedMark(m.page, { fx: m.fx, fy: m.fy, fw: m.fw, fh: m.fh });
+  redactMarks.push(...marks); // {page,fx,fy,fw,fh}; drawn per page on render
+  relayoutRedactMarks();
   els.redactTextModal.hidden = true;
-  toast(`${marks.length} match(es) marked on ${pages.size} page(s) — review the boxes, then “Apply redactions”.`);
+  toast(`${marks.length} match(es) marked on ${pages.size} page(s) — review the boxes (scroll to see them all), then “Apply redactions”.`);
 };
 
 // --- split by hand-drawn regions ---------------------------------------------
@@ -5521,6 +5533,7 @@ function clearOverlays() {
   exitShape();    // nor a pending shape-draw mode
   exitCrop();     // nor a pending crop-draw mode
   exitNote(); exitDropdown(); exitRadio();     // nor a pending note-placement mode
+  redactMarks = []; // pending redaction boxes don't carry to a new/reloaded document
   clearOverlayHistory(); // a new/reloaded document resets the overlay-edit undo stack
 }
 // clearDetected drops only auto-detected fields (text/check/circleone), keeping
