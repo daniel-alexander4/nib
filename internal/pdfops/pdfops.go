@@ -1095,6 +1095,89 @@ func StampPageNumbers(pdf []byte, st PageNumberStyle) ([]byte, error) {
 	return out.Bytes(), nil
 }
 
+// pageLabelStyles maps Nib's style names to the PDF /S numbering-style codes
+// (PDF 32000 §12.4.2): decimal, upper/lower Roman, upper/lower letters. "none"
+// maps to "" → a label dict with no /S, i.e. a prefix-only label (or unlabelled).
+var pageLabelStyles = map[string]string{
+	"decimal":     "D",
+	"roman-upper": "R",
+	"roman-lower": "r",
+	"alpha-upper": "A",
+	"alpha-lower": "a",
+	"none":        "",
+}
+
+// PageLabelRange is one entry of a /PageLabels number tree: from page Start
+// (1-based) onward, pages carry a logical label numbered in Style, counting from
+// First, behind an optional Prefix. Ranges are contiguous — each runs until the
+// next begins — so a front-matter+body document is two ranges.
+type PageLabelRange struct {
+	Start  int    `json:"start"`  // 1-based page the range begins on
+	Style  string `json:"style"`  // decimal | roman-lower | roman-upper | alpha-lower | alpha-upper | none
+	Prefix string `json:"prefix"` // text before the number (optional)
+	First  int    `json:"first"`  // first label value in the range (default 1)
+}
+
+// SetPageLabels writes a /PageLabels number tree into the catalog so a viewer
+// shows logical page numbers (front-matter i, ii, iii then body 1, 2, 3) in its
+// page box and thumbnails, independent of the physical sequence. pdfcpu exposes
+// no page-label API, so the number tree is built by hand and spliced onto the
+// catalog — the same read→build-dict→IndRefForNewObject→assign shape AddBookmarks
+// uses for /Outlines. The ranges need not start at page 1 (pages before the first
+// range simply carry no label).
+func SetPageLabels(pdf []byte, ranges []PageLabelRange) ([]byte, error) {
+	n, err := PageCount(pdf)
+	if err != nil {
+		return nil, err
+	}
+	if len(ranges) == 0 {
+		return nil, fmt.Errorf("no page-label ranges given")
+	}
+	// Sort a copy by Start so the number-tree keys ascend, as pdfcpu requires.
+	rs := append([]PageLabelRange(nil), ranges...)
+	sort.Slice(rs, func(i, j int) bool { return rs[i].Start < rs[j].Start })
+
+	nums := types.Array{}
+	prev := 0
+	for _, r := range rs {
+		s, ok := pageLabelStyles[r.Style]
+		if !ok {
+			return nil, fmt.Errorf("unknown page-label style %q", r.Style)
+		}
+		if r.Start < 1 || r.Start > n {
+			return nil, fmt.Errorf("page-label range start %d out of range 1..%d", r.Start, n)
+		}
+		if r.Start <= prev {
+			return nil, fmt.Errorf("page-label ranges must start on distinct, ascending pages")
+		}
+		prev = r.Start
+		label := types.Dict{"Type": types.Name("PageLabel")}
+		if s != "" {
+			label["S"] = types.Name(s)
+		}
+		if r.Prefix != "" {
+			label["P"] = types.StringLiteral(types.EncodeUTF16String(r.Prefix))
+		}
+		if r.First > 1 {
+			label["St"] = types.Integer(r.First)
+		}
+		nums = append(nums, types.Integer(r.Start-1), label)
+	}
+
+	return writeMutated(pdf, func(ctx *model.Context) error {
+		root, err := ctx.XRefTable.Catalog()
+		if err != nil {
+			return err
+		}
+		ref, err := ctx.IndRefForNewObject(types.Dict{"Nums": nums})
+		if err != nil {
+			return err
+		}
+		root["PageLabels"] = *ref
+		return nil
+	})
+}
+
 // ExportFormJSON returns the form field data of pdf as pdfcpu's JSON.
 func ExportFormJSON(pdf []byte) ([]byte, error) {
 	var out bytes.Buffer
