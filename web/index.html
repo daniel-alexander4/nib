@@ -198,6 +198,7 @@
 
     <div class="tbtab" data-tab="secure">
       <button id="redactBtn" title="Draw redaction boxes">Redact</button>
+      <button id="redactTextBtn" title="Find a word or pattern (SSN, email, phone, card) and mark every occurrence for redaction">Redact text…</button>
       <button id="applyRedactBtn" title="Permanently redact marked pages">Apply redactions</button>
       <span class="tbsep"></span>
       <button id="scanBtn" title="Find and remove hidden code &amp; content">Scan for hidden content…</button>
@@ -699,6 +700,30 @@
   </div>
 
   <!-- Stamp running page numbers / Bates numbers onto every page -->
+  <!-- Redact text: find a term / PII pattern and mark every hit for redaction. -->
+  <div id="redactTextModal" hidden>
+    <div class="sigcard">
+      <h3>Redact matching text</h3>
+      <p class="libhint">Find every occurrence of a word/phrase or a built-in pattern and mark it for
+        redaction. Matches are marked as boxes you can review (and remove individually) — then press
+        <strong>Apply redactions</strong> to permanently flatten those pages. Reads the text layer, so a
+        scanned PDF with no text finds nothing — run <strong>OCR</strong> on it first.</p>
+      <label>Word or phrase <input id="rtTerm" type="text" placeholder="optional — e.g. a name or account number" /></label>
+      <div class="splitcontrols">
+        <label class="check"><input id="rtSSN" type="checkbox" /> SSN</label>
+        <label class="check"><input id="rtEmail" type="checkbox" /> Email</label>
+        <label class="check"><input id="rtPhone" type="checkbox" /> Phone (US)</label>
+        <label class="check"><input id="rtCard" type="checkbox" /> Card number</label>
+      </div>
+      <p id="rtStatus" class="libhint"></p>
+      <div class="sigbtns">
+        <span class="grow"></span>
+        <button id="rtCancel">Cancel</button>
+        <button id="rtFind" class="primary">Find &amp; mark</button>
+      </div>
+    </div>
+  </div>
+
   <div id="pageNumModal" hidden>
     <div class="sigcard">
       <h3>Page numbers</h3>
