@@ -2,8 +2,7 @@ package pdfops
 
 import (
 	"bytes"
-	"os"
-	"path/filepath"
+	"io"
 	"testing"
 
 	"nib/internal/testpdf"
@@ -17,28 +16,18 @@ import (
 // streams first, so a FlateDecode'd copy of the text can't hide from the scan.
 func contentContains(t *testing.T, pdf []byte, pages, needle string) bool {
 	t.Helper()
-	dir := t.TempDir()
 	var sel []string
 	if pages != "" {
 		sel = []string{pages}
 	}
-	if err := api.ExtractContent(bytes.NewReader(pdf), dir, "doc.pdf", sel, model.NewDefaultConfiguration()); err != nil {
+	// pdfcpu v0.13 ExtractContent hands each page's decoded content stream to a
+	// callback; accumulate them all and scan the lot for the needle.
+	var buf bytes.Buffer
+	digest := func(r io.Reader, _ int) error { _, err := io.Copy(&buf, r); return err }
+	if err := api.ExtractContent(bytes.NewReader(pdf), sel, digest, model.NewDefaultConfiguration()); err != nil {
 		t.Fatalf("extract content: %v", err)
 	}
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, e := range entries {
-		b, err := os.ReadFile(filepath.Join(dir, e.Name()))
-		if err != nil {
-			t.Fatal(err)
-		}
-		if bytes.Contains(b, []byte(needle)) {
-			return true
-		}
-	}
-	return false
+	return bytes.Contains(buf.Bytes(), []byte(needle))
 }
 
 // TestRedactLeavesNoResidualContent proves nib's "replace the page with a flat
