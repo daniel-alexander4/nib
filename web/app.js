@@ -39,6 +39,7 @@ const els = {
   textToolBtn: $('textToolBtn'), detectBtn: $('detectBtn'),
   hlColors: $('hlColors'), hlSwatches: $('hlSwatches'), hlCustom: $('hlCustom'),
   borderBtn: $('borderBtn'), borderWidth: $('borderWidth'), borderWidthInput: $('borderWidthInput'),
+  dropdownBtn: $('dropdownBtn'),
   shapeBtn: $('shapeBtn'), shapeOpts: $('shapeOpts'), shapeFill: $('shapeFill'),
   noteBtn: $('noteBtn'),
   prevBtn: $('prevBtn'), nextBtn: $('nextBtn'),
@@ -2917,7 +2918,7 @@ els.saveFillableBtn.onclick = () => {
     row.className = 'fieldname-row';
     const tag = document.createElement('span');
     tag.className = 'fieldname-kind';
-    tag.textContent = (f.kind === 'check' ? '☑' : '✎') + ' p' + f.page;
+    tag.textContent = (f.kind === 'check' ? '☑' : f.kind === 'dropdown' ? '▾' : '✎') + ' p' + f.page;
     const inp = document.createElement('input');
     inp.type = 'text';
     inp.value = 'field_' + (i + 1);
@@ -2942,13 +2943,20 @@ els.fieldNameGo.onclick = async () => {
   // Normalize names client-side so authoring never hits pdfcpu's empty/duplicate
   // field-id errors: trim, blank → field_N, then de-dupe with a numeric suffix.
   const seen = new Set();
-  const fields = pendingAuthor.map((f, i) => {
+  const fields = [];
+  pendingAuthor.forEach((f, i) => {
+    if (f.kind === 'dropdown' && !(f.options && f.options.length)) {
+      toast('Skipped a dropdown with no options'); return; // pdfcpu requires ≥1
+    }
     const base = (f.input.value || '').trim() || ('field_' + (i + 1));
     let name = base;
     for (let n = 2; seen.has(name); n++) name = base + '_' + n;
     seen.add(name);
-    return { page: f.page, rect: f.rect, kind: f.kind, name };
+    const spec = { page: f.page, rect: f.rect, kind: f.kind, name };
+    if (f.kind === 'dropdown') spec.options = f.options;
+    fields.push(spec);
   });
+  if (!fields.length) return;
   // Post the base document WITHOUT baking the overlay fields — they become widgets.
   const saved = pdfDocument.annotationStorage.size > 0
     ? await pdfDocument.saveDocument()
@@ -3240,7 +3248,7 @@ let redStart = null, redDiv = null, redHit = null;
 
 els.redactBtn.onclick = () => {
   redactMode = !redactMode;
-  if (redactMode) { setMarkerMode(null); exitSplitBox(); exitBorder(); exitCrop(); exitNote(); exitShape(); } // one box tool at a time
+  if (redactMode) { setMarkerMode(null); exitSplitBox(); exitBorder(); exitCrop(); exitNote(); exitDropdown(); exitShape(); } // one box tool at a time
   reflectRedact();
   els.viewerContainer.style.cursor = redactMode ? 'crosshair' : '';
 };
@@ -3362,7 +3370,7 @@ els.splitBoxBtn.onclick = () => {
   exitBorder();
   exitShape();
   exitCrop();
-  exitNote();
+  exitNote(); exitDropdown();
   if (redactMode) { redactMode = false; reflectRedact(); }
   if (editMode) { editMode = false; reflectEdit(); }
   reflectSplitBox();
@@ -3447,7 +3455,7 @@ els.cropBtn.onclick = () => {
   exitBorder();
   exitShape();
   exitSplitBox();
-  exitNote();
+  exitNote(); exitDropdown();
   if (redactMode) { redactMode = false; reflectRedact(); }
   if (editMode) { editMode = false; reflectEdit(); }
   reflectCrop();
@@ -3514,7 +3522,7 @@ els.editTextBtn.onclick = () => {
   if (!pdfDocument) { toast('Open a PDF first'); return; }
   editMode = !editMode;
   if (editMode && redactMode) { redactMode = false; reflectRedact(); } // one box tool at a time
-  if (editMode) { setMarkerMode(null); exitSplitBox(); exitBorder(); exitCrop(); exitNote(); exitShape(); }
+  if (editMode) { setMarkerMode(null); exitSplitBox(); exitBorder(); exitCrop(); exitNote(); exitDropdown(); exitShape(); }
   reflectEdit();
   els.viewerContainer.style.cursor = editMode ? 'crosshair' : '';
 };
@@ -3731,7 +3739,7 @@ function setMarkerMode(m) {
     exitBorder();
     exitShape();
     exitCrop();
-    exitNote();
+    exitNote(); exitDropdown();
   }
   all('.markers button').forEach((b) => b.classList.toggle('active', b.dataset.marker === m));
   els.viewerContainer.style.cursor = m ? 'crosshair' : '';
@@ -4282,7 +4290,7 @@ function setTool(mode) {
   viewer.annotationEditorMode = {
     mode: activeTool ? pdfjsLib.AnnotationEditorType[activeTool] : pdfjsLib.AnnotationEditorType.NONE,
   };
-  if (activeTool) { exitBorder(); exitNote(); exitShape(); } // Nib-side tools, not pdf.js modes — one at a time
+  if (activeTool) { exitBorder(); exitNote(); exitDropdown(); exitShape(); } // Nib-side tools, not pdf.js modes — one at a time
   // Mirror the active mode onto every control bound to it (Edit menu + toolbar).
   document.querySelectorAll('[data-mode]').forEach((b) => b.classList.toggle('active', b.dataset.mode === activeTool));
   // The highlight color row is contextual — show it only while highlighting (or
@@ -4384,7 +4392,7 @@ els.borderBtn.onclick = () => {
   if (editMode) { editMode = false; reflectEdit(); }
   exitSplitBox();
   exitCrop();
-  exitNote();
+  exitNote(); exitDropdown();
   reflectBorder();
   els.viewerContainer.style.cursor = 'crosshair';
 };
@@ -4447,6 +4455,100 @@ function makeBox(frac, opts) {
   recordAdd(f);
 }
 
+// --- Dropdown tool: place a fillable dropdown (combobox) field ----------------
+// A box-draw tool like Border, but the overlay carries an options list; on "Save
+// as fillable form…" it authors a real AcroForm combobox (see collectAuthorFields
+// → /api/form/author → pdfops.AuthorForm). Options are typed inline on the field.
+let dropdownMode = false;
+let ddStart = null, ddDiv = null, ddHit = null;
+function reflectDropdown() { els.dropdownBtn.classList.toggle('active', dropdownMode); }
+function exitDropdown() {
+  if (!dropdownMode) return;
+  dropdownMode = false;
+  reflectDropdown();
+  els.viewerContainer.style.cursor = '';
+}
+els.dropdownBtn.onclick = () => {
+  if (dropdownMode) { exitDropdown(); return; }
+  if (!pdfDocument) { toast('Open a PDF first'); return; }
+  dropdownMode = true;
+  setTool(null);
+  setMarkerMode(null);
+  if (redactMode) { redactMode = false; reflectRedact(); }
+  if (editMode) { editMode = false; reflectEdit(); }
+  exitSplitBox();
+  exitCrop();
+  exitNote(); exitDropdown(); // exitDropdown here is a no-op (we set the mode below)
+  exitBorder();
+  exitShape();
+  dropdownMode = true;
+  reflectDropdown();
+  els.viewerContainer.style.cursor = 'crosshair';
+};
+els.viewerContainer.addEventListener('pointerdown', (e) => {
+  if (!dropdownMode) return;
+  ddHit = pageAt(e.clientX, e.clientY);
+  if (!ddHit) return;
+  ddStart = { x: e.clientX, y: e.clientY };
+  ddDiv = document.createElement('div');
+  ddDiv.className = 'bordermark';
+  ddHit.pv.div.appendChild(ddDiv);
+  sizeMark(ddDiv, ddHit.r, ddStart, ddStart);
+  e.preventDefault();
+});
+els.viewerContainer.addEventListener('pointermove', (e) => {
+  if (ddStart) sizeMark(ddDiv, ddHit.r, ddStart, { x: e.clientX, y: e.clientY });
+});
+els.viewerContainer.addEventListener('pointerup', async (e) => {
+  if (!ddStart) return;
+  const hit = ddHit, start = ddStart;
+  ddDiv.remove();
+  ddStart = null; ddDiv = null; ddHit = null;
+  const r = hit.r;
+  const fw = Math.abs(e.clientX - start.x) / r.width;
+  const fh = Math.abs(e.clientY - start.y) / r.height;
+  if (fw < 0.01 || fh < 0.01) return; // ignore a stray click
+  const fx0 = (Math.min(start.x, e.clientX) - r.left) / r.width;
+  const fy0 = (Math.min(start.y, e.clientY) - r.top) / r.height;
+  const base = (await pdfDocument.getPage(hit.n)).getViewport({ scale: 1 });
+  makeDropdown([fx0, fy0, fx0 + fw, fy0 + fh], { page: hit.n, pageW: base.width, pageH: base.height });
+});
+
+// makeDropdown registers a draggable/resizable dropdown overlay (kind 'dropdown')
+// with an inline comma-separated options input; the options ride to the server in
+// collectAuthorFields, where each becomes a combobox choice.
+function makeDropdown(frac, opts) {
+  const f = { page: opts.page, frac, pageW: opts.pageW, pageH: opts.pageH, kind: 'dropdown' };
+  const el = document.createElement('div');
+  el.className = 'ovl ovl-dropdown';
+  el.tabIndex = 0;
+  const input = document.createElement('input');
+  input.className = 'dd-opts';
+  input.placeholder = 'options: a, b, c';
+  input.addEventListener('pointerdown', (ev) => ev.stopPropagation());
+  const caret = document.createElement('span');
+  caret.className = 'dd-caret'; caret.textContent = '▾';
+  const handle = document.createElement('span');
+  handle.className = 'stamp-resize';
+  const del = document.createElement('button');
+  del.className = 'stamp-del'; del.textContent = '×'; del.title = 'Remove dropdown';
+  el.append(input, caret, handle, del);
+  f.el = el; f.optsInput = input;
+
+  const remove = () => deleteField(f);
+  del.onclick = (ev) => { ev.stopPropagation(); remove(); };
+  // Delete/Backspace removes the field only when the box (not the options input) is focused.
+  el.addEventListener('keydown', (ev) => { if ((ev.key === 'Delete' || ev.key === 'Backspace') && ev.target === el) remove(); });
+  enableStampGestures(f, el, handle);
+
+  overlayFields.push(f);
+  const pv = viewer.getPageView(f.page - 1);
+  pv.div.appendChild(el);
+  layoutField(f, pv);
+  recordAdd(f);
+  input.focus();
+}
+
 // boxPNG renders a transparent PNG with a stroked rectangle outline in hex at the
 // given pen weight (PDF points). Drawing at the rect's own point size (× super-
 // sample) means the server's scale-to-rect is uniform, so the weight stays true.
@@ -4491,7 +4593,7 @@ els.shapeBtn.onclick = () => {
   if (editMode) { editMode = false; reflectEdit(); }
   exitSplitBox();
   exitCrop();
-  exitNote();
+  exitNote(); exitDropdown();
   exitBorder();
   reflectShape();
   els.viewerContainer.style.cursor = 'crosshair';
@@ -4630,7 +4732,7 @@ function exitNote() {
   els.viewerContainer.style.cursor = '';
 }
 els.noteBtn.onclick = () => {
-  if (noteMode) { exitNote(); return; }
+  if (noteMode) { exitNote(); exitDropdown(); return; }
   if (!pdfDocument) { toast('Open a PDF first'); return; }
   noteMode = true;
   setTool(null);
@@ -4655,7 +4757,7 @@ els.viewerContainer.addEventListener('pointerdown', async (e) => {
   const base = (await pdfDocument.getPage(hit.n)).getViewport({ scale: 1 }); // PDF points
   const fw = Math.min(0.3, 150 / r.width), fh = Math.min(0.2, 72 / r.height); // default card size
   makeNote([fx, fy, Math.min(fx + fw, 1), Math.min(fy + fh, 1)], { page: hit.n, pageW: base.width, pageH: base.height });
-  exitNote(); // place one; re-click the tool for another
+  exitNote(); exitDropdown(); // place one; re-click the tool for another
 });
 
 // makeNote registers a draggable note card (kind 'note') with an inline comment
@@ -4851,7 +4953,7 @@ function clearOverlays() {
   exitBorder();   // nor a pending border-draw mode
   exitShape();    // nor a pending shape-draw mode
   exitCrop();     // nor a pending crop-draw mode
-  exitNote();     // nor a pending note-placement mode
+  exitNote(); exitDropdown();     // nor a pending note-placement mode
   clearOverlayHistory(); // a new/reloaded document resets the overlay-edit undo stack
 }
 // clearDetected drops only auto-detected fields (text/check/circleone), keeping
@@ -4860,7 +4962,7 @@ function clearOverlays() {
 // placed marker.
 function clearDetected() {
   overlayFields = overlayFields.filter((f) => {
-    if (f.kind === 'stamp' || f.kind === 'edit' || f.kind === 'marker' || f.kind === 'box' || f.kind === 'note' || f.kind === 'shape') return true;
+    if (f.kind === 'stamp' || f.kind === 'edit' || f.kind === 'marker' || f.kind === 'box' || f.kind === 'note' || f.kind === 'shape' || f.kind === 'dropdown') return true;
     f.el.remove();
     return false;
   });
@@ -4936,6 +5038,9 @@ function collectAuthorFields() {
   for (const f of overlayFields) {
     if (f.kind === 'text' || f.kind === 'check') {
       out.push({ page: f.page, rect: rectPoints(f, f.frac), kind: f.kind, el: f.el });
+    } else if (f.kind === 'dropdown') {
+      const options = f.optsInput.value.split(',').map((s) => s.trim()).filter(Boolean);
+      out.push({ page: f.page, rect: rectPoints(f, f.frac), kind: 'dropdown', options, el: f.el });
     }
   }
   return out;
