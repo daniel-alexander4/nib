@@ -56,7 +56,7 @@ const els = {
   selMoveFrontBtn: $('selMoveFrontBtn'), selMoveBackBtn: $('selMoveBackBtn'),
   appendBtn: $('appendBtn'), appendInput: $('appendInput'),
   redactBtn: $('redactBtn'), applyRedactBtn: $('applyRedactBtn'),
-  editTextBtn: $('editTextBtn'), removeOriginalsBtn: $('removeOriginalsBtn'), ocrBtn: $('ocrBtn'),
+  editTextBtn: $('editTextBtn'), removeOriginalsBtn: $('removeOriginalsBtn'), ocrBtn: $('ocrBtn'), ocrLang: $('ocrLang'),
   scanBtn: $('scanBtn'), scanModal: $('scanModal'), scanBody: $('scanBody'),
   scanStripBtn: $('scanStripBtn'), scanMetaBtn: $('scanMetaBtn'), scanSafeBtn: $('scanSafeBtn'),
   scanFlattenBtn: $('scanFlattenBtn'), scanClose: $('scanClose'),
@@ -2719,11 +2719,14 @@ async function runOCR() {
     // context — they must be full URLs or the worker's fetches fail ("Failed to
     // fetch") on the core wasm and the traineddata.
     const base = new URL('./vendor/tesseract/', location.href).href;
-    worker = await window.Tesseract.createWorker('eng', 1, {
+    // Single language for best accuracy; the picker defaults to English so the
+    // common case is unchanged. Each <lang>.traineddata.gz is vendored alongside.
+    const lang = (els.ocrLang && els.ocrLang.value) || 'eng';
+    worker = await window.Tesseract.createWorker(lang, 1, {
       workerPath: base + 'worker.min.js',
       corePath: base + 'tesseract-core-simd.wasm.js',
       langPath: base,
-      gzip: true, // eng.traineddata.gz
+      gzip: true, // <lang>.traineddata.gz
     });
     const words = [];
     const n = pdfDocument.numPages;
@@ -4721,7 +4724,7 @@ const DOC_REQUIRED = [
   'exportZipBtn', 'exportPngBtn', 'exportFormJsonBtn', 'exportFormCsvBtn', 'exportBookmarkSplitBtn',
   'exportPageSplitBtn',
   'textToolBtn', 'highlightToolBtn', 'drawToolBtn',
-  'detectBtn', 'editTextBtn', 'removeOriginalsBtn', 'ocrBtn', 'autofillBtn', 'splitBtn',
+  'detectBtn', 'editTextBtn', 'removeOriginalsBtn', 'ocrBtn', 'ocrLang', 'autofillBtn', 'splitBtn',
   'splitBoxBtn', 'applyBoxSplitBtn', 'rotateLeftBtn', 'rotateRightBtn',
   'extractBtn', 'insertBlankBtn', 'duplicatePageBtn', 'insertPdfBtn', 'pageNumBtn', 'nupBtn', 'cropBtn',
   'redactBtn', 'applyRedactBtn', 'scanBtn', 'attachBtn', 'decryptBtn',
