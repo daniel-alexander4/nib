@@ -86,16 +86,16 @@ func TestSanitizeFilename(t *testing.T) {
 		"   ":         "",
 	}
 	for in, want := range clean {
-		if got := sanitizeFilename(in); got != want {
-			t.Errorf("sanitizeFilename(%q) = %q, want %q", in, got, want)
+		if got := SanitizeFilename(in); got != want {
+			t.Errorf("SanitizeFilename(%q) = %q, want %q", in, got, want)
 		}
 	}
 	// Adversarial inputs must always reduce to a safe base name (no separators,
 	// no NUL, never "." or ".." — those would escape the chosen folder).
 	for _, in := range []string{"../../etc/passwd", `..\..\win`, "/abs/path", "..", ".", "a/b\\c", "x\x00y"} {
-		got := sanitizeFilename(in)
+		got := SanitizeFilename(in)
 		if strings.ContainsAny(got, "/\\\x00") || got == "." || got == ".." {
-			t.Errorf("sanitizeFilename(%q) = %q is not a safe base name", in, got)
+			t.Errorf("SanitizeFilename(%q) = %q is not a safe base name", in, got)
 		}
 	}
 }
