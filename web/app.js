@@ -2907,11 +2907,66 @@ els.saveEditableBtn.onclick = async () => {
 // interactive AcroForm widgets (a blank form to distribute), not flattened text.
 // "Save as fillable form…" opens a naming step: one row per authorable field with
 // an editable name (default field_N), then authors real AcroForm widgets.
+// pageTextItems returns a page's text-layer runs as {str,x,y,w,h} in PDF points,
+// bottom-left (y = the baseline) — the same space rectPoints produces, so field
+// rects and text positions compare directly. Empty on an image-only page (no
+// text layer). Mirrors the text gather in the Detect / Edit-text handlers.
+async function pageTextItems(n) {
+  try {
+    const tc = await (await pdfDocument.getPage(n)).getTextContent();
+    return tc.items.filter((it) => it.str && it.str.trim()).map((it) => ({
+      str: it.str, x: it.transform[4], y: it.transform[5],
+      w: it.width, h: it.height || Math.hypot(it.transform[2], it.transform[3]),
+    }));
+  } catch { return []; } // image-only PDF: no text layer
+}
+
+// suggestFieldName derives a default AcroForm field name from the form's own
+// text: the label just left of the field on the same row (reassembling pdf.js
+// text fragments right-to-left until a wide gap), or else a single run directly
+// above it. CONSERVATIVE BY DESIGN — returns '' (caller falls back to field_N)
+// unless a label is clearly adjacent, because clearing a wrong guess costs the
+// user more than accepting a clean field_N. rect is [x0,yBot,x1,yTop] and items
+// are {str,x,y,w,h}, both PDF points bottom-left.
+function suggestFieldName(rect, items) {
+  const [x0, yBot, x1, yTop] = rect;
+  const fh = Math.max(yTop - yBot, 8); // field line height, floored
+  const slug = (s) => s.normalize('NFD').replace(/[\u0300-\u036f]/g, '') // drop diacritics: Prénom → prenom
+    .toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 40);
+  const ok = (s) => (/[a-z]/.test(s) ? s : ''); // require a letter, else no suggestion
+  // 1. Label to the LEFT, same row (band overlap), reassembled until a wide gap.
+  const left = items
+    .filter((it) => it.y + it.h * 0.8 >= yBot && it.y - it.h * 0.2 <= yTop && it.x + it.w <= x0 + 2)
+    .sort((a, b) => b.x - a.x); // nearest the field first
+  if (left.length && x0 - (left[0].x + left[0].w) <= fh * 2.5) { // nearest label must be adjacent
+    const run = [left[0]];
+    for (let i = 1; i < left.length; i++) {
+      if (run[run.length - 1].x - (left[i].x + left[i].w) > fh * 1.2) break; // wide gap → stop
+      run.push(left[i]);
+    }
+    const name = ok(slug(run.reverse().map((it) => it.str).join(' ')));
+    if (name) return name;
+  }
+  // 2. Single run directly ABOVE, horizontally overlapping the field.
+  const above = items
+    .filter((it) => it.y > yTop - fh * 0.2 && it.y - yTop <= fh * 1.6 && it.x < x1 && it.x + it.w > x0)
+    .sort((a, b) => a.y - b.y); // closest above first
+  return above.length ? ok(slug(above[0].str)) : '';
+}
+
 let pendingAuthor = []; // candidate fields awaiting naming in fieldNameModal
-els.saveFillableBtn.onclick = () => {
+els.saveFillableBtn.onclick = async () => {
   if (!pdfDocument) return;
   pendingAuthor = collectAuthorFields();
   if (!pendingAuthor.length) { toast('Run Detect or place text/checkbox fields first'); return; }
+  // Pre-name each field from the form's own text (see suggestFieldName); each
+  // page's text layer is fetched once. Conservative, so anything unclear — and
+  // every field on an image-only scan — stays field_N.
+  const textByPage = new Map();
+  for (const f of pendingAuthor) {
+    if (!textByPage.has(f.page)) textByPage.set(f.page, await pageTextItems(f.page));
+    f.suggested = suggestFieldName(f.rect, textByPage.get(f.page));
+  }
   els.fieldNameList.innerHTML = '';
   pendingAuthor.forEach((f, i) => {
     const row = document.createElement('label');
@@ -2921,7 +2976,7 @@ els.saveFillableBtn.onclick = () => {
     tag.textContent = (f.kind === 'check' ? '☑' : f.kind === 'dropdown' ? '▾' : '✎') + ' p' + f.page;
     const inp = document.createElement('input');
     inp.type = 'text';
-    inp.value = 'field_' + (i + 1);
+    inp.value = f.suggested || ('field_' + (i + 1));
     inp.onfocus = () => f.el && f.el.classList.add('naming-hilite');
     inp.onblur = () => f.el && f.el.classList.remove('naming-hilite');
     row.append(tag, inp);
