@@ -31,7 +31,7 @@ func TestStampTextLayerSearchable(t *testing.T) {
 		{Page: 1, Rect: [4]float64{50, 40, 200, 52}, Text: "more…"},
 		{Page: 1, Rect: [4]float64{50, 20, 200, 32}, Text: "50%"}, // bare % must survive as a literal, not a pdfcpu placeholder
 	}
-	out, err := StampTextLayer(base, words)
+	out, err := StampTextLayer(base, words, "eng")
 	if err != nil {
 		t.Fatalf("StampTextLayer: %v", err)
 	}
@@ -68,7 +68,7 @@ func TestStampTextLayerCyrillicGreek(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		out, err := StampTextLayer(base, []Word{{Page: 1, Rect: [4]float64{50, 100, 300, 112}, Text: sample}})
+		out, err := StampTextLayer(base, []Word{{Page: 1, Rect: [4]float64{50, 100, 300, 112}, Text: sample}}, lang)
 		if err != nil {
 			t.Errorf("%s: StampTextLayer: %v", lang, err)
 			continue
@@ -85,7 +85,7 @@ func TestStampTextLayerNoWords(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	out, err := StampTextLayer(base, nil)
+	out, err := StampTextLayer(base, nil, "eng")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -131,7 +131,7 @@ func TestStampTextLayerManyWords(t *testing.T) {
 		Word{Page: 1, Rect: [4]float64{50, 120, 200, 132}, Text: "paren)(\\back"},
 		Word{Page: 1, Rect: [4]float64{-5, 200, 60, 212}, Text: "negx"},
 	)
-	if _, err := StampTextLayer(base, words); err != nil {
+	if _, err := StampTextLayer(base, words, "eng"); err != nil {
 		t.Fatalf("StampTextLayer on %d words: %v", len(words), err)
 	}
 }
@@ -161,7 +161,7 @@ func TestStampTextLayerUnicode(t *testing.T) {
 		y := 60.0 + float64(i/5)*14
 		words = append(words, Word{Page: 1, Rect: [4]float64{x, y, x + 90, y + 11}, Text: tk})
 	}
-	out, err := StampTextLayer(base, words)
+	out, err := StampTextLayer(base, words, "eng")
 	if err != nil {
 		t.Fatalf("StampTextLayer on Unicode tokens: %v", err)
 	}

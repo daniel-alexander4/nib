@@ -12,6 +12,7 @@ import (
 	"encoding/json"
 	"io"
 	"io/fs"
+	"log"
 	"net"
 	"net/http"
 	"os"
@@ -59,6 +60,12 @@ type Server struct {
 // its vault in configDir. version is the running build, surfaced by the update
 // check and the About dialog.
 func New(web, legal fs.FS, configDir, version string) *Server {
+	// Install the vendored non-Latin OCR fonts now, before any request can trigger
+	// pdfcpu's once-only font-registry load (see pdfops.InstallOCRFonts). A failure
+	// only costs Thai/Devanagari OCR, so log and carry on rather than refuse to boot.
+	if err := pdfops.InstallOCRFonts(); err != nil {
+		log.Printf("server: could not install OCR fonts: %v", err)
+	}
 	return &Server{web: web, legal: legal, configDir: configDir, version: version}
 }
 

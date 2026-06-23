@@ -32,23 +32,28 @@ func (s *Server) handleOCR(w http.ResponseWriter, r *http.Request) {
 		httpError(w, http.StatusNotFound, "no document open")
 		return
 	}
-	var words []pdfops.Word
-	if err := json.NewDecoder(r.Body).Decode(&words); err != nil {
+	// The browser sends the OCR language alongside the words: it picks the font
+	// the invisible layer is stamped in (Thai/Devanagari need a non-Roboto face).
+	var body struct {
+		Lang  string        `json:"lang"`
+		Words []pdfops.Word `json:"words"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		httpError(w, http.StatusBadRequest, "could not read OCR words")
 		return
 	}
-	if len(words) == 0 {
+	if len(body.Words) == 0 {
 		writeJSON(w, s.docResponse())
 		return
 	}
-	result, err := pdfops.StampTextLayer(doc.data, words)
+	result, err := pdfops.StampTextLayer(doc.data, body.Words, body.Lang)
 	if err != nil {
-		log.Printf("ocr: stamp failed (%d words): %v", len(words), err)
+		log.Printf("ocr: stamp failed (%d words, lang %q): %v", len(body.Words), body.Lang, err)
 		httpError(w, http.StatusUnprocessableEntity, "could not add the text layer")
 		return
 	}
 	if verr := pdfops.Validate(result); verr != nil {
-		log.Printf("ocr: stamped output failed validation (%d words): %v", len(words), verr)
+		log.Printf("ocr: stamped output failed validation (%d words): %v", len(body.Words), verr)
 		httpError(w, http.StatusUnprocessableEntity, "could not add the text layer")
 		return
 	}

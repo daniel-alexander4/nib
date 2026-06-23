@@ -1067,17 +1067,27 @@ at <http://www.apache.org/licenses/LICENSE-2.0>. Upstream:
 
 ---
 
-## Tesseract.js 5.1.1 (+ tesseract.js-core, eng/fra/deu/spa/ita/rus/ukr/bul/srp/mkd/bel/ell traineddata)
+## Tesseract.js 5.1.1 (+ tesseract.js-core, eng/fra/deu/spa/ita/rus/ukr/bul/srp/mkd/bel/ell/tha/hin traineddata)
 
 Vendored under `web/vendor/tesseract/` for on-device OCR (the WASM engine, its
 worker, and the English, French, German, Spanish, Italian, Russian, Ukrainian,
-Bulgarian, Serbian, Macedonian, Belarusian and Greek `tessdata_fast`
+Bulgarian, Serbian, Macedonian, Belarusian, Greek, Thai and Hindi `tessdata_fast`
 models). Copyright the Tesseract.js
 contributors and the Tesseract OCR project, licensed under the Apache License,
 Version 2.0. The full license text is reproduced in the `golang.org/x`/pdfcpu
 sections above and at <http://www.apache.org/licenses/LICENSE-2.0>. Upstream:
 <https://github.com/naptha/tesseract.js> and
 <https://github.com/tesseract-ocr/tessdata_fast>.
+
+---
+
+## Noto Sans Thai & Noto Sans Devanagari
+
+Vendored under `internal/pdfops/fonts/` and installed into pdfcpu's font registry
+so the OCR text layer can be stamped in Thai and Devanagari scripts (which the
+bundled Roboto does not cover). Copyright the Noto Project Authors, licensed under
+the SIL Open Font License, Version 1.1 — see
+<https://openfontlicense.org>. Upstream: <https://github.com/notofonts/noto-fonts>.
 
 ---
 

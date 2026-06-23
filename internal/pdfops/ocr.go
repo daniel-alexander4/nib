@@ -32,13 +32,18 @@ type Word struct {
 // The page still looks exactly like the scan, but the text is searchable and
 // copy-pasteable: this is the standard "searchable PDF" / OCR layer. The text is a
 // real (...) Tj run (not glyph outlines), so pdftotext and pdf.js Find recover it.
-func StampTextLayer(pdf []byte, words []Word) ([]byte, error) {
-	// api.TextWatermark below validates the Roboto user font against pdfcpu's
+//
+// lang is the OCR language (e.g. "eng", "tha", "hin"); it selects the font, since
+// one font can't cover every script. Thai/Devanagari use their vendored Noto face
+// (installed by InstallOCRFonts at startup); everything else falls back to Roboto.
+func StampTextLayer(pdf []byte, words []Word, lang string) ([]byte, error) {
+	// api.TextWatermark below validates the chosen user font against pdfcpu's
 	// in-memory font registry, which is only populated the first time a default
 	// config is built (it installs + loads the bundled Roboto). Force that now,
 	// before the per-word TextWatermark calls — otherwise a process whose first
-	// font op is OCR rejects Roboto with "unsupported".
+	// font op is OCR rejects the font with "unsupported".
 	model.NewDefaultConfiguration()
+	fontName := ocrFontFor(lang)
 	wms := map[int][]*model.Watermark{}
 	for _, w := range words {
 		if strings.TrimSpace(w.Text) == "" {
@@ -53,7 +58,7 @@ func StampTextLayer(pdf []byte, words []Word) ([]byte, error) {
 		// Anchor at the box's bottom-left, in points. No fillcolor/mode in the
 		// description string (the parser rejects mode 3) — RenderMode is set below.
 		desc := fmt.Sprintf("fontname:%s, points:%d, scalefactor:1 abs, position:bl, offset:%.2f %.2f, rotation:0",
-			ocrFont, pts, w.Rect[0], w.Rect[1])
+			fontName, pts, w.Rect[0], w.Rect[1])
 		// pdfcpu's format.Text treats % as a placeholder introducer in watermark
 		// text (%p page#, %P page count, %t timestamp, %v version; %% = a literal %).
 		// Raw OCR text is full of bare % signs, and a % that isn't a valid placeholder
