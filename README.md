@@ -151,7 +151,9 @@ so it works offline like everything else. Pick the scan's language from the
 dropdown next to the button (**English, French, German, Spanish, Italian,
 Russian, Ukrainian, Bulgarian, Serbian, Macedonian, Belarusian, Greek, Thai,
 Hindi**) for best accuracy; full Unicode comes through either way (accents,
-quotes, dashes, and non-Latin scripts). It's undoable, too.
+quotes, dashes, and non-Latin scripts). The OCR'd document also gets its
+**language tag** set (PDF `/Lang`) so a screen reader announces it in the right
+voice. It's undoable, too.
 
 ### Real redaction
 Draw redaction boxes and press **Apply**. Nib re-renders those pages flat so the
