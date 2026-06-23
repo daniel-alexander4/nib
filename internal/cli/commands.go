@@ -313,8 +313,8 @@ func cmdNup(args []string) int {
 
 func cmdPagenum(args []string) int {
 	fs := flag.NewFlagSet("nib pagenum", flag.ContinueOnError)
-	var out string
-	var inPlace, total bool
+	var out, outDir string
+	var inPlace, total, continuous bool
 	st := pdfops.PageNumberStyle{Start: 1, Size: 11}
 	outFlag(fs, &out)
 	inPlaceFlag(fs, &inPlace)
@@ -325,14 +325,95 @@ func cmdPagenum(args []string) int {
 	fs.IntVar(&st.Size, "size", 11, "point size")
 	fs.StringVar(&st.Color, "color", "", "hex color #RRGGBB (default black)")
 	fs.BoolVar(&total, "total", false, "append \" of N\"")
-	fs.Usage = usageFunc(fs, "nib pagenum IN -o OUT [--position br --start 1 --prefix P --pad N --total]", "Stamp running page numbers (or Bates numbering) onto every page.")
+	fs.BoolVar(&continuous, "continuous", false, "number multiple files as one running sequence (Bates production)")
+	fs.StringVar(&outDir, "out-dir", "", "with --continuous: write numbered copies into this directory")
+	fs.Usage = usageFunc(fs, "nib pagenum IN -o OUT [--start 1 --prefix P --pad N --total]  |  nib pagenum --continuous (-w | --out-dir DIR) FILE...", "Stamp running page numbers (or Bates numbering). --continuous threads ONE counter across several files.")
 	if code, ok := parse(fs, args); !ok {
 		return code
 	}
 	st.OfTotal = total
+	if continuous {
+		return runContinuousPagenum(fs.Args(), st, inPlace, outDir, out)
+	}
 	return runTransform(fs, out, inPlace, func(b []byte) ([]byte, error) {
 		return pdfops.StampPageNumbers(b, st)
 	})
+}
+
+// runContinuousPagenum stamps a set of files with ONE running page/Bates counter:
+// file 1 starts at --start, each later file continues where the previous ended.
+// Output is either in place (-w) or a non-destructive copy set (--out-dir); exactly
+// one is required (never an implicit overwrite). Every input is read and validated
+// up front, so a bad PDF — or the grand total needed for --total's "of N" — is known
+// before anything is written.
+func runContinuousPagenum(files []string, st pdfops.PageNumberStyle, inPlace bool, outDir, out string) int {
+	switch {
+	case out != "":
+		errf("--continuous writes many files: use -w or --out-dir DIR, not -o")
+		return 1
+	case inPlace == (outDir != ""): // neither, or both
+		errf("--continuous needs exactly one of -w (rewrite in place) or --out-dir DIR")
+		return 1
+	case len(files) == 0:
+		errf("--continuous needs one or more input PDFs")
+		return 1
+	}
+	if st.Start < 1 {
+		st.Start = 1 // match StampPageNumbers' own clamp, so the threaded offset and Total agree
+	}
+	docs := make([][]byte, len(files))
+	counts := make([]int, len(files))
+	grand := 0
+	for i, f := range files {
+		if f == "-" {
+			errf("--continuous reads files by name; stdin (-) is not supported")
+			return 1
+		}
+		b, err := os.ReadFile(f)
+		if err != nil {
+			errf("%v", err)
+			return 1
+		}
+		n, err := pdfops.PageCount(b)
+		if err != nil {
+			errf("%s: %v", f, err)
+			return 1
+		}
+		docs[i], counts[i] = b, n
+		grand += n
+	}
+	if st.OfTotal {
+		st.Total = st.Start + grand - 1 // "of N" = the set's last number, not each file's
+	}
+	offset := st.Start
+	for i, f := range files {
+		s := st
+		s.Start = offset
+		res, err := pdfops.StampPageNumbers(docs[i], s)
+		if err != nil {
+			errf("%s: %v", f, err)
+			return 1
+		}
+		docs[i] = res // stamped output replaces the input bytes
+		offset += counts[i]
+	}
+	if inPlace {
+		for i, f := range files {
+			if err := writeAtomic(f, docs[i]); err != nil {
+				errf("%s: %v", f, err)
+				return 1
+			}
+			fmt.Printf("%s: rewritten\n", f)
+		}
+		return 0
+	}
+	seen := map[string]int{}
+	parts := make([]pdfops.SplitPart, len(files))
+	for i, f := range files {
+		base := pdfops.SanitizeFilename(strings.TrimSuffix(filepath.Base(f), filepath.Ext(f)))
+		parts[i] = pdfops.SplitPart{Name: pdfops.UniqueName(base, i+1, seen), Data: docs[i]}
+	}
+	return writeSplitFiles(outDir, parts)
 }
 
 // cmdAttachments lists embedded files (default), extracts one to -o, or embeds one
