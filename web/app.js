@@ -3005,7 +3005,7 @@ async function runOCR() {
     }
     if (!words.length) { toast('No text found to add'); return; }
     btn.textContent = 'Saving…';
-    const res = await apiFetch('/api/ocr', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(words) });
+    const res = await apiFetch('/api/ocr', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ lang, words }) });
     if (!res.ok) { toast('Could not add the text layer'); return; }
     await setDocumentFromServer(await res.json());
     toast(`Added a searchable text layer (${words.length} words)`);
