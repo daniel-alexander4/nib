@@ -149,6 +149,15 @@ Draw redaction boxes and press **Apply**. Nib re-renders those pages flat so the
 content underneath is **actually gone** — not just hidden behind a black
 rectangle. (Verified: a redacted page exposes no hidden text or form field.)
 
+Don't want to hunt for every occurrence by hand? **Redact text…** finds them for
+you: type a word or phrase, and/or tick a built-in pattern — **SSN, email, phone,
+card number** — and Nib marks every match in the document as a redaction box.
+Review the boxes (remove any you don't want), then press **Apply** to flatten
+them for real. It reads the text layer, so it works on any text-based PDF — and
+on a scan once you've run **OCR**. Matches split across the page's text runs are
+still caught; matches that wrap across a line break are not (rare for the
+patterns).
+
 ### Compare two versions
 Wondering what changed between draft v3 and v4 of a contract? **File → Compare…**
 lets you pick a second PDF and diffs its text against the open document
