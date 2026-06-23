@@ -56,6 +56,15 @@ an image-only scan there's no text to read, so fields stay `field_N` unless you'
 run **OCR** first. The opposite of flattening: instead of baking your answers in,
 you publish a blank form for others to fill.
 
+### Mail-merge a form from a spreadsheet
+Got a fillable form and a spreadsheet of records? **File → Fill from spreadsheet…**
+picks a CSV and fills the form once per row, handing you a **ZIP with one PDF per
+row**. The CSV's first row is the form's field names (export them with *File →
+Export → Form data (CSV)* to see the exact names); checkbox fields take
+true/false/yes/1. It runs **entirely on your machine** — the same engine as the
+`nib fill` command line, just point-and-click. (The form needs real fillable
+fields; on a flat scan, run *Save as fillable form…* first.)
+
 ### Circles & pills for multiple choice
 Choosing an option marks it the way a person would: a **circle** around a single
 letter (or `Y`/`N`), or a **pill** around a whole word — baked cleanly into the
