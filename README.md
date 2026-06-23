@@ -140,9 +140,9 @@ shows up in *Find*). The OCR runs **entirely on your machine** — the recogniti
 engine is built into Nib (no install, no cloud, nothing leaves your computer) —
 so it works offline like everything else. Pick the scan's language from the
 dropdown next to the button (**English, French, German, Spanish, Italian,
-Russian, Ukrainian, Bulgarian, Serbian, Macedonian, Belarusian, Greek**) for
-best accuracy; full Unicode comes through either way (accents, quotes, dashes).
-It's undoable, too.
+Russian, Ukrainian, Bulgarian, Serbian, Macedonian, Belarusian, Greek, Thai,
+Hindi**) for best accuracy; full Unicode comes through either way (accents,
+quotes, dashes, and non-Latin scripts). It's undoable, too.
 
 ### Real redaction
 Draw redaction boxes and press **Apply**. Nib re-renders those pages flat so the
