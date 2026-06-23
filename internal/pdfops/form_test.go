@@ -102,3 +102,64 @@ func TestAuthorFormRadio(t *testing.T) {
 		t.Error("expected an error for a radio group with <2 options")
 	}
 }
+
+// TestAuthorFormRadioVertical authors a vertical radio group in a tall box and
+// confirms (a) it round-trips as a real choice field and (b) the buttons render
+// anchored at the box's TOP and stacking downward — i.e. their ink clusters in
+// the upper half of the box, not the lower. This pins pdfcpu's vertical-anchor
+// convention (orientation:"vert" anchors at the top edge), the one geometry the
+// horizontal-only v1 left unverified.
+func TestAuthorFormRadioVertical(t *testing.T) {
+	base, err := testpdf.Text("survey")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A deliberately tall, narrow box (height ≫ width) so three small buttons
+	// stacked from the top leave clear slack at the bottom — the discriminator.
+	const x0, y0, x1, y1 = 100.0, 560.0, 116.0, 700.0
+	out, err := AuthorForm(base, []FormField{
+		{Page: 1, Rect: [4]float64{x0, y0, x1, y1}, Kind: "radio", Name: "plan",
+			Options: []string{"Basic", "Pro", "Enterprise"}, Orientation: "vert"},
+	})
+	if err != nil {
+		t.Fatalf("AuthorForm vertical radio: %v", err)
+	}
+	if err := Validate(out); err != nil {
+		t.Fatalf("authored PDF does not validate: %v", err)
+	}
+	js, _ := ExportFormJSON(out)
+	for _, want := range []string{"plan", "Basic", "Pro", "Enterprise"} {
+		if !strings.Contains(string(js), want) {
+			t.Errorf("radio field/value %q missing from form export: %s", want, js)
+		}
+	}
+
+	// Geometry check (needs poppler). testpdf pages are A4 portrait (842pt tall);
+	// poppler renders at 36 DPI → 0.5 px/pt, top-left origin.
+	skipNoPoppler(t)
+	img := renderPDF(t, out, "vradio")[0]
+	const scale = 0.5
+	const pageH = 842.0
+	// Box in image rows (top-left origin): box top (y1) is the smaller row.
+	topRow := int((pageH - y1) * scale)
+	botRow := int((pageH - y0) * scale)
+	midRow := (topRow + botRow) / 2
+	// Scan the button column band (a little padding around [x0,x1]) for ink.
+	loCol, hiCol := int(x0*scale)-2, int(x1*scale)+2
+	var sumRow, n int
+	for row := topRow; row <= botRow; row++ {
+		for col := loCol; col <= hiCol; col++ {
+			r, g, b, _ := img.At(col, row).RGBA()
+			if r+g+b < 384*257 { // dark (RGBA is 16-bit; 384 of 765 in 8-bit terms)
+				sumRow += row
+				n++
+			}
+		}
+	}
+	if n == 0 {
+		t.Fatal("found no radio-button ink inside the box — vertical group did not render where expected")
+	}
+	if meanRow := sumRow / n; meanRow > midRow {
+		t.Errorf("vertical radio ink centred at row %d, below box mid %d — buttons did not anchor at the top edge", meanRow, midRow)
+	}
+}

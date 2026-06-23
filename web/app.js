@@ -3012,6 +3012,12 @@ els.fieldNameGo.onclick = async () => {
     seen.add(name);
     const spec = { page: f.page, rect: f.rect, kind: f.kind, name };
     if (f.kind === 'dropdown' || f.kind === 'radio') spec.options = f.options;
+    // A radio group inherits its layout from the drawn box's aspect: a wide box
+    // lays the buttons out horizontally, a tall box stacks them vertically.
+    if (f.kind === 'radio') {
+      const w = f.rect[2] - f.rect[0], h = f.rect[3] - f.rect[1];
+      spec.orientation = w >= h ? 'hor' : 'vert';
+    }
     fields.push(spec);
   });
   if (!fields.length) return;
