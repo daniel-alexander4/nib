@@ -20,6 +20,10 @@ type FormField struct {
 	Kind    string     `json:"kind"`
 	Name    string     `json:"name"`
 	Options []string   `json:"options,omitempty"`
+	// Orientation lays out a radio group: "vert" stacks the buttons downward from
+	// the box's top edge, anything else (the default) marches them right from the
+	// lower-left. Ignored for non-radio kinds.
+	Orientation string `json:"orientation,omitempty"`
 }
 
 // AuthorForm adds real fillable AcroForm widgets (text fields, checkboxes) to the
@@ -67,17 +71,22 @@ func AuthorForm(pdf []byte, fields []FormField) ([]byte, error) {
 			})
 		case "radio":
 			// pdfcpu's radiobuttongroup auto-lays-out the buttons from a single
-			// anchor, so the drawn box just picks the start point (lower-left);
-			// buttons march to the right, each labelled with its value. Horizontal
-			// only for now (vertical needs a separate anchor convention). pdfcpu
-			// requires ≥2 values.
+			// anchor, so the drawn box just picks the start point and a button size;
+			// each button is labelled with its value. A horizontal group anchors at
+			// the lower-left and marches right, its button size taken from the box
+			// height; a vertical group anchors at the top-left and stacks downward,
+			// its button size taken from the box width. pdfcpu requires ≥2 values.
 			if len(f.Options) < 2 {
 				return nil, fmt.Errorf("radio %q needs at least two options", f.Name)
 			}
+			orientation, pos, width := "hor", []float64{x0, y0}, y1-y0
+			if f.Orientation == "vert" {
+				orientation, pos, width = "vert", []float64{x0, y1}, x1-x0
+			}
 			arr, _ := content["radiobuttongroup"].([]any)
 			content["radiobuttongroup"] = append(arr, map[string]any{
-				"id": f.Name, "orientation": "hor",
-				"pos": []float64{x0, y0}, "width": y1 - y0,
+				"id": f.Name, "orientation": orientation,
+				"pos": pos, "width": width,
 				"buttons": map[string]any{
 					"values": f.Options,
 					"label":  map[string]any{"value": "dummy", "width": 60, "gap": 4, "pos": "right"},

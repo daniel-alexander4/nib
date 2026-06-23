@@ -46,7 +46,9 @@ checkbox becomes a live, fillable field (with proper appearance streams, so it
 works in Adobe and any browser), dropped right onto the original page — the scan
 itself is untouched. Need a **dropdown** or a **radio-button group**? The Edit-tab
 **Dropdown** and **Radio** tools let you draw one and type its choices; they're
-authored as a real combobox / radio group. A quick step lets
+authored as a real combobox / radio group. A radio group lays its buttons out to
+match the box you draw — a wide box runs them across, a tall box stacks them down.
+A quick step lets
 you **name each field** so the collected data is meaningful — Nib pre-fills each
 name from the field's own label on the page (e.g. a box beside "First Name:" is
 named `first_name`), which you can edit (focus a row to highlight that field). On
