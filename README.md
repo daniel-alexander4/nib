@@ -515,6 +515,7 @@ isn't a known command (a PDF path, or nothing) still opens the app as usual.
 | `nib nup IN -o OUT --n N` | Place N pages per sheet — 2/4/6/9/16… (`--border` for outlines). |
 | `nib pagenum IN -o OUT` | Stamp running page numbers or Bates numbering (`--prefix ABC --pad 6 --position br --total`). `--continuous (-w \| --out-dir DIR) FILE…` threads one counter across a whole file set (multi-file Bates production). |
 | `nib pagelabels IN -o OUT` | Set logical page labels — one `--range PAGE:STYLE[:START[:PREFIX]]` per section (STYLE = `decimal`/`roman-lower`/`roman-upper`/`alpha-lower`/`alpha-upper`/`none`), e.g. `--range 1:roman-lower --range 5:decimal`. |
+| `nib fill IN --data D` | Fill a form: a JSON record (`--data x.json -o OUT`, the inverse of *Export form data (JSON)*) or a **CSV mail-merge** (`--data rows.csv --out-dir DIR` — header row = field names, one filled PDF per row; `--name-col COL` names each output). Filling removes any existing signature. |
 | `nib attachments IN [--json]` | List embedded files; `--extract NAME -o OUT` pulls one out, `--add FILE -o OUT` embeds one. |
 | `nib outline IN [--json]` | List the document's bookmark outline (indented by level, or JSON). |
 | `nib watch DIR --do OP` | Run `timestamp`/`optimize`/`sanitize` on each PDF added to `DIR`, until interrupted. |
@@ -533,7 +534,7 @@ nib sanitize -w *.pdf          # scrub a whole folder in place
 nib optimize in.pdf -o - | nib sanitize - -o out.pdf   # compose in a pipeline
 ```
 
-For `optimize`, `merge`, `sanitize`, `sign`, `rotate`, `pages`, `encrypt`, `decrypt`, `nup`, `pagenum`, and `pagelabels`, a filename of `-` reads a PDF
+For `optimize`, `merge`, `sanitize`, `sign`, `rotate`, `pages`, `encrypt`, `decrypt`, `nup`, `pagenum`, `pagelabels`, and `fill` (JSON mode), a filename of `-` reads a PDF
 from stdin, and `-o -` writes the result to stdout (refused when stdout is a
 terminal), so the commands chain together.
 
