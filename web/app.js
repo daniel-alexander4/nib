@@ -1128,8 +1128,10 @@ let docGen = 0; // bumps on each load so a stale async render/build can bail
 
 eventBus.on('pagesinit', () => {
   viewer.currentScaleValue = 'page-width'; // immediate fit (page 1) so there's no 100%-then-fit flash…
-  fitWidestWidth();                        // …then refine to the widest page as a locked numeric scale.
 });
+// …then refine to the widest page once every page view is populated and the layout
+// has settled (pagesinit is too early — see fitWidestWidth).
+eventBus.on('pagesloaded', fitWidestWidth);
 eventBus.on('pagechanging', (e) => {
   all('.pageNum').forEach((i) => { i.value = e.pageNumber; });
   markCurrentThumb(e.pageNumber);
@@ -5935,17 +5937,25 @@ function fitWidth() { fitWidestWidth(); }
 // trapped you at the size boundary. This mirrors pdf.js's own page-width formula
 // (pdf_viewer.mjs #setScale): scale = (clientWidth − SCROLLBAR_PADDING) / pageWidthPt;
 // Nib uses default scroll/spread, so SCROLLBAR_PADDING (40) and a factor of 1 are
-// the whole computation. Page widths must come from getPage() — at pagesinit only
-// page 1's viewport is real.
-async function fitWidestWidth() {
+// the whole computation.
+//
+// Widths come from each page's RENDERED viewport (getPageView(i).viewport), which
+// already accounts for /Rotate — so a rotated landscape page reports its true 792pt
+// display width, not its 612pt portrait MediaBox. This must run at 'pagesloaded',
+// not 'pagesinit': at pagesinit only page 1's view is populated (others still hold
+// page 1's portrait viewport) and the container width hasn't settled, which made a
+// wider rotated page overflow. By pagesloaded (sub-5000-page docs) every page view
+// is set and the layout is settled; a page whose view isn't ready yet is skipped.
+function fitWidestWidth() {
   if (!pdfDocument) return;
-  const gen = docGen;
   let maxW = 0;
-  for (let i = 1; i <= pdfDocument.numPages; i++) {
-    const w = (await pdfDocument.getPage(i)).getViewport({ scale: 1 }).width;
-    if (w > maxW) maxW = w;
+  for (let i = 0; i < pdfDocument.numPages; i++) {
+    const vp = viewer.getPageView(i)?.viewport;
+    if (vp) {
+      const w = vp.width / vp.scale; // rendered display width in points (rotation applied)
+      if (w > maxW) maxW = w;
+    }
   }
-  if (gen !== docGen) return; // a newer document loaded — don't apply a stale fit
   const avail = els.viewerContainer.clientWidth - 40; // 40 = pdf.js SCROLLBAR_PADDING
   if (maxW > 0 && avail > 0) viewer.currentScale = avail / maxW;
 }
