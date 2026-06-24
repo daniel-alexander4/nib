@@ -56,8 +56,10 @@ func cmdSanitize(args []string) int {
 func cmdPDFA(args []string) int {
 	fs := flag.NewFlagSet("nib pdfa", flag.ContinueOnError)
 	var out string
+	var useGS bool
 	outFlag(fs, &out)
-	fs.Usage = usageFunc(fs, "nib pdfa IN -o OUT", "Convert to a PDF/A-2b archival candidate (verify with veraPDF). Refuses documents whose fonts aren't embedded.")
+	fs.BoolVar(&useGS, "gs", false, "convert via Ghostscript — the general path that re-embeds fonts and converts colour (requires Ghostscript installed)")
+	fs.Usage = usageFunc(fs, "nib pdfa IN -o OUT [--gs]", "Convert to a PDF/A-2b archival candidate (verify with veraPDF). Pure-Go by default — refuses documents whose fonts aren't embedded; --gs uses Ghostscript to convert those too.")
 	if code, ok := parse(fs, args); !ok {
 		return code
 	}
@@ -70,6 +72,18 @@ func cmdPDFA(args []string) int {
 		errf("%v", err)
 		return 1
 	}
+	if useGS {
+		result, err := pdfops.ConvertPDFAGhostscript(pdf)
+		if err != nil {
+			if errors.Is(err, pdfops.ErrGhostscriptMissing) {
+				errf("Ghostscript not found — install it, or omit --gs for the pure-Go converter")
+			} else {
+				errf("%v", err)
+			}
+			return 1
+		}
+		return writeOut(out, result)
+	}
 	result, blockers, err := pdfops.PreparePDFA(pdf)
 	if err != nil {
 		errf("%v", err)
@@ -78,6 +92,9 @@ func cmdPDFA(args []string) int {
 	if len(blockers) > 0 {
 		for _, b := range blockers {
 			errf("cannot convert to PDF/A: %s", b)
+		}
+		if pdfops.GhostscriptAvailable() {
+			errf("retry with --gs to convert via Ghostscript (re-embeds fonts, converts colour)")
 		}
 		return 1
 	}

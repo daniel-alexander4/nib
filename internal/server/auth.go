@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"os"
 
+	"nib/internal/pdfops"
 	"nib/internal/sshkey"
 	"nib/internal/vault"
 )
@@ -150,6 +151,7 @@ type statusResponse struct {
 	Appearance            string   `json:"appearance,omitempty"`            // dark | light (saved theme preference)
 	RecentHighlightColors []string `json:"recentHighlightColors,omitempty"` // last-used highlight colors, newest first
 	Version               string   `json:"version"`                         // running build, shown in the About dialog
+	Ghostscript           bool     `json:"ghostscript"`                     // gs installed → offer the general (vector-preserving) PDF/A converter
 }
 
 // currentStatus describes how (and whether) the vault can be unlocked, stamped
@@ -158,6 +160,7 @@ type statusResponse struct {
 func (s *Server) currentStatus() statusResponse {
 	st := s.vaultStatus()
 	st.Version = s.version
+	st.Ghostscript = pdfops.GhostscriptAvailable()
 	envAllows := os.Getenv("NIB_NO_UPDATE_CHECK") == ""
 	st.UpdateCheckLocked = !envAllows
 	st.AutoUpdate = envAllows

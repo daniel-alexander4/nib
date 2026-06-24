@@ -144,7 +144,7 @@ const els = {
   importXfdfBtn: $('importXfdfBtn'), importXfdfModal: $('importXfdfModal'), importXfdfPick: $('importXfdfPick'),
   importXfdfInput: $('importXfdfInput'), importXfdfStatus: $('importXfdfStatus'), importXfdfClose: $('importXfdfClose'),
   pdfaBtn: $('pdfaBtn'), pdfaModal: $('pdfaModal'), pdfaStatus: $('pdfaStatus'),
-  pdfaGo: $('pdfaGo'), pdfaClose: $('pdfaClose'),
+  pdfaGo: $('pdfaGo'), pdfaGsGo: $('pdfaGsGo'), pdfaClose: $('pdfaClose'),
   exportCertBtn: $('exportCertBtn'), printBtn: $('printBtn'),
   finalizeModal: $('finalizeModal'), fzText: $('fzText'), fzDate: $('fzDate'),
   fzTsa: $('fzTsa'), fzTsaOn: $('fzTsaOn'), fzCancel: $('fzCancel'), fzGo: $('fzGo'),
@@ -207,6 +207,7 @@ const all = (sel) => document.querySelectorAll(sel);
 // with no prompt. csrf is the per-process token issued when the vault unlocks.
 let csrf = null;
 let authState = 'setup'; // setup | migrate | key-missing | ready
+let gsAvailable = false; // Ghostscript installed (from /api/status) → offer the general PDF/A converter
 
 // apiFetch wraps fetch with the CSRF header on writes; a 401 reopens the wizard.
 async function apiFetch(url, opts = {}) {
@@ -241,6 +242,7 @@ els.introOverlay.addEventListener('click', (e) => {
 // applyStatus drives the UI from /api/status.
 function applyStatus(st) {
   authState = st.state;
+  gsAvailable = !!st.ghostscript;
   els.aboutVersion.textContent = st.version || 'dev';
   if (st.state === 'ready') {
     csrf = st.csrf;
@@ -1668,27 +1670,39 @@ els.importXfdfInput.onchange = async () => {
 function openPdfa() {
   if (!pdfDocument) return toast('Open a PDF first');
   els.pdfaStatus.textContent = '';
+  els.pdfaGsGo.hidden = true; // revealed only when the pure-Go path refuses and gs is installed
   els.pdfaModal.hidden = false;
 }
 els.pdfaBtn.onclick = openPdfa;
 els.pdfaClose.onclick = () => { els.pdfaModal.hidden = true; };
-els.pdfaGo.onclick = async () => {
-  els.pdfaStatus.textContent = 'Converting…';
-  els.pdfaGo.disabled = true;
+els.pdfaGo.onclick = () => runPdfa('');
+els.pdfaGsGo.onclick = () => runPdfa('gs');
+
+// runPdfa posts the current document to the PDF/A converter. Default is the pure-Go
+// normalizer; engine 'gs' is the Ghostscript path (re-embeds fonts, converts
+// colour) — offered as a fallback when the pure-Go path refuses and gs is installed.
+async function runPdfa(engine) {
+  const gs = engine === 'gs';
+  els.pdfaStatus.textContent = gs ? 'Converting with Ghostscript…' : 'Converting…';
+  els.pdfaGo.disabled = els.pdfaGsGo.disabled = true;
   try {
-    const res = await apiFetch('/api/pdfa', { method: 'POST', body: await bakedForm() });
+    const res = await apiFetch(gs ? '/api/pdfa?engine=gs' : '/api/pdfa', { method: 'POST', body: await bakedForm() });
     if (!res.ok) {
       let msg = 'Could not convert to PDF/A.';
       try { msg = (await res.json()).error || msg; } catch { /* keep default */ }
+      if (!gs && gsAvailable) {
+        els.pdfaGsGo.hidden = false; // the heavier converter can handle what pure-Go refused
+        msg += ' — Ghostscript can convert it (re-embeds fonts, converts colour).';
+      }
       els.pdfaStatus.textContent = msg;
       return;
     }
     els.pdfaModal.hidden = true;
     openSaveAs(await res.blob(), exportBase() + '-pdfa.pdf', 'Save archival PDF (PDF/A-2b)');
   } finally {
-    els.pdfaGo.disabled = false;
+    els.pdfaGo.disabled = els.pdfaGsGo.disabled = false;
   }
-};
+}
 
 // renderCompare word-diffs the open document (a) against the chosen file (b) and
 // paints the result inline: removed runs struck through in red, additions in
