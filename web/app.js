@@ -44,6 +44,7 @@ const els = {
   comparePager: $('comparePager'), cmPrev: $('cmPrev'), cmNext: $('cmNext'),
   cmAPrev: $('cmAPrev'), cmANext: $('cmANext'), cmPageLabelA: $('cmPageLabelA'),
   cmBPrev: $('cmBPrev'), cmBNext: $('cmBNext'), cmPageLabelB: $('cmPageLabelB'),
+  cmAuto: $('cmAuto'), cmAlignStat: $('cmAlignStat'),
   fillCsvBtn: $('fillCsvBtn'), fillCsvModal: $('fillCsvModal'), fillCsvPick: $('fillCsvPick'),
   fillCsvInput: $('fillCsvInput'), fillCsvStatus: $('fillCsvStatus'), fillCsvClose: $('fillCsvClose'),
   pathInput: $('pathInput'), openGo: $('openGo'),
@@ -1293,19 +1294,63 @@ els.combineGo.onclick = async () => {
 // documentText is the shared content-stream-order dump also used by "Export
 // text" — deliberately NOT geometry-sorted (re-sorting scrambles columns),
 // which keeps the diff reliable for two versions from the same producer.
-async function documentText(doc) {
-  let out = '';
+// pageTexts returns each page's text in content-stream order (image-only pages →
+// ""). It is the single extraction pass behind both documentText (joined) and the
+// per-page fingerprints used for auto page-matching.
+async function pageTexts(doc) {
+  const out = [];
   for (let n = 1; n <= doc.numPages; n++) {
-    let tc;
-    try { tc = await (await doc.getPage(n)).getTextContent(); }
-    catch { continue; } // image-only page: no text layer
-    for (const it of tc.items) {
-      out += it.str;
-      if (it.hasEOL) out += '\n';
-    }
-    out += '\n'; // blank line between pages
+    let s = '';
+    try {
+      const tc = await (await doc.getPage(n)).getTextContent();
+      for (const it of tc.items) { s += it.str; if (it.hasEOL) s += '\n'; }
+    } catch { /* image-only page: no text layer */ }
+    out.push(s);
   }
   return out;
+}
+
+async function documentText(doc) {
+  return (await pageTexts(doc)).join('\n') + '\n';
+}
+
+// pageFingerprints normalizes each page's text into a comparison key. A blank or
+// text-less page gets a per-document, per-index sentinel so it can never match
+// another blank across the two documents (which would mis-pair). meaningful is
+// the count of pages that carry real text.
+function pageFingerprints(texts, tag) {
+  let meaningful = 0;
+  const keys = texts.map((t, i) => {
+    const norm = t.replace(/\s+/g, ' ').trim().toLowerCase();
+    if (norm === '') return `\x00empty:${tag}:${i}`;
+    meaningful++;
+    return norm;
+  });
+  return { keys, meaningful };
+}
+
+// alignPages aligns two page-fingerprint sequences via a longest-common-subsequence
+// pass, returning ordered steps {a,b} of 1-based page numbers — with b=null for a
+// page only in the open document (deleted) and a=null for one only in the compared
+// document (added). Page counts are small, so the O(m·n) table is trivial.
+function alignPages(ka, kb) {
+  const m = ka.length, n = kb.length;
+  const dp = Array.from({ length: m + 1 }, () => new Int32Array(n + 1));
+  for (let i = m - 1; i >= 0; i--) {
+    for (let j = n - 1; j >= 0; j--) {
+      dp[i][j] = ka[i] === kb[j] ? dp[i + 1][j + 1] + 1 : Math.max(dp[i + 1][j], dp[i][j + 1]);
+    }
+  }
+  const steps = [];
+  let i = 0, j = 0;
+  while (i < m && j < n) {
+    if (ka[i] === kb[j]) { steps.push({ a: i + 1, b: j + 1 }); i++; j++; }
+    else if (dp[i + 1][j] >= dp[i][j + 1]) { steps.push({ a: i + 1, b: null }); i++; }
+    else { steps.push({ a: null, b: j + 1 }); j++; }
+  }
+  while (i < m) { steps.push({ a: i + 1, b: null }); i++; }
+  while (j < n) { steps.push({ a: null, b: j + 1 }); j++; }
+  return steps;
 }
 
 const CMP_SCALE = 2; // 144 DPI — matches the flatten/redact raster scale
@@ -1316,10 +1361,46 @@ let cmpPageA = 1, cmpPageB = 1; // independent pages (visual modes) so an insert
                                 // deleted page can be re-aligned across the shift
 let cmpText = null;  // cached {a,b} text dumps so mode-switching doesn't re-extract
 let cmpSeq = 0;      // render token — discards a stale paint if the user flips fast
+let cmpAlign = null; // [{a,b}] auto page-matching steps (null until computed / when not meaningful)
+let cmpAlignIdx = 0; // position within cmpAlign for lockstep nav
+let cmpAlignTried = false; // whether fingerprinting+alignment has run for this pair
 
 function closeCmpDoc() {
   if (cmpDoc) { cmpDoc.destroy(); cmpDoc = null; } // free the comparison doc
   cmpText = null; cmpName = ''; cmpPageA = 1; cmpPageB = 1; cmpMode = 'text';
+  cmpAlign = null; cmpAlignIdx = 0; cmpAlignTried = false;
+  if (els.cmAuto) els.cmAuto.checked = true;
+}
+
+// autoActive reports whether auto page-matching is currently driving navigation:
+// the user hasn't turned it off and an alignment was computed (both docs have text).
+function autoActive() { return els.cmAuto.checked && cmpAlign && cmpAlign.length > 0; }
+
+// alignStat summarises the alignment for the toolbar: "+added −removed" (added =
+// pages only in the compared doc, removed = pages only in the open doc), or a
+// "pages aligned" note when the pagination matches 1:1.
+function alignStat() {
+  let added = 0, removed = 0;
+  for (const s of cmpAlign) { if (s.a == null) added++; else if (s.b == null) removed++; }
+  if (!added && !removed) return 'pages aligned';
+  return [added ? `+${added}` : '', removed ? `−${removed}` : ''].filter(Boolean).join(' ');
+}
+
+// ensureAlignment lazily fingerprints both documents and computes the page
+// alignment once per pair. When neither side has text (e.g. two scans) there's
+// nothing to align on, so auto-align is disabled and nav falls back to manual.
+async function ensureAlignment() {
+  if (cmpAlignTried) return;
+  cmpAlignTried = true;
+  const [ta, tb] = await Promise.all([pageTexts(pdfDocument), pageTexts(cmpDoc)]);
+  const a = pageFingerprints(ta, 'a'), b = pageFingerprints(tb, 'b');
+  if (a.meaningful > 0 && b.meaningful > 0) {
+    cmpAlign = alignPages(a.keys, b.keys);
+  } else {
+    cmpAlign = null;
+    els.cmAuto.checked = false; // no text to align on → manual paging only
+  }
+  els.cmAuto.disabled = !cmpAlign;
 }
 function openCompare() {
   if (!pdfDocument) return toast('Open a PDF first');
@@ -1354,16 +1435,29 @@ els.compareInput.onchange = async () => {
 for (const btn of document.querySelectorAll('.cmmode')) {
   btn.onclick = () => setCompareMode(btn.dataset.mode);
 }
-// Lockstep prev/next steps both documents together (preserving alignment); the
-// per-side ‹ › steppers nudge one document to re-align across an inserted/deleted page.
-els.cmPrev.onclick = () => stepCompare(-1, -1);
-els.cmNext.onclick = () => stepCompare(1, 1);
-els.cmAPrev.onclick = () => stepCompare(-1, 0);
-els.cmANext.onclick = () => stepCompare(1, 0);
-els.cmBPrev.onclick = () => stepCompare(0, -1);
-els.cmBNext.onclick = () => stepCompare(0, 1);
+// Lockstep prev/next: with auto-align on, walk the computed page pairing (so an
+// inserted/deleted page stays aligned); otherwise step both documents together.
+els.cmPrev.onclick = () => lockstep(-1);
+els.cmNext.onclick = () => lockstep(1);
+// The per-side ‹ › steppers are the manual escape hatch — they only act when
+// auto-align is off (disabled while it's on; uncheck Auto-align to nudge a side).
+els.cmAPrev.onclick = () => stepManual(-1, 0);
+els.cmANext.onclick = () => stepManual(1, 0);
+els.cmBPrev.onclick = () => stepManual(0, -1);
+els.cmBNext.onclick = () => stepManual(0, 1);
+els.cmAuto.onchange = () => { cmpAlignIdx = 0; renderCompareVisual(cmpMode); };
 
-function stepCompare(da, db) {
+function lockstep(dir) {
+  if (autoActive()) {
+    cmpAlignIdx = Math.min(Math.max(cmpAlignIdx + dir, 0), cmpAlign.length - 1);
+  } else {
+    cmpPageA = Math.min(Math.max(cmpPageA + dir, 1), pdfDocument.numPages);
+    cmpPageB = Math.min(Math.max(cmpPageB + dir, 1), cmpDoc.numPages);
+  }
+  renderCompareVisual(cmpMode);
+}
+
+function stepManual(da, db) {
   cmpPageA = Math.min(Math.max(cmpPageA + da, 1), pdfDocument.numPages);
   cmpPageB = Math.min(Math.max(cmpPageB + db, 1), cmpDoc.numPages);
   renderCompareVisual(cmpMode);
@@ -1395,15 +1489,54 @@ async function renderCompareText() {
 // deleted page can be re-aligned; a size-mismatched pair is shown without a diff.
 async function renderCompareVisual(mode) {
   const seq = ++cmpSeq;
+  if (!cmpAlignTried) {
+    els.compareSummary.hidden = true;
+    els.compareBody.innerHTML = '<p class="scan-where">Aligning pages…</p>';
+  }
+  await ensureAlignment();
+  if (seq !== cmpSeq) return; // a newer render started while fingerprinting
   const nA = pdfDocument.numPages, nB = cmpDoc.numPages;
+  const auto = autoActive();
+
+  // In auto mode the current alignment step drives which pages show; a gap step
+  // (one side null) means a page was added or removed and is shown on its own.
+  let step = null;
+  if (auto) {
+    cmpAlignIdx = Math.min(Math.max(cmpAlignIdx, 0), cmpAlign.length - 1);
+    step = cmpAlign[cmpAlignIdx];
+    if (step.a != null) cmpPageA = step.a;
+    if (step.b != null) cmpPageB = step.b;
+  }
   cmpPageA = Math.min(Math.max(cmpPageA, 1), nA);
   cmpPageB = Math.min(Math.max(cmpPageB, 1), nB);
-  els.cmPageLabelA.textContent = `${cmpPageA} / ${nA}`;
-  els.cmPageLabelB.textContent = `${cmpPageB} / ${nB}`;
-  els.cmPrev.disabled = cmpPageA <= 1 && cmpPageB <= 1;
-  els.cmNext.disabled = cmpPageA >= nA && cmpPageB >= nB;
-  els.cmAPrev.disabled = cmpPageA <= 1; els.cmANext.disabled = cmpPageA >= nA;
-  els.cmBPrev.disabled = cmpPageB <= 1; els.cmBNext.disabled = cmpPageB >= nB;
+
+  els.cmPageLabelA.textContent = step && step.a == null ? `— / ${nA}` : `${cmpPageA} / ${nA}`;
+  els.cmPageLabelB.textContent = step && step.b == null ? `— / ${nB}` : `${cmpPageB} / ${nB}`;
+  els.cmPrev.disabled = auto ? cmpAlignIdx <= 0 : (cmpPageA <= 1 && cmpPageB <= 1);
+  els.cmNext.disabled = auto ? cmpAlignIdx >= cmpAlign.length - 1 : (cmpPageA >= nA && cmpPageB >= nB);
+  els.cmAPrev.disabled = auto || cmpPageA <= 1; els.cmANext.disabled = auto || cmpPageA >= nA;
+  els.cmBPrev.disabled = auto || cmpPageB <= 1; els.cmBNext.disabled = auto || cmpPageB >= nB;
+  els.cmAlignStat.textContent = auto ? alignStat() : '';
+
+  // A gap step renders the single present page with an added/removed banner.
+  if (step && step.b == null) {
+    const ra = await renderPageCanvas(pdfDocument, cmpPageA, CMP_SCALE);
+    if (seq !== cmpSeq) return;
+    els.compareSummary.hidden = false;
+    els.compareSummary.textContent = `Page ${cmpPageA} is only in the open document (removed from ${cmpName}).`;
+    els.compareBody.textContent = '';
+    showCompareCanvases([[`Open document — page ${cmpPageA}`, ra.canvas]]);
+    return;
+  }
+  if (step && step.a == null) {
+    const rb = await renderPageCanvas(cmpDoc, cmpPageB, CMP_SCALE);
+    if (seq !== cmpSeq) return;
+    els.compareSummary.hidden = false;
+    els.compareSummary.textContent = `Page ${cmpPageB} was added in ${cmpName} (not in the open document).`;
+    els.compareBody.textContent = '';
+    showCompareCanvases([[`${cmpName} — page ${cmpPageB}`, rb.canvas]]);
+    return;
+  }
 
   const [ra, rb] = await Promise.all([
     renderPageCanvas(pdfDocument, cmpPageA, CMP_SCALE),

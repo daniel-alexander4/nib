@@ -210,11 +210,15 @@ switchable from the toolbar at the top of the dialog:
   on **scanned** PDFs too. Pages that differ in size between the two documents are
   shown side by side instead (normalise page sizes first for a difference map).
 
-In the visual modes the two sides **page independently**: the outer ‹ › step both
-documents together, while each side's own ‹ › nudges just that document — so if one
-version inserted or deleted a page, you can line the two back up and keep comparing
-the pages that actually correspond. Like everything else it runs **entirely on your
-machine** — the second PDF never leaves your computer.
+In the visual modes Nib **auto-aligns the pages**: it matches each page of one
+document to its counterpart in the other, so if a version inserted or deleted a
+page the comparison stays lined up instead of every later page reading as changed.
+The outer ‹ › then step through the matched pairs, an added or removed page is shown
+on its own with a banner, and the toolbar notes how many pages were added/removed.
+Auto-align uses the page text, so it needs text-based PDFs (uncheck **Auto-align**
+to page the two sides manually, or for scanned documents — run **OCR** first to make
+them alignable). Like everything else it runs **entirely on your machine** — the
+second PDF never leaves your computer.
 
 ### Scan for hidden content
 **Secure → Scan for hidden content** lists what's lurking in a PDF that you can't
