@@ -7,6 +7,8 @@ import (
 	"crypto/rand"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"image"
+	"image/png"
 	"math/big"
 	"os"
 	"os/exec"
@@ -362,6 +364,52 @@ func TestFillBadModes(t *testing.T) {
 	if code := cmdFill([]string{formPath}); code == 0 {
 		t.Error("missing --data should fail")
 	}
+}
+
+// TestPDFA: `nib pdfa` refuses a non-embedded-font document (exit 1) and converts
+// a fontless image PDF to a valid PDF/A candidate carrying the identifier.
+func TestPDFA(t *testing.T) {
+	dir := t.TempDir()
+
+	// testpdf.Text uses the standard-14 Courier (not embedded) → refused.
+	textPDF, err := testpdf.Text("hi")
+	if err != nil {
+		t.Fatal(err)
+	}
+	bad := filepath.Join(dir, "text.pdf")
+	mustWrite(t, bad, textPDF)
+	if code := cmdPDFA([]string{bad, "-o", filepath.Join(dir, "bad-out.pdf")}); code != 1 {
+		t.Fatalf("pdfa on a non-embedded-font PDF exit = %d, want 1", code)
+	}
+
+	// An image-only PDF has no fonts → converts.
+	imgPDF, err := pdfops.ImagesToPDF([]pdfops.RasterPage{{Image: cliTinyPNG(t), W: 200, H: 200}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	img := filepath.Join(dir, "img.pdf")
+	mustWrite(t, img, imgPDF)
+	out := filepath.Join(dir, "img-pdfa.pdf")
+	if code := cmdPDFA([]string{img, "-o", out}); code != 0 {
+		t.Fatalf("pdfa on an image PDF exit = %d, want 0", code)
+	}
+	got := readPDF(t, out)
+	if err := pdfops.Validate(got); err != nil {
+		t.Fatalf("PDF/A output invalid: %v", err)
+	}
+	if !bytes.Contains(got, []byte("pdfaid:part")) {
+		t.Error("PDF/A output missing the pdfaid identifier")
+	}
+}
+
+// cliTinyPNG encodes a small blank image for the fontless PDF/A test.
+func cliTinyPNG(t *testing.T) []byte {
+	t.Helper()
+	var b bytes.Buffer
+	if err := png.Encode(&b, image.NewRGBA(image.Rect(0, 0, 16, 16))); err != nil {
+		t.Fatal(err)
+	}
+	return b.Bytes()
 }
 
 // TestExportXFDFAndFill round-trips through the CLI: fill a form from an XFDF
