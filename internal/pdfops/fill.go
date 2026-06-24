@@ -66,52 +66,13 @@ func FillFormCSV(pdf, data []byte, nameCol string) ([]SplitPart, error) {
 	if err != nil {
 		return nil, err
 	}
+	multi := listBoxKeys(skeleton) // which headers feed multi-select list boxes
 
 	seen := map[string]int{}
 	parts := make([]SplitPart, 0, len(rows)-1)
 	for r, row := range rows[1:] {
-		var fg form.FormGroup
-		if err := json.Unmarshal(skelJSON, &fg); err != nil {
-			return nil, err
-		}
-		f := &fg.Forms[0]
-		for _, x := range f.TextFields {
-			if v, ok := cell(x.Name, x.ID, colOf, row); ok {
-				x.Value = v
-			}
-		}
-		for _, x := range f.DateFields {
-			if v, ok := cell(x.Name, x.ID, colOf, row); ok {
-				x.Value = v
-			}
-		}
-		for _, x := range f.CheckBoxes {
-			if v, ok := cell(x.Name, x.ID, colOf, row); ok {
-				x.Value = truthy(v)
-			}
-		}
-		for _, x := range f.ComboBoxes {
-			if v, ok := cell(x.Name, x.ID, colOf, row); ok {
-				x.Value = v
-			}
-		}
-		for _, x := range f.RadioButtonGroups {
-			if v, ok := cell(x.Name, x.ID, colOf, row); ok {
-				x.Value = v
-			}
-		}
-		for _, x := range f.ListBoxes {
-			if v, ok := cell(x.Name, x.ID, colOf, row); ok {
-				x.Values = splitMulti(v)
-			}
-		}
-
-		b, err := json.Marshal(fg)
+		out, err := fillFromValues(pdf, skelJSON, rowValues(header, row, multi))
 		if err != nil {
-			return nil, err
-		}
-		var out bytes.Buffer
-		if err := api.FillForm(bytes.NewReader(pdf), bytes.NewReader(b), &out, model.NewDefaultConfiguration()); err != nil {
 			return nil, fmt.Errorf("row %d: %w", r+1, err)
 		}
 		base := fmt.Sprintf("row-%03d", r+1)
@@ -120,23 +81,114 @@ func FillFormCSV(pdf, data []byte, nameCol string) ([]SplitPart, error) {
 				base = s
 			}
 		}
-		parts = append(parts, SplitPart{Name: UniqueName(base, r+1, seen), Data: out.Bytes()})
+		parts = append(parts, SplitPart{Name: UniqueName(base, r+1, seen), Data: out})
 	}
 	return parts, nil
 }
 
-// cell returns the row value under whichever of the field's name or id is a CSV
-// column header (pdfcpu fills match on either).
-func cell(name, id string, colOf map[string]int, row []string) (string, bool) {
+// fillFromValues fills the marshalled skeleton form group with values keyed by
+// field name or id, runs pdfcpu's fill over pdf, and returns the filled PDF. Both
+// FillFormCSV (per row) and FillFormXFDF feed this one applier, so the
+// name→typed-field mapping lives in a single place. List boxes take every value;
+// every other field takes the first.
+func fillFromValues(pdf, skelJSON []byte, values map[string][]string) ([]byte, error) {
+	var fg form.FormGroup
+	if err := json.Unmarshal(skelJSON, &fg); err != nil {
+		return nil, err
+	}
+	f := &fg.Forms[0]
+	for _, x := range f.TextFields {
+		if v, ok := pick(values, x.Name, x.ID); ok {
+			x.Value = first(v)
+		}
+	}
+	for _, x := range f.DateFields {
+		if v, ok := pick(values, x.Name, x.ID); ok {
+			x.Value = first(v)
+		}
+	}
+	for _, x := range f.CheckBoxes {
+		if v, ok := pick(values, x.Name, x.ID); ok {
+			x.Value = truthy(first(v))
+		}
+	}
+	for _, x := range f.ComboBoxes {
+		if v, ok := pick(values, x.Name, x.ID); ok {
+			x.Value = first(v)
+		}
+	}
+	for _, x := range f.RadioButtonGroups {
+		if v, ok := pick(values, x.Name, x.ID); ok {
+			x.Value = first(v)
+		}
+	}
+	for _, x := range f.ListBoxes {
+		if v, ok := pick(values, x.Name, x.ID); ok {
+			x.Values = v
+		}
+	}
+	b, err := json.Marshal(fg)
+	if err != nil {
+		return nil, err
+	}
+	var out bytes.Buffer
+	if err := api.FillForm(bytes.NewReader(pdf), bytes.NewReader(b), &out, model.NewDefaultConfiguration()); err != nil {
+		return nil, err
+	}
+	return out.Bytes(), nil
+}
+
+// rowValues turns a CSV record into the name→value(s) map fillFromValues consumes,
+// keyed by each column header (a field name or id). A header feeding a list box is
+// split into multiple values; every other column carries a single value.
+func rowValues(header, row []string, multi map[string]bool) map[string][]string {
+	values := make(map[string][]string, len(header))
+	for i, h := range header {
+		if i >= len(row) {
+			continue
+		}
+		if multi[h] {
+			values[h] = splitMulti(row[i])
+		} else {
+			values[h] = []string{row[i]}
+		}
+	}
+	return values
+}
+
+// listBoxKeys returns the set of names and ids that identify list-box fields, so
+// the CSV path knows which cells to split into multiple selections.
+func listBoxKeys(fg *form.FormGroup) map[string]bool {
+	keys := map[string]bool{}
+	for _, f := range fg.Forms {
+		for _, x := range f.ListBoxes {
+			keys[x.Name] = true
+			keys[x.ID] = true
+		}
+	}
+	return keys
+}
+
+// pick returns the values stored under whichever of the field's name or id is a
+// key (pdfcpu fills match on either).
+func pick(values map[string][]string, name, id string) ([]string, bool) {
 	for _, key := range []string{name, id} {
 		if key == "" {
 			continue
 		}
-		if c, ok := colOf[key]; ok && c < len(row) {
-			return row[c], true
+		if v, ok := values[key]; ok {
+			return v, true
 		}
 	}
-	return "", false
+	return nil, false
+}
+
+// first returns the leading value, or "" for an empty slice.
+func first(v []string) string {
+	if len(v) > 0 {
+		return v[0]
+	}
+	return ""
 }
 
 // truthy reads a CSV checkbox cell — true for t/true/1/yes/y/x/checked/on (any case).

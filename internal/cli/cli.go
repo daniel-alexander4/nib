@@ -68,6 +68,7 @@ var commands = map[string]func([]string) int{
 	"pagenum":     cmdPagenum,
 	"pagelabels":  cmdPagelabels,
 	"fill":        cmdFill,
+	"export-xfdf": cmdExportXFDF,
 	"attachments": cmdAttachments,
 	"outline":     cmdOutline,
 }
@@ -95,14 +96,15 @@ These subcommands run headlessly, without a browser:
   nib pagenum IN -o OUT           stamp running page numbers / Bates numbering
                                   (--continuous threads one counter across FILE…)
   nib pagelabels IN -o OUT        set logical page labels (--range PAGE:STYLE[:START[:PREFIX]])
-  nib fill IN --data D            fill a form from JSON (-o OUT), or mail-merge a CSV (--out-dir DIR)
+  nib fill IN --data D            fill a form from JSON/XFDF (-o OUT), or mail-merge a CSV (--out-dir DIR)
+  nib export-xfdf IN -o OUT        export a form's field data as XFDF (Acrobat/Foxit interchange)
   nib attachments IN [--json]     list embedded files (--extract NAME / --add FILE)
   nib outline IN [--json]         list the document's bookmark outline
   nib watch DIR --do OP           run timestamp/optimize/sanitize on each new PDF
   nib version                     print the version
 
 Commands that produce a PDF require -o/--out FILE. For optimize, merge, sanitize,
-sign, rotate, pages, encrypt, decrypt, nup, normalize, pagenum, pagelabels, and fill (JSON), "-" reads a PDF from stdin or (as
+sign, rotate, pages, encrypt, decrypt, nup, normalize, pagenum, pagelabels, fill (JSON/XFDF), and export-xfdf, "-" reads a PDF from stdin or (as
 -o -) writes it to stdout, so they compose in a pipeline. Exit status is non-zero
 on failure (verify: 2 when a signature is invalid or absent).
 
