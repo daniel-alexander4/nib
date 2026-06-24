@@ -72,7 +72,7 @@ const els = {
   redactTextBtn: $('redactTextBtn'), redactTextModal: $('redactTextModal'),
   rtTerm: $('rtTerm'), rtSSN: $('rtSSN'), rtEmail: $('rtEmail'), rtPhone: $('rtPhone'),
   rtCard: $('rtCard'), rtFind: $('rtFind'), rtStatus: $('rtStatus'), rtCancel: $('rtCancel'),
-  editTextBtn: $('editTextBtn'), removeOriginalsBtn: $('removeOriginalsBtn'), ocrBtn: $('ocrBtn'), ocrLang: $('ocrLang'),
+  editTextBtn: $('editTextBtn'), removeOriginalsBtn: $('removeOriginalsBtn'), ocrBtn: $('ocrBtn'), ocrLang: $('ocrLang'), ocrQuality: $('ocrQuality'),
   scanBtn: $('scanBtn'), scanModal: $('scanModal'), scanBody: $('scanBody'),
   scanStripBtn: $('scanStripBtn'), scanMetaBtn: $('scanMetaBtn'), scanSafeBtn: $('scanSafeBtn'),
   scanFlattenBtn: $('scanFlattenBtn'), scanClose: $('scanClose'),
@@ -3343,7 +3343,6 @@ function loadTesseract() {
   });
 }
 
-const OCR_SCALE = 200 / 72; // ~200 DPI — a good accuracy/speed balance for OCR
 
 async function runOCR() {
   if (!pdfDocument || !confirmSignatureLoss()) return;
@@ -3361,25 +3360,32 @@ async function runOCR() {
     // Single language for best accuracy; the picker defaults to English so the
     // common case is unchanged. Each <lang>.traineddata.gz is vendored alongside.
     const lang = (els.ocrLang && els.ocrLang.value) || 'eng';
+    // Render DPI is a per-run choice: Fast (200, the default) or Best (300, the
+    // tesseract-recommended optimum — slower but more accurate, esp. small text).
+    const dpi = Number(els.ocrQuality && els.ocrQuality.value) || 200;
+    const ocrScale = dpi / 72; // canvas px per PDF point at the chosen DPI
     worker = await window.Tesseract.createWorker(lang, 1, {
       workerPath: base + 'worker.min.js',
       corePath: base + 'tesseract-core-simd.wasm.js',
       langPath: base,
       gzip: true, // <lang>.traineddata.gz
     });
+    // Tell tesseract the true DPI instead of letting it estimate from the bitmap
+    // (a wrong guess skews its layout/word-spacing heuristics); matches ocrScale.
+    await worker.setParameters({ user_defined_dpi: String(dpi) });
     const words = [];
     const n = pdfDocument.numPages;
     for (let p = 1; p <= n; p++) {
       btn.textContent = `OCR ${p}/${n}…`;
-      const { blob, h } = await renderPageBlob(pdfDocument, p, OCR_SCALE, null, 'image/png');
+      const { blob, h } = await renderPageBlob(pdfDocument, p, ocrScale, null, 'image/png');
       const { data } = await worker.recognize(blob);
       for (const word of data.words || []) {
         const t = (word.text || '').trim();
         if (!t) continue;
-        // bbox is pixels (top-left origin) at OCR_SCALE; map to PDF points
+        // bbox is pixels (top-left origin) at ocrScale; map to PDF points
         // (bottom-left origin): x/scale, and flip Y about the page height h.
         const b = word.bbox;
-        words.push({ page: p, text: t, rect: [b.x0 / OCR_SCALE, h - b.y1 / OCR_SCALE, b.x1 / OCR_SCALE, h - b.y0 / OCR_SCALE] });
+        words.push({ page: p, text: t, rect: [b.x0 / ocrScale, h - b.y1 / ocrScale, b.x1 / ocrScale, h - b.y0 / ocrScale] });
       }
     }
     if (!words.length) { toast('No text found to add'); return; }
@@ -5772,7 +5778,7 @@ const DOC_REQUIRED = [
   'exportZipBtn', 'exportPngBtn', 'exportFormJsonBtn', 'exportFormCsvBtn', 'exportFormXfdfBtn', 'exportBookmarkSplitBtn',
   'exportPageSplitBtn', 'pdfaBtn',
   'textToolBtn', 'highlightToolBtn', 'drawToolBtn',
-  'detectBtn', 'editTextBtn', 'removeOriginalsBtn', 'ocrBtn', 'ocrLang', 'autofillBtn', 'splitBtn',
+  'detectBtn', 'editTextBtn', 'removeOriginalsBtn', 'ocrBtn', 'ocrLang', 'ocrQuality', 'autofillBtn', 'splitBtn',
   'splitBoxBtn', 'applyBoxSplitBtn', 'rotateLeftBtn', 'rotateRightBtn',
   'extractBtn', 'insertBlankBtn', 'duplicatePageBtn', 'insertPdfBtn', 'pageNumBtn', 'pageLabelsBtn', 'nupBtn', 'normalizeBtn', 'cropBtn',
   'redactBtn', 'redactTextBtn', 'applyRedactBtn', 'scanBtn', 'attachBtn', 'encryptBtn', 'decryptBtn', 'compareBtn', 'fillCsvBtn', 'importXfdfBtn',
