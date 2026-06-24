@@ -41,8 +41,9 @@ const els = {
   compareBtn: $('compareBtn'), compareModal: $('compareModal'), compareBody: $('compareBody'),
   compareInput: $('compareInput'), comparePick: $('comparePick'), compareClose: $('compareClose'),
   compareTools: $('compareTools'), compareSummary: $('compareSummary'),
-  comparePager: $('comparePager'), cmPageLabel: $('cmPageLabel'),
-  cmPrev: $('cmPrev'), cmNext: $('cmNext'),
+  comparePager: $('comparePager'), cmPrev: $('cmPrev'), cmNext: $('cmNext'),
+  cmAPrev: $('cmAPrev'), cmANext: $('cmANext'), cmPageLabelA: $('cmPageLabelA'),
+  cmBPrev: $('cmBPrev'), cmBNext: $('cmBNext'), cmPageLabelB: $('cmPageLabelB'),
   fillCsvBtn: $('fillCsvBtn'), fillCsvModal: $('fillCsvModal'), fillCsvPick: $('fillCsvPick'),
   fillCsvInput: $('fillCsvInput'), fillCsvStatus: $('fillCsvStatus'), fillCsvClose: $('fillCsvClose'),
   pathInput: $('pathInput'), openGo: $('openGo'),
@@ -1311,13 +1312,14 @@ const CMP_SCALE = 2; // 144 DPI — matches the flatten/redact raster scale
 let cmpDoc = null;   // the picked pdf.js doc, kept alive across page nav until close
 let cmpName = '';    // picked filename (shown as a caption / in summaries)
 let cmpMode = 'text';// 'text' | 'side' | 'diff'
-let cmpPage = 1;     // current page (visual modes), 1-based
+let cmpPageA = 1, cmpPageB = 1; // independent pages (visual modes) so an inserted/
+                                // deleted page can be re-aligned across the shift
 let cmpText = null;  // cached {a,b} text dumps so mode-switching doesn't re-extract
 let cmpSeq = 0;      // render token — discards a stale paint if the user flips fast
 
 function closeCmpDoc() {
   if (cmpDoc) { cmpDoc.destroy(); cmpDoc = null; } // free the comparison doc
-  cmpText = null; cmpName = ''; cmpPage = 1; cmpMode = 'text';
+  cmpText = null; cmpName = ''; cmpPageA = 1; cmpPageB = 1; cmpMode = 'text';
 }
 function openCompare() {
   if (!pdfDocument) return toast('Open a PDF first');
@@ -1352,8 +1354,20 @@ els.compareInput.onchange = async () => {
 for (const btn of document.querySelectorAll('.cmmode')) {
   btn.onclick = () => setCompareMode(btn.dataset.mode);
 }
-els.cmPrev.onclick = () => { if (cmpPage > 1) { cmpPage--; renderCompareVisual(cmpMode); } };
-els.cmNext.onclick = () => { cmpPage++; renderCompareVisual(cmpMode); };
+// Lockstep prev/next steps both documents together (preserving alignment); the
+// per-side ‹ › steppers nudge one document to re-align across an inserted/deleted page.
+els.cmPrev.onclick = () => stepCompare(-1, -1);
+els.cmNext.onclick = () => stepCompare(1, 1);
+els.cmAPrev.onclick = () => stepCompare(-1, 0);
+els.cmANext.onclick = () => stepCompare(1, 0);
+els.cmBPrev.onclick = () => stepCompare(0, -1);
+els.cmBNext.onclick = () => stepCompare(0, 1);
+
+function stepCompare(da, db) {
+  cmpPageA = Math.min(Math.max(cmpPageA + da, 1), pdfDocument.numPages);
+  cmpPageB = Math.min(Math.max(cmpPageB + db, 1), cmpDoc.numPages);
+  renderCompareVisual(cmpMode);
+}
 
 function setCompareMode(mode) {
   cmpMode = mode;
@@ -1375,54 +1389,53 @@ async function renderCompareText() {
   renderCompare(cmpText.a, cmpText.b, cmpName);
 }
 
-// Visual modes: rasterise the current page of both documents (lazily, one page at
+// Visual modes: rasterise the selected page of each document (lazily, one page at
 // a time) and either show them side by side or paint a pixelmatch difference map.
-// Pages present in only one document, or differing in size, are shown without a
-// pixel diff and explained in the summary line.
+// The two pages are chosen independently (cmpPageA/cmpPageB) so an inserted or
+// deleted page can be re-aligned; a size-mismatched pair is shown without a diff.
 async function renderCompareVisual(mode) {
   const seq = ++cmpSeq;
   const nA = pdfDocument.numPages, nB = cmpDoc.numPages;
-  const total = Math.max(nA, nB);
-  cmpPage = Math.min(Math.max(cmpPage, 1), total);
-  els.cmPageLabel.textContent = `Page ${cmpPage} / ${total}`;
-  els.cmPrev.disabled = cmpPage <= 1;
-  els.cmNext.disabled = cmpPage >= total;
+  cmpPageA = Math.min(Math.max(cmpPageA, 1), nA);
+  cmpPageB = Math.min(Math.max(cmpPageB, 1), nB);
+  els.cmPageLabelA.textContent = `${cmpPageA} / ${nA}`;
+  els.cmPageLabelB.textContent = `${cmpPageB} / ${nB}`;
+  els.cmPrev.disabled = cmpPageA <= 1 && cmpPageB <= 1;
+  els.cmNext.disabled = cmpPageA >= nA && cmpPageB >= nB;
+  els.cmAPrev.disabled = cmpPageA <= 1; els.cmANext.disabled = cmpPageA >= nA;
+  els.cmBPrev.disabled = cmpPageB <= 1; els.cmBNext.disabled = cmpPageB >= nB;
 
-  const hasA = cmpPage <= nA, hasB = cmpPage <= nB;
+  const [ra, rb] = await Promise.all([
+    renderPageCanvas(pdfDocument, cmpPageA, CMP_SCALE),
+    renderPageCanvas(cmpDoc, cmpPageB, CMP_SCALE),
+  ]);
+  if (seq !== cmpSeq) return;
+
+  const capA = `Open document — page ${cmpPageA}`, capB = `${cmpName} — page ${cmpPageB}`;
+  const countNote = nA !== nB ? `Documents have different page counts (${nA} vs ${nB}).` : '';
   let summary = '', items;
-  if (!hasA || !hasB) {
-    const r = await renderPageCanvas(hasA ? pdfDocument : cmpDoc, cmpPage, CMP_SCALE);
-    if (seq !== cmpSeq) return;
-    summary = hasA ? 'This page exists only in the open document.'
-                   : `This page exists only in “${cmpName}”.`;
-    items = [[hasA ? 'Open document' : cmpName, r.canvas]];
+  if (mode === 'side') {
+    summary = countNote;
+    items = [[capA, ra.canvas], [capB, rb.canvas]];
+  } else if (ra.canvas.width !== rb.canvas.width || ra.canvas.height !== rb.canvas.height) {
+    summary = `Page sizes differ (${Math.round(ra.w)}×${Math.round(ra.h)} vs ${Math.round(rb.w)}×${Math.round(rb.h)} pt) — can’t build a difference map. Normalise page sizes first; showing both pages.`;
+    items = [[capA, ra.canvas], [capB, rb.canvas]];
   } else {
-    const [ra, rb] = await Promise.all([
-      renderPageCanvas(pdfDocument, cmpPage, CMP_SCALE),
-      renderPageCanvas(cmpDoc, cmpPage, CMP_SCALE),
-    ]);
-    if (seq !== cmpSeq) return;
-    if (mode === 'side') {
-      items = [['Open document', ra.canvas], [cmpName, rb.canvas]];
-    } else if (ra.canvas.width !== rb.canvas.width || ra.canvas.height !== rb.canvas.height) {
-      summary = `Page sizes differ (${Math.round(ra.w)}×${Math.round(ra.h)} vs ${Math.round(rb.w)}×${Math.round(rb.h)} pt) — can’t build a difference map. Normalise page sizes first; showing both pages.`;
-      items = [['Open document', ra.canvas], [cmpName, rb.canvas]];
-    } else {
-      const w = ra.canvas.width, h = ra.canvas.height;
-      const da = ra.canvas.getContext('2d').getImageData(0, 0, w, h);
-      const db = rb.canvas.getContext('2d').getImageData(0, 0, w, h);
-      const out = document.createElement('canvas');
-      out.width = w; out.height = h;
-      const octx = out.getContext('2d');
-      const od = octx.createImageData(w, h);
-      const changed = pixelmatch(da.data, db.data, od.data, w, h, { threshold: 0.1, alpha: 0.15 });
-      octx.putImageData(od, 0, 0);
-      const pct = 100 * changed / (w * h);
-      summary = changed === 0
-        ? 'No visible differences on this page.'
-        : `${changed.toLocaleString()} pixels changed (${pct < 0.1 ? pct.toFixed(2) : pct.toFixed(1)}%), highlighted in red.`;
-      items = [['Differences', out]];
-    }
+    const w = ra.canvas.width, h = ra.canvas.height;
+    const da = ra.canvas.getContext('2d').getImageData(0, 0, w, h);
+    const db = rb.canvas.getContext('2d').getImageData(0, 0, w, h);
+    const out = document.createElement('canvas');
+    out.width = w; out.height = h;
+    const octx = out.getContext('2d');
+    const od = octx.createImageData(w, h);
+    const changed = pixelmatch(da.data, db.data, od.data, w, h, { threshold: 0.1, alpha: 0.15 });
+    octx.putImageData(od, 0, 0);
+    const pct = 100 * changed / (w * h);
+    const diffMsg = changed === 0
+      ? 'No visible differences between these pages.'
+      : `${changed.toLocaleString()} pixels changed (${pct < 0.1 ? pct.toFixed(2) : pct.toFixed(1)}%), highlighted in red.`;
+    summary = countNote ? `${diffMsg} ${countNote}` : diffMsg;
+    items = [[`Differences — open page ${cmpPageA} vs ${cmpName} page ${cmpPageB}`, out]];
   }
   els.compareSummary.hidden = !summary;
   els.compareSummary.textContent = summary;
