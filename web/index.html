@@ -633,13 +633,15 @@
       <h3>Archival PDF (PDF/A-2b)</h3>
       <p class="libhint">Convert this document to a <strong>PDF/A-2b candidate</strong> for long-term
         archiving: Nib embeds an sRGB output profile, writes the PDF/A identification, and removes
-        active content and attachments. It refuses documents whose fonts aren't embedded (PDF/A
-        requires it and Nib can't add a missing font).</p>
+        active content and attachments. The fast built-in converter refuses documents whose fonts
+        aren't embedded; if <strong>Ghostscript</strong> is installed, it can convert those too
+        (re-embedding fonts and converting colour).</p>
       <p class="libhint"><strong>Verify the result with veraPDF.</strong> Nib can't validate PDF/A
         conformance itself, so this is a candidate, not a certified file.</p>
       <div id="pdfaStatus" class="libhint"></div>
       <div class="sigbtns">
         <button id="pdfaGo" class="primary">Convert &amp; save…</button>
+        <button id="pdfaGsGo" hidden>Convert with Ghostscript</button>
         <span class="grow"></span>
         <button id="pdfaClose">Close</button>
       </div>

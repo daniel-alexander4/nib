@@ -80,13 +80,25 @@ Archival PDF (PDF/A-2b)…** converts the open document to a **PDF/A-2b candidat
 Nib embeds an sRGB output profile, writes the PDF/A identification, and removes
 active content and attachments. On the command line it's `nib pdfa IN -o OUT`.
 
-Nib is honest about what it can and can't do here. PDF/A requires every font to be
-embedded, and Nib can't add a font that isn't already in the file, so a document
-with non-embedded fonts (or one that's encrypted) is **refused with the specific
-reason** rather than turned into a file that falsely claims conformance. And
-because no pure-Go PDF/A validator exists, Nib can't certify the result itself —
-it produces a *candidate* you should **verify with [veraPDF](https://verapdf.org/)**
-before relying on it for archival.
+Nib is honest about what it can and can't do here. The fast built-in converter is
+pure Go, but PDF/A requires every font to be embedded and Nib can't add a font
+that isn't already in the file, so a document with non-embedded fonts (or one
+that's encrypted) is **refused with the specific reason** rather than turned into
+a file that falsely claims conformance.
+
+For those harder documents, Nib can use **[Ghostscript](https://www.ghostscript.com/)**
+if it's installed on your system — it re-embeds fonts and converts colour, the
+general conversion pure Go can't do. It's strictly optional: when Ghostscript is
+present the dialog offers a *"Convert with Ghostscript"* button (and the CLI a
+`--gs` flag); when it isn't, the built-in converter is used and the feature simply
+isn't offered. Ghostscript is detected at runtime and never bundled, so Nib stays a
+single pure-Go binary. (Note: that path runs Ghostscript over your PDF; it executes
+under Ghostscript's sandbox, but it is processing the document, so only enable it
+for files you'd open anyway.)
+
+Either way, because no pure-Go PDF/A validator exists, Nib can't certify the result
+itself — it produces a *candidate* you should **verify with
+[veraPDF](https://verapdf.org/)** before relying on it for archival.
 
 ### Circles & pills for multiple choice
 Choosing an option marks it the way a person would: a **circle** around a single
