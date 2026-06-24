@@ -648,9 +648,10 @@
         <strong>Text</strong> word-diffs the two text layers
         (<span style="color:var(--red)">removed</span> /
         <span style="color:var(--green)">added</span>, inline);
-        <strong>Side-by-side</strong> shows the same page of each; and
+        <strong>Side-by-side</strong> shows a page of each; and
         <strong>Differences</strong> paints a per-pixel map of what changed — which works on
-        scans too. Everything runs on your machine; the second PDF never leaves your computer.</p>
+        scans too. The two sides page independently, so you can line up an inserted or deleted
+        page. Everything runs on your machine; the second PDF never leaves your computer.</p>
       <div id="compareTools" class="comparetools" hidden>
         <div class="comparemodes">
           <button class="cmmode active" data-mode="text">Text</button>
@@ -659,9 +660,18 @@
         </div>
         <span class="grow"></span>
         <span id="comparePager" class="comparepager" hidden>
-          <button id="cmPrev" title="Previous page">‹</button>
-          <span id="cmPageLabel">Page 1 / 1</span>
-          <button id="cmNext" title="Next page">›</button>
+          <button id="cmPrev" title="Previous page (both documents)">‹</button>
+          <span class="cmside">Open
+            <button id="cmAPrev" class="cmstep" title="Open document: previous page">‹</button>
+            <span id="cmPageLabelA">1 / 1</span>
+            <button id="cmANext" class="cmstep" title="Open document: next page">›</button>
+          </span>
+          <span class="cmside">Compared
+            <button id="cmBPrev" class="cmstep" title="Compared document: previous page">‹</button>
+            <span id="cmPageLabelB">1 / 1</span>
+            <button id="cmBNext" class="cmstep" title="Compared document: next page">›</button>
+          </span>
+          <button id="cmNext" title="Next page (both documents)">›</button>
         </span>
       </div>
       <div id="compareSummary" class="comparesummary" hidden></div>

@@ -203,15 +203,18 @@ switchable from the toolbar at the top of the dialog:
   any text-based PDF (a scan with no text shows nothing — run **OCR** on it
   first, which makes it diffable). Reading order follows each document's text
   stream, so it's most reliable comparing two versions produced by the same tool.
-- **Side-by-side** — renders the same page of each document next to each other.
+- **Side-by-side** — renders a page of each document next to each other.
 - **Differences** — paints a per-pixel **difference map**: regions that changed
   are highlighted in red, with the percentage of the page that differs. Tells you
   *where* it changed — and because it compares rendered pixels, not text, it works
   on **scanned** PDFs too. Pages that differ in size between the two documents are
   shown side by side instead (normalise page sizes first for a difference map).
 
-Like everything else it runs **entirely on your machine** — the second PDF never
-leaves your computer.
+In the visual modes the two sides **page independently**: the outer ‹ › step both
+documents together, while each side's own ‹ › nudges just that document — so if one
+version inserted or deleted a page, you can line the two back up and keep comparing
+the pages that actually correspond. Like everything else it runs **entirely on your
+machine** — the second PDF never leaves your computer.
 
 ### Scan for hidden content
 **Secure → Scan for hidden content** lists what's lurking in a PDF that you can't
