@@ -49,6 +49,41 @@ func cmdSanitize(args []string) int {
 	return runTransform(fs, out, inPlace, sanitize)
 }
 
+// cmdPDFA converts a PDF to a PDF/A-2b archival candidate. It refuses (exit 1,
+// reasons on stderr) a document Nib can't make conformant — non-embedded fonts or
+// encryption — rather than emit a file that falsely claims PDF/A. The result must
+// be verified with veraPDF; Nib cannot self-validate conformance.
+func cmdPDFA(args []string) int {
+	fs := flag.NewFlagSet("nib pdfa", flag.ContinueOnError)
+	var out string
+	outFlag(fs, &out)
+	fs.Usage = usageFunc(fs, "nib pdfa IN -o OUT", "Convert to a PDF/A-2b archival candidate (verify with veraPDF). Refuses documents whose fonts aren't embedded.")
+	if code, ok := parse(fs, args); !ok {
+		return code
+	}
+	in, code := singleInput(fs, out)
+	if code != 0 {
+		return code
+	}
+	pdf, err := readInput(in)
+	if err != nil {
+		errf("%v", err)
+		return 1
+	}
+	result, blockers, err := pdfops.PreparePDFA(pdf)
+	if err != nil {
+		errf("%v", err)
+		return 1
+	}
+	if len(blockers) > 0 {
+		for _, b := range blockers {
+			errf("cannot convert to PDF/A: %s", b)
+		}
+		return 1
+	}
+	return writeOut(out, result)
+}
+
 // sanitize runs both scrubs the GUI's Secure tab offers: active content first,
 // then identifying metadata.
 func sanitize(pdf []byte) ([]byte, error) {
