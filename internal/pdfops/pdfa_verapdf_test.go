@@ -83,6 +83,7 @@ func TestPDFAConformanceVeraPDF(t *testing.T) {
 	requireVeraPDFCompliant(t, pure, "2b")
 
 	if GhostscriptAvailable() {
+		// A non-embedded-font doc pure-Go refuses → gs converts → conformant.
 		src, err := testpdf.Text("veraPDF Ghostscript conformance check")
 		if err != nil {
 			t.Fatal(err)
@@ -92,5 +93,12 @@ func TestPDFAConformanceVeraPDF(t *testing.T) {
 			t.Fatalf("ConvertPDFAGhostscript: %v", err)
 		}
 		requireVeraPDFCompliant(t, gsOut, "2b")
+
+		// A DeviceCMYK doc pure-Go refuses → gs converts (colour) → conformant.
+		cmykOut, err := ConvertPDFAGhostscript(gsToCMYK(t, img))
+		if err != nil {
+			t.Fatalf("ConvertPDFAGhostscript (CMYK): %v", err)
+		}
+		requireVeraPDFCompliant(t, cmykOut, "2b")
 	}
 }
