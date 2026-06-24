@@ -489,10 +489,10 @@ func cmdFill(args []string) int {
 	fs := flag.NewFlagSet("nib fill", flag.ContinueOnError)
 	var out, outDir, dataPath, nameCol string
 	outFlag(fs, &out)
-	fs.StringVar(&dataPath, "data", "", "form data: a .json record (single fill) or a .csv (one row → one PDF) (required)")
+	fs.StringVar(&dataPath, "data", "", "form data: a .json or .xfdf record (single fill) or a .csv (one row → one PDF) (required)")
 	fs.StringVar(&outDir, "out-dir", "", "with a CSV: write one filled PDF per row into this folder")
 	fs.StringVar(&nameCol, "name-col", "", "with a CSV: name each output from this column's value")
-	fs.Usage = usageFunc(fs, "nib fill IN --data DATA.json -o OUT  |  nib fill IN --data DATA.csv --out-dir DIR [--name-col COL]", "Fill a form from a JSON record, or mail-merge a CSV (one filled PDF per row).")
+	fs.Usage = usageFunc(fs, "nib fill IN --data DATA.json|.xfdf -o OUT  |  nib fill IN --data DATA.csv --out-dir DIR [--name-col COL]", "Fill a form from a JSON or XFDF record, or mail-merge a CSV (one filled PDF per row).")
 	if code, ok := parse(fs, args); !ok {
 		return code
 	}
@@ -532,22 +532,41 @@ func cmdFill(args []string) int {
 		return writeSplitFiles(outDir, parts)
 	}
 
-	// JSON single fill (pipeable via - / -o -).
+	// Single fill from a JSON or XFDF record (pipeable via - / -o -).
 	if outDir != "" {
-		errf("--out-dir is for a CSV mail-merge; a JSON record fills one PDF — use -o")
+		errf("--out-dir is for a CSV mail-merge; a JSON/XFDF record fills one PDF — use -o")
 		return 1
 	}
 	if nameCol != "" {
 		errf("--name-col is only for a CSV mail-merge")
 		return 1
 	}
+	fillFn := func(b []byte) ([]byte, error) { return pdfops.FillFormJSON(b, data) }
+	if strings.EqualFold(filepath.Ext(dataPath), ".xfdf") {
+		fillFn = func(b []byte) ([]byte, error) { return pdfops.FillFormXFDF(b, data) }
+	}
 	in, code := singleInput(fs, out)
 	if code != 0 {
 		return code
 	}
-	return transform(in, out, func(b []byte) ([]byte, error) {
-		return pdfops.FillFormJSON(b, data)
-	})
+	return transform(in, out, fillFn)
+}
+
+// cmdExportXFDF exports a form's field data as XFDF — the XML interchange format
+// Acrobat and Foxit read and write — the inverse of `nib fill --data DATA.xfdf`.
+func cmdExportXFDF(args []string) int {
+	fs := flag.NewFlagSet("nib export-xfdf", flag.ContinueOnError)
+	var out string
+	outFlag(fs, &out)
+	fs.Usage = usageFunc(fs, "nib export-xfdf IN -o OUT.xfdf", "Export a form's field data as XFDF (the Acrobat/Foxit interchange format).")
+	if code, ok := parse(fs, args); !ok {
+		return code
+	}
+	in, code := singleInput(fs, out)
+	if code != 0 {
+		return code
+	}
+	return transform(in, out, pdfops.ExportFormXFDF)
 }
 
 // cmdAttachments lists embedded files (default), extracts one to -o, or embeds one

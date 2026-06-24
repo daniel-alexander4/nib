@@ -65,6 +65,15 @@ true/false/yes/1. It runs **entirely on your machine** — the same engine as th
 `nib fill` command line, just point-and-click. (The form needs real fillable
 fields; on a flat scan, run *Save as fillable form…* first.)
 
+### Exchange form data as XFDF
+Trading form data with Acrobat or Foxit? Nib reads and writes **XFDF**, the XML
+form-data interchange format both speak. **File → Export → Form data (XFDF)**
+saves the open form's values; **File → Import form data (XFDF)…** fills the form
+from an `.xfdf` file and saves the result. On the command line it's
+`nib export-xfdf IN -o OUT.xfdf` and `nib fill IN --data DATA.xfdf -o OUT`.
+Hierarchical (dotted) field names are preserved as nested fields; like every Nib
+operation it runs entirely on your machine.
+
 ### Circles & pills for multiple choice
 Choosing an option marks it the way a person would: a **circle** around a single
 letter (or `Y`/`N`), or a **pill** around a whole word — baked cleanly into the
@@ -533,7 +542,8 @@ isn't a known command (a PDF path, or nothing) still opens the app as usual.
 | `nib normalize IN -o OUT` | Resize every page to the document's most common page size — make a mixed-size PDF uniform (content scaled to fit, centred; orientation kept). |
 | `nib pagenum IN -o OUT` | Stamp running page numbers or Bates numbering (`--prefix ABC --pad 6 --position br --total`). `--continuous (-w \| --out-dir DIR) FILE…` threads one counter across a whole file set (multi-file Bates production). |
 | `nib pagelabels IN -o OUT` | Set logical page labels — one `--range PAGE:STYLE[:START[:PREFIX]]` per section (STYLE = `decimal`/`roman-lower`/`roman-upper`/`alpha-lower`/`alpha-upper`/`none`), e.g. `--range 1:roman-lower --range 5:decimal`. |
-| `nib fill IN --data D` | Fill a form: a JSON record (`--data x.json -o OUT`, the inverse of *Export form data (JSON)*) or a **CSV mail-merge** (`--data rows.csv --out-dir DIR` — header row = field names, one filled PDF per row; `--name-col COL` names each output). Filling removes any existing signature. |
+| `nib fill IN --data D` | Fill a form: a JSON or **XFDF** record (`--data x.json\|.xfdf -o OUT`, the inverse of *Export form data*) or a **CSV mail-merge** (`--data rows.csv --out-dir DIR` — header row = field names, one filled PDF per row; `--name-col COL` names each output). Filling removes any existing signature. |
+| `nib export-xfdf IN -o OUT` | Export a form's field data as **XFDF** — the XML interchange format Acrobat and Foxit read and write (the inverse of `nib fill --data x.xfdf`). |
 | `nib attachments IN [--json]` | List embedded files; `--extract NAME -o OUT` pulls one out, `--add FILE -o OUT` embeds one. |
 | `nib outline IN [--json]` | List the document's bookmark outline (indented by level, or JSON). |
 | `nib watch DIR --do OP` | Run `timestamp`/`optimize`/`sanitize` on each PDF added to `DIR`, until interrupted. |

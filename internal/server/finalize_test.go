@@ -89,7 +89,7 @@ func TestFormDataExport(t *testing.T) {
 	c, csrf := authedClient(t, ts)
 	openByPath(t, ts.URL, c, csrf, path)
 
-	for _, format := range []string{"json", "csv"} {
+	for _, format := range []string{"json", "csv", "xfdf"} {
 		resp, err := c.Get(ts.URL + "/api/form-data?format=" + format)
 		if err != nil {
 			t.Fatal(err)
