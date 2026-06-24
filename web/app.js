@@ -27,6 +27,7 @@ import {
   buildTextRows,
 } from './detect.js';
 import { diffWords } from './vendor/diff/diff.min.mjs';
+import pixelmatch from './vendor/pixelmatch/pixelmatch.mjs';
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = './vendor/pdfjs/pdf.worker.min.mjs';
 
@@ -39,6 +40,9 @@ const els = {
   combineCancel: $('combineCancel'), combineGo: $('combineGo'),
   compareBtn: $('compareBtn'), compareModal: $('compareModal'), compareBody: $('compareBody'),
   compareInput: $('compareInput'), comparePick: $('comparePick'), compareClose: $('compareClose'),
+  compareTools: $('compareTools'), compareSummary: $('compareSummary'),
+  comparePager: $('comparePager'), cmPageLabel: $('cmPageLabel'),
+  cmPrev: $('cmPrev'), cmNext: $('cmNext'),
   fillCsvBtn: $('fillCsvBtn'), fillCsvModal: $('fillCsvModal'), fillCsvPick: $('fillCsvPick'),
   fillCsvInput: $('fillCsvInput'), fillCsvStatus: $('fillCsvStatus'), fillCsvClose: $('fillCsvClose'),
   pathInput: $('pathInput'), openGo: $('openGo'),
@@ -1276,12 +1280,16 @@ els.combineGo.onclick = async () => {
   toast('Combined — reorder pages by dragging thumbnails, then Save As to keep it');
 };
 
-// --- Compare two PDFs (text diff) -------------------------------------------
-// All client-side: pdf.js is the only place a PDF's text layer exists (the Go
-// engine can't extract text), so we read both documents' text and word-diff them
-// with jsdiff. documentText is the shared content-stream-order dump also used by
-// "Export text" — deliberately NOT geometry-sorted (re-sorting scrambles
-// columns), which keeps the diff reliable for two versions from the same producer.
+// --- Compare two PDFs --------------------------------------------------------
+// All client-side: pdf.js is the only place a PDF's text layer and rendered
+// pixels exist (the Go engine can't extract either). One modal, three modes:
+//   Text         — word-diff the two text layers with jsdiff (what changed).
+//   Side-by-side — render the same page of both documents next to each other.
+//   Differences  — pixel-diff the rendered pages with pixelmatch (where it
+//                  changed); works on scans too, since it compares pixels.
+// documentText is the shared content-stream-order dump also used by "Export
+// text" — deliberately NOT geometry-sorted (re-sorting scrambles columns),
+// which keeps the diff reliable for two versions from the same producer.
 async function documentText(doc) {
   let out = '';
   for (let n = 1; n <= doc.numPages; n++) {
@@ -1297,35 +1305,147 @@ async function documentText(doc) {
   return out;
 }
 
+const CMP_SCALE = 2; // 144 DPI — matches the flatten/redact raster scale
+let cmpDoc = null;   // the picked pdf.js doc, kept alive across page nav until close
+let cmpName = '';    // picked filename (shown as a caption / in summaries)
+let cmpMode = 'text';// 'text' | 'side' | 'diff'
+let cmpPage = 1;     // current page (visual modes), 1-based
+let cmpText = null;  // cached {a,b} text dumps so mode-switching doesn't re-extract
+let cmpSeq = 0;      // render token — discards a stale paint if the user flips fast
+
+function closeCmpDoc() {
+  if (cmpDoc) { cmpDoc.destroy(); cmpDoc = null; } // free the comparison doc
+  cmpText = null; cmpName = ''; cmpPage = 1; cmpMode = 'text';
+}
 function openCompare() {
   if (!pdfDocument) return toast('Open a PDF first');
+  closeCmpDoc();
+  els.compareTools.hidden = true;
+  els.compareSummary.hidden = true;
   els.compareBody.innerHTML = '<p class="scan-where">Choose a PDF to compare against the open document.</p>';
   els.compareModal.hidden = false;
 }
 els.compareBtn.onclick = openCompare;
-els.compareClose.onclick = () => { els.compareModal.hidden = true; };
+els.compareClose.onclick = () => { els.compareModal.hidden = true; closeCmpDoc(); };
 els.comparePick.onclick = () => els.compareInput.click();
 els.compareInput.onchange = async () => {
   const f = els.compareInput.files[0];
   els.compareInput.value = '';
   if (!f) return;
-  els.compareBody.innerHTML = '<p class="scan-where">Comparing…</p>';
-  let other;
+  closeCmpDoc();
+  els.compareBody.innerHTML = '<p class="scan-where">Loading…</p>';
   try {
     const buf = new Uint8Array(await f.arrayBuffer());
-    other = await pdfjsLib.getDocument({ data: buf }).promise;
+    cmpDoc = await pdfjsLib.getDocument({ data: buf }).promise;
   } catch {
     els.compareBody.innerHTML = '<p class="scan-where">Could not read that PDF.</p>';
     return;
   }
-  try {
-    const a = await documentText(pdfDocument);
-    const b = await documentText(other);
-    renderCompare(a, b, f.name);
-  } finally {
-    other.destroy(); // free the comparison doc; only the open document stays loaded
-  }
+  cmpName = f.name;
+  els.compareTools.hidden = false;
+  setCompareMode('text'); // default to the text diff (instant; preserves prior behaviour)
 };
+
+// The mode toolbar: switch view, re-rendering the current page for the visual modes.
+for (const btn of document.querySelectorAll('.cmmode')) {
+  btn.onclick = () => setCompareMode(btn.dataset.mode);
+}
+els.cmPrev.onclick = () => { if (cmpPage > 1) { cmpPage--; renderCompareVisual(cmpMode); } };
+els.cmNext.onclick = () => { cmpPage++; renderCompareVisual(cmpMode); };
+
+function setCompareMode(mode) {
+  cmpMode = mode;
+  for (const btn of document.querySelectorAll('.cmmode')) {
+    btn.classList.toggle('active', btn.dataset.mode === mode);
+  }
+  els.comparePager.hidden = (mode === 'text');
+  if (mode === 'text') renderCompareText();
+  else renderCompareVisual(mode);
+}
+
+// Text mode: extract both text layers once (cached), then word-diff via renderCompare.
+async function renderCompareText() {
+  els.compareSummary.hidden = true;
+  if (!cmpText) {
+    els.compareBody.innerHTML = '<p class="scan-where">Comparing text…</p>';
+    cmpText = { a: await documentText(pdfDocument), b: await documentText(cmpDoc) };
+  }
+  renderCompare(cmpText.a, cmpText.b, cmpName);
+}
+
+// Visual modes: rasterise the current page of both documents (lazily, one page at
+// a time) and either show them side by side or paint a pixelmatch difference map.
+// Pages present in only one document, or differing in size, are shown without a
+// pixel diff and explained in the summary line.
+async function renderCompareVisual(mode) {
+  const seq = ++cmpSeq;
+  const nA = pdfDocument.numPages, nB = cmpDoc.numPages;
+  const total = Math.max(nA, nB);
+  cmpPage = Math.min(Math.max(cmpPage, 1), total);
+  els.cmPageLabel.textContent = `Page ${cmpPage} / ${total}`;
+  els.cmPrev.disabled = cmpPage <= 1;
+  els.cmNext.disabled = cmpPage >= total;
+
+  const hasA = cmpPage <= nA, hasB = cmpPage <= nB;
+  let summary = '', items;
+  if (!hasA || !hasB) {
+    const r = await renderPageCanvas(hasA ? pdfDocument : cmpDoc, cmpPage, CMP_SCALE);
+    if (seq !== cmpSeq) return;
+    summary = hasA ? 'This page exists only in the open document.'
+                   : `This page exists only in “${cmpName}”.`;
+    items = [[hasA ? 'Open document' : cmpName, r.canvas]];
+  } else {
+    const [ra, rb] = await Promise.all([
+      renderPageCanvas(pdfDocument, cmpPage, CMP_SCALE),
+      renderPageCanvas(cmpDoc, cmpPage, CMP_SCALE),
+    ]);
+    if (seq !== cmpSeq) return;
+    if (mode === 'side') {
+      items = [['Open document', ra.canvas], [cmpName, rb.canvas]];
+    } else if (ra.canvas.width !== rb.canvas.width || ra.canvas.height !== rb.canvas.height) {
+      summary = `Page sizes differ (${Math.round(ra.w)}×${Math.round(ra.h)} vs ${Math.round(rb.w)}×${Math.round(rb.h)} pt) — can’t build a difference map. Normalise page sizes first; showing both pages.`;
+      items = [['Open document', ra.canvas], [cmpName, rb.canvas]];
+    } else {
+      const w = ra.canvas.width, h = ra.canvas.height;
+      const da = ra.canvas.getContext('2d').getImageData(0, 0, w, h);
+      const db = rb.canvas.getContext('2d').getImageData(0, 0, w, h);
+      const out = document.createElement('canvas');
+      out.width = w; out.height = h;
+      const octx = out.getContext('2d');
+      const od = octx.createImageData(w, h);
+      const changed = pixelmatch(da.data, db.data, od.data, w, h, { threshold: 0.1, alpha: 0.15 });
+      octx.putImageData(od, 0, 0);
+      const pct = 100 * changed / (w * h);
+      summary = changed === 0
+        ? 'No visible differences on this page.'
+        : `${changed.toLocaleString()} pixels changed (${pct < 0.1 ? pct.toFixed(2) : pct.toFixed(1)}%), highlighted in red.`;
+      items = [['Differences', out]];
+    }
+  }
+  els.compareSummary.hidden = !summary;
+  els.compareSummary.textContent = summary;
+  els.compareBody.textContent = '';
+  showCompareCanvases(items);
+}
+
+// Lay labelled rendered pages into the compare body. Canvas pixels are the 2×
+// raster; CSS scales each down to fit. Labels go in via textContent (filenames
+// could otherwise inject markup).
+function showCompareCanvases(items) {
+  const row = document.createElement('div');
+  row.className = 'comparecanvasrow' + (items.length > 1 ? ' two' : '');
+  for (const [label, canvas] of items) {
+    const col = document.createElement('figure');
+    col.className = 'comparecol';
+    const cap = document.createElement('figcaption');
+    cap.textContent = label;
+    canvas.classList.add('comparecanvas');
+    col.appendChild(cap);
+    col.appendChild(canvas);
+    row.appendChild(col);
+  }
+  els.compareBody.appendChild(row);
+}
 
 // --- fill from spreadsheet (CSV mail-merge) ----------------------------------
 // Surfaces `nib fill`'s CSV mail-merge in the GUI: post the open form template
@@ -3010,6 +3130,21 @@ async function renderPageBlob(doc, n, scale, paint, mime, quality) {
   if (paint) paint(ctx, cv, n);
   const blob = await new Promise((r) => cv.toBlob(r, mime || 'image/png', quality));
   return { blob, w: base.width, h: base.height };
+}
+
+// renderPageCanvas rasterises one page to a fresh canvas and returns it with the
+// page's true point size. A sibling of renderPageBlob kept separate so the
+// redaction/flatten bake path (which needs a blob) is untouched; visual compare
+// needs the live canvas to read pixels back via getImageData.
+async function renderPageCanvas(doc, n, scale) {
+  const page = await doc.getPage(n);
+  const base = page.getViewport({ scale: 1 }); // points: the page's true physical size
+  const vp = page.getViewport({ scale });
+  const cv = document.createElement('canvas');
+  cv.width = vp.width; cv.height = vp.height;
+  const ctx = cv.getContext('2d');
+  await page.render({ canvasContext: ctx, viewport: vp, annotationMode: pdfjsLib.AnnotationMode.ENABLE }).promise;
+  return { canvas: cv, w: base.width, h: base.height };
 }
 
 // --- OCR: make a scanned PDF searchable --------------------------------------

@@ -181,13 +181,23 @@ patterns).
 
 ### Compare two versions
 Wondering what changed between draft v3 and v4 of a contract? **File → Compare…**
-lets you pick a second PDF and diffs its text against the open document
-**word-by-word** — removed text is struck through in red, additions are shown in
-green, inline. It compares the **text layer**, so it works on any text-based PDF
-(a scanned PDF with no text shows nothing — run **OCR** on it first, which makes
-it diffable). Like everything else it runs **entirely on your machine** — the
-second PDF never leaves your computer. Reading order follows each document's text
-stream, so it's most reliable comparing two versions produced by the same tool.
+lets you pick a second PDF and compare it against the open document three ways,
+switchable from the toolbar at the top of the dialog:
+
+- **Text** — diffs the two **text layers** word-by-word: removed text struck
+  through in red, additions in green, inline. Tells you *what* changed. Works on
+  any text-based PDF (a scan with no text shows nothing — run **OCR** on it
+  first, which makes it diffable). Reading order follows each document's text
+  stream, so it's most reliable comparing two versions produced by the same tool.
+- **Side-by-side** — renders the same page of each document next to each other.
+- **Differences** — paints a per-pixel **difference map**: regions that changed
+  are highlighted in red, with the percentage of the page that differs. Tells you
+  *where* it changed — and because it compares rendered pixels, not text, it works
+  on **scanned** PDFs too. Pages that differ in size between the two documents are
+  shown side by side instead (normalise page sizes first for a difference map).
+
+Like everything else it runs **entirely on your machine** — the second PDF never
+leaves your computer.
 
 ### Scan for hidden content
 **Secure → Scan for hidden content** lists what's lurking in a PDF that you can't
