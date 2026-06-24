@@ -446,6 +446,15 @@ re-encoded as PNG/TIFF. Text extraction reads the existing text layer, so a
 scanned (image-only) page has nothing to give and contributes nothing (there's no
 OCR), and complex multi-column layouts may not preserve reading order.
 
+**This page's table → spreadsheet** (File → Export → *This page's table (XLSX)* or
+*(CSV)*) clusters the current page's text into rows and columns and saves it as an
+Excel/LibreOffice **.xlsx** or a **.csv**. It's a **best-effort** extraction of
+grid-style tables — merged cells, multi-line cells, and irregular layouts may come
+out wrong, so **review the result**. Like the text export it reads the text layer
+(OCR a scanned page first), and like everything else the spreadsheet is built on
+your machine (no office-suite dependency — Nib writes the minimal file format
+itself).
+
 ### Find in the document
 Type in the **Find** box (or press **Ctrl/Cmd+F**) to highlight every match. Step
 through them with the **‹ ›** buttons or **Enter** / **Shift+Enter**, and the
