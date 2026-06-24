@@ -1091,6 +1091,34 @@ the SIL Open Font License, Version 1.1 — see
 
 ---
 
+## pixelmatch 7.2.0
+
+Vendored under `web/vendor/pixelmatch/` for the on-device visual page comparison
+(the per-pixel difference map behind **File → Compare… → Differences**). Copyright
+(c) 2025 Mapbox, licensed under the ISC License:
+
+```
+ISC License
+
+Copyright (c) 2025, Mapbox
+
+Permission to use, copy, modify, and/or distribute this software for any purpose
+with or without fee is hereby granted, provided that the above copyright notice
+and this permission notice appear in all copies.
+
+THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES WITH
+REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF MERCHANTABILITY AND
+FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY SPECIAL, DIRECT,
+INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES WHATSOEVER RESULTING FROM LOSS
+OF USE, DATA OR PROFITS, WHETHER IN AN ACTION OF CONTRACT, NEGLIGENCE OR OTHER
+TORTIOUS ACTION, ARISING OUT OF OR IN CONNECTION WITH THE USE OR PERFORMANCE OF
+THIS SOFTWARE.
+```
+
+Upstream: <https://github.com/mapbox/pixelmatch>.
+
+---
+
 ## The Go Programming Language (standard library & toolchain)
 
 Nib is built with the Go toolchain and links the Go standard library,
