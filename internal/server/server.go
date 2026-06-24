@@ -116,6 +116,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/flags", s.requireUnlocked(s.handleFlags))
 	mux.HandleFunc("POST /api/form/author", s.requireUnlocked(s.handleFormAuthor))
 	mux.HandleFunc("POST /api/form/fill-csv", s.requireUnlocked(s.handleFormFillCSV))
+	mux.HandleFunc("POST /api/form/fill-xfdf", s.requireUnlocked(s.handleFormFillXFDF))
 
 	// Page operations.
 	mux.HandleFunc("POST /api/pages", s.requireUnlocked(s.handlePages))

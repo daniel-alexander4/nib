@@ -236,7 +236,7 @@ func (s *Server) handleOptimize(w http.ResponseWriter, r *http.Request) {
 	sendDownload(w, "optimized.pdf", "application/pdf", result)
 }
 
-// handleFormData exports the current document's form fields as JSON or CSV.
+// handleFormData exports the current document's form fields as JSON, CSV, or XFDF.
 func (s *Server) handleFormData(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
 	doc := s.doc
@@ -245,13 +245,22 @@ func (s *Server) handleFormData(w http.ResponseWriter, r *http.Request) {
 		httpError(w, http.StatusNotFound, "no document open")
 		return
 	}
-	if r.URL.Query().Get("format") == "csv" {
+	switch r.URL.Query().Get("format") {
+	case "csv":
 		data, err := pdfops.ExportFormCSV(doc.data)
 		if err != nil {
 			httpError(w, http.StatusInternalServerError, "could not export form")
 			return
 		}
 		sendDownload(w, "form-data.csv", "text/csv", data)
+		return
+	case "xfdf":
+		data, err := pdfops.ExportFormXFDF(doc.data)
+		if err != nil {
+			httpError(w, http.StatusInternalServerError, "could not export form")
+			return
+		}
+		sendDownload(w, "form-data.xfdf", "application/vnd.adobe.xfdf", data)
 		return
 	}
 	data, err := pdfops.ExportFormJSON(doc.data)

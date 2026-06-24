@@ -133,6 +133,9 @@ const els = {
   exportZipBtn: $('exportZipBtn'), exportPngBtn: $('exportPngBtn'),
   exportImagesBtn: $('exportImagesBtn'), exportTextBtn: $('exportTextBtn'),
   exportFormJsonBtn: $('exportFormJsonBtn'), exportFormCsvBtn: $('exportFormCsvBtn'),
+  exportFormXfdfBtn: $('exportFormXfdfBtn'),
+  importXfdfBtn: $('importXfdfBtn'), importXfdfModal: $('importXfdfModal'), importXfdfPick: $('importXfdfPick'),
+  importXfdfInput: $('importXfdfInput'), importXfdfStatus: $('importXfdfStatus'), importXfdfClose: $('importXfdfClose'),
   exportCertBtn: $('exportCertBtn'), printBtn: $('printBtn'),
   finalizeModal: $('finalizeModal'), fzText: $('fzText'), fzDate: $('fzDate'),
   fzTsa: $('fzTsa'), fzTsaOn: $('fzTsaOn'), fzCancel: $('fzCancel'), fzGo: $('fzGo'),
@@ -1354,6 +1357,37 @@ els.fillCsvInput.onchange = async () => {
   }
   els.fillCsvModal.hidden = true;
   openSaveAs(await res.blob(), exportBase() + '-filled.zip', 'Save merged PDFs (ZIP)');
+};
+
+// --- import form data (XFDF) -------------------------------------------------
+// Surfaces `nib fill --data x.xfdf` in the GUI: post the open form template
+// (AcroForm fields intact — bakedBytes preserves them) plus the XFDF, and the
+// server fills one PDF and returns it. Reuses pdfops.FillFormXFDF unchanged.
+function openImportXfdf() {
+  if (!pdfDocument) return toast('Open a form first');
+  els.importXfdfStatus.textContent = '';
+  els.importXfdfModal.hidden = false;
+}
+els.importXfdfBtn.onclick = openImportXfdf;
+els.importXfdfClose.onclick = () => { els.importXfdfModal.hidden = true; };
+els.importXfdfPick.onclick = () => els.importXfdfInput.click();
+els.importXfdfInput.onchange = async () => {
+  const f = els.importXfdfInput.files[0];
+  els.importXfdfInput.value = '';
+  if (!f) return;
+  els.importXfdfStatus.textContent = 'Filling…';
+  let xfdf;
+  try { xfdf = await f.text(); } catch { els.importXfdfStatus.textContent = 'Could not read that file.'; return; }
+  const form = new FormData();
+  form.append('pdf', new Blob([await bakedBytes()], { type: 'application/pdf' }), 'doc.pdf');
+  form.append('data', xfdf);
+  const res = await apiFetch('/api/form/fill-xfdf', { method: 'POST', body: form });
+  if (!res.ok) {
+    els.importXfdfStatus.textContent = 'Fill failed — does this PDF have fillable fields, and do the XFDF field names match?';
+    return;
+  }
+  els.importXfdfModal.hidden = true;
+  openSaveAs(await res.blob(), exportBase() + '-filled.pdf', 'Save filled PDF');
 };
 
 // renderCompare word-diffs the open document (a) against the chosen file (b) and
@@ -3348,6 +3382,7 @@ els.exportImagesBtn.onclick = async () => {
 
 els.exportFormJsonBtn.onclick = () => { window.location = '/api/form-data?format=json'; };
 els.exportFormCsvBtn.onclick = () => { window.location = '/api/form-data?format=csv'; };
+els.exportFormXfdfBtn.onclick = () => { window.location = '/api/form-data?format=xfdf'; };
 els.exportCertBtn.onclick = () => { window.location = '/api/identity'; };
 
 els.printBtn.onclick = async () => {
@@ -5420,13 +5455,13 @@ let overlayHistory = { undo: [], redo: [] }; // client overlay-edit undo, draine
 let libraryImages = []; // cached /api/images list (the image-library panel)
 const DOC_REQUIRED = [
   'saveFlatBtn', 'saveEditableBtn', 'saveFillableBtn', 'printBtn',
-  'exportZipBtn', 'exportPngBtn', 'exportFormJsonBtn', 'exportFormCsvBtn', 'exportBookmarkSplitBtn',
+  'exportZipBtn', 'exportPngBtn', 'exportFormJsonBtn', 'exportFormCsvBtn', 'exportFormXfdfBtn', 'exportBookmarkSplitBtn',
   'exportPageSplitBtn',
   'textToolBtn', 'highlightToolBtn', 'drawToolBtn',
   'detectBtn', 'editTextBtn', 'removeOriginalsBtn', 'ocrBtn', 'ocrLang', 'autofillBtn', 'splitBtn',
   'splitBoxBtn', 'applyBoxSplitBtn', 'rotateLeftBtn', 'rotateRightBtn',
   'extractBtn', 'insertBlankBtn', 'duplicatePageBtn', 'insertPdfBtn', 'pageNumBtn', 'pageLabelsBtn', 'nupBtn', 'normalizeBtn', 'cropBtn',
-  'redactBtn', 'redactTextBtn', 'applyRedactBtn', 'scanBtn', 'attachBtn', 'encryptBtn', 'decryptBtn', 'compareBtn', 'fillCsvBtn',
+  'redactBtn', 'redactTextBtn', 'applyRedactBtn', 'scanBtn', 'attachBtn', 'encryptBtn', 'decryptBtn', 'compareBtn', 'fillCsvBtn', 'importXfdfBtn',
   'finalizeBtn', 'timestampBtn', 'cosignBtn', 'sessionInitBtn', 'sessionSendBtn',
 ];
 function setDocControls(enabled) {

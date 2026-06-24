@@ -88,6 +88,7 @@
       <button id="combineBtn" title="Combine several PDFs into one new document">Combine PDFs…</button>
       <button id="compareBtn" title="Compare this document with another PDF — see what text changed">Compare…</button>
       <button id="fillCsvBtn" title="Mail-merge a spreadsheet onto this form — one filled PDF per row, as a ZIP">Fill from spreadsheet…</button>
+      <button id="importXfdfBtn" title="Fill this form from an XFDF data file (the Acrobat/Foxit interchange format)">Import form data (XFDF)…</button>
       <button id="saveBtn" title="Save (overwrites the original)" disabled>Save</button>
       <div class="menu">
         <button class="menutop">Save as</button>
@@ -109,6 +110,7 @@
           <button id="exportTextBtn">Document text (.txt)</button>
           <button id="exportFormJsonBtn">Form data (JSON)</button>
           <button id="exportFormCsvBtn">Form data (CSV)</button>
+          <button id="exportFormXfdfBtn" title="Export this form's data as XFDF — the interchange format Acrobat and Foxit read">Form data (XFDF)</button>
           <button id="exportCertBtn">Signing certificate</button>
         </div>
       </div>
@@ -596,6 +598,24 @@
         <input id="fillCsvInput" type="file" accept=".csv,text/csv" hidden />
         <span class="grow"></span>
         <button id="fillCsvClose" class="primary">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Import XFDF: fill the open form from an XFDF data file → save the filled PDF. -->
+  <div id="importXfdfModal" hidden>
+    <div class="sigcard">
+      <h3>Import form data (XFDF)</h3>
+      <p class="libhint">Fill this form from an <strong>XFDF</strong> file — the XML form-data format
+        Acrobat and Foxit export. Field names are matched to this document's fillable fields; the
+        filled PDF is saved as a new file. The document must have fillable fields — if it's a flat
+        scan, run <em>Save as fillable form…</em> first.</p>
+      <div id="importXfdfStatus" class="libhint"></div>
+      <div class="sigbtns">
+        <button id="importXfdfPick">Choose XFDF…</button>
+        <input id="importXfdfInput" type="file" accept=".xfdf,application/vnd.adobe.xfdf,text/xml,application/xml" hidden />
+        <span class="grow"></span>
+        <button id="importXfdfClose" class="primary">Close</button>
       </div>
     </div>
   </div>
