@@ -364,6 +364,37 @@ func TestFillBadModes(t *testing.T) {
 	}
 }
 
+// TestExportXFDFAndFill round-trips through the CLI: fill a form from an XFDF
+// record, then export the filled form's data back out as XFDF.
+func TestExportXFDFAndFill(t *testing.T) {
+	dir := t.TempDir()
+	formPath := fillTestForm(t, dir)
+
+	xfdfPath := filepath.Join(dir, "d.xfdf")
+	if err := os.WriteFile(xfdfPath, []byte(`<xfdf xmlns="http://ns.adobe.com/xfdf/"><fields><field name="fullName"><value>Grace</value></field></fields></xfdf>`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out := filepath.Join(dir, "filled.pdf")
+	if code := cmdFill([]string{formPath, "--data", xfdfPath, "-o", out}); code != 0 {
+		t.Fatalf("xfdf fill exit = %d, want 0", code)
+	}
+	if err := pdfops.Validate(readPDF(t, out)); err != nil {
+		t.Fatalf("filled output invalid: %v", err)
+	}
+
+	xout := filepath.Join(dir, "exported.xfdf")
+	if code := cmdExportXFDF([]string{out, "-o", xout}); code != 0 {
+		t.Fatalf("export-xfdf exit = %d, want 0", code)
+	}
+	data, err := os.ReadFile(xout)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), "Grace") {
+		t.Fatalf("exported XFDF missing value:\n%s", data)
+	}
+}
+
 // TestContinuousPagenum threads ONE Bates counter across a file set: file 1's
 // pages number from --start, file 2 continues where file 1 ended, and --total's
 // "of N" is the set's grand total — not each file's. Covers both output modes,

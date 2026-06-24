@@ -74,3 +74,24 @@ func (s *Server) handleFormFillCSV(w http.ResponseWriter, r *http.Request) {
 	}
 	sendDownload(w, "filled-forms.zip", "application/zip", buf.Bytes())
 }
+
+// handleFormFillXFDF fills the posted form template from an uploaded XFDF document
+// and returns the single filled PDF. It reuses the same engine as `nib fill --data
+// data.xfdf` (pdfops.FillFormXFDF); like author and the CSV merge it derives a new
+// artifact and never touches the open document.
+func (s *Server) handleFormFillXFDF(w http.ResponseWriter, r *http.Request) {
+	if err := r.ParseMultipartForm(maxPDFBytes); err != nil {
+		httpError(w, http.StatusBadRequest, "could not parse upload")
+		return
+	}
+	pdfBytes, ok := formFileBytes(w, r, "pdf")
+	if !ok {
+		return
+	}
+	out, err := pdfops.FillFormXFDF(pdfBytes, []byte(r.FormValue("data")))
+	if err != nil {
+		httpError(w, http.StatusBadRequest, "could not fill form: "+err.Error())
+		return
+	}
+	sendDownload(w, "filled.pdf", "application/pdf", out)
+}
