@@ -108,6 +108,7 @@
           <button id="exportBookmarkSplitBtn">Split by bookmarks (to a folder)…</button>
           <button id="exportPageSplitBtn">Split into files by page range (to a folder)…</button>
           <button id="exportTextBtn">Document text (.txt)</button>
+          <button id="pdfaBtn" title="Convert to a PDF/A-2b archival candidate (verify the result with veraPDF)">Archival PDF (PDF/A-2b)…</button>
           <button id="exportFormJsonBtn">Form data (JSON)</button>
           <button id="exportFormCsvBtn">Form data (CSV)</button>
           <button id="exportFormXfdfBtn" title="Export this form's data as XFDF — the interchange format Acrobat and Foxit read">Form data (XFDF)</button>
@@ -616,6 +617,25 @@
         <input id="importXfdfInput" type="file" accept=".xfdf,application/vnd.adobe.xfdf,text/xml,application/xml" hidden />
         <span class="grow"></span>
         <button id="importXfdfClose" class="primary">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- PDF/A: convert the open document to a PDF/A-2b archival candidate → save it. -->
+  <div id="pdfaModal" hidden>
+    <div class="sigcard">
+      <h3>Archival PDF (PDF/A-2b)</h3>
+      <p class="libhint">Convert this document to a <strong>PDF/A-2b candidate</strong> for long-term
+        archiving: Nib embeds an sRGB output profile, writes the PDF/A identification, and removes
+        active content and attachments. It refuses documents whose fonts aren't embedded (PDF/A
+        requires it and Nib can't add a missing font).</p>
+      <p class="libhint"><strong>Verify the result with veraPDF.</strong> Nib can't validate PDF/A
+        conformance itself, so this is a candidate, not a certified file.</p>
+      <div id="pdfaStatus" class="libhint"></div>
+      <div class="sigbtns">
+        <button id="pdfaGo" class="primary">Convert &amp; save…</button>
+        <span class="grow"></span>
+        <button id="pdfaClose">Close</button>
       </div>
     </div>
   </div>

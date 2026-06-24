@@ -69,6 +69,7 @@ var commands = map[string]func([]string) int{
 	"pagelabels":  cmdPagelabels,
 	"fill":        cmdFill,
 	"export-xfdf": cmdExportXFDF,
+	"pdfa":        cmdPDFA,
 	"attachments": cmdAttachments,
 	"outline":     cmdOutline,
 }
@@ -93,6 +94,7 @@ These subcommands run headlessly, without a browser:
   nib decrypt IN -o OUT           remove password protection / owner restrictions
   nib nup IN -o OUT --n N         place N pages per sheet (2/4/6/9/16…)
   nib normalize IN -o OUT         resize every page to the doc's most common size
+  nib pdfa IN -o OUT               convert to a PDF/A-2b archival candidate (verify with veraPDF)
   nib pagenum IN -o OUT           stamp running page numbers / Bates numbering
                                   (--continuous threads one counter across FILE…)
   nib pagelabels IN -o OUT        set logical page labels (--range PAGE:STYLE[:START[:PREFIX]])
