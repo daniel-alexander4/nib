@@ -60,7 +60,13 @@ while IFS= read -r mod; do
   emit ""
 done <<<"$mods"
 
-# --- Vendored pdf.js -------------------------------------------------------
+# --- Vendored web assets (web/vendor/) and fonts (internal/pdfops/fonts/) ----
+# Hand-authored attribution for the third-party code/fonts Nib vendors directly
+# (these have no Go module dir to read a LICENSE from). Apache-2.0 deps point to
+# the full text already reproduced in the pdfcpu/golang.org/x sections above;
+# BSD/ISC/OFL deps reproduce their own text+copyright here, since those are not
+# otherwise present in this file. NOTE: bump the version strings below when a
+# vendored library is re-vendored (pdf.js reads its own VERSION file).
 if [ -f web/vendor/pdfjs/VERSION ]; then
   pdfjs_ver="$(cat web/vendor/pdfjs/VERSION)"
   emit "## Mozilla pdf.js ${pdfjs_ver}"
@@ -74,6 +80,191 @@ if [ -f web/vendor/pdfjs/VERSION ]; then
   emit "---"
   emit ""
 fi
+
+cat >>"$tmp" <<'VENDORED_EOF'
+## jsdiff 7.0.0
+
+Vendored under `web/vendor/diff/` for the word-level text comparison (the inline
+diff behind **File → Compare… → Text**). Copyright (c) 2009-2015 Kevin Decker,
+licensed under the BSD 3-Clause License:
+
+```
+BSD 3-Clause License
+
+Copyright (c) 2009-2015, Kevin Decker <kpdecker@gmail.com>
+All rights reserved.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are met:
+
+1. Redistributions of source code must retain the above copyright notice, this
+   list of conditions and the following disclaimer.
+
+2. Redistributions in binary form must reproduce the above copyright notice,
+   this list of conditions and the following disclaimer in the documentation
+   and/or other materials provided with the distribution.
+
+3. Neither the name of the copyright holder nor the names of its
+   contributors may be used to endorse or promote products derived from
+   this software without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+```
+
+Upstream: <https://github.com/kpdecker/jsdiff>.
+
+---
+
+## Tesseract.js 5.1.1 (+ tesseract.js-core, ara/bel/bul/deu/ell/eng/fra/heb/hin/ita/mkd/rus/spa/srp/tha/ukr traineddata)
+
+Vendored under `web/vendor/tesseract/` for on-device OCR (the WASM engine, its
+worker, and the Arabic, Belarusian, Bulgarian, German, Greek, English, French,
+Hebrew, Hindi, Italian, Macedonian, Russian, Spanish, Serbian, Thai and Ukrainian
+`tessdata_fast` models). Copyright the Tesseract.js contributors and the Tesseract
+OCR project, licensed under the Apache License, Version 2.0. The full license text
+is reproduced in the `golang.org/x`/pdfcpu sections above and at
+<http://www.apache.org/licenses/LICENSE-2.0>. Upstream:
+<https://github.com/naptha/tesseract.js> and
+<https://github.com/tesseract-ocr/tessdata_fast>.
+
+---
+
+## pixelmatch 7.2.0
+
+Vendored under `web/vendor/pixelmatch/` for the on-device visual page comparison
+(the per-pixel difference map behind **File → Compare… → Differences**). Copyright
+(c) 2025 Mapbox, licensed under the ISC License:
+
+```
+ISC License
+
+Copyright (c) 2025, Mapbox
+
+Permission to use, copy, modify, and/or distribute this software for any purpose
+with or without fee is hereby granted, provided that the above copyright notice
+and this permission notice appear in all copies.
+
+THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES WITH
+REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF MERCHANTABILITY AND
+FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY SPECIAL, DIRECT,
+INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES WHATSOEVER RESULTING FROM LOSS
+OF USE, DATA OR PROFITS, WHETHER IN AN ACTION OF CONTRACT, NEGLIGENCE OR OTHER
+TORTIOUS ACTION, ARISING OUT OF OR IN CONNECTION WITH THE USE OR PERFORMANCE OF
+THIS SOFTWARE.
+```
+
+Upstream: <https://github.com/mapbox/pixelmatch>.
+
+---
+
+## Noto Sans Thai, Devanagari, Arabic & Hebrew
+
+Vendored under `internal/pdfops/fonts/` and installed into pdfcpu's font registry
+so the OCR text layer can be stamped in Thai, Devanagari, Arabic and Hebrew scripts
+(which the bundled Roboto does not cover). Copyright The Noto Project Authors,
+licensed under the SIL Open Font License, Version 1.1:
+
+```
+Copyright The Noto Project Authors (https://github.com/notofonts)
+
+SIL OPEN FONT LICENSE Version 1.1 - 26 February 2007
+
+PREAMBLE
+The goals of the Open Font License (OFL) are to stimulate worldwide
+development of collaborative font projects, to support the font creation
+efforts of academic and linguistic communities, and to provide a free and
+open framework in which fonts may be shared and improved in partnership
+with others.
+
+The OFL allows the licensed fonts to be used, studied, modified and
+redistributed freely as long as they are not sold by themselves. The
+fonts, including any derivative works, can be bundled, embedded,
+redistributed and/or sold with any software provided that any reserved
+names are not used by derivative works. The fonts and derivatives,
+however, cannot be released under any other type of license. The
+requirement for fonts to remain under this license does not apply to any
+document created using the fonts or their derivatives.
+
+DEFINITIONS
+"Font Software" refers to the set of files released by the Copyright
+Holder(s) under this license and clearly marked as such. This may
+include source files, build scripts and documentation.
+
+"Reserved Font Name" refers to any names specified as such after the
+copyright statement(s).
+
+"Original Version" refers to the collection of Font Software components as
+distributed by the Copyright Holder(s).
+
+"Modified Version" refers to any derivative made by adding to, deleting,
+or substituting -- in part or in whole -- any of the components of the
+Original Version, by changing formats or by porting the Font Software to a
+new environment.
+
+"Author" refers to any designer, engineer, programmer, technical writer
+or other person who contributed to the Font Software.
+
+PERMISSION & CONDITIONS
+Permission is hereby granted, free of charge, to any person obtaining a
+copy of the Font Software, to use, study, copy, merge, embed, modify,
+redistribute, and sell modified and unmodified copies of the Font
+Software, subject to the following conditions:
+
+1) Neither the Font Software nor any of its individual components, in
+Original or Modified Versions, may be sold by itself.
+
+2) Original or Modified Versions of the Font Software may be bundled,
+redistributed and/or sold with any software, provided that each copy
+contains the above copyright notice and this license. These can be
+included either as stand-alone text files, human-readable headers or in
+the appropriate machine-readable metadata fields within text or binary
+files as long as those fields can be easily viewed by the user.
+
+3) No Modified Version of the Font Software may use the Reserved Font
+Name(s) unless explicit written permission is granted by the corresponding
+Copyright Holder. This restriction only applies to the primary font name as
+presented to the users.
+
+4) The name(s) of the Copyright Holder(s) or the Author(s) of the Font
+Software shall not be used to promote, endorse or advertise any Modified
+Version, except to acknowledge the contribution(s) of the Copyright
+Holder(s) and the Author(s) or with their explicit written permission.
+
+5) The Font Software, modified or unmodified, in part or in whole, must be
+distributed entirely under this license, and must not be distributed under
+any other license. The requirement for fonts to remain under this license
+does not apply to any document created using the Font Software.
+
+TERMINATION
+This license becomes null and void if any of the above conditions are not
+met.
+
+DISCLAIMER
+THE FONT SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO ANY WARRANTIES OF
+MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT OF
+COPYRIGHT, PATENT, TRADEMARK, OR OTHER RIGHT. IN NO EVENT SHALL THE
+COPYRIGHT HOLDER BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY,
+INCLUDING ANY GENERAL, SPECIAL, INDIRECT, INCIDENTAL, OR CONSEQUENTIAL
+DAMAGES, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+FROM, OUT OF THE USE OR INABILITY TO USE THE FONT SOFTWARE OR FROM OTHER
+DEALINGS IN THE FONT SOFTWARE.
+```
+
+Upstream: <https://github.com/notofonts/noto-fonts>.
+
+---
+
+VENDORED_EOF
 
 # --- Go standard library / toolchain ---------------------------------------
 emit "## The Go Programming Language (standard library & toolchain)"
