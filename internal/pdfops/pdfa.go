@@ -166,7 +166,29 @@ func injectPDFAMarkers(ctx *model.Context) error {
 		return err
 	}
 	root["Metadata"] = *xmpRef
+
+	clearImageInterpolate(xt)
 	return nil
+}
+
+// clearImageInterpolate removes the /Interpolate key from every image XObject.
+// PDF/A-2 §6.2.8 requires it to be false if present, and pdfcpu's image import
+// sets it true; absence is the default-false the rule wants. (Inline images carry
+// the analogous /I in content streams and are out of scope — Nib's own images are
+// XObjects, and veraPDF would flag any inline case.)
+func clearImageInterpolate(xt *model.XRefTable) {
+	for _, e := range xt.Table {
+		if e == nil {
+			continue
+		}
+		sd, ok := e.Object.(types.StreamDict)
+		if !ok {
+			continue
+		}
+		if n := sd.Dict.NameEntry("Subtype"); n != nil && *n == "Image" {
+			delete(sd.Dict, "Interpolate")
+		}
+	}
 }
 
 // isEncryptionErr reports whether err is pdfcpu refusing to read an encrypted PDF
