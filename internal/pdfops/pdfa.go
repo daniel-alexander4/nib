@@ -6,7 +6,7 @@ import (
 	"strings"
 
 	"github.com/pdfcpu/pdfcpu/pkg/api"
-	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu"
+	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/font"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/types"
 )
@@ -65,22 +65,18 @@ const xmpPDFA2B = "<?xpacket begin=\"\uFEFF\" id=\"W5M0MpCehiHzreSzNTczkc9d\"?>\
 // possible non-conformance (e.g. DeviceCMYK colour or annotations lacking
 // appearance streams), so the result must be verified with veraPDF.
 func PreparePDFA(pdf []byte) (data []byte, blockers []string, err error) {
-	info, err := api.PDFInfo(bytes.NewReader(pdf), "", nil, true, model.NewDefaultConfiguration())
+	// One read drives all detection. An encrypted PDF fails here (no password) —
+	// that's the encryption blocker. Validating fonts off the full XRefTable (not
+	// api.PDFInfo) is deliberate: PDFInfo only walks page resources, so it misses
+	// fonts referenced by AcroForm /DA and widget /AP streams, which veraPDF flags.
+	ctx, err := api.ReadValidateAndOptimize(bytes.NewReader(pdf), model.NewDefaultConfiguration())
 	if err != nil {
 		if isEncryptionErr(err) {
 			return nil, []string{pdfaEncryptedMsg}, nil
 		}
 		return nil, nil, err
 	}
-	if info.Encrypted {
-		return nil, []string{pdfaEncryptedMsg}, nil
-	}
-
-	if missing := nonEmbeddedFonts(info); len(missing) > 0 {
-		blockers = append(blockers, "these fonts are not embedded, which PDF/A requires and Nib cannot add: "+
-			strings.Join(missing, ", ")+". Re-export the document as PDF/A from the application that created it.")
-	}
-	if len(blockers) > 0 {
+	if blockers = pdfaBlockers(ctx.XRefTable); len(blockers) > 0 {
 		return nil, blockers, nil
 	}
 
@@ -97,19 +93,50 @@ func PreparePDFA(pdf []byte) (data []byte, blockers []string, err error) {
 
 const pdfaEncryptedMsg = "the document is password-protected — remove the password first (Secure → Remove password), then convert"
 
-// nonEmbeddedFonts returns the de-duplicated names of fonts the PDF references
-// without embedding. PDF/A requires every font (including the standard-14) to be
-// embedded; pdfcpu reports the standard-14 as non-embedded, which is correct here.
-func nonEmbeddedFonts(info *pdfcpu.PDFInfo) []string {
+// pdfaBlockers returns the reasons the pure-Go path cannot make this document
+// conformant — what it must refuse rather than mis-label. The set is the reliably
+// pure-Go-detectable disqualifiers (Ghostscript handles these when installed): any
+// non-embedded font, and DeviceCMYK colour (not valid under the sRGB OutputIntent
+// Nib adds). It is best-effort, not a full validator: e.g. CMYK set by content-
+// stream operators rather than an image/colorspace isn't detected — hence the
+// "verify with veraPDF" caveat and the gs fallback.
+func pdfaBlockers(xt *model.XRefTable) []string {
+	var b []string
+	if missing := nonEmbeddedFonts(xt); len(missing) > 0 {
+		b = append(b, "these fonts are not embedded, which PDF/A requires and Nib cannot add: "+
+			strings.Join(missing, ", ")+". Re-export the document as PDF/A from the application that created it.")
+	}
+	if usesDeviceCMYK(xt) {
+		b = append(b, "the document uses DeviceCMYK colour, which isn't valid under the sRGB output profile "+
+			"Nib adds; converting it needs a colour engine Nib doesn't have.")
+	}
+	return b
+}
+
+// nonEmbeddedFonts sweeps every font dictionary in the document (page, AcroForm
+// /DR, and widget /AP fonts alike) and returns the de-duplicated names of those
+// whose program isn't embedded — which PDF/A requires for every font, including
+// the standard-14. font.Embedded resolves Type0 fonts through their descendant.
+func nonEmbeddedFonts(xt *model.XRefTable) []string {
 	var missing []string
 	seen := map[string]bool{}
-	for _, f := range info.Fonts {
-		if f.Embedded {
+	for objNr, e := range xt.Table {
+		if e == nil {
 			continue
 		}
-		name := f.Name
-		if name == "" {
-			name = "(unnamed)"
+		d, ok := e.Object.(types.Dict)
+		if !ok {
+			continue
+		}
+		if t := d.NameEntry("Type"); t == nil || *t != "Font" {
+			continue
+		}
+		if emb, err := font.Embedded(xt, d, objNr); err != nil || emb {
+			continue
+		}
+		name := "(unnamed)"
+		if n := d.NameEntry("BaseFont"); n != nil {
+			name = *n
 		}
 		if !seen[name] {
 			seen[name] = true
@@ -117,6 +144,59 @@ func nonEmbeddedFonts(info *pdfcpu.PDFInfo) []string {
 		}
 	}
 	return missing
+}
+
+// usesDeviceCMYK reports whether any image XObject is in a CMYK colour space —
+// the common, reliably-detectable CMYK case (CMYK scans/photos). Content-stream
+// CMYK operators are out of scope (see pdfaBlockers).
+func usesDeviceCMYK(xt *model.XRefTable) bool {
+	for _, e := range xt.Table {
+		if e == nil {
+			continue
+		}
+		sd, ok := e.Object.(types.StreamDict)
+		if !ok {
+			continue
+		}
+		if st := sd.Dict.NameEntry("Subtype"); st == nil || *st != "Image" {
+			continue
+		}
+		if isCMYKColorSpace(xt, sd.Dict["ColorSpace"]) {
+			return true
+		}
+	}
+	return false
+}
+
+// isCMYKColorSpace reports whether a colour-space object denotes CMYK: /DeviceCMYK,
+// an ICCBased stream with N=4, or a Separation/DeviceN over a CMYK alternate.
+func isCMYKColorSpace(xt *model.XRefTable, cs types.Object) bool {
+	cs, _ = xt.Dereference(cs)
+	switch v := cs.(type) {
+	case types.Name:
+		return v == "DeviceCMYK"
+	case types.Array:
+		if len(v) == 0 {
+			return false
+		}
+		head, _ := v[0].(types.Name)
+		switch head {
+		case "ICCBased":
+			if len(v) < 2 {
+				return false
+			}
+			if sd, _, _ := xt.DereferenceStreamDict(v[1]); sd != nil {
+				if n := sd.Dict.IntEntry("N"); n != nil && *n == 4 {
+					return true
+				}
+			}
+		case "Separation", "DeviceN":
+			if len(v) > 2 {
+				return isCMYKColorSpace(xt, v[2]) // the alternate colour space
+			}
+		}
+	}
+	return false
 }
 
 // injectPDFAMarkers adds the sRGB OutputIntent (with embedded ICC profile) and the
