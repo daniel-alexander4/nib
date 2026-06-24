@@ -138,6 +138,7 @@ const els = {
   reduceResult: $('reduceResult'), reduceGo: $('reduceGo'), reduceSave: $('reduceSave'), reduceCancel: $('reduceCancel'),
   exportZipBtn: $('exportZipBtn'), exportPngBtn: $('exportPngBtn'),
   exportImagesBtn: $('exportImagesBtn'), exportTextBtn: $('exportTextBtn'),
+  exportTableXlsxBtn: $('exportTableXlsxBtn'), exportTableCsvBtn: $('exportTableCsvBtn'),
   exportFormJsonBtn: $('exportFormJsonBtn'), exportFormCsvBtn: $('exportFormCsvBtn'),
   exportFormXfdfBtn: $('exportFormXfdfBtn'),
   importXfdfBtn: $('importXfdfBtn'), importXfdfModal: $('importXfdfModal'), importXfdfPick: $('importXfdfPick'),
@@ -3692,6 +3693,74 @@ els.exportTextBtn.onclick = async () => {
   openSaveAs(new Blob([out], { type: 'text/plain' }), exportBase() + '.txt', 'Export text (.txt)');
 };
 
+// extractTable clusters a page's pdf.js text items into a row/column grid — the
+// canonical position-based table extraction (works on ruled and unruled grid
+// tables, since it reads text alignment, not drawn rules). It is best-effort:
+// merged cells, multi-line cells, and irregular layouts mis-extract, so the export
+// UI tells the user to review the result. Returns rows of cell strings.
+function median(xs) {
+  if (!xs.length) return 0;
+  const s = [...xs].sort((a, b) => a - b);
+  return s[Math.floor(s.length / 2)];
+}
+async function extractTable(page) {
+  const tc = await page.getTextContent();
+  const items = tc.items
+    .filter((it) => it.str && it.str.trim() !== '')
+    .map((it) => ({ str: it.str.trim(), x: it.transform[4], y: it.transform[5], h: it.height || Math.hypot(it.transform[2], it.transform[3]) || 10 }));
+  if (!items.length) return [];
+  const h = median(items.map((i) => i.h)) || 10;
+  const rowTol = h * 0.6, colTol = h * 1.5; // same baseline → same row; x-starts within colTol → same column
+
+  // Rows: group by baseline y (PDF y grows upward, so top of page first).
+  items.sort((a, b) => b.y - a.y);
+  const rows = [];
+  for (const it of items) {
+    let row = rows.find((r) => Math.abs(r.y - it.y) <= rowTol);
+    if (!row) { row = { y: it.y, items: [] }; rows.push(row); }
+    row.items.push(it);
+  }
+
+  // Columns: cluster all item x-starts into left-edge anchors.
+  const anchors = [];
+  for (const x of items.map((i) => i.x).sort((a, b) => a - b)) {
+    if (!anchors.length || x - anchors[anchors.length - 1] > colTol) anchors.push(x);
+  }
+  const colOf = (x) => {
+    let best = 0;
+    for (let i = 1; i < anchors.length; i++) if (Math.abs(x - anchors[i]) < Math.abs(x - anchors[best])) best = i;
+    return best;
+  };
+
+  return rows.map((row) => {
+    const cells = new Array(anchors.length).fill('');
+    row.items.sort((a, b) => a.x - b.x);
+    for (const it of row.items) {
+      const c = colOf(it.x);
+      cells[c] = cells[c] ? cells[c] + ' ' + it.str : it.str;
+    }
+    return cells;
+  });
+}
+
+// exportTable extracts the current page's table and saves it as a spreadsheet.
+// The grid is built client-side (only pdf.js can read PDF text); the server just
+// serializes it (CSV via encoding/csv, XLSX as minimal OOXML).
+async function exportTable(format) {
+  if (!pdfDocument) return toast('Open a PDF first');
+  const page = await pdfDocument.getPage(viewer.currentPageNumber);
+  const grid = await extractTable(page);
+  if (!grid.length) return toast('No text on this page to extract (a scanned page? run OCR first)');
+  const res = await apiFetch('/api/table?format=' + format, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ grid }),
+  });
+  if (!res.ok) { toast('Could not build the spreadsheet'); return; }
+  const ext = format === 'csv' ? '.csv' : '.xlsx';
+  openSaveAs(await res.blob(), exportBase() + '-p' + viewer.currentPageNumber + '-table' + ext, 'Export table (' + format.toUpperCase() + ')');
+}
+els.exportTableXlsxBtn.onclick = () => exportTable('xlsx');
+els.exportTableCsvBtn.onclick = () => exportTable('csv');
+
 els.exportImagesBtn.onclick = async () => {
   if (!pdfDocument) return toast('Open a PDF first');
   const res = await apiFetch('/api/extract-images', { method: 'POST' });
@@ -5775,7 +5844,7 @@ let overlayHistory = { undo: [], redo: [] }; // client overlay-edit undo, draine
 let libraryImages = []; // cached /api/images list (the image-library panel)
 const DOC_REQUIRED = [
   'saveFlatBtn', 'saveEditableBtn', 'saveFillableBtn', 'printBtn',
-  'exportZipBtn', 'exportPngBtn', 'exportFormJsonBtn', 'exportFormCsvBtn', 'exportFormXfdfBtn', 'exportBookmarkSplitBtn',
+  'exportZipBtn', 'exportPngBtn', 'exportFormJsonBtn', 'exportFormCsvBtn', 'exportFormXfdfBtn', 'exportTableXlsxBtn', 'exportTableCsvBtn', 'exportBookmarkSplitBtn',
   'exportPageSplitBtn', 'pdfaBtn',
   'textToolBtn', 'highlightToolBtn', 'drawToolBtn',
   'detectBtn', 'editTextBtn', 'removeOriginalsBtn', 'ocrBtn', 'ocrLang', 'ocrQuality', 'autofillBtn', 'splitBtn',
