@@ -8,10 +8,14 @@
 #   - the Go modules actually linked into ./cmd/nib (not the full module graph),
 #   - the vendored pdf.js engine under web/,
 #   - the Go standard library / toolchain.
+#
+# An optional first argument names where to write the result (default
+# THIRD-PARTY-NOTICES.md); the freshness-guard test passes a temp path so it can
+# regenerate and diff without touching the committed file.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-OUT="THIRD-PARTY-NOTICES.md"
+OUT="${1:-THIRD-PARTY-NOTICES.md}"
 tmp="$(mktemp)"
 
 emit() { printf '%s\n' "$1" >>"$tmp"; }
