@@ -1,6 +1,7 @@
 package server
 
 import (
+	"errors"
 	"net/http"
 	"strings"
 
@@ -23,6 +24,23 @@ func (s *Server) handlePDFA(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+
+	// engine=gs → the general Ghostscript converter (re-embeds fonts, converts
+	// colour); default → the pure-Go normalizer (fast, but refuses hard cases).
+	if r.URL.Query().Get("engine") == "gs" {
+		result, err := pdfops.ConvertPDFAGhostscript(pdfBytes)
+		if err != nil {
+			if errors.Is(err, pdfops.ErrGhostscriptMissing) {
+				httpError(w, http.StatusBadRequest, "Ghostscript is not installed")
+			} else {
+				httpError(w, http.StatusBadRequest, err.Error())
+			}
+			return
+		}
+		sendDownload(w, "archival.pdf", "application/pdf", result)
+		return
+	}
+
 	result, blockers, err := pdfops.PreparePDFA(pdfBytes)
 	if err != nil {
 		httpError(w, http.StatusInternalServerError, "could not convert to PDF/A")
