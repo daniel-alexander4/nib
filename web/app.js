@@ -140,6 +140,8 @@ const els = {
   exportFormXfdfBtn: $('exportFormXfdfBtn'),
   importXfdfBtn: $('importXfdfBtn'), importXfdfModal: $('importXfdfModal'), importXfdfPick: $('importXfdfPick'),
   importXfdfInput: $('importXfdfInput'), importXfdfStatus: $('importXfdfStatus'), importXfdfClose: $('importXfdfClose'),
+  pdfaBtn: $('pdfaBtn'), pdfaModal: $('pdfaModal'), pdfaStatus: $('pdfaStatus'),
+  pdfaGo: $('pdfaGo'), pdfaClose: $('pdfaClose'),
   exportCertBtn: $('exportCertBtn'), printBtn: $('printBtn'),
   finalizeModal: $('finalizeModal'), fzText: $('fzText'), fzDate: $('fzDate'),
   fzTsa: $('fzTsa'), fzTsaOn: $('fzTsaOn'), fzCancel: $('fzCancel'), fzGo: $('fzGo'),
@@ -1508,6 +1510,37 @@ els.importXfdfInput.onchange = async () => {
   }
   els.importXfdfModal.hidden = true;
   openSaveAs(await res.blob(), exportBase() + '-filled.pdf', 'Save filled PDF');
+};
+
+// --- convert to PDF/A-2b archival candidate ----------------------------------
+// Surfaces `nib pdfa` in the GUI: post the current document (overlay edits baked
+// in) and the server injects the sRGB OutputIntent + PDF/A XMP. The server refuses
+// documents with non-embedded fonts (or encryption) with a specific 400 message
+// shown in the modal. The result is a candidate — the modal says "verify with
+// veraPDF" because Nib can't validate conformance itself.
+function openPdfa() {
+  if (!pdfDocument) return toast('Open a PDF first');
+  els.pdfaStatus.textContent = '';
+  els.pdfaModal.hidden = false;
+}
+els.pdfaBtn.onclick = openPdfa;
+els.pdfaClose.onclick = () => { els.pdfaModal.hidden = true; };
+els.pdfaGo.onclick = async () => {
+  els.pdfaStatus.textContent = 'Converting…';
+  els.pdfaGo.disabled = true;
+  try {
+    const res = await apiFetch('/api/pdfa', { method: 'POST', body: await bakedForm() });
+    if (!res.ok) {
+      let msg = 'Could not convert to PDF/A.';
+      try { msg = (await res.json()).error || msg; } catch { /* keep default */ }
+      els.pdfaStatus.textContent = msg;
+      return;
+    }
+    els.pdfaModal.hidden = true;
+    openSaveAs(await res.blob(), exportBase() + '-pdfa.pdf', 'Save archival PDF (PDF/A-2b)');
+  } finally {
+    els.pdfaGo.disabled = false;
+  }
 };
 
 // renderCompare word-diffs the open document (a) against the chosen file (b) and
@@ -5591,7 +5624,7 @@ let libraryImages = []; // cached /api/images list (the image-library panel)
 const DOC_REQUIRED = [
   'saveFlatBtn', 'saveEditableBtn', 'saveFillableBtn', 'printBtn',
   'exportZipBtn', 'exportPngBtn', 'exportFormJsonBtn', 'exportFormCsvBtn', 'exportFormXfdfBtn', 'exportBookmarkSplitBtn',
-  'exportPageSplitBtn',
+  'exportPageSplitBtn', 'pdfaBtn',
   'textToolBtn', 'highlightToolBtn', 'drawToolBtn',
   'detectBtn', 'editTextBtn', 'removeOriginalsBtn', 'ocrBtn', 'ocrLang', 'autofillBtn', 'splitBtn',
   'splitBoxBtn', 'applyBoxSplitBtn', 'rotateLeftBtn', 'rotateRightBtn',
