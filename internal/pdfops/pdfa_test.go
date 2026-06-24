@@ -2,6 +2,9 @@ package pdfops
 
 import (
 	"bytes"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -9,6 +12,66 @@ import (
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
 	"nib/internal/testpdf"
 )
+
+// TestPreparePDFARefusesAcroFormDAFont: a form whose widget /AP draws text in a
+// non-embedded font (authorTestForm uses Helvetica) must be refused — api.PDFInfo
+// reports 0 fonts for it, so this is the gap only the full font-dict sweep closes.
+func TestPreparePDFARefusesAcroFormDAFont(t *testing.T) {
+	out, blockers, err := PreparePDFA(authorTestForm(t))
+	if err != nil {
+		t.Fatalf("PreparePDFA: %v", err)
+	}
+	if out != nil {
+		t.Error("expected no output — the AcroForm appearance font isn't embedded")
+	}
+	if len(blockers) == 0 || !strings.Contains(strings.ToLower(blockers[0]), "embed") {
+		t.Fatalf("expected a non-embedded-font blocker, got %v", blockers)
+	}
+}
+
+// gsToCMYK converts an image PDF to a DeviceCMYK PDF via Ghostscript, to exercise
+// CMYK detection on a real CMYK document. Skips when Ghostscript isn't installed.
+func gsToCMYK(t *testing.T, pdf []byte) []byte {
+	t.Helper()
+	if !GhostscriptAvailable() {
+		t.Skip("Ghostscript not installed; skipping CMYK fixture")
+	}
+	dir := t.TempDir()
+	in, out := filepath.Join(dir, "in.pdf"), filepath.Join(dir, "cmyk.pdf")
+	if err := os.WriteFile(in, pdf, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command(ghostscriptPath(), "-dBATCH", "-dNOPAUSE", "-dQUIET",
+		"-sColorConversionStrategy=CMYK", "-dProcessColorModel=/DeviceCMYK",
+		"-sDEVICE=pdfwrite", "-sOutputFile="+out, in)
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("gs CMYK conversion: %v", err)
+	}
+	b, err := os.ReadFile(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return b
+}
+
+// TestPreparePDFARefusesCMYK: a DeviceCMYK document is refused (the sRGB
+// OutputIntent can't legitimize CMYK). gs-gated via the CMYK fixture.
+func TestPreparePDFARefusesCMYK(t *testing.T) {
+	img, err := ImagesToPDF([]RasterPage{rasterPage(t, 200, 200)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, blockers, err := PreparePDFA(gsToCMYK(t, img))
+	if err != nil {
+		t.Fatalf("PreparePDFA: %v", err)
+	}
+	if out != nil {
+		t.Error("expected no output for a DeviceCMYK document")
+	}
+	if len(blockers) == 0 || !strings.Contains(strings.ToLower(blockers[0]), "cmyk") {
+		t.Fatalf("expected a CMYK blocker, got %v", blockers)
+	}
+}
 
 // TestPreparePDFA converts an image-only PDF (no fonts → nothing to embed) and
 // confirms the output carries the sRGB OutputIntent and the pdfaid XMP, that the
