@@ -86,7 +86,7 @@
         <div class="dropdown"><div class="recentSlot"></div></div>
       </div>
       <button id="combineBtn" title="Combine several PDFs into one new document">Combine PDFs…</button>
-      <button id="compareBtn" title="Compare this document with another PDF — see what text changed">Compare…</button>
+      <button id="compareBtn" title="Compare this document with another PDF — text diff, side by side, or a visual difference map">Compare…</button>
       <button id="fillCsvBtn" title="Mail-merge a spreadsheet onto this form — one filled PDF per row, as a ZIP">Fill from spreadsheet…</button>
       <button id="importXfdfBtn" title="Fill this form from an XFDF data file (the Acrobat/Foxit interchange format)">Import form data (XFDF)…</button>
       <button id="saveBtn" title="Save (overwrites the original)" disabled>Save</button>
@@ -620,15 +620,31 @@
     </div>
   </div>
 
-  <!-- Compare: diff the open document's text against another PDF's. -->
+  <!-- Compare: against another PDF — text diff, side by side, or pixel difference map. -->
   <div id="compareModal" hidden>
-    <div class="sigcard">
+    <div class="sigcard comparecard">
       <h3>Compare with another PDF</h3>
-      <p class="libhint">Pick a second PDF — its text is compared word-by-word against the open
-        document's, so you can see what changed between two versions (e.g. draft v3 vs v4 of a
-        contract). <span style="color:var(--red)">Removed</span> and
-        <span style="color:var(--green)">added</span> text are marked inline. This reads the text
-        layer only; a scanned PDF with no text shows nothing — run OCR on it first.</p>
+      <p class="libhint">Pick a second PDF and compare it against the open document three ways:
+        <strong>Text</strong> word-diffs the two text layers
+        (<span style="color:var(--red)">removed</span> /
+        <span style="color:var(--green)">added</span>, inline);
+        <strong>Side-by-side</strong> shows the same page of each; and
+        <strong>Differences</strong> paints a per-pixel map of what changed — which works on
+        scans too. Everything runs on your machine; the second PDF never leaves your computer.</p>
+      <div id="compareTools" class="comparetools" hidden>
+        <div class="comparemodes">
+          <button class="cmmode active" data-mode="text">Text</button>
+          <button class="cmmode" data-mode="side">Side-by-side</button>
+          <button class="cmmode" data-mode="diff">Differences</button>
+        </div>
+        <span class="grow"></span>
+        <span id="comparePager" class="comparepager" hidden>
+          <button id="cmPrev" title="Previous page">‹</button>
+          <span id="cmPageLabel">Page 1 / 1</span>
+          <button id="cmNext" title="Next page">›</button>
+        </span>
+      </div>
+      <div id="compareSummary" class="comparesummary" hidden></div>
       <div id="compareBody" class="sigdetails"></div>
       <div class="sigbtns">
         <button id="comparePick">Choose PDF to compare…</button>
