@@ -5934,18 +5934,20 @@ function fitWidth() { fitWidestWidth(); }
 // locks it as a NUMERIC scale, so a mixed-size document scrolls smoothly. A named
 // 'page-width' re-fits to whichever page scrolls into view (pdf.js recomputes it
 // against the current page), which on mixed sizes fought the scroll position and
-// trapped you at the size boundary. This mirrors pdf.js's own page-width formula
-// (pdf_viewer.mjs #setScale): scale = (clientWidth − SCROLLBAR_PADDING) / pageWidthPt;
-// Nib uses default scroll/spread, so SCROLLBAR_PADDING (40) and a factor of 1 are
-// the whole computation.
+// trapped you at the size boundary.
 //
 // Widths come from each page's RENDERED viewport (getPageView(i).viewport), which
 // already accounts for /Rotate — so a rotated landscape page reports its true 792pt
 // display width, not its 612pt portrait MediaBox. This must run at 'pagesloaded',
 // not 'pagesinit': at pagesinit only page 1's view is populated (others still hold
-// page 1's portrait viewport) and the container width hasn't settled, which made a
-// wider rotated page overflow. By pagesloaded (sub-5000-page docs) every page view
+// page 1's portrait viewport). By pagesloaded (sub-5000-page docs) every page view
 // is set and the layout is settled; a page whose view isn't ready yet is skipped.
+//
+// Scale math mirrors pdf.js's own page-width formula (pdf_viewer.mjs #setScale /
+// scrollIntoView): pdf.js renders a page at currentScale × PDF_TO_CSS_UNITS (the
+// 72pt→96px conversion), so the scale that fits maxW points into `avail` CSS pixels
+// is avail / maxW / PDF_TO_CSS_UNITS. Dropping that divisor zooms every page 4/3 too
+// wide — the widest page then overflows.
 function fitWidestWidth() {
   if (!pdfDocument) return;
   let maxW = 0;
@@ -5957,7 +5959,9 @@ function fitWidestWidth() {
     }
   }
   const avail = els.viewerContainer.clientWidth - 40; // 40 = pdf.js SCROLLBAR_PADDING
-  if (maxW > 0 && avail > 0) viewer.currentScale = avail / maxW;
+  if (maxW > 0 && avail > 0) {
+    viewer.currentScale = avail / maxW / pdfjsLib.PixelsPerInch.PDF_TO_CSS_UNITS;
+  }
 }
 els.prevBtn.onclick = prevPage;
 els.nextBtn.onclick = nextPage;
