@@ -429,6 +429,9 @@ input[type="search"] { width: 100%; }
 .comparepager { display: inline-flex; align-items: center; gap: 8px; font-size: 12px; color: var(--subtext0); }
 .cmside { display: inline-flex; align-items: center; gap: 4px; }
 .cmside .cmstep { padding: 1px 6px; font-size: 12px; line-height: 1.2; }
+.cmauto { display: inline-flex; align-items: center; gap: 4px; cursor: pointer; }
+.cmauto input { cursor: pointer; }
+.cmalignstat { font-variant-numeric: tabular-nums; color: var(--subtext1); }
 .comparesummary { font-size: 12px; color: var(--text); margin: 4px 0 8px; }
 .comparecanvasrow { display: flex; gap: 12px; justify-content: center; align-items: flex-start; }
 .comparecanvasrow.two .comparecol { flex: 1 1 0; }
