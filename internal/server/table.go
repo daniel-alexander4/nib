@@ -34,6 +34,15 @@ func (s *Server) handleTableExport(w http.ResponseWriter, r *http.Request) {
 		sendDownload(w, "table.csv", "text/csv", data)
 		return
 	}
+	if r.URL.Query().Get("format") == "ods" {
+		data, err := pdfops.GridToODS(body.Grid)
+		if err != nil {
+			httpError(w, http.StatusInternalServerError, "could not build spreadsheet")
+			return
+		}
+		sendDownload(w, "table.ods", "application/vnd.oasis.opendocument.spreadsheet", data)
+		return
+	}
 	data, err := pdfops.GridToXLSX(body.Grid)
 	if err != nil {
 		httpError(w, http.StatusInternalServerError, "could not build spreadsheet")
