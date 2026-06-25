@@ -160,6 +160,83 @@ func TestStampTextLayerKorean(t *testing.T) {
 	}
 }
 
+// TestStampTextLayerLatinBreadth is the coverage gate for the European-Latin
+// languages added on top of Roboto: their distinctive diacritics (Polish, Czech,
+// Hungarian, Romanian comma-accents, Turkish dotless-i, Vietnamese stacked
+// diacritics, etc.) must round-trip through pdftotext via the bundled Roboto — no
+// dedicated font. Catches a coverage regression if the bundled Roboto ever changes.
+func TestStampTextLayerLatinBreadth(t *testing.T) {
+	if _, err := exec.LookPath("pdftotext"); err != nil {
+		t.Skip("pdftotext (poppler) not installed")
+	}
+	samples := map[string]string{
+		"por": "coração não ação",
+		"pol": "zażółć gęślą jaźń",
+		"nld": "déjà café",
+		"tur": "İstanbul güneş çığ",
+		"vie": "Tiếng Việt Đà Nẵng",
+		"ces": "příliš žluťoučký kůň",
+		"hun": "árvíztűrő tükörfúrógép",
+		"ron": "în România țară șters",
+		"swe": "smörgås Åke",
+	}
+	for lang, sample := range samples {
+		base, err := testpdf.Text("scan")
+		if err != nil {
+			t.Fatal(err)
+		}
+		out, err := StampTextLayer(base, []Word{{Page: 1, Rect: [4]float64{40, 100, 360, 116}, Text: sample}}, lang)
+		if err != nil {
+			t.Errorf("%s: StampTextLayer: %v", lang, err)
+			continue
+		}
+		if txt := pdfToText(t, out); !strings.Contains(txt, sample) {
+			t.Errorf("%s: %q did not round-trip — extracted %q", lang, sample, strings.TrimSpace(txt))
+		}
+	}
+}
+
+// TestStampTextLayerScriptBreadth gates the languages that reuse an existing
+// vendored non-Latin face: Marathi/Nepali/Sanskrit on Noto Devanagari (LTR), and
+// Persian/Urdu on Noto Arabic (RTL → rune-multiset round-trip, since a bidi
+// extractor reverses RTL on display).
+func TestStampTextLayerScriptBreadth(t *testing.T) {
+	if _, err := exec.LookPath("pdftotext"); err != nil {
+		t.Skip("pdftotext (poppler) not installed")
+	}
+	ltr := map[string]string{
+		"mar": "मराठी भाषा ळ",
+		"nep": "नेपाली भाषा",
+		"san": "संस्कृतम् ऋ",
+	}
+	rtl := map[string]string{
+		"fas": "فارسی پژوهش گچ",
+		"urd": "اردو زبان ٹھ ڈ",
+	}
+	for lang, sample := range ltr {
+		base, _ := testpdf.Text("scan")
+		out, err := StampTextLayer(base, []Word{{Page: 1, Rect: [4]float64{40, 100, 360, 116}, Text: sample}}, lang)
+		if err != nil {
+			t.Errorf("%s: StampTextLayer: %v", lang, err)
+			continue
+		}
+		if txt := pdfToText(t, out); !strings.Contains(txt, sample) {
+			t.Errorf("%s: %q did not round-trip — extracted %q", lang, sample, strings.TrimSpace(txt))
+		}
+	}
+	for lang, sample := range rtl {
+		base, _ := testpdf.Text("scan")
+		out, err := StampTextLayer(base, []Word{{Page: 1, Rect: [4]float64{40, 100, 360, 116}, Text: sample}}, lang)
+		if err != nil {
+			t.Errorf("%s: StampTextLayer: %v", lang, err)
+			continue
+		}
+		if miss := missingRunes(sample, pdfToText(t, out)); miss != "" {
+			t.Errorf("%s: %q missing glyphs %q", lang, sample, miss)
+		}
+	}
+}
+
 func TestOCRFontFor(t *testing.T) {
 	cases := map[string]string{
 		"eng": "Roboto-Regular",
