@@ -260,6 +260,38 @@ func TestStampTextLayerBengali(t *testing.T) {
 	}
 }
 
+// TestStampTextLayerSouthAsian gates the six South-Asian scripts, each on its own
+// vendored static Noto glyf face, installed by PostScript name. Samples include a
+// virama conjunct where natural; like Bengali/Devanagari the invisible layer
+// round-trips on logical-order /ToUnicode regardless of visual shaping.
+func TestStampTextLayerSouthAsian(t *testing.T) {
+	if _, err := exec.LookPath("pdftotext"); err != nil {
+		t.Skip("pdftotext (poppler) not installed")
+	}
+	samples := map[string]string{
+		"tam": "தமிழ் மொழி",   // Tamil (with ழ் virama)
+		"tel": "తెలుగు భాష",   // Telugu
+		"kan": "ಕನ್ನಡ ಭಾಷೆ",   // Kannada (ನ್ನ conjunct)
+		"mal": "മലയാളം ക്ത",   // Malayalam (ക്ത conjunct)
+		"guj": "ગુજરાતી ભાષા", // Gujarati
+		"pan": "ਪੰਜਾਬੀ ਭਾਸ਼ਾ",  // Punjabi (Gurmukhi)
+	}
+	for lang, sample := range samples {
+		base, err := testpdf.Text("scan")
+		if err != nil {
+			t.Fatal(err)
+		}
+		out, err := StampTextLayer(base, []Word{{Page: 1, Rect: [4]float64{40, 100, 360, 116}, Text: sample}}, lang)
+		if err != nil {
+			t.Errorf("%s: StampTextLayer: %v", lang, err)
+			continue
+		}
+		if txt := pdfToText(t, out); !strings.Contains(txt, sample) {
+			t.Errorf("%s [%s]: %q did not round-trip — extracted %q", lang, ocrFontFor(lang), sample, strings.TrimSpace(txt))
+		}
+	}
+}
+
 func TestOCRFontFor(t *testing.T) {
 	cases := map[string]string{
 		"eng": "Roboto-Regular",
@@ -269,6 +301,12 @@ func TestOCRFontFor(t *testing.T) {
 		"hin": "NotoSansDevanagari-Regular",
 		"mar": "NotoSansDevanagari-Regular",
 		"ben": "NotoSansBengali-Regular",
+		"tam": "NotoSansTamil-Regular",
+		"tel": "NotoSansTelugu-Regular",
+		"kan": "NotoSansKannada-Regular",
+		"mal": "NotoSansMalayalam-Regular",
+		"guj": "NotoSansGujarati-Regular",
+		"pan": "NotoSansGurmukhi-Regular",
 		"ara":     "NotoSansArabic-Regular",
 		"heb":     "NotoSansHebrew-Regular",
 		"chi_sim": "DroidSansFallback",

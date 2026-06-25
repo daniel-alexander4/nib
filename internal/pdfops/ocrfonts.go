@@ -14,7 +14,7 @@ import (
 // need their own embedded font, installed into pdfcpu's user-font dir. (This is
 // the only font Nib vendors itself; Roboto comes from inside pdfcpu.)
 
-//go:embed fonts/NotoSansThai-Regular.ttf fonts/NotoSansDevanagari-Regular.ttf fonts/NotoSansArabic-Regular.ttf fonts/NotoSansHebrew-Regular.ttf fonts/NotoSansBengali-Regular.ttf fonts/DroidSansFallbackFull.ttf fonts/NanumGothic-Regular.ttf
+//go:embed fonts/NotoSansThai-Regular.ttf fonts/NotoSansDevanagari-Regular.ttf fonts/NotoSansArabic-Regular.ttf fonts/NotoSansHebrew-Regular.ttf fonts/NotoSansBengali-Regular.ttf fonts/NotoSansTamil-Regular.ttf fonts/NotoSansTelugu-Regular.ttf fonts/NotoSansKannada-Regular.ttf fonts/NotoSansMalayalam-Regular.ttf fonts/NotoSansGujarati-Regular.ttf fonts/NotoSansGurmukhi-Regular.ttf fonts/DroidSansFallbackFull.ttf fonts/NanumGothic-Regular.ttf
 var ocrFontFS embed.FS
 
 // ocrFontFiles maps each font's PostScript name (the name pdfcpu registers it
@@ -25,6 +25,12 @@ var ocrFontFiles = map[string]string{
 	"NotoSansArabic-Regular":     "fonts/NotoSansArabic-Regular.ttf",
 	"NotoSansHebrew-Regular":     "fonts/NotoSansHebrew-Regular.ttf",
 	"NotoSansBengali-Regular":    "fonts/NotoSansBengali-Regular.ttf",
+	"NotoSansTamil-Regular":      "fonts/NotoSansTamil-Regular.ttf",
+	"NotoSansTelugu-Regular":     "fonts/NotoSansTelugu-Regular.ttf",
+	"NotoSansKannada-Regular":    "fonts/NotoSansKannada-Regular.ttf",
+	"NotoSansMalayalam-Regular":  "fonts/NotoSansMalayalam-Regular.ttf",
+	"NotoSansGujarati-Regular":   "fonts/NotoSansGujarati-Regular.ttf",
+	"NotoSansGurmukhi-Regular":   "fonts/NotoSansGurmukhi-Regular.ttf",
 	// One pan-CJK face covers Simplified/Traditional Chinese and Japanese; its
 	// embedded PostScript name is "DroidSansFallback" (the .ttf file is *Full*).
 	"DroidSansFallback": "fonts/DroidSansFallbackFull.ttf",
@@ -44,6 +50,7 @@ var ocrLangBCP47 = map[string]string{
 	"ces": "cs", "nld": "nl", "hun": "hu", "pol": "pl", "por": "pt",
 	"ron": "ro", "swe": "sv", "tur": "tr", "vie": "vi",
 	"mar": "mr", "nep": "ne", "san": "sa", "fas": "fa", "urd": "ur", "ben": "bn",
+	"tam": "ta", "tel": "te", "kan": "kn", "mal": "ml", "guj": "gu", "pan": "pa",
 	"chi_sim": "zh-Hans", "chi_tra": "zh-Hant", "jpn": "ja", "kor": "ko",
 }
 
@@ -65,6 +72,18 @@ func ocrFontFor(lang string) string {
 		return "NotoSansDevanagari-Regular"
 	case "ben": // Bengali script
 		return "NotoSansBengali-Regular"
+	case "tam": // Tamil
+		return "NotoSansTamil-Regular"
+	case "tel": // Telugu
+		return "NotoSansTelugu-Regular"
+	case "kan": // Kannada
+		return "NotoSansKannada-Regular"
+	case "mal": // Malayalam
+		return "NotoSansMalayalam-Regular"
+	case "guj": // Gujarati
+		return "NotoSansGujarati-Regular"
+	case "pan": // Punjabi (Gurmukhi script)
+		return "NotoSansGurmukhi-Regular"
 	case "ara", "fas", "urd": // Arabic-script languages
 		return "NotoSansArabic-Regular"
 	case "heb":

@@ -1143,14 +1143,15 @@ Upstream: <https://github.com/kpdecker/jsdiff>.
 
 ---
 
-## Tesseract.js 5.1.1 (+ tesseract.js-core, ara/bel/ben/bul/ces/chi_sim/chi_tra/deu/ell/eng/fas/fra/heb/hin/hun/ita/jpn/kor/mar/mkd/nep/nld/pol/por/ron/rus/san/spa/srp/swe/tha/tur/ukr/urd/vie traineddata)
+## Tesseract.js 5.1.1 (+ tesseract.js-core, ara/bel/ben/bul/ces/chi_sim/chi_tra/deu/ell/eng/fas/fra/guj/heb/hin/hun/ita/jpn/kan/kor/mal/mar/mkd/nep/nld/pan/pol/por/ron/rus/san/spa/srp/swe/tam/tel/tha/tur/ukr/urd/vie traineddata)
 
 Vendored under `web/vendor/tesseract/` for on-device OCR (the WASM engine, its
 worker, and the Arabic, Belarusian, Bengali, Bulgarian, Chinese (Simplified and
-Traditional), Czech, Dutch, English, French, German, Greek, Hebrew, Hindi,
-Hungarian, Italian, Japanese, Korean, Macedonian, Marathi, Nepali, Persian,
-Polish, Portuguese, Romanian, Russian, Sanskrit, Serbian, Spanish, Swedish, Thai,
-Turkish, Ukrainian, Urdu and Vietnamese
+Traditional), Czech, Dutch, English, French, German, Greek, Gujarati, Hebrew,
+Hindi, Hungarian, Italian, Japanese, Kannada, Korean, Macedonian, Malayalam,
+Marathi, Nepali, Persian, Polish, Portuguese, Punjabi, Romanian, Russian,
+Sanskrit, Serbian, Spanish, Swedish, Tamil, Telugu, Thai, Turkish, Ukrainian,
+Urdu and Vietnamese
 `tessdata_fast` models). Copyright the Tesseract.js contributors and the Tesseract
 OCR project, licensed under the Apache License, Version 2.0. The full license text
 is reproduced in the `golang.org/x`/pdfcpu sections above and at
@@ -1188,11 +1189,12 @@ Upstream: <https://github.com/mapbox/pixelmatch>.
 
 ---
 
-## Noto Sans Thai, Devanagari, Bengali, Arabic & Hebrew
+## Noto Sans Thai, Devanagari, Bengali, Tamil, Telugu, Kannada, Malayalam, Gujarati, Gurmukhi, Arabic & Hebrew
 
 Vendored under `internal/pdfops/fonts/` and installed into pdfcpu's font registry
-so the OCR text layer can be stamped in Thai, Devanagari, Bengali, Arabic and Hebrew
-scripts (which the bundled Roboto does not cover). Copyright The Noto Project Authors,
+so the OCR text layer can be stamped in Thai, Devanagari, Bengali, Tamil, Telugu,
+Kannada, Malayalam, Gujarati, Gurmukhi, Arabic and Hebrew scripts (which the
+bundled Roboto does not cover). Copyright The Noto Project Authors,
 licensed under the SIL Open Font License, Version 1.1:
 
 ```
