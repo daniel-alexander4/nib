@@ -6,11 +6,58 @@
 ![100% local](https://img.shields.io/badge/data-100%25%20local-success)
 ![cgo-free](https://img.shields.io/badge/build-pure%20Go%2C%20single%20binary-00ADD8)
 
-**Fill, sign, flatten, and redact PDFs on your own machine.** Nib opens like a
-desktop app, but it's really just a tiny local web server and your browser — so
-nothing you open, type, or sign ever leaves your computer. No accounts, no cloud,
-no telemetry. Your documents, signatures, and signing identity live in an
-encrypted vault that only your SSH key can open.
+**A complete PDF toolkit that runs entirely on your own machine.** Fill any form,
+make scans searchable with on-device OCR in 29 languages, truly redact, compare
+revisions visually, sign and timestamp, convert to and from Office and PDF/A,
+pull tables out to spreadsheets, and reshape pages — all from a desktop-style app
+*or* a scriptable command line.
+
+And it's **yours**: free and open source under the GPL, a single self-contained
+binary with no installer, no account, no subscription, and no cloud. Nothing you
+open, type, or sign ever leaves your computer, and your documents and signing
+identity live in an encrypted vault only your SSH key can open.
+
+---
+
+## How Nib compares
+
+How Nib's feature set lines up against the three best-known PDF editors. **Legend:**
+✓ built in · ◐ partial or limited · — not available.
+
+| Capability | **Nib** | Adobe Acrobat Pro | Foxit PDF Editor | PDF-XChange Editor |
+| --- | :--: | :--: | :--: | :--: |
+| Fill forms — including flat & scanned | ✓ | ✓ | ✓ | ✓ |
+| Detect fields, turn a scan into a fillable form | ✓ | ✓ | ✓ | ✓ |
+| On-device OCR | ✓ *(29 languages)* | ✓ | ✓ | ✓ |
+| True redaction + pattern / PII search-and-redact | ✓ | ✓ | ✓ | ✓ |
+| Visual **and** text document compare | ✓ | ✓ | ✓ | ◐ |
+| Edit existing text with paragraph reflow | ◐ *(cover & replace)* | ✓ | ✓ | ✓ |
+| Digital signature with your own certificate | ✓ | ✓ | ✓ | ✓ |
+| RFC-3161 trusted timestamp | ✓ | ✓ | ✓ | ✓ |
+| **OpenTimestamps** (Bitcoin) proof of *when* | ✓ | — | — | — |
+| **Peer-to-peer co-signing**, no server | ✓ | — | — | — |
+| PDF/A archival export | ✓ | ✓ | ✓ | ✓ |
+| Office ↔ PDF conversion | ✓ † | ✓ | ✓ | ◐ |
+| Table → spreadsheet (XLSX / ODS / CSV) | ✓ | ✓ | ✓ | ◐ |
+| Merge, split, rotate, crop, N-up, Bates, page labels | ✓ | ✓ | ✓ | ✓ |
+| AES-256 encryption | ✓ | ✓ | ✓ | ✓ |
+| **Scriptable command line** / batch a folder | ✓ | — | — | ◐ |
+| Runs 100% offline, no account, no telemetry | ✓ | — | ◐ | ✓ |
+| **Free & open source** (GPLv3) | ✓ | — | — | — |
+| Single self-contained binary (Linux/macOS/Windows) | ✓ | — | — | — ‡ |
+| Price | **Free** | Subscription | Paid | Paid (free tier) |
+
+<sub>† Office conversion uses LibreOffice if it's installed — optional, detected at runtime, never bundled. ‡ PDF-XChange Editor is Windows-only.</sub>
+
+Acrobat, Foxit and PDF-XChange are mature commercial editors that do plenty Nib
+doesn't aim to — full WYSIWYG content editing, prepress, cloud collaboration. The
+table is about the jobs Nib *does* cover, and where it works differently.
+
+**Choose Nib** when you want to own your tools: work entirely offline with no
+account or subscription, script PDF jobs from the command line, keep every
+document and signature on your own machine, and stand on a transparent GPLv3
+codebase you can read and rebuild. Reach for a commercial editor when you need
+full WYSIWYG layout editing or prepress.
 
 ---
 
