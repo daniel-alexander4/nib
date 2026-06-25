@@ -1143,11 +1143,12 @@ Upstream: <https://github.com/kpdecker/jsdiff>.
 
 ---
 
-## Tesseract.js 5.1.1 (+ tesseract.js-core, ara/bel/bul/deu/ell/eng/fra/heb/hin/ita/mkd/rus/spa/srp/tha/ukr traineddata)
+## Tesseract.js 5.1.1 (+ tesseract.js-core, ara/bel/bul/chi_sim/chi_tra/deu/ell/eng/fra/heb/hin/ita/jpn/mkd/rus/spa/srp/tha/ukr traineddata)
 
 Vendored under `web/vendor/tesseract/` for on-device OCR (the WASM engine, its
-worker, and the Arabic, Belarusian, Bulgarian, German, Greek, English, French,
-Hebrew, Hindi, Italian, Macedonian, Russian, Spanish, Serbian, Thai and Ukrainian
+worker, and the Arabic, Belarusian, Bulgarian, Chinese (Simplified and
+Traditional), German, Greek, English, French, Hebrew, Hindi, Italian, Japanese,
+Macedonian, Russian, Spanish, Serbian, Thai and Ukrainian
 `tessdata_fast` models). Copyright the Tesseract.js contributors and the Tesseract
 OCR project, licensed under the Apache License, Version 2.0. The full license text
 is reproduced in the `golang.org/x`/pdfcpu sections above and at
@@ -1280,6 +1281,19 @@ DEALINGS IN THE FONT SOFTWARE.
 ```
 
 Upstream: <https://github.com/notofonts/noto-fonts>.
+
+---
+
+## Droid Sans Fallback
+
+Vendored under `internal/pdfops/fonts/` (`DroidSansFallbackFull.ttf`) and installed
+into pdfcpu's font registry so the OCR text layer can be stamped in Chinese
+(Simplified and Traditional) and Japanese — one pan-CJK face the bundled Roboto and
+the Noto faces above do not cover. Copyright (c) Google Inc. / Ascender Corporation,
+licensed under the Apache License, Version 2.0; the full license text is reproduced
+in the `golang.org/x`/pdfcpu sections above and at
+<http://www.apache.org/licenses/LICENSE-2.0>. Upstream:
+<https://android.googlesource.com/platform/frameworks/base/+/master/data/fonts>.
 
 ---
 
