@@ -35,6 +35,7 @@ pdfjsLib.GlobalWorkerOptions.workerSrc = './vendor/pdfjs/pdf.worker.min.mjs';
 const $ = (id) => document.getElementById(id);
 const els = {
   menubar: $('menubar'), toolbar: $('toolbar'), openMenuItem: $('openMenuItem'),
+  officeOpenBtn: $('officeOpenBtn'), officeInput: $('officeInput'),
   combineBtn: $('combineBtn'), combineModal: $('combineModal'), combineList: $('combineList'),
   combineAddBtn: $('combineAddBtn'), combineInput: $('combineInput'),
   combineCancel: $('combineCancel'), combineGo: $('combineGo'),
@@ -209,6 +210,7 @@ const all = (sel) => document.querySelectorAll(sel);
 let csrf = null;
 let authState = 'setup'; // setup | migrate | key-missing | ready
 let gsAvailable = false; // Ghostscript installed (from /api/status) → offer the general PDF/A converter
+let loAvailable = false; // LibreOffice installed (from /api/status) → offer office-document → PDF conversion
 
 // apiFetch wraps fetch with the CSRF header on writes; a 401 reopens the wizard.
 async function apiFetch(url, opts = {}) {
@@ -244,6 +246,8 @@ els.introOverlay.addEventListener('click', (e) => {
 function applyStatus(st) {
   authState = st.state;
   gsAvailable = !!st.ghostscript;
+  loAvailable = !!st.libreoffice;
+  els.officeOpenBtn.hidden = !loAvailable; // a primary open action — hide entirely when LibreOffice is absent
   els.aboutVersion.textContent = st.version || 'dev';
   if (st.state === 'ready') {
     csrf = st.csrf;
@@ -1213,6 +1217,26 @@ async function uploadFile(file) {
   if (!res.ok) return toast((await res.json()).error || 'could not open file');
   await setDocumentFromServer(await res.json());
 }
+
+// Office → PDF: pick a Word/Excel/PowerPoint/OpenDocument file, convert it on the
+// server via LibreOffice, and open the resulting PDF as the active document. Only
+// offered when LibreOffice is installed (the button is hidden otherwise).
+els.officeOpenBtn.onclick = () => els.officeInput.click();
+els.officeInput.onchange = async () => {
+  const file = els.officeInput.files[0];
+  els.officeInput.value = '';
+  if (!file) return;
+  const form = new FormData();
+  form.append('file', file);
+  toast('Converting to PDF…');
+  try {
+    const res = await apiFetch('/api/office', { method: 'POST', body: form });
+    if (!res.ok) return toast((await res.json()).error || 'could not convert file');
+    await setDocumentFromServer(await res.json());
+  } catch {
+    toast('could not convert file');
+  }
+};
 
 async function openURL(url) {
   const res = await apiFetch('/api/open-url', {
