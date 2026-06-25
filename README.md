@@ -250,6 +250,9 @@ document to its counterpart in the other, so if a version inserted or deleted a
 page the comparison stays lined up instead of every later page reading as changed.
 The outer ‹ › then step through the matched pairs, an added or removed page is shown
 on its own with a banner, and the toolbar notes how many pages were added/removed.
+A page that simply **changed position** is recognised as a *move* — its banner says
+where it went (and where it came from) rather than reporting it as one page deleted
+and another added, so a reorder reads as a reorder.
 For text-based PDFs alignment is instant — it matches on the page text. For
 **scanned documents** (or a scan compared against a digital original), where there's
 no text to match on, Nib instead renders every page and aligns on a **visual
