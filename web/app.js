@@ -1461,7 +1461,7 @@ let cmpAlignIdx = 0; // position within cmpAlign for lockstep nav
 let cmpAlignTried = false; // whether fingerprinting+alignment has run for this pair
 
 function closeCmpDoc() {
-  if (cmpDoc) { cmpDoc.destroy(); cmpDoc = null; } // free the comparison doc
+  if (cmpDoc) { cmpDoc.loadingTask.destroy(); cmpDoc = null; } // free the comparison doc (destroy lives on the loading task, not the proxy)
   cmpText = null; cmpName = ''; cmpPageA = 1; cmpPageB = 1; cmpMode = 'text';
   cmpAlign = null; cmpAlignIdx = 0; cmpAlignTried = false;
   if (els.cmAuto) els.cmAuto.checked = true;
@@ -5334,14 +5334,16 @@ function setTool(mode) {
   };
   if (activeTool) { exitBorder(); exitNote(); exitDropdown(); exitRadio(); exitShape(); } // Nib-side tools, not pdf.js modes — one at a time
   // Mirror the active mode onto every control bound to it (Edit menu + toolbar).
-  document.querySelectorAll('[data-mode]').forEach((b) => b.classList.toggle('active', b.dataset.mode === activeTool));
+  // Scope out the compare tabs: they share the data-mode attribute (text/side/diff)
+  // but are wired to setCompareMode, not the annotation tools.
+  document.querySelectorAll('[data-mode]:not(.cmmode)').forEach((b) => b.classList.toggle('active', b.dataset.mode === activeTool));
   // The highlight color row is contextual — show it only while highlighting (or
   // drawing a border), and re-assert the selected color so the next highlight
   // uses it (not pdf.js yellow).
   reflectAnnoControls();
   if (activeTool === 'HIGHLIGHT') applyHighlightColor(selectedHlColor);
 }
-document.querySelectorAll('[data-mode]').forEach((b) => {
+document.querySelectorAll('[data-mode]:not(.cmmode)').forEach((b) => {
   b.onclick = () => setTool(b.dataset.mode);
 });
 
