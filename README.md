@@ -7,7 +7,7 @@
 ![cgo-free](https://img.shields.io/badge/build-pure%20Go%2C%20single%20binary-00ADD8)
 
 **A complete PDF toolkit that runs entirely on your own machine.** Fill any form,
-make scans searchable with on-device OCR in 29 languages, truly redact, compare
+make scans searchable with on-device OCR in 41 languages, truly redact, compare
 revisions visually, sign and timestamp, convert to and from Office and PDF/A,
 pull tables out to spreadsheets, and reshape pages — all from a desktop-style app
 *or* a scriptable command line.
@@ -28,7 +28,7 @@ How Nib's feature set lines up against the three best-known PDF editors.
 | --- | :--: | :--: | :--: | :--: |
 | Fill forms — including flat & scanned | ✅ | ✅ | ✅ | ✅ |
 | Detect fields, turn a scan into a fillable form | ✅ | ✅ | ✅ | ✅ |
-| On-device OCR *(29 languages)* | ✅ | ✅ | ✅ | ✅ |
+| On-device OCR *(41 languages)* | ✅ | ✅ | ✅ | ✅ |
 | True redaction + pattern / PII search-and-redact | ✅ | ✅ | ✅ | ✅ |
 | Visual **and** text document compare | ✅ | ✅ | ✅ | 🟡 |
 | Edit existing text with paragraph reflow | 🟡 *(cover & replace)* | ✅ | ✅ | ✅ |
@@ -253,7 +253,8 @@ so it works offline like everything else. Pick the scan's language from the
 dropdown next to the button (**English, French, German, Spanish, Italian, Czech,
 Dutch, Hungarian, Polish, Portuguese, Romanian, Swedish, Turkish, Vietnamese,
 Russian, Ukrainian, Bulgarian, Serbian, Macedonian, Belarusian, Greek, Thai,
-Hindi, Bengali, Marathi, Nepali, Sanskrit, Arabic, Persian, Urdu, Hebrew, Chinese
+Hindi, Bengali, Marathi, Nepali, Sanskrit, Tamil, Telugu, Kannada, Malayalam,
+Gujarati, Punjabi, Arabic, Persian, Urdu, Hebrew, Chinese
 (Simplified and Traditional), Japanese, Korean**) for
 best accuracy; full Unicode comes through either way (accents, quotes, dashes, and
 non-Latin scripts — including right-to-left Arabic and Hebrew, which stay searchable
