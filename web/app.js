@@ -139,6 +139,7 @@ const els = {
   exportZipBtn: $('exportZipBtn'), exportPngBtn: $('exportPngBtn'),
   exportImagesBtn: $('exportImagesBtn'), exportTextBtn: $('exportTextBtn'),
   exportTableXlsxBtn: $('exportTableXlsxBtn'), exportTableCsvBtn: $('exportTableCsvBtn'),
+  exportTableOdsBtn: $('exportTableOdsBtn'),
   exportFormJsonBtn: $('exportFormJsonBtn'), exportFormCsvBtn: $('exportFormCsvBtn'),
   exportFormXfdfBtn: $('exportFormXfdfBtn'),
   importXfdfBtn: $('importXfdfBtn'), importXfdfModal: $('importXfdfModal'), importXfdfPick: $('importXfdfPick'),
@@ -3769,11 +3770,12 @@ async function exportTable(format) {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ grid }),
   });
   if (!res.ok) { toast('Could not build the spreadsheet'); return; }
-  const ext = format === 'csv' ? '.csv' : '.xlsx';
+  const ext = { csv: '.csv', ods: '.ods', xlsx: '.xlsx' }[format] || '.xlsx';
   openSaveAs(await res.blob(), exportBase() + '-p' + viewer.currentPageNumber + '-table' + ext, 'Export table (' + format.toUpperCase() + ')');
 }
 els.exportTableXlsxBtn.onclick = () => exportTable('xlsx');
 els.exportTableCsvBtn.onclick = () => exportTable('csv');
+els.exportTableOdsBtn.onclick = () => exportTable('ods');
 
 els.exportImagesBtn.onclick = async () => {
   if (!pdfDocument) return toast('Open a PDF first');
@@ -5858,7 +5860,7 @@ let overlayHistory = { undo: [], redo: [] }; // client overlay-edit undo, draine
 let libraryImages = []; // cached /api/images list (the image-library panel)
 const DOC_REQUIRED = [
   'saveFlatBtn', 'saveEditableBtn', 'saveFillableBtn', 'printBtn',
-  'exportZipBtn', 'exportPngBtn', 'exportFormJsonBtn', 'exportFormCsvBtn', 'exportFormXfdfBtn', 'exportTableXlsxBtn', 'exportTableCsvBtn', 'exportBookmarkSplitBtn',
+  'exportZipBtn', 'exportPngBtn', 'exportFormJsonBtn', 'exportFormCsvBtn', 'exportFormXfdfBtn', 'exportTableXlsxBtn', 'exportTableCsvBtn', 'exportTableOdsBtn', 'exportBookmarkSplitBtn',
   'exportPageSplitBtn', 'pdfaBtn',
   'textToolBtn', 'highlightToolBtn', 'drawToolBtn',
   'detectBtn', 'editTextBtn', 'removeOriginalsBtn', 'ocrBtn', 'ocrLang', 'ocrQuality', 'autofillBtn', 'splitBtn',
