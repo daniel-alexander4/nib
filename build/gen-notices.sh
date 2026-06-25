@@ -128,10 +128,10 @@ Upstream: <https://github.com/kpdecker/jsdiff>.
 
 ---
 
-## Tesseract.js 5.1.1 (+ tesseract.js-core, ara/bel/bul/ces/chi_sim/chi_tra/deu/ell/eng/fas/fra/heb/hin/hun/ita/jpn/kor/mar/mkd/nep/nld/pol/por/ron/rus/san/spa/srp/swe/tha/tur/ukr/urd/vie traineddata)
+## Tesseract.js 5.1.1 (+ tesseract.js-core, ara/bel/ben/bul/ces/chi_sim/chi_tra/deu/ell/eng/fas/fra/heb/hin/hun/ita/jpn/kor/mar/mkd/nep/nld/pol/por/ron/rus/san/spa/srp/swe/tha/tur/ukr/urd/vie traineddata)
 
 Vendored under `web/vendor/tesseract/` for on-device OCR (the WASM engine, its
-worker, and the Arabic, Belarusian, Bulgarian, Chinese (Simplified and
+worker, and the Arabic, Belarusian, Bengali, Bulgarian, Chinese (Simplified and
 Traditional), Czech, Dutch, English, French, German, Greek, Hebrew, Hindi,
 Hungarian, Italian, Japanese, Korean, Macedonian, Marathi, Nepali, Persian,
 Polish, Portuguese, Romanian, Russian, Sanskrit, Serbian, Spanish, Swedish, Thai,
@@ -173,11 +173,11 @@ Upstream: <https://github.com/mapbox/pixelmatch>.
 
 ---
 
-## Noto Sans Thai, Devanagari, Arabic & Hebrew
+## Noto Sans Thai, Devanagari, Bengali, Arabic & Hebrew
 
 Vendored under `internal/pdfops/fonts/` and installed into pdfcpu's font registry
-so the OCR text layer can be stamped in Thai, Devanagari, Arabic and Hebrew scripts
-(which the bundled Roboto does not cover). Copyright The Noto Project Authors,
+so the OCR text layer can be stamped in Thai, Devanagari, Bengali, Arabic and Hebrew
+scripts (which the bundled Roboto does not cover). Copyright The Noto Project Authors,
 licensed under the SIL Open Font License, Version 1.1:
 
 ```
