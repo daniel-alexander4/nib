@@ -136,6 +136,30 @@ func TestStampTextLayerCJK(t *testing.T) {
 	}
 }
 
+// TestStampTextLayerKorean is the coverage gate for Korean: the vendored NanumGothic
+// glyf face, installed by its PostScript name, must carry the modern hangul
+// syllables (which Droid Sans Fallback's cmap lacks) and round-trip through
+// pdftotext. Korean is LTR, so a plain strings.Contains check applies. (Hanja —
+// Chinese chars sometimes in formal Korean — are NOT covered by NanumGothic; see
+// deferred.md/completed.md. Modern Korean is overwhelmingly hangul.)
+func TestStampTextLayerKorean(t *testing.T) {
+	if _, err := exec.LookPath("pdftotext"); err != nil {
+		t.Skip("pdftotext (poppler) not installed")
+	}
+	sample := "안녕하세요세계" // "Hello, world" in hangul
+	base, err := testpdf.Text("scan")
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := StampTextLayer(base, []Word{{Page: 1, Rect: [4]float64{50, 100, 320, 116}, Text: sample}}, "kor")
+	if err != nil {
+		t.Fatalf("kor: StampTextLayer: %v", err)
+	}
+	if txt := pdfToText(t, out); !strings.Contains(txt, sample) {
+		t.Errorf("kor: %q did not round-trip — extracted %q (font missing or lacks glyphs)", sample, strings.TrimSpace(txt))
+	}
+}
+
 func TestOCRFontFor(t *testing.T) {
 	cases := map[string]string{
 		"eng": "Roboto-Regular",
@@ -149,6 +173,7 @@ func TestOCRFontFor(t *testing.T) {
 		"chi_sim": "DroidSansFallback",
 		"chi_tra": "DroidSansFallback",
 		"jpn":     "DroidSansFallback",
+		"kor":     "NanumGothic",
 		"":        "Roboto-Regular",
 		"zzz":     "Roboto-Regular",
 	}
