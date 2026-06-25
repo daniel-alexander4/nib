@@ -14,7 +14,7 @@ import (
 // need their own embedded font, installed into pdfcpu's user-font dir. (This is
 // the only font Nib vendors itself; Roboto comes from inside pdfcpu.)
 
-//go:embed fonts/NotoSansThai-Regular.ttf fonts/NotoSansDevanagari-Regular.ttf fonts/NotoSansArabic-Regular.ttf fonts/NotoSansHebrew-Regular.ttf fonts/DroidSansFallbackFull.ttf fonts/NanumGothic-Regular.ttf
+//go:embed fonts/NotoSansThai-Regular.ttf fonts/NotoSansDevanagari-Regular.ttf fonts/NotoSansArabic-Regular.ttf fonts/NotoSansHebrew-Regular.ttf fonts/NotoSansBengali-Regular.ttf fonts/DroidSansFallbackFull.ttf fonts/NanumGothic-Regular.ttf
 var ocrFontFS embed.FS
 
 // ocrFontFiles maps each font's PostScript name (the name pdfcpu registers it
@@ -24,6 +24,7 @@ var ocrFontFiles = map[string]string{
 	"NotoSansDevanagari-Regular": "fonts/NotoSansDevanagari-Regular.ttf",
 	"NotoSansArabic-Regular":     "fonts/NotoSansArabic-Regular.ttf",
 	"NotoSansHebrew-Regular":     "fonts/NotoSansHebrew-Regular.ttf",
+	"NotoSansBengali-Regular":    "fonts/NotoSansBengali-Regular.ttf",
 	// One pan-CJK face covers Simplified/Traditional Chinese and Japanese; its
 	// embedded PostScript name is "DroidSansFallback" (the .ttf file is *Full*).
 	"DroidSansFallback": "fonts/DroidSansFallbackFull.ttf",
@@ -42,7 +43,7 @@ var ocrLangBCP47 = map[string]string{
 	"ara": "ar", "heb": "he",
 	"ces": "cs", "nld": "nl", "hun": "hu", "pol": "pl", "por": "pt",
 	"ron": "ro", "swe": "sv", "tur": "tr", "vie": "vi",
-	"mar": "mr", "nep": "ne", "san": "sa", "fas": "fa", "urd": "ur",
+	"mar": "mr", "nep": "ne", "san": "sa", "fas": "fa", "urd": "ur", "ben": "bn",
 	"chi_sim": "zh-Hans", "chi_tra": "zh-Hant", "jpn": "ja", "kor": "ko",
 }
 
@@ -62,6 +63,8 @@ func ocrFontFor(lang string) string {
 		return "NotoSansThai-Regular"
 	case "hin", "mar", "nep", "san": // Devanagari-script languages
 		return "NotoSansDevanagari-Regular"
+	case "ben": // Bengali script
+		return "NotoSansBengali-Regular"
 	case "ara", "fas", "urd": // Arabic-script languages
 		return "NotoSansArabic-Regular"
 	case "heb":
