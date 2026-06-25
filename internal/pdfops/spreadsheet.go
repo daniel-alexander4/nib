@@ -6,6 +6,7 @@ import (
 	"encoding/csv"
 	"encoding/xml"
 	"fmt"
+	"hash/crc32"
 	"strings"
 )
 
@@ -24,6 +25,74 @@ func GridToCSV(grid [][]string) ([]byte, error) {
 	}
 	return buf.Bytes(), cw.Error()
 }
+
+// GridToODS serializes the grid as a minimal OpenDocument Spreadsheet (.ods) — the
+// ODF counterpart of GridToXLSX, hand-rolled (zip + XML), pure Go. ODF requires the
+// uncompressed "mimetype" entry to be first in the package; the rest are ordinary
+// deflated parts.
+func GridToODS(grid [][]string) ([]byte, error) {
+	var buf bytes.Buffer
+	zw := zip.NewWriter(&buf)
+	// mimetype MUST be the first entry, stored uncompressed, with its size/CRC in the
+	// local header (no data descriptor) so an ODF reader can sniff it at byte 38.
+	// CreateRaw (not Create) is required — Create streams with a data-descriptor flag
+	// that zeroes the local-header size, which strict readers (LibreOffice) reject.
+	mtBytes := []byte(odsMimetype)
+	mt, err := zw.CreateRaw(&zip.FileHeader{
+		Name:               "mimetype",
+		Method:             zip.Store,
+		CRC32:              crc32.ChecksumIEEE(mtBytes),
+		CompressedSize64:   uint64(len(mtBytes)),
+		UncompressedSize64: uint64(len(mtBytes)),
+	})
+	if err != nil {
+		return nil, err
+	}
+	if _, err := mt.Write(mtBytes); err != nil {
+		return nil, err
+	}
+	for _, p := range []struct{ name, body string }{
+		{"META-INF/manifest.xml", odsManifestXML},
+		{"content.xml", odsContentXML(grid)},
+	} {
+		w, err := zw.Create(p.name)
+		if err != nil {
+			return nil, err
+		}
+		if _, err := w.Write([]byte(p.body)); err != nil {
+			return nil, err
+		}
+	}
+	if err := zw.Close(); err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
+}
+
+// odsContentXML builds the ODF body: one <table:table-row> per grid row, a
+// string <table:table-cell> per non-empty cell (empty cells are self-closing).
+func odsContentXML(grid [][]string) string {
+	var b strings.Builder
+	b.WriteString(xmlHeader)
+	b.WriteString(`<office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:table="urn:oasis:names:tc:opendocument:xmlns:table:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" office:version="1.2"><office:body><office:spreadsheet><table:table table:name="Sheet1">`)
+	for _, row := range grid {
+		b.WriteString(`<table:table-row>`)
+		for _, cell := range row {
+			if cell == "" {
+				b.WriteString(`<table:table-cell/>`)
+				continue
+			}
+			fmt.Fprintf(&b, `<table:table-cell office:value-type="string"><text:p>%s</text:p></table:table-cell>`, xmlEsc(cell))
+		}
+		b.WriteString(`</table:table-row>`)
+	}
+	b.WriteString(`</table:table></office:spreadsheet></office:body></office:document-content>`)
+	return b.String()
+}
+
+const odsMimetype = "application/vnd.oasis.opendocument.spreadsheet"
+
+const odsManifestXML = xmlHeader + `<manifest:manifest xmlns:manifest="urn:oasis:names:tc:opendocument:xmlns:manifest:1.0" manifest:version="1.2"><manifest:file-entry manifest:full-path="/" manifest:media-type="application/vnd.oasis.opendocument.spreadsheet"/><manifest:file-entry manifest:full-path="content.xml" manifest:media-type="text/xml"/></manifest:manifest>`
 
 // GridToXLSX serializes the grid as a minimal .xlsx (OOXML SpreadsheetML) with one
 // worksheet, using inline strings (no shared-string table, no styles) — the
