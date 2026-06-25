@@ -42,6 +42,7 @@ var ocrLangBCP47 = map[string]string{
 	"ara": "ar", "heb": "he",
 	"ces": "cs", "nld": "nl", "hun": "hu", "pol": "pl", "por": "pt",
 	"ron": "ro", "swe": "sv", "tur": "tr", "vie": "vi",
+	"mar": "mr", "nep": "ne", "san": "sa", "fas": "fa", "urd": "ur",
 	"chi_sim": "zh-Hans", "chi_tra": "zh-Hant", "jpn": "ja", "kor": "ko",
 }
 
