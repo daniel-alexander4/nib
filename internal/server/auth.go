@@ -152,6 +152,7 @@ type statusResponse struct {
 	RecentHighlightColors []string `json:"recentHighlightColors,omitempty"` // last-used highlight colors, newest first
 	Version               string   `json:"version"`                         // running build, shown in the About dialog
 	Ghostscript           bool     `json:"ghostscript"`                     // gs installed → offer the general (vector-preserving) PDF/A converter
+	LibreOffice           bool     `json:"libreoffice"`                     // LibreOffice installed → offer office-document → PDF conversion
 }
 
 // currentStatus describes how (and whether) the vault can be unlocked, stamped
@@ -161,6 +162,7 @@ func (s *Server) currentStatus() statusResponse {
 	st := s.vaultStatus()
 	st.Version = s.version
 	st.Ghostscript = pdfops.GhostscriptAvailable()
+	st.LibreOffice = pdfops.LibreOfficeAvailable()
 	envAllows := os.Getenv("NIB_NO_UPDATE_CHECK") == ""
 	st.UpdateCheckLocked = !envAllows
 	st.AutoUpdate = envAllows
