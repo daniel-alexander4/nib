@@ -237,6 +237,29 @@ func TestStampTextLayerScriptBreadth(t *testing.T) {
 	}
 }
 
+// TestStampTextLayerBengali gates Bengali: the vendored Noto Sans Bengali glyf
+// face, installed by PostScript name, must cover the Bengali block and round-trip
+// through pdftotext — including a virama conjunct (ক্ত), proving the invisible
+// layer is searchable regardless of visual shaping (the /ToUnicode carries logical
+// order, as for Devanagari).
+func TestStampTextLayerBengali(t *testing.T) {
+	if _, err := exec.LookPath("pdftotext"); err != nil {
+		t.Skip("pdftotext (poppler) not installed")
+	}
+	sample := "বাংলা ক্ত" // "Bangla" + a conjunct (ka + virama + ta)
+	base, err := testpdf.Text("scan")
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := StampTextLayer(base, []Word{{Page: 1, Rect: [4]float64{40, 100, 360, 116}, Text: sample}}, "ben")
+	if err != nil {
+		t.Fatalf("ben: StampTextLayer: %v", err)
+	}
+	if txt := pdfToText(t, out); !strings.Contains(txt, sample) {
+		t.Errorf("ben: %q did not round-trip — extracted %q (font missing or lacks glyphs)", sample, strings.TrimSpace(txt))
+	}
+}
+
 func TestOCRFontFor(t *testing.T) {
 	cases := map[string]string{
 		"eng": "Roboto-Regular",
@@ -245,6 +268,7 @@ func TestOCRFontFor(t *testing.T) {
 		"tha": "NotoSansThai-Regular",
 		"hin": "NotoSansDevanagari-Regular",
 		"mar": "NotoSansDevanagari-Regular",
+		"ben": "NotoSansBengali-Regular",
 		"ara":     "NotoSansArabic-Regular",
 		"heb":     "NotoSansHebrew-Regular",
 		"chi_sim": "DroidSansFallback",
