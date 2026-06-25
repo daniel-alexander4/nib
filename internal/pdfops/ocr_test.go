@@ -79,6 +79,43 @@ func TestStampTextLayerCyrillicGreek(t *testing.T) {
 	}
 }
 
+// TestStampTextLayerLatinExtended pins the same NO-extra-font coverage for the
+// Latin-script European languages — they fall through ocrFontFor to pdfcpu's
+// bundled Roboto. Each sample carries that language's hardest diacritics, the two
+// at-risk being Romanian's comma-below ș/ț (U+0218–021B, distinct from cedilla
+// ş/ţ) and Vietnamese's stacked tone+vowel marks (ế/ộ/ữ). A failure means Roboto
+// lacks a glyph and that language must be pulled (its OCR layer would be empty).
+func TestStampTextLayerLatinExtended(t *testing.T) {
+	if _, err := exec.LookPath("pdftotext"); err != nil {
+		t.Skip("pdftotext (poppler) not installed")
+	}
+	samples := map[string]string{
+		"ces": "příliš žluťoučký kůň",
+		"nld": "drieëntwintig coördinatie",
+		"hun": "árvíztűrő tükörfúrógép",
+		"pol": "zażółć gęślą jaźń",
+		"por": "coração não àção",
+		"ron": "așază țară în mâine", // comma-below ș/ț + â/î
+		"swe": "Skåne flygande bäckasiner",
+		"tur": "İstanbul ığdır şçöü", // dotted/dotless İ/ı + ğ
+		"vie": "Tiếng Việt chữ Quốc ngữ",
+	}
+	for lang, sample := range samples {
+		base, err := testpdf.Text("scan")
+		if err != nil {
+			t.Fatal(err)
+		}
+		out, err := StampTextLayer(base, []Word{{Page: 1, Rect: [4]float64{40, 100, 540, 116}, Text: sample}}, lang)
+		if err != nil {
+			t.Errorf("%s: StampTextLayer: %v", lang, err)
+			continue
+		}
+		if txt := pdfToText(t, out); !strings.Contains(txt, sample) {
+			t.Errorf("%s: Roboto does not cover %q — extracted %q; pull this language from the picker", lang, sample, strings.TrimSpace(txt))
+		}
+	}
+}
+
 // TestStampTextLayerNoWords is a no-op pass-through (nothing to OCR on a page).
 func TestStampTextLayerNoWords(t *testing.T) {
 	base, err := testpdf.Text("x")
