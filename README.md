@@ -230,10 +230,14 @@ document to its counterpart in the other, so if a version inserted or deleted a
 page the comparison stays lined up instead of every later page reading as changed.
 The outer ‹ › then step through the matched pairs, an added or removed page is shown
 on its own with a banner, and the toolbar notes how many pages were added/removed.
-Auto-align uses the page text, so it needs text-based PDFs (uncheck **Auto-align**
-to page the two sides manually, or for scanned documents — run **OCR** first to make
-them alignable). Like everything else it runs **entirely on your machine** — the
-second PDF never leaves your computer.
+For text-based PDFs alignment is instant — it matches on the page text. For
+**scanned documents** (or a scan compared against a digital original), where there's
+no text to match on, Nib instead renders every page and aligns on a **visual
+fingerprint**, so two scanned revisions line up too; lightly-edited pages stay
+paired (the difference map then shows what changed) while a genuinely new or removed
+page becomes a gap. That render pass shows brief progress; uncheck **Auto-align** at
+any time to page the two sides manually. Like everything else it runs **entirely on
+your machine** — the second PDF never leaves your computer.
 
 ### Scan for hidden content
 **Secure → Scan for hidden content** lists what's lurking in a PDF that you can't

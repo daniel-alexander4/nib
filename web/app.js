@@ -1333,28 +1333,78 @@ function pageFingerprints(texts, tag) {
   return { keys, meaningful };
 }
 
-// alignPages aligns two page-fingerprint sequences via a longest-common-subsequence
-// pass, returning ordered steps {a,b} of 1-based page numbers — with b=null for a
-// page only in the open document (deleted) and a=null for one only in the compared
-// document (added). Page counts are small, so the O(m·n) table is trivial.
-function alignPages(ka, kb) {
+// alignPages aligns two page-key sequences via a longest-common-subsequence pass,
+// returning ordered steps {a,b} of 1-based page numbers — with b=null for a page
+// only in the open document (deleted) and a=null for one only in the compared
+// document (added). Page counts are small, so the O(m·n) table is trivial. eq is
+// the match test: exact equality for text fingerprints, or a perceptual-hash
+// distance threshold for scans — within-threshold pairs become aligned diagonals,
+// everything else a gap, which is exactly LCS with a fuzzy equality predicate.
+function alignPages(ka, kb, eq = (x, y) => x === y) {
   const m = ka.length, n = kb.length;
   const dp = Array.from({ length: m + 1 }, () => new Int32Array(n + 1));
   for (let i = m - 1; i >= 0; i--) {
     for (let j = n - 1; j >= 0; j--) {
-      dp[i][j] = ka[i] === kb[j] ? dp[i + 1][j + 1] + 1 : Math.max(dp[i + 1][j], dp[i][j + 1]);
+      dp[i][j] = eq(ka[i], kb[j]) ? dp[i + 1][j + 1] + 1 : Math.max(dp[i + 1][j], dp[i][j + 1]);
     }
   }
   const steps = [];
   let i = 0, j = 0;
   while (i < m && j < n) {
-    if (ka[i] === kb[j]) { steps.push({ a: i + 1, b: j + 1 }); i++; j++; }
+    if (eq(ka[i], kb[j])) { steps.push({ a: i + 1, b: j + 1 }); i++; j++; }
     else if (dp[i + 1][j] >= dp[i][j + 1]) { steps.push({ a: i + 1, b: null }); i++; }
     else { steps.push({ a: null, b: j + 1 }); j++; }
   }
   while (i < m) { steps.push({ a: i + 1, b: null }); i++; }
   while (j < n) { steps.push({ a: null, b: j + 1 }); j++; }
   return steps;
+}
+
+// --- Perceptual page hashing: align two scans (or a scan vs a digital PDF) when
+// neither side has text to fingerprint. dHash renders each page tiny, reduces it
+// to a 9×8 grayscale grid, and records whether each pixel is brighter than its
+// right neighbour — 64 bits robust to scan noise, slight skew, and resampling.
+const DHASH_T = 12; // max Hamming distance (of 64) for two pages to count as "the same page"
+
+// pageDHash rasterises one page small and returns its 64-bit dHash as 8 bytes.
+async function pageDHash(doc, n) {
+  const { canvas } = await renderPageCanvas(doc, n, 0.25); // small render; downscaled again below
+  const g = document.createElement('canvas');
+  g.width = 9; g.height = 8;
+  const ctx = g.getContext('2d');
+  ctx.drawImage(canvas, 0, 0, 9, 8); // box-filter down to the dHash grid
+  const px = ctx.getImageData(0, 0, 9, 8).data;
+  const lum = (i) => 0.299 * px[i] + 0.587 * px[i + 1] + 0.114 * px[i + 2];
+  const bytes = new Uint8Array(8);
+  let bit = 0;
+  for (let y = 0; y < 8; y++) {
+    for (let x = 0; x < 8; x++) {
+      const here = lum((y * 9 + x) * 4), right = lum((y * 9 + x + 1) * 4);
+      if (here > right) bytes[bit >> 3] |= 1 << (bit & 7);
+      bit++;
+    }
+  }
+  return bytes;
+}
+
+// pagePixelHashes hashes every page of a doc, reporting progress as it goes.
+async function pagePixelHashes(doc, onProgress) {
+  const hashes = [];
+  for (let n = 1; n <= doc.numPages; n++) {
+    hashes.push(await pageDHash(doc, n));
+    if (onProgress) onProgress();
+  }
+  return hashes;
+}
+
+// hamming counts differing bits between two equal-length byte arrays.
+function hamming(a, b) {
+  let d = 0;
+  for (let i = 0; i < a.length; i++) {
+    let v = a[i] ^ b[i];
+    while (v) { d += v & 1; v >>= 1; }
+  }
+  return d;
 }
 
 const CMP_SCALE = 2; // 144 DPI — matches the flatten/redact raster scale
@@ -1390,9 +1440,11 @@ function alignStat() {
   return [added ? `+${added}` : '', removed ? `−${removed}` : ''].filter(Boolean).join(' ');
 }
 
-// ensureAlignment lazily fingerprints both documents and computes the page
-// alignment once per pair. When neither side has text (e.g. two scans) there's
-// nothing to align on, so auto-align is disabled and nav falls back to manual.
+// ensureAlignment lazily aligns the two documents once per pair. Text PDFs align
+// instantly on per-page text fingerprints (LCS). When a side has no text to
+// fingerprint (a scan, or a scan vs a digital PDF) it falls back to rasterising
+// every page and aligning on perceptual hashes within a Hamming threshold — a
+// render pass, so it shows progress. Only if rendering fails does nav go manual.
 async function ensureAlignment() {
   if (cmpAlignTried) return;
   cmpAlignTried = true;
@@ -1401,8 +1453,17 @@ async function ensureAlignment() {
   if (a.meaningful > 0 && b.meaningful > 0) {
     cmpAlign = alignPages(a.keys, b.keys);
   } else {
-    cmpAlign = null;
-    els.cmAuto.checked = false; // no text to align on → manual paging only
+    try {
+      const total = pdfDocument.numPages + cmpDoc.numPages;
+      let done = 0;
+      const tick = () => { els.compareBody.innerHTML = `<p class="scan-where">Aligning pages… ${++done}/${total}</p>`; };
+      const ha = await pagePixelHashes(pdfDocument, tick);
+      const hb = await pagePixelHashes(cmpDoc, tick);
+      cmpAlign = alignPages(ha, hb, (x, y) => hamming(x, y) <= DHASH_T);
+    } catch {
+      cmpAlign = null;
+      els.cmAuto.checked = false; // couldn't render to hash → manual paging only
+    }
   }
   els.cmAuto.disabled = !cmpAlign;
 }
