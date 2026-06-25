@@ -128,13 +128,14 @@ Upstream: <https://github.com/kpdecker/jsdiff>.
 
 ---
 
-## Tesseract.js 5.1.1 (+ tesseract.js-core, ara/bel/bul/ces/chi_sim/chi_tra/deu/ell/eng/fra/heb/hin/hun/ita/jpn/kor/mkd/nld/pol/por/ron/rus/spa/srp/swe/tha/tur/ukr/vie traineddata)
+## Tesseract.js 5.1.1 (+ tesseract.js-core, ara/bel/bul/ces/chi_sim/chi_tra/deu/ell/eng/fas/fra/heb/hin/hun/ita/jpn/kor/mar/mkd/nep/nld/pol/por/ron/rus/san/spa/srp/swe/tha/tur/ukr/urd/vie traineddata)
 
 Vendored under `web/vendor/tesseract/` for on-device OCR (the WASM engine, its
 worker, and the Arabic, Belarusian, Bulgarian, Chinese (Simplified and
 Traditional), Czech, Dutch, English, French, German, Greek, Hebrew, Hindi,
-Hungarian, Italian, Japanese, Korean, Macedonian, Polish, Portuguese, Romanian,
-Russian, Serbian, Spanish, Swedish, Thai, Turkish, Ukrainian and Vietnamese
+Hungarian, Italian, Japanese, Korean, Macedonian, Marathi, Nepali, Persian,
+Polish, Portuguese, Romanian, Russian, Sanskrit, Serbian, Spanish, Swedish, Thai,
+Turkish, Ukrainian, Urdu and Vietnamese
 `tessdata_fast` models). Copyright the Tesseract.js contributors and the Tesseract
 OCR project, licensed under the Apache License, Version 2.0. The full license text
 is reproduced in the `golang.org/x`/pdfcpu sections above and at
