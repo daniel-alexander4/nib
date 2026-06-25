@@ -106,6 +106,36 @@ func missingRunes(want, got string) string {
 	return string(missing)
 }
 
+// TestStampTextLayerCJK is the coverage gate for the CJK scripts: the vendored
+// Droid pan-CJK face, installed by its embedded PostScript name (DroidSansFallback),
+// must carry glyphs for Simplified + Traditional Chinese and Japanese (kana+kanji),
+// and the invisible layer must round-trip through pdftotext. (Korean hangul is NOT
+// covered by this face — see deferred.md — and is intentionally absent here.)
+func TestStampTextLayerCJK(t *testing.T) {
+	if _, err := exec.LookPath("pdftotext"); err != nil {
+		t.Skip("pdftotext (poppler) not installed")
+	}
+	samples := map[string]string{
+		"chi_sim": "你好世界",       // Simplified Chinese
+		"chi_tra": "繁體中文世界", // Traditional Chinese (繁/體 are traditional-only forms)
+		"jpn":     "こんにちは世界", // Japanese: hiragana + kanji
+	}
+	for lang, sample := range samples {
+		base, err := testpdf.Text("scan")
+		if err != nil {
+			t.Fatal(err)
+		}
+		out, err := StampTextLayer(base, []Word{{Page: 1, Rect: [4]float64{50, 100, 320, 116}, Text: sample}}, lang)
+		if err != nil {
+			t.Errorf("%s: StampTextLayer: %v", lang, err)
+			continue
+		}
+		if txt := pdfToText(t, out); !strings.Contains(txt, sample) {
+			t.Errorf("%s: %q did not round-trip — extracted %q (font missing or lacks glyphs)", lang, sample, strings.TrimSpace(txt))
+		}
+	}
+}
+
 func TestOCRFontFor(t *testing.T) {
 	cases := map[string]string{
 		"eng": "Roboto-Regular",
@@ -114,10 +144,13 @@ func TestOCRFontFor(t *testing.T) {
 		"tha": "NotoSansThai-Regular",
 		"hin": "NotoSansDevanagari-Regular",
 		"mar": "NotoSansDevanagari-Regular",
-		"ara": "NotoSansArabic-Regular",
-		"heb": "NotoSansHebrew-Regular",
-		"":    "Roboto-Regular",
-		"zzz": "Roboto-Regular",
+		"ara":     "NotoSansArabic-Regular",
+		"heb":     "NotoSansHebrew-Regular",
+		"chi_sim": "DroidSansFallback",
+		"chi_tra": "DroidSansFallback",
+		"jpn":     "DroidSansFallback",
+		"":        "Roboto-Regular",
+		"zzz":     "Roboto-Regular",
 	}
 	for lang, want := range cases {
 		if got := ocrFontFor(lang); got != want {

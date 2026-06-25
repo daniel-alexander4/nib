@@ -205,9 +205,10 @@ engine is built into Nib (no install, no cloud, nothing leaves your computer) �
 so it works offline like everything else. Pick the scan's language from the
 dropdown next to the button (**English, French, German, Spanish, Italian,
 Russian, Ukrainian, Bulgarian, Serbian, Macedonian, Belarusian, Greek, Thai,
-Hindi, Arabic, Hebrew**) for best accuracy; full Unicode comes through either way
-(accents, quotes, dashes, and non-Latin scripts — including right-to-left Arabic
-and Hebrew, which stay searchable in logical order). A **quality** selector next to
+Hindi, Arabic, Hebrew, Chinese (Simplified and Traditional), Japanese**) for best
+accuracy; full Unicode comes through either way (accents, quotes, dashes, and
+non-Latin scripts — including right-to-left Arabic and Hebrew, which stay searchable
+in logical order, and CJK). A **quality** selector next to
 it trades speed for accuracy: **Fast** (200 DPI) is the quick default; **Best**
 (300 DPI) renders the pages larger so small or faint text reads more reliably — a
 bit slower, worth it when accuracy matters. The OCR'd document also gets its
