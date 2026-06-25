@@ -1384,6 +1384,23 @@ function alignPages(ka, kb, eq = (x, y) => x === y) {
   return steps;
 }
 
+// detectMoves layers move detection over the order-preserving alignment: LCS can
+// only show a reordered page as a delete on one side plus an insert on the other,
+// so this matches each removed page (b=null, an A-page) to an unused added page
+// (a=null, a B-page) by the same eq, and annotates the pair as a move
+// (movedTo/movedFrom carry the partner's 1-based page). Greedy, each added gap used
+// once; gaps with no counterpart stay genuine deletes/inserts. Mutates and returns
+// steps. ka/kb are the same key arrays alignPages aligned on.
+function detectMoves(steps, ka, kb, eq = (x, y) => x === y) {
+  const added = steps.filter((s) => s.a == null); // B-only pages, candidates to move *into*
+  for (const rem of steps) {
+    if (rem.b != null) continue; // not a removed page
+    const hit = added.find((s) => s.movedFrom == null && eq(ka[rem.a - 1], kb[s.b - 1]));
+    if (hit) { rem.movedTo = hit.b; hit.movedFrom = rem.a; }
+  }
+  return steps;
+}
+
 // --- Perceptual page hashing: align two scans (or a scan vs a digital PDF) when
 // neither side has text to fingerprint. dHash renders each page tiny, reduces it
 // to a 9×8 grayscale grid, and records whether each pixel is brighter than its
@@ -1454,14 +1471,20 @@ function closeCmpDoc() {
 // the user hasn't turned it off and an alignment was computed (both docs have text).
 function autoActive() { return els.cmAuto.checked && cmpAlign && cmpAlign.length > 0; }
 
-// alignStat summarises the alignment for the toolbar: "+added −removed" (added =
-// pages only in the compared doc, removed = pages only in the open doc), or a
-// "pages aligned" note when the pagination matches 1:1.
+// alignStat summarises the alignment for the toolbar: "+added −removed ⇄moved"
+// (added = pages only in the compared doc, removed = pages only in the open doc,
+// moved = a page that simply changed position), or a "pages aligned" note when the
+// pagination matches 1:1. A moved page is counted once and excluded from add/remove.
 function alignStat() {
-  let added = 0, removed = 0;
-  for (const s of cmpAlign) { if (s.a == null) added++; else if (s.b == null) removed++; }
-  if (!added && !removed) return 'pages aligned';
-  return [added ? `+${added}` : '', removed ? `−${removed}` : ''].filter(Boolean).join(' ');
+  let added = 0, removed = 0, moved = 0;
+  for (const s of cmpAlign) {
+    if (s.movedTo != null) moved++;          // counted once, on the A-side step
+    else if (s.movedFrom != null) continue;  // the B-side of a move, already counted
+    else if (s.a == null) added++;
+    else if (s.b == null) removed++;
+  }
+  if (!added && !removed && !moved) return 'pages aligned';
+  return [added ? `+${added}` : '', removed ? `−${removed}` : '', moved ? `⇄${moved}` : ''].filter(Boolean).join(' ');
 }
 
 // ensureAlignment lazily aligns the two documents once per pair. Text PDFs align
@@ -1475,7 +1498,7 @@ async function ensureAlignment() {
   const [ta, tb] = await Promise.all([pageTexts(pdfDocument), pageTexts(cmpDoc)]);
   const a = pageFingerprints(ta, 'a'), b = pageFingerprints(tb, 'b');
   if (a.meaningful > 0 && b.meaningful > 0) {
-    cmpAlign = alignPages(a.keys, b.keys);
+    cmpAlign = detectMoves(alignPages(a.keys, b.keys), a.keys, b.keys);
   } else {
     try {
       const total = pdfDocument.numPages + cmpDoc.numPages;
@@ -1483,7 +1506,8 @@ async function ensureAlignment() {
       const tick = () => { els.compareBody.innerHTML = `<p class="scan-where">Aligning pages… ${++done}/${total}</p>`; };
       const ha = await pagePixelHashes(pdfDocument, tick);
       const hb = await pagePixelHashes(cmpDoc, tick);
-      cmpAlign = alignPages(ha, hb, (x, y) => hamming(x, y) <= DHASH_T);
+      const near = (x, y) => hamming(x, y) <= DHASH_T;
+      cmpAlign = detectMoves(alignPages(ha, hb, near), ha, hb, near);
     } catch {
       cmpAlign = null;
       els.cmAuto.checked = false; // couldn't render to hash → manual paging only
@@ -1607,12 +1631,16 @@ async function renderCompareVisual(mode) {
   els.cmBPrev.disabled = auto || cmpPageB <= 1; els.cmBNext.disabled = auto || cmpPageB >= nB;
   els.cmAlignStat.textContent = auto ? alignStat() : '';
 
-  // A gap step renders the single present page with an added/removed banner.
+  // A gap step renders the single present page with a banner. A page that simply
+  // changed position is labelled as a move (cross-referencing its other position)
+  // rather than a delete/insert, so a reorder doesn't read as lost + new content.
   if (step && step.b == null) {
     const ra = await renderPageCanvas(pdfDocument, cmpPageA, CMP_SCALE);
     if (seq !== cmpSeq) return;
     els.compareSummary.hidden = false;
-    els.compareSummary.textContent = `Page ${cmpPageA} is only in the open document (removed from ${cmpName}).`;
+    els.compareSummary.textContent = step.movedTo != null
+      ? `Page ${cmpPageA} moved to page ${step.movedTo} of ${cmpName}.`
+      : `Page ${cmpPageA} is only in the open document (removed from ${cmpName}).`;
     els.compareBody.textContent = '';
     showCompareCanvases([[`Open document — page ${cmpPageA}`, ra.canvas]]);
     return;
@@ -1621,7 +1649,9 @@ async function renderCompareVisual(mode) {
     const rb = await renderPageCanvas(cmpDoc, cmpPageB, CMP_SCALE);
     if (seq !== cmpSeq) return;
     els.compareSummary.hidden = false;
-    els.compareSummary.textContent = `Page ${cmpPageB} was added in ${cmpName} (not in the open document).`;
+    els.compareSummary.textContent = step.movedFrom != null
+      ? `Page ${cmpPageB} of ${cmpName} moved from page ${step.movedFrom} of the open document.`
+      : `Page ${cmpPageB} was added in ${cmpName} (not in the open document).`;
     els.compareBody.textContent = '';
     showCompareCanvases([[`${cmpName} — page ${cmpPageB}`, rb.canvas]]);
     return;
