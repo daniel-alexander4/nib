@@ -14,7 +14,7 @@ import (
 // need their own embedded font, installed into pdfcpu's user-font dir. (This is
 // the only font Nib vendors itself; Roboto comes from inside pdfcpu.)
 
-//go:embed fonts/NotoSansThai-Regular.ttf fonts/NotoSansDevanagari-Regular.ttf fonts/NotoSansArabic-Regular.ttf fonts/NotoSansHebrew-Regular.ttf fonts/DroidSansFallbackFull.ttf
+//go:embed fonts/NotoSansThai-Regular.ttf fonts/NotoSansDevanagari-Regular.ttf fonts/NotoSansArabic-Regular.ttf fonts/NotoSansHebrew-Regular.ttf fonts/DroidSansFallbackFull.ttf fonts/NanumGothic-Regular.ttf
 var ocrFontFS embed.FS
 
 // ocrFontFiles maps each font's PostScript name (the name pdfcpu registers it
@@ -27,6 +27,9 @@ var ocrFontFiles = map[string]string{
 	// One pan-CJK face covers Simplified/Traditional Chinese and Japanese; its
 	// embedded PostScript name is "DroidSansFallback" (the .ttf file is *Full*).
 	"DroidSansFallback": "fonts/DroidSansFallbackFull.ttf",
+	// Korean hangul: Droid's hangul coverage is incomplete, so Korean gets its own
+	// glyf face (all 11,172 modern syllables). PostScript name "NanumGothic".
+	"NanumGothic": "fonts/NanumGothic-Regular.ttf",
 }
 
 // ocrLangBCP47 maps Nib's OCR language codes (ISO 639-2/3, as tesseract uses) to
@@ -37,7 +40,7 @@ var ocrLangBCP47 = map[string]string{
 	"rus": "ru", "ukr": "uk", "bul": "bg", "srp": "sr", "mkd": "mk",
 	"bel": "be", "ell": "el", "tha": "th", "hin": "hi",
 	"ara": "ar", "heb": "he",
-	"chi_sim": "zh-Hans", "chi_tra": "zh-Hant", "jpn": "ja",
+	"chi_sim": "zh-Hans", "chi_tra": "zh-Hant", "jpn": "ja", "kor": "ko",
 }
 
 // OCRLangToBCP47 returns the BCP 47 language tag for an OCR language code (for
@@ -62,6 +65,8 @@ func ocrFontFor(lang string) string {
 		return "NotoSansHebrew-Regular"
 	case "chi_sim", "chi_tra", "jpn": // CJK — one Droid pan-CJK face covers all three
 		return "DroidSansFallback"
+	case "kor": // Korean hangul — its own glyf face (Droid's hangul is incomplete)
+		return "NanumGothic"
 	default:
 		return ocrFont // Roboto-Regular — Latin, Cyrillic, Greek
 	}

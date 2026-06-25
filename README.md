@@ -205,8 +205,8 @@ engine is built into Nib (no install, no cloud, nothing leaves your computer) â€
 so it works offline like everything else. Pick the scan's language from the
 dropdown next to the button (**English, French, German, Spanish, Italian,
 Russian, Ukrainian, Bulgarian, Serbian, Macedonian, Belarusian, Greek, Thai,
-Hindi, Arabic, Hebrew, Chinese (Simplified and Traditional), Japanese**) for best
-accuracy; full Unicode comes through either way (accents, quotes, dashes, and
+Hindi, Arabic, Hebrew, Chinese (Simplified and Traditional), Japanese, Korean**) for
+best accuracy; full Unicode comes through either way (accents, quotes, dashes, and
 non-Latin scripts â€” including right-to-left Arabic and Hebrew, which stay searchable
 in logical order, and CJK). A **quality** selector next to
 it trades speed for accuracy: **Fast** (200 DPI) is the quick default; **Best**

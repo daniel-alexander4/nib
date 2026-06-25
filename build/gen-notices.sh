@@ -282,6 +282,17 @@ in the `golang.org/x`/pdfcpu sections above and at
 
 ---
 
+## NanumGothic
+
+Vendored under `internal/pdfops/fonts/` (`NanumGothic-Regular.ttf`) and installed
+into pdfcpu's font registry so the OCR text layer can be stamped in Korean (hangul)
+— the Droid pan-CJK face above does not cover the full hangul syllable block.
+Copyright (c) NAVER Corporation, with Reserved Font Name "Nanum", licensed under the
+SIL Open Font License, Version 1.1 (the full license text is reproduced in the Noto
+Sans section above). Upstream: <https://github.com/google/fonts/tree/main/ofl/nanumgothic>.
+
+---
+
 VENDORED_EOF
 
 # --- Go standard library / toolchain ---------------------------------------
