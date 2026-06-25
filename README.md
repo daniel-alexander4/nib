@@ -253,7 +253,8 @@ so it works offline like everything else. Pick the scan's language from the
 dropdown next to the button (**English, French, German, Spanish, Italian, Czech,
 Dutch, Hungarian, Polish, Portuguese, Romanian, Swedish, Turkish, Vietnamese,
 Russian, Ukrainian, Bulgarian, Serbian, Macedonian, Belarusian, Greek, Thai,
-Hindi, Arabic, Hebrew, Chinese (Simplified and Traditional), Japanese, Korean**) for
+Hindi, Marathi, Nepali, Sanskrit, Arabic, Persian, Urdu, Hebrew, Chinese
+(Simplified and Traditional), Japanese, Korean**) for
 best accuracy; full Unicode comes through either way (accents, quotes, dashes, and
 non-Latin scripts — including right-to-left Arabic and Hebrew, which stay searchable
 in logical order, and CJK). A **quality** selector next to
