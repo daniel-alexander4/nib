@@ -21,33 +21,33 @@ identity live in an encrypted vault only your SSH key can open.
 
 ## How Nib compares
 
-How Nib's feature set lines up against the three best-known PDF editors. **Legend:**
-✓ built in · ◐ partial or limited · — not available.
+How Nib's feature set lines up against the three best-known PDF editors.
+**Legend:** ✅ built in · 🟡 partial or limited · ❌ not available.
 
 | Capability | **Nib** | Adobe Acrobat Pro | Foxit PDF Editor | PDF-XChange Editor |
 | --- | :--: | :--: | :--: | :--: |
-| Fill forms — including flat & scanned | ✓ | ✓ | ✓ | ✓ |
-| Detect fields, turn a scan into a fillable form | ✓ | ✓ | ✓ | ✓ |
-| On-device OCR | ✓ *(29 languages)* | ✓ | ✓ | ✓ |
-| True redaction + pattern / PII search-and-redact | ✓ | ✓ | ✓ | ✓ |
-| Visual **and** text document compare | ✓ | ✓ | ✓ | ◐ |
-| Edit existing text with paragraph reflow | ◐ *(cover & replace)* | ✓ | ✓ | ✓ |
-| Digital signature with your own certificate | ✓ | ✓ | ✓ | ✓ |
-| RFC-3161 trusted timestamp | ✓ | ✓ | ✓ | ✓ |
-| **OpenTimestamps** (Bitcoin) proof of *when* | ✓ | — | — | — |
-| **Peer-to-peer co-signing**, no server | ✓ | — | — | — |
-| PDF/A archival export | ✓ | ✓ | ✓ | ✓ |
-| Office ↔ PDF conversion | ✓ † | ✓ | ✓ | ◐ |
-| Table → spreadsheet (XLSX / ODS / CSV) | ✓ | ✓ | ✓ | ◐ |
-| Merge, split, rotate, crop, N-up, Bates, page labels | ✓ | ✓ | ✓ | ✓ |
-| AES-256 encryption | ✓ | ✓ | ✓ | ✓ |
-| **Scriptable command line** / batch a folder | ✓ | — | — | ◐ |
-| Runs 100% offline, no account, no telemetry | ✓ | — | ◐ | ✓ |
-| **Free & open source** (GPLv3) | ✓ | — | — | — |
-| Single self-contained binary (Linux/macOS/Windows) | ✓ | — | — | — ‡ |
-| Price | **Free** | Subscription | Paid | Paid (free tier) |
+| Fill forms — including flat & scanned | ✅ | ✅ | ✅ | ✅ |
+| Detect fields, turn a scan into a fillable form | ✅ | ✅ | ✅ | ✅ |
+| On-device OCR *(29 languages)* | ✅ | ✅ | ✅ | ✅ |
+| True redaction + pattern / PII search-and-redact | ✅ | ✅ | ✅ | ✅ |
+| Visual **and** text document compare | ✅ | ✅ | ✅ | 🟡 |
+| Edit existing text with paragraph reflow | 🟡 *(cover & replace)* | ✅ | ✅ | ✅ |
+| Digital signature with your own certificate | ✅ | ✅ | ✅ | ✅ |
+| RFC-3161 trusted timestamp | ✅ | ✅ | ✅ | ✅ |
+| **OpenTimestamps** (Bitcoin) proof of *when* | ✅ | ❌ | ❌ | ❌ |
+| **Peer-to-peer co-signing**, no server | ✅ | ❌ | ❌ | ❌ |
+| PDF/A archival export | ✅ | ✅ | ✅ | ✅ |
+| Office ↔ PDF conversion † | ✅ | ✅ | ✅ | 🟡 |
+| Table → spreadsheet (XLSX / ODS / CSV) | ✅ | ✅ | ✅ | 🟡 |
+| Merge, split, rotate, crop, N-up, Bates, page labels | ✅ | ✅ | ✅ | ✅ |
+| AES-256 encryption | ✅ | ✅ | ✅ | ✅ |
+| **Scriptable command line** / batch a folder | ✅ | ❌ | ❌ | 🟡 |
+| Runs 100% offline, no account, no telemetry | ✅ | ❌ | 🟡 | ✅ |
+| **Free & open source** (GPLv3) | ✅ | ❌ | ❌ | ❌ |
+| Single self-contained binary, cross-platform ‡ | ✅ | ❌ | ❌ | ❌ |
+| **Price** | 🟢 **Free** | 🔴 Subscription | 🔴 Paid | 🟡 Free tier |
 
-<sub>† Office conversion uses LibreOffice if it's installed — optional, detected at runtime, never bundled. ‡ PDF-XChange Editor is Windows-only.</sub>
+<sub>† Office conversion uses LibreOffice if it's installed — optional, detected at runtime, never bundled. ‡ One portable binary for Linux / macOS / Windows (PDF-XChange Editor is Windows-only).</sub>
 
 Acrobat, Foxit and PDF-XChange are mature commercial editors that do plenty Nib
 doesn't aim to — full WYSIWYG content editing, prepress, cloud collaboration. The
