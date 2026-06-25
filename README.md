@@ -81,10 +81,10 @@ Nib embeds an sRGB output profile, writes the PDF/A identification, and removes
 active content and attachments. On the command line it's `nib pdfa IN -o OUT`.
 
 Nib is honest about what it can and can't do here. The fast built-in converter is
-pure Go, but PDF/A requires every font to be embedded and Nib can't add a font
-that isn't already in the file, so a document with non-embedded fonts (or one
-that's encrypted) is **refused with the specific reason** rather than turned into
-a file that falsely claims conformance.
+pure Go, but PDF/A requires every font embedded and device-independent colour, and
+Nib can't add a missing font or convert colour itself — so a document with
+non-embedded fonts, DeviceCMYK colour, or encryption is **refused with the specific
+reason** rather than turned into a file that falsely claims conformance.
 
 For those harder documents, Nib can use **[Ghostscript](https://www.ghostscript.com/)**
 if it's installed on your system — it re-embeds fonts and converts colour, the
