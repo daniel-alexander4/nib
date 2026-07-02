@@ -82,6 +82,9 @@ func TestSanitizeFilename(t *testing.T) {
 		".hidden":     "hidden",
 		"trailing...": "trailing",
 		"CON":         "_CON",
+		"CON.txt":     "_CON.txt", // reserved-with-extension is still the device on Windows
+		"lpt1.pdf":    "_lpt1.pdf",
+		"console":     "console", // reserved prefix inside a longer word is fine
 		"":            "",
 		"   ":         "",
 	}

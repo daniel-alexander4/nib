@@ -158,10 +158,11 @@ func (s *Server) handleCosignQuote(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleCosignSign(w http.ResponseWriter, r *http.Request) {
 	v := vaultFrom(r)
-	if err := r.ParseMultipartForm(maxPDFBytes); err != nil {
-		httpError(w, http.StatusBadRequest, "could not read upload")
+	cleanup, ok := parseMultipart(w, r, maxPDFBytes)
+	if !ok {
 		return
 	}
+	defer cleanup()
 	pdfBytes, ok := formFileBytes(w, r, "pdf")
 	if !ok {
 		return

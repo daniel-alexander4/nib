@@ -10,6 +10,26 @@ import (
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/types"
 )
 
+// TestAttachmentName pins the basename reduction: paths are stripped and the
+// dot-path names that survive a separator strip ("." / "..") reduce to "", which
+// AddAttachment rejects — so no downstream disk write can ever see a dot-path.
+func TestAttachmentName(t *testing.T) {
+	cases := map[string]string{
+		"report.pdf":     "report.pdf",
+		"a/b/report.pdf": "report.pdf",
+		`..\..\x`:        "x",
+		"..":             "",
+		".":              "",
+		"../..":          "",
+		"  spaced  ":     "spaced",
+	}
+	for in, want := range cases {
+		if got := attachmentName(in); got != want {
+			t.Errorf("attachmentName(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
 // TestAttachmentRoundTrip proves the full cycle on one in-memory document: a
 // fresh doc has no attachments, AddAttachment embeds one, Attachments lists it,
 // and ExtractAttachment returns the exact original bytes.

@@ -81,10 +81,11 @@ func watchLoop(dir string, interval int, opName string, act watchAction) int {
 
 	seen := map[string]fileState{}
 	processed := map[string]bool{}
+	failed := map[string]fileState{}
 	ticker := time.NewTicker(time.Duration(interval) * time.Second)
 	defer ticker.Stop()
 	for {
-		scanOnce(dir, seen, processed, act)
+		scanOnce(dir, seen, processed, failed, act)
 		select {
 		case <-ctx.Done():
 			fmt.Fprintln(os.Stderr, "\nnib: stopped")
@@ -95,10 +96,12 @@ func watchLoop(dir string, interval int, opName string, act watchAction) int {
 }
 
 // scanOnce processes any PDF in dir that is new and has settled since the last
-// scan (size+mtime unchanged). Each path is acted on at most once per run, so an
-// in-place rewrite's own mtime change doesn't retrigger it. State is carried in
-// seen/processed across calls.
-func scanOnce(dir string, seen map[string]fileState, processed map[string]bool, act watchAction) {
+// scan (size+mtime unchanged). Each path is SUCCESSFULLY acted on at most once
+// per run, so an in-place rewrite's own mtime change doesn't retrigger it. A
+// failed action is retried — but only after the file's size or mtime changes,
+// so a settled-but-broken file doesn't re-error on every scan. State is carried
+// in seen/processed/failed across calls.
+func scanOnce(dir string, seen map[string]fileState, processed map[string]bool, failed map[string]fileState, act watchAction) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		errf("%v", err)
@@ -117,16 +120,23 @@ func scanOnce(dir string, seen map[string]fileState, processed map[string]bool, 
 			continue
 		}
 		st := fileState{info.Size(), info.ModTime()}
+		if f, ok := failed[path]; ok {
+			if f == st {
+				continue // same bytes that already failed — wait for a change
+			}
+			delete(failed, path) // changed since the failure — eligible again
+		}
 		prev, ok := seen[path]
 		seen[path] = st
 		if !ok || prev != st {
 			continue // first sight or still changing — let it settle
 		}
 		status, err := act(path)
-		processed[path] = true
 		if err != nil {
+			failed[path] = st
 			errf("%s: %v", path, err)
 		} else {
+			processed[path] = true
 			fmt.Printf("%s: %s\n", path, status)
 		}
 	}

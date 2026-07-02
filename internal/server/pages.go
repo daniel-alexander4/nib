@@ -14,10 +14,11 @@ import (
 // The client posts its saved bytes (edits already baked) since these ops
 // restructure the PDF in ways pdf.js cannot do client-side.
 func (s *Server) handlePages(w http.ResponseWriter, r *http.Request) {
-	if err := r.ParseMultipartForm(maxPDFBytes); err != nil {
-		httpError(w, http.StatusBadRequest, "could not parse upload")
+	cleanup, ok := parseMultipart(w, r, maxPDFBytes)
+	if !ok {
 		return
 	}
+	defer cleanup()
 	pdfBytes, ok := formFileBytes(w, r, "pdf")
 	if !ok {
 		return

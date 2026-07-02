@@ -88,6 +88,7 @@ func ConvertPDFAGhostscript(pdf []byte) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), gsConvertTimeout)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, gs,
+		"-dSAFER", // the ≥9.50 default, but explicit so an older gs is sandboxed too
 		"-dPDFA=2", "-dPDFACompatibilityPolicy=1",
 		"-dBATCH", "-dNOPAUSE", "-dQUIET",
 		"-sColorConversionStrategy=RGB", "-sDEVICE=pdfwrite",
@@ -95,17 +96,24 @@ func ConvertPDFAGhostscript(pdf []byte) ([]byte, error) {
 		"-sOutputFile="+outPath,
 		defPath, inPath,
 	)
+	return runConvert(ctx, cmd, outPath, "Ghostscript")
+}
+
+// runConvert runs a prepared external-converter command and reads the file it
+// was told to produce — the run/timeout/stderr-tail plumbing Ghostscript and
+// LibreOffice share, kept in one place so fixes land in both.
+func runConvert(ctx context.Context, cmd *exec.Cmd, outPath, tool string) ([]byte, error) {
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
 		if ctx.Err() == context.DeadlineExceeded {
-			return nil, fmt.Errorf("Ghostscript timed out converting this document")
+			return nil, fmt.Errorf("%s timed out converting this document", tool)
 		}
-		return nil, fmt.Errorf("Ghostscript could not convert this document: %s", gsErrTail(stderr.String(), err))
+		return nil, fmt.Errorf("%s could not convert this document: %s", tool, execErrTail(stderr.String(), err))
 	}
 	out, err := os.ReadFile(outPath)
 	if err != nil || len(out) == 0 {
-		return nil, fmt.Errorf("Ghostscript produced no output: %s", gsErrTail(stderr.String(), err))
+		return nil, fmt.Errorf("%s produced no output: %s", tool, execErrTail(stderr.String(), err))
 	}
 	return out, nil
 }
@@ -133,10 +141,13 @@ func psEscape(s string) string {
 	return strings.NewReplacer(`\`, `\\`, "(", `\(`, ")", `\)`).Replace(s)
 }
 
-// gsErrTail returns a short, useful tail of Ghostscript's stderr for an error.
-func gsErrTail(stderr string, err error) string {
+// execErrTail returns a short, useful tail of a converter's stderr for an error.
+func execErrTail(stderr string, err error) string {
 	stderr = strings.TrimSpace(stderr)
 	if stderr == "" {
+		if err == nil { // empty output file with a clean exit: no detail to add
+			return "(no error output)"
+		}
 		return err.Error()
 	}
 	lines := strings.Split(stderr, "\n")
