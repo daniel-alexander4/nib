@@ -15,10 +15,11 @@ import (
 // content), this emits live form fields and never touches the open document — it's
 // a derive-a-new-artifact action, like extract/flatten.
 func (s *Server) handleFormAuthor(w http.ResponseWriter, r *http.Request) {
-	if err := r.ParseMultipartForm(maxPDFBytes); err != nil {
-		httpError(w, http.StatusBadRequest, "could not parse upload")
+	cleanup, ok := parseMultipart(w, r, maxPDFBytes)
+	if !ok {
 		return
 	}
+	defer cleanup()
 	pdfBytes, ok := formFileBytes(w, r, "pdf")
 	if !ok {
 		return
@@ -42,10 +43,11 @@ func (s *Server) handleFormAuthor(w http.ResponseWriter, r *http.Request) {
 // extract it derives a new artifact and never touches the open document. The CSV
 // header row must be the form's field names.
 func (s *Server) handleFormFillCSV(w http.ResponseWriter, r *http.Request) {
-	if err := r.ParseMultipartForm(maxPDFBytes); err != nil {
-		httpError(w, http.StatusBadRequest, "could not parse upload")
+	cleanup, ok := parseMultipart(w, r, maxPDFBytes)
+	if !ok {
 		return
 	}
+	defer cleanup()
 	pdfBytes, ok := formFileBytes(w, r, "pdf")
 	if !ok {
 		return
@@ -80,10 +82,11 @@ func (s *Server) handleFormFillCSV(w http.ResponseWriter, r *http.Request) {
 // data.xfdf` (pdfops.FillFormXFDF); like author and the CSV merge it derives a new
 // artifact and never touches the open document.
 func (s *Server) handleFormFillXFDF(w http.ResponseWriter, r *http.Request) {
-	if err := r.ParseMultipartForm(maxPDFBytes); err != nil {
-		httpError(w, http.StatusBadRequest, "could not parse upload")
+	cleanup, ok := parseMultipart(w, r, maxPDFBytes)
+	if !ok {
 		return
 	}
+	defer cleanup()
 	pdfBytes, ok := formFileBytes(w, r, "pdf")
 	if !ok {
 		return

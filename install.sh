@@ -16,7 +16,9 @@ CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X main.version=$VERSION" -o di
 
 if ! command -v nfpm >/dev/null 2>&1; then
   echo "installing nfpm…"
-  go install github.com/goreleaser/nfpm/v2/cmd/nfpm@latest
+  # Pinned, not @latest: an unpinned build tool fetched mid-install could drift
+  # or be compromised between runs. Bump deliberately when upgrading nfpm.
+  go install github.com/goreleaser/nfpm/v2/cmd/nfpm@v2.46.3
   export PATH="$PATH:$(go env GOPATH)/bin"
 fi
 

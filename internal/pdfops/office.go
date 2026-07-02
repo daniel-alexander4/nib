@@ -1,10 +1,8 @@
 package pdfops
 
 import (
-	"bytes"
 	"context"
 	"errors"
-	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -127,17 +125,5 @@ func ConvertOfficeToPDF(data []byte, ext string) ([]byte, error) {
 		"--convert-to", "pdf", "--outdir", outDir,
 		inPath,
 	)
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
-	if err := cmd.Run(); err != nil {
-		if ctx.Err() == context.DeadlineExceeded {
-			return nil, fmt.Errorf("LibreOffice timed out converting this document")
-		}
-		return nil, fmt.Errorf("LibreOffice could not convert this document: %s", gsErrTail(stderr.String(), err))
-	}
-	out, err := os.ReadFile(filepath.Join(outDir, "in.pdf"))
-	if err != nil || len(out) == 0 {
-		return nil, fmt.Errorf("LibreOffice produced no output: %s", gsErrTail(stderr.String(), err))
-	}
-	return out, nil
+	return runConvert(ctx, cmd, filepath.Join(outDir, "in.pdf"), "LibreOffice")
 }

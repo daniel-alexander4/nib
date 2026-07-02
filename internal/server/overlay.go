@@ -23,10 +23,11 @@ type stampReq struct {
 // "current filled document" the client uses before saving, flattening, or
 // exporting — overlay fields are HTML widgets, so they must be baked here.
 func (s *Server) handleBake(w http.ResponseWriter, r *http.Request) {
-	if err := r.ParseMultipartForm(maxPDFBytes); err != nil {
-		httpError(w, http.StatusBadRequest, "could not parse upload")
+	cleanup, ok := parseMultipart(w, r, maxPDFBytes)
+	if !ok {
 		return
 	}
+	defer cleanup()
 	pdfBytes, ok := formFileBytes(w, r, "pdf")
 	if !ok {
 		return
@@ -133,10 +134,11 @@ func (s *Server) handleBake(w http.ResponseWriter, r *http.Request) {
 // absent/empty value strips the property, which the recipient's final save does
 // once the markers are filled (the bake preserves it, so it must go explicitly).
 func (s *Server) handleFlags(w http.ResponseWriter, r *http.Request) {
-	if err := r.ParseMultipartForm(maxPDFBytes); err != nil {
-		httpError(w, http.StatusBadRequest, "could not parse upload")
+	cleanup, ok := parseMultipart(w, r, maxPDFBytes)
+	if !ok {
 		return
 	}
+	defer cleanup()
 	pdfBytes, ok := formFileBytes(w, r, "pdf")
 	if !ok {
 		return

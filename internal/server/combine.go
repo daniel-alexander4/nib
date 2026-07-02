@@ -13,10 +13,11 @@ import (
 // Combine works whether or not a document is already open. The files ride in as
 // repeated multipart "file" fields, in the user's chosen order.
 func (s *Server) handleCombine(w http.ResponseWriter, r *http.Request) {
-	if err := r.ParseMultipartForm(maxPDFBytes); err != nil {
-		httpError(w, http.StatusBadRequest, "could not parse upload")
+	cleanup, ok := parseMultipart(w, r, maxPDFBytes)
+	if !ok {
 		return
 	}
+	defer cleanup()
 	headers := r.MultipartForm.File["file"]
 	if len(headers) < 2 {
 		httpError(w, http.StatusBadRequest, "choose at least two PDFs to combine")

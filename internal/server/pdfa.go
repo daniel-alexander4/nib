@@ -16,10 +16,11 @@ import (
 // emit a file that falsely claims PDF/A. The result is a candidate: the client
 // labels it "verify with veraPDF".
 func (s *Server) handlePDFA(w http.ResponseWriter, r *http.Request) {
-	if err := r.ParseMultipartForm(maxPDFBytes); err != nil {
-		httpError(w, http.StatusBadRequest, "could not parse upload")
+	cleanup, ok := parseMultipart(w, r, maxPDFBytes)
+	if !ok {
 		return
 	}
+	defer cleanup()
 	pdfBytes, ok := formFileBytes(w, r, "pdf")
 	if !ok {
 		return

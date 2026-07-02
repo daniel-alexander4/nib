@@ -775,8 +775,11 @@ func newGCM(key []byte) (cipher.AEAD, error) {
 	return cipher.NewGCM(block)
 }
 
-// writeFileAtomic writes via a temp file + rename so an interrupted write can't
-// corrupt the vault.
+// writeFileAtomic writes via a temp file + fsync + rename (+ parent-dir fsync)
+// so an interrupted write can't corrupt the vault — the syncs make the rename
+// durable, not merely atomic: without them a crash right after the rename can
+// leave a stale or truncated file on disk. The vault holds keys; it gets the
+// full-durability treatment.
 func writeFileAtomic(path string, data []byte) error {
 	tmp, err := os.CreateTemp(filepath.Dir(path), ".vault-*.tmp")
 	if err != nil {
@@ -792,8 +795,22 @@ func writeFileAtomic(path string, data []byte) error {
 		tmp.Close()
 		return err
 	}
+	if err := tmp.Sync(); err != nil {
+		tmp.Close()
+		return err
+	}
 	if err := tmp.Close(); err != nil {
 		return err
 	}
-	return os.Rename(tmpName, path)
+	if err := os.Rename(tmpName, path); err != nil {
+		return err
+	}
+	// Persist the directory entry so the rename itself survives a crash.
+	dir, err := os.Open(filepath.Dir(path))
+	if err != nil {
+		return nil // rename succeeded; dir-sync is best-effort belt-and-suspenders
+	}
+	defer dir.Close()
+	_ = dir.Sync()
+	return nil
 }

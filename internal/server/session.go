@@ -487,10 +487,11 @@ func (s *Server) handleDoc(w http.ResponseWriter, r *http.Request) {
 // always a deliberate local action.
 func (s *Server) handleSessionInitiate(w http.ResponseWriter, r *http.Request) {
 	v := vaultFrom(r)
-	if err := r.ParseMultipartForm(maxPDFBytes); err != nil {
-		httpError(w, http.StatusBadRequest, "could not read upload")
+	cleanup, ok := parseMultipart(w, r, maxPDFBytes)
+	if !ok {
 		return
 	}
+	defer cleanup()
 	address := r.FormValue("address")
 	if address == "" {
 		httpError(w, http.StatusBadRequest, "a peer address is required")
@@ -564,10 +565,11 @@ type sendResult struct {
 // requireUnlocked (unlocked + CSRF + loopback origin).
 func (s *Server) handleSessionSend(w http.ResponseWriter, r *http.Request) {
 	v := vaultFrom(r)
-	if err := r.ParseMultipartForm(maxPDFBytes); err != nil {
-		httpError(w, http.StatusBadRequest, "could not read upload")
+	cleanup, ok := parseMultipart(w, r, maxPDFBytes)
+	if !ok {
 		return
 	}
+	defer cleanup()
 	address := r.FormValue("address")
 	if address == "" {
 		httpError(w, http.StatusBadRequest, "a peer address is required")

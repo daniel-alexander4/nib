@@ -35,10 +35,11 @@ type watermarkParam struct {
 // for download. Any later edit invalidates the signature — the tamper-evidence.
 func (s *Server) handleFinalize(w http.ResponseWriter, r *http.Request) {
 	v := vaultFrom(r)
-	if err := r.ParseMultipartForm(maxPDFBytes); err != nil {
-		httpError(w, http.StatusBadRequest, "could not parse upload")
+	cleanup, ok := parseMultipart(w, r, maxPDFBytes)
+	if !ok {
 		return
 	}
+	defer cleanup()
 	pdfBytes, ok := formFileBytes(w, r, "pdf")
 	if !ok {
 		return
