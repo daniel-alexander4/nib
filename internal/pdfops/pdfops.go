@@ -1315,8 +1315,17 @@ func extractImages(pdf []byte, perPage bool) ([]byte, int, error) {
 		if err != nil {
 			return nil, 0, err
 		}
+		anyOK := false
 		for p := 1; p <= n; p++ {
-			_ = run([]string{strconv.Itoa(p)}) // skip a page whose image can't be extracted
+			if run([]string{strconv.Itoa(p)}) == nil { // skip a page whose image can't be extracted
+				anyOK = true
+			}
+		}
+		// count==0 with no page succeeding means every page's extraction failed —
+		// report that rather than an indistinguishable "no images found". (A clean
+		// image-free doc reaches this branch only after the whole-doc pass errored.)
+		if count == 0 && !anyOK {
+			return nil, 0, fmt.Errorf("could not extract images from any page")
 		}
 	}
 
