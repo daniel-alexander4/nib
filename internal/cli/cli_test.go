@@ -627,6 +627,18 @@ func TestRunDispatch(t *testing.T) {
 	if handled, _ := Run([]string{"open-this.pdf"}, "1.2.3"); handled {
 		t.Error("a non-verb first arg should fall through to the desktop boot")
 	}
+	// A mistyped verb alongside a transform-only flag is an unknown command, not a
+	// file to open — booting the GUI would silently discard the -o.
+	if handled, code := Run([]string{"optmize", "in.pdf", "-o", "out.pdf"}, "1.2.3"); !handled || code != 1 {
+		t.Errorf("typo'd verb with -o: handled=%v code=%d, want true/1", handled, code)
+	}
+	if handled, code := Run([]string{"optmize", "in.pdf", "--out=out.pdf"}, "1.2.3"); !handled || code != 1 {
+		t.Errorf("typo'd verb with --out=: handled=%v code=%d, want true/1", handled, code)
+	}
+	// A bare non-verb (no transform flag) still falls through to open a file.
+	if handled, _ := Run([]string{"my report.pdf"}, "1.2.3"); handled {
+		t.Error("a bare non-verb should still fall through to the desktop boot")
+	}
 	if handled, code := Run([]string{"version"}, "1.2.3"); !handled || code != 0 {
 		t.Errorf("version: handled=%v code=%d, want true/0", handled, code)
 	}

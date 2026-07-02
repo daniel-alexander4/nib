@@ -11,7 +11,7 @@ import (
 // handleTableExport turns a table grid the browser extracted from the current page
 // (pdf.js text positions clustered into rows/columns) into a downloadable
 // spreadsheet. Extraction is client-side because only pdf.js can read PDF text;
-// the server just serializes the grid (CSV or XLSX). It derives a new artifact
+// the server just serializes the grid (CSV, XLSX, or ODS). It derives a new artifact
 // and never touches the open document.
 func (s *Server) handleTableExport(w http.ResponseWriter, r *http.Request) {
 	var body struct {
