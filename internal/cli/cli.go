@@ -44,9 +44,34 @@ func Run(args []string, version string) (handled bool, code int) {
 	}
 	run, ok := commands[args[0]]
 	if !ok {
+		// Not a known verb. Normally the first arg is a PDF path and main opens the
+		// desktop app — but a transform-only flag (-o/--out/-w/--in-place) among the
+		// args means the user meant a headless command and mistyped the verb; booting
+		// the GUI would silently discard their -o. Only that unambiguous signal is
+		// treated as a typo; a bare non-verb still falls through to open a file.
+		if hasTransformFlag(args[1:]) {
+			fmt.Fprintf(os.Stderr, "nib: unknown command %q (run \"nib help\" for the command list)\n", args[0])
+			return true, 1
+		}
 		return false, 0 // not a subcommand — let main open the desktop app
 	}
 	return true, run(args[1:])
+}
+
+// hasTransformFlag reports whether args carry an output flag that only the
+// headless transform commands accept, so a non-verb first argument alongside one
+// is a mistyped command rather than a file to open in the desktop app.
+func hasTransformFlag(args []string) bool {
+	for _, a := range args {
+		switch a {
+		case "-o", "--out", "-w", "--in-place":
+			return true
+		}
+		if strings.HasPrefix(a, "-o=") || strings.HasPrefix(a, "--out=") {
+			return true
+		}
+	}
+	return false
 }
 
 // commands maps each verb to its handler. version/help are handled in Run.

@@ -47,9 +47,9 @@ const (
 
 // SignerInfo is the per-signer detail surfaced to the UI.
 type SignerInfo struct {
-	Name        string      `json:"name,omitempty"`   // certificate subject common name, when present
-	Valid       bool        `json:"valid"`            // this signer's byte-range hash checks out
-	When        string      `json:"when,omitempty"`   // signing time (display string), when present
+	Name        string      `json:"name,omitempty"`        // certificate subject common name, when present
+	Valid       bool        `json:"valid"`                 // this signer's byte-range hash checks out
+	When        string      `json:"when,omitempty"`        // signing time (display string), when present
 	TimeBacking TimeBacking `json:"timeBacking"`           // none / self-asserted / tsa
 	Reason      string      `json:"reason,omitempty"`      // signature /Reason; for co-signing, carries the attestation
 	Fingerprint string      `json:"fingerprint,omitempty"` // hex SHA-256 SPKI of the signer's cert (the identity that signed)
@@ -74,7 +74,15 @@ type Status struct {
 func Verify(data []byte) Status {
 	resp, err := verify.Verify(bytes.NewReader(data), int64(len(data)))
 	if err != nil || resp == nil || len(resp.Signers) == 0 {
-		// No parseable signature dictionary == unsigned for our purposes.
+		// Zero parseable signers covers two very different documents: one that is
+		// genuinely unsigned, and one whose signature blob is present but fails to
+		// parse (the library drops that signer with no top-level error). The latter
+		// is tamper-evident — silently downgrading it to Unsigned would hide a
+		// corrupted signature — so cross-check the PDF for an actual signature blob
+		// before calling it unsigned.
+		if err == nil && resp != nil && signatureBlobPresent(data) {
+			return Status{State: Invalid}
+		}
 		return Status{State: Unsigned}
 	}
 
@@ -91,6 +99,34 @@ func Verify(data []byte) Status {
 	// parse failure here must not change the integrity verdict.
 	st.AddedAfter, _ = trailingContentAfterLastSignature(data)
 	return st
+}
+
+// signatureBlobPresent reports whether the document has an AcroForm signature
+// field carrying a non-empty /Contents — i.e. a real PKCS#7 blob the verifier
+// should have been able to parse. It's the discriminator between a genuinely
+// unsigned document (no such field, or an empty placeholder field left by another
+// tool's "prepare for signing") and one whose sole signature failed to parse. A
+// parse failure here is treated as "no signature" — best-effort, never panics.
+func signatureBlobPresent(pdf []byte) bool {
+	r, err := dpdf.NewReader(bytes.NewReader(pdf), int64(len(pdf)))
+	if err != nil {
+		return false
+	}
+	acro := r.Trailer().Key("Root").Key("AcroForm")
+	if acro.IsNull() {
+		return false
+	}
+	fields := acro.Key("Fields")
+	for i := 0; i < fields.Len(); i++ {
+		f := fields.Index(i)
+		if f.Key("FT").Name() != "Sig" {
+			continue
+		}
+		if len(f.Key("V").Key("Contents").RawString()) > 0 {
+			return true
+		}
+	}
+	return false
 }
 
 // trailingContentAfterLastSignature reports whether pdf has content beyond the

@@ -2973,8 +2973,10 @@ async function placeStamp(bitmapUrl) {
   const pv = viewer.getPageView(n - 1);
   if (!pv?.div || !pv.viewport) { toast('Scroll the page into view, then try again'); return; }
   const base = (await pdfDocument.getPage(n)).getViewport({ scale: 1 }); // PDF points
+  const gen = docGen;
   const img = new Image();
   img.onload = () => {
+    if (gen !== docGen) return; // a reload superseded this placement — pv.div is now detached
     const W = pv.div.clientWidth, H = pv.div.clientHeight;
     const aspect = (img.naturalWidth / img.naturalHeight) || 1;
     const dispW = Math.min(W * 0.3, img.naturalWidth || W * 0.3);
@@ -5572,10 +5574,9 @@ els.dropdownBtn.onclick = () => {
   if (editMode) { editMode = false; reflectEdit(); }
   exitSplitBox();
   exitCrop();
-  exitNote(); exitDropdown(); exitRadio(); // exitDropdown here is a no-op (we set the mode below)
+  exitNote(); exitRadio(); // clear the sibling one-at-a-time tools (not dropdown — we're entering it)
   exitBorder();
   exitShape();
-  dropdownMode = true;
   reflectDropdown();
   els.viewerContainer.style.cursor = 'crosshair';
 };

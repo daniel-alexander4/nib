@@ -107,6 +107,70 @@ func TestVerifyAfterDecryptStaysSigned(t *testing.T) {
 	}
 }
 
+// TestVerifyUnparseableSignatureIsInvalid pins the discriminator: a document whose
+// signature /Contents blob is present but corrupt must report Invalid, not Unsigned.
+// The library drops an unparseable signer with no top-level error, which would
+// otherwise land in the same "zero signers" bucket as a genuinely unsigned PDF and
+// silently hide a tampered signature.
+func TestVerifyUnparseableSignatureIsInvalid(t *testing.T) {
+	base, err := testpdf.Form()
+	if err != nil {
+		t.Fatal(err)
+	}
+	certPEM, keyPEM, err := GenerateIdentity("Jane Doe")
+	if err != nil {
+		t.Fatal(err)
+	}
+	signed, err := Sign(base, certPEM, keyPEM, Options{Name: "Jane Doe", Reason: "Test", When: time.Now()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st := Verify(signed); st.State != Valid {
+		t.Fatalf("precondition: freshly signed doc state = %q, want %q", st.State, Valid)
+	}
+
+	// Corrupt the DER at the start of the /Contents hex blob in place: same length
+	// (ByteRange offsets and PDF structure stay intact) and still valid hex (the PDF
+	// string parser is happy), but the PKCS#7 SEQUENCE tag is destroyed so the blob
+	// won't parse. This is the "signature present but unparseable" case.
+	mangled := append([]byte(nil), signed...)
+	ci := bytes.Index(mangled, []byte("/Contents"))
+	if ci < 0 {
+		t.Fatal("signed doc has no /Contents")
+	}
+	lt := bytes.IndexByte(mangled[ci:], '<')
+	if lt < 0 {
+		t.Fatal("no < opening the /Contents hex string")
+	}
+	start := ci + lt + 1
+	flipped := 0
+	for j := start; j < len(mangled) && flipped < 8; j++ {
+		c := mangled[j]
+		if isHexDigit(c) {
+			if c == '0' {
+				mangled[j] = '1'
+			} else {
+				mangled[j] = '0'
+			}
+			flipped++
+		}
+	}
+	if flipped < 8 {
+		t.Fatal("could not find hex digits to corrupt in /Contents")
+	}
+
+	if !signatureBlobPresent(mangled) {
+		t.Fatal("corruption removed the signature blob; test would not exercise the path")
+	}
+	if st := Verify(mangled); st.State != Invalid {
+		t.Errorf("mangled signature state = %q, want %q (must not downgrade to Unsigned)", st.State, Invalid)
+	}
+}
+
+func isHexDigit(c byte) bool {
+	return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')
+}
+
 // signerInfo must read time backing from token presence, not the library's
 // TimeSource field: an RFC3161 token wins (TSA), else a /M time is self-asserted,
 // else there is no time.
