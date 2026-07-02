@@ -78,10 +78,11 @@ func (s *Server) handleListDir(w http.ResponseWriter, r *http.Request) {
 // handleWriteFile writes posted bytes to a chosen absolute path, creating parent
 // directories as needed. Multipart: a "data" file part plus a "path" field.
 func (s *Server) handleWriteFile(w http.ResponseWriter, r *http.Request) {
-	if err := r.ParseMultipartForm(maxPDFBytes); err != nil {
-		httpError(w, http.StatusBadRequest, "could not parse upload")
+	cleanup, ok := parseMultipart(w, r, maxPDFBytes)
+	if !ok {
 		return
 	}
+	defer cleanup()
 	target := filepath.Clean(expandHome(strings.TrimSpace(r.FormValue("path"))))
 	if target == "" || target == "." {
 		httpError(w, http.StatusBadRequest, "no destination path")

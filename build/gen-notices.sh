@@ -17,6 +17,7 @@ cd "$(dirname "$0")/.."
 
 OUT="${1:-THIRD-PARTY-NOTICES.md}"
 tmp="$(mktemp)"
+trap 'rm -f "$tmp"' EXIT
 
 emit() { printf '%s\n' "$1" >>"$tmp"; }
 
@@ -69,8 +70,10 @@ done <<<"$mods"
 # (these have no Go module dir to read a LICENSE from). Apache-2.0 deps point to
 # the full text already reproduced in the pdfcpu/golang.org/x sections above;
 # BSD/ISC/OFL deps reproduce their own text+copyright here, since those are not
-# otherwise present in this file. NOTE: bump the version strings below when a
-# vendored library is re-vendored (pdf.js reads its own VERSION file).
+# otherwise present in this file. Every vendored library's version is read from a
+# VERSION file in its vendor directory (like pdf.js) — updating that file when
+# re-vendoring is what keeps these notices honest, and the freshness test
+# (notices_test.go) then catches a regenerate that was forgotten.
 if [ -f web/vendor/pdfjs/VERSION ]; then
   pdfjs_ver="$(cat web/vendor/pdfjs/VERSION)"
   emit "## Mozilla pdf.js ${pdfjs_ver}"
@@ -85,8 +88,13 @@ if [ -f web/vendor/pdfjs/VERSION ]; then
   emit ""
 fi
 
-cat >>"$tmp" <<'VENDORED_EOF'
-## jsdiff 7.0.0
+jsdiff_ver="$(cat web/vendor/diff/VERSION)"
+tesseract_ver="$(cat web/vendor/tesseract/VERSION)"
+pixelmatch_ver="$(cat web/vendor/pixelmatch/VERSION)"
+sed -e "s/@JSDIFF_VER@/${jsdiff_ver}/" \
+    -e "s/@TESSERACT_VER@/${tesseract_ver}/" \
+    -e "s/@PIXELMATCH_VER@/${pixelmatch_ver}/" >>"$tmp" <<'VENDORED_EOF'
+## jsdiff @JSDIFF_VER@
 
 Vendored under `web/vendor/diff/` for the word-level text comparison (the inline
 diff behind **File → Compare… → Text**). Copyright (c) 2009-2015 Kevin Decker,
@@ -128,7 +136,7 @@ Upstream: <https://github.com/kpdecker/jsdiff>.
 
 ---
 
-## Tesseract.js 5.1.1 (+ tesseract.js-core, ara/bel/ben/bul/ces/chi_sim/chi_tra/deu/ell/eng/fas/fra/guj/heb/hin/hun/ita/jpn/kan/kor/mal/mar/mkd/nep/nld/pan/pol/por/ron/rus/san/spa/srp/swe/tam/tel/tha/tur/ukr/urd/vie traineddata)
+## Tesseract.js @TESSERACT_VER@ (+ tesseract.js-core, ara/bel/ben/bul/ces/chi_sim/chi_tra/deu/ell/eng/fas/fra/guj/heb/hin/hun/ita/jpn/kan/kor/mal/mar/mkd/nep/nld/pan/pol/por/ron/rus/san/spa/srp/swe/tam/tel/tha/tur/ukr/urd/vie traineddata)
 
 Vendored under `web/vendor/tesseract/` for on-device OCR (the WASM engine, its
 worker, and the Arabic, Belarusian, Bengali, Bulgarian, Chinese (Simplified and
@@ -146,7 +154,7 @@ is reproduced in the `golang.org/x`/pdfcpu sections above and at
 
 ---
 
-## pixelmatch 7.2.0
+## pixelmatch @PIXELMATCH_VER@
 
 Vendored under `web/vendor/pixelmatch/` for the on-device visual page comparison
 (the per-pixel difference map behind **File → Compare… → Differences**). Copyright

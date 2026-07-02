@@ -17,6 +17,11 @@ import (
 // never the document. The returned .ots is a sidecar the user keeps alongside the
 // PDF; it does not touch the PDF, so it cannot disturb an existing signature.
 func (s *Server) handleTimestamp(w http.ResponseWriter, r *http.Request) {
+	cleanup, ok := parseMultipart(w, r, maxPDFBytes)
+	if !ok {
+		return
+	}
+	defer cleanup()
 	pdfBytes, ok := formFileBytes(w, r, "pdf")
 	if !ok {
 		return
@@ -38,6 +43,11 @@ func (s *Server) handleTimestamp(w http.ResponseWriter, r *http.Request) {
 // form value overrides the default explorers with a single user-supplied
 // Esplora-API endpoint, which is then trusted on its own.
 func (s *Server) handleTimestampVerify(w http.ResponseWriter, r *http.Request) {
+	cleanup, ok := parseMultipart(w, r, maxPDFBytes)
+	if !ok {
+		return
+	}
+	defer cleanup()
 	pdfBytes, ok := formFileBytes(w, r, "pdf")
 	if !ok {
 		return

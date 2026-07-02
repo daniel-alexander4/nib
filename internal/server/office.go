@@ -17,7 +17,11 @@ import (
 // "open & convert". The converted document is upload-origin (no path), so it can be
 // edited and saved-as but not saved in place, exactly like any uploaded file.
 func (s *Server) handleOffice(w http.ResponseWriter, r *http.Request) {
-	r.Body = http.MaxBytesReader(w, r.Body, maxPDFBytes)
+	cleanup, ok := parseMultipart(w, r, maxPDFBytes)
+	if !ok {
+		return
+	}
+	defer cleanup()
 	file, header, err := r.FormFile("file")
 	if err != nil {
 		httpError(w, http.StatusBadRequest, "no file uploaded")

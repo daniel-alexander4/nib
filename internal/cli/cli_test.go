@@ -7,6 +7,7 @@ import (
 	"crypto/rand"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"errors"
 	"image"
 	"image/png"
 	"math/big"
@@ -797,17 +798,17 @@ func mode(t *testing.T, path string) os.FileMode {
 func TestWatchScanSettlesThenActsOnce(t *testing.T) {
 	dir := t.TempDir()
 	p := writePDF(t, dir, "drop.pdf")
-	seen, processed := map[string]fileState{}, map[string]bool{}
+	seen, processed, failed := map[string]fileState{}, map[string]bool{}, map[string]fileState{}
 	calls := 0
 	act := func(path string) (string, error) { calls++; return "done", nil }
 
 	// First scan only records the file (not yet settled).
-	scanOnce(dir, seen, processed, act)
+	scanOnce(dir, seen, processed, failed, act)
 	if calls != 0 {
 		t.Fatalf("acted on first sight: calls = %d, want 0", calls)
 	}
 	// Second scan: unchanged since the first → settled → act exactly once.
-	scanOnce(dir, seen, processed, act)
+	scanOnce(dir, seen, processed, failed, act)
 	if calls != 1 {
 		t.Fatalf("after settle: calls = %d, want 1", calls)
 	}
@@ -816,9 +817,53 @@ func TestWatchScanSettlesThenActsOnce(t *testing.T) {
 	if err := os.Chtimes(p, time.Now(), time.Now().Add(time.Minute)); err != nil {
 		t.Fatal(err)
 	}
-	scanOnce(dir, seen, processed, act)
+	scanOnce(dir, seen, processed, failed, act)
 	if calls != 1 {
 		t.Fatalf("reprocessed an already-handled file: calls = %d, want 1", calls)
+	}
+}
+
+// TestWatchScanRetriesFailureOnlyAfterChange proves the failure path: a settled
+// file whose action errors is NOT retried while its size+mtime stay the same (no
+// per-scan error spam), but a change to the file makes it eligible again — and a
+// then-successful action marks it processed for good.
+func TestWatchScanRetriesFailureOnlyAfterChange(t *testing.T) {
+	dir := t.TempDir()
+	p := writePDF(t, dir, "bad.pdf")
+	seen, processed, failed := map[string]fileState{}, map[string]bool{}, map[string]fileState{}
+	calls := 0
+	fail := true
+	act := func(path string) (string, error) {
+		calls++
+		if fail {
+			return "", errors.New("boom")
+		}
+		return "done", nil
+	}
+
+	scanOnce(dir, seen, processed, failed, act) // record
+	scanOnce(dir, seen, processed, failed, act) // settle → act → fail
+	if calls != 1 {
+		t.Fatalf("after settle: calls = %d, want 1", calls)
+	}
+	// Unchanged file: the failure must not be retried on every scan.
+	scanOnce(dir, seen, processed, failed, act)
+	scanOnce(dir, seen, processed, failed, act)
+	if calls != 1 {
+		t.Fatalf("retried an unchanged failing file: calls = %d, want 1", calls)
+	}
+	// Change the file: eligible again after it re-settles.
+	fail = false
+	if err := os.Chtimes(p, time.Now(), time.Now().Add(time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	scanOnce(dir, seen, processed, failed, act) // sees the change — let it settle
+	scanOnce(dir, seen, processed, failed, act) // settled → retry → success
+	if calls != 2 {
+		t.Fatalf("after change: calls = %d, want 2", calls)
+	}
+	if !processed[p] {
+		t.Error("successful retry did not mark the file processed")
 	}
 }
 
@@ -828,11 +873,11 @@ func TestWatchScanSkipsNonPDFAndUnsettled(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "notes.txt"), []byte("x"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	seen, processed := map[string]fileState{}, map[string]bool{}
+	seen, processed, failed := map[string]fileState{}, map[string]bool{}, map[string]fileState{}
 	var acted []string
 	act := func(path string) (string, error) { acted = append(acted, filepath.Base(path)); return "ok", nil }
-	scanOnce(dir, seen, processed, act) // record
-	scanOnce(dir, seen, processed, act) // settle → act
+	scanOnce(dir, seen, processed, failed, act) // record
+	scanOnce(dir, seen, processed, failed, act) // settle → act
 	if len(acted) != 1 || acted[0] != "doc.pdf" {
 		t.Fatalf("acted on %v, want only [doc.pdf]", acted)
 	}

@@ -1,6 +1,7 @@
 package p2p
 
 import (
+	"bytes"
 	"crypto/tls"
 	"encoding/binary"
 	"encoding/hex"
@@ -17,6 +18,15 @@ import (
 // memory (the sign API is []byte, so streaming would save nothing), so a size cap
 // — not chunking — is the right bound, mirroring the URL-fetch size limits.
 const maxFrame = 128 << 20 // 128 MiB
+
+// exchangeDeadline is the absolute time budget for one whole session exchange
+// (handshake, frames both ways, and the wait on the REMOTE user's consent —
+// the initiator's read of the result blocks for the peer's entire decision).
+// It must exceed the receiving side's consent window (the server's
+// sessionConsentTimeout, 5 min) plus transfer and signing margin; without it a
+// peer that stalls mid-frame ties up the single armed session forever (frames
+// are size-capped by maxFrame but were not time-capped).
+const exchangeDeadline = 6 * time.Minute
 
 // Confirmer is the receiving side's consent gate. Shown the connected peer's
 // attestation (their identity, accepted-peer, and intent, read from the document
@@ -56,12 +66,22 @@ func Listen(addr string, identityCertPEM, identityKeyPEM, pinnedSPKI []byte) (ne
 // the peer actually co-signed it and accepted this user. mySignedPDF is the output
 // of the local prepare + Contribute; myFingerprint is this user's SPKI pin.
 func Initiate(conn *tls.Conn, mySignedPDF, myFingerprint []byte) ([]byte, error) {
+	_ = conn.SetDeadline(time.Now().Add(exchangeDeadline))
 	if err := writeFrame(conn, mySignedPDF); err != nil {
 		return nil, fmt.Errorf("send document: %w", err)
 	}
 	final, err := readFrame(conn)
 	if err != nil {
 		return nil, fmt.Errorf("receive co-signed document: %w", err)
+	}
+	// Bind the result to the document sent THIS session. confirmCoSigned alone
+	// accepts any document these two identities ever mutually co-signed — a
+	// malicious peer could replay an older co-signed artifact and both signature
+	// checks would still pass. The prefix check is sound because the signer is
+	// strictly append-only: a legitimate co-signature is always mySignedPDF plus
+	// a trailing incremental update (see sign/trailing_test.go).
+	if !bytes.HasPrefix(final, mySignedPDF) {
+		return nil, errors.New("returned document is not the one sent this session")
 	}
 	peerFP, err := verifiedPeerFingerprint(conn.ConnectionState())
 	if err != nil {
@@ -79,6 +99,7 @@ func Initiate(conn *tls.Conn, mySignedPDF, myFingerprint []byte) ([]byte, error)
 // the result back — returning the co-signed document so the receiver keeps it too.
 // peerLabel is this user's pinned label for the peer (for display).
 func Receive(conn *tls.Conn, myCertPEM, myKeyPEM []byte, peerLabel string, c Confirmer) ([]byte, error) {
+	_ = conn.SetDeadline(time.Now().Add(exchangeDeadline))
 	if err := conn.Handshake(); err != nil {
 		return nil, err
 	}
@@ -126,6 +147,7 @@ type Accepter interface {
 // courier, used to hand a flagged PDF to a peer for signing or to return the signed
 // result. The pin is enforced by the TLS config, exactly as in Initiate.
 func SendDocument(conn *tls.Conn, pdf []byte) error {
+	_ = conn.SetDeadline(time.Now().Add(exchangeDeadline))
 	if err := writeFrame(conn, pdf); err != nil {
 		return fmt.Errorf("send document: %w", err)
 	}
@@ -149,6 +171,7 @@ func SendDocument(conn *tls.Conn, pdf []byte) error {
 // decline it returns ErrDeclined and sends no acknowledgement, so the sender learns
 // the document was not kept.
 func ReceiveDocument(conn *tls.Conn, a Accepter) (doc, peerFP []byte, err error) {
+	_ = conn.SetDeadline(time.Now().Add(exchangeDeadline))
 	if err := conn.Handshake(); err != nil {
 		return nil, nil, err
 	}

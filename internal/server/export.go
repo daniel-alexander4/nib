@@ -18,10 +18,11 @@ import (
 // NOT touch the open document — extracting is a derive-a-file action, like
 // flatten/export, so the result is handed back for Save-as, not adopted.
 func (s *Server) handleExtract(w http.ResponseWriter, r *http.Request) {
-	if err := r.ParseMultipartForm(maxPDFBytes); err != nil {
-		httpError(w, http.StatusBadRequest, "could not parse upload")
+	cleanup, ok := parseMultipart(w, r, maxPDFBytes)
+	if !ok {
 		return
 	}
+	defer cleanup()
 	pdfBytes, ok := formFileBytes(w, r, "pdf")
 	if !ok {
 		return
@@ -45,10 +46,11 @@ func (s *Server) handleExtract(w http.ResponseWriter, r *http.Request) {
 // open document. Filenames come from the bookmark titles (sanitized + deduped in
 // pdfops) with an optional prefix; each is confined to the chosen folder.
 func (s *Server) handleSplitBookmarks(w http.ResponseWriter, r *http.Request) {
-	if err := r.ParseMultipartForm(maxPDFBytes); err != nil {
-		httpError(w, http.StatusBadRequest, "could not parse upload")
+	cleanup, ok := parseMultipart(w, r, maxPDFBytes)
+	if !ok {
 		return
 	}
+	defer cleanup()
 	pdfBytes, ok := formFileBytes(w, r, "pdf")
 	if !ok {
 		return
@@ -74,10 +76,11 @@ func (s *Server) handleSplitBookmarks(w http.ResponseWriter, r *http.Request) {
 // Like the bookmark split it never touches the open document. (The imposed-page
 // splitters op:split/splitrects cut one sheet's geometry instead.)
 func (s *Server) handleSplitPages(w http.ResponseWriter, r *http.Request) {
-	if err := r.ParseMultipartForm(maxPDFBytes); err != nil {
-		httpError(w, http.StatusBadRequest, "could not parse upload")
+	cleanup, ok := parseMultipart(w, r, maxPDFBytes)
+	if !ok {
 		return
 	}
+	defer cleanup()
 	pdfBytes, ok := formFileBytes(w, r, "pdf")
 	if !ok {
 		return
@@ -144,10 +147,11 @@ func writeSplitParts(w http.ResponseWriter, dir string, parts []pdfops.SplitPart
 // image-PDF (the rasterize flatten / guaranteed-flat export) or a ZIP of the
 // images. The browser renders each page to a PNG; the server packages them.
 func (s *Server) handleAssemble(w http.ResponseWriter, r *http.Request) {
-	if err := r.ParseMultipartForm(maxPDFBytes); err != nil {
-		httpError(w, http.StatusBadRequest, "could not parse upload")
+	cleanup, ok := parseMultipart(w, r, maxPDFBytes)
+	if !ok {
 		return
 	}
+	defer cleanup()
 	parts := r.MultipartForm.File["image"]
 	if len(parts) == 0 {
 		httpError(w, http.StatusBadRequest, "no images provided")

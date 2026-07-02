@@ -7,9 +7,13 @@ import (
 )
 
 // undoBudget bounds the in-memory undo/redo history: at most maxUndoDepth states
-// per stack, and at most maxUndoBytes total across the undo stack, oldest evicted
-// first. A single document can be up to maxPDFBytes (200 MiB), so the byte budget
-// — not the depth — is what protects memory on large documents.
+// per stack, and at most maxUndoBytes total across the UNDO stack, oldest evicted
+// first. The redo stack is only depth-capped (transitively, by what undo held), not
+// byte-capped: undo and redo are one linear history split at a cursor, and evicting
+// from redo's far end would silently truncate the user's redo reach — so a deep
+// undo of large documents can transiently hold up to ~2× maxUndoBytes across the
+// two stacks until the history is rewritten or cleared. That peak is accepted;
+// the byte budget is what protects memory on the growing (undo) side.
 const (
 	maxUndoDepth = 30
 	maxUndoBytes = 256 << 20

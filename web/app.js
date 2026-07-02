@@ -221,6 +221,13 @@ async function apiFetch(url, opts = {}) {
   return res;
 }
 
+// errText extracts the server's {error} message from a failed response, falling
+// back when the body isn't JSON (proxy error, truncated) — so failure paths can
+// always toast something instead of rejecting inside the error handler itself.
+async function errText(res, fallback) {
+  try { return (await res.json()).error || fallback; } catch { return fallback; }
+}
+
 function selectedKeyMode() {
   return els.authForm.querySelector('input[name="keymode"]:checked')?.value || 'use';
 }
@@ -381,7 +388,7 @@ els.restoreInput.onchange = async () => {
   const file = els.restoreInput.files[0]; if (!file) return;
   if (!confirm('Replace your current vault with this backup? It will only open if this machine’s SSH key is enrolled in it.')) return;
   const res = await apiFetch('/api/vault/import', { method: 'POST', body: await file.arrayBuffer() });
-  if (res.ok) applyStatus(await res.json()); else toast((await res.json()).error || 'restore failed');
+  if (res.ok) applyStatus(await res.json()); else toast(await errText(res, 'restore failed'));
 };
 
 // --- update check ------------------------------------------------------------
@@ -513,7 +520,7 @@ async function addKey(body) {
     els.keyAddPath.value = '';
     toast('Key authorized');
   } else {
-    toast((await res.json()).error || 'could not add key');
+    toast(await errText(res, 'could not add key'));
   }
 }
 
@@ -525,7 +532,7 @@ async function removeKey(pubKey, label) {
     body: JSON.stringify({ pubKey }),
   });
   if (res.ok) { renderKeys(await res.json()); toast('Key removed'); }
-  else toast((await res.json()).error || 'could not remove key');
+  else toast(await errText(res, 'could not remove key'));
 }
 
 els.manageKeysBtn.onclick = () => { els.keysModal.hidden = false; loadKeys(); };
@@ -597,7 +604,7 @@ async function pinPeer() {
     els.peerLabel.value = '';
     toast('Peer pinned');
   } else {
-    toast((await res.json()).error || 'could not pin peer');
+    toast(await errText(res, 'could not pin peer'));
   }
 }
 
@@ -609,7 +616,7 @@ async function unpinPeer(fingerprint, label) {
     body: JSON.stringify({ fingerprint }),
   });
   if (res.ok) { renderPeers(await res.json()); toast('Peer unpinned'); }
-  else toast((await res.json()).error || 'could not unpin peer');
+  else toast(await errText(res, 'could not unpin peer'));
 }
 
 els.managePeersBtn.onclick = () => { els.peersModal.hidden = false; loadPeers(); loadExtSigner(); };
@@ -638,7 +645,7 @@ els.extP12Import.onclick = async () => {
   form.append('passphrase', els.extP12Pass.value);
   const res = await apiFetch('/api/identity/external', { method: 'POST', body: form });
   if (res.status === 401) { els.extP12Pass.focus(); return toast('Wrong passphrase, or not a PKCS#12 file'); }
-  if (!res.ok) { toast((await res.json()).error || 'Could not import certificate'); return; }
+  if (!res.ok) { toast(await errText(res, 'Could not import certificate')); return; }
   els.extP12Pass.value = ''; els.extP12File.value = '';
   loadExtSigner();
   toast('Signing certificate imported');
@@ -703,7 +710,7 @@ async function cosign() {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ fingerprint, intent }),
   });
-  if (!qr.ok) { toast((await qr.json()).error || 'could not start co-signing'); return; }
+  if (!qr.ok) { toast(await errText(qr, 'could not start co-signing')); return; }
   const q = await qr.json();
   const png = await renderAttestation(q.lines, q.rect);
 
@@ -711,7 +718,7 @@ async function cosign() {
   form.append('params', JSON.stringify({ fingerprint, intent, when: q.when }));
   form.append('appearance', png, 'attestation.png');
   const sr = await apiFetch('/api/cosign/sign', { method: 'POST', body: form });
-  if (!sr.ok) { toast((await sr.json()).error || 'could not co-sign'); return; }
+  if (!sr.ok) { toast(await errText(sr, 'could not co-sign')); return; }
   openSaveAs(await sr.blob(), exportBase() + '-cosigned.pdf', 'Save co-signed PDF');
 }
 
@@ -756,21 +763,26 @@ async function sessionInit() {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ fingerprint, intent }),
   });
-  if (!qr.ok) { toast((await qr.json()).error || 'could not start co-signing'); return; }
+  if (!qr.ok) { toast(await errText(qr, 'could not start co-signing')); return; }
   const q = await qr.json();
   const png = await renderAttestation(q.lines, q.rect);
 
   els.sinGo.disabled = true; els.sinCancel.disabled = true; els.sinProgress.hidden = false;
-  const form = await bakedForm();
-  form.append('params', JSON.stringify({ fingerprint, intent, when: q.when }));
-  form.append('appearance', png, 'attestation.png');
-  form.append('address', address);
-  const res = await apiFetch('/api/session/initiate', { method: 'POST', body: form });
-  els.sinGo.disabled = false; els.sinCancel.disabled = false; els.sinProgress.hidden = true;
-  if (!res.ok) { toast((await res.json()).error || 'co-signing did not complete'); return; }
-  els.sessionInitModal.hidden = true;
-  await setDocumentFromServer(await res.json());
-  toast('Co-signed live — document updated');
+  try {
+    const form = await bakedForm();
+    form.append('params', JSON.stringify({ fingerprint, intent, when: q.when }));
+    form.append('appearance', png, 'attestation.png');
+    form.append('address', address);
+    const res = await apiFetch('/api/session/initiate', { method: 'POST', body: form });
+    if (!res.ok) { toast(await errText(res, 'co-signing did not complete')); return; }
+    els.sessionInitModal.hidden = true;
+    await setDocumentFromServer(await res.json());
+    toast('Co-signed live — document updated');
+  } catch (e) {
+    toast('could not co-sign: ' + e.message);
+  } finally {
+    els.sinGo.disabled = false; els.sinCancel.disabled = false; els.sinProgress.hidden = true;
+  }
 }
 
 els.sessionInitBtn.onclick = openSessionInit;
@@ -847,7 +859,7 @@ async function armRecv() {
     body: JSON.stringify({ fingerprint: opt.value, bind, mode: recvMode }),
   });
   els.srvArmGo.disabled = false;
-  if (!res.ok) { toast((await res.json()).error || 'could not arm'); return; }
+  if (!res.ok) { toast(await errText(res, 'could not arm')); return; }
   const st = await res.json();
   els.srvWaitAddr.textContent = st.address || bind;
   els.srvWaitPeer.textContent = recvArmedLabel;
@@ -898,16 +910,22 @@ async function loadPendingPreview(token) {
   let doc;
   try { doc = await pdfjsLib.getDocument({ url: '/api/session/pending-pdf?t=' + Date.now() }).promise; }
   catch { if (token === recvPoll) els.srvPreview.textContent = 'could not render the document'; return; }
-  for (let i = 1; i <= doc.numPages; i++) {
-    if (token !== recvPoll) return; // modal closed mid-render
-    const page = await doc.getPage(i);
-    const base = page.getViewport({ scale: 1 });
-    const vp = page.getViewport({ scale: Math.min(1.2, 380 / base.width) });
-    const canvas = document.createElement('canvas');
-    canvas.width = Math.ceil(vp.width);
-    canvas.height = Math.ceil(vp.height);
-    els.srvPreview.append(canvas);
-    await page.render({ canvasContext: canvas.getContext('2d'), viewport: vp }).promise;
+  // This function is the doc's sole holder, so it destroys it on every exit —
+  // otherwise each consent preview leaks a worker-side document.
+  try {
+    for (let i = 1; i <= doc.numPages; i++) {
+      if (token !== recvPoll) return; // modal closed mid-render
+      const page = await doc.getPage(i);
+      const base = page.getViewport({ scale: 1 });
+      const vp = page.getViewport({ scale: Math.min(1.2, 380 / base.width) });
+      const canvas = document.createElement('canvas');
+      canvas.width = Math.ceil(vp.width);
+      canvas.height = Math.ceil(vp.height);
+      els.srvPreview.append(canvas);
+      await page.render({ canvasContext: canvas.getContext('2d'), viewport: vp }).promise;
+    }
+  } finally {
+    doc.loadingTask.destroy().catch(() => {});
   }
 }
 
@@ -921,7 +939,7 @@ async function acceptRecv() {
     });
     if (!res.ok) {
       els.srvAccept.disabled = false; els.srvDecline.disabled = false;
-      toast((await res.json()).error || 'could not accept');
+      toast(await errText(res, 'could not accept'));
       return;
     }
     recvStage = 'applying';
@@ -936,17 +954,22 @@ async function acceptRecv() {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ intent }),
   });
-  if (qr.ok) {
-    const q = await qr.json();
-    appearance = await blobToBase64(await renderAttestation(q.lines, q.rect));
+  if (!qr.ok) {
+    // Proceeding would co-sign without the visible attestation block; abort so
+    // the user can retry rather than silently sign with no on-page trace.
+    els.srvAccept.disabled = false; els.srvDecline.disabled = false;
+    toast(await errText(qr, 'could not prepare the signature block'));
+    return;
   }
+  const q = await qr.json();
+  appearance = await blobToBase64(await renderAttestation(q.lines, q.rect));
   const res = await apiFetch('/api/session/respond', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ accept: true, intent, appearance }),
   });
   if (!res.ok) {
     els.srvAccept.disabled = false; els.srvDecline.disabled = false;
-    toast((await res.json()).error || 'could not co-sign');
+    toast(await errText(res, 'could not co-sign'));
     return;
   }
   recvStage = 'applying';
@@ -1059,7 +1082,7 @@ async function sendToPeer() {
     form.append('fingerprint', opt.value);
     form.append('address', address);
     const res = await apiFetch('/api/session/send', { method: 'POST', body: form });
-    if (!res.ok) { toast((await res.json()).error || 'could not send'); return; }
+    if (!res.ok) { toast(await errText(res, 'could not send')); return; }
     const r = await res.json();
     toast(r.declined ? 'The peer declined the document' : 'Sent — the peer has the document');
     els.sessionSendModal.hidden = true;
@@ -1175,9 +1198,14 @@ async function setDocumentFromServer(meta) {
   }
   if (gen !== docGen) return; // a newer load superseded this one
 
+  const old = pdfDocument;
   pdfDocument = doc;
   viewer.setDocument(pdfDocument);
   linkService.setDocument(pdfDocument, null);
+  // Free the superseded document's worker-side resources once the viewer and
+  // link service have been repointed — without this, every edit op (each of
+  // which reloads through here) orphans a document for the session's lifetime.
+  if (old && old !== doc) old.loadingTask.destroy().catch(() => {});
   // A fresh document gets a new pdf.js editor manager; re-assert the chosen
   // highlight color so it sticks across reloads (page ops) until the user changes it.
   applyHighlightColor(selectedHlColor);
@@ -1206,7 +1234,7 @@ async function openPath(path) {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ path }),
   });
-  if (!res.ok) return toast((await res.json()).error || 'could not open file');
+  if (!res.ok) return toast(await errText(res, 'could not open file'));
   await setDocumentFromServer(await res.json());
 }
 
@@ -1214,7 +1242,7 @@ async function uploadFile(file) {
   const form = new FormData();
   form.append('file', file);
   const res = await apiFetch('/api/upload', { method: 'POST', body: form });
-  if (!res.ok) return toast((await res.json()).error || 'could not open file');
+  if (!res.ok) return toast(await errText(res, 'could not open file'));
   await setDocumentFromServer(await res.json());
 }
 
@@ -1231,7 +1259,7 @@ els.officeInput.onchange = async () => {
   toast('Converting to PDF…');
   try {
     const res = await apiFetch('/api/office', { method: 'POST', body: form });
-    if (!res.ok) return toast((await res.json()).error || 'could not convert file');
+    if (!res.ok) return toast(await errText(res, 'could not convert file'));
     await setDocumentFromServer(await res.json());
   } catch {
     toast('could not convert file');
@@ -1243,7 +1271,7 @@ async function openURL(url) {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ url }),
   });
-  if (!res.ok) return toast((await res.json()).error || 'could not fetch URL');
+  if (!res.ok) return toast(await errText(res, 'could not fetch URL'));
   originalName = (url.split('/').pop() || '').split('?')[0] || 'document.pdf';
   await setDocumentFromServer(await res.json());
 }
@@ -1461,6 +1489,7 @@ let cmpAlignIdx = 0; // position within cmpAlign for lockstep nav
 let cmpAlignTried = false; // whether fingerprinting+alignment has run for this pair
 
 function closeCmpDoc() {
+  cmpSeq++; // teardown participates in the render token: in-flight aligns/paints bail instead of reading the nulled doc
   if (cmpDoc) { cmpDoc.loadingTask.destroy(); cmpDoc = null; } // free the comparison doc (destroy lives on the loading task, not the proxy)
   cmpText = null; cmpName = ''; cmpPageA = 1; cmpPageB = 1; cmpMode = 'text';
   cmpAlign = null; cmpAlignIdx = 0; cmpAlignTried = false;
@@ -1495,7 +1524,10 @@ function alignStat() {
 async function ensureAlignment() {
   if (cmpAlignTried) return;
   cmpAlignTried = true;
+  if (!cmpDoc) return;
+  const seq = cmpSeq; // closeCmpDoc bumps this; bail after each await rather than read the nulled doc
   const [ta, tb] = await Promise.all([pageTexts(pdfDocument), pageTexts(cmpDoc)]);
+  if (seq !== cmpSeq) return;
   const a = pageFingerprints(ta, 'a'), b = pageFingerprints(tb, 'b');
   if (a.meaningful > 0 && b.meaningful > 0) {
     cmpAlign = detectMoves(alignPages(a.keys, b.keys), a.keys, b.keys);
@@ -1505,7 +1537,9 @@ async function ensureAlignment() {
       let done = 0;
       const tick = () => { els.compareBody.innerHTML = `<p class="scan-where">Aligning pages… ${++done}/${total}</p>`; };
       const ha = await pagePixelHashes(pdfDocument, tick);
+      if (seq !== cmpSeq) return;
       const hb = await pagePixelHashes(cmpDoc, tick);
+      if (seq !== cmpSeq) return;
       const near = (x, y) => hamming(x, y) <= DHASH_T;
       cmpAlign = detectMoves(alignPages(ha, hb, near), ha, hb, near);
     } catch {
@@ -1734,16 +1768,20 @@ els.fillCsvInput.onchange = async () => {
   els.fillCsvStatus.textContent = 'Merging…';
   let csv;
   try { csv = await f.text(); } catch { els.fillCsvStatus.textContent = 'Could not read that file.'; return; }
-  const form = new FormData();
-  form.append('pdf', new Blob([await bakedBytes()], { type: 'application/pdf' }), 'doc.pdf');
-  form.append('data', csv);
-  const res = await apiFetch('/api/form/fill-csv', { method: 'POST', body: form });
-  if (!res.ok) {
-    els.fillCsvStatus.textContent = 'Merge failed — does this PDF have fillable fields, and do the CSV headers match the field names?';
-    return;
+  try {
+    const form = new FormData();
+    form.append('pdf', new Blob([await bakedBytes()], { type: 'application/pdf' }), 'doc.pdf');
+    form.append('data', csv);
+    const res = await apiFetch('/api/form/fill-csv', { method: 'POST', body: form });
+    if (!res.ok) {
+      els.fillCsvStatus.textContent = 'Merge failed — does this PDF have fillable fields, and do the CSV headers match the field names?';
+      return;
+    }
+    els.fillCsvModal.hidden = true;
+    openSaveAs(await res.blob(), exportBase() + '-filled.zip', 'Save merged PDFs (ZIP)');
+  } catch (e) {
+    els.fillCsvStatus.textContent = 'Merge failed — ' + e.message;
   }
-  els.fillCsvModal.hidden = true;
-  openSaveAs(await res.blob(), exportBase() + '-filled.zip', 'Save merged PDFs (ZIP)');
 };
 
 // --- import form data (XFDF) -------------------------------------------------
@@ -1765,16 +1803,20 @@ els.importXfdfInput.onchange = async () => {
   els.importXfdfStatus.textContent = 'Filling…';
   let xfdf;
   try { xfdf = await f.text(); } catch { els.importXfdfStatus.textContent = 'Could not read that file.'; return; }
-  const form = new FormData();
-  form.append('pdf', new Blob([await bakedBytes()], { type: 'application/pdf' }), 'doc.pdf');
-  form.append('data', xfdf);
-  const res = await apiFetch('/api/form/fill-xfdf', { method: 'POST', body: form });
-  if (!res.ok) {
-    els.importXfdfStatus.textContent = 'Fill failed — does this PDF have fillable fields, and do the XFDF field names match?';
-    return;
+  try {
+    const form = new FormData();
+    form.append('pdf', new Blob([await bakedBytes()], { type: 'application/pdf' }), 'doc.pdf');
+    form.append('data', xfdf);
+    const res = await apiFetch('/api/form/fill-xfdf', { method: 'POST', body: form });
+    if (!res.ok) {
+      els.importXfdfStatus.textContent = 'Fill failed — does this PDF have fillable fields, and do the XFDF field names match?';
+      return;
+    }
+    els.importXfdfModal.hidden = true;
+    openSaveAs(await res.blob(), exportBase() + '-filled.pdf', 'Save filled PDF');
+  } catch (e) {
+    els.importXfdfStatus.textContent = 'Fill failed — ' + e.message;
   }
-  els.importXfdfModal.hidden = true;
-  openSaveAs(await res.blob(), exportBase() + '-filled.pdf', 'Save filled PDF');
 };
 
 // --- convert to PDF/A-2b archival candidate ----------------------------------
@@ -1804,8 +1846,7 @@ async function runPdfa(engine) {
   try {
     const res = await apiFetch(gs ? '/api/pdfa?engine=gs' : '/api/pdfa', { method: 'POST', body: await bakedForm() });
     if (!res.ok) {
-      let msg = 'Could not convert to PDF/A.';
-      try { msg = (await res.json()).error || msg; } catch { /* keep default */ }
+      let msg = await errText(res, 'Could not convert to PDF/A.');
       if (!gs && gsAvailable) {
         els.pdfaGsGo.hidden = false; // the heavier converter can handle what pure-Go refused
         msg += ' — Ghostscript can convert it (re-embeds fonts, converts colour).';
@@ -1815,6 +1856,8 @@ async function runPdfa(engine) {
     }
     els.pdfaModal.hidden = true;
     openSaveAs(await res.blob(), exportBase() + '-pdfa.pdf', 'Save archival PDF (PDF/A-2b)');
+  } catch (e) {
+    els.pdfaStatus.textContent = 'Could not convert to PDF/A — ' + e.message;
   } finally {
     els.pdfaGo.disabled = els.pdfaGsGo.disabled = false;
   }
@@ -1883,7 +1926,7 @@ async function save() {
       headers: { 'Content-Type': 'application/pdf' },
       body: bytes,
     });
-    if (!res.ok) { toast((await res.json()).error || 'save failed'); return; }
+    if (!res.ok) { toast(await errText(res, 'save failed')); return; }
     const meta = await res.json();
     updateBadge(meta.signature);
     toast('Saved');
@@ -2649,10 +2692,12 @@ els.extractGo.onclick = extractGo;
 // Stamp a running number onto every page, in place (op:'pagenum' on /api/pages →
 // pdfops.StampPageNumbers). The number, prefix, zero-pad and start are formatted
 // server-side; here we just gather them and show a live first/last preview.
+// pnPrefixVal is the one place the prefix is read: % is stripped (pdfcpu treats
+// it as a placeholder marker) so the preview and the stamped output can't disagree.
+function pnPrefixVal() { return els.pnPrefix.value.replace(/%/g, ''); }
 function pnFormat(num, start, n) {
   const pad = Math.min(12, Math.max(0, parseInt(els.pnPad.value, 10) || 0));
-  const prefix = els.pnPrefix.value.replace(/%/g, '');
-  return prefix + String(num).padStart(pad, '0') + (els.pnTotal.checked ? ' of ' + (start + n - 1) : '');
+  return pnPrefixVal() + String(num).padStart(pad, '0') + (els.pnTotal.checked ? ' of ' + (start + n - 1) : '');
 }
 function pnPreview() {
   const start = Math.max(1, parseInt(els.pnStart.value, 10) || 1);
@@ -2669,7 +2714,7 @@ function openPageNum() {
 async function pageNumGo() {
   const ok = await pageOp('pagenum', {
     position: els.pnPosition.value,
-    prefix: els.pnPrefix.value,
+    prefix: pnPrefixVal(),
     start: Math.max(1, parseInt(els.pnStart.value, 10) || 1),
     pad: Math.min(12, Math.max(0, parseInt(els.pnPad.value, 10) || 0)),
     total: els.pnTotal.checked,
@@ -2909,7 +2954,7 @@ els.outlineSave.onclick = async () => {
   const form = await bakedForm();
   form.append('outline', JSON.stringify(outlineItems.map((it) => ({ title: it.title.trim(), page: it.page, level: it.level }))));
   const res = await apiFetch('/api/outline', { method: 'POST', body: form });
-  if (!res.ok) return toast((await res.json()).error || 'could not save the outline');
+  if (!res.ok) return toast(await errText(res, 'could not save the outline'));
   await setDocumentFromServer(await res.json());
   els.outlineModal.hidden = true;
   toast('Outline saved');
@@ -3133,7 +3178,7 @@ els.bgSave.onclick = async () => {
   form.append('name', bgSrc.name);
   const res = await apiFetch('/api/images', { method: 'POST', body: form });
   if (res.ok) { els.bgModal.hidden = true; bgSrc = null; loadImages(); }
-  else toast((await res.json()).error || 'could not add image');
+  else toast(await errText(res, 'could not add image'));
 };
 
 // Quick-stamps: render a small bitmap and place it via the same stamp path.
@@ -3302,7 +3347,7 @@ els.saveAsGo.onclick = async () => {
   form.append('path', dir + '/' + name);
   form.append('data', saveAsBlob, name);
   const res = await apiFetch('/api/write', { method: 'POST', body: form });
-  if (!res.ok) { toast((await res.json()).error || 'could not save'); return; }
+  if (!res.ok) { toast(await errText(res, 'could not save')); return; }
   const meta = await res.json();
   els.saveAsModal.hidden = true;
   saveAsBlob = null;
@@ -3343,7 +3388,7 @@ async function bookmarkSplitGo() {
   form.append('dir', dir);
   form.append('prefix', els.bsPrefix.value);
   const res = await apiFetch('/api/split-bookmarks', { method: 'POST', body: form });
-  if (!res.ok) { toast((await res.json()).error || 'could not split'); return; }
+  if (!res.ok) { toast(await errText(res, 'could not split')); return; }
   const meta = await res.json();
   els.bookmarkSplitModal.hidden = true;
   toast(`Wrote ${meta.count} file${meta.count === 1 ? '' : 's'} to ${meta.dir}`);
@@ -3411,7 +3456,7 @@ async function pageSplitGo() {
   if (psMode() === 'every') form.append('every', String(Math.max(1, parseInt(els.psEvery.value, 10) || 1)));
   else form.append('ranges', els.psRanges.value);
   const res = await apiFetch('/api/split-pages', { method: 'POST', body: form });
-  if (!res.ok) { toast((await res.json()).error || 'could not split'); return; }
+  if (!res.ok) { toast(await errText(res, 'could not split')); return; }
   const meta = await res.json();
   els.pageSplitModal.hidden = true;
   toast(`Wrote ${meta.count} file${meta.count === 1 ? '' : 's'} to ${meta.dir}`);
@@ -4248,7 +4293,8 @@ const PII_PATTERNS = {
   rtSSN: /\b\d{3}[-.\s]?\d{2}[-.\s]?\d{4}\b/g,
   rtEmail: /\b[\w.+-]+@[\w-]+\.[\w.-]+\b/g,
   rtPhone: /(?:\+?1[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}\b/g,
-  rtCard: /\b(?:\d[ -]?){13,16}\b/g,
+  rtCard: /\b(?:\d[ -]?){13,19}\b/g, // 19 covers the long Maestro/UnionPay PANs, not just 13-16
+
 };
 function escapeRegExp(s) { return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
 
@@ -4274,7 +4320,11 @@ function drawRedactMarks(pv, pageNum) {
   }
 }
 function relayoutRedactMarks() {
-  if (!pdfDocument) return;
+  // No marks → nothing to draw or sweep (marks only reach length 0 via a full
+  // document reload, which tears the boxes down with the old page DOM). Bail
+  // before the all-pages walk: this runs on every pagerendered/scalechanging,
+  // so it's scroll-hot-path work in the common no-marks case.
+  if (!pdfDocument || !redactMarks.length) return;
   for (let i = 0; i < pdfDocument.numPages; i++) {
     const pv = viewer.getPageView(i);
     if (pv?.div) drawRedactMarks(pv, i + 1);
@@ -6265,14 +6315,20 @@ async function bakedBytes() {
     if (stamps.length) form.append('stamps', JSON.stringify(stamps));
     if (notes.length) form.append('notes', JSON.stringify(notes));
     const res = await apiFetch('/api/bake', { method: 'POST', body: form });
-    if (!res.ok) { toast('could not apply edits'); return saved; }
+    // A failed bake must abort the whole operation: returning the un-baked bytes
+    // here would let save/print/flatten/sign proceed with a document silently
+    // missing the user's covers, fields, stamps, and notes.
+    if (!res.ok) throw new Error(await errText(res, 'could not apply edits'));
     out = new Uint8Array(await res.arrayBuffer());
   }
   // A document opened with embedded signing flags carries the NibFlags property,
   // which the bake preserves — strip it from any baked output so the finished
   // file doesn't reopen in signing mode. (Server no-op once it's already gone.)
   if (docHadFlags) {
-    try { out = await embedFlags(out, null); } catch (e) { console.error('flag strip failed', e); }
+    try { out = await embedFlags(out, null); } catch (e) {
+      console.error('flag strip failed', e);
+      toast('warning: could not remove the signing flags — this file may reopen in signing mode');
+    }
   }
   return out;
 }
@@ -6688,6 +6744,14 @@ function toast(msg) {
   toastEl.classList.add('show');
   setTimeout(() => toastEl.classList.remove('show'), 2500);
 }
+
+// Backstop for async handlers without their own try/catch: an operation that
+// throws (a failed bake, a mid-flight abort) surfaces as a toast instead of a
+// silent unhandled rejection the user never sees.
+window.addEventListener('unhandledrejection', (ev) => {
+  console.error('unhandled rejection', ev.reason);
+  toast(ev.reason?.message || 'operation failed');
+});
 
 // --- launch: check unlock state, then show the app or the first-run wizard ----
 refreshStatus();

@@ -9,6 +9,7 @@
   --overlay0: #6c7086;
   --text: #cdd6f4;
   --subtext0: #a6adc8;
+  --subtext1: #bac2de;
   --blue: #89b4fa;
   --green: #a6e3a1;
   --red: #f38ba8;
@@ -34,6 +35,7 @@
   --overlay0: #9ca0b0;
   --text: #4c4f69;
   --subtext0: #6c6f85;
+  --subtext1: #7c7f93;
   --blue: #1e66f5;
   --green: #40a02b;
   --red: #d20f39;
@@ -217,9 +219,8 @@ input[type="text"], input[type="search"], input[type="number"], input[type="pass
 input[type="text"] { width: 260px; }
 input[type="number"] { width: 56px; text-align: right; }
 input[type="search"] { width: 100%; }
-#pageCount { color: var(--subtext0); }
+.pageCount { color: var(--subtext0); }
 
-#saveBtn { color: var(--blue); font-weight: 600; }
 
 /* --- signature badge --- */
 .badge {
@@ -780,7 +781,7 @@ input.ovl-check { appearance: auto; accent-color: #1a7f37; background: transpare
 .menu.open .dropdown { display: flex; }
 .dropdown button.active { background: var(--surface1); box-shadow: inset 2px 0 0 var(--blue); }
 .menucap { font-size: 11px; color: var(--overlay0); padding: 5px 8px 1px; text-transform: uppercase; letter-spacing: 0.5px; }
-#recentSlot { display: flex; flex-direction: column; gap: 4px; }
+.recentSlot { display: flex; flex-direction: column; gap: 4px; }
 .dropdown .menuitem.idle input[type="search"] { width: 200px; }
 .dropdown button, .dropdown .menuitem {
   background: transparent;

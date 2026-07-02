@@ -195,5 +195,11 @@ func attachmentName(name string) string {
 	if i := strings.LastIndexAny(name, `/\`); i >= 0 {
 		name = name[i+1:]
 	}
-	return strings.TrimSpace(name)
+	name = strings.TrimSpace(name)
+	// A bare "." or ".." would survive the separator strip; harmless as a PDF
+	// name-tree key, but any downstream disk write must never see a dot-path.
+	if name == "." || name == ".." {
+		return ""
+	}
+	return name
 }

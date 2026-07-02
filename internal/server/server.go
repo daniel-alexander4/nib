@@ -27,6 +27,25 @@ import (
 // maxPDFBytes caps how large a PDF the server will read or accept on save.
 const maxPDFBytes = 200 << 20 // 200 MiB
 
+// parseMultipart caps the request body at max, parses the multipart form, and
+// hands back a cleanup that removes any parts the parser spilled to temp files —
+// net/http never removes those itself, so skipping the cleanup leaks disk until
+// the process exits. On failure it writes the 400 and returns ok=false.
+//
+//	cleanup, ok := parseMultipart(w, r, maxPDFBytes)
+//	if !ok {
+//		return
+//	}
+//	defer cleanup()
+func parseMultipart(w http.ResponseWriter, r *http.Request, max int64) (cleanup func(), ok bool) {
+	r.Body = http.MaxBytesReader(w, r.Body, max)
+	if err := r.ParseMultipartForm(max); err != nil {
+		httpError(w, http.StatusBadRequest, "could not parse upload")
+		return nil, false
+	}
+	return func() { _ = r.MultipartForm.RemoveAll() }, true
+}
+
 // document is the single PDF currently open in the session.
 type document struct {
 	// path is the local file the document was opened from. Empty when the
@@ -224,7 +243,11 @@ func (s *Server) handleOpen(w http.ResponseWriter, r *http.Request) {
 // document has no server-side path, so it can be filled and re-downloaded but
 // not saved in place.
 func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
-	r.Body = http.MaxBytesReader(w, r.Body, maxPDFBytes)
+	cleanup, ok := parseMultipart(w, r, maxPDFBytes)
+	if !ok {
+		return
+	}
+	defer cleanup()
 	file, header, err := r.FormFile("file")
 	if err != nil {
 		httpError(w, http.StatusBadRequest, "no file uploaded")
