@@ -46,10 +46,11 @@ func (s *Server) handleExternalSignerGet(w http.ResponseWriter, r *http.Request)
 // persisted — the .p12 is stored as imported and re-decoded per sign.
 func (s *Server) handleExternalSignerImport(w http.ResponseWriter, r *http.Request) {
 	v := vaultFrom(r)
-	if err := r.ParseMultipartForm(maxPDFBytes); err != nil {
-		httpError(w, http.StatusBadRequest, "could not parse upload")
+	cleanup, ok := parseMultipart(w, r, maxPDFBytes)
+	if !ok {
 		return
 	}
+	defer cleanup()
 	p12, ok := formFileBytes(w, r, "p12")
 	if !ok {
 		return

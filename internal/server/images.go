@@ -81,7 +81,11 @@ func (s *Server) handleImageAdd(w http.ResponseWriter, r *http.Request) {
 		}
 		name, data = req.Name, b
 	} else {
-		r.Body = http.MaxBytesReader(w, r.Body, maxImageBytes)
+		cleanup, pok := parseMultipart(w, r, maxImageBytes)
+		if !pok {
+			return
+		}
+		defer cleanup()
 		file, header, err := r.FormFile("file")
 		if err != nil {
 			httpError(w, http.StatusBadRequest, "no file uploaded")

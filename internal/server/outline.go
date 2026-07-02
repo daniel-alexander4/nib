@@ -33,10 +33,11 @@ func (s *Server) handleOutlineGet(w http.ResponseWriter, r *http.Request) {
 // document. It takes the client's baked PDF (field "pdf", so pending overlay edits
 // are preserved) plus the new outline as JSON in the "outline" field.
 func (s *Server) handleOutlineSet(w http.ResponseWriter, r *http.Request) {
-	if err := r.ParseMultipartForm(maxPDFBytes); err != nil {
-		httpError(w, http.StatusBadRequest, "could not parse upload")
+	cleanup, ok := parseMultipart(w, r, maxPDFBytes)
+	if !ok {
 		return
 	}
+	defer cleanup()
 	pdfBytes, ok := formFileBytes(w, r, "pdf")
 	if !ok {
 		return

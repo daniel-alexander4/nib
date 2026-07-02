@@ -322,7 +322,9 @@ func SplitBySpans(pdf []byte, spans []string, prefix string) ([]SplitPart, error
 // punctuation. winReserved matches the Windows device names that can't be files.
 var (
 	fnameUnsafe = regexp.MustCompile(`[/\\<>:"|?*\x00-\x1f\x7f]`)
-	winReserved = regexp.MustCompile(`(?i)^(con|prn|aux|nul|com[1-9]|lpt[1-9])$`)
+	// A reserved device name is reserved with ANY extension too (CON.txt is the
+	// CON device on Windows), so match up to the first dot, not just the whole name.
+	winReserved = regexp.MustCompile(`(?i)^(con|prn|aux|nul|com[1-9]|lpt[1-9])(\.|$)`)
 )
 
 // SanitizeFilename reduces an arbitrary string (a bookmark title, or a source
