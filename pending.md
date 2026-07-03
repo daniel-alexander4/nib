@@ -1,14 +1,14 @@
 # Pending
 
-## VERIFY: version-pill click-to-download against a real release (v1.94.0)
+## VERIFY: version-pill download against a real release (v1.95.0)
 
-- Shipped: the tri-state version pill (yellow unknown / green current / red
-  outdated) with click-to-check-and-download. All states and the download were
-  live-verified, but only against a **stubbed** `/api/update/check` and a routed
-  fake asset — no newer GitHub release existed to exercise end-to-end. The
-  narrow gap: confirm `location.assign(downloadUrl)` on a **real** GitHub
-  release asset downloads as an attachment (Content-Disposition) without
-  navigating away. Check on the first release newer than an installed build.
+- Shipped: the tri-state version pill (v1.94.0) + click-to-check with a
+  confirm-prompt download (v1.95.0). All states, the prompt, and the download
+  were live-verified, but only against a **stubbed** `/api/update/check` and a
+  routed fake asset — no newer GitHub release existed to exercise end-to-end.
+  The narrow gap: on the first release newer than an installed build, confirm
+  the prompt's `location.assign(downloadUrl)` pulls the real GitHub asset as an
+  attachment (Content-Disposition) without navigating away.
 
 ## SSH-key unlock (replaces the password) — accepted tradeoff + unverified UI
 
