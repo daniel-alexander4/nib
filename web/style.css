@@ -240,14 +240,15 @@ input[type="search"] { width: 100%; }
   font-size: 11px; color: var(--blue); text-decoration: underline;
 }
 
-/* --- update pill (shown when a newer release is available) --- */
+/* --- update pill (always shown; color = update status) --- */
+/* red base: a newer release is available — click to download */
 #updatePill {
   display: inline-flex;
   align-items: stretch;
   margin-right: 8px;
   border-radius: 999px;
   overflow: hidden;
-  background: var(--mauve);
+  background: var(--red);
 }
 #updatePill button {
   border: none;
@@ -260,11 +261,14 @@ input[type="search"] { width: 100%; }
 #updateGet { padding: 4px 10px; }
 #updateDismiss { padding: 4px 8px 4px 4px; opacity: 0.7; }
 #updatePill button:hover { background: rgba(0, 0, 0, 0.12); }
-/* "current version" badge: informational, not a call to action */
+/* "current version" badge: informational (no dismiss), but still clickable —
+   clicking checks for an update and downloads one if available */
 #updatePill.current { background: var(--surface1); }
-#updatePill.current #updateGet { color: var(--text); cursor: default; }
-#updatePill.current #updateGet:hover { background: transparent; }
+#updatePill.current #updateGet { color: var(--text); }
 #updatePill.current #updateDismiss { display: none; }
+/* update status unknown (startup check off, or the check failed): yellow */
+#updatePill.current.unknown { background: var(--yellow); }
+#updatePill.current.unknown #updateGet { color: var(--crust); }
 /* on the latest published release: a green "you're up to date" confirmation */
 #updatePill.current.latest { background: var(--green); }
 #updatePill.current.latest #updateGet { color: var(--crust); }
