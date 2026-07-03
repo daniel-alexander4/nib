@@ -628,10 +628,16 @@ install; `make notices` regenerates [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES
 on its own.
 
 ### Staying up to date
-At startup Nib asks GitHub for its latest release version; if a newer one exists,
-a pill appears at the top that downloads the build matching your OS and
-architecture (a `.deb` for a package install, otherwise the raw binary). You can
-also trigger it any time from the **⚙ Settings & Help** menu → **Check for updates…**.
+A version pill at the top always shows the installed version, colored by update
+status: **yellow** — status unknown (no check has run yet, or the startup check
+is turned off); **green** — you're on the latest release; **red** — a newer
+release exists. At startup Nib asks GitHub for its latest release version and
+colors the pill accordingly. Clicking a red pill downloads the build matching
+your OS and architecture (a `.deb` for a package install, otherwise the raw
+binary); clicking a yellow or green pill checks right now — even with the
+startup check off — and starts that download immediately if you're out of date.
+You can also check any time from the **⚙ Settings & Help** menu →
+**Check for updates…**.
 
 This is the only call Nib makes on its own, and it's a **version query — no
 document data, no telemetry**: your documents never leave your computer. Turn the
