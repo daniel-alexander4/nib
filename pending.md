@@ -1,5 +1,15 @@
 # Pending
 
+## VERIFY: version-pill click-to-download against a real release (v1.94.0)
+
+- Shipped: the tri-state version pill (yellow unknown / green current / red
+  outdated) with click-to-check-and-download. All states and the download were
+  live-verified, but only against a **stubbed** `/api/update/check` and a routed
+  fake asset — no newer GitHub release existed to exercise end-to-end. The
+  narrow gap: confirm `location.assign(downloadUrl)` on a **real** GitHub
+  release asset downloads as an attachment (Content-Disposition) without
+  navigating away. Check on the first release newer than an installed build.
+
 ## SSH-key unlock (replaces the password) — accepted tradeoff + unverified UI
 
 - The vault is now sealed to the user's SSH key (no password). Consequence,
