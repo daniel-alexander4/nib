@@ -270,8 +270,8 @@ function applyStatus(st) {
     els.autoUpdateChk.checked = st.autoUpdate;
     els.autoUpdateChk.disabled = st.updateCheckLocked;
     els.autoUpdateChk.parentElement.title = st.updateCheckLocked ? 'Forced off by NIB_NO_UPDATE_CHECK' : '';
-    // Always show the installed version as a green badge. An update check, if it
-    // runs, swaps it to the download CTA only when a newer release exists.
+    // Always show the installed version, yellow (status unknown) until a check
+    // runs; a check turns it green (up to date) or red (update available).
     showVersionBadge(st.version);
     // Automatic update check, once per session, at the first usable moment.
     if (st.autoUpdate && !updateChecked) { updateChecked = true; runUpdateCheck(true); }
@@ -392,28 +392,34 @@ els.restoreInput.onchange = async () => {
 };
 
 // --- update check ------------------------------------------------------------
-// Runs once at startup (when autoUpdate is set) and from "Check for updates…".
-// Notify-only: a newer release raises the menubar pill, which downloads the
-// asset for this OS/arch on click. Nib installs nothing.
+// Runs once at startup (when autoUpdate is set), from "Check for updates…", and
+// from clicking the pill itself. The pill's color is its update status: yellow =
+// unknown (no check has run, or it failed), green = on the latest release, red =
+// a newer release exists (click to download). Nib installs nothing.
 let updateChecked = false;
 let updateInfo = null; // last check result, for the pill's download action
+let updateChecking = false; // in-flight guard: a second click mustn't double-check
 
-// showVersionBadge renders the always-on installed-version pill in its green
-// "you're fine" state (no download action, no dismiss). This is the default:
-// shown on load, and whenever update checks are disabled or no update is
-// available. Only a known-available update (runUpdateCheck) replaces the green
-// badge with the download CTA.
+// showVersionBadge renders the always-on installed-version pill in its yellow
+// "status unknown" state (no download action, no dismiss). This is the default:
+// shown on load and after a failed check. A check that completes turns it green
+// (up to date) or swaps in the red download CTA (runUpdateCheck).
 function showVersionBadge(version) {
   updateInfo = null;
-  els.updatePill.classList.add('current', 'latest');
+  els.updatePill.classList.add('current', 'unknown');
+  els.updatePill.classList.remove('latest');
   els.updateGet.textContent = `v${version || 'dev'}`;
-  els.updateGet.title = `Installed version (v${version || 'dev'})`;
+  els.updateGet.title = `Installed version (v${version || 'dev'}) — update status unknown, click to check`;
   els.updatePill.hidden = false;
 }
 
 // runUpdateCheck queries the server. auto=true is the silent startup check (only
-// surfaces the pill); auto=false is the manual menu item (also toasts the result).
-async function runUpdateCheck(auto) {
+// surfaces the pill); auto=false is the manual menu item or a pill click (also
+// toasts the result). download=true (pill click) additionally starts the download
+// right away when a newer release has an asset for this OS/arch.
+async function runUpdateCheck(auto, download) {
+  if (updateChecking) return;
+  updateChecking = true;
   let d;
   try {
     const res = await fetch('/api/update/check');
@@ -422,29 +428,47 @@ async function runUpdateCheck(auto) {
   } catch {
     if (!auto) toast('Could not check for updates.');
     return;
+  } finally {
+    updateChecking = false;
   }
   if (!d.updateAvailable) {
-    // Up to date: the green badge, refined with a confirmed title and toast.
-    showVersionBadge(d.current);
+    // Up to date: the green badge with a confirmed title (and toast if manual).
+    updateInfo = null;
+    els.updatePill.classList.add('current', 'latest');
+    els.updatePill.classList.remove('unknown');
+    els.updateGet.textContent = `v${d.current}`;
     els.updateGet.title = d.latest ? `You’re on the latest version (v${d.current})` : `Up to date (v${d.current})`;
+    els.updatePill.hidden = false;
     if (!auto) toast(d.latest ? `You’re on the latest version (v${d.current}).` : `Up to date (v${d.current}).`);
     return;
   }
   updateInfo = d;
-  els.updatePill.classList.remove('current', 'latest');
+  els.updatePill.classList.remove('current', 'latest', 'unknown');
   els.updateGet.title = 'Download the latest version for your system';
   els.updateGet.textContent = `Update to v${d.latest} ↓`;
   els.updatePill.hidden = false;
-  if (!auto) toast(`Nib v${d.latest} is available — click the pill to download.`);
+  if (download && d.downloadUrl) {
+    // The asset serves as an attachment, so assigning location downloads in
+    // place — and unlike window.open after an await, it can't be popup-blocked.
+    toast(`Nib v${d.latest} is available — downloading…`);
+    location.assign(d.downloadUrl);
+  } else if (!auto) {
+    toast(`Nib v${d.latest} is available — click the pill to download.`);
+  }
 }
 
 els.checkUpdatesBtn.onclick = () => runUpdateCheck(false);
 els.updateDismiss.onclick = () => { els.updatePill.hidden = true; };
 els.updateGet.onclick = () => {
-  if (!updateInfo) return;
-  // A release asset serves as an attachment, so this downloads without leaving
-  // the app; the release page (fallback) opens in a new tab.
-  window.open(updateInfo.downloadUrl || updateInfo.url, '_blank', 'noopener');
+  if (updateInfo) {
+    // Red CTA: a release asset serves as an attachment, so this downloads without
+    // leaving the app; the release page (fallback) opens in a new tab.
+    window.open(updateInfo.downloadUrl || updateInfo.url, '_blank', 'noopener');
+    return;
+  }
+  // Yellow or green: check now — even when the startup check is toggled off —
+  // and download immediately if out of date.
+  runUpdateCheck(false, true);
 };
 
 // --- authorized keys ---------------------------------------------------------
