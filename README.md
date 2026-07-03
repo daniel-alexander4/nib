@@ -632,18 +632,16 @@ A version pill at the top always shows the installed version, colored by update
 status: **yellow** — status unknown (no check has run yet, or the startup check
 is turned off); **green** — you're on the latest release; **red** — a newer
 release exists. At startup Nib asks GitHub for its latest release version and
-colors the pill accordingly. Clicking a red pill downloads the build matching
-your OS and architecture (a `.deb` for a package install, otherwise the raw
-binary); clicking a yellow or green pill checks right now — even with the
-startup check off — and starts that download immediately if you're out of date.
-You can also check any time from the **⚙ Settings & Help** menu →
-**Check for updates…**.
+colors the pill accordingly. Clicking the pill checks right now — even with the
+startup check off — and, when a newer release exists, offers to download the
+build matching your OS and architecture (a `.deb` for a package install,
+otherwise the raw binary).
 
 This is the only call Nib makes on its own, and it's a **version query — no
 document data, no telemetry**: your documents never leave your computer. Turn the
 startup check off from **⚙ Settings → Check for updates on startup** (saved in
-your vault), or set `NIB_NO_UPDATE_CHECK=1` to force it off regardless (the manual
-**Check for updates…** still works either way). Nib only notifies and downloads — it never installs or replaces
+your vault), or set `NIB_NO_UPDATE_CHECK=1` to force it off regardless (clicking
+the version pill still checks either way). Nib only notifies and downloads — it never installs or replaces
 itself; you apply the update the way you installed (`apt` / `install.sh`, or by
 swapping the binary).
 
@@ -653,7 +651,7 @@ swapping the binary).
 | --- | --- |
 | `NIB_ADDR` | Pin a fixed loopback address (e.g. `127.0.0.1:8791`) instead of a random port. Must be loopback (`127.0.0.1`, `localhost`, or `::1`) — a non-loopback address is refused at startup. |
 | `NIB_NO_BROWSER` | Don't open a window — just serve and log the URL (headless / remote). |
-| `NIB_NO_UPDATE_CHECK` | Disable the automatic startup update check (the manual **Check for updates…** still works). |
+| `NIB_NO_UPDATE_CHECK` | Disable the automatic startup update check (clicking the version pill still checks). |
 
 ---
 

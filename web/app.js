@@ -83,7 +83,7 @@ const els = {
   decryptGo: $('decryptGo'), decryptCancel: $('decryptCancel'), decryptError: $('decryptError'),
   encryptBtn: $('encryptBtn'), encryptModal: $('encryptModal'), encryptPw: $('encryptPw'),
   encryptPw2: $('encryptPw2'), encryptGo: $('encryptGo'), encryptCancel: $('encryptCancel'), encryptError: $('encryptError'),
-  backupBtn: $('backupBtn'), restoreInput: $('restoreInput'), checkUpdatesBtn: $('checkUpdatesBtn'),
+  backupBtn: $('backupBtn'), restoreInput: $('restoreInput'),
   updatePill: $('updatePill'), updateGet: $('updateGet'), updateDismiss: $('updateDismiss'),
   manageKeysBtn: $('manageKeysBtn'), keysModal: $('keysModal'), keysList: $('keysList'),
   keyCandidates: $('keyCandidates'), keyPaste: $('keyPaste'), keyAddPath: $('keyAddPath'),
@@ -392,20 +392,19 @@ els.restoreInput.onchange = async () => {
 };
 
 // --- update check ------------------------------------------------------------
-// Runs once at startup (when autoUpdate is set), from "Check for updates…", and
-// from clicking the pill itself. The pill's color is its update status: yellow =
-// unknown (no check has run, or it failed), green = on the latest release, red =
-// a newer release exists (click to download). Nib installs nothing.
+// Runs once at startup (when autoUpdate is set) and from clicking the pill
+// itself. The pill's color is its update status: yellow = unknown (no check has
+// run, or it failed), green = on the latest release, red = a newer release
+// exists. A pill click that finds an update offers the download in a confirm
+// prompt. Nib installs nothing.
 let updateChecked = false;
-let updateInfo = null; // last check result, for the pill's download action
 let updateChecking = false; // in-flight guard: a second click mustn't double-check
 
 // showVersionBadge renders the always-on installed-version pill in its yellow
-// "status unknown" state (no download action, no dismiss). This is the default:
-// shown on load and after a failed check. A check that completes turns it green
-// (up to date) or swaps in the red download CTA (runUpdateCheck).
+// "status unknown" state (no dismiss). This is the default: shown on load and
+// after a failed check. A check that completes turns it green (up to date) or
+// swaps in the red update notice (runUpdateCheck).
 function showVersionBadge(version) {
-  updateInfo = null;
   els.updatePill.classList.add('current', 'unknown');
   els.updatePill.classList.remove('latest');
   els.updateGet.textContent = `v${version || 'dev'}`;
@@ -413,11 +412,23 @@ function showVersionBadge(version) {
   els.updatePill.hidden = false;
 }
 
-// runUpdateCheck queries the server. auto=true is the silent startup check (only
-// surfaces the pill); auto=false is the manual menu item or a pill click (also
-// toasts the result). download=true (pill click) additionally starts the download
-// right away when a newer release has an asset for this OS/arch.
-async function runUpdateCheck(auto, download) {
+// startDownload fetches the release. The OS/arch asset serves as an attachment,
+// so assigning location downloads in place without user activation; the release
+// page (fallback when no asset matches) needs a tab — if that open is ever
+// blocked, the pill stays red and a second click re-offers it.
+function startDownload(d) {
+  if (d.downloadUrl) {
+    toast(`Downloading Nib v${d.latest}…`);
+    location.assign(d.downloadUrl);
+  } else {
+    window.open(d.url, '_blank', 'noopener');
+  }
+}
+
+// runUpdateCheck queries the server and repaints the pill. auto=true is the
+// silent startup check (only colors the pill); auto=false is a pill click, which
+// also toasts an up-to-date result and offers a found update for download.
+async function runUpdateCheck(auto) {
   if (updateChecking) return;
   updateChecking = true;
   let d;
@@ -433,7 +444,6 @@ async function runUpdateCheck(auto, download) {
   }
   if (!d.updateAvailable) {
     // Up to date: the green badge with a confirmed title (and toast if manual).
-    updateInfo = null;
     els.updatePill.classList.add('current', 'latest');
     els.updatePill.classList.remove('unknown');
     els.updateGet.textContent = `v${d.current}`;
@@ -442,34 +452,19 @@ async function runUpdateCheck(auto, download) {
     if (!auto) toast(d.latest ? `You’re on the latest version (v${d.current}).` : `Up to date (v${d.current}).`);
     return;
   }
-  updateInfo = d;
   els.updatePill.classList.remove('current', 'latest', 'unknown');
-  els.updateGet.title = 'Download the latest version for your system';
+  els.updateGet.title = 'A newer version is available — click to download';
   els.updateGet.textContent = `Update to v${d.latest} ↓`;
   els.updatePill.hidden = false;
-  if (download && d.downloadUrl) {
-    // The asset serves as an attachment, so assigning location downloads in
-    // place — and unlike window.open after an await, it can't be popup-blocked.
-    toast(`Nib v${d.latest} is available — downloading…`);
-    location.assign(d.downloadUrl);
-  } else if (!auto) {
-    toast(`Nib v${d.latest} is available — click the pill to download.`);
+  if (!auto && confirm(`Nib v${d.latest} is available (you have v${d.current}). Download it now?`)) {
+    startDownload(d);
   }
 }
 
-els.checkUpdatesBtn.onclick = () => runUpdateCheck(false);
 els.updateDismiss.onclick = () => { els.updatePill.hidden = true; };
-els.updateGet.onclick = () => {
-  if (updateInfo) {
-    // Red CTA: a release asset serves as an attachment, so this downloads without
-    // leaving the app; the release page (fallback) opens in a new tab.
-    window.open(updateInfo.downloadUrl || updateInfo.url, '_blank', 'noopener');
-    return;
-  }
-  // Yellow or green: check now — even when the startup check is toggled off —
-  // and download immediately if out of date.
-  runUpdateCheck(false, true);
-};
+// The pill is the manual check: any click (yellow, green, or red) re-checks —
+// even when the startup check is toggled off — and offers a found update.
+els.updateGet.onclick = () => runUpdateCheck(false);
 
 // --- authorized keys ---------------------------------------------------------
 // The vault's content key is sealed to one or more SSH public keys; this dialog
