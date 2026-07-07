@@ -31,7 +31,7 @@ func TestWebAssetsEmbedded(t *testing.T) {
 	}
 }
 
-// The About dialog shows the GPLv3 licence and third-party attributions by
+// The About dialog shows the AGPLv3 licence and third-party attributions by
 // serving these embedded files; if either drops out of the embed the in-app
 // view (and our licence-compliance claim) silently breaks.
 func TestLegalFilesEmbedded(t *testing.T) {

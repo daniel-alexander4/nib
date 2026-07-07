@@ -17,4 +17,4 @@ out of the public repo). Never commit them (and never `git add -f` them); don't
 assume a fresh clone has them.
 
 ## License
-GPLv3 (see `LICENSE`). The project ships as-is, no warranty.
+AGPLv3 (see `LICENSE`). The project ships as-is, no warranty.
