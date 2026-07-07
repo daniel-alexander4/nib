@@ -1,6 +1,6 @@
 # Nib
 
-[![License: GPLv3](https://img.shields.io/badge/license-GPLv3-blue.svg)](LICENSE)
+[![License: AGPLv3](https://img.shields.io/badge/license-AGPLv3-blue.svg)](LICENSE)
 ![Go](https://img.shields.io/badge/Go-1.25%2B-00ADD8?logo=go&logoColor=white)
 ![Platforms](https://img.shields.io/badge/platforms-Linux%20%7C%20macOS%20%7C%20Windows-555)
 ![100% local](https://img.shields.io/badge/data-100%25%20local-success)
@@ -12,7 +12,7 @@ revisions visually, sign and timestamp, convert to and from Office and PDF/A,
 pull tables out to spreadsheets, and reshape pages — all from a desktop-style app
 *or* a scriptable command line.
 
-And it's **yours**: free and open source under the GPL, a single self-contained
+And it's **yours**: free and open source under the AGPL, a single self-contained
 binary with no installer, no account, no subscription, and no cloud. Nothing you
 open, type, or sign ever leaves your computer, and your documents and signing
 identity live in an encrypted vault only your SSH key can open.
@@ -43,7 +43,7 @@ How Nib's feature set lines up against the three best-known PDF editors.
 | AES-256 encryption | ✅ | ✅ | ✅ | ✅ |
 | **Scriptable command line** / batch a folder | ✅ | ❌ | ❌ | 🟡 |
 | Runs 100% offline, no account, no telemetry | ✅ | ❌ | 🟡 | ✅ |
-| **Free & open source** (GPLv3) | ✅ | ❌ | ❌ | ❌ |
+| **Free & open source** (AGPLv3) | ✅ | ❌ | ❌ | ❌ |
 | Single self-contained binary, cross-platform ‡ | ✅ | ❌ | ❌ | ❌ |
 | **Price** | 🟢 **Free** | 🔴 Subscription | 🔴 Paid | 🟡 Free tier |
 
@@ -55,7 +55,7 @@ table is about the jobs Nib *does* cover, and where it works differently.
 
 **Choose Nib** when you want to own your tools: work entirely offline with no
 account or subscription, script PDF jobs from the command line, keep every
-document and signature on your own machine, and stand on a transparent GPLv3
+document and signature on your own machine, and stand on a transparent AGPLv3
 codebase you can read and rebuild. Reach for a commercial editor when you need
 full WYSIWYG layout editing or prepress.
 
@@ -747,15 +747,17 @@ web/             the single-page UI and the vendored pdf.js engine (embedded)
 
 ## License
 
-Nib is free software under the **GNU General Public License v3.0** — see
+Nib is free software under the **GNU Affero General Public License v3.0** — see
 [LICENSE](LICENSE). Copyright © 2026 Daniel Alexander.
 
 Distributed **as-is, with no warranty** of any kind, to the extent permitted by
-law (GPLv3 §§15–16). You may use, study, share, and modify it under the GPL;
-derivative works must also be released under the GPL.
+law (AGPLv3 §§15–16). You may use, study, share, and modify it under the AGPL;
+derivative works must also be released under the AGPL. Because Nib is AGPL,
+if you run a modified version to provide a network service, you must offer that
+version's complete source to its users (AGPLv3 §13).
 
 Nib also incorporates third-party software (Go modules and the vendored pdf.js
-engine), all under GPLv3-compatible permissive licenses (BSD, MIT, Apache-2.0).
+engine), all under AGPLv3-compatible permissive licenses (BSD, MIT, Apache-2.0).
 Their required copyright and license notices are collected in
 [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md), regenerated with
 `build/gen-notices.sh`.
