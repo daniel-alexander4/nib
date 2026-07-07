@@ -1140,7 +1140,7 @@ async function showAboutDoc(title, path) {
 els.aboutBtn.onclick = () => { showAboutMain(); els.aboutModal.hidden = false; };
 els.aboutClose.onclick = () => { els.aboutModal.hidden = true; };
 els.aboutBackBtn.onclick = showAboutMain;
-els.aboutLicenseBtn.onclick = () => showAboutDoc('Licence (GPLv3)', '/legal/LICENSE');
+els.aboutLicenseBtn.onclick = () => showAboutDoc('Licence (AGPLv3)', '/legal/LICENSE');
 els.aboutNoticesBtn.onclick = () => showAboutDoc('Third-party notices', '/legal/THIRD-PARTY-NOTICES.md');
 els.keyAddBtn.onclick = () => {
   const pubKey = els.keyPaste.value.trim();

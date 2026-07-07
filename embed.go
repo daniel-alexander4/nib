@@ -11,7 +11,7 @@ import (
 //go:embed all:web
 var webFS embed.FS
 
-// legalFS carries the GPLv3 licence and the third-party attribution file so the
+// legalFS carries the AGPLv3 licence and the third-party attribution file so the
 // About dialog can show the same text that ships in the .deb/release — they're
 // served straight from these embedded copies, so the in-app view can't drift.
 //
