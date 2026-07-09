@@ -80,3 +80,35 @@ func TestSupportedOfficeExt(t *testing.T) {
 		}
 	}
 }
+
+// TestConvertDocMarkdown: Markdown converts natively — no LibreOffice, no skip.
+func TestConvertDocMarkdown(t *testing.T) {
+	out, err := ConvertDocToPDF([]byte("# Title\n\nBody with **bold** text.\n"), ".md")
+	if err != nil {
+		t.Fatalf("ConvertDocToPDF: %v", err)
+	}
+	if !bytes.HasPrefix(out, []byte("%PDF")) {
+		t.Errorf("output is not a PDF (no %%PDF header)")
+	}
+	if err := Validate(out); err != nil {
+		t.Errorf("converted PDF invalid: %v", err)
+	}
+}
+
+// TestSupportedDocExt: Markdown extensions are accepted alongside the office
+// allowlist; everything else still refuses.
+func TestSupportedDocExt(t *testing.T) {
+	for _, ok := range []string{"md", ".md", ".MD", "markdown", ".docx", "csv"} {
+		if !SupportedDocExt(ok) {
+			t.Errorf("SupportedDocExt(%q) = false, want true", ok)
+		}
+	}
+	for _, bad := range []string{"exe", ".pdf", "", ".html"} {
+		if SupportedDocExt(bad) {
+			t.Errorf("SupportedDocExt(%q) = true, want false", bad)
+		}
+	}
+	if SupportedOfficeExt(".md") {
+		t.Error("SupportedOfficeExt(.md) = true — Markdown must not route to LibreOffice")
+	}
+}

@@ -254,7 +254,11 @@ function applyStatus(st) {
   authState = st.state;
   gsAvailable = !!st.ghostscript;
   loAvailable = !!st.libreoffice;
-  els.officeOpenBtn.hidden = !loAvailable; // a primary open action — hide entirely when LibreOffice is absent
+  // Markdown converts natively, so the button always shows; without LibreOffice
+  // the picker is scoped to what the server can actually convert.
+  els.officeInput.accept = loAvailable
+    ? '.md,.markdown,.doc,.docx,.odt,.rtf,.txt,.xls,.xlsx,.ods,.csv,.ppt,.pptx,.odp'
+    : '.md,.markdown';
   els.aboutVersion.textContent = st.version || 'dev';
   if (st.state === 'ready') {
     csrf = st.csrf;
