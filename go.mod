@@ -24,6 +24,7 @@ require (
 	github.com/mattetti/filebuffer v1.0.1 // indirect
 	github.com/mattn/go-runewidth v0.0.24 // indirect
 	github.com/pkg/errors v0.9.1 // indirect
+	github.com/yuin/goldmark v1.8.2 // indirect
 	golang.org/x/image v0.41.0 // indirect
 	golang.org/x/sys v0.45.0 // indirect
 	golang.org/x/text v0.37.0 // indirect

@@ -1,5 +1,17 @@
 # Pending
 
+## Markdown→PDF: non-Latin text renders wrong with core fonts (v1.96.0)
+
+- Shipped: native Markdown→PDF import (`nib/mdpdf`, exported for external
+  import) rendering with the Base-14 core fonts — nothing embedded, but
+  coverage is WinAnsi/Latin only. The gap: Markdown containing non-Latin text
+  (Cyrillic, Greek, CJK, Arabic, …) renders as wrong or missing glyphs. Path
+  forward exists and is scoped: detect non-WinAnsi runs and fall back to the
+  vendored OCR font pool (`internal/pdfops/fonts/`, registered via
+  `InstallOCRFonts`), the way the OCR text layer already picks faces per
+  script — at the cost of embedding those faces in the output (and of `mdpdf`
+  needing the fonts passed in, to stay self-contained).
+
 ## VERIFY: version-pill download against a real release (v1.95.0)
 
 - Shipped: the tri-state version pill (v1.94.0) + click-to-check with a

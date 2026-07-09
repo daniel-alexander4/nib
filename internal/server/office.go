@@ -11,11 +11,12 @@ import (
 	"nib/internal/sign"
 )
 
-// handleOffice converts a posted office document (DOCX/XLSX/ODT/…) to PDF via
-// installed LibreOffice and installs the result as the working document, returning
-// the same meta as an upload so the browser can render it immediately — a one-step
-// "open & convert". The converted document is upload-origin (no path), so it can be
-// edited and saved-as but not saved in place, exactly like any uploaded file.
+// handleOffice converts a posted document to PDF — Markdown natively, office
+// documents (DOCX/XLSX/ODT/…) via installed LibreOffice — and installs the result
+// as the working document, returning the same meta as an upload so the browser can
+// render it immediately — a one-step "open & convert". The converted document is
+// upload-origin (no path), so it can be edited and saved-as but not saved in
+// place, exactly like any uploaded file.
 func (s *Server) handleOffice(w http.ResponseWriter, r *http.Request) {
 	cleanup, ok := parseMultipart(w, r, maxPDFBytes)
 	if !ok {
@@ -35,12 +36,12 @@ func (s *Server) handleOffice(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ext := filepath.Ext(header.Filename)
-	if !pdfops.SupportedOfficeExt(ext) {
-		httpError(w, http.StatusBadRequest, "unsupported document type — convert a Word, Excel, PowerPoint, or OpenDocument file")
+	if !pdfops.SupportedDocExt(ext) {
+		httpError(w, http.StatusBadRequest, "unsupported document type — convert a Word, Excel, PowerPoint, OpenDocument, or Markdown file")
 		return
 	}
 
-	pdf, err := pdfops.ConvertOfficeToPDF(data, ext)
+	pdf, err := pdfops.ConvertDocToPDF(data, ext)
 	if err != nil {
 		if errors.Is(err, pdfops.ErrLibreOfficeMissing) {
 			httpError(w, http.StatusBadRequest, "LibreOffice is not installed")
