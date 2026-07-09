@@ -9,5 +9,8 @@
 tmpgen/
 overlay-*.png
 
+# project instructions stay local (Dan's convention, 2026-07-09)
+/CLAUDE.md
+
 # OS cruft
 .DS_Store
