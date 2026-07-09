@@ -92,3 +92,32 @@ func TestOfficeHandlerRejectsUnsupported(t *testing.T) {
 		t.Fatalf("office on a .exe status = %d, want 400", resp.StatusCode)
 	}
 }
+
+// TestOfficeHandlerMarkdown: a posted Markdown file converts natively (no
+// LibreOffice, so no skip) and is installed as the working document.
+func TestOfficeHandlerMarkdown(t *testing.T) {
+	ts, _ := startServer(t)
+	c, csrf := authedClient(t, ts)
+
+	body, ct := officeForm(t, "notes.md", []byte("# Notes\n\n- one\n- two\n"))
+	resp := write(t, c, csrf, http.MethodPost, ts.URL+"/api/office", ct, body)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		out, _ := io.ReadAll(resp.Body)
+		t.Fatalf("markdown convert status = %d: %s", resp.StatusCode, out)
+	}
+	out, _ := io.ReadAll(resp.Body)
+	if !bytes.Contains(out, []byte(`"name":"notes.pdf"`)) {
+		t.Errorf("response should name the converted file notes.pdf, got: %s", out)
+	}
+
+	pr, err := c.Get(ts.URL + "/api/pdf")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pr.Body.Close()
+	pdf, _ := io.ReadAll(pr.Body)
+	if !bytes.HasPrefix(pdf, []byte("%PDF")) {
+		t.Errorf("working document is not a PDF after markdown conversion")
+	}
+}

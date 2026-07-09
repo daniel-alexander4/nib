@@ -9,6 +9,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"nib/mdpdf"
 )
 
 // Office-document → PDF conversion: shell out to an installed LibreOffice in
@@ -57,6 +59,28 @@ func SupportedOfficeExt(ext string) bool {
 		}
 	}
 	return false
+}
+
+// SupportedMarkdownExt reports whether ext (any case, with or without a leading
+// dot) is Markdown, which converts natively — no LibreOffice needed.
+func SupportedMarkdownExt(ext string) bool {
+	ext = strings.ToLower(strings.TrimPrefix(ext, "."))
+	return ext == "md" || ext == "markdown"
+}
+
+// SupportedDocExt reports whether ext converts to PDF via ConvertDocToPDF,
+// natively (Markdown) or through LibreOffice (office formats).
+func SupportedDocExt(ext string) bool {
+	return SupportedMarkdownExt(ext) || SupportedOfficeExt(ext)
+}
+
+// ConvertDocToPDF converts a non-PDF document to PDF. Markdown renders in pure
+// Go and is always available; everything else goes through LibreOffice.
+func ConvertDocToPDF(data []byte, ext string) ([]byte, error) {
+	if SupportedMarkdownExt(ext) {
+		return mdpdf.Convert(data)
+	}
+	return ConvertOfficeToPDF(data, ext)
 }
 
 var loPath struct {

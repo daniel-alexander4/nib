@@ -121,7 +121,7 @@ These subcommands run headlessly, without a browser:
   nib nup IN -o OUT --n N         place N pages per sheet (2/4/6/9/16…)
   nib normalize IN -o OUT         resize every page to the doc's most common size
   nib pdfa IN -o OUT               convert to a PDF/A-2b archival candidate (--gs: via Ghostscript)
-  nib office IN -o OUT             convert an office document (.docx/.xlsx/.odt/…) to PDF (needs LibreOffice)
+  nib office IN -o OUT             convert a document (.md/.docx/.xlsx/.odt/…) to PDF (office formats need LibreOffice)
   nib pagenum IN -o OUT           stamp running page numbers / Bates numbering
                                   (--continuous threads one counter across FILE…)
   nib pagelabels IN -o OUT        set logical page labels (--range PAGE:STYLE[:START[:PREFIX]])

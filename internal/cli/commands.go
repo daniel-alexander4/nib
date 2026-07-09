@@ -101,15 +101,15 @@ func cmdPDFA(args []string) int {
 	return writeOut(out, result)
 }
 
-// cmdOffice converts an office document (Word/Excel/PowerPoint/OpenDocument) to
-// PDF via installed LibreOffice. The input's extension selects the import filter,
-// so it needs a real file path (not stdin).
+// cmdOffice converts a document to PDF: Markdown natively, office documents
+// (Word/Excel/PowerPoint/OpenDocument) via installed LibreOffice. The input's
+// extension selects the conversion, so it needs a real file path (not stdin).
 func cmdOffice(args []string) int {
 	fs := flag.NewFlagSet("nib office", flag.ContinueOnError)
 	var out string
 	outFlag(fs, &out)
 	fs.Usage = usageFunc(fs, "nib office IN -o OUT",
-		"Convert an office document (.docx/.xlsx/.odt/.pptx/…) to PDF via LibreOffice (must be installed).")
+		"Convert a document (.md/.docx/.xlsx/.odt/.pptx/…) to PDF. Markdown converts natively; office formats need LibreOffice installed.")
 	if code, ok := parse(fs, args); !ok {
 		return code
 	}
@@ -118,8 +118,8 @@ func cmdOffice(args []string) int {
 		return code
 	}
 	ext := filepath.Ext(in)
-	if !pdfops.SupportedOfficeExt(ext) {
-		errf("unsupported document type %q — give a Word, Excel, PowerPoint, or OpenDocument file", ext)
+	if !pdfops.SupportedDocExt(ext) {
+		errf("unsupported document type %q — give a Markdown, Word, Excel, PowerPoint, or OpenDocument file", ext)
 		return 1
 	}
 	data, err := readInput(in)
@@ -127,7 +127,7 @@ func cmdOffice(args []string) int {
 		errf("%v", err)
 		return 1
 	}
-	pdf, err := pdfops.ConvertOfficeToPDF(data, ext)
+	pdf, err := pdfops.ConvertDocToPDF(data, ext)
 	if err != nil {
 		if errors.Is(err, pdfops.ErrLibreOfficeMissing) {
 			errf("LibreOffice not found — install it to convert office documents")
