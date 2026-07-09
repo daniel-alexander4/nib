@@ -147,18 +147,24 @@ Either way, because no pure-Go PDF/A validator exists, Nib can't certify the res
 itself — it produces a *candidate* you should **verify with
 [veraPDF](https://verapdf.org/)** before relying on it for archival.
 
-### Open an office document
-**File → Open & convert to PDF…** opens a Word, Excel, PowerPoint, or OpenDocument
-file (`.docx/.doc/.odt/.rtf/.txt`, `.xlsx/.xls/.ods/.csv`, `.pptx/.ppt/.odp`) by
-converting it to PDF — it then becomes the open document, ready to mark up, fill,
-sign, or save. Rendering office layout is something pure Go can't do, so Nib shells
-out to **[LibreOffice](https://www.libreoffice.org/)** in headless mode; like
+### Open an office or Markdown document
+**File → Open & convert to PDF…** opens a Markdown, Word, Excel, PowerPoint, or
+OpenDocument file (`.md/.markdown`, `.docx/.doc/.odt/.rtf/.txt`,
+`.xlsx/.xls/.ods/.csv`, `.pptx/.ppt/.odp`) by converting it to PDF — it then
+becomes the open document, ready to mark up, fill, sign, or save.
+
+**Markdown converts natively**, in pure Go, with no external tool: headings,
+emphasis, lists, blockquotes, and code blocks render as crisp selectable text
+(Latin scripts; images and tables are skipped). For office formats, rendering
+office layout is something pure Go can't do, so Nib shells out to
+**[LibreOffice](https://www.libreoffice.org/)** in headless mode; like
 Ghostscript it's strictly optional and **detected at runtime** (never bundled, so
-Nib stays a single cgo-free binary). When LibreOffice isn't installed the menu entry
-is hidden, and the CLI verb reports it's missing:
+Nib stays a single cgo-free binary). When LibreOffice isn't installed the file
+picker narrows to Markdown, and the CLI verb reports it's missing:
 
 ```
 nib office report.docx -o report.pdf
+nib office notes.md -o notes.pdf
 ```
 
 Each conversion runs in its own temporary directory with an isolated LibreOffice
