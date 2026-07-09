@@ -6610,6 +6610,69 @@ els.zoomInBtn.onclick = zoomIn;
 els.zoomOutBtn.onclick = zoomOut;
 els.fitBtn.onclick = fitWidth;
 
+// Ctrl+scroll (and trackpad pinch, which Chromium/Firefox deliver as a ctrlKey
+// wheel) zooms the DOCUMENT, not the browser. Left to the browser, ctrl+wheel
+// scales the whole UI — menus crowd out the page — and pdf.js never re-renders
+// for the new devicePixelRatio, so the document also goes permanently blurry.
+// Routed into pdf.js's own updateScale instead: cursor-anchored, and drawingDelay
+// CSS-scales during the gesture with one sharp redraw after the last tick (the
+// official viewer's wheel behavior). Must be window-level and non-passive:
+// hovering the toolbar shouldn't fall back to browser zoom, and preventDefault
+// is what suppresses it. Keyboard Ctrl+=/Ctrl+0 stays untouched as the escape
+// hatch for deliberately scaling the whole UI.
+// A trackpad pinch also arrives as a ctrlKey wheel event, but with no physical
+// Ctrl press — that's how it's told apart from a real Ctrl+scroll (the official
+// viewer's trick). A pinch gets a continuous factor per event (its deltas are
+// small and rapid); a mouse notch gets one discrete zoom step, whatever its
+// deltaMode (Chromium reports notches as ±100 pixel-mode deltas).
+let ctrlHeld = false;
+window.addEventListener('keydown', (e) => { if (e.key === 'Control') ctrlHeld = true; });
+window.addEventListener('keyup', (e) => { if (e.key === 'Control') ctrlHeld = false; });
+window.addEventListener('blur', () => { ctrlHeld = false; });
+let wheelTicks = 0; // fractional notches accumulated until a full step
+window.addEventListener('wheel', (e) => {
+  if (!e.ctrlKey && !e.metaKey) return; // plain scroll: not ours
+  e.preventDefault();
+  if (!pdfDocument || !e.deltaY) return;
+  const origin = [e.clientX, e.clientY];
+  const pixelMode = e.deltaMode === WheelEvent.DOM_DELTA_PIXEL;
+  if (pixelMode && !ctrlHeld) {
+    // Trackpad pinch: continuous factor per event.
+    viewer.updateScale({ scaleFactor: 2 ** (-e.deltaY / 100), origin, drawingDelay: 400 });
+  } else {
+    // Notched wheel: one zoom step per notch, same 1.15 factor as the buttons.
+    wheelTicks += -e.deltaY / (pixelMode ? 100 : e.deltaMode === WheelEvent.DOM_DELTA_LINE ? 3 : 1);
+    const steps = Math.trunc(wheelTicks);
+    if (steps) {
+      wheelTicks -= steps;
+      viewer.updateScale({ scaleFactor: 1.15 ** steps, origin, drawingDelay: 400 });
+    }
+  }
+}, { passive: false });
+
+// Re-render when devicePixelRatio changes (browser zoom via keyboard, OS display
+// scaling, dragging to a different-DPI monitor): pdf.js only reads dpr at render
+// time, so without this every canvas stays at the old resolution and is CSS-
+// stretched — permanently soft text. All of those changes also resize the CSS
+// viewport, so a resize listener comparing dpr is the reliable trigger; the
+// resolution media query is a second net for any dpr change that somehow leaves
+// the viewport size alone (it matches only the current dpr, so it re-arms with
+// the new value after each change).
+let lastDpr = devicePixelRatio;
+function dprChanged() {
+  if (devicePixelRatio === lastDpr) return;
+  lastDpr = devicePixelRatio;
+  if (pdfDocument) viewer.refresh();
+}
+window.addEventListener('resize', dprChanged);
+function watchDpr() {
+  matchMedia(`(resolution: ${devicePixelRatio}dppx)`).addEventListener('change', () => {
+    dprChanged();
+    watchDpr();
+  }, { once: true });
+}
+watchDpr();
+
 // In-document search: typing runs a fresh highlight-all find (debounced); Enter and
 // the ‹ › buttons step through the matches via pdf.js's `type:'again'` — no re-scan,
 // with query+flags held identical so the controller steps instead of falling back to

@@ -559,6 +559,9 @@ readout next to the box shows which match you're on out of the total (`3/12`).
 ### Keyboard shortcuts
 - **PageUp / PageDown** — previous / next page; **Home / End** — first / last page.
 - **Ctrl/Cmd + + / − / 0** — zoom in / out / fit to width.
+- **Ctrl + scroll wheel** (or trackpad pinch) — zoom the document at the cursor.
+  Nib intercepts this so the document zooms crisply instead of the browser
+  scaling the whole UI.
 - **Ctrl/Cmd + S** save, **+O** open, **+F** find, **+B** toggle the sidebar.
 
 Navigation keys stand down while you're typing in a field or a dialog is open, so
