@@ -7,6 +7,7 @@
 # local verification / scratch artifacts
 .playwright-mcp/
 tmpgen/
+tshoot/
 overlay-*.png
 
 # project instructions stay local (Dan's convention, 2026-07-09)
