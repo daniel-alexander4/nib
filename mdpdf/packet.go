@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: AGPL-3.0-or-later
-
 package mdpdf
 
 // This file provides generic PDF-assembly primitives for building a single
