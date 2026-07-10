@@ -6,6 +6,11 @@
 // The output uses the PDF Base-14 core fonts (Helvetica for body text, Courier
 // for code), so no font files are embedded and coverage is limited to Latin
 // (WinAnsi) text. Images and tables are skipped; links render as their text.
+//
+// Beyond Markdown rendering, the package provides in-memory PDF-assembly
+// primitives: AssemblePacket concatenates a cover PDF with exhibit files
+// (PDFs and raster images) into one paginated packet, and ImageToPDF renders
+// a single image as an A4 page.
 package mdpdf
 
 import (
