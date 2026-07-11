@@ -10,7 +10,7 @@
 // Beyond Markdown rendering, the package provides in-memory PDF-assembly
 // primitives: AssemblePacket concatenates a cover PDF with exhibit files
 // (PDFs and raster images) into one paginated packet, and ImageToPDF renders
-// a single image as an A4 page.
+// an image as US Letter page(s).
 package mdpdf
 
 import (
@@ -49,7 +49,7 @@ const (
 // headingSizes maps heading level 1-6 to point size (always bold).
 var headingSizes = [6]int{20, 16, 13, 12, 11, 11}
 
-// Convert renders CommonMark Markdown to a paginated A4 PDF.
+// Convert renders CommonMark Markdown to a paginated US Letter PDF.
 func Convert(md []byte) ([]byte, error) {
 	doc := goldmark.New().Parser().Parse(text.NewReader(md))
 	r := &renderer{src: md, l: newLayout()}
@@ -303,7 +303,9 @@ func (l *layout) spec() ([]byte, error) {
 		pages[strconv.Itoa(i+1)] = map[string]any{"content": content}
 	}
 	return json.Marshal(map[string]any{
-		"paper":  "A4P",
+		// Must agree with layout.go's pageW/pageH (Letter, 612x792) or the
+		// wrap/pagination math desyncs from the emitted MediaBox.
+		"paper":  "LetterP",
 		"origin": "LowerLeft",
 		"pages":  pages,
 	})
