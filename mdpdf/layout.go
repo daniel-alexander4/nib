@@ -6,10 +6,13 @@ import (
 	"github.com/pdfcpu/pdfcpu/pkg/font"
 )
 
-// Page geometry: A4 portrait in points, lower-left origin, 1-inch margins.
+// Page geometry: US Letter portrait in points, lower-left origin, 1-inch
+// margins. Letter (not A4) because the primary consumers produce US
+// business/medical correspondence; these constants and the "paper" name in
+// spec() must change together or layout math desyncs from the MediaBox.
 const (
-	pageW    = 595.0
-	pageH    = 842.0
+	pageW    = 612.0
+	pageH    = 792.0
 	marginX  = 72.0
 	marginY  = 72.0
 	contentW = pageW - 2*marginX
