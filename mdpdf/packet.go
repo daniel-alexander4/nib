@@ -20,7 +20,7 @@ import (
 // AssemblePacket concatenates a cover PDF with exhibit files into one
 // paginated PDF (the packet). Each exhibit is auto-detected: a PDF is merged
 // as-is (after a validating round-trip); a raster image (JPEG, PNG, or TIFF)
-// is rendered as an A4 page via ImageToPDF. An exhibit that can't be read or
+// is rendered as US Letter page(s) via ImageToPDF. An exhibit that can't be read or
 // converted is SKIPPED — its index is returned in skipped — so one corrupt
 // file never fails the whole packet. Order is preserved: cover first, then
 // the surviving exhibits in input order. Fully in-memory; nothing touches
@@ -77,14 +77,18 @@ func AssemblePacket(cover []byte, exhibits [][]byte) (packet []byte, skipped []i
 	return packet, skipped, nil
 }
 
-// ImageToPDF renders a single raster image (JPEG, PNG, or TIFF) as one A4
-// page, centered and scaled to fit, returning a one-page PDF. It errors on
-// an unsupported or corrupt image. Known limitation: a multi-page TIFF
-// (common for faxed documents) imports only its first page.
+// ImageToPDF renders a raster image (JPEG, PNG, or TIFF) as US Letter
+// page(s), centered and scaled to fit. It errors on an unsupported or
+// corrupt image. A multi-page TIFF (common for faxed documents) yields one
+// PDF page per TIFF page — pdfcpu walks the whole IFD chain via
+// hhrutter/tiff, whose decoder also covers the fax compressions (CCITT
+// G3/G4); a page that fails to decode errors the import loudly rather than
+// being dropped. Pinned by TestImageToPDFMultiPageTIFF so a pdfcpu upgrade
+// can't silently regress to first-page-only.
 func ImageToPDF(img []byte) (pdf []byte, err error) {
 	defer catchPanic(&err)
 
-	imp, err := api.Import("formsize:A4, position:c, scalefactor:1.0 rel", types.POINTS)
+	imp, err := api.Import("formsize:Letter, position:c, scalefactor:1.0 rel", types.POINTS)
 	if err != nil {
 		return nil, fmt.Errorf("mdpdf: import config: %w", err)
 	}
