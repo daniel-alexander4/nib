@@ -25,7 +25,13 @@ type style struct {
 	size int
 }
 
-func (s style) width(text string) float64 { return font.TextWidth(text, s.font, s.size) }
+// width measures text as the PDF will carry it: pdfcpu counts BYTES for core
+// fonts, so the string must be measured in its encoded form or every
+// non-ASCII rune inflates the measurement and shifts the rest of the line
+// (see encodedWidth).
+func (s style) width(text string) float64 {
+	return font.TextWidth(encodedWidth(text), s.font, s.size)
+}
 
 // leading is the baseline-to-baseline distance for lines set in this style.
 func (s style) leading() float64 { return float64(s.size) * 1.35 }
