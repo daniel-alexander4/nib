@@ -3314,30 +3314,54 @@ function exportBase() {
   return b || 'document';
 }
 
-// joinPath appends a name to a directory, collapsing any trailing slash.
-const joinPath = (dir, name) => dir.replace(/\/+$/, '') + '/' + name;
-
 let saveAsBlob = null; // the bytes the dialog will write on confirm
 
-// browseDir drives a folder picker. t names the four elements it writes (dir
-// input, here label, up button, list ul) so the same browser backs both the
-// Save-as dialog and the bookmark-split dialog.
+// The server names the reason a listing came back empty in one word; turning it
+// into a sentence is the UI's job, the same split the decrypt dialog uses.
+const LIST_REASON = {
+  missing: 'That folder doesn’t exist.',
+  denied: 'You don’t have permission to read that folder.',
+  notdir: 'That’s a file, not a folder.',
+  unreadable: 'That folder can’t be read.',
+};
+
+// browseDir drives the folder browser behind every dialog that picks a folder:
+// Save-as, the two splits, and Open. t names the four elements it writes (dir
+// input, here label, up button, list ul). onFile, when given, additionally
+// renders the folder's PDFs as clickable rows — that's the Open dialog, the only
+// one that opens a file rather than choosing a destination.
+//
+// Every path the list navigates or opens with comes fully built from the server,
+// which is the only side that knows the separator. This used to be four dialogs
+// over two near-identical browsers, both joining with "/" — which is why a
+// Windows path displayed and behaved inconsistently.
 const saveAsDirEls = () => ({ dir: els.saveAsDir, here: els.saveAsHere, up: els.saveAsUp, list: els.saveAsList });
-async function browseDir(path, t = saveAsDirEls()) {
+async function browseDir(path, t = saveAsDirEls(), onFile = null) {
   const res = await apiFetch('/api/listdir' + (path ? '?path=' + encodeURIComponent(path) : ''));
-  if (!res.ok) return;
+  if (!res.ok) return toast('could not list folder');
   const info = await res.json();
   t.dir.value = info.path;
   t.here.textContent = info.path;
   t.up.disabled = !info.parent;
   t.up.dataset.parent = info.parent || '';
   t.list.innerHTML = '';
-  for (const d of info.dirs) {
+  const row = (label, cls, onclick) => {
     const li = document.createElement('li');
-    li.textContent = d;
-    li.onclick = () => browseDir(joinPath(info.path, d), t);
+    li.textContent = label;
+    if (cls) li.className = cls;
+    if (onclick) li.onclick = onclick;
     t.list.appendChild(li);
+  };
+  // Say why it's empty, so an unreadable folder can't pass for an empty one.
+  if (info.reason) row(LIST_REASON[info.reason] || LIST_REASON.unreadable, 'idle', null);
+  // At a filesystem root the parent walk is over. On Windows that's only the end
+  // of one drive, so the server offers the others here — without this the browser
+  // can never leave the drive holding the user's profile.
+  for (const r of (info.roots || [])) {
+    if (r !== info.path) row(r, 'root', () => browseDir(r, t, onFile));
   }
+  if (onFile) for (const f of info.files) row(f.name, 'file', () => onFile(f.path));
+  for (const d of info.dirs) row(d.name, null, () => browseDir(d.path, t, onFile));
 }
 
 function openSaveAs(blob, defaultName, title) {
@@ -3365,11 +3389,15 @@ els.saveAsDir.onchange = () => browseDir(els.saveAsDir.value.trim());
 els.saveAsGo.onclick = async () => {
   if (!saveAsBlob) return;
   const name = els.saveAsName.value.trim();
-  const dir = els.saveAsDir.value.trim().replace(/\/+$/, '');
+  const dir = els.saveAsDir.value.trim();
   if (!name) return toast('Enter a file name');
   if (!dir) return toast('Choose a folder');
   const form = new FormData();
-  form.append('path', dir + '/' + name);
+  // Folder and name go over separately: the server joins them, because only it
+  // knows the separator, and joining there is what keeps a typed "../" from
+  // escaping the folder this dialog says it's writing to.
+  form.append('dir', dir);
+  form.append('name', name);
   form.append('data', saveAsBlob, name);
   const res = await apiFetch('/api/write', { method: 'POST', body: form });
   if (!res.ok) { toast(await errText(res, 'could not save')); return; }
@@ -3405,7 +3433,7 @@ async function openBookmarkSplit() {
 }
 
 async function bookmarkSplitGo() {
-  const dir = els.bsDir.value.trim().replace(/\/+$/, '');
+  const dir = els.bsDir.value.trim(); // the server Cleans it
   if (!dir) return toast('Choose a folder');
   const count = bsOutline.length;
   if (!confirm(`Write ${count} file${count === 1 ? '' : 's'} to ${dir}? Files with the same name will be replaced.`)) return;
@@ -3469,7 +3497,7 @@ function openPageSplit() {
   browseDir('', pageSplitDirEls());
 }
 async function pageSplitGo() {
-  const dir = els.psDir.value.trim().replace(/\/+$/, '');
+  const dir = els.psDir.value.trim(); // the server Cleans it
   if (!dir) return toast('Choose a folder');
   const count = psSpans().length;
   if (!count) return toast('Enter page ranges like 1-3, 4-8.');
@@ -5273,39 +5301,19 @@ els.removeOriginalsBtn.onclick = async () => {
 // --- open dialog -------------------------------------------------------------
 // The Open… dialog is the single open surface: type a path or URL, or browse the
 // filesystem. Browsing opens BY PATH (via openPath -> /api/open), so the file can
-// be saved in place and is remembered in Recent — unlike a drag-drop upload.
-let lastBrowseDir = ''; // remember where the user last browsed, across opens
-
-async function openBrowse(path) {
-  const res = await apiFetch('/api/listdir?path=' + encodeURIComponent(path || '~'));
-  if (!res.ok) return toast('could not list folder');
-  const info = await res.json();
-  lastBrowseDir = info.path;
-  els.openDir.value = info.path;
-  els.openHere.textContent = info.path;
-  els.openUp.disabled = !info.parent;
-  els.openUp.dataset.parent = info.parent || '';
-  els.openList.innerHTML = '';
-  // PDFs first — they're what this dialog opens; folders follow for navigation.
-  for (const f of (info.files || [])) {
-    const li = document.createElement('li');
-    li.className = 'file';
-    li.textContent = f;
-    li.onclick = () => { els.openModal.hidden = true; openPath(joinPath(info.path, f)); };
-    els.openList.appendChild(li);
-  }
-  for (const d of info.dirs) {
-    const li = document.createElement('li');
-    li.textContent = d;
-    li.onclick = () => openBrowse(joinPath(info.path, d));
-    els.openList.appendChild(li);
-  }
-}
+// be saved in place and is remembered in Recent — unlike a drag-drop upload. It
+// runs on the same browseDir as the three destination pickers; the only thing
+// that makes it different is that its rows can be files.
+const openDirEls = () => ({ dir: els.openDir, here: els.openHere, up: els.openUp, list: els.openList });
+const openFileRow = (path) => { els.openModal.hidden = true; openPath(path); };
+// The dir input keeps whatever folder the last browse left in it, so it doubles
+// as the "where was I?" memory across opens; '~' seeds the very first one at home.
+const openBrowse = (path) => browseDir(path || '~', openDirEls(), openFileRow);
 
 function openOpenDialog() {
   els.openModal.hidden = false;
   els.pathInput.value = '';
-  openBrowse(lastBrowseDir);
+  openBrowse(els.openDir.value.trim());
   els.pathInput.focus();
 }
 function openTyped() {
@@ -5389,10 +5397,11 @@ async function refreshRecent() {
       slot.appendChild(empty);
       continue;
     }
-    for (const p of recent) {
+    for (const e of recent) {
       const b = document.createElement('button');
-      b.textContent = p.replace(/^.*\//, ''); b.title = p;
-      b.onclick = () => openPath(p);
+      // The server sends the display name: only it can tell where a path ends.
+      b.textContent = e.name; b.title = e.path;
+      b.onclick = () => openPath(e.path);
       slot.appendChild(b);
     }
   }

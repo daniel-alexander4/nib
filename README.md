@@ -448,6 +448,19 @@ If the receiver is behind **CGNAT** (common on mobile and some ISPs), port-forwa
 won't work — use the VPN path. The security model doesn't depend on *how* you reach
 each other: the pinned-key handshake holds over any transport.
 
+### Open a document
+**Open…** (File tab, or Ctrl+O) takes a typed path or URL, or browses your
+filesystem. Browsing opens the file *by path*, so it can be saved back in place
+and shows up under **Recent** — unlike dragging a file onto the window, which
+uploads a copy with nowhere to save to.
+
+The same folder browser backs every destination picker (Save As, and both
+splits). On Windows it lists your **drives** once you reach the top of one:
+there's no single root there the way `/` is on Linux and macOS, so without that
+a document on `D:`, a USB stick or a mapped share couldn't be reached by
+clicking. And a folder Nib can't read says so — "you don't have permission to
+read that folder", "that's a file, not a folder" — instead of looking empty.
+
 ### Pages & export
 **Combine PDFs…** (File tab) assembles several documents into one: add the files,
 arrange them with ↑ ↓, and they merge top-to-bottom into a new document — then

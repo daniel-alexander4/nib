@@ -10,6 +10,7 @@ require (
 	github.com/pdfcpu/pdfcpu v0.13.0
 	github.com/yuin/goldmark v1.8.2
 	golang.org/x/crypto v0.52.0
+	golang.org/x/sys v0.45.0
 	golang.org/x/term v0.43.0
 	software.sslmate.com/src/go-pkcs12 v0.7.2
 )
@@ -26,7 +27,6 @@ require (
 	github.com/mattn/go-runewidth v0.0.24 // indirect
 	github.com/pkg/errors v0.9.1 // indirect
 	golang.org/x/image v0.41.0 // indirect
-	golang.org/x/sys v0.45.0 // indirect
 	golang.org/x/text v0.37.0 // indirect
 	gopkg.in/yaml.v2 v2.4.0 // indirect
 )
