@@ -8,6 +8,7 @@ require (
 	github.com/digitorus/pdfsign v0.0.0-20260407063256-85ede6424a74
 	github.com/digitorus/timestamp v0.0.0-20231217203849-220c5c2851b7
 	github.com/pdfcpu/pdfcpu v0.13.0
+	github.com/yuin/goldmark v1.8.2
 	golang.org/x/crypto v0.52.0
 	golang.org/x/term v0.43.0
 	software.sslmate.com/src/go-pkcs12 v0.7.2
@@ -24,7 +25,6 @@ require (
 	github.com/mattetti/filebuffer v1.0.1 // indirect
 	github.com/mattn/go-runewidth v0.0.24 // indirect
 	github.com/pkg/errors v0.9.1 // indirect
-	github.com/yuin/goldmark v1.8.2 // indirect
 	golang.org/x/image v0.41.0 // indirect
 	golang.org/x/sys v0.45.0 // indirect
 	golang.org/x/text v0.37.0 // indirect
