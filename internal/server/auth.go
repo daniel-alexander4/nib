@@ -7,10 +7,13 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/url"
 	"os"
+	"path/filepath"
+	"strings"
 
 	"nib/internal/pdfops"
 	"nib/internal/sshkey"
@@ -229,21 +232,52 @@ func writeKeyPrepError(w http.ResponseWriter, keyPath string, err error) {
 	httpError(w, http.StatusBadRequest, "could not prepare key: "+err.Error())
 }
 
+// normalizeKeyPath turns a user-supplied key location into one that will still
+// mean the same thing on the next launch: it expands a leading "~" (reusing the
+// same expander the folder browser uses, which accepts "~\" as well as "~/") and
+// then requires the result be absolute.
+//
+// The absolute requirement is the point, not a formality. A relative path is
+// resolved against the process's working directory, which is a property of how
+// the app was started rather than of the machine — on Windows an Explorer
+// double-click, an "Open with", and a shortcut each give a different one. A key
+// written relative to one of those is not found by the next launch, and the vault
+// it unlocks is then unopenable. Observed before this guard existed: enrolling
+// with "~/.ssh/id_ed25519" created a directory literally named "~" beside the
+// working directory, and the vault recorded that as the key's home.
+func normalizeKeyPath(p string) (string, error) {
+	p = expandHome(strings.TrimSpace(p))
+	if p == "" {
+		return "", errors.New("key path required")
+	}
+	if !filepath.IsAbs(p) {
+		return "", fmt.Errorf("key path must be absolute, not %q — a relative path is "+
+			"resolved against wherever Nib happened to be started, so the key would not "+
+			"be found next time", p)
+	}
+	return filepath.Clean(p), nil
+}
+
 // resolveKey prepares the public-key line and key path for enrollment.
 func resolveKey(mode, keyPath string) (pubLine, path string, err error) {
 	switch mode {
 	case "create":
-		if keyPath == "" {
+		if strings.TrimSpace(keyPath) == "" {
 			keyPath = sshkey.DefaultNewKeyPath()
 		}
-		pub, err := sshkey.Generate(keyPath)
-		return pub, keyPath, err
-	case "use":
-		if keyPath == "" {
-			return "", "", errors.New("key path required")
+		target, err := normalizeKeyPath(keyPath)
+		if err != nil {
+			return "", "", err
 		}
-		pub, err := sshkey.PublicKeyLine(keyPath)
-		return pub, keyPath, err
+		pub, err := sshkey.Generate(target)
+		return pub, target, err
+	case "use":
+		target, err := normalizeKeyPath(keyPath)
+		if err != nil {
+			return "", "", err
+		}
+		pub, err := sshkey.PublicKeyLine(target)
+		return pub, target, err
 	default:
 		return "", "", errors.New("unknown mode")
 	}

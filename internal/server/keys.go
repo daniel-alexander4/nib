@@ -58,32 +58,53 @@ func (s *Server) handleKeysAdd(w http.ResponseWriter, r *http.Request) {
 	}
 	var pubLine, keyPath string
 	switch req.Mode {
+	// Every mode below stores a key path in the vault, and that path is re-read at
+	// each unlock — so it goes through normalizeKeyPath for the same reason
+	// resolveKey does: a relative one is anchored to whatever directory Nib
+	// happened to be started in and will not be found next launch.
 	case "use":
-		if req.KeyPath == "" {
-			httpError(w, http.StatusBadRequest, "key path required")
+		target, err := normalizeKeyPath(req.KeyPath)
+		if err != nil {
+			httpError(w, http.StatusBadRequest, err.Error())
 			return
 		}
-		pl, err := sshkey.PublicKeyLine(req.KeyPath)
+		pl, err := sshkey.PublicKeyLine(target)
 		if err != nil {
 			httpError(w, http.StatusBadRequest, "could not read key: "+err.Error())
 			return
 		}
-		pubLine, keyPath = pl, req.KeyPath
+		pubLine, keyPath = pl, target
 	case "paste":
 		pubLine = strings.TrimSpace(req.PubKey)
 		if pubLine == "" {
 			httpError(w, http.StatusBadRequest, "public key required")
 			return
 		}
-		keyPath = strings.TrimSpace(req.KeyPath)
-		if keyPath == "" {
-			keyPath = sshkey.DefaultNewKeyPath()
+		// A pasted key's private half usually lives on ANOTHER machine — that is
+		// the point of pasting one. So the path stays optional and an empty one is
+		// recorded as empty, which reads as "we cannot unlock with this locally".
+		// (It used to default to this machine's own key path, which claimed the
+		// pasted key lived somewhere it does not.) A path that IS given still has
+		// to be one we could find again.
+		if strings.TrimSpace(req.KeyPath) != "" {
+			target, err := normalizeKeyPath(req.KeyPath)
+			if err != nil {
+				httpError(w, http.StatusBadRequest, err.Error())
+				return
+			}
+			keyPath = target
 		}
 	case "create":
-		keyPath = strings.TrimSpace(req.KeyPath)
-		if keyPath == "" {
-			keyPath = sshkey.DefaultNewKeyPath()
+		raw := strings.TrimSpace(req.KeyPath)
+		if raw == "" {
+			raw = sshkey.DefaultNewKeyPath()
 		}
+		target, err := normalizeKeyPath(raw)
+		if err != nil {
+			httpError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		keyPath = target
 		pl, err := sshkey.Generate(keyPath)
 		if err != nil {
 			writeKeyPrepError(w, keyPath, err)
