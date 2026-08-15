@@ -57,7 +57,11 @@ func (s *Server) handleRedact(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	s.commitBarrier(result) // redaction destroys content: no undo may resurrect it
+	// redaction destroys content: no undo may resurrect it
+	if !s.commitBarrier(result) {
+		httpError(w, http.StatusNotFound, "no document open")
+		return
+	}
 	writeJSON(w, s.docResponse())
 }
 

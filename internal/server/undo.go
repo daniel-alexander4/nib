@@ -24,36 +24,50 @@ const (
 // drops any redo history, then makes result the current document. Callers pass the
 // input they actually operated on — posted bytes for page/outline ops, doc.data
 // for in-place ops — so undo restores precisely the pre-op document (including any
-// overlay the client baked into the input). No-op if no document is open.
-func (s *Server) commitMutation(input, result []byte) {
+// overlay the client baked into the input).
+//
+// It reports whether the commit landed: false means no document is open and the
+// work was discarded. Callers MUST check it and answer 404 rather than replying
+// 200 with an empty docResponse — a success reply for discarded work. The check
+// belongs here and not in the caller because only this function holds the lock
+// across the test and the write; a caller that tested s.doc first would leave a
+// window for a close to land in between, which is the very defect.
+func (s *Server) commitMutation(input, result []byte) bool {
 	sig := sign.Verify(result)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.doc == nil {
-		return
+		return false
 	}
 	s.undo = append(s.undo, input)
 	s.clearRedoLocked()
 	s.trimUndoLocked()
 	s.doc.data = result
 	s.doc.sig = sig
+	return true
 }
 
 // commitBarrier makes result the current document and CLEARS the undo/redo
 // history. Used by operations that destroy content the user expects to be gone for
 // good (redaction, flatten/remove-originals): retaining pre-op snapshots would let
-// undo resurrect the very content the operation removed. No-op if no document.
-func (s *Server) commitBarrier(result []byte) {
+// undo resurrect the very content the operation removed.
+//
+// Reports whether the commit landed, on the same contract as commitMutation —
+// and it matters more here, because the operations that come through this door
+// are the irreversible ones. Telling a user their redaction succeeded when it
+// was discarded is the worst reply this server can give.
+func (s *Server) commitBarrier(result []byte) bool {
 	sig := sign.Verify(result)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.doc == nil {
-		return
+		return false
 	}
 	s.clearUndoLocked()
 	s.clearRedoLocked()
 	s.doc.data = result
 	s.doc.sig = sig
+	return true
 }
 
 // clearUndoLocked / clearRedoLocked drop a history stack, niling entries so the

@@ -52,6 +52,9 @@ func (s *Server) handleOutlineSet(w http.ResponseWriter, r *http.Request) {
 		httpError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	s.commitMutation(pdfBytes, result)
+	if !s.commitMutation(pdfBytes, result) {
+		httpError(w, http.StatusNotFound, "no document open")
+		return
+	}
 	writeJSON(w, s.docResponse())
 }

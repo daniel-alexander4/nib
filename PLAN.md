@@ -326,21 +326,59 @@ Exit criteria:
 - Opening a document after a Close works normally.
 - Full-repo `/code-review` clean; shippable as a release.
 
-#### P01.S01 — Server: drop the document
+#### P01.S01 — Server: honest empty state on the mutating routes *(done 2026-08-15, v1.102.4)*
+Scope: the four routes that currently commit against a closed document and return
+200 (`pages.go:142`, `outline.go:55`, `redact.go:60`, `export.go:229`). Refs: D2.
+
+**(slice-grill pin: order swapped with S02, 2026-08-15)** This was S02. The four
+routes' wrong-success is near-unreachable today — `s.doc` is nil only before the
+first open, when the UI disables those controls — and **Close is what makes it
+reachable**. Landing the close route first would put a live wrong-success on the
+redaction path into this repo's history for one commit; landing the guards first
+costs nothing.
+
+**(reality drift, 2026-08-15: the guard shape changed during implementation)** The
+grill approved copying the 13 siblings' `doc := s.doc; if doc == nil` guard. Reading
+the handlers refuted the premise: **these four never read `doc.data`.** They work
+entirely from bytes the client posted and only *install* the result. So the sibling
+shape is a pattern that does not fit, and worse, a check placed before the commit
+call leaves a TOCTOU — a close landing in between still yields a 200 for discarded
+work, which is the exact defect. Instead `commitMutation`/`commitBarrier` **return
+whether they committed**, and all 8 production callers act on it. One lock
+acquisition, no window, and the four already-guarded callers (`attachments.go:57`,
+`scan.go:76,146`, `ocr.go:70`) get the same race closed for free.
+
+Tasks:
+1. T01 — `commitMutation` and `commitBarrier` return `bool`.
+2. T02 — all 8 production callers 404 on a false return.
+3. T03 — table-driven test over the four routes: **200 with a document open first**,
+   then 404 without.
+4. T04 — assert the 404 body is the literal `no document open` the siblings emit.
+
+Acceptance:
+- Each of the four returns 404 with no document open, matching the other 13.
+- Each still returns its normal status **with** a document open — the non-zero probe.
+- The 404 body is the same string the siblings emit, not a new one.
+- A race between an in-flight op and a close cannot report success for
+  discarded work.
+
+#### P01.S02 — Server: drop the document
 Scope: `POST /api/close` → `setDoc(nil)`, which already clears both rings.
 Refs: D2.
 Acceptance:
 - After close, `/api/pdf` 404s and `/api/doc` returns the empty `docResponse`.
-- Undo history is gone: `canUndo` false *and* a subsequent undo is a no-op.
-
-#### P01.S02 — Server: honest empty state on the mutating routes
-Scope: add the standard 404 guard to the four routes that currently commit
-against a closed document and return 200 (`pages.go:142`, `outline.go:55`,
-`redact.go:60`, `export.go:229`). Refs: D2.
-Acceptance:
-- Each of the four returns 404 with no document open, matching the other 13.
-- A race between an in-flight op and a close cannot report success for
-  discarded work.
+- Undo history is gone: `canUndo` **true before the close and false after** —
+  `docResponse` computes it from `len(s.undo)` independently of `doc`, so this
+  detects an uncleared ring; asserting only the post-close `false` would pass
+  against a server that never had history.
+- `POST /api/close` with nothing open is idempotent: 200 and the empty
+  `docResponse`, matching the `ErrNotEncrypted`-passes-through precedent (v1.57.0).
+- **(carried from P01.S01, 2026-08-15)** A close landing *while* one of the four
+  mutating routes is in flight makes that route answer 404, not 200. S01 closed
+  this class structurally — the test-and-write is one lock acquisition — but
+  recorded the clause `not exercised`, because until this slice there was no way
+  to make a close happen mid-operation. It is exercisable here and must actually
+  be driven, not inherited as met.
 
 #### P01.S03 — Client: the teardown
 Scope: `closeDocument()` mirroring `setDocumentFromServer` — bump `docGen`, the
