@@ -165,3 +165,62 @@ func TestLoopbackPredicates(t *testing.T) {
 		}
 	}
 }
+
+// The defect this closes: any readable file became the open document, and because
+// a path-opened document reports canSave, the next Save wrote PDF bytes over it.
+// Asserting the refusal alone would miss the half that actually destroyed data,
+// so this also proves the file on disk is untouched and no document was adopted.
+func TestOpenRejectsNonPDFAndLeavesItIntact(t *testing.T) {
+	ts, _ := startServer(t)
+	c, csrf := authedClient(t, ts)
+
+	notes := filepath.Join(t.TempDir(), "notes.txt")
+	original := []byte("not a pdf at all\n")
+	if err := os.WriteFile(notes, original, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	body, _ := json.Marshal(openRequest{Path: notes})
+	resp := write(t, c, csrf, http.MethodPost, ts.URL+"/api/open", "application/json", bytes.NewReader(body))
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusUnsupportedMediaType {
+		t.Fatalf("open(non-PDF) status = %d, want 415", resp.StatusCode)
+	}
+
+	// Nothing was adopted, so /api/pdf must still report "no document open"
+	// rather than handing the text back as a PDF.
+	pr, err := c.Get(ts.URL + "/api/pdf")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pr.Body.Close()
+	if pr.StatusCode != http.StatusNotFound {
+		t.Errorf("pdf status after a refused open = %d, want 404", pr.StatusCode)
+	}
+
+	if got, err := os.ReadFile(notes); err != nil || !bytes.Equal(got, original) {
+		t.Errorf("the file changed on disk: %q (err %v)", got, err)
+	}
+}
+
+// A PDF whose header sits a little way in still opens — the guard must not be so
+// strict that it locks users out of documents Nib can actually render.
+func TestOpenAcceptsOffsetHeader(t *testing.T) {
+	ts, path := startServer(t)
+	c, csrf := authedClient(t, ts)
+
+	real, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	offset := filepath.Join(t.TempDir(), "offset.pdf")
+	if err := os.WriteFile(offset, append([]byte("\n\n\n"), real...), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	body, _ := json.Marshal(openRequest{Path: offset})
+	resp := write(t, c, csrf, http.MethodPost, ts.URL+"/api/open", "application/json", bytes.NewReader(body))
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("open(offset header) status = %d, want 200", resp.StatusCode)
+	}
+}
