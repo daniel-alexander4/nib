@@ -125,6 +125,22 @@ check "the tesseract core (.js) too"            "$(ctype 'vendor/tesseract/tesse
 check "stylesheet is served as CSS"             "$(ctype 'style.css')"                       'text/css'
 
 echo
+echo "key paths — a relative one is anchored to however the app was started"
+# filepath.IsAbs answers differently per OS, so the Windows shapes can only be
+# checked here: C:\... is absolute, a bare name and a drive-relative \Users\...
+# are not. A key stored at a non-absolute path is not found by the next launch.
+# Driven through /api/ssh/keys rather than /api/ssh/enroll: the vault is already
+# set up by this point, so enroll would answer 409 before ever reaching the guard.
+# This is the second entry point anyway — the one a fix to the first-run wizard
+# alone would have missed.
+keyadd() { curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/api/ssh/keys" \
+  -H 'Content-Type: application/json' -H "X-CSRF-Token: $CSRF" \
+  -d "{\"mode\":\"create\",\"keyPath\":\"$1\"}"; }
+check "a bare relative name is refused"     "$(keyadd 'id_ed25519')"          '400'
+check "a drive-relative path is refused"    "$(keyadd '\\\\Users\\\\me\\\\k')" '400'
+checknot "and nothing was written beside the exe" "$(ls "$WORK" 2>/dev/null)" 'id_ed25519'
+
+echo
 echo "drive enumeration — the parent walk dead-ends at a drive root on Windows"
 ROOT_LIST="$(listdir 'C:\')"
 check "C:\\ reports no parent"            "$ROOT_LIST" '"parent":""'
