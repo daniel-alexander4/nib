@@ -206,10 +206,17 @@ func Candidates() []string {
 }
 
 // DefaultNewKeyPath is where a freshly created key is written: ~/.ssh/id_ed25519.
+//
+// It returns "" when the home directory is unknown, because there is no sensible
+// default then. It used to return the bare name "id_ed25519", which is relative:
+// the key landed beside whatever directory Nib was started in, the vault recorded
+// that, and the next launch — from a different directory, which on Windows is
+// simply a different way of opening the app — could not find it. An empty default
+// makes the wizard ask instead of guessing wrong.
 func DefaultNewKeyPath() string {
 	home, err := os.UserHomeDir()
 	if err != nil {
-		return "id_ed25519"
+		return ""
 	}
 	return filepath.Join(home, ".ssh", "id_ed25519")
 }

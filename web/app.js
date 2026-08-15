@@ -326,7 +326,15 @@ function applyStatus(st) {
   els.authHint.textContent = st.state === 'migrate'
     ? 'Enter your old vault password once; Nib will re-key the vault to your SSH key.'
     : 'Choose the SSH key that unlocks Nib. No password is used.';
-  els.createPath.value = st.defaultKeyPath || '~/.ssh/id_ed25519';
+  // Prefill only a real path. The old fallback put the literal "~/.ssh/id_ed25519"
+  // in the field, which the server now rejects (a "~" path is expanded, but this
+  // was a placeholder standing in for a path the server couldn't work out). Both
+  // hints come from the server too, so Windows isn't shown a POSIX example.
+  els.createPath.value = st.defaultKeyPath || '';
+  if (st.defaultKeyPath) {
+    els.createPath.placeholder = st.defaultKeyPath;
+    els.keyPath.placeholder = st.defaultKeyPath;
+  }
   els.authForm.querySelector('input[value="use"]').checked = haveCandidates;
   els.authForm.querySelector('input[value="create"]').checked = !haveCandidates;
   els.authSubmit.textContent = st.state === 'migrate' ? 'Migrate' : 'Enable';
