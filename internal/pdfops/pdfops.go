@@ -26,6 +26,29 @@ import (
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/types"
 )
 
+// pdfHeaderWindow is how far into a file the %PDF- header may sit. ISO 32000-1
+// §7.5.2 puts it at byte 0, but Adobe's implementation notes tell readers to
+// accept it anywhere in the first 1024 bytes, and pdf.js scans that far — so a
+// stricter test here would refuse documents Nib goes on to render perfectly.
+const pdfHeaderWindow = 1024
+
+// LooksLikePDF reports whether data carries a PDF header. It is a cheap "is this
+// the right kind of file at all" gate, deliberately not a validity check:
+// Validate runs the full pdfcpu read, which rejects plenty of real-world PDFs
+// that pdf.js displays without complaint, so using it to guard an open would
+// lock users out of their own documents.
+//
+// This is the single answer to that question. It used to be one inline prefix
+// test on the URL-fetch path, which left the two other open surfaces ungated —
+// so a text file could become the "open document", and because a path-opened
+// document reports canSave, saving it wrote PDF bytes over the original.
+func LooksLikePDF(data []byte) bool {
+	if len(data) > pdfHeaderWindow {
+		data = data[:pdfHeaderWindow]
+	}
+	return bytes.Contains(data, []byte("%PDF-"))
+}
+
 // RasterPage is a rasterized page image plus the point size its PDF page should
 // take. The client rasterizes at 2× for crispness, so the image's pixel
 // dimensions are double the page; carrying the target size explicitly keeps the
