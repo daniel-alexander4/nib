@@ -139,7 +139,10 @@ func (s *Server) handlePages(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	s.commitMutation(pdfBytes, result)
+	if !s.commitMutation(pdfBytes, result) {
+		httpError(w, http.StatusNotFound, "no document open")
+		return
+	}
 	writeJSON(w, s.docResponse())
 }
 
