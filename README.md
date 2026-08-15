@@ -648,6 +648,19 @@ Cross-compiles a static, cgo-free binary for **Linux, macOS, and Windows**
 (amd64 + arm64) into `dist/`, plus Linux `.deb` packages. On macOS and Windows
 you run the binary directly — it's fully self-contained.
 
+On Windows, run `nib register` once to have Nib offered for PDFs in Explorer's
+**Open with** menu (`nib unregister` undoes it). Everything it writes lives under
+`HKEY_CURRENT_USER`, so it needs no administrator rights and touches no other
+account. It stops short of making Nib the *default* PDF handler, and so does
+every other program: since Windows 8 the default for a file type is sealed
+behind a per-user key that only Windows itself may write. Right-click a PDF →
+**Open with** → **Choose another app** → **Nib**, and tick *Always use this app*
+if you want it to stick.
+
+Opening several PDFs from Explorer gives you a window each. That differs from
+the Linux desktop entry, which passes `--replace` and reuses one window; the
+process-replacement that relies on is Linux-only.
+
 Windows behaviour can be checked without a Windows machine: `./build/winrepro.sh`
 builds `nib.exe`, runs it headless under [wine](https://www.winehq.org/) in a
 throwaway prefix, and drives the same HTTP calls the UI makes — drive
@@ -717,6 +730,7 @@ isn't a known command (a PDF path, or nothing) still opens the app as usual.
 | `nib export-xfdf IN -o OUT` | Export a form's field data as **XFDF** — the XML interchange format Acrobat and Foxit read and write (the inverse of `nib fill --data x.xfdf`). |
 | `nib attachments IN [--json]` | List embedded files; `--extract NAME -o OUT` pulls one out, `--add FILE -o OUT` embeds one. |
 | `nib outline IN [--json]` | List the document's bookmark outline (indented by level, or JSON). |
+| `nib register` / `nib unregister` | **Windows only.** Add or remove Nib from Explorer's "Open with" menu for PDFs (per-user, no admin). Windows reserves the *default* handler for the user to pick. |
 | `nib watch DIR --do OP` | Run `timestamp`/`optimize`/`sanitize` on each PDF added to `DIR`, until interrupted. |
 | `nib version` | Print the version. |
 

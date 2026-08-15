@@ -98,6 +98,8 @@ var commands = map[string]func([]string) int{
 	"office":      cmdOffice,
 	"attachments": cmdAttachments,
 	"outline":     cmdOutline,
+	"register":    cmdRegister,
+	"unregister":  cmdUnregister,
 }
 
 func printUsage(w *os.File) {
@@ -106,6 +108,8 @@ func printUsage(w *os.File) {
 Run "nib" with no command (optionally a PDF path) to open the desktop app.
 These subcommands run headlessly, without a browser:
 
+  nib register                    (Windows) offer Nib for PDFs in "Open with"
+  nib unregister                  (Windows) undo register
   nib timestamp FILE...           write an OpenTimestamps proof (FILE.ots) per file
   nib timestamp --verify FILE...  check each FILE against its FILE.ots proof
   nib verify [--json] FILE...     report each file's signature integrity
