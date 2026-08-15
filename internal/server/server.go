@@ -234,6 +234,13 @@ func (s *Server) handleOpen(w http.ResponseWriter, r *http.Request) {
 		httpError(w, http.StatusInternalServerError, "could not read file")
 		return
 	}
+	// A path-opened document reports canSave, so a non-PDF opened here would be
+	// overwritten with PDF bytes by the next Save — the one open surface where
+	// getting this wrong destroys the file.
+	if !pdfops.LooksLikePDF(data) {
+		httpError(w, http.StatusUnsupportedMediaType, "that file isn't a PDF")
+		return
+	}
 	s.setDoc(&document{path: path, data: data, sig: sign.Verify(data)})
 	_ = vaultFrom(r).AddRecent(path) // best-effort; failure to record is non-fatal
 	writeJSON(w, s.docResponse())
@@ -257,6 +264,12 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 	data, err := io.ReadAll(file)
 	if err != nil {
 		httpError(w, http.StatusBadRequest, "could not read upload")
+		return
+	}
+	// No path here, so nothing can be overwritten — but an unreadable "document"
+	// still leaves the viewer stuck on "Loading…" with no explanation.
+	if !pdfops.LooksLikePDF(data) {
+		httpError(w, http.StatusUnsupportedMediaType, "that file isn't a PDF")
 		return
 	}
 	s.setDoc(&document{path: "", data: data, sig: sign.Verify(data)})

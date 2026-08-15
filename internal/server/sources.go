@@ -1,13 +1,13 @@
 package server
 
 import (
-	"bytes"
 	"encoding/json"
 	"io"
 	"net/http"
 	"path/filepath"
 	"time"
 
+	"nib/internal/pdfops"
 	"nib/internal/sign"
 )
 
@@ -46,7 +46,7 @@ func (s *Server) handleOpenURL(w http.ResponseWriter, r *http.Request) {
 		httpError(w, http.StatusBadGateway, "could not fetch PDF")
 		return
 	}
-	if !bytes.HasPrefix(data, []byte("%PDF")) {
+	if !pdfops.LooksLikePDF(data) {
 		httpError(w, http.StatusUnsupportedMediaType, "URL did not return a PDF")
 		return
 	}

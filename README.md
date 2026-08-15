@@ -454,6 +454,10 @@ filesystem. Browsing opens the file *by path*, so it can be saved back in place
 and shows up under **Recent** — unlike dragging a file onto the window, which
 uploads a copy with nowhere to save to.
 
+A file that isn't a PDF is refused with a message rather than opening an empty
+viewer — the header is looked for in the first 1024 bytes, the same window
+pdf.js allows, so a document with a little junk before its header still opens.
+
 The same folder browser backs every destination picker (Save As, and both
 splits). On Windows it lists your **drives** once you reach the top of one:
 there's no single root there the way `/` is on Linux and macOS, so without that

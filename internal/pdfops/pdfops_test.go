@@ -468,3 +468,29 @@ func TestCoreFont(t *testing.T) {
 		}
 	}
 }
+
+// The header may legally sit anywhere in the first 1024 bytes — a stricter test
+// refuses documents pdf.js renders, a looser one lets a text file become the
+// open document and, on the path-open surface, get overwritten by the next Save.
+func TestLooksLikePDF(t *testing.T) {
+	offset := func(n int) []byte { return append(bytes.Repeat([]byte("\n"), n), []byte("%PDF-1.7\n")...) }
+	cases := []struct {
+		name string
+		data []byte
+		want bool
+	}{
+		{"header at byte 0", []byte("%PDF-1.7\n1 0 obj"), true},
+		{"header at 500 — junk before it is legal", offset(500), true},
+		{"header at the 1024-byte edge", offset(1015), true},
+		{"header past the window", offset(2000), false},
+		{"plain text", []byte("not a pdf at all\n"), false},
+		{"HTML error page a URL fetch might return", []byte("<!doctype html><title>404</title>"), false},
+		{"%PDF without the version hyphen is not a header", []byte("%PDF but not really"), false},
+		{"empty", nil, false},
+	}
+	for _, c := range cases {
+		if got := LooksLikePDF(c.data); got != c.want {
+			t.Errorf("%s: LooksLikePDF() = %v, want %v", c.name, got, c.want)
+		}
+	}
+}
