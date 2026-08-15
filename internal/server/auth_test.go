@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"os"
+	"path/filepath"
 	"testing"
 )
 
@@ -135,5 +137,96 @@ func TestVaultExportImportRoundTrip(t *testing.T) {
 	bad.Body.Close()
 	if bad.StatusCode != http.StatusBadRequest {
 		t.Errorf("import garbage = %d, want 400", bad.StatusCode)
+	}
+}
+
+// A key path is re-read at every unlock, so it has to survive a change of working
+// directory. It used to not: enrolling with "~/.ssh/id_ed25519" made a directory
+// literally named "~" beside wherever Nib was started, and a bare name landed
+// there too — then the next launch, from a different directory, could not find the
+// key and the vault would not open.
+func TestNormalizeKeyPath(t *testing.T) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Skip("no home dir")
+	}
+	abs := filepath.Join(home, ".ssh", "id_ed25519")
+
+	ok := map[string]string{
+		"~/.ssh/id_ed25519": abs,
+		abs:                 abs,
+		"  " + abs + "  ":   abs, // surrounding space is the user's, not a path
+	}
+	for in, want := range ok {
+		got, err := normalizeKeyPath(in)
+		if err != nil {
+			t.Errorf("normalizeKeyPath(%q) errored: %v", in, err)
+			continue
+		}
+		if got != want {
+			t.Errorf("normalizeKeyPath(%q) = %q, want %q", in, got, want)
+		}
+	}
+
+	for _, bad := range []string{"", "   ", "id_ed25519", "keys/id_ed25519", "./id_ed25519", "../id_ed25519"} {
+		if got, err := normalizeKeyPath(bad); err == nil {
+			t.Errorf("normalizeKeyPath(%q) = %q with no error — a path resolved against the "+
+				"working directory will not be found on the next launch", bad, got)
+		}
+	}
+}
+
+// The defect in full: the request was accepted AND a key file appeared beside the
+// working directory. Asserting only the status would pass against code that
+// rejects for some unrelated reason, so this asserts the file too.
+func TestEnrollRejectsRelativeKeyPathAndWritesNothing(t *testing.T) {
+	ts, _ := startServer(t)
+	c := newClient(t)
+
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	stray := filepath.Join(cwd, "id_ed25519")
+	os.Remove(stray)
+	t.Cleanup(func() { os.Remove(stray); os.Remove(stray + ".pub") })
+
+	body, _ := json.Marshal(enrollRequest{Mode: "create", KeyPath: "id_ed25519"})
+	resp, err := c.Post(ts.URL+"/api/ssh/enroll", "application/json", bytes.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("enroll(relative) status = %d, want 400", resp.StatusCode)
+	}
+	if _, err := os.Stat(stray); err == nil {
+		t.Errorf("a key was written to %s — relative paths must not reach sshkey.Generate", stray)
+	}
+	msg, _ := io.ReadAll(resp.Body)
+	if !bytes.Contains(msg, []byte("absolute")) {
+		t.Errorf("error body = %s, want it to say the path must be absolute", msg)
+	}
+}
+
+// The second entry point. Fixing only the first-run wizard would leave the same
+// defect fully reachable through Manage authorized keys.
+func TestAddKeyRejectsRelativeKeyPath(t *testing.T) {
+	ts, _ := startServer(t)
+	c, csrf := authedClient(t, ts)
+
+	cwd, _ := os.Getwd()
+	stray := filepath.Join(cwd, "id_ed25519")
+	os.Remove(stray)
+	t.Cleanup(func() { os.Remove(stray); os.Remove(stray + ".pub") })
+
+	body, _ := json.Marshal(addKeyRequest{Mode: "create", KeyPath: "id_ed25519"})
+	resp := write(t, c, csrf, http.MethodPost, ts.URL+"/api/ssh/keys", "application/json", bytes.NewReader(body))
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("addKey(relative) status = %d, want 400", resp.StatusCode)
+	}
+	if _, err := os.Stat(stray); err == nil {
+		t.Errorf("a key was written to %s via /api/ssh/keys", stray)
 	}
 }
