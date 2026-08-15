@@ -226,7 +226,11 @@ func (s *Server) handleAssemble(w http.ResponseWriter, r *http.Request) {
 	// reload=1 loads the flattened result back as the open document (the
 	// guaranteed-inert sanitize floor) instead of downloading it.
 	if r.FormValue("reload") == "1" {
-		s.commitBarrier(pdf) // flatten makes covered/edited content unrecoverable
+		// flatten makes covered/edited content unrecoverable
+		if !s.commitBarrier(pdf) {
+			httpError(w, http.StatusNotFound, "no document open")
+			return
+		}
 		writeJSON(w, s.docResponse())
 		return
 	}
