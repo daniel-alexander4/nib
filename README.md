@@ -644,6 +644,13 @@ Cross-compiles a static, cgo-free binary for **Linux, macOS, and Windows**
 (amd64 + arm64) into `dist/`, plus Linux `.deb` packages. On macOS and Windows
 you run the binary directly — it's fully self-contained.
 
+Windows behaviour can be checked without a Windows machine: `./build/winrepro.sh`
+builds `nib.exe`, runs it headless under [wine](https://www.winehq.org/) in a
+throwaway prefix, and drives the same HTTP calls the UI makes — drive
+enumeration, `~\` expansion, unreadable-folder reporting, save containment. The
+places `path/filepath` answers differently on Windows are exactly the ones a
+Linux test suite can't reach. It skips cleanly when wine isn't installed.
+
 A `Makefile` wraps these: `make dist` regenerates the third-party notices and
 runs the cross-compile/package; `make install` does the same for a local
 install; `make notices` regenerates [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md)
