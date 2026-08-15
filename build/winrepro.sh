@@ -78,6 +78,18 @@ CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -o "$EXE" ./cmd/nib || exit 1
 echo "initializing wine prefix (first run takes a moment)"
 wineboot -u >/dev/null 2>&1
 
+# Run the whole harness against a HOSTILE MIME registry. Go's mime package seeds
+# itself from HKEY_CLASSES_ROOT on Windows, so a stray per-machine entry decides
+# the Content-Type of the assets Nib ships inside its own binary. A real user hit
+# exactly this: ".mjs" served as text/plain, Chromium refused the UI's modules
+# under strict MIME checking, and the app window came up with no dialog and no
+# button that worked. Go's own workaround covers ".js" and nothing else.
+#
+# Setting these before nib starts (mime reads the registry once, at init) means
+# every check below runs under the condition that broke it.
+wine reg add 'HKCR\.mjs' /v "Content Type" /t REG_SZ /d "text/plain" /f >/dev/null 2>&1
+wine reg add 'HKCR\.js'  /v "Content Type" /t REG_SZ /d "text/plain" /f >/dev/null 2>&1
+
 # Seed a folder directly under the Windows home. Wine symlinks the shell folders
 # (Documents, Desktop) out to the real Unix home, so a fresh subdirectory is the
 # only one guaranteed to hold just our fixtures.
@@ -102,6 +114,15 @@ curl -s --max-time 2 "$BASE/api/status" >/dev/null 2>&1 || {
 curl -s -X POST "$BASE/api/ssh/enroll" -H 'Content-Type: application/json' -d '{"mode":"create"}' >/dev/null
 CSRF="$(curl -s "$BASE/api/status" | sed -n 's/.*"csrf":"\([^"]*\)".*/\1/p')"
 [ -n "$CSRF" ] || { echo "vault did not unlock; log follows"; cat "$WORK/nib.log"; exit 1; }
+
+echo
+echo "asset MIME types — the UI is an ES module; a non-JS type stops it executing"
+ctype() { curl -s -o /dev/null -D - "$BASE/$1" | tr -d '\r' | sed -n 's/^[Cc]ontent-[Tt]ype: //p'; }
+check "app.js is served as JavaScript"          "$(ctype 'app.js')"                          'text/javascript'
+check ".mjs is served as JavaScript"            "$(ctype 'vendor/pdfjs/pdf.min.mjs')"        'text/javascript'
+check "the other .mjs modules too"              "$(ctype 'vendor/pixelmatch/pixelmatch.mjs')" 'text/javascript'
+check "the tesseract core (.js) too"            "$(ctype 'vendor/tesseract/tesseract-core-simd.wasm.js')" 'text/javascript'
+check "stylesheet is served as CSS"             "$(ctype 'style.css')"                       'text/css'
 
 echo
 echo "drive enumeration — the parent walk dead-ends at a drive root on Windows"
