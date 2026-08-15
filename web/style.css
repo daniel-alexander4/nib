@@ -524,6 +524,13 @@ input[type="search"] { width: 100%; }
 .dirlist li { padding: 4px 8px; border-radius: 4px; cursor: pointer; font-size: 13px; }
 .dirlist li::before { content: "📁 "; }
 .dirlist li.file::before { content: "📄 "; }
+/* Drives, shown once the parent walk runs out — on Windows a filesystem root is
+   only the top of one drive, so these are how the browser reaches the others. */
+.dirlist li.root::before { content: "💽 "; }
+/* The "why is this empty" row: an explanation, not somewhere you can navigate. */
+.dirlist li.idle { cursor: default; color: var(--overlay0); font-size: 12px; }
+.dirlist li.idle::before { content: "⚠ "; }
+.dirlist li.idle:hover { background: none; }
 .dirlist li:hover { background: var(--surface0); }
 .sigcard {
   background: var(--mantle); border: 1px solid var(--surface0);

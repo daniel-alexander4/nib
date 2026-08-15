@@ -55,7 +55,7 @@ func (s *Server) handleSplitBookmarks(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	dir, ok := splitDir(w, r)
+	dir, ok := destDir(w, r)
 	if !ok {
 		return
 	}
@@ -85,7 +85,7 @@ func (s *Server) handleSplitPages(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	dir, ok := splitDir(w, r)
+	dir, ok := destDir(w, r)
 	if !ok {
 		return
 	}
@@ -107,16 +107,30 @@ func (s *Server) handleSplitPages(w http.ResponseWriter, r *http.Request) {
 	writeSplitParts(w, dir, parts)
 }
 
-// splitDir parses and validates the destination folder for a folder-writing split
-// (an absolute path is required). It writes the error response itself, returning
-// ok=false then.
-func splitDir(w http.ResponseWriter, r *http.Request) (string, bool) {
+// destDir parses and validates the destination folder for any folder-writing
+// operation (an absolute path is required). Shared by the two split handlers and
+// the save-as writer, so one rule governs every folder the UI can write into —
+// the writer used to carry its own copy of this, which drifted into a different
+// error message and, more importantly, no containment check at all. It writes the
+// error response itself, returning ok=false then.
+//
+// There is no dir == "" case to reject: filepath.Clean("") is ".".
+func destDir(w http.ResponseWriter, r *http.Request) (string, bool) {
 	dir := filepath.Clean(expandHome(strings.TrimSpace(r.FormValue("dir"))))
-	if dir == "" || dir == "." || !filepath.IsAbs(dir) {
+	if dir == "." || !filepath.IsAbs(dir) {
 		httpError(w, http.StatusBadRequest, "destination must be an absolute folder")
 		return "", false
 	}
 	return dir, true
+}
+
+// containedJoin joins a file name onto dir and reports whether the result stayed
+// inside dir. Every name the UI supplies is ultimately free text — a typed
+// save-as name, a bookmark title — so "../x" must not escape the folder the user
+// chose to write into.
+func containedJoin(dir, name string) (string, bool) {
+	full := filepath.Join(dir, name)
+	return full, filepath.Dir(full) == dir
 }
 
 // writeSplitParts writes each part as <dir>/<name>.pdf — atomic, and contained to
@@ -129,8 +143,8 @@ func writeSplitParts(w http.ResponseWriter, dir string, parts []pdfops.SplitPart
 	}
 	names := make([]string, 0, len(parts))
 	for _, p := range parts {
-		full := filepath.Join(dir, p.Name+".pdf")
-		if filepath.Dir(full) != dir { // containment: the name is user/title-derived
+		full, ok := containedJoin(dir, p.Name+".pdf") // the name is user/title-derived
+		if !ok {
 			httpError(w, http.StatusBadRequest, "unsafe file name")
 			return
 		}

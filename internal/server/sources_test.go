@@ -39,12 +39,17 @@ func TestRecentReflectsOpen(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer resp.Body.Close()
-	var recent []string
+	var recent []recentEntry
 	if err := json.NewDecoder(resp.Body).Decode(&recent); err != nil {
 		t.Fatal(err)
 	}
-	if len(recent) != 1 || recent[0] != path {
-		t.Errorf("recent = %v, want [%s]", recent, path)
+	if len(recent) != 1 || recent[0].Path != path {
+		t.Errorf("recent = %v, want one entry with path %s", recent, path)
+	}
+	// The display name comes from the server: the browser cannot tell where a
+	// Windows path ends, and stripping to the last "/" left C:\a\b.pdf whole.
+	if len(recent) == 1 && recent[0].Name != filepath.Base(path) {
+		t.Errorf("recent name = %q, want %q", recent[0].Name, filepath.Base(path))
 	}
 }
 
@@ -68,13 +73,13 @@ func TestRecentKeepsPriorOpens(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer resp.Body.Close()
-	var recent []string
+	var recent []recentEntry
 	if err := json.NewDecoder(resp.Body).Decode(&recent); err != nil {
 		t.Fatal(err)
 	}
 	want := []string{pathB, pathA}
-	if len(recent) != 2 || recent[0] != want[0] || recent[1] != want[1] {
-		t.Errorf("recent = %v, want %v", recent, want)
+	if len(recent) != 2 || recent[0].Path != want[0] || recent[1].Path != want[1] {
+		t.Errorf("recent = %v, want paths %v", recent, want)
 	}
 }
 
