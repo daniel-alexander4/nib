@@ -793,7 +793,36 @@ Acceptance:
 - The mid-build close asserts the build was **in flight**, or reports
   `not exercised`.
 
-#### P02.S05 — The verify contract
+#### P02.S05 — The verify contract *(done 2026-08-16, v1.103.5)*
+
+**(grill pin, 2026-08-16: the slice is smaller than written, and one item nearly
+evaporated.)** Two of its three stated jobs were already done by S01 and S03 —
+tiers 2 and 3 each carry a ceiling naming the tier that covers its gap. What is
+actually left:
+
+- **`CLAUDE.md` is git-ignored** in this repo ("project instructions stay local"),
+  so STANDARDS §10's "written into CLAUDE.md as the build/verify contract" would
+  put the contract where a fresh clone cannot see it. Resolved by writing a
+  committed copy and having `CLAUDE.md` point at it — the standard's intent
+  without its only copy being invisible.
+- **`README.md` has no Build/Develop section at all**; it is user-facing feature
+  documentation, so the contract does not belong there either.
+- **Tier 1 has no ceiling of its own** — it is described only inside tier 2's
+  file, which is a chain documented from its middle link.
+- **The browser-candidate drift guard**, proposed at S03's gate. `uirepro.sh`
+  duplicates `internal/browser.chromiumCandidates()`; the guard is what makes that
+  duplication acceptable rather than a debt, and it is the item that would have
+  quietly evaporated if nobody wrote it down.
+
+Tasks:
+1. T01 — `CONTRIBUTING.md`: three commands, three ceilings, read as a chain.
+2. T02 — tier 1's ceiling written there (it has no file of its own).
+3. T03 — `CLAUDE.md` points at it.
+4. T04 — `verify_test.go` at the root, beside `notices_test.go`: the commands
+   exist, are executable, and are named in the contract.
+5. T05 — `internal/browser/browser_test.go`: the bash list matches the Go list.
+6. T06 — both guards proven red, each naming its assertion.
+
 Scope: each tier's ceiling written where its harness lives and naming the tier
 that covers its gap; `CLAUDE.md` gains the build/verify contract naming all three
 commands (STANDARDS §10).
