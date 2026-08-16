@@ -1181,7 +1181,38 @@ Acceptance:
 
 #### P03.S05 — arrivals open a new document
 Scope: D10 — `setDoc` splits into replace-active and add-new; the arrival paths
-(`session.go:252,549`) add. Refs: D10.
+(`session.go:252,561`) add. Refs: D10.
+
+**(reality drift, 2026-08-16, deepdive)** the phase exit criterion says "Arrivals
+(co-sign, p2p) open a new document rather than replacing one", but the p2p one-way
+receive does **not** open a document at all — `saveReceived` (`session.go:255`) writes
+the file under `~/nib` and never touches the registry. Only the two co-sign paths call
+`setDoc`: `session.go:252` (background, the receiving peer) and `session.go:561`
+(the dialing peer, with a user waiting on the response). The criterion's p2p half is
+about a path that does not exist; the ask is unchanged for the two that do.
+
+**(regression found by this slice's deepdive, 2026-08-16 — live at v1.103.12)**
+P03.S03 made `apiFetch` attach `X-Nib-Doc` unconditionally, and `apiFetch` throws only
+on **401** — a **409 comes back as an ordinary response**. `reloadOpenDoc`
+(`web/app.js:1044`), the refresh that runs after a co-signature is applied out of band,
+does `setDocumentFromServer(await res.json())`. So on the receiving peer:
+
+1. the arrival replaces the document, unregistering the client's id;
+2. `/api/doc` carrying that id answers 409 with `{"error": "..."}` (tier 1: proven);
+3. `apiFetch` returns it as data (tier 2: proven — the body reaches the caller and
+   carries no `id`);
+4. `docMeta` becomes the error object, so **`docMeta.id` is undefined and every later
+   request stops sending the header** — the session silently reverts to the unpinned
+   path S03 existed to close, and `canSave` goes undefined so Save breaks.
+
+The document still *renders*, because `/api/pdf` with no id falls back to the active
+one — which is why this is invisible rather than loud.
+
+**S05 does not fix it by adding documents; it makes it worse.** Once arrivals *add*,
+the client's id stays valid and `/api/doc` answers about the **old** document, so the
+co-signed result never appears at all. The root cause is that `reloadOpenDoc` asks a
+question about the *session* ("what is active now?") through a call pinned to a
+*document*. Fixed here as part of the slice.
 Acceptance:
 - A completed co-sign adds a document rather than replacing the open one.
 - The other five `setDoc` callers still replace, asserted individually.
