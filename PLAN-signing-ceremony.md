@@ -9,6 +9,10 @@ Amended 2026-08-16 (transport-fallback pass, Dan's instruction: TCP retained as 
 peer transport rather than deleted, and router port mapping added to the ladder —
 D14 and D15 added, D7/D8/D9 pinned, P02 and P05 amended, caveats 6–8 added. Stage 2
 has not yet run).
+Amended 2026-08-16 (connection-algorithm pass, Dan's instruction: the four
+specifications the ladder was missing — clocks, symmetry and glare, channel loss,
+failure diagnosis — settled as D16–D19, with D8/D11/D13 pinned, P01.S05, P05 and P06
+amended and caveat 9 added. Stage 2 still has not run).
 SME packs: **crypto (core tier)** — `go.mod` declares `filippo.io/age`,
 `golang.org/x/crypto`, `edwards25519`, `hpke`, `go-pkcs12`, `digitorus/pdfsign`
 (inferred, trigger 1); the consensus tier does not fire — two sequential
@@ -211,6 +215,20 @@ side needs it**. Two peers whose NATs both do endpoint-dependent mapping cannot 
 at all, but if either one obtains a mapping, the other simply dials it. That converts
 a class the plan previously had no answer for into a working case.
 
+**(connection-algorithm pin, 2026-08-16)** The race's mechanics are now specified:
+its clocks in **D16** (candidates trickle in; one connect deadline ends the race),
+its symmetry and glare resolution in **D17** (both sides dial, deterministic
+lower-fingerprint tie-break, the ceremony role decoupled from who dialled), its
+behaviour on channel loss in **D18**, and its failure diagnosis in **D19**.
+
+**A structural correction this pass surfaced, recorded rather than fixed:** the DHT
+is not tier 4's private input — it is the **signalling channel for tiers 2, 3 and 4
+alike**, because a dialable address is useless if the peer cannot learn it. An
+unreachable DHT therefore collapses three tiers at once, leaving only tier 1 (LAN)
+and tier 5 (manual). P04's framing understates this. Whether the plan wants a second
+signalling path is a **Stage 2 grill target**, not this pass — D19 cause 2 makes the
+failure legible in the meantime.
+
 ### D9 — The manual address path is demoted, not deleted *(settled 2026-08-15 via /discuss, auto-adopted)*
 
 The host:port field survives, moved out of the primary flow into an advanced
@@ -251,6 +269,13 @@ Both become named guard tests.
 untrusted discovery layer defensible at all, and L2 is what makes D4's mandate
 enforceable rather than aspirational.
 
+**(connection-algorithm pin, 2026-08-16)** Both laws gain a named consequence in this
+pass. **L2 extends to D18:** a verification confirmation is valid for exactly one
+channel and may never be carried across a reconnection — reuse would be a silent
+downgrade of precisely the kind the law forbids, so the L2 guard test covers it.
+**L1 extends to D19:** NAT classification is diagnostic only; it may steer messages
+and tier preference and may never touch the pin check.
+
 ### D12 — External gate: an outside cryptographic review before the ceremony ships *(settled 2026-08-15 via /discuss, auto-adopted)*
 
 The feature does not ship to users until an outside reviewer has read the pairing
@@ -263,6 +288,12 @@ weight, and the planning playbook asks for external gates to be named at Stage 1
 
 The mode tab (`web/index.html:30`) and the role-picker flow (`:257`) are renamed and
 restructured around the new process.
+
+**(connection-algorithm pin, 2026-08-16)** The role picker survives, but what it
+selects narrows: per **D17** it chooses the *document-flow* role only — who owns the
+document and therefore who calls `Initiate` — and no longer implies who dials or who
+listens, since both sides now do both. Two parties who pick the same role must get a
+named error at pairing time rather than a hang.
 
 ### D14 — TCP is retained as a peer transport, never deleted *(settled 2026-08-16 — Dan's instruction)*
 
@@ -327,6 +358,148 @@ pin). It is also cheaper to build than the tier it now precedes.
 NAT in mind, but carrier-side deployment is a caveat (8), not a premise — the CGNAT
 case remains D9's.
 
+### D16 — Two clocks: candidates trickle, one connect deadline ends the race *(settled 2026-08-16 via /discuss, auto-adopted)*
+
+The ladder runs on two independent clocks, and conflating them is the defect this
+decision exists to prevent.
+
+**Clock 1 — per-mechanism gather deadlines.** Each candidate source has its own short
+budget: multicast browse, the port-mapping request, the DHT self-address probe. A
+source that misses its budget **contributes no candidate and is not an error** —
+gathering never blocks the race. Candidates **join the race as they arrive**; the race
+does not wait for gathering to finish.
+
+**Clock 2 — one connect deadline** for the whole ceremony's connection attempt. When
+it expires with no established channel, the ceremony fails with the diagnosis from
+D19. Every per-mechanism budget is strictly shorter than it.
+
+Initial values, named together in one constant block and **tunable, not law** —
+the structure above is the law:
+
+| clock | initial value |
+|---|---|
+| multicast browse | 2 s |
+| port-mapping request (all three protocols) | 3 s |
+| DHT self-address probe | 8 s |
+| DHT candidate fetch | retried every 2 s for the race |
+| punch retransmit cadence | 250 ms |
+| **overall connect deadline** | **60 s** |
+
+*Why trickle rather than gather-then-dial:* the tiers have latencies an order of
+magnitude apart. LAN answers in milliseconds; the DHT round trip is seconds. Waiting
+for the slowest source before dialing the fastest would make the common case pay for
+the rare one, which is the same reasoning that made D8 concurrent.
+
+*Why 60 s and not less:* two people are on a phone call when this runs. Failing at
+20 s when the DHT would have answered at 25 s wastes a scheduled ceremony; the cost
+of waiting is that the two of them keep talking for another half minute. The UI shows
+per-tier progress throughout (D19), so the wait is never a blank spinner.
+
+*Not to be confused with the existing session clocks.* `exchangeDeadline`
+(`internal/p2p/session.go:29`, 6 minutes) budgets a *established* session — handshake,
+frames both ways, and the wait on the remote user's consent — and the server's
+consent window is 5 minutes inside it (`:25`). D16's clocks run **before** any of
+that and are independent of all of it.
+
+### D17 — Both sides race symmetrically; the ceremony role is decoupled from who dialled *(settled 2026-08-16 via /discuss, auto-adopted)*
+
+**Every ceremony is symmetric at the transport layer.** Both sides publish candidates,
+both sides listen, and both sides dial everything the other published. There is no
+"client" and no "server" in the ladder.
+
+**The document-flow role is a separate thing, chosen in the UI and unaffected by the
+race.** Originate (you own the document) and Receive (`web/index.html:257`, D13)
+determine who calls `Initiate` and who calls `Receive` *after* a channel exists. If
+both parties pick the same role, that is a clear, named error surfaced at pairing
+time — not a hang.
+
+**Punch synchronization needs no shared clock.** Both sides retransmit punch packets
+at the D16 cadence for the life of the race; the first packet to traverse opens the
+mapping and the peer's next retransmit arrives. The only requirement is that the two
+arming windows *overlap*, which the ceremony flow guarantees by construction — two
+people arrange this live. Published candidates carry an expiry so a stale record from
+a previous session is never punched at.
+
+**Glare resolution is deterministic.** Symmetric dialing means both sides can complete
+a handshake at nearly the same instant, leaving two channels. On first success the
+ladder waits a short settle window before proceeding, then keeps exactly one channel
+by a rule both sides compute identically: **the channel whose dialer holds the
+numerically lower 32-byte identity fingerprint survives; the other is closed.** Both
+fingerprints are known to both sides once the handshakes complete
+(`verifiedPeerFingerprint`, `internal/p2p/session.go:296`), so neither side needs to
+ask the other which channel won.
+
+*Why the tie-break lands before the verification string:* the string is derived per
+channel (D4), so displaying it and *then* dropping that channel would show the user
+four words that attest to a connection they are no longer on.
+
+*What this costs elsewhere:* `Dial` and `Listen` currently bake direction into the
+transport (`session.go:44`, `:56`), and the server arms exactly one listener today.
+Symmetric racing means both roles run at once on both sides — a P05 concern, but it
+lands on the same re-typed core D14 already requires.
+
+### D18 — A confirmation is valid for exactly one channel *(settled 2026-08-16 via /discuss, auto-adopted)*
+
+**Law.** The four-word verification confirmation (D4) attests to *the channel it was
+computed on*. It is never carried across a reconnection. This is a direct consequence
+of L2: a confirmation reused on a second channel would assert an agreement the two
+people never made about that channel.
+
+Behaviour splits at the confirmation gate:
+
+- **Channel lost before both confirmations** — harmless. The ladder re-races within
+  the remaining connect deadline (D16). Because the new channel derives a new
+  verification string, **both sides re-read and re-confirm**; a stale string on screen
+  is replaced, never silently reused.
+- **Channel lost after both confirmations** — the ceremony **fails and restarts from
+  the beginning**, including a fresh verification string. It does not resume. Resuming
+  would require re-establishing a channel whose replay bound is per-session: the
+  prefix-extension check binds the returned document to the bytes sent *this* session
+  (`internal/p2p/session.go:83`), and `exchangeDeadline` budgets one exchange (`:29`).
+
+*Why fail rather than auto-reconnect after confirmation:* an automatic reconnect would
+still demand a full re-confirmation, so it buys only the saving of one button press,
+at the cost of a resumption state machine on the one path where correctness matters
+most. Rare event, simple rule.
+
+*Guard test:* the L2 guard named in D11 extends to cover it — no path may reach the
+signing exchange carrying a confirmation computed on a different channel.
+
+### D19 — Failure is diagnosed on the mapping/filtering axis, and names four distinct causes *(settled 2026-08-16 via /discuss, auto-adopted; supersedes the CGNAT framing in P05)*
+
+The ladder classifies NAT behaviour on the **RFC 4787 axis — mapping behaviour
+(endpoint-independent vs endpoint-dependent) and filtering behaviour** — not on
+whether the NAT is carrier-grade. The classification comes free from the DHT probe:
+comparing the mapped `IP:port` reported by **two different DHT nodes** distinguishes
+the two mapping classes, exactly as a two-server STUN check does.
+
+Four causes, four messages — where the plan previously had one:
+
+1. **The peer never published.** They are not armed, or they are on a different
+   ceremony. → "The other side hasn't started their ceremony yet."
+2. **The rendezvous is unreachable.** No DHT responses at all — the usual cause is a
+   network that blocks outbound UDP. → names the LAN and manual/VPN paths, which are
+   the two that survive (D14).
+3. **The peer published but nothing connects, and the mapping classes explain it.**
+   Both ends endpoint-dependent with no port mapping obtained. → says a direct
+   connection is not possible between these two networks, and names the two things
+   that fix it: either side enabling port mapping on their router, or a VPN both
+   already run.
+4. **The peer published, the classes do not explain it.** Something else — filtering,
+   a firewall, an asymmetric failure. → an honest "couldn't establish a connection"
+   with the per-tier detail available.
+
+Presentation is **plain language first, with the technical detail behind a
+disclosure** — the person who can act on "endpoint-dependent mapping" is exactly the
+person who will open the details.
+
+**L1 pin:** the classification is **diagnostic only**. Nothing it produces may
+influence which peer is accepted; it changes messages and tier preference, never the
+pin check. The L1 guard covers it.
+
+*Depends on:* caveat 7 — the classification is only meaningful if the probe runs on
+the same local socket the session will use.
+
 ---
 
 ## Build order
@@ -384,6 +557,7 @@ Acceptance:
 - No document bytes cross the wire before both confirmations are recorded.
 - Declining, or timing out, ends the session with a distinct, user-legible outcome — not the same error as a network failure.
 - A guard test named for L2 fails if any path reaches the signing exchange unconfirmed.
+- **A confirmation computed on one channel is rejected on any other, driven by reconnecting mid-ceremony rather than asserted. (added 2026-08-16, D18)**
 Tasks: *(written at slice-grill time)*
 
 ### P02 — QUIC session transport **(TCP retained beside it — amended 2026-08-16, D14)**
@@ -424,15 +598,20 @@ Exit criteria:
 - **A mapping is never held while no ceremony is armed, and is gone from the router after teardown, cancel and crash alike — driven, not asserted. (added 2026-08-16, D15)**
 - **Every tier that ends in a dialable address completes over TCP as well as QUIC, proven with UDP blocked. (added 2026-08-16, D14)**
 - All tiers are attempted concurrently; the first to complete is used and the rest are cancelled.
-- Both ends behind carrier-grade NAT fails with an explanation that names the fallback, not a generic timeout **— and the fallback it names is the one that actually applies: a shared VPN or a manual address one side can accept, not a port-forward the carrier's NAT forbids (amended 2026-08-16, D9 pin)**.
+- **A candidate arriving late joins the race in flight; no tier waits on another tier's gathering. (added 2026-08-16, D16)**
+- **Simultaneous success on both sides converges on one channel by the lower-fingerprint rule, driven by forcing the glare rather than waiting to observe it. (added 2026-08-16, D17)**
+- **Losing the channel before confirmation re-races and re-confirms; losing it after confirmation fails the ceremony. Both are driven. (added 2026-08-16, D18)**
+- ~~Both ends behind carrier-grade NAT fails with an explanation that names the fallback, not a generic timeout **— and the fallback it names is the one that actually applies: a shared VPN or a manual address one side can accept, not a port-forward the carrier's NAT forbids (amended 2026-08-16, D9 pin)**.~~ **Each of D19's four causes produces its own message, and the mapping-class test distinguishes the two NAT classes from two DHT observations. Cause 3's message names port mapping and a shared VPN — never a port-forward the carrier's NAT forbids. (superseded 2026-08-16, D19)**
 
-Slices *(sketch)*: candidate gathering; concurrent attempt and cancellation; IPv6 tier; **the port-mapping client (PCP → NAT-PMP → UPnP-IGD) and its licence notice; the mapping lease lifecycle and teardown-on-every-path; the armed-only disclosure line in the ceremony screen (D15);** IPv4 punch with keepalives; the CGNAT diagnosis and message; **the TCP dialer wired into every dialable tier (D14);** manual path demoted to advanced.
+Slices *(sketch)*: candidate gathering **and the trickle-in race with its two clocks (D16)**; concurrent attempt and cancellation **including the glare tie-break (D17)**; IPv6 tier; **the port-mapping client (PCP → NAT-PMP → UPnP-IGD) and its licence notice; the mapping lease lifecycle and teardown-on-every-path; the armed-only disclosure line in the ceremony screen (D15);** IPv4 punch with keepalives **and symmetric retransmit (D17)**; ~~the CGNAT diagnosis and message~~ **the mapping-class probe and D19's four-cause diagnosis**; **channel-loss behaviour either side of the confirmation gate (D18); the TCP dialer wired into every dialable tier (D14);** manual path demoted to advanced.
 
 ### P06 — The Signing Ceremony surface
 Goal: the Collaborate tab becomes the Signing Ceremony, restructured around name-in, connect, confirm, sign.
 Exit criteria:
 - The primary flow contains no address field and no hex fingerprint.
-- Every failure tier has a distinct, actionable message.
+- Every failure tier has a distinct, actionable message **— the four of D19, plain language first with the technical detail behind a disclosure (amended 2026-08-16)**.
+- **The connection screen shows per-tier progress for the whole connect deadline, never a blank spinner. (added 2026-08-16, D16)**
+- **Picking the same document-flow role on both sides is a named error at pairing time, not a hang. (added 2026-08-16, D17)**
 - **While a ceremony is armed, the screen discloses that a temporary router opening was requested and names the port; when no mapping was obtained it says so rather than staying silent. (added 2026-08-16, D15)**
 - The advanced fallback is reachable but never on the default path.
 - Documentation and README updated in the same phase (STANDARDS docs-parity).
@@ -464,6 +643,7 @@ re-verified.
 6. **A Go port-mapping library covering PCP, NAT-PMP and UPnP-IGD exists under a licence compatible with AGPLv3 distribution** (D15). If only some protocols are covered, the tier still ships — with narrower router coverage, recorded rather than assumed. *(added 2026-08-16)*
 7. **The mapped port, the DHT self-address probe and the live session must all be the same local socket.** A NAT mapping — learned or requested — is a function of the *internal* `IP:port`, so a mapping obtained on the DHT socket or on a throwaway socket is useless for a session that listens elsewhere, even under a perfectly endpoint-independent NAT. This constrains library selection in **both P02 and P04**: the QUIC library must accept an existing `net.PacketConn` and the DHT must be willing to share it. Load-bearing for tiers 3 and 4 alike, and not currently reflected in either phase's slice sketch. *(added 2026-08-16)*
 8. **Carrier-side PCP deployment is not assumed.** RFC 6887 was specified with carrier-grade NAT in mind, but whether carriers actually answer PCP is unverified and, on present evidence, mostly no. The CGNAT case stays D9's until measured. *(added 2026-08-16)*
+9. **Two DHT observations are enough to separate the mapping classes, and the DHT will answer two distinct nodes within D16's probe budget.** D19's diagnosis rests on it; a two-server STUN check is the established form, but that the BitTorrent DHT's response pattern supplies the same two observations in ~8 s is unverified. If it does not, cause 3 degrades to cause 4 — a worse message, not a broken ladder. *(added 2026-08-16)*
 
 ## Bookkeeping
 
