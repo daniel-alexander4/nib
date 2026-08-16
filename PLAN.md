@@ -24,6 +24,12 @@ Stage 8 bootstrap: **not run, by decision** — see D14.
 
 **Where this plan and the original brief differ, the plan wins.**
 
+**Sibling plan:** this repo also carries `PLAN-signing-ceremony.md` (Stage 1 seed
+2026-08-15), which replaces the Collaboration process with the Signing Ceremony.
+The two are independent and neither supersedes the other; `/createcode` must be
+told which plan it is walking. The split ends when one of the two retires into
+CLAUDE.md + ADRs per STANDARDS §15.6.
+
 This plan covers **one feature project inside the existing `nib` repo**: making
 Nib hold more than one document at a time, with per-document state preserved
 across switches, plus **Close view** and **Close all**. It is not a plan for nib
