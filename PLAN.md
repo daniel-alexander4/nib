@@ -904,7 +904,7 @@ Acceptance:
 - Each tier's ceiling names the tier that covers the gap, so a delegation is
   explicit rather than a silence.
 
-### P03 — Document identity, server side
+### P03 — Document identity, server side *(done 2026-08-16, v1.103.14)*
 Goal: the server holds N documents and every document-touching endpoint says
 which one it means. Refs: D6, **D7**, D8, D9, D10, **D15**.
 Exit criteria:
@@ -952,6 +952,31 @@ and stale on the denominator, because P01 added routes.
 independently shippable and harmless; "the client always sends one" is a different
 claim needing a different guard. Landing them together would let the second hide
 inside the first's green — the exact shape of the plan-review's critical finding.
+
+**(phase close, 2026-08-16, v1.103.14)** Exit criteria, every clause, split on `and`:
+
+- ✅ `s.doc` replaced by a registry + active id behind one accessor — the field is gone;
+  the six textual matches left in the tree are comments describing the history.
+- ✅ …**and** the 16 nil guards keep their shape — `TestEveryDocumentResolutionIsHandled`
+  asserts 17 `resolveDoc` + 7 direct `docFor` sites, each count changed deliberately.
+- ✅ Every document-touching route carries an id (mechanism amended: header, not body).
+- ✅ Per-document rings **and** ✅ one global byte budget — S04, plus ADR-003.
+- ✅ …**and** single-document behaviour unchanged — *within the premise pin*: identical
+  wherever the depth cap binds, deliberately different above 256 MiB, which is what
+  bounding the undo+redo pair means. Not claimed unqualified.
+- ✅ Arrivals open a new document rather than replacing one — **criterion amended** to
+  co-sign only; `saveReceived` writes a one-way transfer to disk and never touches the
+  registry, so the "p2p" half named a path that does not exist.
+- ✅ (plan-review pin) The two-document probe — `TestOperationAddressedToInactive­
+  DocumentLeavesActiveAlone`, which found the defect it now guards.
+- ⏳ (plan-review pin) The all-tabs-stale case — **not exercised, carried to P06** for
+  the reason stated below; P03 delivers the 409 that makes it expressible.
+
+**Three findings this phase produced that were not in it:** a live data race in shipped
+code on `/api/doc` (S04, pre-existing); an eviction pass that discarded the active
+document's history (S04, caught in its own diff review); and a silent unpinning
+regression introduced by S03 and found by S05's deepdive. All three were invisible to
+the tests that existed when they were written, and all three now have red-probed guards.
 
 **The all-tabs-stale pin cannot be discharged in this phase.** It says the case
 resolves to the launch empty state "not N error tabs" — and there are no tabs until
