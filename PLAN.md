@@ -428,7 +428,80 @@ Acceptance:
   be driven, not inherited as met.
 - Opening a document after a close works normally.
 
-#### P01.S03 — Client: the teardown
+#### P01.S03 — Client: the teardown *(done 2026-08-16, v1.102.9)*
+
+**(deepdive pin, 2026-08-16 — the dive ran before the grill and changed the slice
+in both directions)** Three claims verified at the line, two work items retired,
+one defect found that the plan does not scope:
+
+- `viewer.setDocument(null)` is a supported, thorough teardown
+  (`web/vendor/pdfjs/pdf_viewer.mjs:8385-8402`): it dispatches `pagesdestroy`,
+  cancels rendering, runs `_resetView()` (`:8720-8749`, which empties
+  `viewer.textContent`, resets scale/page/rotation and aborts its event
+  `AbortController`), nulls the find controller and scripting manager, **destroys
+  the annotation-editor UI manager** and sets its mode to `NONE`. So no Nib-side
+  find or editor teardown is needed, and the slice must not poke
+  `viewer.annotationEditorMode` at all.
+- `updateBadge(null)` resets `lastSig` *and* the badge *and* the details button in
+  one call (`:1976`, `:1984`, `:1996`) — the plan listed those separately.
+- `applySignLock()` reads `!!pdfDocument` (`:4865`), so ordering is load-bearing:
+  null the document first, then the flags, then call it.
+- Three launch-state items the scope line omits, found by diffing against
+  `index.html:62-63,93,125`: `saveBtn.disabled` **and its `title`** (`:1248`
+  overwrites it with a path-specific string), `.pageCount` → `/ 0`, `.pageNum` → 1.
+
+Tasks:
+1. T01 — `resetSharedDocState()`: `clearOverlays()` plus the four armed modes.
+2. T02 — it does not touch `viewer.annotationEditorMode`; pdf.js owns that.
+3. T03 — `setDocumentFromServer` calls it in place of the bare `clearOverlays()`.
+4. T04 — `closeDocument()`: null first, bump `docGen`, close Compare, shared
+   reset, `viewer.setDocument(null)`, `linkService.setDocument(null, null)`,
+   destroy the captured doc.
+5. T05 — the launch chrome, asserted against `index.html` rather than memory.
+6. T06 — `docMeta`/`originalName`/`docHadFlags`/`signLocked`, then
+   `applySignLock()` and `setDocControls(false)`.
+7. T07 — `closeCmpDoc`'s `destroy()` gains the `.catch()` its siblings have.
+8. T08 — the G2 fix in `buildThumbnails` (see the gap-down pin below).
+9. T09 — live-drive all nine paths in a real browser.
+
+**(gap-down G2, found by the deepdive — a defect the plan does not scope)**
+`buildThumbnails` (`app.js:2366-2404`) has **two awaits per iteration** and its
+staleness guard sits before both. The loop condition re-reads
+`pdfDocument.numPages` after every await, and `els.thumbGrid.appendChild(wrap)`
+(`:2400`) sits *after* the guard and *before* the second await. So a close landing
+during `await pdfDocument.getPage(n)` lets that iteration run on and append **one
+orphan thumbnail into the grid the close just cleared**, then throw a `TypeError`
+on the nulled binding into the `.catch` at `:1257`, which logs and swallows it.
+**Bumping `docGen` is necessary but not sufficient**, and the acceptance clause
+"the empty state is byte-identical to launch" fails intermittently and silently.
+`buildOutline` (`:2889-2916`) is correct by contrast — one await, guard
+immediately after, everything downstream synchronous — and that asymmetry is what
+makes this a defect rather than a style point. Fix: hoist `numPages` before the
+loop and re-check the generation immediately before the append.
+
+**(harness pin, 2026-08-16)** D2 puts P01 first and D13/D19 put the three-tier
+harness in P02, so this slice and S04 have **no automated tier** and are verified
+by live browser drive only. Recorded so the absence of a test file here is not
+later read as an oversight.
+
+**(reality drift, 2026-08-16, found during implementation — the slice cannot
+verify its own close path)** `web/index.html:1310` loads `app.js` as
+`<script type="module">`, so `closeDocument` is module-scoped and unreachable from
+the console; and this slice's own scope puts the Close *control* in S04. So there
+is no way to make a Close happen while S03 is the slice in hand.
+
+Rather than add a test-only hook to production code, the clauses are **split by
+what is actually drivable now**, using the same carried-clause mechanic S01 used
+to hand its race clause to S02:
+
+- **Discharged here** — the shared reset and the open-over-open bug it fixes. That
+  is this slice's genuinely novel content and its one behaviour change to an
+  existing path, and it is fully drivable: arm a tool, open a *different*
+  document, observe no lit button and no crosshair.
+- **Carried to S04, recorded `not exercised` here** — everything that needs a
+  Close to happen: the empty state, the pdf.js and Compare teardown, the
+  mid-build thumbnail race, and the next-open-still-works clause. S04 must
+  actually drive these, not inherit them as met.
 Scope: `closeDocument()` mirroring `setDocumentFromServer` — bump `docGen`, the
 shared reset (below), `closeCmpDoc()`, detach then destroy via
 `loadingTask.destroy()`, drop `has-doc`, reset `docMeta`/`lastSig`/`originalName`/
@@ -464,6 +537,16 @@ confirm before discarding unsaved work, from the three signals that exist
 Acceptance:
 - The control greys out with nothing open.
 - Closing with unsaved edits prompts; cancelling leaves the document untouched.
+- **(carried from P01.S03, 2026-08-16)** With the control in place, drive the
+  teardown clauses S03 could not reach and must not be inherited as met: the
+  empty state is byte-identical to launch (badge, `saveBtn` **and its title**,
+  `/ 0`, `.pageNum` 1, both sidebars); no second pdf.js document survives a Close,
+  Compare included; a Close during a large document's thumbnail build leaves **no
+  orphan thumbnail**; and the next open works normally.
+- **(carried from P07's premise correction, 2026-08-16)** The confirm is
+  **bypassable by the ordinary double-click path** until P07 lands — a second
+  launch SIGTERMs this instance and discards the document with no prompt. Say so
+  in the slice rather than implying the prompt is unconditional.
 
 ### P02 — Test harness, in three tiers
 Goal: a way to assert this feature's behaviour mechanically, because every failure
