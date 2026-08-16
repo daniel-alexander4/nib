@@ -14,9 +14,7 @@ type attachmentsResponse struct {
 // handleAttachmentsList reports the embedded files in the current document. It is
 // read-only, so it is a plain GET.
 func (s *Server) handleAttachmentsList(w http.ResponseWriter, r *http.Request) {
-	s.mu.Lock()
-	doc := s.doc
-	s.mu.Unlock()
+	doc := s.activeDoc()
 	if doc == nil {
 		httpError(w, http.StatusNotFound, "no document open")
 		return
@@ -33,9 +31,7 @@ func (s *Server) handleAttachmentsList(w http.ResponseWriter, r *http.Request) {
 // the result the current document (the client reloads it). The file rides in as
 // the multipart field "file"; its name comes from the "name" field.
 func (s *Server) handleAttachmentAdd(w http.ResponseWriter, r *http.Request) {
-	s.mu.Lock()
-	doc := s.doc
-	s.mu.Unlock()
+	doc := s.activeDoc()
 	if doc == nil {
 		httpError(w, http.StatusNotFound, "no document open")
 		return
@@ -64,9 +60,7 @@ func (s *Server) handleAttachmentAdd(w http.ResponseWriter, r *http.Request) {
 // handleAttachmentExtract streams one embedded file back to the browser as a
 // download. The attachment name rides in as the "name" field.
 func (s *Server) handleAttachmentExtract(w http.ResponseWriter, r *http.Request) {
-	s.mu.Lock()
-	doc := s.doc
-	s.mu.Unlock()
+	doc := s.activeDoc()
 	if doc == nil {
 		httpError(w, http.StatusNotFound, "no document open")
 		return

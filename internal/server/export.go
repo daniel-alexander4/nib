@@ -241,9 +241,7 @@ func (s *Server) handleAssemble(w http.ResponseWriter, r *http.Request) {
 // repacking; no image/quality change) and returns the smaller copy for save-as.
 // The before/after byte sizes ride in headers so the UI can show the result.
 func (s *Server) handleOptimize(w http.ResponseWriter, r *http.Request) {
-	s.mu.Lock()
-	doc := s.doc
-	s.mu.Unlock()
+	doc := s.activeDoc()
 	if doc == nil {
 		httpError(w, http.StatusNotFound, "no document open")
 		return
@@ -260,9 +258,7 @@ func (s *Server) handleOptimize(w http.ResponseWriter, r *http.Request) {
 
 // handleFormData exports the current document's form fields as JSON, CSV, or XFDF.
 func (s *Server) handleFormData(w http.ResponseWriter, r *http.Request) {
-	s.mu.Lock()
-	doc := s.doc
-	s.mu.Unlock()
+	doc := s.activeDoc()
 	if doc == nil {
 		httpError(w, http.StatusNotFound, "no document open")
 		return
@@ -298,9 +294,7 @@ func (s *Server) handleFormData(w http.ResponseWriter, r *http.Request) {
 // document with no extractable images returns 200 with X-Image-Count: 0 and an
 // empty body, so the client can say so rather than save an empty archive.
 func (s *Server) handleExtractImages(w http.ResponseWriter, r *http.Request) {
-	s.mu.Lock()
-	doc := s.doc
-	s.mu.Unlock()
+	doc := s.activeDoc()
 	if doc == nil {
 		httpError(w, http.StatusNotFound, "no document open")
 		return

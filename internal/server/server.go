@@ -17,6 +17,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"sync"
 
 	"nib/internal/pdfops"
@@ -46,8 +47,39 @@ func parseMultipart(w http.ResponseWriter, r *http.Request, max int64) (cleanup 
 	return func() { _ = r.MultipartForm.RemoveAll() }, true
 }
 
-// document is the single PDF currently open in the session.
+// docID names one open document. It is deliberately two fields rather than a
+// packed integer, so a test can fail on one without the other.
+//
+// Seq is monotonic for the life of the process and is **never reused** — not
+// reclaimed when a document closes, never an index into the registry. That is the
+// whole of ADR-001's second half: the pinning law reduces to an id comparison, so
+// a recycled id defeats it silently and completely (close document 3, open another
+// that is also 3, and an operation pinned to the old one passes its check and
+// commits to the new). Cheap to get right here; impossible to detect later,
+// because the failure looks like a correct comparison.
+//
+// Epoch is a per-process nonce, and it is why Seq alone is not enough. Seq restarts
+// at 1 when the process does. Normally unreachable — the default bind is
+// 127.0.0.1:0, so a restart takes a new port and a surviving browser tab cannot
+// reconnect — but NIB_ADDR pins a fixed port for headless runs (cmd/nib/main.go),
+// and there a stale tab reconnects and can name an id the new process has since
+// reassigned. Same corruption, crossing a process boundary.
+type docID struct {
+	Epoch string
+	Seq   uint64
+}
+
+func (d docID) String() string { return d.Epoch + ":" + strconv.FormatUint(d.Seq, 10) }
+
+// valid reports whether this id names anything. The zero docID never does: Seq
+// starts at 1, so a zero-valued id is "unset" and can never collide with a real one.
+func (d docID) valid() bool { return d.Seq != 0 && d.Epoch != "" }
+
+// document is one open PDF in the session.
 type document struct {
+	// id is assigned once, at open, and never changes or repeats. See docID.
+	id docID
+
 	// path is the local file the document was opened from. Empty when the
 	// document was uploaded through the browser (no server-side path), in which
 	// case it cannot be saved in place.
@@ -68,9 +100,20 @@ type Server struct {
 	mu    sync.Mutex
 	vault *vault.Vault // unlocked vault, nil until the SSH key unlocks it
 	csrf  string       // per-process CSRF token, issued when the vault unlocks
-	doc   *document    // current open PDF
-	undo  [][]byte     // prior document states (oldest first) for undo; see undo.go
-	redo  [][]byte     // states rolled back by undo, for redo
+
+	// The document registry. Today it holds at most one entry and every route
+	// acts on the active id, so behaviour is identical to the single `doc` field
+	// this replaces — the registry exists so that P03.S02 can put ids on the wire
+	// and later phases can hold several. Reached through activeDoc()/activeDocLocked()
+	// and never read directly, which is what keeps the ~16 call sites' guard shape
+	// (`doc := …; if doc == nil`) intact and the diff reviewable.
+	docs     []*document // open documents, in open order
+	activeID docID       // the document routes act on unless told otherwise
+	nextSeq  uint64      // monotonic; incremented per open, never reset or reclaimed
+	epoch    string      // per-process nonce; see docID
+
+	undo [][]byte // prior document states (oldest first) for undo; see undo.go
+	redo [][]byte // states rolled back by undo, for redo
 
 	sess session // armed live co-signing listener (Nib's one routable surface)
 }
@@ -85,7 +128,9 @@ func New(web, legal fs.FS, configDir, version string) *Server {
 	if err := pdfops.InstallOCRFonts(); err != nil {
 		log.Printf("server: could not install OCR fonts: %v", err)
 	}
-	return &Server{web: web, legal: legal, configDir: configDir, version: version}
+	// The epoch is per-process and is minted before anything can open a document,
+	// so no id can ever be issued without one.
+	return &Server{web: web, legal: legal, configDir: configDir, version: version, epoch: newToken()}
 }
 
 // Handler builds the HTTP routes. Status and key enrollment/migration are public
@@ -299,9 +344,7 @@ func (s *Server) handleClose(w http.ResponseWriter, r *http.Request) {
 
 // handlePDF streams the current document's bytes for pdf.js to render.
 func (s *Server) handlePDF(w http.ResponseWriter, r *http.Request) {
-	s.mu.Lock()
-	doc := s.doc
-	s.mu.Unlock()
+	doc := s.activeDoc()
 	if doc == nil {
 		httpError(w, http.StatusNotFound, "no document open")
 		return
@@ -316,9 +359,7 @@ func (s *Server) handlePDF(w http.ResponseWriter, r *http.Request) {
 // non-destructive, fields stay editable). Upload-origin documents have no path
 // and are rejected here; Save-As lands in a later milestone.
 func (s *Server) handleSave(w http.ResponseWriter, r *http.Request) {
-	s.mu.Lock()
-	doc := s.doc
-	s.mu.Unlock()
+	doc := s.activeDoc()
 	if doc == nil {
 		httpError(w, http.StatusNotFound, "no document open")
 		return
@@ -348,9 +389,52 @@ func (s *Server) handleSave(w http.ResponseWriter, r *http.Request) {
 
 // --- helpers ------------------------------------------------------------------
 
+// activeDoc returns the document routes act on, or nil when none is open. It
+// takes the lock itself.
+//
+// This is the single accessor D6 asks for, and the reason it exists is the shape
+// of its call sites rather than the lookup itself: ~16 handlers previously wrote
+// `s.mu.Lock(); doc := s.doc; s.mu.Unlock(); if doc == nil {`. They now write
+// `doc := s.activeDoc(); if doc == nil {` — the same guard, three fewer lines of
+// ceremony, and one place to change when "active" stops meaning "the only one".
+// A handler that reaches past this into s.docs is the one that breaks first.
+func (s *Server) activeDoc() *document {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.activeDocLocked()
+}
+
+// activeDocLocked is activeDoc for callers already holding s.mu — the undo/redo
+// paths, which must test and mutate the document under one hold.
+func (s *Server) activeDocLocked() *document {
+	for _, d := range s.docs {
+		if d.id == s.activeID {
+			return d
+		}
+	}
+	return nil
+}
+
+// setDoc installs doc as the open document, REPLACING whatever was open, and
+// clears the history rings. nil closes the document.
+//
+// "Replacing" is the whole of its contract today and all seven callers depend on
+// it. Under a registry the operation obviously wants to split into replace-active
+// and add-new — D10 says arrivals should add — but doing that here would move
+// arrival semantics a phase early inside a slice whose acceptance says behaviour
+// is unchanged, where nothing would catch it. **The split is P03.S05's.**
 func (s *Server) setDoc(doc *document) {
 	s.mu.Lock()
-	s.doc = doc
+	if doc == nil {
+		s.docs = nil
+		s.activeID = docID{}
+	} else {
+		// A fresh id per open: never the closed document's, never an index.
+		s.nextSeq++
+		doc.id = docID{Epoch: s.epoch, Seq: s.nextSeq}
+		s.docs = []*document{doc}
+		s.activeID = doc.id
+	}
 	s.clearUndoLocked() // a fresh/replacement document starts with no history
 	s.clearRedoLocked()
 	s.mu.Unlock()
@@ -360,7 +444,7 @@ func (s *Server) setDoc(doc *document) {
 // takes the lock itself; callers must not hold it.
 func (s *Server) docResponse() docResponse {
 	s.mu.Lock()
-	doc := s.doc
+	doc := s.activeDocLocked()
 	canUndo := len(s.undo) > 0
 	canRedo := len(s.redo) > 0
 	s.mu.Unlock()

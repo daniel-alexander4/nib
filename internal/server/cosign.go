@@ -100,9 +100,7 @@ type attestationsResponse struct {
 // signature-details modal fetches it lazily.
 func (s *Server) handleAttestations(w http.ResponseWriter, r *http.Request) {
 	v := vaultFrom(r)
-	s.mu.Lock()
-	doc := s.doc
-	s.mu.Unlock()
+	doc := s.activeDoc()
 	if doc == nil {
 		writeJSON(w, attestationsResponse{Attestations: []attestationView{}})
 		return
@@ -133,9 +131,7 @@ func (s *Server) handleCosignQuote(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	s.mu.Lock()
-	doc := s.doc
-	s.mu.Unlock()
+	doc := s.activeDoc()
 	if doc == nil {
 		httpError(w, http.StatusBadRequest, "no document open")
 		return

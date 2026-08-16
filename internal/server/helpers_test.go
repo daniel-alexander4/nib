@@ -84,3 +84,18 @@ func jsonBody(v any) *bytes.Reader {
 	b, _ := json.Marshal(v)
 	return bytes.NewReader(b)
 }
+
+// openTestServer returns a Server holding one open document, built through the
+// real setDoc path rather than by hand.
+//
+// Three tests used to write `&Server{doc: …}` directly. With the registry that no
+// longer compiles, and hand-assembling docs/activeID/nextSeq/epoch in a test would
+// be a second, silently-drifting copy of setDoc's invariants — including the id
+// rules ADR-001 turns on. Going through setDoc means these tests exercise the same
+// construction production does, and get a real id for free.
+func openTestServer(t *testing.T, pdf []byte) *Server {
+	t.Helper()
+	s := &Server{epoch: "test-epoch"}
+	s.setDoc(&document{data: pdf})
+	return s
+}
