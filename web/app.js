@@ -1247,9 +1247,55 @@ const viewer = new PDFViewer({
 });
 linkService.setViewer(viewer);
 
+// --- the view record ---------------------------------------------------------
+//
+// One open document's client-side state. Today exactly one view exists and `view` is
+// always it, so behaviour is identical — the record exists so that P05.S03 can give each
+// document its own viewer and DOM, and so the bindings below stop being shared before
+// anything can share them.
+//
+// **Swap-on-switch was refused** (PLAN.md P05 phase-open). Leaving these as module-level
+// bindings and saving/restoring them at the switch boundary would cost no reference
+// churn, and would make the module-level values a cache whose correctness depends on
+// nothing async reading them across a switch — precisely the class P04 spent three
+// slices closing on the server-addressed side, reintroduced where there is no id to
+// check and no 409 to refuse.
+//
+// The three marked SAFETY below are not UI state. Sharing them does not produce a stale
+// label; it produces destroyed content, a broken promise to a counterparty, and a
+// misreported cryptographic fact, in that order.
+function newView() {
+  return {
+    // SAFETY — marks drawn on this document, baked by /api/redact through
+    // commitBarrier, which clears the undo history BY DESIGN. Marks belonging to one
+    // document baked onto another is irreversible destruction with no path back: the
+    // worst single outcome anywhere in this plan.
+    redactMarks: [],
+    // SAFETY — a received signing document opens locked and non-editable, which is a
+    // guarantee made to a counterparty. Ambiguity must resolve toward LOCKED: unlocking
+    // the wrong document breaks the promise, locking the wrong one is friction.
+    signLocked: false,
+    // SAFETY — the signature-details modal is where a trust decision is made. Showing
+    // one document's verification result under another's name is not a stale label; it
+    // misreports a cryptographic fact.
+    lastSig: null,
+
+    // Staleness token: bumps on each load so a stale async render/build can bail. Per
+    // view because a shared one lets a background document's finishing build abort the
+    // foreground's.
+    docGen: 0,
+    outlineItems: [],
+    originalName: '', // basename of the opened file, for default export names
+  };
+}
+
+// The active view. Reassigned, never mutated wholesale, so a captured `view` reference
+// stays valid for the document it was captured from — the same property P04's captured
+// document id has, for the same reason.
+let view = newView();
+
 let pdfDocument = null;
 let docMeta = { canSave: false, path: '' };
-let lastSig = null; // last verification result, for the signature-details modal
 
 // Full-rewrite edits (sanitise, flatten, redact, remove-originals, page ops) drop
 // any signature the document carries. These guards keep one from being destroyed
@@ -1259,7 +1305,7 @@ let lastSig = null; // last verification result, for the signature-details modal
 // frictionless; after the first such edit the result is unsigned, so they don't
 // nag on a doc that no longer has a signature to lose.
 function isSigned() {
-  return !!(lastSig && lastSig.state && lastSig.state !== 'unsigned');
+  return !!(view.lastSig && view.lastSig.state && view.lastSig.state !== 'unsigned');
 }
 function signatureWarning() {
   return isSigned() ? '\n\nThis will also invalidate the document’s existing signature.' : '';
@@ -1267,8 +1313,6 @@ function signatureWarning() {
 function confirmSignatureLoss() {
   return !isSigned() || confirm('This document is signed. Editing it will invalidate the existing signature. Continue?');
 }
-let originalName = ''; // basename of the opened file, for default export names
-let docGen = 0; // bumps on each load so a stale async render/build can bail
 
 eventBus.on('pagesinit', () => {
   viewer.currentScaleValue = 'page-width'; // immediate fit (page 1) so there's no 100%-then-fit flash…
@@ -1299,9 +1343,9 @@ async function setDocumentFromServer(meta) {
     console.error('setDocumentFromServer got a refusal, not a document:', meta);
     return;
   }
-  const gen = ++docGen;
+  const gen = ++view.docGen;
   docMeta = meta;
-  if (meta.name && meta.name !== '.') originalName = meta.name;
+  if (meta.name && meta.name !== '.') view.originalName = meta.name;
   resetSharedDocState(); // was clearOverlays() — see the four modes it never covered
   let doc;
   try {
@@ -1318,7 +1362,7 @@ async function setDocumentFromServer(meta) {
     console.error('pdf load failed', e);
     return;
   }
-  if (gen !== docGen) return; // a newer load superseded this one
+  if (gen !== view.docGen) return; // a newer load superseded this one
 
   const old = pdfDocument;
   pdfDocument = doc;
@@ -1340,7 +1384,7 @@ async function setDocumentFromServer(meta) {
   updateBadge(meta.signature);
   // Rebuild any embedded signing flags as markers and offer the signing flow.
   docHadFlags = Array.isArray(meta.flags) && meta.flags.length > 0;
-  signLocked = docHadFlags; // a received signing document opens locked, non-editable
+  view.signLocked = docHadFlags; // a received signing document opens locked, non-editable
   els.signBanner.hidden = true;
   reconstructFlags(meta.flags);
   applySignLock();
@@ -1364,13 +1408,13 @@ async function setDocumentFromServer(meta) {
 // !!pdfDocument, so it must run after that null for the whole sign surface to
 // drive itself closed.
 //
-// docGen is bumped so in-flight sidebar builds bail — necessary, but not
+// view.docGen is bumped so in-flight sidebar builds bail — necessary, but not
 // sufficient on its own: see the generation re-check in buildThumbnails, which
 // would otherwise append into the grid this function just cleared.
 function closeDocument() {
   const doc = pdfDocument;
   pdfDocument = null;
-  docGen++;
+  view.docGen++;
 
   els.compareModal.hidden = true;
   closeCmpDoc();
@@ -1383,11 +1427,11 @@ function closeDocument() {
   if (doc) doc.loadingTask.destroy().catch(() => {});
 
   docMeta = { canSave: false, path: '' };
-  originalName = '';
+  view.originalName = '';
   docHadFlags = false;
-  signLocked = false;
+  view.signLocked = false;
   els.signBanner.hidden = true;
-  updateBadge(null); // resets lastSig, the badge, and the details button together
+  updateBadge(null); // resets view.lastSig, the badge, and the details button together
 
   // Back to the launch markup, not merely to something empty (index.html).
   els.viewerWrap.classList.remove('has-doc');
@@ -1491,7 +1535,7 @@ async function openURL(url) {
     body: JSON.stringify({ url }),
   });
   if (!res.ok) return toast(await errText(res, 'could not fetch URL'));
-  originalName = (url.split('/').pop() || '').split('?')[0] || 'document.pdf';
+  view.originalName = (url.split('/').pop() || '').split('?')[0] || 'document.pdf';
   await setDocumentFromServer(await res.json());
 }
 
@@ -2204,7 +2248,7 @@ async function save() {
 
 // --- signature badge ---------------------------------------------------------
 function updateBadge(sig) {
-  lastSig = sig;
+  view.lastSig = sig;
   const b = els.sigBadge;
   const signers = sig?.signers || [];
   const map = {
@@ -2235,7 +2279,7 @@ function timeLabel(s) {
 }
 
 async function openSigDetails() {
-  const signers = lastSig?.signers || [];
+  const signers = view.lastSig?.signers || [];
   if (!signers.length) return;
   const body = els.sigDetailsBody;
   body.innerHTML = '';
@@ -2264,7 +2308,7 @@ async function openSigDetails() {
   // Document-level caution: content in a revision after the last signature is
   // covered by none. Shown whatever the per-signer verdicts (it's about the
   // whole file, not one signer); the signatures themselves stay valid.
-  if (lastSig?.addedAfter) {
+  if (view.lastSig?.addedAfter) {
     const note = document.createElement('div');
     note.className = 'signote';
     note.textContent = '⚠ Content was added after the last signature — it is not covered by any signature.';
@@ -2596,7 +2640,7 @@ els.attachInput.onchange = async () => {
 };
 
 // --- thumbnails sidebar ------------------------------------------------------
-async function buildThumbnails(gen = docGen) {
+async function buildThumbnails(gen = view.docGen) {
   els.thumbGrid.innerHTML = '';
   clearSelection(); // a rebuild means a new/edited doc — old page numbers no longer apply
   // numPages is read ONCE, while the document is still alive. In the loop condition
@@ -2607,7 +2651,7 @@ async function buildThumbnails(gen = docGen) {
   // that, not because a null deref was observed.
   const total = pdfDocument.numPages;
   for (let n = 1; n <= total; n++) {
-    if (gen !== docGen) return; // a newer document loaded — stop rendering stale thumbs
+    if (gen !== view.docGen) return; // a newer document loaded — stop rendering stale thumbs
     const page = await pdfDocument.getPage(n);
     const base = page.getViewport({ scale: 1 });
     const viewport = page.getViewport({ scale: 150 / base.width });
@@ -2650,7 +2694,7 @@ async function buildThumbnails(gen = docGen) {
     // renders, one orphan thumbnail would land in a grid closeDocument had already
     // emptied, and nothing here would say why. One comparison to make the staleness
     // contract self-contained.
-    if (gen !== docGen) return;
+    if (gen !== view.docGen) return;
     els.thumbGrid.appendChild(wrap);
     await page.render({ canvasContext: canvas.getContext('2d'), viewport }).promise;
   }
@@ -3142,7 +3186,7 @@ els.splitCols.oninput = drawSplitPreview;
 els.splitRows.oninput = drawSplitPreview;
 
 // --- outline sidebar ---------------------------------------------------------
-async function buildOutline(gen = docGen) {
+async function buildOutline(gen = view.docGen) {
   els.outline.innerHTML = '';
   const edit = document.createElement('button');
   edit.className = 'outline-edit';
@@ -3150,7 +3194,7 @@ async function buildOutline(gen = docGen) {
   edit.onclick = openOutlineEditor;
   els.outline.appendChild(edit);
   const outline = await pdfDocument.getOutline();
-  if (gen !== docGen) return; // a newer document loaded — drop this stale outline
+  if (gen !== view.docGen) return; // a newer document loaded — drop this stale outline
   if (!outline || !outline.length) {
     const empty = document.createElement('div');
     empty.className = 'thumb-label';
@@ -3175,13 +3219,12 @@ async function buildOutline(gen = docGen) {
 // Author the bookmark tree: a flat, page-ordered, leveled list (indent to nest).
 // Reads/writes through the server (pdfcpu), so each bookmark carries a real page
 // and what's written matches what's read. Save replaces the whole outline.
-let outlineItems = [];
-function sortOutline() { outlineItems.sort((a, b) => a.page - b.page); }
+function sortOutline() { view.outlineItems.sort((a, b) => a.page - b.page); }
 function renderOutlineEditor() {
   sortOutline();
   const list = els.outlineEditList;
   list.innerHTML = '';
-  if (!outlineItems.length) {
+  if (!view.outlineItems.length) {
     const p = document.createElement('p');
     p.className = 'scan-empty';
     p.textContent = 'No bookmarks yet — add one.';
@@ -3189,7 +3232,7 @@ function renderOutlineEditor() {
   }
   const n = pdfDocument ? pdfDocument.numPages : 1;
   let prev = -1;
-  outlineItems.forEach((it, i) => {
+  view.outlineItems.forEach((it, i) => {
     it.level = Math.max(0, Math.min(it.level, prev + 1)); // nesting may deepen one level at a time
     prev = it.level;
     const row = document.createElement('div');
@@ -3209,7 +3252,7 @@ function renderOutlineEditor() {
     outdent.onclick = () => { it.level = Math.max(0, it.level - 1); renderOutlineEditor(); };
     const del = document.createElement('button');
     del.className = 'keydel'; del.textContent = '✕'; del.title = 'Delete';
-    del.onclick = () => { outlineItems.splice(i, 1); renderOutlineEditor(); };
+    del.onclick = () => { view.outlineItems.splice(i, 1); renderOutlineEditor(); };
     row.append(title, page, indent, outdent, del);
     list.appendChild(row);
   });
@@ -3219,27 +3262,27 @@ async function openOutlineEditor() {
   try {
     const res = await apiFetch('/api/outline');
     if (!res.ok) throw new Error('outline');
-    outlineItems = ((await res.json()).items || []).map((it) => ({ title: it.title, page: it.page, level: it.level }));
-  } catch { outlineItems = []; }
+    view.outlineItems = ((await res.json()).items || []).map((it) => ({ title: it.title, page: it.page, level: it.level }));
+  } catch { view.outlineItems = []; }
   renderOutlineEditor();
   els.outlineModal.hidden = false;
 }
 els.outlineCancel.onclick = () => { els.outlineModal.hidden = true; };
 els.outlineAddBtn.onclick = () => {
-  outlineItems.push({ title: 'New bookmark', page: viewer.currentPageNumber || 1, level: 0 });
+  view.outlineItems.push({ title: 'New bookmark', page: viewer.currentPageNumber || 1, level: 0 });
   renderOutlineEditor();
 };
 els.outlineSave.onclick = async () => {
   sortOutline();
   const titles = new Set();
-  for (const it of outlineItems) {
+  for (const it of view.outlineItems) {
     const t = it.title.trim();
     if (!t) return toast('Every bookmark needs a title');
     if (titles.has(t)) return toast(`Bookmark titles must be unique: “${t}”`);
     titles.add(t);
   }
   const form = await bakedForm();
-  form.append('outline', JSON.stringify(outlineItems.map((it) => ({ title: it.title.trim(), page: it.page, level: it.level }))));
+  form.append('outline', JSON.stringify(view.outlineItems.map((it) => ({ title: it.title.trim(), page: it.page, level: it.level }))));
   const res = await apiFetch('/api/outline', { method: 'POST', body: form });
   if (!res.ok) return toast(await errText(res, 'could not save the outline'));
   await setDocumentFromServer(await res.json());
@@ -3260,10 +3303,10 @@ async function placeStamp(bitmapUrl) {
   const pv = viewer.getPageView(n - 1);
   if (!pv?.div || !pv.viewport) { toast('Scroll the page into view, then try again'); return; }
   const base = (await pdfDocument.getPage(n)).getViewport({ scale: 1 }); // PDF points
-  const gen = docGen;
+  const gen = view.docGen;
   const img = new Image();
   img.onload = () => {
-    if (gen !== docGen) return; // a reload superseded this placement — pv.div is now detached
+    if (gen !== view.docGen) return; // a reload superseded this placement — pv.div is now detached
     const W = pv.div.clientWidth, H = pv.div.clientHeight;
     const aspect = (img.naturalWidth / img.naturalHeight) || 1;
     const dispW = Math.min(W * 0.3, img.naturalWidth || W * 0.3);
@@ -3573,7 +3616,7 @@ function downloadBlob(blob, name) {
 
 // exportBase is the opened file's name without its directory or .pdf suffix,
 // used to build defaults like "<base>-flattened.pdf".
-// exportBase reads `originalName`/`docMeta` at CALL time, so it must be called at an
+// exportBase reads `view.originalName`/`docMeta` at CALL time, so it must be called at an
 // operation's ENTRY and its result carried — never called at the point the file is
 // handed to openSaveAs.
 //
@@ -3587,7 +3630,7 @@ function downloadBlob(blob, name) {
 // a user tells two documents apart in a workflow whose whole point is which document
 // was signed.
 function exportBase() {
-  const b = (originalName || docMeta.name || 'document').replace(/\.[Pp][Dd][Ff]$/, '');
+  const b = (view.originalName || docMeta.name || 'document').replace(/\.[Pp][Dd][Ff]$/, '');
   return b || 'document';
 }
 
@@ -4559,7 +4602,6 @@ els.profileSave.onclick = async () => {
 // boxes painted in and replaced by those flat images server-side, so the content
 // under a box is genuinely removed. Non-marked pages keep their vector text.
 let redactMode = false;
-let redactMarks = []; // {page, fx, fy, fw, fh} as fractions of the page
 let redStart = null, redDiv = null, redHit = null;
 
 els.redactBtn.onclick = () => {
@@ -4629,7 +4671,7 @@ els.viewerContainer.addEventListener('pointerup', (e) => {
   const fw = Math.abs(e.clientX - redStart.x) / r.width;
   const fh = Math.abs(e.clientY - redStart.y) / r.height;
   if (fw > 0.005 && fh > 0.005) {
-    redactMarks.push({ page: redHit.n, fx: (x0 - r.left) / r.width, fy: (y0 - r.top) / r.height, fw, fh });
+    view.redactMarks.push({ page: redHit.n, fx: (x0 - r.left) / r.width, fy: (y0 - r.top) / r.height, fw, fh });
   } else {
     redDiv.remove();
   }
@@ -4637,17 +4679,17 @@ els.viewerContainer.addEventListener('pointerup', (e) => {
 });
 
 els.applyRedactBtn.onclick = async () => {
-  if (!redactMarks.length) return toast('Draw redaction boxes first');
+  if (!view.redactMarks.length) return toast('Draw redaction boxes first');
   if (!confirm('Permanently redact the marked pages? Those pages become flat images and the content under each box is removed. This cannot be undone.' + signatureWarning())) return;
 
   const byPage = {};
-  for (const m of redactMarks) (byPage[m.page] ||= []).push(m);
+  for (const m of view.redactMarks) (byPage[m.page] ||= []).push(m);
   const res = await flattenPages(Object.keys(byPage).map(Number), (ctx, cv, n) => {
     ctx.fillStyle = '#000';
     for (const m of byPage[n]) ctx.fillRect(m.fx * cv.width, m.fy * cv.height, m.fw * cv.width, m.fh * cv.height);
   });
   if (!res.ok) return toast('redaction failed');
-  redactMarks = [];
+  view.redactMarks = [];
   redactMode = false;
   reflectRedact();
   els.viewerContainer.style.cursor = '';
@@ -4657,7 +4699,7 @@ els.applyRedactBtn.onclick = async () => {
 
 // --- search / pattern redaction ----------------------------------------------
 // Find every occurrence of a term or PII pattern in the text layer and mark each
-// one for redaction, feeding the SAME redactMarks → applyRedact pipeline as the
+// one for redaction, feeding the SAME view.redactMarks → applyRedact pipeline as the
 // hand-drawn boxes. All client-side: pdf.js is the only place the text layer
 // lives (the Go engine can't extract text). Marks are reviewed as boxes, then the
 // user presses Apply — the existing irreversible, true-removal bake.
@@ -4673,16 +4715,16 @@ const PII_PATTERNS = {
 function escapeRegExp(s) { return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
 
 // drawRedactMarks (re)draws every redaction box for one rendered page from
-// redactMarks (page-content top-left fractions → the page's live content box).
+// view.redactMarks (page-content top-left fractions → the page's live content box).
 // relayoutRedactMarks does it for all rendered pages, and both run on every
 // pagerendered/scalechanging — so marks show on EVERY marked page and reflow on
 // zoom, not just the page that was on screen when they were generated. (The boxes
-// are pure review overlays; the source of truth is redactMarks, which applyRedact
+// are pure review overlays; the source of truth is view.redactMarks, which applyRedact
 // flattens page by page regardless of what's currently drawn.)
 function drawRedactMarks(pv, pageNum) {
   pv.div.querySelectorAll('.redactmark').forEach((el) => el.remove());
   const cr = pageContentRect(pv.div);
-  for (const m of redactMarks) {
+  for (const m of view.redactMarks) {
     if (m.page !== pageNum) continue;
     const div = document.createElement('div');
     div.className = 'redactmark';
@@ -4698,7 +4740,7 @@ function relayoutRedactMarks() {
   // document reload, which tears the boxes down with the old page DOM). Bail
   // before the all-pages walk: this runs on every pagerendered/scalechanging,
   // so it's scroll-hot-path work in the common no-marks case.
-  if (!pdfDocument || !redactMarks.length) return;
+  if (!pdfDocument || !view.redactMarks.length) return;
   for (let i = 0; i < pdfDocument.numPages; i++) {
     const pv = viewer.getPageView(i);
     if (pv?.div) drawRedactMarks(pv, i + 1);
@@ -4711,7 +4753,7 @@ eventBus.on('scalechanging', relayoutRedactMarks);
 // reconstructed string (buildTextRows — the same per-character geometry the field
 // detectors use), and returns over-covering marks for each hit. Text runs are
 // mapped into top-left page space (like the Detect path) so the box fractions go
-// straight into redactMarks. Because pdf.js fragments a run at arbitrary points and
+// straight into view.redactMarks. Because pdf.js fragments a run at arbitrary points and
 // buildTextRows joins fragments with a space, a "compact" string drops those
 // injected boundary spaces (cx === NaN) so a pattern split across runs still matches.
 async function scanTextMatches(patterns) {
@@ -4799,7 +4841,7 @@ els.rtFind.onclick = async () => {
     return;
   }
   const pages = new Set(marks.map((m) => m.page));
-  redactMarks.push(...marks); // {page,fx,fy,fw,fh}; drawn per page on render
+  view.redactMarks.push(...marks); // {page,fx,fy,fw,fh}; drawn per page on render
   relayoutRedactMarks();
   els.redactTextModal.hidden = true;
   toast(`${marks.length} match(es) marked on ${pages.size} page(s) — review the boxes (scroll to see them all), then “Apply redactions”.`);
@@ -5102,7 +5144,6 @@ let activeMarker = null;      // the marker highlighted as the current fill targ
 let fillTarget = null;        // a sign/initial marker awaiting a Library pick
 let markerSig = null, markerInit = null; // remembered sign/initial fill sources for this session
 let docHadFlags = false;      // the open document arrived with embedded signing flags
-let signLocked = false;       // "signing marks completed": doc is signing-only, non-editable
 let signTotal = 0;            // flag count when the signing banner appeared, for "X of N"
 let signStarted = false;      // the recipient has hit Start, so the action is now "Next field"
 
@@ -5110,8 +5151,8 @@ let signStarted = false;      // the recipient has hit Start, so the action is n
 // drag, and delete flags (only while unlocked). flagsFillable: a flag may be clicked
 // to fill it — true while unlocked (a preparer self-filling a form) and, even when
 // locked, on a received document (the recipient signs but can't reshape the layout).
-function flagsEditable() { return !signLocked; }
-function flagsFillable() { return !signLocked || docHadFlags; }
+function flagsEditable() { return !view.signLocked; }
+function flagsFillable() { return !view.signLocked || docHadFlags; }
 const MARKER_SIZES = {
   sign: [0.22, 0.05], date: [0.13, 0.035], initial: [0.07, 0.05],
   name: [0.24, 0.035], title: [0.18, 0.035], company: [0.24, 0.035],
@@ -5139,9 +5180,9 @@ els.saveForSigningBtn.onclick = () => { if (!pdfDocument) return toast('Open a P
 // and must stay non-editable; see setDocumentFromServer.
 els.signCompleteBtn.onclick = () => {
   if (!pdfDocument) return;
-  if (!signLocked && !markerFields().length) return toast('Place at least one flag first.');
-  setSignLocked(!signLocked);
-  toast(signLocked
+  if (!view.signLocked && !markerFields().length) return toast('Place at least one flag first.');
+  setSignLocked(!view.signLocked);
+  toast(view.signLocked
     ? 'Marks locked — the document is in signing mode and can no longer be edited.'
     : 'Editing re-enabled — you can change the flags again.');
 };
@@ -5163,7 +5204,7 @@ function setEditingEnabled(on) {
 }
 
 function setSignLocked(locked) {
-  signLocked = locked;
+  view.signLocked = locked;
   if (locked) { // leaving any active editing tool behind would be a dead, disabled mode
     setMarkerMode(null);
     if (redactMode) { redactMode = false; reflectRedact(); els.viewerContainer.style.cursor = ''; }
@@ -5172,12 +5213,12 @@ function setSignLocked(locked) {
   applySignLock();
 }
 
-// applySignLock reflects signLocked across the whole UI. Safe to call whenever the
+// applySignLock reflects view.signLocked across the whole UI. Safe to call whenever the
 // lock, the open document, or the flag count changes.
 function applySignLock() {
   const open = !!pdfDocument;
-  setEditingEnabled(open && !signLocked);
-  els.viewerWrap.classList.toggle('signing-locked', signLocked);
+  setEditingEnabled(open && !view.signLocked);
+  els.viewerWrap.classList.toggle('signing-locked', view.signLocked);
   reflectSignControls();
 }
 
@@ -5188,12 +5229,12 @@ function reflectSignControls() {
   const recipient = docHadFlags;            // opened with flags => the counterparty's copy
   const n = markerFields().length;
   // A recipient never prepares; a locked preparer can't place until they edit again.
-  all('.markers button').forEach((b) => { b.disabled = !open || recipient || signLocked; });
+  all('.markers button').forEach((b) => { b.disabled = !open || recipient || view.signLocked; });
   els.saveForSigningBtn.disabled = !open || recipient;
   els.signCompleteBtn.hidden = !open || recipient;
-  els.signCompleteBtn.disabled = !signLocked && n === 0;
-  els.signCompleteBtn.textContent = signLocked ? 'Edit marks again' : 'Signing marks completed';
-  els.signCompleteBtn.classList.toggle('active', signLocked);
+  els.signCompleteBtn.disabled = !view.signLocked && n === 0;
+  els.signCompleteBtn.textContent = view.signLocked ? 'Edit marks again' : 'Signing marks completed';
+  els.signCompleteBtn.classList.toggle('active', view.signLocked);
 }
 
 function setMarkerMode(m) {
@@ -6527,7 +6568,7 @@ function clearOverlays() {
   exitShape();    // nor a pending shape-draw mode
   exitCrop();     // nor a pending crop-draw mode
   exitNote(); exitDropdown(); exitRadio();     // nor a pending note-placement mode
-  redactMarks = []; // pending redaction boxes don't carry to a new/reloaded document
+  view.redactMarks = []; // pending redaction boxes don't carry to a new/reloaded document
   clearOverlayHistory(); // a new/reloaded document resets the overlay-edit undo stack
 }
 

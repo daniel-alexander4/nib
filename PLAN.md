@@ -1450,7 +1450,83 @@ Exit criteria:
   view-scoped.
 - Re-fit and dpr-heal on activation (a view that loads hidden gets no scale).
 - The two sidebars show the active document's content and nothing else.
-Slices: sketched at phase-open.
+**(phase-open, 2026-08-16 — slices firmed against the codebase as it now stands, with
+the surface measured rather than estimated.)**
+
+**377 references across 13 bindings in a 7,222-line file** — measured, and it is what
+drives the slicing below: `pdfDocument` 148, `viewer` 67, `docMeta` 37, `overlayFields`
+35, `eventBus` 16, `signLocked` 16, `redactMarks` 13, `docGen` 12, `outlineItems` 10,
+`lastSig` 8, `linkService` 7, `originalName` 6, `findController` 2.
+
+**(decision, 2026-08-16 — swap-on-switch is refused.)** There is a tempting shortcut:
+leave all 13 as module-level bindings and *save/restore* them at the switch boundary, so
+the active view's values are copied in and out. It would cost zero reference churn
+against 377 sites. **It is refused, and the reason is this plan's own history:** the
+module-level bindings would then be a cache whose correctness depends on nothing async
+reading them across a switch — exactly the class P04 just spent three slices closing on
+the server-addressed side. Swap-on-switch reintroduces it on the client-state side,
+where there is no id to check and no 409 to refuse. ADR-002's argument applies unchanged:
+a single missed binding loses data silently. The explicit refactor is the price of not
+having that failure mode.
+
+**(decision, 2026-08-16 — the sidebars go per-view; the phase-open call the subsystem pin
+asked for.)** The pin offered per-view containers (consistent with D3, costs hidden
+thumbnail DOM) or rebuild-on-activation (cheaper, re-renders every thumbnail on every
+switch). **Per-view containers** — rebuild-on-activation is precisely what ADR-002 exists
+to avoid, and the memory cost is already accepted there and bounded by P06's document
+cap. `docGen` is per-view either way: a shared token lets a background document's
+finishing build abort the foreground's.
+
+#### P05.S01 — the view record, and the bindings where sharing is a safety defect *(done 2026-08-16, v1.105.0)*
+Scope: introduce the `view` record and move the **small, safety-critical** bindings onto
+it — `redactMarks`, `signLocked`, `lastSig`, plus `docGen`, `outlineItems`,
+`originalName` (~65 references). One view exists, so behaviour is identical. Refs: D5,
+D11, D12, and the dimension-review pin on the three safety bindings.
+
+**Sliced this way deliberately.** The three bindings the pin calls safety defects rather
+than UI defects are also among the smallest, so they land first and are asserted before
+the 220-reference bulk moves. Biggest-first would put the irreversible-destruction
+binding behind the riskiest edit in the phase.
+Acceptance:
+- `redactMarks` is per-view, with a guard that marks drawn on one view cannot be baked
+  through another — the worst outcome in this plan, because redaction commits through
+  `commitBarrier`, which clears undo by design.
+- `signLocked` is per-view, **and ambiguity resolves toward locked** — a guard asserts a
+  locked document is still locked after a switch.
+- `lastSig` is per-view, with a guard that the signature-details modal cannot show one
+  document's verification result under another's name.
+- Single-view behaviour unchanged; the existing suites stay green.
+
+#### P05.S02 — the bulk state bindings
+Scope: `pdfDocument`, `docMeta`, `overlayFields` onto the view (~220 references). Refs:
+D5, D12, and the hot-path pin.
+Acceptance:
+- `relayoutOverlays` walks **only the active view's** fields — asserted, because a
+  version iterating every open document turns the one genuinely frequent path in this
+  feature into an N× regression on the path a user feels most.
+- Single-view behaviour unchanged.
+
+#### P05.S03 — per-view viewer and DOM
+Scope: `viewer`/`eventBus`/`linkService`/`findController` per view; per-view
+`#viewerContainer`/`#viewer` inside the stable `#viewerWrap`; the **26** pointer
+listeners re-homed to the stable parent; cleanup sweeps view-scoped. Refs: D3, ADR-002.
+Acceptance:
+- Each view owns its viewer and container; inactive views hidden, never destroyed.
+- The pointer listeners survive a view being hidden — they are on the stable parent.
+- A document-wide DOM sweep cannot reach a hidden view's marks (ADR-002's consequence).
+
+#### P05.S04 — activation
+Scope: show/hide on switch; re-fit and dpr-heal on activation. Refs: D3.
+Acceptance:
+- A view that loads while hidden gets a scale when activated — red without the re-fit,
+  since a hidden container reports `clientWidth` 0.
+
+#### P05.S05 — the sidebars
+Scope: per-view thumbnail and outline containers, per-view `docGen`. Refs: D3, and the
+subsystem-round pin.
+Acceptance:
+- The two sidebars show the active document's content and nothing else.
+- A background document finishing its build cannot abort the foreground's.
 
 **(dimension-review pin: the one hot path this feature has, 2026-08-15)** Switching
 is a `display` toggle and opening is a user action, so neither is per-frame. But
