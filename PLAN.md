@@ -1060,7 +1060,41 @@ Acceptance:
 - 409 is distinguishable from 404 in body as well as status.
 - An id from a previous process epoch is 409, not silently accepted.
 
-#### P03.S03 — the client always sends an id
+#### P03.S03 — the client always sends an id *(done 2026-08-16, v1.103.11)*
+
+**(deepdive, 2026-08-16: the load-bearing task is a wire addition the slice does
+not mention.)** `docResponse` carries no id — Name, Path, CanSave, Signature,
+Flags, CanUndo, CanRedo, and nothing the client could echo back. The enforcement is
+**impossible** until the server tells the client what its document is called, so
+T01 is that addition and the header plumbing is wiring behind it.
+
+Also traced: **nothing bypasses `apiFetch` today.** Exactly three bare `fetch()`
+calls exist (`/api/status`, `/api/ssh/unlock`, `/api/update/check`) and none is a
+document route. That is the property the whole enforcement rests on, it is true
+now, and nothing keeps it true — hence T06.
+
+**The attachment is unconditional, not route-scoped.** A client-side list of
+document routes would be a second copy of the server's knowledge, in a different
+language, drifting on the next route added; the header is inert on the 49 routes
+that never call `docFor`, so over-sending costs nothing and a drifted list costs a
+route that silently falls back to the active document — the finding this slice
+closes.
+
+Tasks:
+1. T01 — `docResponse.id` (server).
+2. T02 — the client stores it.
+3. T03 — `apiFetch` attaches `X-Nib-Doc` whenever a document is open.
+4. T04 — `/api/pdf?doc=` where pdf.js builds the URL (D15's exception).
+5. T05 — tier-2 guard: a document-route call carries the header, and the id matches
+   the one the server issued. Proven red by removing the attachment.
+6. T06 — static guard: the three `apiFetch` bypasses stay exactly those three.
+
+**What this slice does NOT do.** The critical pin says the client sends the calling
+view's **captured** id; S03 sends the **current** one. Capturing is operation
+pinning, which is **P04**. With one view they are the same value, so the difference
+is invisible today and total once P05 lands — recorded so the pin is not read as
+discharged here, because a pin marked satisfied is one nobody re-reads.
+
 Scope: the critical pin's enforcement — `apiFetch` attaches the active view's id to
 every document route, so a call site cannot omit it by forgetting. Refs: D15's
 critical pin.
