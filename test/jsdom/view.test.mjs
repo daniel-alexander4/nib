@@ -31,9 +31,23 @@ import path from 'node:path';
 import { REPO } from './boot.mjs';
 
 const APP = fs.readFileSync(path.join(REPO, 'web', 'app.js'), 'utf8');
+// Full-line `//` comments only. Trailing comments and `/* */` blocks survive, and the
+// bare-name scans below match inside them — so a trailing comment that happens to name
+// one of the scanned bindings produces a FALSE RED accusing the code of a defect it does
+// not have. That direction is deliberate: it is self-announcing and the fix is to reword
+// the comment. A cleverer stripper would have to reason about `//` inside string literals,
+// and getting that wrong produces false GREENS, which is the direction that hurts.
 const CODE = APP.split('\n').filter((l) => !l.trim().startsWith('//')).join('\n');
 
 const PER_VIEW = ['redactMarks', 'signLocked', 'lastSig', 'docGen', 'outlineItems', 'originalName'];
+
+// P05.S03 — the four pdf.js objects. They are scanned by the same machinery because
+// they fail the same way, but their reason is stronger than the state bindings': the
+// vendored library FORCES them per view. PDFViewer's constructor registers on the bus
+// it is handed and mutates the find controller it is handed; PDFFindController
+// registers three more handlers on that bus; PDFLinkService holds a single viewer slot.
+// Sharing any one of them makes N documents interfere through pdf.js itself.
+const PER_VIEW_ENGINE = ['viewer', 'eventBus', 'linkService', 'findController'];
 
 test('the view record exists and is the only home for these bindings', () => {
   assert.match(CODE, /function newView\(\)/, 'there is no view record');
@@ -54,13 +68,63 @@ test('none of the per-view bindings is declared at module scope', () => {
   }
 });
 
+// The scan below excludes newView()'s own body, because that function is the one place
+// these names legitimately appear bare — it is where the record is built. Cutting that
+// region out is done by locating two string anchors, and THAT is a hazard in its own
+// right, so it is checked rather than trusted.
+//
+// Measured, on the code as it stood at P05.S03: if the closing anchor goes stale,
+// `String.slice(start, -1)` swallows 200,944 of the file's 248,519 characters into the
+// excluded region, `outside` collapses to the 47,575-character prefix, and all six
+// names report zero hits. The scan then reads 19% of the file while claiming to cover
+// it — a green over a population it no longer sees.
+//
+// It is not silent TODAY: the anchors are the same literals asserted above, so a stale
+// one turns this file red there first. The failure mode this guards is the realistic
+// one — someone fixes the assertion above and misses this independent copy of the same
+// string — and it costs three lines to remove.
+function outsideTheRecord() {
+  const start = CODE.indexOf('function newView()');
+  const end = CODE.indexOf('let view = newView();');
+  assert.ok(start !== -1, 'the newView() anchor is stale — this scan would silently read almost nothing');
+  assert.ok(end !== -1, 'the `let view = newView();` anchor is stale — this scan would silently read almost nothing');
+  assert.ok(start < end, 'the anchors are out of order — the excluded region would be empty and the scan would flag the record itself');
+
+  const outside = CODE.replace(CODE.slice(start, end), '');
+
+  // Stimulus, in three parts, because the first two alone do not close it.
+  //
+  // `indexOf` takes the FIRST match, so the excluded region can only grow UPWARD
+  // undetected — and `CODE` strips only lines whose trimmed text begins with `//`, which
+  // leaves block comments as a live vector. Measured: a `/* built by function newView()
+  // */` planted near the top of app.js grows the excluded region from ~2.4k to ~49k
+  // characters, drops roughly 1,300 lines out of the scan, and BOTH downstream sentinels
+  // still pass. So a sentinel from before the record is required, and a bound on how much
+  // the exclusion may eat is what actually makes the growth visible.
+  assert.ok(outside.includes('const $ = (id) => document.getElementById(id)'),
+    'the scanned region no longer reaches the top of the file — the exclusion grew upward');
+  assert.ok(outside.includes('function setDocumentFromServer'),
+    'the scanned region no longer reaches past newView() — the exclusion swallowed the file');
+  assert.ok(outside.includes('function relayoutOverlays'),
+    'the scanned region no longer reaches the end of the file');
+
+  const eaten = CODE.length - outside.length;
+  assert.ok(eaten < 8000,
+    `the excluded region is ${eaten} characters — newView() is nowhere near that big, so an anchor has drifted and the scan is reading a population it does not cover`);
+  return outside;
+}
+
 test('every read of a per-view binding goes through the record', () => {
   // A reference not prefixed by `view.` is a read of something that no longer exists —
-  // or worse, a re-introduced module-level shadow. Property definitions inside
-  // newView() are excluded by requiring a non-property context.
-  const body = CODE.slice(CODE.indexOf('function newView()'), CODE.indexOf('let view = newView();'));
-  const outside = CODE.replace(body, '');
-  for (const name of PER_VIEW) {
+  // or worse, a re-introduced module-level shadow.
+  //
+  // The guard is NAME-shaped, and the test name promises more than that: it proves "no
+  // bare name", which is not quite "every read goes through the record". A module-level
+  // singleton reached by property path — `const shared = {}; shared.viewer = view.viewer;`
+  // — passes both this and the declaration check. Stated so the next reader does not
+  // over-trust it; closing it properly needs a parser, not a regex.
+  const outside = outsideTheRecord();
+  for (const name of [...PER_VIEW, ...PER_VIEW_ENGINE]) {
     const bare = new RegExp(`(?<![.\\w$])${name}\\b`, 'g');
     const hits = outside.match(bare) || [];
     assert.deepEqual(hits, [],
@@ -101,17 +165,27 @@ test('lastSig belongs to a view — the trust decision', () => {
 // so that a hidden view's fields are laid out too — and that turns the path a user feels
 // most into an N× regression. It must walk the ACTIVE view's fields and only those.
 test('relayoutOverlays walks one view, not every open document', () => {
-  const start = CODE.indexOf('function relayoutOverlays()');
-  assert.ok(start !== -1, 'relayoutOverlays is gone — the hot-path pin has nothing to bind to');
+  // Re-derived for P05.S03, NOT loosened. The function took no argument and read the
+  // module-level `view`; it now takes the OWNING view, because it fires on that view's
+  // own event bus and pairing one view's page geometry with another's field list would
+  // move the active document's overlay elements into a background page div. The pin it
+  // discharges is unchanged: ONE view's fields, never a collection of views.
+  const start = CODE.indexOf('function relayoutOverlays(owner)');
+  assert.ok(start !== -1, 'relayoutOverlays is gone or no longer takes its owning view — the hot-path pin has nothing to bind to');
   const fn = CODE.slice(start, CODE.indexOf('\n}', start));
 
-  assert.match(fn, /for \(const f of view\.overlayFields\)/,
-    'relayoutOverlays does not iterate the active view\'s fields');
+  assert.match(fn, /for \(const f of owner\.overlayFields\)/,
+    'relayoutOverlays does not iterate the owning view\'s fields');
 
   // The wrong shape, named so it fails loudly rather than merely not matching above:
   // any loop over a collection of views inside this function is the N× regression.
   assert.doesNotMatch(fn, /\bviews\b|forEach\s*\(\s*\(?\s*v\b/,
     'relayoutOverlays iterates more than one view — this is the N× regression on scroll and zoom that the hot-path pin exists to prevent');
+
+  // And it must not reach back to the active view: that is the same defect wearing a
+  // different shape, and it would pass both assertions above.
+  assert.doesNotMatch(fn, /(?<![.\w$])view\b/,
+    'relayoutOverlays reads the active view — it must use only the view it was handed');
 });
 
 test('the bulk bindings are per-view too', () => {
@@ -120,4 +194,74 @@ test('the bulk bindings are per-view too', () => {
       `${name} is still module-level — 220 references would all reach whichever document is active`);
     assert.ok(CODE.includes(`view.${name}`), `${name} is not reached through the view record`);
   }
+});
+
+// ── P05.S03 — the viewer, the DOM, and the sweeps ───────────────────────────
+//
+// What this tier CAN reach: the source shape, the real DOM the app builds at boot, and
+// — via a decoy container — whether a cleanup sweep is view-scoped or document-scoped.
+// What it cannot: a real switch. One view exists until P06 gives opens a way to add
+// one, so "inactive views hidden, never destroyed" and "the listeners survive a view
+// being hidden" are asserted structurally here and recorded `not exercised` behaviourally.
+
+test('the four pdf.js objects are built per view, not once for the app', () => {
+  // Stimulus first: the names must appear, or "none is module-scope" is a green over an
+  // empty population, satisfied by deleting the viewer entirely.
+  for (const name of PER_VIEW_ENGINE) {
+    assert.ok(CODE.includes(name), `${name} does not appear at all — the scan is not reading what it thinks`);
+  }
+  for (const name of PER_VIEW_ENGINE) {
+    assert.doesNotMatch(CODE, new RegExp(`^(?:let|var|const)\\s+${name}\\b`, 'm'),
+      `${name} is still a module-level singleton — pdf.js makes N documents interfere through it`);
+  }
+  // Each is constructed inside the record's own builder.
+  assert.match(CODE, /v\.eventBus = new EventBus\(\)/, 'the event bus is not per view');
+  assert.match(CODE, /v\.linkService = new PDFLinkService\(/, 'the link service is not per view');
+  assert.match(CODE, /v\.findController = new PDFFindController\(/, 'the find controller is not per view');
+  assert.match(CODE, /v\.viewer = new PDFViewer\(/, 'the viewer is not per view');
+});
+
+test('the reason the engine is per view survives in the record', () => {
+  // Prose, deliberately — the same call V4 made for the safety bindings. Nothing in the
+  // types says PDFViewer's constructor mutates the find controller it is handed, so an
+  // edit that keeps the mechanism and drops the reason leaves the next reader unable to
+  // tell this apart from ordinary tidiness.
+  assert.match(APP, /MUTATES the find controller/,
+    'the record no longer records that PDFViewer mutates the find controller — the strongest reason these are per view');
+});
+
+test('the drawing tools listen on the stable wrap, not on a per-view container', () => {
+  // A listener bound to a container would serve only the view that existed when the
+  // module evaluated; a document opened later would get no drawing tools at all.
+  const onWrap = (CODE.match(/els\.viewerWrap\.addEventListener\('pointer/g) || []).length;
+  assert.ok(onWrap >= 26, `only ${onWrap} pointer listeners on the stable wrap — some have moved off it`);
+  assert.doesNotMatch(CODE, /els\.viewerContainer/,
+    'the module-load container handle is back — it can only ever name the first view');
+
+  // Counting the wrap alone is not enough, and this is the hole the first version had: a
+  // NEW tool bound to `view.container` leaves the count at 26 and every other assertion
+  // here green, while being exactly the defect described above. So the negative
+  // population is named too. The count is a floor rather than an equality for the
+  // opposite reason — an equality of 26 goes red when a legitimate eleventh tool is
+  // added, which reads as a regression and trains the next person to bump the literal.
+  assert.doesNotMatch(CODE, /view\.container\.addEventListener\('pointer/,
+    'a pointer listener is bound to a per-view container — it would serve only that view, and a document opened later gets no drawing tools');
+  assert.doesNotMatch(CODE, /\.pagesEl\.addEventListener\('pointer/,
+    'a pointer listener is bound to a per-view page stack — same defect one level in');
+
+  // Every pointerdown asks whether the event started in the ACTIVE view, because the
+  // wrap also receives events over #signBanner, which floats above the page.
+  //
+  // Paired per handler, not counted. Totals alone are satisfied by moving a guard off a
+  // pointerdown and onto its sibling pointermove: the two counts still match, and one
+  // pointerdown is left unguarded on the wrap.
+  const blocks = CODE.split(/els\.viewerWrap\.addEventListener\('pointerdown'/).slice(1);
+  assert.equal(blocks.length, 10, `expected 10 pointerdown handlers on the wrap, found ${blocks.length}`);
+  blocks.forEach((b, i) => {
+    const head = b.slice(0, 400); // the guard sits two lines in, after the mode bail
+    assert.match(head, /if \(!startedInActiveView\(e\)\) return;/,
+      `pointerdown handler ${i + 1} of ${blocks.length} has no origin guard — a click on #signBanner reaches it`);
+  });
+  assert.match(CODE, /e\.target\.closest\('\.viewerContainer'\) === view\.container/,
+    'the origin guard no longer compares against the active view container');
 });

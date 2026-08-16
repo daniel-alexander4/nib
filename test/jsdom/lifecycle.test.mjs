@@ -44,7 +44,18 @@ async function closeDocument() {
 
 const armRedact = () => document.getElementById('redactBtn').click();
 const redactLit = () => document.getElementById('redactBtn').classList.contains('active');
-const cursor = () => document.getElementById('viewerContainer').style.cursor;
+// Re-derived for P05.S03, not loosened. The crosshair used to be written on
+// #viewerContainer; that element is now one per open document and built in JS, so the
+// cursor moved to the stable #viewerWrap — which is also where the drawing tools now
+// listen. Reading it off the wrap keeps this asserting the same user-visible fact.
+// Over the page itself this is identical: the container is inset:0 over the wrap, and
+// `.textLayer :is(span, br) { cursor: text }` in the vendored sheet overrode the
+// inherited crosshair before the move and still does. It is NOT identical everywhere —
+// #signBanner is a child of the wrap rather than of the container, so it now inherits the
+// crosshair on its padding and label where it previously showed an arrow. Cosmetic, and
+// invisible at this tier (jsdom computes no inherited cursor); recorded so the next
+// reader does not take "identical" as a claim about the whole wrap.
+const cursor = () => document.getElementById('viewerWrap').style.cursor;
 
 test('opening a document reaches the app (the stimulus for everything below)', async () => {
   await openDocument();

@@ -128,11 +128,23 @@ return — is rejected because **an overlay's value lives in the DOM**
 the user's typing with no error. Preservation must not depend on twelve
 hand-written round-trips being individually correct.
 
-### D5 — Binding strategy: reassignable module bindings *(settled 2026-08-15 via /grill)*
+### D5 — Binding strategy: reassignable module bindings *(settled 2026-08-15 via /grill; **SUPERSEDED 2026-08-16** by the P05 phase-open decision)*
 `viewer`, `eventBus`, `linkService`, `findController` become `let` and are
 repointed to the active view on switch; `pdfDocument` already is one. This is
 what makes D3 affordable: roughly 198 call sites read these at call time and need
 no edits. Only `els.viewerContainer` (50 refs) needs a swappable binding.
+
+**(superseded 2026-08-16, recorded during P05.S03 — this decision IS swap-on-switch,
+which P05's phase-open decision refuses.)** The paragraph above and the phase-open
+decision "swap-on-switch is refused" contradict each other outright: one prescribes
+repointing module bindings at the switch boundary, the other refuses exactly that and
+gives the reason (the bindings become a cache whose correctness depends on nothing async
+reading them across a switch — the class P04 spent three slices closing server-side).
+The phase-open decision governs, and `web/app.js:1256-1262` already records the refusal
+in code. **D5 is left in place rather than struck**, because the useful artifact is the
+contradiction: a reader sizing this work from D5's "roughly 198 call sites … need no
+edits" would size it at zero, when the true figure is 79 code sites that all get edited.
+Its `els.viewerContainer` count is also wrong — 51, not 50.
 
 ### D6 — Document identity is a wire concern *(settled 2026-08-15 via /deepdive)*
 Every document-touching endpoint carries a document id. A client-side view
@@ -1443,9 +1455,11 @@ Goal: each document owns its viewer, its DOM and its state records. Refs: D3, D5
 D11, D12.
 Exit criteria:
 - Per-view `PDFViewer`/container; inactive views hidden, never destroyed.
-- The seven silent-loss bindings plus `signLocked`, `lastSig`, `docGen` are
-  per-view; `detachField`/`reattachField`/`relayoutOverlays` resolve the owning
-  view, not the active one.
+- The seven silent-loss bindings plus `signLocked`, `lastSig`, `docGen` **and
+  `overlayHistory`** are per-view; `detachField`/`reattachField`/`relayoutOverlays`
+  resolve the owning view, not the active one. **(amended 2026-08-16, S03 deepdive —
+  `overlayHistory` was missing from the phase-open enumeration; see the measurement
+  correction below.)**
 - The 26 pointer listeners re-homed to the stable parent; cleanup sweeps
   view-scoped.
 - Re-fit and dpr-heal on activation (a view that loads hidden gets no scale).
@@ -1457,6 +1471,21 @@ the surface measured rather than estimated.)**
 drives the slicing below: `pdfDocument` 148, `viewer` 67, `docMeta` 37, `overlayFields`
 35, `eventBus` 16, `signLocked` 16, `redactMarks` 13, `docGen` 12, `outlineItems` 10,
 `lastSig` 8, `linkService` 7, `originalName` 6, `findController` 2.
+
+**(measurement correction, 2026-08-16, found by S03's deepdive — the enumeration above
+is short by one binding, and the missing one is safety-critical.)** `overlayHistory`
+(`app.js:6446`) is declared at module scope and is not in the 13. It holds the client
+overlay-edit undo/redo stacks, whose entries are **closures over overlay elements**
+(`:6527-6533`), drained by `undoAny()` before the server ring (`:6538`). Shared across
+views, Ctrl+Z in document A replays a command captured against document B's element —
+the same irreversible-loss family as `redactMarks`, not the stale-label family. It is
+therefore **fourteen** bindings, and the exit criterion above is amended to say so.
+The lesson is P04's, again and exactly: *a count used to size work is an instrument, and
+an instrument that has never been red-fixtured will happily report a population it did
+not read.* The 377/13 figures also count comment prose — the guard suite strips comments
+(`view.test.mjs:34`), so the population it actually polices is smaller than the figure
+that sized the phase. **`overlayHistory` is P05.S06's** (added below); no earlier slice
+claims it.
 
 **(decision, 2026-08-16 — swap-on-switch is refused.)** There is a tempting shortcut:
 leave all 13 as module-level bindings and *save/restore* them at the switch boundary, so
@@ -1512,14 +1541,150 @@ Acceptance:
   feature into an N× regression on the path a user feels most.
 - Single-view behaviour unchanged.
 
-#### P05.S03 — per-view viewer and DOM
+#### P05.S03 — per-view viewer and DOM *(done 2026-08-16, v1.105.2)*
 Scope: `viewer`/`eventBus`/`linkService`/`findController` per view; per-view
-`#viewerContainer`/`#viewer` inside the stable `#viewerWrap`; the **26** pointer
+container/pages pair inside the stable `#viewerWrap`; the **26** pointer
 listeners re-homed to the stable parent; cleanup sweeps view-scoped. Refs: D3, ADR-002.
+
+**(deepdive pin, 2026-08-16 — the dive ran before the grill and hardened the premise
+rather than the plan.)** The four bindings being per-view was written as a design
+preference. It is **forced by the vendored pdf.js, four independent ways**, each read at
+the line:
+- `PDFViewer`'s constructor registers `thumbnailrendered` on the bus it is handed
+  (`pdf_viewer.mjs:8065`). N viewers on one bus each index `_pages[pageNumber-1]` from
+  another document's event and call `pdfPage.cleanup()`.
+- The same constructor **mutates** the find controller it is handed —
+  `findController.onIsPageVisible = …` (`:8012`) — a single slot, last writer wins.
+- `PDFFindController`'s constructor registers `find`/`findbarclose`/`pagesedited` on the
+  bus (`:927-929`), so one `dispatch('find')` makes every open document search at once
+  and race to answer the single counter.
+- `PDFLinkService` holds one `pdfViewer` field and `setViewer` is 1:1 (`:1582,:1589`),
+  so outline clicks drive the last-constructed viewer.
+
+**Re-homing the 26 listeners is safe by construction, and that is a fact about one
+function.** All ten `pointerdown` handlers resolve the page through `pageAt`
+(`app.js:4649`), which is pure viewport geometry against `getPageView(i)` rects. There is
+no `e.currentTarget` and no `elementFromPoint` anywhere in `app.js`, so moving a listener
+up one ancestor changes no coordinate and no target. The **16** `pointermove`/`pointerup`
+handlers are each gated on their own drag-state variable, so they need no origin guard —
+and leaving them unguarded fixes a latent orphan-`div` bug (see the behaviour-change pin).
+
+**(grill pin, 2026-08-16 — the origin guard is real, and it belongs on ten handlers, not
+26.)** `#signBanner` is today a *sibling* of `#viewerContainer` (`index.html:341`), so a
+pointerdown on it does not reach the tools. On the wrap it would. Seven tools —
+splitBox, crop, border, dropdown, radio, shape, note — are **not** in `EDITING_TOOLS`
+(`app.js:5205-5209`, verified), so they stay armable while the banner is up, and a click
+on the banner would land a note or start a drag on the page beneath it. The guard
+reproduces today's semantics. It goes on the ten `pointerdown` handlers **after** each
+one's existing mode-flag bail: putting a `closest()` tree-walk first would add eight
+ancestor walks per `pointermove` across the text layer, which `CLAUDE.md`'s hot-path rule
+governs. `#empty` needs no guard — it is `pointer-events:none` (`style.css:772`) and
+hidden whenever a document is open (`:774`).
+
+**(grill pin, 2026-08-16 — build the container visible, then hide.)** pdf.js's
+`container must be absolutely positioned` check (`pdf_viewer.mjs:8000`) is guarded by
+`this.container.offsetParent`, which is **null when the element is `display:none`**. So
+constructing a viewer into a hidden container **skips** the check rather than satisfying
+it, and it never re-runs — a CSS mistake would then throw only for the first visible view
+and stay silent for every hidden one. `newView()` therefore appends and constructs while
+visible, and hides afterwards only if the view is not active. This also disposes of the
+"created hidden leaves the app blank" defect: one view exists and it is always active.
+
+**(reality drift, 2026-08-16 — removing the `#viewer` id would have blinded tier 3.)**
+`test/ui/harness.mjs:86` waits on `#viewer .page` **inside `openDocument()`**, the helper
+every tier-3 test calls; `:118` and `:135` use it too. Since tier 2 declares no layout and
+no rendering engine (`boot.mjs:15-21`), cursor behaviour and pointer routing are
+*delegated* to tier 3 — so dropping the id would have deleted the one instrument able to
+see this slice's own regression, and it would have failed as a **timeout**, not an
+assertion. The three selectors are re-derived to the new idiom (T11), not loosened.
+
+**(behaviour change, recorded deliberately, 2026-08-16)** A drag released outside the
+container today never reaches the container's `pointerup`, so its drag-state variable
+stays non-null and its preview div is orphaned. Re-homing to the wrap terminates the drag
+correctly. This is a fix, not a regression, and it is written down rather than smuggled in
+because "reproduce today's semantics" would otherwise imply today's semantics were right.
+
+**(note, 2026-08-16 — a latent shared global, left alone on purpose.)** Every `PDFViewer`
+writes `--viewer-container-height` onto the document root (`pdf_viewer.mjs:552`,
+`:9590-9595`), so with N viewers a hidden view's `0px` clobbers the active view's value.
+Inert in Nib: the only consumers are the presentation-mode `dummyPage`
+(`pdf_viewer.mjs:8778-8781`) and a pdf.js sidebar Nib does not render, and `_resetView`
+pins `ScrollMode.VERTICAL` (`:8733`). One comment, no fix — it goes live the day spread
+or presentation mode does.
+
+**(note, 2026-08-16 — ADR-002 is not edited.)** ADR-002 spells the decision as a
+`#viewerContainer`/`#viewer` pair. This slice makes those classes, because two elements
+cannot share an id. The **decision content is untouched** — each document still owns its
+own container and pages pair, nested in the stable wrap, hidden not destroyed — so the
+ids read as illustrative of the shape, not as the decision. Per `CLAUDE.md`, ADRs are
+superseded and never edited; nothing here rises to a supersession.
+
+Tasks:
+1. T01 — `newView()` builds its own DOM (`.viewerContainer` > `.pdfViewer.viewerPages`),
+   appends to `#viewerWrap`, and constructs the four pdf.js objects onto the record,
+   passing `viewer:` explicitly so the inner div needs no id (`pdf_viewer.mjs:7995`).
+2. T02 — remove the static markup and the `els.viewerContainer` handle; CSS
+   `#viewerContainer` → `.viewerContainer`, `#viewer` → `.viewerPages`.
+3. T03 — the nine module-scope `eventBus.on` registrations move into `newView()`.
+4. T04 — handlers writing **shared** chrome (`pagechanging`; both find-count events)
+   gain an active-view guard.
+5. T05 — `relayoutOverlays`/`relayoutRedactMarks`/`fitWidestWidth`/`pagesinit` act on the
+   **owning** view; the three direct callers (`:5520`, `:4857`, `:6999`) pass it.
+6. T06 — the bare `viewer.` reads, three `linkService` sites and two `eventBus.dispatch`
+   sites resolve through the view.
+7. T07 — re-home the 26 listeners to `els.viewerWrap`; ten `pointerdown` guards, placed
+   after the mode-flag bail.
+8. T08 — the 23 cursor writes move to the wrap.
+9. T09 — `all('.splitmark')` (`:4875`) and `all('.cropmark')` (`:4959`) re-root at the
+   owning view's container.
+10. T10 — tier 2: `lifecycle.test.mjs:47` reads the cursor off the wrap.
+11. T11 — tier 3: `harness.mjs:86,118,135` re-scoped off the `#viewer` id.
+12. T12 — `view.test.mjs` guards re-derived (the `relayoutOverlays` anchor at `:104`, the
+    `overlayFields` shape at `:108`), the four bindings added to the per-view scan, and
+    anchor-staleness assertions added.
+13. T13 — the decoy fixture, asserting **both** directions.
+14. T14 — this amendment, the D5 supersession pin, and the `overlayHistory` correction.
+
 Acceptance:
 - Each view owns its viewer and container; inactive views hidden, never destroyed.
+  **Ownership** is asserted at the source and by construction; **inactive** is
+  `not exercised` — no production path creates a second view until P06.
 - The pointer listeners survive a view being hidden — they are on the stable parent.
+  Bound-to-the-wrap is asserted and probed red; surviving an actual hide is
+  `not exercised` (jsdom has no layout, tier 3 has one view).
 - A document-wide DOM sweep cannot reach a hidden view's marks (ADR-002's consequence).
+  **Driven for real** at tier 2 by injecting a decoy container: the test asserts the
+  active view's own mark **is** removed *and* the decoy's survives. One-directional would
+  pass against a sweep that removes nothing, which is the vacuous green this plan keeps
+  meeting.
+- Single-view behaviour unchanged; the existing suites stay green.
+- **The redaction tripwire applies** (`app.js:4636-4640`): this slice changes how `pageAt`
+  resolves its viewer, which feeds `pageContentRect`, so the manual procedure in
+  `reference_redaction_visual_check.md` runs before the commit. **Run 2026-08-16 against a
+  known-secret fixture: 24/24 interior pixels black, 3/3 just-outside controls pure white —
+  matching the 2026-06-02 v0.9.19 baseline exactly.** The procedure needed no adaptation,
+  which is itself the result: it drives bubbling PointerEvents from a text-layer span, so it
+  exercised the re-homed listeners on their new root without knowing they had moved.
+
+**(live verification, 2026-08-16 — the origin guard, with a control arm.)** The one behaviour
+this slice *changes* is that `#signBanner` now sits under the pointer root. Driven in a real
+browser: the same armed note tool placed 2 notes on the page and placed **nothing** on the
+banner. The control arm is the point — the first two attempts at this probe both reported
+"refused" while proving nothing, once because the tool had never armed (its button lives in
+another toolbar tab) and once because the control placed no note either (`makeNote` is async
+and the read was synchronous). *A refusal is only evidence when the same stimulus is shown to
+succeed somewhere.*
+
+**(review, 2026-08-16 — the critical was in this slice's instrument, not its code.)** The
+first decoy fixture built `.viewerContainer > .splitmark` with no page stack and parked the
+live mark on `.viewerPages` rather than in a `.page` — neither matching what `newView()`
+builds nor where the app appends a mark. Measured: a `document.querySelectorAll('.viewerPages
+.splitmark')` sweep — document-wide, reaching every open view — passed **both** assertions with
+the suite at 42/42. It cleared the live mark, and missed the decoy's only because the decoy
+lacked the element the selector keyed on. **A decoy that differs from the real thing tests the
+difference, not the rule**, and this is the third time this phase has met a green over a
+population that was never exercised. Rebuilt to the real shape and re-probed red three ways.
+Full disposition: `<project-memory>/code-reviews/P05.S03-per-view-viewer.md`.
 
 #### P05.S04 — activation
 Scope: show/hide on switch; re-fit and dpr-heal on activation. Refs: D3.
@@ -1533,6 +1698,46 @@ subsystem-round pin.
 Acceptance:
 - The two sidebars show the active document's content and nothing else.
 - A background document finishing its build cannot abort the foreground's.
+
+#### P05.S06 — the fourteenth binding: `overlayHistory`
+**(added 2026-08-16 by S03's deepdive — Dan's call, option A.)** Scope: `overlayHistory`
+(`app.js:6446`) onto the view record. Refs: D5, D12, and the measurement correction in
+the phase-open notes.
+
+Sliced separately and placed **last** rather than folded into S01, because S01 is closed
+and because this binding is in S01's category, not S02's: it is a *safety* binding, and
+retrofitting it into a closed slice would leave the phase with no record that the
+enumeration which sized the work had missed it. The residue is the point.
+
+The failure it removes: the undo/redo entries are **closures over overlay elements**
+(`:6527-6533`), and `undoAny()` (`:6538`) drains this stack **before** the server ring.
+So with one shared stack, Ctrl+Z in document A pops a command captured against document
+B and calls `c.undo()` on B's element — a mutation of a document the user is not looking
+at, from a keystroke they aimed at the one they are. That is the `redactMarks` family
+(irreversible, silent), not the stale-label family.
+
+**(scope addition, 2026-08-16, found by S03's diff review — the phase criterion names two
+functions and this is where they belong.)** The exit criterion says
+`detachField`/`reattachField` must resolve the **owning** view, not the active one. Both
+(`app.js:6620-6627`, plus `layoutFieldNow` at `:6629`) still read the module-level `view`
+after S03 — deliberately, because **every** stored-closure use of them is inside a
+`recordOverlayEdit(...)` call (`:5441-5459`, `:6637-6646`), which is to say inside this
+slice's binding. Fixing them without per-view history is the half of the fix that does not
+remove the failure: a *direct* call is always correct, since a user can only interact with
+the visible view, and it is only the stored closure that can outlive a switch. So the two
+land together, here.
+
+Acceptance:
+- `overlayHistory` is per-view, and the undo/redo button state (`:6476-6477`) reflects
+  the **active** view's stack.
+- `detachField`, `reattachField` and `layoutFieldNow` act on the view that owns the field,
+  not whichever is active when an undo is drained — discharging the phase criterion that
+  names the first two.
+- A guard asserts an overlay-edit undo recorded on one view cannot be drained through
+  another — red without the fix.
+- `hasEditsSinceOpen` (`:1480`) reads the owning view's stack, not whichever is active.
+- The phase-open enumeration says **fourteen** bindings, and the exit criterion names
+  this one.
 
 **(dimension-review pin: the one hot path this feature has, 2026-08-15)** Switching
 is a `display` toggle and opening is a user action, so neither is per-frame. But
