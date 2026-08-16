@@ -684,7 +684,24 @@ Acceptance:
   assertion failed rather than merely that something did.
 - The ceiling is written where the harness lives.
 
-#### P02.S02 — Tier 2: P01's client acceptance, retroactively
+#### P02.S02 — Tier 2: P01's client acceptance, retroactively *(done 2026-08-16, v1.103.2)*
+
+**(grill pin, 2026-08-16: booting is not opening.)** S01's `getDocument()`
+resolves to `null`, which is enough to boot and is exactly why S01 passed. It is
+not enough to open: `setDocumentFromServer` assigns that null to `pdfDocument` and
+then reads `pdfDocument.numPages` (`app.js:1245`). So T01 is a minimal document
+object, sized by what the open path touches — the same discipline that produced
+S01's 7-symbol surface.
+
+Tasks:
+1. T01 — a minimal document stub the open path can run against.
+2. T02 — the shared reset on the **open** path (the pre-existing bug S03 fixed).
+3. T03 — the shared reset on the **close** path.
+4. T04 — `closeDocument()` restores the launch chrome, asserted as a transition.
+5. T05 — `hasEditsSinceOpen()` from each of its four signals, plus the negative arm.
+6. T06 — proven red: restore the pre-S03 `clearOverlays()`, confirm T02 fails.
+7. T07 — each test names the P01 acceptance line it discharges.
+
 Scope: express as `node --test` tests the P01 clauses that live in the client —
 the shared reset clearing all four armed modes on **both** open and close,
 `closeDocument()` restoring the launch chrome value-for-value, and

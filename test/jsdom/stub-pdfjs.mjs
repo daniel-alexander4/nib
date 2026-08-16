@@ -35,11 +35,71 @@ export const Util = {
   transform: (a) => a,
 };
 
-// A document that resolves to null: enough for the open path to be driven up to
-// the point where rendering would begin, which is where this tier stops.
-export function getDocument() {
+// ── The document ─────────────────────────────────────────────────────────────
+// Booting is not opening. Resolving to `null` is enough for app.js to evaluate
+// (which is all P02.S01 needed), but the open path assigns the result to
+// pdfDocument and immediately reads `pdfDocument.numPages` to fill the page count
+// (app.js:1245) — so a null document throws there.
+//
+// The surface below is sized by what the open path actually touches, not by what
+// a PDF has: numPages, getPage (thumbnails), getOutline (the outline sidebar),
+// annotationStorage (the unsaved-edit signal), and loadingTask.destroy (teardown).
+// Same discipline as the seven symbols above — complete by construction, so a new
+// dependency fails loudly by name rather than silently returning undefined.
+//
+// getPage's viewport is real arithmetic rather than a constant: buildThumbnails
+// scales by `150 / base.width`, and a viewport that lied about its width would
+// make that scaling untestable. What it CANNOT do is render — jsdom has no canvas,
+// so `render()` rejects, buildThumbnails ends in its caller's .catch, and the
+// thumbnail grid stays empty at this tier. That is the ceiling, and it means the
+// thumbnail half of any sidebar assertion belongs to tier 3, not here.
+function makePage(n) {
   return {
-    promise: Promise.resolve(null),
+    pageNumber: n,
+    getViewport({ scale = 1 } = {}) {
+      return { width: 612 * scale, height: 792 * scale, scale, rotation: 0 };
+    },
+    render() {
+      return { promise: Promise.reject(new Error('jsdom has no canvas — rendering is tier 3')) };
+    },
+    getTextContent: async () => ({ items: [] }),
+    getAnnotations: async () => [],
+  };
+}
+
+let nextDocument = null;
+
+// The most recently created document, so a test can reach its annotationStorage —
+// app.js reads `.size` there as one of its four "edited since open" signals, and
+// there is no other way in from outside the module.
+export let lastDocument = null;
+
+// setNextDocument configures what the next getDocument() resolves to. Tests call
+// it to open a document of a known size; passing null restores the boot-only
+// behaviour S01 relied on.
+export function setNextDocument(opts) {
+  nextDocument = opts === null ? null : { numPages: 3, outline: null, ...opts };
+}
+
+export function getDocument() {
+  const cfg = nextDocument;
+  const task = { destroy: async () => {} };
+  if (cfg === null) {
+    return { promise: Promise.resolve(null), destroy: async () => {} };
+  }
+  const doc = {
+    numPages: cfg.numPages,
+    loadingTask: task,
+    // A real Map, because app.js reads `.size` as its pdf.js-edit signal and
+    // tests need to make it non-empty on demand.
+    annotationStorage: new Map(),
+    getPage: async (n) => makePage(n),
+    getOutline: async () => cfg.outline,
+    getData: async () => new Uint8Array(),
+    saveDocument: async () => new Uint8Array(),
     destroy: async () => {},
   };
+  lastDocument = doc;
+  task.promise = Promise.resolve(doc);
+  return task;
 }
