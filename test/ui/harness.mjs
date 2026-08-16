@@ -83,7 +83,14 @@ export async function launch() {
         (n) => document.querySelector('.pageCount').textContent === `/ ${n}`,
         pages,
       );
-      await page.waitForFunction(() => document.querySelectorAll('#viewer .page').length > 0);
+      // Scoped to the VISIBLE view (P05.S03). These three selectors read `#viewer .page`
+      // until that slice gave each open document its own container, and an id cannot be
+      // shared — but a bare `.viewerPages .page` would have been worse than the rename
+      // looks: with several containers in the wrap it silently measures whichever one
+      // the document ordered first, which need not be the one on screen. That failure
+      // surfaces as Playwright's 30s TimeoutError, not an assertion failure, because this
+      // line is inside openDocument() — which every tier-3 test calls.
+      await page.waitForFunction(() => document.querySelectorAll('.viewerContainer:not([hidden]) .page').length > 0);
     },
 
     // deleteMarker(type) removes the flag placed by placeMarker(type).
@@ -91,7 +98,8 @@ export async function launch() {
     // It DISARMS the tool first, and that is not tidiness — with the flag tool
     // still armed, clicking a flag's × plants ANOTHER flag instead of removing
     // it (measured: 1 marker in, 2 out). Placement listens on `pointerdown` on
-    // the viewer container while the × only calls stopPropagation() on `click`,
+    // #viewerWrap (P05.S03 moved it off the container) while the × only calls
+    // stopPropagation() on `click`,
     // so the placement fires first and is never stopped. That is a real defect in
     // the app, filed separately; the harness works around it because a test
     // should not be the thing that fixes it.
@@ -115,7 +123,7 @@ export async function launch() {
     async placeMarker(type = 'date') {
       await page.click('[data-tab="collaborate"]');
       await page.click(`[data-marker="${type}"]`);
-      const box = await page.locator('#viewer .page').first().boundingBox();
+      const box = await page.locator('.viewerContainer:not([hidden]) .page').first().boundingBox();
       await page.mouse.click(box.x + box.width / 2, box.y + box.height / 3);
       await page.waitForSelector('.ovl-marker');
     },
@@ -132,7 +140,9 @@ export async function launch() {
         overlays: document.querySelectorAll('.ovl').length,
         markers: document.querySelectorAll('.ovl-marker').length,
         thumbs: document.getElementById('thumbGrid').children.length,
-        pages: document.querySelectorAll('#viewer .page').length,
+        // The visible view's pages, not every visible container's summed — with two
+        // views open a sum would silently report 3 + 5 = 8 and read as a page count.
+        pages: document.querySelector('.viewerContainer:not([hidden])')?.querySelectorAll('.page').length ?? 0,
       }));
     },
   };
