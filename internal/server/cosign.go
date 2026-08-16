@@ -100,7 +100,14 @@ type attestationsResponse struct {
 // signature-details modal fetches it lazily.
 func (s *Server) handleAttestations(w http.ResponseWriter, r *http.Request) {
 	v := vaultFrom(r)
-	doc := s.activeDoc()
+	// Not resolveDoc: this route's nil answer is an empty list rather than a 404,
+	// because "no document open" is not an error for a panel that polls. A named
+	// document we do not hold still is one.
+	doc, err := s.docFor(r)
+	if err != nil {
+		httpError(w, http.StatusConflict, "that document is no longer open")
+		return
+	}
 	if doc == nil {
 		writeJSON(w, attestationsResponse{Attestations: []attestationView{}})
 		return
@@ -131,7 +138,14 @@ func (s *Server) handleCosignQuote(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	doc := s.activeDoc()
+	// Not resolveDoc: this route answers 400 rather than 404 for a missing
+	// document, because quoting requires one and asking without one is a client
+	// bug. Preserved as-is; only the 409 arm is new.
+	doc, err := s.docFor(r)
+	if err != nil {
+		httpError(w, http.StatusConflict, "that document is no longer open")
+		return
+	}
 	if doc == nil {
 		httpError(w, http.StatusBadRequest, "no document open")
 		return

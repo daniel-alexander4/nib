@@ -32,12 +32,20 @@ const (
 // belongs here and not in the caller because only this function holds the lock
 // across the test and the write; a caller that tested the document first would leave a
 // window for a close to land in between, which is the very defect.
-func (s *Server) commitMutation(input, result []byte) bool {
+func (s *Server) commitMutation(doc *document, input, result []byte) bool {
 	sig := sign.Verify(result)
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	doc := s.activeDocLocked()
-	if doc == nil {
+	// The TARGET document, passed in, not whatever happens to be active. Resolving
+	// active here would let an operation addressed to one document commit into
+	// another — ADR-001's corruption arriving through the helper rather than
+	// through a forgotten header, and invisible at every call site.
+	//
+	// P01.S01's property is unchanged and strictly stronger: the test and the write
+	// still happen under one lock hold, so a close landing in between cannot yield
+	// a success for discarded work. The test is now "is this document still
+	// registered" rather than "is anything open".
+	if doc == nil || !s.isRegisteredLocked(doc) {
 		return false
 	}
 	s.undo = append(s.undo, input)
@@ -57,12 +65,14 @@ func (s *Server) commitMutation(input, result []byte) bool {
 // and it matters more here, because the operations that come through this door
 // are the irreversible ones. Telling a user their redaction succeeded when it
 // was discarded is the worst reply this server can give.
-func (s *Server) commitBarrier(result []byte) bool {
+func (s *Server) commitBarrier(doc *document, result []byte) bool {
 	sig := sign.Verify(result)
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	doc := s.activeDocLocked()
-	if doc == nil {
+	// See commitMutation. It matters more here: these are the irreversible
+	// operations, so committing one into the wrong document destroys content that
+	// undo is deliberately unable to bring back.
+	if doc == nil || !s.isRegisteredLocked(doc) {
 		return false
 	}
 	s.clearUndoLocked()
@@ -106,8 +116,17 @@ func (s *Server) trimUndoLocked() {
 // moving the current state onto the redo stack. With nothing to undo it simply
 // returns the current state. The client reloads the bytes from /api/pdf.
 func (s *Server) handleUndo(w http.ResponseWriter, r *http.Request) {
+	// Resolved from the header, and the request stays BODYLESS — which is the
+	// whole reason D15 chose a header. An earlier exit criterion said these two
+	// routes would "stop being bodyless"; it predates D15 and assumed a body was
+	// how an id arrives. Adding one here would edit exactly the schema the header
+	// exists to leave alone. See PLAN.md P03.S02.
+	doc, err := s.docFor(r)
+	if err != nil {
+		httpError(w, http.StatusConflict, "that document is no longer open")
+		return
+	}
 	s.mu.Lock()
-	doc := s.activeDocLocked()
 	if doc == nil || len(s.undo) == 0 {
 		s.mu.Unlock()
 		writeJSON(w, s.docResponse())
@@ -127,8 +146,17 @@ func (s *Server) handleUndo(w http.ResponseWriter, r *http.Request) {
 // handleRedo re-applies the last undone operation, moving the current state back
 // onto the undo stack. With nothing to redo it returns the current state.
 func (s *Server) handleRedo(w http.ResponseWriter, r *http.Request) {
+	// Resolved from the header, and the request stays BODYLESS — which is the
+	// whole reason D15 chose a header. An earlier exit criterion said these two
+	// routes would "stop being bodyless"; it predates D15 and assumed a body was
+	// how an id arrives. Adding one here would edit exactly the schema the header
+	// exists to leave alone. See PLAN.md P03.S02.
+	doc, err := s.docFor(r)
+	if err != nil {
+		httpError(w, http.StatusConflict, "that document is no longer open")
+		return
+	}
 	s.mu.Lock()
-	doc := s.activeDocLocked()
 	if doc == nil || len(s.redo) == 0 {
 		s.mu.Unlock()
 		writeJSON(w, s.docResponse())

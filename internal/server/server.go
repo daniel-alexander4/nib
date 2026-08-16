@@ -10,6 +10,7 @@ package server
 
 import (
 	"encoding/json"
+	"errors"
 	"io"
 	"io/fs"
 	"log"
@@ -18,6 +19,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"sync"
 
 	"nib/internal/pdfops"
@@ -336,6 +338,12 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 // the two in undo.go that dereference without their own check do so under a
 // single lock hold that checked nil first.
 func (s *Server) handleClose(w http.ResponseWriter, r *http.Request) {
+	// Addressed like any other document route: naming a document this server does
+	// not hold is a 409, not a silent close of whatever happens to be active.
+	if _, err := s.docFor(r); err != nil {
+		httpError(w, http.StatusConflict, "that document is no longer open")
+		return
+	}
 	s.setDoc(nil)
 	writeJSON(w, s.docResponse())
 }
@@ -344,9 +352,8 @@ func (s *Server) handleClose(w http.ResponseWriter, r *http.Request) {
 
 // handlePDF streams the current document's bytes for pdf.js to render.
 func (s *Server) handlePDF(w http.ResponseWriter, r *http.Request) {
-	doc := s.activeDoc()
-	if doc == nil {
-		httpError(w, http.StatusNotFound, "no document open")
+	doc, ok := s.resolveDoc(w, r)
+	if !ok {
 		return
 	}
 	w.Header().Set("Content-Type", "application/pdf")
@@ -359,9 +366,8 @@ func (s *Server) handlePDF(w http.ResponseWriter, r *http.Request) {
 // non-destructive, fields stay editable). Upload-origin documents have no path
 // and are rejected here; Save-As lands in a later milestone.
 func (s *Server) handleSave(w http.ResponseWriter, r *http.Request) {
-	doc := s.activeDoc()
-	if doc == nil {
-		httpError(w, http.StatusNotFound, "no document open")
+	doc, ok := s.resolveDoc(w, r)
+	if !ok {
 		return
 	}
 	if doc.path == "" {
@@ -413,6 +419,101 @@ func (s *Server) activeDocLocked() *document {
 		}
 	}
 	return nil
+}
+
+// errNoSuchDoc means the request named a document this server does not hold —
+// closed, or issued by a previous process. Distinct from "nothing is open", and
+// the distinction is the point: see resolveDoc.
+var errNoSuchDoc = errors.New("no such document")
+
+// parseDocID reads the wire form, "<epoch>:<seq>".
+func parseDocID(raw string) (docID, bool) {
+	epoch, seq, ok := strings.Cut(raw, ":")
+	if !ok || epoch == "" {
+		return docID{}, false
+	}
+	n, err := strconv.ParseUint(seq, 10, 64)
+	if err != nil || n == 0 {
+		return docID{}, false
+	}
+	return docID{Epoch: epoch, Seq: n}, true
+}
+
+// docFor resolves the document a request addresses: the X-Nib-Doc header, or a
+// `doc` query parameter, or — when neither is given — the active document.
+//
+// The default is deliberate and narrow (D15). Around twenty existing Go tests and
+// every `nib` CLI verb address one document by construction, and requiring an id
+// would edit them all to say nothing new. But **the default is for those callers
+// only**: the web client always sends an id, enforced in apiFetch rather than by
+// discipline, because a call site that merely *forgets* the header would silently
+// get "whatever is active" — which during a document switch is the wrong document,
+// committed having passed no check. That enforcement is P03.S03's.
+//
+// Both carriers are accepted everywhere rather than the query parameter being
+// special-cased to /api/pdf. D15's exception is about what the *client* sends —
+// pdf.js owns that fetch and a header would mean opting into its plumbing — and a
+// server that tolerates both needs no path-shaped branch to say so.
+func (s *Server) docFor(r *http.Request) (*document, error) {
+	raw := r.Header.Get("X-Nib-Doc")
+	if raw == "" {
+		raw = r.URL.Query().Get("doc")
+	}
+	if raw == "" {
+		return s.activeDoc(), nil
+	}
+	id, ok := parseDocID(raw)
+	if !ok {
+		return nil, errNoSuchDoc
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	// Epoch first, and not as a style preference: an id from a previous process
+	// carries a Seq from that process's counter, so a check that compared Seq
+	// first would accept a stale id exactly whenever the two counters happened to
+	// line up — which is the case this exists to refuse.
+	if id.Epoch != s.epoch {
+		return nil, errNoSuchDoc
+	}
+	for _, d := range s.docs {
+		if d.id == id {
+			return d, nil
+		}
+	}
+	return nil, errNoSuchDoc
+}
+
+// resolveDoc is docFor for the thirteen handlers whose nil branch is the standard
+// 404; it writes the refusal itself and reports whether the caller should carry on.
+//
+// The two statuses are different facts and the client branches on them: 404 is
+// "nothing is open" and the app shows its empty state; 409 is "not that one" and
+// the client drops a stale tab while leaving the rest alone. They therefore differ
+// in body as well as status — a shared message would make them one fact to
+// whoever reads the response.
+func (s *Server) resolveDoc(w http.ResponseWriter, r *http.Request) (*document, bool) {
+	doc, err := s.docFor(r)
+	if err != nil {
+		httpError(w, http.StatusConflict, "that document is no longer open")
+		return nil, false
+	}
+	if doc == nil {
+		httpError(w, http.StatusNotFound, "no document open")
+		return nil, false
+	}
+	return doc, true
+}
+
+// isRegisteredLocked reports whether doc is still one this server holds. Caller
+// holds s.mu. Identity, not equality: a document that was closed and replaced is a
+// different pointer even if its contents match.
+func (s *Server) isRegisteredLocked(doc *document) bool {
+	for _, d := range s.docs {
+		if d == doc {
+			return true
+		}
+	}
+	return false
 }
 
 // setDoc installs doc as the open document, REPLACING whatever was open, and

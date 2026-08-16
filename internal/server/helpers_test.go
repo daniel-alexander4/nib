@@ -99,3 +99,30 @@ func openTestServer(t *testing.T, pdf []byte) *Server {
 	s.setDoc(&document{data: pdf})
 	return s
 }
+
+// startServerWith returns a running test server AND the Server behind it, so a
+// test can put the registry into a state the public API cannot yet reach.
+//
+// setDoc still replaces (the add path is P03.S05), so there is no route that opens
+// a second document — but the routing this slice exists to prove is about
+// *addressing* documents, not about how they arrived. Building the registry
+// directly is the honest way to test that a slice early, and it is confined to
+// this helper rather than repeated per test.
+func startServerWith(t *testing.T) (*httptest.Server, *Server) {
+	t.Helper()
+	t.Setenv("HOME", t.TempDir())
+	srv := New(os.DirFS("."), os.DirFS("."), t.TempDir(), "test")
+	ts := httptest.NewServer(srv.Handler())
+	t.Cleanup(ts.Close)
+	return ts, srv
+}
+
+// addDocument puts a second document into the registry directly, returning its id.
+func addDocument(s *Server, data []byte) docID {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.nextSeq++
+	d := &document{id: docID{Epoch: s.epoch, Seq: s.nextSeq}, data: data}
+	s.docs = append(s.docs, d)
+	return d.id
+}

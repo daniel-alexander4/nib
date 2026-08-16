@@ -25,9 +25,8 @@ func (s *Server) handleOCR(w http.ResponseWriter, r *http.Request) {
 			httpError(w, http.StatusUnprocessableEntity, "could not add the text layer")
 		}
 	}()
-	doc := s.activeDoc()
-	if doc == nil {
-		httpError(w, http.StatusNotFound, "no document open")
+	doc, ok := s.resolveDoc(w, r)
+	if !ok {
 		return
 	}
 	// The browser sends the OCR language alongside the words: it picks the font
@@ -65,7 +64,7 @@ func (s *Server) handleOCR(w http.ResponseWriter, r *http.Request) {
 			log.Printf("ocr: could not set document language %q: %v", tag, lerr)
 		}
 	}
-	if !s.commitMutation(doc.data, result) {
+	if !s.commitMutation(doc, doc.data, result) {
 		httpError(w, http.StatusNotFound, "no document open")
 		return
 	}
