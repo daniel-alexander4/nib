@@ -1400,9 +1400,17 @@ Acceptance:
   sites" is both the pass and what a broken scanner reports.
 - Each site's behaviour is otherwise unchanged (the existing suites stay green).
 
-#### P04.S03 — exports are named for the document they came from
-Scope: `exportBase()` takes the captured document rather than reading `originalName`/
-`docMeta` at call time; its 20 call sites pass one. Refs: D7.
+#### P04.S03 — exports are named for the document they came from *(done 2026-08-16, v1.104.2)*
+Scope: the export NAME is captured at operation entry rather than `exportBase()` being
+called at the point of use — 20 call sites across **19 scopes**, each capturing into
+`exportName` before its first `await`. Refs: D7.
+
+**(shape changed during implementation, 2026-08-16)** The slice planned to pass a
+captured *document* into `exportBase(doc)`. Capturing the resulting *string* at entry is
+the same guarantee with a smaller surface: `exportBase` keeps its signature, nothing
+threads a document through 19 scopes, and the property — the name is fixed before the
+operation can be overtaken — is identical. The mechanism was the plan's; the guarantee
+is what the acceptance asks for.
 Acceptance:
 - An export begun on A and resolving after the document changed is named for **A**.
 - Red against the current code, which names it for whatever is current when the blob

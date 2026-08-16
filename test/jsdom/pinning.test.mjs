@@ -159,3 +159,44 @@ test('apiFetch honours an explicit docId over the current document', () => {
 // active and asserts B's file is untouched on disk. That needs a real filesystem and a
 // real server, which is exactly the delegation this tier's ceiling describes — jsdom
 // can see which header went out, not which file got written.
+
+// P04.S03 — an export is named for the document it came from.
+//
+// Not corruption but mislabeling, and it fails in a place that matters: in
+// `openSaveAs(await res.blob(), exportBase() + '-cosigned.pdf')` the arguments evaluate
+// LEFT TO RIGHT, so the blob resolves before exportBase() runs and the name is taken
+// from whatever document is current by then. Worst on the signing names, where the
+// filename is how a user tells two documents apart in a workflow whose entire subject
+// is which document was signed.
+test('every export names its document at operation entry, not at save time', () => {
+  // The stimulus: there must BE export sites, or "none of them are late" is a green
+  // over an empty population.
+  const captures = APP.match(/const exportName = exportBase\(\);/g) || [];
+  assert.ok(captures.length >= 15,
+    `only ${captures.length} export scopes capture a name — the scan is not reading what it thinks`);
+
+  // And no site may call exportBase() at the point of use. One call is the definition
+  // itself; anything else is a name taken after the operation finished.
+  //
+  // Comments are stripped first. The doc comment ON exportBase quotes the very pattern
+  // it warns against, so counting raw occurrences makes this check fail on its own
+  // documentation — the third time in this plan that a guard has read prose as code
+  // (registry_test.go's idiom scan, and the capture-position check above).
+  const CODE = APP.split('\n').filter((l) => !l.trim().startsWith('//')).join('\n');
+  const calls = (CODE.match(/exportBase\(\)/g) || []).length;
+  const defs = (CODE.match(/function exportBase\(\)/g) || []).length;
+  assert.equal(defs, 1, 'exportBase is defined more than once');
+  assert.equal(calls - defs, captures.length,
+    'an exportBase() call outside a capture — it would name the file for whatever document is current when the export resolves, not the one it came from');
+});
+
+test('the signing exports are covered by name', () => {
+  // Named explicitly rather than trusted to the count above, because these are the two
+  // where a wrong filename is a wrong claim about which document was signed.
+  for (const suffix of ['-cosigned.pdf', '-for-signing.pdf']) {
+    const line = APP.split('\n').find((l) => l.includes(suffix) && l.includes('openSaveAs'));
+    assert.ok(line, `no export site produces ${suffix}`);
+    assert.ok(line.includes('exportName'),
+      `${suffix} is named from a live read rather than a captured one`);
+  }
+});
