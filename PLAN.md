@@ -1497,9 +1497,15 @@ Acceptance:
   document's verification result under another's name.
 - Single-view behaviour unchanged; the existing suites stay green.
 
-#### P05.S02 — the bulk state bindings
+#### P05.S02 — the bulk state bindings *(done 2026-08-16, v1.105.1)*
 Scope: `pdfDocument`, `docMeta`, `overlayFields` onto the view (~220 references). Refs:
 D5, D12, and the hot-path pin.
+**(note, 2026-08-16)** Two P04 guards went red on this slice's idiom change — they name
+`docMeta` and it became `view.docMeta`. They were **re-derived** to the new idiom, not
+loosened until they passed: the same distinction P03.S02 had to make when the registry
+changed the resolution idiom out from under its guard, and worth repeating because a
+regex widened to stop failing is a guard that has stopped guarding.
+
 Acceptance:
 - `relayoutOverlays` walks **only the active view's** fields — asserted, because a
   version iterating every open document turns the one genuinely frequent path in this
