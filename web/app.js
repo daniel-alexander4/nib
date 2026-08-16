@@ -787,6 +787,8 @@ async function renderAttestation(lines, rect) {
 }
 
 async function cosign() {
+  // Export name captured at operation entry — see exportBase (D7).
+  const exportName = exportBase();
   const fingerprint = els.cosignPeer.value;
   if (!fingerprint) return;
   const intent = els.cosignIntent.value;
@@ -804,7 +806,7 @@ async function cosign() {
   form.append('appearance', png, 'attestation.png');
   const sr = await apiFetch('/api/cosign/sign', { method: 'POST', body: form });
   if (!sr.ok) { toast(await errText(sr, 'could not co-sign')); return; }
-  openSaveAs(await sr.blob(), exportBase() + '-cosigned.pdf', 'Save co-signed PDF');
+  openSaveAs(await sr.blob(), exportName + '-cosigned.pdf', 'Save co-signed PDF');
 }
 
 els.cosignBtn.onclick = openCosign;
@@ -1982,6 +1984,8 @@ els.fillCsvBtn.onclick = openFillCsv;
 els.fillCsvClose.onclick = () => { els.fillCsvModal.hidden = true; };
 els.fillCsvPick.onclick = () => els.fillCsvInput.click();
 els.fillCsvInput.onchange = async () => {
+  // Export name captured at operation entry — see exportBase (D7).
+  const exportName = exportBase();
   const f = els.fillCsvInput.files[0];
   els.fillCsvInput.value = '';
   if (!f) return;
@@ -1998,7 +2002,7 @@ els.fillCsvInput.onchange = async () => {
       return;
     }
     els.fillCsvModal.hidden = true;
-    openSaveAs(await res.blob(), exportBase() + '-filled.zip', 'Save merged PDFs (ZIP)');
+    openSaveAs(await res.blob(), exportName + '-filled.zip', 'Save merged PDFs (ZIP)');
   } catch (e) {
     els.fillCsvStatus.textContent = 'Merge failed — ' + e.message;
   }
@@ -2017,6 +2021,8 @@ els.importXfdfBtn.onclick = openImportXfdf;
 els.importXfdfClose.onclick = () => { els.importXfdfModal.hidden = true; };
 els.importXfdfPick.onclick = () => els.importXfdfInput.click();
 els.importXfdfInput.onchange = async () => {
+  // Export name captured at operation entry — see exportBase (D7).
+  const exportName = exportBase();
   const f = els.importXfdfInput.files[0];
   els.importXfdfInput.value = '';
   if (!f) return;
@@ -2033,7 +2039,7 @@ els.importXfdfInput.onchange = async () => {
       return;
     }
     els.importXfdfModal.hidden = true;
-    openSaveAs(await res.blob(), exportBase() + '-filled.pdf', 'Save filled PDF');
+    openSaveAs(await res.blob(), exportName + '-filled.pdf', 'Save filled PDF');
   } catch (e) {
     els.importXfdfStatus.textContent = 'Fill failed — ' + e.message;
   }
@@ -2060,6 +2066,8 @@ els.pdfaGsGo.onclick = () => runPdfa('gs');
 // normalizer; engine 'gs' is the Ghostscript path (re-embeds fonts, converts
 // colour) — offered as a fallback when the pure-Go path refuses and gs is installed.
 async function runPdfa(engine) {
+  // Export name captured at operation entry — see exportBase (D7).
+  const exportName = exportBase();
   const gs = engine === 'gs';
   els.pdfaStatus.textContent = gs ? 'Converting with Ghostscript…' : 'Converting…';
   els.pdfaGo.disabled = els.pdfaGsGo.disabled = true;
@@ -2075,7 +2083,7 @@ async function runPdfa(engine) {
       return;
     }
     els.pdfaModal.hidden = true;
-    openSaveAs(await res.blob(), exportBase() + '-pdfa.pdf', 'Save archival PDF (PDF/A-2b)');
+    openSaveAs(await res.blob(), exportName + '-pdfa.pdf', 'Save archival PDF (PDF/A-2b)');
   } catch (e) {
     els.pdfaStatus.textContent = 'Could not convert to PDF/A — ' + e.message;
   } finally {
@@ -2464,6 +2472,8 @@ els.encryptBtn.onclick = () => {
 };
 els.encryptCancel.onclick = () => { els.encryptModal.hidden = true; };
 els.encryptGo.onclick = async () => {
+  // Export name captured at operation entry — see exportBase (D7).
+  const exportName = exportBase();
   const pw = els.encryptPw.value;
   if (!pw) {
     els.encryptError.textContent = 'Enter a password.';
@@ -2484,7 +2494,7 @@ els.encryptGo.onclick = async () => {
   const res = await apiFetch('/api/encrypt', { method: 'POST', body: form });
   if (!res.ok) { toast('could not protect the document'); return; }
   els.encryptModal.hidden = true;
-  openSaveAs(await res.blob(), exportBase() + '-protected.pdf', 'Save password-protected PDF');
+  openSaveAs(await res.blob(), exportName + '-protected.pdf', 'Save password-protected PDF');
 };
 els.encryptPw.addEventListener('keydown', (e) => {
   if (e.key === 'Enter') { e.preventDefault(); els.encryptPw2.focus(); }
@@ -2946,6 +2956,8 @@ function openExtract() {
 }
 
 async function extractGo() {
+  // Export name captured at operation entry — see exportBase (D7).
+  const exportName = exportBase();
   const pages = parsePageRanges(els.extractPages.value, pdfDocument.numPages);
   if (!pages || pages.length === 0) {
     els.extractHint.textContent = 'Enter pages like "1-3, 5" within the document range.';
@@ -2956,7 +2968,7 @@ async function extractGo() {
   const res = await apiFetch('/api/extract', { method: 'POST', body: form });
   if (!res.ok) return toast('could not extract pages');
   els.extractModal.hidden = true;
-  openSaveAs(await res.blob(), exportBase() + '-pages.pdf', 'Extract pages');
+  openSaveAs(await res.blob(), exportName + '-pages.pdf', 'Extract pages');
 }
 
 els.extractBtn.onclick = openExtract;
@@ -3561,6 +3573,19 @@ function downloadBlob(blob, name) {
 
 // exportBase is the opened file's name without its directory or .pdf suffix,
 // used to build defaults like "<base>-flattened.pdf".
+// exportBase reads `originalName`/`docMeta` at CALL time, so it must be called at an
+// operation's ENTRY and its result carried — never called at the point the file is
+// handed to openSaveAs.
+//
+// The reason is easy to miss and it is why all 19 export scopes capture into
+// `exportName` first: in `openSaveAs(await res.blob(), exportBase() + '-filled.pdf')`
+// the arguments evaluate left to right, so the blob resolves BEFORE exportBase runs.
+// The name was therefore taken from whatever document was current once the export
+// finished, not from the one the bytes came from — B's name on A's contents.
+//
+// Worst on the signing names (`-cosigned`, `-for-signing`), where the filename is how
+// a user tells two documents apart in a workflow whose whole point is which document
+// was signed.
 function exportBase() {
   const b = (originalName || docMeta.name || 'document').replace(/\.[Pp][Dd][Ff]$/, '');
   return b || 'document';
@@ -3982,9 +4007,11 @@ function sizeSummary(before, after) {
 }
 
 els.saveFlatBtn.onclick = async () => {
+  // Export name captured at operation entry — see exportBase (D7).
+  const exportName = exportBase();
   if (!pdfDocument) return toast('Open a PDF first');
   const blob = await assembleBlob('pdf');
-  if (blob) openSaveAs(blob, exportBase() + '-flattened.pdf', 'Save flattened PDF');
+  if (blob) openSaveAs(blob, exportName + '-flattened.pdf', 'Save flattened PDF');
 };
 
 // Reduce file size. Renders the result, shows before→after size, and only then
@@ -4003,6 +4030,8 @@ all('input[name="reduceMode"]').forEach((r) => {
   r.onchange = () => { els.reduceQuality.hidden = r.value !== 'compress' || !r.checked; };
 });
 els.reduceGo.onclick = async () => {
+  // Export name captured at operation entry — see exportBase (D7).
+  const exportName = exportBase();
   // Captured HERE, not inside the helpers. This handler awaits (optimize, bakedBytes)
   // before it reaches compressBlob, so the helpers' entry-time default would already be
   // too late — entry is only a safe capture point for a helper entered before the
@@ -4036,18 +4065,22 @@ els.reduceGo.onclick = async () => {
 els.reduceSave.onclick = () => {
   if (!reduceBlob) return;
   els.reduceModal.hidden = true;
-  openSaveAs(reduceBlob, exportBase() + '-smaller.pdf', 'Save reduced PDF');
+  openSaveAs(reduceBlob, exportName + '-smaller.pdf', 'Save reduced PDF');
 };
 els.exportZipBtn.onclick = async () => {
+  // Export name captured at operation entry — see exportBase (D7).
+  const exportName = exportBase();
   if (!pdfDocument) return toast('Open a PDF first');
   const blob = await assembleBlob('zip');
-  if (blob) openSaveAs(blob, exportBase() + '-pages.zip', 'Export pages (ZIP)');
+  if (blob) openSaveAs(blob, exportName + '-pages.zip', 'Export pages (ZIP)');
 };
 
 els.saveEditableBtn.onclick = async () => {
+  // Export name captured at operation entry — see exportBase (D7).
+  const exportName = exportBase();
   if (!pdfDocument) return;
   const bytes = await bakedBytes();
-  openSaveAs(new Blob([bytes], { type: 'application/pdf' }), exportBase() + '-editable.pdf', 'Save editable copy');
+  openSaveAs(new Blob([bytes], { type: 'application/pdf' }), exportName + '-editable.pdf', 'Save editable copy');
 };
 
 // Save as fillable PDF: turn detected/placed text + checkbox fields into real
@@ -4140,6 +4173,8 @@ function clearNamingHilite() {
 els.fieldNameCancel.onclick = () => { els.fieldNameModal.hidden = true; clearNamingHilite(); };
 
 els.fieldNameGo.onclick = async () => {
+  // Export name captured at operation entry — see exportBase (D7).
+  const exportName = exportBase();
   els.fieldNameModal.hidden = true;
   clearNamingHilite();
   // Normalize names client-side so authoring never hits pdfcpu's empty/duplicate
@@ -4177,22 +4212,26 @@ els.fieldNameGo.onclick = async () => {
   form.append('fields', JSON.stringify(fields));
   const res = await apiFetch('/api/form/author', { method: 'POST', body: form });
   if (!res.ok) { toast('could not create fillable form'); return; }
-  openSaveAs(await res.blob(), exportBase() + '-fillable.pdf', 'Save fillable PDF');
+  openSaveAs(await res.blob(), exportName + '-fillable.pdf', 'Save fillable PDF');
 };
 
 els.exportPngBtn.onclick = async () => {
+  // Export name captured at operation entry — see exportBase (D7).
+  const exportName = exportBase();
   if (!pdfDocument) return;
   const [{ blob }] = await renderFilledPages(2, viewer.currentPageNumber);
-  openSaveAs(blob, exportBase() + '-page' + viewer.currentPageNumber + '.png', 'Export page (PNG)');
+  openSaveAs(blob, exportName + '-page' + viewer.currentPageNumber + '.png', 'Export page (PNG)');
 };
 
 els.exportTextBtn.onclick = async () => {
+  // Export name captured at operation entry — see exportBase (D7).
+  const exportName = exportBase();
   if (!pdfDocument) return toast('Open a PDF first');
   // Best-effort dump of the document's text layer via pdf.js (see documentText:
   // content-stream order, hasEOL newlines; scanned pages have no text layer and
   // contribute nothing). Compare uses the same helper so the two stay in step.
   const out = await documentText(pdfDocument);
-  openSaveAs(new Blob([out], { type: 'text/plain' }), exportBase() + '.txt', 'Export text (.txt)');
+  openSaveAs(new Blob([out], { type: 'text/plain' }), exportName + '.txt', 'Export text (.txt)');
 };
 
 // extractTable clusters a page's pdf.js text items into a row/column grid — the
@@ -4249,6 +4288,8 @@ async function extractTable(page) {
 // The grid is built client-side (only pdf.js can read PDF text); the server just
 // serializes it (CSV via encoding/csv, XLSX as minimal OOXML).
 async function exportTable(format) {
+  // Export name captured at operation entry — see exportBase (D7).
+  const exportName = exportBase();
   if (!pdfDocument) return toast('Open a PDF first');
   const page = await pdfDocument.getPage(viewer.currentPageNumber);
   const grid = await extractTable(page);
@@ -4258,18 +4299,20 @@ async function exportTable(format) {
   });
   if (!res.ok) { toast('Could not build the spreadsheet'); return; }
   const ext = { csv: '.csv', ods: '.ods', xlsx: '.xlsx' }[format] || '.xlsx';
-  openSaveAs(await res.blob(), exportBase() + '-p' + viewer.currentPageNumber + '-table' + ext, 'Export table (' + format.toUpperCase() + ')');
+  openSaveAs(await res.blob(), exportName + '-p' + viewer.currentPageNumber + '-table' + ext, 'Export table (' + format.toUpperCase() + ')');
 }
 els.exportTableXlsxBtn.onclick = () => exportTable('xlsx');
 els.exportTableCsvBtn.onclick = () => exportTable('csv');
 els.exportTableOdsBtn.onclick = () => exportTable('ods');
 
 els.exportImagesBtn.onclick = async () => {
+  // Export name captured at operation entry — see exportBase (D7).
+  const exportName = exportBase();
   if (!pdfDocument) return toast('Open a PDF first');
   const res = await apiFetch('/api/extract-images', { method: 'POST' });
   if (!res.ok) { toast('Could not extract images'); return; }
   if (res.headers.get('X-Image-Count') === '0') { toast('No extractable images found'); return; }
-  openSaveAs(await res.blob(), exportBase() + '-images.zip', 'Export embedded images (ZIP)');
+  openSaveAs(await res.blob(), exportName + '-images.zip', 'Export embedded images (ZIP)');
 };
 
 els.exportFormJsonBtn.onclick = () => { window.location = '/api/form-data?format=json'; };
@@ -4366,6 +4409,8 @@ all('.wmpreset').forEach((b) => {
 });
 drawPreview();
 els.fzGo.onclick = async () => {
+  // Export name captured at operation entry — see exportBase (D7).
+  const exportName = exportBase();
   const signAs = els.fzSignAs.value;
   if (signAs === 'external' && !els.fzPassphrase.value) { els.fzPassphrase.focus(); return toast('Enter the certificate passphrase'); }
   let text = els.fzText.value.trim();
@@ -4390,7 +4435,7 @@ els.fzGo.onclick = async () => {
   if (!res.ok) { toast('Could not finalize'); return; }
   els.finalizeModal.hidden = true;
   els.fzPassphrase.value = '';
-  openSaveAs(await res.blob(), exportBase() + '-finalized.pdf', 'Save finalized PDF');
+  openSaveAs(await res.blob(), exportName + '-finalized.pdf', 'Save finalized PDF');
 };
 
 // OpenTimestamps: stamp the current document's hash into the Bitcoin blockchain
@@ -4399,12 +4444,14 @@ els.fzGo.onclick = async () => {
 els.timestampBtn.onclick = () => { if (pdfDocument) els.timestampModal.hidden = false; };
 els.tsCancel.onclick = () => { els.timestampModal.hidden = true; };
 els.tsGo.onclick = async () => {
+  // Export name captured at operation entry — see exportBase (D7).
+  const exportName = exportBase();
   els.timestampModal.hidden = true;
   const form = await bakedForm();
   toast('Contacting OpenTimestamps calendars…');
   const res = await apiFetch('/api/timestamp', { method: 'POST', body: form });
   if (!res.ok) { toast('Could not reach an OpenTimestamps calendar'); return; }
-  openSaveAs(await res.blob(), exportBase() + '.pdf.ots', 'Save OpenTimestamps proof');
+  openSaveAs(await res.blob(), exportName + '.pdf.ots', 'Save OpenTimestamps proof');
 };
 
 // Verify an OpenTimestamps proof against the open document: pick the .ots, send it
@@ -4419,7 +4466,7 @@ els.timestampVerifyBtn.onclick = () => {
 els.tvCancel.onclick = () => { els.tsVerifyModal.hidden = true; };
 els.tvSave.onclick = () => {
   if (!upgradedProofB64) return;
-  openSaveAs(b64ToBlob(upgradedProofB64, 'application/octet-stream'), exportBase() + '.ots', 'Save complete proof');
+  openSaveAs(b64ToBlob(upgradedProofB64, 'application/octet-stream'), exportName + '.ots', 'Save complete proof');
 };
 els.tvExplorerOn.onchange = () => { els.tvExplorer.disabled = !els.tvExplorerOn.checked; };
 els.tvPick.onclick = () => els.tvFile.click();
@@ -5465,6 +5512,8 @@ function signNext() {
 
 // saveForSigning embeds the placed flags and offers the single emailable file.
 async function saveForSigning() {
+  // Export name captured at operation entry — see exportBase (D7).
+  const exportName = exportBase();
   const flags = collectFlags();
   if (!flags.length) return toast('Place at least one flag first (Sign / Date / Initial).');
   // Captured before the first await, and threaded into every helper below: they
@@ -5474,7 +5523,7 @@ async function saveForSigning() {
   try {
     const baked = await bakedBytes(opDoc && opDoc.id); // bake any non-flag edits; strips a prior flag set
     const out = await embedFlags(baked, flags, opDoc && opDoc.id); // embed the current flags
-    openSaveAs(new Blob([out], { type: 'application/pdf' }), exportBase() + '-for-signing.pdf', 'Save for signing — email this exact file');
+    openSaveAs(new Blob([out], { type: 'application/pdf' }), exportName + '-for-signing.pdf', 'Save for signing — email this exact file');
     toast('Saved for signing. Email this file as-is; printing or re-exporting it elsewhere drops the flags.');
   } catch (e) {
     toast('could not prepare the document: ' + e.message);
@@ -5489,6 +5538,8 @@ async function saveForSigning() {
 // same /api/finalize path Finalize & sign uses. The baked-then-signed file is
 // flat and frozen — any later edit breaks the signature.
 async function completeAndSign() {
+  // Export name captured at operation entry — see exportBase (D7).
+  const exportName = exportBase();
   const empty = markerFields().length;
   if (empty && !confirm(`${empty} field${empty === 1 ? '' : 's'} still empty — complete and sign anyway?`)) return;
   els.signAction.disabled = true; els.signDone.disabled = true;
@@ -5499,7 +5550,7 @@ async function completeAndSign() {
     if (!res.ok) { toast('Could not complete and sign'); return; }
     // Drop the "-for-signing" the preparer's save added, so the file lands as
     // <doc>.signed.pdf rather than <doc>-for-signing.signed.pdf.
-    const base = exportBase().replace(/-for-signing$/i, '');
+    const base = exportName.replace(/-for-signing$/i, '');
     openSaveAs(await res.blob(), base + '.signed.pdf', 'Save completed & signed PDF');
     els.signBanner.hidden = true;
   } catch (e) {
