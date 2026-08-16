@@ -2,13 +2,15 @@
   "name": "nib-dev-harness",
   "version": "0.0.0",
   "private": true,
-  "description": "NOT SHIPPED. Development-only test harness for Nib's front end. Nib itself is a single Go binary with the web assets embedded (see embed.go); nothing here is part of a release, and node_modules/ is git-ignored. See test/jsdom/boot.mjs for what this tier reaches and where it stops.",
+  "description": "NOT SHIPPED. Development-only test harness for Nib's front end, in two tiers: jsdom (test/jsdom) and a real browser against the real binary (test/ui). Nib itself is a single Go binary with the web assets embedded (see embed.go); nothing here is part of a release, and node_modules/ is git-ignored. Each tier states its own ceiling where it lives.",
   "license": "AGPL-3.0-only",
   "type": "module",
   "scripts": {
-    "test": "./build/jsdomtest.sh"
+    "test": "./build/jsdomtest.sh",
+    "test:ui": "./build/uirepro.sh"
   },
   "devDependencies": {
-    "jsdom": "^24.0.0"
+    "jsdom": "^24.0.0",
+    "playwright-core": "^1.62.1"
   }
 }
