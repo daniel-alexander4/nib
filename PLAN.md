@@ -323,14 +323,23 @@ Goal: repo scaffolding. Already present: CLAUDE.md, VERSION, build/install
 scripts, embed.go, nfpm packaging, desktop entry, wine harness.
 Exit criteria: n/a.
 
-### P01 — Close the open document
+### P01 — Close the open document *(done 2026-08-16, v1.103.0)*
 Goal: the app can put a document down without quitting or opening another,
 returning to exactly the state it launches in.
 Exit criteria:
-- `/api/pdf` 404s and the UI shows "Open a PDF to begin." after Close.
-- The undo rings are cleared — the document's bytes are not retained.
-- Opening a document after a Close works normally.
-- Full-repo `/code-review` clean; shippable as a release.
+- [x] `/api/pdf` 404s and the UI shows "Open a PDF to begin." after Close.
+      Both halves driven live — 404 with the literal `no document open`, and
+      `#empty` computed visible with its text asserted literally.
+- [x] The undo rings are cleared — the document's bytes are not retained.
+      Rings: asserted directly on the `*Server` with both non-empty first, and
+      red-fixtured. Bytes: **met at the reference level** (all three byte-holding
+      fields dropped, ring entries nil'd) and **not measurable at this
+      granularity** as a heap property — no instrument in this phase observes
+      reclamation, and that is recorded rather than read as met.
+- [x] Opening a document after a Close works normally.
+- [x] Full-repo `/code-review` clean; shippable as a release. One finding,
+      pre-existing and outside scope (Compare is not torn down on open — D11's,
+      filed); `-race` green across all 15 packages.
 
 #### P01.S01 — Server: honest empty state on the mutating routes *(done 2026-08-15, v1.102.4)*
 Scope: the four routes that currently commit against a closed document and return
