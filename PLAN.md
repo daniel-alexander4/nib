@@ -967,8 +967,7 @@ inside the first's green — the exact shape of the plan-review's critical findi
 - ✅ Arrivals open a new document rather than replacing one — **criterion amended** to
   co-sign only; `saveReceived` writes a one-way transfer to disk and never touches the
   registry, so the "p2p" half named a path that does not exist.
-- ✅ (plan-review pin) The two-document probe — `TestOperationAddressedToInactive­
-  DocumentLeavesActiveAlone`, which found the defect it now guards.
+- ✅ (plan-review pin) The two-document probe — `TestOperationAddressedToInactiveDocumentLeavesActiveAlone`, which found the defect it now guards.
 - ⏳ (plan-review pin) The all-tabs-stale case — **not exercised, carried to P06** for
   the reason stated below; P03 delivers the 409 that makes it expressible.
 
