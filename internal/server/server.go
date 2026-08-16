@@ -128,6 +128,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/combine", s.requireUnlocked(s.handleCombine))
 	mux.HandleFunc("GET /api/pdf", s.requireUnlocked(s.handlePDF))
 	mux.HandleFunc("GET /api/doc", s.requireUnlocked(s.handleDoc))
+	mux.HandleFunc("POST /api/close", s.requireUnlocked(s.handleClose))
 	mux.HandleFunc("POST /api/save", s.requireUnlocked(s.handleSave))
 	mux.HandleFunc("GET /api/listdir", s.requireUnlocked(s.handleListDir))
 	mux.HandleFunc("POST /api/write", s.requireUnlocked(s.handleWriteFile))
@@ -276,6 +277,22 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 	resp := s.docResponse()
 	resp.Name = header.Filename
 	writeJSON(w, resp)
+}
+
+// handleClose puts the open document down without quitting: setDoc(nil) drops the
+// bytes and clears both history rings, leaving the server in exactly the state it
+// launches in. It is deliberately idempotent — closing with nothing open is a 200
+// and the same empty response, on the ErrNotEncrypted-passes-through precedent
+// (v1.57.0), since the only way to reach it is a race against a disabled control.
+//
+// Note what this makes newly possible: until now s.doc was nil only before the
+// first open, so no reader had to tolerate nil at an arbitrary moment. Now every
+// reader must, and every reader does — each nil-checks before dereferencing, and
+// the two in undo.go that dereference without their own check do so under a
+// single lock hold that checked nil first.
+func (s *Server) handleClose(w http.ResponseWriter, r *http.Request) {
+	s.setDoc(nil)
+	writeJSON(w, s.docResponse())
 }
 
 // --- API: pdf bytes / save ----------------------------------------------------
