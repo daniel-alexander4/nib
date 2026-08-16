@@ -713,7 +713,36 @@ Acceptance:
   red against the pre-P01.S03 `clearOverlays()`.
 - Every test asserts its stimulus before grading the response.
 
-#### P02.S03 — Tier 3: the browser harness
+#### P02.S03 — Tier 3: the browser harness *(done 2026-08-16, v1.103.3)*
+
+**(grill pin, 2026-08-16: why this tier drives a browser at all.)** Raised at the
+gate — should nib not be self-contained? Verified at the line: it is not.
+`internal/browser/browser.go:25-44` execs an **installed** Chromium-family browser
+with `--app=`, falling back to `xdg-open`; there is no bundled engine anywhere in
+the tree. So tier 3 drives Chromium because **that is what nib drives** — a UI
+harness avoiding browsers would be testing something no user runs. The
+self-contained-app question is filed to `pending.md` as its own architecture
+decision and does not block this tier.
+
+`playwright-core` (14 MB, **no browser download**) pointed at the system browser,
+rather than `playwright` (~130 MB of bundled engines): it keeps the harness on the
+same engine as the product and adds no dependency nib does not already have.
+Measured before grilling — against the real binary it reported
+`canvasWorks: true, layoutWorks: true`, which are exactly the two things tier 2
+declared it could not reach, and the launch state read back identically to tier 2.
+
+Tasks:
+1. T01 — `playwright-core` as a devDependency.
+2. T02 — resolve the browser by nib's own candidate order, `NIB_UI_BROWSER` override.
+3. T03 — `build/uirepro.sh`: build, launch headless under a throwaway `HOME`,
+   enroll a key, run the tests, kill the server on every exit path.
+4. T04 — two **distinct** skip paths: no driver, and no browser.
+5. T05 — `test/ui/smoke.test.mjs`: launch state, plus canvas and layout
+   non-degenerate — the row that justifies the tier.
+6. T06 — the non-zero test-count guard, reusing S01's lesson.
+7. T07 — proven red, naming the assertion.
+8. T08 — the ceiling written in the script, including what it still does not cover.
+
 Scope: `build/uirepro.sh`, sibling of `winrepro.sh` — build nib, launch it
 headless on a fixed loopback port with a throwaway `HOME`, enroll a key over the
 API, drive a real browser.
