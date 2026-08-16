@@ -25,9 +25,7 @@ func (s *Server) handleOCR(w http.ResponseWriter, r *http.Request) {
 			httpError(w, http.StatusUnprocessableEntity, "could not add the text layer")
 		}
 	}()
-	s.mu.Lock()
-	doc := s.doc
-	s.mu.Unlock()
+	doc := s.activeDoc()
 	if doc == nil {
 		httpError(w, http.StatusNotFound, "no document open")
 		return

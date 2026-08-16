@@ -30,20 +30,21 @@ const (
 // work was discarded. Callers MUST check it and answer 404 rather than replying
 // 200 with an empty docResponse — a success reply for discarded work. The check
 // belongs here and not in the caller because only this function holds the lock
-// across the test and the write; a caller that tested s.doc first would leave a
+// across the test and the write; a caller that tested the document first would leave a
 // window for a close to land in between, which is the very defect.
 func (s *Server) commitMutation(input, result []byte) bool {
 	sig := sign.Verify(result)
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.doc == nil {
+	doc := s.activeDocLocked()
+	if doc == nil {
 		return false
 	}
 	s.undo = append(s.undo, input)
 	s.clearRedoLocked()
 	s.trimUndoLocked()
-	s.doc.data = result
-	s.doc.sig = sig
+	doc.data = result
+	doc.sig = sig
 	return true
 }
 
@@ -60,13 +61,14 @@ func (s *Server) commitBarrier(result []byte) bool {
 	sig := sign.Verify(result)
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.doc == nil {
+	doc := s.activeDocLocked()
+	if doc == nil {
 		return false
 	}
 	s.clearUndoLocked()
 	s.clearRedoLocked()
-	s.doc.data = result
-	s.doc.sig = sig
+	doc.data = result
+	doc.sig = sig
 	return true
 }
 
@@ -105,7 +107,8 @@ func (s *Server) trimUndoLocked() {
 // returns the current state. The client reloads the bytes from /api/pdf.
 func (s *Server) handleUndo(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
-	if s.doc == nil || len(s.undo) == 0 {
+	doc := s.activeDocLocked()
+	if doc == nil || len(s.undo) == 0 {
 		s.mu.Unlock()
 		writeJSON(w, s.docResponse())
 		return
@@ -114,9 +117,9 @@ func (s *Server) handleUndo(w http.ResponseWriter, r *http.Request) {
 	prev := s.undo[last]
 	s.undo[last] = nil
 	s.undo = s.undo[:last]
-	s.redo = append(s.redo, s.doc.data)
-	s.doc.data = prev
-	s.doc.sig = sign.Verify(prev)
+	s.redo = append(s.redo, doc.data)
+	doc.data = prev
+	doc.sig = sign.Verify(prev)
 	s.mu.Unlock()
 	writeJSON(w, s.docResponse())
 }
@@ -125,7 +128,8 @@ func (s *Server) handleUndo(w http.ResponseWriter, r *http.Request) {
 // onto the undo stack. With nothing to redo it returns the current state.
 func (s *Server) handleRedo(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
-	if s.doc == nil || len(s.redo) == 0 {
+	doc := s.activeDocLocked()
+	if doc == nil || len(s.redo) == 0 {
 		s.mu.Unlock()
 		writeJSON(w, s.docResponse())
 		return
@@ -134,10 +138,10 @@ func (s *Server) handleRedo(w http.ResponseWriter, r *http.Request) {
 	next := s.redo[last]
 	s.redo[last] = nil
 	s.redo = s.redo[:last]
-	s.undo = append(s.undo, s.doc.data)
+	s.undo = append(s.undo, doc.data)
 	s.trimUndoLocked()
-	s.doc.data = next
-	s.doc.sig = sign.Verify(next)
+	doc.data = next
+	doc.sig = sign.Verify(next)
 	s.mu.Unlock()
 	writeJSON(w, s.docResponse())
 }
