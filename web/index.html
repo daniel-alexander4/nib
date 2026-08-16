@@ -343,9 +343,10 @@
         <button id="signDone" hidden>Finish &amp; sign</button>
         <button id="signAction" class="primary"></button>
       </div>
-      <div id="viewerContainer">
-        <div id="viewer" class="pdfViewer"></div>
-      </div>
+      <!-- Each open document gets its own .viewerContainer / .viewerPages pair here,
+           built by newView() in app.js (ADR-002). They are classes, not ids, because
+           several exist at once; the wrap is the one stable node, and it is what the
+           drawing tools listen on. -->
       <div id="empty">Open a PDF to begin.</div>
     </div>
   </main>
