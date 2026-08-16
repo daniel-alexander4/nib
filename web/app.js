@@ -262,7 +262,7 @@ async function apiFetch(url, opts = {}) {
   delete opts.unpinned;
   delete opts.docId;
   if (hasPin) { if (pinned) opts.headers['X-Nib-Doc'] = pinned; }
-  else if (!unpinned && docMeta && docMeta.id) opts.headers['X-Nib-Doc'] = docMeta.id;
+  else if (!unpinned && view.docMeta && view.docMeta.id) opts.headers['X-Nib-Doc'] = view.docMeta.id;
   const res = await fetch(url, opts);
   if (res.status === 401) { refreshStatus(); throw new Error('locked'); }
   // A 409 ("the document you named is gone") is deliberately NOT thrown the way a 401
@@ -334,7 +334,7 @@ function applyStatus(st) {
     // Automatic update check, once per session, at the first usable moment.
     if (st.autoUpdate && !updateChecked) { updateChecked = true; runUpdateCheck(true); }
     const initial = new URLSearchParams(location.search).get('open');
-    if (initial && !pdfDocument) openPath(initial).catch((e) => toast('could not open: ' + e.message));
+    if (initial && !view.pdfDocument) openPath(initial).catch((e) => toast('could not open: ' + e.message));
     return;
   }
 
@@ -748,7 +748,7 @@ els.peerSelfCopy.onclick = () => copyFp(selfFingerprint);
 
 // --- co-sign with a peer -----------------------------------------------------
 async function openCosign() {
-  if (!pdfDocument) return;
+  if (!view.pdfDocument) return;
   const res = await apiFetch('/api/peers');
   if (!res.ok) { toast('could not load peers'); return; }
   const peers = (await res.json()).peers || [];
@@ -819,7 +819,7 @@ els.cosignGo.onclick = cosign;
 // path is shared with Track A co-sign (/api/cosign/quote on the open document, then
 // the rasterized appearance); only the transport differs.
 async function openSessionInit() {
-  if (!pdfDocument) { toast('Open a PDF first'); return; }
+  if (!view.pdfDocument) { toast('Open a PDF first'); return; }
   const res = await apiFetch('/api/peers');
   if (!res.ok) { toast('could not load peers'); return; }
   const peers = (await res.json()).peers || [];
@@ -1138,7 +1138,7 @@ els.srvPeerCopy.onclick = () => copyFp(recvPeerFp);
 // document goes out as the same bytes a save would: baked, with the placed flags
 // embedded when there are any (so a flagged file opens in signing mode for them).
 async function openSessionSend() {
-  if (!pdfDocument) { toast('Open a PDF first'); return; }
+  if (!view.pdfDocument) { toast('Open a PDF first'); return; }
   const res = await apiFetch('/api/peers');
   if (!res.ok) { toast('could not load peers'); return; }
   const data = await res.json();
@@ -1164,7 +1164,7 @@ async function openSessionSend() {
 async function sendableForm() {
   // Captured before the first await, and threaded into every helper below: they
   // receive bytes derived from THIS document, and their own entry is already too late.
-  const opDoc = docMeta;
+  const opDoc = view.docMeta;
   let bytes = await bakedBytes(opDoc && opDoc.id);
   const flags = collectFlags();
   if (flags.length) bytes = await embedFlags(bytes, flags, opDoc && opDoc.id);
@@ -1286,6 +1286,20 @@ function newView() {
     docGen: 0,
     outlineItems: [],
     originalName: '', // basename of the opened file, for default export names
+
+    // The parsed document and its server metadata. `docMeta.id` is what P04's captured
+    // pinning sends, so a view holding its own docMeta is what makes an operation
+    // started in one view addressable to that view once several exist.
+    pdfDocument: null,
+    docMeta: { canSave: false, path: '' },
+
+    // The overlay widgets rendered over this document's pages. Per view for D4's
+    // reason — an overlay's value lives in its DOM element — and read on the ONE
+    // genuinely frequent path this feature has: relayoutOverlays runs on scroll and
+    // zoom. It walks `view.overlayFields`, which is the active view's and only the
+    // active view's. A version iterating every open document would turn that path into
+    // an N x regression on the thing a user feels most (PLAN.md P05 hot-path pin).
+    overlayFields: [],
   };
 }
 
@@ -1294,8 +1308,6 @@ function newView() {
 // document id has, for the same reason.
 let view = newView();
 
-let pdfDocument = null;
-let docMeta = { canSave: false, path: '' };
 
 // Full-rewrite edits (sanitise, flatten, redact, remove-originals, page ops) drop
 // any signature the document carries. These guards keep one from being destroyed
@@ -1332,7 +1344,7 @@ async function setDocumentFromServer(meta) {
   // than heuristic.
   //
   // The guard lives HERE, not at the fetch, because this is the one place where the
-  // mistake does damage: assigning a refusal to docMeta leaves docMeta.id undefined,
+  // mistake does damage: assigning a refusal to view.docMeta leaves view.docMeta.id undefined,
   // so every later request silently stops sending the header and the session reverts
   // to the unpinned path P03.S03 exists to close — while the document still renders,
   // because /api/pdf with no id falls back to the active one. Silent in both
@@ -1344,7 +1356,7 @@ async function setDocumentFromServer(meta) {
     return;
   }
   const gen = ++view.docGen;
-  docMeta = meta;
+  view.docMeta = meta;
   if (meta.name && meta.name !== '.') view.originalName = meta.name;
   resetSharedDocState(); // was clearOverlays() — see the four modes it never covered
   let doc;
@@ -1364,10 +1376,10 @@ async function setDocumentFromServer(meta) {
   }
   if (gen !== view.docGen) return; // a newer load superseded this one
 
-  const old = pdfDocument;
-  pdfDocument = doc;
-  viewer.setDocument(pdfDocument);
-  linkService.setDocument(pdfDocument, null);
+  const old = view.pdfDocument;
+  view.pdfDocument = doc;
+  viewer.setDocument(view.pdfDocument);
+  linkService.setDocument(view.pdfDocument, null);
   // Free the superseded document's worker-side resources once the viewer and
   // link service have been repointed — without this, every edit op (each of
   // which reloads through here) orphans a document for the session's lifetime.
@@ -1377,7 +1389,7 @@ async function setDocumentFromServer(meta) {
   applyHighlightColor(selectedHlColor);
 
   els.viewerWrap.classList.add('has-doc');
-  all('.pageCount').forEach((s) => { s.textContent = '/ ' + pdfDocument.numPages; });
+  all('.pageCount').forEach((s) => { s.textContent = '/ ' + view.pdfDocument.numPages; });
   els.saveBtn.disabled = false;
   setDocControls(true);
   els.saveBtn.title = meta.canSave ? 'Save (overwrites ' + meta.path + ')' : 'Save a copy (downloads — opened without a local path)';
@@ -1402,18 +1414,18 @@ async function setDocumentFromServer(meta) {
 // which is also why its behaviour is verified through the open path (which shares
 // resetSharedDocState) rather than by driving a Close.
 //
-// Order is load-bearing in two places. pdfDocument is nulled FIRST, before
+// Order is load-bearing in two places. view.pdfDocument is nulled FIRST, before
 // anything that can throw, so a failure part-way through cannot leave a
 // half-closed state that poisons the next open. And applySignLock reads
-// !!pdfDocument, so it must run after that null for the whole sign surface to
+// !!view.pdfDocument, so it must run after that null for the whole sign surface to
 // drive itself closed.
 //
 // view.docGen is bumped so in-flight sidebar builds bail — necessary, but not
 // sufficient on its own: see the generation re-check in buildThumbnails, which
 // would otherwise append into the grid this function just cleared.
 function closeDocument() {
-  const doc = pdfDocument;
-  pdfDocument = null;
+  const doc = view.pdfDocument;
+  view.pdfDocument = null;
   view.docGen++;
 
   els.compareModal.hidden = true;
@@ -1426,7 +1438,7 @@ function closeDocument() {
   linkService.setDocument(null, null);
   if (doc) doc.loadingTask.destroy().catch(() => {});
 
-  docMeta = { canSave: false, path: '' };
+  view.docMeta = { canSave: false, path: '' };
   view.originalName = '';
   docHadFlags = false;
   view.signLocked = false;
@@ -1463,10 +1475,10 @@ function closeDocument() {
 // pinning already rewrites every setDocumentFromServer caller (D17); building it
 // here would mean building it twice.
 function hasEditsSinceOpen() {
-  return (pdfDocument?.annotationStorage?.size || 0) > 0
-    || overlayFields.length > 0
+  return (view.pdfDocument?.annotationStorage?.size || 0) > 0
+    || view.overlayFields.length > 0
     || overlayHistory.undo.length > 0
-    || !!docMeta.canUndo;
+    || !!view.docMeta.canUndo;
 }
 
 // requestClose is the Close control: confirm if anything has been edited, drop the
@@ -1477,7 +1489,7 @@ function hasEditsSinceOpen() {
 // holds the document — and /api/pdf would still serve it. The route is idempotent
 // and has no failure mode of its own, so ordering it first costs nothing.
 async function requestClose() {
-  if (!pdfDocument) return;
+  if (!view.pdfDocument) return;
   // Worded to what the signals actually support: "since the last save" is true
   // whether or not a save has happened, including when the answer is "nothing".
   if (hasEditsSinceOpen()
@@ -1792,17 +1804,17 @@ async function ensureAlignment() {
   cmpAlignTried = true;
   if (!cmpDoc) return;
   const seq = cmpSeq; // closeCmpDoc bumps this; bail after each await rather than read the nulled doc
-  const [ta, tb] = await Promise.all([pageTexts(pdfDocument), pageTexts(cmpDoc)]);
+  const [ta, tb] = await Promise.all([pageTexts(view.pdfDocument), pageTexts(cmpDoc)]);
   if (seq !== cmpSeq) return;
   const a = pageFingerprints(ta, 'a'), b = pageFingerprints(tb, 'b');
   if (a.meaningful > 0 && b.meaningful > 0) {
     cmpAlign = detectMoves(alignPages(a.keys, b.keys), a.keys, b.keys);
   } else {
     try {
-      const total = pdfDocument.numPages + cmpDoc.numPages;
+      const total = view.pdfDocument.numPages + cmpDoc.numPages;
       let done = 0;
       const tick = () => { els.compareBody.innerHTML = `<p class="scan-where">Aligning pages… ${++done}/${total}</p>`; };
-      const ha = await pagePixelHashes(pdfDocument, tick);
+      const ha = await pagePixelHashes(view.pdfDocument, tick);
       if (seq !== cmpSeq) return;
       const hb = await pagePixelHashes(cmpDoc, tick);
       if (seq !== cmpSeq) return;
@@ -1816,7 +1828,7 @@ async function ensureAlignment() {
   els.cmAuto.disabled = !cmpAlign;
 }
 function openCompare() {
-  if (!pdfDocument) return toast('Open a PDF first');
+  if (!view.pdfDocument) return toast('Open a PDF first');
   closeCmpDoc();
   els.compareTools.hidden = true;
   els.compareSummary.hidden = true;
@@ -1864,14 +1876,14 @@ function lockstep(dir) {
   if (autoActive()) {
     cmpAlignIdx = Math.min(Math.max(cmpAlignIdx + dir, 0), cmpAlign.length - 1);
   } else {
-    cmpPageA = Math.min(Math.max(cmpPageA + dir, 1), pdfDocument.numPages);
+    cmpPageA = Math.min(Math.max(cmpPageA + dir, 1), view.pdfDocument.numPages);
     cmpPageB = Math.min(Math.max(cmpPageB + dir, 1), cmpDoc.numPages);
   }
   renderCompareVisual(cmpMode);
 }
 
 function stepManual(da, db) {
-  cmpPageA = Math.min(Math.max(cmpPageA + da, 1), pdfDocument.numPages);
+  cmpPageA = Math.min(Math.max(cmpPageA + da, 1), view.pdfDocument.numPages);
   cmpPageB = Math.min(Math.max(cmpPageB + db, 1), cmpDoc.numPages);
   renderCompareVisual(cmpMode);
 }
@@ -1891,7 +1903,7 @@ async function renderCompareText() {
   els.compareSummary.hidden = true;
   if (!cmpText) {
     els.compareBody.innerHTML = '<p class="scan-where">Comparing text…</p>';
-    cmpText = { a: await documentText(pdfDocument), b: await documentText(cmpDoc) };
+    cmpText = { a: await documentText(view.pdfDocument), b: await documentText(cmpDoc) };
   }
   renderCompare(cmpText.a, cmpText.b, cmpName);
 }
@@ -1908,7 +1920,7 @@ async function renderCompareVisual(mode) {
   }
   await ensureAlignment();
   if (seq !== cmpSeq) return; // a newer render started while fingerprinting
-  const nA = pdfDocument.numPages, nB = cmpDoc.numPages;
+  const nA = view.pdfDocument.numPages, nB = cmpDoc.numPages;
   const auto = autoActive();
 
   // In auto mode the current alignment step drives which pages show; a gap step
@@ -1935,7 +1947,7 @@ async function renderCompareVisual(mode) {
   // changed position is labelled as a move (cross-referencing its other position)
   // rather than a delete/insert, so a reorder doesn't read as lost + new content.
   if (step && step.b == null) {
-    const ra = await renderPageCanvas(pdfDocument, cmpPageA, CMP_SCALE);
+    const ra = await renderPageCanvas(view.pdfDocument, cmpPageA, CMP_SCALE);
     if (seq !== cmpSeq) return;
     els.compareSummary.hidden = false;
     els.compareSummary.textContent = step.movedTo != null
@@ -1958,7 +1970,7 @@ async function renderCompareVisual(mode) {
   }
 
   const [ra, rb] = await Promise.all([
-    renderPageCanvas(pdfDocument, cmpPageA, CMP_SCALE),
+    renderPageCanvas(view.pdfDocument, cmpPageA, CMP_SCALE),
     renderPageCanvas(cmpDoc, cmpPageB, CMP_SCALE),
   ]);
   if (seq !== cmpSeq) return;
@@ -2020,7 +2032,7 @@ function showCompareCanvases(items) {
 // server fills one PDF per row and returns them as a ZIP. Reuses pdfops.FillFormCSV
 // unchanged; the only new server code is the zip-bundling handler.
 function openFillCsv() {
-  if (!pdfDocument) return toast('Open a form first');
+  if (!view.pdfDocument) return toast('Open a form first');
   els.fillCsvStatus.textContent = '';
   els.fillCsvModal.hidden = false;
 }
@@ -2057,7 +2069,7 @@ els.fillCsvInput.onchange = async () => {
 // (AcroForm fields intact — bakedBytes preserves them) plus the XFDF, and the
 // server fills one PDF and returns it. Reuses pdfops.FillFormXFDF unchanged.
 function openImportXfdf() {
-  if (!pdfDocument) return toast('Open a form first');
+  if (!view.pdfDocument) return toast('Open a form first');
   els.importXfdfStatus.textContent = '';
   els.importXfdfModal.hidden = false;
 }
@@ -2096,7 +2108,7 @@ els.importXfdfInput.onchange = async () => {
 // shown in the modal. The result is a candidate — the modal says "verify with
 // veraPDF" because Nib can't validate conformance itself.
 function openPdfa() {
-  if (!pdfDocument) return toast('Open a PDF first');
+  if (!view.pdfDocument) return toast('Open a PDF first');
   els.pdfaStatus.textContent = '';
   els.pdfaGsGo.hidden = true; // revealed only when the pure-Go path refuses and gs is installed
   els.pdfaModal.hidden = false;
@@ -2183,19 +2195,19 @@ function openSmart(value) {
 
 // --- save --------------------------------------------------------------------
 async function save() {
-  if (!pdfDocument) return;
+  if (!view.pdfDocument) return;
   // CAPTURED, before the first await — D7, and this is the site the phase's deepdive
   // called the worst. bakedBytes() below is asynchronous and can take seconds on a
   // large document; if the open document changes while it runs, every later read of
-  // `docMeta` describes a DIFFERENT document than the bytes came from. Concretely:
+  // `view.docMeta` describes a DIFFERENT document than the bytes came from. Concretely:
   // apiFetch stamps the current id, /api/save writes the posted bytes to the addressed
   // document's path, and A's contents land in B's file — past the signature guard,
   // with a "Saved" toast and no error anywhere.
   //
   // `doc` is used for all three of them: the id that addresses the request, the
   // canSave that decides download-vs-overwrite, and nothing read from the live
-  // `docMeta` after this line.
-  const doc = docMeta;
+  // `view.docMeta` after this line.
+  const doc = view.docMeta;
   els.saveBtn.disabled = true;
   try {
     const bytes = await bakedBytes();
@@ -2231,18 +2243,18 @@ async function save() {
     // an identity check would report "the document changed" after any concurrent
     // refresh and silently skip a reload that was owed. The question here is which
     // document is open, and that is what the id answers.
-    if (!docMeta || docMeta.id !== doc.id) { toast('Saved'); return; }
+    if (!view.docMeta || view.docMeta.id !== doc.id) { toast('Saved'); return; }
 
     updateBadge(meta.signature);
     toast('Saved');
     // If detected fields were baked in, reload so the page shows the stamped
-    // text and the transient input widgets are cleared. overlayFields is read only
+    // text and the transient input widgets are cleared. view.overlayFields is read only
     // once the document is known not to have changed, above.
-    if (overlayFields.length) await setDocumentFromServer(meta);
+    if (view.overlayFields.length) await setDocumentFromServer(meta);
   } catch (err) {
     toast('save failed: ' + err.message);
   } finally {
-    els.saveBtn.disabled = !pdfDocument;
+    els.saveBtn.disabled = !view.pdfDocument;
   }
 }
 
@@ -2405,7 +2417,7 @@ function renderScanReport(rep) {
 }
 
 async function openScan() {
-  if (!pdfDocument) return toast('Open a PDF first');
+  if (!view.pdfDocument) return toast('Open a PDF first');
   els.scanBody.innerHTML = '<p class="scan-where">Scanning…</p>';
   els.scanModal.hidden = false;
   try {
@@ -2421,7 +2433,7 @@ els.scanClose.onclick = () => { els.scanModal.hidden = true; };
 // the cleaned document and shows what remains; on failure it leaves the document
 // untouched and points to the next, more thorough method.
 async function runSanitize(method, stepDown) {
-  if (!pdfDocument) return;
+  if (!view.pdfDocument) return;
   if (!confirmSignatureLoss()) return;
   const res = await apiFetch('/api/sanitize?method=' + method, { method: 'POST' });
   if (!res.ok) return toast('removal failed');
@@ -2454,7 +2466,7 @@ async function postDecrypt(password) {
 }
 
 els.decryptBtn.onclick = async () => {
-  if (!pdfDocument) return toast('Open a PDF first');
+  if (!view.pdfDocument) return toast('Open a PDF first');
   if (!confirmSignatureLoss()) return;
   const out = await postDecrypt(''); // an open doc decrypts with the empty user password
   if (!out) return;
@@ -2482,7 +2494,7 @@ els.decryptGo.onclick = async () => {
     return;
   }
   els.decryptModal.hidden = true;
-  await setDocumentFromServer(out.reason === 'plain' ? docMeta : out);
+  await setDocumentFromServer(out.reason === 'plain' ? view.docMeta : out);
   // Unlocking rewrites the PDF, which breaks any signature it carried. On this
   // on-open path the user never saw the signed state (the doc couldn't render
   // until now), so the usual confirmSignatureLoss prompt never fired — warn here
@@ -2504,7 +2516,7 @@ els.decryptPw.addEventListener('keydown', (e) => {
 // re-rendered without the password). The password is typed twice — a typo would
 // lock the copy permanently, and Nib can't recover one.
 els.encryptBtn.onclick = () => {
-  if (!pdfDocument) return toast('Open a PDF first');
+  if (!view.pdfDocument) return toast('Open a PDF first');
   // The open doc is untouched — only the protected copy loses any signature — so this
   // is a tailored warning, not the in-place confirmSignatureLoss() the editing ops use.
   if (isSigned() && !confirm('This document is signed. The protected copy won’t carry that signature (encrypting rewrites the file); your open document is unchanged. Continue?')) return;
@@ -2550,7 +2562,7 @@ els.encryptPw2.addEventListener('keydown', (e) => {
 // Flatten is the guaranteed-inert floor: rasterise every page and load the
 // flattened result back as the open document.
 els.scanFlattenBtn.onclick = async () => {
-  if (!pdfDocument) return;
+  if (!view.pdfDocument) return;
   if (!confirmSignatureLoss()) return;
   const pages = await renderFilledPages(2);
   const form = new FormData();
@@ -2618,7 +2630,7 @@ async function extractAttachment(name) {
   openSaveAs(await res.blob(), name, 'Save attachment');
 }
 els.attachBtn.onclick = () => {
-  if (!pdfDocument) return toast('Open a PDF first');
+  if (!view.pdfDocument) return toast('Open a PDF first');
   els.attachmentsModal.hidden = false;
   loadAttachments();
 };
@@ -2649,10 +2661,10 @@ async function buildThumbnails(gen = view.docGen) {
   // the loop before the condition is reached, so this prevents a TypeError that
   // does not currently occur — it is here so the loop does not silently depend on
   // that, not because a null deref was observed.
-  const total = pdfDocument.numPages;
+  const total = view.pdfDocument.numPages;
   for (let n = 1; n <= total; n++) {
     if (gen !== view.docGen) return; // a newer document loaded — stop rendering stale thumbs
-    const page = await pdfDocument.getPage(n);
+    const page = await view.pdfDocument.getPage(n);
     const base = page.getViewport({ scale: 1 });
     const viewport = page.getViewport({ scale: 150 / base.width });
 
@@ -2673,7 +2685,7 @@ async function buildThumbnails(gen = view.docGen) {
     const rot = document.createElement('button'); rot.textContent = '↻'; rot.title = 'Rotate right';
     rot.onclick = (e) => { e.stopPropagation(); pageOp('rotate', { pages: String(n), deg: 90 }); };
     const del = document.createElement('button'); del.textContent = '×'; del.title = 'Delete page';
-    del.onclick = (e) => { e.stopPropagation(); if (pdfDocument.numPages > 1) pageOp('delete', { pages: String(n) }); };
+    del.onclick = (e) => { e.stopPropagation(); if (view.pdfDocument.numPages > 1) pageOp('delete', { pages: String(n) }); };
     acts.append(rotL, rot, del);
 
     const label = document.createElement('div');
@@ -2826,7 +2838,7 @@ els.thumbGrid.addEventListener('dragend', onThumbDragEnd);
 
 // --- page operations (M7): bake edits, apply server-side, reload -------------
 async function pageOp(op, extra = {}) {
-  if (!pdfDocument) return;
+  if (!view.pdfDocument) return;
   if (!confirmSignatureLoss()) return;
   const form = await bakedForm();
   form.append('op', op);
@@ -2866,8 +2878,8 @@ els.appendInput.onchange = () => {
 let splitSrc = null; // offscreen render of the page being split
 
 async function openSplit() {
-  if (!pdfDocument) return;
-  const page = await pdfDocument.getPage(viewer.currentPageNumber);
+  if (!view.pdfDocument) return;
+  const page = await view.pdfDocument.getPage(viewer.currentPageNumber);
   const base = page.getViewport({ scale: 1 });
   const vp = page.getViewport({ scale: Math.min(2, 900 / base.width) });
   const cv = document.createElement('canvas');
@@ -2929,7 +2941,7 @@ els.selRotateLeftBtn.onclick = () => { if (selectedPages.size) pageOp('rotate', 
 els.selRotateRightBtn.onclick = () => { if (selectedPages.size) pageOp('rotate', { pages: selectedPagesParam(), deg: 90 }); };
 els.selDeleteBtn.onclick = () => {
   if (!selectedPages.size) return;
-  if (pdfDocument.numPages <= selectedPages.size) { toast("can't delete every page"); return; }
+  if (view.pdfDocument.numPages <= selectedPages.size) { toast("can't delete every page"); return; }
   pageOp('delete', { pages: selectedPagesParam() });
 };
 els.selClearBtn.onclick = () => clearSelection();
@@ -2941,9 +2953,9 @@ function moveSelected(toFront) {
   if (!selectedPages.size) return;
   const selected = [...selectedPages].sort((a, b) => a - b);
   const rest = [];
-  for (let p = 1; p <= pdfDocument.numPages; p++) if (!selectedPages.has(p)) rest.push(p);
+  for (let p = 1; p <= view.pdfDocument.numPages; p++) if (!selectedPages.has(p)) rest.push(p);
   const order = toFront ? [...selected, ...rest] : [...rest, ...selected];
-  const identity = Array.from({ length: pdfDocument.numPages }, (_, i) => i + 1);
+  const identity = Array.from({ length: view.pdfDocument.numPages }, (_, i) => i + 1);
   if (order.join(',') === identity.join(',')) return; // already at that end
   pageOp('reorder', { pages: order.join(',') });
 }
@@ -2991,8 +3003,8 @@ function parsePageRanges(spec, max) {
 }
 
 function openExtract() {
-  if (!pdfDocument) return;
-  const n = pdfDocument.numPages;
+  if (!view.pdfDocument) return;
+  const n = view.pdfDocument.numPages;
   els.extractPages.value = '';
   els.extractHint.textContent = `This document has ${n} page${n === 1 ? '' : 's'}.`;
   els.extractModal.hidden = false;
@@ -3002,7 +3014,7 @@ function openExtract() {
 async function extractGo() {
   // Export name captured at operation entry — see exportBase (D7).
   const exportName = exportBase();
-  const pages = parsePageRanges(els.extractPages.value, pdfDocument.numPages);
+  const pages = parsePageRanges(els.extractPages.value, view.pdfDocument.numPages);
   if (!pages || pages.length === 0) {
     els.extractHint.textContent = 'Enter pages like "1-3, 5" within the document range.';
     return;
@@ -3032,13 +3044,13 @@ function pnFormat(num, start, n) {
 }
 function pnPreview() {
   const start = Math.max(1, parseInt(els.pnStart.value, 10) || 1);
-  const n = pdfDocument ? pdfDocument.numPages : 1;
+  const n = view.pdfDocument ? view.pdfDocument.numPages : 1;
   els.pnPreview.textContent = n === 1
     ? `1 page → “${pnFormat(start, start, n)}”`
     : `${n} pages → “${pnFormat(start, start, n)}” … “${pnFormat(start + n - 1, start, n)}”`;
 }
 function openPageNum() {
-  if (!pdfDocument) return;
+  if (!view.pdfDocument) return;
   pnPreview();
   els.pageNumModal.hidden = false;
 }
@@ -3093,7 +3105,7 @@ function plLabel(style, first, idx, prefix) {
   return (prefix || '') + body;
 }
 function updatePlPreview() {
-  const n = pdfDocument ? pdfDocument.numPages : 1;
+  const n = view.pdfDocument ? view.pdfDocument.numPages : 1;
   const rs = [...plRanges].sort((a, b) => a.start - b.start);
   els.plPreview.textContent = rs.map((r, i) => {
     const start = Math.max(1, Math.min(r.start, n));
@@ -3108,7 +3120,7 @@ function updatePlPreview() {
 }
 function renderPageLabels() {
   plRanges.sort((a, b) => a.start - b.start);
-  const n = pdfDocument ? pdfDocument.numPages : 1;
+  const n = view.pdfDocument ? view.pdfDocument.numPages : 1;
   els.plList.innerHTML = '';
   plRanges.forEach((r, i) => {
     const row = document.createElement('div');
@@ -3140,7 +3152,7 @@ function renderPageLabels() {
   updatePlPreview();
 }
 function openPageLabels() {
-  if (!pdfDocument) return;
+  if (!view.pdfDocument) return;
   plRanges = [{ start: 1, style: 'decimal', first: 1, prefix: '' }];
   renderPageLabels();
   els.pageLabelsModal.hidden = false;
@@ -3159,7 +3171,7 @@ els.pageLabelsBtn.onclick = openPageLabels;
 els.plCancel.onclick = () => { els.pageLabelsModal.hidden = true; };
 els.plGo.onclick = pageLabelsGo;
 els.plAdd.onclick = () => {
-  const n = pdfDocument ? pdfDocument.numPages : 1;
+  const n = view.pdfDocument ? view.pdfDocument.numPages : 1;
   const last = plRanges.reduce((m, r) => Math.max(m, r.start), 0);
   plRanges.push({ start: Math.min(n, last + 1), style: 'decimal', first: 1, prefix: '' });
   renderPageLabels();
@@ -3168,7 +3180,7 @@ els.plAdd.onclick = () => {
 // --- N-up: combine several pages onto each sheet -----------------------------
 // Whole-document re-imposition in place (op:'nup' on /api/pages → pdfops.NUp).
 function openNup() {
-  if (!pdfDocument) return;
+  if (!view.pdfDocument) return;
   els.nupModal.hidden = false;
 }
 async function nupGo() {
@@ -3193,7 +3205,7 @@ async function buildOutline(gen = view.docGen) {
   edit.textContent = 'Edit outline…';
   edit.onclick = openOutlineEditor;
   els.outline.appendChild(edit);
-  const outline = await pdfDocument.getOutline();
+  const outline = await view.pdfDocument.getOutline();
   if (gen !== view.docGen) return; // a newer document loaded — drop this stale outline
   if (!outline || !outline.length) {
     const empty = document.createElement('div');
@@ -3230,7 +3242,7 @@ function renderOutlineEditor() {
     p.textContent = 'No bookmarks yet — add one.';
     list.appendChild(p);
   }
-  const n = pdfDocument ? pdfDocument.numPages : 1;
+  const n = view.pdfDocument ? view.pdfDocument.numPages : 1;
   let prev = -1;
   view.outlineItems.forEach((it, i) => {
     it.level = Math.max(0, Math.min(it.level, prev + 1)); // nesting may deepen one level at a time
@@ -3258,7 +3270,7 @@ function renderOutlineEditor() {
   });
 }
 async function openOutlineEditor() {
-  if (!pdfDocument) return;
+  if (!view.pdfDocument) return;
   try {
     const res = await apiFetch('/api/outline');
     if (!res.ok) throw new Error('outline');
@@ -3298,11 +3310,11 @@ els.outlineSave.onclick = async () => {
 // too high (the line/letter no longer matched). bitmapUrl is a library image
 // (/api/images/{id}) or a data: URL for a generated stamp.
 async function placeStamp(bitmapUrl) {
-  if (!pdfDocument) { toast('Open a PDF first'); return; }
+  if (!view.pdfDocument) { toast('Open a PDF first'); return; }
   const n = viewer.currentPageNumber;
   const pv = viewer.getPageView(n - 1);
   if (!pv?.div || !pv.viewport) { toast('Scroll the page into view, then try again'); return; }
-  const base = (await pdfDocument.getPage(n)).getViewport({ scale: 1 }); // PDF points
+  const base = (await view.pdfDocument.getPage(n)).getViewport({ scale: 1 }); // PDF points
   const gen = view.docGen;
   const img = new Image();
   img.onload = () => {
@@ -3344,7 +3356,7 @@ function makeStamp(src, aspect, frac, opts, pv) {
   el.addEventListener('keydown', (e) => { if (e.key === 'Delete' || e.key === 'Backspace') remove(); });
   enableStampGestures(f, el, handle);
 
-  overlayFields.push(f);
+  view.overlayFields.push(f);
   pv.div.appendChild(el);
   layoutField(f, pv);
   recordAdd(f);
@@ -3616,7 +3628,7 @@ function downloadBlob(blob, name) {
 
 // exportBase is the opened file's name without its directory or .pdf suffix,
 // used to build defaults like "<base>-flattened.pdf".
-// exportBase reads `view.originalName`/`docMeta` at CALL time, so it must be called at an
+// exportBase reads `view.originalName`/`view.docMeta` at CALL time, so it must be called at an
 // operation's ENTRY and its result carried — never called at the point the file is
 // handed to openSaveAs.
 //
@@ -3630,7 +3642,7 @@ function downloadBlob(blob, name) {
 // a user tells two documents apart in a workflow whose whole point is which document
 // was signed.
 function exportBase() {
-  const b = (view.originalName || docMeta.name || 'document').replace(/\.[Pp][Dd][Ff]$/, '');
+  const b = (view.originalName || view.docMeta.name || 'document').replace(/\.[Pp][Dd][Ff]$/, '');
   return b || 'document';
 }
 
@@ -3742,8 +3754,8 @@ function updateBsPreview() {
 }
 
 async function openBookmarkSplit() {
-  if (!pdfDocument) return;
-  const outline = await pdfDocument.getOutline();
+  if (!view.pdfDocument) return;
+  const outline = await view.pdfDocument.getOutline();
   if (!outline || !outline.length) { toast('This PDF has no bookmarks to split by'); return; }
   bsOutline = outline;
   els.bsPrefix.value = '';
@@ -3786,7 +3798,7 @@ const spanLabel = (from, thru) => (from === thru ? String(from) : `${from}-${thr
 // psSpans computes the preview/confirm span labels client-side. Range tokens that
 // are malformed or out of bounds are skipped here; the server is the real guard.
 function psSpans() {
-  const n = pdfDocument ? pdfDocument.numPages : 0;
+  const n = view.pdfDocument ? view.pdfDocument.numPages : 0;
   const spans = [];
   if (psMode() === 'every') {
     const k = Math.max(1, parseInt(els.psEvery.value, 10) || 1);
@@ -3810,7 +3822,7 @@ function updatePsPreview() {
   els.psPreview.textContent = `${spans.length} file${spans.length === 1 ? '' : 's'}: ${sample}  —  saved as “${els.psPrefix.value}<range>.pdf”`;
 }
 function openPageSplit() {
-  if (!pdfDocument) return;
+  if (!view.pdfDocument) return;
   els.psPrefix.value = '';
   updatePsPreview();
   els.pageSplitModal.hidden = false;
@@ -3894,12 +3906,12 @@ function loadTesseract() {
 
 
 async function runOCR() {
-  if (!pdfDocument || !confirmSignatureLoss()) return;
+  if (!view.pdfDocument || !confirmSignatureLoss()) return;
   // CAPTURED before the first await (D7). OCR is the longest operation in the app —
   // loading the engine, then a recognition pass per page — so the window in which the
   // open document can change is measured in tens of seconds. The text layer is stamped
   // onto the document the words were read FROM.
-  const doc = docMeta;
+  const doc = view.docMeta;
   const btn = els.ocrBtn, label = btn.textContent;
   btn.disabled = true;
   let worker;
@@ -3928,10 +3940,10 @@ async function runOCR() {
     // (a wrong guess skews its layout/word-spacing heuristics); matches ocrScale.
     await worker.setParameters({ user_defined_dpi: String(dpi) });
     const words = [];
-    const n = pdfDocument.numPages;
+    const n = view.pdfDocument.numPages;
     for (let p = 1; p <= n; p++) {
       btn.textContent = `OCR ${p}/${n}…`;
-      const { blob, h } = await renderPageBlob(pdfDocument, p, ocrScale, null, 'image/png');
+      const { blob, h } = await renderPageBlob(view.pdfDocument, p, ocrScale, null, 'image/png');
       const { data } = await worker.recognize(blob);
       for (const word of data.words || []) {
         const t = (word.text || '').trim();
@@ -3978,7 +3990,7 @@ async function renderFilledPages(scale, onlyPage, mime, quality) {
 // any await inside this function — not "whatever is current when the request is
 // built", which is the defect (D7). A caller that has already awaited before reaching
 // here must pass its OWN captured id, because entry is already too late for it.
-async function flattenPages(pages, paint, docId = docMeta && docMeta.id) {
+async function flattenPages(pages, paint, docId = view.docMeta && view.docMeta.id) {
   const bytes = await bakedBytes();
   // pdf.js detaches the buffer it parses, but `bytes` is also uploaded as the pdf
   // field, so render from a copy and keep the original intact for the upload.
@@ -4002,7 +4014,7 @@ async function flattenPages(pages, paint, docId = docMeta && docMeta.id) {
 // any await inside this function — not "whatever is current when the request is
 // built", which is the defect (D7). A caller that has already awaited before reaching
 // here must pass its OWN captured id, because entry is already too late for it.
-async function assembleBlob(format, docId = docMeta && docMeta.id) {
+async function assembleBlob(format, docId = view.docMeta && view.docMeta.id) {
   const pages = await renderFilledPages(2);
   const form = new FormData();
   pages.forEach((p, i) => {
@@ -4024,7 +4036,7 @@ async function assembleBlob(format, docId = docMeta && docMeta.id) {
 // any await inside this function — not "whatever is current when the request is
 // built", which is the defect (D7). A caller that has already awaited before reaching
 // here must pass its OWN captured id, because entry is already too late for it.
-async function compressBlob(scale, quality, docId = docMeta && docMeta.id) {
+async function compressBlob(scale, quality, docId = view.docMeta && view.docMeta.id) {
   const pages = await renderFilledPages(scale, 0, 'image/jpeg', quality);
   const form = new FormData();
   pages.forEach((p, i) => {
@@ -4052,7 +4064,7 @@ function sizeSummary(before, after) {
 els.saveFlatBtn.onclick = async () => {
   // Export name captured at operation entry — see exportBase (D7).
   const exportName = exportBase();
-  if (!pdfDocument) return toast('Open a PDF first');
+  if (!view.pdfDocument) return toast('Open a PDF first');
   const blob = await assembleBlob('pdf');
   if (blob) openSaveAs(blob, exportName + '-flattened.pdf', 'Save flattened PDF');
 };
@@ -4067,7 +4079,7 @@ function resetReduce() {
   els.reduceModal.querySelector('input[value="optimize"]').checked = true;
   els.reduceQuality.hidden = true;
 }
-els.reduceBtn.onclick = () => { if (!pdfDocument) return toast('Open a PDF first'); resetReduce(); els.reduceModal.hidden = false; };
+els.reduceBtn.onclick = () => { if (!view.pdfDocument) return toast('Open a PDF first'); resetReduce(); els.reduceModal.hidden = false; };
 els.reduceCancel.onclick = () => { els.reduceModal.hidden = true; };
 all('input[name="reduceMode"]').forEach((r) => {
   r.onchange = () => { els.reduceQuality.hidden = r.value !== 'compress' || !r.checked; };
@@ -4079,7 +4091,7 @@ els.reduceGo.onclick = async () => {
   // before it reaches compressBlob, so the helpers' entry-time default would already be
   // too late — entry is only a safe capture point for a helper entered before the
   // operation's first await, and this is the one caller where it is not.
-  const opDoc = docMeta;
+  const opDoc = view.docMeta;
   const mode = els.reduceModal.querySelector('input[name="reduceMode"]:checked').value;
   els.reduceGo.disabled = true; els.reduceGo.textContent = 'Working…';
   let blob, before, after;
@@ -4113,7 +4125,7 @@ els.reduceSave.onclick = () => {
 els.exportZipBtn.onclick = async () => {
   // Export name captured at operation entry — see exportBase (D7).
   const exportName = exportBase();
-  if (!pdfDocument) return toast('Open a PDF first');
+  if (!view.pdfDocument) return toast('Open a PDF first');
   const blob = await assembleBlob('zip');
   if (blob) openSaveAs(blob, exportName + '-pages.zip', 'Export pages (ZIP)');
 };
@@ -4121,7 +4133,7 @@ els.exportZipBtn.onclick = async () => {
 els.saveEditableBtn.onclick = async () => {
   // Export name captured at operation entry — see exportBase (D7).
   const exportName = exportBase();
-  if (!pdfDocument) return;
+  if (!view.pdfDocument) return;
   const bytes = await bakedBytes();
   openSaveAs(new Blob([bytes], { type: 'application/pdf' }), exportName + '-editable.pdf', 'Save editable copy');
 };
@@ -4136,7 +4148,7 @@ els.saveEditableBtn.onclick = async () => {
 // text layer). Mirrors the text gather in the Detect / Edit-text handlers.
 async function pageTextItems(n) {
   try {
-    const tc = await (await pdfDocument.getPage(n)).getTextContent();
+    const tc = await (await view.pdfDocument.getPage(n)).getTextContent();
     return tc.items.filter((it) => it.str && it.str.trim()).map((it) => ({
       str: it.str, x: it.transform[4], y: it.transform[5],
       w: it.width, h: it.height || Math.hypot(it.transform[2], it.transform[3]),
@@ -4179,7 +4191,7 @@ function suggestFieldName(rect, items) {
 
 let pendingAuthor = []; // candidate fields awaiting naming in fieldNameModal
 els.saveFillableBtn.onclick = async () => {
-  if (!pdfDocument) return;
+  if (!view.pdfDocument) return;
   pendingAuthor = collectAuthorFields();
   if (!pendingAuthor.length) { toast('Run Detect or place text/checkbox fields first'); return; }
   // Pre-name each field from the form's own text (see suggestFieldName); each
@@ -4247,9 +4259,9 @@ els.fieldNameGo.onclick = async () => {
   });
   if (!fields.length) return;
   // Post the base document WITHOUT baking the overlay fields — they become widgets.
-  const saved = pdfDocument.annotationStorage.size > 0
-    ? await pdfDocument.saveDocument()
-    : await pdfDocument.getData();
+  const saved = view.pdfDocument.annotationStorage.size > 0
+    ? await view.pdfDocument.saveDocument()
+    : await view.pdfDocument.getData();
   const form = new FormData();
   form.append('pdf', new Blob([saved], { type: 'application/pdf' }), 'doc.pdf');
   form.append('fields', JSON.stringify(fields));
@@ -4261,7 +4273,7 @@ els.fieldNameGo.onclick = async () => {
 els.exportPngBtn.onclick = async () => {
   // Export name captured at operation entry — see exportBase (D7).
   const exportName = exportBase();
-  if (!pdfDocument) return;
+  if (!view.pdfDocument) return;
   const [{ blob }] = await renderFilledPages(2, viewer.currentPageNumber);
   openSaveAs(blob, exportName + '-page' + viewer.currentPageNumber + '.png', 'Export page (PNG)');
 };
@@ -4269,11 +4281,11 @@ els.exportPngBtn.onclick = async () => {
 els.exportTextBtn.onclick = async () => {
   // Export name captured at operation entry — see exportBase (D7).
   const exportName = exportBase();
-  if (!pdfDocument) return toast('Open a PDF first');
+  if (!view.pdfDocument) return toast('Open a PDF first');
   // Best-effort dump of the document's text layer via pdf.js (see documentText:
   // content-stream order, hasEOL newlines; scanned pages have no text layer and
   // contribute nothing). Compare uses the same helper so the two stay in step.
-  const out = await documentText(pdfDocument);
+  const out = await documentText(view.pdfDocument);
   openSaveAs(new Blob([out], { type: 'text/plain' }), exportName + '.txt', 'Export text (.txt)');
 };
 
@@ -4333,8 +4345,8 @@ async function extractTable(page) {
 async function exportTable(format) {
   // Export name captured at operation entry — see exportBase (D7).
   const exportName = exportBase();
-  if (!pdfDocument) return toast('Open a PDF first');
-  const page = await pdfDocument.getPage(viewer.currentPageNumber);
+  if (!view.pdfDocument) return toast('Open a PDF first');
+  const page = await view.pdfDocument.getPage(viewer.currentPageNumber);
   const grid = await extractTable(page);
   if (!grid.length) return toast('No text on this page to extract (a scanned page? run OCR first)');
   const res = await apiFetch('/api/table?format=' + format, {
@@ -4351,7 +4363,7 @@ els.exportTableOdsBtn.onclick = () => exportTable('ods');
 els.exportImagesBtn.onclick = async () => {
   // Export name captured at operation entry — see exportBase (D7).
   const exportName = exportBase();
-  if (!pdfDocument) return toast('Open a PDF first');
+  if (!view.pdfDocument) return toast('Open a PDF first');
   const res = await apiFetch('/api/extract-images', { method: 'POST' });
   if (!res.ok) { toast('Could not extract images'); return; }
   if (res.headers.get('X-Image-Count') === '0') { toast('No extractable images found'); return; }
@@ -4364,7 +4376,7 @@ els.exportFormXfdfBtn.onclick = () => { window.location = '/api/form-data?format
 els.exportCertBtn.onclick = () => { window.location = '/api/identity'; };
 
 els.printBtn.onclick = async () => {
-  if (!pdfDocument) return toast('Open a PDF first');
+  if (!view.pdfDocument) return toast('Open a PDF first');
   // Print the real PDF bytes (WYSIWYG, vector) through the browser's own print
   // dialog. Printing the on-screen #viewer would capture pdf.js's screen-DPI
   // page canvases plus the app chrome, not the document — so feed the same
@@ -4391,7 +4403,7 @@ els.printBtn.onclick = async () => {
 
 // Finalize & sign.
 els.finalizeBtn.onclick = async () => {
-  if (!pdfDocument) return;
+  if (!view.pdfDocument) return;
   await refreshSignAs();
   els.finalizeModal.hidden = false;
 };
@@ -4484,7 +4496,7 @@ els.fzGo.onclick = async () => {
 // OpenTimestamps: stamp the current document's hash into the Bitcoin blockchain
 // and save the .ots proof as a sidecar. The proof is over the same baked bytes
 // Finalize signs, so it matches what the user keeps; the PDF itself is untouched.
-els.timestampBtn.onclick = () => { if (pdfDocument) els.timestampModal.hidden = false; };
+els.timestampBtn.onclick = () => { if (view.pdfDocument) els.timestampModal.hidden = false; };
 els.tsCancel.onclick = () => { els.timestampModal.hidden = true; };
 els.tsGo.onclick = async () => {
   // Export name captured at operation entry — see exportBase (D7).
@@ -4501,7 +4513,7 @@ els.tsGo.onclick = async () => {
 // with the document's bytes, and report whether (and when) it's anchored to Bitcoin.
 let upgradedProofB64 = null; // a now-complete .ots offered for saving after verify
 els.timestampVerifyBtn.onclick = () => {
-  if (!pdfDocument) return;
+  if (!view.pdfDocument) return;
   els.tvResult.hidden = true; els.tvResult.textContent = '';
   els.tvSave.hidden = true; upgradedProofB64 = null;
   els.tsVerifyModal.hidden = false;
@@ -4558,16 +4570,16 @@ function timestampVerifyMessage(r) {
 
 // Autofill: set matching form-field values from the saved profile.
 els.autofillBtn.onclick = async () => {
-  if (!pdfDocument) return toast('Open a PDF first');
+  if (!view.pdfDocument) return toast('Open a PDF first');
   const res = await apiFetch('/api/profile');
   const profile = res.ok ? await res.json() : {};
   if (!Object.keys(profile).length) return toast('No profile yet — edit it first');
-  const objs = await pdfDocument.getFieldObjects();
+  const objs = await view.pdfDocument.getFieldObjects();
   if (!objs) return toast('This PDF has no form fields');
   let count = 0;
   for (const [name, arr] of Object.entries(objs)) {
     if (profile[name] === undefined) continue;
-    for (const o of arr) { pdfDocument.annotationStorage.setValue(o.id, { value: profile[name] }); count++; }
+    for (const o of arr) { view.pdfDocument.annotationStorage.setValue(o.id, { value: profile[name] }); count++; }
   }
   viewer.refresh?.();
   toast(count ? `Filled ${count} field(s) — review and Save` : 'No matching field names');
@@ -4635,7 +4647,7 @@ function pageContentRect(div) {
 }
 
 function pageAt(x, y) {
-  for (let i = 0; i < (pdfDocument?.numPages || 0); i++) {
+  for (let i = 0; i < (view.pdfDocument?.numPages || 0); i++) {
     const pv = viewer.getPageView(i);
     const r = pv?.div?.getBoundingClientRect();
     if (r && x >= r.left && x <= r.right && y >= r.top && y <= r.bottom) {
@@ -4740,8 +4752,8 @@ function relayoutRedactMarks() {
   // document reload, which tears the boxes down with the old page DOM). Bail
   // before the all-pages walk: this runs on every pagerendered/scalechanging,
   // so it's scroll-hot-path work in the common no-marks case.
-  if (!pdfDocument || !view.redactMarks.length) return;
-  for (let i = 0; i < pdfDocument.numPages; i++) {
+  if (!view.pdfDocument || !view.redactMarks.length) return;
+  for (let i = 0; i < view.pdfDocument.numPages; i++) {
     const pv = viewer.getPageView(i);
     if (pv?.div) drawRedactMarks(pv, i + 1);
   }
@@ -4758,8 +4770,8 @@ eventBus.on('scalechanging', relayoutRedactMarks);
 // injected boundary spaces (cx === NaN) so a pattern split across runs still matches.
 async function scanTextMatches(patterns) {
   const marks = [];
-  for (let n = 1; n <= pdfDocument.numPages; n++) {
-    const page = await pdfDocument.getPage(n);
+  for (let n = 1; n <= view.pdfDocument.numPages; n++) {
+    const page = await view.pdfDocument.getPage(n);
     // Match + build the box in the UNROTATED viewport, where buildTextRows' "text
     // advances horizontally" assumption holds; vp is the rendered viewport (page
     // /Rotate applied) the finished box is mapped back into — what the apply bake
@@ -4820,7 +4832,7 @@ async function scanTextMatches(patterns) {
 }
 
 function openRedactText() {
-  if (!pdfDocument) return toast('Open a PDF first');
+  if (!view.pdfDocument) return toast('Open a PDF first');
   els.rtStatus.textContent = '';
   els.redactTextModal.hidden = false;
 }
@@ -4850,7 +4862,7 @@ els.rtFind.onclick = async () => {
 // --- split by hand-drawn regions ---------------------------------------------
 // Draw rectangles on the current page; on Apply, each becomes its own page (the
 // page cropped to that rectangle, server-side via op:'splitrects'). The regions
-// live OUTSIDE overlayFields, so the bake step never burns them in as marks.
+// live OUTSIDE view.overlayFields, so the bake step never burns them in as marks.
 let splitBoxMode = false;
 let splitRects = []; // {fx, fy, fw, fh} fractions of the page (top-left origin)
 let sbStart = null, sbDiv = null, sbHit = null, sbPage = 0;
@@ -4871,7 +4883,7 @@ function exitSplitBox() {
 }
 els.splitBoxBtn.onclick = () => {
   if (splitBoxMode) { exitSplitBox(); return; }
-  if (!pdfDocument) return;
+  if (!view.pdfDocument) return;
   splitBoxMode = true;
   sbPage = viewer.currentPageNumber; // regions apply to the page you start on
   setMarkerMode(null);
@@ -4916,7 +4928,7 @@ els.viewerContainer.addEventListener('pointerup', (e) => {
 els.applyBoxSplitBtn.onclick = async () => {
   if (!splitBoxMode || !splitRects.length) return toast('Draw split regions first');
   const page = sbPage;
-  const base = (await pdfDocument.getPage(page)).getViewport({ scale: 1 }); // PDF points
+  const base = (await view.pdfDocument.getPage(page)).getViewport({ scale: 1 }); // PDF points
   const f = { pageW: base.width, pageH: base.height };
   const rects = splitRects.map((m) => rectPoints(f, [m.fx, m.fy, m.fx + m.fw, m.fy + m.fh]));
   splitBoxMode = false;
@@ -4932,7 +4944,7 @@ els.applyBoxSplitBtn.onclick = async () => {
 // --- crop: trim pages down to a drawn box ------------------------------------
 // Draw ONE keep-rectangle on the current page; on confirm, every page (or just
 // this one) is trimmed to it server-side via op:'crop' → pdfops.Crop. Like the
-// split regions, the mark lives OUTSIDE overlayFields so the bake never burns it
+// split regions, the mark lives OUTSIDE view.overlayFields so the bake never burns it
 // in. Reuses the same display-space → PDF-points conversion (rectPoints) as Split
 // by box; the server flattens any /Rotate before cropping.
 let cropMode = false;
@@ -4956,7 +4968,7 @@ function exitCrop() {
 }
 els.cropBtn.onclick = () => {
   if (cropMode) { exitCrop(); return; }
-  if (!pdfDocument) return;
+  if (!view.pdfDocument) return;
   cropMode = true;
   cropPage = viewer.currentPageNumber; // the box is measured in this page's space
   setMarkerMode(null);
@@ -5027,7 +5039,7 @@ let editMode = false;
 let edStart = null, edDiv = null, edHit = null;
 
 els.editTextBtn.onclick = () => {
-  if (!pdfDocument) { toast('Open a PDF first'); return; }
+  if (!view.pdfDocument) { toast('Open a PDF first'); return; }
   editMode = !editMode;
   if (editMode && redactMode) { redactMode = false; reflectRedact(); } // one box tool at a time
   if (editMode) { setMarkerMode(null); exitSplitBox(); exitBorder(); exitCrop(); exitNote(); exitDropdown(); exitRadio(); exitShape(); }
@@ -5068,7 +5080,7 @@ els.viewerContainer.addEventListener('pointerup', async (e) => {
 // prefilled, covered edit overlay. frac is the box in page fractions (top-left).
 async function addEdit(hit, frac) {
   const n = hit.n, pv = hit.pv;
-  const page = await pdfDocument.getPage(n);
+  const page = await view.pdfDocument.getPage(n);
   const base = page.getViewport({ scale: 1 });
   const pageW = base.width, pageH = base.height; // PDF points
   // Box in PDF points (bottom-left origin) for the text-overlap test.
@@ -5122,7 +5134,7 @@ function makeEditField(frac, opts, pv) {
   el.style.fontWeight = /Bold/.test(opts.font) ? '700' : '400';
   el.style.fontStyle = /(Italic|Oblique)/.test(opts.font) ? 'italic' : 'normal';
   f.el = el;
-  overlayFields.push(f);
+  view.overlayFields.push(f);
   layoutField(f, pv);
   pv.div.appendChild(el);
   recordAdd(f);
@@ -5169,9 +5181,9 @@ const TEXT_MARKER_KEYS = {
 };
 
 document.querySelectorAll('.markers button').forEach((b) => {
-  b.onclick = () => { if (!pdfDocument) return toast('Open a PDF first'); setMarkerMode(markerMode === b.dataset.marker ? null : b.dataset.marker); };
+  b.onclick = () => { if (!view.pdfDocument) return toast('Open a PDF first'); setMarkerMode(markerMode === b.dataset.marker ? null : b.dataset.marker); };
 });
-els.saveForSigningBtn.onclick = () => { if (!pdfDocument) return toast('Open a PDF first'); saveForSigning(); };
+els.saveForSigningBtn.onclick = () => { if (!view.pdfDocument) return toast('Open a PDF first'); saveForSigning(); };
 
 // "Signing marks completed" locks the document into signing-only mode: flag
 // placement and every content-editing tool turn off and the placed flags freeze.
@@ -5179,7 +5191,7 @@ els.saveForSigningBtn.onclick = () => { if (!pdfDocument) return toast('Open a P
 // arrived with flags) opens locked with no toggle — it is the counterparty's copy
 // and must stay non-editable; see setDocumentFromServer.
 els.signCompleteBtn.onclick = () => {
-  if (!pdfDocument) return;
+  if (!view.pdfDocument) return;
   if (!view.signLocked && !markerFields().length) return toast('Place at least one flag first.');
   setSignLocked(!view.signLocked);
   toast(view.signLocked
@@ -5216,7 +5228,7 @@ function setSignLocked(locked) {
 // applySignLock reflects view.signLocked across the whole UI. Safe to call whenever the
 // lock, the open document, or the flag count changes.
 function applySignLock() {
-  const open = !!pdfDocument;
+  const open = !!view.pdfDocument;
   setEditingEnabled(open && !view.signLocked);
   els.viewerWrap.classList.toggle('signing-locked', view.signLocked);
   reflectSignControls();
@@ -5225,7 +5237,7 @@ function applySignLock() {
 // reflectSignControls keeps the Flags-panel controls consistent with the role
 // (preparer vs recipient) and the lock state.
 function reflectSignControls() {
-  const open = !!pdfDocument;
+  const open = !!view.pdfDocument;
   const recipient = docHadFlags;            // opened with flags => the counterparty's copy
   const n = markerFields().length;
   // A recipient never prepares; a locked preparer can't place until they edit again.
@@ -5260,7 +5272,7 @@ els.viewerContainer.addEventListener('pointerdown', (e) => {
   e.preventDefault();
   // Snap to a detected blank if the click landed on one (the primary flow: Detect,
   // then flag each blank); otherwise free-place a default flag (the fallback).
-  const field = overlayFields.find((f) => f.kind === 'text' && f.el.contains(e.target));
+  const field = view.overlayFields.find((f) => f.kind === 'text' && f.el.contains(e.target));
   if (field) return void convertFieldToFlag(field, markerMode);
   const r = hit.r, [fw, fh] = MARKER_SIZES[markerMode];
   const fx = Math.min(Math.max((e.clientX - r.left) / r.width - fw / 2, 0), 1 - fw);
@@ -5304,7 +5316,7 @@ function buildMarker(type, frac, page, record = true) {
     if (e.key === 'Enter') { e.preventDefault(); if (flagsFillable()) fillMarker(f); }
     else if ((e.key === 'Delete' || e.key === 'Backspace') && flagsEditable()) removeField(f);
   });
-  overlayFields.push(f);
+  view.overlayFields.push(f);
   reflectSignControls();
   if (record) {
     recordOverlayEdit({
@@ -5420,7 +5432,7 @@ async function fillTextMarker(f) {
 async function placeIntoMarker(f, src) {
   const pv = viewer.getPageView(f.page - 1);
   if (!pv?.div) return toast('Scroll the page into view, then try again');
-  const base = (await pdfDocument.getPage(f.page)).getViewport({ scale: 1 });
+  const base = (await view.pdfDocument.getPage(f.page)).getViewport({ scale: 1 });
   const next = nextMarkerAfter(f);
   await new Promise((resolve) => {
     const img = new Image();
@@ -5443,7 +5455,7 @@ async function placeIntoMarker(f, src) {
 // nextMarkerAfter returns the next unfilled marker after f in reading order
 // (page, then top-to-bottom, then left-to-right), wrapping to the first if none.
 function nextMarkerAfter(f) {
-  const markers = overlayFields.filter((o) => o.kind === 'marker' && o !== f)
+  const markers = view.overlayFields.filter((o) => o.kind === 'marker' && o !== f)
     .sort((a, b) => a.page - b.page || a.frac[1] - b.frac[1] || a.frac[0] - b.frac[0]);
   for (const m of markers) {
     if (m.page > f.page || (m.page === f.page && (m.frac[1] > f.frac[1] || (m.frac[1] === f.frac[1] && m.frac[0] >= f.frac[0])))) return m;
@@ -5470,7 +5482,7 @@ function setActiveMarker(m) {
 // as the NibFlags property — see internal/pdfops/flags.go), and emails it. The
 // recipient's Nib rebuilds the flags on open and walks them flag-to-flag.
 
-function markerFields() { return overlayFields.filter((f) => f.kind === 'marker'); }
+function markerFields() { return view.overlayFields.filter((f) => f.kind === 'marker'); }
 
 function collectFlags() {
   return markerFields().map((f) => ({ page: f.page, frac: f.frac, type: f.tagType }));
@@ -5485,7 +5497,7 @@ function collectFlags() {
 // required-in-practice parameter rather than an entry-time default. A scanner that
 // looks only at await-ordering inside a function is structurally blind to this shape,
 // which is why it is named here rather than left to the guard.
-async function embedFlags(bytes, flags, docId = docMeta && docMeta.id) {
+async function embedFlags(bytes, flags, docId = view.docMeta && view.docMeta.id) {
   const form = new FormData();
   form.append('pdf', new Blob([bytes], { type: 'application/pdf' }), 'doc.pdf');
   if (flags && flags.length) form.append('flags', JSON.stringify(flags));
@@ -5501,7 +5513,7 @@ function reconstructFlags(flags) {
   if (!Array.isArray(flags)) return;
   for (const fl of flags) {
     if (!fl || !MARKER_LABELS[fl.type] || !Array.isArray(fl.frac) || fl.frac.length !== 4) continue;
-    const page = Math.max(1, Math.min(pdfDocument.numPages, fl.page | 0));
+    const page = Math.max(1, Math.min(view.pdfDocument.numPages, fl.page | 0));
     const frac = fl.frac.map((n) => Math.max(0, Math.min(1, +n || 0)));
     buildMarker(fl.type, frac, page, false); // load on open — not an undoable edit
   }
@@ -5559,7 +5571,7 @@ async function saveForSigning() {
   if (!flags.length) return toast('Place at least one flag first (Sign / Date / Initial).');
   // Captured before the first await, and threaded into every helper below: they
   // receive bytes derived from THIS document, and their own entry is already too late.
-  const opDoc = docMeta;
+  const opDoc = view.docMeta;
   els.saveBtn.disabled = true;
   try {
     const baked = await bakedBytes(opDoc && opDoc.id); // bake any non-flag edits; strips a prior flag set
@@ -5569,7 +5581,7 @@ async function saveForSigning() {
   } catch (e) {
     toast('could not prepare the document: ' + e.message);
   } finally {
-    els.saveBtn.disabled = !pdfDocument;
+    els.saveBtn.disabled = !view.pdfDocument;
   }
 }
 
@@ -5661,13 +5673,13 @@ function cssFamily(core) {
 // good. Reuses the redaction path — bake the covers + replacement text in, then
 // rasterize just those pages (no black box painted).
 els.removeOriginalsBtn.onclick = async () => {
-  const pages = [...new Set(overlayFields.filter((f) => f.kind === 'edit').map((f) => f.page))];
+  const pages = [...new Set(view.overlayFields.filter((f) => f.kind === 'edit').map((f) => f.page))];
   if (!pages.length) return toast('No text edits to flatten');
   if (!confirm('Make the text edits permanent? The edited page(s) become flat images and the original text underneath is removed. This cannot be undone.' + signatureWarning())) return;
 
   const res = await flattenPages(pages);
   if (!res.ok) return toast('could not flatten edits');
-  overlayFields = overlayFields.filter((f) => { if (f.kind === 'edit' && pages.includes(f.page)) { f.el.remove(); return false; } return true; });
+  view.overlayFields = view.overlayFields.filter((f) => { if (f.kind === 'edit' && pages.includes(f.page)) { f.el.remove(); return false; } return true; });
   editMode = false; reflectEdit();
   els.viewerContainer.style.cursor = '';
   await setDocumentFromServer(await res.json());
@@ -5888,7 +5900,7 @@ const clampWeight = (v) => Math.min(10, Math.max(1, Number(v) || 2)); // points
 
 els.borderBtn.onclick = () => {
   if (borderMode) { exitBorder(); return; }
-  if (!pdfDocument) { toast('Open a PDF first'); return; }
+  if (!view.pdfDocument) { toast('Open a PDF first'); return; }
   borderMode = true;
   setTool(null); // clear any pdf.js editor tool
   setMarkerMode(null);
@@ -5927,7 +5939,7 @@ els.viewerContainer.addEventListener('pointerup', async (e) => {
   if (fw < 0.01 || fh < 0.01) return; // ignore a stray click
   const fx0 = (Math.min(start.x, e.clientX) - r.left) / r.width;
   const fy0 = (Math.min(start.y, e.clientY) - r.top) / r.height;
-  const base = (await pdfDocument.getPage(hit.n)).getViewport({ scale: 1 }); // PDF points
+  const base = (await view.pdfDocument.getPage(hit.n)).getViewport({ scale: 1 }); // PDF points
   makeBox([fx0, fy0, fx0 + fw, fy0 + fh], { page: hit.n, pageW: base.width, pageH: base.height });
 });
 
@@ -5952,7 +5964,7 @@ function makeBox(frac, opts) {
   el.addEventListener('keydown', (ev) => { if (ev.key === 'Delete' || ev.key === 'Backspace') remove(); });
   enableStampGestures(f, el, handle);
 
-  overlayFields.push(f);
+  view.overlayFields.push(f);
   const pv = viewer.getPageView(f.page - 1);
   pv.div.appendChild(el);
   layoutField(f, pv);
@@ -5974,7 +5986,7 @@ function exitDropdown() {
 }
 els.dropdownBtn.onclick = () => {
   if (dropdownMode) { exitDropdown(); return; }
-  if (!pdfDocument) { toast('Open a PDF first'); return; }
+  if (!view.pdfDocument) { toast('Open a PDF first'); return; }
   dropdownMode = true;
   setTool(null);
   setMarkerMode(null);
@@ -6013,7 +6025,7 @@ els.viewerContainer.addEventListener('pointerup', async (e) => {
   if (fw < 0.01 || fh < 0.01) return; // ignore a stray click
   const fx0 = (Math.min(start.x, e.clientX) - r.left) / r.width;
   const fy0 = (Math.min(start.y, e.clientY) - r.top) / r.height;
-  const base = (await pdfDocument.getPage(hit.n)).getViewport({ scale: 1 });
+  const base = (await view.pdfDocument.getPage(hit.n)).getViewport({ scale: 1 });
   makeDropdown([fx0, fy0, fx0 + fw, fy0 + fh], { page: hit.n, pageW: base.width, pageH: base.height });
 });
 
@@ -6044,7 +6056,7 @@ function makeDropdown(frac, opts) {
   el.addEventListener('keydown', (ev) => { if ((ev.key === 'Delete' || ev.key === 'Backspace') && ev.target === el) remove(); });
   enableStampGestures(f, el, handle);
 
-  overlayFields.push(f);
+  view.overlayFields.push(f);
   const pv = viewer.getPageView(f.page - 1);
   pv.div.appendChild(el);
   layoutField(f, pv);
@@ -6067,7 +6079,7 @@ function exitRadio() {
 }
 els.radioBtn.onclick = () => {
   if (radioMode) { exitRadio(); return; }
-  if (!pdfDocument) { toast('Open a PDF first'); return; }
+  if (!view.pdfDocument) { toast('Open a PDF first'); return; }
   radioMode = true;
   setTool(null);
   setMarkerMode(null);
@@ -6107,7 +6119,7 @@ els.viewerContainer.addEventListener('pointerup', async (e) => {
   if (fw < 0.01 || fh < 0.01) return; // ignore a stray click
   const fx0 = (Math.min(start.x, e.clientX) - r.left) / r.width;
   const fy0 = (Math.min(start.y, e.clientY) - r.top) / r.height;
-  const base = (await pdfDocument.getPage(hit.n)).getViewport({ scale: 1 });
+  const base = (await view.pdfDocument.getPage(hit.n)).getViewport({ scale: 1 });
   makeRadio([fx0, fy0, fx0 + fw, fy0 + fh], { page: hit.n, pageW: base.width, pageH: base.height });
 });
 
@@ -6138,7 +6150,7 @@ function makeRadio(frac, opts) {
   el.addEventListener('keydown', (ev) => { if ((ev.key === 'Delete' || ev.key === 'Backspace') && ev.target === el) remove(); });
   enableStampGestures(f, el, handle);
 
-  overlayFields.push(f);
+  view.overlayFields.push(f);
   const pv = viewer.getPageView(f.page - 1);
   pv.div.appendChild(el);
   layoutField(f, pv);
@@ -6182,7 +6194,7 @@ function exitShape() {
 }
 els.shapeBtn.onclick = () => {
   if (shapeMode) { exitShape(); return; }
-  if (!pdfDocument) { toast('Open a PDF first'); return; }
+  if (!view.pdfDocument) { toast('Open a PDF first'); return; }
   shapeMode = true;
   setTool(null);
   setMarkerMode(null);
@@ -6290,7 +6302,7 @@ els.viewerContainer.addEventListener('pointerup', async (e) => {
   const isLine = shapeType === 'line' || shapeType === 'arrow';
   const fw = Math.abs(e.clientX - start.x) / r.width, fh = Math.abs(e.clientY - start.y) / r.height;
   if (isLine ? (fw < 0.005 && fh < 0.005) : (fw < 0.01 || fh < 0.01)) return; // ignore a stray click
-  const base = (await pdfDocument.getPage(hit.n)).getViewport({ scale: 1 }); // PDF points
+  const base = (await view.pdfDocument.getPage(hit.n)).getViewport({ scale: 1 }); // PDF points
   // Line/arrow: grow the holding box by an arrowhead-sized margin (in points, per
   // axis) and inset the endpoints so the head clears the box edge; this also makes
   // an axis-aligned line's box non-degenerate. rect/ellipse keep a tight bbox.
@@ -6325,7 +6337,7 @@ function makeShape(frac, opts) {
   el.addEventListener('keydown', (ev) => { if (ev.key === 'Delete' || ev.key === 'Backspace') remove(); });
   enableStampGestures(f, el, handle);
 
-  overlayFields.push(f);
+  view.overlayFields.push(f);
   const pv = viewer.getPageView(f.page - 1);
   pv.div.appendChild(el);
   layoutField(f, pv);
@@ -6346,7 +6358,7 @@ function exitNote() {
 }
 els.noteBtn.onclick = () => {
   if (noteMode) { exitNote(); exitDropdown(); exitRadio(); return; }
-  if (!pdfDocument) { toast('Open a PDF first'); return; }
+  if (!view.pdfDocument) { toast('Open a PDF first'); return; }
   noteMode = true;
   setTool(null);
   setMarkerMode(null);
@@ -6367,7 +6379,7 @@ els.viewerContainer.addEventListener('pointerdown', async (e) => {
   const r = hit.r;
   const fx = (e.clientX - r.left) / r.width;
   const fy = (e.clientY - r.top) / r.height;
-  const base = (await pdfDocument.getPage(hit.n)).getViewport({ scale: 1 }); // PDF points
+  const base = (await view.pdfDocument.getPage(hit.n)).getViewport({ scale: 1 }); // PDF points
   const fw = Math.min(0.3, 150 / r.width), fh = Math.min(0.2, 72 / r.height); // default card size
   makeNote([fx, fy, Math.min(fx + fw, 1), Math.min(fy + fh, 1)], { page: hit.n, pageW: base.width, pageH: base.height });
   exitNote(); exitDropdown(); exitRadio(); // place one; re-click the tool for another
@@ -6400,7 +6412,7 @@ function makeNote(frac, opts) {
   del.onclick = (ev) => { ev.stopPropagation(); remove(); };
   enableStampGestures(f, el, handle);
 
-  overlayFields.push(f);
+  view.overlayFields.push(f);
   const pv = viewer.getPageView(f.page - 1);
   pv.div.appendChild(el);
   layoutField(f, pv);
@@ -6412,7 +6424,7 @@ function makeNote(frac, opts) {
 // icon anchors at the card's top-left corner, in PDF points.
 function collectNotes() {
   const out = [];
-  for (const f of overlayFields) {
+  for (const f of view.overlayFields) {
     if (f.kind !== 'note' || !f.text.trim()) continue;
     const [x0, , , y1] = rectPoints(f, f.frac); // x0 = left, y1 = top edge (PDF points)
     out.push({ page: f.page, x: x0, y: y1, text: f.text.trim() });
@@ -6429,9 +6441,8 @@ all('#toolbar [data-forward]').forEach((b) => { b.onclick = () => $(b.dataset.fo
 // silently doing nothing. Doc-free actions — verify a timestamp, receive a
 // co-signature, identity/peers/keys, the certificate export, About — stay live.
 // Overlay state, declared before setDocControls(false) runs below: that call now
-// reaches reflectSignControls() -> markerFields(), which reads overlayFields, so the
+// reaches reflectSignControls() -> markerFields(), which reads view.overlayFields, so the
 // binding must already be initialized (a `let` declared later would throw on its TDZ).
-let overlayFields = []; // {page, frac:[fx0,fy0,fx1,fy1], pageW, pageH, kind, el}
 let overlayHistory = { undo: [], redo: [] }; // client overlay-edit undo, drained before the server ring
 let libraryImages = []; // cached /api/images list (the image-library panel)
 const DOC_REQUIRED = [
@@ -6458,10 +6469,10 @@ function setDocControls(enabled) {
 }
 setDocControls(false); // nothing open yet
 
-// Undo/Redo enable from the server's per-document history flags (docMeta.canUndo/
+// Undo/Redo enable from the server's per-document history flags (view.docMeta.canUndo/
 // canRedo, refreshed on every load); both off when no document is open.
 function reflectUndoControls(enabled) {
-  const m = docMeta || {};
+  const m = view.docMeta || {};
   if (els.undoBtn) els.undoBtn.disabled = !(enabled && (m.canUndo || overlayHistory.undo.length));
   if (els.redoBtn) els.redoBtn.disabled = !(enabled && (m.canRedo || overlayHistory.redo.length));
 }
@@ -6477,7 +6488,7 @@ function reflectUndoControls(enabled) {
 function recordOverlayEdit(cmd) {
   overlayHistory.undo.push(cmd);
   overlayHistory.redo = [];
-  reflectUndoControls(!!pdfDocument);
+  reflectUndoControls(!!view.pdfDocument);
 }
 function clearOverlayHistory() { overlayHistory.undo = []; overlayHistory.redo = []; }
 // detachField/reattachField toggle a field's presence without rebuilding it — the
@@ -6485,10 +6496,10 @@ function clearOverlayHistory() { overlayHistory.undo = []; overlayHistory.redo =
 // re-attach or detach. layoutFieldNow repositions a still-attached field (moves).
 function detachField(f) {
   f.el.remove();
-  overlayFields = overlayFields.filter((o) => o !== f);
+  view.overlayFields = view.overlayFields.filter((o) => o !== f);
 }
 function reattachField(f) {
-  overlayFields.push(f);
+  view.overlayFields.push(f);
   const pv = viewer.getPageView(f.page - 1);
   if (pv?.div) { pv.div.appendChild(f.el); layoutField(f, pv); }
 }
@@ -6515,12 +6526,12 @@ function recordMove(f, before, after) {
 function undoOverlayEdit() {
   const c = overlayHistory.undo.pop();
   c.undo(); overlayHistory.redo.push(c);
-  reflectUndoControls(!!pdfDocument);
+  reflectUndoControls(!!view.pdfDocument);
 }
 function redoOverlayEdit() {
   const c = overlayHistory.redo.pop();
   c.redo(); overlayHistory.undo.push(c);
-  reflectUndoControls(!!pdfDocument);
+  reflectUndoControls(!!view.pdfDocument);
 }
 // undoAny/redoAny are the single dispatch for both Ctrl+Z and the ↶/↷ buttons:
 // drain the client overlay stack first, then fall through to the server ring.
@@ -6531,13 +6542,13 @@ function redoAny() { if (overlayHistory.redo.length) redoOverlayEdit(); else doR
 // ops, outline, sanitize, attachments). The server returns fresh doc metadata and
 // the view reloads through the universal setDocumentFromServer path.
 async function doUndo() {
-  if (!pdfDocument || !(docMeta && docMeta.canUndo)) return;
+  if (!view.pdfDocument || !(view.docMeta && view.docMeta.canUndo)) return;
   const res = await apiFetch('/api/undo', { method: 'POST' });
   if (!res.ok) { toast('undo failed'); return; }
   await setDocumentFromServer(await res.json());
 }
 async function doRedo() {
-  if (!pdfDocument || !(docMeta && docMeta.canRedo)) return;
+  if (!view.pdfDocument || !(view.docMeta && view.docMeta.canRedo)) return;
   const res = await apiFetch('/api/redo', { method: 'POST' });
   if (!res.ok) { toast('redo failed'); return; }
   await setDocumentFromServer(await res.json());
@@ -6560,8 +6571,8 @@ window.addEventListener('drop', (e) => {
 // so display position is just frac * actual page-div size (no scale drift) and
 // the PDF rect for stamping is frac * page dimensions.
 function clearOverlays() {
-  overlayFields.forEach((f) => f.el.remove());
-  overlayFields = [];
+  view.overlayFields.forEach((f) => f.el.remove());
+  view.overlayFields = [];
   activeMarker = null; fillTarget = null; // markers are gone with the old document
   exitSplitBox(); // a pending region selection doesn't carry to a new document
   exitBorder();   // nor a pending border-draw mode
@@ -6606,7 +6617,7 @@ function resetSharedDocState() {
 // Detect doesn't wipe a signature/quick-stamp, a cover-and-replace edit, or a
 // placed marker.
 function clearDetected() {
-  overlayFields = overlayFields.filter((f) => {
+  view.overlayFields = view.overlayFields.filter((f) => {
     if (f.kind === 'stamp' || f.kind === 'edit' || f.kind === 'marker' || f.kind === 'box' || f.kind === 'note' || f.kind === 'shape' || f.kind === 'dropdown') return true;
     f.el.remove();
     return false;
@@ -6637,7 +6648,7 @@ function layoutField(f, pv) {
   else if (f.kind === 'edit') f.el.style.fontSize = (f.size * W / f.pageW) + 'px';
 }
 function relayoutOverlays() {
-  for (const f of overlayFields) {
+  for (const f of view.overlayFields) {
     const pv = viewer.getPageView(f.page - 1);
     if (pv?.div && pv.viewport) {
       if (f.el.parentElement !== pv.div) pv.div.appendChild(f.el);
@@ -6656,7 +6667,7 @@ function rectPoints(f, frac) {
 
 function collectFields() {
   const out = [];
-  for (const f of overlayFields) {
+  for (const f of view.overlayFields) {
     if (f.kind === 'text' && f.el.value.trim() !== '') {
       out.push({ page: f.page, rect: rectPoints(f, f.frac), text: f.el.value });
     } else if (f.kind === 'edit' && f.el.value.trim() !== '') {
@@ -6680,7 +6691,7 @@ function collectFields() {
 // typed value is ignored: authored fields are blank (a distributable template).
 function collectAuthorFields() {
   const out = [];
-  for (const f of overlayFields) {
+  for (const f of view.overlayFields) {
     if (f.kind === 'text' || f.kind === 'check') {
       out.push({ page: f.page, rect: rectPoints(f, f.frac), kind: f.kind, el: f.el });
     } else if (f.kind === 'dropdown' || f.kind === 'radio') {
@@ -6696,7 +6707,7 @@ function collectAuthorFields() {
 // before the replacement text (see /api/bake).
 function collectCovers() {
   const out = [];
-  for (const f of overlayFields) {
+  for (const f of view.overlayFields) {
     if (f.kind !== 'edit') continue;
     const rect = rectPoints(f, f.coverFrac || f.frac);
     out.push({ page: f.page, rect, png: coverPNG(rect[2] - rect[0], rect[3] - rect[1], f.bg) });
@@ -6709,7 +6720,7 @@ function collectCovers() {
 // checkbox X's.
 function collectStamps() {
   const out = [];
-  for (const f of overlayFields) {
+  for (const f of view.overlayFields) {
     if (f.kind === 'stamp') {
       const rect = rectPoints(f, f.frac);
       if (f.imageId) out.push({ page: f.page, rect, image: f.imageId });
@@ -6736,15 +6747,15 @@ function collectStamps() {
 // docId threads the CALLER's capture down. bakedBytes is entered from operations that
 // have usually already awaited, so its own entry is not a safe capture point — the
 // default exists only for the call sites that enter it first thing.
-async function bakedBytes(docId = docMeta && docMeta.id) {
+async function bakedBytes(docId = view.docMeta && view.docMeta.id) {
   // saveDocument() bakes pdf.js annotation-storage edits (form fills, FREETEXT/
   // INK/HIGHLIGHT/STAMP) and warns + does a needless rewrite when storage is
   // empty. Our overlay edits (covers/fields/stamps) bake server-side via
   // /api/bake, so when there are no pdf.js edits, getData() is the library's
   // prescribed lighter equivalent (raw bytes, no bake).
-  const saved = pdfDocument.annotationStorage.size > 0
-    ? await pdfDocument.saveDocument()
-    : await pdfDocument.getData();
+  const saved = view.pdfDocument.annotationStorage.size > 0
+    ? await view.pdfDocument.saveDocument()
+    : await view.pdfDocument.getData();
   const fields = collectFields();
   const stamps = collectStamps();
   const covers = collectCovers();
@@ -6786,7 +6797,7 @@ async function bakedForm() {
 }
 
 els.detectBtn.onclick = async () => {
-  if (!pdfDocument) { toast('Open a PDF first'); return; }
+  if (!view.pdfDocument) { toast('Open a PDF first'); return; }
   clearDetected();
   const n = viewer.currentPageNumber;
   const pv = viewer.getPageView(n - 1);
@@ -6794,7 +6805,7 @@ els.detectBtn.onclick = async () => {
 
   // Render the page to an offscreen canvas at a consistent resolution, so
   // detection doesn't depend on the current zoom (faint thin rules need it).
-  const page = await pdfDocument.getPage(n);
+  const page = await view.pdfDocument.getPage(n);
   const base = page.getViewport({ scale: 1 });
   const pageW = base.width, pageH = base.height; // PDF points
   const dvp = page.getViewport({ scale: Math.min(3, 1600 / pageW) });
@@ -6916,7 +6927,7 @@ function makeField(kind, frac, opts, pv) {
     f.el.type = 'text';
     f.el.className = 'ovl ovl-text';
   }
-  overlayFields.push(f);
+  view.overlayFields.push(f);
   layoutField(f, pv);
   pv.div.appendChild(f.el);
   return f;
@@ -6979,10 +6990,10 @@ els.saveBtn.onclick = save;
 
 // Page navigation + zoom: the toolbar buttons and the keyboard shortcuts share
 // these, so the bounds logic lives in one place.
-function prevPage() { if (pdfDocument && viewer.currentPageNumber > 1) viewer.currentPageNumber--; }
-function nextPage() { if (pdfDocument && viewer.currentPageNumber < pdfDocument.numPages) viewer.currentPageNumber++; }
-function firstPage() { if (pdfDocument) viewer.currentPageNumber = 1; }
-function lastPage() { if (pdfDocument) viewer.currentPageNumber = pdfDocument.numPages; }
+function prevPage() { if (view.pdfDocument && viewer.currentPageNumber > 1) viewer.currentPageNumber--; }
+function nextPage() { if (view.pdfDocument && viewer.currentPageNumber < view.pdfDocument.numPages) viewer.currentPageNumber++; }
+function firstPage() { if (view.pdfDocument) viewer.currentPageNumber = 1; }
+function lastPage() { if (view.pdfDocument) viewer.currentPageNumber = view.pdfDocument.numPages; }
 function zoomIn() { viewer.currentScale = viewer.currentScale * 1.15; }
 function zoomOut() { viewer.currentScale = viewer.currentScale / 1.15; }
 function fitWidth() { fitWidestWidth(); }
@@ -7005,9 +7016,9 @@ function fitWidth() { fitWidestWidth(); }
 // is avail / maxW / PDF_TO_CSS_UNITS. Dropping that divisor zooms every page 4/3 too
 // wide — the widest page then overflows.
 function fitWidestWidth() {
-  if (!pdfDocument) return;
+  if (!view.pdfDocument) return;
   let maxW = 0;
-  for (let i = 0; i < pdfDocument.numPages; i++) {
+  for (let i = 0; i < view.pdfDocument.numPages; i++) {
     const vp = viewer.getPageView(i)?.viewport;
     if (vp) {
       const w = vp.width / vp.scale; // rendered display width in points (rotation applied)
@@ -7023,7 +7034,7 @@ els.prevBtn.onclick = prevPage;
 els.nextBtn.onclick = nextPage;
 all('.pageNum').forEach((input) => input.addEventListener('change', () => {
   const n = Number(input.value);
-  if (pdfDocument && n >= 1 && n <= pdfDocument.numPages) viewer.currentPageNumber = n;
+  if (view.pdfDocument && n >= 1 && n <= view.pdfDocument.numPages) viewer.currentPageNumber = n;
 }));
 els.zoomInBtn.onclick = zoomIn;
 els.zoomOutBtn.onclick = zoomOut;
@@ -7052,7 +7063,7 @@ let wheelTicks = 0; // fractional notches accumulated until a full step
 window.addEventListener('wheel', (e) => {
   if (!e.ctrlKey && !e.metaKey) return; // plain scroll: not ours
   e.preventDefault();
-  if (!pdfDocument || !e.deltaY) return;
+  if (!view.pdfDocument || !e.deltaY) return;
   const origin = [e.clientX, e.clientY];
   const pixelMode = e.deltaMode === WheelEvent.DOM_DELTA_PIXEL;
   if (pixelMode && !ctrlHeld) {
@@ -7081,7 +7092,7 @@ let lastDpr = devicePixelRatio;
 function dprChanged() {
   if (devicePixelRatio === lastDpr) return;
   lastDpr = devicePixelRatio;
-  if (pdfDocument) viewer.refresh();
+  if (view.pdfDocument) viewer.refresh();
 }
 window.addEventListener('resize', dprChanged);
 function watchDpr() {
@@ -7230,7 +7241,7 @@ window.addEventListener('keydown', (e) => {
     }
     return;
   }
-  if (!pdfDocument || isTypingTarget(e.target)) return;
+  if (!view.pdfDocument || isTypingTarget(e.target)) return;
   if (document.querySelector('div[id$="Modal"]:not([hidden])')) return;
   if (e.key === 'PageDown') { e.preventDefault(); nextPage(); }
   else if (e.key === 'PageUp') { e.preventDefault(); prevPage(); }

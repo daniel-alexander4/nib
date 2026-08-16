@@ -85,7 +85,7 @@ test('the post-arrival refresh asks its question unpinned', () => {
   // failure that makes a source assertion dangerous.
   assert.match(app, /const unpinned = opts\.unpinned === true;/,
     'apiFetch does not read the unpinned option the call site passes');
-  assert.match(app, /if \(!unpinned && docMeta && docMeta\.id\)/,
+  assert.match(app, /if \(!unpinned && view\.docMeta && view\.docMeta\.id\)/,
     'apiFetch attaches the id without consulting the unpinned option');
 });
 
