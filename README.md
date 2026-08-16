@@ -458,6 +458,18 @@ A file that isn't a PDF is refused with a message rather than opening an empty
 viewer — the header is looked for in the first 1024 bytes, the same window
 pdf.js allows, so a document with a little junk before its header still opens.
 
+**Close** (File tab) puts the document down without quitting: the viewer returns
+to "Open a PDF to begin.", the undo history is dropped, and Nib keeps running
+ready for the next file. If anything has been edited since the document was
+opened it asks first — and it asks about edits *since the last save*, because
+that is what Nib can actually tell: saving deliberately leaves the undo history
+intact, so a save does not silence the question.
+
+One caveat, until single-instance handling lands: opening a second PDF from your
+file manager doesn't reach the running Nib — it starts a new one, which replaces
+the first without that prompt. Use **Open…** or **Close** from inside the app if
+you have unsaved work.
+
 The same folder browser backs every destination picker (Save As, and both
 splits). On Windows it lists your **drives** once you reach the top of one:
 there's no single root there the way `/` is on Linux and macOS, so without that
