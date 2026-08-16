@@ -910,9 +910,14 @@ which one it means. Refs: D6, **D7**, D8, D9, D10, **D15**.
 Exit criteria:
 - `s.doc` replaced by a registry + active id behind one accessor; the **16** nil
   guards keep their shape. *(tier 1)*
-- Every document-touching route carries an id; `/api/undo` and `/api/redo` stop
-  being bodyless. *(tier 1 for the routes; tier 2 for the client always sending
-  one — see D15's critical pin)*
+- Every document-touching route carries an id. *(tier 1 for the routes; tier 2 for
+  the client always sending one — see D15's critical pin)*
+  **(reality drift, 2026-08-16)** This clause used to end *"; `/api/undo` and
+  `/api/redo` stop being bodyless"* — struck, because **D15 chose a header
+  precisely so no body schema changes**, and names those two routes as the example
+  it accommodates. The criterion predates D15 and assumed a body was how an id
+  arrives. The requirement (both are addressable) stands and is met; only the
+  mechanism was wrong. See P03.S02.
 - Per-document rings under one global byte budget; single-document behaviour
   unchanged, proven by the existing Go tests **plus the probe below**. *(tier 1)*
 - Arrivals (co-sign, p2p) open a new document rather than replacing one. *(tier 1)*
@@ -986,7 +991,65 @@ Acceptance:
   clause worth holding.
 - `setDoc` still replaces; nothing arrives as a new document yet.
 
-#### P03.S02 — the id on the wire
+#### P03.S02 — the id on the wire *(done 2026-08-16, v1.103.10)*
+
+**(reality drift, 2026-08-16: two decisions contradict, and the older one's
+*premise* is what is wrong.)** This phase's exit criterion 2 says *"`/api/undo` and
+`/api/redo` stop being bodyless."* **D15 says the opposite, and says it as the
+reason for its own choice**: a header *"carries the id across all three [body
+shapes] — bodyless POST (`/api/undo`, `/api/redo`), JSON, and multipart — **without
+editing a single body schema**."*
+
+The criterion predates D15: it was written while the transport was unsettled and
+assumed a body was how an id would arrive. D15 settled the transport at Stage 3 and
+superseded that mechanism without the criterion being re-read — the accretion bug,
+two decisions each sound when written. It also survived the plan-review, which read
+"carries an id" and not the clause behind the semicolon.
+
+**The requirement stands; only its premise falls.** Undo and redo must be
+addressable — they are, by the header — so they **stay bodyless**, and building the
+criterion literally would edit exactly the schemas D15 exists to leave alone.
+
+**(trace, 2026-08-16: the wire surface is a third smaller than "every
+document-touching route".)** Routes split three ways: **23 address** an existing
+document and need the id; **6 create** one (`/api/open`, `/api/open-url`,
+`/api/upload`, `/api/combine`, `/api/office`, `/api/session/initiate`) and have
+nothing to name; 49 touch no document at all. Putting an id on the create six would
+be a parameter that cannot mean anything, and an invitation to a later reader to
+wonder what it does.
+
+Tasks:
+1. T01 — `docFor(r)`: header → query param → active default; a distinguishable
+   not-found.
+2. T02 — the 23 addressing routes resolve through it; the 6 create routes untouched.
+3. T03 — 404 and 409 differ in **body** as well as status; they drive different
+   client behaviour (blank the app vs drop a tab).
+4. T04 — the epoch is compared **before** Seq.
+5. T05 — undo and redo stay bodyless, carrying the header.
+6. T06 — **rewrite** S01's guard to the new idiom, count re-derived. It is coupled
+   to the idiom this slice replaces, so it will go red; loosening its regex until it
+   passes is how a guard stops guarding.
+7. T07 — the two-document probe, 409-by-body, epoch-409, and `?doc=`.
+
+**(reality drift, 2026-08-16 — the grill under-scoped this, and writing the probe
+is what found it.)** "The 23 addressing routes resolve through `docFor`" is not
+sufficient, because **the mutating routes do not resolve a document at all.**
+`outline.go`, `export.go`, `pages.go` and `redact.go` — the same four P01.S01 dealt
+with — take their bytes from the request and commit through `commitMutation` /
+`commitBarrier`, which resolve **the active document internally**. So an operation
+addressed to document B would commit its result into document A: precisely the
+corruption ADR-001 exists to prevent, arriving through the helper rather than
+through a forgotten header.
+
+The probe could not have been written without discovering this, which is the
+argument for writing probes before believing plans.
+
+8. T08 — `commitMutation`/`commitBarrier` take the **target document** rather than
+   resolving active; all 8 callers pass the one they resolved, and the four
+   unguarded routes resolve first. The helpers keep their single-lock
+   test-and-write (P01.S01's TOCTOU fix) — the test just becomes "is this document
+   still registered" instead of "is anything active", which is strictly stronger.
+
 Scope: `X-Nib-Doc` on document routes; `/api/pdf?doc=` (D15's named exception);
 optional, defaulting to active, for the CLI and pre-existing tests; **409** for an
 id the server does not hold, including an epoch mismatch; `/api/undo` and

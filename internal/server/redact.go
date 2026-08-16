@@ -58,7 +58,16 @@ func (s *Server) handleRedact(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// redaction destroys content: no undo may resurrect it
-	if !s.commitBarrier(result) {
+	// Resolve the document this result is being installed INTO. These four routes
+	// never read the open document — they work from posted bytes — so before the
+	// registry there was nothing to resolve and "the open one" was unambiguous. It
+	// is not any more: without this, an operation addressed to one document commits
+	// its result into another.
+	doc, ok := s.resolveDoc(w, r)
+	if !ok {
+		return
+	}
+	if !s.commitBarrier(doc, result) {
 		httpError(w, http.StatusNotFound, "no document open")
 		return
 	}

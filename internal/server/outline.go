@@ -14,9 +14,8 @@ type outlineResponse struct {
 
 // handleOutlineGet reports the current document's bookmark outline (read-only GET).
 func (s *Server) handleOutlineGet(w http.ResponseWriter, r *http.Request) {
-	doc := s.activeDoc()
-	if doc == nil {
-		httpError(w, http.StatusNotFound, "no document open")
+	doc, ok := s.resolveDoc(w, r)
+	if !ok {
 		return
 	}
 	items, err := pdfops.Outline(doc.data)
@@ -50,7 +49,16 @@ func (s *Server) handleOutlineSet(w http.ResponseWriter, r *http.Request) {
 		httpError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	if !s.commitMutation(pdfBytes, result) {
+	// Resolve the document this result is being installed INTO. These four routes
+	// never read the open document — they work from posted bytes — so before the
+	// registry there was nothing to resolve and "the open one" was unambiguous. It
+	// is not any more: without this, an operation addressed to one document commits
+	// its result into another.
+	doc, ok := s.resolveDoc(w, r)
+	if !ok {
+		return
+	}
+	if !s.commitMutation(doc, pdfBytes, result) {
 		httpError(w, http.StatusNotFound, "no document open")
 		return
 	}

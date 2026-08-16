@@ -470,6 +470,13 @@ func (s *Server) handleSessionQuote(w http.ResponseWriter, r *http.Request) {
 // signature state — so the UI can refresh after the document changes out of band,
 // as it does when runSession applies a received live co-signature asynchronously.
 func (s *Server) handleDoc(w http.ResponseWriter, r *http.Request) {
+	// Reports the addressed document. With one open document this resolves to the
+	// same answer as before; the 409 is what a client needs to tell "that tab is
+	// gone" from "nothing is open" — different facts driving different behaviour.
+	if _, err := s.docFor(r); err != nil {
+		httpError(w, http.StatusConflict, "that document is no longer open")
+		return
+	}
 	writeJSON(w, s.docResponse())
 }
 

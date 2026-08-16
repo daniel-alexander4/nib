@@ -14,9 +14,8 @@ type attachmentsResponse struct {
 // handleAttachmentsList reports the embedded files in the current document. It is
 // read-only, so it is a plain GET.
 func (s *Server) handleAttachmentsList(w http.ResponseWriter, r *http.Request) {
-	doc := s.activeDoc()
-	if doc == nil {
-		httpError(w, http.StatusNotFound, "no document open")
+	doc, ok := s.resolveDoc(w, r)
+	if !ok {
 		return
 	}
 	aa, err := pdfops.Attachments(doc.data)
@@ -31,9 +30,8 @@ func (s *Server) handleAttachmentsList(w http.ResponseWriter, r *http.Request) {
 // the result the current document (the client reloads it). The file rides in as
 // the multipart field "file"; its name comes from the "name" field.
 func (s *Server) handleAttachmentAdd(w http.ResponseWriter, r *http.Request) {
-	doc := s.activeDoc()
-	if doc == nil {
-		httpError(w, http.StatusNotFound, "no document open")
+	doc, ok := s.resolveDoc(w, r)
+	if !ok {
 		return
 	}
 	cleanup, ok := parseMultipart(w, r, maxPDFBytes)
@@ -50,7 +48,7 @@ func (s *Server) handleAttachmentAdd(w http.ResponseWriter, r *http.Request) {
 		httpError(w, http.StatusBadRequest, "could not add attachment: "+err.Error())
 		return
 	}
-	if !s.commitMutation(doc.data, result) {
+	if !s.commitMutation(doc, doc.data, result) {
 		httpError(w, http.StatusNotFound, "no document open")
 		return
 	}
@@ -60,9 +58,8 @@ func (s *Server) handleAttachmentAdd(w http.ResponseWriter, r *http.Request) {
 // handleAttachmentExtract streams one embedded file back to the browser as a
 // download. The attachment name rides in as the "name" field.
 func (s *Server) handleAttachmentExtract(w http.ResponseWriter, r *http.Request) {
-	doc := s.activeDoc()
-	if doc == nil {
-		httpError(w, http.StatusNotFound, "no document open")
+	doc, ok := s.resolveDoc(w, r)
+	if !ok {
 		return
 	}
 	name := r.FormValue("name")

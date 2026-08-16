@@ -10,25 +10,31 @@ import (
 	"nib/internal/testpdf"
 )
 
-// The registry replaced a single `s.doc` field with an ordered list plus an active
-// id, and D6's whole argument for doing it behind one accessor is that the ~16
-// call sites keep their guard shape — `doc := …; if doc == nil` — so the change
-// stays reviewable and no handler grows a new way to be nil-unsafe.
+// Every place that resolves the addressed document handles the case where it is
+// not there. Two shapes count as handling it:
 //
-// This asserts the property rather than the text. Asserting the text unchanged
-// would fail on any correct rewrite; asserting "there is a guard near the read" is
-// what actually protects against the failure, which is a handler that reads the
-// document and then uses it without checking.
-func TestEveryActiveDocReadIsGuarded(t *testing.T) {
-	read := regexp.MustCompile(`doc := s\.activeDoc\(\)`)
-	guard := regexp.MustCompile(`if doc == nil`)
+//   - resolveDoc(w, r), which writes both refusals itself — 404 for "nothing is
+//     open", 409 for "not that one" — and is what thirteen handlers use;
+//   - docFor(r) directly, for the six handlers whose nil answer is not a 404
+//     (attestations returns an empty list; cosign/quote answers 400; undo, redo,
+//     close and doc have their own shapes). Those must handle `err` themselves.
+//
+// **This guard replaced P03.S01's, and the replacement is deliberate.** S01's
+// version matched `doc := s.activeDoc()` and asserted exactly 15 sites. S02 changed
+// that idiom, so the old guard went red — and the tempting repair was to loosen its
+// regex until it passed, which is how a guard stops guarding. It was rewritten
+// instead, and the rewrite is *stronger*: the old one checked only the nil branch,
+// this one also requires the 409 arm, which is new surface that had no guard at all.
+func TestEveryDocumentResolutionIsHandled(t *testing.T) {
+	direct := regexp.MustCompile(`s\.docFor\(r\)`)
+	handled := regexp.MustCompile(`err != nil`)
 
 	files, err := filepath.Glob("*.go")
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	sites := 0
+	resolveSites, directSites := 0, 0
 	for _, f := range files {
 		if strings.HasSuffix(f, "_test.go") {
 			continue
@@ -39,42 +45,53 @@ func TestEveryActiveDocReadIsGuarded(t *testing.T) {
 		}
 		lines := strings.Split(string(src), "\n")
 		for i, line := range lines {
-			// Comments are skipped, and that is not housekeeping: the first run of
-			// this guard flagged activeDoc()'s own doc comment, which quotes the
-			// idiom as an example. A scan that matches prose reports sites that do
-			// not exist and inflates its own count — the same vacuity it exists to
-			// catch, one level up.
-			if strings.HasPrefix(strings.TrimSpace(line), "//") {
+			// Comments are skipped: an earlier run of this guard's predecessor
+			// flagged a doc comment quoting the idiom, which both reports a site
+			// that does not exist and inflates the count its own stimulus
+			// assertion depends on.
+			trimmed := strings.TrimSpace(line)
+			if strings.HasPrefix(trimmed, "//") {
 				continue
 			}
-			if !read.MatchString(line) {
+			if strings.Contains(line, "s.resolveDoc(w, r)") && !strings.Contains(line, "func (s *Server)") {
+				resolveSites++
 				continue
 			}
-			sites++
-			// Within five lines, because that is the existing idiom's reach: the
-			// guard follows the read immediately in every current site, and five
-			// leaves room for a comment without admitting a distant check.
+			if !direct.MatchString(line) {
+				continue
+			}
+			// docFor's own definition and resolveDoc's call are not call sites.
+			if strings.Contains(line, "func (s *Server) docFor") {
+				continue
+			}
+			directSites++
 			found := false
-			for j := i + 1; j < len(lines) && j <= i+5; j++ {
-				if guard.MatchString(lines[j]) {
+			for j := i; j < len(lines) && j <= i+3; j++ {
+				if handled.MatchString(lines[j]) {
 					found = true
 					break
 				}
 			}
 			if !found {
-				t.Errorf("%s:%d reads the active document but does not guard it against nil within 5 lines", f, i+1)
+				t.Errorf("%s:%d resolves a document with docFor but does not handle the not-found error within 3 lines", f, i+1)
 			}
 		}
 	}
 
-	// The stimulus, asserted before the response: a regex that matched nothing
-	// would report every site guarded — perfect health over an empty population,
-	// forever. 15 is the measured count of real call sites; the sixteenth document
-	// read is docResponse's, which goes through activeDocLocked() under a held lock
-	// with its own nil check. A change to this number is a real change to how many
-	// places can be nil-unsafe, and should be seen.
-	if sites != 15 {
-		t.Errorf("expected 15 active-document reads, found %d — if that is intended, update this count deliberately", sites)
+	// The stimulus, before the response. A regex matching nothing would report
+	// every site handled — perfect health over an empty population, forever.
+	// resolveDoc's own body contains one docFor call, hence 7 rather than 6.
+	// 17, not 13: the four install-only routes (outline, pages, redact, and
+	// export's reload branch) gained a resolution during this slice. They never
+	// read the open document — they work from posted bytes — so before the
+	// registry there was nothing for them to resolve, and "the open one" was
+	// unambiguous. It is not any more. The guard demanded this count change be
+	// deliberate rather than absorbed, which is the whole reason it names a number.
+	if resolveSites != 17 {
+		t.Errorf("expected 17 resolveDoc sites, found %d — update this deliberately if intended", resolveSites)
+	}
+	if directSites != 7 {
+		t.Errorf("expected 7 direct docFor sites, found %d — update this deliberately if intended", directSites)
 	}
 }
 
