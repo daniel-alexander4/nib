@@ -11,9 +11,8 @@ import (
 // (auto-run hooks, JavaScript, risky actions, attachments, layers, metadata).
 // It is read-only — it never alters the document — so it is a plain GET.
 func (s *Server) handleScan(w http.ResponseWriter, r *http.Request) {
-	doc := s.activeDoc()
-	if doc == nil {
-		httpError(w, http.StatusNotFound, "no document open")
+	doc, ok := s.resolveDoc(w, r)
+	if !ok {
 		return
 	}
 	rep, err := pdfops.Scan(doc.data)
@@ -41,9 +40,8 @@ type sanitizeResponse struct {
 // client-rasterized /api/assemble path.) A strip that fails to validate leaves
 // the open document unchanged so the user can fall back safely.
 func (s *Server) handleSanitize(w http.ResponseWriter, r *http.Request) {
-	doc := s.activeDoc()
-	if doc == nil {
-		httpError(w, http.StatusNotFound, "no document open")
+	doc, ok := s.resolveDoc(w, r)
+	if !ok {
 		return
 	}
 
@@ -69,7 +67,7 @@ func (s *Server) handleSanitize(w http.ResponseWriter, r *http.Request) {
 	}
 
 	residual, _ := pdfops.Scan(result)
-	if !s.commitMutation(doc.data, result) {
+	if !s.commitMutation(doc, doc.data, result) {
 		httpError(w, http.StatusNotFound, "no document open")
 		return
 	}
@@ -123,9 +121,8 @@ func (s *Server) handleEncrypt(w http.ResponseWriter, r *http.Request) {
 // cracking), so a wrong/missing one returns reason "password" and an already
 // unprotected document returns reason "plain", both leaving the document as-is.
 func (s *Server) handleDecrypt(w http.ResponseWriter, r *http.Request) {
-	doc := s.activeDoc()
-	if doc == nil {
-		httpError(w, http.StatusNotFound, "no document open")
+	doc, ok := s.resolveDoc(w, r)
+	if !ok {
 		return
 	}
 	result, err := pdfops.RemovePassword(doc.data, r.FormValue("password"))
@@ -140,7 +137,7 @@ func (s *Server) handleDecrypt(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
-	if !s.commitMutation(doc.data, result) {
+	if !s.commitMutation(doc, doc.data, result) {
 		httpError(w, http.StatusNotFound, "no document open")
 		return
 	}

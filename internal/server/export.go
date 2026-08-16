@@ -227,7 +227,16 @@ func (s *Server) handleAssemble(w http.ResponseWriter, r *http.Request) {
 	// guaranteed-inert sanitize floor) instead of downloading it.
 	if r.FormValue("reload") == "1" {
 		// flatten makes covered/edited content unrecoverable
-		if !s.commitBarrier(pdf) {
+		// Resolve the document this result is being installed INTO. These four routes
+		// never read the open document — they work from posted bytes — so before the
+		// registry there was nothing to resolve and "the open one" was unambiguous. It
+		// is not any more: without this, an operation addressed to one document commits
+		// its result into another.
+		doc, ok := s.resolveDoc(w, r)
+		if !ok {
+			return
+		}
+		if !s.commitBarrier(doc, pdf) {
 			httpError(w, http.StatusNotFound, "no document open")
 			return
 		}
@@ -241,9 +250,8 @@ func (s *Server) handleAssemble(w http.ResponseWriter, r *http.Request) {
 // repacking; no image/quality change) and returns the smaller copy for save-as.
 // The before/after byte sizes ride in headers so the UI can show the result.
 func (s *Server) handleOptimize(w http.ResponseWriter, r *http.Request) {
-	doc := s.activeDoc()
-	if doc == nil {
-		httpError(w, http.StatusNotFound, "no document open")
+	doc, ok := s.resolveDoc(w, r)
+	if !ok {
 		return
 	}
 	result, err := pdfops.Optimize(doc.data)
@@ -258,9 +266,8 @@ func (s *Server) handleOptimize(w http.ResponseWriter, r *http.Request) {
 
 // handleFormData exports the current document's form fields as JSON, CSV, or XFDF.
 func (s *Server) handleFormData(w http.ResponseWriter, r *http.Request) {
-	doc := s.activeDoc()
-	if doc == nil {
-		httpError(w, http.StatusNotFound, "no document open")
+	doc, ok := s.resolveDoc(w, r)
+	if !ok {
 		return
 	}
 	switch r.URL.Query().Get("format") {
@@ -294,9 +301,8 @@ func (s *Server) handleFormData(w http.ResponseWriter, r *http.Request) {
 // document with no extractable images returns 200 with X-Image-Count: 0 and an
 // empty body, so the client can say so rather than save an empty archive.
 func (s *Server) handleExtractImages(w http.ResponseWriter, r *http.Request) {
-	doc := s.activeDoc()
-	if doc == nil {
-		httpError(w, http.StatusNotFound, "no document open")
+	doc, ok := s.resolveDoc(w, r)
+	if !ok {
 		return
 	}
 	data, count, err := pdfops.ExtractImagesZip(doc.data)
