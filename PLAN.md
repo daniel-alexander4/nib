@@ -1288,7 +1288,7 @@ Acceptance:
 - The post-arrival refresh carries no `X-Nib-Doc`, red if it pins to the stale id.
 - The other five `setDoc` callers still replace, asserted individually.
 
-### P04 — Operation pinning, client side
+### P04 — Operation pinning, client side *(done 2026-08-16, v1.104.3)*
 Goal: no operation acts on a document it did not capture at its start. Refs: D7.
 Exit criteria:
 - The 13 corrupting post-await sites capture their document and id before the
@@ -1298,6 +1298,26 @@ Exit criteria:
 - A harness test proves the `save()` case: begin a save, switch documents mid-
   flight, and assert the *other* document's file is untouched.
 **No user-visible output — this is the safety phase and it cannot be skipped.**
+
+**(phase close, 2026-08-16, v1.104.3)** Exit criteria, every clause, split on `and`:
+
+- ✅ The corrupting post-await sites capture their document and id before the first
+  `await` — **6, not 13**; the phase-open count was wrong and agreed with the plan by
+  coincidence (see the correction above). 5 self-corrupting, 1 caller-corrupting.
+- ✅ …**and** carry it through — `apiFetch` gains `docId`, decided by presence rather
+  than truthiness so a captured-but-missing id cannot silently fall back.
+- ✅ The mislabeling sites (all through `exportBase()`) name the document they actually
+  exported — **20 sites across 19 scopes**; the plan said ~25.
+- ✅ A harness test proves the `save()` case — `TestSaveGoesToTheCapturedDocument`
+  `NotTheCurrentOne`, which under the pre-P04 client fails at its *stimulus* gate
+  because A's file is never written at all: the bytes went to B.
+- ⏳ **Not exercised at any tier:** the join — a real browser saving while a real
+  document change lands inside the request's flight window. No harness can arrange it.
+
+**The phase's own lesson, recorded because it cost a slice and a half:** the scanner
+used to size this work was an instrument, was wrong, and had no red fixture. It now has
+one, checked against a synthetic corrupting function and a synthetic safe one. *A
+measurement used to size work needs a red fixture before its number is quoted.*
 
 **(phase-open, 2026-08-16 — slices firmed against the codebase as it now stands,
 with every count re-derived rather than inherited.)**
