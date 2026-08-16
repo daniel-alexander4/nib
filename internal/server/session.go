@@ -249,7 +249,11 @@ func (s *Server) runSession(ln net.Listener, cert, key []byte, label, mode strin
 	if err != nil {
 		return // declined, timed out, or a protocol error — nothing to apply
 	}
-	s.setDoc(&document{data: final, sig: sign.Verify(final)})
+	// D10: the co-signed document ARRIVES, so it opens alongside whatever the user
+	// already had open rather than replacing it. Before this, completing a co-signature
+	// on the receiving side silently discarded the recipient's open document and its
+	// undo history — work they never asked to close.
+	s.addDoc(&document{data: final, sig: sign.Verify(final)})
 }
 
 // saveReceived writes an accepted one-way transfer under ~/nib, routed by what the
@@ -558,7 +562,10 @@ func (s *Server) handleSessionInitiate(w http.ResponseWriter, r *http.Request) {
 		httpError(w, http.StatusBadGateway, "co-signing did not complete: "+err.Error())
 		return
 	}
-	installed := s.setDoc(&document{data: final, sig: sign.Verify(final)})
+	// D10: an arrival adds. Same reasoning as runSession's — the difference here is
+	// only that a user is waiting on this response, so the document they get back is
+	// the arrival, which addDoc has made active.
+	installed := s.addDoc(&document{data: final, sig: sign.Verify(final)})
 	writeJSON(w, s.docResponse(installed))
 }
 

@@ -232,9 +232,24 @@ async function apiFetch(url, opts = {}) {
   // This sends the CURRENT id. Carrying the id captured before an operation's
   // first await is operation pinning (P04) — the same value while there is one
   // view, a different one the moment there are several.
-  if (docMeta && docMeta.id) opts.headers['X-Nib-Doc'] = docMeta.id;
+  //
+  // `opts.unpinned` opts one call out. It exists for exactly one question — "what is
+  // the active document now?" — which is about the SESSION rather than about a
+  // document, and which a pinned call cannot ask: pinning it means asking after the
+  // document the client already knows about, which is never the one it needs to learn.
+  // See reloadOpenDoc.
+  const unpinned = opts.unpinned === true;
+  delete opts.unpinned;
+  if (!unpinned && docMeta && docMeta.id) opts.headers['X-Nib-Doc'] = docMeta.id;
   const res = await fetch(url, opts);
   if (res.status === 401) { refreshStatus(); throw new Error('locked'); }
+  // A 409 ("the document you named is gone") is deliberately NOT thrown the way a 401
+  // is. Every document-route call site here already handles it correctly, with the
+  // shape `if (!res.ok) { toast('…'); return; }` — 15 of them — so throwing would
+  // convert fifteen clear, user-visible failures into unhandled rejections that say
+  // nothing at all. The refusal is handled where refusals are already handled; what
+  // must not happen is a refusal BODY being mistaken for a document, and that is
+  // guarded in setDocumentFromServer, at the one place the mistake is possible.
   return res;
 }
 
@@ -1041,8 +1056,20 @@ async function declineRecv() {
 // reloadOpenDoc refreshes the viewer after runSession applies a received co-signature
 // out of band (no response carries the new metadata, so the UI fetches it).
 async function reloadOpenDoc() {
-  try { await setDocumentFromServer(await (await apiFetch('/api/doc')).json()); }
-  catch { toast('co-signed, but could not refresh the view'); }
+  // UNPINNED, deliberately. A co-signature applied out of band ADDS a document and
+  // makes it active (D10); the document this client currently names is still open and
+  // still perfectly valid. So a pinned fetch here answers the wrong question — it
+  // reports the document the user was already looking at, and the arrival never
+  // appears. What this call needs is "what is active now?", which is a question about
+  // the session and the only one in the app that is.
+  try {
+    const res = await apiFetch('/api/doc', { unpinned: true });
+    // The ok check this function did not have, and the whole of the original defect:
+    // it parsed the body unconditionally and handed it to setDocumentFromServer. Every
+    // other document-route call site in this file already had this line.
+    if (!res.ok) { toast('co-signed, but could not refresh the view'); return; }
+    await setDocumentFromServer(await res.json());
+  } catch { toast('co-signed, but could not refresh the view'); }
 }
 
 // endRecv stops polling, discards the isolated preview, and closes the modal.
@@ -1229,6 +1256,22 @@ eventBus.on('pagechanging', (e) => {
 
 // --- open / load -------------------------------------------------------------
 async function setDocumentFromServer(meta) {
+  // A refusal body is not a document. The server answers a stale id with
+  // `{"error": "..."}` and a 200 body has no `error` field, so this is exact rather
+  // than heuristic.
+  //
+  // The guard lives HERE, not at the fetch, because this is the one place where the
+  // mistake does damage: assigning a refusal to docMeta leaves docMeta.id undefined,
+  // so every later request silently stops sending the header and the session reverts
+  // to the unpinned path P03.S03 exists to close — while the document still renders,
+  // because /api/pdf with no id falls back to the active one. Silent in both
+  // directions. Any of the twenty document-route call sites could grow the same
+  // missing ok-check that reloadOpenDoc had; one guard at the sink covers them all.
+  if (!meta || meta.error) {
+    toast('could not read the document');
+    console.error('setDocumentFromServer got a refusal, not a document:', meta);
+    return;
+  }
   const gen = ++docGen;
   docMeta = meta;
   if (meta.name && meta.name !== '.') originalName = meta.name;
