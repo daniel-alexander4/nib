@@ -15,3 +15,6 @@ overlay-*.png
 
 # OS cruft
 .DS_Store
+
+# dev-only front-end test harness (package.json is checked in; its deps are not)
+/node_modules/
