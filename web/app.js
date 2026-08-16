@@ -238,9 +238,31 @@ async function apiFetch(url, opts = {}) {
   // document, and which a pinned call cannot ask: pinning it means asking after the
   // document the client already knows about, which is never the one it needs to learn.
   // See reloadOpenDoc.
+  //
+  // `opts.docId` is the other direction, and it is operation pinning itself (D7): the
+  // caller captured a document id BEFORE its first await and names it explicitly, so
+  // the request goes to the document the payload came from rather than to whatever is
+  // current by the time the request is built. Without it, an operation that bakes
+  // document A's bytes and then posts them is addressed to B if the document changed
+  // in between — and /api/save writes the posted bytes to the addressed document's
+  // path, so A's contents land in B's file.
+  //
+  // This is only safe because ADR-001 makes ids monotonic and never reused: a captured
+  // id whose document is gone gets a 409 and the operation is REFUSED. Under a
+  // recycled id the same request would be silently redirected at whatever inherited
+  // the number, which is worse than the bug it replaces.
+  // `'docId' in opts` rather than a truthiness test, deliberately. A caller that
+  // captured a document and found no id has a bug, and falling back to the CURRENT
+  // id would send exactly the request pinning exists to prevent — silently, and
+  // through the very option that was meant to stop it. Presence is the intent;
+  // an absent value stays absent.
   const unpinned = opts.unpinned === true;
+  const hasPin = Object.prototype.hasOwnProperty.call(opts, 'docId');
+  const pinned = opts.docId;
   delete opts.unpinned;
-  if (!unpinned && docMeta && docMeta.id) opts.headers['X-Nib-Doc'] = docMeta.id;
+  delete opts.docId;
+  if (hasPin) { if (pinned) opts.headers['X-Nib-Doc'] = pinned; }
+  else if (!unpinned && docMeta && docMeta.id) opts.headers['X-Nib-Doc'] = docMeta.id;
   const res = await fetch(url, opts);
   if (res.status === 401) { refreshStatus(); throw new Error('locked'); }
   // A 409 ("the document you named is gone") is deliberately NOT thrown the way a 401
@@ -2107,12 +2129,27 @@ function openSmart(value) {
 // --- save --------------------------------------------------------------------
 async function save() {
   if (!pdfDocument) return;
+  // CAPTURED, before the first await — D7, and this is the site the phase's deepdive
+  // called the worst. bakedBytes() below is asynchronous and can take seconds on a
+  // large document; if the open document changes while it runs, every later read of
+  // `docMeta` describes a DIFFERENT document than the bytes came from. Concretely:
+  // apiFetch stamps the current id, /api/save writes the posted bytes to the addressed
+  // document's path, and A's contents land in B's file — past the signature guard,
+  // with a "Saved" toast and no error anywhere.
+  //
+  // `doc` is used for all three of them: the id that addresses the request, the
+  // canSave that decides download-vs-overwrite, and nothing read from the live
+  // `docMeta` after this line.
+  const doc = docMeta;
   els.saveBtn.disabled = true;
   try {
     const bytes = await bakedBytes();
     // No local path to overwrite (drag-dropped or opened by URL) — save a copy
-    // by downloading it instead.
-    if (!docMeta.canSave) {
+    // by downloading it instead. Read off the CAPTURED document: the live one may by
+    // now be a different document with a different answer, and getting this wrong
+    // either downloads a file the user asked to have overwritten or overwrites a file
+    // the user asked to have downloaded.
+    if (!doc.canSave) {
       downloadBlob(new Blob([bytes], { type: 'application/pdf' }), 'document.pdf');
       return;
     }
@@ -2120,13 +2157,32 @@ async function save() {
       method: 'POST',
       headers: { 'Content-Type': 'application/pdf' },
       body: bytes,
+      docId: doc.id,
     });
     if (!res.ok) { toast(await errText(res, 'save failed')); return; }
     const meta = await res.json();
+
+    // Everything below reports on the SAVE, and the save was of `doc`. If the open
+    // document changed while the bytes were in flight, none of it belongs on screen:
+    // the badge would describe A's signature under B, and the reload would yank the
+    // user back to A after they deliberately opened B.
+    //
+    // The save itself already succeeded and was correctly addressed — that is the
+    // whole point of the captured id — so this is not an error path. It is the
+    // difference between "the save happened" and "the save is what you are looking
+    // at", which are separate facts the old code could not tell apart.
+    // Compared by ID, not by object identity. `setDocumentFromServer` builds a fresh
+    // meta object every time it runs, including when it reloads the SAME document — so
+    // an identity check would report "the document changed" after any concurrent
+    // refresh and silently skip a reload that was owed. The question here is which
+    // document is open, and that is what the id answers.
+    if (!docMeta || docMeta.id !== doc.id) { toast('Saved'); return; }
+
     updateBadge(meta.signature);
     toast('Saved');
     // If detected fields were baked in, reload so the page shows the stamped
-    // text and the transient input widgets are cleared.
+    // text and the transient input widgets are cleared. overlayFields is read only
+    // once the document is known not to have changed, above.
     if (overlayFields.length) await setDocumentFromServer(meta);
   } catch (err) {
     toast('save failed: ' + err.message);
