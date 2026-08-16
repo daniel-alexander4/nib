@@ -22,6 +22,10 @@ Stage 7 plan-review 2026-08-15: structural gate + SME panel → one **critical**
 finding landed as a pin on D7 (ids must never be reused, or the pinning law passes
 while corrupting), three consistency defects fixed, D-numbering repaired.
 Stage 8 bootstrap: **not run, by decision** — see D14.
+Plan-review of P03 2026-08-16 (phase-scoped, ahead of phase-open): structural gate
+passed with two defects (stale guard count, `Refs` omitting D15); panel returned
+one **critical** — the optional-default id lets a call site unpin silently — plus
+six warnings and three info. All adopted; pins landed on D15, D8 and P03.
 
 **Where this plan and the original brief differ, the plan wins.**
 
@@ -168,6 +172,14 @@ the undo+redo pair across all documents, not the undo side alone — otherwise t
 per-document change quietly re-scales a limit the single-document design
 deliberately reasoned about and accepted.
 
+**(plan-review pin, warning: eviction must be observable, 2026-08-16)** Evicting
+"from inactive documents first" discards that document's undo history while the
+user is looking elsewhere. They switch back and their undo is gone, having done
+nothing to cause it and having been told nothing. *Its own observation:* after an
+eviction, the affected document's `docResponse.canUndo` is false **and** the UI
+says why on activation — asserted by a test that fills two documents past the
+budget and reads the evicted one's flag, red if eviction is silent.
+
 ### D9 — Open-document cap *(settled 2026-08-15; ~~a count~~ **amended to count + bytes (dimension review, 2026-08-15)**)*
 Eight open documents, refused with a clear message rather than degrading. Each
 document costs its bytes (up to 200 MiB), a pdf.js proxy, a rendered DOM subtree
@@ -233,6 +245,41 @@ destructive. P00 is marked pre-satisfied; this plan starts at P01.
   404 already means "no document open"; a closed tab is a different fact and the
   client must be able to tell them apart to remove the tab rather than blank the
   app.
+
+**(plan-review pin, critical: who may omit the id, 2026-08-16)** The optional
+default and D7's pinning law meet badly. D7 is *no operation may act on a document
+it did not capture*; the default says omitting the id is fine, and a call site that
+simply **forgets** the header then gets "whatever the server currently thinks is
+active" — which, during exactly the switch D7 exists to survive, is the wrong
+document. It commits having passed no check, because it never made one.
+
+What makes this critical is that **the omission is invisible**: a pinned call and
+an unpinned call differ by the *absence* of a header. No error, no log line, and
+nothing in review distinguishes "correctly defaulted" from "forgot" — the same
+shape as the id-reuse trap, a guard reporting success because it was never reached.
+
+So the default is **for the CLI and the pre-existing Go tests only**. The web
+client always sends an id, and that is enforced **by the transport rather than by
+discipline**: `apiFetch` attaches the calling view's captured id to every
+document-touching route, so a call site cannot omit it by forgetting.
+
+*Its own observation, not a clause riding an existing bullet:* a tier-2 test that
+walks every `apiFetch` call to a document route and asserts `X-Nib-Doc` is present,
+**proven red by removing the attachment in `apiFetch`**. That test is what
+discharges this pin; no other criterion covers it.
+
+**(plan-review pin, warning: ids are per-process, 2026-08-16)** ADR-001 makes ids
+monotonic and never reused — *within a process*. A restart restarts the counter at
+1. Usually harmless, because the default `NIB_ADDR` is `127.0.0.1:0` and a restart
+takes a different port, so a surviving browser tab simply cannot reconnect. **But
+`NIB_ADDR` pins a fixed port for headless/remote runs** (`cmd/nib/main.go:58-60`),
+which is a documented, supported mode — and there a stale tab reconnects and can
+pin to an id the new process has since reassigned to a different document. That is
+ADR-001's exact failure, crossing a process boundary.
+
+The id therefore carries a per-process epoch (`<nonce>:<counter>`). A mismatched
+epoch is **409**, the same answer as a closed document, because it is the same
+fact: the document you named is not one I hold.
 
 ### D16 — Opening a path that is already open focuses it *(settled 2026-08-15, auto-adopted; override welcome)*
 Two tabs on one path would be two independent working copies, both savable to the
@@ -859,15 +906,37 @@ Acceptance:
 
 ### P03 — Document identity, server side
 Goal: the server holds N documents and every document-touching endpoint says
-which one it means. Refs: D6, D8, D9, D10.
+which one it means. Refs: D6, **D7**, D8, D9, D10, **D15**.
 Exit criteria:
-- `s.doc` replaced by a registry + active id behind one accessor; the ~14 nil
-  guards keep their shape.
+- `s.doc` replaced by a registry + active id behind one accessor; the **16** nil
+  guards keep their shape. *(tier 1)*
 - Every document-touching route carries an id; `/api/undo` and `/api/redo` stop
-  being bodyless.
+  being bodyless. *(tier 1 for the routes; tier 2 for the client always sending
+  one — see D15's critical pin)*
 - Per-document rings under one global byte budget; single-document behaviour
-  unchanged, proven by the existing Go tests.
-- Arrivals (co-sign, p2p) open a new document rather than replacing one.
+  unchanged, proven by the existing Go tests **plus the probe below**. *(tier 1)*
+- Arrivals (co-sign, p2p) open a new document rather than replacing one. *(tier 1)*
+- **(plan-review pin, 2026-08-16)** A **two-document probe** that is red without
+  the registry: open two documents, address an operation to the *inactive* one,
+  and assert the active one was not touched. Stated as its own criterion rather
+  than appended to the "behaviour unchanged" bullet, because those existing tests
+  pass today and would pass against a registry that ignored ids entirely — a
+  criterion that cannot fail is not one.
+- **(plan-review pin, 2026-08-16)** The **all-tabs-stale** case resolves to the
+  launch empty state, not to N error tabs. D15 gives 409 for one closed document;
+  a *server* restart makes every id stale at once, and P06's reload pin covers
+  restoring tabs from the server, not the server having none to restore. Observed
+  by restarting the server under a client holding ≥2 ids and reading the resulting
+  UI state.
+
+**(plan-review pin: refs and counts, 2026-08-16)** `Refs` gained **D7** and
+**D15** — D15 is *the* decision on how the id travels and carries the `/api/pdf`
+query-param exception written explicitly *"so it is not 'fixed' into uniformity
+later by someone who did not know why it exists"*, and the person most likely to
+do that fixing is the one reading this phase. The guard count was `~14`; it is
+**16**, measured twice (P01.S02's inventory, and again at this review). Counts in
+prose go stale — prefer citing the guard.
+
 Slices: sketched at phase-open.
 
 ### P04 — Operation pinning, client side
