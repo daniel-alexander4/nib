@@ -13,6 +13,11 @@ Amended 2026-08-16 (connection-algorithm pass, Dan's instruction: the four
 specifications the ladder was missing — clocks, symmetry and glare, channel loss,
 failure diagnosis — settled as D16–D19, with D8/D11/D13 pinned, P01.S05, P05 and P06
 amended and caveat 9 added. Stage 2 still has not run).
+Amended 2026-08-16 (connect deadline raised to 300 s and role-conflict handling fixed,
+both Dan's calls: D16's deadline superseded with backoff, candidate-expiry and
+mapping-refresh consequences adopted alongside it; D17's roles chosen pre-connection
+with a conflict stopping the ceremony for a retry rather than resolving itself.
+Stage 2 still has not run).
 SME packs: **crypto (core tier)** — `go.mod` declares `filippo.io/age`,
 `golang.org/x/crypto`, `edwards25519`, `hpke`, `go-pkcs12`, `digitorus/pdfsign`
 (inferred, trigger 1); the consensus tier does not fire — two sequential
@@ -381,25 +386,44 @@ the structure above is the law:
 | multicast browse | 2 s |
 | port-mapping request (all three protocols) | 3 s |
 | DHT self-address probe | 8 s |
-| DHT candidate fetch | retried every 2 s for the race |
-| punch retransmit cadence | 250 ms |
-| **overall connect deadline** | **60 s** |
+| DHT candidate fetch | every 2 s for the first 30 s, then every 5 s |
+| punch retransmit cadence | 250 ms for the first 30 s, then 1 s |
+| published candidate expiry | > connect deadline + margin (D17) |
+| **overall connect deadline** | ~~60 s~~ **300 s (Dan, 2026-08-16)** |
 
 *Why trickle rather than gather-then-dial:* the tiers have latencies an order of
 magnitude apart. LAN answers in milliseconds; the DHT round trip is seconds. Waiting
 for the slowest source before dialing the fastest would make the common case pay for
 the rare one, which is the same reasoning that made D8 concurrent.
 
-*Why 60 s and not less:* two people are on a phone call when this runs. Failing at
-20 s when the DHT would have answered at 25 s wastes a scheduled ceremony; the cost
-of waiting is that the two of them keep talking for another half minute. The UI shows
-per-tier progress throughout (D19), so the wait is never a blank spinner.
+*Why ~~60 s~~ **300 s** (Dan's call, 2026-08-16):* two people are on a phone call when
+this runs, and a ceremony they scheduled is worth more than a fast failure. Five
+minutes is long enough that a slow DHT, a router that takes its time answering a
+mapping request, or a peer who arms a couple of minutes late all still land inside
+one attempt. The UI shows per-tier progress throughout (D19), so the wait is never a
+blank spinner, and the user can abandon at any point — the deadline bounds the
+*machine's* patience, not the person's.
+
+**Three consequences of the longer deadline, adopted with it:**
+
+- **Retries back off.** At 250 ms for 300 s a punch would emit ~1,200 packets per
+  candidate, and a 2 s fetch loop ~150 DHT queries. Both step down after the first
+  30 s (table above). Sustained full-rate traffic for five minutes is both wasteful
+  and the kind of pattern a carrier or a DHT peer is entitled to treat as abuse.
+- **Published candidates must outlive the race.** A record whose expiry is shorter
+  than the connect deadline vanishes mid-attempt, so the expiry floor is the deadline
+  plus margin — otherwise a peer arming at minute four finds nothing.
+- **The port mapping must be refreshed, not merely short-leased.** D15's lease is
+  shorter than 300 s by design, so refresh-while-armed moves from incidental to
+  load-bearing: without it the mapping dies during its own tier's race.
 
 *Not to be confused with the existing session clocks.* `exchangeDeadline`
-(`internal/p2p/session.go:29`, 6 minutes) budgets a *established* session — handshake,
+(`internal/p2p/session.go:29`, 6 minutes) budgets an *established* session — handshake,
 frames both ways, and the wait on the remote user's consent — and the server's
 consent window is 5 minutes inside it (`:25`). D16's clocks run **before** any of
-that and are independent of all of it.
+that and are independent of all of it. The two now sit in the same order of magnitude,
+so state the total plainly: worst case is ~5 minutes connecting followed by up to
+6 minutes exchanging, and neither clock may be implemented in terms of the other.
 
 ### D17 — Both sides race symmetrically; the ceremony role is decoupled from who dialled *(settled 2026-08-16 via /discuss, auto-adopted)*
 
@@ -409,16 +433,42 @@ both sides listen, and both sides dial everything the other published. There is 
 
 **The document-flow role is a separate thing, chosen in the UI and unaffected by the
 race.** Originate (you own the document) and Receive (`web/index.html:257`, D13)
-determine who calls `Initiate` and who calls `Receive` *after* a channel exists. If
-both parties pick the same role, that is a clear, named error surfaced at pairing
-time — not a hang.
+determine who calls `Initiate` and who calls `Receive` *after* a channel exists.
+
+**Roles are chosen before connecting, and a conflict stops the ceremony
+*(Dan, 2026-08-16)*.** Each side commits to its role in the UI before the ladder
+starts — the role is never inferred from who dialled, never negotiated, and never
+swapped automatically. If both sides chose the same role, the ceremony **stops and
+both parties try again** after one of them changes their pick. There is no recovery
+in place: no auto-swap, no "one of you becomes the originator", no silent coin flip.
+
+*Where the conflict is detected, and why not earlier:* the *choice* precedes
+connection, but the *conflict* cannot be discovered before the two sides can talk —
+detecting it requires comparing two locally-held values. The comparison therefore
+happens at **the first exchange on the surviving channel**: after glare resolution has
+picked the one channel (below), and before the verification string is derived, before
+consent, before any document byte. The alternative — publishing the role alongside the
+DHT candidate, which would catch it sooner — is rejected: it would put a second
+observable attribute under a stable public rendezvous key, adding metadata to exactly
+the surface the plan is already watching.
+
+*Why stop rather than auto-resolve:* the role determines who is attesting to what, on
+a document that carries legal weight. A machine that silently picks the originator
+has decided which person's copy is authoritative. Two people on a call resolve it in
+five seconds; the software should not guess.
+
+*What a tampered role bit can do:* the role exchange happens on a pinned channel but
+before the verification string, so an attacker who has defeated the 66-bit pin could
+flip it. The worst outcome is a spurious conflict and a restart — a nuisance, not a
+compromise, since the verification string still gates everything that matters (D4).
 
 **Punch synchronization needs no shared clock.** Both sides retransmit punch packets
 at the D16 cadence for the life of the race; the first packet to traverse opens the
 mapping and the peer's next retransmit arrives. The only requirement is that the two
 arming windows *overlap*, which the ceremony flow guarantees by construction — two
 people arrange this live. Published candidates carry an expiry so a stale record from
-a previous session is never punched at.
+a previous session is never punched at — floored above the connect deadline (D16), so
+a record can never expire during its own race.
 
 **Glare resolution is deterministic.** Symmetric dialing means both sides can complete
 a handshake at nearly the same instant, leaving two channels. On first success the
@@ -600,6 +650,8 @@ Exit criteria:
 - All tiers are attempted concurrently; the first to complete is used and the rest are cancelled.
 - **A candidate arriving late joins the race in flight; no tier waits on another tier's gathering. (added 2026-08-16, D16)**
 - **Simultaneous success on both sides converges on one channel by the lower-fingerprint rule, driven by forcing the glare rather than waiting to observe it. (added 2026-08-16, D17)**
+- **A same-role pair stops on the surviving channel before any verification string is derived; no document byte and no session-derived word exists at that point. (added 2026-08-16, D17)**
+- **Nothing in the race emits at full rate for the whole deadline: retry cadences step down, and a published record outlives the race that depends on it. (added 2026-08-16, D16)**
 - **Losing the channel before confirmation re-races and re-confirms; losing it after confirmation fails the ceremony. Both are driven. (added 2026-08-16, D18)**
 - ~~Both ends behind carrier-grade NAT fails with an explanation that names the fallback, not a generic timeout **— and the fallback it names is the one that actually applies: a shared VPN or a manual address one side can accept, not a port-forward the carrier's NAT forbids (amended 2026-08-16, D9 pin)**.~~ **Each of D19's four causes produces its own message, and the mapping-class test distinguishes the two NAT classes from two DHT observations. Cause 3's message names port mapping and a shared VPN — never a port-forward the carrier's NAT forbids. (superseded 2026-08-16, D19)**
 
@@ -611,7 +663,7 @@ Exit criteria:
 - The primary flow contains no address field and no hex fingerprint.
 - Every failure tier has a distinct, actionable message **— the four of D19, plain language first with the technical detail behind a disclosure (amended 2026-08-16)**.
 - **The connection screen shows per-tier progress for the whole connect deadline, never a blank spinner. (added 2026-08-16, D16)**
-- **Picking the same document-flow role on both sides is a named error at pairing time, not a hang. (added 2026-08-16, D17)**
+- **Picking the same document-flow role on both sides stops the ceremony with a named message telling them one must change and both retry — detected on the channel before the verification string, never a hang and never auto-resolved. (added 2026-08-16, D17)**
 - **While a ceremony is armed, the screen discloses that a temporary router opening was requested and names the port; when no mapping was obtained it says so rather than staying silent. (added 2026-08-16, D15)**
 - The advanced fallback is reachable but never on the default path.
 - Documentation and README updated in the same phase (STANDARDS docs-parity).
