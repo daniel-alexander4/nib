@@ -106,6 +106,16 @@ export async function boot({ routes = {}, search = '' } = {}) {
     dispatchEvent() { return false; },
   });
 
+  // jsdom stubs confirm() as "not implemented" and app.js calls it bare, so the
+  // harness owns it. Recorded rather than merely answered: a test that asserts
+  // "closing a clean document does not prompt" needs to know the call COUNT, not
+  // just the return value — otherwise it passes against a confirm nobody called
+  // for the wrong reason.
+  const confirms = [];
+  let confirmAnswer = true;
+  globalThis.confirm = (message) => { confirms.push(message); return confirmAnswer; };
+  globalThis.alert = () => {};
+
   const calls = [];
   const table = { ...BOOT_ROUTES, ...routes };
   globalThis.fetch = async (url, opts = {}) => {
@@ -140,5 +150,28 @@ export async function boot({ routes = {}, search = '' } = {}) {
   await new Promise((r) => setTimeout(r, 50));
   process.off('unhandledRejection', onRejection);
 
-  return { dom, window: dom.window, document: dom.window.document, calls, rejections };
+  return {
+    dom,
+    window: dom.window,
+    document: dom.window.document,
+    calls,
+    rejections,
+    confirms,
+    setConfirmAnswer(v) { confirmAnswer = v; },
+    // settle waits for app.js's async work — a fetch round-trip and the DOM
+    // writes that follow it — by DRAINING THE EVENT LOOP rather than sleeping a
+    // wall-clock interval.
+    //
+    // That distinction is the difference between a deterministic test and a flaky
+    // one. Every await in this harness resolves against a stubbed fetch, so the
+    // work is queued microtasks and immediates, not real I/O; a fixed `setTimeout`
+    // would be a guess that happens to be long enough on this machine and might
+    // not be on a loaded one. Draining ticks finishes as soon as the queue is
+    // empty and cannot be too short.
+    settle: async (ticks = 12) => {
+      for (let i = 0; i < ticks; i++) {
+        await new Promise((r) => setImmediate(r));
+      }
+    },
+  };
 }
