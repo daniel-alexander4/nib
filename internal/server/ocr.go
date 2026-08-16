@@ -40,7 +40,7 @@ func (s *Server) handleOCR(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if len(body.Words) == 0 {
-		writeJSON(w, s.docResponse())
+		writeJSON(w, s.docResponse(doc))
 		return
 	}
 	result, err := pdfops.StampTextLayer(doc.data, body.Words, body.Lang)
@@ -68,5 +68,5 @@ func (s *Server) handleOCR(w http.ResponseWriter, r *http.Request) {
 		httpError(w, http.StatusNotFound, "no document open")
 		return
 	}
-	writeJSON(w, s.docResponse())
+	writeJSON(w, s.docResponse(doc))
 }

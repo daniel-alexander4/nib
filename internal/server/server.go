@@ -88,6 +88,24 @@ type document struct {
 	path string
 	data []byte
 	sig  sign.Status
+
+	// undo/redo are this document's own history. They live here rather than on the
+	// Server because a per-server ring means an operation on one document pops a
+	// state belonging to another — the same class of defect as an unpinned
+	// operation, arriving through the history instead of through a route (D8).
+	//
+	// The byte budget that bounds them is NOT per-document: see trimHistoryLocked.
+	undo [][]byte // prior document states, oldest first
+	redo [][]byte // states rolled back by undo
+
+	// historyEvicted records that this document's history was dropped to keep the
+	// global budget, rather than never having existed. Without it the two are
+	// indistinguishable on the wire — `canUndo:false` reads identically for "you
+	// have made no edits" and "your edits are no longer undoable" — which is the
+	// silent eviction the plan-review pin refuses. Sticky: it describes something
+	// that happened to the document, and it is cleared only by a barrier or a
+	// fresh history.
+	historyEvicted bool
 }
 
 // Server holds the embedded UI, the auth session, and the current document.
@@ -114,8 +132,15 @@ type Server struct {
 	nextSeq  uint64      // monotonic; incremented per open, never reset or reclaimed
 	epoch    string      // per-process nonce; see docID
 
-	undo [][]byte // prior document states (oldest first) for undo; see undo.go
-	redo [][]byte // states rolled back by undo, for redo
+	// maxHistoryBytes overrides the global history budget. Zero means maxUndoBytes,
+	// which is what production always uses; only the eviction tests set it, so they
+	// can exercise the budget with kilobytes rather than a quarter of a gigabyte.
+	maxHistoryBytes int
+
+	// historyEvictions counts documents whose history has been dropped to keep the
+	// global byte budget. Class-1: read by the eviction tests, and the only place a
+	// silent eviction would show up as a number rather than as a missing effect.
+	historyEvictions uint64
 
 	sess session // armed live co-signing listener (Nib's one routable surface)
 }
@@ -263,6 +288,14 @@ type docResponse struct {
 	Flags     json.RawMessage `json:"flags,omitempty"` // embedded sign/date/initial placeholders, if any
 	CanUndo   bool            `json:"canUndo"`         // an undoable operation is on the stack
 	CanRedo   bool            `json:"canRedo"`         // an undone operation can be re-applied
+
+	// HistoryEvicted distinguishes "your edit history was dropped to free memory"
+	// from "you have not edited this document" — states that canUndo:false reports
+	// identically. The plan-review pin requires eviction to be OBSERVABLE, and the
+	// effect alone is not an observation: a user switching back to a document would
+	// find an empty undo stack and no account of where it went. Omitted while false,
+	// so a document that has never been evicted serializes exactly as before.
+	HistoryEvicted bool `json:"historyEvicted,omitempty"`
 }
 
 // handleOpen loads a PDF from a server-side path. Opening by path is what makes
@@ -295,9 +328,9 @@ func (s *Server) handleOpen(w http.ResponseWriter, r *http.Request) {
 		httpError(w, http.StatusUnsupportedMediaType, "that file isn't a PDF")
 		return
 	}
-	s.setDoc(&document{path: path, data: data, sig: sign.Verify(data)})
+	installed := s.setDoc(&document{path: path, data: data, sig: sign.Verify(data)})
 	_ = vaultFrom(r).AddRecent(path) // best-effort; failure to record is non-fatal
-	writeJSON(w, s.docResponse())
+	writeJSON(w, s.docResponse(installed))
 }
 
 // handleUpload accepts a PDF posted from the browser file-picker. Such a
@@ -326,8 +359,8 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 		httpError(w, http.StatusUnsupportedMediaType, "that file isn't a PDF")
 		return
 	}
-	s.setDoc(&document{path: "", data: data, sig: sign.Verify(data)})
-	resp := s.docResponse()
+	installed := s.setDoc(&document{path: "", data: data, sig: sign.Verify(data)})
+	resp := s.docResponse(installed)
 	resp.Name = header.Filename
 	writeJSON(w, resp)
 }
@@ -351,7 +384,10 @@ func (s *Server) handleClose(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.setDoc(nil)
-	writeJSON(w, s.docResponse())
+	// The zero response, built from a nil document rather than from "nothing is
+	// active": after S05 a close leaves the OTHER documents open, and re-resolving
+	// active here would describe a document the user did not just close.
+	writeJSON(w, s.docResponse(nil))
 }
 
 // --- API: pdf bytes / save ----------------------------------------------------
@@ -396,7 +432,7 @@ func (s *Server) handleSave(w http.ResponseWriter, r *http.Request) {
 	doc.data = data
 	doc.sig = sig
 	s.mu.Unlock()
-	writeJSON(w, s.docResponse())
+	writeJSON(w, s.docResponse(doc))
 }
 
 // --- helpers ------------------------------------------------------------------
@@ -530,8 +566,26 @@ func (s *Server) isRegisteredLocked(doc *document) bool {
 // and add-new — D10 says arrivals should add — but doing that here would move
 // arrival semantics a phase early inside a slice whose acceptance says behaviour
 // is unchanged, where nothing would catch it. **The split is P03.S05's.**
-func (s *Server) setDoc(doc *document) {
+// It returns the document it installed (nil for a close), so the six callers that
+// install and then describe a document pass the one they just installed rather than
+// re-resolving "the active one" — which is the same answer today and stops being one
+// the moment P03.S05 lets an arrival add a document instead of replacing.
+func (s *Server) setDoc(doc *document) *document {
 	s.mu.Lock()
+	// Release the outgoing documents' histories explicitly rather than leaving them
+	// to become garbage with the documents themselves. Dropping the registry entry
+	// does make them unreachable *eventually*, but a request already in flight still
+	// holds its `doc` pointer — an OCR or export handler can hold one for many
+	// seconds — and until it returns, that document's rings keep up to maxUndoDepth
+	// whole PDFs alive. This is what keeps P01's "close retains no document bytes"
+	// criterion true by construction instead of by garbage-collector timing.
+	for _, d := range s.docs {
+		if d == doc {
+			continue // reinstalling the same document: not an outgoing one
+		}
+		clearUndo(d)
+		clearRedo(d)
+	}
 	if doc == nil {
 		s.docs = nil
 		s.activeID = docID{}
@@ -542,35 +596,59 @@ func (s *Server) setDoc(doc *document) {
 		s.docs = []*document{doc}
 		s.activeID = doc.id
 	}
-	s.clearUndoLocked() // a fresh/replacement document starts with no history
-	s.clearRedoLocked()
+	// No history to clear: a fresh document carries its own empty stacks, and the
+	// outgoing document's history is released with the document itself. Clearing a
+	// server-global pair here is what P03.S04 removed — the rings now belong to the
+	// documents, so replacing the registry replaces the history with it.
 	s.mu.Unlock()
+	return doc
 }
 
-// docResponse builds the metadata response for the current document. It
-// takes the lock itself; callers must not hold it.
-func (s *Server) docResponse() docResponse {
+// docResponse builds the metadata response for ONE document — the one the caller
+// resolved, never "whatever is active". It takes the lock itself; callers must not
+// hold it. A nil or no-longer-registered document yields the zero response, which is
+// what the routes already send when nothing is open.
+//
+// Taking the document as an argument is what makes a document able to report on
+// ITSELF. The previous signature took none and read s.activeDocLocked(), so an
+// inactive document had no way to say anything — including that its history had been
+// evicted, which is a clause P03.S04 owes and could not have expressed.
+//
+// **Every field is snapshotted under one lock hold.** The previous version released
+// the lock and then read doc.path, doc.sig and doc.data, which was a live data race
+// against undo.go's `doc.data = result` — reproduced with -race on an ordinary
+// /api/doc concurrent with /api/pages, i.e. one user with two browser panes. See
+// TestDocResponseRacesMutation, which fails against that shape.
+func (s *Server) docResponse(doc *document) docResponse {
 	s.mu.Lock()
-	doc := s.activeDocLocked()
-	canUndo := len(s.undo) > 0
-	canRedo := len(s.redo) > 0
-	s.mu.Unlock()
-	if doc == nil {
+	if doc == nil || !s.isRegisteredLocked(doc) {
+		s.mu.Unlock()
 		return docResponse{}
 	}
 	resp := docResponse{
-		ID:        doc.id.String(),
-		Name:      filepath.Base(doc.path),
-		Path:      doc.path,
-		CanSave:   doc.path != "",
-		Signature: doc.sig,
-		CanUndo:   canUndo,
-		CanRedo:   canRedo,
+		ID:             doc.id.String(),
+		Name:           filepath.Base(doc.path),
+		Path:           doc.path,
+		CanSave:        doc.path != "",
+		Signature:      doc.sig,
+		CanUndo:        len(doc.undo) > 0,
+		CanRedo:        len(doc.redo) > 0,
+		HistoryEvicted: doc.historyEvicted,
 	}
+	// The bytes are read AFTER the lock is released, deliberately: FlagsJSON parses
+	// the PDF, and holding the server mutex across a parse would serialize every
+	// request behind it. Copying the slice header here is sufficient, because
+	// doc.data is always REPLACED wholesale and never mutated in place (all five
+	// writers assign a fresh slice) — so the array this header points at cannot
+	// change under the parse. That invariant is what makes the unlocked read safe;
+	// mutating doc.data in place would silently reintroduce the race.
+	data := doc.data
+	s.mu.Unlock()
+
 	// Surface embedded signing placeholders so the recipient's UI can rebuild
 	// them on open (the read half of the flag round-trip; the write half is
 	// /api/flags). A parse failure just means "no flags" — never blocks the open.
-	if flags, err := pdfops.FlagsJSON(doc.data); err == nil && json.Valid(flags) {
+	if flags, err := pdfops.FlagsJSON(data); err == nil && json.Valid(flags) {
 		resp.Flags = flags
 	}
 	return resp

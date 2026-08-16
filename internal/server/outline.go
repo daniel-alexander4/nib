@@ -62,5 +62,5 @@ func (s *Server) handleOutlineSet(w http.ResponseWriter, r *http.Request) {
 		httpError(w, http.StatusNotFound, "no document open")
 		return
 	}
-	writeJSON(w, s.docResponse())
+	writeJSON(w, s.docResponse(doc))
 }

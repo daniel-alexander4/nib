@@ -40,3 +40,5 @@ home today.
   document it did not capture at its start; ids are never reused
 - [ADR-002: One PDFViewer per document](002-per-view-viewers.md) — hidden, never
   destroyed, because an overlay's value lives in the DOM
+- [ADR-003: Global history budget](003-global-history-budget.md) — the undo/redo
+  byte budget is one figure for all open documents and bounds the undo+redo pair

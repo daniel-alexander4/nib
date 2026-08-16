@@ -134,18 +134,29 @@ func TestCommitBarrierAndTrim(t *testing.T) {
 	}
 	s := openTestServer(t, pdf)
 
+	// The rings live on the DOCUMENT now (P03.S04), so the assertions read the
+	// document's own stacks. The depth cap is the single-document behaviour the
+	// slice's premise pin promises is unchanged, so this test is also that clause's
+	// evidence — it would go red if the budget's move to the undo+redo pair had
+	// altered ordinary trimming.
+	doc := s.activeDoc()
 	for i := 0; i < maxUndoDepth+5; i++ {
-		s.commitMutation(s.activeDoc(), pdf, pdf)
+		s.commitMutation(doc, pdf, pdf)
 	}
-	if len(s.undo) != maxUndoDepth {
-		t.Errorf("undo depth = %d, want %d (oldest evicted)", len(s.undo), maxUndoDepth)
+	if len(doc.undo) != maxUndoDepth {
+		t.Errorf("undo depth = %d, want %d (oldest evicted)", len(doc.undo), maxUndoDepth)
 	}
-	if len(s.redo) != 0 {
-		t.Errorf("commitMutation must clear redo, got %d", len(s.redo))
+	if len(doc.redo) != 0 {
+		t.Errorf("commitMutation must clear redo, got %d", len(doc.redo))
 	}
 
-	s.commitBarrier(s.activeDoc(), pdf)
-	if len(s.undo) != 0 || len(s.redo) != 0 {
-		t.Errorf("barrier must clear history, got undo=%d redo=%d", len(s.undo), len(s.redo))
+	s.commitBarrier(doc, pdf)
+	if len(doc.undo) != 0 || len(doc.redo) != 0 {
+		t.Errorf("barrier must clear history, got undo=%d redo=%d", len(doc.undo), len(doc.redo))
+	}
+	// A barrier is not an eviction. Reporting it as one would tell the user their
+	// redaction cost them their undo history for memory reasons.
+	if doc.historyEvicted {
+		t.Error("commitBarrier marked the document as history-evicted")
 	}
 }

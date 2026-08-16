@@ -152,7 +152,7 @@ func (s *Server) handlePages(w http.ResponseWriter, r *http.Request) {
 		httpError(w, http.StatusNotFound, "no document open")
 		return
 	}
-	writeJSON(w, s.docResponse())
+	writeJSON(w, s.docResponse(doc))
 }
 
 // splitPages parses a comma-separated page selection ("1,3,5"); empty means all.

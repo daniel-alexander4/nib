@@ -240,7 +240,7 @@ func (s *Server) handleAssemble(w http.ResponseWriter, r *http.Request) {
 			httpError(w, http.StatusNotFound, "no document open")
 			return
 		}
-		writeJSON(w, s.docResponse())
+		writeJSON(w, s.docResponse(doc))
 		return
 	}
 	sendDownload(w, "flattened.pdf", "application/pdf", pdf)

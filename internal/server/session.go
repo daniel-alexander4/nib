@@ -473,11 +473,16 @@ func (s *Server) handleDoc(w http.ResponseWriter, r *http.Request) {
 	// Reports the addressed document. With one open document this resolves to the
 	// same answer as before; the 409 is what a client needs to tell "that tab is
 	// gone" from "nothing is open" — different facts driving different behaviour.
-	if _, err := s.docFor(r); err != nil {
+	doc, err := s.docFor(r)
+	if err != nil {
 		httpError(w, http.StatusConflict, "that document is no longer open")
 		return
 	}
-	writeJSON(w, s.docResponse())
+	// The resolved document is now REPORTED, not discarded. It was thrown away when
+	// docResponse took no argument and could only describe the active one — so a
+	// client polling /api/doc for an inactive document was answered about a
+	// different document entirely, with a 200 and no way to tell.
+	writeJSON(w, s.docResponse(doc))
 }
 
 // handleSessionInitiate runs the dialing side of a live co-signing session: it
@@ -553,8 +558,8 @@ func (s *Server) handleSessionInitiate(w http.ResponseWriter, r *http.Request) {
 		httpError(w, http.StatusBadGateway, "co-signing did not complete: "+err.Error())
 		return
 	}
-	s.setDoc(&document{data: final, sig: sign.Verify(final)})
-	writeJSON(w, s.docResponse())
+	installed := s.setDoc(&document{data: final, sig: sign.Verify(final)})
+	writeJSON(w, s.docResponse(installed))
 }
 
 // sendResult reports the outcome of a one-way send: Sent on a confirmed receipt,
