@@ -132,7 +132,7 @@ func TestCommitBarrierAndTrim(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s := &Server{doc: &document{data: pdf}}
+	s := openTestServer(t, pdf)
 
 	for i := 0; i < maxUndoDepth+5; i++ {
 		s.commitMutation(pdf, pdf)

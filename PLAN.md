@@ -937,7 +937,90 @@ do that fixing is the one reading this phase. The guard count was `~14`; it is
 **16**, measured twice (P01.S02's inventory, and again at this review). Counts in
 prose go stale — prefer citing the guard.
 
-Slices: sketched at phase-open.
+**(phase-open, 2026-08-16 — slices firmed against the codebase as it now stands
+and against the plan-review pins.)** Measured rather than inherited: **16** guard
+sites (the plan said ~14), **7** `setDoc` callers, and **29 of 78** registered
+routes touch document state directly — D15's "~30 of ~68" is right on the count
+and stale on the denominator, because P01 added routes.
+
+**S02 and S03 are split deliberately.** "The server accepts an optional id" is
+independently shippable and harmless; "the client always sends one" is a different
+claim needing a different guard. Landing them together would let the second hide
+inside the first's green — the exact shape of the plan-review's critical finding.
+
+**The all-tabs-stale pin cannot be discharged in this phase.** It says the case
+resolves to the launch empty state "not N error tabs" — and there are no tabs until
+P06, so N is 1 and the clause is unfalsifiable here. P03 delivers the 409 that makes
+it possible; the resolution **carries to P06**, on the mechanic P01.S03→S04 used.
+
+#### P03.S01 — the registry, behind one accessor *(done 2026-08-16, v1.103.9)*
+Scope: `s.doc` becomes an ordered registry + active id + a monotonic,
+epoch-prefixed counter, all behind one `activeDoc()` accessor. **Internal only** —
+no wire change, no behaviour change. Refs: D6, D7/ADR-001.
+
+Tasks:
+1. T01 — registry, `activeID`, counter and per-process epoch on `Server`.
+2. T02 — `activeDoc()` as the single accessor; the 16 sites keep their guard shape.
+3. T03 — `setDoc`'s 7 callers stay on **replace**; the replace-vs-add split is S05's.
+4. T04 — `docResponse()` and the commit helpers operate on the active document.
+5. T05 — the shape guard: 16 sites, each guard within 5 lines of its read.
+6. T06 — ids advance across close/reopen; two servers differ in epoch.
+7. T07 — the existing Go suite green and unchanged.
+
+Acceptance:
+- The registry holds the document and names it active — asserted on the **registry**,
+  not on app behaviour.
+- All 16 guards keep their shape; the count is asserted, not described.
+- Ids strictly increase across a close and reopen; two servers differ in epoch.
+- Every existing single-document test passes, **with no assertion changed**.
+  *This suite is a regression net, **not** evidence the registry works* — it passes
+  today and would pass against a registry that ignored ids entirely. The evidence
+  is S02's two-document probe.
+  **(reality drift, 2026-08-16: "unchanged" was too strong.)** Four tests
+  hand-constructed `&Server{doc: …}`, reaching past the accessor into a field the
+  registry removes, so they could not compile untouched. They now go through a
+  shared `openTestServer` helper that calls the real `setDoc` — which is better
+  than the original, since hand-assembling `docs`/`activeID`/`nextSeq`/`epoch` in a
+  test would be a second, silently-drifting copy of the id invariants ADR-001 turns
+  on. **No assertion changed**; the edits are construction only, and that is the
+  clause worth holding.
+- `setDoc` still replaces; nothing arrives as a new document yet.
+
+#### P03.S02 — the id on the wire
+Scope: `X-Nib-Doc` on document routes; `/api/pdf?doc=` (D15's named exception);
+optional, defaulting to active, for the CLI and pre-existing tests; **409** for an
+id the server does not hold, including an epoch mismatch; `/api/undo` and
+`/api/redo` stop being bodyless. Refs: D6, D15.
+Acceptance:
+- **The two-document probe** (P03's pinned criterion): address an operation to the
+  *inactive* document and assert the active one was untouched.
+- 409 is distinguishable from 404 in body as well as status.
+- An id from a previous process epoch is 409, not silently accepted.
+
+#### P03.S03 — the client always sends an id
+Scope: the critical pin's enforcement — `apiFetch` attaches the active view's id to
+every document route, so a call site cannot omit it by forgetting. Refs: D15's
+critical pin.
+Acceptance:
+- A tier-2 test asserts `X-Nib-Doc` on every document-route `apiFetch`, **proven red
+  by removing the attachment**.
+- `/api/pdf` carries its id as a query parameter, not a header (D15's exception).
+
+#### P03.S04 — per-document rings, one global budget
+Scope: D8 — rings per document, `maxUndoBytes` shared across all open documents and
+bounding the **undo+redo pair** (the 2× → 2N× pin), evicting inactive documents
+first and **observably** (the plan-review pin).
+Acceptance:
+- Single-document behaviour byte-identical.
+- Two documents past the budget evicts the inactive one, and the evicted document's
+  `canUndo` reads false — its own observation, red if eviction is silent.
+
+#### P03.S05 — arrivals open a new document
+Scope: D10 — `setDoc` splits into replace-active and add-new; the arrival paths
+(`session.go:252,549`) add. Refs: D10.
+Acceptance:
+- A completed co-sign adds a document rather than replacing the open one.
+- The other five `setDoc` callers still replace, asserted individually.
 
 ### P04 — Operation pinning, client side
 Goal: no operation acts on a document it did not capture at its start. Refs: D7.

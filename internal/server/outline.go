@@ -14,9 +14,7 @@ type outlineResponse struct {
 
 // handleOutlineGet reports the current document's bookmark outline (read-only GET).
 func (s *Server) handleOutlineGet(w http.ResponseWriter, r *http.Request) {
-	s.mu.Lock()
-	doc := s.doc
-	s.mu.Unlock()
+	doc := s.activeDoc()
 	if doc == nil {
 		httpError(w, http.StatusNotFound, "no document open")
 		return
