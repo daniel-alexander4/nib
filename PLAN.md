@@ -368,15 +368,56 @@ Acceptance:
 - A race between an in-flight op and a close cannot report success for
   discarded work.
 
-#### P01.S02 — Server: drop the document
+#### P01.S02 — Server: drop the document *(done 2026-08-16, v1.102.6)*
 Scope: `POST /api/close` → `setDoc(nil)`, which already clears both rings.
 Refs: D2.
+
+**(reality drift, 2026-08-16: the ring-clearing instrument could not fail)** The
+acceptance clause below used to justify itself with "`docResponse` computes
+`canUndo` from `len(s.undo)` **independently of `doc`**, so this detects an
+uncleared ring." **Refuted at `server.go:344-352`**: it computes `canUndo` under
+the lock and then returns the *zero struct* when `doc == nil`, discarding it. So
+`canUndo` is false after any close because the document is gone, not because the
+ring was cleared — the test would have passed unchanged against a server whose
+`setDoc(nil)` left the ring fully populated. Since the clause it discharges is a
+**phase** exit criterion about retained document bytes, the defect grades at the
+clause's severity, not the check's. The clause now asserts the ring directly; the
+server tests are `package server`, so `len(s.undo)` is available and resolves it
+exactly.
+
+**(grill pin: the in-flight clause needs no timing, 2026-08-16)** Exactly one
+lock acquisition decides it (`undo.go:37-41`, `:61-65`), so a test places the
+close *before* it deterministically. The concurrent probe is retained for the
+race detector but explicitly does not discharge the clause: a 404 cannot
+distinguish "the close landed inside the window" from "the close won outright",
+so a both-outcomes rule would be a proxy for window-visited rather than a
+measurement of it — the same coarser-than-the-clause defect just fixed above.
+
+Tasks:
+1. T01 — `handleClose`: `setDoc(nil)`, then `writeJSON(w, s.docResponse())`.
+2. T02 — register `POST /api/close` behind `requireUnlocked`.
+3. T03 — transition test: open → `/api/pdf` 200 → close → 404 + `no document open`.
+4. T04 — ring clearing asserted on the `*Server` directly, non-empty first.
+5. T05 — idempotency: close with nothing open, and close twice.
+6. T06 — close, then open another document.
+7. T07 — the in-flight clause, deterministically, on both commit helpers.
+8. T08 — `-race` probe: `/api/pages` concurrent with `/api/close`. **(reality
+   drift, 2026-08-16)** Its planned invariant — *no reply is ever 200 with an
+   empty `docResponse`* — is refuted by `pages.go:142-146`: the lock is released
+   between the successful commit and the `docResponse()` call, so a close landing
+   there yields a 200 with an empty body that is entirely correct. The probe now
+   asserts every reply is **200 or 404** — never a panic, a 500, or a dropped
+   connection. The commit-landed-or-404 property is T07's, and deterministic.
+9. T09 — post-close exposure: `/api/redact` 404s *after* a close.
+10. T10 — this amendment.
+
 Acceptance:
 - After close, `/api/pdf` 404s and `/api/doc` returns the empty `docResponse`.
-- Undo history is gone: `canUndo` **true before the close and false after** —
-  `docResponse` computes it from `len(s.undo)` independently of `doc`, so this
-  detects an uncleared ring; asserting only the post-close `false` would pass
-  against a server that never had history.
+- Undo history is gone: **`len(s.undo)` and `len(s.redo)` are both zero after the
+  close, with the undo ring asserted non-empty before it.** Asserting only the
+  post-close state would pass against a server that never had history, and
+  asserting it through `docResponse.canUndo` would pass against a server that
+  never cleared the ring (see the drift pin above).
 - `POST /api/close` with nothing open is idempotent: 200 and the empty
   `docResponse`, matching the `ErrNotEncrypted`-passes-through precedent (v1.57.0).
 - **(carried from P01.S01, 2026-08-15)** A close landing *while* one of the four
@@ -385,6 +426,7 @@ Acceptance:
   recorded the clause `not exercised`, because until this slice there was no way
   to make a close happen mid-operation. It is exercisable here and must actually
   be driven, not inherited as met.
+- Opening a document after a close works normally.
 
 #### P01.S03 — Client: the teardown
 Scope: `closeDocument()` mirroring `setDocumentFromServer` — bump `docGen`, the
@@ -564,6 +606,31 @@ Exit criteria:
 Slices: sketched at phase-open. **Deliberately after P06** — tabs work without it,
 and it is the one phase whose risk is process lifecycle rather than document
 state.
+
+**(reality drift, 2026-08-16, found during P01.S02's review sweep — premise
+correction only, the phase is not re-scoped)** The multi-document pending entry
+introduced P07 as *"new: nothing today handles an already-running nib"*. **That
+is false at the line.** `internal/singleton` exists; `cmd/nib/main.go:52` calls
+`singleton.ReplaceOthers()` behind a `--replace` flag; and `build/nib.desktop`
+ships `Exec=nib --replace %f`, so the desktop launcher passes it on every
+activation. `ReplaceOthers` **SIGTERMs every other process running the same
+executable** (`internal/singleton/singleton_linux.go`).
+
+So the real starting point is not "nothing handles it" but "it is handled by
+killing the other instance". P07 is therefore a **change of policy — replace-and-
+kill into hand-off-and-focus** — not a build from zero, and it inherits a working
+process-discovery mechanism rather than needing one.
+
+Two consequences worth carrying, neither actioned here:
+- **It interacts with P01.S04.** Opening a second PDF from the file manager
+  today SIGTERMs the running nib and discards whatever was open — no Close, no
+  unsaved-work prompt. So the confirm S04 adds is bypassable by the ordinary
+  double-click path until P07 lands. S04 should say so rather than imply the
+  prompt is unconditional.
+- **The Windows exit criterion is the sharper one**, because `nib register`
+  (v1.102.0) makes double-click the ordinary path there, and `ReplaceOthers`
+  matches on the executable — worth confirming that predicate on Windows during
+  P07 rather than assuming the Linux shape carries.
 
 ---
 
