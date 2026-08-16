@@ -120,7 +120,10 @@ export async function boot({ routes = {}, search = '' } = {}) {
   const table = { ...BOOT_ROUTES, ...routes };
   globalThis.fetch = async (url, opts = {}) => {
     const u = String(url);
-    calls.push({ url: u, method: opts.method || 'GET' });
+    // Headers are recorded, not just the URL: P03.S03's guard asserts that every
+    // document-route call carries X-Nib-Doc, and an unpinned call differs from a
+    // pinned one only by an absent header.
+    calls.push({ url: u, method: opts.method || 'GET', headers: { ...(opts.headers || {}) } });
     const key = Object.keys(table).find((k) => u.split('?')[0].endsWith(k));
     if (key === undefined) {
       throw new Error(

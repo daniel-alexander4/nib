@@ -250,6 +250,12 @@ type openRequest struct {
 // docResponse is the metadata returned after a document is opened or saved.
 // The PDF bytes themselves are fetched separately from /api/pdf.
 type docResponse struct {
+	// ID names this document on the wire — the client echoes it back on every
+	// document-touching request. Without it the client has nothing to send and
+	// every request silently takes docFor's compatibility default, which is the
+	// unpinned path D7 exists to prevent. Omitted when nothing is open, so the
+	// empty docResponse stays byte-identical to what it was before.
+	ID        string          `json:"id,omitempty"`
 	Name      string          `json:"name"`
 	Path      string          `json:"path"`            // empty => upload origin, no in-place save
 	CanSave   bool            `json:"canSave"`         // true when a save would overwrite Path
@@ -553,6 +559,7 @@ func (s *Server) docResponse() docResponse {
 		return docResponse{}
 	}
 	resp := docResponse{
+		ID:        doc.id.String(),
 		Name:      filepath.Base(doc.path),
 		Path:      doc.path,
 		CanSave:   doc.path != "",
