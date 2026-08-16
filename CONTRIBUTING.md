@@ -82,4 +82,7 @@ Nib does). Both are in tier 1, so they run first and for free.
 - **Keep docs in step with the code** in the same change, not afterwards.
 - `THIRD-PARTY-NOTICES.md` is generated — run `build/gen-notices.sh`, and
   `TestNoticesUpToDate` will tell you if you forgot.
+- **A new architectural decision gets an ADR in the same change** —
+  `docs/adr/`, numbered, with `_index.md` listing them. ADRs are immutable in
+  their decision content: supersede with a new one rather than editing an old one.
 - Licensed AGPLv3; the project ships as-is, with no warranty.

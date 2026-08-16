@@ -12,7 +12,8 @@ sidebar pin on P05.
 Stage 4 flat-spot passes 2026-08-15: ran to dry in two passes → D17 (`setDoc` is a
 seven-caller chokepoint), D18 + P07 (no single-instance path exists).
 Stage 5 standards alignment 2026-08-15: read `STANDARDS.md` in full → D19; P07 and
-P02 both replaced with proven house patterns; one open question for Dan (ADRs).
+P02 both replaced with proven house patterns; the ADR question raised there was
+answered 2026-08-16 (adopted — see D19).
 Stage 6 dimension reviews 2026-08-15: hot-path/security, host availability, scale,
 the crypto and verification SME packs, and "what haven't we looked at" → D9
 amended from a count cap to count+bytes, plus pins on P05 (the one hot path; the
@@ -34,8 +35,8 @@ This plan covers **one feature project inside the existing `nib` repo**: making
 Nib hold more than one document at a time, with per-document state preserved
 across switches, plus **Close view** and **Close all**. It is not a plan for nib
 as a whole — nib is a mature product (v1.102.2) with its own CLAUDE.md, release
-machinery, and repo laws, all of which govern here unchanged. (It has no ADR
-practice; see D19, where that is raised as a question rather than assumed.)
+machinery, and repo laws, all of which govern here unchanged. (It adopted ADRs on
+2026-08-16 — see D19.)
 
 ---
 
@@ -309,10 +310,17 @@ and D15's optional id leans on it: the UI ships embedded in the binary
 change needs no negotiation. The id is optional to keep ~20 existing tests and the
 CLI meaningful — not for client compatibility.
 
-**Question for Dan (does not block P01)** — §11 says a new architectural decision
-gets an ADR in the same change, and nib has no `docs/adr/` at all. D3 (per-view
-viewers) and D7 (the pinning law) are architecture by any reading. Adopting ADRs
-is a repo-wide convention change, so this plan does not impose one unilaterally.
+**Answered 2026-08-16 (Dan's call): ADRs adopted.** `docs/adr/` now holds
+**ADR-001 — operation pinning (D7)**, carrying the never-reuse-an-id pin as its
+load-bearing half, and **ADR-002 — one `PDFViewer` per document (D3)**, with
+`_index.md` recording why the corpus starts at two and why earlier decisions are
+deliberately not backfilled. `CLAUDE.md` and `CONTRIBUTING.md` both carry the rule.
+
+Why it mattered rather than being bookkeeping: **this plan retires when its build
+order is walked** (§15.6). Without ADRs, D7's law would go on constraining every
+future async operation while the only record of *what it protects against* — the
+13 corrupting sites, the `save()` case, the id-reuse trap — retired with the
+document that found them.
 
 ---
 
