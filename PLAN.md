@@ -1309,13 +1309,38 @@ The plan's counts came from a planning-time deepdive. Re-measured against the tr
   *category* is too broad to act on. Most post-await reads are of `pdfDocument`, the
   client's own rendering object — reading a stale one costs a stale render, not a
   corrupted file.
-- **"13 can corrupt"** → **confirmed exactly, 13**, and now with a mechanical
-  definition instead of a hand count: *an `apiFetch` on a **mutating** route that is
-  preceded by an `await` in the same function.* That is the actual corruption channel,
-  because `apiFetch` stamps the **current** `docMeta.id` while the payload was built
-  from the document that was current before the await. 56 post-await `apiFetch` calls
-  in total; 43 are read-only, where a wrong id costs a wrong answer rather than a wrong
-  write.
+- **"13 can corrupt"** → **the true number is 6**, and the "confirmed exactly 13"
+  recorded here at phase-open was **wrong**. See the correction below.
+
+**(correction, 2026-08-16, P04.S02 — the phase-open measurement was wrong and it agreed
+with the plan by coincidence.)** The scanner used at phase-open asked *"does the word
+`await` appear earlier in this function than the `apiFetch` call?"* In
+`const res = await apiFetch(...)` the word `await` sits **before** `apiFetch`, so a
+call that **is** its own first await counted as preceded by one. Eight functions were
+reported as corrupting that structurally cannot be — `runSanitize`, `postDecrypt`,
+`loadAttachments`, `extractAttachment`, `openOutlineEditor`, `doUndo`, `doRedo`, and
+`embedFlags` — and the total came to 13, matching the plan's number exactly. That match
+was reported as independent confirmation of the plan's count. It was a coincidence
+between two different errors.
+
+The corrected rule strips the introducer belonging to the call itself before looking for
+a preceding `await`. Re-measured:
+
+- **5 self-corrupting sites** — an await inside the function precedes its own mutating
+  call: `save` (S01), `runOCR`, `flattenPages`, `assembleBlob`, `compressBlob`.
+- **1 caller-corrupting site** — `embedFlags`, whose `apiFetch` *is* its own first
+  await, but which receives document-derived bytes from callers that have already
+  awaited to produce them. **A scan over await-ordering inside a function is
+  structurally blind to this shape**, so it is named in the code rather than left to the
+  guard.
+- **6 in total.** The other seven of the original eight take no document-derived payload
+  (`method`, `password`, `name`, or nothing) and act on the current document by
+  definition, so there is nothing for them to capture.
+
+The lesson is the one the plan already states about counts in prose, applied to a
+measurement: *the scanner is an instrument and needed its own red fixture.* It now has
+one — checked against a synthetic corrupting function and a synthetic safe one, rather
+than against the source it is meant to judge.
 - **"~25 mislabeling sites (all through `exportBase()`)"** → **20 call sites**, and the
   "all through `exportBase()`" half is exactly right.
 
@@ -1358,12 +1383,21 @@ Acceptance:
 - A guard lists exactly the **12** remaining unpinned mutating sites; a **new** one fails
   it. Red if the scan matches nothing.
 
-#### P04.S02 — the remaining twelve
-Scope: the other 12 mutating sites capture their document before their first `await`;
-the guard's allowlist empties. Refs: D7.
+#### P04.S02 — the remaining sites *(done 2026-08-16, v1.104.1)*
+Scope: the other mutating sites capture their document before their first `await`; the
+guard's allowlist empties. **Five, not twelve** — see the correction above, which this
+slice produced. Refs: D7.
+
+Capture point, decided here: a helper captures **at its own entry** via a default
+parameter, which is a defined moment before any await inside it — and a caller that has
+already awaited passes its own captured id explicitly, overriding. `els.reduceGo`,
+`sendableForm`, `saveForSigning` and `bakedBytes` are the callers where entry is already
+too late, and each captures at the top of the operation instead.
 Acceptance:
 - The guard's allowlist is **empty**, and the guard is still red against a newly
-  introduced unpinned site — proven by adding one.
+  introduced unpinned site — proven by unpinning each fixed site in turn.
+- The scanner has its own red fixture, because with an empty allowlist "no unpinned
+  sites" is both the pass and what a broken scanner reports.
 - Each site's behaviour is otherwise unchanged (the existing suites stay green).
 
 #### P04.S03 — exports are named for the document they came from
