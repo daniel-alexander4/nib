@@ -1297,8 +1297,84 @@ Exit criteria:
   actually exported.
 - A harness test proves the `save()` case: begin a save, switch documents mid-
   flight, and assert the *other* document's file is untouched.
-Slices: sketched at phase-open. **No user-visible output — this is the safety
-phase and it cannot be skipped.**
+**No user-visible output — this is the safety phase and it cannot be skipped.**
+
+**(phase-open, 2026-08-16 — slices firmed against the codebase as it now stands,
+with every count re-derived rather than inherited.)**
+
+The plan's counts came from a planning-time deepdive. Re-measured against the tree:
+
+- **"38 post-await document reads"** → the scan finds **19 async functions** holding
+  **~33** such reads. The number moved because prose counts do; more importantly, the
+  *category* is too broad to act on. Most post-await reads are of `pdfDocument`, the
+  client's own rendering object — reading a stale one costs a stale render, not a
+  corrupted file.
+- **"13 can corrupt"** → **confirmed exactly, 13**, and now with a mechanical
+  definition instead of a hand count: *an `apiFetch` on a **mutating** route that is
+  preceded by an `await` in the same function.* That is the actual corruption channel,
+  because `apiFetch` stamps the **current** `docMeta.id` while the payload was built
+  from the document that was current before the await. 56 post-await `apiFetch` calls
+  in total; 43 are read-only, where a wrong id costs a wrong answer rather than a wrong
+  write.
+- **"~25 mislabeling sites (all through `exportBase()`)"** → **20 call sites**, and the
+  "all through `exportBase()`" half is exactly right.
+
+**What makes this phase fixable at all is P03.** The remedy is to send the **captured**
+id, and that is only safe because ADR-001 guarantees ids are never reused: a captured id
+whose document is gone gets a **409 and the operation is refused**, rather than being
+silently redirected at whatever now holds that identity. The client-side law rests on
+the server-side one.
+
+#### P04.S01 — capture at the transport, and the worst site *(done 2026-08-16, v1.104.0)*
+Scope: `apiFetch` gains `docId` — an explicitly captured id that overrides the current
+one, the exact counterpart of S05's `unpinned`. `save()` captures its document before
+its first `await` and uses the captured id **and** the captured `canSave`. A guard test
+freezes the remaining unpinned sites so the set can only shrink. Refs: D7, ADR-001.
+Tasks:
+- T01 — `apiFetch` gains `docId`. Decided by **presence**, not truthiness: a caller that
+  captured a document and found no id has a bug, and falling back to the current id
+  would send exactly the request pinning exists to prevent, through the option meant to
+  stop it.
+- T02 — `save()` captures before its first `await`; the captured document supplies the
+  id, `canSave`, and the identity check before the badge/reload.
+- T03 — the scan guard, frozen as a **list** of the 12 remaining sites rather than a
+  count — a count sits still while one site is fixed and another introduced.
+- T04 — tier 1 proves the file-level property; tier 2 proves the client's half.
+
+**(diff-review findings, 2026-08-16, both fixed in slice)**
+- The post-save check compared `docMeta !== doc` by **object identity**, but
+  `setDocumentFromServer` builds a fresh meta object every run, including for the *same*
+  document — so any concurrent refresh would have reported "the document changed" and
+  silently skipped a reload that was owed. Compares ids now.
+- `apiFetch` decided pinning by truthiness, so a captured-but-missing id fell back to the
+  current one. Unreachable today (an open document always has an id), fixed anyway
+  because the failure mode is the phase's own defect arriving through its own remedy.
+
+Acceptance:
+- `save()` reads no document state after its first `await`.
+- Begin a save, change the document mid-flight, and the **other** document's file is
+  untouched — red against the code as it stands, where A's bytes are written to B's path.
+- A captured id whose document is gone yields a refusal, not a redirect.
+- A guard lists exactly the **12** remaining unpinned mutating sites; a **new** one fails
+  it. Red if the scan matches nothing.
+
+#### P04.S02 — the remaining twelve
+Scope: the other 12 mutating sites capture their document before their first `await`;
+the guard's allowlist empties. Refs: D7.
+Acceptance:
+- The guard's allowlist is **empty**, and the guard is still red against a newly
+  introduced unpinned site — proven by adding one.
+- Each site's behaviour is otherwise unchanged (the existing suites stay green).
+
+#### P04.S03 — exports are named for the document they came from
+Scope: `exportBase()` takes the captured document rather than reading `originalName`/
+`docMeta` at call time; its 20 call sites pass one. Refs: D7.
+Acceptance:
+- An export begun on A and resolving after the document changed is named for **A**.
+- Red against the current code, which names it for whatever is current when the blob
+  resolves.
+- The signing-workflow names (`-cosigned`, `-for-signing`) are covered by name, since
+  those are the ones where the filename is how a user tells two documents apart.
 
 ### P05 — Per-view state and viewers
 Goal: each document owns its viewer, its DOM and its state records. Refs: D3, D5,
