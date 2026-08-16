@@ -93,3 +93,31 @@ test('lastSig belongs to a view — the trust decision', () => {
   assert.match(APP, /misreports a cryptographic fact/,
     'the record no longer says why lastSig is safety-critical rather than cosmetic');
 });
+
+// P05.S02 — the bulk bindings, and the ONE hot path this feature has.
+//
+// `relayoutOverlays` runs on scroll and zoom. The dimension review pinned it because a
+// per-view refactor has an obvious wrong shape — iterate every open document's overlays,
+// so that a hidden view's fields are laid out too — and that turns the path a user feels
+// most into an N× regression. It must walk the ACTIVE view's fields and only those.
+test('relayoutOverlays walks one view, not every open document', () => {
+  const start = CODE.indexOf('function relayoutOverlays()');
+  assert.ok(start !== -1, 'relayoutOverlays is gone — the hot-path pin has nothing to bind to');
+  const fn = CODE.slice(start, CODE.indexOf('\n}', start));
+
+  assert.match(fn, /for \(const f of view\.overlayFields\)/,
+    'relayoutOverlays does not iterate the active view\'s fields');
+
+  // The wrong shape, named so it fails loudly rather than merely not matching above:
+  // any loop over a collection of views inside this function is the N× regression.
+  assert.doesNotMatch(fn, /\bviews\b|forEach\s*\(\s*\(?\s*v\b/,
+    'relayoutOverlays iterates more than one view — this is the N× regression on scroll and zoom that the hot-path pin exists to prevent');
+});
+
+test('the bulk bindings are per-view too', () => {
+  for (const name of ['pdfDocument', 'docMeta', 'overlayFields']) {
+    assert.doesNotMatch(CODE, new RegExp(`^(?:let|var|const)\\s+${name}\\b`, 'm'),
+      `${name} is still module-level — 220 references would all reach whichever document is active`);
+    assert.ok(CODE.includes(`view.${name}`), `${name} is not reached through the view record`);
+  }
+});

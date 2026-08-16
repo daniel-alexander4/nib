@@ -114,18 +114,23 @@ test('no mutating call is unpinned', () => {
     'an unpinned mutating call — its payload predates the id it is addressed with, so it acts on whatever document is current when the request goes out');
 });
 
+// The idiom changed in P05.S01/S02: `docMeta` became `view.docMeta` when document state
+// moved onto the view record. This guard was RE-DERIVED to the new idiom rather than
+// loosened until it passed — the distinction P03.S02 had to make when the registry
+// changed the resolution idiom out from under its guard, and the reason that one is
+// worth repeating: a regex widened to stop failing is a guard that has stopped guarding.
 test('save() is pinned, and reads nothing about the document after its first await', () => {
   const body = APP.slice(APP.indexOf('async function save()'));
   const end = body.indexOf('\n}\n');
   const fn = body.slice(0, end);
 
-  assert.match(fn, /const doc = docMeta;/,
+  assert.match(fn, /const doc = view\.docMeta;/,
     'save() does not capture its document before awaiting');
   assert.match(fn, /docId: doc\.id,/,
     'save() posts without naming the captured document — /api/save writes to the ADDRESSED document, so the bytes would land in another file');
   assert.match(fn, /if \(!doc\.canSave\)/,
     'save() reads canSave off the live docMeta after awaiting — it would download a file the user asked to overwrite, or overwrite one they asked to download');
-  assert.match(fn, /if \(!docMeta \|\| docMeta\.id !== doc\.id\) \{ toast\('Saved'\); return; \}/,
+  assert.match(fn, /if \(!view\.docMeta \|\| view\.docMeta\.id !== doc\.id\) \{ toast\('Saved'\); return; \}/,
     'save() updates the badge and reloads without checking the document is still the one it saved — and it must compare IDS, since a fresh meta object for the same document is not the same object');
 
   // And the capture must come BEFORE the first await, which is the whole property.
@@ -135,7 +140,7 @@ test('save() is pinned, and reads nothing about the document after its first awa
   // failing on its own documentation, which is the same class of error as the guard in
   // registry_test.go that once flagged a doc comment quoting the idiom it policed.
   const code = fn.split('\n').filter((l) => !l.trim().startsWith('//')).join('\n');
-  const capture = code.indexOf('const doc = docMeta;');
+  const capture = code.indexOf('const doc = view.docMeta;');
   const firstAwait = code.indexOf('await');
   assert.ok(capture !== -1, 'the capture line is not in save()');
   assert.ok(firstAwait !== -1, 'save() contains no await — the property under test does not apply, so this is not a pass');
