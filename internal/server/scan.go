@@ -62,7 +62,7 @@ func (s *Server) handleSanitize(w http.ResponseWriter, r *http.Request) {
 	// not-ok (not an error) so the UI can recommend the next method down. The
 	// open document is deliberately left as-is in both cases.
 	if err != nil || pdfops.Validate(result) != nil {
-		writeJSON(w, sanitizeResponse{docResponse: s.docResponse(), Ok: false})
+		writeJSON(w, sanitizeResponse{docResponse: s.docResponse(doc), Ok: false})
 		return
 	}
 
@@ -71,7 +71,7 @@ func (s *Server) handleSanitize(w http.ResponseWriter, r *http.Request) {
 		httpError(w, http.StatusNotFound, "no document open")
 		return
 	}
-	writeJSON(w, sanitizeResponse{docResponse: s.docResponse(), Ok: true, Residual: residual})
+	writeJSON(w, sanitizeResponse{docResponse: s.docResponse(doc), Ok: true, Residual: residual})
 }
 
 // decryptResponse reports a remove-password attempt: the usual document metadata,
@@ -129,9 +129,9 @@ func (s *Server) handleDecrypt(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		switch {
 		case errors.Is(err, pdfops.ErrWrongPassword):
-			writeJSON(w, decryptResponse{docResponse: s.docResponse(), Reason: "password"})
+			writeJSON(w, decryptResponse{docResponse: s.docResponse(doc), Reason: "password"})
 		case errors.Is(err, pdfops.ErrNotEncrypted):
-			writeJSON(w, decryptResponse{docResponse: s.docResponse(), Reason: "plain"})
+			writeJSON(w, decryptResponse{docResponse: s.docResponse(doc), Reason: "plain"})
 		default:
 			httpError(w, http.StatusInternalServerError, "could not remove protection")
 		}
@@ -141,5 +141,5 @@ func (s *Server) handleDecrypt(w http.ResponseWriter, r *http.Request) {
 		httpError(w, http.StatusNotFound, "no document open")
 		return
 	}
-	writeJSON(w, decryptResponse{docResponse: s.docResponse(), Ok: true})
+	writeJSON(w, decryptResponse{docResponse: s.docResponse(doc), Ok: true})
 }

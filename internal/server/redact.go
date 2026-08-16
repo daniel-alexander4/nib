@@ -71,7 +71,7 @@ func (s *Server) handleRedact(w http.ResponseWriter, r *http.Request) {
 		httpError(w, http.StatusNotFound, "no document open")
 		return
 	}
-	writeJSON(w, s.docResponse())
+	writeJSON(w, s.docResponse(doc))
 }
 
 // maxPageDim is PDF's largest legal page side in points (200 inches); any larger
