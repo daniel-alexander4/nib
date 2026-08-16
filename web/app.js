@@ -60,7 +60,7 @@ const els = {
   zoomInBtn: $('zoomInBtn'), zoomOutBtn: $('zoomOutBtn'), fitBtn: $('fitBtn'),
   sigBadge: $('sigBadge'), saveBtn: $('saveBtn'), statusCluster: $('statusCluster'),
   themeToggle: $('themeToggle'),
-  viewerWrap: $('viewerWrap'), viewerContainer: $('viewerContainer'),
+  viewerWrap: $('viewerWrap'), empty: $('empty'),
   thumbs: $('thumbs'), thumbGrid: $('thumbGrid'), outline: $('outline'),
   outlineModal: $('outlineModal'), outlineEditList: $('outlineEditList'),
   outlineAddBtn: $('outlineAddBtn'), outlineCancel: $('outlineCancel'), outlineSave: $('outlineSave'),
@@ -1232,21 +1232,6 @@ els.keyAddBtn.onclick = () => {
 };
 els.keyCreateBtn.onclick = () => addKey({ mode: 'create', keyPath: els.keyAddPath.value.trim() });
 
-// --- viewer wiring -----------------------------------------------------------
-const eventBus = new EventBus();
-const linkService = new PDFLinkService({ eventBus });
-const findController = new PDFFindController({ eventBus, linkService });
-const viewer = new PDFViewer({
-  container: els.viewerContainer,
-  eventBus,
-  linkService,
-  findController,
-  l10n: new GenericL10n('en-US'),
-  annotationMode: pdfjsLib.AnnotationMode.ENABLE_FORMS, // render fillable fields
-  imageResourcesPath: './vendor/pdfjs/images/', // sticky-note icons resolve here (see annotation-note.svg)
-});
-linkService.setViewer(viewer);
-
 // --- the view record ---------------------------------------------------------
 //
 // One open document's client-side state. Today exactly one view exists and `view` is
@@ -1264,8 +1249,12 @@ linkService.setViewer(viewer);
 // The three marked SAFETY below are not UI state. Sharing them does not produce a stale
 // label; it produces destroyed content, a broken promise to a counterparty, and a
 // misreported cryptographic fact, in that order.
+// Everything one view owns is built HERE, in one function, and that is deliberate:
+// this is the only place the four pdf.js objects and the two DOM nodes appear by bare
+// name, so every other site in the file must reach them through the record. The
+// source guard in view.test.mjs excludes exactly this function's body for that reason.
 function newView() {
-  return {
+  const v = {
     // SAFETY — marks drawn on this document, baked by /api/redact through
     // commitBarrier, which clears the undo history BY DESIGN. Marks belonging to one
     // document baked onto another is irreversible destruction with no path back: the
@@ -1300,7 +1289,122 @@ function newView() {
     // active view's. A version iterating every open document would turn that path into
     // an N x regression on the thing a user feels most (PLAN.md P05 hot-path pin).
     overlayFields: [],
+
+    // This view's own DOM and its own pdf.js engine (ADR-002). `container` is the scroll
+    // box; the page stack inside it is pdf.js's to own (it empties it on setDocument) and
+    // is reachable as `viewer.viewer`, so it is not duplicated here.
+    container: null,
+    viewer: null,
+    eventBus: null,
+    linkService: null,
+    findController: null,
   };
+
+  // The DOM, built VISIBLE and only then hidden by the caller if this is not the
+  // active view. That order is load-bearing: pdf.js's "container must be absolutely
+  // positioned" check is guarded by `container.offsetParent` (pdf_viewer.mjs:8000),
+  // which is null while the element is display:none — so constructing into a hidden
+  // container SKIPS the check rather than satisfying it, and it never re-runs. A
+  // mistake in .viewerContainer's CSS would then throw only for the first visible
+  // view and stay silent for every other one.
+  //
+  // Inserted before #empty so the launch message paints over an empty view rather
+  // than under it.
+  v.container = document.createElement('div');
+  v.container.className = 'viewerContainer';
+  const pagesEl = document.createElement('div');
+  pagesEl.className = 'pdfViewer viewerPages';
+  v.container.appendChild(pagesEl);
+  const isFirstView = els.viewerWrap.querySelector('.viewerContainer') === null;
+  els.viewerWrap.insertBefore(v.container, els.empty);
+
+  // Each of these four is per view because the vendored pdf.js forces it, not for
+  // tidiness — verified at the line during P05.S03's deepdive:
+  //   * PDFViewer's constructor registers 'thumbnailrendered' on the bus it is handed
+  //     (pdf_viewer.mjs:8065), so N viewers on one bus index _pages[] from each other's
+  //     events and cleanup() the wrong document's page.
+  //   * The same constructor MUTATES the find controller — onIsPageVisible (:8012) is
+  //     one slot, last writer wins.
+  //   * PDFFindController registers find/findbarclose/pagesedited on the bus (:927), so
+  //     one dispatch('find') makes every open document search at once and race to answer
+  //     the single counter.
+  //   * PDFLinkService holds one pdfViewer field and setViewer is 1:1 (:1582), so
+  //     outline clicks would drive the last-constructed viewer.
+  v.eventBus = new EventBus();
+  v.linkService = new PDFLinkService({ eventBus: v.eventBus });
+  v.findController = new PDFFindController({ eventBus: v.eventBus, linkService: v.linkService });
+  v.viewer = new PDFViewer({
+    container: v.container,
+    viewer: pagesEl, // explicit, so the page stack needs no id (pdf_viewer.mjs:7995)
+    eventBus: v.eventBus,
+    linkService: v.linkService,
+    findController: v.findController,
+    l10n: new GenericL10n('en-US'),
+    annotationMode: pdfjsLib.AnnotationMode.ENABLE_FORMS, // render fillable fields
+    imageResourcesPath: './vendor/pdfjs/images/', // sticky-note icons resolve here (see annotation-note.svg)
+  });
+  v.linkService.setViewer(v.viewer);
+
+  // One global that N viewers share, deliberately left alone: each PDFViewer's own
+  // ResizeObserver writes --viewer-container-height onto document.documentElement
+  // (pdf_viewer.mjs:9590), so a hidden view's 0px clobbers the active view's value. Inert
+  // in Nib — the only consumers are .dummyPage, created solely in presentation/spread
+  // mode (:8779), and a pdf.js sidebar we do not render — and _resetView pins
+  // ScrollMode.VERTICAL (:8733). It goes live the day spread or presentation mode does.
+
+  // Hidden AFTER construction, not before, and the order is the whole point: pdf.js's
+  // "container must be absolutely positioned" check is guarded by `container.offsetParent`
+  // (pdf_viewer.mjs:8000), which is null while the element is display:none. Constructing
+  // into an already-hidden container SKIPS that check rather than satisfying it, and it
+  // never re-runs — so a mistake in .viewerContainer's CSS would throw for the first
+  // visible view and stay silent for every later one. Hiding here means every view's
+  // geometry is validated by pdf.js, whichever order they are created in.
+  //
+  // Only the construction-time half lives here. SWITCHING (and the re-fit a hidden view
+  // needs, because its container reports clientWidth 0) is P05.S04's. Hidden, never
+  // destroyed: the page DOM stays, which is the whole of ADR-002.
+  v.container.hidden = !isFirstView;
+
+  // The bus is per view, so these registrations are per view too. Two kinds, and the
+  // difference is the whole point:
+  //
+  //   * Handlers that act on THIS view's own DOM take `v` and must never read the
+  //     module-level `view` — a background viewer firing while another is active would
+  //     otherwise pair this view's page geometry with the active view's field list, and
+  //     relayoutOverlays would move the active document's overlay elements into a
+  //     background page div.
+  //   * Handlers that write SHARED chrome — the page-number inputs, the thumbnail
+  //     highlight, the find counter — bail unless this view is the active one. A
+  //     background document finishing its load must not repaint the foreground's.
+  v.eventBus.on('pagesinit', () => {
+    // On a HIDDEN view this computes a negative scale — 'page-width' routes to
+    // (container.clientWidth - 40) / width, and clientWidth is 0 while display:none. It is
+    // left unclamped deliberately: P05.S04's re-fit on activation overwrites it, and
+    // papering over it here with a fallback width would hide the very measurement problem
+    // S04 exists to solve. Named because this is the FIRST place it bites, before
+    // fitWidestWidth's own guard.
+    v.viewer.currentScaleValue = 'page-width'; // immediate fit (page 1) so there's no 100%-then-fit flash…
+  });
+  // …then refine to the widest page once every page view is populated and the layout
+  // has settled (pagesinit is too early — see fitWidestWidth).
+  v.eventBus.on('pagesloaded', () => fitWidestWidth(v));
+  v.eventBus.on('pagechanging', (e) => {
+    if (v !== view) return;
+    all('.pageNum').forEach((i) => { i.value = e.pageNumber; });
+    markCurrentThumb(e.pageNumber);
+  });
+  v.eventBus.on('pagerendered', () => relayoutRedactMarks(v));
+  v.eventBus.on('scalechanging', () => relayoutRedactMarks(v));
+  v.eventBus.on('scalechanging', () => relayoutOverlays(v));
+  v.eventBus.on('pagerendered', () => relayoutOverlays(v));
+  v.eventBus.on('updatefindcontrolstate', ({ matchesCount }) => {
+    if (v === view) renderFindCount(matchesCount);
+  });
+  v.eventBus.on('updatefindmatchescount', ({ matchesCount }) => {
+    if (v === view) renderFindCount(matchesCount);
+  });
+
+  return v;
 }
 
 // The active view. Reassigned, never mutated wholesale, so a captured `view` reference
@@ -1325,17 +1429,6 @@ function signatureWarning() {
 function confirmSignatureLoss() {
   return !isSigned() || confirm('This document is signed. Editing it will invalidate the existing signature. Continue?');
 }
-
-eventBus.on('pagesinit', () => {
-  viewer.currentScaleValue = 'page-width'; // immediate fit (page 1) so there's no 100%-then-fit flash…
-});
-// …then refine to the widest page once every page view is populated and the layout
-// has settled (pagesinit is too early — see fitWidestWidth).
-eventBus.on('pagesloaded', fitWidestWidth);
-eventBus.on('pagechanging', (e) => {
-  all('.pageNum').forEach((i) => { i.value = e.pageNumber; });
-  markCurrentThumb(e.pageNumber);
-});
 
 // --- open / load -------------------------------------------------------------
 async function setDocumentFromServer(meta) {
@@ -1378,8 +1471,8 @@ async function setDocumentFromServer(meta) {
 
   const old = view.pdfDocument;
   view.pdfDocument = doc;
-  viewer.setDocument(view.pdfDocument);
-  linkService.setDocument(view.pdfDocument, null);
+  view.viewer.setDocument(view.pdfDocument);
+  view.linkService.setDocument(view.pdfDocument, null);
   // Free the superseded document's worker-side resources once the viewer and
   // link service have been repointed — without this, every edit op (each of
   // which reloads through here) orphans a document for the session's lifetime.
@@ -1434,8 +1527,8 @@ function closeDocument() {
 
   // pdf.js's own teardown: it cancels rendering, resets the view (emptying the
   // page DOM), and drops the find controller and the annotation editor manager.
-  viewer.setDocument(null);
-  linkService.setDocument(null, null);
+  view.viewer.setDocument(null);
+  view.linkService.setDocument(null, null);
   if (doc) doc.loadingTask.destroy().catch(() => {});
 
   view.docMeta = { canSave: false, path: '' };
@@ -2710,7 +2803,7 @@ async function buildThumbnails(gen = view.docGen) {
     els.thumbGrid.appendChild(wrap);
     await page.render({ canvasContext: canvas.getContext('2d'), viewport }).promise;
   }
-  markCurrentThumb(viewer.currentPageNumber || 1);
+  markCurrentThumb(view.viewer.currentPageNumber || 1);
 }
 
 function markCurrentThumb(n) {
@@ -2743,7 +2836,7 @@ function onThumbClick(e, n) {
   } else {
     selectedPages.clear();
     selAnchor = n;
-    viewer.currentPageNumber = n;
+    view.viewer.currentPageNumber = n;
   }
   markSelectedThumbs();
 }
@@ -2879,7 +2972,7 @@ let splitSrc = null; // offscreen render of the page being split
 
 async function openSplit() {
   if (!view.pdfDocument) return;
-  const page = await view.pdfDocument.getPage(viewer.currentPageNumber);
+  const page = await view.pdfDocument.getPage(view.viewer.currentPageNumber);
   const base = page.getViewport({ scale: 1 });
   const vp = page.getViewport({ scale: Math.min(2, 900 / base.width) });
   const cv = document.createElement('canvas');
@@ -2922,7 +3015,7 @@ function drawSplitPreview() {
 async function splitGo() {
   const { cols, rows } = splitGrid();
   if (cols * rows < 2) { toast('choose at least two pieces (more than one column or row)'); return; }
-  const page = viewer.currentPageNumber;
+  const page = view.viewer.currentPageNumber;
   els.splitModal.hidden = true;
   await pageOp('split', { page, cols, rows, resize: els.splitResize.checked });
 }
@@ -2964,12 +3057,12 @@ els.selMoveBackBtn.onclick = () => moveSelected(false);
 
 // Insert a blank page after the page on screen — a replace-in-place mutation, so
 // it routes through pageOp like rotate/delete (the blank matches the neighbour).
-els.insertBlankBtn.onclick = () => pageOp('insertblank', { page: viewer.currentPageNumber });
+els.insertBlankBtn.onclick = () => pageOp('insertblank', { page: view.viewer.currentPageNumber });
 
 // Duplicate the page on screen — the copy lands right after it (replace-in-place
 // mutation, same pageOp rail as insert-blank).
 els.duplicatePageBtn.onclick = async () => {
-  if (await pageOp('duplicate', { page: viewer.currentPageNumber })) toast('Page duplicated');
+  if (await pageOp('duplicate', { page: view.viewer.currentPageNumber })) toast('Page duplicated');
 };
 
 // Insert another PDF BEFORE the page on screen (before page 1 prepends; use
@@ -2978,7 +3071,7 @@ els.insertPdfBtn.onclick = () => els.insertPdfInput.click();
 els.insertPdfInput.onchange = async () => {
   const file = els.insertPdfInput.files[0];
   els.insertPdfInput.value = '';
-  if (file && await pageOp('insertpdf', { file, page: viewer.currentPageNumber })) toast('PDF inserted');
+  if (file && await pageOp('insertpdf', { file, page: view.viewer.currentPageNumber })) toast('PDF inserted');
 };
 
 // --- extract a page range into a new PDF -------------------------------------
@@ -3199,14 +3292,23 @@ els.splitRows.oninput = drawSplitPreview;
 
 // --- outline sidebar ---------------------------------------------------------
 async function buildOutline(gen = view.docGen) {
+  // Captured at entry, not read at click time. Each link's onclick escapes into the DOM
+  // and fires arbitrarily later, so resolving `view` inside it would navigate whichever
+  // document happened to be active then — ADR-001's law applied to a client-side
+  // closure. Same shape as P04's captured document id, for the same reason.
+  const owner = view;
   els.outline.innerHTML = '';
   const edit = document.createElement('button');
   edit.className = 'outline-edit';
   edit.textContent = 'Edit outline…';
   edit.onclick = openOutlineEditor;
   els.outline.appendChild(edit);
-  const outline = await view.pdfDocument.getOutline();
-  if (gen !== view.docGen) return; // a newer document loaded — drop this stale outline
+  const outline = await owner.pdfDocument.getOutline();
+  // Against the OWNER's token, not the active view's. `docGen` became per-view in S02 and
+  // every view starts at 0, so comparing a token captured from A's counter against B's
+  // counter is the id-reuse failure ADR-001 names: the comparison still passes, and A's
+  // stale outline renders while B is on screen.
+  if (gen !== owner.docGen) return; // a newer document loaded — drop this stale outline
   if (!outline || !outline.length) {
     const empty = document.createElement('div');
     empty.className = 'thumb-label';
@@ -3219,7 +3321,7 @@ async function buildOutline(gen = view.docGen) {
       const a = document.createElement('a');
       a.textContent = it.title;
       a.style.paddingLeft = 4 + depth * 12 + 'px';
-      a.onclick = () => linkService.goToDestination(it.dest);
+      a.onclick = () => owner.linkService.goToDestination(it.dest);
       els.outline.appendChild(a);
       if (it.items?.length) render(it.items, depth + 1);
     }
@@ -3281,7 +3383,7 @@ async function openOutlineEditor() {
 }
 els.outlineCancel.onclick = () => { els.outlineModal.hidden = true; };
 els.outlineAddBtn.onclick = () => {
-  view.outlineItems.push({ title: 'New bookmark', page: viewer.currentPageNumber || 1, level: 0 });
+  view.outlineItems.push({ title: 'New bookmark', page: view.viewer.currentPageNumber || 1, level: 0 });
   renderOutlineEditor();
 };
 els.outlineSave.onclick = async () => {
@@ -3311,8 +3413,8 @@ els.outlineSave.onclick = async () => {
 // (/api/images/{id}) or a data: URL for a generated stamp.
 async function placeStamp(bitmapUrl) {
   if (!view.pdfDocument) { toast('Open a PDF first'); return; }
-  const n = viewer.currentPageNumber;
-  const pv = viewer.getPageView(n - 1);
+  const n = view.viewer.currentPageNumber;
+  const pv = view.viewer.getPageView(n - 1);
   if (!pv?.div || !pv.viewport) { toast('Scroll the page into view, then try again'); return; }
   const base = (await view.pdfDocument.getPage(n)).getViewport({ scale: 1 }); // PDF points
   const gen = view.docGen;
@@ -3377,7 +3479,7 @@ function enableStampGestures(f, el, handle) {
   handle.addEventListener('pointerdown', begin('resize'));
   el.addEventListener('pointermove', (e) => {
     if (!mode) return;
-    const pv = viewer.getPageView(f.page - 1);
+    const pv = view.viewer.getPageView(f.page - 1);
     if (!pv?.div) return;
     const W = pv.div.clientWidth, H = pv.div.clientHeight;
     const dx = (e.clientX - sx) / W, dy = (e.clientY - sy) / H;
@@ -4274,8 +4376,8 @@ els.exportPngBtn.onclick = async () => {
   // Export name captured at operation entry — see exportBase (D7).
   const exportName = exportBase();
   if (!view.pdfDocument) return;
-  const [{ blob }] = await renderFilledPages(2, viewer.currentPageNumber);
-  openSaveAs(blob, exportName + '-page' + viewer.currentPageNumber + '.png', 'Export page (PNG)');
+  const [{ blob }] = await renderFilledPages(2, view.viewer.currentPageNumber);
+  openSaveAs(blob, exportName + '-page' + view.viewer.currentPageNumber + '.png', 'Export page (PNG)');
 };
 
 els.exportTextBtn.onclick = async () => {
@@ -4346,7 +4448,7 @@ async function exportTable(format) {
   // Export name captured at operation entry — see exportBase (D7).
   const exportName = exportBase();
   if (!view.pdfDocument) return toast('Open a PDF first');
-  const page = await view.pdfDocument.getPage(viewer.currentPageNumber);
+  const page = await view.pdfDocument.getPage(view.viewer.currentPageNumber);
   const grid = await extractTable(page);
   if (!grid.length) return toast('No text on this page to extract (a scanned page? run OCR first)');
   const res = await apiFetch('/api/table?format=' + format, {
@@ -4354,7 +4456,7 @@ async function exportTable(format) {
   });
   if (!res.ok) { toast('Could not build the spreadsheet'); return; }
   const ext = { csv: '.csv', ods: '.ods', xlsx: '.xlsx' }[format] || '.xlsx';
-  openSaveAs(await res.blob(), exportName + '-p' + viewer.currentPageNumber + '-table' + ext, 'Export table (' + format.toUpperCase() + ')');
+  openSaveAs(await res.blob(), exportName + '-p' + view.viewer.currentPageNumber + '-table' + ext, 'Export table (' + format.toUpperCase() + ')');
 }
 els.exportTableXlsxBtn.onclick = () => exportTable('xlsx');
 els.exportTableCsvBtn.onclick = () => exportTable('csv');
@@ -4378,7 +4480,7 @@ els.exportCertBtn.onclick = () => { window.location = '/api/identity'; };
 els.printBtn.onclick = async () => {
   if (!view.pdfDocument) return toast('Open a PDF first');
   // Print the real PDF bytes (WYSIWYG, vector) through the browser's own print
-  // dialog. Printing the on-screen #viewer would capture pdf.js's screen-DPI
+  // dialog. Printing the on-screen page stack would capture pdf.js's screen-DPI
   // page canvases plus the app chrome, not the document — so feed the same
   // baked bytes Save/Export use into a hidden iframe and print that. A hidden
   // iframe (not window.open) sidesteps popup blockers; the Blob URL must outlive
@@ -4581,7 +4683,7 @@ els.autofillBtn.onclick = async () => {
     if (profile[name] === undefined) continue;
     for (const o of arr) { view.pdfDocument.annotationStorage.setValue(o.id, { value: profile[name] }); count++; }
   }
-  viewer.refresh?.();
+  view.viewer.refresh?.();
   toast(count ? `Filled ${count} field(s) — review and Save` : 'No matching field names');
 };
 
@@ -4620,7 +4722,7 @@ els.redactBtn.onclick = () => {
   redactMode = !redactMode;
   if (redactMode) { setMarkerMode(null); exitSplitBox(); exitBorder(); exitCrop(); exitNote(); exitDropdown(); exitRadio(); exitShape(); } // one box tool at a time
   reflectRedact();
-  els.viewerContainer.style.cursor = redactMode ? 'crosshair' : '';
+  els.viewerWrap.style.cursor = redactMode ? 'crosshair' : '';
 };
 // Keep both the Edit-menu and toolbar redact buttons lit while redact mode is on.
 function reflectRedact() {
@@ -4646,9 +4748,34 @@ function pageContentRect(div) {
   return { left: r.left + bl, top: r.top + bt, width: r.width - bl - br, height: r.height - bt - bb };
 }
 
+// The ten drawing tools listen on the STABLE #viewerWrap rather than on a view's own
+// container, so that one binding serves every view including ones created later
+// (ADR-002). The wrap has two other children, and one of them matters: #signBanner
+// floats OVER the page with z-index 6, and today — as a sibling of the container — a
+// pointerdown on it does not reach these handlers at all. On the wrap it would, and
+// seven of the tools (splitBox, crop, border, dropdown, radio, shape, note) are not in
+// EDITING_TOOLS, so they stay armable while the banner is up: a click meant for
+// "Finish & sign" would land a note or start a drag on the page beneath it, because
+// pageAt hit-tests raw coordinates and knows nothing about what is painted on top.
+//
+// #empty needs no guard — it is pointer-events:none and display:none whenever a
+// document is open — but this asks the general question rather than naming the banner,
+// so a future child of the wrap is covered without anyone remembering to come back.
+//
+// Only pointerdown is guarded. Every pointermove/pointerup handler is already gated on
+// its own drag-state variable, which only a successful pointerdown sets, so they are
+// inert unless a drag is live. That also closes one narrow gap: a release over
+// #signBanner used to miss the container's pointerup entirely, stranding the drag state
+// non-null with an orphaned preview div. Only over the banner — the container is inset:0
+// on the wrap, so the two have identical geometry, and a release over the sidebar or the
+// toolbar still strands the drag exactly as before.
+function startedInActiveView(e) {
+  return e.target.closest('.viewerContainer') === view.container;
+}
+
 function pageAt(x, y) {
   for (let i = 0; i < (view.pdfDocument?.numPages || 0); i++) {
-    const pv = viewer.getPageView(i);
+    const pv = view.viewer.getPageView(i);
     const r = pv?.div?.getBoundingClientRect();
     if (r && x >= r.left && x <= r.right && y >= r.top && y <= r.bottom) {
       return { pv, n: i + 1, r: pageContentRect(pv.div) };
@@ -4662,8 +4789,9 @@ function sizeMark(div, r, a, b) {
   div.style.width = Math.abs(b.x - a.x) + 'px';
   div.style.height = Math.abs(b.y - a.y) + 'px';
 }
-els.viewerContainer.addEventListener('pointerdown', (e) => {
+els.viewerWrap.addEventListener('pointerdown', (e) => {
   if (!redactMode) return;
+  if (!startedInActiveView(e)) return;
   redHit = pageAt(e.clientX, e.clientY);
   if (!redHit) return;
   redStart = { x: e.clientX, y: e.clientY };
@@ -4673,10 +4801,10 @@ els.viewerContainer.addEventListener('pointerdown', (e) => {
   sizeMark(redDiv, redHit.r, redStart, redStart);
   e.preventDefault();
 });
-els.viewerContainer.addEventListener('pointermove', (e) => {
+els.viewerWrap.addEventListener('pointermove', (e) => {
   if (redStart) sizeMark(redDiv, redHit.r, redStart, { x: e.clientX, y: e.clientY });
 });
-els.viewerContainer.addEventListener('pointerup', (e) => {
+els.viewerWrap.addEventListener('pointerup', (e) => {
   if (!redStart) return;
   const r = redHit.r;
   const x0 = Math.min(redStart.x, e.clientX), y0 = Math.min(redStart.y, e.clientY);
@@ -4704,7 +4832,7 @@ els.applyRedactBtn.onclick = async () => {
   view.redactMarks = [];
   redactMode = false;
   reflectRedact();
-  els.viewerContainer.style.cursor = '';
+  els.viewerWrap.style.cursor = '';
   await setDocumentFromServer(await res.json());
   toast('Redacted — affected pages are now flattened images');
 };
@@ -4733,10 +4861,10 @@ function escapeRegExp(s) { return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
 // zoom, not just the page that was on screen when they were generated. (The boxes
 // are pure review overlays; the source of truth is view.redactMarks, which applyRedact
 // flattens page by page regardless of what's currently drawn.)
-function drawRedactMarks(pv, pageNum) {
+function drawRedactMarks(owner, pv, pageNum) {
   pv.div.querySelectorAll('.redactmark').forEach((el) => el.remove());
   const cr = pageContentRect(pv.div);
-  for (const m of view.redactMarks) {
+  for (const m of owner.redactMarks) {
     if (m.page !== pageNum) continue;
     const div = document.createElement('div');
     div.className = 'redactmark';
@@ -4747,19 +4875,26 @@ function drawRedactMarks(pv, pageNum) {
     pv.div.appendChild(div);
   }
 }
-function relayoutRedactMarks() {
-  // No marks → nothing to draw or sweep (marks only reach length 0 via a full
-  // document reload, which tears the boxes down with the old page DOM). Bail
-  // before the all-pages walk: this runs on every pagerendered/scalechanging,
-  // so it's scroll-hot-path work in the common no-marks case.
-  if (!view.pdfDocument || !view.redactMarks.length) return;
-  for (let i = 0; i < view.pdfDocument.numPages; i++) {
-    const pv = viewer.getPageView(i);
-    if (pv?.div) drawRedactMarks(pv, i + 1);
+// Takes the OWNING view, never the active one: this fires on that view's own bus, and
+// pairing one view's page geometry with another's marks is the SAFETY failure at the
+// top of newView(), reached without any document-wide selector.
+function relayoutRedactMarks(owner) {
+  // No marks → nothing to draw or sweep. Bail before the all-pages walk: this runs on
+  // every pagerendered/scalechanging, so it's scroll-hot-path work in the common
+  // no-marks case.
+  //
+  // The old note here said marks only reach length 0 via a full reload "which tears the
+  // boxes down with the old page DOM". ADR-002 retires that premise — a hidden view's
+  // page DOM is never torn down — so the bail is now justified only by the emptiness of
+  // the list, which is all it ever actually needed.
+  if (!owner.pdfDocument || !owner.redactMarks.length) return;
+  for (let i = 0; i < owner.pdfDocument.numPages; i++) {
+    const pv = owner.viewer.getPageView(i);
+    if (pv?.div) drawRedactMarks(owner, pv, i + 1);
   }
 }
-eventBus.on('pagerendered', relayoutRedactMarks);
-eventBus.on('scalechanging', relayoutRedactMarks);
+// Bound per view in newView() — the owning view is passed in, so a background
+// viewer's event lays out ITS marks and never the active document's.
 
 // scanTextMatches walks every page's text, runs each pattern over the per-row
 // reconstructed string (buildTextRows — the same per-character geometry the field
@@ -4854,7 +4989,7 @@ els.rtFind.onclick = async () => {
   }
   const pages = new Set(marks.map((m) => m.page));
   view.redactMarks.push(...marks); // {page,fx,fy,fw,fh}; drawn per page on render
-  relayoutRedactMarks();
+  relayoutRedactMarks(view);
   els.redactTextModal.hidden = true;
   toast(`${marks.length} match(es) marked on ${pages.size} page(s) — review the boxes (scroll to see them all), then “Apply redactions”.`);
 };
@@ -4870,22 +5005,27 @@ let sbStart = null, sbDiv = null, sbHit = null, sbPage = 0;
 function reflectSplitBox() {
   all('#splitBoxBtn, [data-forward="splitBoxBtn"]').forEach((b) => b.classList.toggle('active', splitBoxMode));
 }
+// View-scoped, not document-scoped. `all()` is document.querySelectorAll, and a
+// .splitmark only ever lives inside a page div — so under ADR-002 the document-wide
+// sweep this used to do reaches into every OTHER open document's page DOM and removes
+// regions the user drew there. Rooting at the view's own container is the fix; the
+// per-page model at drawRedactMarks is the same idea one level finer.
 function clearSplitRects() {
   splitRects = [];
-  all('.splitmark').forEach((d) => d.remove());
+  view.container.querySelectorAll('.splitmark').forEach((d) => d.remove());
 }
 function exitSplitBox() {
   if (!splitBoxMode) return;
   splitBoxMode = false;
   clearSplitRects();
   reflectSplitBox();
-  els.viewerContainer.style.cursor = '';
+  els.viewerWrap.style.cursor = '';
 }
 els.splitBoxBtn.onclick = () => {
   if (splitBoxMode) { exitSplitBox(); return; }
   if (!view.pdfDocument) return;
   splitBoxMode = true;
-  sbPage = viewer.currentPageNumber; // regions apply to the page you start on
+  sbPage = view.viewer.currentPageNumber; // regions apply to the page you start on
   setMarkerMode(null);
   exitBorder();
   exitShape();
@@ -4894,11 +5034,12 @@ els.splitBoxBtn.onclick = () => {
   if (redactMode) { redactMode = false; reflectRedact(); }
   if (editMode) { editMode = false; reflectEdit(); }
   reflectSplitBox();
-  els.viewerContainer.style.cursor = 'crosshair';
+  els.viewerWrap.style.cursor = 'crosshair';
 };
 
-els.viewerContainer.addEventListener('pointerdown', (e) => {
+els.viewerWrap.addEventListener('pointerdown', (e) => {
   if (!splitBoxMode) return;
+  if (!startedInActiveView(e)) return;
   sbHit = pageAt(e.clientX, e.clientY);
   if (!sbHit || sbHit.n !== sbPage) return; // only the page the split started on
   sbStart = { x: e.clientX, y: e.clientY };
@@ -4908,10 +5049,10 @@ els.viewerContainer.addEventListener('pointerdown', (e) => {
   sizeMark(sbDiv, sbHit.r, sbStart, sbStart);
   e.preventDefault();
 });
-els.viewerContainer.addEventListener('pointermove', (e) => {
+els.viewerWrap.addEventListener('pointermove', (e) => {
   if (sbStart) sizeMark(sbDiv, sbHit.r, sbStart, { x: e.clientX, y: e.clientY });
 });
-els.viewerContainer.addEventListener('pointerup', (e) => {
+els.viewerWrap.addEventListener('pointerup', (e) => {
   if (!sbStart) return;
   const r = sbHit.r;
   const x0 = Math.min(sbStart.x, e.clientX), y0 = Math.min(sbStart.y, e.clientY);
@@ -4934,7 +5075,7 @@ els.applyBoxSplitBtn.onclick = async () => {
   splitBoxMode = false;
   clearSplitRects();
   reflectSplitBox();
-  els.viewerContainer.style.cursor = '';
+  els.viewerWrap.style.cursor = '';
   const ok = await pageOp('splitrects', { page, rects: JSON.stringify(rects) });
   if (ok) toast(rects.length === 1
     ? `Page ${page} replaced by 1 region`
@@ -4954,9 +5095,10 @@ let cropStart = null, cropDiv = null, cropHit = null, cropPage = 0;
 function reflectCrop() {
   all('#cropBtn, [data-forward="cropBtn"]').forEach((b) => b.classList.toggle('active', cropMode));
 }
+// View-scoped for the same reason as clearSplitRects above.
 function clearCropRect() {
   cropRect = null;
-  all('.cropmark').forEach((d) => d.remove());
+  view.container.querySelectorAll('.cropmark').forEach((d) => d.remove());
 }
 function exitCrop() {
   if (!cropMode) return;
@@ -4964,13 +5106,13 @@ function exitCrop() {
   clearCropRect();
   els.cropModal.hidden = true;
   reflectCrop();
-  els.viewerContainer.style.cursor = '';
+  els.viewerWrap.style.cursor = '';
 }
 els.cropBtn.onclick = () => {
   if (cropMode) { exitCrop(); return; }
   if (!view.pdfDocument) return;
   cropMode = true;
-  cropPage = viewer.currentPageNumber; // the box is measured in this page's space
+  cropPage = view.viewer.currentPageNumber; // the box is measured in this page's space
   setMarkerMode(null);
   exitBorder();
   exitShape();
@@ -4979,12 +5121,13 @@ els.cropBtn.onclick = () => {
   if (redactMode) { redactMode = false; reflectRedact(); }
   if (editMode) { editMode = false; reflectEdit(); }
   reflectCrop();
-  els.viewerContainer.style.cursor = 'crosshair';
+  els.viewerWrap.style.cursor = 'crosshair';
   toast('Draw the area to keep, then confirm');
 };
 
-els.viewerContainer.addEventListener('pointerdown', (e) => {
+els.viewerWrap.addEventListener('pointerdown', (e) => {
   if (!cropMode) return;
+  if (!startedInActiveView(e)) return;
   cropHit = pageAt(e.clientX, e.clientY);
   if (!cropHit || cropHit.n !== cropPage) return; // measure on the page you started on
   clearCropRect(); // a single keep-rectangle: a fresh draw replaces the old one
@@ -4995,10 +5138,10 @@ els.viewerContainer.addEventListener('pointerdown', (e) => {
   sizeMark(cropDiv, cropHit.r, cropStart, cropStart);
   e.preventDefault();
 });
-els.viewerContainer.addEventListener('pointermove', (e) => {
+els.viewerWrap.addEventListener('pointermove', (e) => {
   if (cropStart) sizeMark(cropDiv, cropHit.r, cropStart, { x: e.clientX, y: e.clientY });
 });
-els.viewerContainer.addEventListener('pointerup', (e) => {
+els.viewerWrap.addEventListener('pointerup', (e) => {
   if (!cropStart) return;
   const r = cropHit.r;
   const x0 = Math.min(cropStart.x, e.clientX), y0 = Math.min(cropStart.y, e.clientY);
@@ -5044,14 +5187,15 @@ els.editTextBtn.onclick = () => {
   if (editMode && redactMode) { redactMode = false; reflectRedact(); } // one box tool at a time
   if (editMode) { setMarkerMode(null); exitSplitBox(); exitBorder(); exitCrop(); exitNote(); exitDropdown(); exitRadio(); exitShape(); }
   reflectEdit();
-  els.viewerContainer.style.cursor = editMode ? 'crosshair' : '';
+  els.viewerWrap.style.cursor = editMode ? 'crosshair' : '';
 };
 function reflectEdit() {
   all('#editTextBtn, [data-forward="editTextBtn"]').forEach((b) => b.classList.toggle('active', editMode));
 }
 
-els.viewerContainer.addEventListener('pointerdown', (e) => {
+els.viewerWrap.addEventListener('pointerdown', (e) => {
   if (!editMode) return;
+  if (!startedInActiveView(e)) return;
   edHit = pageAt(e.clientX, e.clientY);
   if (!edHit) return;
   edStart = { x: e.clientX, y: e.clientY };
@@ -5061,10 +5205,10 @@ els.viewerContainer.addEventListener('pointerdown', (e) => {
   sizeMark(edDiv, edHit.r, edStart, edStart);
   e.preventDefault();
 });
-els.viewerContainer.addEventListener('pointermove', (e) => {
+els.viewerWrap.addEventListener('pointermove', (e) => {
   if (edStart) sizeMark(edDiv, edHit.r, edStart, { x: e.clientX, y: e.clientY });
 });
-els.viewerContainer.addEventListener('pointerup', async (e) => {
+els.viewerWrap.addEventListener('pointerup', async (e) => {
   if (!edStart) return;
   const r = edHit.r, hit = edHit;
   const x0 = Math.min(edStart.x, e.clientX), y0 = Math.min(edStart.y, e.clientY);
@@ -5219,8 +5363,8 @@ function setSignLocked(locked) {
   view.signLocked = locked;
   if (locked) { // leaving any active editing tool behind would be a dead, disabled mode
     setMarkerMode(null);
-    if (redactMode) { redactMode = false; reflectRedact(); els.viewerContainer.style.cursor = ''; }
-    if (editMode) { editMode = false; reflectEdit(); els.viewerContainer.style.cursor = ''; }
+    if (redactMode) { redactMode = false; reflectRedact(); els.viewerWrap.style.cursor = ''; }
+    if (editMode) { editMode = false; reflectEdit(); els.viewerWrap.style.cursor = ''; }
   }
   applySignLock();
 }
@@ -5261,12 +5405,13 @@ function setMarkerMode(m) {
     exitNote(); exitDropdown(); exitRadio();
   }
   all('.markers button').forEach((b) => b.classList.toggle('active', b.dataset.marker === m));
-  els.viewerContainer.style.cursor = m ? 'crosshair' : '';
+  els.viewerWrap.style.cursor = m ? 'crosshair' : '';
 }
 
 // A single click on the page drops a default-sized marker centred at the click.
-els.viewerContainer.addEventListener('pointerdown', (e) => {
+els.viewerWrap.addEventListener('pointerdown', (e) => {
   if (!markerMode) return;
+  if (!startedInActiveView(e)) return;
   const hit = pageAt(e.clientX, e.clientY);
   if (!hit) return;
   e.preventDefault();
@@ -5290,7 +5435,7 @@ function convertFieldToFlag(field, type) {
   const top = Math.max(0, Math.min(fy0, fy1 - fh));
   removeField(field, false); // internal transform — not its own undo step
   const f = buildMarker(type, [fx0, top, fx1, fy1], field.page, false);
-  const pv = viewer.getPageView(field.page - 1);
+  const pv = view.viewer.getPageView(field.page - 1);
   if (pv?.div) { pv.div.appendChild(f.el); layoutField(f, pv); }
   return f;
 }
@@ -5361,7 +5506,7 @@ function enableMarkerGestures(f, el) {
   });
   el.addEventListener('pointermove', (e) => {
     if (!down || !flagsEditable()) return; // a recipient signs but can't reshape the layout
-    const pv = viewer.getPageView(f.page - 1); if (!pv?.div) return;
+    const pv = view.viewer.getPageView(f.page - 1); if (!pv?.div) return;
     const W = pv.div.clientWidth, H = pv.div.clientHeight;
     if (Math.abs(e.clientX - down.x) + Math.abs(e.clientY - down.y) > 3) moved = true;
     const [x0, y0, x1, y1] = down.frac, w = x1 - x0, h = y1 - y0;
@@ -5430,7 +5575,7 @@ async function fillTextMarker(f) {
 // placeIntoMarker swaps a marker for a real image stamp fitted inside the marker
 // box (aspect preserved), then advances to the next marker in document order.
 async function placeIntoMarker(f, src) {
-  const pv = viewer.getPageView(f.page - 1);
+  const pv = view.viewer.getPageView(f.page - 1);
   if (!pv?.div) return toast('Scroll the page into view, then try again');
   const base = (await view.pdfDocument.getPage(f.page)).getViewport({ scale: 1 });
   const next = nextMarkerAfter(f);
@@ -5517,7 +5662,7 @@ function reconstructFlags(flags) {
     const frac = fl.frac.map((n) => Math.max(0, Math.min(1, +n || 0)));
     buildMarker(fl.type, frac, page, false); // load on open — not an undoable edit
   }
-  relayoutOverlays(); // attach flags on already-rendered pages; the rest follow on pagerendered
+  relayoutOverlays(view); // attach flags on already-rendered pages; the rest follow on pagerendered
   showSignBanner();
 }
 
@@ -5681,7 +5826,7 @@ els.removeOriginalsBtn.onclick = async () => {
   if (!res.ok) return toast('could not flatten edits');
   view.overlayFields = view.overlayFields.filter((f) => { if (f.kind === 'edit' && pages.includes(f.page)) { f.el.remove(); return false; } return true; });
   editMode = false; reflectEdit();
-  els.viewerContainer.style.cursor = '';
+  els.viewerWrap.style.cursor = '';
   await setDocumentFromServer(await res.json());
   toast('Edits flattened — original text removed on edited page(s)');
 };
@@ -5801,7 +5946,7 @@ async function refreshRecent() {
 let activeTool = null;
 function setTool(mode) {
   activeTool = activeTool === mode ? null : mode;
-  viewer.annotationEditorMode = {
+  view.viewer.annotationEditorMode = {
     mode: activeTool ? pdfjsLib.AnnotationEditorType[activeTool] : pdfjsLib.AnnotationEditorType.NONE,
   };
   if (activeTool) { exitBorder(); exitNote(); exitDropdown(); exitRadio(); exitShape(); } // Nib-side tools, not pdf.js modes — one at a time
@@ -5833,7 +5978,7 @@ let recentHlColors = DEFAULT_HL_COLORS.slice();
 let selectedHlColor = DEFAULT_HL_COLORS[0];
 
 function applyHighlightColor(hex) {
-  eventBus.dispatch('switchannotationeditorparams', {
+  view.eventBus.dispatch('switchannotationeditorparams', {
     source: window,
     type: pdfjsLib.AnnotationEditorParamsType.HIGHLIGHT_COLOR,
     value: hex,
@@ -5894,7 +6039,7 @@ function exitBorder() {
   if (!borderMode) return;
   borderMode = false;
   reflectBorder();
-  els.viewerContainer.style.cursor = '';
+  els.viewerWrap.style.cursor = '';
 }
 const clampWeight = (v) => Math.min(10, Math.max(1, Number(v) || 2)); // points
 
@@ -5910,11 +6055,12 @@ els.borderBtn.onclick = () => {
   exitCrop();
   exitNote(); exitDropdown(); exitRadio();
   reflectBorder();
-  els.viewerContainer.style.cursor = 'crosshair';
+  els.viewerWrap.style.cursor = 'crosshair';
 };
 
-els.viewerContainer.addEventListener('pointerdown', (e) => {
+els.viewerWrap.addEventListener('pointerdown', (e) => {
   if (!borderMode) return;
+  if (!startedInActiveView(e)) return;
   bdHit = pageAt(e.clientX, e.clientY);
   if (!bdHit) return;
   bdStart = { x: e.clientX, y: e.clientY };
@@ -5925,10 +6071,10 @@ els.viewerContainer.addEventListener('pointerdown', (e) => {
   sizeMark(bdDiv, bdHit.r, bdStart, bdStart);
   e.preventDefault();
 });
-els.viewerContainer.addEventListener('pointermove', (e) => {
+els.viewerWrap.addEventListener('pointermove', (e) => {
   if (bdStart) sizeMark(bdDiv, bdHit.r, bdStart, { x: e.clientX, y: e.clientY });
 });
-els.viewerContainer.addEventListener('pointerup', async (e) => {
+els.viewerWrap.addEventListener('pointerup', async (e) => {
   if (!bdStart) return;
   const hit = bdHit, start = bdStart;
   bdDiv.remove();
@@ -5965,7 +6111,7 @@ function makeBox(frac, opts) {
   enableStampGestures(f, el, handle);
 
   view.overlayFields.push(f);
-  const pv = viewer.getPageView(f.page - 1);
+  const pv = view.viewer.getPageView(f.page - 1);
   pv.div.appendChild(el);
   layoutField(f, pv);
   recordAdd(f);
@@ -5982,7 +6128,7 @@ function exitDropdown() {
   if (!dropdownMode) return;
   dropdownMode = false;
   reflectDropdown();
-  els.viewerContainer.style.cursor = '';
+  els.viewerWrap.style.cursor = '';
 }
 els.dropdownBtn.onclick = () => {
   if (dropdownMode) { exitDropdown(); return; }
@@ -5998,10 +6144,11 @@ els.dropdownBtn.onclick = () => {
   exitBorder();
   exitShape();
   reflectDropdown();
-  els.viewerContainer.style.cursor = 'crosshair';
+  els.viewerWrap.style.cursor = 'crosshair';
 };
-els.viewerContainer.addEventListener('pointerdown', (e) => {
+els.viewerWrap.addEventListener('pointerdown', (e) => {
   if (!dropdownMode) return;
+  if (!startedInActiveView(e)) return;
   ddHit = pageAt(e.clientX, e.clientY);
   if (!ddHit) return;
   ddStart = { x: e.clientX, y: e.clientY };
@@ -6011,10 +6158,10 @@ els.viewerContainer.addEventListener('pointerdown', (e) => {
   sizeMark(ddDiv, ddHit.r, ddStart, ddStart);
   e.preventDefault();
 });
-els.viewerContainer.addEventListener('pointermove', (e) => {
+els.viewerWrap.addEventListener('pointermove', (e) => {
   if (ddStart) sizeMark(ddDiv, ddHit.r, ddStart, { x: e.clientX, y: e.clientY });
 });
-els.viewerContainer.addEventListener('pointerup', async (e) => {
+els.viewerWrap.addEventListener('pointerup', async (e) => {
   if (!ddStart) return;
   const hit = ddHit, start = ddStart;
   ddDiv.remove();
@@ -6057,7 +6204,7 @@ function makeDropdown(frac, opts) {
   enableStampGestures(f, el, handle);
 
   view.overlayFields.push(f);
-  const pv = viewer.getPageView(f.page - 1);
+  const pv = view.viewer.getPageView(f.page - 1);
   pv.div.appendChild(el);
   layoutField(f, pv);
   recordAdd(f);
@@ -6075,7 +6222,7 @@ function exitRadio() {
   if (!radioMode) return;
   radioMode = false;
   reflectRadio();
-  els.viewerContainer.style.cursor = '';
+  els.viewerWrap.style.cursor = '';
 }
 els.radioBtn.onclick = () => {
   if (radioMode) { exitRadio(); return; }
@@ -6092,10 +6239,11 @@ els.radioBtn.onclick = () => {
   exitShape();
   radioMode = true;
   reflectRadio();
-  els.viewerContainer.style.cursor = 'crosshair';
+  els.viewerWrap.style.cursor = 'crosshair';
 };
-els.viewerContainer.addEventListener('pointerdown', (e) => {
+els.viewerWrap.addEventListener('pointerdown', (e) => {
   if (!radioMode) return;
+  if (!startedInActiveView(e)) return;
   rdHit = pageAt(e.clientX, e.clientY);
   if (!rdHit) return;
   rdStart = { x: e.clientX, y: e.clientY };
@@ -6105,10 +6253,10 @@ els.viewerContainer.addEventListener('pointerdown', (e) => {
   sizeMark(rdDiv, rdHit.r, rdStart, rdStart);
   e.preventDefault();
 });
-els.viewerContainer.addEventListener('pointermove', (e) => {
+els.viewerWrap.addEventListener('pointermove', (e) => {
   if (rdStart) sizeMark(rdDiv, rdHit.r, rdStart, { x: e.clientX, y: e.clientY });
 });
-els.viewerContainer.addEventListener('pointerup', async (e) => {
+els.viewerWrap.addEventListener('pointerup', async (e) => {
   if (!rdStart) return;
   const hit = rdHit, start = rdStart;
   rdDiv.remove();
@@ -6151,7 +6299,7 @@ function makeRadio(frac, opts) {
   enableStampGestures(f, el, handle);
 
   view.overlayFields.push(f);
-  const pv = viewer.getPageView(f.page - 1);
+  const pv = view.viewer.getPageView(f.page - 1);
   pv.div.appendChild(el);
   layoutField(f, pv);
   recordAdd(f);
@@ -6190,7 +6338,7 @@ function exitShape() {
   if (!shapeMode) return;
   shapeMode = false;
   reflectShape();
-  els.viewerContainer.style.cursor = '';
+  els.viewerWrap.style.cursor = '';
 }
 els.shapeBtn.onclick = () => {
   if (shapeMode) { exitShape(); return; }
@@ -6205,7 +6353,7 @@ els.shapeBtn.onclick = () => {
   exitNote(); exitDropdown(); exitRadio();
   exitBorder();
   reflectShape();
-  els.viewerContainer.style.cursor = 'crosshair';
+  els.viewerWrap.style.cursor = 'crosshair';
 };
 all('.shapetype').forEach((b) => {
   b.onclick = () => { shapeType = b.dataset.shape; all('.shapetype').forEach((x) => x.classList.toggle('active', x === b)); };
@@ -6273,8 +6421,9 @@ function shapeMarkPNG(wPts, hPts, f) {
   return cv.toDataURL('image/png').split(',')[1];
 }
 
-els.viewerContainer.addEventListener('pointerdown', (e) => {
+els.viewerWrap.addEventListener('pointerdown', (e) => {
   if (!shapeMode) return;
+  if (!startedInActiveView(e)) return;
   shHit = pageAt(e.clientX, e.clientY);
   if (!shHit) return;
   shStart = { x: e.clientX, y: e.clientY };
@@ -6283,7 +6432,7 @@ els.viewerContainer.addEventListener('pointerdown', (e) => {
   shHit.pv.div.appendChild(shCanvas);
   e.preventDefault();
 });
-els.viewerContainer.addEventListener('pointermove', (e) => {
+els.viewerWrap.addEventListener('pointermove', (e) => {
   if (!shStart) return;
   const r = shHit.r;
   const w = clampWeight(els.borderWidthInput.value);
@@ -6294,7 +6443,7 @@ els.viewerContainer.addEventListener('pointermove', (e) => {
   shCanvas.width = Math.max(1, Math.round(g.w)); shCanvas.height = Math.max(1, Math.round(g.h));
   paintShape(shCanvas.getContext('2d'), shCanvas.width, shCanvas.height, shapeType, els.shapeFill.checked, selectedHlColor, w, g.from, g.to);
 });
-els.viewerContainer.addEventListener('pointerup', async (e) => {
+els.viewerWrap.addEventListener('pointerup', async (e) => {
   if (!shStart) return;
   const hit = shHit, start = shStart;
   shCanvas.remove(); shStart = null; shCanvas = null; shHit = null;
@@ -6338,7 +6487,7 @@ function makeShape(frac, opts) {
   enableStampGestures(f, el, handle);
 
   view.overlayFields.push(f);
-  const pv = viewer.getPageView(f.page - 1);
+  const pv = view.viewer.getPageView(f.page - 1);
   pv.div.appendChild(el);
   layoutField(f, pv);
   recordAdd(f);
@@ -6354,7 +6503,7 @@ function exitNote() {
   if (!noteMode) return;
   noteMode = false;
   reflectNote();
-  els.viewerContainer.style.cursor = '';
+  els.viewerWrap.style.cursor = '';
 }
 els.noteBtn.onclick = () => {
   if (noteMode) { exitNote(); exitDropdown(); exitRadio(); return; }
@@ -6369,10 +6518,11 @@ els.noteBtn.onclick = () => {
   exitBorder();
   exitShape();
   reflectNote();
-  els.viewerContainer.style.cursor = 'crosshair';
+  els.viewerWrap.style.cursor = 'crosshair';
 };
-els.viewerContainer.addEventListener('pointerdown', async (e) => {
+els.viewerWrap.addEventListener('pointerdown', async (e) => {
   if (!noteMode) return;
+  if (!startedInActiveView(e)) return;
   const hit = pageAt(e.clientX, e.clientY);
   if (!hit) return;
   e.preventDefault();
@@ -6413,7 +6563,7 @@ function makeNote(frac, opts) {
   enableStampGestures(f, el, handle);
 
   view.overlayFields.push(f);
-  const pv = viewer.getPageView(f.page - 1);
+  const pv = view.viewer.getPageView(f.page - 1);
   pv.div.appendChild(el);
   layoutField(f, pv);
   recordAdd(f);
@@ -6500,11 +6650,11 @@ function detachField(f) {
 }
 function reattachField(f) {
   view.overlayFields.push(f);
-  const pv = viewer.getPageView(f.page - 1);
+  const pv = view.viewer.getPageView(f.page - 1);
   if (pv?.div) { pv.div.appendChild(f.el); layoutField(f, pv); }
 }
 function layoutFieldNow(f) {
-  const pv = viewer.getPageView(f.page - 1);
+  const pv = view.viewer.getPageView(f.page - 1);
   if (pv?.div) layoutField(f, pv);
 }
 // recordAdd / deleteField are the recorded create/remove used by the overlay
@@ -6610,7 +6760,7 @@ function resetSharedDocState() {
   activeTool = null;
   document.querySelectorAll('[data-mode]:not(.cmmode)').forEach((b) => b.classList.remove('active'));
   reflectAnnoControls();
-  els.viewerContainer.style.cursor = '';
+  els.viewerWrap.style.cursor = '';
 }
 // clearDetected drops only auto-detected fields (text/check/circleone), keeping
 // user-placed stamps, text edits, and sign/date/initial markers so re-running
@@ -6647,17 +6797,20 @@ function layoutField(f, pv) {
   // the baked text instead of being sized from the box height.
   else if (f.kind === 'edit') f.el.style.fontSize = (f.size * W / f.pageW) + 'px';
 }
-function relayoutOverlays() {
-  for (const f of view.overlayFields) {
-    const pv = viewer.getPageView(f.page - 1);
+// HOT PATH — runs on scroll and zoom. It walks ONE view's fields, the owning one, and
+// never a collection of views: a version iterating every open document turns the path a
+// user feels most into an N x regression (PLAN.md P05 hot-path pin).
+function relayoutOverlays(owner) {
+  for (const f of owner.overlayFields) {
+    const pv = owner.viewer.getPageView(f.page - 1);
     if (pv?.div && pv.viewport) {
       if (f.el.parentElement !== pv.div) pv.div.appendChild(f.el);
       layoutField(f, pv);
     }
   }
 }
-eventBus.on('scalechanging', relayoutOverlays);
-eventBus.on('pagerendered', relayoutOverlays);
+// Bound per view in newView(), with the owning view passed in — see the hot-path
+// note on relayoutOverlays above.
 
 // page-fraction (top-left origin) -> PDF points (bottom-left origin)
 function rectPoints(f, frac) {
@@ -6799,8 +6952,8 @@ async function bakedForm() {
 els.detectBtn.onclick = async () => {
   if (!view.pdfDocument) { toast('Open a PDF first'); return; }
   clearDetected();
-  const n = viewer.currentPageNumber;
-  const pv = viewer.getPageView(n - 1);
+  const n = view.viewer.currentPageNumber;
+  const pv = view.viewer.getPageView(n - 1);
   if (!pv?.div || !pv.viewport) { toast('Scroll the page into view, then try again'); return; }
 
   // Render the page to an offscreen canvas at a consistent resolution, so
@@ -6990,13 +7143,13 @@ els.saveBtn.onclick = save;
 
 // Page navigation + zoom: the toolbar buttons and the keyboard shortcuts share
 // these, so the bounds logic lives in one place.
-function prevPage() { if (view.pdfDocument && viewer.currentPageNumber > 1) viewer.currentPageNumber--; }
-function nextPage() { if (view.pdfDocument && viewer.currentPageNumber < view.pdfDocument.numPages) viewer.currentPageNumber++; }
-function firstPage() { if (view.pdfDocument) viewer.currentPageNumber = 1; }
-function lastPage() { if (view.pdfDocument) viewer.currentPageNumber = view.pdfDocument.numPages; }
-function zoomIn() { viewer.currentScale = viewer.currentScale * 1.15; }
-function zoomOut() { viewer.currentScale = viewer.currentScale / 1.15; }
-function fitWidth() { fitWidestWidth(); }
+function prevPage() { if (view.pdfDocument && view.viewer.currentPageNumber > 1) view.viewer.currentPageNumber--; }
+function nextPage() { if (view.pdfDocument && view.viewer.currentPageNumber < view.pdfDocument.numPages) view.viewer.currentPageNumber++; }
+function firstPage() { if (view.pdfDocument) view.viewer.currentPageNumber = 1; }
+function lastPage() { if (view.pdfDocument) view.viewer.currentPageNumber = view.pdfDocument.numPages; }
+function zoomIn() { view.viewer.currentScale = view.viewer.currentScale * 1.15; }
+function zoomOut() { view.viewer.currentScale = view.viewer.currentScale / 1.15; }
+function fitWidth() { fitWidestWidth(view); }
 // fitWidestWidth fits the WIDEST page in the document to the container width and
 // locks it as a NUMERIC scale, so a mixed-size document scrolls smoothly. A named
 // 'page-width' re-fits to whichever page scrolls into view (pdf.js recomputes it
@@ -7015,26 +7168,30 @@ function fitWidth() { fitWidestWidth(); }
 // 72pt→96px conversion), so the scale that fits maxW points into `avail` CSS pixels
 // is avail / maxW / PDF_TO_CSS_UNITS. Dropping that divisor zooms every page 4/3 too
 // wide — the widest page then overflows.
-function fitWidestWidth() {
-  if (!view.pdfDocument) return;
+function fitWidestWidth(owner) {
+  if (!owner.pdfDocument) return;
   let maxW = 0;
-  for (let i = 0; i < view.pdfDocument.numPages; i++) {
-    const vp = viewer.getPageView(i)?.viewport;
+  for (let i = 0; i < owner.pdfDocument.numPages; i++) {
+    const vp = owner.viewer.getPageView(i)?.viewport;
     if (vp) {
       const w = vp.width / vp.scale; // rendered display width in points (rotation applied)
       if (w > maxW) maxW = w;
     }
   }
-  const avail = els.viewerContainer.clientWidth - 40; // 40 = pdf.js SCROLLBAR_PADDING
+  // The owning view's container, not the active one's — and a HIDDEN container reports
+  // clientWidth 0, so `avail` goes negative and the guard below makes this a silent
+  // no-op. That is ADR-002's stated consequence, and re-fitting on activation is
+  // P05.S04's; this slice must not paper over it with a fallback width.
+  const avail = owner.container.clientWidth - 40; // 40 = pdf.js SCROLLBAR_PADDING
   if (maxW > 0 && avail > 0) {
-    viewer.currentScale = avail / maxW / pdfjsLib.PixelsPerInch.PDF_TO_CSS_UNITS;
+    owner.viewer.currentScale = avail / maxW / pdfjsLib.PixelsPerInch.PDF_TO_CSS_UNITS;
   }
 }
 els.prevBtn.onclick = prevPage;
 els.nextBtn.onclick = nextPage;
 all('.pageNum').forEach((input) => input.addEventListener('change', () => {
   const n = Number(input.value);
-  if (view.pdfDocument && n >= 1 && n <= view.pdfDocument.numPages) viewer.currentPageNumber = n;
+  if (view.pdfDocument && n >= 1 && n <= view.pdfDocument.numPages) view.viewer.currentPageNumber = n;
 }));
 els.zoomInBtn.onclick = zoomIn;
 els.zoomOutBtn.onclick = zoomOut;
@@ -7068,14 +7225,14 @@ window.addEventListener('wheel', (e) => {
   const pixelMode = e.deltaMode === WheelEvent.DOM_DELTA_PIXEL;
   if (pixelMode && !ctrlHeld) {
     // Trackpad pinch: continuous factor per event.
-    viewer.updateScale({ scaleFactor: 2 ** (-e.deltaY / 100), origin, drawingDelay: 400 });
+    view.viewer.updateScale({ scaleFactor: 2 ** (-e.deltaY / 100), origin, drawingDelay: 400 });
   } else {
     // Notched wheel: one zoom step per notch, same 1.15 factor as the buttons.
     wheelTicks += -e.deltaY / (pixelMode ? 100 : e.deltaMode === WheelEvent.DOM_DELTA_LINE ? 3 : 1);
     const steps = Math.trunc(wheelTicks);
     if (steps) {
       wheelTicks -= steps;
-      viewer.updateScale({ scaleFactor: 1.15 ** steps, origin, drawingDelay: 400 });
+      view.viewer.updateScale({ scaleFactor: 1.15 ** steps, origin, drawingDelay: 400 });
     }
   }
 }, { passive: false });
@@ -7092,7 +7249,7 @@ let lastDpr = devicePixelRatio;
 function dprChanged() {
   if (devicePixelRatio === lastDpr) return;
   lastDpr = devicePixelRatio;
-  if (view.pdfDocument) viewer.refresh();
+  if (view.pdfDocument) view.viewer.refresh();
 }
 window.addEventListener('resize', dprChanged);
 function watchDpr() {
@@ -7112,7 +7269,7 @@ const findInput = () => document.querySelector('.searchInput');
 function runFind(again = false, previous = false) {
   const input = findInput();
   if (!input) return;
-  eventBus.dispatch('find', {
+  view.eventBus.dispatch('find', {
     type: again ? 'again' : '', query: input.value,
     caseSensitive: false, highlightAll: true, findPrevious: previous,
   });
@@ -7142,8 +7299,8 @@ function renderFindCount(matchesCount) {
   els.findCount.textContent = !findInput()?.value ? '' : total ? `${current}/${total}` : '0/0';
   els.findPrevBtn.disabled = els.findNextBtn.disabled = total === 0;
 }
-eventBus.on('updatefindcontrolstate', ({ matchesCount }) => renderFindCount(matchesCount));
-eventBus.on('updatefindmatchescount', ({ matchesCount }) => renderFindCount(matchesCount));
+// Bound per view in newView(). The find counter is SHARED chrome, so those two
+// registrations bail unless the firing view is the active one.
 
 // sidebar tabs
 document.querySelectorAll('.tab').forEach((tab) => {

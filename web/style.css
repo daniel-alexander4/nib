@@ -607,12 +607,14 @@ input[type="search"] { width: 100%; }
   border: 1px solid var(--surface1); box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
   pointer-events: none;
 }
-#viewerContainer {
+/* One per open document (ADR-002), so these are classes rather than ids. The
+   absolute positioning is not cosmetic: PDFViewer's constructor throws without it. */
+.viewerContainer {
   position: absolute;
   inset: 0;
   overflow: auto;
 }
-#viewer { margin: 16px auto; }
+.viewerPages { margin: 16px auto; }
 .redactmark {
   position: absolute;
   background: rgba(0, 0, 0, 0.85);
