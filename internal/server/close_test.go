@@ -77,7 +77,7 @@ func TestCloseClearsBothRings(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s := &Server{doc: &document{data: pdf}}
+	s := openTestServer(t, pdf)
 
 	// Populate BOTH rings: two commits fill undo, one undo moves a state across.
 	s.commitMutation(pdf, pdf)
@@ -92,7 +92,7 @@ func TestCloseClearsBothRings(t *testing.T) {
 	if len(s.undo) != 0 || len(s.redo) != 0 {
 		t.Errorf("close must clear both rings, got undo=%d redo=%d", len(s.undo), len(s.redo))
 	}
-	if s.doc != nil {
+	if s.activeDoc() != nil {
 		t.Error("close must drop the document")
 	}
 }
@@ -155,7 +155,7 @@ func TestCommitAfterCloseIsRefused(t *testing.T) {
 		{"commitBarrier", func(s *Server) bool { return s.commitBarrier(pdf) }},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			s := &Server{doc: &document{data: pdf}}
+			s := openTestServer(t, pdf)
 			// The non-zero probe: the identical call must succeed with a
 			// document open, or a helper that always returned false would pass.
 			if !tc.commit(s) {
