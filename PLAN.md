@@ -752,7 +752,38 @@ Acceptance:
 - Proven red once, naming the assertion expected to break.
 - The ceiling written in the script.
 
-#### P02.S04 — Tier 3: P01's end-to-end acceptance, retroactively
+#### P02.S04 — Tier 3: P01's end-to-end acceptance, retroactively *(done 2026-08-16, v1.103.4)*
+
+**(grill pin, 2026-08-16: this is the last tier, which changes the rules.)** S02
+could record a row `not exercised — tier 3 owns it` because a tier 3 was coming.
+Nothing comes after this one, so a row this slice cannot exercise is **filed as a
+standing gap**, never delegated. Stated up front so the convenient verdict is not
+reached for at the end.
+
+**(measured before the grill)** Driving the real app found three steps no reading
+would have predicted, each surfaced by Playwright refusing to click an invisible
+element: the Open dialog must be opened before `#pathInput` can be filled; the
+sign/date/initial flags are **not** under `Sign` (`SIDEBAR_FOR.sign` is
+`['library']` — the Flags panel belongs to `collaborate`, `app.js:6901-6907`); and
+the working sequence is open → `[data-tab="collaborate"]` → `[data-marker="date"]`
+→ click a page, verified to place **1 `.ovl`**. That last result is what makes
+`overlayFields` and `overlayHistory` — S02's two `not exercised` rows — reachable
+here.
+
+Tasks:
+1. T01 — `test/ui/fixtures.mjs`: a generated PDF, parameterized by page count.
+2. T02 — explicit, counted dialog handling in the harness (Playwright
+   auto-dismisses by default, which silently means "cancel").
+3. T03 — the P01 flow: prompt, cancel-leaves-untouched, confirm, empty state
+   **including the thumbnail grid**, which tier 2 could not assert.
+4. T04 — `overlayFields` alone.
+5. T05 — `overlayHistory` alone (place then delete).
+6. T06 — the mid-build thumbnail close on 80 pages, in-flight count captured
+   **at close time**.
+7. T07 — `/api/close` failure injected; nothing tears down.
+8. T08 — reopen after close.
+9. T09 — proven red, naming the assertion.
+
 Scope: script the flows driven by hand during P01 — the empty state value-for-value
 against the launch markup, Close/cancel/confirm, reopen, the mid-build thumbnail
 close, and the injected-failure path.
