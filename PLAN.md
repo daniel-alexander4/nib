@@ -1103,14 +1103,81 @@ Acceptance:
   by removing the attachment**.
 - `/api/pdf` carries its id as a query parameter, not a header (D15's exception).
 
-#### P03.S04 — per-document rings, one global budget
+#### P03.S04 — per-document rings, one global budget *(done 2026-08-16, v1.103.12)*
 Scope: D8 — rings per document, `maxUndoBytes` shared across all open documents and
 bounding the **undo+redo pair** (the 2× → 2N× pin), evicting inactive documents
 first and **observably** (the plan-review pin).
+
+**(reality drift, 2026-08-16, deepdive)** the slice's stated scope is a data-structure
+move and its real load-bearing task is a wire change. `docResponse()` takes no argument
+and reads the **active** document plus the two server-global rings (`server.go:552-557`),
+so "the evicted document's own observation" does not exist to be asserted; 25 call sites
+must pass the document they resolved. Found by tracing the seam, not visible from the
+slice as written.
+
+**(reality drift, 2026-08-16, deepdive — pre-existing defect on this slice's lines)**
+`docResponse` releases `s.mu` at `server.go:557` and *then* reads `doc.path`, `doc.sig`
+and `doc.data`. That is a live data race against `undo.go:54`, demonstrated with `-race`
+on an ordinary `/api/doc` + `/api/pages` pair — it reproduces today, with one document,
+on a user running two browser panes. Not introduced here; fixed here as T01 because T02
+rewrites the same lines (Dan's call, 2026-08-16).
+
+**(premise pin, 2026-08-16, Dan's call)** the acceptance clause "single-document
+behaviour byte-identical" predates the plan-review's undo+redo pin and contradicts it:
+counting redo toward the budget *is* a change to single-document behaviour, taking one
+document's ceiling from ~512 MiB across the two stacks to 256 MiB. The premise is struck,
+the requirement kept — behaviour is identical wherever the depth cap binds, which with
+`maxUndoDepth = 30` against ordinary PDFs is every realistic case, and deliberately
+different above 256 MiB. The pin exists so the ledger cannot report "byte-identical"
+against a reading that silently excluded the case the pin added.
+
+**(scope note, 2026-08-16)** eviction is **unreachable through the GUI** until P05 lands
+arrivals — the real app cannot open a second document — so no clause of this slice is
+exercisable at tier 3. Tier 1 drives the registry directly; tier 3 stays in the run as a
+regression check that single-document undo/redo is untouched. Those are different claims
+and the ledger reports them as different rows.
+
+Tasks:
+- T01 — `docResponse(doc *document)`: the response is built entirely under one lock hold
+  and re-checks registration inside it. Closes the race above; the `-race` probe that
+  found it is kept as a standing fixture.
+- T02 — `undo`/`redo` move from `Server` onto `document`; clear/trim become
+  document-scoped; the 25 `docResponse()` call sites pass their resolved document.
+- T03 — `trimHistoryLocked`: total = undo+redo across **all** documents against one
+  `maxUndoBytes`; inactive documents' histories are evicted **whole** (entry-by-entry
+  cannot converge when the bytes sit in redo, and a partially-truncated history is the
+  silent eviction the pin refuses), then the active document's undo trims as today.
+- T04 — `historyEvicted` on the document and on the wire: the pin's own observation,
+  because `canUndo:false` alone is indistinguishable from "you never had any history".
+- T05 — tests: eviction fires and is red if silent; the evicted document's own
+  `docResponse` reads false; single-document depth behaviour unchanged.
+
+Defaults taken (logged, reversible):
+- Eviction order among inactive documents is **open order, oldest first**. LRU is the
+  better model but there is no last-active signal to record until switching exists (P06);
+  filed rather than faked.
+- `maxUndoBytes` becomes the **global** figure, not per-document — per-document would be
+  256N MiB, which is what the pin refuses.
+- The budget is a bound with one named exception, not a hard cap: the active document
+  always keeps its last undo entry, as today.
+
+**(diff-review finding, 2026-08-16)** `trimHistoryLocked`'s parameter was named
+`active` and was in fact *the document that just grew* — different documents whenever an
+operation is addressed to an inactive one, which is the case this phase exists to
+support. The eviction pass therefore skipped the addressed document and evicted the
+genuinely active one: the acceptance clause inverted, green against all five eviction
+tests, because every one of them grows the active document and cannot tell the two
+apart. Fixed with a three-tier order and a dedicated regression test; recorded in
+ADR-003, because the same conflation is the natural way to write it.
+
 Acceptance:
-- Single-document behaviour byte-identical.
+- Single-document behaviour unchanged wherever the depth cap binds (see the premise pin).
 - Two documents past the budget evicts the inactive one, and the evicted document's
   `canUndo` reads false — its own observation, red if eviction is silent.
+- Eviction is distinguishable from never-having-had-history on the wire (the T04 flag),
+  red if the only evidence is `canUndo:false`.
+- `/api/doc` concurrent with a mutation is clean under `-race`, red against the code as
+  it stood before this slice.
 
 #### P03.S05 — arrivals open a new document
 Scope: D10 — `setDoc` splits into replace-active and add-new; the arrival paths

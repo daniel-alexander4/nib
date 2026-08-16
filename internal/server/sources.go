@@ -50,6 +50,6 @@ func (s *Server) handleOpenURL(w http.ResponseWriter, r *http.Request) {
 		httpError(w, http.StatusUnsupportedMediaType, "URL did not return a PDF")
 		return
 	}
-	s.setDoc(&document{path: "", data: data, sig: sign.Verify(data)})
-	writeJSON(w, s.docResponse())
+	installed := s.setDoc(&document{path: "", data: data, sig: sign.Verify(data)})
+	writeJSON(w, s.docResponse(installed))
 }

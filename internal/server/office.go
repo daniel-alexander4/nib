@@ -51,8 +51,8 @@ func (s *Server) handleOffice(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	s.setDoc(&document{path: "", data: pdf, sig: sign.Verify(pdf)})
-	resp := s.docResponse()
+	installed := s.setDoc(&document{path: "", data: pdf, sig: sign.Verify(pdf)})
+	resp := s.docResponse(installed)
 	// Present the converted PDF under the source name with a .pdf extension.
 	base := strings.TrimSuffix(header.Filename, filepath.Ext(header.Filename))
 	resp.Name = base + ".pdf"
