@@ -1215,7 +1215,7 @@ async function setDocumentFromServer(meta) {
   const gen = ++docGen;
   docMeta = meta;
   if (meta.name && meta.name !== '.') originalName = meta.name;
-  clearOverlays();
+  resetSharedDocState(); // was clearOverlays() — see the four modes it never covered
   let doc;
   try {
     doc = await pdfjsLib.getDocument({ url: '/api/pdf?t=' + Date.now() }).promise;
@@ -1256,6 +1256,60 @@ async function setDocumentFromServer(meta) {
   // Sidebars are non-essential; a build failure must not break the load.
   buildThumbnails(gen).catch((e) => console.error('thumbnails failed', e));
   buildOutline(gen).catch((e) => console.error('outline failed', e));
+}
+
+// closeDocument puts the open document down and returns the app to exactly the
+// state it launches in — the client half of POST /api/close (v1.102.6).
+//
+// It has NO caller yet, deliberately: P01.S04 adds the Close control in the File
+// toolbar and the unsaved-work confirm that guards it, and that is what makes
+// this live. Until then the teardown is complete but unreachable from the UI,
+// which is also why its behaviour is verified through the open path (which shares
+// resetSharedDocState) rather than by driving a Close.
+//
+// Order is load-bearing in two places. pdfDocument is nulled FIRST, before
+// anything that can throw, so a failure part-way through cannot leave a
+// half-closed state that poisons the next open. And applySignLock reads
+// !!pdfDocument, so it must run after that null for the whole sign surface to
+// drive itself closed.
+//
+// docGen is bumped so in-flight sidebar builds bail — necessary, but not
+// sufficient on its own: see the generation re-check in buildThumbnails, which
+// would otherwise append into the grid this function just cleared.
+function closeDocument() {
+  const doc = pdfDocument;
+  pdfDocument = null;
+  docGen++;
+
+  els.compareModal.hidden = true;
+  closeCmpDoc();
+  resetSharedDocState();
+
+  // pdf.js's own teardown: it cancels rendering, resets the view (emptying the
+  // page DOM), and drops the find controller and the annotation editor manager.
+  viewer.setDocument(null);
+  linkService.setDocument(null, null);
+  if (doc) doc.loadingTask.destroy().catch(() => {});
+
+  docMeta = { canSave: false, path: '' };
+  originalName = '';
+  docHadFlags = false;
+  signLocked = false;
+  els.signBanner.hidden = true;
+  updateBadge(null); // resets lastSig, the badge, and the details button together
+
+  // Back to the launch markup, not merely to something empty (index.html).
+  els.viewerWrap.classList.remove('has-doc');
+  els.saveBtn.disabled = true;
+  els.saveBtn.title = 'Save (overwrites the original)';
+  all('.pageCount').forEach((s) => { s.textContent = '/ 0'; });
+  all('.pageNum').forEach((i) => { i.value = 1; });
+  els.thumbGrid.innerHTML = '';
+  clearSelection();
+  els.outline.innerHTML = '';
+
+  applySignLock();
+  setDocControls(false);
 }
 
 async function openPath(path) {
@@ -1521,7 +1575,10 @@ let cmpAlignTried = false; // whether fingerprinting+alignment has run for this 
 
 function closeCmpDoc() {
   cmpSeq++; // teardown participates in the render token: in-flight aligns/paints bail instead of reading the nulled doc
-  if (cmpDoc) { cmpDoc.loadingTask.destroy(); cmpDoc = null; } // free the comparison doc (destroy lives on the loading task, not the proxy)
+  // Free the comparison doc (destroy lives on the loading task, not the proxy).
+  // The .catch matches the other two destroy sites: an unhandled rejection here
+  // would fire during a Close, which is exactly the half-closed state to avoid.
+  if (cmpDoc) { cmpDoc.loadingTask.destroy().catch(() => {}); cmpDoc = null; }
   cmpText = null; cmpName = ''; cmpPageA = 1; cmpPageB = 1; cmpMode = 'text';
   cmpAlign = null; cmpAlignIdx = 0; cmpAlignTried = false;
   if (els.cmAuto) els.cmAuto.checked = true;
@@ -2366,7 +2423,12 @@ els.attachInput.onchange = async () => {
 async function buildThumbnails(gen = docGen) {
   els.thumbGrid.innerHTML = '';
   clearSelection(); // a rebuild means a new/edited doc — old page numbers no longer apply
-  for (let n = 1; n <= pdfDocument.numPages; n++) {
+  // numPages is read ONCE, while the document is still alive. Read in the loop
+  // condition it is re-evaluated after every await below, so a close that nulls
+  // pdfDocument mid-build would throw a TypeError here instead of letting the
+  // generation guard return quietly.
+  const total = pdfDocument.numPages;
+  for (let n = 1; n <= total; n++) {
     if (gen !== docGen) return; // a newer document loaded — stop rendering stale thumbs
     const page = await pdfDocument.getPage(n);
     const base = page.getViewport({ scale: 1 });
@@ -2397,6 +2459,10 @@ async function buildThumbnails(gen = docGen) {
     label.textContent = n;
 
     wrap.append(canvas, acts, label);
+    // Re-check AFTER the getPage await above: the guard at the top of the loop is
+    // the wrong side of it, so without this a close landing mid-await appends one
+    // orphan thumbnail into the grid closeDocument has already emptied.
+    if (gen !== docGen) return;
     els.thumbGrid.appendChild(wrap);
     await page.render({ canvasContext: canvas.getContext('2d'), viewport }).promise;
   }
@@ -6201,6 +6267,36 @@ function clearOverlays() {
   exitNote(); exitDropdown(); exitRadio();     // nor a pending note-placement mode
   redactMarks = []; // pending redaction boxes don't carry to a new/reloaded document
   clearOverlayHistory(); // a new/reloaded document resets the overlay-edit undo stack
+}
+
+// resetSharedDocState is the ONE teardown both the open path and the close path
+// call, so a Close can never be stricter than an open — two teardowns that drift
+// is the whole failure this slice exists to avoid.
+//
+// clearOverlays covers the seven Nib draw modes it can exit, but four armed modes
+// were never in it: redactMode, editMode, markerMode and activeTool. So opening a
+// second document already leaves a lit tool button and a crosshair cursor
+// describing a mode whose marks were just wiped — a pre-existing open-over-open
+// bug that this fixes as a side effect. That widening is deliberate and is the
+// only behaviour change this makes to an existing path.
+//
+// It deliberately does NOT touch viewer.annotationEditorMode: pdf.js resets its
+// own editor mode inside setDocument (destroying the editor UI manager and
+// setting the mode to NONE), on both the null and the new-document call. Doing it
+// here as well would be a second expression of one rule — and on the close path
+// it would run against a manager that no longer exists.
+//
+// Session-scoped state stays: markerSig/markerInit are remembered fill sources for
+// the session, not the document, so clearing them here would be a regression.
+function resetSharedDocState() {
+  clearOverlays();
+  setMarkerMode(null); // clears the lit .markers button and the cursor
+  if (redactMode) { redactMode = false; reflectRedact(); }
+  if (editMode) { editMode = false; reflectEdit(); }
+  activeTool = null;
+  document.querySelectorAll('[data-mode]:not(.cmmode)').forEach((b) => b.classList.remove('active'));
+  reflectAnnoControls();
+  els.viewerContainer.style.cursor = '';
 }
 // clearDetected drops only auto-detected fields (text/check/circleone), keeping
 // user-placed stamps, text edits, and sign/date/initial markers so re-running
