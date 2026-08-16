@@ -216,6 +216,23 @@ let loAvailable = false; // LibreOffice installed (from /api/status) → offer o
 async function apiFetch(url, opts = {}) {
   opts.headers = { ...(opts.headers || {}) };
   if (opts.method && opts.method !== 'GET') opts.headers['X-CSRF-Token'] = csrf;
+  // Name the document on every request, so no call site can omit it by
+  // forgetting. That is the whole point of doing it here: the server accepts a
+  // missing id and falls back to "whatever is active" — a compatibility path the
+  // CLI and the older Go tests need — so a handler that simply forgets the header
+  // gets the active document during exactly the switch operation-pinning exists to
+  // survive, having passed no check. A pinned call and an unpinned one would
+  // differ only by an ABSENT header, which nothing in review can see.
+  //
+  // Attached unconditionally rather than to a list of document routes: a list here
+  // would be a second copy of the server's knowledge of which routes those are,
+  // in a different language, drifting the first time a route is added. The header
+  // is inert on the routes that never resolve a document.
+  //
+  // This sends the CURRENT id. Carrying the id captured before an operation's
+  // first await is operation pinning (P04) — the same value while there is one
+  // view, a different one the moment there are several.
+  if (docMeta && docMeta.id) opts.headers['X-Nib-Doc'] = docMeta.id;
   const res = await fetch(url, opts);
   if (res.status === 401) { refreshStatus(); throw new Error('locked'); }
   return res;
@@ -1218,7 +1235,11 @@ async function setDocumentFromServer(meta) {
   resetSharedDocState(); // was clearOverlays() — see the four modes it never covered
   let doc;
   try {
-    doc = await pdfjsLib.getDocument({ url: '/api/pdf?t=' + Date.now() }).promise;
+    // The id goes in the URL, not a header: pdf.js issues this fetch itself, so a
+    // header would mean opting into its httpHeaders plumbing to gain a uniformity
+    // nobody reads (D15). The URL already carries a cache-buster; the id joins it.
+    const docParam = meta.id ? '&doc=' + encodeURIComponent(meta.id) : '';
+    doc = await pdfjsLib.getDocument({ url: '/api/pdf?t=' + Date.now() + docParam }).promise;
   } catch (e) {
     // An encrypted PDF needs its open password before pdf.js can render it; prompt
     // for it and unlock the working copy rather than dead-end on a generic error.
