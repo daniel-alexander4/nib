@@ -639,7 +639,91 @@ Exit criteria:
   defect. A harness never probed red is a harness that can only report pass.
 - P01's acceptance criteria expressed as tier-2/tier-3 tests, retroactively.
 - The tier ceilings written down where the harness lives, not only here.
-Slices: sketched at phase-open.
+
+**(phase-open, 2026-08-16 — slices firmed against the codebase as it now stands.)**
+Tier 1 already exists (90 test files), so this phase builds tiers 2 and 3 and the
+contract naming all three. **Each tier proves itself red inside its own slice**
+rather than deferring that to a closing slice: a harness that ships before it has
+been seen to fail is the thing this phase exists to prevent.
+
+Feasibility was **measured at phase-open, not assumed** — the probe is recorded in
+`instruments/P02.md`. Its findings, each of which changed a slice: only two vendor
+modules need stubbing (not four); `pdf_viewer.mjs` reads `globalThis.pdfjsLib`
+rather than its import; jsdom implements no `matchMedia` at all; the `pdfjsLib`
+surface `app.js` uses is exactly **7 symbols**; and the real `index.html` satisfies
+all **428** element ids `app.js` requests, with **0** missing.
+
+#### P02.S01 — Tier 2: the jsdom harness that loads the real `web/app.js` *(done 2026-08-16, v1.103.1)*
+Scope: `package.json` (private, not shipped, jsdom the sole devDependency), the two
+vendor stubs, the resolve hook, the jsdom boot, a smoke test, the id-coverage
+guard, and `build/jsdomtest.sh`. Refs: D13, D19.
+
+Tasks:
+1. T01 — `package.json` (`private: true`, not shipped); `node_modules/` git-ignored.
+2. T02 — `test/jsdom/stub-pdfjs.mjs` (7 symbols) + `stub-viewer.mjs` (5 classes),
+   surfaces enumerated from the code; `EventBus` real because `app.js` drives
+   behaviour through it.
+3. T03 — `test/jsdom/hooks.mjs`: a resolve hook matching **exactly** the two
+   vendor specifiers, so `detect.js`, `diff` and `pixelmatch` load for real.
+4. T04 — `test/jsdom/boot.mjs`: jsdom from the real `index.html`, the browser
+   globals, a `matchMedia` polyfill, a per-endpoint `fetch` stub derived from the
+   Go handlers, and `globalThis.pdfjsLib` set before the import.
+5. T05 — smoke test: the module boots and three P01 values read back.
+6. T06 — the id-coverage guard (428 requested, 0 missing).
+7. T07 — `build/jsdomtest.sh`, one command, skipping cleanly.
+8. T08 — proven red: remove one id, confirm T06 fails **naming that id**.
+9. T09 — the ceiling written in `boot.mjs`, naming tier 3 as what covers the gap.
+
+Acceptance:
+- One command runs it; absent deps print a skip line and exit 0 — distinguished
+  from a pass **by the line, not the code**.
+- The suite reports a **non-zero test count**; a runner that discovers nothing
+  also exits 0.
+- The real `app.js` and the real `index.html` are loaded, not copies.
+- The id guard is proven red against a removed id, and the run confirms **that**
+  assertion failed rather than merely that something did.
+- The ceiling is written where the harness lives.
+
+#### P02.S02 — Tier 2: P01's client acceptance, retroactively
+Scope: express as `node --test` tests the P01 clauses that live in the client —
+the shared reset clearing all four armed modes on **both** open and close,
+`closeDocument()` restoring the launch chrome value-for-value, and
+`hasEditsSinceOpen()` for each of its four signals.
+Acceptance:
+- Each of the four edit signals driven **on its own**, so a signal that never
+  fires cannot hide behind the others.
+- The open-over-open bug pinned: arm a mode, run the open path, assert cleared —
+  red against the pre-P01.S03 `clearOverlays()`.
+- Every test asserts its stimulus before grading the response.
+
+#### P02.S03 — Tier 3: the browser harness
+Scope: `build/uirepro.sh`, sibling of `winrepro.sh` — build nib, launch it
+headless on a fixed loopback port with a throwaway `HOME`, enroll a key over the
+API, drive a real browser.
+Acceptance:
+- One command; skips cleanly when the driver is absent, in `winrepro.sh`'s shape.
+- Runs against the real binary, not a mock server.
+- Proven red once, naming the assertion expected to break.
+- The ceiling written in the script.
+
+#### P02.S04 — Tier 3: P01's end-to-end acceptance, retroactively
+Scope: script the flows driven by hand during P01 — the empty state value-for-value
+against the launch markup, Close/cancel/confirm, reopen, the mid-build thumbnail
+close, and the injected-failure path.
+Acceptance:
+- The non-zero probe precedes every zero read (the prompt driven before "no
+  prompt"; the control enabled before disabled).
+- The mid-build close asserts the build was **in flight**, or reports
+  `not exercised`.
+
+#### P02.S05 — The verify contract
+Scope: each tier's ceiling written where its harness lives and naming the tier
+that covers its gap; `CLAUDE.md` gains the build/verify contract naming all three
+commands (STANDARDS §10).
+Acceptance:
+- All three commands named in `CLAUDE.md`.
+- Each tier's ceiling names the tier that covers the gap, so a delegation is
+  explicit rather than a silence.
 
 ### P03 — Document identity, server side
 Goal: the server holds N documents and every document-touching endpoint says
