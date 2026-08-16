@@ -147,7 +147,7 @@ const els = {
   importXfdfInput: $('importXfdfInput'), importXfdfStatus: $('importXfdfStatus'), importXfdfClose: $('importXfdfClose'),
   pdfaBtn: $('pdfaBtn'), pdfaModal: $('pdfaModal'), pdfaStatus: $('pdfaStatus'),
   pdfaGo: $('pdfaGo'), pdfaGsGo: $('pdfaGsGo'), pdfaClose: $('pdfaClose'),
-  exportCertBtn: $('exportCertBtn'), printBtn: $('printBtn'),
+  exportCertBtn: $('exportCertBtn'), printBtn: $('printBtn'), closeBtn: $('closeBtn'),
   finalizeModal: $('finalizeModal'), fzText: $('fzText'), fzDate: $('fzDate'),
   fzTsa: $('fzTsa'), fzTsaOn: $('fzTsaOn'), fzCancel: $('fzCancel'), fzGo: $('fzGo'),
   fzOpacity: $('fzOpacity'), fzSize: $('fzSize'), fzAngle: $('fzAngle'), fzColor: $('fzColor'),
@@ -1312,6 +1312,49 @@ function closeDocument() {
   setDocControls(false);
 }
 
+// hasEditsSinceOpen reports whether anything has been changed since the document
+// was opened or last reloaded — pdf.js annotation edits, Nib overlay fields or
+// their undo stack, or a committed server-side operation.
+//
+// Read the name literally: this is NOT "has unsaved work". A successful save
+// clears none of these. save() reloads only when there are overlay fields
+// (:2023), so an AcroForm fill with no overlays keeps the same annotationStorage
+// entries; and the server's handleSave never touches the undo ring, because undo
+// after a save is deliberate. So this over-reports after a save.
+//
+// That is the safe direction — it can prompt when nothing would be lost, never
+// the reverse — and the prompt below is worded so it stays true either way. The
+// honest fix is a dirty flag cleared on save, which lands in P04, where operation
+// pinning already rewrites every setDocumentFromServer caller (D17); building it
+// here would mean building it twice.
+function hasEditsSinceOpen() {
+  return (pdfDocument?.annotationStorage?.size || 0) > 0
+    || overlayFields.length > 0
+    || overlayHistory.undo.length > 0
+    || !!docMeta.canUndo;
+}
+
+// requestClose is the Close control: confirm if anything has been edited, drop the
+// document server-side, and only then tear the client down.
+//
+// Server first, deliberately. Tearing the client down before the route answers
+// would leave a window where the UI shows the empty state while the server still
+// holds the document — and /api/pdf would still serve it. The route is idempotent
+// and has no failure mode of its own, so ordering it first costs nothing.
+async function requestClose() {
+  if (!pdfDocument) return;
+  // Worded to what the signals actually support: "since the last save" is true
+  // whether or not a save has happened, including when the answer is "nothing".
+  if (hasEditsSinceOpen()
+      && !confirm('Close this document? Any edits made since the last save will be lost.')) {
+    return;
+  }
+  const res = await apiFetch('/api/close', { method: 'POST' });
+  if (!res.ok) return toast(await errText(res, 'could not close the document'));
+  closeDocument();
+}
+els.closeBtn.onclick = requestClose;
+
 async function openPath(path) {
   if (!path) return;
   const res = await apiFetch('/api/open', {
@@ -2423,10 +2466,12 @@ els.attachInput.onchange = async () => {
 async function buildThumbnails(gen = docGen) {
   els.thumbGrid.innerHTML = '';
   clearSelection(); // a rebuild means a new/edited doc — old page numbers no longer apply
-  // numPages is read ONCE, while the document is still alive. Read in the loop
-  // condition it is re-evaluated after every await below, so a close that nulls
-  // pdfDocument mid-build would throw a TypeError here instead of letting the
-  // generation guard return quietly.
+  // numPages is read ONCE, while the document is still alive. In the loop condition
+  // it would be re-evaluated after every await below, against a binding a Close can
+  // null. In practice the render cancellation (see the note at the append) unwinds
+  // the loop before the condition is reached, so this prevents a TypeError that
+  // does not currently occur — it is here so the loop does not silently depend on
+  // that, not because a null deref was observed.
   const total = pdfDocument.numPages;
   for (let n = 1; n <= total; n++) {
     if (gen !== docGen) return; // a newer document loaded — stop rendering stale thumbs
@@ -2459,9 +2504,19 @@ async function buildThumbnails(gen = docGen) {
     label.textContent = n;
 
     wrap.append(canvas, acts, label);
-    // Re-check AFTER the getPage await above: the guard at the top of the loop is
-    // the wrong side of it, so without this a close landing mid-await appends one
-    // orphan thumbnail into the grid closeDocument has already emptied.
+    // Belt and braces, and honest about which is which. What actually unwinds this
+    // loop when the document goes away is pdf.js: tearing the document down cancels
+    // the in-flight page render below, and the RenderingCancelledException it throws
+    // exits the whole function through the caller's .catch — measured, not assumed
+    // (a build interrupted by a Close logs exactly that). So the window between the
+    // getPage await and this append is NOT reachable via a Close today.
+    //
+    // The check stays because that protection is a third-party guarantee this
+    // function never states it depends on: the guard at the top of the loop sits on
+    // the wrong side of the await, so if a pdf.js bump ever stopped cancelling
+    // renders, one orphan thumbnail would land in a grid closeDocument had already
+    // emptied, and nothing here would say why. One comparison to make the staleness
+    // contract self-contained.
     if (gen !== docGen) return;
     els.thumbGrid.appendChild(wrap);
     await page.render({ canvasContext: canvas.getContext('2d'), viewport }).promise;
@@ -6141,6 +6196,7 @@ const DOC_REQUIRED = [
   'splitBoxBtn', 'applyBoxSplitBtn', 'rotateLeftBtn', 'rotateRightBtn',
   'extractBtn', 'insertBlankBtn', 'duplicatePageBtn', 'insertPdfBtn', 'pageNumBtn', 'pageLabelsBtn', 'nupBtn', 'normalizeBtn', 'cropBtn',
   'redactBtn', 'redactTextBtn', 'applyRedactBtn', 'scanBtn', 'attachBtn', 'encryptBtn', 'decryptBtn', 'compareBtn', 'fillCsvBtn', 'importXfdfBtn',
+  'closeBtn',
   'finalizeBtn', 'timestampBtn', 'cosignBtn', 'sessionInitBtn', 'sessionSendBtn',
 ];
 function setDocControls(enabled) {
