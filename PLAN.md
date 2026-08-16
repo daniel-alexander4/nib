@@ -475,9 +475,26 @@ on the nulled binding into the `.catch` at `:1257`, which logs and swallows it.
 **Bumping `docGen` is necessary but not sufficient**, and the acceptance clause
 "the empty state is byte-identical to launch" fails intermittently and silently.
 `buildOutline` (`:2889-2916`) is correct by contrast — one await, guard
-immediately after, everything downstream synchronous — and that asymmetry is what
-makes this a defect rather than a style point. Fix: hoist `numPages` before the
-loop and re-check the generation immediately before the append.
+immediately after, everything downstream synchronous. Fix: hoist `numPages` before
+the loop and re-check the generation immediately before the append.
+
+**(measurement correction, 2026-08-16, S04 — the reachability above was
+overstated.)** Driven for real in S04 with an 80-page document, closing while the
+build was demonstrably in flight (3 of 80 thumbnails present), the fix produced an
+empty grid — **and so did a red fixture with the fix removed.** The console says
+why: `thumbnails failed RenderingCancelledException`. Tearing the document down
+**cancels the in-flight page render**, and that exception unwinds the entire
+`buildThumbnails` loop through the caller's `.catch` before any further iteration
+can append or re-evaluate the loop condition.
+
+So the window is real in the code but **not reachable via a Close**, and neither
+half of the fix repairs an observable defect. Both are kept as defence-in-depth
+and re-commented to say so: the loop's actual protection is a *pdf.js* guarantee
+it never declares a dependency on, and a bump that stopped cancelling renders
+would reopen the window with nothing in the function explaining it. The original
+claim is left above rather than deleted, because the correction is the useful part
+— a defect reasoned from the code and then measured to be unreachable is exactly
+what the "severities are assumptions too" rule is about.
 
 **(harness pin, 2026-08-16)** D2 puts P01 first and D13/D19 put the three-tier
 harness in P02, so this slice and S04 have **no automated tier** and are verified
@@ -529,7 +546,39 @@ Acceptance:
   button and no crosshair — the pre-existing bug, asserted directly.
 - The empty state is byte-identical to launch.
 
-#### P01.S04 — Client: the Close control and the unsaved-work confirm
+#### P01.S04 — Client: the Close control and the unsaved-work confirm *(done 2026-08-16, v1.102.10)*
+
+**(grill pin, 2026-08-16: the three signals mean "ever edited", not "unsaved")**
+The scope line below specifies the confirm "from the three signals that exist".
+Tracing the save path refutes the premise: **a successful save clears none of
+them.** `save()` (`app.js:2001-2029`) reloads only `if (overlayFields.length)`, so
+an AcroForm fill with no overlays keeps the same `annotationStorage` with the same
+entries; and the server's `handleSave` writes the file and updates
+`doc.data`/`doc.sig` but never touches `s.undo`, so `docMeta.canUndo` survives a
+save — correctly, because undo-after-save is a feature.
+
+So after any save the confirm still fires. The error direction is **safe** (it
+over-prompts, never under-prompts), but the consequence is not cosmetic: a confirm
+that fires every time trains the user to dismiss it, so it stops protecting on the
+one close where it mattered.
+
+**Shipped as specified anyway, for a sequencing reason.** The honest fix is a
+dirty flag set by the mutation funnel and cleared by a successful save — which
+needs every `setDocumentFromServer` caller to declare what it is doing. **P04
+rewrites exactly those call sites** for operation pinning (D17). Building it here
+means building it twice. What this slice owes instead is that **the prompt must
+not claim more than the signals support**.
+
+Tasks:
+1. T01 — a `Close` button after `Print…`, at the end of the file-actions group.
+2. T02 — register `closeBtn` in `DOC_REQUIRED`.
+3. T03 — the handler: prompt when any edit signal is set; cancel returns first.
+4. T04 — **server first, then client**: `POST /api/close`, tear down only on success.
+5. T05 — wording that does not overclaim ("since the last save").
+6. T06 — drive the four clauses S03 recorded `not exercised`.
+7. T07 — drive the orphan-thumbnail race on a document large enough to still be
+   building; report `not exercised` if the build was not in flight.
+8. T08 — record the double-click bypass (G2) in the slice.
 Scope: a **Close** button in the File tab toolbar, registered in `DOC_REQUIRED`;
 confirm before discarding unsaved work, from the three signals that exist
 (`annotationStorage.size`, overlay fields/history, `docMeta.canUndo`). No Ctrl+W
