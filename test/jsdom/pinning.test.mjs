@@ -52,47 +52,66 @@ function scanUnpinned(src) {
 
   const out = [];
   for (const { name, body } of funcs) {
-    const firstAwait = body.indexOf('await');
-    if (firstAwait === -1) continue;
     const call = /apiFetch\(\s*'([^']+)'/g;
     let c;
     while ((c = call.exec(body)) !== null) {
-      if (c.index <= firstAwait) continue;          // the fetch IS the first await
+      // Is there an await that COMPLETES before this call is built? The naive test —
+      // "does the word `await` appear earlier in the function" — is wrong and was
+      // wrong here: in `const res = await apiFetch(...)` the word `await` sits before
+      // `apiFetch`, so the call's OWN await counted as a preceding one and eight
+      // functions were reported as corrupting that structurally cannot be. Strip the
+      // introducer that belongs to this very call, then look.
+      const pre = body.slice(0, c.index)
+        .replace(/(?:(?:const|let|var)\s+\w+\s*=\s*|return\s+)?await\s+$/, '');
+      if (!pre.includes('await')) continue;
       const route = c[1].split('?')[0];
       if (!MUTATING.some((r) => route.startsWith(r))) continue;
       // Read the call's own argument object — from the call to the matching close —
       // and look for an explicit docId.
+      // Both forms count: `docId: expr` and the ES6 shorthand `docId`. Missing the
+      // shorthand made three pinned helpers read as unpinned.
       const tail = body.slice(c.index, c.index + 400);
-      if (/\bdocId\s*:/.test(tail)) continue;
+      if (/\bdocId\s*[,:}\s]/.test(tail)) continue;
       out.push({ name, route });
     }
   }
   return out;
 }
 
-// The frozen set. P04.S01 pins `save()`; S02 empties this list. It is a list rather
-// than a count so that a fix and a new defect cannot cancel out — a count would stay
-// at 12 while one site was pinned and another introduced.
-const KNOWN_UNPINNED = [
-  'runSanitize', 'postDecrypt', 'loadAttachments', 'extractAttachment',
-  'openOutlineEditor', 'runOCR', 'flattenPages', 'assembleBlob', 'compressBlob',
-  'embedFlags', 'doUndo', 'doRedo',
-];
+// The frozen set — EMPTY as of P04.S02. It stays as a list rather than a count so that
+// a fix and a new defect cannot cancel out; a count would sit still while one site was
+// pinned and another introduced.
+const KNOWN_UNPINNED = [];
 
-test('the scan finds the sites it claims to — its own stimulus', () => {
-  // Without this, an empty or broken scan reports "no unpinned sites" forever,
-  // including after apiFetch's docId support was deleted. The scanner is the
-  // instrument; an instrument that reaches nothing grades everything as healthy.
-  const found = scanUnpinned(APP);
-  assert.ok(found.length > 0,
-    'the pinning scan matched nothing — it is not reading what it thinks, so every assertion below is vacuous');
+// With the frozen list empty, "no unpinned sites" is the pass — and it is also what a
+// broken scanner reports. So the scanner is checked against a KNOWN-BAD input rather
+// than against the real source: a synthetic function that is unmistakably corrupting.
+// This is the stimulus test the empty list makes necessary.
+test('the scan detects a corrupting site — its own stimulus', () => {
+  const bad = `
+async function synthetic() {
+  const bytes = await bakedBytes();
+  const res = await apiFetch('/api/save', { method: 'POST', body: bytes });
+}`;
+  const found = scanUnpinned(bad).map((f) => f.name);
+  assert.deepEqual(found, ['synthetic'],
+    'the scanner does not detect an obviously corrupting site, so its silence on the real source means nothing');
+
+  // And it must NOT flag the shape that is safe, or it would be unusable and the
+  // frozen list would fill with functions that are fine.
+  const good = `
+async function safe() {
+  const res = await apiFetch('/api/save', { method: 'POST' });
+}`;
+  assert.deepEqual(scanUnpinned(good), [],
+    'the scanner flags a call that IS its own first await — the false positive that put eight safe functions on the frozen list');
 });
 
-test('no mutating call is unpinned except the frozen twelve', () => {
+test('no mutating call is unpinned', () => {
   const found = scanUnpinned(APP).map((f) => f.name);
   const unexpected = [...new Set(found)].filter((n) => !KNOWN_UNPINNED.includes(n));
   assert.deepEqual(unexpected, [],
-    'a NEW unpinned mutating call — its payload predates the id it is addressed with, so it acts on whatever document is current when it goes out');
+    'an unpinned mutating call — its payload predates the id it is addressed with, so it acts on whatever document is current when the request goes out');
 });
 
 test('save() is pinned, and reads nothing about the document after its first await', () => {
