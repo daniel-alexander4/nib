@@ -606,7 +606,25 @@ Acceptance:
   launch SIGTERMs this instance and discards the document with no prompt. Say so
   in the slice rather than implying the prompt is unconditional.
 
-### P02 — Test harness, in three tiers
+### P02 — Test harness, in three tiers *(done 2026-08-16, v1.103.6)*
+Exit criteria — all met:
+- [x] Tiers 2 and 3 each runnable from one command, skipping cleanly when their
+      dependencies are absent. Tier 2's skip verified *before* `npm install`;
+      tier 3's two skips (driver, browser) verified separately, the browser one
+      naming all six candidates it looked for.
+- [x] Each tier proven red at least once. Tier 2: a renamed id, naming the id.
+      Tier 3: a changed empty-state string, naming the assertion. Plus three more
+      red paths in S05 and the cross-tier fixture below.
+- [x] P01's acceptance expressed as tier-2/tier-3 tests, retroactively — including
+      the two edit signals and the thumbnail grid tier 2 could not reach.
+- [x] The tier ceilings written where the harness lives. Tier 1 had no file, so it
+      leads the chain in `CONTRIBUTING.md`; `verify_test.go` guards all three.
+
+**The result that justifies the tiering, and it is measured rather than argued:**
+removing the grid clear from `closeDocument()` leaves **tier 2 at 13/13 — blind**
+— and **fails tier 3 twice**. A defect one tier cannot see and the other catches
+is the whole argument for having two; until that run it was a comment.
+
 Goal: a way to assert this feature's behaviour mechanically, because every failure
 mode in P03–P06 is silent. Refs: D13, D19.
 
