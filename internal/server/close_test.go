@@ -78,19 +78,26 @@ func TestCloseClearsBothRings(t *testing.T) {
 		t.Fatal(err)
 	}
 	s := openTestServer(t, pdf)
+	doc := s.activeDoc()
 
 	// Populate BOTH rings: two commits fill undo, one undo moves a state across.
-	s.commitMutation(s.activeDoc(), pdf, pdf)
-	s.commitMutation(s.activeDoc(), pdf, pdf)
+	s.commitMutation(doc, pdf, pdf)
+	s.commitMutation(doc, pdf, pdf)
 	s.handleUndo(httptest.NewRecorder(), httptest.NewRequest(http.MethodPost, "/api/undo", nil))
-	if len(s.undo) == 0 || len(s.redo) == 0 {
-		t.Fatalf("setup: want both rings non-empty, got undo=%d redo=%d", len(s.undo), len(s.redo))
+	if len(doc.undo) == 0 || len(doc.redo) == 0 {
+		t.Fatalf("setup: want both rings non-empty, got undo=%d redo=%d", len(doc.undo), len(doc.redo))
 	}
 
 	s.handleClose(httptest.NewRecorder(), httptest.NewRequest(http.MethodPost, "/api/close", nil))
 
-	if len(s.undo) != 0 || len(s.redo) != 0 {
-		t.Errorf("close must clear both rings, got undo=%d redo=%d", len(s.undo), len(s.redo))
+	// The rings moved onto the document in P03.S04, and this test deliberately holds
+	// the closed document's pointer — which is exactly the situation a request still
+	// in flight is in. Dropping the registry entry alone would leave these stacks
+	// populated for as long as any such reference lives, so setDoc releases them
+	// explicitly and this asserts that it did. Reading the SERVER's rings here would
+	// now be unfalsifiable: there are none.
+	if len(doc.undo) != 0 || len(doc.redo) != 0 {
+		t.Errorf("close must clear both rings, got undo=%d redo=%d", len(doc.undo), len(doc.redo))
 	}
 	if s.activeDoc() != nil {
 		t.Error("close must drop the document")

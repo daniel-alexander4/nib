@@ -6,14 +6,24 @@ import (
 	"nib/internal/sign"
 )
 
-// undoBudget bounds the in-memory undo/redo history: at most maxUndoDepth states
-// per stack, and at most maxUndoBytes total across the UNDO stack, oldest evicted
-// first. The redo stack is only depth-capped (transitively, by what undo held), not
-// byte-capped: undo and redo are one linear history split at a cursor, and evicting
-// from redo's far end would silently truncate the user's redo reach — so a deep
-// undo of large documents can transiently hold up to ~2× maxUndoBytes across the
-// two stacks until the history is rewritten or cleared. That peak is accepted;
-// the byte budget is what protects memory on the growing (undo) side.
+// The history budget. maxUndoDepth caps each document's undo stack; maxUndoBytes is
+// a SINGLE GLOBAL figure covering every open document's undo and redo bytes together.
+//
+// Both halves of that sentence are deliberate and both changed in P03.S04:
+//
+//   - Global, not per-document. A per-document budget would be 256 MiB × N open
+//     documents, which is the growth D8's pin refuses — the whole point of moving the
+//     rings onto documents is that the memory ceiling must NOT move with them.
+//   - The pair, not just undo. The previous budget counted only the undo stack, on the
+//     reasoning that evicting from redo's far end silently shortens the user's redo
+//     reach. That reasoning was sound and the consequence was a real ceiling of ~2×
+//     maxUndoBytes for one document — and 2N× once documents multiply. Counting the
+//     pair is what closes it.
+//
+// It is a bound with one named exception, not a hard cap: the active document always
+// keeps its most recent undo entry, so a single document holding one state larger than
+// the budget exceeds it rather than losing the ability to undo. Stated because a cap
+// the code does not enforce is worse than a smaller one it does.
 const (
 	maxUndoDepth = 30
 	maxUndoBytes = 256 << 20
@@ -48,9 +58,13 @@ func (s *Server) commitMutation(doc *document, input, result []byte) bool {
 	if doc == nil || !s.isRegisteredLocked(doc) {
 		return false
 	}
-	s.undo = append(s.undo, input)
-	s.clearRedoLocked()
-	s.trimUndoLocked()
+	doc.undo = append(doc.undo, input)
+	clearRedo(doc)
+	// A fresh edit is a fresh history: whatever was evicted before, this document
+	// now has something undoable again and the flag would otherwise be reported
+	// alongside a non-empty stack, which reads as a lie.
+	doc.historyEvicted = false
+	s.trimHistoryLocked(doc)
 	doc.data = result
 	doc.sig = sig
 	return true
@@ -75,40 +89,151 @@ func (s *Server) commitBarrier(doc *document, result []byte) bool {
 	if doc == nil || !s.isRegisteredLocked(doc) {
 		return false
 	}
-	s.clearUndoLocked()
-	s.clearRedoLocked()
+	clearUndo(doc)
+	clearRedo(doc)
+	// A barrier is not an eviction: the history is gone because the user asked for
+	// content to be destroyed, not because memory ran short. Reporting it as an
+	// eviction would tell them their redaction cost them their undo stack.
+	doc.historyEvicted = false
 	doc.data = result
 	doc.sig = sig
 	return true
 }
 
-// clearUndoLocked / clearRedoLocked drop a history stack, niling entries so the
+// clearUndo / clearRedo drop one document's history stack, niling entries so the
 // (potentially large) byte slices they hold are released to the GC. Caller holds s.mu.
-func (s *Server) clearUndoLocked() {
-	for i := range s.undo {
-		s.undo[i] = nil
+func clearUndo(doc *document) {
+	for i := range doc.undo {
+		doc.undo[i] = nil
 	}
-	s.undo = nil
+	doc.undo = nil
 }
 
-func (s *Server) clearRedoLocked() {
-	for i := range s.redo {
-		s.redo[i] = nil
+func clearRedo(doc *document) {
+	for i := range doc.redo {
+		doc.redo[i] = nil
 	}
-	s.redo = nil
+	doc.redo = nil
 }
 
-// trimUndoLocked enforces the depth and total-byte caps, evicting oldest entries
-// first and niling them so their bytes are released. Caller holds s.mu.
-func (s *Server) trimUndoLocked() {
+// historyBytes reports the bytes one document's two stacks hold together.
+func historyBytes(doc *document) int {
 	total := 0
-	for _, b := range s.undo {
+	for _, b := range doc.undo {
 		total += len(b)
 	}
-	for len(s.undo) > 1 && (len(s.undo) > maxUndoDepth || total > maxUndoBytes) {
-		total -= len(s.undo[0])
-		s.undo[0] = nil
-		s.undo = s.undo[1:]
+	for _, b := range doc.redo {
+		total += len(b)
+	}
+	return total
+}
+
+// historyBytesLocked reports the bytes held across EVERY open document — the figure
+// maxUndoBytes bounds. Caller holds s.mu.
+func (s *Server) historyBytesLocked() int {
+	total := 0
+	for _, d := range s.docs {
+		total += historyBytes(d)
+	}
+	return total
+}
+
+// historyBudget is the byte ceiling this server enforces. It exists so the eviction
+// tests can drive the budget with kilobytes instead of allocating 256 MiB per case —
+// a test that cannot afford to run is a test that does not run. Production never sets
+// the field, so the constant is what ships.
+func (s *Server) historyBudget() int {
+	if s.maxHistoryBytes > 0 {
+		return s.maxHistoryBytes
+	}
+	return maxUndoBytes
+}
+
+// trimHistoryLocked enforces the depth cap on `active` and the global byte budget
+// across every open document. Caller holds s.mu; `active` is the document that just
+// grew, which is the only one whose entries may be trimmed individually.
+//
+// **Eviction happens in two different units, and that is the design, not an
+// inconsistency.**
+//
+// An INACTIVE document loses its history WHOLE. Two reasons, and either alone would
+// decide it. First, convergence: a budget covering undo+redo cannot be met by
+// dropping undo entries alone, because a document whose bytes all sit in redo has
+// nothing left to give and the loop would spin against a ceiling it cannot reach.
+// Second, honesty: a partially-trimmed history is precisely the silent eviction the
+// plan-review pin refuses — the user keeps an undo button that reaches less far than
+// it did, with nothing anywhere saying so. Dropping the history whole is a state the
+// document can report (historyEvicted), and a half-dropped one is not.
+//
+// The ACTIVE document keeps the entry-by-entry trim it has always had, because that
+// is ordinary depth-cap behaviour the user experiences as "undo remembers 30 steps"
+// and it must not change.
+//
+// Order among inactive documents is OPEN ORDER, oldest first. Least-recently-active
+// is the better model and is not available: nothing records a last-active moment
+// until document switching exists (P06). Recorded as a default rather than
+// approximated with a signal that would be wrong.
+//
+// **`grown` is not the same document as the active one, and conflating them is a
+// live defect, not a naming quibble.** This whole phase exists so an operation can be
+// addressed to a document the user is not looking at; when one is, `grown` is that
+// inactive document while s.activeID names another. A pass that protected `grown` and
+// treated everything else as evictable would then throw away the history of the
+// document the user actually has open, to make room for one they do not — the
+// acceptance clause exactly inverted, and green against every test that grows the
+// active document. So eviction walks three tiers, in order: documents that are
+// neither grown nor active, then the active document, then `grown`'s own entries.
+func (s *Server) trimHistoryLocked(grown *document) {
+	// Depth first, on the document that grew. This is unchanged behaviour and the
+	// cap that binds in every realistic case — 30 states of an ordinary PDF is far
+	// below the byte budget, which is why single-document behaviour is unaffected by
+	// the budget's move to the pair (see PLAN.md P03.S04's premise pin).
+	for len(grown.undo) > maxUndoDepth {
+		grown.undo[0] = nil
+		grown.undo = grown.undo[1:]
+	}
+
+	if s.historyBytesLocked() <= s.historyBudget() {
+		return
+	}
+
+	// evict drops one document's history whole, reporting whether that was enough.
+	evict := func(d *document) bool {
+		if d == nil || d == grown || (len(d.undo) == 0 && len(d.redo) == 0) {
+			return false
+		}
+		clearUndo(d)
+		clearRedo(d)
+		d.historyEvicted = true
+		s.historyEvictions++
+		return s.historyBytesLocked() <= s.historyBudget()
+	}
+
+	// Tier 1: documents the user is neither editing nor looking at.
+	active := s.activeDocLocked()
+	for _, d := range s.docs {
+		if d == active {
+			continue
+		}
+		if evict(d) {
+			return
+		}
+	}
+
+	// Tier 2: the active document — evicted only once every other history is gone,
+	// and still ahead of breaking the budget, because an unbounded ceiling costs the
+	// user more than a history they can be told about.
+	if evict(active) {
+		return
+	}
+
+	// Tier 3: the bytes are the grown document's own. Trim its undo from the oldest
+	// end, keeping the last entry: a document whose single most recent state exceeds
+	// the whole budget stays undoable rather than being silently stripped of the one
+	// thing undo is for. This is the named exception in the budget's contract.
+	for len(grown.undo) > 1 && s.historyBytesLocked() > s.historyBudget() {
+		grown.undo[0] = nil
+		grown.undo = grown.undo[1:]
 	}
 }
 
@@ -127,20 +252,20 @@ func (s *Server) handleUndo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.mu.Lock()
-	if doc == nil || len(s.undo) == 0 {
+	if doc == nil || len(doc.undo) == 0 {
 		s.mu.Unlock()
-		writeJSON(w, s.docResponse())
+		writeJSON(w, s.docResponse(doc))
 		return
 	}
-	last := len(s.undo) - 1
-	prev := s.undo[last]
-	s.undo[last] = nil
-	s.undo = s.undo[:last]
-	s.redo = append(s.redo, doc.data)
+	last := len(doc.undo) - 1
+	prev := doc.undo[last]
+	doc.undo[last] = nil
+	doc.undo = doc.undo[:last]
+	doc.redo = append(doc.redo, doc.data)
 	doc.data = prev
 	doc.sig = sign.Verify(prev)
 	s.mu.Unlock()
-	writeJSON(w, s.docResponse())
+	writeJSON(w, s.docResponse(doc))
 }
 
 // handleRedo re-applies the last undone operation, moving the current state back
@@ -157,19 +282,19 @@ func (s *Server) handleRedo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.mu.Lock()
-	if doc == nil || len(s.redo) == 0 {
+	if doc == nil || len(doc.redo) == 0 {
 		s.mu.Unlock()
-		writeJSON(w, s.docResponse())
+		writeJSON(w, s.docResponse(doc))
 		return
 	}
-	last := len(s.redo) - 1
-	next := s.redo[last]
-	s.redo[last] = nil
-	s.redo = s.redo[:last]
-	s.undo = append(s.undo, doc.data)
-	s.trimUndoLocked()
+	last := len(doc.redo) - 1
+	next := doc.redo[last]
+	doc.redo[last] = nil
+	doc.redo = doc.redo[:last]
+	doc.undo = append(doc.undo, doc.data)
+	s.trimHistoryLocked(doc)
 	doc.data = next
 	doc.sig = sign.Verify(next)
 	s.mu.Unlock()
-	writeJSON(w, s.docResponse())
+	writeJSON(w, s.docResponse(doc))
 }
