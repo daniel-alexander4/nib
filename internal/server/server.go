@@ -558,18 +558,51 @@ func (s *Server) isRegisteredLocked(doc *document) bool {
 	return false
 }
 
-// setDoc installs doc as the open document, REPLACING whatever was open, and
-// clears the history rings. nil closes the document.
+// registerLocked mints the next id, installs doc in the registry and makes it
+// active. Caller holds s.mu. It is the ONE place an id is issued, so ADR-001's
+// never-reused law has a single site to hold rather than one per entry point — a
+// second issuer would defeat the law by collision instead of by reuse.
+func (s *Server) registerLocked(doc *document) {
+	s.nextSeq++
+	doc.id = docID{Epoch: s.epoch, Seq: s.nextSeq}
+	s.docs = append(s.docs, doc)
+	s.activeID = doc.id
+}
+
+// addDoc opens doc ALONGSIDE whatever is already open and makes it active,
+// returning it. This is D10's arrival path, and the difference from setDoc is
+// entirely in what it does NOT do: it drops no document and clears no history.
 //
-// "Replacing" is the whole of its contract today and all seven callers depend on
-// it. Under a registry the operation obviously wants to split into replace-active
-// and add-new — D10 says arrivals should add — but doing that here would move
-// arrival semantics a phase early inside a slice whose acceptance says behaviour
-// is unchanged, where nothing would catch it. **The split is P03.S05's.**
-// It returns the document it installed (nil for a close), so the six callers that
-// install and then describe a document pass the one they just installed rather than
-// re-resolving "the active one" — which is the same answer today and stops being one
-// the moment P03.S05 lets an arrival add a document instead of replacing.
+// **It activates as well as adding, deliberately.** A background arrival should
+// badge a tab rather than seize the view — that is the right behaviour and it is
+// P06's, because there is no tab strip yet. An added-but-inactive document would be
+// unreachable: the client learns of an arrival by re-reading the active document, so
+// the feature would ship as "your co-signature completed and you can never see it".
+// Activating also keeps today's observable behaviour exactly, which confines this
+// change to the part that was invisible anyway — the previous document surviving.
+// Revisit when tabs land.
+func (s *Server) addDoc(doc *document) *document {
+	if doc == nil {
+		return nil
+	}
+	s.mu.Lock()
+	s.registerLocked(doc)
+	s.mu.Unlock()
+	return doc
+}
+
+// setDoc installs doc as the open document, REPLACING whatever was open, and
+// releasing the outgoing histories. nil closes the document.
+//
+// Replacing is still the right contract for its remaining callers — opening a file,
+// an upload, a combine, an office conversion — where the user is asking for this
+// document *instead of* that one. Arrivals are the case that differs, and they go
+// through addDoc (D10).
+//
+// It returns the document it installed (nil for a close), so the callers that install
+// and then describe a document pass the one they just installed rather than
+// re-resolving "the active one" — which was the same answer until arrivals started
+// adding, and is no longer.
 func (s *Server) setDoc(doc *document) *document {
 	s.mu.Lock()
 	// Release the outgoing documents' histories explicitly rather than leaving them
@@ -586,15 +619,11 @@ func (s *Server) setDoc(doc *document) *document {
 		clearUndo(d)
 		clearRedo(d)
 	}
-	if doc == nil {
-		s.docs = nil
-		s.activeID = docID{}
-	} else {
+	s.docs = nil
+	s.activeID = docID{}
+	if doc != nil {
 		// A fresh id per open: never the closed document's, never an index.
-		s.nextSeq++
-		doc.id = docID{Epoch: s.epoch, Seq: s.nextSeq}
-		s.docs = []*document{doc}
-		s.activeID = doc.id
+		s.registerLocked(doc)
 	}
 	// No history to clear: a fresh document carries its own empty stacks, and the
 	// outgoing document's history is released with the document itself. Clearing a

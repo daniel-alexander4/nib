@@ -1179,7 +1179,7 @@ Acceptance:
 - `/api/doc` concurrent with a mutation is clean under `-race`, red against the code as
   it stood before this slice.
 
-#### P03.S05 — arrivals open a new document
+#### P03.S05 — arrivals open a new document *(done 2026-08-16, v1.103.13)*
 Scope: D10 — `setDoc` splits into replace-active and add-new; the arrival paths
 (`session.go:252,561`) add. Refs: D10.
 
@@ -1213,8 +1213,55 @@ the client's id stays valid and `/api/doc` answers about the **old** document, s
 co-signed result never appears at all. The root cause is that `reloadOpenDoc` asks a
 question about the *session* ("what is active now?") through a call pinned to a
 *document*. Fixed here as part of the slice.
+**(criterion amended, 2026-08-16, autonomous — evidence above)** the phase exit
+criterion's "(co-sign, p2p)" is narrowed to co-sign. `saveReceived` writes a received
+one-way transfer to `~/nib` and never touches the registry, so there is no p2p arrival
+that opens a document to change. Making one would be a behaviour change to a shipped
+feature and new scope; the criterion is corrected to describe the two paths that exist.
+
+Tasks:
+- T01 — `setDoc` splits: `setDoc` keeps its replace contract, `addDoc` adds a document
+  and makes it active. Id minting and the registry write are shared; `addDoc` clears
+  nothing, which is the whole difference.
+- T02 — the two co-sign paths (`session.go:252`, `session.go:561`) call `addDoc`.
+- T03 — ~~`apiFetch` stops handing a 409 body to its caller as data~~ **(struck by this
+  slice's own diff review, 2026-08-16)**. Built as written first, then reverted: the
+  review counted the document-route call sites and found **20, of which 15 already
+  handle a refusal correctly** as `if (!res.ok) { toast('…'); return; }`. Throwing in
+  `apiFetch` would have converted fifteen clear, user-visible failures into unhandled
+  rejections that say nothing — a strictly worse outcome, introduced while fixing an
+  unrelated defect. `reloadOpenDoc` was the **only** site missing that check, which is
+  the whole of the original bug. Replaced by:
+  - T03a — `reloadOpenDoc` gains the `res.ok` check every other site already had.
+  - T03b — `setDocumentFromServer` refuses a refusal body (`meta.error`, which is exact:
+    a 200 body never carries that field, and "no id" would wrongly reject the legitimate
+    empty response a closed document produces). The guard sits at the **sink** because
+    that is where the mistake does damage and where one check covers all twenty callers,
+    any of which could grow the same omission.
+- T04 — `reloadOpenDoc` asks its question **un-pinned**, deliberately and with the
+  reason written at the call site: after an out-of-band arrival it is asking "what is
+  active now?", which is a question about the session, not about a document.
+- T05 — tests: tier 1 (an arrival adds, the previous document survives with its
+  history, the arrival is active); tier 2 (a 409 never becomes `docMeta`, and the
+  refresh sends no id).
+
+**Arrivals add AND activate** (default taken, 2026-08-16). Add-without-activate is the
+right P06 behaviour — a background arrival should badge a tab, not seize the view — but
+there is no tab strip until P06, so an added-but-inactive document is unreachable: the
+feature would ship as "your co-signature completed and you can never see it". Activating
+also preserves today's observable behaviour exactly, so the change is confined to the
+part that was invisible anyway (the previous document surviving). Revisit at P06.
+
 Acceptance:
 - A completed co-sign adds a document rather than replacing the open one.
+- The previously open document survives the arrival **with its undo history intact** —
+  its own observation, red if the arrival clears it.
+- The arrival is the active document, so the existing refresh still shows it.
+- A refusal body never becomes the document, and the session stays pinned after one —
+  red against the code as it stood (`docMeta.id` became undefined and every later
+  request silently unpinned).
+- `apiFetch` does **not** throw on 409, red if the reverted design returns.
+- The post-arrival refresh carries no `X-Nib-Doc`, red if it pins to the stale id.
 - The other five `setDoc` callers still replace, asserted individually.
 
 ### P04 — Operation pinning, client side
