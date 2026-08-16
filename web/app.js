@@ -1160,9 +1160,12 @@ async function openSessionSend() {
 // currently-placed flags embedded when any markers exist — the same hand-off bytes
 // "Save for signing…" produces, routed to a peer instead of a file.
 async function sendableForm() {
-  let bytes = await bakedBytes();
+  // Captured before the first await, and threaded into every helper below: they
+  // receive bytes derived from THIS document, and their own entry is already too late.
+  const opDoc = docMeta;
+  let bytes = await bakedBytes(opDoc && opDoc.id);
   const flags = collectFlags();
-  if (flags.length) bytes = await embedFlags(bytes, flags);
+  if (flags.length) bytes = await embedFlags(bytes, flags, opDoc && opDoc.id);
   const form = new FormData();
   form.append('pdf', new Blob([bytes], { type: 'application/pdf' }), 'doc.pdf');
   return form;
@@ -3824,6 +3827,11 @@ function loadTesseract() {
 
 async function runOCR() {
   if (!pdfDocument || !confirmSignatureLoss()) return;
+  // CAPTURED before the first await (D7). OCR is the longest operation in the app —
+  // loading the engine, then a recognition pass per page — so the window in which the
+  // open document can change is measured in tens of seconds. The text layer is stamped
+  // onto the document the words were read FROM.
+  const doc = docMeta;
   const btn = els.ocrBtn, label = btn.textContent;
   btn.disabled = true;
   let worker;
@@ -3868,7 +3876,7 @@ async function runOCR() {
     }
     if (!words.length) { toast('No text found to add'); return; }
     btn.textContent = 'Saving…';
-    const res = await apiFetch('/api/ocr', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ lang, words }) });
+    const res = await apiFetch('/api/ocr', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ lang, words }), docId: doc && doc.id });
     if (!res.ok) { toast('Could not add the text layer'); return; }
     await setDocumentFromServer(await res.json());
     toast(`Added a searchable text layer (${words.length} words)`);
@@ -3898,7 +3906,11 @@ async function renderFilledPages(scale, onlyPage, mime, quality) {
 // /api/redact, which swaps each for a flat image — destroying the vector content
 // underneath. The shared engine behind "Apply redactions" and "Remove originals";
 // the optional paint hook lets redaction burn its black boxes in before the snapshot.
-async function flattenPages(pages, paint) {
+// `docId` defaults to the document open AT ENTRY, which is a defined moment before
+// any await inside this function — not "whatever is current when the request is
+// built", which is the defect (D7). A caller that has already awaited before reaching
+// here must pass its OWN captured id, because entry is already too late for it.
+async function flattenPages(pages, paint, docId = docMeta && docMeta.id) {
   const bytes = await bakedBytes();
   // pdf.js detaches the buffer it parses, but `bytes` is also uploaded as the pdf
   // field, so render from a copy and keep the original intact for the upload.
@@ -3912,13 +3924,17 @@ async function flattenPages(pages, paint) {
     form.append('pageW', String(w));
     form.append('pageH', String(h));
   }
-  return apiFetch('/api/redact', { method: 'POST', body: form });
+  return apiFetch('/api/redact', { method: 'POST', body: form, docId });
 }
 
 // assembleBlob rasterises every (filled, stamped) page and packages it server-
 // side into a flattened image-PDF or a ZIP of PNGs. Returns the blob, or null on
 // failure.
-async function assembleBlob(format) {
+// `docId` defaults to the document open AT ENTRY, which is a defined moment before
+// any await inside this function — not "whatever is current when the request is
+// built", which is the defect (D7). A caller that has already awaited before reaching
+// here must pass its OWN captured id, because entry is already too late for it.
+async function assembleBlob(format, docId = docMeta && docMeta.id) {
   const pages = await renderFilledPages(2);
   const form = new FormData();
   pages.forEach((p, i) => {
@@ -3927,7 +3943,7 @@ async function assembleBlob(format) {
     form.append('pageH', String(p.h));
   });
   form.append('format', format);
-  const res = await apiFetch('/api/assemble', { method: 'POST', body: form });
+  const res = await apiFetch('/api/assemble', { method: 'POST', body: form, docId });
   if (!res.ok) { toast('export failed'); return null; }
   return res.blob();
 }
@@ -3936,7 +3952,11 @@ async function assembleBlob(format) {
 // quality and assembles a much smaller image-PDF — the lossy "reduce size" path.
 // It flattens the document (text becomes images), so the caller warns and shows
 // the before/after size before saving.
-async function compressBlob(scale, quality) {
+// `docId` defaults to the document open AT ENTRY, which is a defined moment before
+// any await inside this function — not "whatever is current when the request is
+// built", which is the defect (D7). A caller that has already awaited before reaching
+// here must pass its OWN captured id, because entry is already too late for it.
+async function compressBlob(scale, quality, docId = docMeta && docMeta.id) {
   const pages = await renderFilledPages(scale, 0, 'image/jpeg', quality);
   const form = new FormData();
   pages.forEach((p, i) => {
@@ -3945,7 +3965,7 @@ async function compressBlob(scale, quality) {
     form.append('pageH', String(p.h));
   });
   form.append('format', 'pdf');
-  const res = await apiFetch('/api/assemble', { method: 'POST', body: form });
+  const res = await apiFetch('/api/assemble', { method: 'POST', body: form, docId });
   if (!res.ok) { toast('compress failed'); return null; }
   return res.blob();
 }
@@ -3983,6 +4003,11 @@ all('input[name="reduceMode"]').forEach((r) => {
   r.onchange = () => { els.reduceQuality.hidden = r.value !== 'compress' || !r.checked; };
 });
 els.reduceGo.onclick = async () => {
+  // Captured HERE, not inside the helpers. This handler awaits (optimize, bakedBytes)
+  // before it reaches compressBlob, so the helpers' entry-time default would already be
+  // too late — entry is only a safe capture point for a helper entered before the
+  // operation's first await, and this is the one caller where it is not.
+  const opDoc = docMeta;
   const mode = els.reduceModal.querySelector('input[name="reduceMode"]:checked').value;
   els.reduceGo.disabled = true; els.reduceGo.textContent = 'Working…';
   let blob, before, after;
@@ -3997,7 +4022,7 @@ els.reduceGo.onclick = async () => {
       const presets = { low: [96 / 72, 0.55], med: [150 / 72, 0.7], high: [220 / 72, 0.82] };
       const [scale, q] = presets[els.reduceQ.value] || presets.med;
       before = (await bakedBytes()).length;
-      blob = await compressBlob(scale, q);
+      blob = await compressBlob(scale, q, opDoc && opDoc.id);
       if (!blob) return;
       after = blob.size;
     }
@@ -5365,11 +5390,18 @@ function collectFlags() {
 
 // embedFlags posts the current document to /api/flags: a non-empty set embeds the
 // placeholders; null strips them. Returns the new bytes.
-async function embedFlags(bytes, flags) {
+// embedFlags is the one site the pinning SCAN cannot see: its apiFetch is its own
+// first await, so nothing changes underneath it *here* — but it receives
+// document-derived `bytes` from a caller that has already awaited to produce them. The
+// corruption is real and the capture point belongs to the caller, so the id is a
+// required-in-practice parameter rather than an entry-time default. A scanner that
+// looks only at await-ordering inside a function is structurally blind to this shape,
+// which is why it is named here rather than left to the guard.
+async function embedFlags(bytes, flags, docId = docMeta && docMeta.id) {
   const form = new FormData();
   form.append('pdf', new Blob([bytes], { type: 'application/pdf' }), 'doc.pdf');
   if (flags && flags.length) form.append('flags', JSON.stringify(flags));
-  const res = await apiFetch('/api/flags', { method: 'POST', body: form });
+  const res = await apiFetch('/api/flags', { method: 'POST', body: form, docId });
   if (!res.ok) throw new Error('flags update failed');
   return new Uint8Array(await res.arrayBuffer());
 }
@@ -5435,10 +5467,13 @@ function signNext() {
 async function saveForSigning() {
   const flags = collectFlags();
   if (!flags.length) return toast('Place at least one flag first (Sign / Date / Initial).');
+  // Captured before the first await, and threaded into every helper below: they
+  // receive bytes derived from THIS document, and their own entry is already too late.
+  const opDoc = docMeta;
   els.saveBtn.disabled = true;
   try {
-    const baked = await bakedBytes();           // bake any non-flag edits; strips a prior flag set
-    const out = await embedFlags(baked, flags); // embed the current flags
+    const baked = await bakedBytes(opDoc && opDoc.id); // bake any non-flag edits; strips a prior flag set
+    const out = await embedFlags(baked, flags, opDoc && opDoc.id); // embed the current flags
     openSaveAs(new Blob([out], { type: 'application/pdf' }), exportBase() + '-for-signing.pdf', 'Save for signing — email this exact file');
     toast('Saved for signing. Email this file as-is; printing or re-exporting it elsewhere drops the flags.');
   } catch (e) {
@@ -6606,7 +6641,10 @@ function collectStamps() {
 
 // bakedBytes is the canonical current document: pdf.js form/annotation edits via
 // saveDocument(), plus the auto-detected overlay fields stamped in server-side.
-async function bakedBytes() {
+// docId threads the CALLER's capture down. bakedBytes is entered from operations that
+// have usually already awaited, so its own entry is not a safe capture point — the
+// default exists only for the call sites that enter it first thing.
+async function bakedBytes(docId = docMeta && docMeta.id) {
   // saveDocument() bakes pdf.js annotation-storage edits (form fills, FREETEXT/
   // INK/HIGHLIGHT/STAMP) and warns + does a needless rewrite when storage is
   // empty. Our overlay edits (covers/fields/stamps) bake server-side via
@@ -6627,7 +6665,7 @@ async function bakedBytes() {
     if (fields.length) form.append('fields', JSON.stringify(fields));
     if (stamps.length) form.append('stamps', JSON.stringify(stamps));
     if (notes.length) form.append('notes', JSON.stringify(notes));
-    const res = await apiFetch('/api/bake', { method: 'POST', body: form });
+    const res = await apiFetch('/api/bake', { method: 'POST', body: form, docId });
     // A failed bake must abort the whole operation: returning the un-baked bytes
     // here would let save/print/flatten/sign proceed with a document silently
     // missing the user's covers, fields, stamps, and notes.
@@ -6638,7 +6676,7 @@ async function bakedBytes() {
   // which the bake preserves — strip it from any baked output so the finished
   // file doesn't reopen in signing mode. (Server no-op once it's already gone.)
   if (docHadFlags) {
-    try { out = await embedFlags(out, null); } catch (e) {
+    try { out = await embedFlags(out, null, docId); } catch (e) {
       console.error('flag strip failed', e);
       toast('warning: could not remove the signing flags — this file may reopen in signing mode');
     }
