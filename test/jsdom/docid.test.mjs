@@ -82,9 +82,18 @@ test('opening a document, then every apiFetch call names it', async () => {
   // The route list is the same membership question MUTATING answers in
   // pinning.test.mjs: a route that resolves a document must name one. Routes that
   // legitimately do not (pre-unlock, vault, image library) are excluded by prefix.
+  //
+  // `/api/docs` is on it as of P06.S03, and the entry is a CORRECTION rather than an
+  // addition: the route is a question about the SESSION — what does the server hold? —
+  // which by construction cannot name a document, and it is the reason apiFetch has an
+  // `unpinned` option at all. It was passing this test only because the reconcile runs
+  // at boot and `calls` is cleared before the drive below, so a future reconcile firing
+  // inside the window would have failed the guard for a correct call. A guard that
+  // passes by timing is one that fails by timing.
   const NOT_DOCUMENT_SCOPED = ['/api/status', '/api/ssh/', '/api/vault/', '/api/images',
     '/api/update/', '/api/identity', '/api/peers', '/api/settings', '/api/profile',
-    '/api/recent', '/api/browse', '/api/roots', '/api/session/', '/api/cosign/'];
+    '/api/recent', '/api/browse', '/api/roots', '/api/session/', '/api/cosign/',
+    '/api/docs'];
   const documentCalls = calls.filter((c) =>
     c.url.startsWith('/api/') && !NOT_DOCUMENT_SCOPED.some((p) => c.url.startsWith(p)));
 

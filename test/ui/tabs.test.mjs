@@ -259,6 +259,36 @@ test('a real browser reload comes back with every document the server holds', as
   assert.equal(visible, 1, `${visible} containers are visible after a reload, want exactly 1`);
 });
 
+test('switching away and back preserves the zoom you set', async () => {
+  // **P06's exit criterion, and it was NOT met until the phase gate found it.**
+  // activateView re-fitted on every activation, so a user who zoomed and switched away
+  // was handed fit-width on return — silently, every time. The clause says switching
+  // preserves zoom; it now does, and this is what would notice if that regressed.
+  //
+  // Two documents are open from the tests above.
+  assert.equal(await tabCount(), 2, `setup: ${await tabCount()} tabs, want 2`);
+  await page.click(tabSel(1));
+  await switched(3);
+
+  const fitted = await page.evaluate(() => document.querySelector('.viewerContainer:not([hidden]) .page').offsetWidth);
+  await page.click('#zoomInBtn');
+  await page.click('#zoomInBtn');
+  const zoomed = await page.evaluate(() => document.querySelector('.viewerContainer:not([hidden]) .page').offsetWidth);
+  // The stimulus: the zoom must actually have changed the rendered width, or "it came
+  // back the same" is true of a control that does nothing.
+  assert.ok(zoomed > fitted * 1.1,
+    `setup: zooming moved the page from ${fitted}px to ${zoomed}px, which is not a change this test can see`);
+
+  await page.click(tabSel(2));
+  await switched(7);
+  await page.click(tabSel(1));
+  await switched(3);
+
+  const back = await page.evaluate(() => document.querySelector('.viewerContainer:not([hidden]) .page').offsetWidth);
+  assert.ok(Math.abs(back - zoomed) < 2,
+    `the document came back at ${back}px instead of the ${zoomed}px it was left at — the switch re-fitted it and threw the user's zoom away`);
+});
+
 test('a reload with ONE document open comes back showing it', async () => {
   // The N=1 case, stated separately in the acceptance because it is the defect that
   // predates tabs: before this slice a reload came back showing ZERO documents while the
