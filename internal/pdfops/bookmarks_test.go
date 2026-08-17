@@ -58,7 +58,7 @@ func TestSetOutlineRejectsBadInput(t *testing.T) {
 		"duplicate title":   {{Title: "A", Page: 1, Level: 0}, {Title: "A", Page: 2, Level: 0}},
 		"empty title":       {{Title: "  ", Page: 1, Level: 0}},
 		"page out of range": {{Title: "A", Page: 9, Level: 0}},
-		"over-deep nesting":  {{Title: "A", Page: 1, Level: 0}, {Title: "B", Page: 2, Level: 2}},
+		"over-deep nesting": {{Title: "A", Page: 1, Level: 0}, {Title: "B", Page: 2, Level: 2}},
 	}
 	for name, items := range cases {
 		if _, err := SetOutline(base, items); err == nil {
