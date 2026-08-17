@@ -1401,6 +1401,11 @@ function newView() {
     pageNumber: undefined,
     renderedDpr: undefined,
 
+    // The document id this view has already reported an eviction for, so the notice
+    // fires once per eviction rather than on every reflectUndoControls call — which
+    // runs on every load, every op and every activation.
+    lastEvictionSeen: undefined,
+
     // This view's own DOM and its own pdf.js engine (ADR-002). `container` is the scroll
     // box; the page stack inside it is pdf.js's to own (it empties it on setDocument) and
     // is reachable as `viewer.viewer`, so it is not duplicated here.
@@ -7146,6 +7151,29 @@ function reflectUndoControls(enabled) {
   const m = view.docMeta || {};
   if (els.undoBtn) els.undoBtn.disabled = !(enabled && (m.canUndo || view.overlayHistory.undo.length));
   if (els.redoBtn) els.redoBtn.disabled = !(enabled && (m.canRedo || view.overlayHistory.redo.length));
+
+  // Eviction is observable or it is not eviction (ADR-003). The server has always
+  // reported historyEvicted when it dropped a document's history whole to keep the
+  // global budget, and nothing in the client read it — so the user's undo button
+  // simply stopped reaching, and `canUndo:false` reads identically for "you have
+  // made no edits" and "your edits are no longer undoable". That is the exact
+  // ambiguity the ADR says whole-history eviction exists to resolve, left
+  // unresolved because the last step was missing.
+  //
+  // Told once per eviction, on the control itself rather than as a toast: a toast
+  // for something that happened while the user was working on another document is
+  // gone before they look, and this is a standing fact about the button, not an
+  // event.
+  if (els.undoBtn) {
+    els.undoBtn.title = m.historyEvicted
+      ? 'Undo — earlier history for this document was released to stay within the memory budget'
+      : 'Undo';
+    els.undoBtn.classList.toggle('evicted', !!m.historyEvicted);
+  }
+  if (m.historyEvicted && view.lastEvictionSeen !== view.docMeta.id) {
+    view.lastEvictionSeen = view.docMeta.id;
+    toast('Earlier undo history for this document was released to stay within the memory budget');
+  }
 }
 
 // --- client overlay-edit undo (P2) ------------------------------------------

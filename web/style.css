@@ -403,9 +403,6 @@ body > div[id$="Modal"] {
   background: rgba(17, 17, 27, 0.7);
   display: flex; align-items: center; justify-content: center;
 }
-/* `hidden` must still win over the display above, or every dialog is permanently
- * open — the attribute is the only thing that closes them. */
-body > div[id$="Modal"][hidden] { display: none; }
 
 /* signature-details modal: one row per signer */
 .sigdetails { display: flex; flex-direction: column; gap: 8px; min-width: 340px; max-width: 460px; }
@@ -965,3 +962,8 @@ input.ovl-check { appearance: auto; accent-color: #1a7f37; background: transpare
 .fieldname-kind { color: var(--subtext0); font-size: 12px; min-width: 52px; }
 /* highlight the page field whose modal row is focused */
 .naming-hilite { outline: 2px solid var(--blue) !important; outline-offset: 1px; }
+
+/* An undo button whose earlier history was released to stay within the global
+ * budget (ADR-003). Marked rather than disabled — undo still reaches the entries
+ * that remain, and the tooltip says what happened. */
+#undoBtn.evicted { border-color: var(--yellow); }
