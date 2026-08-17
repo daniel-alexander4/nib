@@ -1,5 +1,12 @@
 # PLAN — Multiple open documents in Nib
 
+Plan review 2026-08-17 (P07, at Dan's request before S02): structural gate passed;
+one **critical** — the desktop launcher's SIGTERM was leaving a stale instance record
+on every activation, because `run()` handled only SIGINT — fixed at the line rather
+than pinned; seven warnings, five adopted as pins below and two carried to S02's gate
+as decisions (what authenticates a hand-off, and whether an on-disk credential that
+lets another local process make Nib act needs its own D-number).
+
 Planning arc started 2026-08-15 (Stage 1 seed, from a completed `/tshoot` →
 `/grill` → `/deepdive` chain rather than a cold brief — the design inputs listed
 under "Inherited evidence" are treated as settled findings, not re-derived).
@@ -327,6 +334,13 @@ a hand-off of the path to the running process, all interacting with the vault. S
 it is **its own phase, not a rider on P06** — but it is named as a decision
 because "the app has tabs yet the OS still opens a second window" is a coherence
 gap a user meets on their first double-click, not an edge case.
+
+**(plan-review pointer, 2026-08-17 — D18's body is stale and this is a signpost, not
+an edit.)** "Nothing anywhere handles an already-running instance" was true of no
+platform by the time P07 opened: the 2026-08-16 reality-drift pin in P07 records that
+Linux handles it by SIGTERMing the sibling, and the 2026-08-17 pin records that the
+handling is **platform-split** — Windows has never had any. Read both before building
+against this decision. The decision itself stands; only its premise sentence is stale.
 
 ### D19 — Standards alignment *(settled 2026-08-15 via Stage 5, against `~/repos/project-standards/STANDARDS.md`)*
 Read in full against this plan. Four adoptions, one deviation, one question for Dan.
@@ -2834,6 +2848,25 @@ Acceptance:
 - A stale record does not strand the launch: it becomes the primary.
 - The cap and the locked-vault cases each have a defined, user-visible answer.
 
+**(plan-review pin: the takeover is a retry, 2026-08-17 — S02.)** "A stale record does
+not strand the launch: it becomes the primary" is one attempt as written, and two
+launches can race to take over the same stale record — `Create` is O_EXCL, so one loses
+and must **re-probe rather than give up**. And an unreadable record (a truncated write,
+a disk that filled) must be treated as absent, never as a state the user is asked to
+clear by hand. **What discharges this specifically:** a test that takes over a stale
+record from two goroutines and asserts exactly one becomes primary while the other hands
+off — not the single-launch takeover the original clause already covers.
+
+**(plan-review pin: the window has no named mechanism, 2026-08-17 — S02.)** "The running
+instance's window is what the user ends up looking at" is the clause most likely to be
+quietly downgraded during implementation, because **Nib owns no window** — the browser
+does, and asking a browser to raise an existing app window is platform- and
+browser-dependent. Name the mechanism before building, and if the honest answer is "we
+re-open the URL and let the browser decide", say that in the clause rather than leaving
+a promise the implementation cannot keep. **What discharges this specifically:** an
+observation of what the user sees after a second launch, on one named platform — not
+"the hand-off returned 200".
+
 #### P07.S03 — retire replace-and-kill, and prove it on Windows
 Scope: drop `--replace` from `build/nib.desktop`, retire `ReplaceOthers`, and
 drive the whole path under wine through `build/winrepro.sh`. Refs: D18.
@@ -2844,6 +2877,16 @@ Acceptance:
   hand-off, which is the exit criterion's own wording ("verified on Windows").
 - The P01.S04 interaction the pin names is resolved or restated: the unsaved-work
   confirm is no longer bypassable by the ordinary double-click path.
+
+**(plan-review pin: the Windows criterion names an instrument that does not exist,
+2026-08-17 — S03.)** `winrepro.sh` starts exactly ONE instance (a single `SERVER_PID`,
+`:119-120`) and pins `NIB_ADDR` to a fixed port — so a second launch there cannot even
+bind, let alone be observed handing off. **This is P06's typed-overlay clause verbatim**:
+an acceptance clause naming its own instrument, with nobody having built it, discovered
+at the gate. S03 owns the two-process harness change, and it is the slice's first task
+rather than its last. **What discharges this specifically:** `winrepro.sh` starting a
+second `wine "$EXE" <path>` against a running first one and asserting the first one's
+document count changed — not the existing single-instance smoke passing.
 
 ---
 

@@ -162,3 +162,33 @@ func TestPathIsInsideTheGivenDirectory(t *testing.T) {
 		t.Errorf("Path = %q, want %q", got, want)
 	}
 }
+
+// TestTheRecordDoesNotOutliveASIGTERM is a source guard, and it exists because the
+// signal that kills Nib in ordinary use is the one Go does not handle by default.
+//
+// `build/nib.desktop` passes `--replace` on every activation and
+// `singleton.ReplaceOthers` sends SIGTERM. An unhandled SIGTERM terminates without
+// running a single deferred function, so the instance record outlives its instance —
+// every desktop double-click leaving one behind, pointing at a dead process, while the
+// launch that killed it finds ErrExists and publishes nothing. Found by P07's plan
+// review; the behaviour itself is driven live in the slice's verification, and this
+// guard is what notices if the signal list is ever trimmed back.
+func TestTheRecordDoesNotOutliveASIGTERM(t *testing.T) {
+	src, err := os.ReadFile(filepath.Join("..", "..", "cmd", "nib", "main.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(src)
+	// The stimulus: the notify call must be there at all, or the assertion below is a
+	// scan over a file that stopped handling signals.
+	if !strings.Contains(text, "signal.NotifyContext(") {
+		t.Fatal("main no longer installs a signal handler — this guard is reading the wrong thing")
+	}
+	if !strings.Contains(text, "syscall.SIGTERM") {
+		t.Error("main does not handle SIGTERM, so a --replace launch kills this process without running its deferred cleanup and the instance record outlives the instance")
+	}
+	// And run() must still RETURN rather than os.Exit, or the defers never fire anyway.
+	if !strings.Contains(text, "func main() { os.Exit(run()) }") {
+		t.Error("main no longer wraps run() — os.Exit skips deferred functions, so the record's removal would not run on the error path")
+	}
+}
