@@ -1199,9 +1199,15 @@ async function openSessionSend() {
 async function sendableForm() {
   // Captured before the first await, and threaded into every helper below: they
   // receive bytes derived from THIS document, and their own entry is already too late.
-  const opDoc = view.docMeta;
-  let bytes = await bakedBytes(opDoc && opDoc.id);
-  const flags = collectFlags();
+  const owner = view;
+  const opDoc = owner.docMeta;
+  let bytes = await bakedBytes(opDoc && opDoc.id, owner);
+  // collectFlags reads the OWNER's markers. It used to read the active view's, on
+  // the far side of the bake, under a comment claiming everything below was threaded
+  // — so one document's bytes could be sent to a pinned peer carrying another
+  // document's signing-flag layout, and the peer would open it in signing mode at
+  // coordinates that mean nothing.
+  const flags = collectFlags(owner);
   if (flags.length) bytes = await embedFlags(bytes, flags, opDoc && opDoc.id);
   const form = new FormData();
   form.append('pdf', new Blob([bytes], { type: 'application/pdf' }), 'doc.pdf');
@@ -1921,12 +1927,20 @@ function closeDocument() {
 // honest fix is a dirty flag cleared on save, which lands in P04, where operation
 // pinning already rewrites every setDocumentFromServer caller (D17); building it
 // here would mean building it twice.
-function hasEditsSinceOpen() {
-  return (view.pdfDocument?.annotationStorage?.size || 0) > 0
-    || view.overlayFields.length > 0
-    || view.overlayHistory.undo.length > 0
-    || !!view.docMeta.canUndo;
+function hasEditsSinceOpen(v = view) {
+  return (v.pdfDocument?.annotationStorage?.size || 0) > 0
+    || v.overlayFields.length > 0
+    || v.overlayHistory.undo.length > 0
+    || !!v.docMeta.canUndo;
 }
+
+// editedViews is what the confirm has to ask, because Close is CLOSE ALL:
+// closeDocument tears down every entry in `views`, while the prompt used to inspect
+// only the active one. With a second document open — which a co-signature arrival
+// creates today — the other document's typed overlays, its overlay undo stack and
+// its server history were discarded with NO prompt at all, and the prompt that did
+// fire said "Close this document?".
+function editedViews() { return views.filter((v) => v.pdfDocument && hasEditsSinceOpen(v)); }
 
 // requestClose is the Close control: confirm if anything has been edited, drop the
 // document server-side, and only then tear the client down.
@@ -1939,9 +1953,16 @@ async function requestClose() {
   if (!view.pdfDocument) return;
   // Worded to what the signals actually support: "since the last save" is true
   // whether or not a save has happened, including when the answer is "nothing".
-  if (hasEditsSinceOpen()
-      && !confirm('Close this document? Any edits made since the last save will be lost.')) {
-    return;
+  // Worded to what the signals actually support ("since the last save" is true
+  // whether or not a save has happened) AND to how many documents are going away.
+  const edited = editedViews();
+  if (edited.length) {
+    const many = views.length > 1;
+    const what = !many ? 'Close this document?'
+      : edited.length === views.length
+        ? `Close all ${views.length} open documents?`
+        : `Close all ${views.length} open documents? ${edited.length} of them have edits.`;
+    if (!confirm(`${what} Any edits made since the last save will be lost.`)) return;
   }
   const res = await apiFetch('/api/close', { method: 'POST' });
   if (!res.ok) return toast(await errText(res, 'could not close the document'));
@@ -3354,10 +3375,25 @@ els.thumbs.addEventListener('drop', onThumbDrop);
 els.thumbs.addEventListener('dragend', onThumbDragEnd);
 
 // --- page operations (M7): bake edits, apply server-side, reload -------------
+// Captured at entry, per ADR-001 and D7. pageOp is the single entry point for
+// rotate, delete, reorder, append, insert, duplicate, split, splitrects, crop,
+// pagenum, pagelabels, nup and normalize, and it used to capture NOTHING: the bake
+// below is an await, apiFetch stamps view.docMeta.id as it exists AFTER it, and
+// server/pages.go commits the posted bytes into whichever document that header
+// names. So a switch landing during the bake committed one document's pages over
+// another — past the pin, with a success toast, and with the undo history cleared
+// by the commit so there was no way back.
+//
+// It is reachable: activateView's only call site is the co-sign arrival poll, which
+// fires on a timer the user does not control, and a bake on a large document takes
+// seconds. save() is the operation that already did this correctly and is the shape
+// copied here.
 async function pageOp(op, extra = {}) {
-  if (!view.pdfDocument) return;
+  const owner = view;
+  const opDoc = owner.docMeta;
+  if (!owner.pdfDocument) return;
   if (!confirmSignatureLoss()) return;
-  const form = await bakedForm();
+  const form = await bakedForm(owner);
   form.append('op', op);
   if (extra.pages) form.append('pages', extra.pages);
   if (extra.deg != null) form.append('deg', String(extra.deg));
@@ -3376,9 +3412,9 @@ async function pageOp(op, extra = {}) {
   if (extra.ranges) form.append('ranges', extra.ranges);
   if (extra.n != null) form.append('n', String(extra.n));
   if (extra.border != null) form.append('border', extra.border ? '1' : '0');
-  const res = await apiFetch('/api/pages', { method: 'POST', body: form });
+  const res = await apiFetch('/api/pages', { method: 'POST', body: form, docId: opDoc && opDoc.id });
   if (!res.ok) { toast('page operation failed'); return false; }
-  await setDocumentFromServer(await res.json());
+  await setDocumentFromServer(await res.json(), owner);
   return true;
 }
 
@@ -6100,8 +6136,8 @@ function setActiveMarker(m) {
 
 function markerFields(owner = view) { return owner.overlayFields.filter((f) => f.kind === 'marker'); }
 
-function collectFlags() {
-  return markerFields().map((f) => ({ page: f.page, frac: f.frac, type: f.tagType }));
+function collectFlags(owner = view) {
+  return markerFields(owner).map((f) => ({ page: f.page, frac: f.frac, type: f.tagType }));
 }
 
 // embedFlags posts the current document to /api/flags: a non-empty set embeds the
@@ -7041,9 +7077,9 @@ function makeNote(frac, opts) {
 
 // collectNotes turns each non-empty note overlay into a {page, x, y, text}: the
 // icon anchors at the card's top-left corner, in PDF points.
-function collectNotes() {
+function collectNotes(owner = view) {
   const out = [];
-  for (const f of view.overlayFields) {
+  for (const f of owner.overlayFields) {
     if (f.kind !== 'note' || !f.text.trim()) continue;
     const [x0, , , y1] = rectPoints(f, f.frac); // x0 = left, y1 = top edge (PDF points)
     out.push({ page: f.page, x: x0, y: y1, text: f.text.trim() });
@@ -7330,9 +7366,9 @@ function rectPoints(f, frac) {
   return [fx0 * f.pageW, (1 - fy1) * f.pageH, fx1 * f.pageW, (1 - fy0) * f.pageH];
 }
 
-function collectFields() {
+function collectFields(owner = view) {
   const out = [];
-  for (const f of view.overlayFields) {
+  for (const f of owner.overlayFields) {
     if (f.kind === 'text' && f.el.value.trim() !== '') {
       out.push({ page: f.page, rect: rectPoints(f, f.frac), text: f.el.value });
     } else if (f.kind === 'edit' && f.el.value.trim() !== '') {
@@ -7370,9 +7406,9 @@ function collectAuthorFields() {
 // collectCovers gathers the opaque fills baked under each text edit: a solid
 // background-coloured PNG over the covered run, sent so the server stamps it
 // before the replacement text (see /api/bake).
-function collectCovers() {
+function collectCovers(owner = view) {
   const out = [];
-  for (const f of view.overlayFields) {
+  for (const f of owner.overlayFields) {
     if (f.kind !== 'edit') continue;
     const rect = rectPoints(f, f.coverFrac || f.frac);
     out.push({ page: f.page, rect, png: coverPNG(rect[2] - rect[0], rect[3] - rect[1], f.bg) });
@@ -7383,9 +7419,9 @@ function collectCovers() {
 // collectStamps gathers image stamps: placed images/quick-stamps (library id or
 // inline PNG), circled choices (a pill/ellipse PNG over the picked option), and
 // checkbox X's.
-function collectStamps() {
+function collectStamps(owner = view) {
   const out = [];
-  for (const f of view.overlayFields) {
+  for (const f of owner.overlayFields) {
     if (f.kind === 'stamp') {
       const rect = rectPoints(f, f.frac);
       if (f.imageId) out.push({ page: f.page, rect, image: f.imageId });
@@ -7425,10 +7461,16 @@ async function bakedBytes(docId = view.docMeta && view.docMeta.id, owner = view)
   const saved = owner.pdfDocument.annotationStorage.size > 0
     ? await owner.pdfDocument.saveDocument()
     : await owner.pdfDocument.getData();
-  const fields = collectFields();
-  const stamps = collectStamps();
-  const covers = collectCovers();
-  const notes = collectNotes();
+  // Threaded, not merely accepted. bakedBytes took an `owner` and used it for
+  // owner.pdfDocument and owner.docHadFlags while these four read the ACTIVE view's
+  // overlayFields — so the parameter read as if the function were owner-safe when
+  // the first caller to use it would have baked one document's pages with another
+  // document's fields, stamps, covers and notes. No caller passed it, so nothing
+  // exposed that.
+  const fields = collectFields(owner);
+  const stamps = collectStamps(owner);
+  const covers = collectCovers(owner);
+  const notes = collectNotes(owner);
   let out = saved;
   if (fields.length || stamps.length || covers.length || notes.length) {
     const form = new FormData();
@@ -7459,9 +7501,10 @@ async function bakedBytes(docId = view.docMeta && view.docMeta.id, owner = view)
 // bakedForm builds the multipart body every endpoint that takes the current
 // document shares: the baked bytes as the "pdf" file part. Callers append their
 // own extra fields (params, ots, appearance, address, op) before sending.
-async function bakedForm() {
+async function bakedForm(owner = view) {
   const form = new FormData();
-  form.append('pdf', new Blob([await bakedBytes()], { type: 'application/pdf' }), 'doc.pdf');
+  const doc = owner.docMeta;
+  form.append('pdf', new Blob([await bakedBytes(doc && doc.id, owner)], { type: 'application/pdf' }), 'doc.pdf');
   return form;
 }
 
