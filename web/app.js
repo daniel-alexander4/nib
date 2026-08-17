@@ -1036,7 +1036,12 @@ async function pollRecv(token) {
     showConsent(st.pending);
   } else if (!st.armed) {
     if (recvStage === 'applying' && recvMode === 'receive') {
-      toast(st.received ? 'Saved ' + st.received.path : 'Document received');
+      // `peer` is who it came from — published for exactly this and never read until
+      // the shape scan asked. "Saved <path>" alone is the one fact the user can already
+      // see; who sent it is the one they cannot.
+      toast(st.received
+        ? 'Saved ' + st.received.path + (st.received.peer ? ' — from ' + st.received.peer : '')
+        : 'Document received');
     } else if (recvStage === 'applying') { await openArrivalInNewView(); toast('Co-signed — it opened alongside your document'); }
     else if (recvStage === 'wait') toast('Session ended — no peer connected');
     else if (recvStage === 'consent') toast('Session timed out');
@@ -1048,7 +1053,11 @@ async function pollRecv(token) {
 
 function showConsent(pending) {
   recvPeerFp = pending.fingerprint || '';
-  els.srvPeerLabel.textContent = recvArmedLabel || 'your pinned peer';
+  // `pending.signer` is who the SERVER saw connect; recvArmedLabel is the label this
+  // client remembers arming for. They are usually the same and the difference matters
+  // when they are not — the consent dialog is the one place the user decides based on
+  // who this is, so it shows the observed identity and falls back to the remembered one.
+  els.srvPeerLabel.textContent = pending.signer || recvArmedLabel || 'your pinned peer';
   els.srvPeerFp.textContent = groupFingerprint(recvPeerFp);
   els.srvPeerReason.textContent = pending.reason || '(none given)';
   showRecvView('srvConsent');
@@ -1314,7 +1323,11 @@ async function sendToPeer() {
     const res = await apiFetch('/api/session/send', { method: 'POST', body: form });
     if (!res.ok) { toast(await errText(res, 'could not send')); return; }
     const r = await res.json();
-    toast(r.declined ? 'The peer declined the document' : 'Sent — the peer has the document');
+    // Three outcomes, because the server publishes two booleans and reading only one
+    // reported "Sent" for a transfer that neither completed nor was declined.
+    toast(r.declined ? 'The peer declined the document'
+      : r.sent ? 'Sent — the peer has the document'
+        : 'The peer did not take the document');
     els.sessionSendModal.hidden = true;
   } catch (e) {
     toast('could not send: ' + e.message);
