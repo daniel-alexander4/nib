@@ -52,6 +52,13 @@ const defaultMinAgree = 2
 // bitcoinMagic tags a Bitcoin block-header attestation in the .ots format.
 var bitcoinMagic = []byte{0x05, 0x88, 0x96, 0x0d, 0x73, 0xd7, 0x19, 0x01}
 
+// ErrProofTooComplex refuses a .ots whose operation count exceeds
+// maxProofInstructions — see that constant for why one byte can commit thousands.
+// Exported and sentinel rather than a bare string so a caller can tell "this proof
+// is hostile" from "this proof is malformed", and so the negative test can assert
+// the specific refusal rather than being satisfied by any error at all.
+var ErrProofTooComplex = errors.New("proof is too complex to verify safely")
+
 // op tags we execute. Nib's own proofs (stamped via the standard calendars) take
 // a sha256-only path to Bitcoin, but third-party proofs may hash with any of the
 // spec's crypto ops, so compute handles all four — sha256, ripemd160, sha1, and
@@ -367,6 +374,26 @@ func parseProof(b []byte) (*proof, error) {
 	return &proof{digest: append([]byte{}, digest...), seqs: seqs}, nil
 }
 
+// maxProofInstructions bounds the total operations one .ots may materialize while
+// parsing. A checkpoint (0xff) duplicates the whole instruction block built so far,
+// so N operations followed by N checkpoints materializes N² instructions out of 2N
+// bytes of input — measured at 876 MiB from an 8 KB file, and cleanly quadratic
+// (4× the input is 16× the memory), so ~32 KB reaches tens of gigabytes.
+//
+// That is an OOM of the entire app — taking every open document with it, and past
+// anything safe.Recover can catch — from a file the user was merely asked to check.
+// The bound is on total work rather than on checkpoint count because the
+// amplification is inherent to what a checkpoint MEANS: a shared prefix is
+// legitimately duplicated once per branch, so no restructuring of the copy removes
+// it (making checkpoints lazy just moves the quadratic onto the attestations that
+// pop them). Real proofs carry tens of operations; this ceiling is four orders
+// above any of them and holds the parse to a few MiB.
+//
+// Note the sibling bound already in this file: compute's hash ops are size-safe by
+// construction, and hexlify is refused outright because it doubles its input. Same
+// reasoning, one layer down — this is the layer it had not been applied to.
+const maxProofInstructions = 100_000
+
 // parseSequences walks the operation/attestation/checkpoint encoding into a set
 // of independent sequences (the checkpoint byte 0xff resets to a shared prefix),
 // mirroring the reference OpenTimestamps parser.
@@ -381,6 +408,10 @@ func parseSequences(c *cursor) ([]sequence, error) {
 	blocks := [][]instr{{}}
 	var checkpoints [][]instr
 	cur := 0
+	// Every instruction materialized, across live blocks and saved checkpoints alike.
+	// Counted where memory is actually committed, not where bytes are read: one
+	// checkpoint byte can commit thousands of instructions.
+	total := 0
 
 	for {
 		tag, err := c.byte()
@@ -417,6 +448,10 @@ func parseSequences(c *cursor) ([]sequence, error) {
 				return nil, fmt.Errorf("unsupported attestation type 0x%x", magic)
 			}
 			blocks[cur] = append(blocks[cur], in)
+			total++
+			if total > maxProofInstructions {
+				return nil, ErrProofTooComplex
+			}
 			if n := len(checkpoints); n > 0 {
 				blocks = append(blocks, checkpoints[n-1])
 				checkpoints = checkpoints[:n-1]
@@ -424,6 +459,13 @@ func parseSequences(c *cursor) ([]sequence, error) {
 			}
 		case tagCheckpoint:
 			b := blocks[cur]
+			// Charged BEFORE the copy: the whole point is that this one byte can
+			// commit an arbitrarily large allocation, so checking afterwards would
+			// mean the allocation the bound exists to refuse has already happened.
+			total += len(b)
+			if total > maxProofInstructions {
+				return nil, ErrProofTooComplex
+			}
 			cp := make([]instr, len(b))
 			copy(cp, b)
 			checkpoints = append(checkpoints, cp)
@@ -439,6 +481,10 @@ func parseSequences(c *cursor) ([]sequence, error) {
 				return nil, fmt.Errorf("unknown operation tag 0x%02x", tag)
 			}
 			blocks[cur] = append(blocks[cur], in)
+			total++
+			if total > maxProofInstructions {
+				return nil, ErrProofTooComplex
+			}
 		}
 	}
 
