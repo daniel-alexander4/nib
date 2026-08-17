@@ -237,7 +237,7 @@ async function apiFetch(url, opts = {}) {
   // the active document now?" — which is about the SESSION rather than about a
   // document, and which a pinned call cannot ask: pinning it means asking after the
   // document the client already knows about, which is never the one it needs to learn.
-  // See reloadOpenDoc.
+  // See openArrivalInNewView.
   //
   // `opts.docId` is the other direction, and it is operation pinning itself (D7): the
   // caller captured a document id BEFORE its first await and names it explicitly, so
@@ -971,7 +971,7 @@ async function pollRecv(token) {
   } else if (!st.armed) {
     if (recvStage === 'applying' && recvMode === 'receive') {
       toast(st.received ? 'Saved ' + st.received.path : 'Document received');
-    } else if (recvStage === 'applying') { await reloadOpenDoc(); toast('Co-signed — document updated'); }
+    } else if (recvStage === 'applying') { await openArrivalInNewView(); toast('Co-signed — it opened alongside your document'); }
     else if (recvStage === 'wait') toast('Session ended — no peer connected');
     else if (recvStage === 'consent') toast('Session timed out');
     endRecv();
@@ -1077,9 +1077,21 @@ async function declineRecv() {
   endRecv();
 }
 
-// reloadOpenDoc refreshes the viewer after runSession applies a received co-signature
+// openArrivalInNewView is what happens after runSession applies a received co-signature
 // out of band (no response carries the new metadata, so the UI fetches it).
-async function reloadOpenDoc() {
+//
+// It ADDS a view. Until P05.S04 this function called setDocumentFromServer, which pointed
+// the single view at the arrival — and its own comment already said why that was wrong:
+// "A co-signature applied out of band ADDS a document and makes it active (D10); the
+// document this client currently names is still open and still perfectly valid." The
+// server half of that landed in P03.S05; the client half did not, so the arrival took the
+// view. Every overlay element and typed value on the document the user was working on went
+// through clearOverlays(), and that document survived only on the server, unreachable.
+//
+// This is also the ONLY path that makes a second view exist. A user Open still replaces,
+// here and on the server, because an added view is unreachable without the tab strip —
+// that pairing is P06's.
+async function openArrivalInNewView() {
   // UNPINNED, deliberately. A co-signature applied out of band ADDS a document and
   // makes it active (D10); the document this client currently names is still open and
   // still perfectly valid. So a pinned fetch here answers the wrong question — it
@@ -1092,7 +1104,28 @@ async function reloadOpenDoc() {
     // it parsed the body unconditionally and handed it to setDocumentFromServer. Every
     // other document-route call site in this file already had this line.
     if (!res.ok) { toast('co-signed, but could not refresh the view'); return; }
-    await setDocumentFromServer(await res.json());
+    const meta = await res.json();
+
+    // The new view is built and loaded BEFORE the switch, so a failure part-way through
+    // leaves the user on the document they had rather than on a half-built one. newView()
+    // hides it automatically because another container already exists, which is also what
+    // makes this the first exercise of the hidden-load path.
+    const arrival = newView();
+    views.push(arrival);
+    await setDocumentFromServer(meta, arrival);
+    // The liveness test is `pdfDocument`, and it is only sound because this view is
+    // FRESH: all four of setDocumentFromServer's early returns leave it null on a new
+    // record. A reused view could carry one from a previous load.
+    if (!arrival.pdfDocument) { // the load refused; drop the empty view rather than switch to it
+      arrival.container.remove();
+      // Guarded, because a Close can land during the load above: closeDocument resets
+      // `views` to [view], indexOf returns -1, and splice(-1, 1) would remove the LAST
+      // element — the live active view — leaving `views` without it.
+      const i = views.indexOf(arrival);
+      if (i >= 0) views.splice(i, 1);
+      return;
+    }
+    activateView(arrival);
   } catch { toast('co-signed, but could not refresh the view'); }
 }
 
@@ -1290,6 +1323,63 @@ function newView() {
     // an N x regression on the thing a user feels most (PLAN.md P05 hot-path pin).
     overlayFields: [],
 
+    // The armed-tool flags and the geometry they capture, per document for the same reason
+    // the bulk bindings are.
+    //
+    // The justification first written here was checked and was mostly wrong, so it is
+    // corrected rather than quietly dropped: it claimed `sbPage`, `splitRects`, `cropPage`,
+    // `cropRect` and `selectedPages` were all read after an await. Only `splitRects` was —
+    // `sbPage` is captured before the await beside it, the crop pair is read synchronously
+    // before its first await, and every selection read happens at click time. The one true
+    // case is now pinned at its operation entry.
+    //
+    // What actually makes them per-view is simpler and holds for all of them: they are one
+    // document's state reaching shared toolbar buttons, a shared cursor, and — for
+    // `selectedPages` — a destructive bulk operation.
+    //
+    // Enumerated here because the phase's own binding count never was: it counted
+    // bindings with many references, and the question activation asks is which bindings
+    // must SWAP. Those are different sets, and this is the difference.
+    redactMode: false,
+    editMode: false,
+    markerMode: null,   // 'sign' | 'date' | 'initial' while armed to place
+    activeMarker: null, // the marker highlighted as the current fill target
+    fillTarget: null,   // a sign/initial marker awaiting a Library pick
+    activeTool: null,   // mirrors viewer.annotationEditorMode, which is per viewer
+    splitBoxMode: false,
+    splitRects: [],     // {fx, fy, fw, fh} fractions of the page (top-left origin)
+    sbPage: 0,
+    cropMode: false,
+    cropRect: null,     // {fx, fy, fw, fh} fraction of the page (top-left origin)
+    cropPage: 0,
+    borderMode: false,
+    dropdownMode: false,
+    radioMode: false,
+    shapeMode: false,
+    noteMode: false,
+
+    // SAFETY — 1-based page numbers in THIS document's pagination, driving the bulk
+    // rotate / delete / reorder bar. Shared across views it applies one document's page
+    // numbers to another's pages, which is a destructive wrong-document operation and not
+    // a stale label. It appears in no enumeration this plan ever made.
+    selectedPages: new Set(),
+    selAnchor: null,    // last clicked page, for shift-range selection
+
+    // The signing-flag state of THIS document. `docHadFlags` decides whether the Flags
+    // panel treats the document as a counterparty's copy, so a shared one either exposes a
+    // received document as editable or refuses to strip NibFlags from the other's export.
+    docHadFlags: false,
+    signTotal: 0,       // flag count when the banner appeared, for "X of N"
+    signStarted: false, // the recipient has hit Start, so the action is now "Next field"
+
+    // Captured at the moment this view is switched away from, and read when it is switched
+    // back. All three start undefined DELIBERATELY: activateView skips the scroll and page
+    // restore on a view that has never been switched away from, and treats an undefined
+    // renderedDpr as "never rendered at a known dpr", forcing one refresh on first show.
+    scrollTop: undefined,
+    pageNumber: undefined,
+    renderedDpr: undefined,
+
     // This view's own DOM and its own pdf.js engine (ADR-002). `container` is the scroll
     // box; the page stack inside it is pdf.js's to own (it empties it on setDocument) and
     // is reachable as `viewer.viewer`, so it is not duplicated here.
@@ -1412,6 +1502,174 @@ function newView() {
 // document id has, for the same reason.
 let view = newView();
 
+// Every open view, in creation order. The ACTIVE one is `view`; the rest are hidden with
+// their page DOM intact (ADR-002). Only arrivals add to this today — a user Open still
+// replaces, both here and on the server, and making Open add is P06's along with the tab
+// strip that would make an added view reachable.
+const views = [view];
+
+// Modals whose contents are derived from ONE document: page ranges bounded by its
+// numPages, element references into its page DOM, bytes rendered from it, an outline read
+// out of it. A switch invalidates all of them.
+//
+// The ones deliberately NOT here are the session- and app-scoped ones — about, background,
+// combine, cosign peer picker, keys, open, peers, profile, the signature-capture pad, and
+// the three session modals — plus `saveAsModal`, which is the interesting exclusion: its
+// bytes are already in hand and its filename was captured at operation entry, so it writes
+// to a path and not to a document. Leaving it open across a switch is correct.
+const DOC_BOUND_MODALS = [
+  'attachmentsModal', 'bookmarkSplitModal', 'cropModal', 'decryptModal', 'encryptModal',
+  'extractModal', 'fieldNameModal', 'fillCsvModal', 'finalizeModal', 'importXfdfModal',
+  'nupModal', 'outlineModal', 'pageLabelsModal', 'pageNumModal', 'pageSplitModal',
+  'pdfaModal', 'redactTextModal', 'reduceModal', 'scanModal', 'sigDetailsModal',
+  'splitModal', 'timestampModal', 'tsVerifyModal',
+];
+
+// --- switching between views -------------------------------------------------
+//
+// The order below is not stylistic. Each step is pinned by something that breaks if it
+// moves, and the ones that bite silently are called out where they sit.
+//
+// What must NEVER appear in here: `setDocument`, `setDocumentFromServer`,
+// `resetSharedDocState`, `clearOverlays`, `clearOverlayHistory`, `reconstructFlags`,
+// `showSignBanner`, `updateBadge(null)`, `closeDocument`, `loadingTask.destroy()` or
+// `newView()`. Every one of them tears down or rebuilds state that ADR-002 exists to
+// preserve — `setDocument` alone runs `_resetView()`, which empties the page stack and
+// takes every overlay element and its typed value with it. Activation is a REPAINT.
+function activateView(v) {
+  if (v === view) return;
+  const out = view;
+
+  // ── A: quiesce the outgoing view ────────────────────────────────────────────
+  // Drags first, and before the hide: the preview nodes live in the outgoing view's page
+  // divs, and a pointerup arriving after the swap would write the drag into whichever
+  // document is active by then.
+  abortDrags();
+  // Captured before hiding, because a display:none element reports scrollTop 0.
+  out.scrollTop = out.container.scrollTop;
+  out.pageNumber = out.viewer.currentPageNumber;
+  closeDocBoundModals();
+  out.container.hidden = true;
+
+  // ── B: the swap ─────────────────────────────────────────────────────────────
+  // One assignment, and everything downstream depends on it having happened: eleven
+  // repaint functions resolve the module-level `view` internally.
+  view = v;
+
+  // ── C: geometry ─────────────────────────────────────────────────────────────
+  // Unhide BEFORE the fit, or clientWidth is 0 and fitWidestWidth silently no-ops.
+  v.container.hidden = false;
+  fitWidestWidth(v);
+  // Explicitly, not via the bus: a re-fit that computes the SAME scale fires no
+  // `scalechanging`, so the self-serving path cannot be relied on to have run.
+  relayoutOverlays(v);
+  relayoutRedactMarks(v);
+  // Per-view dpr. `lastDpr` is one module global and dprChanged refreshes only the active
+  // viewer, so a dpr change while this view was hidden was recorded and never delivered —
+  // its canvases would stay at the old resolution, CSS-stretched, permanently soft.
+  if (v.renderedDpr !== devicePixelRatio) {
+    v.renderedDpr = devicePixelRatio;
+    v.viewer.refresh();
+  }
+  // display:none drops scrollTop, so without this the view returns to page 1. ADR-002's
+  // "preservation is the browser's default" covers DOM content; scroll offset is ours.
+  if (v.pageNumber) v.viewer.currentPageNumber = v.pageNumber;
+  if (v.scrollTop) v.container.scrollTop = v.scrollTop;
+  applyHighlightColor(selectedHlColor); // the colour is session state; the dispatch is per bus
+
+  // ── D: repaint the shared chrome ────────────────────────────────────────────
+  repaintForActiveView();
+}
+
+// abortDrags cancels any gesture in flight and removes its preview node. Transient state
+// is aborted, never restored: a half-drawn box belongs to a moment, not to a document.
+function abortDrags() {
+  for (const d of [redDiv, sbDiv, cropDiv, edDiv, bdDiv, ddDiv, rdDiv, shCanvas]) d?.remove();
+  redStart = redDiv = redHit = null;
+  sbStart = sbDiv = sbHit = null;
+  cropStart = cropDiv = cropHit = null;
+  edStart = edDiv = edHit = null;
+  bdStart = bdDiv = bdHit = null;
+  ddStart = ddDiv = ddHit = null;
+  rdStart = rdDiv = rdHit = null;
+  shStart = shCanvas = shHit = null;
+  onThumbDragEnd(); // also restores the grid's DOM order
+}
+
+// Modals holding state derived from ONE document. Left open across a switch they would
+// act on the new document with the old one's numbers — page ranges bounded by the old
+// numPages, element references into the old view's page DOM, bytes from the old document.
+// Closing them is one rule for twenty bindings, and it is the honest one: their state
+// cannot be meaningfully carried.
+function closeDocBoundModals() {
+  els.compareModal.hidden = true;
+  closeCmpDoc();
+  for (const id of DOC_BOUND_MODALS) { const m = $(id); if (m) m.hidden = true; }
+}
+
+// repaintForActiveView drives every shared element from the active view. Ordering:
+// updateBadge AFTER the swap (its first statement WRITES view.lastSig, so called earlier
+// it would overwrite the outgoing view's — one of the three SAFETY fields); docHadFlags is
+// already on the record so reflectSignControls reads the right one; and applySignLock
+// AFTER setDocControls, because EDITING_TOOLS is a strict subset of DOC_REQUIRED and the
+// latter re-enables everything the former just disabled.
+function repaintForActiveView() {
+  const open = !!view.pdfDocument;
+  els.viewerWrap.classList.toggle('has-doc', open);
+  els.saveBtn.disabled = !open;
+  els.saveBtn.title = open
+    ? (view.docMeta.canSave ? 'Save (overwrites ' + view.docMeta.path + ')' : 'Save a copy (downloads — opened without a local path)')
+    : 'Save (overwrites the original)';
+  all('.pageCount').forEach((s) => { s.textContent = '/ ' + (open ? view.pdfDocument.numPages : 0); });
+  all('.pageNum').forEach((i) => { i.value = open ? view.viewer.currentPageNumber : 1; });
+  updateBadge(view.lastSig); // idempotent re-assignment; NEVER updateBadge(null) here
+
+  els.thumbGrid.innerHTML = '';
+  els.outline.innerHTML = '';
+  if (open) {
+    // The selection is snapshotted and put back, because buildThumbnails calls
+    // clearSelection() — which empties the INCOMING view's Set, not the outgoing one. A
+    // `.then(markSelectedThumbs)` alone would repaint an already-emptied selection and
+    // silently drop it on every switch, which is the opposite of what moving
+    // `selectedPages` onto the record was for.
+    const keep = new Set(view.selectedPages);
+    const anchor = view.selAnchor;
+    buildThumbnails(view.docGen, view).then(() => {
+      view.selectedPages = keep;
+      view.selAnchor = anchor;
+      markSelectedThumbs();
+    }).catch((e) => console.error('thumbnails failed', e));
+    buildOutline(view.docGen, view).catch((e) => console.error('outline failed', e));
+  } else {
+    clearSelection(); // no document: the outgoing view's "N selected" bar must not persist
+  }
+
+  // The search box and counter are one shared pair for N documents. Cleared rather than
+  // restored: leaving A's query over B's count is the wrong-document display this whole
+  // phase is about, and per-view query restore is a feature P06 can decide on.
+  const si = findInput(); if (si) si.value = '';
+  renderFindCount(null);
+
+  setDocControls(open);
+  applySignLock();
+
+  els.signBanner.hidden = !view.signTotal;
+  if (view.signTotal) setSignBanner(); // NOT showSignBanner — that resets a recipient's progress
+
+  reflectRedact(); reflectEdit(); reflectSplitBox(); reflectCrop();
+  reflectBorder(); reflectDropdown(); reflectRadio(); reflectShape(); reflectNote();
+  all('.markers button').forEach((b) => b.classList.toggle('active', b.dataset.marker === view.markerMode));
+  all('#toolbar [data-mode]:not(.cmmode)').forEach((t) => t.classList.toggle('active', t.dataset.mode === view.activeTool));
+  reflectAnnoControls();
+  els.viewerWrap.style.cursor = anyToolArmed() ? 'crosshair' : '';
+}
+
+function anyToolArmed() {
+  return !!(view.redactMode || view.editMode || view.markerMode || view.splitBoxMode
+    || view.cropMode || view.borderMode || view.dropdownMode || view.radioMode
+    || view.shapeMode || view.noteMode);
+}
+
 
 // Full-rewrite edits (sanitise, flatten, redact, remove-originals, page ops) drop
 // any signature the document carries. These guards keep one from being destroyed
@@ -1431,7 +1689,12 @@ function confirmSignatureLoss() {
 }
 
 // --- open / load -------------------------------------------------------------
-async function setDocumentFromServer(meta) {
+// `target` is the view the document loads INTO — the active one unless a caller says
+// otherwise. An arrival passes the freshly-built hidden view, which is the one path that
+// loads a document into a view the user is not looking at. Everything that writes shared
+// chrome below is therefore guarded on `target === view`: a background load must not
+// repaint the foreground's Save label, page count, badge or banner.
+async function setDocumentFromServer(meta, target = view) {
   // A refusal body is not a document. The server answers a stale id with
   // `{"error": "..."}` and a 200 body has no `error` field, so this is exact rather
   // than heuristic.
@@ -1442,16 +1705,16 @@ async function setDocumentFromServer(meta) {
   // to the unpinned path P03.S03 exists to close — while the document still renders,
   // because /api/pdf with no id falls back to the active one. Silent in both
   // directions. Any of the twenty document-route call sites could grow the same
-  // missing ok-check that reloadOpenDoc had; one guard at the sink covers them all.
+  // missing ok-check that openArrivalInNewView had; one guard at the sink covers them all.
   if (!meta || meta.error) {
     toast('could not read the document');
     console.error('setDocumentFromServer got a refusal, not a document:', meta);
     return;
   }
-  const gen = ++view.docGen;
-  view.docMeta = meta;
-  if (meta.name && meta.name !== '.') view.originalName = meta.name;
-  resetSharedDocState(); // was clearOverlays() — see the four modes it never covered
+  const gen = ++target.docGen;
+  target.docMeta = meta;
+  if (meta.name && meta.name !== '.') target.originalName = meta.name;
+  resetSharedDocState(target); // was clearOverlays() — see the four modes it never covered
   let doc;
   try {
     // The id goes in the URL, not a header: pdf.js issues this fetch itself, so a
@@ -1462,40 +1725,58 @@ async function setDocumentFromServer(meta) {
   } catch (e) {
     // An encrypted PDF needs its open password before pdf.js can render it; prompt
     // for it and unlock the working copy rather than dead-end on a generic error.
-    if (e && e.name === 'PasswordException') { openDecryptPrompt(); return; }
+    // The decrypt prompt is one shared modal and its Unlock handler reloads the ACTIVE
+    // view, so offering it for a background load would put the password the user typed for
+    // an arrival onto the document they are looking at. A background load simply fails.
+    if (e && e.name === 'PasswordException') {
+      if (target === view) openDecryptPrompt();
+      else toast('the document that arrived is password-protected — open it to unlock');
+      return;
+    }
     toast('could not render the document');
     console.error('pdf load failed', e);
     return;
   }
-  if (gen !== view.docGen) return; // a newer load superseded this one
+  if (gen !== target.docGen) return; // a newer load superseded this one
 
-  const old = view.pdfDocument;
-  view.pdfDocument = doc;
-  view.viewer.setDocument(view.pdfDocument);
-  view.linkService.setDocument(view.pdfDocument, null);
+  const old = target.pdfDocument;
+  target.pdfDocument = doc;
+  target.viewer.setDocument(target.pdfDocument);
+  target.linkService.setDocument(target.pdfDocument, null);
   // Free the superseded document's worker-side resources once the viewer and
   // link service have been repointed — without this, every edit op (each of
   // which reloads through here) orphans a document for the session's lifetime.
   if (old && old !== doc) old.loadingTask.destroy().catch(() => {});
   // A fresh document gets a new pdf.js editor manager; re-assert the chosen
   // highlight color so it sticks across reloads (page ops) until the user changes it.
-  applyHighlightColor(selectedHlColor);
+  applyHighlightColor(selectedHlColor, target);
 
-  els.viewerWrap.classList.add('has-doc');
-  all('.pageCount').forEach((s) => { s.textContent = '/ ' + view.pdfDocument.numPages; });
-  els.saveBtn.disabled = false;
-  setDocControls(true);
-  els.saveBtn.title = meta.canSave ? 'Save (overwrites ' + meta.path + ')' : 'Save a copy (downloads — opened without a local path)';
-  updateBadge(meta.signature);
+  // Everything from here to the sidebars is SHARED chrome: one element for N documents.
+  // A background load records its state on the target and paints nothing; activateView is
+  // what makes the chrome show a view, and it is the only thing that should.
+  if (target === view) {
+    els.viewerWrap.classList.add('has-doc');
+    all('.pageCount').forEach((s) => { s.textContent = '/ ' + target.pdfDocument.numPages; });
+    els.saveBtn.disabled = false;
+    setDocControls(true);
+    els.saveBtn.title = meta.canSave ? 'Save (overwrites ' + meta.path + ')' : 'Save a copy (downloads — opened without a local path)';
+  }
+  // updateBadge WRITES view.lastSig as its first statement, so a background load must not
+  // call it — that would overwrite the ACTIVE view's signature result, which is the trust
+  // decision the details modal shows. The target's own value is recorded directly instead.
+  if (target === view) updateBadge(meta.signature); else target.lastSig = meta.signature;
   // Rebuild any embedded signing flags as markers and offer the signing flow.
-  docHadFlags = Array.isArray(meta.flags) && meta.flags.length > 0;
-  view.signLocked = docHadFlags; // a received signing document opens locked, non-editable
-  els.signBanner.hidden = true;
-  reconstructFlags(meta.flags);
-  applySignLock();
-  // Sidebars are non-essential; a build failure must not break the load.
-  buildThumbnails(gen).catch((e) => console.error('thumbnails failed', e));
-  buildOutline(gen).catch((e) => console.error('outline failed', e));
+  target.docHadFlags = Array.isArray(meta.flags) && meta.flags.length > 0;
+  target.signLocked = target.docHadFlags; // a received signing document opens locked, non-editable
+  if (target === view) els.signBanner.hidden = true;
+  reconstructFlags(meta.flags, target);
+  if (target === view) applySignLock();
+  // Sidebars are non-essential; a build failure must not break the load. Shared until
+  // P05.S05, so a background load leaves them showing the active document.
+  if (target === view) {
+    buildThumbnails(gen, target).catch((e) => console.error('thumbnails failed', e));
+    buildOutline(gen, target).catch((e) => console.error('outline failed', e));
+  }
 }
 
 // closeDocument puts the open document down and returns the app to exactly the
@@ -1517,6 +1798,34 @@ async function setDocumentFromServer(meta) {
 // sufficient on its own: see the generation re-check in buildThumbnails, which
 // would otherwise append into the grid this function just cleared.
 function closeDocument() {
+  // Close is CLOSE ALL, and it is that way because the server says so: handleClose calls
+  // setDoc(nil), which empties the whole registry and clears every open document's undo
+  // rings. An arrival can already leave two documents open, so a client that dropped only
+  // the active view would leave the other one showing a document the server no longer
+  // holds — every pinned request against it a 409, with the page still rendered.
+  //
+  // Matching the server is honest rather than a regression: Close has always meant "close
+  // everything". P06 splits Close view from Close all, and that is where the server needs
+  // a per-document remove to split against.
+  for (const v of views) {
+    if (v === view) continue;
+    const d = v.pdfDocument;
+    v.pdfDocument = null;
+    v.docGen++;
+    v.viewer.setDocument(null);
+    v.linkService.setDocument(null, null);
+    if (d) d.loadingTask.destroy().catch(() => {});
+    v.container.remove(); // the page DOM ADR-002 preserved across switches goes on a close
+  }
+  views.length = 0;
+  views.push(view);
+
+  // The same quiescing a switch does, for the same reason: a gesture in flight holds live
+  // nodes that setDocument(null) is about to detach, and a document-bound modal outlives
+  // the document it describes.
+  abortDrags();
+  closeDocBoundModals();
+
   const doc = view.pdfDocument;
   view.pdfDocument = null;
   view.docGen++;
@@ -1533,7 +1842,7 @@ function closeDocument() {
 
   view.docMeta = { canSave: false, path: '' };
   view.originalName = '';
-  docHadFlags = false;
+  view.docHadFlags = false;
   view.signLocked = false;
   els.signBanner.hidden = true;
   updateBadge(null); // resets view.lastSig, the badge, and the details button together
@@ -2745,7 +3054,13 @@ els.attachInput.onchange = async () => {
 };
 
 // --- thumbnails sidebar ------------------------------------------------------
-async function buildThumbnails(gen = view.docGen) {
+// The staleness token is a (view, generation) PAIR, not a generation. `docGen` became
+// per-view in S02 and every view starts at 0, so two freshly-loaded views commonly both
+// sit at 1 and `gen !== view.docGen` reads 1 !== 1 — false, and the stale build carries on
+// appending. That is the id-reuse failure ADR-001 names: the comparison still passes.
+// Capturing the owner makes the identity half of the token explicit, and the owner check
+// also stops a background build painting into the shared grid.
+async function buildThumbnails(gen = view.docGen, owner = view) {
   els.thumbGrid.innerHTML = '';
   clearSelection(); // a rebuild means a new/edited doc — old page numbers no longer apply
   // numPages is read ONCE, while the document is still alive. In the loop condition
@@ -2754,10 +3069,10 @@ async function buildThumbnails(gen = view.docGen) {
   // the loop before the condition is reached, so this prevents a TypeError that
   // does not currently occur — it is here so the loop does not silently depend on
   // that, not because a null deref was observed.
-  const total = view.pdfDocument.numPages;
+  const total = owner.pdfDocument.numPages;
   for (let n = 1; n <= total; n++) {
-    if (gen !== view.docGen) return; // a newer document loaded — stop rendering stale thumbs
-    const page = await view.pdfDocument.getPage(n);
+    if (owner !== view || gen !== owner.docGen) return; // a newer document loaded, or this view is no longer on screen
+    const page = await owner.pdfDocument.getPage(n);
     const base = page.getViewport({ scale: 1 });
     const viewport = page.getViewport({ scale: 150 / base.width });
 
@@ -2799,11 +3114,11 @@ async function buildThumbnails(gen = view.docGen) {
     // renders, one orphan thumbnail would land in a grid closeDocument had already
     // emptied, and nothing here would say why. One comparison to make the staleness
     // contract self-contained.
-    if (gen !== view.docGen) return;
+    if (owner !== view || gen !== owner.docGen) return;
     els.thumbGrid.appendChild(wrap);
     await page.render({ canvasContext: canvas.getContext('2d'), viewport }).promise;
   }
-  markCurrentThumb(view.viewer.currentPageNumber || 1);
+  markCurrentThumb(owner.viewer.currentPageNumber || 1);
 }
 
 function markCurrentThumb(n) {
@@ -2819,46 +3134,44 @@ function markCurrentThumb(n) {
 // it only ever names pages currently on screen. Bulk ops route through the same
 // pageOp rail as the per-thumbnail buttons, so they inherit the signature guard,
 // overlay bake, and reload for free.
-let selectedPages = new Set(); // page numbers selected in the grid
-let selAnchor = null;          // last clicked page, for shift-range selection
 
 // onThumbClick handles a thumbnail click with its modifier keys: shift extends a
 // range from the anchor, ctrl/cmd toggles one page, a plain click clears the
 // selection and navigates (the pre-existing behaviour).
 function onThumbClick(e, n) {
-  if (e.shiftKey && selAnchor != null) {
-    const lo = Math.min(selAnchor, n), hi = Math.max(selAnchor, n);
-    selectedPages.clear();
-    for (let p = lo; p <= hi; p++) selectedPages.add(p);
+  if (e.shiftKey && view.selAnchor != null) {
+    const lo = Math.min(view.selAnchor, n), hi = Math.max(view.selAnchor, n);
+    view.selectedPages.clear();
+    for (let p = lo; p <= hi; p++) view.selectedPages.add(p);
   } else if (e.ctrlKey || e.metaKey) {
-    if (!selectedPages.delete(n)) selectedPages.add(n);
-    selAnchor = n;
+    if (!view.selectedPages.delete(n)) view.selectedPages.add(n);
+    view.selAnchor = n;
   } else {
-    selectedPages.clear();
-    selAnchor = n;
+    view.selectedPages.clear();
+    view.selAnchor = n;
     view.viewer.currentPageNumber = n;
   }
   markSelectedThumbs();
 }
 
 function clearSelection() {
-  selectedPages.clear();
-  selAnchor = null;
+  view.selectedPages.clear();
+  view.selAnchor = null;
   markSelectedThumbs();
 }
 
 function markSelectedThumbs() {
   els.thumbGrid.querySelectorAll('.thumbwrap').forEach((c) => {
-    c.classList.toggle('selected', selectedPages.has(Number(c.dataset.page)));
+    c.classList.toggle('selected', view.selectedPages.has(Number(c.dataset.page)));
   });
-  els.thumbSelBar.hidden = selectedPages.size === 0;
-  els.thumbSelCount.textContent = selectedPages.size + ' selected';
+  els.thumbSelBar.hidden = view.selectedPages.size === 0;
+  els.thumbSelCount.textContent = view.selectedPages.size + ' selected';
 }
 
 // selectedPagesParam joins the selection into the comma list pageOp/the server
 // expect, in ascending page order.
 function selectedPagesParam() {
-  return [...selectedPages].sort((a, b) => a - b).join(',');
+  return [...view.selectedPages].sort((a, b) => a - b).join(',');
 }
 
 // --- thumbnail drag-to-reorder ----------------------------------------------
@@ -3030,11 +3343,11 @@ els.normalizeBtn.onclick = async () => {
 
 // Bulk actions on the thumbnail multi-selection. Delete is blocked when it would
 // empty the document (mirrors the per-thumbnail "numPages > 1" guard, generalized).
-els.selRotateLeftBtn.onclick = () => { if (selectedPages.size) pageOp('rotate', { pages: selectedPagesParam(), deg: 270 }); };
-els.selRotateRightBtn.onclick = () => { if (selectedPages.size) pageOp('rotate', { pages: selectedPagesParam(), deg: 90 }); };
+els.selRotateLeftBtn.onclick = () => { if (view.selectedPages.size) pageOp('rotate', { pages: selectedPagesParam(), deg: 270 }); };
+els.selRotateRightBtn.onclick = () => { if (view.selectedPages.size) pageOp('rotate', { pages: selectedPagesParam(), deg: 90 }); };
 els.selDeleteBtn.onclick = () => {
-  if (!selectedPages.size) return;
-  if (view.pdfDocument.numPages <= selectedPages.size) { toast("can't delete every page"); return; }
+  if (!view.selectedPages.size) return;
+  if (view.pdfDocument.numPages <= view.selectedPages.size) { toast("can't delete every page"); return; }
   pageOp('delete', { pages: selectedPagesParam() });
 };
 els.selClearBtn.onclick = () => clearSelection();
@@ -3043,10 +3356,10 @@ els.selClearBtn.onclick = () => clearSelection();
 // drag (pageOp('reorder') → Collect), so it bakes overlays, warns on signature
 // loss, and is undoable for free. A move that wouldn't change the order is a no-op.
 function moveSelected(toFront) {
-  if (!selectedPages.size) return;
-  const selected = [...selectedPages].sort((a, b) => a - b);
+  if (!view.selectedPages.size) return;
+  const selected = [...view.selectedPages].sort((a, b) => a - b);
   const rest = [];
-  for (let p = 1; p <= view.pdfDocument.numPages; p++) if (!selectedPages.has(p)) rest.push(p);
+  for (let p = 1; p <= view.pdfDocument.numPages; p++) if (!view.selectedPages.has(p)) rest.push(p);
   const order = toFront ? [...selected, ...rest] : [...rest, ...selected];
   const identity = Array.from({ length: view.pdfDocument.numPages }, (_, i) => i + 1);
   if (order.join(',') === identity.join(',')) return; // already at that end
@@ -3291,12 +3604,11 @@ els.splitCols.oninput = drawSplitPreview;
 els.splitRows.oninput = drawSplitPreview;
 
 // --- outline sidebar ---------------------------------------------------------
-async function buildOutline(gen = view.docGen) {
+async function buildOutline(gen = view.docGen, owner = view) {
   // Captured at entry, not read at click time. Each link's onclick escapes into the DOM
   // and fires arbitrarily later, so resolving `view` inside it would navigate whichever
   // document happened to be active then — ADR-001's law applied to a client-side
   // closure. Same shape as P04's captured document id, for the same reason.
-  const owner = view;
   els.outline.innerHTML = '';
   const edit = document.createElement('button');
   edit.className = 'outline-edit';
@@ -3308,7 +3620,7 @@ async function buildOutline(gen = view.docGen) {
   // every view starts at 0, so comparing a token captured from A's counter against B's
   // counter is the id-reuse failure ADR-001 names: the comparison still passes, and A's
   // stale outline renders while B is on screen.
-  if (gen !== owner.docGen) return; // a newer document loaded — drop this stale outline
+  if (owner !== view || gen !== owner.docGen) return; // a newer document loaded, or this view is no longer on screen
   if (!outline || !outline.length) {
     const empty = document.createElement('div');
     empty.className = 'thumb-label';
@@ -3526,7 +3838,7 @@ async function loadImages() {
     card.onclick = (e) => {
       if (e.target.closest('.del')) return;
       const src = '/api/images/' + m.id;
-      if (fillTarget) resolveFillTarget(src); else placeStamp(src);
+      if (view.fillTarget) resolveFillTarget(src); else placeStamp(src);
     };
     // Built-in (binary-shipped) signatures are read-only — no delete control.
     if (!m.builtin) {
@@ -4174,8 +4486,15 @@ els.saveFlatBtn.onclick = async () => {
 // Reduce file size. Renders the result, shows before→after size, and only then
 // reveals Save — so the user backs out if compress grew (or flattened) the file.
 let reduceBlob = null;
+// Captured alongside the blob, because the Save button is a SEPARATE handler from the one
+// that produced it — `exportName` is a const in reduceGo's scope and is not in scope here.
+// It read it anyway until 2026-08-16 and threw ReferenceError on every click; `node --check`
+// passes on a scope error, so tier 0 could never have seen it. This is the D7 capture rule
+// applied to a two-handler flow: capture at operation entry, then carry it to wherever the
+// result is consumed rather than re-deriving it there.
+let reduceName = '';
 function resetReduce() {
-  reduceBlob = null;
+  reduceBlob = null; reduceName = '';
   els.reduceResult.hidden = true; els.reduceResult.textContent = '';
   els.reduceSave.hidden = true; els.reduceGo.hidden = false;
   els.reduceModal.querySelector('input[value="optimize"]').checked = true;
@@ -4213,7 +4532,7 @@ els.reduceGo.onclick = async () => {
       after = blob.size;
     }
   } finally { els.reduceGo.disabled = false; els.reduceGo.textContent = 'Reduce'; }
-  reduceBlob = blob;
+  reduceBlob = blob; reduceName = exportName;
   els.reduceResult.textContent = sizeSummary(before, after);
   els.reduceResult.hidden = false;
   els.reduceGo.hidden = true;
@@ -4222,7 +4541,7 @@ els.reduceGo.onclick = async () => {
 els.reduceSave.onclick = () => {
   if (!reduceBlob) return;
   els.reduceModal.hidden = true;
-  openSaveAs(reduceBlob, exportName + '-smaller.pdf', 'Save reduced PDF');
+  openSaveAs(reduceBlob, reduceName + '-smaller.pdf', 'Save reduced PDF');
 };
 els.exportZipBtn.onclick = async () => {
   // Export name captured at operation entry — see exportBase (D7).
@@ -4614,26 +4933,31 @@ els.tsGo.onclick = async () => {
 // Verify an OpenTimestamps proof against the open document: pick the .ots, send it
 // with the document's bytes, and report whether (and when) it's anchored to Bitcoin.
 let upgradedProofB64 = null; // a now-complete .ots offered for saving after verify
+let upgradedProofName = ''; // captured with it — same two-handler ReferenceError as reduceName
 els.timestampVerifyBtn.onclick = () => {
   if (!view.pdfDocument) return;
   els.tvResult.hidden = true; els.tvResult.textContent = '';
-  els.tvSave.hidden = true; upgradedProofB64 = null;
+  els.tvSave.hidden = true; upgradedProofB64 = null; upgradedProofName = '';
   els.tsVerifyModal.hidden = false;
 };
 els.tvCancel.onclick = () => { els.tsVerifyModal.hidden = true; };
 els.tvSave.onclick = () => {
   if (!upgradedProofB64) return;
-  openSaveAs(b64ToBlob(upgradedProofB64, 'application/octet-stream'), exportName + '.ots', 'Save complete proof');
+  openSaveAs(b64ToBlob(upgradedProofB64, 'application/octet-stream'), upgradedProofName + '.ots', 'Save complete proof');
 };
 els.tvExplorerOn.onchange = () => { els.tvExplorer.disabled = !els.tvExplorerOn.checked; };
 els.tvPick.onclick = () => els.tvFile.click();
 els.tvFile.onchange = async () => {
+  // Export name captured at operation entry — see exportBase (D7). This handler awaits
+  // before it produces the proof, and the Save button is a different handler again, so the
+  // name is carried on upgradedProofName rather than re-derived at either later point.
+  const exportName = exportBase();
   const f = els.tvFile.files[0];
   els.tvFile.value = '';
   if (!f) return;
   els.tvResult.hidden = false;
   els.tvResult.textContent = 'Checking…';
-  els.tvSave.hidden = true; upgradedProofB64 = null;
+  els.tvSave.hidden = true; upgradedProofB64 = null; upgradedProofName = '';
   try {
     const form = await bakedForm();
     form.append('ots', f, f.name);
@@ -4646,7 +4970,7 @@ els.tvFile.onchange = async () => {
     }
     const r = await res.json();
     els.tvResult.textContent = timestampVerifyMessage(r);
-    if (r.upgraded) { upgradedProofB64 = r.upgraded; els.tvSave.hidden = false; }
+    if (r.upgraded) { upgradedProofB64 = r.upgraded; upgradedProofName = exportName; els.tvSave.hidden = false; }
   } catch {
     els.tvResult.textContent = '✗ verification failed';
   }
@@ -4715,18 +5039,17 @@ els.profileSave.onclick = async () => {
 // Draw boxes over pages; on Apply, the marked pages are re-rendered with the
 // boxes painted in and replaced by those flat images server-side, so the content
 // under a box is genuinely removed. Non-marked pages keep their vector text.
-let redactMode = false;
 let redStart = null, redDiv = null, redHit = null;
 
 els.redactBtn.onclick = () => {
-  redactMode = !redactMode;
-  if (redactMode) { setMarkerMode(null); exitSplitBox(); exitBorder(); exitCrop(); exitNote(); exitDropdown(); exitRadio(); exitShape(); } // one box tool at a time
+  view.redactMode = !view.redactMode;
+  if (view.redactMode) { setMarkerMode(null); exitSplitBox(); exitBorder(); exitCrop(); exitNote(); exitDropdown(); exitRadio(); exitShape(); } // one box tool at a time
   reflectRedact();
-  els.viewerWrap.style.cursor = redactMode ? 'crosshair' : '';
+  els.viewerWrap.style.cursor = view.redactMode ? 'crosshair' : '';
 };
 // Keep both the Edit-menu and toolbar redact buttons lit while redact mode is on.
 function reflectRedact() {
-  all('#redactBtn, [data-forward="redactBtn"]').forEach((b) => b.classList.toggle('active', redactMode));
+  all('#redactBtn, [data-forward="redactBtn"]').forEach((b) => b.classList.toggle('active', view.redactMode));
 }
 
 // The pdf.js .page has a transparent border (9px), so its border-box rect is
@@ -4790,7 +5113,7 @@ function sizeMark(div, r, a, b) {
   div.style.height = Math.abs(b.y - a.y) + 'px';
 }
 els.viewerWrap.addEventListener('pointerdown', (e) => {
-  if (!redactMode) return;
+  if (!view.redactMode) return;
   if (!startedInActiveView(e)) return;
   redHit = pageAt(e.clientX, e.clientY);
   if (!redHit) return;
@@ -4819,18 +5142,22 @@ els.viewerWrap.addEventListener('pointerup', (e) => {
 });
 
 els.applyRedactBtn.onclick = async () => {
-  if (!view.redactMarks.length) return toast('Draw redaction boxes first');
+  // Captured at entry: flattenPages is already pinned, but the disarm below runs after its
+  // await and would otherwise clear whichever view is active by then — leaving this one
+  // armed over marks already baked, where a second Apply redacts flat pages.
+  const owner = view;
+  if (!owner.redactMarks.length) return toast('Draw redaction boxes first');
   if (!confirm('Permanently redact the marked pages? Those pages become flat images and the content under each box is removed. This cannot be undone.' + signatureWarning())) return;
 
   const byPage = {};
-  for (const m of view.redactMarks) (byPage[m.page] ||= []).push(m);
+  for (const m of owner.redactMarks) (byPage[m.page] ||= []).push(m);
   const res = await flattenPages(Object.keys(byPage).map(Number), (ctx, cv, n) => {
     ctx.fillStyle = '#000';
     for (const m of byPage[n]) ctx.fillRect(m.fx * cv.width, m.fy * cv.height, m.fw * cv.width, m.fh * cv.height);
   });
   if (!res.ok) return toast('redaction failed');
-  view.redactMarks = [];
-  redactMode = false;
+  owner.redactMarks = [];
+  owner.redactMode = false;
   reflectRedact();
   els.viewerWrap.style.cursor = '';
   await setDocumentFromServer(await res.json());
@@ -4998,50 +5325,48 @@ els.rtFind.onclick = async () => {
 // Draw rectangles on the current page; on Apply, each becomes its own page (the
 // page cropped to that rectangle, server-side via op:'splitrects'). The regions
 // live OUTSIDE view.overlayFields, so the bake step never burns them in as marks.
-let splitBoxMode = false;
-let splitRects = []; // {fx, fy, fw, fh} fractions of the page (top-left origin)
-let sbStart = null, sbDiv = null, sbHit = null, sbPage = 0;
+let sbStart = null, sbDiv = null, sbHit = null; // transient: aborted on switch, never restored
 
 function reflectSplitBox() {
-  all('#splitBoxBtn, [data-forward="splitBoxBtn"]').forEach((b) => b.classList.toggle('active', splitBoxMode));
+  all('#splitBoxBtn, [data-forward="splitBoxBtn"]').forEach((b) => b.classList.toggle('active', view.splitBoxMode));
 }
 // View-scoped, not document-scoped. `all()` is document.querySelectorAll, and a
 // .splitmark only ever lives inside a page div — so under ADR-002 the document-wide
 // sweep this used to do reaches into every OTHER open document's page DOM and removes
 // regions the user drew there. Rooting at the view's own container is the fix; the
 // per-page model at drawRedactMarks is the same idea one level finer.
-function clearSplitRects() {
-  splitRects = [];
-  view.container.querySelectorAll('.splitmark').forEach((d) => d.remove());
+function clearSplitRects(owner = view) {
+  owner.splitRects = [];
+  owner.container.querySelectorAll('.splitmark').forEach((d) => d.remove());
 }
 function exitSplitBox() {
-  if (!splitBoxMode) return;
-  splitBoxMode = false;
+  if (!view.splitBoxMode) return;
+  view.splitBoxMode = false;
   clearSplitRects();
   reflectSplitBox();
   els.viewerWrap.style.cursor = '';
 }
 els.splitBoxBtn.onclick = () => {
-  if (splitBoxMode) { exitSplitBox(); return; }
+  if (view.splitBoxMode) { exitSplitBox(); return; }
   if (!view.pdfDocument) return;
-  splitBoxMode = true;
-  sbPage = view.viewer.currentPageNumber; // regions apply to the page you start on
+  view.splitBoxMode = true;
+  view.sbPage = view.viewer.currentPageNumber; // regions apply to the page you start on
   setMarkerMode(null);
   exitBorder();
   exitShape();
   exitCrop();
   exitNote(); exitDropdown(); exitRadio();
-  if (redactMode) { redactMode = false; reflectRedact(); }
-  if (editMode) { editMode = false; reflectEdit(); }
+  if (view.redactMode) { view.redactMode = false; reflectRedact(); }
+  if (view.editMode) { view.editMode = false; reflectEdit(); }
   reflectSplitBox();
   els.viewerWrap.style.cursor = 'crosshair';
 };
 
 els.viewerWrap.addEventListener('pointerdown', (e) => {
-  if (!splitBoxMode) return;
+  if (!view.splitBoxMode) return;
   if (!startedInActiveView(e)) return;
   sbHit = pageAt(e.clientX, e.clientY);
-  if (!sbHit || sbHit.n !== sbPage) return; // only the page the split started on
+  if (!sbHit || sbHit.n !== view.sbPage) return; // only the page the split started on
   sbStart = { x: e.clientX, y: e.clientY };
   sbDiv = document.createElement('div');
   sbDiv.className = 'splitmark';
@@ -5059,7 +5384,7 @@ els.viewerWrap.addEventListener('pointerup', (e) => {
   const fw = Math.abs(e.clientX - sbStart.x) / r.width;
   const fh = Math.abs(e.clientY - sbStart.y) / r.height;
   if (fw > 0.01 && fh > 0.01) {
-    splitRects.push({ fx: (x0 - r.left) / r.width, fy: (y0 - r.top) / r.height, fw, fh });
+    view.splitRects.push({ fx: (x0 - r.left) / r.width, fy: (y0 - r.top) / r.height, fw, fh });
   } else {
     sbDiv.remove();
   }
@@ -5067,13 +5392,19 @@ els.viewerWrap.addEventListener('pointerup', (e) => {
 });
 
 els.applyBoxSplitBtn.onclick = async () => {
-  if (!splitBoxMode || !splitRects.length) return toast('Draw split regions first');
-  const page = sbPage;
-  const base = (await view.pdfDocument.getPage(page)).getViewport({ scale: 1 }); // PDF points
+  // Captured at operation entry, all of it. `sbPage` already was; `splitRects` was not,
+  // and it is read after the getPage await below — so a switch landing in that window gave
+  // the arrival's empty array, posted an empty region list against the wrong document, and
+  // disarmed the arrival while this view kept its marks and its armed cursor.
+  const owner = view;
+  if (!owner.splitBoxMode || !owner.splitRects.length) return toast('Draw split regions first');
+  const page = owner.sbPage;
+  const rectsFrac = owner.splitRects.slice();
+  const base = (await owner.pdfDocument.getPage(page)).getViewport({ scale: 1 }); // PDF points
   const f = { pageW: base.width, pageH: base.height };
-  const rects = splitRects.map((m) => rectPoints(f, [m.fx, m.fy, m.fx + m.fw, m.fy + m.fh]));
-  splitBoxMode = false;
-  clearSplitRects();
+  const rects = rectsFrac.map((m) => rectPoints(f, [m.fx, m.fy, m.fx + m.fw, m.fy + m.fh]));
+  owner.splitBoxMode = false;
+  clearSplitRects(owner);
   reflectSplitBox();
   els.viewerWrap.style.cursor = '';
   const ok = await pageOp('splitrects', { page, rects: JSON.stringify(rects) });
@@ -5088,48 +5419,46 @@ els.applyBoxSplitBtn.onclick = async () => {
 // split regions, the mark lives OUTSIDE view.overlayFields so the bake never burns it
 // in. Reuses the same display-space → PDF-points conversion (rectPoints) as Split
 // by box; the server flattens any /Rotate before cropping.
-let cropMode = false;
-let cropRect = null; // {fx, fy, fw, fh} fraction of the page (top-left origin)
-let cropStart = null, cropDiv = null, cropHit = null, cropPage = 0;
+let cropStart = null, cropDiv = null, cropHit = null; // transient: aborted on switch
 
 function reflectCrop() {
-  all('#cropBtn, [data-forward="cropBtn"]').forEach((b) => b.classList.toggle('active', cropMode));
+  all('#cropBtn, [data-forward="cropBtn"]').forEach((b) => b.classList.toggle('active', view.cropMode));
 }
 // View-scoped for the same reason as clearSplitRects above.
 function clearCropRect() {
-  cropRect = null;
+  view.cropRect = null;
   view.container.querySelectorAll('.cropmark').forEach((d) => d.remove());
 }
 function exitCrop() {
-  if (!cropMode) return;
-  cropMode = false;
+  if (!view.cropMode) return;
+  view.cropMode = false;
   clearCropRect();
   els.cropModal.hidden = true;
   reflectCrop();
   els.viewerWrap.style.cursor = '';
 }
 els.cropBtn.onclick = () => {
-  if (cropMode) { exitCrop(); return; }
+  if (view.cropMode) { exitCrop(); return; }
   if (!view.pdfDocument) return;
-  cropMode = true;
-  cropPage = view.viewer.currentPageNumber; // the box is measured in this page's space
+  view.cropMode = true;
+  view.cropPage = view.viewer.currentPageNumber; // the box is measured in this page's space
   setMarkerMode(null);
   exitBorder();
   exitShape();
   exitSplitBox();
   exitNote(); exitDropdown(); exitRadio();
-  if (redactMode) { redactMode = false; reflectRedact(); }
-  if (editMode) { editMode = false; reflectEdit(); }
+  if (view.redactMode) { view.redactMode = false; reflectRedact(); }
+  if (view.editMode) { view.editMode = false; reflectEdit(); }
   reflectCrop();
   els.viewerWrap.style.cursor = 'crosshair';
   toast('Draw the area to keep, then confirm');
 };
 
 els.viewerWrap.addEventListener('pointerdown', (e) => {
-  if (!cropMode) return;
+  if (!view.cropMode) return;
   if (!startedInActiveView(e)) return;
   cropHit = pageAt(e.clientX, e.clientY);
-  if (!cropHit || cropHit.n !== cropPage) return; // measure on the page you started on
+  if (!cropHit || cropHit.n !== view.cropPage) return; // measure on the page you started on
   clearCropRect(); // a single keep-rectangle: a fresh draw replaces the old one
   cropStart = { x: e.clientX, y: e.clientY };
   cropDiv = document.createElement('div');
@@ -5149,7 +5478,7 @@ els.viewerWrap.addEventListener('pointerup', (e) => {
   const fh = Math.abs(e.clientY - cropStart.y) / r.height;
   cropStart = null; cropHit = null;
   if (fw > 0.01 && fh > 0.01) {
-    cropRect = { fx: (x0 - r.left) / r.width, fy: (y0 - r.top) / r.height, fw, fh };
+    view.cropRect = { fx: (x0 - r.left) / r.width, fy: (y0 - r.top) / r.height, fw, fh };
     els.cropModal.hidden = false; // confirm: all-pages choice + the honest note
   } else if (cropDiv) {
     cropDiv.remove(); cropDiv = null;
@@ -5158,13 +5487,13 @@ els.viewerWrap.addEventListener('pointerup', (e) => {
 
 els.cropCancel.onclick = () => { els.cropModal.hidden = true; clearCropRect(); }; // stay in crop mode for a redraw
 els.cropGo.onclick = async () => {
-  if (!cropRect) { els.cropModal.hidden = true; return; }
-  const page = cropPage;
+  if (!view.cropRect) { els.cropModal.hidden = true; return; }
+  const page = view.cropPage;
   // Send the keep-box as page fractions (top-left origin) [fx, fy, fw, fh]; the
   // server scales it to each target page's own size, so a mixed-size document
   // crops proportionally instead of to a fixed window. On a uniform document this
   // is identical to the old absolute-points path.
-  const frac = [cropRect.fx, cropRect.fy, cropRect.fw, cropRect.fh];
+  const frac = [view.cropRect.fx, view.cropRect.fy, view.cropRect.fw, view.cropRect.fh];
   const allPages = els.cropAllPages.checked;
   exitCrop();
   const ok = await pageOp('crop', { rect: JSON.stringify(frac), pages: allPages ? '' : String(page) });
@@ -5178,23 +5507,22 @@ els.cropGo.onclick = async () => {
 // under the replacement text (bakedBytes -> /api/bake). The original text stays
 // in the page (a visual edit) until "Remove originals" flattens the edited pages
 // (reusing the redaction path), which removes it for good.
-let editMode = false;
 let edStart = null, edDiv = null, edHit = null;
 
 els.editTextBtn.onclick = () => {
   if (!view.pdfDocument) { toast('Open a PDF first'); return; }
-  editMode = !editMode;
-  if (editMode && redactMode) { redactMode = false; reflectRedact(); } // one box tool at a time
-  if (editMode) { setMarkerMode(null); exitSplitBox(); exitBorder(); exitCrop(); exitNote(); exitDropdown(); exitRadio(); exitShape(); }
+  view.editMode = !view.editMode;
+  if (view.editMode && view.redactMode) { view.redactMode = false; reflectRedact(); } // one box tool at a time
+  if (view.editMode) { setMarkerMode(null); exitSplitBox(); exitBorder(); exitCrop(); exitNote(); exitDropdown(); exitRadio(); exitShape(); }
   reflectEdit();
-  els.viewerWrap.style.cursor = editMode ? 'crosshair' : '';
+  els.viewerWrap.style.cursor = view.editMode ? 'crosshair' : '';
 };
 function reflectEdit() {
-  all('#editTextBtn, [data-forward="editTextBtn"]').forEach((b) => b.classList.toggle('active', editMode));
+  all('#editTextBtn, [data-forward="editTextBtn"]').forEach((b) => b.classList.toggle('active', view.editMode));
 }
 
 els.viewerWrap.addEventListener('pointerdown', (e) => {
-  if (!editMode) return;
+  if (!view.editMode) return;
   if (!startedInActiveView(e)) return;
   edHit = pageAt(e.clientX, e.clientY);
   if (!edHit) return;
@@ -5295,20 +5623,14 @@ function makeEditField(frac, opts, pv) {
 //
 // These place a VISIBLE appearance for filling out a form; they are NOT a
 // cryptographic signature — that remains the separate Finalize & sign step.
-let markerMode = null;        // 'sign' | 'date' | 'initial' while armed to place
-let activeMarker = null;      // the marker highlighted as the current fill target
-let fillTarget = null;        // a sign/initial marker awaiting a Library pick
 let markerSig = null, markerInit = null; // remembered sign/initial fill sources for this session
-let docHadFlags = false;      // the open document arrived with embedded signing flags
-let signTotal = 0;            // flag count when the signing banner appeared, for "X of N"
-let signStarted = false;      // the recipient has hit Start, so the action is now "Next field"
 
 // Two gates govern what can be done to flags. flagsEditable: the preparer may place,
 // drag, and delete flags (only while unlocked). flagsFillable: a flag may be clicked
 // to fill it — true while unlocked (a preparer self-filling a form) and, even when
 // locked, on a received document (the recipient signs but can't reshape the layout).
 function flagsEditable() { return !view.signLocked; }
-function flagsFillable() { return !view.signLocked || docHadFlags; }
+function flagsFillable() { return !view.signLocked || view.docHadFlags; }
 const MARKER_SIZES = {
   sign: [0.22, 0.05], date: [0.13, 0.035], initial: [0.07, 0.05],
   name: [0.24, 0.035], title: [0.18, 0.035], company: [0.24, 0.035],
@@ -5325,7 +5647,7 @@ const TEXT_MARKER_KEYS = {
 };
 
 document.querySelectorAll('.markers button').forEach((b) => {
-  b.onclick = () => { if (!view.pdfDocument) return toast('Open a PDF first'); setMarkerMode(markerMode === b.dataset.marker ? null : b.dataset.marker); };
+  b.onclick = () => { if (!view.pdfDocument) return toast('Open a PDF first'); setMarkerMode(view.markerMode === b.dataset.marker ? null : b.dataset.marker); };
 });
 els.saveForSigningBtn.onclick = () => { if (!view.pdfDocument) return toast('Open a PDF first'); saveForSigning(); };
 
@@ -5363,8 +5685,8 @@ function setSignLocked(locked) {
   view.signLocked = locked;
   if (locked) { // leaving any active editing tool behind would be a dead, disabled mode
     setMarkerMode(null);
-    if (redactMode) { redactMode = false; reflectRedact(); els.viewerWrap.style.cursor = ''; }
-    if (editMode) { editMode = false; reflectEdit(); els.viewerWrap.style.cursor = ''; }
+    if (view.redactMode) { view.redactMode = false; reflectRedact(); els.viewerWrap.style.cursor = ''; }
+    if (view.editMode) { view.editMode = false; reflectEdit(); els.viewerWrap.style.cursor = ''; }
   }
   applySignLock();
 }
@@ -5382,7 +5704,7 @@ function applySignLock() {
 // (preparer vs recipient) and the lock state.
 function reflectSignControls() {
   const open = !!view.pdfDocument;
-  const recipient = docHadFlags;            // opened with flags => the counterparty's copy
+  const recipient = view.docHadFlags;            // opened with flags => the counterparty's copy
   const n = markerFields().length;
   // A recipient never prepares; a locked preparer can't place until they edit again.
   all('.markers button').forEach((b) => { b.disabled = !open || recipient || view.signLocked; });
@@ -5394,10 +5716,10 @@ function reflectSignControls() {
 }
 
 function setMarkerMode(m) {
-  markerMode = m;
+  view.markerMode = m;
   if (m) { // one placement tool at a time
-    if (redactMode) { redactMode = false; reflectRedact(); }
-    if (editMode) { editMode = false; reflectEdit(); }
+    if (view.redactMode) { view.redactMode = false; reflectRedact(); }
+    if (view.editMode) { view.editMode = false; reflectEdit(); }
     exitSplitBox();
     exitBorder();
     exitShape();
@@ -5410,7 +5732,7 @@ function setMarkerMode(m) {
 
 // A single click on the page drops a default-sized marker centred at the click.
 els.viewerWrap.addEventListener('pointerdown', (e) => {
-  if (!markerMode) return;
+  if (!view.markerMode) return;
   if (!startedInActiveView(e)) return;
   const hit = pageAt(e.clientX, e.clientY);
   if (!hit) return;
@@ -5418,11 +5740,11 @@ els.viewerWrap.addEventListener('pointerdown', (e) => {
   // Snap to a detected blank if the click landed on one (the primary flow: Detect,
   // then flag each blank); otherwise free-place a default flag (the fallback).
   const field = view.overlayFields.find((f) => f.kind === 'text' && f.el.contains(e.target));
-  if (field) return void convertFieldToFlag(field, markerMode);
-  const r = hit.r, [fw, fh] = MARKER_SIZES[markerMode];
+  if (field) return void convertFieldToFlag(field, view.markerMode);
+  const r = hit.r, [fw, fh] = MARKER_SIZES[view.markerMode];
   const fx = Math.min(Math.max((e.clientX - r.left) / r.width - fw / 2, 0), 1 - fw);
   const fy = Math.min(Math.max((e.clientY - r.top) / r.height - fh / 2, 0), 1 - fh);
-  makeMarker(markerMode, [fx, fy, fx + fw, fy + fh], hit);
+  makeMarker(view.markerMode, [fx, fy, fx + fw, fy + fh], hit);
 });
 
 // convertFieldToFlag turns a detected blank into a sign/date/initial flag bound to
@@ -5443,7 +5765,7 @@ function convertFieldToFlag(field, type) {
 // buildMarker creates a marker field + its DOM element and registers it, but does
 // NOT attach it to a page — relayoutOverlays places it once the page renders.
 // This lets reconstructFlags rebuild markers on pages that aren't on screen yet.
-function buildMarker(type, frac, page, record = true) {
+function buildMarker(type, frac, page, record = true, owner = view) {
   const f = { page, frac, kind: 'marker', tagType: type };
   const el = document.createElement('div');
   el.className = 'ovl ovl-marker';
@@ -5461,7 +5783,7 @@ function buildMarker(type, frac, page, record = true) {
     if (e.key === 'Enter') { e.preventDefault(); if (flagsFillable()) fillMarker(f); }
     else if ((e.key === 'Delete' || e.key === 'Backspace') && flagsEditable()) removeField(f);
   });
-  view.overlayFields.push(f);
+  owner.overlayFields.push(f);
   reflectSignControls();
   if (record) {
     recordOverlayEdit({
@@ -5487,8 +5809,8 @@ function removeField(f, record = true) {
     });
   }
   detachField(f);
-  if (activeMarker === f) activeMarker = null;
-  if (fillTarget === f) fillTarget = null;
+  if (view.activeMarker === f) view.activeMarker = null;
+  if (view.fillTarget === f) view.fillTarget = null;
   reflectSignControls();
 }
 
@@ -5530,14 +5852,14 @@ async function fillMarker(f) {
   if (src) return placeIntoMarker(f, src);
   // No remembered image yet — let the user pick one from the Library; the next
   // Library click resolves this target (resolveFillTarget) and is remembered.
-  fillTarget = f;
+  view.fillTarget = f;
   setActiveMarker(f);
   document.querySelector('.tab[data-panel="library"]')?.click();
   toast('Pick your ' + (f.tagType === 'sign' ? 'signature' : 'initials') + ' in the Library — it fills this marker and any others.');
 }
 
 function resolveFillTarget(src) {
-  const f = fillTarget; fillTarget = null;
+  const f = view.fillTarget; view.fillTarget = null;
   if (!f) return;
   if (f.tagType === 'sign') markerSig = src; else markerInit = src;
   placeIntoMarker(f, src);
@@ -5617,8 +5939,8 @@ function advanceTo(m) {
 }
 
 function setActiveMarker(m) {
-  activeMarker?.el?.classList.remove('marker-active');
-  activeMarker = m;
+  view.activeMarker?.el?.classList.remove('marker-active');
+  view.activeMarker = m;
   m?.el?.classList.add('marker-active');
 }
 
@@ -5627,7 +5949,7 @@ function setActiveMarker(m) {
 // as the NibFlags property — see internal/pdfops/flags.go), and emails it. The
 // recipient's Nib rebuilds the flags on open and walks them flag-to-flag.
 
-function markerFields() { return view.overlayFields.filter((f) => f.kind === 'marker'); }
+function markerFields(owner = view) { return owner.overlayFields.filter((f) => f.kind === 'marker'); }
 
 function collectFlags() {
   return markerFields().map((f) => ({ page: f.page, frac: f.frac, type: f.tagType }));
@@ -5654,26 +5976,29 @@ async function embedFlags(bytes, flags, docId = view.docMeta && view.docMeta.id)
 // reconstructFlags rebuilds embedded placeholders as markers on open and shows the
 // signing banner. Coordinates are clamped defensively — a hand-edited property
 // can never place a flag off-page or on a page that doesn't exist.
-function reconstructFlags(flags) {
+function reconstructFlags(flags, owner = view) {
   if (!Array.isArray(flags)) return;
   for (const fl of flags) {
     if (!fl || !MARKER_LABELS[fl.type] || !Array.isArray(fl.frac) || fl.frac.length !== 4) continue;
-    const page = Math.max(1, Math.min(view.pdfDocument.numPages, fl.page | 0));
+    const page = Math.max(1, Math.min(owner.pdfDocument.numPages, fl.page | 0));
     const frac = fl.frac.map((n) => Math.max(0, Math.min(1, +n || 0)));
-    buildMarker(fl.type, frac, page, false); // load on open — not an undoable edit
+    buildMarker(fl.type, frac, page, false, owner); // load on open — not an undoable edit
   }
-  relayoutOverlays(view); // attach flags on already-rendered pages; the rest follow on pagerendered
-  showSignBanner();
+  relayoutOverlays(owner); // attach flags on already-rendered pages; the rest follow on pagerendered
+  showSignBanner(owner);
 }
 
 function firstMarker() {
   return markerFields().sort((a, b) => a.page - b.page || a.frac[1] - b.frac[1] || a.frac[0] - b.frac[0])[0] || null;
 }
 
-function showSignBanner() {
-  signTotal = markerFields().length;
-  signStarted = false;
-  if (!signTotal) { els.signBanner.hidden = true; return; }
+function showSignBanner(owner = view) {
+  owner.signTotal = markerFields(owner).length;
+  owner.signStarted = false;
+  // The banner is one element for N documents, so a background load records its own count
+  // and paints nothing. activateView repaints it from the incoming view's signTotal.
+  if (owner !== view) return;
+  if (!owner.signTotal) { els.signBanner.hidden = true; return; }
   els.signBanner.hidden = false;
   setSignBanner();
 }
@@ -5687,24 +6012,24 @@ function setSignBanner() {
   if (els.signBanner.hidden) return;
   const remaining = markerFields().length;
   if (!remaining) {
-    els.signMsg.textContent = signTotal ? 'All fields filled.' : 'No fields to fill.';
+    els.signMsg.textContent = view.signTotal ? 'All fields filled.' : 'No fields to fill.';
     els.signAction.textContent = 'Mark complete & sign';
     els.signAction.onclick = completeAndSign;
     els.signDone.hidden = true;
     return;
   }
-  els.signMsg.textContent = signStarted
-    ? `Field ${signTotal - remaining + 1} of ${signTotal}.`
-    : `This document has ${signTotal} field${signTotal === 1 ? '' : 's'} to fill.`;
-  els.signAction.textContent = signStarted ? 'Next field' : 'Start';
+  els.signMsg.textContent = view.signStarted
+    ? `Field ${view.signTotal - remaining + 1} of ${view.signTotal}.`
+    : `This document has ${view.signTotal} field${view.signTotal === 1 ? '' : 's'} to fill.`;
+  els.signAction.textContent = view.signStarted ? 'Next field' : 'Start';
   els.signAction.onclick = signNext;
   els.signDone.hidden = false;
   els.signDone.onclick = completeAndSign;
 }
 
 function signNext() {
-  signStarted = true;
-  const from = (activeMarker && activeMarker.kind === 'marker') ? activeMarker : null;
+  view.signStarted = true;
+  const from = (view.activeMarker && view.activeMarker.kind === 'marker') ? view.activeMarker : null;
   advanceTo(from ? nextMarkerAfter(from) : firstMarker());
 }
 
@@ -5818,16 +6143,17 @@ function cssFamily(core) {
 // good. Reuses the redaction path — bake the covers + replacement text in, then
 // rasterize just those pages (no black box painted).
 els.removeOriginalsBtn.onclick = async () => {
-  const pages = [...new Set(view.overlayFields.filter((f) => f.kind === 'edit').map((f) => f.page))];
+  const owner = view; // captured at entry — everything below the await acts on THIS document
+  const pages = [...new Set(owner.overlayFields.filter((f) => f.kind === 'edit').map((f) => f.page))];
   if (!pages.length) return toast('No text edits to flatten');
   if (!confirm('Make the text edits permanent? The edited page(s) become flat images and the original text underneath is removed. This cannot be undone.' + signatureWarning())) return;
 
   const res = await flattenPages(pages);
   if (!res.ok) return toast('could not flatten edits');
-  view.overlayFields = view.overlayFields.filter((f) => { if (f.kind === 'edit' && pages.includes(f.page)) { f.el.remove(); return false; } return true; });
-  editMode = false; reflectEdit();
-  els.viewerWrap.style.cursor = '';
-  await setDocumentFromServer(await res.json());
+  owner.overlayFields = owner.overlayFields.filter((f) => { if (f.kind === 'edit' && pages.includes(f.page)) { f.el.remove(); return false; } return true; });
+  owner.editMode = false; if (owner === view) reflectEdit();
+  if (owner === view) els.viewerWrap.style.cursor = '';
+  await setDocumentFromServer(await res.json(), owner);
   toast('Edits flattened — original text removed on edited page(s)');
 };
 
@@ -5943,22 +6269,21 @@ async function refreshRecent() {
 // Annotation tools (M4 Text + M8 Highlight/Draw): mutually exclusive toggles of
 // the pdf.js editor mode. Each is baked into the PDF by saveDocument(). Modes
 // come from the buttons' data-mode (FREETEXT, HIGHLIGHT, INK).
-let activeTool = null;
 function setTool(mode) {
-  activeTool = activeTool === mode ? null : mode;
+  view.activeTool = view.activeTool === mode ? null : mode;
   view.viewer.annotationEditorMode = {
-    mode: activeTool ? pdfjsLib.AnnotationEditorType[activeTool] : pdfjsLib.AnnotationEditorType.NONE,
+    mode: view.activeTool ? pdfjsLib.AnnotationEditorType[view.activeTool] : pdfjsLib.AnnotationEditorType.NONE,
   };
-  if (activeTool) { exitBorder(); exitNote(); exitDropdown(); exitRadio(); exitShape(); } // Nib-side tools, not pdf.js modes — one at a time
+  if (view.activeTool) { exitBorder(); exitNote(); exitDropdown(); exitRadio(); exitShape(); } // Nib-side tools, not pdf.js modes — one at a time
   // Mirror the active mode onto every control bound to it (Edit menu + toolbar).
   // Scope out the compare tabs: they share the data-mode attribute (text/side/diff)
   // but are wired to setCompareMode, not the annotation tools.
-  document.querySelectorAll('[data-mode]:not(.cmmode)').forEach((b) => b.classList.toggle('active', b.dataset.mode === activeTool));
+  document.querySelectorAll('[data-mode]:not(.cmmode)').forEach((b) => b.classList.toggle('active', b.dataset.mode === view.activeTool));
   // The highlight color row is contextual — show it only while highlighting (or
   // drawing a border), and re-assert the selected color so the next highlight
   // uses it (not pdf.js yellow).
   reflectAnnoControls();
-  if (activeTool === 'HIGHLIGHT') applyHighlightColor(selectedHlColor);
+  if (view.activeTool === 'HIGHLIGHT') applyHighlightColor(selectedHlColor);
 }
 document.querySelectorAll('[data-mode]:not(.cmmode)').forEach((b) => {
   b.onclick = () => setTool(b.dataset.mode);
@@ -5977,8 +6302,8 @@ let recentHlColors = DEFAULT_HL_COLORS.slice();
 // document reloads re-assert it, so a highlight color persists until changed.
 let selectedHlColor = DEFAULT_HL_COLORS[0];
 
-function applyHighlightColor(hex) {
-  view.eventBus.dispatch('switchannotationeditorparams', {
+function applyHighlightColor(hex, owner = view) {
+  owner.eventBus.dispatch('switchannotationeditorparams', {
     source: window,
     type: pdfjsLib.AnnotationEditorParamsType.HIGHLIGHT_COLOR,
     value: hex,
@@ -6021,36 +6346,35 @@ els.hlCustom.onchange = () => setHighlightColor(els.hlCustom.value);
 // 'box'), and on save it bakes as a transparent stroked-rectangle PNG through the
 // same /api/bake stamps path as the Y/N circle. Color comes from the shared
 // highlight palette; thickness (points) is captured per box at draw time.
-let borderMode = false;
 let bdStart = null, bdDiv = null, bdHit = null;
 
 // Show the highlight color row while highlighting OR drawing borders; the
 // thickness control only while drawing borders.
 function reflectAnnoControls() {
-  els.hlColors.hidden = !(activeTool === 'HIGHLIGHT' || borderMode || shapeMode);
-  els.borderWidth.hidden = !(borderMode || shapeMode);
-  els.shapeOpts.hidden = !shapeMode;
+  els.hlColors.hidden = !(view.activeTool === 'HIGHLIGHT' || view.borderMode || view.shapeMode);
+  els.borderWidth.hidden = !(view.borderMode || view.shapeMode);
+  els.shapeOpts.hidden = !view.shapeMode;
 }
 function reflectBorder() {
-  els.borderBtn.classList.toggle('active', borderMode);
+  els.borderBtn.classList.toggle('active', view.borderMode);
   reflectAnnoControls();
 }
 function exitBorder() {
-  if (!borderMode) return;
-  borderMode = false;
+  if (!view.borderMode) return;
+  view.borderMode = false;
   reflectBorder();
   els.viewerWrap.style.cursor = '';
 }
 const clampWeight = (v) => Math.min(10, Math.max(1, Number(v) || 2)); // points
 
 els.borderBtn.onclick = () => {
-  if (borderMode) { exitBorder(); return; }
+  if (view.borderMode) { exitBorder(); return; }
   if (!view.pdfDocument) { toast('Open a PDF first'); return; }
-  borderMode = true;
+  view.borderMode = true;
   setTool(null); // clear any pdf.js editor tool
   setMarkerMode(null);
-  if (redactMode) { redactMode = false; reflectRedact(); }
-  if (editMode) { editMode = false; reflectEdit(); }
+  if (view.redactMode) { view.redactMode = false; reflectRedact(); }
+  if (view.editMode) { view.editMode = false; reflectEdit(); }
   exitSplitBox();
   exitCrop();
   exitNote(); exitDropdown(); exitRadio();
@@ -6059,7 +6383,7 @@ els.borderBtn.onclick = () => {
 };
 
 els.viewerWrap.addEventListener('pointerdown', (e) => {
-  if (!borderMode) return;
+  if (!view.borderMode) return;
   if (!startedInActiveView(e)) return;
   bdHit = pageAt(e.clientX, e.clientY);
   if (!bdHit) return;
@@ -6121,23 +6445,22 @@ function makeBox(frac, opts) {
 // A box-draw tool like Border, but the overlay carries an options list; on "Save
 // as fillable form…" it authors a real AcroForm combobox (see collectAuthorFields
 // → /api/form/author → pdfops.AuthorForm). Options are typed inline on the field.
-let dropdownMode = false;
 let ddStart = null, ddDiv = null, ddHit = null;
-function reflectDropdown() { els.dropdownBtn.classList.toggle('active', dropdownMode); }
+function reflectDropdown() { els.dropdownBtn.classList.toggle('active', view.dropdownMode); }
 function exitDropdown() {
-  if (!dropdownMode) return;
-  dropdownMode = false;
+  if (!view.dropdownMode) return;
+  view.dropdownMode = false;
   reflectDropdown();
   els.viewerWrap.style.cursor = '';
 }
 els.dropdownBtn.onclick = () => {
-  if (dropdownMode) { exitDropdown(); return; }
+  if (view.dropdownMode) { exitDropdown(); return; }
   if (!view.pdfDocument) { toast('Open a PDF first'); return; }
-  dropdownMode = true;
+  view.dropdownMode = true;
   setTool(null);
   setMarkerMode(null);
-  if (redactMode) { redactMode = false; reflectRedact(); }
-  if (editMode) { editMode = false; reflectEdit(); }
+  if (view.redactMode) { view.redactMode = false; reflectRedact(); }
+  if (view.editMode) { view.editMode = false; reflectEdit(); }
   exitSplitBox();
   exitCrop();
   exitNote(); exitRadio(); // clear the sibling one-at-a-time tools (not dropdown — we're entering it)
@@ -6147,7 +6470,7 @@ els.dropdownBtn.onclick = () => {
   els.viewerWrap.style.cursor = 'crosshair';
 };
 els.viewerWrap.addEventListener('pointerdown', (e) => {
-  if (!dropdownMode) return;
+  if (!view.dropdownMode) return;
   if (!startedInActiveView(e)) return;
   ddHit = pageAt(e.clientX, e.clientY);
   if (!ddHit) return;
@@ -6215,34 +6538,33 @@ function makeDropdown(frac, opts) {
 // group, type ≥2 comma-separated choices; "Save as fillable form…" authors a real
 // AcroForm radiobuttongroup whose buttons march to the right of the anchor, each
 // labelled with its value. (Horizontal only for now.)
-let radioMode = false;
 let rdStart = null, rdDiv = null, rdHit = null;
-function reflectRadio() { els.radioBtn.classList.toggle('active', radioMode); }
+function reflectRadio() { els.radioBtn.classList.toggle('active', view.radioMode); }
 function exitRadio() {
-  if (!radioMode) return;
-  radioMode = false;
+  if (!view.radioMode) return;
+  view.radioMode = false;
   reflectRadio();
   els.viewerWrap.style.cursor = '';
 }
 els.radioBtn.onclick = () => {
-  if (radioMode) { exitRadio(); return; }
+  if (view.radioMode) { exitRadio(); return; }
   if (!view.pdfDocument) { toast('Open a PDF first'); return; }
-  radioMode = true;
+  view.radioMode = true;
   setTool(null);
   setMarkerMode(null);
-  if (redactMode) { redactMode = false; reflectRedact(); }
-  if (editMode) { editMode = false; reflectEdit(); }
+  if (view.redactMode) { view.redactMode = false; reflectRedact(); }
+  if (view.editMode) { view.editMode = false; reflectEdit(); }
   exitSplitBox();
   exitCrop();
   exitNote(); exitDropdown();
   exitBorder();
   exitShape();
-  radioMode = true;
+  view.radioMode = true;
   reflectRadio();
   els.viewerWrap.style.cursor = 'crosshair';
 };
 els.viewerWrap.addEventListener('pointerdown', (e) => {
-  if (!radioMode) return;
+  if (!view.radioMode) return;
   if (!startedInActiveView(e)) return;
   rdHit = pageAt(e.clientX, e.clientY);
   if (!rdHit) return;
@@ -6326,28 +6648,27 @@ function boxPNG(wPts, hPts, hex, weightPts) {
 // Drawn marks baked as PNG stamps (the Border path), so they render in every
 // viewer. One paintShape renderer drives the live drag preview, the persistent
 // overlay (layoutField), and the baked PNG (shapeMarkPNG).
-let shapeMode = false;
 let shapeType = 'line';
 let shStart = null, shCanvas = null, shHit = null;
 
 function reflectShape() {
-  els.shapeBtn.classList.toggle('active', shapeMode);
+  els.shapeBtn.classList.toggle('active', view.shapeMode);
   reflectAnnoControls();
 }
 function exitShape() {
-  if (!shapeMode) return;
-  shapeMode = false;
+  if (!view.shapeMode) return;
+  view.shapeMode = false;
   reflectShape();
   els.viewerWrap.style.cursor = '';
 }
 els.shapeBtn.onclick = () => {
-  if (shapeMode) { exitShape(); return; }
+  if (view.shapeMode) { exitShape(); return; }
   if (!view.pdfDocument) { toast('Open a PDF first'); return; }
-  shapeMode = true;
+  view.shapeMode = true;
   setTool(null);
   setMarkerMode(null);
-  if (redactMode) { redactMode = false; reflectRedact(); }
-  if (editMode) { editMode = false; reflectEdit(); }
+  if (view.redactMode) { view.redactMode = false; reflectRedact(); }
+  if (view.editMode) { view.editMode = false; reflectEdit(); }
   exitSplitBox();
   exitCrop();
   exitNote(); exitDropdown(); exitRadio();
@@ -6422,7 +6743,7 @@ function shapeMarkPNG(wPts, hPts, f) {
 }
 
 els.viewerWrap.addEventListener('pointerdown', (e) => {
-  if (!shapeMode) return;
+  if (!view.shapeMode) return;
   if (!startedInActiveView(e)) return;
   shHit = pageAt(e.clientX, e.clientY);
   if (!shHit) return;
@@ -6497,22 +6818,21 @@ function makeShape(frac, opts) {
 // A note is a Nib overlay (a small text card) you place, drag, and edit; at save
 // it bakes into a native /Text sticky-note annotation (a clickable icon whose
 // popup shows the comment) via pdfops.AddNotes.
-let noteMode = false;
-function reflectNote() { els.noteBtn.classList.toggle('active', noteMode); }
+function reflectNote() { els.noteBtn.classList.toggle('active', view.noteMode); }
 function exitNote() {
-  if (!noteMode) return;
-  noteMode = false;
+  if (!view.noteMode) return;
+  view.noteMode = false;
   reflectNote();
   els.viewerWrap.style.cursor = '';
 }
 els.noteBtn.onclick = () => {
-  if (noteMode) { exitNote(); exitDropdown(); exitRadio(); return; }
+  if (view.noteMode) { exitNote(); exitDropdown(); exitRadio(); return; }
   if (!view.pdfDocument) { toast('Open a PDF first'); return; }
-  noteMode = true;
+  view.noteMode = true;
   setTool(null);
   setMarkerMode(null);
-  if (redactMode) { redactMode = false; reflectRedact(); }
-  if (editMode) { editMode = false; reflectEdit(); }
+  if (view.redactMode) { view.redactMode = false; reflectRedact(); }
+  if (view.editMode) { view.editMode = false; reflectEdit(); }
   exitSplitBox();
   exitCrop();
   exitBorder();
@@ -6521,7 +6841,7 @@ els.noteBtn.onclick = () => {
   els.viewerWrap.style.cursor = 'crosshair';
 };
 els.viewerWrap.addEventListener('pointerdown', async (e) => {
-  if (!noteMode) return;
+  if (!view.noteMode) return;
   if (!startedInActiveView(e)) return;
   const hit = pageAt(e.clientX, e.clientY);
   if (!hit) return;
@@ -6720,16 +7040,25 @@ window.addEventListener('drop', (e) => {
 // Each field stores its rectangle as a FRACTION of the page (top-left origin),
 // so display position is just frac * actual page-div size (no scale drift) and
 // the PDF rect for stamping is frac * page dimensions.
-function clearOverlays() {
-  view.overlayFields.forEach((f) => f.el.remove());
-  view.overlayFields = [];
-  activeMarker = null; fillTarget = null; // markers are gone with the old document
+// `owner` is the view being torn down — the active one unless a background load says
+// otherwise. It is not decoration: this function empties overlayFields, nulls the marker
+// bindings and clears redactMarks, so running it against the active view during an
+// ARRIVAL's load destroys the typed values and redaction marks on the document the user is
+// looking at. That is the exact defect openArrivalInNewView exists to remove, and it was
+// still live after the call site moved, because the call site was not the destroyer.
+function clearOverlays(owner = view) {
+  owner.overlayFields.forEach((f) => f.el.remove());
+  owner.overlayFields = [];
+  owner.activeMarker = null; owner.fillTarget = null; // markers are gone with the old document
+  owner.redactMarks = []; // pending redaction boxes don't carry to a new/reloaded document
+  // The draw-mode exits repaint SHARED toolbar buttons and the shared cursor, so they are
+  // the active view's business only. A background view is freshly built and has none armed.
+  if (owner !== view) return;
   exitSplitBox(); // a pending region selection doesn't carry to a new document
   exitBorder();   // nor a pending border-draw mode
   exitShape();    // nor a pending shape-draw mode
   exitCrop();     // nor a pending crop-draw mode
   exitNote(); exitDropdown(); exitRadio();     // nor a pending note-placement mode
-  view.redactMarks = []; // pending redaction boxes don't carry to a new/reloaded document
   clearOverlayHistory(); // a new/reloaded document resets the overlay-edit undo stack
 }
 
@@ -6752,12 +7081,15 @@ function clearOverlays() {
 //
 // Session-scoped state stays: markerSig/markerInit are remembered fill sources for
 // the session, not the document, so clearing them here would be a regression.
-function resetSharedDocState() {
-  clearOverlays();
+function resetSharedDocState(owner = view) {
+  clearOverlays(owner);
+  // Everything below repaints shared chrome. A background load records nothing here and
+  // paints nothing; activateView is what makes the chrome show a view.
+  if (owner !== view) return;
   setMarkerMode(null); // clears the lit .markers button and the cursor
-  if (redactMode) { redactMode = false; reflectRedact(); }
-  if (editMode) { editMode = false; reflectEdit(); }
-  activeTool = null;
+  if (view.redactMode) { view.redactMode = false; reflectRedact(); }
+  if (view.editMode) { view.editMode = false; reflectEdit(); }
+  view.activeTool = null;
   document.querySelectorAll('[data-mode]:not(.cmmode)').forEach((b) => b.classList.remove('active'));
   reflectAnnoControls();
   els.viewerWrap.style.cursor = '';
@@ -6900,15 +7232,19 @@ function collectStamps() {
 // docId threads the CALLER's capture down. bakedBytes is entered from operations that
 // have usually already awaited, so its own entry is not a safe capture point — the
 // default exists only for the call sites that enter it first thing.
-async function bakedBytes(docId = view.docMeta && view.docMeta.id) {
+async function bakedBytes(docId = view.docMeta && view.docMeta.id, owner = view) {
+  // The request was already pinned by docId; the PREDICATE that decides whether to strip
+  // NibFlags was not. Read after the bake round-trip, a save of a flagged document that
+  // raced a switch got the OTHER document's answer, and the finished signed file kept its
+  // flags and reopened in signing mode.
   // saveDocument() bakes pdf.js annotation-storage edits (form fills, FREETEXT/
   // INK/HIGHLIGHT/STAMP) and warns + does a needless rewrite when storage is
   // empty. Our overlay edits (covers/fields/stamps) bake server-side via
   // /api/bake, so when there are no pdf.js edits, getData() is the library's
   // prescribed lighter equivalent (raw bytes, no bake).
-  const saved = view.pdfDocument.annotationStorage.size > 0
-    ? await view.pdfDocument.saveDocument()
-    : await view.pdfDocument.getData();
+  const saved = owner.pdfDocument.annotationStorage.size > 0
+    ? await owner.pdfDocument.saveDocument()
+    : await owner.pdfDocument.getData();
   const fields = collectFields();
   const stamps = collectStamps();
   const covers = collectCovers();
@@ -6931,7 +7267,7 @@ async function bakedBytes(docId = view.docMeta && view.docMeta.id) {
   // A document opened with embedded signing flags carries the NibFlags property,
   // which the bake preserves — strip it from any baked output so the finished
   // file doesn't reopen in signing mode. (Server no-op once it's already gone.)
-  if (docHadFlags) {
+  if (owner.docHadFlags) {
     try { out = await embedFlags(out, null, docId); } catch (e) {
       console.error('flag strip failed', e);
       toast('warning: could not remove the signing flags — this file may reopen in signing mode');
@@ -7249,7 +7585,11 @@ let lastDpr = devicePixelRatio;
 function dprChanged() {
   if (devicePixelRatio === lastDpr) return;
   lastDpr = devicePixelRatio;
-  if (view.pdfDocument) view.viewer.refresh();
+  // Recording what was refreshed is not bookkeeping — activateView skips its refresh when
+  // renderedDpr already matches, so without this line a view refreshed here keeps a stale
+  // renderedDpr, and a later activation at that same dpr sees a match and skips. Its
+  // canvases stay at the resolution they were rasterised at, CSS-stretched, permanently.
+  if (view.pdfDocument) { view.renderedDpr = devicePixelRatio; view.viewer.refresh(); }
 }
 window.addEventListener('resize', dprChanged);
 function watchDpr() {
@@ -7391,7 +7731,7 @@ window.addEventListener('keydown', (e) => {
       // annotation editor is active (its own Ctrl+Z handles FreeText/Ink/
       // Highlight), or with a modal open. Otherwise drain the client overlay-edit
       // stack first, then fall through to the server document-op undo.
-      if (isTypingTarget(e.target) || activeTool ||
+      if (isTypingTarget(e.target) || view.activeTool ||
           document.querySelector('div[id$="Modal"]:not([hidden])')) return;
       e.preventDefault();
       if (e.key === 'y' || e.shiftKey) redoAny(); else undoAny();
