@@ -2421,10 +2421,82 @@ the attempt is recorded in `test/ui/tabs.test.mjs` where the test would have bee
 it needs is a placement helper that scrolls its target page into view — harness work, not
 slice work — and the clause reconciles at the P06 close, which already carries it.
 
-#### P06.S03 — Reload restores what the server holds
+#### P06.S03 — Reload restores what the server holds *(done 2026-08-17, v1.106.2)*
 Scope: `GET /api/docs` returning the ordered list with the active id, and a boot
 restore that rebuilds one view per open document. Refs: the reload pin, as
 corrected above.
+
+- T01 — `GET /api/docs` → `{docs: [docResponse…], activeId}`, in registry order.
+- T02 — `reconcileWithServer()`: adopt a view for every document the server holds,
+  drop views it does not, activate the one it names, and collapse to the launch
+  state when it holds none.
+- T03 — call it once at boot, when the vault is ready, BEFORE honouring `?open=`.
+- T04 — call it when a document route answers 409. One call site: `apiFetch`
+  already sees every document request, and a list of routes here would be a second
+  copy of the server's knowledge in a different language.
+- T05 — `?open=` after a restore activates an already-open tab for that path
+  rather than opening a second copy.
+- T06 — seam rows V53–V58.
+
+**(grill, 2026-08-17 — what the attack changed.)**
+1. **T04 was not in the firmed scope, and it is how the carried all-tabs-stale
+   clause is actually discharged.** A boot restore cannot express that clause: on a
+   fresh page load the client holds no ids at all. The case the pin names is a
+   RUNNING client whose server restarted — every id then 409s, because `docFor`
+   refuses a foreign epoch before it compares anything else. So the clause needs
+   reconciliation-on-409 rather than restore-on-boot, and one function serves both.
+2. **`?open=` has to move.** It is guarded by `!view.pdfDocument`, which is false
+   after a restore — so the file the OS asked nib to open would silently not open.
+3. **The restore is bounded by the cap and by nothing else.** Eight documents' page
+   DOM at boot is the worst case; that is D9's business, but this is the first time
+   the ceiling is paid all at once.
+
+**Defaults taken, each reversible:** `{docs, activeId}` mirroring the server's own
+model rather than a flat list with an `active` flag; `?open=` activates an existing
+tab for that path rather than opening a duplicate; reconcile-on-409 is general
+rather than special-cased to a stale epoch.
+
+**(found during implementation, 2026-08-17.)**
+1. **The reconciler's ORDER is its correctness, and a red test found that.** Dropping
+   the vanished documents before adopting the held ones is the obvious shape and it is
+   wrong twice: with nothing held it tears down the last view, `views` goes EMPTY and
+   `view` points at a torn-down record — and the empty-case branch then does nothing,
+   because it tests `view.pdfDocument`, which the teardown just nulled. Observed as the
+   app keeping its `has-doc` chrome over no document at all. Empty-case first, then
+   adopt, then activate, then drop, so there is always a live view to stand on.
+2. **`arrival.test.mjs`'s 409 guard was re-derived, not loosened.** It asserted the
+   string `res.status === 409` appeared NOWHERE in `app.js` — a proxy for "apiFetch must
+   not throw on 409" that stopped tracking its property the moment apiFetch grew a 409
+   branch that reconciles instead of throwing. It now reads the branch and asserts the
+   property: no `throw`, and no `await` either, since awaiting would make every refused
+   call wait on a second round-trip before its caller could report it. **Its own
+   stimulus needed a second pass**: `/res\.status === 401.*throw/s` matched the word
+   "throw" in a comment forty lines below, so it could not fail.
+3. **A tab count is not an observable at one document.** The strip is hidden below two
+   (S01's rule), so "one tab remains" is 0 either way — the first draft of the 409 test
+   could not tell the right outcome from the worst one. Counted as containers.
+
+**Acceptance ledger — 6 rows, all met, 0 not exercised.** A reload with N documents comes
+back with N tabs ✅ **and** the same active one ✅ (tier 3, a real `page.reload()` against
+the real binary — the only tier where the page genuinely loses its state); the N=1 case
+✅ (tier 3, stated separately because it is the defect that predates tabs and the strip
+is hidden at one document, so nothing in the multi-document path would catch it); a
+path-less document survives ✅ (tier 2, where the restored set deliberately includes a
+document with no path — the case that was unreachable for the process's whole life
+before this slice, since the only way back to a document was to open it by path); the
+list is in registry order and carries each document's path ✅ (`docs_test.go`); the
+all-tabs-stale case resolves to the launch empty state ✅ — **with one honest
+qualification below**.
+
+**On all-tabs-stale, what was observed is one step in from the pin's own wording.** The
+pin says to observe the case "by restarting the server under a client holding ≥2 ids". A
+restart's client-visible effect is exactly what tier 2 drives: every id 409s, because
+`docFor` refuses a foreign epoch before it compares anything else, and `/api/docs`
+reports a different set. **The restart is the pin's setup, not its subject.** What stays
+unobserved is the Go half — that a fresh process really does mint a new epoch and refuse
+every old id — which lives in `docid_test.go` rather than in a browser. Tier 3 cannot
+supply the literal stimulus: its nib process is shared across test files and owned by
+`uirepro.sh`, so restarting it mid-run would break the siblings.
 Acceptance:
 - A reload with N documents open comes back with N tabs and the same active one.
 - A reload with **one** document open comes back showing it — the N=1 case, which

@@ -106,8 +106,30 @@ test('a refusal body is refused rather than becoming the document', async () => 
   // And apiFetch must NOT throw on 409: fifteen call sites handle it as
   // `if (!res.ok) { toast(...) }`, and throwing would turn each into an unhandled
   // rejection that tells the user nothing.
-  assert.doesNotMatch(app, /res\.status === 409/,
-    'apiFetch throws on 409, converting fifteen handled failures into silent ones');
+  //
+  // **Re-derived at P06.S03, not loosened.** This used to assert that the string
+  // `res.status === 409` appeared NOWHERE in app.js — a proxy for "does not throw",
+  // and a proxy that stopped tracking its property the moment apiFetch grew a 409
+  // branch that reconciles instead of throwing. Widening a guard until it passes is
+  // how a guard stops guarding, so this now reads the branch and asserts the thing
+  // the proxy stood for.
+  const fnStart = app.indexOf('async function apiFetch');
+  assert.ok(fnStart !== -1, 'apiFetch is gone — this guard has nothing to read');
+  const fn = app.slice(fnStart, app.indexOf('\n}', app.indexOf('return res;', fnStart)));
+  // The stimulus: the 401 branch DOES throw, so a scan that finds no `throw` anywhere
+  // is reading the wrong region rather than reporting health.
+  // Same LINE, not `.*` under the s flag: that version matched the word "throw" in a
+  // comment forty lines below and so could not fail. The stimulus for a stimulus.
+  assert.match(fn, /res\.status === 401[^\n]*throw/,
+    'the 401 branch no longer throws — this scan is not reading apiFetch');
+  const at409 = fn.indexOf('res.status === 409');
+  if (at409 !== -1) {
+    const branch = fn.slice(at409, fn.indexOf('\n  }', at409) + 4);
+    assert.doesNotMatch(branch, /\bthrow\b/,
+      'apiFetch throws on 409, converting fifteen handled failures into silent ones');
+    assert.doesNotMatch(branch, /\bawait\b/,
+      'apiFetch awaits its 409 reconciliation, so every refused call now waits on a second round-trip before the caller can report it');
+  }
 
   // The behavioural half: the refusal really is refused. docMeta keeps its id, so
   // the session stays pinned — observable through the header on a later call.

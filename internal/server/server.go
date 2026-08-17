@@ -200,6 +200,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/combine", s.requireUnlocked(s.handleCombine))
 	mux.HandleFunc("GET /api/pdf", s.requireUnlocked(s.handlePDF))
 	mux.HandleFunc("GET /api/doc", s.requireUnlocked(s.handleDoc))
+	mux.HandleFunc("GET /api/docs", s.requireUnlocked(s.handleDocs))
 	mux.HandleFunc("POST /api/close", s.requireUnlocked(s.handleClose))
 	mux.HandleFunc("POST /api/close-view", s.requireUnlocked(s.handleCloseView))
 	mux.HandleFunc("POST /api/save", s.requireUnlocked(s.handleSave))
@@ -411,6 +412,49 @@ func (s *Server) handleClose(w http.ResponseWriter, r *http.Request) {
 	// after a close would describe whatever the registry answers next, which is not
 	// the document the user just closed.
 	writeJSON(w, s.docResponse(nil))
+}
+
+// docsResponse is the whole open set: every document in registry order, plus which one
+// is active.
+//
+// **A list plus an id, mirroring the server's own model**, rather than a flat list with
+// an `active: true` on one entry. The registry IS an ordered slice and an active id, so
+// this shape cannot represent a state the server cannot be in — where a flag on each
+// entry can say two documents are active, or none, and the client would have to decide
+// which lie to believe.
+type docsResponse struct {
+	Docs     []docResponse `json:"docs"`
+	ActiveID string        `json:"activeId,omitempty"`
+}
+
+// handleDocs answers what the server currently holds. It is the client's only way to
+// learn that, and until P06.S03 there was no such route and no caller for one: the
+// client asked "what is the ACTIVE document" (`/api/doc`) from exactly one place, the
+// co-sign arrival poll, and never asked what else was open.
+//
+// That gap is why a reload came back showing zero documents while the server still held
+// them, and why a path-less document — an upload, a combine, an office conversion, an
+// arrival — was unreachable for the rest of the process's life once the page reloaded:
+// the only way back to a document was to open it by path, and those have none.
+func (s *Server) handleDocs(w http.ResponseWriter, r *http.Request) {
+	s.mu.Lock()
+	docs := append([]*document(nil), s.docs...)
+	active := s.activeID
+	s.mu.Unlock()
+
+	// docResponse takes the lock itself, so the snapshot above is released first. A
+	// document closed in between yields its zero response and is filtered out — the
+	// list describes what was open, not what the caller hoped was.
+	out := docsResponse{Docs: make([]docResponse, 0, len(docs))}
+	if active.valid() {
+		out.ActiveID = active.String()
+	}
+	for _, d := range docs {
+		if dr := s.docResponse(d); dr.ID != "" {
+			out.Docs = append(out.Docs, dr)
+		}
+	}
+	writeJSON(w, out)
 }
 
 // handleCloseView closes the ADDRESSED document and leaves the others open. Its
