@@ -49,6 +49,23 @@ per overlay kind: a hidden element keeps its value because nothing removed it.
   hidden 300-page document, on top of the page DOM, and one more arrives with every
   completed co-signature. Recorded as a dated note rather than an edit, because an
   ADR's text is the record of what was decided and when — see `_index.md`.
+
+  **(resolved, 2026-08-17, P06.S01 + P06.S04 — the bound now exists.)** D9's cap is
+  built: **eight documents** (`maxOpenDocs`, P06.S01, which is the slice that made
+  unbounded growth reachable by making Open ADD) **and 512 MiB of aggregate document
+  bytes** (`maxOpenBytes`, P06.S04, chosen against a measurement recorded in
+  `PLAN.md`), refusing on whichever binds first. The sentence above is true again.
+
+  **And the figure this note quoted was wrong.** "Roughly 35 MiB of canvas and ~2,100
+  nodes per hidden 300-page document" was an estimate; P06.S04 measured it in a real
+  browser across 3-, 50-, 150- and 300-page documents and found the canvas cost is set
+  by the **viewport**, not by the document's length — about 12–22 MiB per view whether
+  it holds 3 pages or 300, because pdf.js renders only what is near the viewport and a
+  hidden view keeps what it had rendered. The node count did scale with pages (~2.2 per
+  page on the near-blank measurement fixtures, so a floor rather than a typical figure),
+  reaching ~690 for 300 pages rather than 2,100. The practical consequence is the
+  opposite of what the estimate implied: **the client is bounded by the COUNT cap, not
+  by the byte one**, because per-view cost barely varies with document size.
 - `display: none` has measurement consequences that must be handled explicitly —
   a hidden container reports `clientWidth` 0, so a view that loads while hidden
   gets no scale and must be re-fit when it is activated. Verified empirically

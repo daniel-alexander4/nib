@@ -234,3 +234,59 @@ func decodeDoc(t *testing.T, resp *http.Response) docResponse {
 	}
 	return dr
 }
+
+// P06.S04 — the byte half of D9's cap.
+//
+// The count and the bytes bind independently, and a test that only exercised one would
+// leave the other's message unreachable: they say different things to a user, and
+// telling someone at the byte ceiling to "close one first" points them at the wrong
+// remedy when the one they close is small.
+func TestTheByteCeilingRefusesAndSaysWhichBoundBound(t *testing.T) {
+	s := &Server{epoch: "test-epoch"}
+	// Two documents just under the ceiling between them, so the registry is nowhere near
+	// the COUNT cap and any refusal below is unambiguously the byte one.
+	big := make([]byte, maxOpenBytes/2-1)
+	if _, err := s.addDocCapped(&document{data: big}); err != nil {
+		t.Fatalf("setup: the first large document was refused: %v", err)
+	}
+	if _, err := s.addDocCapped(&document{data: big}); err != nil {
+		t.Fatalf("setup: the second large document was refused: %v — the ceiling binds too early", err)
+	}
+	s.mu.Lock()
+	n := len(s.docs)
+	s.mu.Unlock()
+	if n != 2 || n >= maxOpenDocs {
+		t.Fatalf("setup: %d documents, want 2 and well under the count cap of %d", n, maxOpenDocs)
+	}
+
+	// One more byte over.
+	_, err := s.addDocCapped(&document{data: make([]byte, 4096)})
+	if err != ErrTooManyBytes {
+		t.Fatalf("an open past the byte ceiling returned %v, want ErrTooManyBytes", err)
+	}
+	if !strings.Contains(err.Error(), "MiB") {
+		t.Errorf("the refusal does not name the ceiling, so the user cannot tell how far over they are: %q", err)
+	}
+
+	// And a SMALL document is still refused at the ceiling — the bound is the aggregate,
+	// not the size of the document being opened. Without this the row passes against an
+	// implementation that only rejected large individual documents.
+	if _, err := s.addDocCapped(&document{data: []byte("tiny")}); err != ErrTooManyBytes {
+		t.Errorf("a tiny document was accepted past the aggregate ceiling (%v) — the cap is measuring the wrong thing", err)
+	}
+}
+
+// TestTheCountCapStillBindsBelowTheByteCeiling — the other direction, and the reason
+// D9 says "whichever binds first". Eight small documents are nowhere near 512 MiB.
+func TestTheCountCapStillBindsBelowTheByteCeiling(t *testing.T) {
+	s := &Server{epoch: "test-epoch"}
+	for i := 0; i < maxOpenDocs; i++ {
+		if _, err := s.addDocCapped(&document{data: []byte("small")}); err != nil {
+			t.Fatalf("setup: document %d was refused: %v", i+1, err)
+		}
+	}
+	_, err := s.addDocCapped(&document{data: []byte("small")})
+	if err != ErrTooManyOpen {
+		t.Errorf("nine tiny documents returned %v, want ErrTooManyOpen — the count cap stopped binding when the byte one landed", err)
+	}
+}
