@@ -37,6 +37,41 @@ var riskyActions = map[string]string{
 	"GoToR":      "high",
 	"GoToE":      "high",
 	"URI":        "medium",
+	// ISO 32000-1 §12.6.4's remaining action types that run something, reach outside
+	// the document, or change what is visible. Rendition is high because a rendition
+	// action can carry its own JavaScript (§12.6.4.13); Hide and SetOCGState are the
+	// hidden-content half of what Scan exists to report, and a document that hides
+	// content on open reads as clean without them.
+	"Rendition":   "high",
+	"Movie":       "medium",
+	"Sound":       "medium",
+	"SetOCGState": "medium",
+	"GoTo3DView":  "medium",
+	"Hide":        "medium",
+}
+
+// eachAction walks an action and everything its /Next chains to, calling fn on each.
+//
+// **Without this, one benign action hides any number of risky ones.** /Next (§12.6.1) is
+// a dict or an ARRAY of dicts, each of which may chain further, and both Scan and
+// StripActive used to look only at the head: `<< /S /GoTo /Next << /S /JavaScript >> >>`
+// scanned clean and survived the strip untouched. Depth is bounded because /Next can be
+// circular in a malformed file and this runs on documents chosen for being malformed.
+func eachAction(xt *model.XRefTable, act types.Dict, depth int, fn func(types.Dict)) {
+	if act == nil || depth > 32 {
+		return
+	}
+	fn(act)
+	switch next := act["Next"].(type) {
+	case types.Array:
+		for _, a := range next {
+			eachAction(xt, derefDict(xt, a), depth+1, fn)
+		}
+	default:
+		if d := derefDict(xt, act["Next"]); d != nil {
+			eachAction(xt, d, depth+1, fn)
+		}
+	}
 }
 
 // Scan reads the PDF and reports active or hidden content: auto-run hooks
@@ -141,11 +176,11 @@ func Scan(pdf []byte) (ScanReport, error) {
 			if _, ok := annot.Find("AA"); ok {
 				add("additionalActions", "medium", "Annotation additional actions", nr)
 			}
-			if act := derefDict(xt, annot["A"]); act != nil {
+			eachAction(xt, derefDict(xt, annot["A"]), 0, func(act types.Dict) {
 				if sev, ok := riskyActions[nameVal(act, "S")]; ok {
 					add("action", sev, actionDetail(nameVal(act, "S")), nr)
 				}
-			}
+			})
 		}
 	})
 
@@ -181,6 +216,14 @@ func StripActive(pdf []byte) ([]byte, error) {
 		if af := derefDict(xt, root["AcroForm"]); af != nil {
 			_ = xt.DeleteDictEntry(af, "XFA")
 		}
+		// The media annotations RemoveFilesAndMedia takes out. StripActive is the STRONGER
+		// tier and used to leave them: a Screen or Movie annotation survived the strip
+		// while the gentle option removed it, so "remove all active content" left behind
+		// the annotations whose whole purpose is to play something. The hierarchy has to
+		// hold in the direction users are told it does.
+		if _, err := pdfcpu.RemoveAnnotations(ctx, nil, []string{"FileAttachment", "Sound", "Movie", "Screen", "3D"}, nil, false); err != nil {
+			return err
+		}
 		eachPage(xt, root, func(page types.Dict, _ int) {
 			_ = xt.DeleteDictEntry(page, "AA")
 			for _, a := range derefArray(xt, page["Annots"]) {
@@ -190,7 +233,18 @@ func StripActive(pdf []byte) ([]byte, error) {
 				}
 				_ = xt.DeleteDictEntry(annot, "AA")
 				if act := derefDict(xt, annot["A"]); act != nil {
-					if _, risky := riskyActions[nameVal(act, "S")]; risky {
+					risky := false
+					// The whole chain, not the head: a benign /GoTo whose /Next runs
+					// JavaScript is a risky action wearing a safe name. Dropping /A drops
+					// the chain with it, which is the only answer that cannot leave a
+					// dangling /Next — keeping the head and rewriting the chain would mean
+					// re-parenting actions this function has no way to validate.
+					eachAction(xt, act, 0, func(a types.Dict) {
+						if _, bad := riskyActions[nameVal(a, "S")]; bad {
+							risky = true
+						}
+					})
+					if risky {
 						_ = xt.DeleteDictEntry(annot, "A")
 					}
 				}
@@ -426,6 +480,16 @@ func actionDetail(s string) string {
 		return "Opens another document"
 	case "URI":
 		return "Opens a web URL"
+	case "Rendition":
+		return "Plays media, and can carry its own JavaScript"
+	case "Movie", "Sound":
+		return "Plays embedded media"
+	case "SetOCGState":
+		return "Changes which optional-content layers are visible"
+	case "GoTo3DView":
+		return "Switches a 3D annotation's view"
+	case "Hide":
+		return "Hides or shows annotations"
 	default:
 		return s + " action"
 	}
