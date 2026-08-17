@@ -1,7 +1,7 @@
 package pdfops
 
 import (
-	"log"
+	"fmt"
 	"os"
 	"os/exec"
 	"strings"
@@ -15,9 +15,18 @@ import (
 // Noto .gob files must be on disk before then, exactly as the server does at
 // startup. Without this, whichever font test runs first would freeze a registry
 // that lacks Thai/Devanagari.
+//
+// A failure here is FATAL, not logged. The comment it replaces said "the
+// Thai/Devanagari test will fail loudly" — which is true only where poppler is
+// installed, because every test that would notice is gated on
+// exec.LookPath("pdftotext") and skips silently without it. On the fresh clone the
+// build contract targets ("a fresh clone runs tiers 0 and 1 unaided"), a broken
+// font install therefore produced a green package and a log line addressed to
+// nobody. Exiting non-zero makes the failure visible independently of poppler.
 func TestMain(m *testing.M) {
 	if err := InstallOCRFonts(); err != nil {
-		log.Printf("InstallOCRFonts: %v", err) // the Thai/Devanagari test will fail loudly
+		fmt.Fprintf(os.Stderr, "InstallOCRFonts: %v\n", err)
+		os.Exit(1)
 	}
 	os.Exit(m.Run())
 }
@@ -116,8 +125,8 @@ func TestStampTextLayerCJK(t *testing.T) {
 		t.Skip("pdftotext (poppler) not installed")
 	}
 	samples := map[string]string{
-		"chi_sim": "你好世界",       // Simplified Chinese
-		"chi_tra": "繁體中文世界", // Traditional Chinese (繁/體 are traditional-only forms)
+		"chi_sim": "你好世界",    // Simplified Chinese
+		"chi_tra": "繁體中文世界",  // Traditional Chinese (繁/體 are traditional-only forms)
 		"jpn":     "こんにちは世界", // Japanese: hiragana + kanji
 	}
 	for lang, sample := range samples {
@@ -274,7 +283,7 @@ func TestStampTextLayerSouthAsian(t *testing.T) {
 		"kan": "ಕನ್ನಡ ಭಾಷೆ",   // Kannada (ನ್ನ conjunct)
 		"mal": "മലയാളം ക്ത",   // Malayalam (ക്ത conjunct)
 		"guj": "ગુજરાતી ભાષા", // Gujarati
-		"pan": "ਪੰਜਾਬੀ ਭਾਸ਼ਾ",  // Punjabi (Gurmukhi)
+		"pan": "ਪੰਜਾਬੀ ਭਾਸ਼ਾ", // Punjabi (Gurmukhi)
 	}
 	for lang, sample := range samples {
 		base, err := testpdf.Text("scan")
@@ -294,19 +303,19 @@ func TestStampTextLayerSouthAsian(t *testing.T) {
 
 func TestOCRFontFor(t *testing.T) {
 	cases := map[string]string{
-		"eng": "Roboto-Regular",
-		"rus": "Roboto-Regular",
-		"ell": "Roboto-Regular",
-		"tha": "NotoSansThai-Regular",
-		"hin": "NotoSansDevanagari-Regular",
-		"mar": "NotoSansDevanagari-Regular",
-		"ben": "NotoSansBengali-Regular",
-		"tam": "NotoSansTamil-Regular",
-		"tel": "NotoSansTelugu-Regular",
-		"kan": "NotoSansKannada-Regular",
-		"mal": "NotoSansMalayalam-Regular",
-		"guj": "NotoSansGujarati-Regular",
-		"pan": "NotoSansGurmukhi-Regular",
+		"eng":     "Roboto-Regular",
+		"rus":     "Roboto-Regular",
+		"ell":     "Roboto-Regular",
+		"tha":     "NotoSansThai-Regular",
+		"hin":     "NotoSansDevanagari-Regular",
+		"mar":     "NotoSansDevanagari-Regular",
+		"ben":     "NotoSansBengali-Regular",
+		"tam":     "NotoSansTamil-Regular",
+		"tel":     "NotoSansTelugu-Regular",
+		"kan":     "NotoSansKannada-Regular",
+		"mal":     "NotoSansMalayalam-Regular",
+		"guj":     "NotoSansGujarati-Regular",
+		"pan":     "NotoSansGurmukhi-Regular",
 		"ara":     "NotoSansArabic-Regular",
 		"heb":     "NotoSansHebrew-Regular",
 		"chi_sim": "DroidSansFallback",
