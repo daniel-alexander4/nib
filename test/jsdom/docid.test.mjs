@@ -62,14 +62,39 @@ test('opening a document, then every apiFetch call names it', async () => {
   assert.ok(calls.some((c) => c.url.includes('/api/open')), 'the open call never went out');
   assert.equal(document.getElementById('viewerWrap').className, 'has-doc');
 
-  // Now drive a document route through apiFetch and read the header off it.
+  // Drive SEVERAL document routes, not one. The generalised assertion below is only
+  // worth its name if the window it inspects holds more than a single call — with
+  // one, "every document-route call carried the id" and "the one call this test
+  // happened to trigger carried the id" are the same statement, which is what the
+  // original single headerOn('/api/scan') check amounted to.
   calls.length = 0;
   document.getElementById('scanBtn').click();
   await settle();
+  document.getElementById('attachBtn').click();
+  await settle();
 
-  const sent = headerOn('/api/scan');
-  assert.equal(sent, DOC_ID,
-    'a document-route call did not carry the id the server issued — it would silently take the active-document default');
+  // EVERY document-route call in the window, not just the one this test happened to
+  // trigger. The name promises "every apiFetch call names it" and the body used to
+  // read a single /api/scan entry — so a second call going out unpinned, which is
+  // exactly the regression the pin exists to stop, left this green. `calls` already
+  // records headers per call, so the general form costs nothing.
+  //
+  // The route list is the same membership question MUTATING answers in
+  // pinning.test.mjs: a route that resolves a document must name one. Routes that
+  // legitimately do not (pre-unlock, vault, image library) are excluded by prefix.
+  const NOT_DOCUMENT_SCOPED = ['/api/status', '/api/ssh/', '/api/vault/', '/api/images',
+    '/api/update/', '/api/identity', '/api/peers', '/api/settings', '/api/profile',
+    '/api/recent', '/api/browse', '/api/roots', '/api/session/', '/api/cosign/'];
+  const documentCalls = calls.filter((c) =>
+    c.url.startsWith('/api/') && !NOT_DOCUMENT_SCOPED.some((p) => c.url.startsWith(p)));
+
+  assert.ok(documentCalls.length > 0,
+    'no document-route call went out at all — the assertion below would pass over an empty list');
+
+  for (const c of documentCalls) {
+    assert.equal(c.headers['X-Nib-Doc'], DOC_ID,
+      `${c.method} ${c.url} carried no document id (or the wrong one) — it would silently take the active-document default`);
+  }
 });
 
 test('the id sent is the one the server issued, not one the client invented', () => {
@@ -107,22 +132,49 @@ test('/api/pdf carries its id as a query parameter', () => {
 // cannot prove a route is non-document, only that a literal is not one it knows
 // about. So a fourth bypass fails this test whatever it fetches, and adding one
 // deliberately means updating this list deliberately — which is the intended cost.
-test('nothing bypasses apiFetch to reach an API route', () => {
+test('nothing bypasses apiFetch to reach a document route', () => {
   const app = fs.readFileSync(path.join(REPO, 'web', 'app.js'), 'utf8');
-  const bare = [];
-  for (const line of app.split('\n')) {
-    if (line.trim().startsWith('//')) continue;
-    for (const m of line.matchAll(/(?<!api)[Ff]etch\(\s*['"`](\/api\/[a-z0-9/-]+)/g)) {
-      bare.push(m[1]);
-    }
+
+  // Scans for /api/ LITERALS that are not the first argument of an apiFetch call,
+  // rather than for the shape `fetch('/api/...')`.
+  //
+  // The narrower form missed the whole class. `const url = cond ? '/api/a' : '/api/b';
+  // await fetch(url)` has no literal inside the fetch call, so two real bypasses
+  // (/api/ssh/enroll and /api/ssh/migrate, app.js) were invisible to a test whose
+  // own comment claimed "a fourth bypass fails this test whatever it fetches". It
+  // also could not see a route reached by NAVIGATION — window.location — which is
+  // how /api/form-data was exporting the server's active document instead of the
+  // view's, because a navigation carries no X-Nib-Doc header at all.
+  const stripped = app.split('\n').filter((l) => !l.trim().startsWith('//')).join('\n');
+  const found = new Map();
+  for (const m of stripped.matchAll(/['"`](\/api\/[a-zA-Z0-9/_-]+)/g)) {
+    const pre = stripped.slice(Math.max(0, m.index - 40), m.index);
+    // The first argument of an apiFetch call, including the ternary form
+    // apiFetch(gs ? '/api/pdfa?engine=gs' : '/api/pdfa', …), which is still pinned.
+    if (/apiFetch\(\s*$/.test(pre) || /apiFetch\([^()]*\?[^()]*$/.test(pre) || /apiFetch\([^()]*:\s*$/.test(pre)) continue;
+    found.set(m[1], (found.get(m[1]) || 0) + 1);
   }
-  const allowed = ['/api/status', '/api/ssh/unlock', '/api/update/check'];
 
-  // The stimulus: if the scan found nothing at all, an empty result would read as
-  // "no bypasses" forever, including after apiFetch itself was deleted.
-  assert.ok(bare.length > 0, 'the bypass scan matched nothing — it is not reading what it thinks');
+  // Allowed, each for a stated reason — an unexplained entry is how a real bypass
+  // gets parked here and forgotten.
+  const allowed = new Set([
+    // Pre-unlock and vault-scoped: no document exists yet, or the route is not
+    // about one. These cannot carry a document id and must not.
+    '/api/status', '/api/ssh/unlock', '/api/ssh/enroll', '/api/ssh/migrate',
+    '/api/update/check', '/api/vault/export', '/api/identity',
+    // pdf.js issues these fetches itself, so the id rides in the URL rather than a
+    // header — D15, decided rather than overlooked.
+    '/api/pdf', '/api/session/pending-pdf',
+    // An <img> src, not a fetch, and the image library is not document-scoped.
+    '/api/images/',
+  ]);
 
-  const unexpected = bare.filter((u) => !allowed.includes(u));
+  // The stimulus: an empty result would read as "no bypasses" forever, including
+  // after apiFetch itself was deleted.
+  assert.ok(found.size > 0, 'the bypass scan matched nothing — it is not reading what it thinks');
+
+  const unexpected = [...found.keys()].filter((u) => !allowed.has(u)).sort();
   assert.deepEqual(unexpected, [],
-    'a route is fetched without going through apiFetch, so it carries no document id and nothing in review would show it');
+    'a document route is reached without apiFetch, so it carries no document id and resolves against whatever the SERVER thinks is active');
 });
+

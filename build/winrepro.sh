@@ -33,12 +33,28 @@ EXE="$WORK/nib.exe"
 USERNAME_="$(id -un)"
 FAILED=0
 
+SERVER_PID=""
+
 cleanup() {
-  # The pattern is bracketed so it can't match this script's own command line.
-  pkill -f "$(printf 'ni[b]%s.exe' '')" >/dev/null 2>&1
+  # This run's processes only. The bracketed `pkill -f ni[b].exe` this replaces did
+  # protect against matching the script's own command line, and that is all it
+  # protected against: it still killed EVERY nib.exe on the machine, so a developer
+  # poking at their own `wine nib.exe` lost it, and two harness runs killed each
+  # other.
+  #
+  # Both halves are needed. $! is the `wine` wrapper, not the Windows process —
+  # that one is a wineserver-managed child — so the pid alone is not guaranteed to
+  # take it down. The pkill is scoped to $WORK, a mktemp path unique to this run,
+  # which is what makes it safe where matching on the exe name was not.
+  [ -n "$SERVER_PID" ] && kill "$SERVER_PID" >/dev/null 2>&1
+  pkill -f "$WORK" >/dev/null 2>&1
   [ "$KEEP" = "1" ] || rm -rf "$WORK"
 }
-[ "$KEEP" = "1" ] || trap cleanup EXIT
+# Trapped unconditionally, with --keep handled INSIDE cleanup — the same shape
+# uirepro.sh uses. Installing the trap only when KEEP != 1 (as this did) meant the
+# work dir and the wine prefix survived an interrupt on an ordinary run, and it
+# trapped only EXIT where uirepro traps EXIT INT TERM.
+trap cleanup EXIT INT TERM
 
 # check NAME HAYSTACK NEEDLE — assert NEEDLE appears in HAYSTACK.
 check() {
@@ -101,6 +117,7 @@ printf 'not a pdf\n' > "$WHOME/nibprobe/notes.txt"
 
 echo "starting nib.exe headless on $BASE"
 NIB_ADDR="127.0.0.1:$PORT" NIB_NO_BROWSER=1 NIB_NO_UPDATE_CHECK=1 wine "$EXE" > "$WORK/nib.log" 2>&1 &
+SERVER_PID=$!
 for _ in $(seq 1 40); do
   curl -s --max-time 2 "$BASE/api/status" >/dev/null 2>&1 && break
   sleep 1
@@ -138,7 +155,17 @@ keyadd() { curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/api/ssh/keys" \
   -d "{\"mode\":\"create\",\"keyPath\":\"$1\"}"; }
 check "a bare relative name is refused"     "$(keyadd 'id_ed25519')"          '400'
 check "a drive-relative path is refused"    "$(keyadd '\\\\Users\\\\me\\\\k')" '400'
-checknot "and nothing was written beside the exe" "$(ls "$WORK" 2>/dev/null)" 'id_ed25519'
+# Where a bare relative name would ACTUALLY land, which is not where this used to
+# look. The script cd's to the repo root, so `wine "$EXE"` inherits that as its
+# working directory and a Windows-side relative path resolves against it — not
+# against $WORK, which only ever holds nib.exe, wine/, nib.log and payload.bin.
+# Scanning $WORK therefore could not fail whatever the guard under test did, and a
+# regression would have dropped a private key into the developer's working tree
+# while this printed ok. Both plausible landing sites are checked, and the wine
+# drive_c home as well, so the assertion covers where the file goes rather than
+# where the exe happens to sit.
+checknot "and no key was written to the working tree" "$(ls . 2>/dev/null)"        'id_ed25519'
+checknot "nor into the wine home"                     "$(ls -R "$WHOME" 2>/dev/null)" 'id_ed25519'
 
 echo
 echo "drive enumeration — the parent walk dead-ends at a drive root on Windows"
