@@ -74,6 +74,35 @@ that rot quietly — `verify_test.go` (the commands in the table above exist and
 named) and `internal/browser/browser_test.go` (tier 3 hunts for the same browsers
 Nib does). Both are in tier 1, so they run first and for free.
 
+## The multiple-documents laws
+
+Nib holds several documents at once (`PLAN.md` P03–P06). Three rules constrain code
+whose author will never read the plan that produced them, so they are written here —
+in the committed file a fresh clone actually gets — rather than only in an ADR or in
+a local `CLAUDE.md`.
+
+1. **No operation may act on a document it did not capture at its start.** ADR-001.
+   An operation that bakes document A's bytes and then posts them must name A, or
+   the server applies them to whatever is active when the request arrives. Capture
+   the id before the first `await` and pass it as `apiFetch`'s `docId`.
+   *Guarded by* `test/jsdom/pinning.test.mjs` — "no mutating call is unpinned".
+2. **Every reload names the view it lands in.** The same law's other half, and they
+   fail apart: `setDocumentFromServer(meta)` with no target writes into whatever
+   view is active when the round-trip *returns*, wiping that view's overlays, redact
+   marks and undo stack. Only the document-installing routes (`open`, `open-url`,
+   `upload`, `combine`, `office`) may omit a target, because installing into the
+   active view is what opening a document means.
+   *Guarded by* `pinning.test.mjs` — "every reload names the view it lands in".
+3. **`views` is mutated in exactly three places** — `addView`, `removeView`,
+   `resetViews` — and each re-renders the tab strip. The strip is a rendering of
+   that array; a fourth mutator leaves it describing a set of documents the app does
+   not hold, and nothing else would say so.
+   *Guarded by* `test/jsdom/view.test.mjs` — "views is mutated in exactly three
+   places, and each re-renders the strip".
+
+Each guard has been proven red against the defect it names. If you are changing one
+of these and the guard is in your way, the guard is the thing that is right.
+
 ## Repo conventions
 
 - **Bump `VERSION` in the same commit as the change.** It is a single semver line
