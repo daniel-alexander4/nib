@@ -57,3 +57,61 @@ func TestHarnessHuntsTheSameBrowsersWeDo(t *testing.T) {
 		t.Errorf("the tier-3 harness hunts different browsers than Nib does — it would test an engine users are not given\n  uirepro.sh: %v\n  browser.go: %v", inScript, want)
 	}
 }
+
+// TestEveryPlatformOffersTheBrowsersWeAdvertise checks all three candidate lists,
+// on every platform, against what the README promises.
+//
+// The sibling test above skips unless GOOS is linux, so the Windows and macOS lists
+// had no guard of any kind — and the Windows list contained no Brave entry at all
+// (install path or bare name) and no Chromium, while README:640 promises "Chrome /
+// Edge / Brave / Chromium (app mode)". A Brave-only Windows user therefore fell
+// through to the rundll32 tab fallback and got an ordinary tabbed window, silently.
+//
+// The lists are read through the same source-scan the sibling uses rather than by
+// calling chromiumCandidates(), because that function returns only the list for the
+// platform the test happens to run on — which is exactly how three of the four lists
+// went unchecked.
+func TestEveryPlatformOffersTheBrowsersWeAdvertise(t *testing.T) {
+	src, err := os.ReadFile("browser.go")
+	if err != nil {
+		t.Fatalf("cannot read the candidate lists: %v", err)
+	}
+	// Comments stripped FIRST. Without this the guard matched the prose explaining
+	// which browsers were missing — so removing Brave from the Windows list left it
+	// green, because the comment above the list still said "Brave". A scan that reads
+	// its own documentation confirms whatever the documentation claims.
+	var kept []string
+	for _, line := range strings.Split(string(src), "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), "//") {
+			continue
+		}
+		kept = append(kept, line)
+	}
+	body := strings.Join(kept, "\n")
+
+	// One block per platform, sliced at the case labels so a browser named in the
+	// darwin list cannot satisfy the windows one.
+	blocks := map[string][2]string{
+		"darwin":  {`case "darwin":`, `case "windows":`},
+		"windows": {`case "windows":`, `default:`},
+		"linux":   {`default:`, "func tabOpener"},
+	}
+	// The four families README:640 advertises. Matched case-insensitively on a
+	// substring, since the same browser is "brave-browser", "Brave Browser" and
+	// "brave.exe" depending on the platform.
+	families := []string{"chrome", "edge", "brave", "chromium"}
+
+	for platform, se := range blocks {
+		start := strings.Index(body, se[0])
+		end := strings.Index(body, se[1])
+		if start < 0 || end <= start {
+			t.Fatalf("%s: cannot locate the candidate block (anchors moved — this guard is not reading what it thinks)", platform)
+		}
+		block := strings.ToLower(body[start:end])
+		for _, fam := range families {
+			if !strings.Contains(block, fam) {
+				t.Errorf("%s offers no %s, but README advertises it — that user silently gets the plain-tab fallback", platform, fam)
+			}
+		}
+	}
+}
