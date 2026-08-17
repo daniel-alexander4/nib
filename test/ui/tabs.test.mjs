@@ -289,6 +289,69 @@ test('switching away and back preserves the zoom you set', async () => {
     `the document came back at ${back}px instead of the ${zoomed}px it was left at — the switch re-fitted it and threw the user's zoom away`);
 });
 
+test('switching away and back preserves a typed overlay value', async () => {
+  // **P06's exit criterion, verbatim: "typed overlay values — asserted by reading a
+  // typed value back out of its DOM element".** It went unexercised through S02 and the
+  // phase close-out for one reason: no tier could type into an overlay. jsdom cannot
+  // place one at all (every getBoundingClientRect is 0, so pageAt never resolves a
+  // page), and tier 3's only placement helper put down a signing flag carrying no text.
+  // The harness now has placeEditField, and this is the clause it exists for.
+  assert.equal(await tabCount(), 2, `setup: ${await tabCount()} tabs, want 2`);
+  await page.click(tabSel(1));
+  await switched(3);
+
+  await h.placeEditField();
+  const TYPED = 'typed on document A';
+  await page.fill('.viewerContainer:not([hidden]) .ovl-edit', TYPED);
+  // The stimulus, and it is the whole reason this is not a count: an overlay that EXISTS
+  // is not an overlay whose value survived, and asserting a count would pass against a
+  // field that came back empty.
+  assert.deepEqual(await h.typedValues(), [TYPED],
+    'setup: the typed value did not land in the overlay, so nothing below can observe it being lost');
+
+  await page.click(tabSel(2));
+  await switched(7);
+  // Gone from the OTHER document's view — overlays are per-view, and reading the same
+  // value here would mean the strip switched while the DOM did not.
+  assert.deepEqual(await h.typedValues(), [],
+    'the other document shows the first one\'s overlay — the views are sharing a page DOM');
+
+  await page.click(tabSel(1));
+  await switched(3);
+  assert.deepEqual(await h.typedValues(), [TYPED],
+    'the typed value did not survive a switch — this is the clause the phase is named for, read back out of the element the user typed into');
+});
+
+test('switching away and back preserves a form fill', async () => {
+  // The other half of the same acceptance clause, and a SEPARATE mechanism: a form fill
+  // is a pdf.js annotationStorage value living in pdf.js's own annotation layer, not a
+  // Nib overlay in ours. Both survive for the same underlying reason — the view is
+  // hidden, never torn down — and "same reason" is exactly the argument that lets an
+  // unexercised clause read as met, so it gets its own fixture and its own drive.
+  const F = writeFixture('tab-form.pdf', { pages: 2, label: 'form page', form: true });
+  await h.openDocument(F, 2);
+  await page.waitForSelector('.viewerContainer:not([hidden]) .annotationLayer input[type="text"]');
+
+  const FILLED = 'filled in on the form';
+  await page.fill('.viewerContainer:not([hidden]) .annotationLayer input[type="text"]', FILLED);
+  // The stimulus: the fill has to have landed, or "it came back" is read off a field
+  // that was empty the whole time.
+  assert.deepEqual(await h.formValues(), [FILLED],
+    'setup: the form fill did not land, so nothing below can observe it being lost');
+
+  await page.click(tabSel(1));
+  await switched(3);
+  await page.click(tabSel(await tabCount()));
+  await page.waitForFunction(() => document.querySelector('.pageCount').textContent === '/ 2');
+
+  assert.deepEqual(await h.formValues(), [FILLED],
+    'the form fill did not survive a switch — pdf.js annotationStorage went with the view');
+
+  // Put the session back to two documents for the tests that follow.
+  await page.click(`${tabSel(await tabCount())} .tabclose`);
+  await page.waitForFunction(() => document.querySelectorAll('#tabstrip .tab').length === 2);
+});
+
 test('a reload with ONE document open comes back showing it', async () => {
   // The N=1 case, stated separately in the acceptance because it is the defect that
   // predates tabs: before this slice a reload came back showing ZERO documents while the

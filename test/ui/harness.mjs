@@ -120,12 +120,82 @@ export async function launch() {
     // the sidebar's Flags panel, which belongs to COLLABORATE mode, not Sign —
     // SIDEBAR_FOR.sign is ['library'] (app.js). Discovered by driving it; nothing
     // in the UI's naming suggests it.
+    // **Scrolls the target page into view first**, and that is a fix rather than a
+    // flourish. This clicked the box of `.page` FIRST unconditionally, so on any
+    // document scrolled past page 1 the click landed outside the viewport and the marker
+    // never appeared — surfacing as a 30-second waitForSelector timeout INSIDE this
+    // helper rather than as an assertion failure in the test that called it. Every
+    // caller until P06.S02 happened to open a fresh document and never met the
+    // precondition, which is why nothing stated it. Found by a caller that violated it.
     async placeMarker(type = 'date') {
+      await this.topOfDocument();
       await page.click('[data-tab="collaborate"]');
       await page.click(`[data-marker="${type}"]`);
       const box = await page.locator('.viewerContainer:not([hidden]) .page').first().boundingBox();
       await page.mouse.click(box.x + box.width / 2, box.y + box.height / 3);
       await page.waitForSelector('.ovl-marker');
+    },
+
+    // topOfDocument scrolls the visible view back to its first page, which every
+    // placement helper needs: they address `.page` FIRST, and a document left scrolled
+    // puts that element above the viewport.
+    async topOfDocument() {
+      await page.evaluate(() => {
+        const c = document.querySelector('.viewerContainer:not([hidden])');
+        if (c) c.scrollTop = 0;
+      });
+      await page.waitForFunction(() => {
+        const p = document.querySelector('.viewerContainer:not([hidden]) .page');
+        if (!p) return false;
+        const r = p.getBoundingClientRect();
+        return r.top > -1 && r.height > 0;
+      });
+    },
+
+    // placeEditField drags a cover-and-replace box over the top-left text of page one
+    // and returns the `<input>` it produces — a real overlay carrying a real typed
+    // value, which is the affordance no tier had.
+    //
+    // It is what P06's exit criterion asks for in as many words: "typed overlay values —
+    // asserted by reading a typed value back out of its DOM element". Until this existed
+    // that clause could not be driven at any tier: jsdom cannot place an overlay at all
+    // (every getBoundingClientRect is 0, so pageAt never resolves a page), and the only
+    // tier-3 placement helper put down a signing flag carrying no text.
+    //
+    // The drag region is where the generated fixtures put their text — `BT /F1 36 Tf
+    // 72 700 Td` on a 612x792 page, so about a tenth in from the left and a tenth down.
+    // A cover box needs to overlap real text: makeEditField samples the text under it
+    // and an empty region yields an empty field, which would still be an input and would
+    // still hold a typed value, but would not be the flow a user takes.
+    async placeEditField() {
+      await this.topOfDocument();
+      await this.mode('edit');
+      await page.click('#editTextBtn');
+      const box = await page.locator('.viewerContainer:not([hidden]) .page').first().boundingBox();
+      await page.mouse.move(box.x + box.width * 0.10, box.y + box.height * 0.08);
+      await page.mouse.down();
+      await page.mouse.move(box.x + box.width * 0.60, box.y + box.height * 0.16, { steps: 8 });
+      await page.mouse.up();
+      await page.waitForSelector('.viewerContainer:not([hidden]) .ovl-edit');
+      // Disarm, or the next click anywhere on the page starts another edit box.
+      await page.click('#editTextBtn');
+      await page.waitForFunction(() => !document.getElementById('editTextBtn').classList.contains('active'));
+    },
+
+    // formValues reads every AcroForm input pdf.js rendered in the VISIBLE view. A form
+    // fill lives in pdf.js's annotationStorage, not in a Nib overlay, so it is a
+    // separate observable from typedValues and the acceptance clause names it
+    // separately.
+    formValues() {
+      return page.$$eval('.viewerContainer:not([hidden]) .annotationLayer input[type="text"]',
+        (els) => els.map((e) => e.value));
+    },
+
+    // typedValues reads every edit-overlay value in the VISIBLE view. The point of the
+    // exercise is reading a value back out of its DOM element, so this reads `.value`
+    // and not, say, a count of overlays.
+    typedValues() {
+      return page.$$eval('.viewerContainer:not([hidden]) .ovl-edit', (els) => els.map((e) => e.value));
     },
 
     // closeDocument clicks Close — from File mode, for the reason above.
