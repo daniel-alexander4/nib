@@ -82,6 +82,26 @@ func watchLoop(dir string, interval int, opName string, act watchAction) int {
 	seen := map[string]fileState{}
 	processed := map[string]bool{}
 	failed := map[string]fileState{}
+
+	// Everything already in the directory is marked processed BEFORE the first scan,
+	// so the watch acts only on files that arrive after it starts.
+	//
+	// That is what this command has always claimed to do — "each PDF ADDED to it"
+	// here, "each NEW PDF" in the command table, "dropped into DIR" in the README —
+	// and not what it did: scanOnce walks every settled .pdf in the directory, so
+	// pointing `nib watch ~/Documents --do sanitize` at an existing folder rewrote
+	// every PDF already in it, in place, stripping metadata from files the user
+	// never intended to touch. A destructive default that three separate documents
+	// said would not happen.
+	if entries, err := os.ReadDir(dir); err == nil {
+		for _, e := range entries {
+			if e.IsDir() || !strings.EqualFold(filepath.Ext(e.Name()), ".pdf") {
+				continue
+			}
+			processed[filepath.Join(dir, e.Name())] = true
+		}
+	}
+
 	ticker := time.NewTicker(time.Duration(interval) * time.Second)
 	defer ticker.Stop()
 	for {

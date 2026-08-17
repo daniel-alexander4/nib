@@ -76,16 +76,16 @@ func hasTransformFlag(args []string) bool {
 
 // commands maps each verb to its handler. version/help are handled in Run.
 var commands = map[string]func([]string) int{
-	"timestamp": cmdTimestamp,
-	"verify":    cmdVerify,
-	"optimize":  cmdOptimize,
-	"merge":     cmdMerge,
-	"sanitize":  cmdSanitize,
-	"sign":      cmdSign,
-	"watch":     cmdWatch,
-	"rotate":    cmdRotate,
-	"pages":     cmdPages,
-	"split":     cmdSplit,
+	"timestamp":   cmdTimestamp,
+	"verify":      cmdVerify,
+	"optimize":    cmdOptimize,
+	"merge":       cmdMerge,
+	"sanitize":    cmdSanitize,
+	"sign":        cmdSign,
+	"watch":       cmdWatch,
+	"rotate":      cmdRotate,
+	"pages":       cmdPages,
+	"split":       cmdSplit,
 	"encrypt":     cmdEncrypt,
 	"decrypt":     cmdDecrypt,
 	"nup":         cmdNup,
@@ -219,6 +219,15 @@ func writeAtomic(path string, data []byte) error {
 	info, err := os.Stat(path)
 	if err != nil {
 		return err
+	}
+	// Follow a symlink to its target before writing. os.Stat already follows one to
+	// read the mode, but CreateTemp+Rename replaces the LINK — so an in-place
+	// rewrite of a symlink silently destroyed the link, left the real file
+	// untouched, and dropped the output in the link's directory instead. The same
+	// rename breaks a hard link. README promises the rewrite "preserves the file's
+	// permissions"; converting a link into a regular file is not that.
+	if resolved, rerr := filepath.EvalSymlinks(path); rerr == nil {
+		path = resolved
 	}
 	tmp, err := os.CreateTemp(filepath.Dir(path), ".nib-*.tmp")
 	if err != nil {
