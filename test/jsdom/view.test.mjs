@@ -539,3 +539,56 @@ test('clearDetected deletes only the kinds Detect creates', () => {
   assert.ok(constructed.includes('radio'), 'the radio kind is gone — this guard was written for it');
   assert.ok(!detected.includes('radio'), 'radio is back in the delete list — a Detect re-run would destroy user-drawn radio groups');
 });
+
+// P06.S01 — `views` has exactly three mutators, and the tab strip re-renders from all
+// three.
+//
+// The strip is a rendering of `views`, so a mutation that does not re-render leaves it
+// describing a set of documents the app does not hold — a tab for a closed document, or
+// a missing tab for an open one, either of which sends a click at `activateView` with a
+// view that is not there. The alternative to a single seam is "remember to call
+// syncTabs()", and this repo has now been charged four times for that shape: a keep-list
+// that omitted 'radio', a route inventory reconciled against nothing, a scanner whose
+// population was never probed, and a pinning guard that policed one of a law's two
+// halves. The server's own answer is the model — registerLocked is "the ONE place an id
+// is issued … a second issuer would defeat the law by collision instead of by reuse".
+test('views is mutated in exactly three places, and each re-renders the strip', () => {
+  // Stimulus first: the three helpers must EXIST, or the scan below is looking for
+  // violations of a rule nothing implements and reports clean over a file that has none
+  // of it. This is the population probe the TRANSIENT inventory went four slices without.
+  for (const fn of ['function addView(', 'function removeView(', 'function resetViews(']) {
+    assert.ok(CODE.includes(fn), `${fn}…) is gone — the single-mutator seam has been dismantled`);
+  }
+
+  // Every mutation site in the file, with the line it sits on. Comments are stripped
+  // first: three of these helpers describe the very expressions they replace, and a scan
+  // that reads its own documentation as code is a failure this file has already had once
+  // (a guard flagging a doc comment that quoted the idiom it policed).
+  const lines = CODE.split('\n').filter((l) => !l.trim().startsWith('//'));
+  const mutations = [];
+  lines.forEach((line, i) => {
+    if (/(?<![.\w$])views\s*\.\s*(push|splice|pop|shift|unshift)\s*\(/.test(line)
+      // `=(?!=)` — assignment, not comparison. Without the negative lookahead
+      // `views.length === 1` (a READ, in installOpened) counts as a mutation, and the
+      // count is then wrong in the direction that makes the guard cry wolf until
+      // someone loosens it.
+      || /(?<![.\w$])views\s*\.\s*length\s*=(?!=)/.test(line)) {
+      mutations.push({ line: i + 1, text: line.trim() });
+    }
+  });
+
+  // Three helpers, four statements: addView pushes, removeView splices, resetViews
+  // clears and pushes. A count rather than a location check, because the helpers move.
+  assert.equal(mutations.length, 4,
+    `views is mutated in ${mutations.length} places, want 4 (addView, removeView, resetViews×2) — a mutation outside the seam leaves the tab strip describing documents the app does not hold:\n  ${mutations.map((m) => `${m.line}: ${m.text}`).join('\n  ')}`);
+
+  // And each of the three re-renders. Sliced per function rather than searched
+  // file-wide: a single syncTabs() anywhere would satisfy a file-wide scan while two of
+  // the three mutators silently skipped it.
+  for (const fn of ['addView', 'removeView', 'resetViews']) {
+    const start = CODE.indexOf(`function ${fn}(`);
+    const body = CODE.slice(start, CODE.indexOf('\n}', start));
+    assert.ok(body.includes('syncTabs()'),
+      `${fn} mutates views without re-rendering the strip — the strip and the app disagree from that call on`);
+  }
+});

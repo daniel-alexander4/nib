@@ -222,7 +222,21 @@ function scanUntargetedReloads(src) {
       else if (ch === ',' && depth === 0) { targeted = true; break; }
     }
     if (targeted) continue;
-    const before = src.slice(Math.max(0, m.index - 1500), m.index);
+    // The lookback stops at the enclosing function, not at a fixed character count.
+    //
+    // A bare 1500-character window reaches into the function ABOVE and attributes its
+    // route to this call — observed: installOpened's reload was blamed on the
+    // `/api/close` in requestClose, thirty lines earlier. A guard that names the wrong
+    // route is worse than one that names none, because the exemption list is keyed on
+    // the route: the next such misattribution could land on an install route and
+    // silently excuse a real defect.
+    const window = src.slice(Math.max(0, m.index - 1500), m.index);
+    const fnStart = Math.max(
+      window.lastIndexOf('function '),
+      window.lastIndexOf('=> {'),
+      window.lastIndexOf('async () => {'),
+    );
+    const before = fnStart === -1 ? window : window.slice(fnStart);
     const routes = [...before.matchAll(/apiFetch\(\s*'([^']+)'/g)];
     const route = routes.length ? routes[routes.length - 1][1].split('?')[0] : '(none)';
     if (INSTALL_ROUTES.includes(route)) continue;
@@ -269,8 +283,15 @@ els.sanitizeBtn.onclick = async () => {
 
 test('every reload names the view it lands in', () => {
   // Stimulus: there must BE call sites, or the emptiness below is a scan reading nothing.
+  //
+  // The floor was 20 and is now 15, and the number moved for a reason rather than
+  // because the guard was widened until it passed — which is the failure mode a floor
+  // invites. P06.S01 folded the five user-open paths (open, upload, office, open-url,
+  // combine) into installOpened, and the arrival's build-load-activate body into
+  // openInNewView, so 21 call sites became 17. The floor is what NOTICED: it went red on
+  // the first run after the refactor, which is what a population probe is for.
   const sites = APP.match(/(?<![.\w$])setDocumentFromServer\(/g) || [];
-  assert.ok(sites.length >= 20,
+  assert.ok(sites.length >= 15,
     `only ${sites.length} setDocumentFromServer sites found — the scan is not reading app.js properly`);
 
   const found = scanUntargetedReloads(APP);

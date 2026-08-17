@@ -30,6 +30,10 @@ const h = await boot({
       name: 'doc.pdf', path: DOC, canSave: true,
       signature: { state: 'unsigned' }, canUndo: false, canRedo: false,
     }),
+    // Needed by the Compare test below, which has to reach the branch of installOpened
+    // that reuses the empty view — the only open path that does NOT go through
+    // activateView, and therefore the only one where D11's open half is observable.
+    '/api/close': () => ({}),
   },
 });
 const { document: doc, window: win, settle } = h;
@@ -183,44 +187,90 @@ test('each view builds its own sidebar containers into the shared panels', () =>
 });
 
 test('a build aimed at one view cannot clear another view grid', async () => {
+  // **Re-aimed at P06.S01, and the decoy is gone.** This test used to open the same
+  // document twice, which under the old semantics REBUILT the active view's grid, and
+  // it needed a hand-built decoy grid to stand in for the second view that could not
+  // exist. Open now ADDS, so the second open builds a real second view with a real
+  // grid of its own — the stimulus the decoy was imitating. Two things improve at
+  // once: the population is the app's own rather than the test's, and the shape can no
+  // longer drift from what newView() produces, which is exactly how the first version
+  // of this test passed 42/42 against a document-wide sweep.
   await openDocument();
-  const live = wrap.querySelector('.viewerContainer'); // the active view's viewer container
-  assert.ok(live, 'setup: no active view');
-
   const thumbs = doc.getElementById('thumbs');
-  const liveGrid = thumbs.querySelector('.thumbgrid:not([hidden])');
-  assert.ok(liveGrid, 'setup: the active view has no visible grid');
+  const firstGrid = thumbs.querySelector('.thumbgrid:not([hidden])');
+  assert.ok(firstGrid, 'setup: the first view has no visible grid');
 
-  // A decoy grid in the shape newView() builds, holding a real thumbnail.
-  const decoy = doc.createElement('div');
-  decoy.className = 'thumbgrid';
-  decoy.hidden = true;
-  const dw = doc.createElement('div');
-  dw.className = 'thumbwrap';
-  dw.dataset.page = '7';
-  decoy.appendChild(dw);
-  thumbs.appendChild(decoy);
-
-  // Reopening rebuilds the ACTIVE view's grid. jsdom renders no canvas, so exactly one
-  // .thumbwrap lands in the live grid before the render rejects — measured, and the reason
-  // the old "the grid stays empty at this tier" comment was wrong.
-  // A sentinel in the ACTIVE grid, so the assertion below has a positive half. Without it
-  // this test passes against a build that never ran at all — the open route regressing, the
-  // button disabled by a mode change, settle() too short — because the decoy keeps its
-  // thumbnail either way. That is the same one-directional vacuity the split-box test above
-  // spells out, and this file's own header names; it went in one-directional anyway.
+  // A sentinel in the FIRST view's grid. It is what makes the survival assertion mean
+  // "the second build did not reach in here" rather than "this grid was always empty".
   const sentinel = doc.createElement('div');
   sentinel.className = 'thumbwrap';
   sentinel.dataset.page = '99';
-  liveGrid.appendChild(sentinel);
+  firstGrid.appendChild(sentinel);
+  const gridsBefore = thumbs.querySelectorAll('.thumbgrid').length;
 
   await openDocument({ numPages: 2 });
 
-  assert.equal(sentinel.isConnected, false,
-    'the rebuild never cleared the active view grid — so the decoy surviving proves nothing');
-  assert.equal(decoy.querySelectorAll('.thumbwrap').length, 1,
-    'a build cleared another view grid — the sidebars are still document-scoped');
-  decoy.remove();
+  // The positive half: a SECOND view exists and built its own grid. Without this the
+  // sentinel surviving proves nothing — an open that failed outright would pass it.
+  const gridsAfter = thumbs.querySelectorAll('.thumbgrid').length;
+  assert.equal(gridsAfter, gridsBefore + 1,
+    `opening a second document produced ${gridsAfter - gridsBefore} new thumbnail grids, want 1 — the open did not add a view`);
+  const secondGrid = thumbs.querySelector('.thumbgrid:not([hidden])');
+  assert.notEqual(secondGrid, firstGrid, 'the visible grid is still the first view\'s — the new view was not activated');
+  // jsdom renders no canvas, so exactly one .thumbwrap lands before the render rejects.
+  assert.equal(secondGrid.querySelectorAll('.thumbwrap').length, 1,
+    'the second view built no thumbnail, so its grid is empty for a reason unrelated to scoping');
+
+  // The negative half: the first view's grid is untouched, sentinel included.
+  assert.equal(sentinel.isConnected, true,
+    'opening a second document cleared the FIRST view\'s thumbnail grid — the sidebars are not view-scoped');
+  assert.equal(firstGrid.hidden, true, 'the first view\'s grid was left visible alongside the second');
+});
+
+test('opening a second document adds a tab, and clicking one switches to it', async () => {
+  // P06.S01's central claim, driven rather than scanned. The strip is client state, so
+  // this tier is the right home for it: no server round-trip decides what it shows.
+  const strip = doc.getElementById('tabstrip');
+  assert.ok(strip, 'there is no #tabstrip in index.html');
+
+  // The state before, asserted rather than assumed — the app has been opening documents
+  // in the tests above, so "two tabs" here has to be measured against what is actually
+  // open rather than against a fresh boot.
+  const before = strip.querySelectorAll('.tab').length;
+  const containersBefore = wrap.querySelectorAll('.viewerContainer').length;
+
+  await openDocument({ numPages: 4 });
+
+  const tabs = [...strip.querySelectorAll('.tab')];
+  assert.equal(tabs.length, before + 1, `the strip shows ${tabs.length} tabs, want ${before + 1} — an open did not add one`);
+  assert.equal(strip.hidden, false, 'the strip is hidden with several documents open');
+  assert.equal(wrap.querySelectorAll('.viewerContainer').length, containersBefore + 1,
+    'no container was built for the new document');
+
+  // Exactly one tab is active, and it is the last one — the just-opened document.
+  const active = tabs.filter((t) => t.classList.contains('active'));
+  assert.equal(active.length, 1, `${active.length} tabs are marked active, want exactly 1`);
+  assert.equal(active[0], tabs[tabs.length - 1], 'the just-opened document is not the active tab');
+  assert.equal(active[0].getAttribute('aria-selected'), 'true',
+    'the active tab does not say so to assistive tech — the accent bar is not readable');
+
+  // The switch. The stimulus assertion first: the target must not already be active, or
+  // "clicking it activated it" is true before the click.
+  const target = tabs[0];
+  assert.equal(target.classList.contains('active'), false, 'setup: the tab being clicked is already the active one');
+  const targetName = target.textContent;
+  target.click();
+  await settle();
+
+  const after = [...strip.querySelectorAll('.tab')];
+  const nowActive = after.filter((t) => t.classList.contains('active'));
+  assert.equal(nowActive.length, 1, 'clicking a tab left more than one active');
+  assert.equal(nowActive[0].textContent, targetName, 'clicking a tab did not activate that document');
+  // One visible container, always — the outgoing view is hidden, never destroyed (ADR-002).
+  const visible = [...wrap.querySelectorAll('.viewerContainer')].filter((c) => !c.hidden);
+  assert.equal(visible.length, 1, `${visible.length} containers are visible, want exactly 1`);
+  assert.equal(wrap.querySelectorAll('.viewerContainer').length, after.length,
+    'a container was destroyed on a switch — ADR-002 hides inactive views, it does not tear them down');
 });
 
 // ── P05.S06 — the undo stack, and why there is no behavioural test here ─────
@@ -251,3 +301,43 @@ test('a build aimed at one view cannot clear another view grid', async () => {
 // every recordOverlayEdit call is asserted to pass one, and the clear is asserted to sit
 // above clearOverlays' shared-chrome return. All four are red-fixtured. The BEHAVIOUR is
 // recorded `not exercised` and carried to P06.
+
+// D11's open-path half, which the switch path has had since P05.S04.
+//
+// `closeCmpDoc` had four call sites and `setDocumentFromServer` was not among them, so
+// opening a different document left the Compare modal on screen showing a cached text
+// diff of the PREVIOUS document against the picked file, while the viewer behind it
+// showed something else. Reachable by ordinary use, and that is not a guess:
+// #compareModal is not in the fixed-overlay group in style.css, so it does not scrim the
+// toolbar and Open… stays clickable while it is open.
+//
+// The fix lives in resetSharedDocState — the shared reset whose entire job is stopping
+// the open and close paths from disagreeing, and which covered the drawing modes while
+// Compare was never in it.
+test('opening a document closes a Compare left open against the previous one', async () => {
+  const modal = doc.getElementById('compareModal');
+  assert.ok(modal, 'there is no #compareModal — this guard no longer covers anything');
+
+  // **The open must be the one that REUSES the empty view.** A first draft opened a
+  // second document instead, which goes through activateView — and activateView has
+  // called closeDocBoundModals since P05.S04, so the modal closed for a reason that had
+  // nothing to do with the fix under test. Deleting the fix left the test green, which
+  // is how it was caught: a red-proof, not a review. The open path is only
+  // distinguishable from the switch path on the branch that installs into the view that
+  // is already there.
+  await openDocument();
+  doc.getElementById('closeBtn').click();
+  await settle();
+  assert.equal(win.document.querySelectorAll('.viewerContainer').length, 1,
+    'setup: the close did not collapse to a single view, so the open below will take the switch path and prove nothing');
+
+  // Open Compare, and assert it opened — with the modal already hidden, "it is hidden
+  // after an open" is true before the open and reads a state nothing produced.
+  modal.hidden = false;
+  assert.equal(modal.hidden, false, 'setup: the Compare modal did not open, so closing it proves nothing');
+
+  await openDocument({ numPages: 2 });
+
+  assert.equal(modal.hidden, true,
+    'opening a document left Compare on screen — it is now showing a cached diff of a document that is no longer in front of it');
+});

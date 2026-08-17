@@ -112,17 +112,16 @@ func TestUndoNoHistory(t *testing.T) {
 
 // TestOpenClearsHistory proves opening a new document wipes the undo history (you
 // can't undo across a fresh open).
-func TestOpenClearsHistory(t *testing.T) {
-	ts, path := startServer(t)
-	c, csrf := authedClient(t, ts)
-	openByPath(t, ts.URL, c, csrf, path)
-	rotateDoc(t, ts, c, csrf, fetchPDF(t, ts, c)) // history now non-empty
-
-	dr := openByPath(t, ts.URL, c, csrf, path) // re-open the same file
-	if dr.CanUndo || dr.CanRedo {
-		t.Errorf("a fresh open must clear history, got canUndo=%v canRedo=%v", dr.CanUndo, dr.CanRedo)
-	}
-}
+// TestOpenClearsHistory was DELETED here on 2026-08-17 (P06.S01) and replaced by
+// TestOpenLeavesTheOtherDocumentsHistoryAlone in opencap_test.go.
+//
+// It opened the same file twice and asserted the second response reported no undo.
+// That was a real claim while Open REPLACED the registry. Now that Open adds, the
+// second open is a different document that never had a history, so the assertion
+// cannot fail for the reason its name gives — it would stay green against an open
+// that did nothing to history at all, and equally against one that wiped every
+// other document's. Left as a note rather than silently removed, because a test
+// that disappears in a diff looks like coverage lost rather than coverage re-aimed.
 
 // TestCommitBarrierAndTrim covers the in-memory ring directly: commitMutation
 // caps the undo depth (oldest evicted) and clears redo; commitBarrier wipes both

@@ -342,7 +342,20 @@
       </div>
     </aside>
 
-    <div id="viewerWrap">
+    <!-- The viewer column: the document switcher stacked above the viewer itself.
+         #viewerWrap stays position:relative and keeps every job it had — the drawing
+         tools listen on it, the per-view containers are absolutely positioned inside
+         it — and the column exists only so the strip can take real layout space above
+         it. Putting the strip INSIDE the wrap was the first shape and it is wrong: the
+         containers are absolutely positioned (pdf.js requires it), so the strip would
+         float over the page content rather than sit above it. -->
+    <div id="viewerCol">
+      <!-- The document switcher (P06.S01). Hidden while one document is open, so a
+           single-document session looks exactly as it did before tabs; it appears at
+           two. Buttons are built by syncTabs() in app.js from the `views` array —
+           the server holds the documents, the strip is client state. -->
+      <div id="tabstrip" role="tablist" aria-label="Open documents" hidden></div>
+      <div id="viewerWrap">
       <div id="signBanner" hidden>
         <span id="signMsg"></span>
         <button id="signDone" hidden>Finish &amp; sign</button>
@@ -352,7 +365,8 @@
            built by newView() in app.js (ADR-002). They are classes, not ids, because
            several exist at once; the wrap is the one stable node, and it is what the
            drawing tools listen on. -->
-      <div id="empty">Open a PDF to begin.</div>
+        <div id="empty">Open a PDF to begin.</div>
+      </div>
     </div>
   </main>
 

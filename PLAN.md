@@ -2195,8 +2195,6 @@ Exit criteria:
 - **(carried from P03, plan-review pin)** The all-tabs-stale case resolves to the launch
   empty state, not N error tabs. Unfalsifiable until there are tabs; P03 shipped the 409
   that makes it expressible.
-Slices: sketched at phase-open.
-
 **(dimension-review pin: what a reload does, 2026-08-15)** The server holds the
 documents; the tab strip is client state. So a browser reload — or a tab crash —
 with eight documents open currently has no defined behaviour under this design,
@@ -2204,6 +2202,162 @@ and the accidental one is "the app comes back showing a single document while th
 server still holds eight." Reload restores the full tab set from the server,
 which is also why `/api/docs` returns the list rather than just a count. Named
 here because it is the failure playbook this feature lacks, not a nicety.
+
+**(premise correction, 2026-08-17, P06 phase-open — the pin above is wrong about
+the failure, and in the user's favour on the count only.)** Checked at the line:
+`/api/doc` has **exactly one call site in the entire client** (`app.js:1111`,
+inside the co-sign arrival poll), and the `?open=` boot path is guarded by
+`!view.pdfDocument`. **There is no boot restore at all, at any N.** A reload today
+comes back showing **zero** documents while the server still holds one, and for a
+path-less document — upload, combine, office, arrival — the bytes are then
+unreachable for the process lifetime, because the only way back to a document is
+to open it by path. So this is not "restore eight instead of one"; it is *the
+client learns what the server holds*, and it is a defect that predates tabs rather
+than one they introduce. Tabs make it worse in one specific way that decides the
+slice order: once a cap counts documents, it counts documents nobody can see.
+
+**(premise correction, 2026-08-17, P06 phase-open — D11 is already implemented.)**
+"Compare is closed on switch" landed in P05.S04: `activateView` calls
+`closeDocBoundModals()`, which hides `#compareModal` and calls `closeCmpDoc()`.
+What survives is the **open** path only — `setDocumentFromServer` is still not a
+`closeCmpDoc` caller, which is the standing pending item about a stale comparison.
+P06 owes one call, not a feature, and it rides in S01 because S01 is already in
+that function. Recorded so the phase is not credited with work a previous phase
+did.
+
+#### Slice shaping — why no slice is server-only *(phase-open, 2026-08-17)*
+The obvious decomposition puts `GET /api/docs` and close-by-id in a server-first
+slice. Both would then sit **produced and never consumed** for two slices — the
+exact shape the P05 phase-close review charged us for with `historyEvicted`, which
+was serialized, asserted by six Go tests, and read by nothing. So every slice below
+carries its server half and its client half, and a route ships in the slice that
+reads it.
+
+#### P06.S01 — Open adds a tab, and the strip that makes it reachable *(done 2026-08-17, v1.106.0)*
+Scope: the five document-install routes stop replacing the registry and start
+adding to it; the client opens each into its own view through the helper the
+arrival path already proved; a tab strip makes the resulting views reachable.
+Refs: D1, D3, D9 (count half), D10, D11.
+
+- T01 — `maxOpenDocs = 8`; the five install routes refuse past it with a 409 that
+  names the limit. **The check sits on the routes, not inside `addDoc`** — see the
+  acceptance note below.
+- T02 — `handleOpen`, `handleOpenURL`/sources, `handleUpload`, `handleCombine`,
+  `handleOffice` switch `setDoc` → `addDoc`.
+- T03 — client: factor `openInNewView(meta)` out of `openArrivalInNewView`, and
+  route `openPath`, `uploadFile`, office, open-url and combine through it.
+- T04 — `addView`/`removeView`/`resetViews` become the only mutators of `views`,
+  each calling `syncTabs()`; a source guard refuses `views.push`/`views.splice`/
+  `views.length =` anywhere else.
+- T05 — the tab strip: markup in `#viewerWrap` beside `#signBanner`, CSS in both
+  themes, rendered from `views`, click → `activateView`.
+- T06 — `resetSharedDocState` closes Compare (the pending item's own named fix).
+- T07 — the seam inventory's rows V35–V43, shipped with the code they measure.
+
+Acceptance:
+- Opening a second document leaves the first open and reachable: two tabs, two
+  registry entries, the inactive container hidden and not destroyed.
+- Clicking an inactive tab activates that view; the outgoing container hides.
+- The ninth open is refused with a message naming the limit, and the eighth is
+  not — the positive control, without which the refusal proves nothing.
+- **An arrival is never refused by the cap.** A co-signature is work a counterparty
+  has already performed and its bytes exist; refusing it at the cap destroys them.
+  This is why T01's check is on the routes rather than in `addDoc`, whose two
+  session call sites must stay unconditional.
+- **(carried from P05, and this is the slice that owes it.)** A view loaded while
+  hidden and then activated has a real scale — re-fit — **and** its canvases are
+  re-rendered at the current device pixel ratio — dpr-heal. Every Open after the
+  first takes the hidden-load path, so both are reachable here with no live peer.
+  **dpr is the risk**: it needs a device-pixel-ratio change while a view is hidden,
+  which means CDP `Emulation.setDeviceMetricsOverride` mid-session. Probed at
+  pre-flight, before anything long runs; if it cannot reach the page's
+  `devicePixelRatio`, that half records `not exercised` **with the probe as its
+  evidence** — not a silent skip, and not a second silent carry.
+- Opening a document with Compare open closes Compare.
+
+**Defaults taken at phase-open, each reversible:** the strip appears at **two**
+documents, not one, so a single-document session looks exactly as it does today;
+**Open adds** rather than looping a teardown, which is what closes the standing
+"Open orphans every other open view" item; the strip renders from client `views`
+rather than `/api/docs`, per the reload pin's own division of labour.
+
+**(found during implementation, 2026-08-17 — five things the grilled plan did not
+have, none of them decision-level.)**
+1. **T05's shape changed.** The strip cannot live inside `#viewerWrap`: the per-view
+   containers are absolutely positioned there (pdf.js requires it), so a strip in the
+   wrap floats over the pages instead of sitting above them. A `#viewerCol` column now
+   holds strip + wrap; the wrap keeps every job it had, including being what the
+   drawing tools listen on.
+2. **Tier 3 had to go serial.** `node --test` runs files in parallel and this tier hands
+   every file the SAME nib process — one registry. That was already unsound and was
+   masked by Open replacing: whatever a sibling file did, the next open reset the
+   registry. With Open adding, `tabs.test.mjs` timed out while `lifecycle.test.mjs`'s
+   close-all emptied the registry underneath it. `--test-concurrency=1`.
+3. **The arrival path routes through `installOpened` too.** After a Close there is one
+   EMPTY view, and building a second beside it put an "Untitled" tab in the strip for a
+   view holding no document — a pre-existing shape the strip made visible.
+4. **The cap's refusal message is worded for the app as it ships.** "Close one first"
+   would be a lie until S02: Close is still close-ALL, so there is no way to close a
+   single document yet. S02 rewords it.
+5. **The strip's labels use `--text`, not a muted token.** Measured: in the light theme
+   `--subtext0` is 4.06:1 and `--subtext1` is 3.25:1 on `--mantle`, both under AA at
+   12.5px — and `--subtext1` is *lighter* than `--subtext0` there, which is a palette
+   inversion filed separately. The active tab is distinguished by background,
+   font-weight, an accent border and `aria-selected` instead of by text colour.
+
+**Acceptance ledger — 11 rows, all met, 0 not exercised.** Every clause split on `and`:
+two tabs ✅ (`perview.test.mjs`), two registry entries with the first still addressable
+✅ (`TestOpenAddsRatherThanReplacing`), inactive container hidden ✅ and not destroyed ✅
+(`tabs.test.mjs`, `perview.test.mjs`), clicking an inactive tab activates it ✅ and the
+outgoing container hides ✅ (`perview.test.mjs`), the ninth open refused with a message
+naming the limit ✅ and the eighth not ✅ (`TestTheNinthOpenIsRefusedAndTheEighthIsNot`),
+an arrival never refused ✅ (`TestAnArrivalIsNeverRefusedByTheCap`), **re-fit on
+activation ✅ and dpr-heal on activation ✅** — P05's carried clause, both halves driven
+in a real browser (`tabs.test.mjs`), the dpr half pre-flighted through CDP before the
+test was written — and Compare closed on an in-place open ✅ (`perview.test.mjs`, whose
+first version was vacuous and was caught by a red-proof). Seam inventory:
+`<project-memory>/instruments/P06.md`, twelve rows V35–V46, every one exercised.
+
+#### P06.S02 — Close view and Close all
+Scope: the server gains a close addressed to **one** document; the strip gains a
+per-tab ×; the menu splits the two actions; closing the active tab activates a
+neighbour. Refs: D1.
+Acceptance:
+- Close view drops one document server-side and client-side and activates a
+  neighbour; the others keep their scroll, page and typed overlay values.
+- Close all is unchanged in effect and still confirms across every edited view.
+- **(carried from P03, plan-review pin)** The all-tabs-stale case resolves to the
+  launch empty state, not N error tabs — expressible for the first time here,
+  because P03 shipped the 409 and this slice ships the tabs.
+
+#### P06.S03 — Reload restores what the server holds
+Scope: `GET /api/docs` returning the ordered list with the active id, and a boot
+restore that rebuilds one view per open document. Refs: the reload pin, as
+corrected above.
+Acceptance:
+- A reload with N documents open comes back with N tabs and the same active one.
+- A reload with **one** document open comes back showing it — the N=1 case, which
+  is the defect that predates tabs and is the reason this slice is not optional.
+- A path-less document (upload, combine, arrival) survives a reload.
+
+#### P06.S04 — The cap's byte half, measured
+Scope: D9's aggregate-byte ceiling, with the figure chosen against a measurement
+rather than assumed, refusing on whichever of count or bytes binds first.
+Refs: D9, ADR-002.
+Acceptance:
+- The measurement is recorded — what a document of a given size actually costs in
+  server bytes, client page DOM and thumbnail canvas — and the ceiling cites it.
+- An open that would cross the byte ceiling is refused with a message naming it.
+- ADR-002's "bounded by the open-document cap" stops being a forward reference: a
+  dated note records that the bound it names now exists.
+
+#### P06.S05 — The model written down
+Scope: README and the in-app help describe multiple open documents; `CLAUDE.md`
+gains the operation-pinning law. Refs: D7.
+Acceptance:
+- README and the ⚙ help describe tabs, Close view, Close all and the cap.
+- `CLAUDE.md` states D7 as a repo law, so a change made without reading this plan
+  cannot unknowingly break it.
 
 ### P07 — Single instance
 Goal: opening a PDF from the OS reaches the running nib as a new tab instead of
