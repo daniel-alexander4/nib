@@ -158,7 +158,7 @@ files="$(find test/ui -maxdepth 1 -name '*.test.mjs' | wc -l | tr -d ' ')"
 # Three since P06.S01 added tabs.test.mjs, which is where P05's carried acceptance
 # clause (re-fit and dpr-heal on activation) finally gets driven — both halves are
 # about layout and a device pixel ratio, neither of which exists at tier 2.
-expect_files=3
+expect_files=4
 if [ "$files" -ne "$expect_files" ]; then
   echo "FAIL: expected $expect_files browser UI test files, found $files — a test file was added or dropped." >&2
   echo "      If deliberate, update expect_files in this script." >&2
