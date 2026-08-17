@@ -201,6 +201,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/pdf", s.requireUnlocked(s.handlePDF))
 	mux.HandleFunc("GET /api/doc", s.requireUnlocked(s.handleDoc))
 	mux.HandleFunc("POST /api/close", s.requireUnlocked(s.handleClose))
+	mux.HandleFunc("POST /api/close-view", s.requireUnlocked(s.handleCloseView))
 	mux.HandleFunc("POST /api/save", s.requireUnlocked(s.handleSave))
 	mux.HandleFunc("GET /api/listdir", s.requireUnlocked(s.handleListDir))
 	mux.HandleFunc("POST /api/write", s.requireUnlocked(s.handleWriteFile))
@@ -410,6 +411,32 @@ func (s *Server) handleClose(w http.ResponseWriter, r *http.Request) {
 	// after a close would describe whatever the registry answers next, which is not
 	// the document the user just closed.
 	writeJSON(w, s.docResponse(nil))
+}
+
+// handleCloseView closes the ADDRESSED document and leaves the others open. Its
+// response describes whatever is active afterwards, which is how the client learns
+// which tab to move to (see removeDoc).
+//
+// **A separate route from /api/close rather than a new meaning for it.** Re-pointing
+// /api/close at one document was the first shape and it is refused: seven tests assert
+// that route empties the registry, and changing what a shipped route means underneath
+// its tests is how a green suite stops describing the code. The destructive operation
+// keeps its established name.
+//
+// **And there is deliberately no "omit the id to close everything".** D15 makes a
+// missing id default to the ACTIVE document, so that shape would make the most
+// destructive operation in the app the one that happens when a header is forgotten —
+// which is verbatim the plan-review critical P03 was given, arriving through the close
+// route instead of through a mutation. Omitting the id here closes the active document,
+// the same narrow default every other route has.
+func (s *Server) handleCloseView(w http.ResponseWriter, r *http.Request) {
+	doc, err := s.docFor(r)
+	if err != nil || doc == nil {
+		httpError(w, http.StatusConflict, "that document is no longer open")
+		return
+	}
+	next := s.removeDoc(doc)
+	writeJSON(w, s.docResponse(next))
 }
 
 // --- API: pdf bytes / save ----------------------------------------------------
@@ -643,13 +670,12 @@ const maxOpenDocs = 8
 // the route can answer 409 for this and 500 for anything else, and so the test can
 // assert the specific refusal rather than being satisfied by any error at all.
 //
-// **The wording is true of the app as it ships this slice, and only that.** "Close one
-// first" is the obvious phrasing and it would be a lie until P06.S02: Close is still
-// close-ALL, server-side and client-side, so there is no way to close a single document
-// yet. A refusal that tells the user to do something the UI cannot do is worse than a
-// bare "no" — it sends them looking for a control that is not there. S02 adds Close view
-// and changes this line with it.
-var ErrTooManyOpen = errors.New("too many documents open (limit " + strconv.Itoa(maxOpenDocs) + ") — use Close, then reopen the ones you need")
+// **The wording tracks what the UI can actually do.** In S01 it read "use Close, then
+// reopen the ones you need", because Close was still close-ALL and telling a user to
+// close ONE would have sent them looking for a control that did not exist. S02 adds
+// Close view and the per-tab ×, so the instruction is now true and this line changed
+// with the feature rather than after it.
+var ErrTooManyOpen = errors.New("too many documents open (limit " + strconv.Itoa(maxOpenDocs) + ") — close one first")
 
 // addDocCapped is addDoc for the five USER-initiated install routes: open, open-url,
 // upload, combine, office. It refuses at maxOpenDocs.
@@ -761,6 +787,56 @@ func (s *Server) setDoc(doc *document) *document {
 	// documents, so replacing the registry replaces the history with it.
 	s.mu.Unlock()
 	return doc
+}
+
+// removeDoc drops ONE document from the registry and returns whatever is active
+// afterwards — the neighbour when the closed document was the active one, unchanged
+// when it was not, nil when nothing is left.
+//
+// **The server picks the neighbour, and the response is how the client learns it.**
+// Both sides deriving "which document is active now" would be two derivations of one
+// rule, and they diverge silently rather than loudly: the strip highlights one document
+// while the unpinned fallback on /api/pdf serves another, and nothing reports a
+// disagreement. Same argument as registerLocked being the one id issuer.
+//
+// The neighbour is the NEXT document, falling back to the previous — the one that
+// visually takes the closed one's place in the strip.
+//
+// **The rings are released explicitly**, exactly as setDoc does and for the same
+// reason: dropping the registry entry makes the document unreachable eventually, but a
+// request already in flight still holds its pointer — an OCR or export handler can hold
+// one for many seconds — and until it returns, that document's rings keep up to
+// maxUndoDepth whole PDFs alive. This is what keeps "a close retains no document bytes"
+// true by construction rather than by garbage-collector timing.
+func (s *Server) removeDoc(doc *document) *document {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	idx := -1
+	for i, d := range s.docs {
+		if d == doc {
+			idx = i
+			break
+		}
+	}
+	if idx < 0 {
+		// Already gone — a concurrent close, or a document from before a close-all.
+		// Not an error: the caller asked for a state that already holds.
+		return s.activeDocLocked()
+	}
+	clearUndo(doc)
+	clearRedo(doc)
+	s.docs = append(s.docs[:idx], s.docs[idx+1:]...)
+	if s.activeID == doc.id {
+		switch {
+		case idx < len(s.docs):
+			s.activeID = s.docs[idx].id // the next one shifted into this slot
+		case len(s.docs) > 0:
+			s.activeID = s.docs[len(s.docs)-1].id // closed the last: fall back to the previous
+		default:
+			s.activeID = docID{} // nothing left; the zero id names nothing
+		}
+	}
+	return s.activeDocLocked()
 }
 
 // docResponse builds the metadata response for ONE document — the one the caller

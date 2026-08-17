@@ -121,11 +121,11 @@ func TestTheNinthOpenIsRefusedAndTheEighthIsNot(t *testing.T) {
 		t.Fatalf("open %d status = %d, want 409 — the cap did not bind", maxOpenDocs+1, resp.StatusCode)
 	}
 	// The message has to tell the user what to DO, or the refusal is a bare "no". And
-	// what it tells them has to be possible in the app as it ships: Close is still
-	// close-ALL until P06.S02, so "close one first" would send the user looking for a
-	// control that does not exist yet. Asserted on the instruction rather than on the
-	// exact sentence, so S02 can reword it without this going red for the wrong reason.
-	if !strings.Contains(body, "Close") {
+	// what it tells them has to be possible in the app as it ships — which is why this
+	// asserts the instruction rather than the exact sentence: S01 said "use Close, then
+	// reopen the ones you need" because Close was still close-ALL, and S02 reworded it to
+	// "close one first" the moment Close view existed. The assertion survived both.
+	if !strings.Contains(strings.ToLower(body), "close") {
 		t.Errorf("the refusal does not tell the user what to do: %q", body)
 	}
 	if !strings.Contains(body, strconv.Itoa(maxOpenDocs)) {
@@ -201,6 +201,36 @@ func docByID(t *testing.T, ts *httptest.Server, c *http.Client, id string) docRe
 	var dr docResponse
 	if err := json.NewDecoder(resp.Body).Decode(&dr); err != nil {
 		t.Fatalf("decoding /api/doc: %v", err)
+	}
+	return dr
+}
+
+// writeTo posts to url pinned to a document id — the shape every close-view test needs
+// and none of them should re-derive.
+func writeTo(t *testing.T, c *http.Client, csrf, url, docID string) *http.Response {
+	t.Helper()
+	req, err := http.NewRequest(http.MethodPost, url, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("X-CSRF-Token", csrf)
+	if docID != "" {
+		req.Header.Set("X-Nib-Doc", docID)
+	}
+	resp, err := c.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return resp
+}
+
+// decodeDoc reads a docResponse off a response and closes the body.
+func decodeDoc(t *testing.T, resp *http.Response) docResponse {
+	t.Helper()
+	defer resp.Body.Close()
+	var dr docResponse
+	if err := json.NewDecoder(resp.Body).Decode(&dr); err != nil {
+		t.Fatalf("decoding docResponse: %v", err)
 	}
 	return dr
 }

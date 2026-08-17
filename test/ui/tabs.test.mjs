@@ -176,3 +176,62 @@ test('switching tabs preserves the page you were on', async () => {
   assert.equal(back.pageNumber, 3,
     `returning to a document put it on page ${back.pageNumber}, not the page 3 it was left on — display:none drops scrollTop, so the restore in activateView is the only thing keeping this true`);
 });
+
+test('closing one document leaves the others open, on the page they were left on', async () => {
+  // P06.S02's acceptance clause, and the reason it is here rather than at tier 2: the
+  // "keeps its page" half needs real layout, because a hidden container reports
+  // scrollTop 0 and jsdom reports everything as 0 whether or not the restore works.
+  //
+  // Three documents, distinguishable by length: A=3, B=5, C=7.
+  const C = writeFixture('tab-c.pdf', { pages: 7, label: 'doc C page' });
+  await h.openDocument(C, 7);
+  assert.equal(await tabCount(), 3, `setup: ${await tabCount()} tabs, want 3`);
+
+  // Leave A on page 2, so "it came back on the page it was left on" is a claim about a
+  // page it had to be PUT on — page 1 would be true of a document that was reloaded.
+  await page.click(tabSel(1));
+  await switched(3);
+  await page.fill('.pageNum', '2');
+  await page.press('.pageNum', 'Enter');
+  await page.waitForFunction(() => Number(document.querySelector('.pageNum').value) === 2);
+
+  // Go to C, then close B — a BACKGROUND tab, which is the case that distinguishes a
+  // close from a switch-then-close.
+  await page.click(tabSel(3));
+  await switched(7);
+  await page.click(`${tabSel(2)} .tabclose`);
+  await page.waitForFunction(() => document.querySelectorAll('#tabstrip .tab').length === 2);
+
+  // Still on C: closing a background document must not move the user.
+  assert.equal(await page.$eval('.pageCount', (el) => el.textContent), '/ 7',
+    'closing a background tab moved the user off the document they were reading');
+
+  // And A is still open, still on page 2.
+  await page.click(tabSel(1));
+  await switched(3);
+  const back = await geometry();
+  assert.equal(back.pageNumber, 2,
+    `the surviving document came back on page ${back.pageNumber}, not the page 2 it was left on — closing a sibling disturbed its state`);
+});
+
+// **NOT EXERCISED, and this is the record of the attempt rather than a silent gap.**
+//
+// S02's acceptance says the surviving documents keep their "typed overlay values". Two
+// things are missing and they are not the same size:
+//
+//  * **Typed** values are unreachable at every tier. jsdom cannot place an overlay at
+//    all — every getBoundingClientRect is 0, so pageAt never resolves a page — and this
+//    tier's only placement helper is `placeMarker`, which places a signing flag carrying
+//    no text. Reading a typed value back out of its DOM element, which is the phase exit
+//    criterion's own wording, needs a typed-overlay harness helper that does not exist.
+//  * **Overlay survival** — weaker, but real — was written and then removed. Three runs:
+//    placeMarker timed out waiting for `.ovl-marker` because the preceding test leaves
+//    that document scrolled to page 2 and placeMarker clicks the box of `.page` FIRST,
+//    which is then above the viewport; scrolling back with the page control did not
+//    settle the container below the threshold; and forcing `scrollTop = 0` did not stick
+//    either. The helper assumes a freshly-opened, unscrolled document, which every
+//    existing caller happens to give it.
+//
+// Left out rather than left red or left flaky. What it needs is a placement helper that
+// scrolls its target page into view first — harness work, not slice work — and the
+// clause reconciles at the P06 close where the phase criterion already carries it.

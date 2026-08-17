@@ -2318,17 +2318,108 @@ test was written — and Compare closed on an in-place open ✅ (`perview.test.m
 first version was vacuous and was caught by a red-proof). Seam inventory:
 `<project-memory>/instruments/P06.md`, twelve rows V35–V46, every one exercised.
 
-#### P06.S02 — Close view and Close all
+#### P06.S02 — Close view and Close all *(done 2026-08-17, v1.106.1)*
 Scope: the server gains a close addressed to **one** document; the strip gains a
 per-tab ×; the menu splits the two actions; closing the active tab activates a
 neighbour. Refs: D1.
+
+- T01 — `POST /api/close-view` closes the ADDRESSED document: drop it from the
+  registry, release its rings explicitly, and if it was active pick the neighbour.
+  `POST /api/close` keeps its current meaning, close-all.
+- T02 — the close-view response describes the **new active document** (the zero
+  response when none remain), so the client follows it rather than computing the
+  neighbour itself.
+- T03 — a per-tab `×`, with `stopPropagation` so closing a tab is not also a switch.
+- T04 — `#closeBtn` reads "Close" at one document and "Close view" at several;
+  `#closeAllBtn` appears at two, matching the strip's own appear-at-two rule.
+- T05 — confirms: close-view asks about THAT view; close-all keeps `editedViews()`.
+- T06 — the cap refusal becomes "close one first", now that closing one is possible.
+- T07 — seam rows V47–V52.
+
 Acceptance:
 - Close view drops one document server-side and client-side and activates a
   neighbour; the others keep their scroll, page and typed overlay values.
 - Close all is unchanged in effect and still confirms across every edited view.
-- **(carried from P03, plan-review pin)** The all-tabs-stale case resolves to the
-  launch empty state, not N error tabs — expressible for the first time here,
-  because P03 shipped the 409 and this slice ships the tabs.
+- Closing the LAST document is close-all: the launch empty state, not an emptied
+  view record left in the strip.
+- A close-view the server refuses (409, because it already dropped that document)
+  still removes the tab — otherwise a stale tab is permanently unclosable.
+
+**(grill, 2026-08-17 — three shapes refused, each for a reason worth keeping.)**
+1. **`POST /api/close` was NOT re-pointed at one document.** That was the first
+   shape, with a new `/api/close-all` beside it. Seven existing tests assert that
+   `/api/close` empties the registry, and silently changing a shipped route's
+   meaning underneath them is how a green suite stops describing the code. The
+   destructive operation keeps its established name; the new, narrower one gets the
+   new name.
+2. **"No id means close all" was refused outright.** D15 makes a missing id default
+   to *the active document*, so that shape makes the most destructive operation the
+   one that happens when a header is FORGOTTEN — which is verbatim the plan-review
+   critical P03 was given, arriving through the close route instead of through a
+   mutation.
+3. **The client does not compute the neighbour.** Server and client both deriving
+   "which document is active now" is two derivations of one rule, and they diverge
+   silently: the strip highlights one document while the unpinned fallback serves
+   another. The server picks and the response says so.
+
+**Defaults taken, each reversible:** `#closeBtn`'s label changes with the count
+rather than always reading "Close view", which would be odd in the single-document
+session S01 was careful to leave untouched; the neighbour is the NEXT tab, falling
+back to the previous — the document that visually takes the closed one's place.
+
+**(found during implementation, 2026-08-17.)**
+1. **Closing a background tab must not switch to it, and the first draft did.** The ×
+   activated the tab and then ran the ordinary close — one code path instead of two —
+   so closing tab 1 while reading tab 3 moved the user to tab 1 and then to whichever
+   neighbour the logic chose. **It was caught by a red-proof coming back GREEN**:
+   deleting the ×'s `stopPropagation` changed nothing observable, because the bubbled
+   click activated the same view the handler was about to activate anyway. The guard
+   was unfalsifiable *because the code was wrong*. Closing a background view without
+   activating it makes the behaviour right and the guard live, and it now fires two
+   ways.
+2. **A `role="button"` nested inside a `<button>`** was the first markup. A button
+   inside a button is invalid HTML that browsers reparent, which would have split each
+   tab into two siblings and taken the strip's positional addressing with it. The tab is
+   now a `div[role=tab][tabindex]` containing a real close `<button>`.
+3. **The lifecycle tests had to say which close they meant.** They assert the LAUNCH
+   state, and before S01 an Open replaced, so exactly one document was open however many
+   tests had run and `#closeBtn` was close-all by definition. Views now accumulate across
+   a file, so `#closeBtn`'s meaning depends on how many documents happen to be open —
+   which would make those tests pass or fail on their position in the file.
+4. **The direct-`docFor` count went 7 → 8**, deliberately: `handleCloseView` resolves
+   with `docFor` rather than `resolveDoc` because its not-found branch is a 409, not a
+   404. The counted guard went red on the first run and is the only thing in the tree
+   that would have noticed a resolution site appearing.
+5. **`/api/close-view` joined the MUTATING inventory**, and the membership rule was
+   reworded from "the handler commits into the addressed document" to "a misaddressed
+   request damages it" — a close commits nothing and is the route where the wrong
+   address costs most.
+
+**Acceptance ledger — 7 rows: 6 met, 1 not exercised.** Close view drops the document
+server-side ✅ (`TestCloseViewDropsOnlyTheAddressedDocument`, which asserts the two
+SURVIVORS because "the closed one is gone" is also true of the `setDoc(nil)` it
+replaces) and client-side ✅ (`perview.test.mjs`); activates a neighbour ✅
+(`TestCloseViewActivatesTheNeighbourAndSaysSo`, both when the closed document was active
+and when it was not); the others keep their scroll and page ✅ (tier 3, a document left
+on page 2 comes back on page 2 after a sibling is closed); Close all unchanged and still
+confirming across every edited view ✅; closing the LAST document returns the launch
+state ✅; a 409 still removes the tab ✅
+(`TestCloseViewIsRefusedForADocumentTheServerDoesNotHold` plus the client branch).
+
+**⏳ NOT EXERCISED — the others keep their overlays, and their *typed* values.** Both
+halves are unreached and they are not the same size. **Typed** values are unreachable at
+every tier: jsdom cannot place an overlay at all (every `getBoundingClientRect` is 0, so
+`pageAt` never resolves a page), and tier 3's only placement helper is `placeMarker`,
+which places a signing flag carrying no text — so "reading a typed value back out of its
+DOM element", the phase criterion's own wording, needs a harness helper that does not
+exist. **Overlay survival** is weaker and was written, then removed after three tier-3
+runs: `placeMarker` clicks the box of `.page` FIRST, which is above the viewport once the
+preceding test leaves that document on page 2, and neither the page control nor forcing
+`scrollTop = 0` settled it. The helper assumes a freshly-opened, unscrolled document,
+which every existing caller happens to give it. Left out rather than left red or flaky;
+the attempt is recorded in `test/ui/tabs.test.mjs` where the test would have been. What
+it needs is a placement helper that scrolls its target page into view — harness work, not
+slice work — and the clause reconciles at the P06 close, which already carries it.
 
 #### P06.S03 — Reload restores what the server holds
 Scope: `GET /api/docs` returning the ordered list with the active id, and a boot
@@ -2339,6 +2430,14 @@ Acceptance:
 - A reload with **one** document open comes back showing it — the N=1 case, which
   is the defect that predates tabs and is the reason this slice is not optional.
 - A path-less document (upload, combine, arrival) survives a reload.
+- **(carried from P03, plan-review pin — moved here from S02 on 2026-08-17.)** The
+  all-tabs-stale case resolves to the launch empty state, not N error tabs. It was
+  filed against S02 at phase-open by reading the clause rather than the pin; the pin
+  says what it actually needs — *"observed by restarting the server under a client
+  holding ≥2 ids and reading the resulting UI state"*. That is a **server restart**,
+  which makes every id stale at once, and seeing it resolve requires the client to be
+  able to ask what the server holds. Closing a document cannot express it; this
+  slice's `/api/docs` and boot restore are what can.
 
 #### P06.S04 — The cap's byte half, measured
 Scope: D9's aggregate-byte ceiling, with the figure chosen against a measurement

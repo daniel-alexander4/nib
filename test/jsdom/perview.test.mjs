@@ -326,7 +326,10 @@ test('opening a document closes a Compare left open against the previous one', a
   // distinguishable from the switch path on the branch that installs into the view that
   // is already there.
   await openDocument();
-  doc.getElementById('closeBtn').click();
+  // Close ALL — this needs to collapse to the single empty view, and #closeBtn is
+  // close-VIEW once several are open (P06.S02).
+  const all = doc.getElementById('closeAllBtn');
+  (all && !all.hidden ? all : doc.getElementById('closeBtn')).click();
   await settle();
   assert.equal(win.document.querySelectorAll('.viewerContainer').length, 1,
     'setup: the close did not collapse to a single view, so the open below will take the switch path and prove nothing');
@@ -340,4 +343,73 @@ test('opening a document closes a Compare left open against the previous one', a
 
   assert.equal(modal.hidden, true,
     'opening a document left Compare on screen — it is now showing a cached diff of a document that is no longer in front of it');
+});
+
+// P06.S02 — the per-tab close.
+//
+// Two properties, and the second is the one that bites: the × must close the document,
+// and it must NOT also switch to it. They fail apart — a × with no stopPropagation
+// closes the right document only because the switch ran first and made it active, and
+// the moment the neighbour logic differs the user loses the tab they were on. The flag
+// × on the pending list is the same defect one surface over: its pointerdown reaches
+// the placement handler, so deleting a flag plants another.
+test('a tab close button closes that document without switching to it first', async () => {
+  const strip = doc.getElementById('tabstrip');
+  await openDocument();
+  await openDocument({ numPages: 2 });
+  await openDocument({ numPages: 4 });
+
+  const before = [...strip.querySelectorAll('.tab')];
+  assert.ok(before.length >= 3, `setup: only ${before.length} tabs — nothing below can distinguish closing from switching`);
+  assert.equal(strip.querySelector('.tab.active'), before[before.length - 1], 'setup: the last-opened document is not the active tab');
+  assert.equal(doc.querySelector('.pageCount').textContent, '/ 4', 'setup: the active document is not the 4-page one');
+
+  // Close the FIRST tab, which is not the active one. If the × also switched, the
+  // active tab afterwards would be a different document than the one we started on.
+  const target = before[0];
+  target.querySelector('.tabclose').click();
+  await settle();
+
+  const after = [...strip.querySelectorAll('.tab')];
+  assert.equal(after.length, before.length - 1, `closing a tab left ${after.length} tabs, want ${before.length - 1}`);
+  assert.ok(!after.includes(target), 'the closed tab is still in the strip');
+
+  // **The document you were reading is still the one you are reading.** This is the
+  // assertion the × 's stopPropagation exists for, and it is only observable because
+  // closing a background tab does NOT activate it first — an earlier draft activated
+  // and then closed, which made this indistinguishable from the defect.
+  //
+  // Identified by PAGE COUNT, not by tab label: every fixture in this file is called
+  // doc.pdf, so a name comparison is 'doc.pdf' vs 'doc.pdf' and cannot fail. The counts
+  // are 3, 2 and 4, which actually tell the three documents apart.
+  assert.equal(doc.querySelector('.pageCount').textContent, '/ 4',
+    'closing a background tab moved the user to a different document — closing tab 1 while reading tab 3 must leave you on tab 3');
+  assert.equal(strip.querySelectorAll('.tab.active').length, 1,
+    'after closing a background tab there is not exactly one active tab');
+
+  // Exactly one active tab, always — a close that forgot to activate a neighbour leaves
+  // none, and one that activated two is a rendering bug the user acts on.
+  assert.equal(strip.querySelectorAll('.tab.active').length, 1,
+    'after closing a tab there is not exactly one active tab');
+  assert.equal(doc.querySelectorAll('.viewerContainer:not([hidden])').length, 1,
+    'after closing a tab there is not exactly one visible container');
+});
+
+test('closing the last document returns the app to the launch state', async () => {
+  const strip = doc.getElementById('tabstrip');
+  // Down to one, whatever the tests above left open.
+  const all = doc.getElementById('closeAllBtn');
+  (all && !all.hidden ? all : doc.getElementById('closeBtn')).click();
+  await settle();
+  await openDocument();
+  assert.equal(strip.hidden, true, 'setup: the strip is showing, so more than one document is open');
+  assert.equal(doc.getElementById('viewerWrap').className, 'has-doc', 'setup: nothing is open to close');
+
+  doc.getElementById('closeBtn').click();
+  await settle();
+
+  // The launch state, not an emptied view record sitting in a strip.
+  assert.equal(doc.getElementById('viewerWrap').className, '', 'closing the last document did not return to the launch state');
+  assert.equal(strip.hidden, true, 'the tab strip is showing with nothing open');
+  assert.equal(doc.getElementById('closeBtn').disabled, true, 'Close is still enabled with nothing open');
 });

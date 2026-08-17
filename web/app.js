@@ -60,7 +60,7 @@ const els = {
   zoomInBtn: $('zoomInBtn'), zoomOutBtn: $('zoomOutBtn'), fitBtn: $('fitBtn'),
   sigBadge: $('sigBadge'), saveBtn: $('saveBtn'), statusCluster: $('statusCluster'),
   themeToggle: $('themeToggle'),
-  viewerWrap: $('viewerWrap'), empty: $('empty'), tabstrip: $('tabstrip'),
+  viewerWrap: $('viewerWrap'), empty: $('empty'), tabstrip: $('tabstrip'), closeAllBtn: $('closeAllBtn'),
   thumbs: $('thumbs'), outline: $('outline'),
   outlineModal: $('outlineModal'), outlineEditList: $('outlineEditList'),
   outlineAddBtn: $('outlineAddBtn'), outlineCancel: $('outlineCancel'), outlineSave: $('outlineSave'),
@@ -1670,13 +1670,28 @@ function syncTabs() {
   // destroys the focused element, and "the control you were on vanished" is a real
   // regression for anyone not using a mouse, not a cosmetic one.
   const focusedIndex = [...strip.children].indexOf(document.activeElement);
-  strip.hidden = views.length < 2;
+  const several = views.length > 1;
+  // The two close controls track the same threshold as the strip. With one document
+  // open, "Close view" and "Close all" name the same act, so the app shows one button
+  // reading "Close" — chrome-identical to before tabs, which is the whole point of the
+  // appear-at-two rule.
+  els.closeBtn.textContent = several ? 'Close view' : 'Close';
+  els.closeBtn.title = several
+    ? 'Close this document and switch to the next one'
+    : 'Close this document and return to the empty state (Nib keeps running)';
+  els.closeAllBtn.hidden = !several;
+  strip.hidden = !several;
   strip.textContent = '';
-  if (strip.hidden) return;
+  if (!several) return;
   for (const v of views) {
-    const b = document.createElement('button');
+    // A DIV with role="tab", not a <button>. The close affordance is a real <button>
+    // inside it, and a button inside a button is invalid HTML that browsers reparent —
+    // which would split each tab into two siblings and take the strip's positional
+    // addressing with it. role="tab" on a div plus tabIndex is the valid shape, and it
+    // keeps the close control separately focusable instead of buried inside the tab.
+    const b = document.createElement('div');
     b.className = 'tab' + (v === view ? ' active' : '');
-    b.type = 'button';
+    b.tabIndex = 0;
     b.setAttribute('role', 'tab');
     // Names the region this tab switches to. A tablist whose tabs control nothing is
     // ARIA that announces a widget and then cannot describe it — worse than plain
@@ -1694,6 +1709,23 @@ function syncTabs() {
     b.appendChild(name);
     b.title = v.docMeta && v.docMeta.path ? v.docMeta.path : (v.originalName || 'Untitled');
     b.onclick = () => activateView(v);
+    // A div is not a button, so it does not activate on Enter/Space for free.
+    b.onkeydown = (e) => {
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); activateView(v); }
+    };
+
+    const x = document.createElement('button');
+    x.type = 'button';
+    x.className = 'tabclose';
+    x.setAttribute('aria-label', 'Close ' + (v.originalName || 'this document'));
+    x.textContent = '×';
+    // stopPropagation, or closing a tab is also a click on the tab: the switch would
+    // run first and the close would then act on a view the user never meant to leave.
+    // Same shape as the flag ×, which plants a flag instead of deleting one because its
+    // pointerdown reaches the placement handler — a standing item on the pending list.
+    const closeThis = (e) => { e.stopPropagation(); closeView(v); };
+    x.onclick = closeThis;
+    b.appendChild(x);
     strip.appendChild(b);
   }
   if (focusedIndex >= 0) strip.children[Math.min(focusedIndex, strip.children.length - 1)]?.focus();
@@ -2080,6 +2112,84 @@ function hasEditsSinceOpen(v = view) {
 // fire said "Close this document?".
 function editedViews() { return views.filter((v) => v.pdfDocument && hasEditsSinceOpen(v)); }
 
+// tearDownView drops one view's DOM and pdf.js document. The bookkeeping half —
+// removing it from `views` — is removeView's, so the strip re-renders exactly once.
+//
+// Deliberately NOT closeDocument: that one returns the whole app to the launch state,
+// which is right when the last document goes and wrong when six others are still open.
+function tearDownView(v) {
+  const doc = v.pdfDocument;
+  v.pdfDocument = null;
+  v.docGen++; // an in-flight thumbnail or outline build bails rather than painting into a removed grid
+  v.viewer.setDocument(null);
+  v.linkService.setDocument(null, null);
+  if (doc) doc.loadingTask.destroy().catch(() => {});
+  v.container.remove();
+  v.thumbGrid.remove();
+  v.outlineList.remove();
+  removeView(v);
+}
+
+// closeView closes ONE document — the active one — and moves to the neighbour the
+// SERVER names. Closing the last document is a close-all and goes the other way.
+//
+// **Server first, and then follow its answer rather than computing one.** Which
+// document is active after a close is the server's to decide (removeDoc), because two
+// derivations of that rule diverge silently: the strip would highlight one document
+// while the unpinned fallback on /api/pdf served another.
+//
+// **A 409 still removes the tab.** It means the server has already dropped this
+// document — a concurrent close, or a close-all from another pane. Leaving the tab
+// would make it permanently unclosable, since every future close of it 409s too.
+// closeView closes ONE document — `owner`, defaulting to the active one.
+//
+// **Closing a background tab does not switch to it first**, and the first draft did.
+// Activating and then closing was one code path instead of two and it silently changed
+// the behaviour: closing tab 1 while you are reading tab 3 would move you to tab 1 and
+// then to whatever the neighbour logic chose, so the document you were reading is not
+// the one you end up on. It also made the × 's stopPropagation unobservable — the
+// bubbled click activated the same view the handler was about to activate anyway — so a
+// red-proof of that guard came back green, which is how the whole thing was caught.
+async function closeView(owner = view) {
+  if (!owner.pdfDocument) return;
+  // The last document: Close view and Close all are the same act, and the app owes the
+  // launch state rather than an emptied view record sitting in the strip.
+  if (views.length === 1) return requestClose();
+  if (hasEditsSinceOpen(owner)) {
+    const name = owner.originalName || 'this document';
+    if (!confirm(`Close ${name}? Any edits made since the last save will be lost.`)) return;
+  }
+  const doc = owner.docMeta;
+  const res = await apiFetch('/api/close-view', { method: 'POST', docId: doc && doc.id });
+  if (!res.ok && res.status !== 409) return toast(await errText(res, 'could not close the document'));
+  const next = res.ok ? await res.json() : null;
+
+  // Switch FIRST, tear down second, and never assign `view` here — all three were wrong
+  // in the first draft.
+  //
+  // Assigning `view = target` before calling activateView makes activateView return at
+  // its own `if (v === view)` guard, so the swap happens and the shared chrome never
+  // repaints: the page count, the save title and the badge go on describing the document
+  // that was just closed. Tearing down before switching hands activateView an outgoing
+  // view whose container it has already removed, so it quiesces a dead record. And
+  // `view` is assigned in exactly one place in this file, which is the single-seam rule
+  // `views` got in S01.
+  //
+  // Only when the closed document WAS the active one: the server leaves its active id
+  // alone when an inactive document is closed (removeDoc), so a client that switched
+  // anyway would be the half of the pair that disagrees. Follow the server's answer,
+  // falling back to any remaining view when it names a document this client has no view
+  // for.
+  if (owner === view) {
+    const named = next && next.id
+      ? views.find((v) => v !== owner && v.docMeta && v.docMeta.id === next.id)
+      : null;
+    const target = named || views.find((v) => v !== owner);
+    if (target) activateView(target);
+  }
+  tearDownView(owner); // removeView re-renders the strip
+}
+
 // requestClose is the Close control: confirm if anything has been edited, drop the
 // document server-side, and only then tear the client down.
 //
@@ -2106,7 +2216,8 @@ async function requestClose() {
   if (!res.ok) return toast(await errText(res, 'could not close the document'));
   closeDocument();
 }
-els.closeBtn.onclick = requestClose;
+els.closeBtn.onclick = () => closeView();
+els.closeAllBtn.onclick = requestClose;
 
 // installOpened lands a just-opened document in a view — a NEW one, unless the app is
 // still showing the empty state.
