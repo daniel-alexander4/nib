@@ -2761,8 +2761,9 @@ moving the constant, and moving the README.
 Goal: opening a PDF from the OS reaches the running nib as a new tab instead of
 launching a second application. Refs: D18.
 Exit criteria:
-- [x] A second launch hands its path to the running instance and exits; **[~]** the
-  running window raises with the file as a new tab.
+- [x] A second launch hands its path to the running instance and exits; **[x]** the
+  running window raises with the file as a new tab. *(Discharged 2026-08-17 by Dan on
+  danlap — see the addendum below the ledger.)*
 - [x] A stale lock left by a killed process recovers without user action.
 - [x] Verified on Windows through `build/winrepro.sh`, where `nib register` makes this
   the ordinary double-click path.
@@ -2773,8 +2774,8 @@ Exit criteria:
 |---|---|---|
 | "A second launch hands its path to the running instance" | **met** | `handoff_test.go` (five tests), and observed end-to-end twice: two real `nib` processes on Linux, and two real `nib.exe` under wine |
 | "and exits" | **met** | `winrepro.sh` asserts exit 0 **and** the absence of `serving at` in the launch's log — two spellings of the same failure, because a process that exited having become a second server is the outcome that matters |
-| "the running window raises" | **not exercised** | Dan-only. No reliable cross-platform raise exists for a window you do not own; recorded as the browser's call at S02 and unchanged |
-| "with the file as a new tab" | **not exercised** *(sharpened)* | The document is in the running instance — `/api/docs` proves it on both platforms. Whether it appears in **the window the user is already looking at** depends on the surfaced URL causing a navigation, and nothing in the tree makes that true. Filed as a VERIFY item with what to look for; the fix, if the run shows it needed, is known and small |
+| "the running window raises" | **met** | See the addendum: Dan launched a second PDF against a running Nib on danlap and ended up looking at Nib, not at a launch that went nowhere |
+| "with the file as a new tab" | **met** | Dan, 2026-08-17, verbatim: *"right-click a PDF → Open with → Nib, with Nib already open on a different document, new tab opened in nib."* The document was not merely in the registry — the strip gained a tab and he saw it |
 | "A stale lock left by a killed process recovers without user action" | **met** | `TestAStaleRecordIsTakenOverWithoutUserAction`, built at this gate — it had **no instrument at any tier** before it. A real binary against a record naming a genuinely-released port; both stimuli asserted; the take-over must mint fresh secrets |
 | "Verified on Windows through `build/winrepro.sh`" | **met** | the second-launch section: a real `wine nib.exe <path>` against a live first instance, asserting the FIRST instance's document list moved, that an already-open path is focused not duplicated, and that the hand-off was neither refused nor queued |
 
@@ -2786,6 +2787,36 @@ caller); and a path handed off in the window between reading `unlocked` and queu
 could be appended **after** `adoptVault`'s one-shot drain, waiting for an unlock that had
 already happened. Both red-proofed. Review:
 `code-reviews/P07-phase-close-2026-08-17.md`.
+
+**(addendum, 2026-08-17 — the parked clause, discharged by the run it always needed.)**
+The phase closed with "the running window raises with the file as a new tab" recorded
+`not exercised` and parked for Dan, per the arc's rule that an acceptance clause whose
+close is a run rather than a build is his. He ran it on danlap and reported: *"right-click
+a PDF → Open with → Nib, with Nib already open on a different document, new tab opened in
+nib."*
+
+**Three things this settles, and one it deliberately does not.**
+- The *tab* half is met, and it was the half nobody had thought about until the close.
+  An already-open page has no push channel — `pollRecv` polls only while a co-sign session
+  is armed — so the tab appears because the surfaced URL causes a navigation. It does.
+  The `visibilitychange` reconcile drafted as the contingency is **not built**, correctly:
+  it was speculation against an unobserved failure, and the observation says there is none.
+- The *raise* half is met in the only sense Nib ever claimed it: the user ends up looking
+  at Nib. Whether the incumbent window came forward or a second one opened beside it is
+  **not recorded**, because Dan's report does not distinguish them and both satisfy the
+  clause — the plan has said since S02 that no reliable cross-platform raise exists for a
+  window you do not own, and that a second window is a second client showing the same
+  documents. Not asked again rather than guessed.
+- **On Linux the "ordinary double-click path" is not Nib's by default**, which the phase
+  half-assumed by naming Windows as the platform where `nib register` makes it so. On
+  danlap `xdg-mime query default application/pdf` answers `xreader.desktop`, from the
+  desktop's own defaults. The `.desktop` declares `MimeType=application/pdf;` so Nib is
+  offered under *Open with*, and that route runs `nib %f` — the identical second launch.
+  The criterion is therefore met by the path a user actually has, and the README now says
+  so (v1.108.3).
+
+**With this, P07's ledger is 6 met / 0 not met / 0 not exercised, and the whole
+P01–P07 plan closes with no clause left unexercised.**
 Slices: sketched at phase-open. **Deliberately after P06** — tabs work without it,
 and it is the one phase whose risk is process lifecycle rather than document
 state.
