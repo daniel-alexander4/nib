@@ -74,9 +74,10 @@ function makePage(n) {
 
 let nextDocument = null;
 
-// The most recently created document, so a test can reach its annotationStorage —
-// app.js reads `.size` there as one of its four "edited since open" signals, and
-// there is no other way in from outside the module.
+// The most recently created document, so a test can reach its annotationStorage — the
+// app installs `onSetModified` there as its pdf.js-edit signal (it read `.size` until
+// v1.108.7, which could not tell an edited value from an unchanged one), and there is no
+// other way in from outside the module.
 export let lastDocument = null;
 
 // setNextDocument configures what the next getDocument() resolves to. Tests call
@@ -95,9 +96,25 @@ export function getDocument() {
   const doc = {
     numPages: cfg.numPages,
     loadingTask: task,
-    // A real Map, because app.js reads `.size` as its pdf.js-edit signal and
-    // tests need to make it non-empty on demand.
-    annotationStorage: new Map(),
+    // A real Map SUBCLASS, because the app no longer reads `.size` — it installs
+    // pdf.js's own `onSetModified` callback, which the real AnnotationStorage fires from
+    // setValue when a value actually changed. A plain Map would silently never fire it,
+    // and the "a form fill prompts on close" test would go green against a signal that
+    // does not exist. Modelled on the real contract rather than on what the test needs:
+    // `set` fires only on a genuine change, and `resetModified` is here because the real
+    // API has it and a stub that answers half an interface invites a caller to use the
+    // half that is missing.
+    annotationStorage: new (class extends Map {
+      onSetModified = null;
+      #modified = false;
+      set(k, v) {
+        const changed = !this.has(k) || JSON.stringify(this.get(k)) !== JSON.stringify(v);
+        super.set(k, v);
+        if (changed && !this.#modified) { this.#modified = true; this.onSetModified?.(); }
+        return this;
+      }
+      resetModified() { this.#modified = false; }
+    })(),
     getPage: async (n) => makePage(n),
     getOutline: async () => cfg.outline,
     getData: async () => new Uint8Array(),
