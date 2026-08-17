@@ -38,4 +38,27 @@ if [ -z "$Nib_n" ] || [ "$Nib_n" -eq 0 ]; then
   exit 1
 fi
 
+# A floor of one is not an inventory. The argument above — "a runner that discovers
+# NO tests looks exactly like a passing suite" — applies just as well to a runner
+# that discovers 1 of 53: delete seven of the eight *.test.mjs files and the count
+# check above still passes.
+#
+# So the population is pinned against the file system, which is the external source
+# a self-referential count cannot be: every test file must contribute at least one
+# test, and the FILE count itself is pinned as a literal. A literal per test would
+# be worse than nothing — it goes red on every legitimate new test and trains the
+# next person to bump the number, which is how V11's equality assertion rotted. A
+# file count changes only when someone adds or deletes a file, which is deliberate.
+Nib_files="$(find test/jsdom -maxdepth 1 -name '*.test.mjs' | wc -l | tr -d ' ')"
+Nib_expect_files=8
+if [ "$Nib_files" -ne "$Nib_expect_files" ]; then
+  echo "FAIL: expected $Nib_expect_files jsdom test files, found $Nib_files — a test file was added or dropped." >&2
+  echo "      If deliberate, update Nib_expect_files in this script." >&2
+  exit 1
+fi
+if [ "$Nib_n" -lt "$Nib_files" ]; then
+  echo "FAIL: $Nib_n tests ran across $Nib_files files — a file contributed nothing, so its tests are silently not running" >&2
+  exit 1
+fi
+
 exit "$Nib_code"

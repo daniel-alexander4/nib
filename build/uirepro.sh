@@ -75,13 +75,40 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
+# Refuse a port someone else already holds, BEFORE building or enrolling anything.
+# Without this the failure surfaces four steps later and blames the wrong thing: a
+# leftover nib from an earlier --keep run keeps the port, our server fails to bind,
+# curl reaches the OLD process, its vault is already enrolled, and the run dies on
+# "FAIL: could not enroll a key". Every word of that points at key enrolment and
+# none of it is what is wrong — and worse, the tier then reports on a binary it did
+# not build.
+if curl -fsS -o /dev/null --max-time 2 "$BASE/api/status" 2>/dev/null; then
+  echo "FAIL: something is already serving $BASE — a leftover --keep run?" >&2
+  echo "      stop it (or set NIB_UI_PORT to a free port) and re-run." >&2
+  exit 1
+fi
+
 echo "building nib…"
 go build -o "$WORK/nib" ./cmd/nib || { echo "FAIL: could not build nib" >&2; exit 1; }
 
-# A throwaway HOME so the run creates its own vault and cannot touch the
-# developer's real one — the same isolation the Go server tests use (t.Setenv).
-mkdir -p "$WORK/home"
-HOME="$WORK/home" NIB_NO_BROWSER=1 NIB_ADDR="127.0.0.1:$PORT" "$WORK/nib" >"$WORK/nib.log" 2>&1 &
+# A throwaway HOME **and XDG_CONFIG_HOME** so the run creates its own vault and
+# cannot touch the developer's real one.
+#
+# Setting HOME alone did not do that. The vault resolves through
+# vault.DefaultDir() -> os.UserConfigDir(), which on Linux prefers
+# $XDG_CONFIG_HOME and only falls back to $HOME/.config — so on any machine that
+# exports it (dotfile managers, Nix, plenty of ~/.profile setups) this harness
+# enrolled a key into the developer's REAL config dir, and cleanup() then removed
+# the key it had sealed to. It was safe here only because the variable happens to
+# be unset: environment luck, not isolation.
+#
+# The comment this replaces cited the Go server tests as the precedent, and that
+# was the wrong precedent — those pass an explicit t.TempDir() as configDir
+# (helpers_test.go) and never rely on HOME for the vault at all. HOME is still set
+# because it isolates ~/.ssh, which is the other half.
+mkdir -p "$WORK/home" "$WORK/config"
+HOME="$WORK/home" XDG_CONFIG_HOME="$WORK/config" \
+  NIB_NO_BROWSER=1 NIB_ADDR="127.0.0.1:$PORT" "$WORK/nib" >"$WORK/nib.log" 2>&1 &
 SERVER_PID=$!
 
 for _ in $(seq 1 60); do
@@ -109,6 +136,22 @@ echo "$out"
 n="$(printf '%s\n' "$out" | sed -n 's/^# tests \([0-9][0-9]*\)$/\1/p' | tail -1)"
 if [ -z "$n" ] || [ "$n" -eq 0 ]; then
   echo "FAIL: the browser UI suite ran but discovered no tests — a green with nothing in it" >&2
+  exit 1
+fi
+
+# The same population pin tier 2 carries, and for the same reason: a floor of one
+# cannot tell 10 tests from 1, so a silently-dropped test file reads as a pass. The
+# file count is the external number; a per-test literal would go red on every new
+# test and train the next person to bump it.
+files="$(find test/ui -maxdepth 1 -name '*.test.mjs' | wc -l | tr -d ' ')"
+expect_files=2
+if [ "$files" -ne "$expect_files" ]; then
+  echo "FAIL: expected $expect_files browser UI test files, found $files — a test file was added or dropped." >&2
+  echo "      If deliberate, update expect_files in this script." >&2
+  exit 1
+fi
+if [ "$n" -lt "$files" ]; then
+  echo "FAIL: $n tests ran across $files files — a file contributed nothing, so its tests are silently not running" >&2
   exit 1
 fi
 

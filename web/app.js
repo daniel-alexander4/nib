@@ -4906,9 +4906,27 @@ els.exportImagesBtn.onclick = async () => {
   openSaveAs(await res.blob(), exportName + '-images.zip', 'Export embedded images (ZIP)');
 };
 
-els.exportFormJsonBtn.onclick = () => { window.location = '/api/form-data?format=json'; };
-els.exportFormCsvBtn.onclick = () => { window.location = '/api/form-data?format=csv'; };
-els.exportFormXfdfBtn.onclick = () => { window.location = '/api/form-data?format=xfdf'; };
+// Form-data export goes through apiFetch, not window.location.
+//
+// A plain navigation carries no X-Nib-Doc header, so /api/form-data resolved via the
+// SERVER's active document. Nothing tells the server which view the user switched to,
+// so after a co-signature arrival — which activates the new view client-side only —
+// switching back and exporting silently wrote out the OTHER document's field values.
+// A document-scoped route cannot be reached by navigation for that reason; the header
+// is the only thing that names the document, and only apiFetch attaches it.
+//
+// exportBase() is captured at entry per D7, so the filename names the document the
+// export came from rather than whatever is active when the bytes arrive.
+async function exportFormData(format, ext) {
+  if (!view.pdfDocument) return toast('Open a PDF first');
+  const exportName = exportBase();
+  const res = await apiFetch('/api/form-data?format=' + format);
+  if (!res.ok) { toast(await errText(res, 'Could not export the form data')); return; }
+  openSaveAs(await res.blob(), exportName + '-form.' + ext, 'Export form data');
+}
+els.exportFormJsonBtn.onclick = () => exportFormData('json', 'json');
+els.exportFormCsvBtn.onclick = () => exportFormData('csv', 'csv');
+els.exportFormXfdfBtn.onclick = () => exportFormData('xfdf', 'xfdf');
 els.exportCertBtn.onclick = () => { window.location = '/api/identity'; };
 
 els.printBtn.onclick = async () => {

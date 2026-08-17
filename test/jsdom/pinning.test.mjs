@@ -25,11 +25,35 @@ const APP = fs.readFileSync(path.join(REPO, 'web', 'app.js'), 'utf8');
 // document rather than merely reporting on it. Kept as a literal list rather than a
 // pattern, for the reason S03's bypass guard keeps one — a pattern can only say a route
 // is not one it knows about.
+//
+// Corrected, and then pinned against the server so it cannot drift again. Three of
+// the fifteen entries this replaces — /api/export, /api/sign, /api/stamp — existed
+// in neither the mux nor web/app.js, so the list read 20% more complete than it was.
+// Two more named routes that do not mutate the stored document (/api/flags and
+// /api/assemble are byte-in/byte-out and never reach commitMutation), and
+// '/api/attachments' was the read route; the mutating one is '/api/attachments/add'.
+//
+// Membership is "the handler commits into the ADDRESSED document" — commitMutation,
+// commitBarrier, or a direct doc.data write under the lock. That is what makes a
+// misaddressed request a corruption rather than a wrong answer.
 const MUTATING = [
-  '/api/save', '/api/pages', '/api/redact', '/api/outline', '/api/attachments',
-  '/api/ocr', '/api/flags', '/api/assemble', '/api/export', '/api/sanitize',
-  '/api/decrypt', '/api/undo', '/api/redo', '/api/sign', '/api/stamp',
+  '/api/save', '/api/pages', '/api/redact', '/api/outline', '/api/ocr',
+  '/api/sanitize', '/api/decrypt', '/api/attachments/add', '/api/undo', '/api/redo',
 ];
+
+test('every route in the MUTATING inventory is a real POST route on the server', () => {
+  // The V2 shape: a hand-kept inventory reconciled against nothing polices nothing.
+  // Three of this list's entries used to name routes that existed nowhere — not in
+  // the mux, not in web/app.js — and no assertion could notice, because a scan for
+  // a route that is never called finds no unpinned call sites and reports clean.
+  // Pinned against the server's own mux, which is the external source the count
+  // has to come from; a typo or a renamed route now fails by name.
+  const mux = fs.readFileSync(path.join(REPO, 'internal', 'server', 'server.go'), 'utf8');
+  for (const route of MUTATING) {
+    assert.ok(mux.includes(`"POST ${route}"`),
+      `${route} is in the MUTATING inventory but is not a POST route in server.go — the list has drifted from the server`);
+  }
+});
 
 // scanUnpinned finds every apiFetch on a mutating route that is preceded by an `await`
 // in its own function and does not pass an explicit `docId`. That is the corruption
