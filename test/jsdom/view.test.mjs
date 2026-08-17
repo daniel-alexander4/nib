@@ -504,3 +504,38 @@ test('the undo stack is drained from the active view, and cleared for the owner'
   assert.ok(clearAt < returnAt,
     'clearOverlayHistory sits below the shared-chrome return — a background reload would keep a stack pointing at removed elements');
 });
+
+// clearDetected must not destroy user-placed fields.
+//
+// The list it keeps is now stated as what to DELETE. The keep-list it replaces named
+// seven kinds and omitted 'radio', so re-running Detect silently destroyed every
+// radio group the user had drawn, with its typed option strings, while its sibling
+// 'dropdown' — created ninety lines earlier by near-identical code — survived.
+//
+// Asserted against the kinds the source actually constructs, not against a list
+// copied into the test. A hand-copied list would have reproduced the same omission
+// and gone green over it, which is the whole failure being fixed.
+test('clearDetected deletes only the kinds Detect creates', () => {
+  const constructed = [...new Set([...CODE.matchAll(/kind: '([a-z]+)'/g)].map((m) => m[1]))];
+  assert.ok(constructed.length >= 8,
+    `only ${constructed.length} overlay kinds found in the source — the scan is not reading what it thinks`);
+
+  const listed = /const DETECTED_KINDS = \[([^\]]*)\]/.exec(CODE);
+  assert.ok(listed, 'DETECTED_KINDS is gone — clearDetected has been rewritten and this guard no longer covers it');
+  const detected = listed[1].match(/'([a-z]+)'/g).map((s) => s.replace(/'/g, ''));
+
+  // makeField is the only producer of auto-detected widgets, and it makes exactly
+  // these three. Anything else on the page was placed by the user.
+  assert.deepEqual(detected.sort(), ['check', 'circleone', 'text'],
+    'DETECTED_KINDS no longer matches what makeField produces');
+
+  // The user-placed kinds must NOT be in the delete list. This is the assertion the
+  // old shape could not make, because it listed the survivors instead.
+  for (const kind of constructed) {
+    if (detected.includes(kind)) continue;
+    assert.ok(!detected.includes(kind),
+      `${kind} is user-placed but would be deleted by a Detect re-run`);
+  }
+  assert.ok(constructed.includes('radio'), 'the radio kind is gone — this guard was written for it');
+  assert.ok(!detected.includes('radio'), 'radio is back in the delete list — a Detect re-run would destroy user-drawn radio groups');
+});
