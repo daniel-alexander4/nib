@@ -352,3 +352,108 @@ func TestDocResponseRacesMutation(t *testing.T) {
 		t.Fatal("no /api/doc read succeeded — the reading half of the race never ran")
 	}
 }
+
+// TestDocumentReadRoutesRaceMutation is the generalisation of the test above, and
+// the reason it exists is the shape of the bug it caught.
+//
+// TestDocResponseRacesMutation drives /api/doc only — the one path that had been
+// fixed. Twelve sibling handlers went on reading doc.data with no lock held, and
+// `go test -race ./internal/server/` stayed green over all of them, because a
+// detector only reports the race it OBSERVES and nothing drove those routes
+// concurrently with a write. A guard whose population is one is not a guard for
+// the class it appears to cover.
+//
+// Each read route below is driven against a stream of page ops (undo.go's
+// `doc.data = result`). Every one of them tripped the detector before docBytes
+// existed; /api/scan trips it on the first round.
+func TestDocumentReadRoutesRaceMutation(t *testing.T) {
+	readRoutes := []struct{ name, method, path string }{
+		{"scan", http.MethodGet, "/api/scan"},
+		{"outline", http.MethodGet, "/api/outline"},
+		{"attachments", http.MethodGet, "/api/attachments"},
+		{"form-data", http.MethodGet, "/api/form-data"},
+		{"optimize", http.MethodPost, "/api/optimize"},
+	}
+
+	ts, srv := startServerWith(t)
+	c, csrf := authedClient(t, ts)
+	pdf, err := testpdf.Form()
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv.setDoc(&document{data: pdf})
+
+	const rounds = 25
+	var mu sync.Mutex
+	mutations := 0
+	reads := map[string]int{}
+
+	var wg sync.WaitGroup
+	wg.Add(1 + len(readRoutes))
+
+	go func() {
+		defer wg.Done()
+		for i := 0; i < rounds; i++ {
+			var buf bytes.Buffer
+			mw := multipart.NewWriter(&buf)
+			fw, _ := mw.CreateFormFile("pdf", "doc.pdf")
+			fw.Write(pdf)
+			mw.WriteField("op", "rotate")
+			mw.WriteField("deg", "90")
+			mw.Close()
+			req, err := http.NewRequest(http.MethodPost, ts.URL+"/api/pages", &buf)
+			if err != nil {
+				continue
+			}
+			req.Header.Set("Content-Type", mw.FormDataContentType())
+			req.Header.Set("X-CSRF-Token", csrf)
+			resp, err := c.Do(req)
+			if err != nil {
+				continue
+			}
+			resp.Body.Close()
+			if resp.StatusCode == http.StatusOK {
+				mu.Lock()
+				mutations++
+				mu.Unlock()
+			}
+		}
+	}()
+
+	for _, rt := range readRoutes {
+		go func(name, method, path string) {
+			defer wg.Done()
+			for i := 0; i < rounds; i++ {
+				req, err := http.NewRequest(method, ts.URL+path, nil)
+				if err != nil {
+					continue
+				}
+				req.Header.Set("X-CSRF-Token", csrf)
+				resp, err := c.Do(req)
+				if err != nil {
+					continue
+				}
+				resp.Body.Close()
+				if resp.StatusCode == http.StatusOK {
+					mu.Lock()
+					reads[name]++
+					mu.Unlock()
+				}
+			}
+		}(rt.name, rt.method, rt.path)
+	}
+	wg.Wait()
+
+	// The stimulus, per the sibling above: -race reports only what it observes, so
+	// an arm that never ran turns this into a green over nothing. Asserted PER
+	// ROUTE, not in total — one busy route would otherwise cover for four silent
+	// ones, which is the same one-population mistake this test exists to correct.
+	if mutations == 0 {
+		t.Fatal("no mutation succeeded — the writing half of the race never ran")
+	}
+	for _, rt := range readRoutes {
+		if reads[rt.name] == 0 {
+			t.Errorf("no %s read succeeded — that half of the race never ran, so -race saw nothing there", rt.name)
+		}
+	}
+}

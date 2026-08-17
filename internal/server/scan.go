@@ -15,7 +15,7 @@ func (s *Server) handleScan(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	rep, err := pdfops.Scan(doc.data)
+	rep, err := pdfops.Scan(s.docBytes(doc))
 	if err != nil {
 		httpError(w, http.StatusInternalServerError, "could not scan: "+err.Error())
 		return
@@ -49,11 +49,11 @@ func (s *Server) handleSanitize(w http.ResponseWriter, r *http.Request) {
 	var err error
 	switch r.FormValue("method") {
 	case "strip":
-		result, err = pdfops.StripActive(doc.data)
+		result, err = pdfops.StripActive(s.docBytes(doc))
 	case "safe":
-		result, err = pdfops.RemoveFilesAndMedia(doc.data)
+		result, err = pdfops.RemoveFilesAndMedia(s.docBytes(doc))
 	case "metadata":
-		result, err = pdfops.StripMetadata(doc.data)
+		result, err = pdfops.StripMetadata(s.docBytes(doc))
 	default:
 		httpError(w, http.StatusBadRequest, "unknown method")
 		return
@@ -67,7 +67,7 @@ func (s *Server) handleSanitize(w http.ResponseWriter, r *http.Request) {
 	}
 
 	residual, _ := pdfops.Scan(result)
-	if !s.commitMutation(doc, doc.data, result) {
+	if !s.commitMutation(doc, s.docBytes(doc), result) {
 		httpError(w, http.StatusNotFound, "no document open")
 		return
 	}
@@ -125,7 +125,7 @@ func (s *Server) handleDecrypt(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	result, err := pdfops.RemovePassword(doc.data, r.FormValue("password"))
+	result, err := pdfops.RemovePassword(s.docBytes(doc), r.FormValue("password"))
 	if err != nil {
 		switch {
 		case errors.Is(err, pdfops.ErrWrongPassword):
@@ -137,7 +137,7 @@ func (s *Server) handleDecrypt(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
-	if !s.commitMutation(doc, doc.data, result) {
+	if !s.commitMutation(doc, s.docBytes(doc), result) {
 		httpError(w, http.StatusNotFound, "no document open")
 		return
 	}
