@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"nib/internal/instance"
@@ -219,5 +220,139 @@ func TestTheQueueIsBoundedAndDropsTheOldest(t *testing.T) {
 	s.mu.Unlock()
 	if after != before {
 		t.Errorf("queueing an already-queued path grew the queue to %d", after)
+	}
+}
+
+// TestAHandoffCanonicalisesThePathBeforeComparingIt — P07 phase close.
+//
+// D16's promise is enforced by a STRING COMPARE against the path each document was
+// opened from, and `handleOpen` stores a cleaned path (`server.go:337`) while this route
+// stored whatever it was sent. So two spellings of one file — the thing `filepath.Clean`
+// exists to collapse — opened it twice, and the harm is D16's own: two working copies,
+// last save silently discarding the other.
+//
+// It was not reachable in production, because the only caller sends a path
+// `filepath.Abs` has already cleaned. That is the finding rather than the excuse: the
+// route's correctness rested on a property of one caller.
+func TestAHandoffCanonicalisesThePathBeforeComparingIt(t *testing.T) {
+	ts, srv := startServerWith(t)
+	c, csrf := authedClient(t, ts)
+	srv.SetHandoffSecret("secret")
+	path := pdfOnDisk(t)
+
+	openByPath(t, ts.URL, c, csrf, path)
+	srv.mu.Lock()
+	before := len(srv.docs)
+	srv.mu.Unlock()
+	// The stimulus: one document is open, so "the count did not change" below is a
+	// statement about the compare and not about an empty registry.
+	if before != 1 {
+		t.Fatalf("setup: %d documents open, want 1", before)
+	}
+
+	// The same file, spelled with an interior "." — what a shell completion, a symlinked
+	// launcher, or a file manager passing a relative-ish path produces.
+	noisy := filepath.Join(filepath.Dir(path), ".", filepath.Base(path))
+	noisy = filepath.Dir(noisy) + string(filepath.Separator) + "." + string(filepath.Separator) + filepath.Base(path)
+	if noisy == path {
+		t.Fatalf("setup: the noisy spelling %q is identical to the clean one, so this test compares nothing", noisy)
+	}
+
+	code, out := handoffTo(t, ts, c, "secret", noisy)
+	if code != http.StatusOK || out.Result != "focused" {
+		t.Fatalf("handing off %q for an open %q = %d/%q, want 200/focused", noisy, path, code, out.Result)
+	}
+	srv.mu.Lock()
+	after := len(srv.docs)
+	srv.mu.Unlock()
+	if after != before {
+		t.Errorf("a second spelling of the same path opened another copy: %d documents, want %d — D16 is a string compare and the strings were not canonicalised", after, before)
+	}
+}
+
+// TestAPathIsNotQueuedOnceTheVaultIsOpen — P07 phase close.
+//
+// `handleHandoff` reads `unlocked` before it decodes the body, so by the time it decides
+// to queue, the vault may already have been adopted — and `adoptVault` drains the queue
+// exactly once, at that moment. A path appended afterwards waits for an unlock that has
+// already happened and will not happen again, so the document silently never opens: the
+// user double-clicks a file while typing their passphrase and nothing appears, ever.
+//
+// The guard is inside `queuePendingOpen` rather than at the call site because that is
+// where it shares the lock `adoptVault` sets the vault under. Tested there for the same
+// reason — a test through the route could only ever observe the ordinary ordering.
+func TestAPathIsNotQueuedOnceTheVaultIsOpen(t *testing.T) {
+	_, srv := startServerWith(t)
+
+	// The stimulus: while locked it DOES queue, or "it did not queue" below says nothing.
+	if !srv.queuePendingOpen("/tmp/while-locked.pdf") {
+		t.Fatal("setup: a locked instance refused to queue, so the unlocked case below is not a contrast")
+	}
+	srv.mu.Lock()
+	queuedWhileLocked := len(srv.pendingOpens)
+	srv.mu.Unlock()
+	if queuedWhileLocked != 1 {
+		t.Fatalf("setup: %d paths queued while locked, want 1", queuedWhileLocked)
+	}
+
+	// A real vault, adopted through the real entry point — adoptVault is the one place a
+	// vault becomes available and the one place the drain runs, so anything that set
+	// srv.vault directly would step over the code under test.
+	_, v := unlockedServer(t)
+	srv.adoptVault(v)
+
+	if srv.queuePendingOpen("/tmp/after-unlock.pdf") {
+		t.Error("a path was queued after the vault opened — the drain has already run, so it waits for an unlock that will not come again and the document never opens")
+	}
+	srv.mu.Lock()
+	left := append([]string(nil), srv.pendingOpens...)
+	srv.mu.Unlock()
+	if len(left) != 0 {
+		t.Errorf("pendingOpens still holds %v after unlock; nothing will ever drain it", left)
+	}
+}
+
+// TestTheVaultIsAdoptedInExactlyOnePlace — P07 phase close, promoting V80 from an
+// inspection to a guard.
+//
+// The seam inventory carried "production sites assigning `s.vault`: 1" as a row checked
+// by eye at each slice close. That is the class of row this project has learned to
+// distrust: it is true until someone adds the second one, and nothing tells them.
+//
+// One is the pass because `adoptVault` is where the pending-open drain hangs. A second
+// assignment is a second unlock route, and a queued hand-off would then open when the
+// user unlocks one way and silently never open when they unlock the other — the exact
+// shape of `closeDocument` carrying its own copy of `tearDownView`, and of `openBrowse`
+// being `browseDir` written twice.
+func TestTheVaultIsAdoptedInExactlyOnePlace(t *testing.T) {
+	sites := 0
+	entries, err := os.ReadDir(".")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var where []string
+	for _, e := range entries {
+		name := e.Name()
+		if e.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
+			continue
+		}
+		src, err := os.ReadFile(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for i, line := range strings.Split(string(src), "\n") {
+			if strings.Contains(line, "s.vault = ") {
+				sites++
+				where = append(where, fmt.Sprintf("%s:%d", name, i+1))
+			}
+		}
+	}
+	// The stimulus: zero would mean the scan is reading the wrong thing, and "no second
+	// assignment" is exactly what zero looks like.
+	if sites == 0 {
+		t.Fatal("the scan found no assignment to s.vault at all — it is not reading what it thinks, and it would report a clean pass forever")
+	}
+	if sites != 1 {
+		t.Errorf("s.vault is assigned in %d places (%v), want 1 — the pending-open drain hangs off adoptVault, so a second unlock route means a handed-off document opens when the user unlocks one way and silently never opens when they unlock the other", sites, where)
 	}
 }
