@@ -723,7 +723,8 @@ isn't a known command (a PDF path, or nothing) still opens the app as usual.
 
 | Command | What it does |
 | --- | --- |
-| `nib timestamp FILE…` | Write an OpenTimestamps proof (`FILE.ots`) for each file. |
+| `nib timestamp FILE…` | Write an OpenTimestamps proof (`FILE.ots`) for each file, skipping any file that already has one. |
+| `nib timestamp --force FILE…` | Re-stamp even where a proof exists, discarding it. |
 | `nib timestamp --verify FILE…` | Check each file against its `FILE.ots` proof. |
 | `nib verify [--json] FILE…` | Report each file's signature integrity. |
 | `nib optimize IN -o OUT` | Losslessly shrink a PDF (or `-w FILE…` to rewrite in place). |
@@ -756,7 +757,7 @@ straight into a script:
 
 ```sh
 nib verify contract.pdf && echo "signature intact"
-for f in *.pdf; do nib timestamp "$f"; done
+for f in *.pdf; do nib timestamp "$f"; done   # re-runnable: already-stamped files are skipped
 nib sanitize -w *.pdf          # scrub a whole folder in place
 nib optimize in.pdf -o - | nib sanitize - -o out.pdf   # compose in a pipeline
 ```
