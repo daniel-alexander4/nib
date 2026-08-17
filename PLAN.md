@@ -1450,7 +1450,7 @@ Acceptance:
 - The signing-workflow names (`-cosigned`, `-for-signing`) are covered by name, since
   those are the ones where the filename is how a user tells two documents apart.
 
-### P05 — Per-view state and viewers
+### P05 — Per-view state and viewers *(done 2026-08-17, v1.105.20)*
 Goal: each document owns its viewer, its DOM and its state records. Refs: D3, D5,
 D11, D12.
 Exit criteria:
@@ -1465,23 +1465,48 @@ Exit criteria:
 - Re-fit and dpr-heal on activation (a view that loads hidden gets no scale).
 - The two sidebars show the active document's content and nothing else.
 
-**(close-out run 2026-08-17, v1.105.19 — the phase is NOT marked done, and the reason is
-one open question rather than open work.)** All six slices shipped (v1.105.0→v1.105.5) and
-the three-part close-out has run: the full-repo `/code-review`
+**(phase close, 2026-08-17, v1.105.20)** All six slices shipped (v1.105.0→v1.105.5) and
+the three-part close-out ran: the full-repo `/code-review`
 (`<project-memory>/code-reviews/P05-phase-close-2026-08-17.md`, 96 findings, 8 criticals,
-now **fully dispositioned** — 47 fixed, 5 no-change-needed, 44 carried by named pending
-items), the remediation (v1.105.6→v1.105.19, seventeen commits), and the **graduation pass
-over all 34 seam rows** (`<project-memory>/instruments/P05.md`) — all 34 `keep-live`, one
-row (V29) corrected, and the pass's own blind spot closed with a new published-field
-reader scan. Five tiers green.
+**fully dispositioned** — 47 fixed, 5 no-change-needed, 44 carried by named pending items),
+the remediation (v1.105.6→v1.105.19, seventeen commits), and the **graduation pass over all
+34 seam rows** (`<project-memory>/instruments/P05.md`) — all 34 `keep-live`, one row (V29)
+corrected, and the pass's own blind spot closed with a new published-field reader scan.
+Five tiers green.
 
-What is open is the **acceptance ledger**: 14 met, 0 not met, **2 not exercised** — clause
-4's re-fit and dpr-heal on activation. Both are present in the code (`app.js:1619`,
-`:1625-1628`) and neither is observable by any tier: jsdom reports every `clientWidth` as
-0, tier 3 has one view, and the only path that creates a second view in production needs a
-live pinned peer. P06 adds the way to create one **without** a peer, which is what a test
-needs. Per the ledger rule a phase closes on no `not exercised` rows **or on Dan's explicit
-call to close over them**, so the marker waits on that call — not on a build.
+Exit criteria, every clause, split on `and`:
+
+- ✅ Per-view `PDFViewer` — 0 module-scope declarations of the four pdf.js objects, 0 bare
+  reads outside `newView()` (V7–V9).
+- ✅ …**and** per-view container — 0 `els.viewerContainer` references (V10); each view
+  builds its own at `app.js:1439`.
+- ✅ …**and** inactive views hidden — `activateView` hides the outgoing container, grid and
+  list; `newView` hides when it is not the first.
+- ✅ …**and** never destroyed — `container.remove()` occurs only on close and on the
+  arrival-load-failure cleanup, never on a switch.
+- ✅ The seven silent-loss bindings **and** `signLocked`, `lastSig`, `docGen` **and**
+  `overlayHistory` are per-view (V1–V5, V30) — **fourteen, not thirteen**, per the S03
+  amendment above.
+- ✅ …**and** `detachField`/`reattachField`/`relayoutOverlays` resolve the owning view —
+  all three take an `owner` and use it (`app.js:7255`, `:7259`, `:7454`); V6 refuses a bare
+  `view` inside `relayoutOverlays`.
+- ✅ The 26 pointer listeners re-homed to the stable parent — measured 26 on
+  `els.viewerWrap`, 0 on a per-view container (V11, a floor plus two negative populations).
+- ✅ …**and** cleanup sweeps view-scoped — V13/V15, two-directional against a decoy.
+- ⏳ Re-fit on activation **and** ⏳ dpr-heal on activation — **not exercised, carried to
+  P06**, on the mechanic P01.S03→S04 and P03's all-tabs-stale pin both used. Present at
+  `app.js:1619` and `:1625-1628`; unobservable by any tier, for the reason below.
+- ✅ The two sidebars show the active document's content (V27/V29) **and** ✅ nothing else
+  — V28, against a decoy grid rather than a second view, and stated that way.
+
+**14 met, 0 not met, 2 not exercised. Closed over the two by Dan's call, 2026-08-17** — the
+ledger rule allows exactly that and requires it be recorded, so this is the record.
+
+**Why clause 4 cannot be discharged in this phase.** Both halves are unobservable, not
+unbuilt: jsdom reports every `clientWidth` as 0, tier 3 has one view, and the only path
+that creates a second view in production is a co-sign arrival, which needs a live pinned
+peer. P06 adds the way to create one **without** a peer — which is what a test needs — so
+the clause becomes drivable there and is P06's first acceptance work.
 
 **377 references across 13 bindings in a 7,222-line file** — measured, and it is what
 drives the slicing below: `pdfDocument` 148, `viewer` 67, `docMeta` 37, `overlayFields`
@@ -2158,6 +2183,18 @@ Exit criteria:
 - README and the in-app help describe the multi-document model; `CLAUDE.md` gains
   the operation-pinning law (D7) so the next change cannot unknowingly break it.
 - Full-repo `/code-review` clean.
+- **(carried from P05, 2026-08-17 — P05 closed over these two by Dan's call, and this
+  is where they land.)** Re-fit **and** dpr-heal on activation: a view that loads while
+  hidden gets no scale, because a hidden container reports `clientWidth` 0. Both are
+  built (`app.js:1619`, `:1625-1628`) and neither has ever been driven. **This is P06's
+  first acceptance work, and the reason is an ordering constraint rather than a
+  preference:** the clause only becomes drivable once this phase can create a second
+  view without a live pinned peer, so whatever slice adds that owes the test in the same
+  change — otherwise the clause carries a second time, which is how a `not exercised`
+  becomes permanent.
+- **(carried from P03, plan-review pin)** The all-tabs-stale case resolves to the launch
+  empty state, not N error tabs. Unfalsifiable until there are tabs; P03 shipped the 409
+  that makes it expressible.
 Slices: sketched at phase-open.
 
 **(dimension-review pin: what a reload does, 2026-08-15)** The server holds the
