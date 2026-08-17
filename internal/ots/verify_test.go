@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/binary"
 	"encoding/hex"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -249,5 +250,59 @@ func TestVerifyProofPersistsUpgrade(t *testing.T) {
 	}
 	if res2.Upgraded != nil {
 		t.Fatal("re-verifying an already-complete proof should not produce a new upgrade")
+	}
+}
+
+// TestParseRefusesCheckpointAmplification pins the bound on parseSequences.
+//
+// The shape it refuses: N no-argument operations followed by N checkpoint bytes.
+// Each checkpoint duplicates the whole block built so far, so the proof materializes
+// N² instructions out of 2N bytes of input. Measured before the bound existed: an
+// 8 KB input allocated 876 MiB, cleanly quadratic, so a ~32 KB file — four orders
+// below the 200 MiB upload cap on /api/timestamp/verify — reaches tens of gigabytes
+// and OOM-kills the process with every open document.
+//
+// Two halves, and the second is what stops the first being satisfied by a parser
+// that refuses everything:
+//   - the hostile shape is refused, with ErrProofTooComplex SPECIFICALLY. A test
+//     happy with any error also passes when the cursor primitives beneath it break
+//     — before the bound, this input failed with "sequence has no attestation",
+//     which is exactly the wrong-reason green.
+//   - a real reference-encoded proof that genuinely USES checkpoints (merkle1OTS,
+//     two calendar branches over a shared op prefix) still parses. Without this arm
+//     a bound of zero would pass.
+func TestParseRefusesCheckpointAmplification(t *testing.T) {
+	build := func(k int) []byte {
+		var b []byte
+		b = append(b, headerMagic...)
+		b = append(b, 0x01, opSHA256)
+		b = append(b, make([]byte, 32)...)
+		for i := 0; i < k; i++ {
+			b = append(b, opSHA256) // no-argument op: one byte, one instruction
+		}
+		for i := 0; i < k; i++ {
+			b = append(b, tagCheckpoint) // one byte, k instructions
+		}
+		return b
+	}
+
+	// Well under the ceiling: refused for its own reasons, never for complexity.
+	if _, err := parseProof(build(50)); errors.Is(err, ErrProofTooComplex) {
+		t.Fatal("a 50-op proof is nowhere near the ceiling and must not be refused as too complex")
+	}
+
+	// Over it: refused, and refused for THIS reason.
+	_, err := parseProof(build(600)) // 600 + 600*600 = 360,600 instructions
+	if err == nil {
+		t.Fatal("an amplifying proof parsed successfully — the bound is not in force")
+	}
+	if !errors.Is(err, ErrProofTooComplex) {
+		t.Fatalf("refused for the wrong reason: got %v, want %v", err, ErrProofTooComplex)
+	}
+
+	// The positive control: a REAL proof built on checkpoints still parses. The
+	// bound must refuse the amplification, not the feature.
+	if _, err := parseProof(mustB64(t, merkle1OTS)); err != nil {
+		t.Fatalf("the bound refuses a legitimate checkpoint-using proof: %v", err)
 	}
 }
