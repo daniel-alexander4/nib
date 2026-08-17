@@ -39,7 +39,15 @@ const APP = fs.readFileSync(path.join(REPO, 'web', 'app.js'), 'utf8');
 // and getting that wrong produces false GREENS, which is the direction that hurts.
 const CODE = APP.split('\n').filter((l) => !l.trim().startsWith('//')).join('\n');
 
-const PER_VIEW = ['redactMarks', 'signLocked', 'lastSig', 'docGen', 'outlineItems', 'originalName'];
+const PER_VIEW = ['redactMarks', 'signLocked', 'lastSig', 'docGen', 'outlineItems', 'originalName',
+  // P05.S06 — the fourteenth binding, and it belongs in THIS list rather than the tool list
+  // because it fails the way the three SAFETY bindings fail. Its entries are closures over
+  // overlay elements and undoAny drains it before the server ring, so one shared stack means
+  // Ctrl+Z in document A mutates document B's element from a keystroke aimed at A.
+  //
+  // The phase-open enumeration counted thirteen because it counted bindings with MANY
+  // references; this one has few, which is why a deepdive of an unrelated slice found it.
+  'overlayHistory'];
 
 // P05.S03 — the four pdf.js objects. They are scanned by the same machinery because
 // they fail the same way, but their reason is stronger than the state bindings': the
@@ -423,4 +431,62 @@ test('a drag captures the grid and the view it started in', () => {
   const drop = CODE.slice(dstart, CODE.indexOf('\n}', dstart));
   assert.match(drop, /dragView !== view/,
     'the drop does not refuse a reorder whose view has changed — pageOp would apply it to the wrong document');
+});
+
+// P05.S06 — the undo commands carry their owner.
+//
+// The stack being per-view is necessary and NOT sufficient. Its entries are closures, and a
+// closure that resolved the module `view` at drain time would splice one document's field
+// into another's overlayFields and append its element into another's page div — the same
+// wrong-document mutation, just relocated from the stack into the commands the stack holds.
+//
+// With a per-view stack drained only while its view is active, the owner IS the active view
+// at drain time, so this is belt-and-braces today. It is asserted anyway for the reason
+// P05.S05's captured dragGrid exists: correct by construction beats correct by an invariant
+// nobody restates when they edit the drain path.
+test('the three field helpers act on the view that owns the field', () => {
+  for (const fn of ['detachField', 'reattachField', 'layoutFieldNow']) {
+    assert.match(CODE, new RegExp(`function ${fn}\\(owner, f\\)`),
+      `${fn} does not take the owning view — a stored undo command would act on whichever document is active`);
+    const start = CODE.indexOf(`function ${fn}(owner, f)`);
+    const body = CODE.slice(start, CODE.indexOf('\n}', start));
+    assert.doesNotMatch(body, /(?<![.\w$])view\./,
+      `${fn} still reads the active view — that is the defect, one level in from the stack`);
+  }
+
+  // And every recorded command hands them an owner rather than letting the default apply:
+  // the default is `view`, which is exactly the resolve-at-drain-time shape.
+  // The declaration is not a call — without the lookbehind the population is one too many
+  // and the count comparison fails for a reason that has nothing to do with the defect.
+  const calls = (CODE.match(/(?<!function )recordOverlayEdit\(/g) || []).length;
+  assert.ok(calls >= 5, `only ${calls} recorded commands found — the scan is not reading what it thinks`);
+  // Bounded lazy match: every call must reach `, owner)` before it ends. A single-line call
+  // and a multi-line object literal both close as `}, owner)`, so one pattern covers both.
+  // `}, owner)` and not `, owner)`: every command is an object literal, so the owner must
+  // follow the literal's CLOSING BRACE. A bare `, owner)` matched anywhere in the window
+  // counted a call as owned when the owner was actually an argument to something INSIDE the
+  // command — `removeField(f, false, owner)` is a real call form in this file, so that is a
+  // shape a next author would plausibly write, and it would have false-greened.
+  const owned = (CODE.match(/(?<!function )recordOverlayEdit\([\s\S]{0,400}?\},\s*owner\s*\)/g) || []).length;
+  assert.equal(owned, calls,
+    `${calls - owned} recordOverlayEdit call(s) do not pass an owner, so the command lands on whichever view is active when it is recorded`);
+});
+
+test('the undo stack is drained from the active view, and cleared for the owner', () => {
+  // Draining the ACTIVE view is correct — the keystroke aims at what is on screen.
+  assert.match(CODE, /function undoAny\(\) \{ if \(view\.overlayHistory\.undo\.length\)/,
+    'undoAny does not drain the active view stack');
+  assert.match(CODE, /function redoAny\(\) \{ if \(view\.overlayHistory\.redo\.length\)/,
+    'redoAny does not drain the active view stack');
+
+  // But clearing is per-view DATA and must happen above clearOverlays' shared-chrome return,
+  // or a background reload keeps a stack whose closures point at elements it just removed.
+  const start = CODE.indexOf('function clearOverlays(owner = view)');
+  const body = CODE.slice(start, CODE.indexOf('\n}', start));
+  const clearAt = body.indexOf('clearOverlayHistory(owner)');
+  const returnAt = body.indexOf('if (owner !== view) return;');
+  assert.ok(clearAt !== -1, 'clearOverlays no longer clears the owner history');
+  assert.ok(returnAt !== -1, 'the shared-chrome early return is gone — this assertion has nothing to order against');
+  assert.ok(clearAt < returnAt,
+    'clearOverlayHistory sits below the shared-chrome return — a background reload would keep a stack pointing at removed elements');
 });

@@ -222,3 +222,32 @@ test('a build aimed at one view cannot clear another view grid', async () => {
     'a build cleared another view grid — the sidebars are still document-scoped');
   decoy.remove();
 });
+
+// ── P05.S06 — the undo stack, and why there is no behavioural test here ─────
+//
+// The acceptance clause asks for "a guard asserts an overlay-edit undo recorded on one view
+// cannot be drained through another — red without the fix". There is no such test in this
+// file, deliberately, and the absence is the honest answer rather than an omission:
+//
+//   * No second view is creatable in any TEST TIER. Note the precision: a second view IS
+//     creatable in production — pollRecv -> openArrivalInNewView, live since P05.S04 — so
+//     the cross-view hazards this phase closes are reachable today by anyone doing a live
+//     co-sign, not latent until P06. What P06 adds is a way to create one WITHOUT a pinned
+//     peer, which is what a test would need. An earlier draft of this comment said "no
+//     second view is creatable below P06" full stop, which is false and made the residual
+//     risk read as unreachable.
+//   * No overlay can be PLACED at this tier at all. Every getBoundingClientRect is 0 under
+//     jsdom, so pageAt never resolves a page and no drawing tool can complete a gesture —
+//     which means the stack cannot even be made non-empty here. This bullet alone is
+//     sufficient; the first is context.
+//
+// A first draft of this test asserted that the undo button starts disabled. It passed
+// identically against a shared stack, so it tested the per-view property not at all — a
+// green that would have read as coverage for the clause it was written under. It was
+// deleted rather than kept.
+//
+// What covers the clause instead is in view.test.mjs: the binding is in the per-view scan,
+// the three field helpers are asserted to take an owner and to contain no active-view read,
+// every recordOverlayEdit call is asserted to pass one, and the clear is asserted to sit
+// above clearOverlays' shared-chrome return. All four are red-fixtured. The BEHAVIOUR is
+// recorded `not exercised` and carried to P06.
