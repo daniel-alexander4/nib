@@ -76,12 +76,32 @@ func (s *Server) ensureUnlocked() {
 	if err != nil {
 		return
 	}
+	s.adoptVault(v)
+}
+
+// adoptVault installs a freshly opened vault and mints the CSRF token for the session.
+//
+// **One place, because something now happens ON unlock.** These four lines were written
+// twice — here and in handleUnlock — identically, which was harmless while they only
+// assigned two fields. P07.S02 hangs the pending-open drain off this moment, and a
+// second copy would mean a hand-off queued against a locked instance opens when the user
+// unlocks through one route and silently never opens when they unlock through the other.
+// That is the duplicate-derivation defect this repo has paid for repeatedly — most
+// recently `closeDocument` carrying its own copy of `tearDownView`.
+//
+// The nil check is the guard that makes it idempotent: a second unlock must not mint a
+// new CSRF token under a client already holding the first.
+func (s *Server) adoptVault(v *vault.Vault) {
 	s.mu.Lock()
-	if s.vault == nil {
+	fresh := s.vault == nil
+	if fresh {
 		s.vault = v
 		s.csrf = newToken()
 	}
 	s.mu.Unlock()
+	if fresh {
+		s.drainPendingOpens()
+	}
 }
 
 // requireUnlocked guards protected routes: the vault must be open, and writes
@@ -352,12 +372,7 @@ func (s *Server) handleUnlock(w http.ResponseWriter, r *http.Request) {
 		httpError(w, http.StatusBadRequest, "could not unlock")
 		return
 	}
-	s.mu.Lock()
-	if s.vault == nil {
-		s.vault = v
-		s.csrf = newToken()
-	}
-	s.mu.Unlock()
+	s.adoptVault(v)
 	writeJSON(w, s.currentStatus())
 }
 
