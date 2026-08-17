@@ -112,7 +112,7 @@ func (s *Server) handleAttestations(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, attestationsResponse{Attestations: []attestationView{}})
 		return
 	}
-	atts := p2p.ReadAttestations(doc.data)
+	atts := p2p.ReadAttestations(s.docBytes(doc))
 	views := make([]attestationView, 0, len(atts))
 	for _, a := range atts {
 		view := attestationView{SignerAttestation: a}
@@ -153,7 +153,7 @@ func (s *Server) handleCosignQuote(w http.ResponseWriter, r *http.Request) {
 	// The placement's position varies, but its size is constant, and the client
 	// only uses the rectangle's width:height to size the rasterized block — /sign
 	// recomputes the authoritative placement on the prepared document.
-	place, err := p2p.NextPlacement(doc.data)
+	place, err := p2p.NextPlacement(s.docBytes(doc))
 	if err != nil {
 		httpError(w, http.StatusInternalServerError, "could not place attestation")
 		return

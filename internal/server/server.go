@@ -422,6 +422,22 @@ func (s *Server) handleSave(w http.ResponseWriter, r *http.Request) {
 		httpError(w, http.StatusBadRequest, "could not read body")
 		return
 	}
+	// Re-checked after the body read, which is the slow part and the whole window:
+	// resolveDoc ran before it, so a close can land in between. commitMutation's
+	// contract names this caller in so many words — "a caller that tested the
+	// document first would leave a window for a close to land in between, which is
+	// the very defect" — and handleSave does not route through it, so it inherited
+	// the defect rather than the guard. Without this, a save addressed to a closed
+	// document still wrote the file and still answered 200 with an EMPTY
+	// docResponse: a success reply for work that was discarded.
+	//
+	// Refused before the write, not after. The document is gone, so this save is an
+	// operation against something the server no longer holds (ADR-001) and it
+	// should not reach the disk at all.
+	if !s.isRegistered(doc) {
+		httpError(w, http.StatusConflict, "that document is no longer open")
+		return
+	}
 	if err := writeFileAtomic(doc.path, data); err != nil {
 		httpError(w, http.StatusInternalServerError, "could not write file")
 		return
@@ -429,6 +445,15 @@ func (s *Server) handleSave(w http.ResponseWriter, r *http.Request) {
 
 	sig := sign.Verify(data)
 	s.mu.Lock()
+	// The narrow remainder: a close landing during the file write itself. The bytes
+	// are on disk — the user asked for them there — but the state must not be
+	// recorded onto a document the registry has dropped, and the reply must say so
+	// rather than describing a document that is not open.
+	if !s.isRegisteredLocked(doc) {
+		s.mu.Unlock()
+		httpError(w, http.StatusConflict, "that document was closed while it was being saved")
+		return
+	}
 	doc.data = data
 	doc.sig = sig
 	s.mu.Unlock()
@@ -549,6 +574,16 @@ func (s *Server) resolveDoc(w http.ResponseWriter, r *http.Request) (*document, 
 // isRegisteredLocked reports whether doc is still one this server holds. Caller
 // holds s.mu. Identity, not equality: a document that was closed and replaced is a
 // different pointer even if its contents match.
+// isRegistered is isRegisteredLocked for a caller that does not already hold the
+// lock. Advisory by nature — the answer can be stale the instant it returns — so
+// it belongs before expensive work, never as the only guard on a commit. The
+// authoritative test is isRegisteredLocked, taken under the same hold as the write.
+func (s *Server) isRegistered(doc *document) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.isRegisteredLocked(doc)
+}
+
 func (s *Server) isRegisteredLocked(doc *document) bool {
 	for _, d := range s.docs {
 		if d == doc {
@@ -681,6 +716,27 @@ func (s *Server) docResponse(doc *document) docResponse {
 		resp.Flags = flags
 	}
 	return resp
+}
+
+// docBytes snapshots a document's current bytes under the lock.
+//
+// Every handler that reads doc.data must come through here. Reading the field
+// directly is a data race against undo.go's `doc.data = result` and handleSave's
+// write — the same race docResponse above documents at length and fixed for
+// itself, leaving twelve siblings unfixed. It is not theoretical: driving
+// GET /api/scan concurrently with POST /api/pages trips the detector immediately,
+// which is one user with two panes.
+//
+// The lock is held only for the slice-header copy, never across the PDF parse that
+// follows, for the reason docResponse gives: doc.data is always REPLACED wholesale
+// and never mutated in place, so the array this header points at cannot change
+// underneath a parse. That invariant is what makes one accessor enough instead of
+// holding the mutex through every operation — and what a future in-place mutation
+// of doc.data would silently break, for every caller at once.
+func (s *Server) docBytes(doc *document) []byte {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return doc.data
 }
 
 // writeFileAtomic writes data to a temp file in the same directory then renames

@@ -254,12 +254,15 @@ func (s *Server) handleOptimize(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	result, err := pdfops.Optimize(doc.data)
+	// Snapshotted once: the reported original size must describe the bytes that
+	// were actually optimized, not whatever a concurrent page op left behind.
+	before := s.docBytes(doc)
+	result, err := pdfops.Optimize(before)
 	if err != nil {
 		httpError(w, http.StatusInternalServerError, "could not optimize: "+err.Error())
 		return
 	}
-	w.Header().Set("X-Original-Size", strconv.Itoa(len(doc.data)))
+	w.Header().Set("X-Original-Size", strconv.Itoa(len(before)))
 	w.Header().Set("X-New-Size", strconv.Itoa(len(result)))
 	sendDownload(w, "optimized.pdf", "application/pdf", result)
 }
@@ -272,7 +275,7 @@ func (s *Server) handleFormData(w http.ResponseWriter, r *http.Request) {
 	}
 	switch r.URL.Query().Get("format") {
 	case "csv":
-		data, err := pdfops.ExportFormCSV(doc.data)
+		data, err := pdfops.ExportFormCSV(s.docBytes(doc))
 		if err != nil {
 			httpError(w, http.StatusInternalServerError, "could not export form")
 			return
@@ -280,7 +283,7 @@ func (s *Server) handleFormData(w http.ResponseWriter, r *http.Request) {
 		sendDownload(w, "form-data.csv", "text/csv", data)
 		return
 	case "xfdf":
-		data, err := pdfops.ExportFormXFDF(doc.data)
+		data, err := pdfops.ExportFormXFDF(s.docBytes(doc))
 		if err != nil {
 			httpError(w, http.StatusInternalServerError, "could not export form")
 			return
@@ -288,7 +291,7 @@ func (s *Server) handleFormData(w http.ResponseWriter, r *http.Request) {
 		sendDownload(w, "form-data.xfdf", "application/vnd.adobe.xfdf", data)
 		return
 	}
-	data, err := pdfops.ExportFormJSON(doc.data)
+	data, err := pdfops.ExportFormJSON(s.docBytes(doc))
 	if err != nil {
 		httpError(w, http.StatusInternalServerError, "could not export form")
 		return
@@ -305,7 +308,7 @@ func (s *Server) handleExtractImages(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	data, count, err := pdfops.ExtractImagesZip(doc.data)
+	data, count, err := pdfops.ExtractImagesZip(s.docBytes(doc))
 	if err != nil {
 		httpError(w, http.StatusInternalServerError, "could not extract images")
 		return
