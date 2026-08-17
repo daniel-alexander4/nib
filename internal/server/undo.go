@@ -20,10 +20,16 @@ import (
 //     maxUndoBytes for one document — and 2N× once documents multiply. Counting the
 //     pair is what closes it.
 //
-// It is a bound with one named exception, not a hard cap: the active document always
-// keeps its most recent undo entry, so a single document holding one state larger than
-// the budget exceeds it rather than losing the ability to undo. Stated because a cap
-// the code does not enforce is worse than a smaller one it does.
+// It is a bound with one named exception, not a hard cap: the document that just
+// GREW always keeps its most recent undo entry, so a single document holding one
+// state larger than the budget exceeds it rather than losing the ability to undo.
+// Stated because a cap the code does not enforce is worse than a smaller one it does.
+//
+// "The document that just grew" is not "the active document", and this comment said
+// active while the code (tier 3 below) trims `grown`. ADR-003 names that exact
+// conflation as a live defect rather than a naming quibble — one that passed every
+// test — so the inverted wording sat nine lines above the constant, which is the
+// first thing anyone reaching for the budget reads.
 const (
 	maxUndoDepth = 30
 	maxUndoBytes = 256 << 20
