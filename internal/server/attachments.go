@@ -18,7 +18,7 @@ func (s *Server) handleAttachmentsList(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	aa, err := pdfops.Attachments(doc.data)
+	aa, err := pdfops.Attachments(s.docBytes(doc))
 	if err != nil {
 		httpError(w, http.StatusInternalServerError, "could not list attachments: "+err.Error())
 		return
@@ -43,12 +43,12 @@ func (s *Server) handleAttachmentAdd(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	result, err := pdfops.AddAttachment(doc.data, r.FormValue("name"), data)
+	result, err := pdfops.AddAttachment(s.docBytes(doc), r.FormValue("name"), data)
 	if err != nil {
 		httpError(w, http.StatusBadRequest, "could not add attachment: "+err.Error())
 		return
 	}
-	if !s.commitMutation(doc, doc.data, result) {
+	if !s.commitMutation(doc, s.docBytes(doc), result) {
 		httpError(w, http.StatusNotFound, "no document open")
 		return
 	}
@@ -62,8 +62,18 @@ func (s *Server) handleAttachmentExtract(w http.ResponseWriter, r *http.Request)
 	if !ok {
 		return
 	}
+	// Through parseMultipart, not a bare FormValue. The client posts a FormData
+	// here, so FormValue would trigger ParseMultipartForm implicitly — with no size
+	// cap on the body, and with the parts it spills to temp files never removed,
+	// which is exactly the leak parseMultipart's doc comment says it exists to
+	// prevent ("skipping the cleanup leaks disk until the process exits").
+	cleanup, ok := parseMultipart(w, r, maxPDFBytes)
+	if !ok {
+		return
+	}
+	defer cleanup()
 	name := r.FormValue("name")
-	data, err := pdfops.ExtractAttachment(doc.data, name)
+	data, err := pdfops.ExtractAttachment(s.docBytes(doc), name)
 	if err != nil {
 		httpError(w, http.StatusNotFound, "could not extract attachment: "+err.Error())
 		return

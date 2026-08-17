@@ -2,7 +2,9 @@ package server
 
 import (
 	"bytes"
+	"io"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"testing"
@@ -149,4 +151,90 @@ func TestSaveToAClosedDocumentIsRefusedNotRedirected(t *testing.T) {
 	if !bytes.Equal(gotB, originalB) {
 		t.Error("the refused save still wrote to the now-current document's file")
 	}
+}
+
+// TestSaveRefusesADocumentClosedWhileTheBodyWasRead covers the window the test
+// above cannot reach. There, the id already named nothing when the request
+// arrived, so resolveDoc refused it. Here the document is live at resolveDoc and
+// closed by the time the bytes have been read — which is the ordinary case for a
+// large save, because the body read is the slow part.
+//
+// commitMutation's contract names this caller: "a caller that tested the document
+// first would leave a window for a close to land in between, which is the very
+// defect". handleSave does not route through commitMutation, so it inherited the
+// defect and not the guard, and answered 200 with an EMPTY docResponse — a success
+// reply for discarded work — after writing the file.
+//
+// The handler is invoked DIRECTLY rather than over a client, and that is the point
+// of the test rather than a shortcut. Two earlier shapes both passed with the
+// guards removed: sequencing the close on a pipe write raced the dispatch and
+// closed the document before resolveDoc (a 409 for an entirely different reason),
+// and hanging the hook on the request body failed because a client-side body is
+// read by the CLIENT as it transmits, so it fired before the server saw anything.
+// Only a server-side body puts the close strictly between resolveDoc and the
+// write. Both false greens said "refused" and neither had been near the defect.
+func TestSaveRefusesADocumentClosedWhileTheBodyWasRead(t *testing.T) {
+	_, srv := startServerWith(t)
+
+	pdf, err := testpdf.Form()
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "doc.pdf")
+	original := append([]byte("ON-DISK-ORIGINAL-"), pdf...)
+	if err := os.WriteFile(path, original, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	doc := srv.setDoc(&document{path: path, data: pdf})
+
+	body := &closeOnFirstRead{data: append([]byte("EDITED-"), pdf...), closeIt: func() { srv.setDoc(nil) }}
+	req := httptest.NewRequest(http.MethodPost, "/api/save", body)
+	req.Header.Set("X-Nib-Doc", doc.id.String())
+	rec := httptest.NewRecorder()
+
+	srv.handleSave(rec, req)
+
+	if !body.read {
+		t.Fatal("the handler never read the body, so the window this test exists for was never entered")
+	}
+	if rec.Code == http.StatusOK {
+		t.Errorf("save into a document closed mid-read answered 200 — a success reply for discarded work")
+	}
+	if rec.Code != http.StatusConflict {
+		t.Errorf("status = %d, want %d", rec.Code, http.StatusConflict)
+	}
+
+	// And it must not have touched the disk: the document is gone, so this is an
+	// operation against something the server no longer holds.
+	onDisk, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(onDisk, original) {
+		t.Errorf("the file was written for a closed document: now %d bytes, want the original %d", len(onDisk), len(original))
+	}
+}
+
+// closeOnFirstRead delivers a request body and runs closeIt the first time the
+// handler reads from it. handleSave calls resolveDoc before io.ReadAll, so the
+// first Read is strictly after the document was resolved and strictly before the
+// file is written — the window, entered deterministically.
+type closeOnFirstRead struct {
+	data    []byte
+	off     int
+	read    bool
+	closeIt func()
+}
+
+func (c *closeOnFirstRead) Read(p []byte) (int, error) {
+	if !c.read {
+		c.read = true
+		c.closeIt()
+	}
+	if c.off >= len(c.data) {
+		return 0, io.EOF
+	}
+	n := copy(p, c.data[c.off:])
+	c.off += n
+	return n, nil
 }

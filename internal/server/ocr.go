@@ -2,11 +2,17 @@ package server
 
 import (
 	"encoding/json"
+	"io"
 	"log"
 	"net/http"
 
 	"nib/internal/pdfops"
 )
+
+// maxOCRWordsBytes caps the OCR words body. A dense page runs to a few thousand
+// Word structs and a long document is stamped page by page, so 32 MiB clears any
+// real request by a wide margin while still bounding the decode.
+const maxOCRWordsBytes = 32 << 20
 
 // handleOCR bakes an invisible, searchable text layer onto the current document
 // from OCR results the browser produced. The browser rasterizes each page and
@@ -35,7 +41,12 @@ func (s *Server) handleOCR(w http.ResponseWriter, r *http.Request) {
 		Lang  string        `json:"lang"`
 		Words []pdfops.Word `json:"words"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+	// Capped like every other JSON body in this package (1<<16 for the small
+	// settings bodies, 1<<20 for profile). This one was uncapped, and it is the
+	// largest of them: a page of OCR output is thousands of Word structs, so the
+	// ceiling has to clear a real document while still bounding the stream. An
+	// uncapped decoder here let a single POST grow the heap without limit.
+	if err := json.NewDecoder(io.LimitReader(r.Body, maxOCRWordsBytes)).Decode(&body); err != nil {
 		httpError(w, http.StatusBadRequest, "could not read OCR words")
 		return
 	}
@@ -43,7 +54,7 @@ func (s *Server) handleOCR(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, s.docResponse(doc))
 		return
 	}
-	result, err := pdfops.StampTextLayer(doc.data, body.Words, body.Lang)
+	result, err := pdfops.StampTextLayer(s.docBytes(doc), body.Words, body.Lang)
 	if err != nil {
 		log.Printf("ocr: stamp failed (%d words, lang %q): %v", len(body.Words), body.Lang, err)
 		httpError(w, http.StatusUnprocessableEntity, "could not add the text layer")
@@ -64,7 +75,7 @@ func (s *Server) handleOCR(w http.ResponseWriter, r *http.Request) {
 			log.Printf("ocr: could not set document language %q: %v", tag, lerr)
 		}
 	}
-	if !s.commitMutation(doc, doc.data, result) {
+	if !s.commitMutation(doc, s.docBytes(doc), result) {
 		httpError(w, http.StatusNotFound, "no document open")
 		return
 	}
