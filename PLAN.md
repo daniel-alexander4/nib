@@ -1464,8 +1464,24 @@ Exit criteria:
   view-scoped.
 - Re-fit and dpr-heal on activation (a view that loads hidden gets no scale).
 - The two sidebars show the active document's content and nothing else.
-**(phase-open, 2026-08-16 — slices firmed against the codebase as it now stands, with
-the surface measured rather than estimated.)**
+
+**(close-out run 2026-08-17, v1.105.19 — the phase is NOT marked done, and the reason is
+one open question rather than open work.)** All six slices shipped (v1.105.0→v1.105.5) and
+the three-part close-out has run: the full-repo `/code-review`
+(`<project-memory>/code-reviews/P05-phase-close-2026-08-17.md`, 96 findings, 8 criticals,
+now **fully dispositioned** — 47 fixed, 5 no-change-needed, 44 carried by named pending
+items), the remediation (v1.105.6→v1.105.19, seventeen commits), and the **graduation pass
+over all 34 seam rows** (`<project-memory>/instruments/P05.md`) — all 34 `keep-live`, one
+row (V29) corrected, and the pass's own blind spot closed with a new published-field
+reader scan. Five tiers green.
+
+What is open is the **acceptance ledger**: 14 met, 0 not met, **2 not exercised** — clause
+4's re-fit and dpr-heal on activation. Both are present in the code (`app.js:1619`,
+`:1625-1628`) and neither is observable by any tier: jsdom reports every `clientWidth` as
+0, tier 3 has one view, and the only path that creates a second view in production needs a
+live pinned peer. P06 adds the way to create one **without** a peer, which is what a test
+needs. Per the ledger rule a phase closes on no `not exercised` rows **or on Dan's explicit
+call to close over them**, so the marker waits on that call — not on a build.
 
 **377 references across 13 bindings in a 7,222-line file** — measured, and it is what
 drives the slicing below: `pdfDocument` 148, `viewer` 67, `docMeta` 37, `overlayFields`

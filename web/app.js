@@ -839,6 +839,15 @@ async function openSessionInit() {
 }
 
 async function sessionInit() {
+  // Captured before the first await, and this is the operation where getting it wrong
+  // is worst: three awaits (the quote, the attestation render, the bake) separate the
+  // click from the POST, and what goes out is a DOCUMENT SENT TO A PEER. A bare
+  // bakedForm() on the far side of them sends whichever document is active by then,
+  // signed and addressed to a pinned counterparty, and the reload then installs the
+  // co-signed result over whatever view is active when the session returns — which for
+  // a live co-sign is minutes later.
+  const owner = view;
+  const opDoc = owner.docMeta;
   const fingerprint = els.sinPeer.value;
   if (!fingerprint) return;
   const address = els.sinAddr.value.trim();
@@ -856,14 +865,14 @@ async function sessionInit() {
 
   els.sinGo.disabled = true; els.sinCancel.disabled = true; els.sinProgress.hidden = false;
   try {
-    const form = await bakedForm();
+    const form = await bakedForm(owner);
     form.append('params', JSON.stringify({ fingerprint, intent, when: q.when }));
     form.append('appearance', png, 'attestation.png');
     form.append('address', address);
-    const res = await apiFetch('/api/session/initiate', { method: 'POST', body: form });
+    const res = await apiFetch('/api/session/initiate', { method: 'POST', body: form, docId: opDoc && opDoc.id });
     if (!res.ok) { toast(await errText(res, 'co-signing did not complete')); return; }
     els.sessionInitModal.hidden = true;
-    await setDocumentFromServer(await res.json());
+    await setDocumentFromServer(await res.json(), owner);
     toast('Co-signed live — document updated');
   } catch (e) {
     toast('could not co-sign: ' + e.message);
@@ -2682,6 +2691,12 @@ async function save() {
   // canSave that decides download-vs-overwrite, and nothing read from the live
   // `view.docMeta` after this line.
   const doc = view.docMeta;
+  // The view behind that meta, captured in the same breath. save() already refuses to
+  // reload when the open document changed, so this is not what makes it safe — it is
+  // what makes the RULE uniform: every setDocumentFromServer call names its target, so
+  // the guard below can be "all of them" with one exemption class instead of a list of
+  // functions each excused for its own reason.
+  const owner = view;
   els.saveBtn.disabled = true;
   try {
     const bytes = await bakedBytes();
@@ -2724,7 +2739,7 @@ async function save() {
     // If detected fields were baked in, reload so the page shows the stamped
     // text and the transient input widgets are cleared. view.overlayFields is read only
     // once the document is known not to have changed, above.
-    if (view.overlayFields.length) await setDocumentFromServer(meta);
+    if (view.overlayFields.length) await setDocumentFromServer(meta, owner);
   } catch (err) {
     toast('save failed: ' + err.message);
   } finally {
@@ -2907,13 +2922,19 @@ els.scanClose.onclick = () => { els.scanModal.hidden = true; };
 // the cleaned document and shows what remains; on failure it leaves the document
 // untouched and points to the next, more thorough method.
 async function runSanitize(method, stepDown) {
-  if (!view.pdfDocument) return;
+  // /api/sanitize resolves the addressed document and commits into it, so the id is
+  // the pin for the request; `owner` is the pin for the RELOAD, which lands after the
+  // round-trip and would otherwise wipe the overlays and undo stack of whichever view
+  // is active by then.
+  const owner = view;
+  const opDoc = owner.docMeta;
+  if (!owner.pdfDocument) return;
   if (!confirmSignatureLoss()) return;
-  const res = await apiFetch('/api/sanitize?method=' + method, { method: 'POST' });
+  const res = await apiFetch('/api/sanitize?method=' + method, { method: 'POST', docId: opDoc && opDoc.id });
   if (!res.ok) return toast('removal failed');
   const out = await res.json();
   if (!out.ok) return toast('Could not cleanly remove it — try ' + stepDown + '.');
-  await setDocumentFromServer(out);
+  await setDocumentFromServer(out, owner);
   renderScanReport(out.residual);
   const left = (out.residual.findings || []).length;
   toast(left ? 'Cleaned — ' + left + ' item(s) remain; Flatten removes the rest'
@@ -2929,24 +2950,26 @@ els.scanSafeBtn.onclick = () => runSanitize('safe', 'Flatten');
 // on-open prompt below (a PDF that won't render without its open password). The
 // server replaces the working copy with the decrypted bytes; only the supplied
 // password is tried — Nib never guesses one.
-async function postDecrypt(password) {
+async function postDecrypt(password, owner = view) {
   const res = await apiFetch('/api/decrypt', {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body: 'password=' + encodeURIComponent(password),
+    docId: owner.docMeta && owner.docMeta.id,
   });
   if (!res.ok) { toast('could not remove protection'); return null; }
   return res.json();
 }
 
 els.decryptBtn.onclick = async () => {
-  if (!view.pdfDocument) return toast('Open a PDF first');
+  const owner = view;
+  if (!owner.pdfDocument) return toast('Open a PDF first');
   if (!confirmSignatureLoss()) return;
-  const out = await postDecrypt(''); // an open doc decrypts with the empty user password
+  const out = await postDecrypt('', owner); // an open doc decrypts with the empty user password
   if (!out) return;
   if (out.reason === 'plain') return toast('This document isn’t password-protected');
   if (out.reason === 'password') return openDecryptPrompt(); // shouldn't occur for an open doc
-  await setDocumentFromServer(out);
+  await setDocumentFromServer(out, owner);
   toast('Password protection removed');
 };
 
@@ -2959,7 +2982,12 @@ function openDecryptPrompt() {
 }
 els.decryptCancel.onclick = () => { els.decryptModal.hidden = true; };
 els.decryptGo.onclick = async () => {
-  const out = await postDecrypt(els.decryptPw.value);
+  // The prompt is only ever raised for the ACTIVE view (setDocumentFromServer refuses
+  // to offer it for a background load, because the password the user types would
+  // otherwise be applied to the document they are looking at), so entry is the right
+  // capture point — and the reload on the far side of the round-trip still needs it.
+  const owner = view;
+  const out = await postDecrypt(els.decryptPw.value, owner);
   if (!out) return;
   if (out.reason === 'password') {
     els.decryptError.textContent = 'Incorrect password — try again.';
@@ -2968,7 +2996,7 @@ els.decryptGo.onclick = async () => {
     return;
   }
   els.decryptModal.hidden = true;
-  await setDocumentFromServer(out.reason === 'plain' ? view.docMeta : out);
+  await setDocumentFromServer(out.reason === 'plain' ? owner.docMeta : out, owner);
   // Unlocking rewrites the PDF, which breaks any signature it carried. On this
   // on-open path the user never saw the signed state (the doc couldn't render
   // until now), so the usual confirmSignatureLoss prompt never fired — warn here
@@ -3036,9 +3064,14 @@ els.encryptPw2.addEventListener('keydown', (e) => {
 // Flatten is the guaranteed-inert floor: rasterise every page and load the
 // flattened result back as the open document.
 els.scanFlattenBtn.onclick = async () => {
-  if (!view.pdfDocument) return;
+  // Flatten rasterises every page and installs the result as the open document, so
+  // both halves need the pin: the pages come from `owner`, and the reload lands on
+  // `owner` — a rasterise of a 300-page scan is the longest window in the Secure tab.
+  const owner = view;
+  const opDoc = owner.docMeta;
+  if (!owner.pdfDocument) return;
   if (!confirmSignatureLoss()) return;
-  const pages = await renderFilledPages(2);
+  const pages = await renderFilledPages(2, undefined, undefined, undefined, owner);
   const form = new FormData();
   pages.forEach((p, i) => {
     form.append('image', p.blob, `page-${i + 1}.png`);
@@ -3047,9 +3080,9 @@ els.scanFlattenBtn.onclick = async () => {
   });
   form.append('format', 'pdf');
   form.append('reload', '1');
-  const res = await apiFetch('/api/assemble', { method: 'POST', body: form });
+  const res = await apiFetch('/api/assemble', { method: 'POST', body: form, docId: opDoc && opDoc.id });
   if (!res.ok) return toast('flatten failed');
-  await setDocumentFromServer(await res.json());
+  await setDocumentFromServer(await res.json(), owner);
   renderScanReport({ findings: [] });
   toast('Flattened — document is now inert images');
 };
@@ -4555,8 +4588,13 @@ if (els.ocrBtn) els.ocrBtn.onclick = runOCR;
 // renderFilledPages rasterises the saved (form-filled, stamped) document so the
 // raster reflects every edit. Used for flatten and image export. mime/quality
 // default to PNG; "image/jpeg" + a quality drives the lossy "reduce size" path.
-async function renderFilledPages(scale, onlyPage, mime, quality) {
-  const bytes = await bakedBytes();
+// `owner` is the document the pages come FROM, and it is threaded rather than
+// defaulted-and-forgotten: bakedBytes reads its overlays, stamps, covers and notes,
+// so a bare bakedBytes() here rasterises whichever document is active when this
+// runs. Every caller below has already awaited by the time it reaches this, which
+// is exactly when "the active view" stops meaning "the document the user acted on".
+async function renderFilledPages(scale, onlyPage, mime, quality, owner = view) {
+  const bytes = await bakedBytes(owner.docMeta && owner.docMeta.id, owner);
   const doc = await pdfjsLib.getDocument({ data: bytes }).promise;
   const pages = [];
   const from = onlyPage || 1;
@@ -4593,12 +4631,16 @@ async function flattenPages(pages, paint, docId = view.docMeta && view.docMeta.i
 // assembleBlob rasterises every (filled, stamped) page and packages it server-
 // side into a flattened image-PDF or a ZIP of PNGs. Returns the blob, or null on
 // failure.
-// `docId` defaults to the document open AT ENTRY, which is a defined moment before
+// `owner` defaults to the document open AT ENTRY, which is a defined moment before
 // any await inside this function — not "whatever is current when the request is
 // built", which is the defect (D7). A caller that has already awaited before reaching
-// here must pass its OWN captured id, because entry is already too late for it.
-async function assembleBlob(format, docId = view.docMeta && view.docMeta.id) {
-  const pages = await renderFilledPages(2);
+// here must pass its OWN captured view, because entry is already too late for it.
+// The owner IS the pin: the id addresses the request and the same record supplies the
+// bytes. Taking a bare `docId` while renderFilledPages read the active view was the
+// half-threaded shape — the request named A and carried B's pages.
+async function assembleBlob(format, owner = view) {
+  const docId = owner.docMeta && owner.docMeta.id;
+  const pages = await renderFilledPages(2, undefined, undefined, undefined, owner);
   const form = new FormData();
   pages.forEach((p, i) => {
     form.append('image', p.blob, `page-${i + 1}.png`);
@@ -4615,12 +4657,13 @@ async function assembleBlob(format, docId = view.docMeta && view.docMeta.id) {
 // quality and assembles a much smaller image-PDF — the lossy "reduce size" path.
 // It flattens the document (text becomes images), so the caller warns and shows
 // the before/after size before saving.
-// `docId` defaults to the document open AT ENTRY, which is a defined moment before
+// `owner` defaults to the document open AT ENTRY, which is a defined moment before
 // any await inside this function — not "whatever is current when the request is
 // built", which is the defect (D7). A caller that has already awaited before reaching
-// here must pass its OWN captured id, because entry is already too late for it.
-async function compressBlob(scale, quality, docId = view.docMeta && view.docMeta.id) {
-  const pages = await renderFilledPages(scale, 0, 'image/jpeg', quality);
+// here must pass its OWN captured view, because entry is already too late for it.
+async function compressBlob(scale, quality, owner = view) {
+  const docId = owner.docMeta && owner.docMeta.id;
+  const pages = await renderFilledPages(scale, 0, 'image/jpeg', quality, owner);
   const form = new FormData();
   pages.forEach((p, i) => {
     form.append('image', p.blob, `page-${i + 1}.jpg`);
@@ -4647,8 +4690,9 @@ function sizeSummary(before, after) {
 els.saveFlatBtn.onclick = async () => {
   // Export name captured at operation entry — see exportBase (D7).
   const exportName = exportBase();
-  if (!view.pdfDocument) return toast('Open a PDF first');
-  const blob = await assembleBlob('pdf');
+  const owner = view;
+  if (!owner.pdfDocument) return toast('Open a PDF first');
+  const blob = await assembleBlob('pdf', owner);
   if (blob) openSaveAs(blob, exportName + '-flattened.pdf', 'Save flattened PDF');
 };
 
@@ -4681,13 +4725,14 @@ els.reduceGo.onclick = async () => {
   // before it reaches compressBlob, so the helpers' entry-time default would already be
   // too late — entry is only a safe capture point for a helper entered before the
   // operation's first await, and this is the one caller where it is not.
-  const opDoc = view.docMeta;
+  const owner = view;
+  const opDoc = owner.docMeta;
   const mode = els.reduceModal.querySelector('input[name="reduceMode"]:checked').value;
   els.reduceGo.disabled = true; els.reduceGo.textContent = 'Working…';
   let blob, before, after;
   try {
     if (mode === 'optimize') {
-      const res = await apiFetch('/api/optimize', { method: 'POST' });
+      const res = await apiFetch('/api/optimize', { method: 'POST', docId: opDoc && opDoc.id });
       if (!res.ok) return toast('Could not optimize');
       blob = await res.blob();
       before = Number(res.headers.get('X-Original-Size')) || 0;
@@ -4695,8 +4740,8 @@ els.reduceGo.onclick = async () => {
     } else {
       const presets = { low: [96 / 72, 0.55], med: [150 / 72, 0.7], high: [220 / 72, 0.82] };
       const [scale, q] = presets[els.reduceQ.value] || presets.med;
-      before = (await bakedBytes()).length;
-      blob = await compressBlob(scale, q, opDoc && opDoc.id);
+      before = (await bakedBytes(opDoc && opDoc.id, owner)).length;
+      blob = await compressBlob(scale, q, owner);
       if (!blob) return;
       after = blob.size;
     }
@@ -4715,8 +4760,9 @@ els.reduceSave.onclick = () => {
 els.exportZipBtn.onclick = async () => {
   // Export name captured at operation entry — see exportBase (D7).
   const exportName = exportBase();
-  if (!view.pdfDocument) return toast('Open a PDF first');
-  const blob = await assembleBlob('zip');
+  const owner = view;
+  if (!owner.pdfDocument) return toast('Open a PDF first');
+  const blob = await assembleBlob('zip', owner);
   if (blob) openSaveAs(blob, exportName + '-pages.zip', 'Export pages (ZIP)');
 };
 
@@ -4863,9 +4909,14 @@ els.fieldNameGo.onclick = async () => {
 els.exportPngBtn.onclick = async () => {
   // Export name captured at operation entry — see exportBase (D7).
   const exportName = exportBase();
-  if (!view.pdfDocument) return;
-  const [{ blob }] = await renderFilledPages(2, view.viewer.currentPageNumber);
-  openSaveAs(blob, exportName + '-page' + view.viewer.currentPageNumber + '.png', 'Export page (PNG)');
+  const owner = view;
+  if (!owner.pdfDocument) return;
+  // The page number is read ONCE, before the await: read again on the far side it
+  // would name a page of whatever document is active then, and the file would be
+  // named for a page it does not contain.
+  const pageNum = owner.viewer.currentPageNumber;
+  const [{ blob }] = await renderFilledPages(2, pageNum, undefined, undefined, owner);
+  openSaveAs(blob, exportName + '-page' + pageNum + '.png', 'Export page (PNG)');
 };
 
 els.exportTextBtn.onclick = async () => {
