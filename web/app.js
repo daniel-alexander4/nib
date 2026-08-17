@@ -368,7 +368,27 @@ function applyStatus(st) {
       reconcileWithServer()
         .catch((e) => console.error('restore failed', e))
         .then(() => {
-          const initial = new URLSearchParams(location.search).get('open');
+          const params = new URLSearchParams(location.search);
+          // A hand-off that did not open a document says so here. The launch that sent
+          // it has no terminal — a double-click's stderr goes nowhere a user will look —
+          // so the message travels on the URL it surfaces this window with.
+          //
+          // A CODE, mapped to words HERE. The launch names which thing happened and the
+          // UI owns the sentence: nothing attacker-influenced is ever rendered, and the
+          // wording lives where wording is edited rather than in a Go string.
+          //
+          // Its honest limit, stated because it is easy to mistake for a delivery
+          // guarantee: this arrives only when the browser opens a NEW window for the
+          // surfaced URL. If it focuses the existing one instead, that page never
+          // reloads and never sees the parameter — the same reason Nib cannot promise
+          // to raise a window it does not own.
+          const NOTICES = {
+            'handoff-refused': 'That document could not be opened here — Nib may be full.',
+            'handoff-queued': 'That document will open once you unlock Nib.',
+          };
+          const notice = NOTICES[params.get('notice')];
+          if (notice) toast(notice);
+          const initial = params.get('open');
           if (initial) openOrActivate(initial).catch((e) => toast('could not open: ' + e.message));
         });
     }

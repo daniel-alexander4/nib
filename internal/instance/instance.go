@@ -14,11 +14,13 @@
 package instance
 
 import (
+	"bytes"
 	"crypto/rand"
 	"crypto/subtle"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"io"
 	"net"
 	"net/http"
 	"os"
@@ -30,9 +32,13 @@ import (
 // vault lives in, which is already the private, per-user place this app keeps state.
 const Name = "instance.json"
 
-// HeaderToken carries the probe token on GET /api/instance. Named here, beside the
-// record that holds the value, so the client and the server cannot disagree about it.
-const HeaderToken = "X-Nib-Instance"
+// HeaderToken carries the probe token on GET /api/instance, and HeaderHandoff the
+// hand-off secret on POST /api/handoff. Named here, beside the record that holds the
+// values, so the client and the server cannot disagree about them.
+const (
+	HeaderToken   = "X-Nib-Instance"
+	HeaderHandoff = "X-Nib-Handoff"
+)
 
 // Record is what a running Nib publishes about itself: where to reach it, and a secret
 // that proves the thing answering there is a Nib and not something else that happens to
@@ -52,6 +58,15 @@ type Record struct {
 	// Token authenticates a probe. It is not a capability: it proves identity to
 	// GET /api/instance and grants nothing else.
 	Token string `json:"token"`
+	// Handoff authorises POST /api/handoff, and nothing else (D20).
+	//
+	// **Separate from Token deliberately, and the separation IS the decision.** The
+	// probe token is presented to anything that asks whether this instance is alive;
+	// if it also authorised "open this file", every read of the record would become a
+	// capability grant, and the sentence above about Token would be false. Two fields
+	// in one 0600 file cost nothing and keep a leak of the cheap, widely-presented
+	// secret from handing over the expensive one.
+	Handoff string `json:"handoff"`
 	// Version is the running build, so a launch can report a mismatch rather than
 	// hand a path to an instance that may not understand it.
 	Version string `json:"version"`
@@ -120,6 +135,9 @@ func Read(dir string) (Record, error) {
 	if rec.Addr == "" || rec.Token == "" {
 		return rec, errors.New("instance record is incomplete")
 	}
+	// Handoff may be empty on a record written by an older build. Probing still works;
+	// handing off does not, and the caller finds that out when it tries — which is
+	// better than refusing to read a record that is valid for what it was written for.
 	return rec, nil
 }
 
@@ -191,4 +209,44 @@ func Probe(rec Record) bool {
 	}
 	defer resp.Body.Close()
 	return resp.StatusCode == http.StatusOK
+}
+
+// HandOff asks the instance the record names to open path (empty means "just surface
+// yourself"), and reports what it did.
+//
+// The four results are distinct because the caller has a decision to make and "it
+// worked" does not answer it: `opened` and `focused` mean exit; `queued` means exit, the
+// user will see it when they unlock; `refused` means exit but say so. Only an error
+// means "that instance is not usable — become the primary".
+func HandOff(rec Record, path string) (result string, reason string, err error) {
+	if rec.Handoff == "" {
+		return "", "", errors.New("the instance record carries no hand-off secret")
+	}
+	body, err := json.Marshal(map[string]string{"path": path})
+	if err != nil {
+		return "", "", err
+	}
+	req, err := http.NewRequest(http.MethodPost, "http://"+rec.Addr+"/api/handoff", bytes.NewReader(body))
+	if err != nil {
+		return "", "", err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set(HeaderHandoff, rec.Handoff)
+	c := &http.Client{Timeout: probeTimeout}
+	resp, err := c.Do(req)
+	if err != nil {
+		return "", "", err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return "", "", errors.New("the running instance refused the hand-off")
+	}
+	var out struct {
+		Result string `json:"result"`
+		Reason string `json:"reason"`
+	}
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<16)).Decode(&out); err != nil {
+		return "", "", err
+	}
+	return out.Result, out.Reason, nil
 }
