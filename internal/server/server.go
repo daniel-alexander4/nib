@@ -328,7 +328,16 @@ func (s *Server) handleOpen(w http.ResponseWriter, r *http.Request) {
 		httpError(w, http.StatusUnsupportedMediaType, "that file isn't a PDF")
 		return
 	}
-	installed := s.setDoc(&document{path: path, data: data, sig: sign.Verify(data)})
+	// Adds rather than replaces (P06.S01): opening a second file leaves the first
+	// open and reachable through the tab strip. Before this, setDoc emptied the whole
+	// registry while the client re-pointed only the ACTIVE view — so with an arrival
+	// open, an Open left the second view rendering a document the server no longer
+	// held, every pinned request against it a 409 with the pages still on screen.
+	installed, err := s.addDocCapped(&document{path: path, data: data, sig: sign.Verify(data)})
+	if err != nil {
+		httpError(w, http.StatusConflict, err.Error())
+		return
+	}
 	_ = vaultFrom(r).AddRecent(path) // best-effort; failure to record is non-fatal
 	writeJSON(w, s.docResponse(installed))
 }
@@ -359,7 +368,11 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 		httpError(w, http.StatusUnsupportedMediaType, "that file isn't a PDF")
 		return
 	}
-	installed := s.setDoc(&document{path: "", data: data, sig: sign.Verify(data)})
+	installed, err := s.addDocCapped(&document{path: "", data: data, sig: sign.Verify(data)})
+	if err != nil {
+		httpError(w, http.StatusConflict, err.Error())
+		return
+	}
 	resp := s.docResponse(installed)
 	resp.Name = header.Filename
 	writeJSON(w, resp)
@@ -613,6 +626,59 @@ func (s *Server) registerLocked(doc *document) {
 	s.activeID = doc.id
 }
 
+// maxOpenDocs is D9's count cap: eight documents, refused rather than degrading.
+//
+// It is HALF of D9, and the half that needs no measurement. The decision is "count
+// AND aggregate bytes, refusing on whichever binds first", with the byte figure
+// chosen against a measurement in P06 — that is P06.S04's, and it is deliberately
+// not guessed here. What lands now is the count, because P06.S01 is the change that
+// makes unbounded growth reachable: before it, Open REPLACED, so a user's exposure
+// was one document however many times they opened one. After it, Open adds, and
+// twenty large scans are a keyboard shortcut. Shipping the thing that creates an
+// exposure two slices ahead of the thing that bounds it is not a defensible order,
+// so the free half travels with it.
+const maxOpenDocs = 8
+
+// ErrTooManyOpen refuses an open at the cap. A sentinel rather than a bare string so
+// the route can answer 409 for this and 500 for anything else, and so the test can
+// assert the specific refusal rather than being satisfied by any error at all.
+//
+// **The wording is true of the app as it ships this slice, and only that.** "Close one
+// first" is the obvious phrasing and it would be a lie until P06.S02: Close is still
+// close-ALL, server-side and client-side, so there is no way to close a single document
+// yet. A refusal that tells the user to do something the UI cannot do is worse than a
+// bare "no" — it sends them looking for a control that is not there. S02 adds Close view
+// and changes this line with it.
+var ErrTooManyOpen = errors.New("too many documents open (limit " + strconv.Itoa(maxOpenDocs) + ") — use Close, then reopen the ones you need")
+
+// addDocCapped is addDoc for the five USER-initiated install routes: open, open-url,
+// upload, combine, office. It refuses at maxOpenDocs.
+//
+// **The cap lives here and not in addDoc, and that distinction is the whole point.**
+// addDoc's other callers are arrivals (D10) — a completed co-signature, whose bytes
+// exist because a counterparty already did the work. Refusing an arrival at the cap
+// does not decline a request; it DESTROYS a signed document that has no other home,
+// since the session path installs it and nothing writes it to disk. A user opening a
+// ninth file can close one and try again; a peer who has already signed cannot.
+//
+// **The test and the append happen under one lock hold**, for the reason
+// commitMutation's contract comment gives one layer down: a caller that checked the
+// count first would leave a window for a concurrent open to land in between, and two
+// requests passing the check at seven both reach nine. One user with two browser
+// panes is enough, which is exactly how the /api/doc race was reproduced.
+func (s *Server) addDocCapped(doc *document) (*document, error) {
+	if doc == nil {
+		return nil, nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if len(s.docs) >= maxOpenDocs {
+		return nil, ErrTooManyOpen
+	}
+	s.registerLocked(doc)
+	return doc, nil
+}
+
 // addDoc opens doc ALONGSIDE whatever is already open and makes it active,
 // returning it. This is D10's arrival path, and the difference from setDoc is
 // entirely in what it does NOT do: it drops no document and clears no history.
@@ -624,7 +690,18 @@ func (s *Server) registerLocked(doc *document) {
 // the feature would ship as "your co-signature completed and you can never see it".
 // Activating also keeps today's observable behaviour exactly, which confines this
 // change to the part that was invisible anyway — the previous document surviving.
-// Revisit when tabs land.
+//
+// **Revisited when tabs landed (P06.S01, 2026-08-17): an arrival still activates.**
+// The strip now exists, so "badge a tab rather than seize the view" is buildable —
+// and it is deliberately not built here, because it is the one behaviour change in
+// this phase that **no tier can observe**. An arrival originates in a p2p session
+// with a pinned peer, so driving "the arrival did NOT take the view" needs a live
+// counterparty; the standing two-machine VERIFY item is the only instrument that
+// would see it. Shipping an unobservable change to the co-signing path, in the
+// slice that is already changing how every open works, buys a nicety at the price
+// of the one flow whose failures are cryptographic. The revisit is recorded rather
+// than left as a dangling "when tabs land", which is the doc-vs-code shape this
+// repo keeps finding.
 func (s *Server) addDoc(doc *document) *document {
 	if doc == nil {
 		return nil
@@ -638,10 +715,19 @@ func (s *Server) addDoc(doc *document) *document {
 // setDoc installs doc as the open document, REPLACING whatever was open, and
 // releasing the outgoing histories. nil closes the document.
 //
-// Replacing is still the right contract for its remaining callers — opening a file,
-// an upload, a combine, an office conversion — where the user is asking for this
-// document *instead of* that one. Arrivals are the case that differs, and they go
-// through addDoc (D10).
+// **Corrected 2026-08-17 (P06.S01): that list of callers is gone.** Opening a file, an
+// upload, a combine and an office conversion all moved to addDocCapped, because with a
+// tab strip the user asking for this document is no longer the user asking to be rid of
+// that one. What is left in PRODUCTION is a single caller — handleClose, passing nil —
+// so the non-nil path is now exercised only by tests, which use it to build a registry
+// in a known state and to assert replace-versus-add.
+//
+// It is kept rather than collapsed into a close, and the reason is a date rather than a
+// preference: P06.S02 splits Close view from Close all and is the slice that decides
+// what the server-side shape of a close becomes. Renaming this now and again in one
+// slice's time is churn across twenty test call sites for no gain. Recorded here so
+// that "setDoc has a production caller that replaces" cannot be read off the signature
+// again — which is exactly what this comment used to invite.
 //
 // It returns the document it installed (nil for a close), so the callers that install
 // and then describe a document pass the one they just installed rather than

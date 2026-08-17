@@ -37,7 +37,11 @@ func (s *Server) handleCombine(w http.ResponseWriter, r *http.Request) {
 		httpError(w, http.StatusInternalServerError, "could not combine the PDFs: "+err.Error())
 		return
 	}
-	installed := s.setDoc(&document{path: "", data: combined, sig: sign.Verify(combined)})
+	installed, cerr := s.addDocCapped(&document{path: "", data: combined, sig: sign.Verify(combined)})
+	if cerr != nil {
+		httpError(w, http.StatusConflict, cerr.Error())
+		return
+	}
 	resp := s.docResponse(installed)
 	resp.Name = "combined.pdf"
 	writeJSON(w, resp)
