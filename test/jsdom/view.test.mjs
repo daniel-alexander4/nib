@@ -64,6 +64,14 @@ const PER_VIEW_ENGINE = ['viewer', 'eventBus', 'linkService', 'findController'];
 // only `splitRects` was one, and it is now pinned at its operation entry. The real
 // justification needs no such list: each is one document's state reaching a shared toolbar
 // button, the shared cursor, or a destructive bulk operation.
+// The receivers a per-view binding may legitimately be read through. Named explicitly
+// rather than accepting any property path: P05.S05 moved several of these onto CAPTURED
+// owners, which is stronger than reading the active view — but "reached through a dot" is
+// weaker than the check was, and would stay green if a refactor parked them on some
+// non-view object. This list is the middle: captured owners are allowed, arbitrary hosts
+// are not.
+const VIEW_RECEIVERS = ['view', 'owner', 'target', 'v', 'out', 'arrival'];
+
 const PER_VIEW_TOOLS = [
   'docHadFlags', 'signTotal', 'signStarted',
   'redactMode', 'editMode', 'markerMode', 'activeMarker', 'fillTarget', 'activeTool',
@@ -232,7 +240,16 @@ test('the bulk bindings are per-view too', () => {
   for (const name of ['pdfDocument', 'docMeta', 'overlayFields']) {
     assert.doesNotMatch(CODE, new RegExp(`^(?:let|var|const)\\s+${name}\\b`, 'm'),
       `${name} is still module-level — 220 references would all reach whichever document is active`);
-    assert.ok(CODE.includes(`view.${name}`), `${name} is not reached through the view record`);
+    // Reached through SOME record, not specifically the active one. P05.S05 moved several
+    // of these onto captured owners (`owner.selAnchor`, `owner.selectedPages`) because the
+    // handler that reads them is baked into one view's thumbnail and fires later — which is
+    // STRONGER than reading the active view, not weaker.
+    //
+    // This is a re-derivation, not a loosening: the property form is only a stimulus check
+    // that the name is used at all. What actually forbids a module-level binding is the
+    // doesNotMatch above, and what forbids a bare read is the scan in the sibling test.
+    assert.match(CODE, new RegExp(`(?:${VIEW_RECEIVERS.join('|')})\\.${name}\\b`),
+      `${name} is not reached through a view record — expected one of ${VIEW_RECEIVERS.join('/')} as the receiver`);
   }
 });
 
@@ -315,7 +332,12 @@ test('the armed-tool and selection state is per view, and the transient state is
   for (const name of PER_VIEW_TOOLS) {
     assert.doesNotMatch(CODE, new RegExp(`^(?:let|var|const)\\s+${name}\\b`, 'm'),
       `${name} is still module-level — with two views it applies one document's state to another`);
-    assert.ok(CODE.includes(`view.${name}`), `${name} is not reached through the view record`);
+    // Reached through SOME record, not specifically the active one — P05.S05 moved several
+    // onto captured owners (`owner.selAnchor`), which is stronger than reading the active
+    // view, not weaker. A re-derivation: the module-scope ban above and the bare-read scan
+    // in the sibling test are what forbid the defect; this line is only the stimulus.
+    assert.match(CODE, new RegExp(`(?:${VIEW_RECEIVERS.join('|')})\\.${name}\\b`),
+      `${name} is not reached through a view record — expected one of ${VIEW_RECEIVERS.join('/')} as the receiver`);
   }
 
   // And the mirror: the transient drag state must STAY module-level. Moving it onto the
@@ -355,4 +377,50 @@ test('the document teardown is owner-scoped, so a background load cannot reach t
   assert.match(body, /owner\.redactMarks = \[\]/, 'clearOverlays does not clear the OWNER\'s redaction marks');
   assert.doesNotMatch(body, /(?<![.\w$])view\.(overlayFields|redactMarks|activeMarker|fillTarget)/,
     'clearOverlays still reaches the active view for a per-document field — that is the defect');
+});
+
+// P05.S05 — the drag listeners, and why this test exists separately from the one above.
+//
+// The pointer guard cannot see these. Its regexes key on `addEventListener('pointer`, and
+// the thumbnail reorder uses `dragstart`/`dragover`/`drop`/`dragend`. Bound to a per-view
+// grid they would serve only the view that existed at module evaluation, and every document
+// opened later would have thumbnails that are `draggable` and completely inert — the S03
+// failure restated in an event family the S03 guard does not match.
+test('the drag listeners are on the stable sidebar, not on a per-view grid', () => {
+  const DRAG = ['dragstart', 'dragover', 'drop', 'dragend'];
+  for (const ev of DRAG) {
+    assert.match(CODE, new RegExp(`els\\.thumbs\\.addEventListener\\('${ev}'`),
+      `the ${ev} listener is not on the stable #thumbs — a per-view grid serves only the first view`);
+  }
+  assert.doesNotMatch(CODE, /(?<![.\w$])view\.thumbGrid\.addEventListener\(/,
+    'a drag listener is bound to a per-view grid — documents opened later get inert thumbnails');
+  assert.doesNotMatch(CODE, /\.thumbgrid'\)\.addEventListener\(/,
+    'a drag listener is bound to a queried grid rather than the stable parent');
+});
+
+// The capture, which is the part that prevents a destructive wrong-document operation
+// rather than merely an inert one.
+test('a drag captures the grid and the view it started in', () => {
+  assert.match(CODE, /let dragGrid = null;/, 'the drag does not capture its grid');
+  assert.match(CODE, /let dragView = null;/, 'the drag does not capture its view');
+  assert.match(CODE, /dragGrid = wrap\.closest\('\.thumbgrid'\)/,
+    'dragstart does not capture the grid the gesture began in');
+
+  // The cancel path is the dangerous one: re-appending into a resolve-at-call-time grid
+  // physically moves one document's thumbnails into another's, after which the next drop
+  // reads their dataset.page and reorders the WRONG document. No docGen check catches it,
+  // because a drag never touches docGen.
+  const start = CODE.indexOf('function onThumbDragEnd()');
+  assert.ok(start !== -1, 'onThumbDragEnd is gone — the cancel-path guard has nothing to bind to');
+  const fn = CODE.slice(start, CODE.indexOf('\n}', start));
+  assert.match(fn, /dragOrig\.forEach\(\(w\) => dragGrid\.appendChild\(w\)\)/,
+    'the cancel path restores into a resolved grid rather than the captured one — it can relocate another view\'s thumbnails');
+  assert.doesNotMatch(fn, /(?<![.\w$])view\./,
+    'onThumbDragEnd reads the active view — it must use only what the gesture captured');
+
+  // And the drop refuses rather than misapplying, because pageOp resolves the module view.
+  const dstart = CODE.indexOf('function onThumbDrop(e)');
+  const drop = CODE.slice(dstart, CODE.indexOf('\n}', dstart));
+  assert.match(drop, /dragView !== view/,
+    'the drop does not refuse a reorder whose view has changed — pageOp would apply it to the wrong document');
 });

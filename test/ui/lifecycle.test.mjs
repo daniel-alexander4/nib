@@ -31,8 +31,10 @@ const chrome = () => page.evaluate(() => ({
   closeDisabled: document.getElementById('closeBtn').disabled,
   pageCount: document.querySelector('.pageCount').textContent,
   pageNum: document.querySelector('.pageNum').value,
-  thumbs: document.getElementById('thumbGrid').children.length,
-  outline: document.getElementById('outline').children.length,
+  thumbs: document.querySelector('.thumbgrid:not([hidden])')?.children.length ?? 0,
+  // CONTENT, not children: since P05.S05 each view's outline is a `.outlinelist` wrapper
+  // inside the shared `#outline` panel, so `children.length` counts open views.
+  outline: document.querySelectorAll('#outline .outline-edit, #outline a').length,
 }));
 const closeDoc = () => h.closeDocument(); // File mode first — see harness.mjs
 
@@ -41,7 +43,7 @@ const closeDoc = () => h.closeDocument(); // File mode first — see harness.mjs
 // structural zero and would have been a green nobody paid for.
 test('the empty state matches launch, thumbnail grid included', async () => {
   await h.openDocument(DOC, 3);
-  await page.waitForFunction(() => document.getElementById('thumbGrid').children.length === 3);
+  await page.waitForFunction(() => document.querySelector('.thumbgrid:not([hidden])')?.children.length === 3);
 
   const open = await chrome();
   assert.equal(open.wrap, 'has-doc');
@@ -64,6 +66,12 @@ test('the empty state matches launch, thumbnail grid included', async () => {
   assert.equal(shut.pageCount, '/ 0');
   assert.equal(shut.pageNum, '1');
   assert.equal(shut.thumbs, 0);
+  // The grid must still EXIST, emptied. `?? 0` reports 0 for a missing grid too, so a
+  // teardown that removed the active view's container instead of clearing it would read as
+  // "empty" and pass the line above — and the reopen test that follows checks pageCount but
+  // never thumbs, so nothing else would catch it.
+  assert.notEqual(await page.$('.thumbgrid'), null,
+    'the active view kept no grid after a close — a reopen would render into a detached node');
   assert.equal(shut.outline, 0);
   assert.equal(shut.wrap, '');
   // A clean document: no prompt. Evidence only because the prompt is driven below.
@@ -137,7 +145,7 @@ test('closing mid-thumbnail-build leaves no orphan thumbnail', async () => {
   assert.equal(total, 80);
 
   // Wait for the build to be demonstrably underway but nowhere near done.
-  await page.waitForFunction(() => document.getElementById('thumbGrid').children.length >= 3);
+  await page.waitForFunction(() => document.querySelector('.thumbgrid:not([hidden])')?.children.length >= 3);
   const atClose = (await h.counts()).thumbs;
 
   h.dialogs.length = 0;

@@ -61,7 +61,7 @@ const els = {
   sigBadge: $('sigBadge'), saveBtn: $('saveBtn'), statusCluster: $('statusCluster'),
   themeToggle: $('themeToggle'),
   viewerWrap: $('viewerWrap'), empty: $('empty'),
-  thumbs: $('thumbs'), thumbGrid: $('thumbGrid'), outline: $('outline'),
+  thumbs: $('thumbs'), outline: $('outline'),
   outlineModal: $('outlineModal'), outlineEditList: $('outlineEditList'),
   outlineAddBtn: $('outlineAddBtn'), outlineCancel: $('outlineCancel'), outlineSave: $('outlineSave'),
   thumbSelBar: $('thumbSelBar'), thumbSelCount: $('thumbSelCount'),
@@ -1118,6 +1118,8 @@ async function openArrivalInNewView() {
     // record. A reused view could carry one from a previous load.
     if (!arrival.pdfDocument) { // the load refused; drop the empty view rather than switch to it
       arrival.container.remove();
+      arrival.thumbGrid.remove();
+      arrival.outlineList.remove();
       // Guarded, because a Close can land during the load above: closeDocument resets
       // `views` to [view], indexOf returns -1, and splice(-1, 1) would remove the LAST
       // element — the live active view — leaving `views` without it.
@@ -1383,7 +1385,14 @@ function newView() {
     // This view's own DOM and its own pdf.js engine (ADR-002). `container` is the scroll
     // box; the page stack inside it is pdf.js's to own (it empties it on setDocument) and
     // is reachable as `viewer.viewer`, so it is not duplicated here.
+    //
+    // `thumbGrid` and `outlineList` are the sidebars' half of the same decision. The phase
+    // chose per-view containers over rebuild-on-activation because rebuilding is what
+    // ADR-002 exists to avoid — so a hidden document keeps its rendered thumbnails and its
+    // outline, and a switch is a `hidden` toggle rather than an N-page re-render.
     container: null,
+    thumbGrid: null,
+    outlineList: null,
     viewer: null,
     eventBus: null,
     linkService: null,
@@ -1408,6 +1417,19 @@ function newView() {
   const isFirstView = els.viewerWrap.querySelector('.viewerContainer') === null;
   els.viewerWrap.insertBefore(v.container, els.empty);
 
+  // The sidebars' per-view halves. Both go INSIDE the shared panels rather than replacing
+  // them: `#thumbs` keeps the append-PDF row and the selection bar, which are chrome for
+  // whichever document is active, and `#outline` has to stay one unique id because the tab
+  // machinery resolves panels by getElementById and `#outline a` styles the links as a
+  // descendant selector. Neither new class carries a `display` rule, so the `hidden`
+  // attribute works — the same trap style.css already documents for the selection bar.
+  v.thumbGrid = document.createElement('div');
+  v.thumbGrid.className = 'thumbgrid';
+  els.thumbs.appendChild(v.thumbGrid);
+  v.outlineList = document.createElement('div');
+  v.outlineList.className = 'outlinelist';
+  els.outline.appendChild(v.outlineList);
+
   // Each of these four is per view because the vendored pdf.js forces it, not for
   // tidiness — verified at the line during P05.S03's deepdive:
   //   * PDFViewer's constructor registers 'thumbnailrendered' on the bus it is handed
@@ -1420,6 +1442,13 @@ function newView() {
   //     the single counter.
   //   * PDFLinkService holds one pdfViewer field and setViewer is 1:1 (:1582), so
   //     outline clicks would drive the last-constructed viewer.
+  // From here on the view owns three attached nodes, and the PDFViewer constructor below
+  // can throw — its "container must be absolutely positioned" check is the reason the
+  // container is built visible in the first place. Without this, a throw leaves an orphan
+  // .viewerContainer inserted before #empty: transparent, inset:0, never hidden, sitting on
+  // top of the active document and swallowing its pointer events. The catch removes what
+  // this function appended and re-throws, so the caller's own failure path still runs.
+  try {
   v.eventBus = new EventBus();
   v.linkService = new PDFLinkService({ eventBus: v.eventBus });
   v.findController = new PDFFindController({ eventBus: v.eventBus, linkService: v.linkService });
@@ -1454,6 +1483,12 @@ function newView() {
   // needs, because its container reports clientWidth 0) is P05.S04's. Hidden, never
   // destroyed: the page DOM stays, which is the whole of ADR-002.
   v.container.hidden = !isFirstView;
+  v.thumbGrid.hidden = !isFirstView;
+  v.outlineList.hidden = !isFirstView;
+  } catch (e) {
+    v.container.remove(); v.thumbGrid.remove(); v.outlineList.remove();
+    throw e;
+  }
 
   // The bus is per view, so these registrations are per view too. Two kinds, and the
   // difference is the whole point:
@@ -1463,8 +1498,9 @@ function newView() {
   //     otherwise pair this view's page geometry with the active view's field list, and
   //     relayoutOverlays would move the active document's overlay elements into a
   //     background page div.
-  //   * Handlers that write SHARED chrome — the page-number inputs, the thumbnail
-  //     highlight, the find counter — bail unless this view is the active one. A
+  //   * Handlers that write SHARED chrome — the page-number inputs and the find counter
+  //     — bail unless this view is the active one. (The thumbnail highlight was in this
+  //     list until P05.S05 gave each view its own grid; it is now the view's own DOM.) A
   //     background document finishing its load must not repaint the foreground's.
   v.eventBus.on('pagesinit', () => {
     // On a HIDDEN view this computes a negative scale — 'page-width' routes to
@@ -1479,9 +1515,13 @@ function newView() {
   // has settled (pagesinit is too early — see fitWidestWidth).
   v.eventBus.on('pagesloaded', () => fitWidestWidth(v));
   v.eventBus.on('pagechanging', (e) => {
+    // The thumbnail highlight CHANGED CATEGORY in P05.S05. With a shared grid it was
+    // shared chrome and belonged behind the gate; with a per-view grid it is this view's
+    // own DOM, so it runs ungated — otherwise a background document's page changes never
+    // reach its own grid and switching to it shows `.current` on a stale page.
+    markCurrentThumb(v, e.pageNumber);
     if (v !== view) return;
-    all('.pageNum').forEach((i) => { i.value = e.pageNumber; });
-    markCurrentThumb(e.pageNumber);
+    all('.pageNum').forEach((i) => { i.value = e.pageNumber; }); // shared chrome, still gated
   });
   v.eventBus.on('pagerendered', () => relayoutRedactMarks(v));
   v.eventBus.on('scalechanging', () => relayoutRedactMarks(v));
@@ -1550,6 +1590,8 @@ function activateView(v) {
   out.pageNumber = out.viewer.currentPageNumber;
   closeDocBoundModals();
   out.container.hidden = true;
+  out.thumbGrid.hidden = true;
+  out.outlineList.hidden = true;
 
   // ── B: the swap ─────────────────────────────────────────────────────────────
   // One assignment, and everything downstream depends on it having happened: eleven
@@ -1559,6 +1601,8 @@ function activateView(v) {
   // ── C: geometry ─────────────────────────────────────────────────────────────
   // Unhide BEFORE the fit, or clientWidth is 0 and fitWidestWidth silently no-ops.
   v.container.hidden = false;
+  v.thumbGrid.hidden = false;
+  v.outlineList.hidden = false;
   fitWidestWidth(v);
   // Explicitly, not via the bus: a re-fit that computes the SAME scale fires no
   // `scalechanging`, so the self-serving path cannot be relied on to have run.
@@ -1624,25 +1668,12 @@ function repaintForActiveView() {
   all('.pageNum').forEach((i) => { i.value = open ? view.viewer.currentPageNumber : 1; });
   updateBadge(view.lastSig); // idempotent re-assignment; NEVER updateBadge(null) here
 
-  els.thumbGrid.innerHTML = '';
-  els.outline.innerHTML = '';
-  if (open) {
-    // The selection is snapshotted and put back, because buildThumbnails calls
-    // clearSelection() — which empties the INCOMING view's Set, not the outgoing one. A
-    // `.then(markSelectedThumbs)` alone would repaint an already-emptied selection and
-    // silently drop it on every switch, which is the opposite of what moving
-    // `selectedPages` onto the record was for.
-    const keep = new Set(view.selectedPages);
-    const anchor = view.selAnchor;
-    buildThumbnails(view.docGen, view).then(() => {
-      view.selectedPages = keep;
-      view.selAnchor = anchor;
-      markSelectedThumbs();
-    }).catch((e) => console.error('thumbnails failed', e));
-    buildOutline(view.docGen, view).catch((e) => console.error('outline failed', e));
-  } else {
-    clearSelection(); // no document: the outgoing view's "N selected" bar must not persist
-  }
+  // The sidebars are NOT rebuilt. P05.S05 gave each view its own grid and outline list, so
+  // activation SHOWS them — which is the phase-open decision, taken because
+  // rebuild-on-activation is "precisely what ADR-002 exists to avoid". The snapshot-and-
+  // restore of selectedPages that used to sit here went with the rebuild: it existed only
+  // because buildThumbnails calls clearSelection on the view it is building.
+  markSelectedThumbs(); // repaint the shared selection bar from the incoming view
 
   // The search box and counter are one shared pair for N documents. Cleared rather than
   // restored: leaving A's query over B's count is the wrong-document display this whole
@@ -1771,12 +1802,11 @@ async function setDocumentFromServer(meta, target = view) {
   if (target === view) els.signBanner.hidden = true;
   reconstructFlags(meta.flags, target);
   if (target === view) applySignLock();
-  // Sidebars are non-essential; a build failure must not break the load. Shared until
-  // P05.S05, so a background load leaves them showing the active document.
-  if (target === view) {
-    buildThumbnails(gen, target).catch((e) => console.error('thumbnails failed', e));
-    buildOutline(gen, target).catch((e) => console.error('outline failed', e));
-  }
+  // Sidebars are non-essential; a build failure must not break the load. Ungated since
+  // P05.S05: each view owns its grid and list, so a background load renders into its own
+  // and is ready the moment the user switches to it.
+  buildThumbnails(gen, target).catch((e) => console.error('thumbnails failed', e));
+  buildOutline(gen, target).catch((e) => console.error('outline failed', e));
 }
 
 // closeDocument puts the open document down and returns the app to exactly the
@@ -1816,6 +1846,8 @@ function closeDocument() {
     v.linkService.setDocument(null, null);
     if (d) d.loadingTask.destroy().catch(() => {});
     v.container.remove(); // the page DOM ADR-002 preserved across switches goes on a close
+    v.thumbGrid.remove();
+    v.outlineList.remove();
   }
   views.length = 0;
   views.push(view);
@@ -1853,9 +1885,9 @@ function closeDocument() {
   els.saveBtn.title = 'Save (overwrites the original)';
   all('.pageCount').forEach((s) => { s.textContent = '/ 0'; });
   all('.pageNum').forEach((i) => { i.value = 1; });
-  els.thumbGrid.innerHTML = '';
+  view.thumbGrid.innerHTML = '';
   clearSelection();
-  els.outline.innerHTML = '';
+  view.outlineList.innerHTML = '';
 
   applySignLock();
   setDocControls(false);
@@ -3054,15 +3086,20 @@ els.attachInput.onchange = async () => {
 };
 
 // --- thumbnails sidebar ------------------------------------------------------
-// The staleness token is a (view, generation) PAIR, not a generation. `docGen` became
-// per-view in S02 and every view starts at 0, so two freshly-loaded views commonly both
-// sit at 1 and `gen !== view.docGen` reads 1 !== 1 — false, and the stale build carries on
-// appending. That is the id-reuse failure ADR-001 names: the comparison still passes.
-// Capturing the owner makes the identity half of the token explicit, and the owner check
-// also stops a background build painting into the shared grid.
+// The staleness token is a (view, generation) PAIR, not a generation. `docGen` is per-view
+// and every view starts at 0, so two freshly-loaded views commonly both sit at 1 and a bare
+// `gen !== view.docGen` reads 1 !== 1 — false, and the stale build carries on appending.
+// That is the id-reuse failure ADR-001 names: the comparison still passes. Capturing the
+// owner makes the identity half explicit.
+//
+// It does NOT bail when the owner is inactive. S04's version did, because there was one
+// shared grid and a background build would have painted into it. The grid is the owner's
+// own now, so a background build renders into its own container and is ready when the user
+// switches — which is the corollary of this slice's second acceptance clause, and the whole
+// reason the phase chose per-view containers over rebuilding.
 async function buildThumbnails(gen = view.docGen, owner = view) {
-  els.thumbGrid.innerHTML = '';
-  clearSelection(); // a rebuild means a new/edited doc — old page numbers no longer apply
+  owner.thumbGrid.innerHTML = '';
+  clearSelection(owner); // a rebuild means a new/edited doc — old page numbers no longer apply
   // numPages is read ONCE, while the document is still alive. In the loop condition
   // it would be re-evaluated after every await below, against a binding a Close can
   // null. In practice the render cancellation (see the note at the append) unwinds
@@ -3071,7 +3108,7 @@ async function buildThumbnails(gen = view.docGen, owner = view) {
   // that, not because a null deref was observed.
   const total = owner.pdfDocument.numPages;
   for (let n = 1; n <= total; n++) {
-    if (owner !== view || gen !== owner.docGen) return; // a newer document loaded, or this view is no longer on screen
+    if (gen !== owner.docGen) return; // a newer document loaded into THIS view
     const page = await owner.pdfDocument.getPage(n);
     const base = page.getViewport({ scale: 1 });
     const viewport = page.getViewport({ scale: 150 / base.width });
@@ -3084,16 +3121,21 @@ async function buildThumbnails(gen = view.docGen, owner = view) {
     canvas.className = 'thumb';
     canvas.width = viewport.width;
     canvas.height = viewport.height;
-    canvas.onclick = (e) => onThumbClick(e, n);
+    canvas.onclick = (e) => onThumbClick(owner, e, n);
 
     const acts = document.createElement('div');
     acts.className = 'thumbacts';
     const rotL = document.createElement('button'); rotL.textContent = '↺'; rotL.title = 'Rotate left';
-    rotL.onclick = (e) => { e.stopPropagation(); pageOp('rotate', { pages: String(n), deg: 270 }); };
+    // Each of these three is baked into ONE view's thumbnail and fires arbitrarily later,
+    // so it captures its owner and refuses rather than acting on whatever is active. Not
+    // reachable today — a hidden grid is display:none and its buttons cannot be clicked —
+    // but before P05.S05 the grid was shared and always the active document's, so resolving
+    // `view` was correct; per-view grids are what make that stop being true.
+    rotL.onclick = (e) => { e.stopPropagation(); if (owner === view) pageOp('rotate', { pages: String(n), deg: 270 }); };
     const rot = document.createElement('button'); rot.textContent = '↻'; rot.title = 'Rotate right';
-    rot.onclick = (e) => { e.stopPropagation(); pageOp('rotate', { pages: String(n), deg: 90 }); };
+    rot.onclick = (e) => { e.stopPropagation(); if (owner === view) pageOp('rotate', { pages: String(n), deg: 90 }); };
     const del = document.createElement('button'); del.textContent = '×'; del.title = 'Delete page';
-    del.onclick = (e) => { e.stopPropagation(); if (view.pdfDocument.numPages > 1) pageOp('delete', { pages: String(n) }); };
+    del.onclick = (e) => { e.stopPropagation(); if (owner === view && owner.pdfDocument.numPages > 1) pageOp('delete', { pages: String(n) }); };
     acts.append(rotL, rot, del);
 
     const label = document.createElement('div');
@@ -3114,15 +3156,15 @@ async function buildThumbnails(gen = view.docGen, owner = view) {
     // renders, one orphan thumbnail would land in a grid closeDocument had already
     // emptied, and nothing here would say why. One comparison to make the staleness
     // contract self-contained.
-    if (owner !== view || gen !== owner.docGen) return;
-    els.thumbGrid.appendChild(wrap);
+    if (gen !== owner.docGen) return;
+    owner.thumbGrid.appendChild(wrap);
     await page.render({ canvasContext: canvas.getContext('2d'), viewport }).promise;
   }
-  markCurrentThumb(owner.viewer.currentPageNumber || 1);
+  markCurrentThumb(owner, owner.viewer.currentPageNumber || 1);
 }
 
-function markCurrentThumb(n) {
-  els.thumbGrid.querySelectorAll('.thumbwrap').forEach((c) => {
+function markCurrentThumb(owner, n) {
+  owner.thumbGrid.querySelectorAll('.thumbwrap').forEach((c) => {
     c.classList.toggle('current', Number(c.dataset.page) === n);
   });
 }
@@ -3138,34 +3180,41 @@ function markCurrentThumb(n) {
 // onThumbClick handles a thumbnail click with its modifier keys: shift extends a
 // range from the anchor, ctrl/cmd toggles one page, a plain click clears the
 // selection and navigates (the pre-existing behaviour).
-function onThumbClick(e, n) {
-  if (e.shiftKey && view.selAnchor != null) {
-    const lo = Math.min(view.selAnchor, n), hi = Math.max(view.selAnchor, n);
-    view.selectedPages.clear();
-    for (let p = lo; p <= hi; p++) view.selectedPages.add(p);
+// `owner` is the view whose thumbnail was clicked, captured when the thumbnail was built.
+// The selection it edits is that view's, and it is 1-based page numbers in that document's
+// pagination — the SAFETY reason selectedPages went onto the record in P05.S04.
+function onThumbClick(owner, e, n) {
+  if (e.shiftKey && owner.selAnchor != null) {
+    const lo = Math.min(owner.selAnchor, n), hi = Math.max(owner.selAnchor, n);
+    owner.selectedPages.clear();
+    for (let p = lo; p <= hi; p++) owner.selectedPages.add(p);
   } else if (e.ctrlKey || e.metaKey) {
-    if (!view.selectedPages.delete(n)) view.selectedPages.add(n);
-    view.selAnchor = n;
+    if (!owner.selectedPages.delete(n)) owner.selectedPages.add(n);
+    owner.selAnchor = n;
   } else {
-    view.selectedPages.clear();
-    view.selAnchor = n;
-    view.viewer.currentPageNumber = n;
+    owner.selectedPages.clear();
+    owner.selAnchor = n;
+    owner.viewer.currentPageNumber = n;
   }
-  markSelectedThumbs();
+  markSelectedThumbs(owner);
 }
 
-function clearSelection() {
-  view.selectedPages.clear();
-  view.selAnchor = null;
-  markSelectedThumbs();
+function clearSelection(owner = view) {
+  owner.selectedPages.clear();
+  owner.selAnchor = null;
+  markSelectedThumbs(owner);
 }
 
-function markSelectedThumbs() {
-  els.thumbGrid.querySelectorAll('.thumbwrap').forEach((c) => {
-    c.classList.toggle('selected', view.selectedPages.has(Number(c.dataset.page)));
+function markSelectedThumbs(owner = view) {
+  owner.thumbGrid.querySelectorAll('.thumbwrap').forEach((c) => {
+    c.classList.toggle('selected', owner.selectedPages.has(Number(c.dataset.page)));
   });
-  els.thumbSelBar.hidden = view.selectedPages.size === 0;
-  els.thumbSelCount.textContent = view.selectedPages.size + ' selected';
+  // The selection BAR is one element for N documents — shared chrome. A background view
+  // records its own selection on its own thumbnails and paints nothing here, or a document
+  // nobody is looking at would set the count the user reads.
+  if (owner !== view) return;
+  els.thumbSelBar.hidden = owner.selectedPages.size === 0;
+  els.thumbSelCount.textContent = owner.selectedPages.size + ' selected';
 }
 
 // selectedPagesParam joins the selection into the comma list pageOp/the server
@@ -3183,16 +3232,32 @@ function selectedPagesParam() {
 let dragBlock = null;    // the .thumbwrap node(s) being dragged — one, or a selected block
 let dragOrig = null;     // snapshot of the grid's child order, for cancel revert
 let dragDropped = false; // a real drop committed this drag
+// Captured at dragstart, and this is the load-bearing pair. The listeners live on the
+// STABLE #thumbs, so every handler after dragstart has to be told which grid — and which
+// document — the gesture belongs to.
+//
+// Resolving them at call time instead would put the worst defect in this slice into
+// onThumbDragEnd: its cancel path re-appends every snapshotted node into a grid, so a
+// cancelled drag whose view is no longer active would physically move one document's
+// .thumbwrap nodes INTO another's grid. The next drop there reads dataset.page off those
+// nodes and fires pageOp('reorder') against the wrong document — a destructive
+// wrong-document page operation that NO docGen comparison catches, because a drag never
+// touches docGen. ADR-001's law, applied to a DOM node instead of a document id.
+let dragGrid = null;     // the .thumbgrid this gesture started in
+let dragView = null;     // the view that owns it
 
 function onThumbDragStart(e) {
   const wrap = e.target.closest('.thumbwrap');
   if (!wrap) return;
+  dragGrid = wrap.closest('.thumbgrid');
+  if (!dragGrid) return;
+  dragView = view;
   // Grabbing a selected thumbnail drags the whole selection; an unselected one
   // drags just itself. Read the block from the DOM .selected class (kept in sync
   // with selectedPages by markSelectedThumbs), in document order.
-  const sel = [...els.thumbGrid.querySelectorAll('.thumbwrap.selected')];
+  const sel = [...dragGrid.querySelectorAll('.thumbwrap.selected')];
   dragBlock = wrap.classList.contains('selected') && sel.length > 1 ? sel : [wrap];
-  dragOrig = [...els.thumbGrid.children];
+  dragOrig = [...dragGrid.children];
   dragDropped = false;
   dragBlock.forEach((w) => w.classList.add('dragging'));
   e.dataTransfer.effectAllowed = 'move';
@@ -3201,19 +3266,34 @@ function onThumbDragStart(e) {
 
 function onThumbDragOver(e) {
   if (!dragBlock) return;
+  if (!overDragGrid(e)) return;
   e.preventDefault(); // allow drop
   e.dataTransfer.dropEffect = 'move';
-  const after = thumbBelow(e.clientY); // never a block node — all are .dragging, which thumbBelow skips
+  const after = thumbBelow(dragGrid, e.clientY); // never a block node — all are .dragging, which thumbBelow skips
   for (const w of dragBlock) {
-    if (after) els.thumbGrid.insertBefore(w, after);
-    else els.thumbGrid.appendChild(w);
+    if (after) dragGrid.insertBefore(w, after);
+    else dragGrid.appendChild(w);
   }
+}
+
+// The origin guard, and the reason it exists is a behaviour change this slice would
+// otherwise have made silently. The listeners moved from the grid to the stable #thumbs,
+// whose subtree ALSO holds the append-PDF row and the selection bar — both above the grid.
+// Without this, dragging a page upward and releasing on the "6 selected" bar fires a drop:
+// thumbBelow returns the first thumbnail, the block splices to position 0, and a
+// whole-document reorder commits. Before the re-homing that release produced no drop event
+// at all and dragend restored the original order. So the guard restores "release outside
+// the grid means cancel" rather than adding a new rule.
+//
+// Same shape as startedInActiveView for the pointer listeners, for the same reason.
+function overDragGrid(e) {
+  return !!dragGrid && e.target.closest('.thumbgrid') === dragGrid;
 }
 
 // thumbBelow returns the first thumbnail whose vertical midpoint is below the
 // cursor (where the dragged thumbnail should be inserted before), or null for end.
-function thumbBelow(y) {
-  return [...els.thumbGrid.querySelectorAll('.thumbwrap:not(.dragging)')].find((w) => {
+function thumbBelow(grid, y) {
+  return [...grid.querySelectorAll('.thumbwrap:not(.dragging)')].find((w) => {
     const r = w.getBoundingClientRect();
     return y < r.top + r.height / 2;
   }) || null;
@@ -3221,9 +3301,19 @@ function thumbBelow(y) {
 
 function onThumbDrop(e) {
   if (!dragBlock) return;
+  if (!overDragGrid(e)) return; // a release outside the grid is a cancel, as it was before
   e.preventDefault();
+  // Refused rather than misapplied: pageOp resolves the module-level `view`, so a reorder
+  // committed after a switch would send this document's page order to another one.
+  //
+  // The refusal comes BEFORE `dragDropped = true`, which is not cosmetic: dragend only
+  // reverts when the drop did not commit, so setting the flag first would leave the grid
+  // showing the dragged order while the server kept the original — and the NEXT drag would
+  // snapshot dragOrig from that permuted baseline and reorder against an order the document
+  // never had.
+  if (dragView !== view) { toast('that document is no longer in front — the reorder was not applied'); return; }
   dragDropped = true;
-  const order = [...els.thumbGrid.querySelectorAll('.thumbwrap')].map((w) => w.dataset.page);
+  const order = [...dragGrid.querySelectorAll('.thumbwrap')].map((w) => w.dataset.page);
   if (order.join(',') !== dragOrig.map((w) => w.dataset.page).join(',')) {
     pageOp('reorder', { pages: order.join(',') });
   }
@@ -3231,16 +3321,24 @@ function onThumbDrop(e) {
 
 function onThumbDragEnd() {
   if (dragBlock) dragBlock.forEach((w) => w.classList.remove('dragging'));
-  if (!dragDropped && dragOrig) dragOrig.forEach((w) => els.thumbGrid.appendChild(w)); // cancelled — restore order
+  // Into the grid the gesture STARTED in — see the dragGrid comment above.
+  if (!dragDropped && dragOrig && dragGrid) dragOrig.forEach((w) => dragGrid.appendChild(w)); // cancelled — restore order
   dragBlock = null;
   dragOrig = null;
   dragDropped = false;
+  dragGrid = null;
+  dragView = null;
 }
 
-els.thumbGrid.addEventListener('dragstart', onThumbDragStart);
-els.thumbGrid.addEventListener('dragover', onThumbDragOver);
-els.thumbGrid.addEventListener('drop', onThumbDrop);
-els.thumbGrid.addEventListener('dragend', onThumbDragEnd);
+// Bound to the STABLE #thumbs, not to a grid: a per-view grid would serve only the view
+// that existed at module evaluation, and every document opened later would have thumbnails
+// that are draggable and completely inert. Same reason the pointer listeners live on
+// #viewerWrap (P05.S03) — and note the guard written for those cannot see these, because
+// it keys on `addEventListener('pointer`.
+els.thumbs.addEventListener('dragstart', onThumbDragStart);
+els.thumbs.addEventListener('dragover', onThumbDragOver);
+els.thumbs.addEventListener('drop', onThumbDrop);
+els.thumbs.addEventListener('dragend', onThumbDragEnd);
 
 // --- page operations (M7): bake edits, apply server-side, reload -------------
 async function pageOp(op, extra = {}) {
@@ -3609,23 +3707,27 @@ async function buildOutline(gen = view.docGen, owner = view) {
   // and fires arbitrarily later, so resolving `view` inside it would navigate whichever
   // document happened to be active then — ADR-001's law applied to a client-side
   // closure. Same shape as P04's captured document id, for the same reason.
-  els.outline.innerHTML = '';
+  owner.outlineList.innerHTML = '';
   const edit = document.createElement('button');
   edit.className = 'outline-edit';
   edit.textContent = 'Edit outline…';
-  edit.onclick = openOutlineEditor;
-  els.outline.appendChild(edit);
+  // Guarded like the thumbnail buttons, and for the same reason — it is the last handler in
+  // this file baked into one view's DOM that resolved the active view at click time, sitting
+  // directly under the paragraph above stating that rule. openOutlineEditor reads
+  // view.pdfDocument and view.outlineItems throughout.
+  edit.onclick = () => { if (owner === view) openOutlineEditor(); };
+  owner.outlineList.appendChild(edit);
   const outline = await owner.pdfDocument.getOutline();
   // Against the OWNER's token, not the active view's. `docGen` became per-view in S02 and
   // every view starts at 0, so comparing a token captured from A's counter against B's
   // counter is the id-reuse failure ADR-001 names: the comparison still passes, and A's
   // stale outline renders while B is on screen.
-  if (owner !== view || gen !== owner.docGen) return; // a newer document loaded, or this view is no longer on screen
+  if (gen !== owner.docGen) return; // a newer document loaded into THIS view (see buildThumbnails)
   if (!outline || !outline.length) {
     const empty = document.createElement('div');
     empty.className = 'thumb-label';
     empty.textContent = 'No outline';
-    els.outline.appendChild(empty);
+    owner.outlineList.appendChild(empty);
     return;
   }
   const render = (items, depth) => {
@@ -3634,7 +3736,7 @@ async function buildOutline(gen = view.docGen, owner = view) {
       a.textContent = it.title;
       a.style.paddingLeft = 4 + depth * 12 + 'px';
       a.onclick = () => owner.linkService.goToDestination(it.dest);
-      els.outline.appendChild(a);
+      owner.outlineList.appendChild(a);
       if (it.items?.length) render(it.items, depth + 1);
     }
   };
