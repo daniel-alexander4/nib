@@ -2,7 +2,7 @@
 Type=Application
 Name=Nib
 Comment=Fill, sign, and finalize PDFs
-Exec=nib --replace %f
+Exec=nib %f
 Icon=nib
 Terminal=false
 Categories=Office;
