@@ -49,10 +49,15 @@ export const Util = {
 //
 // getPage's viewport is real arithmetic rather than a constant: buildThumbnails
 // scales by `150 / base.width`, and a viewport that lied about its width would
-// make that scaling untestable. What it CANNOT do is render — jsdom has no canvas,
-// so `render()` rejects, buildThumbnails ends in its caller's .catch, and the
-// thumbnail grid stays empty at this tier. That is the ceiling, and it means the
-// thumbnail half of any sidebar assertion belongs to tier 3, not here.
+// make that scaling untestable. What it CANNOT do is render — jsdom has no canvas, so
+// `render()` rejects and buildThumbnails ends in its caller's .catch.
+//
+// It does NOT leave the grid empty, which this comment claimed until P05.S05 measured it.
+// buildThumbnails appends the wrapper BEFORE awaiting the render, so exactly ONE
+// `.thumbwrap` lands before the rejection unwinds the loop. The ceiling is real — a
+// thumbnail COUNT is a tier-3 assertion, because only one page ever renders here — but
+// "the grid is empty" was a false premise, and an emptiness assertion written against it
+// would have passed for the wrong reason.
 function makePage(n) {
   return {
     pageNumber: n,

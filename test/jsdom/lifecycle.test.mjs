@@ -104,8 +104,21 @@ test('closeDocument restores the launch chrome', async () => {
   assert.equal(document.getElementById('saveBtn').disabled, false);
   assert.ok(document.getElementById('saveBtn').title.includes(DOC),
     'the Save title should carry the document path while one is open');
-  assert.ok(document.getElementById('outline').children.length > 0,
-    'the outline sidebar should have content while a document is open');
+  // Counted as CONTENT, not children. P05.S05 nested a per-view `.outlinelist` inside
+  // `#outline`, so `children.length` is now the number of open views and would read > 0
+  // with no document at all — and it was already weak before that: measured with no
+  // outline present, `#outline` had 2 children (the Edit button and the empty-state div),
+  // so this passed on chrome alone. `.outline-edit` is the honest marker that a build ran.
+  assert.ok(document.querySelectorAll('#outline .outline-edit').length > 0,
+    'the outline sidebar should have been built while a document is open');
+  // The thumbnail grid in its OPENED form, per this test's own convention four lines up.
+  // Exactly one lands at this tier — buildThumbnails appends the wrapper before the render
+  // that jsdom rejects — and asserting it here is what keeps the post-close zero earned. If
+  // the append ever moved after the render, the closing assertion would revert to a
+  // structural green in silence, which is the failure the corrected comment below exists to
+  // prevent and which this line is what actually prevents.
+  assert.equal(document.querySelectorAll('.thumbgrid .thumbwrap').length, 1,
+    'the grid must POPULATE before its emptiness means anything');
 
   await closeDocument();
 
@@ -119,12 +132,19 @@ test('closeDocument restores the launch chrome', async () => {
   assert.equal(document.getElementById('sigBadge').className, 'badge badge-none');
   assert.equal(document.querySelector('.pageCount').textContent, '/ 0');
   assert.equal(document.querySelector('.pageNum').value, '1');
-  assert.equal(document.getElementById('outline').children.length, 0);
+  // "No view has any outline content" — Close is close-all since P05.S04, and since
+  // P05.S05 each view's list is a wrapper INSIDE #outline, so the wrappers survive an
+  // emptied close by design. What must be zero is what they contain.
+  assert.equal(document.querySelectorAll('#outline .outline-edit, #outline a').length, 0);
   assert.equal(document.getElementById('closeBtn').disabled, true);
-  // NOTE: the thumbnail grid is deliberately NOT asserted here. jsdom has no
-  // canvas, so buildThumbnails always fails into its caller's .catch and the grid
-  // is empty at this tier whether or not the teardown clears it — a green that
-  // would be structural, not earned. Tier 3 (P02.S04) owns that half.
+  // The thumbnail grid IS asserted here now, and the reason the old note gave for not
+  // asserting it was measured false. It said jsdom's missing canvas leaves the grid empty
+  // "whether or not the teardown clears it". Measured through this harness: the grid holds
+  // exactly ONE `.thumbwrap`, because buildThumbnails appends the wrapper BEFORE the
+  // render that rejects. So an emptiness assertion here is earned rather than structural —
+  // it distinguishes a teardown that clears from one that does not.
+  assert.equal(document.querySelectorAll('.thumbgrid .thumbwrap').length, 0,
+    'no view may keep a thumbnail after a close-all');
 });
 
 // P01.S04 acceptance, and the reason the helper is named hasEditsSinceOpen: each
