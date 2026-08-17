@@ -37,7 +37,7 @@ func TestSetLangRejectsEmpty(t *testing.T) {
 func TestOCRLangToBCP47(t *testing.T) {
 	cases := map[string]string{
 		"eng": "en", "tha": "th", "hin": "hi", "ell": "el", "ukr": "uk",
-		"":    "", "zzz": "",
+		"": "", "zzz": "",
 	}
 	for code, want := range cases {
 		if got := OCRLangToBCP47(code); got != want {
