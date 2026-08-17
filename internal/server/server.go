@@ -310,7 +310,51 @@ func (s *Server) Handler() http.Handler {
 
 	// Static UI (public — it renders the first-run wizard).
 	mux.Handle("/", http.FileServerFS(s.web))
-	return loopbackOnly(mux)
+	return loopbackOnly(securityHeaders(mux))
+}
+
+// securityHeaders sets the three response headers a document-handling app that renders
+// untrusted files should never have been without.
+//
+// **The CSP is strict because the app was already built for one**, which is what makes
+// this a header rather than a refactor: no inline event handlers, no eval, no
+// new Function, no insertAdjacentHTML, and every innerHTML assignment a static literal.
+// The only obstacle was two inline `style=` attributes in index.html, now classes.
+//
+// The permissive-looking entries are each load-bearing, and removing one breaks a
+// feature rather than tightening anything:
+//   - 'wasm-unsafe-eval' — tesseract.js is a WASM build, and OCR is a shipped feature.
+//   - worker-src blob:   — pdf.js and tesseract.js both start workers from blob URLs.
+//   - img/media blob: and data: — every rendered page, thumbnail, compare map and
+//     placed stamp is a canvas blob or a data URL.
+//
+// object-src 'none' and frame-ancestors 'none' are the ones that matter for a viewer:
+// no plugin content, and no other page may frame this one.
+func securityHeaders(next http.Handler) http.Handler {
+	const csp = "default-src 'self'; " +
+		"script-src 'self' 'wasm-unsafe-eval'; " +
+		"style-src 'self'; " +
+		"img-src 'self' data: blob:; " +
+		"media-src 'self' blob:; " +
+		"font-src 'self'; " +
+		"connect-src 'self' blob:; " +
+		"worker-src 'self' blob:; " +
+		"object-src 'none'; " +
+		"base-uri 'none'; " +
+		"form-action 'self'; " +
+		"frame-ancestors 'none'"
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		h := w.Header()
+		h.Set("Content-Security-Policy", csp)
+		// The asset handler serves from an embedded FS and Go sniffs a content type from
+		// the extension; nosniff stops a browser second-guessing that for a file whose
+		// bytes look like something else.
+		h.Set("X-Content-Type-Options", "nosniff")
+		// A loopback URL in a Referer header is not a secret, but there is no reason for
+		// it to travel — the download prompt navigates to github.com.
+		h.Set("Referrer-Policy", "no-referrer")
+		next.ServeHTTP(w, r)
+	})
 }
 
 // --- API: open / upload -------------------------------------------------------

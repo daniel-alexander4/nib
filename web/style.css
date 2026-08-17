@@ -232,9 +232,19 @@ input[type="search"] { width: 100%; }
 }
 .badge-none     { background: var(--surface0); color: var(--subtext0); }
 .badge-unsigned { background: var(--surface0); color: var(--blue); }
-.badge-valid    { background: rgba(166, 227, 161, 0.18); color: var(--green); }
-.badge-invalid  { background: rgba(243, 139, 168, 0.18); color: var(--red); }
-.badge-warn     { background: rgba(249, 226, 175, 0.18); color: var(--yellow); }
+/* color-mix, not a hardcoded rgba: those three literals were Mocha's green/red/yellow,
+   so in the light theme the TEXT followed the theme variable and the tint did not — a
+   Latte-green word on a Mocha-green wash. The mixed form is already used elsewhere in
+   this file and tracks whichever palette is active. */
+.badge-valid    { background: color-mix(in srgb, var(--green) 18%, transparent);  color: var(--green); }
+.badge-invalid  { background: color-mix(in srgb, var(--red) 18%, transparent);    color: var(--red); }
+.badge-warn     { background: color-mix(in srgb, var(--yellow) 18%, transparent); color: var(--yellow); }
+/* The last two inline style= attributes in index.html, moved here so the page can be
+   served under style-src 'self' — an inline attribute needs 'unsafe-inline', which would
+   hand back most of what the policy is for. */
+.inkred   { color: var(--red); }
+.inkgreen { color: var(--green); }
+
 .badge-link {
   background: none; border: none; padding: 2px 4px; cursor: pointer;
   font-size: 11px; color: var(--blue); text-decoration: underline;

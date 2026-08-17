@@ -3,6 +3,7 @@ package pdfops
 import (
 	"bytes"
 	_ "embed"
+	"sort"
 	"strings"
 
 	"github.com/pdfcpu/pdfcpu/pkg/api"
@@ -143,6 +144,11 @@ func nonEmbeddedFonts(xt *model.XRefTable) []string {
 			missing = append(missing, name)
 		}
 	}
+	// Sorted, because the loop above walks xt.Table — a MAP — and the result is joined
+	// into a message the user reads. Unsorted, the same document produced a different
+	// list order on every run, which reads as instability in the document rather than in
+	// the iteration.
+	sort.Strings(missing)
 	return missing
 }
 
