@@ -85,11 +85,11 @@ func TestSetPageLabelsRejects(t *testing.T) {
 // assertion on the value read back) was green over this for the life of the feature.
 func TestSetPageLabelsEscapesPrefix(t *testing.T) {
 	for _, prefix := range []string{
-		"Exhibit 1) x",  // closes the literal early
-		"Exhibit (1 x",  // opens one that is never closed
-		`Ex\hibit `,     // the escape character itself
-		"Ex(1)h ",       // balanced: legal already, must not regress
-		"Plain-A ",      // the ordinary case
+		"Exhibit 1) x", // closes the literal early
+		"Exhibit (1 x", // opens one that is never closed
+		`Ex\hibit `,    // the escape character itself
+		"Ex(1)h ",      // balanced: legal already, must not regress
+		"Plain-A ",     // the ordinary case
 	} {
 		t.Run(prefix, func(t *testing.T) {
 			out, err := SetPageLabels(threePagePDF(t), []PageLabelRange{
