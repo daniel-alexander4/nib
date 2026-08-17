@@ -2195,6 +2195,54 @@ Exit criteria:
 - **(carried from P03, plan-review pin)** The all-tabs-stale case resolves to the launch
   empty state, not N error tabs. Unfalsifiable until there are tabs; P03 shipped the 409
   that makes it expressible.
+**(phase close-out run 2026-08-17, v1.106.5 — the phase is NOT marked done, and two of
+the three reasons are Dan's rather than mine.)** All five slices shipped
+(v1.106.0→v1.106.4). The close-out found three defects that no slice review had, which
+is what the gate is for:
+
+1. **Switching threw away the user's zoom** — `activateView` re-fitted on EVERY
+   activation, so a document zoomed to 200% came back at fit-width, silently, every
+   time. Measured: 1375px → 1040px. It is a failure of this phase's own exit criterion
+   ("switching preserves scroll, zoom, page"), it had been there since P05.S04 built
+   activation, and nothing observed it because no clause was ever driven against zoom.
+   Fixed by re-fitting only a view that has never had a scale — which is what the
+   carried P05 clause actually needs — and red-proofed.
+2. **`closeDocument` carried a nine-line copy of `tearDownView`**, the helper S02 added
+   a hundred lines below it: a fix to one teardown would silently leave the other.
+3. **A guard was passing by timing.** `/api/docs` is unpinned by design, and
+   `docid.test.mjs`'s "every apiFetch call names its document" excluded it only because
+   the boot reconcile happens before the test clears its call list. A future reconcile
+   inside that window would have failed the guard for a *correct* call.
+
+**Acceptance ledger — every clause split on `and`.**
+
+| # | Clause (verbatim) | Verdict | Evidence |
+|---|---|---|---|
+| 1a | "A document switcher" | **met** | the strip; driven at tier 2 (`perview.test.mjs`) and tier 3 |
+| 1b | "**Close view**" | **met** | `/api/close-view` + the per-tab ×; `closeview_test.go`, `perview.test.mjs` |
+| 1c | "**and Close all**" | **met** | unchanged in effect, still confirming across every edited view |
+| 2a | "Switching preserves scroll" | **met** | tier 3: a document left on page 2 returns on page 2, which is `scrollTop` restored — pdf.js derives the page from the scroll offset |
+| 2b | "…zoom" | **met — and it was NOT until this gate** | tier 3, red-proofed at 1375px vs 1040px |
+| 2c | "…page" | **met** | tier 3, twice (across a switch and across a sibling's close) |
+| 2d | "…form fills" | **NOT EXERCISED** | preserved by construction — the viewer is hidden, never torn down, so `annotationStorage` survives — but nothing drives a fill and reads it back |
+| 2e | "…and typed overlay values — asserted by reading a typed value back out of its DOM element" | **NOT EXERCISED** | the clause names its own instrument and that instrument does not exist: jsdom cannot place an overlay (every `getBoundingClientRect` is 0), and tier 3's `placeMarker` places a signing flag with no text. Carried from S02, where the attempt is recorded in `test/ui/tabs.test.mjs` |
+| 3 | "The document cap refuses with a message" | **met** | both bounds, whichever binds first, each naming which one |
+| 4a | "README … describe[s] the multi-document model" | **met** | rewritten, not appended to; two stale sentences struck |
+| 4b | "…and the in-app help" | **met** | ⚙ About gains "Working with several documents" |
+| 4c | "`CLAUDE.md` gains the operation-pinning law (D7)" | **met as amended** | the three laws are in `CONTRIBUTING.md` — `/CLAUDE.md` is git-ignored, so the criterion as written could not have achieved its own stated purpose. See the S05 premise correction |
+| 5 | "Full-repo `/code-review` clean" | **NOT MET — not run as specified** | what ran is a phase-DIFF review with targeted re-reads of the subsystems P06 touched. It found the three defects above. It is **not** the eight-reviewer end-to-end sweep P05 got, and the difference is stated rather than absorbed |
+| 6 | *(carried from P05)* "Re-fit … on activation" **and** "dpr-heal on activation" | **met, both** | tier 3, in S01 — the slice that made a second view creatable without a live peer; the dpr half pre-flighted through CDP before the test was written |
+| 7 | *(carried from P03)* "The all-tabs-stale case resolves to the launch empty state, not N error tabs" | **met, with a stated qualification** | tier 2 drives a restart's client-visible effect — every id 409s, `/api/docs` reports a different set. The restart itself is the pin's setup and stays unobserved; tier 3's nib process is shared across test files |
+
+**14 met, 1 not met, 2 not exercised.** Criterion 5 is the not-met, and criteria 2d/2e
+are the unexercised pair — both halves of "the state a switch preserves", both blocked on
+the same missing harness affordance: **nothing in any tier can type into an overlay and
+read it back.** That is one piece of harness work, and it would close both.
+
+Per the ledger rule a phase closes on no `not exercised` rows **or on Dan's explicit call
+to close over them** — and criterion 5 is his in a second way, since the full-repo review
+it names is a scale of work to authorise rather than a build to finish.
+
 **(dimension-review pin: what a reload does, 2026-08-15)** The server holds the
 documents; the tab strip is client state. So a browser reload — or a tab crash —
 with eight documents open currently has no defined behaviour under this design,
