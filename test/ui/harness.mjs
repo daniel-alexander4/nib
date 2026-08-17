@@ -95,22 +95,21 @@ export async function launch() {
 
     // deleteMarker(type) removes the flag placed by placeMarker(type).
     //
-    // It DISARMS the tool first, and that is not tidiness — with the flag tool
-    // still armed, clicking a flag's × plants ANOTHER flag instead of removing
-    // it (measured: 1 marker in, 2 out). Placement listens on `pointerdown` on
-    // #viewerWrap (P05.S03 moved it off the container) while the × only calls
-    // stopPropagation() on `click`,
-    // so the placement fires first and is never stopped. That is a real defect in
-    // the app, filed separately; the harness works around it because a test
-    // should not be the thing that fixes it.
+    // **It deletes with the tool STILL ARMED, deliberately.** This used to disarm first,
+    // because with the flag tool armed a click on a flag's × planted ANOTHER flag
+    // instead of removing it (measured here: 1 marker in, 2 out) — placement listens on
+    // `pointerdown` on #viewerWrap while the × only stops propagation on `click`, so the
+    // placement fired first and was never stopped. `onExistingOverlay` fixed that in the
+    // app, and REMOVING the disarm is the regression check: put the defect back and this
+    // helper's own `=== 0` wait fails, because the deleted flag is replaced by a new one.
+    // A workaround kept after its defect is fixed is a test that can no longer see it.
     //
     // The × itself is display:none until :hover OR :focus on the marker
     // (style.css), and buildMarker gives the marker tabIndex 0 so it can be
     // focused. Focus rather than hover: a click performs its own pointer
     // movement, which can re-hide the button between the actionability check and
     // the click. Focus does not move.
-    async deleteMarker(type = 'date') {
-      await page.click(`[data-marker="${type}"]`); // toggle the tool off
+    async deleteMarker() {
       await page.locator('.ovl-marker').first().focus();
       await page.locator('.ovl-marker .marker-del').first().click();
       await page.waitForFunction(() => document.querySelectorAll('.ovl-marker').length === 0);
