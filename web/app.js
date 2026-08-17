@@ -1388,6 +1388,13 @@ function newView() {
     // view because a shared one lets a background document's finishing build abort the
     // foreground's.
     docGen: 0,
+    // Whether this view has ever been given a real scale. A view that loads while
+    // HIDDEN reports clientWidth 0, so fitWidestWidth silently no-ops and the view is
+    // left at pdf.js's default — indistinguishable, by reading currentScale alone, from
+    // a user who deliberately zoomed to 100%. activateView re-fits only when this is
+    // false, which is what lets a switch preserve zoom (P06 exit criterion) while still
+    // rescuing a view that never got one (P05's carried clause).
+    hasScale: false,
     outlineItems: [],
     originalName: '', // basename of the opened file, for default export names
 
@@ -1823,7 +1830,15 @@ function activateView(v) {
   v.container.hidden = false;
   v.thumbGrid.hidden = false;
   v.outlineList.hidden = false;
-  fitWidestWidth(v);
+  // **Only a view that never got a scale**, which is the difference between rescuing a
+  // hidden load and destroying the user's zoom.
+  //
+  // This was unconditional, and unconditional is a defect the phase's own exit criterion
+  // names: "switching preserves scroll, zoom, page". A user who zoomed to 200%, switched
+  // away and switched back was handed fit-width, silently, every time. Nothing else
+  // depended on the re-fit happening on every activation — the resize listener heals dpr
+  // and does not re-fit at all — so the narrow version loses nothing.
+  if (!v.hasScale) fitWidestWidth(v);
   // Explicitly, not via the bus: a re-fit that computes the SAME scale fires no
   // `scalechanging`, so the self-serving path cannot be relied on to have run.
   relayoutOverlays(v);
@@ -1964,6 +1979,9 @@ async function setDocumentFromServer(meta, target = view) {
     return;
   }
   const gen = ++target.docGen;
+  // A different document in the same view needs its own fit: page sizes differ, so the
+  // outgoing document's scale is not this one's.
+  target.hasScale = false;
   target.docMeta = meta;
   if (meta.name && meta.name !== '.') target.originalName = meta.name;
   resetSharedDocState(target); // was clearOverlays() — see the four modes it never covered
@@ -2064,19 +2082,12 @@ function closeDocument() {
   // Matching the server is honest rather than a regression: Close has always meant "close
   // everything". P06 splits Close view from Close all, and that is where the server needs
   // a per-document remove to split against.
-  for (const v of views) {
-    if (v === view) continue;
-    const d = v.pdfDocument;
-    v.pdfDocument = null;
-    v.docGen++;
-    v.viewer.setDocument(null);
-    v.linkService.setDocument(null, null);
-    if (d) d.loadingTask.destroy().catch(() => {});
-    v.container.remove(); // the page DOM ADR-002 preserved across switches goes on a close
-    v.thumbGrid.remove();
-    v.outlineList.remove();
-  }
-  resetViews(view);
+  // Through tearDownView, not a second copy of it. This loop WAS that copy — nine lines
+  // duplicating the helper P06.S02 added a hundred lines below, which is the duplicate
+  // derivation this repo keeps paying for: a fix to one teardown silently leaves the
+  // other behind. Iterated over a copy, because tearDownView removes from `views`.
+  for (const v of [...views]) if (v !== view) tearDownView(v);
+  resetViews(view); // `views` is already down to the active view; this makes that explicit and re-renders
 
   // The same quiescing a switch does, for the same reason: a gesture in flight holds live
   // nodes that setDocument(null) is about to detach, and a document-bound modal outlives
@@ -8249,6 +8260,7 @@ function fitWidestWidth(owner) {
   const avail = owner.container.clientWidth - 40; // 40 = pdf.js SCROLLBAR_PADDING
   if (maxW > 0 && avail > 0) {
     owner.viewer.currentScale = avail / maxW / pdfjsLib.PixelsPerInch.PDF_TO_CSS_UNITS;
+    owner.hasScale = true; // it applied; activateView need not rescue this view
   }
 }
 els.prevBtn.onclick = prevPage;
