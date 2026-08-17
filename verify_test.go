@@ -2,6 +2,7 @@ package nib
 
 import (
 	"os"
+	"os/exec"
 	"strings"
 	"testing"
 )
@@ -54,5 +55,34 @@ func TestVerifyContractIsTrue(t *testing.T) {
 		if !strings.Contains(contract, ceiling) {
 			t.Errorf("CONTRIBUTING.md is missing a tier ceiling: %q", ceiling)
 		}
+	}
+}
+
+// TestSourceIsFormatted keeps gofmt drift from accumulating silently.
+//
+// Three files were unformatted when this was added, one of them for long enough
+// that a full-repo review reported the repo had exactly one — the count was wrong
+// because nothing measured it. Formatting is not a quality bar worth arguing about;
+// it is worth a guard precisely because it is mechanical, and a guard costs less
+// than the recurring question of whether it matters.
+//
+// Reports every offender rather than the first, so one run fixes the set.
+func TestSourceIsFormatted(t *testing.T) {
+	if _, err := exec.LookPath("gofmt"); err != nil {
+		t.Skip("gofmt not on PATH (a toolchain-less environment); formatting is unchecked here")
+	}
+	out, err := exec.Command("gofmt", "-l", ".").Output()
+	if err != nil {
+		t.Fatalf("gofmt -l: %v", err)
+	}
+	var bad []string
+	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		if line == "" {
+			continue
+		}
+		bad = append(bad, line)
+	}
+	if len(bad) > 0 {
+		t.Errorf("unformatted files (run: gofmt -w .):\n  %s", strings.Join(bad, "\n  "))
 	}
 }
