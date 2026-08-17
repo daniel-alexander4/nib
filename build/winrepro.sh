@@ -111,8 +111,18 @@ wine reg add 'HKCR\.js'  /v "Content Type" /t REG_SZ /d "text/plain" /f >/dev/nu
 # only one guaranteed to hold just our fixtures.
 WHOME="$WINEPREFIX/drive_c/users/$USERNAME_"
 mkdir -p "$WHOME/nibprobe"
-cp .playwright-mcp/shots/docA.pdf "$WHOME/nibprobe/report.pdf" 2>/dev/null \
-  || printf '%%PDF-1.7\n' > "$WHOME/nibprobe/report.pdf"
+# Fixtures are GENERATED, not copied. This used to be
+#   cp .playwright-mcp/shots/docA.pdf … || printf '%%PDF-1.7\n' > …
+# whose source is a gitignored scratch artifact — so on every machine but the one
+# that captured it the fallback fired and the "PDF" was a nine-byte header. Every
+# check below passed against it, because LooksLikePDF only wants the header and a
+# headless run renders nothing; the harness was silent about whether Nib can open a
+# real document on Windows while reading as though it had said so. See build/genpdf.go.
+go run build/genpdf.go "$WHOME/nibprobe/report.pdf" "report page 1" "report page 2" || exit 1
+# A SECOND document, for the hand-off checks: D16 makes an already-open path focus
+# rather than duplicate, so a second launch carrying report.pdf could not move the
+# document count no matter how well the hand-off worked.
+go run build/genpdf.go "$WHOME/nibprobe/second.pdf" "second page 1" || exit 1
 printf 'not a pdf\n' > "$WHOME/nibprobe/notes.txt"
 
 echo "starting nib.exe headless on $BASE"
@@ -223,6 +233,82 @@ fi
 OK_CODE="$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/api/write" -H "X-CSRF-Token: $CSRF" \
   -F 'dir=C:\users\'"$USERNAME_"'\nibprobe' -F 'name=saved.pdf' -F "data=@$WORK/payload.bin")"
 check "an ordinary save still works" "$OK_CODE" '200'
+
+echo
+echo "second launch — hands the document to the running instance instead of killing it"
+# P07's Windows criterion, and until this section the harness could not speak to it:
+# winrepro started exactly ONE nib.exe, so "a second launch hands off" was asserted by
+# Go tests and by a Linux browser drive, on the one platform where double-click is the
+# ORDINARY way in (`nib register`) and where the mechanism it replaces never worked at
+# all — `internal/singleton` walked /proc, and its Windows build was `return 0`.
+#
+# The instrument is the FIRST instance's document list. A hand-off that worked moves it;
+# a replace-and-kill would empty it; a second instance that simply served alongside would
+# not touch it at all. Those three outcomes are distinguishable here and nowhere else in
+# this file.
+docs() { curl -s --max-time 5 "$BASE/api/docs"; }
+ndocs() { printf '%s' "$1" | grep -o '"id":"' | wc -l | tr -d ' '; }
+
+BEFORE="$(docs)"
+# The stimulus: the first instance must be holding report.pdf already (the open check
+# above put it there). Without this, "the count went up" could be counting from a route
+# that answered nothing, and "report.pdf survived" could be true of an empty list.
+check "the running instance holds the opened document" "$BEFORE" '"name":"report.pdf"'
+N_BEFORE="$(ndocs "$BEFORE")"
+[ "$N_BEFORE" -ge 1 ] || { echo "  FAIL /api/docs reported $N_BEFORE documents; the hand-off checks below cannot mean anything"; FAILED=1; }
+
+# No NIB_ADDR on the second launch, deliberately: if the hand-off fails, this process
+# falls through to binding a port, and pinning it to the first instance's would turn a
+# hand-off failure into a bind failure — the wrong error, and one that looks like this.
+timeout 90 env NIB_NO_BROWSER=1 NIB_NO_UPDATE_CHECK=1 \
+  wine "$EXE" 'C:\users\'"$USERNAME_"'\nibprobe\second.pdf' > "$WORK/second.log" 2>&1
+SECOND_RC=$?
+if [ "$SECOND_RC" = "0" ]; then
+  echo "  ok   the second launch exited instead of serving"
+else
+  echo "  FAIL the second launch exited $SECOND_RC (124 = it never exited, so it became a second server)"
+  sed -n '1,20p' "$WORK/second.log"
+  FAILED=1
+fi
+checknot "and it never bound a port of its own" "$(cat "$WORK/second.log")" 'serving at'
+
+AFTER="$(docs)"
+N_AFTER="$(ndocs "$AFTER")"
+if [ "$N_AFTER" -gt "$N_BEFORE" ]; then
+  echo "  ok   the first instance's document count moved ($N_BEFORE -> $N_AFTER)"
+else
+  echo "  FAIL the first instance still holds $N_AFTER documents; the hand-off did not arrive"
+  FAILED=1
+fi
+check "the handed-off document is open in the FIRST instance" "$AFTER" '"name":"second.pdf"'
+# The retirement itself. Note what this one does and does not falsify: it fails against
+# replace-and-kill, which would have taken the first instance down and left a survivor
+# knowing nothing of report.pdf — and it passes against a launch that never handed off at
+# all, because that leaves the first instance equally untouched. The count check above is
+# the row that catches THAT, which is why both are here.
+check "and the document that was already open survived" "$AFTER" '"name":"report.pdf"'
+
+# D16 — an already-open path is focused, not opened twice. Checked here rather than only
+# in Go because the comparison is between PATHS, and a path is the thing this platform
+# spells differently.
+#
+# **Its stimulus is asserted before its result**, and that is not ceremony: the first
+# draft compared counts alone, so when the hand-off was disabled entirely — the red-proof
+# for this whole section — the count did not move and this row reported ok. A check that
+# is green when nothing happened is measuring nothing.
+timeout 90 env NIB_NO_BROWSER=1 NIB_NO_UPDATE_CHECK=1 \
+  wine "$EXE" 'C:\users\'"$USERNAME_"'/nibprobe/report.pdf' > "$WORK/third.log" 2>&1
+THIRD_RC=$?
+N_THIRD="$(ndocs "$(docs)")"
+if [ "$THIRD_RC" != "0" ] || grep -qF 'serving at' "$WORK/third.log"; then
+  echo "  FAIL the already-open launch never reached the running instance (exit $THIRD_RC), so its count check would pass over a hand-off that did not happen"
+  FAILED=1
+elif [ "$N_THIRD" = "$N_AFTER" ]; then
+  echo "  ok   handing over an already-open path focused it rather than duplicating it"
+else
+  echo "  FAIL the count went $N_AFTER -> $N_THIRD; an already-open path opened a second copy"
+  FAILED=1
+fi
 
 echo
 if [ "$FAILED" = "0" ]; then
