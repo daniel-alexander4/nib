@@ -23,6 +23,7 @@ import (
 	"nib"
 	"nib/internal/browser"
 	"nib/internal/cli"
+	"nib/internal/safe"
 	"nib/internal/server"
 	"nib/internal/singleton"
 	"nib/internal/vault"
@@ -77,9 +78,18 @@ func main() {
 
 	s := server.New(nib.WebFS(), nib.LegalFS(), vault.DefaultDir(), version)
 	srv := &http.Server{Handler: s.Handler()}
+	// A serve failure signals the main goroutine instead of exiting from here.
+	// log.Fatalf calls os.Exit, which skips every deferred function AND the explicit
+	// DisarmSession below — so a serve error left an armed co-signing listener, the
+	// one routable socket this app ever opens, un-torn-down. It also carried no
+	// safe.Recover, unlike the three other detached goroutines in the tree, so a
+	// panic outside an HTTP handler took the process down with the user's unsaved
+	// document — which is what safe.Recover's own comment says it exists to prevent.
+	serveErr := make(chan error, 1)
 	go func() {
+		defer safe.Recover("http serve")
 		if err := srv.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			log.Fatalf("server error: %v", err)
+			serveErr <- err
 		}
 	}()
 
@@ -100,9 +110,18 @@ func main() {
 	// Run until interrupted, then shut down cleanly.
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
-	<-ctx.Done()
+	code := 0
+	select {
+	case <-ctx.Done():
+	case err := <-serveErr:
+		log.Printf("server error: %v", err)
+		code = 1
+	}
 	s.DisarmSession() // tear down any armed co-signing listener before exiting
 	_ = srv.Close()
+	if code != 0 {
+		os.Exit(code)
+	}
 }
 
 // loopbackBind reports whether addr is a host:port on the loopback interface.
