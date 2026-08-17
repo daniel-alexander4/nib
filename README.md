@@ -433,7 +433,9 @@ There are two ways to exchange the document:
   authenticated TLS, pinned to each other's identity key: an unpinned peer is dropped
   at the handshake, before any document bytes are exchanged. The receiver reviews the
   exact document and accepts or declines — nothing is signed without that consent —
-  and the session tears down after a single exchange.
+  and the session tears down after a single exchange. **The co-signed document arrives
+  alongside whatever you already had open, not on top of it** — your own document stays
+  open, with anything you had typed or marked on it untouched.
 
 **Reachability for live sessions.** Nib runs no relay, rendezvous, or NAT-traversal
 infrastructure of its own (that would mean a server, and Nib has none). The dialing

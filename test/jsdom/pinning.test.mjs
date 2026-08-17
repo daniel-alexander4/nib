@@ -205,3 +205,119 @@ test('the signing exports are covered by name', () => {
       `${suffix} is named from a live read rather than a captured one`);
   }
 });
+
+// P05.S04 — the other half of P04's export-name rule, and the half that shipped broken.
+//
+// D7's rule is "capture the export name at operation entry". Nineteen scopes obey it by
+// declaring `const exportName = exportBase();` at the top of the handler that uses it.
+// TWO could not, because their flow is split across two handlers: the one that produces
+// the artifact (`reduceGo`, `tvFile`) and the one that saves it (`reduceSave`, `tvSave`).
+// The rewrite gave the second handler no local entry to capture at, and it read the first
+// handler's `const` anyway — a sibling arrow function at module scope, so the identifier
+// simply does not resolve.
+//
+// Both threw `ReferenceError` on every click from P04 until 2026-08-16: "Save reduced PDF"
+// and "Save complete proof" did nothing at all. Nothing caught it — `node --check` passes
+// on a scope error, tier 2 never drove either flow, and tier 3 drives neither.
+//
+// The fix carries the captured name forward on a module binding alongside the artifact
+// (`reduceName`, `upgradedProofName`) rather than re-deriving it at save time, which would
+// name the document that is active when the user clicks rather than the one the bytes came
+// from — the same defect P04 exists to close, one step later.
+test('no handler reads an export name it did not capture', () => {
+  const lines = APP.split('\n');
+  // Approximate a handler as the region from the nearest preceding module-level binding.
+  // Coarse, deliberately: it over-reports rather than under-reports, and a false positive
+  // here is a loud question about a real scope while a false negative is a broken button.
+  const starts = lines.reduce((acc, l, i) => {
+    if (/^(els\.\w+\.\w+ = |function |const \w+ = (async )?\(|let )/.test(l)) acc.push(i);
+    return acc;
+  }, [0]);
+
+  const unscoped = [];
+  lines.forEach((l, i) => {
+    if (!l.includes('exportName') || l.trim().startsWith('//')) return;
+    if (/const exportName/.test(l)) return;
+    const prev = Math.max(...starts.filter((s) => s <= i));
+    if (!lines.slice(prev, i + 1).join('\n').includes('const exportName')) {
+      unscoped.push(`${i + 1}: ${l.trim()}`);
+    }
+  });
+
+  assert.deepEqual(unscoped, [],
+    `an export name is read outside the handler that captured it — this throws ReferenceError at click time and node --check cannot see it:\n  ${unscoped.join('\n  ')}`);
+
+  // Stimulus: the scan must actually be reading a population. Nineteen-odd scopes declare
+  // it; if that count collapses, the green above is over nothing.
+  const declared = (APP.match(/const exportName = exportBase\(\);/g) || []).length;
+  assert.ok(declared >= 15,
+    `only ${declared} export scopes declare a captured name — the scan is not reading what it thinks`);
+});
+
+// P05.S04 — every function called in app.js is one app.js declares.
+//
+// Written because this slice introduced exactly this defect and carried it past two gates:
+// `reloadOpenDoc` was renamed to `openArrivalInNewView` and its one call site was not,
+// leaving `await reloadOpenDoc()` on the arrival path. `node --check` passed (a scope error
+// is not a syntax error) and all 44 tier-2 tests passed, because nothing drives that path —
+// which is precisely the ceiling arrival.test.mjs declares. It was found by reading, which
+// is not a process.
+//
+// This is a HEURISTIC, and it is worth being plain about that: it strips comments and
+// string literals, collects declarations and parameters by pattern, and flags calls to bare
+// identifiers left over. A real `no-undef` linter would do it properly; this repo has none,
+// and the alternative was nothing. Its false-positive direction is a loud named question
+// about a real identifier; the false negative it replaces was a dead code path on the one
+// flow this slice exists to fix. When a false positive appears, add the name to KNOWN below
+// with a reason rather than loosening the scan.
+test('every bare function call resolves to something app.js declares', () => {
+  let src = APP.replace(/\/\*[\s\S]*?\*\//g, '');       // block comments
+  src = src.replace(/(?<!:)\/\/[^\n]*/g, '');              // line comments (not URLs)
+  src = src.replace(/'(?:[^'\\\n]|\\.)*'/g, '""');       // string literals
+  src = src.replace(/"(?:[^"\\\n]|\\.)*"/g, '""');
+  src = src.replace(/`(?:[^`\\]|\\.)*`/g, '""');          // templates
+
+  const declared = new Set();
+  const add = (n) => { const t = String(n).trim().split(/[\s=[\]{}:.]/)[0]; if (t) declared.add(t); };
+  for (const m of src.matchAll(/(?:^|\n)\s*(?:async\s+)?function\s+([A-Za-z_$][\w$]*)/g)) add(m[1]);
+  for (const m of src.matchAll(/(?:^|\n)\s*(?:const|let|var)\s+([^=\n;]+)/g)) m[1].split(',').forEach(add);
+  for (const m of src.matchAll(/import\s*\{([^}]*)\}/g)) m[1].split(',').forEach((n) => add(n.split(' as ').pop()));
+  for (const m of src.matchAll(/import\s+([A-Za-z_$][\w$]*)\s+from/g)) add(m[1]);   // default imports
+  for (const m of src.matchAll(/import\s*\*\s*as\s+([A-Za-z_$][\w$]*)/g)) add(m[1]);
+  for (const m of src.matchAll(/\(([^()]*)\)\s*=>/g)) m[1].split(',').forEach(add);
+  for (const m of src.matchAll(/function\s*\w*\s*\(([^()]*)\)/g)) m[1].split(',').forEach(add);
+  for (const m of src.matchAll(/([\w$]+)\s*=>/g)) add(m[1]);
+  for (const m of src.matchAll(/catch\s*\(\s*([\w$]+)/g)) add(m[1]);
+  for (const m of src.matchAll(/for\s*\(\s*(?:const|let|var)\s+([\w$]+)/g)) add(m[1]);
+
+  const KEYWORDS = new Set(['if', 'for', 'while', 'switch', 'catch', 'return', 'typeof', 'await',
+    'function', 'super', 'new', 'of', 'in', 'do', 'else', 'try', 'throw', 'delete', 'void',
+    'yield', 'case', 'async']);
+  const BROWSER = new Set(['window', 'document', 'console', 'Math', 'JSON', 'Object', 'Array',
+    'String', 'Number', 'Boolean', 'Date', 'Set', 'Map', 'Promise', 'Error', 'RegExp',
+    'parseInt', 'parseFloat', 'isNaN', 'isFinite', 'setTimeout', 'clearTimeout', 'setInterval',
+    'clearInterval', 'fetch', 'alert', 'confirm', 'prompt', 'encodeURIComponent',
+    'decodeURIComponent', 'Uint8Array', 'Blob', 'File', 'FileReader', 'FormData', 'URL',
+    'URLSearchParams', 'DOMParser', 'XMLSerializer', 'Image', 'atob', 'btoa', 'structuredClone',
+    'requestAnimationFrame', 'cancelAnimationFrame', 'matchMedia', 'getComputedStyle',
+    'createImageBitmap', 'Intl', 'BigInt', 'Symbol']);
+  // Names the heuristic cannot see, each with why. Not a suppression list to grow casually.
+  const KNOWN = new Set([
+    'eq',     // a destructured callback parameter in alignPages' options object
+    'onFile', // likewise, in the drag-and-drop wiring
+  ]);
+
+  const unresolved = new Set();
+  for (const m of src.matchAll(/(?<![.\w$])([a-z_$][\w$]*)\s*\(/g)) {
+    const n = m[1];
+    if (declared.has(n) || KEYWORDS.has(n) || BROWSER.has(n) || KNOWN.has(n)) continue;
+    unresolved.add(n);
+  }
+
+  assert.deepEqual([...unresolved].sort(), [],
+    `called but never declared — a rename that missed a call site throws at run time, and neither node --check nor any tier sees it: ${[...unresolved].sort().join(', ')}`);
+
+  // Stimulus: the scan must be reading a real population, or the green above is over an
+  // empty set — which is what a broken strip step would silently produce.
+  assert.ok(declared.size > 400, `only ${declared.size} declarations found — the scan is not reading app.js properly`);
+});
