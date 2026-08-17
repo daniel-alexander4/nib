@@ -64,7 +64,25 @@ function scanUnpinned(src) {
   let m;
   while ((m = header.exec(src)) !== null) {
     const name = m[1] || m[2] || m[3];
-    const open = src.indexOf('{', m.index);
+    // The body's opening brace, which is NOT simply the next `{`. A default
+    // parameter puts one inside the parameter list — `async function pageOp(op,
+    // extra = {})` — and taking the first brace captured `{}` as the entire body.
+    //
+    // That is not a hypothetical: pageOp is the single entry point for twenty
+    // document operations and was unpinned, and this scanner reported clean,
+    // because it never read a line of it. The guard whose whole job is to catch an
+    // unpinned mutating call could not see the most dangerous one in the file.
+    // Walk the parameter list to its matching close paren first, then take the
+    // brace after it.
+    const lp = src.indexOf('(', m.index);
+    if (lp === -1) continue;
+    let pd = 0, afterParams = -1;
+    for (let j = lp; j < src.length; j++) {
+      if (src[j] === '(') pd++;
+      else if (src[j] === ')') { pd--; if (pd === 0) { afterParams = j; break; } }
+    }
+    if (afterParams === -1) continue;
+    const open = src.indexOf('{', afterParams);
     if (open === -1) continue;
     let depth = 0, end = open;
     for (let j = open; j < src.length; j++) {
@@ -120,6 +138,17 @@ async function synthetic() {
   const found = scanUnpinned(bad).map((f) => f.name);
   assert.deepEqual(found, ['synthetic'],
     'the scanner does not detect an obviously corrupting site, so its silence on the real source means nothing');
+
+  // The shape that defeated it: an object default parameter. This is pageOp's
+  // signature, and while the body-finder took the first `{` the scanner read `{}`
+  // as the whole function and reported clean over twenty unpinned operations.
+  const defaulted = `
+async function withDefault(op, extra = {}) {
+  const form = await bakedForm();
+  const res = await apiFetch('/api/pages', { method: 'POST', body: form });
+}`;
+  assert.deepEqual(scanUnpinned(defaulted).map((f) => f.name), ['withDefault'],
+    'a function with an object default parameter is invisible to the scanner — its body was never read');
 
   // And it must NOT flag the shape that is safe, or it would be unusable and the
   // frozen list would fill with functions that are fine.
