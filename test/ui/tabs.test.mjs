@@ -235,3 +235,49 @@ test('closing one document leaves the others open, on the page they were left on
 // Left out rather than left red or left flaky. What it needs is a placement helper that
 // scrolls its target page into view first — harness work, not slice work — and the
 // clause reconciles at the P06 close where the phase criterion already carries it.
+
+test('a real browser reload comes back with every document the server holds', async () => {
+  // S03's acceptance, end to end and against a real server: this is the tier where the
+  // page genuinely reloads, dropping every scrap of client state, and the only thing
+  // that can bring the documents back is asking the server what it holds.
+  //
+  // Two documents are open from the tests above. Asserted before the reload, so "two
+  // came back" is a claim about a restore rather than about a page that never left.
+  const before = await tabCount();
+  assert.equal(before, 2, `setup: ${before} tabs, want 2`);
+  const activeBefore = await page.$eval('.pageCount', (el) => el.textContent);
+
+  await page.reload();
+  await page.waitForSelector('#empty', { state: 'attached' });
+  await page.waitForFunction(() => document.querySelectorAll('#tabstrip .tab').length === 2);
+  await switched(Number(activeBefore.replace('/ ', '')));
+
+  assert.equal(await tabCount(), 2, 'the reload did not restore both documents');
+  assert.equal(await page.$eval('.pageCount', (el) => el.textContent), activeBefore,
+    'the reload came back on a different document than the one that was active');
+  const visible = await page.$$eval('.viewerContainer:not([hidden])', (els) => els.length);
+  assert.equal(visible, 1, `${visible} containers are visible after a reload, want exactly 1`);
+});
+
+test('a reload with ONE document open comes back showing it', async () => {
+  // The N=1 case, stated separately in the acceptance because it is the defect that
+  // predates tabs: before this slice a reload came back showing ZERO documents while the
+  // server still held one, and the strip is hidden at one document, so nothing about the
+  // multi-document path would have caught it.
+  await page.click(`${tabSel(2)} .tabclose`);
+  await page.waitForFunction(() => document.getElementById('tabstrip').hidden === true);
+  const only = await page.$eval('.pageCount', (el) => el.textContent);
+  assert.equal(await page.$$eval('.viewerContainer', (els) => els.length), 1,
+    'setup: more than one document is still open, so this is not the N=1 case');
+
+  await page.reload();
+  await page.waitForSelector('#empty', { state: 'attached' });
+  await page.waitForFunction((n) => document.querySelector('.pageCount').textContent === n, only);
+
+  assert.equal(await page.$eval('#viewerWrap', (el) => el.className), 'has-doc',
+    'a reload with one document open came back to the launch state — the client never asked what the server holds');
+  assert.equal(await page.$$eval('.viewerContainer', (els) => els.length), 1,
+    'the reload did not restore exactly the one open document');
+  assert.equal(await page.$eval('#tabstrip', (el) => el.hidden), true,
+    'the strip is showing with one document open');
+});

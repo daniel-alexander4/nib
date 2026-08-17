@@ -272,8 +272,33 @@ async function apiFetch(url, opts = {}) {
   // nothing at all. The refusal is handled where refusals are already handled; what
   // must not happen is a refusal BODY being mistaken for a document, and that is
   // guarded in setDocumentFromServer, at the one place the mistake is possible.
+  //
+  // **P06.S03 adds a reconciliation on top of that handling, not instead of it.** A 409
+  // means the server no longer holds the document this request named, and the tab for it
+  // is then a tab where everything fails. One 409 is usually an ordinary race — a close
+  // that landed first — and the reconcile simply drops that one tab. The case the
+  // plan-review pin names is the other end: a SERVER RESTART makes every id stale at
+  // once, because docFor refuses a foreign epoch before it compares anything else, and
+  // the app must resolve to the launch empty state rather than to N tabs that each
+  // error. Both are "make the client match the server", which is why there is one
+  // function and not two.
+  //
+  // Fired here rather than at fifteen call sites, for the same reason the header is
+  // attached here: a list of the routes that can 409 would be a second copy of the
+  // server's knowledge, in a different language, drifting the first time a route is
+  // added. Not awaited — the caller's own refusal handling runs now, and the strip
+  // catches up a moment later. Guarded against re-entry so a reconcile that itself gets
+  // a 409 cannot recurse.
+  if (res.status === 409 && !reconciling && !unpinned) {
+    reconciling = true;
+    reconcileWithServer().catch(() => {}).finally(() => { reconciling = false; });
+  }
   return res;
 }
+
+// reconciling guards apiFetch's 409 hook against re-entry: reconcileWithServer issues
+// requests of its own, and a 409 from one of those would call it again.
+let reconciling = false;
 
 // errText extracts the server's {error} message from a failed response, falling
 // back when the body isn't JSON (proxy error, truncated) — so failure paths can
@@ -333,8 +358,20 @@ function applyStatus(st) {
     showVersionBadge(st.version);
     // Automatic update check, once per session, at the first usable moment.
     if (st.autoUpdate && !updateChecked) { updateChecked = true; runUpdateCheck(true); }
-    const initial = new URLSearchParams(location.search).get('open');
-    if (initial && !view.pdfDocument) openPath(initial).catch((e) => toast('could not open: ' + e.message));
+    // Restore FIRST, then honour ?open=. The order is load-bearing twice over: the
+    // guard this replaces was `!view.pdfDocument`, which is false the moment a restore
+    // has put a document in the view — so the file the OS asked nib to open would
+    // silently not open — and a ?open= handled before the restore would be buried under
+    // the documents that arrive after it.
+    if (!restored) {
+      restored = true;
+      reconcileWithServer()
+        .catch((e) => console.error('restore failed', e))
+        .then(() => {
+          const initial = new URLSearchParams(location.search).get('open');
+          if (initial) openOrActivate(initial).catch((e) => toast('could not open: ' + e.message));
+        });
+    }
     return;
   }
 
@@ -2244,6 +2281,81 @@ async function installOpened(meta) {
     return !!view.pdfDocument;
   }
   return openInNewView(meta);
+}
+
+// restored guards the boot restore to once per page load. applyStatus runs again after
+// an unlock and after a migration, and a second restore would re-adopt every document
+// the client already has a view for.
+let restored = false;
+
+// reconcileWithServer makes the client's views match what the server actually holds.
+//
+// **It is the answer to two questions that turned out to be one.** At boot it is the
+// restore: before P06.S03 the client asked "what is the ACTIVE document" from exactly
+// one place — the co-sign arrival poll — and never asked what else was open, so a reload
+// came back showing NOTHING while the server still held N, and a path-less document (an
+// upload, a combine, an office conversion, an arrival) was unreachable for the rest of
+// the process's life, because the only way back to a document was to open it by path.
+// On a 409 it is the all-tabs-stale case from P03's plan-review pin: a server restart
+// makes every id stale at once — `docFor` refuses a foreign epoch before it compares
+// anything else — and the app must resolve to the launch empty state rather than to N
+// tabs that each error. Same function, because "adopt what the server has, drop what it
+// does not" describes both.
+async function reconcileWithServer() {
+  const res = await apiFetch('/api/docs', { unpinned: true });
+  if (!res.ok) return false; // the server is unreachable or locked; leave the UI alone
+  const { docs = [], activeId = '' } = await res.json();
+
+  // **Empty first, then adopt, then drop — and the order is the whole correctness of
+  // this function.** Dropping first was the obvious shape and it is wrong twice over.
+  // With nothing held, the drop loop tears down the last view, `views` goes EMPTY and
+  // `view` points at a torn-down record — and the empty-case branch then does nothing,
+  // because it tests `view.pdfDocument`, which the teardown just nulled. Observed: the
+  // app kept its `has-doc` chrome over no document at all. With something held but none
+  // of it known to the client, the same drop leaves `view` dangling until an adoption
+  // happens to replace it. Adopting and activating first means there is always a live
+  // view to stand on before anything is removed.
+  if (!docs.length) {
+    // Nothing open server-side. closeDocument is the launch state AND re-seats `views`
+    // to a single empty view, which is exactly what is owed here; a hand-rolled teardown
+    // would be a second copy of it. Guarded so a boot with nothing open stays untouched.
+    if (view.pdfDocument || views.length > 1) closeDocument();
+    return true;
+  }
+
+  // Adopt everything the client does not already have, in the server's order.
+  for (const meta of docs) {
+    if (views.some((v) => v.docMeta && v.docMeta.id === meta.id)) continue;
+    await installOpened(meta);
+  }
+
+  // Activate the one the server says is active, rather than whichever adoption finished
+  // last — the same "follow the server, do not re-derive it" rule as the close. Done
+  // BEFORE the drops, so the view being dropped is never the active one.
+  const target = views.find((v) => v.docMeta && v.docMeta.id === activeId);
+  if (target && target !== view) activateView(target);
+
+  // Drop what the server no longer holds: a view for a vanished document is a tab where
+  // every action 409s, and leaving it is the "N error tabs" the pin refuses.
+  const held = new Set(docs.map((d) => d.id).filter(Boolean));
+  for (const v of [...views]) {
+    const id = v.docMeta && v.docMeta.id;
+    if (v !== view && v.pdfDocument && id && !held.has(id)) tearDownView(v);
+  }
+  syncTabs();
+  return true;
+}
+
+// openOrActivate opens a path, or brings its tab forward when it is already open.
+//
+// Opening the same file twice is legitimate when a user asks for it — the server allows
+// it and `TestOpenAddsRatherThanReplacing` relies on it — but `?open=` after a restore is
+// not that ask: it is the OS handing nib a file, and answering with a second copy of a
+// document already on screen is surprising rather than helpful.
+async function openOrActivate(path) {
+  const already = views.find((v) => v.pdfDocument && v.docMeta && v.docMeta.path === path);
+  if (already) { if (already !== view) activateView(already); return; }
+  return openPath(path);
 }
 
 async function openPath(path) {
