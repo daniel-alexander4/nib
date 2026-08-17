@@ -159,11 +159,22 @@ test('closing mid-thumbnail-build leaves no orphan thumbnail', async () => {
 
 test('a failed close tears nothing down', async () => {
   await h.openDocument(DOC, 3);
-  await page.route('**/api/close', (route) =>
-    route.fulfill({ status: 500, contentType: 'application/json', body: '{"error":"injected"}' }));
+  // The stimulus counter, and without it this test proves nothing: EVERY assertion
+  // below is already true before the click. Ask the question — what would this have
+  // missed if the close had done nothing at all? — and the answer was "nothing, it
+  // would still be green". A close that never fired, a control that never armed, or
+  // a settle that returned too early all read as "a failed close tore nothing down".
+  let refusals = 0;
+  await page.route('**/api/close', (route) => {
+    refusals++;
+    return route.fulfill({ status: 500, contentType: 'application/json', body: '{"error":"injected"}' });
+  });
 
   h.dialogs.length = 0;
   await closeDoc();
+
+  assert.ok(refusals > 0,
+    'NOT EXERCISED: /api/close was never called, so the failure this test injects never happened');
 
   const kept = await chrome();
   assert.equal(kept.wrap, 'has-doc', 'a failed close must not tear down the client');
