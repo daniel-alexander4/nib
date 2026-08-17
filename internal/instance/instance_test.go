@@ -166,13 +166,16 @@ func TestPathIsInsideTheGivenDirectory(t *testing.T) {
 // TestTheRecordDoesNotOutliveASIGTERM is a source guard, and it exists because the
 // signal that kills Nib in ordinary use is the one Go does not handle by default.
 //
-// `build/nib.desktop` passes `--replace` on every activation and
-// `singleton.ReplaceOthers` sends SIGTERM. An unhandled SIGTERM terminates without
-// running a single deferred function, so the instance record outlives its instance —
-// every desktop double-click leaving one behind, pointing at a dead process, while the
-// launch that killed it finds ErrExists and publishes nothing. Found by P07's plan
-// review; the behaviour itself is driven live in the slice's verification, and this
-// guard is what notices if the signal list is ever trimmed back.
+// An unhandled SIGTERM terminates without running a single deferred function, so the
+// instance record outlives its instance — pointing at a dead process, while the next
+// launch finds ErrExists and publishes nothing.
+//
+// **The finding's original case is gone and the guard is not.** P07's plan review found
+// it where `build/nib.desktop` passed `--replace` and `singleton.ReplaceOthers` sent
+// SIGTERM; S02 dropped the flag from the desktop entry and S03 deleted the package. A
+// session logout, a `systemctl stop`, a container stop and a plain `kill` all still send
+// it. This guard is what notices if the signal list is trimmed back on the reasoning
+// that the sender it was written for no longer exists.
 func TestTheRecordDoesNotOutliveASIGTERM(t *testing.T) {
 	src, err := os.ReadFile(filepath.Join("..", "..", "cmd", "nib", "main.go"))
 	if err != nil {
