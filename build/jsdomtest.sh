@@ -50,7 +50,9 @@ fi
 # next person to bump the number, which is how V11's equality assertion rotted. A
 # file count changes only when someone adds or deletes a file, which is deliberate.
 Nib_files="$(find test/jsdom -maxdepth 1 -name '*.test.mjs' | wc -l | tr -d ' ')"
-Nib_expect_files=8
+# Nine since P06.S03 added restore.test.mjs, which needs its own boot: the restore runs
+# at module-evaluation time and one boot per file is this tier's standing rule.
+Nib_expect_files=9
 if [ "$Nib_files" -ne "$Nib_expect_files" ]; then
   echo "FAIL: expected $Nib_expect_files jsdom test files, found $Nib_files — a test file was added or dropped." >&2
   echo "      If deliberate, update Nib_expect_files in this script." >&2
