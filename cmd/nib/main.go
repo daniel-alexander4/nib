@@ -23,6 +23,7 @@ import (
 	"nib"
 	"nib/internal/browser"
 	"nib/internal/cli"
+	"nib/internal/instance"
 	"nib/internal/safe"
 	"nib/internal/server"
 	"nib/internal/singleton"
@@ -32,7 +33,20 @@ import (
 // version is set at build time via -ldflags "-X main.version=…".
 var version = "dev"
 
-func main() {
+// main is a wrapper and run() is the program, so that **every deferred cleanup actually
+// runs**.
+//
+// `os.Exit` does not run deferred functions. With the body inline, the `os.Exit(code)`
+// on the error path below silently skipped every `defer` above it — which P07.S01
+// noticed by adding one (the instance record's removal) and finding that a serve error
+// would leave the record behind for the next launch to reason about. It is the same
+// shape the P05 review found in the serve goroutine's `log.Fatalf`, which skipped both
+// `defer stop()` and the explicit `DisarmSession`. Fixing it here rather than adding a
+// second removal call site fixes the class: any future defer in this function is now
+// correct by construction instead of correct by whoever remembers this paragraph.
+func main() { os.Exit(run()) }
+
+func run() int {
 	log.SetFlags(0)
 	log.SetPrefix("nib: ")
 
@@ -40,7 +54,7 @@ func main() {
 	// without ever binding a port or opening a browser. Anything else (a PDF
 	// path, --replace, or no argument) falls through to the desktop boot below.
 	if handled, code := cli.Run(os.Args[1:], version); handled {
-		os.Exit(code)
+		return code
 	}
 
 	replace := flag.Bool("replace", false, "terminate any other running Nib instance before starting")
@@ -63,20 +77,60 @@ func main() {
 		bind = "127.0.0.1:0"
 	}
 	if !loopbackBind(bind) {
-		log.Fatalf("NIB_ADDR must bind a loopback address (127.0.0.1, localhost, or ::1); got %q", bind)
+		log.Printf("NIB_ADDR must bind a loopback address (127.0.0.1, localhost, or ::1); got %q", bind)
+		return 1
 	}
 	ln, err := net.Listen("tcp", bind)
 	if err != nil {
-		log.Fatalf("cannot bind %s: %v", bind, err)
+		log.Printf("cannot bind %s: %v", bind, err)
+		return 1
 	}
 	// Backstop the loopbackBind string check: if a hostname like "localhost"
 	// resolved to a routable address (e.g. a doctored /etc/hosts), refuse to serve.
 	if tcp, ok := ln.Addr().(*net.TCPAddr); !ok || !tcp.IP.IsLoopback() {
-		log.Fatalf("refusing to serve on non-loopback address %s", ln.Addr())
+		// Printf-and-return rather than Fatalf: inside run(), a Fatalf would skip the
+		// deferred cleanups that the whole point of this restructuring is to run.
+		log.Printf("refusing to serve on non-loopback address %s", ln.Addr())
+		return 1
 	}
 	addr := ln.Addr().String()
 
+	// Publish the rendezvous record: where this instance is, and a token proving a
+	// probe reached IT. A second launch has no other way to find this process — the
+	// bind above is 127.0.0.1:0, a random port by design.
+	//
+	// A failure here is logged and not fatal. The record is how a LATER launch finds
+	// this one; a nib that cannot write it still serves the user in front of it, and
+	// refusing to start would trade a working app for a missing convenience.
+	cfgDir := vault.DefaultDir()
+	probeToken, err := instance.NewToken()
+	if err != nil {
+		log.Printf("could not mint an instance token: %v", err)
+	}
+	if probeToken != "" {
+		rec := instance.Record{Addr: addr, Token: probeToken, Version: version}
+		switch err := instance.Create(cfgDir, rec); {
+		case err == nil:
+			// Deferred, and that only works because run() RETURNS rather than
+			// calling os.Exit — see main. A stale record is the case the next
+			// launch has to reason about, so leaving fewer of them is worth
+			// making the whole function defer-safe.
+			defer func() { _ = instance.Remove(cfgDir) }()
+		case errors.Is(err, instance.ErrExists):
+			// Another instance already published. P07.S02 decides what to do about
+			// it — hand the path over, or take over a stale record. Until then this
+			// is a note rather than a behaviour change: today's launch carries on and
+			// serves, exactly as it did before the record existed.
+			log.Printf("another Nib instance is already recorded; running alongside it")
+			probeToken = ""
+		default:
+			log.Printf("could not publish the instance record: %v", err)
+			probeToken = ""
+		}
+	}
+
 	s := server.New(nib.WebFS(), nib.LegalFS(), vault.DefaultDir(), version)
+	s.SetInstanceToken(probeToken)
 	srv := &http.Server{Handler: s.Handler()}
 	// A serve failure signals the main goroutine instead of exiting from here.
 	// log.Fatalf calls os.Exit, which skips every deferred function AND the explicit
@@ -119,9 +173,7 @@ func main() {
 	}
 	s.DisarmSession() // tear down any armed co-signing listener before exiting
 	_ = srv.Close()
-	if code != 0 {
-		os.Exit(code)
-	}
+	return code
 }
 
 // loopbackBind reports whether addr is a host:port on the loopback interface.
