@@ -464,59 +464,104 @@ func runContinuousPagenum(files []string, st pdfops.PageNumberStyle, inPlace boo
 	if st.Start < 1 {
 		st.Start = 1 // match StampPageNumbers' own clamp, so the threaded offset and Total agree
 	}
-	docs := make([][]byte, len(files))
-	counts := make([]int, len(files))
-	grand := 0
-	for i, f := range files {
+	for _, f := range files {
 		if f == "-" {
 			errf("--continuous reads files by name; stdin (-) is not supported")
 			return 1
 		}
+	}
+
+	// ONE document in memory at a time, not the whole set.
+	//
+	// This used to read every input up front, stamp every one, and hold both the inputs
+	// and the stamped outputs until the last write — so a Bates run over a few hundred
+	// scanned PDFs held all of them at once. The counting pass below re-reads each file
+	// and keeps only its page count; the stamping pass re-reads, stamps, writes, and
+	// drops. Twice the I/O, bounded memory, and the trade is the right way round for a
+	// command whose whole purpose is batches.
+	//
+	// The counting pass runs only for --total, which is the only thing that needs a
+	// number from files it has not reached yet.
+	counts := make([]int, len(files))
+	if st.OfTotal {
+		grand := 0
+		for i, f := range files {
+			n, err := pageCountOf(f)
+			if err != nil {
+				errf("%s: %v", f, err)
+				return 1
+			}
+			counts[i] = n
+			grand += n
+		}
+		st.Total = st.Start + grand - 1 // "of N" = the set's last number, not each file's
+	}
+
+	if !inPlace {
+		dir := filepath.Clean(outDir)
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			errf("%v", err)
+			return 1
+		}
+		outDir = dir
+	}
+	seen := map[string]int{}
+	offset := st.Start
+	for i, f := range files {
 		b, err := os.ReadFile(f)
 		if err != nil {
 			errf("%v", err)
 			return 1
 		}
-		n, err := pdfops.PageCount(b)
-		if err != nil {
-			errf("%s: %v", f, err)
-			return 1
+		n := counts[i]
+		if n == 0 { // no counting pass ran (no --total): count it here, from bytes already in hand
+			if n, err = pdfops.PageCount(b); err != nil {
+				errf("%s: %v", f, err)
+				return 1
+			}
 		}
-		docs[i], counts[i] = b, n
-		grand += n
-	}
-	if st.OfTotal {
-		st.Total = st.Start + grand - 1 // "of N" = the set's last number, not each file's
-	}
-	offset := st.Start
-	for i, f := range files {
 		s := st
 		s.Start = offset
-		res, err := pdfops.StampPageNumbers(docs[i], s)
+		res, err := pdfops.StampPageNumbers(b, s)
 		if err != nil {
 			errf("%s: %v", f, err)
 			return 1
 		}
-		docs[i] = res // stamped output replaces the input bytes
-		offset += counts[i]
-	}
-	if inPlace {
-		for i, f := range files {
-			if err := writeAtomic(f, docs[i]); err != nil {
+		offset += n
+		if inPlace {
+			if err := writeAtomic(f, res); err != nil {
 				errf("%s: %v", f, err)
 				return 1
 			}
 			fmt.Printf("%s: rewritten\n", f)
+			continue
 		}
-		return 0
-	}
-	seen := map[string]int{}
-	parts := make([]pdfops.SplitPart, len(files))
-	for i, f := range files {
 		base := pdfops.SanitizeFilename(strings.TrimSuffix(filepath.Base(f), filepath.Ext(f)))
-		parts[i] = pdfops.SplitPart{Name: pdfops.UniqueName(base, i+1, seen), Data: docs[i]}
+		full := filepath.Join(outDir, pdfops.UniqueName(base, i+1, seen)+".pdf")
+		if filepath.Dir(full) != outDir { // containment: the name is input-derived
+			errf("unsafe file name %q", base)
+			return 1
+		}
+		if err := os.WriteFile(full, res, 0o644); err != nil {
+			errf("%v", err)
+			return 1
+		}
+		fmt.Println(full)
 	}
-	return writeSplitFiles(outDir, parts)
+	if !inPlace {
+		fmt.Printf("%d file(s) written to %s\n", len(files), outDir)
+	}
+	return 0
+}
+
+// pageCountOf reads a PDF only to count its pages and lets the bytes go immediately —
+// the whole point of the counting pass in runContinuousPagenum.
+func pageCountOf(path string) (int, error) {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return 0, err
+	}
+	return pdfops.PageCount(b)
 }
 
 // rangeFlag collects repeatable --range PAGE:STYLE[:START[:PREFIX]] specs into
