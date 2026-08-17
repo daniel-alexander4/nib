@@ -3,6 +3,7 @@ package nib
 import (
 	"os"
 	"os/exec"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -57,9 +58,63 @@ func TestVerifyContractIsTrue(t *testing.T) {
 	// Each tier states what it CANNOT see, and that half is the one worth
 	// guarding: a contract listing three commands and no blind spots invites
 	// exactly the over-trust the tiering exists to prevent.
-	for _, ceiling := range []string{"Cannot see: the client at all", "Cannot see: anything that needs rendering", "Cannot see: other engines"} {
-		if !strings.Contains(contract, ceiling) {
-			t.Errorf("CONTRIBUTING.md is missing a tier ceiling: %q", ceiling)
+	//
+	// Checked in the HARNESS FILES too, not only here. The contract sends readers to
+	// "the ceiling written in test/jsdom/boot.mjs" and "the ceiling written in
+	// build/uirepro.sh", and those are the copies that rot — this file is the one
+	// people edit when they edit the contract, and the harness comment is the one they
+	// forget. A ceiling that exists only in the document the guard reads is a ceiling
+	// the guard cannot tell from a deleted one.
+	for _, c := range []struct{ file, ceiling string }{
+		{"CONTRIBUTING.md", "Cannot see: the client at all"},
+		{"CONTRIBUTING.md", "Cannot see: anything that needs rendering"},
+		{"CONTRIBUTING.md", "Cannot see: other engines"},
+		{"test/jsdom/boot.mjs", "Where it stops"},
+		{"build/uirepro.sh", "Where it still stops"},
+	} {
+		body := contract
+		if c.file != "CONTRIBUTING.md" {
+			b, err := os.ReadFile(c.file)
+			if err != nil {
+				t.Errorf("%s is named in the contract as holding a ceiling, and is missing: %v", c.file, err)
+				continue
+			}
+			body = string(b)
+		}
+		if !strings.Contains(body, c.ceiling) {
+			t.Errorf("%s no longer states its ceiling (%q) — the contract sends readers there for it", c.file, c.ceiling)
+		}
+	}
+
+	// The four-row TABLE, not merely the four commands somewhere in the prose.
+	//
+	// strings.Contains over the whole file was the entire check, so deleting the table
+	// and leaving the commands mentioned in a sentence kept this green — and the table
+	// is the part that pairs each command with a tier number and with what it verifies.
+	// Asserted as rows so the structure has to survive, not just the words.
+	for i, cmd := range []string{"`go build ./...`", "`go test ./...`", "`./build/jsdomtest.sh`", "`./build/uirepro.sh`"} {
+		row := "| " + strconv.Itoa(i) + " | " + cmd
+		if !strings.Contains(contract, row) {
+			t.Errorf("the tier table has lost its row %d (%q) — the commands may still be named in prose, which is what made this check pass over a deleted table", i, row)
+		}
+	}
+
+	// The "proven red at least once" claim needs a record behind it.
+	//
+	// This is the V1 shape in the file that teaches V1: the sentence was guarded (it is
+	// in `contract`, so a deletion would fail the ceiling checks above) while the FACT it
+	// asserts was backed by nothing a reader could check. docs/red-proofs.md is that
+	// record; a claim of having been proven red, with no ledger, is a claim nobody can
+	// audit and therefore one nobody should believe.
+	if strings.Contains(contract, "proven red") {
+		ledger, err := os.ReadFile("docs/red-proofs.md")
+		if err != nil {
+			t.Fatalf("CONTRIBUTING.md claims every tier has been proven red, and docs/red-proofs.md — the record of it — is missing: %v", err)
+		}
+		for _, tier := range []string{"Tier 1", "Tier 2", "Tier 3"} {
+			if !strings.Contains(string(ledger), tier) {
+				t.Errorf("docs/red-proofs.md has no entries for %s, so the contract's claim is unbacked for that tier", tier)
+			}
 		}
 	}
 }
