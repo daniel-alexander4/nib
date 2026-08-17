@@ -38,6 +38,17 @@ per overlay kind: a hidden element keeps its value because nothing removed it.
   overlay kinds added later. That is the whole argument.
 - Hidden views cost memory: each keeps its rendered page DOM. This is bounded by
   the open-document cap and is the price of the property above.
+
+  **(correction, 2026-08-17, P05 phase-close review — the bound named above does
+  not exist.)** The decision stands; this consequence overstated what backs it.
+  There is no open-document cap in the code, in count or in bytes: `Server.addDoc`
+  appends with no length test and nothing but a full close removes an entry, and
+  client-side `views.push(arrival)` is equally unbounded. D9's cap is planned for
+  P06 (`PLAN.md`), so the sentence describes an intended state in the present
+  tense. Measured cost meanwhile: roughly 35 MiB of canvas and ~2,100 nodes per
+  hidden 300-page document, on top of the page DOM, and one more arrives with every
+  completed co-signature. Recorded as a dated note rather than an edit, because an
+  ADR's text is the record of what was decided and when — see `_index.md`.
 - `display: none` has measurement consequences that must be handled explicitly —
   a hidden container reports `clientWidth` 0, so a view that loads while hidden
   gets no scale and must be re-fit when it is activated. Verified empirically

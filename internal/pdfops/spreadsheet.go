@@ -16,11 +16,42 @@ import (
 // OOXML package (zip + a few XML parts), since a Go office library would be a
 // heavy/licence-encumbered dependency the project declined.
 
+// csvSafe neutralizes a cell that a spreadsheet would execute as a formula.
+//
+// The grid is table text extracted from an UNTRUSTED PDF, and CSV is the one output
+// format here that carries no type information: XLSX marks cells t="inlineStr" and
+// ODS office:value-type="string", so both are inert by construction, while a CSV
+// cell beginning = + - @ (or a leading tab/CR before one) becomes a live formula the
+// moment the file is opened in Excel or LibreOffice — =HYPERLINK, DDE, and the rest.
+//
+// Prefixing with an apostrophe is the conventional fix: spreadsheets read it as
+// "treat the rest as text" and strip it on display, and a plain text reader sees one
+// leading quote rather than a mangled value. Leading control characters are dropped
+// first, since they would otherwise carry the trigger past the check.
+func csvSafe(cell string) string {
+	trimmed := strings.TrimLeft(cell, "\t\r\n ")
+	if trimmed == "" {
+		return cell
+	}
+	switch trimmed[0] {
+	case '=', '+', '-', '@':
+		return "'" + trimmed
+	}
+	return cell
+}
+
 // GridToCSV serializes the grid as RFC-4180 CSV (encoding/csv handles quoting).
 func GridToCSV(grid [][]string) ([]byte, error) {
 	var buf bytes.Buffer
 	cw := csv.NewWriter(&buf)
-	if err := cw.WriteAll(grid); err != nil {
+	safe := make([][]string, len(grid))
+	for i, row := range grid {
+		safe[i] = make([]string, len(row))
+		for j, cell := range row {
+			safe[i][j] = csvSafe(cell)
+		}
+	}
+	if err := cw.WriteAll(safe); err != nil {
 		return nil, err
 	}
 	return buf.Bytes(), cw.Error()
