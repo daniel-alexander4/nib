@@ -1482,7 +1482,22 @@ the same irreversible-loss family as `redactMarks`, not the stale-label family. 
 therefore **fourteen** bindings, and the exit criterion above is amended to say so.
 The lesson is P04's, again and exactly: *a count used to size work is an instrument, and
 an instrument that has never been red-fixtured will happily report a population it did
-not read.* The 377/13 figures also count comment prose — the guard suite strips comments
+not read.*
+
+**(measurement correction, 2026-08-16, S04's deepdive — and this one is a 3x error, not a
+one-binding error.)** The enumeration above counts *bindings with many references*. The
+question activation actually asks is **what must swap when the active view changes**, and
+that finds roughly **35**: the 13 here, `overlayHistory` (S06's), ~22 more per-document
+bindings still at module scope, ~11 transient ones that must be **aborted rather than
+restored**, and ~20 modal-state bindings that collapse to one rule. Named because the two
+corrections have different causes and only the second is interesting: the first was a
+missed row in a list; this one is a list that was answering a different question than the
+phase needed. **The reference-count instrument was never wrong — it was never the right
+instrument**, and nothing in the phase would have surfaced that until a slice tried to use
+its output. The standout omission is `selectedPages`/`selAnchor` (`app.js:2822-2823`),
+which drives the bulk rotate/delete/reorder bar off one document's page numbers: with two
+views that is a destructive wrong-document operation, and it appears in no enumeration in
+this plan. The 377/13 figures also count comment prose — the guard suite strips comments
 (`view.test.mjs:34`), so the population it actually polices is smaller than the figure
 that sized the phase. **`overlayHistory` is P05.S06's** (added below); no earlier slice
 claims it.
@@ -1686,11 +1701,173 @@ difference, not the rule**, and this is the third time this phase has met a gree
 population that was never exercised. Rebuilt to the real shape and re-probed red three ways.
 Full disposition: `<project-memory>/code-reviews/P05.S03-per-view-viewer.md`.
 
-#### P05.S04 — activation
-Scope: show/hide on switch; re-fit and dpr-heal on activation. Refs: D3.
+#### P05.S04 — activation *(done 2026-08-16, v1.105.3)*
+Scope: the remaining per-document module state onto the view record; `activateView(v)`
+(quiesce, swap, geometry, repaint); per-view dpr tracking and scroll restore; arrivals
+open into a new hidden view; Close drops all views. Refs: D3, D10, ADR-002.
+
+**(re-scoped 2026-08-16 by the S04 deepdive, Dan's call — option A.)** The slice was
+scoped as "show/hide on switch; re-fit and dpr-heal on activation". Three things the dive
+established changed that:
+
+**(1) The slice cannot verify itself, at any tier.** Its one clause needs a view that loads
+while hidden, and nothing can produce one: every open path calls `setDoc`, which does
+`s.docs = nil` (opens **replace**, server-side); jsdom has no layout, so `clientWidth` is
+always 0 and the clause is invisible there *by declared ceiling*; and the one adding path —
+a co-sign arrival calling `addDoc` — needs a live pinned peer, which `arrival.test.mjs`
+already records as undriveable from jsdom and carried to P06. **The clause is
+`not exercised` and carries to P06**, on Dan's explicit call at the S04 gate. The
+*mechanism* is verified as necessary: a hidden container makes pdf.js compute
+`(clientWidth - 40) / width` → negative, reaching `#setScaleUpdatePages` unclamped
+(`pdf_viewer.mjs:8933`), and nothing repairs it on show — `#resizeObserverCallback`
+updates one CSS var and nulls a cached offset, no re-scale and no re-render (`:9596`).
+
+**(2) The phase's binding count was short by roughly 3x, not by one.** S03 found a
+fourteenth. Asking the different question — *what must swap when the active view changes?*
+— finds about **35**: the 13 already moved, `overlayHistory` (S06's), ~22 per-document
+bindings still at module scope, ~11 transient ones that must be **aborted rather than
+restored**, and ~20 modal-state bindings that collapse to one rule (close them on switch).
+The worst of the new ones is **`selectedPages`/`selAnchor`** (`app.js:2822-2823`), which no
+enumeration in this plan has ever named: 1-based page numbers in one document's pagination
+driving the bulk rotate/delete/reorder bar, so with two views it applies the *old*
+document's page numbers to the *new* document. That is a destructive wrong-document
+operation, not a stale label.
+
+**(3) Two live defects and two live `ReferenceError`s sit in the code this slice touches,
+and fixing them is most of what makes the slice worth shipping.** They are listed as tasks
+below rather than filed, because three of the four are in the exact call paths activation
+has to get right, and the fourth is two lines.
+
+**(live defect — an arrival destroys unsaved work.)** `reloadOpenDoc` (`app.js:1082`)
+states the correct premise in its own comment — *"A co-signature applied out of band ADDS a
+document and makes it active (D10); the document this client currently names is still open
+and still perfectly valid"* — and then calls `setDocumentFromServer`, which repoints the
+single view at the arrival and runs `clearOverlays()` on the way. P03.S05 built the server
+half; the client half was never built, so every overlay element and typed value on the
+document the user was working on is destroyed, and that document survives only on the
+server, unreachable from the UI. **This is also S04's stimulus**: it is what makes a second
+view exist.
+
+**(live defect — Close closes everything.)** `handleClose` calls `setDoc(nil)`, which empties
+the whole registry and clears every open document's undo rings. Arrivals can already leave
+two documents open, so closing one drops both. S04 makes the *client* match that
+(a Close drops all views), which is honest rather than a regression — Close is "Close all"
+today. **P06 splits Close view from Close all**, and that is where the server needs a
+per-document remove.
+
+**(live defect — two Save buttons throw.)** `app.js:4225` ("Save reduced PDF") and `:4626`
+("Save complete proof") read `exportName`, declared inside a *different* handler (`:4191`
+and `:4605`) with no module-level binding anywhere. Sibling arrow functions at module
+scope. P04 residue: these are the two export scopes split across a second handler, so the
+capture-at-operation-entry rewrite had no local entry to capture at. `node --check` passes
+because it is a scope error and not a syntax error, which is exactly why tier 0 never saw
+it — and why the fix ships with a test that drives each flow far enough to have caught it.
+
+**(ordering constraints the dive pinned, all load-bearing.)** `view = v` before every
+repaint, because eleven repaint functions resolve the module-level `view` internally.
+`updateBadge` **after** the swap, because its first statement is a *write* —
+`view.lastSig = sig` — so called before it, it overwrites the outgoing view's `lastSig`,
+one of the three SAFETY fields. `docHadFlags` restored before `applySignLock`, which reads
+it as `recipient`. `applySignLock` **after** `setDocControls(true)`, because `EDITING_TOOLS`
+is a strict subset of `DOC_REQUIRED` and the latter re-enables everything the former just
+disabled. Unhide before the re-fit, or `clientWidth` is 0 and the fit silently no-ops.
+Abort in-flight drags **before** hiding, because the preview nodes live in the outgoing
+view's page divs and a release after the swap writes the drag into the wrong document.
+
+**(and what must never run on activation.)** `setDocument` — it calls `_resetView()`, which
+does `viewer.textContent = ""`, emptying the page stack and every overlay value with it,
+which is the whole of ADR-002. Also barred: `setDocumentFromServer`, `resetSharedDocState`,
+`clearOverlays`, `clearOverlayHistory`, `reconstructFlags` (it *pushes* with no clear of its
+own, so re-running duplicates every flag), `showSignBanner` (it resets a recipient's
+mid-flow progress — `setSignBanner` is the repaint), `updateBadge(null)`, `closeDocument`,
+`loadingTask.destroy()`, and `newView()`.
+
+**(scroll is not preserved by hiding, and ADR-002 does not cover it.)** `display:none`
+drops `scrollTop`, so on show the scroll watcher runs with 0 and the view returns to page 1.
+The ADR's "preservation is the browser's default" holds for DOM *content*; scroll offset is
+Nib's to restore. Same for dpr: `lastDpr` is one module global and `dprChanged` refreshes
+only the active viewer, so a dpr change while a view was hidden is recorded and never
+delivered — that view's canvases stay soft permanently.
+
+Tasks:
+1. T01 — the ~22 remaining per-document module bindings move onto the view record,
+   including `selectedPages`/`selAnchor`.
+2. T02 — `activateView(v)` phase A: abort every live drag, capture scroll and page number,
+   close the document-bound modals.
+3. T03 — phase B: the swap, and the restore of the per-document state, in the pinned order.
+4. T04 — phase C: unhide, re-fit, then relayout overlays and marks **explicitly** — a
+   re-fit that computes the same scale fires no event, so the self-serving path is not
+   enough.
+5. T05 — per-view dpr tracking (`v.renderedDpr`) and the refresh on activation.
+6. T06 — scroll and page restore.
+7. T07 — phase D: repaint the shared chrome — wrap classes, Save label, page counters,
+   badge, both sidebars, find counter, doc-required controls, sign lock, flags panel,
+   banner, the nine tool reflectors and the wrap cursor.
+8. T08 — arrivals open into a new hidden view (the client half of D10).
+9. T09 — Close drops all views, matching the server.
+10. T10 — the two `ReferenceError`s, each with a test that drives its flow.
+11. T11 — this amendment.
+
 Acceptance:
 - A view that loads while hidden gets a scale when activated — red without the re-fit,
-  since a hidden container reports `clientWidth` 0.
+  since a hidden container reports `clientWidth` 0. **`not exercised` — carried to P06**
+  (Dan's call, 2026-08-16): no path creates a second view until the tab strip, jsdom has no
+  layout, and the arrival that could is undriveable below P06.
+- An arrival opens a **new** view and leaves the current one intact — its overlay fields
+  and redaction marks survive, asserted directly rather than through the DOM.
+- The per-document bindings are on the view record, `selectedPages` among them; a
+  module-scope scan for them is red before the move.
+- The transient drag state is **aborted** on switch, never restored — asserted by name,
+  because restoring it is the plausible wrong shape.
+- Both Save buttons produce a download rather than throwing, each driven through its own
+  flow.
+- Single-view behaviour unchanged; all four tiers green.
+
+**(diff review, 2026-08-16 — three criticals, and all three were in machinery this slice
+added to prevent their own class.)**
+
+1. **The scripted move of 193 references missed two, and the guard was blind to exactly the
+   form it missed.** `[...selectedPages]` in `selectedPagesParam` and `moveSelected`: the
+   character before the identifier is the third dot of the spread, so the guard's
+   property-access lookbehind rejected both. They were the only two spread reads among the
+   193 sites, and both were live `ReferenceError`s that killed **every bulk page operation**
+   with one document open and no arrival needed. The lookbehind now rejects a preceding dot
+   only when it is not part of `...`, and both the defect and the fix were driven live:
+   rotate sent `pages=1,2`, ⤒ sent `reorder 3,1,2,4`, and `eval('[...selectedPages]')` in the
+   same page returns `ReferenceError`.
+2. **The arrival still destroyed the active view's work.** `setDocumentFromServer` guarded
+   every shared-chrome write on `target === view` and then called `resetSharedDocState()`
+   unguarded — a function entirely module-`view` bound, which empties `overlayFields`, nulls
+   the marker bindings, clears `redactMarks` and drops the overlay undo stack. It was
+   *reported* fixed before the review caught it, and the cause is the useful part: **a
+   scripted edit asserted on six substitutions, aborted on the fourth, and wrote none of
+   them** — a composed fix that was never applied, under a narrative that had moved on. A
+   scripted edit that asserts before writing must be checked for having written.
+3. **The rename broke the arrival path.** `reloadOpenDoc` became `openArrivalInNewView` and
+   its one call site did not. `node --check` passed and all 44 tests passed, because nothing
+   drives that path — the exact ceiling `arrival.test.mjs` declares, met within an hour of
+   reading it. Now guarded by an unresolved-call scan, red against that defect.
+
+Also fixed: `views.splice(indexOf, 1)` with no `-1` check (a Close racing the load removed the
+**active** view); the sidebar staleness token, which compared generations across views that
+both start at 0 and so could not identify a document (ADR-001's id-reuse shape again, now a
+`(view, generation)` pair); `dprChanged` not recording what it refreshed, which left a view
+permanently soft; the "selection restore" that called `clearSelection()` on the *incoming*
+view and so cleared rather than restored; the decrypt prompt writing the wrong document; and
+four operations resolving the view after an await (`splitRects`, `bakedBytes`' flag-strip
+predicate, and the redact and remove-originals disarms).
+
+**(correction, 2026-08-16 — a comment that justified itself with claims that were untrue.)**
+The record's note said `sbPage`, `splitRects`, `cropPage`, `cropRect` and `selectedPages` were
+all read after an await. Only `splitRects` was, and it is the one that went unfixed while the
+comment asserted the class had been considered. Corrected in both the code and the guard.
+
+**(deferred, enumerated rather than described.)** The rest of the resolve-at-fire-time family
+— `fillTarget` across the Library pick, `placeIntoMarker` after the image decode, the two
+pointer-capture gesture closures `abortDrags` cannot reach, `pageOp` plus 19 unpinned
+`setDocumentFromServer` call sites, the shape/note handlers already inside their await — is
+listed site-by-site in the pending item. A new item covers Open orphaning every other view and
+Close-all never asking about their unsaved work; both are P06-shaped.
 
 #### P05.S05 — the sidebars
 Scope: per-view thumbnail and outline containers, per-view `docGen`. Refs: D3, and the

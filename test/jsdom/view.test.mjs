@@ -49,6 +49,39 @@ const PER_VIEW = ['redactMarks', 'signLocked', 'lastSig', 'docGen', 'outlineItem
 // Sharing any one of them makes N documents interfere through pdf.js itself.
 const PER_VIEW_ENGINE = ['viewer', 'eventBus', 'linkService', 'findController'];
 
+// P05.S04 — the bindings that must SWAP when the active view changes, which is a different
+// question from "which bindings have many references" and finds a different set. The phase
+// sized itself on the second and was short by roughly 3x.
+//
+// `selectedPages` is the one to read twice: 1-based page numbers in one document's
+// pagination, driving the bulk rotate / delete / reorder bar. Shared, it applies document
+// A's page numbers to document B's pages — a destructive wrong-document operation, and it
+// appears in no enumeration this plan made before S04's deepdive.
+//
+// They move onto the record rather than being stashed and restored at the switch, which is
+// the phase-open decision that refused swap-on-switch. The first version of this comment
+// justified that with a list of after-await reads that was mostly untrue on inspection —
+// only `splitRects` was one, and it is now pinned at its operation entry. The real
+// justification needs no such list: each is one document's state reaching a shared toolbar
+// button, the shared cursor, or a destructive bulk operation.
+const PER_VIEW_TOOLS = [
+  'docHadFlags', 'signTotal', 'signStarted',
+  'redactMode', 'editMode', 'markerMode', 'activeMarker', 'fillTarget', 'activeTool',
+  'splitBoxMode', 'splitRects', 'sbPage', 'cropMode', 'cropRect', 'cropPage',
+  'borderMode', 'dropdownMode', 'radioMode', 'shapeMode', 'noteMode',
+  'selectedPages', 'selAnchor',
+];
+
+// The transient counterpart, and the distinction is the point: these hold live DOM nodes in
+// the OUTGOING view's page divs mid-gesture. They must be ABORTED on a switch, never
+// restored — restoring them is the plausible wrong shape, and it would leave a half-drawn
+// preview attached to a document the user is no longer looking at, whose pointerup then
+// writes the drag into whichever document is active by then.
+const TRANSIENT = ['sbStart', 'sbDiv', 'sbHit', 'cropStart', 'cropDiv', 'cropHit',
+  'redStart', 'redDiv', 'redHit', 'edStart', 'edDiv', 'edHit',
+  'bdStart', 'bdDiv', 'bdHit', 'ddStart', 'ddDiv', 'ddHit',
+  'rdStart', 'rdDiv', 'rdHit', 'shStart', 'shCanvas', 'shHit'];
+
 test('the view record exists and is the only home for these bindings', () => {
   assert.match(CODE, /function newView\(\)/, 'there is no view record');
   assert.match(CODE, /let view = newView\(\);/, 'no active view is established');
@@ -124,8 +157,15 @@ test('every read of a per-view binding goes through the record', () => {
   // — passes both this and the declaration check. Stated so the next reader does not
   // over-trust it; closing it properly needs a parser, not a regex.
   const outside = outsideTheRecord();
-  for (const name of [...PER_VIEW, ...PER_VIEW_ENGINE]) {
-    const bare = new RegExp(`(?<![.\\w$])${name}\\b`, 'g');
+  for (const name of [...PER_VIEW, ...PER_VIEW_ENGINE, ...PER_VIEW_TOOLS]) {
+    // `(?<![.\\w$])` alone is BLIND to the spread form. In `[...selectedPages]` the character
+    // before the identifier is the third dot of `...`, so a property-access lookbehind
+    // rejects it — and that is not hypothetical: the two references this scan missed in
+    // P05.S04 were the only two spread reads among 193 sites, and both were live
+    // ReferenceErrors that killed every bulk page operation. The guard whose whole job is to
+    // make a missed rename loud was silent on the one syntactic form the rename missed.
+    // So: reject a preceding dot only when it is NOT part of `...`.
+    const bare = new RegExp(`(?<!\\.\\.)(?<![\\w$])(?<!\\.)${name}\\b|(?<=\\.\\.\\.)${name}\\b`, 'g');
     const hits = outside.match(bare) || [];
     assert.deepEqual(hits, [],
       `${name} is read without going through the view record (${hits.length} site(s)) — with several views open that read reaches whichever document happens to be active`);
@@ -264,4 +304,55 @@ test('the drawing tools listen on the stable wrap, not on a per-view container',
   });
   assert.match(CODE, /e\.target\.closest\('\.viewerContainer'\) === view\.container/,
     'the origin guard no longer compares against the active view container');
+});
+
+test('the armed-tool and selection state is per view, and the transient state is not', () => {
+  // Stimulus first: every name must appear, or the module-scope check below is a green
+  // over an empty population.
+  for (const name of PER_VIEW_TOOLS) {
+    assert.ok(CODE.includes(name), `${name} does not appear at all — the scan is not reading what it thinks`);
+  }
+  for (const name of PER_VIEW_TOOLS) {
+    assert.doesNotMatch(CODE, new RegExp(`^(?:let|var|const)\\s+${name}\\b`, 'm'),
+      `${name} is still module-level — with two views it applies one document's state to another`);
+    assert.ok(CODE.includes(`view.${name}`), `${name} is not reached through the view record`);
+  }
+
+  // And the mirror: the transient drag state must STAY module-level. Moving it onto the
+  // record would look like consistency and would be wrong — it is aborted on a switch, so
+  // a per-view copy is state nobody should ever read back.
+  for (const name of TRANSIENT) {
+    assert.doesNotMatch(CODE, new RegExp(`(?<![.\\w$])view\\.${name}\\b`),
+      `${name} was moved onto the view record — transient drag state is aborted on a switch, never restored`);
+  }
+});
+
+// P05.S04 — a background load must not tear down the view the user is looking at.
+//
+// This is the slice's critical, and it is asserted at the source because the behaviour
+// cannot be driven: the arrival originates in a p2p session (arrival.test.mjs records that
+// ceiling), so no tier can make a background load happen. What IS checkable is the property
+// that makes it survivable — the teardown takes an owner, and the load path hands it one.
+//
+// The defect: setDocumentFromServer guarded every shared-chrome write on `target === view`
+// and then called resetSharedDocState() unguarded, which is entirely module-`view` bound —
+// it empties overlayFields, nulls the marker bindings, clears redactMarks and drops the
+// overlay undo stack. An arrival therefore destroyed the active document's typed values and
+// redaction marks, which is verbatim what the arrival path was rewritten to stop doing.
+test('the document teardown is owner-scoped, so a background load cannot reach the active view', () => {
+  assert.match(CODE, /function clearOverlays\(owner = view\)/,
+    'clearOverlays no longer takes an owner — a background load would empty the ACTIVE view\'s overlayFields and redactMarks');
+  assert.match(CODE, /function resetSharedDocState\(owner = view\)/,
+    'resetSharedDocState no longer takes an owner');
+  assert.match(CODE, /resetSharedDocState\(target\);/,
+    'setDocumentFromServer calls the teardown without passing its target — the destroyer would resolve the active view');
+
+  // The owner must actually be used, not merely accepted. A parameter that is ignored is a
+  // specification with no caller, and it would read as a fix while changing nothing.
+  const start = CODE.indexOf('function clearOverlays(owner = view)');
+  const body = CODE.slice(start, CODE.indexOf('\n}', start));
+  assert.match(body, /owner\.overlayFields = \[\]/, 'clearOverlays does not empty the OWNER\'s fields');
+  assert.match(body, /owner\.redactMarks = \[\]/, 'clearOverlays does not clear the OWNER\'s redaction marks');
+  assert.doesNotMatch(body, /(?<![.\w$])view\.(overlayFields|redactMarks|activeMarker|fillTarget)/,
+    'clearOverlays still reaches the active view for a per-document field — that is the defect');
 });
