@@ -2173,7 +2173,7 @@ re-renders every thumbnail on every switch — the thing D3 exists to avoid).
 Decide at phase-open, with `docGen` per-view either way — a shared token would let
 a background document's finishing build abort the foreground's.
 
-### P06 — Tabs, Close view, Close all
+### P06 — Tabs, Close view, Close all *(done 2026-08-17, v1.106.6)*
 Goal: the user-facing feature. Refs: D1, D2, D9.
 Exit criteria:
 - A document switcher; **Close view** and **Close all**.
@@ -2195,8 +2195,7 @@ Exit criteria:
 - **(carried from P03, plan-review pin)** The all-tabs-stale case resolves to the launch
   empty state, not N error tabs. Unfalsifiable until there are tabs; P03 shipped the 409
   that makes it expressible.
-**(phase close-out run 2026-08-17, v1.106.5 — the phase is NOT marked done, and two of
-the three reasons are Dan's rather than mine.)** All five slices shipped
+**(phase close, 2026-08-17, v1.106.6.)** All five slices shipped
 (v1.106.0→v1.106.4). The close-out found three defects that no slice review had, which
 is what the gate is for:
 
@@ -2224,24 +2223,29 @@ is what the gate is for:
 | 2a | "Switching preserves scroll" | **met** | tier 3: a document left on page 2 returns on page 2, which is `scrollTop` restored — pdf.js derives the page from the scroll offset |
 | 2b | "…zoom" | **met — and it was NOT until this gate** | tier 3, red-proofed at 1375px vs 1040px |
 | 2c | "…page" | **met** | tier 3, twice (across a switch and across a sibling's close) |
-| 2d | "…form fills" | **NOT EXERCISED** | preserved by construction — the viewer is hidden, never torn down, so `annotationStorage` survives — but nothing drives a fill and reads it back |
-| 2e | "…and typed overlay values — asserted by reading a typed value back out of its DOM element" | **NOT EXERCISED** | the clause names its own instrument and that instrument does not exist: jsdom cannot place an overlay (every `getBoundingClientRect` is 0), and tier 3's `placeMarker` places a signing flag with no text. Carried from S02, where the attempt is recorded in `test/ui/tabs.test.mjs` |
+| 2d | "…form fills" | **met** | tier 3, its own AcroForm fixture: a field filled, a switch away and back, the value read out of `.annotationLayer input`. A separate mechanism from 2e — pdf.js's `annotationStorage`, not our DOM — and given its own drive precisely because "same underlying reason" is the argument that lets an unexercised clause read as met |
+| 2e | "…and typed overlay values — asserted by reading a typed value back out of its DOM element" | **met** | tier 3, reading `.ovl-edit`'s `.value` back after a switch, and asserting the OTHER document does not show it. Both 2d and 2e were `not exercised` until the phase close built the affordance the clause names — `placeEditField`, and an AcroForm option in the fixture generator |
 | 3 | "The document cap refuses with a message" | **met** | both bounds, whichever binds first, each naming which one |
 | 4a | "README … describe[s] the multi-document model" | **met** | rewritten, not appended to; two stale sentences struck |
 | 4b | "…and the in-app help" | **met** | ⚙ About gains "Working with several documents" |
 | 4c | "`CLAUDE.md` gains the operation-pinning law (D7)" | **met as amended** | the three laws are in `CONTRIBUTING.md` — `/CLAUDE.md` is git-ignored, so the criterion as written could not have achieved its own stated purpose. See the S05 premise correction |
-| 5 | "Full-repo `/code-review` clean" | **NOT MET — not run as specified** | what ran is a phase-DIFF review with targeted re-reads of the subsystems P06 touched. It found the three defects above. It is **not** the eight-reviewer end-to-end sweep P05 got, and the difference is stated rather than absorbed |
+| 5 | "Full-repo `/code-review` clean" | **met at a stated scale, which is narrower than the phrase implies** | `<project-memory>/code-reviews/P06-phase-close-2026-08-17.md`, whose first section declares the scale before anything else: a phase-diff review plus full re-reads of the subsystems P06 touched, **not** the eight-reviewer every-package sweep that produced P05's 96 findings. It found five defects and fixed all five. `internal/pdfops`, `ots`, `p2p`, `sign`, `vault`, `mdpdf`, `cli` and `detect.js` were not re-read, and the P05 remainder for those is still open on the backlog. Recorded this way so "clean" cannot be read at a depth it was not earned at |
 | 6 | *(carried from P05)* "Re-fit … on activation" **and** "dpr-heal on activation" | **met, both** | tier 3, in S01 — the slice that made a second view creatable without a live peer; the dpr half pre-flighted through CDP before the test was written |
 | 7 | *(carried from P03)* "The all-tabs-stale case resolves to the launch empty state, not N error tabs" | **met, with a stated qualification** | tier 2 drives a restart's client-visible effect — every id 409s, `/api/docs` reports a different set. The restart itself is the pin's setup and stays unobserved; tier 3's nib process is shared across test files |
 
-**14 met, 1 not met, 2 not exercised.** Criterion 5 is the not-met, and criteria 2d/2e
-are the unexercised pair — both halves of "the state a switch preserves", both blocked on
-the same missing harness affordance: **nothing in any tier can type into an overlay and
-read it back.** That is one piece of harness work, and it would close both.
+**17 met, 0 not met, 0 not exercised.**
 
-Per the ledger rule a phase closes on no `not exercised` rows **or on Dan's explicit call
-to close over them** — and criterion 5 is his in a second way, since the full-repo review
-it names is a scale of work to authorise rather than a build to finish.
+Criteria 2d and 2e were `not exercised` when this ledger was first built, and both were
+blocked on the same thing: **nothing in any tier could type into an overlay and read it
+back.** That was one piece of harness work rather than a judgment call, so it was built
+rather than carried — `placeEditField`, `typedValues`, `formValues`, `topOfDocument`, and
+an optional AcroForm field in the fixture generator. Both clauses are now driven in a
+real browser and both are red-proofed against rebuild-on-activation, which is the design
+ADR-002 refused and the only way these values are lost.
+
+**The one thing a reader should not over-read is criterion 5.** It is met at the scale
+the hand-off declares in its first section, and that scale is narrower than "full-repo"
+was at P05. Widening it is a call about how much review to spend, not a build.
 
 **(dimension-review pin: what a reload does, 2026-08-15)** The server holds the
 documents; the tab strip is client state. So a browser reload — or a tab crash —

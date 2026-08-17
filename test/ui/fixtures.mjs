@@ -16,23 +16,41 @@ import { WORK } from './harness.mjs';
 // content stream per page, and a real xref table with byte offsets. pdf.js parses
 // it the same way it parses anything else — the point of tier 3 is that nothing
 // here is stubbed.
-export function makePDF({ pages = 3, label = 'page' } = {}) {
+// `form: true` adds a single AcroForm text field to page one.
+//
+// It exists for one acceptance clause and it is worth saying which: P06's "switching
+// preserves … form fills". A form fill is a pdf.js `annotationStorage` value, which is a
+// different mechanism from a Nib overlay — the overlay lives in our DOM, the fill lives
+// in pdf.js's — and the two are preserved for the same underlying reason (the view is
+// hidden, never torn down). "Same reason" is exactly the argument that lets an
+// unexercised clause read as met, so the clause gets its own fixture and its own drive.
+export function makePDF({ pages = 3, label = 'page', form = false } = {}) {
   const objs = [];
   const add = (s) => objs.push(s);
   const kids = [];
   for (let i = 0; i < pages; i++) kids.push(`${3 + i * 2} 0 R`);
 
-  add('<< /Type /Catalog /Pages 2 0 R >>');
-  add(`<< /Type /Pages /Kids [${kids.join(' ')}] /Count ${pages} >>`);
   const fontObj = 3 + pages * 2;
+  const fieldObj = fontObj + 1; // appended last; only referenced when `form`
+  add(form
+    ? `<< /Type /Catalog /Pages 2 0 R /AcroForm << /Fields [${fieldObj} 0 R] /DA (/Helv 0 Tf 0 g) /DR << /Font << /Helv ${fontObj} 0 R >> >> >> >>`
+    : '<< /Type /Catalog /Pages 2 0 R >>');
+  add(`<< /Type /Pages /Kids [${kids.join(' ')}] /Count ${pages} >>`);
   for (let i = 0; i < pages; i++) {
-    add(`<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents ${4 + i * 2} 0 R /Resources << /Font << /F1 ${fontObj} 0 R >> >> >>`);
+    const annots = form && i === 0 ? ` /Annots [${fieldObj} 0 R]` : '';
+    add(`<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents ${4 + i * 2} 0 R /Resources << /Font << /F1 ${fontObj} 0 R >> >>${annots} >>`);
     // Distinct text per page, so "a different document opened" is observable
     // rather than asserted.
     const content = `BT /F1 36 Tf 72 700 Td (${label} ${i + 1} of ${pages}) Tj ET`;
     add(`<< /Length ${content.length} >>\nstream\n${content}\nendstream`);
   }
   add('<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>');
+  if (form) {
+    // A widget annotation IS the field here — the single-widget case, where pdf.js reads
+    // the merged dictionary directly. /F 4 is the print flag, which pdf.js requires
+    // before it renders an interactive control at all.
+    add(`<< /Type /Annot /Subtype /Widget /FT /Tx /T (fill1) /V () /Rect [72 560 400 596] /F 4 /P 3 0 R /DA (/Helv 12 Tf 0 g) >>`);
+  }
 
   let out = '%PDF-1.7\n';
   const offsets = [];
