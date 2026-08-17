@@ -3105,6 +3105,8 @@ els.attachBtn.onclick = () => {
 els.attachClose.onclick = () => { els.attachmentsModal.hidden = true; };
 els.attachAddBtn.onclick = () => els.attachInput.click();
 els.attachInput.onchange = async () => {
+  const owner = view;
+  const opDoc = owner.docMeta;
   const file = els.attachInput.files[0];
   els.attachInput.value = '';
   if (!file) return;
@@ -3112,9 +3114,9 @@ els.attachInput.onchange = async () => {
   const form = new FormData();
   form.append('file', file, file.name);
   form.append('name', file.name);
-  const res = await apiFetch('/api/attachments/add', { method: 'POST', body: form });
+  const res = await apiFetch('/api/attachments/add', { method: 'POST', body: form, docId: opDoc && opDoc.id });
   if (!res.ok) return toast('could not attach the file (a same-named attachment may already exist)');
-  await setDocumentFromServer(await res.json());
+  await setDocumentFromServer(await res.json(), owner);
   await loadAttachments();
   toast('File attached');
 };
@@ -3850,6 +3852,10 @@ els.outlineAddBtn.onclick = () => {
   renderOutlineEditor();
 };
 els.outlineSave.onclick = async () => {
+  // Captured at entry: the bake and the POST are both awaits, and the outline being
+  // saved belongs to the document the editor was opened on.
+  const owner = view;
+  const opDoc = owner.docMeta;
   sortOutline();
   const titles = new Set();
   for (const it of view.outlineItems) {
@@ -3858,11 +3864,11 @@ els.outlineSave.onclick = async () => {
     if (titles.has(t)) return toast(`Bookmark titles must be unique: “${t}”`);
     titles.add(t);
   }
-  const form = await bakedForm();
-  form.append('outline', JSON.stringify(view.outlineItems.map((it) => ({ title: it.title.trim(), page: it.page, level: it.level }))));
-  const res = await apiFetch('/api/outline', { method: 'POST', body: form });
+  const form = await bakedForm(owner);
+  form.append('outline', JSON.stringify(owner.outlineItems.map((it) => ({ title: it.title.trim(), page: it.page, level: it.level }))));
+  const res = await apiFetch('/api/outline', { method: 'POST', body: form, docId: opDoc && opDoc.id });
   if (!res.ok) return toast(await errText(res, 'could not save the outline'));
-  await setDocumentFromServer(await res.json());
+  await setDocumentFromServer(await res.json(), owner);
   els.outlineModal.hidden = true;
   toast('Outline saved');
 };
@@ -4476,7 +4482,13 @@ async function runOCR() {
   // loading the engine, then a recognition pass per page — so the window in which the
   // open document can change is measured in tens of seconds. The text layer is stamped
   // onto the document the words were read FROM.
-  const doc = view.docMeta;
+  // The VIEW as well as the id. The pin already sent the words to the right
+  // document; the reload afterwards still landed on whichever view was active, and
+  // the page loop below still read the active viewer — so words read from one
+  // document were stamped, correctly pinned, onto it, while the OTHER document's
+  // view was replaced by the result.
+  const owner = view;
+  const doc = owner.docMeta;
   const btn = els.ocrBtn, label = btn.textContent;
   btn.disabled = true;
   let worker;
@@ -4505,10 +4517,10 @@ async function runOCR() {
     // (a wrong guess skews its layout/word-spacing heuristics); matches ocrScale.
     await worker.setParameters({ user_defined_dpi: String(dpi) });
     const words = [];
-    const n = view.pdfDocument.numPages;
+    const n = owner.pdfDocument.numPages;
     for (let p = 1; p <= n; p++) {
       btn.textContent = `OCR ${p}/${n}…`;
-      const { blob, h } = await renderPageBlob(view.pdfDocument, p, ocrScale, null, 'image/png');
+      const { blob, h } = await renderPageBlob(owner.pdfDocument, p, ocrScale, null, 'image/png');
       const { data } = await worker.recognize(blob);
       for (const word of data.words || []) {
         const t = (word.text || '').trim();
@@ -4523,7 +4535,7 @@ async function runOCR() {
     btn.textContent = 'Saving…';
     const res = await apiFetch('/api/ocr', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ lang, words }), docId: doc && doc.id });
     if (!res.ok) { toast('Could not add the text layer'); return; }
-    await setDocumentFromServer(await res.json());
+    await setDocumentFromServer(await res.json(), owner);
     toast(`Added a searchable text layer (${words.length} words)`);
   } catch (e) {
     toast(e.message || 'OCR failed');
@@ -5329,7 +5341,11 @@ els.applyRedactBtn.onclick = async () => {
   owner.redactMode = false;
   reflectRedact();
   els.viewerWrap.style.cursor = '';
-  await setDocumentFromServer(await res.json());
+  // The capture is used here too. This function opens by capturing `owner` and
+  // threading it through owner.redactMarks and owner.redactMode, with a comment
+  // saying the disarm must not touch another view — and then dropped it on the
+  // reload, which is the line that actually replaces a document.
+  await setDocumentFromServer(await res.json(), owner);
   toast('Redacted — affected pages are now flattened images');
 };
 
@@ -7210,16 +7226,23 @@ function redoAny() { if (view.overlayHistory.redo.length) redoOverlayEdit(); els
 // ops, outline, sanitize, attachments). The server returns fresh doc metadata and
 // the view reloads through the universal setDocumentFromServer path.
 async function doUndo() {
-  if (!view.pdfDocument || !(view.docMeta && view.docMeta.canUndo)) return;
-  const res = await apiFetch('/api/undo', { method: 'POST' });
+  // Pinned and owned: the id names the document whose history is being walked, and
+  // the reload lands on the view that asked. Unpinned, an undo issued on A and
+  // answered after a switch reverted B a step and installed the result over A.
+  const owner = view;
+  const doc = owner.docMeta;
+  if (!owner.pdfDocument || !(doc && doc.canUndo)) return;
+  const res = await apiFetch('/api/undo', { method: 'POST', docId: doc && doc.id });
   if (!res.ok) { toast('undo failed'); return; }
-  await setDocumentFromServer(await res.json());
+  await setDocumentFromServer(await res.json(), owner);
 }
 async function doRedo() {
-  if (!view.pdfDocument || !(view.docMeta && view.docMeta.canRedo)) return;
-  const res = await apiFetch('/api/redo', { method: 'POST' });
+  const owner = view;
+  const doc = owner.docMeta;
+  if (!owner.pdfDocument || !(doc && doc.canRedo)) return;
+  const res = await apiFetch('/api/redo', { method: 'POST', docId: doc && doc.id });
   if (!res.ok) { toast('redo failed'); return; }
-  await setDocumentFromServer(await res.json());
+  await setDocumentFromServer(await res.json(), owner);
 }
 if (els.undoBtn) els.undoBtn.onclick = undoAny;
 if (els.redoBtn) els.redoBtn.onclick = redoAny;
