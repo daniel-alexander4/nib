@@ -42,6 +42,10 @@ type cosignQuote struct {
 // inputs, so the rendered block and the signed /Reason always agree. It refuses
 // any peer the user hasn't pinned out-of-band (the honest-trust requirement) and
 // caps the intent length. Writes the HTTP error itself and returns ok=false.
+// maxWhenSkew bounds how far a client-supplied attestation time may sit from the
+// server's own clock. See the use in cosignAttestation.
+const maxWhenSkew = 24 * time.Hour
+
 func (s *Server) cosignAttestation(w http.ResponseWriter, v *vault.Vault, p cosignParams) (p2p.Attestation, bool) {
 	fp, err := parseFingerprint(p.Fingerprint)
 	if err != nil {
@@ -57,10 +61,16 @@ func (s *Server) cosignAttestation(w http.ResponseWriter, v *vault.Vault, p cosi
 	if rs := []rune(intent); len(rs) > maxIntentLen {
 		intent = string(rs[:maxIntentLen])
 	}
+	// The client may name the time, but not an arbitrary one: `when` is signed into the
+	// attestation, so an unbounded value lets a caller mint a co-signature dated years
+	// back or forward and have Nib's own key vouch for it. Bounded to a day either side
+	// of now — enough for clock skew and a slow consent, not enough to backdate.
 	when := time.Now()
 	if p.When != "" {
 		if t, err := time.Parse(time.RFC3339, p.When); err == nil {
-			when = t
+			if d := t.Sub(when); d > -maxWhenSkew && d < maxWhenSkew {
+				when = t
+			}
 		}
 	}
 	return p2p.Attestation{
