@@ -2739,6 +2739,112 @@ Two consequences worth carrying, neither actioned here:
   matches on the executable — worth confirming that predicate on Windows during
   P07 rather than assuming the Linux shape carries.
 
+**(premise correction, 2026-08-17, P07 phase-open — what P07 inherits is thinner
+than the pin above says, and the difference decides the design.)** The pin records
+that P07 "inherits a working process-discovery mechanism rather than needing one".
+At the line, `ReplaceOthers` is `//go:build linux` and its sibling is
+`//go:build !linux … func ReplaceOthers() int { return 0 }`. **On Windows nothing
+happens today** — and Windows is where `nib register` (v1.102.0) makes double-click
+the ordinary path and where this phase's exit criterion is sharpest. So a second
+double-click there already opens a second full application, vault and all. The
+mechanism is inherited on one platform and is being replaced anyway; the rendezvous
+is built from zero. The upside is real: the replacement fixes Windows, which
+`singleton` never touched.
+
+**D18's own premise is false in the same place.** It says "nothing anywhere handles
+an already-running instance"; the 2026-08-16 pin corrects that for Linux, and
+neither says the correction is **platform-split**. Recorded because that split is
+the fact the slice list is shaped around.
+
+#### P07.S01 — the rendezvous *(done 2026-08-17, v1.107.0)*
+Scope: a second process cannot find the running one at all — the server binds
+`127.0.0.1:0`, a random port — so everything else in this phase rests on a
+rendezvous record. Platform-neutral by construction, which is what makes it the
+replacement for a Linux-only `/proc` scan rather than an addition to it.
+Refs: D18.
+
+- T01 — `internal/instance`: `Create(dir, addr, token)` (O_EXCL, 0600, atomic),
+  `Read(dir)`, `Remove(dir)`.
+- T02 — `GET /api/instance`: public (pre-unlock), constant-time token compare,
+  answering `{ok, version}` and nothing else.
+- T03 — `cmd/nib/main.go` writes the record after the listener binds and removes
+  it on the clean-exit path.
+- T04 — `Probe(rec)` — is the recorded instance alive, and is it ours?
+- T05 — seam rows V70–V74.
+
+Acceptance:
+- A running nib leaves a record naming its address, readable only by its owner.
+- A probe against that record answers yes for the running instance and no for a
+  stale one (a record whose address nothing answers, or answers wrongly).
+- **The probe works while the running instance is LOCKED.** If it did not, a
+  locked nib would read as dead, a second launch would take over, and the user's
+  unlocked session would be replaced by a fresh locked one — two servers, one
+  record. This is why the route is public rather than behind `requireUnlocked`.
+- The record is gone after a clean exit.
+
+**(grill, 2026-08-17 — what the attack changed.)**
+1. **The record carries no pid.** The first shape had `{pid, addr, token}`. A pid
+   invites pid-based decisions — signal it, stat `/proc/<pid>` — and **pids are
+   recycled**, which is ADR-001's hazard one level over: the check passes against
+   the wrong process. Address-plus-token is self-authenticating and strictly
+   better evidence, so the pid is not merely unused, it is absent.
+2. **Constant-time token compare**, as `requireUnlocked` already does for CSRF. An
+   attacker who can read a 0600 file in the config dir has already won, but a
+   200-vs-403 on a byte-by-byte compare is a token oracle for one who cannot, and
+   the primitive is already in the tree.
+3. **No fourth atomic-write helper.** One exists three times already
+   (`internal/vault:840`, `internal/cli:218`, `internal/server:1001`); a fourth
+   copy is the duplicate derivation this repo keeps paying for.
+
+**(found during implementation, 2026-08-17 — one defect, and it is a class rather
+than an instance.)** `main` ended with `os.Exit(code)` on the error path, and
+**`os.Exit` does not run deferred functions** — so the record's deferred removal
+would have been skipped exactly when a serve error killed the process, leaving a
+stale record for the next launch. It is the same shape the P05 review found in the
+serve goroutine's `log.Fatalf` (which skipped `defer stop()` and the explicit
+`DisarmSession`). Fixed at the root rather than by adding a second removal call
+site: `func main() { os.Exit(run()) }`, so **every** defer in that function is now
+correct by construction, and the three remaining `log.Fatalf`s became
+`log.Printf` + `return 1`.
+
+**Acceptance ledger — 6 rows, all met, 0 not exercised**, every one driven against
+the real binary and not only in unit tests. A running nib leaves a record naming
+its address ✅ (`127.0.0.1:35747` observed) readable only by its owner ✅
+(`-rw-------`); a probe answers yes for the running instance ✅ (200) and no for a
+stale one — both senses: nothing answers ✅ (closed port, unit) and something
+answers wrongly ✅ (403 on a wrong token, live); **the probe works while the
+instance is LOCKED** ✅ — observed live with `/api/status` reporting `setup`, which
+is what makes this the clause and not a paraphrase of it; and the record is gone
+after a clean exit ✅. Seam rows V70–V74.
+
+**Parked for Dan, carried to S02's gate rather than blocking here:** what a
+hand-off should do when the running instance's vault is **locked**. The user
+double-clicks a PDF, the running nib is locked, and something has to happen —
+deliver-and-queue, surface-the-window-and-let-them-unlock, or refuse with a
+message. Each is defensible and each changes what the record must carry.
+
+#### P07.S02 — hand-off, and the window the user is looking for
+Scope: a launch carrying a path reads the record, probes, delivers the path to the
+running instance, surfaces its window, and exits; a dead or absent record means
+*become the primary*. Refs: D18, D1.
+Acceptance:
+- A second launch with a path opens that document as a tab in the RUNNING
+  instance and exits without binding a port.
+- The running instance's window is what the user ends up looking at.
+- A stale record does not strand the launch: it becomes the primary.
+- The cap and the locked-vault cases each have a defined, user-visible answer.
+
+#### P07.S03 — retire replace-and-kill, and prove it on Windows
+Scope: drop `--replace` from `build/nib.desktop`, retire `ReplaceOthers`, and
+drive the whole path under wine through `build/winrepro.sh`. Refs: D18.
+Acceptance:
+- The desktop entry no longer passes `--replace`, and a launch no longer SIGTERMs
+  a sibling — the behaviour the 2026-08-16 pin found and named.
+- `winrepro.sh` drives a second launch against a running instance and observes the
+  hand-off, which is the exit criterion's own wording ("verified on Windows").
+- The P01.S04 interaction the pin names is resolved or restated: the unsaved-work
+  confirm is no longer bypassable by the ordinary double-click path.
+
 ---
 
 ## Out of scope

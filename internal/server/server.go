@@ -22,6 +22,7 @@ import (
 	"strings"
 	"sync"
 
+	"nib/internal/instance"
 	"nib/internal/pdfops"
 	"nib/internal/sign"
 	"nib/internal/vault"
@@ -142,6 +143,13 @@ type Server struct {
 	// silent eviction would show up as a number rather than as a missing effect.
 	historyEvictions uint64
 
+	// instanceToken authenticates GET /api/instance — the probe a second launch uses
+	// to ask "is the Nib named in the rendezvous record still alive, and is it you?".
+	// Empty means this server published no record (a headless run, a test), and the
+	// route then refuses everything, which is the honest answer: there is nothing to
+	// identify against.
+	instanceToken string
+
 	sess session // armed live co-signing listener (Nib's one routable surface)
 }
 
@@ -160,6 +168,14 @@ func New(web, legal fs.FS, configDir, version string) *Server {
 	return &Server{web: web, legal: legal, configDir: configDir, version: version, epoch: newToken()}
 }
 
+// SetInstanceToken tells the server which probe token identifies it. Called by main
+// after the rendezvous record is published and before the browser opens.
+func (s *Server) SetInstanceToken(tok string) {
+	s.mu.Lock()
+	s.instanceToken = tok
+	s.mu.Unlock()
+}
+
 // Handler builds the HTTP routes. Status and key enrollment/migration are public
 // so the UI can run its first-run wizard; every document and vault route is gated
 // behind an unlocked vault. API patterns take precedence over the static files.
@@ -168,6 +184,7 @@ func (s *Server) Handler() http.Handler {
 
 	// Public — reachable before the vault is unlocked.
 	mux.HandleFunc("GET /api/status", s.handleStatus)
+	mux.HandleFunc("GET /api/instance", s.handleInstance)
 	mux.HandleFunc("GET /api/update/check", s.handleUpdateCheck)
 	mux.HandleFunc("POST /api/ssh/enroll", requirePublicLoopback(s.handleEnroll))
 	mux.HandleFunc("POST /api/ssh/migrate", requirePublicLoopback(s.handleMigrate))
@@ -412,6 +429,34 @@ func (s *Server) handleClose(w http.ResponseWriter, r *http.Request) {
 	// after a close would describe whatever the registry answers next, which is not
 	// the document the user just closed.
 	writeJSON(w, s.docResponse(nil))
+}
+
+// handleInstance answers a rendezvous probe: is the Nib named in the instance record
+// still alive, and is it this one?
+//
+// **Public — deliberately NOT behind requireUnlocked — and that is the whole design
+// decision in this route.** If the probe required an unlocked vault, a running-but-LOCKED
+// Nib would read as dead: the second launch would conclude the record was stale, remove
+// it, take over the rendezvous, and start a fresh server. The user would then have two
+// nibs, one holding their unlocked session and their open documents behind a window that
+// no longer owns the record, and the other showing a locked first-run screen. The failure
+// is silent and it costs exactly the state the phase exists to preserve.
+//
+// It answers only whether the token matches, and the running version. No document, no
+// path, no vault state — a probe is an identity question and the answer should not be a
+// place to learn anything else.
+func (s *Server) handleInstance(w http.ResponseWriter, r *http.Request) {
+	s.mu.Lock()
+	tok := s.instanceToken
+	s.mu.Unlock()
+	// No token means this server published no record. Refusing is the honest answer
+	// rather than a friendly one: something IS listening here, but it is not the
+	// instance any record names, so a caller must not treat it as one.
+	if tok == "" || !instance.TokenMatches(r.Header.Get(instance.HeaderToken), tok) {
+		httpError(w, http.StatusForbidden, "not this instance")
+		return
+	}
+	writeJSON(w, map[string]any{"ok": true, "version": s.version})
 }
 
 // docsResponse is the whole open set: every document in registry order, plus which one
