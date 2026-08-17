@@ -1281,7 +1281,9 @@ els.keyCreateBtn.onclick = () => addKey({ mode: 'create', keyPath: els.keyAddPat
 // slices closing on the server-addressed side, reintroduced where there is no id to
 // check and no 409 to refuse.
 //
-// The three marked SAFETY below are not UI state. Sharing them does not produce a stale
+// The five marked SAFETY below are not UI state — three at S01, plus selectedPages (S04)
+// and overlayHistory (S06), both found by deepdives of other slices. Sharing them does not
+// produce a stale
 // label; it produces destroyed content, a broken promise to a counterparty, and a
 // misreported cryptographic fact, in that order.
 // Everything one view owns is built HERE, in one function, and that is deliberate:
@@ -1359,6 +1361,17 @@ function newView() {
     radioMode: false,
     shapeMode: false,
     noteMode: false,
+
+    // SAFETY — the client overlay-edit undo/redo stacks. Its entries are CLOSURES over
+    // overlay elements, and undoAny drains this stack before falling through to the server
+    // ring — so one shared stack means Ctrl+Z in document A pops a command recorded against
+    // document B and mutates B's element, from a keystroke aimed at the one on screen.
+    // Irreversible and silent: the redactMarks family, not the stale-label family.
+    //
+    // The fourteenth binding. The phase-open enumeration counted thirteen because it
+    // counted bindings with many references, and this one has few — which is why it took a
+    // deepdive of a different slice to find it.
+    overlayHistory: { undo: [], redo: [] },
 
     // SAFETY — 1-based page numbers in THIS document's pagination, driving the bulk
     // rotate / delete / reorder bar. Shared across views it applies one document's page
@@ -1911,7 +1924,7 @@ function closeDocument() {
 function hasEditsSinceOpen() {
   return (view.pdfDocument?.annotationStorage?.size || 0) > 0
     || view.overlayFields.length > 0
-    || overlayHistory.undo.length > 0
+    || view.overlayHistory.undo.length > 0
     || !!view.docMeta.canUndo;
 }
 
@@ -3850,7 +3863,7 @@ async function placeStamp(bitmapUrl) {
 // makeStamp registers a draggable/resizable image overlay (kind 'stamp'). The
 // baking source is the library id (server resolves bytes) or an inline base64
 // PNG for a generated stamp.
-function makeStamp(src, aspect, frac, opts, pv) {
+function makeStamp(src, aspect, frac, opts, pv, owner = view) {
   const f = { page: opts.page, frac, pageW: opts.pageW, pageH: opts.pageH, kind: 'stamp', aspect };
   if (src.startsWith('data:')) f.png = src.slice(src.indexOf(',') + 1);
   else { const m = src.match(/\/api\/images\/([^/?#]+)/); if (m) f.imageId = m[1]; }
@@ -3872,10 +3885,10 @@ function makeStamp(src, aspect, frac, opts, pv) {
   el.addEventListener('keydown', (e) => { if (e.key === 'Delete' || e.key === 'Backspace') remove(); });
   enableStampGestures(f, el, handle);
 
-  view.overlayFields.push(f);
+  owner.overlayFields.push(f);
   pv.div.appendChild(el);
   layoutField(f, pv);
-  recordAdd(f);
+  recordAdd(f, owner);
 }
 
 // enableStampGestures wires move (anywhere on the stamp) and resize (the corner
@@ -5877,21 +5890,21 @@ function buildMarker(type, frac, page, record = true, owner = view) {
   label.textContent = MARKER_LABELS[type];
   const del = document.createElement('button');
   del.className = 'marker-del'; del.textContent = '×'; del.title = 'Remove flag';
-  del.onclick = (e) => { e.stopPropagation(); if (flagsEditable()) removeField(f); };
+  del.onclick = (e) => { e.stopPropagation(); if (flagsEditable()) removeField(f, true, owner); };
   el.append(label, del);
   f.el = el;
   enableMarkerGestures(f, el);
   el.addEventListener('keydown', (e) => {
     if (e.key === 'Enter') { e.preventDefault(); if (flagsFillable()) fillMarker(f); }
-    else if ((e.key === 'Delete' || e.key === 'Backspace') && flagsEditable()) removeField(f);
+    else if ((e.key === 'Delete' || e.key === 'Backspace') && flagsEditable()) removeField(f, true, owner);
   });
   owner.overlayFields.push(f);
   reflectSignControls();
   if (record) {
     recordOverlayEdit({
-      undo: () => { detachField(f); reflectSignControls(); },
-      redo: () => { reattachField(f); reflectSignControls(); },
-    });
+      undo: () => { detachField(owner, f); reflectSignControls(); },
+      redo: () => { reattachField(owner, f); reflectSignControls(); },
+    }, owner);
   }
   return f;
 }
@@ -5903,16 +5916,22 @@ function makeMarker(type, frac, hit) {
   return f;
 }
 
-function removeField(f, record = true) {
+// `owner` for a stronger reason than the keydown handler it is bound to: buildMarker is
+// called with a BACKGROUND owner from reconstructFlags on the arrival load path, so this is
+// reachable for a view that is not on screen — and activeMarker/fillTarget are that view's
+// bindings. (The × buttons in the overlay factories are the same shape and stayed on the
+// default; they are safe only because a display:none view receives no pointer events, which
+// is the weaker reason and is why they are filed rather than fixed.)
+function removeField(f, record = true, owner = view) {
   if (record) {
     recordOverlayEdit({
-      undo: () => { reattachField(f); reflectSignControls(); },
-      redo: () => { detachField(f); reflectSignControls(); },
-    });
+      undo: () => { reattachField(owner, f); reflectSignControls(); },
+      redo: () => { detachField(owner, f); reflectSignControls(); },
+    }, owner);
   }
-  detachField(f);
-  if (view.activeMarker === f) view.activeMarker = null;
-  if (view.fillTarget === f) view.fillTarget = null;
+  detachField(owner, f);
+  if (owner.activeMarker === f) owner.activeMarker = null;
+  if (owner.fillTarget === f) owner.fillTarget = null;
   reflectSignControls();
 }
 
@@ -5999,9 +6018,16 @@ async function fillTextMarker(f) {
 // placeIntoMarker swaps a marker for a real image stamp fitted inside the marker
 // box (aspect preserved), then advances to the next marker in document order.
 async function placeIntoMarker(f, src) {
-  const pv = view.viewer.getPageView(f.page - 1);
+  // Captured at entry, and this one is REACHABLE rather than latent. A co-sign arrival
+  // creates a second view in production today (pollRecv -> openArrivalInNewView), so the
+  // await on the image below is a real window: the continuation would register the stamp in
+  // the ARRIVAL's overlayFields while appending its element into THIS document's page div,
+  // and the arrival's bake would then burn it onto the arrival at this document's
+  // coordinates. Everything after the first await uses `owner`.
+  const owner = view;
+  const pv = owner.viewer.getPageView(f.page - 1);
   if (!pv?.div) return toast('Scroll the page into view, then try again');
-  const base = (await view.pdfDocument.getPage(f.page)).getViewport({ scale: 1 });
+  const base = (await owner.pdfDocument.getPage(f.page)).getViewport({ scale: 1 });
   const next = nextMarkerAfter(f);
   await new Promise((resolve) => {
     const img = new Image();
@@ -6011,14 +6037,17 @@ async function placeIntoMarker(f, src) {
       const [x0, y0, x1, y1] = f.frac;
       let w = x1 - x0, h = w * W / (aspect * H); // fit width, derive height by aspect
       if (h > y1 - y0) { h = y1 - y0; w = h * aspect * H / W; } // too tall — fit height instead
-      makeStamp(src, aspect, [x0, y0, x0 + w, y0 + h], { page: f.page, pageW: base.width, pageH: base.height }, pv);
+      makeStamp(src, aspect, [x0, y0, x0 + w, y0 + h], { page: f.page, pageW: base.width, pageH: base.height }, pv, owner);
       resolve();
     };
     img.onerror = () => { toast('could not load image'); resolve(); };
     img.src = src;
   });
-  removeField(f);
-  advanceTo(next);
+  removeField(f, true, owner);
+  // The banner and the active-marker highlight are SHARED chrome, so they are repainted only
+  // when this document is still the one on screen — rather than threaded, which would mean
+  // painting one document's progress while another is displayed.
+  if (owner === view) advanceTo(next);
 }
 
 // nextMarkerAfter returns the next unfilled marker after f in reading order
@@ -7015,7 +7044,6 @@ all('#toolbar [data-forward]').forEach((b) => { b.onclick = () => $(b.dataset.fo
 // Overlay state, declared before setDocControls(false) runs below: that call now
 // reaches reflectSignControls() -> markerFields(), which reads view.overlayFields, so the
 // binding must already be initialized (a `let` declared later would throw on its TDZ).
-let overlayHistory = { undo: [], redo: [] }; // client overlay-edit undo, drained before the server ring
 let libraryImages = []; // cached /api/images list (the image-library panel)
 const DOC_REQUIRED = [
   'saveFlatBtn', 'saveEditableBtn', 'saveFillableBtn', 'printBtn',
@@ -7045,8 +7073,8 @@ setDocControls(false); // nothing open yet
 // canRedo, refreshed on every load); both off when no document is open.
 function reflectUndoControls(enabled) {
   const m = view.docMeta || {};
-  if (els.undoBtn) els.undoBtn.disabled = !(enabled && (m.canUndo || overlayHistory.undo.length));
-  if (els.redoBtn) els.redoBtn.disabled = !(enabled && (m.canRedo || overlayHistory.redo.length));
+  if (els.undoBtn) els.undoBtn.disabled = !(enabled && (m.canUndo || view.overlayHistory.undo.length));
+  if (els.redoBtn) els.redoBtn.disabled = !(enabled && (m.canRedo || view.overlayHistory.redo.length));
 }
 
 // --- client overlay-edit undo (P2) ------------------------------------------
@@ -7057,58 +7085,72 @@ function reflectUndoControls(enabled) {
 // reloads through setDocumentFromServer -> clearOverlays (which clears this
 // stack too), it only ever holds the newest run of un-baked edits, so "client
 // edits first, then server ops" is the correct chronological order for free.
-function recordOverlayEdit(cmd) {
-  overlayHistory.undo.push(cmd);
-  overlayHistory.redo = [];
+function recordOverlayEdit(cmd, owner = view) {
+  owner.overlayHistory.undo.push(cmd);
+  owner.overlayHistory.redo = [];
   reflectUndoControls(!!view.pdfDocument);
 }
-function clearOverlayHistory() { overlayHistory.undo = []; overlayHistory.redo = []; }
+function clearOverlayHistory(owner = view) { owner.overlayHistory.undo = []; owner.overlayHistory.redo = []; }
 // detachField/reattachField toggle a field's presence without rebuilding it — the
 // DOM element survives in the command closure, so add/delete undo is just a
 // re-attach or detach. layoutFieldNow repositions a still-attached field (moves).
-function detachField(f) {
+// All three take the view that OWNS the field. Every stored-closure use of them lives in a
+// recordOverlayEdit command, and a command outliving a switch would otherwise splice one
+// document's field into another's list and append its element into another's page div.
+//
+// With the stack now per-view and drained only while its view is active, the owner IS the
+// active view at drain time — so reading `view` here would be correct today. The parameter
+// goes in anyway, so the property holds by construction rather than by depending on that
+// invariant. Same reasoning as P05.S05's captured dragGrid.
+function detachField(owner, f) {
   f.el.remove();
-  view.overlayFields = view.overlayFields.filter((o) => o !== f);
+  owner.overlayFields = owner.overlayFields.filter((o) => o !== f);
 }
-function reattachField(f) {
-  view.overlayFields.push(f);
-  const pv = view.viewer.getPageView(f.page - 1);
+function reattachField(owner, f) {
+  owner.overlayFields.push(f);
+  const pv = owner.viewer.getPageView(f.page - 1);
   if (pv?.div) { pv.div.appendChild(f.el); layoutField(f, pv); }
 }
-function layoutFieldNow(f) {
-  const pv = view.viewer.getPageView(f.page - 1);
+function layoutFieldNow(owner, f) {
+  const pv = owner.viewer.getPageView(f.page - 1);
   if (pv?.div) layoutField(f, pv);
 }
 // recordAdd / deleteField are the recorded create/remove used by the overlay
 // factories and the per-overlay × buttons. recordMove records one command per
 // move/resize gesture. detachField alone (no record) is the bulk-wipe path.
-function recordAdd(f) {
-  recordOverlayEdit({ undo: () => detachField(f), redo: () => reattachField(f) });
+function recordAdd(f, owner = view) {
+  recordOverlayEdit({ undo: () => detachField(owner, f), redo: () => reattachField(owner, f) }, owner);
 }
-function deleteField(f, record = true) {
-  if (record) recordOverlayEdit({ undo: () => reattachField(f), redo: () => detachField(f) });
-  detachField(f);
+function deleteField(f, record = true, owner = view) {
+  if (record) recordOverlayEdit({ undo: () => reattachField(owner, f), redo: () => detachField(owner, f) }, owner);
+  detachField(owner, f);
 }
-function recordMove(f, before, after) {
+function recordMove(f, before, after, owner = view) {
   recordOverlayEdit({
-    undo: () => { f.frac = before.slice(); layoutFieldNow(f); },
-    redo: () => { f.frac = after.slice(); layoutFieldNow(f); },
-  });
+    undo: () => { f.frac = before.slice(); layoutFieldNow(owner, f); },
+    redo: () => { f.frac = after.slice(); layoutFieldNow(owner, f); },
+  }, owner);
 }
 function undoOverlayEdit() {
-  const c = overlayHistory.undo.pop();
-  c.undo(); overlayHistory.redo.push(c);
+  const c = view.overlayHistory.undo.pop();
+  c.undo(); view.overlayHistory.redo.push(c);
   reflectUndoControls(!!view.pdfDocument);
 }
 function redoOverlayEdit() {
-  const c = overlayHistory.redo.pop();
-  c.redo(); overlayHistory.undo.push(c);
+  const c = view.overlayHistory.redo.pop();
+  c.redo(); view.overlayHistory.undo.push(c);
   reflectUndoControls(!!view.pdfDocument);
 }
 // undoAny/redoAny are the single dispatch for both Ctrl+Z and the ↶/↷ buttons:
 // drain the client overlay stack first, then fall through to the server ring.
-function undoAny() { if (overlayHistory.undo.length) undoOverlayEdit(); else doUndo(); }
-function redoAny() { if (overlayHistory.redo.length) redoOverlayEdit(); else doRedo(); }
+// The ACTIVE view's stack, deliberately: Ctrl+Z aims at the document on screen. Every command
+// is pushed onto the same owner it closes over, so one drained from `view`'s stack has
+// `owner === view` by construction rather than by an invariant about record timing. That
+// holds for the field mutation; the two marker commands also call reflectSignControls(),
+// which repaints shared chrome from the active view — correct here only because a drain
+// implies the owner is active.
+function undoAny() { if (view.overlayHistory.undo.length) undoOverlayEdit(); else doUndo(); }
+function redoAny() { if (view.overlayHistory.redo.length) redoOverlayEdit(); else doRedo(); }
 
 // doUndo/doRedo revert or re-apply the last server-side document operation (page
 // ops, outline, sanitize, attachments). The server returns fresh doc metadata and
@@ -7153,6 +7195,13 @@ function clearOverlays(owner = view) {
   owner.overlayFields = [];
   owner.activeMarker = null; owner.fillTarget = null; // markers are gone with the old document
   owner.redactMarks = []; // pending redaction boxes don't carry to a new/reloaded document
+  // ABOVE the return, because the undo stack is per-view DATA rather than shared chrome —
+  // its entries are closures over the overlay elements this function removed at the top.
+  // Left below it, a background reload would keep a stack whose reattachField pushes a
+  // pre-reload field back in and appends its element to a page div from the new document.
+  // It also closes a second defect nobody had named: the old shared clear wiped the ACTIVE
+  // document's undo stack whenever a background document reloaded.
+  clearOverlayHistory(owner); // a new/reloaded document resets the overlay-edit undo stack
   // The draw-mode exits repaint SHARED toolbar buttons and the shared cursor, so they are
   // the active view's business only. A background view is freshly built and has none armed.
   if (owner !== view) return;
@@ -7161,7 +7210,6 @@ function clearOverlays(owner = view) {
   exitShape();    // nor a pending shape-draw mode
   exitCrop();     // nor a pending crop-draw mode
   exitNote(); exitDropdown(); exitRadio();     // nor a pending note-placement mode
-  clearOverlayHistory(); // a new/reloaded document resets the overlay-edit undo stack
 }
 
 // resetSharedDocState is the ONE teardown both the open path and the close path
