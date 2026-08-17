@@ -3017,9 +3017,36 @@ to "the window raised". **What discharges it specifically:** an observation of w
 on screen after a second launch, on one named platform — not "the hand-off returned
 200".
 
-#### P07.S03 — retire replace-and-kill, and prove it on Windows
+#### P07.S03 — retire replace-and-kill, and prove it on Windows *(done 2026-08-17, v1.108.1)*
 Scope: drop `--replace` from `build/nib.desktop`, retire `ReplaceOthers`, and
 drive the whole path under wine through `build/winrepro.sh`. Refs: D18.
+- T01 — `winrepro.sh` gains a **second-launch mode**: with the first instance up and
+  unlocked, run a second `wine "$EXE" <path>` and assert the FIRST instance's
+  document count changed. The plan-review pin's own task, and it comes first.
+- T02 — generate the PDF fixture rather than copying a gitignored artifact.
+- T03 — delete `internal/singleton`.
+- T04 — keep `--replace` accepted-and-ignored, guarded so it stays harmless.
+- T05 — seam rows V82–V85.
+
+**(grill, 2026-08-17.)**
+1. **`internal/singleton` is already dead.** P07.S02 removed the import, so
+   `ReplaceOthers` has **no production caller** and survives only because its own
+   test calls it — a function kept alive by the test written for it, which is the
+   vacuity shape the P05 review named. Deleted rather than annotated.
+2. **`--replace` must NOT be removed, and the bullet below reads as if it should.**
+   An older installed `.desktop` still passes it, and `flag.Parse()` on an unknown
+   flag exits non-zero — so deleting the flag turns a stale desktop entry into a
+   launch that fails outright. Accepted-and-ignored is the correct PERMANENT shape;
+   S03 guards that it stays harmless rather than finishing a removal.
+3. **A second launch already works under a pinned `NIB_ADDR`, and that is S02's
+   inverted order rather than luck** — the hand-off happens before `net.Listen`, so
+   the second process exits before it would have collided on the fixed port. Stated
+   because the harness pins a port and the obvious reading is that it cannot work.
+4. **The P01.S04 interaction needs no separate work.** "The unsaved-work confirm is
+   no longer bypassable by the ordinary double-click path" is true by construction:
+   a double-click hands off, nothing is torn down, there is nothing to confirm.
+   T01's assertion that the first instance's documents survive IS the observation.
+
 Acceptance:
 - The desktop entry no longer passes `--replace`, and a launch no longer SIGTERMs
   a sibling — the behaviour the 2026-08-16 pin found and named.
@@ -3037,6 +3064,61 @@ at the gate. S03 owns the two-process harness change, and it is the slice's firs
 rather than its last. **What discharges this specifically:** `winrepro.sh` starting a
 second `wine "$EXE" <path>` against a running first one and asserting the first one's
 document count changed — not the existing single-instance smoke passing.
+
+**(S03 close-out, 2026-08-17, v1.108.1.)** All five tasks landed. The acceptance
+ledger, clause by clause:
+
+| clause | verdict | what answered it |
+|---|---|---|
+| "The desktop entry no longer passes `--replace`" | **met** | `build/nib.desktop:5` is `Exec=nib %f`, read at the line |
+| "and a launch no longer SIGTERMs a sibling" | **met** | `internal/singleton` deleted; a tree-wide grep for `SIGTERM`, `Process.Signal` and `syscall.Kill` in production code finds only the *receiver* in `main.go:200`. No sender remains anywhere |
+| "`winrepro.sh` drives a second launch against a running instance" | **met** | the "second launch" section: `timeout 90 env … wine "$EXE" <path>`, against the first instance still serving on the pinned port |
+| "and observes the hand-off" | **met** | the first instance's document count moves 1 → 2, `second.pdf` appears in *its* `/api/docs`, the second process exits 0 and never logs `serving at` |
+| "the unsaved-work confirm is no longer bypassable by the ordinary double-click path" | **met** | grill item 4's construction argument, plus the observation: `report.pdf` is still open in the first instance afterwards, so nothing was torn down and there was nothing to confirm. **Stated precisely because the row alone does not prove it** — a launch that handed off to nobody leaves the first instance equally untouched, so it is this row *together with* the count moving |
+| plan-review pin — "starting a second `wine "$EXE" <path>` … and asserting the first one's document count changed" | **discharged** | its own named observation, not a passing single-instance smoke |
+
+**What the slice found, and none of it was in the shipped code.**
+
+1. **The Windows harness's PDF fixture was nine bytes on every machine but one.**
+   `cp .playwright-mcp/shots/docA.pdf … || printf '%%PDF-1.7\n'` — a gitignored scratch
+   artifact with a header-only fallback. Every check passed against it, because
+   `LooksLikePDF` wants only the header and a headless run renders nothing, so the
+   harness was silent about whether Nib opens a real document on Windows while reading
+   as though it had said so. Fixtures are now generated (`build/genpdf.go`, over
+   `internal/testpdf`). **This is the phase's recurring shape again: the defect was in
+   the instrument.**
+2. **The D16 check was green against a no-op.** Comparing document counts alone, it
+   reported `ok` when the hand-off was disabled entirely — because then nothing moves.
+   It now asserts its own stimulus (the launch exited 0 and never bound a port) before
+   comparing. Caught by the red-proof, which is what red-proofs are for.
+3. **A test was deleted by an overwrite and the suite stayed green.** Writing the new
+   `cmd/nib/main_test.go` destroyed `TestLoopbackBind`, which had guarded the
+   non-loopback bind refusal. `go test ./...` is green in both worlds — nothing in a Go
+   tree notices a test that stopped existing. Restored; found by reading the diff's file
+   stat, which said *modified* where *added* was expected.
+4. **Three live comments described the package this slice deleted**, one of them
+   load-bearing: `main.go`'s SIGTERM handler was justified by "`nib.desktop` passes
+   `--replace` and `ReplaceOthers` sends SIGTERM", both now false. The obvious tidy-up
+   after deleting `singleton` is to conclude nothing sends SIGTERM and trim the handler —
+   which silently restores stale records for every user who logs out instead of closing
+   the window. Rewritten to the durable reason (logout, `systemctl stop`, container
+   stop, `kill`).
+5. **`winrepro.sh` was named in `CONTRIBUTING.md` and guarded by nothing.**
+   `TestVerifyContractIsTrue` checked the three tier scripts only. It now covers the
+   Windows harness too, because as of this slice that file carries a claim no other test
+   in the tree can make.
+
+Also live-verified on **Linux**, deliberately: `singleton` was Linux-only, so Linux is
+the platform whose launch behaviour this slice changed most. Two real `nib` processes in
+an isolated `XDG_CONFIG_HOME` — the second exited 0 with no `serving at`, `beta.pdf`
+landed in the first instance's `/api/docs`, and SIGTERM to the first removed the record.
+
+**Carried to the phase boundary, unchanged:** the window clause. "After a second launch,
+the user is looking at a Nib window showing the handed-off document" is still **not
+exercised**. S03 was expected to discharge it with a windowed wine run; there is no
+Chromium in the wine prefix, and `browser.Open` execs a separate process Playwright
+cannot attach to. It is Dan-only by the arc's own definition — an acceptance clause whose
+close is a run rather than a build.
 
 ---
 

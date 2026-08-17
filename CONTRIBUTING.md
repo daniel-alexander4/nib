@@ -29,8 +29,11 @@ Chromium-family browser on `PATH` — the same browser Nib itself needs to show 
 UI, so if Nib runs at all, tier 3 can run.
 
 There is also `./build/winrepro.sh`, which runs the Windows binary under wine to
-check the places `path/filepath` answers differently. It is not part of the
-routine loop — run it when touching path handling, file dialogs, or packaging.
+check the places `path/filepath` answers differently, and to run a **second
+launch** against a live first one — the single-instance hand-off, on the platform
+where double-click is the ordinary way in and where the mechanism it replaced
+never worked at all. It is not part of the routine loop — run it when touching
+path handling, file dialogs, launch/hand-off, or packaging.
 
 ## The three tiers, and why there are three
 
