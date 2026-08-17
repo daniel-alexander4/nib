@@ -2511,10 +2511,96 @@ Acceptance:
   able to ask what the server holds. Closing a document cannot express it; this
   slice's `/api/docs` and boot restore are what can.
 
-#### P06.S04 — The cap's byte half, measured
+#### P06.S04 — The cap's byte half, measured *(done 2026-08-17, v1.106.3)*
 Scope: D9's aggregate-byte ceiling, with the figure chosen against a measurement
 rather than assumed, refusing on whichever of count or bytes binds first.
 Refs: D9, ADR-002.
+
+- T01 — measure what an open document actually costs: server bytes, client page
+  DOM nodes, and thumbnail canvas. Recorded with its method, not recollected.
+- T02 — `maxOpenBytes`, chosen against T01 and cited to it in the constant itself.
+- T03 — `addDocCapped` refuses on whichever of count or bytes binds first, and the
+  message names which one.
+- T04 — the client surfaces it (the refusal already flows through `errText`).
+- T05 — ADR-002's forward reference gains a dated note: the bound it cites exists.
+- T06 — seam rows V59–V63.
+
+**(grill, 2026-08-17.)**
+1. **The measurement has to include the client, and the cap can only enforce the
+   server.** D9 counts "its bytes, a pdf.js proxy, a rendered DOM subtree and a share
+   of the undo budget", but `addDocCapped` sees only `len(doc.data)`. A 2 MB vector
+   PDF with 400 pages costs far more client-side than a 60 MB scan of 3. So the
+   honest shape is a ceiling on server bytes **plus a recorded measurement of the
+   client cost it does NOT bound** — not a byte figure that implies it covers a
+   footprint it cannot see.
+2. **The restore made this sharper.** Before S03 the client paid for documents one
+   open at a time; a boot now adopts everything at once, so the ceiling is paid in a
+   single burst. That is the first time anything does.
+3. **The undo budget is already bounded and must not be double-counted.** ADR-003's
+   `maxUndoBytes` is one global 256 MiB across the undo+redo pair. A document cap
+   that also counted history would make two bounds interact in a way neither states.
+   The cap counts `doc.data` only, and says so.
+
+**Defaults taken, each reversible:** the ceiling is on `doc.data` alone, with the
+client-side cost measured and documented but not enforced, because it cannot be
+enforced from the server; the measurement is recorded in this plan rather than only
+in a commit message, since D9 makes it the justification for a constant.
+
+**(the measurement, 2026-08-17.)** Method: a temporary tier-3 file opened generated
+fixtures of 3, 50, 150 and 300 pages in one real Chromium against the real binary,
+reading `document.getElementsByTagName('*').length`, `performance.memory
+.usedJSHeapSize` and the summed backing store of every `<canvas>` before and after
+each open. The file was removed once the numbers were taken; what it produced is
+here, because a measurement that only exists in a commit message is not available to
+the next person choosing a constant.
+
+| pages | file bytes | DOM nodes added | canvas MiB (all views) | canvas delta |
+|---|---|---|---|---|
+| 3 | 1,116 | 42 | 11.7 | +11.7 |
+| 50 | 13,914 | 167 | 34.0 | +22.3 |
+| 150 | 41,716 | 349 | 47.5 | +13.5 |
+| 300 | 83,416 | 688 | 63.9 | +16.4 |
+
+**What it changes.** The canvas cost per view is set by the **viewport, not by the
+document's length** — 12–22 MiB whether the view holds 3 pages or 300, because pdf.js
+renders only what is near the viewport and a hidden view keeps what it had rendered.
+So **the client is bounded by the COUNT cap, not by the byte one**, and the byte
+ceiling is a server-side bound on `doc.data` that should not be described as bounding
+memory generally. JS heap moved 1–2 MiB per document and was noisy enough (one delta
+came back negative, a GC between samples) that it says nothing beyond "not the
+dominant term".
+
+**It also corrects a figure ADR-002 was carrying**: "roughly 35 MiB of canvas and
+~2,100 nodes per hidden 300-page document" was an estimate, and the measurement puts
+it at ~16 MiB and ~690 nodes. A dated note now records that in the ADR.
+
+**What the measurement cannot see**: the fixtures are near-blank generated pages with
+one text run each, so the ~2.2 nodes per page is a FLOOR — a text-heavy real page
+builds a much larger text layer. The count that matters for a cap is the one this
+does not have, and the honest reading is that the node figure bounds nothing; the
+canvas figure, being viewport-bound, does not depend on the fixture in the same way.
+
+**Choosing 512 MiB.** Eight documents at `maxPDFBytes` is 1.6 GB of `doc.data`, which
+is the exposure the count cap alone leaves. 512 MiB admits eight ordinary documents
+(eight 60 MB scans is 480 MB) and refuses only the pathological set — a cap that
+refuses real work is one users route around. It is 2× `maxUndoBytes`, so the two
+server-side bounds are the same order and the whole server ceiling stays under a
+gigabyte.
+
+**Acceptance ledger — 4 rows, all met.** The measurement is recorded with its method
+✅ (above); the ceiling cites it ✅ (`maxOpenBytes`'s own comment carries the three
+figures that decide it); an open that would cross the ceiling is refused with a message
+naming it ✅ (`TestTheByteCeilingRefusesAndSaysWhichBoundBound`, which also asserts a
+TINY document is refused at the ceiling — without that the row passes against an
+implementation that only rejected large individual documents, i.e. one measuring the
+wrong thing); and ADR-002's forward reference stops being one ✅ — a dated note records
+that the bound it cites now exists, **and corrects the figure the ADR was carrying**,
+since the measurement puts a hidden 300-page document at ~16 MiB and ~690 nodes rather
+than the estimated ~35 MiB and ~2,100.
+
+Whichever-binds-first is covered from both sides:
+`TestTheCountCapStillBindsBelowTheByteCeiling` opens nine tiny documents and requires
+`ErrTooManyOpen`, so the count cap cannot quietly stop binding when the byte one lands.
 Acceptance:
 - The measurement is recorded — what a document of a given size actually costs in
   server bytes, client page DOM and thumbnail canvas — and the ceiling cites it.
