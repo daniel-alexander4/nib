@@ -167,6 +167,117 @@ test('no mutating call is unpinned', () => {
     'an unpinned mutating call — its payload predates the id it is addressed with, so it acts on whatever document is current when the request goes out');
 });
 
+// ---------------------------------------------------------------------------
+// The RELOAD half of the same law (ADR-001), and the half that had no guard.
+//
+// scanUnpinned above asks which document a request is ADDRESSED to. This asks which
+// view the response is INSTALLED into — `setDocumentFromServer(meta, target)` writes
+// target.docMeta, bumps target.docGen, runs resetSharedDocState (wiping that view's
+// overlays, redact marks and undo stack) and repoints its viewer. A call that omits
+// the target writes into whatever view is active when the round-trip RETURNS.
+//
+// The two halves fail independently, which is why one guard could not cover both and
+// why this gap survived the pass that closed the other: /api/sanitize, /api/decrypt
+// and /api/assemble are each called with no preceding await, so the request half is
+// correct by construction and scanUnpinned rightly said nothing — while the reload
+// landing seconds later was unpinned. Sixteen of twenty-one call sites were fixed in
+// v1.105.14/15 and five were left, with nothing able to notice.
+//
+// Pinned against the mux for the same reason MUTATING is: a route list reconciled
+// against nothing polices nothing.
+const INSTALL_ROUTES = [
+  '/api/open', '/api/open-url', '/api/upload', '/api/combine', '/api/office',
+];
+
+// scanUntargetedReloads finds every setDocumentFromServer call that passes no explicit
+// target and whose response did not come from a document-INSTALLING route.
+//
+// Route rather than function name, deliberately. Five of these live in anonymous
+// `els.x.onclick = async () => {}` handlers that a function-header scan cannot name,
+// and a hand list of excused names is the V2 shape: it would have to be updated
+// whenever a handler is renamed, and it fails silently when it is not. What actually
+// makes a call legitimate is what the response IS — an Open replaces the document you
+// are looking at, by definition — and that is a property of the route.
+function scanUntargetedReloads(src) {
+  const out = [];
+  const call = /(?<![.\w$])setDocumentFromServer\(/g;
+  let m;
+  while ((m = call.exec(src)) !== null) {
+    // The declaration is not a call site.
+    if (/function\s+$/.test(src.slice(Math.max(0, m.index - 24), m.index))) continue;
+    const lp = m.index + 'setDocumentFromServer'.length;
+    let d = 0, end = -1;
+    for (let j = lp; j < src.length; j++) {
+      if (src[j] === '(') d++;
+      else if (src[j] === ')') { d--; if (d === 0) { end = j; break; } }
+    }
+    if (end === -1) continue;
+    // A comma at argument depth means a target was passed. Depth-aware, because the
+    // first argument is routinely a call or a ternary carrying commas of its own.
+    const args = src.slice(lp + 1, end);
+    let depth = 0, targeted = false;
+    for (const ch of args) {
+      if (ch === '(' || ch === '[' || ch === '{') depth++;
+      else if (ch === ')' || ch === ']' || ch === '}') depth--;
+      else if (ch === ',' && depth === 0) { targeted = true; break; }
+    }
+    if (targeted) continue;
+    const before = src.slice(Math.max(0, m.index - 1500), m.index);
+    const routes = [...before.matchAll(/apiFetch\(\s*'([^']+)'/g)];
+    const route = routes.length ? routes[routes.length - 1][1].split('?')[0] : '(none)';
+    if (INSTALL_ROUTES.includes(route)) continue;
+    out.push({ route, line: src.slice(0, m.index).split('\n').length });
+  }
+  return out;
+}
+
+test('every install route in the exemption list is a real POST route on the server', () => {
+  const mux = fs.readFileSync(path.join(REPO, 'internal', 'server', 'server.go'), 'utf8');
+  for (const route of INSTALL_ROUTES) {
+    assert.ok(mux.includes(`"POST ${route}"`),
+      `${route} exempts a reload site but is not a POST route in server.go — the exemption list has drifted from the server`);
+  }
+});
+
+test('the reload scan detects an untargeted reload — its own stimulus', () => {
+  const bad = `
+els.sanitizeBtn.onclick = async () => {
+  const res = await apiFetch('/api/sanitize', { method: 'POST' });
+  await setDocumentFromServer(await res.json());
+};`;
+  assert.equal(scanUntargetedReloads(bad).length, 1,
+    'the scanner does not detect an obviously untargeted reload, so its silence on the real source means nothing');
+
+  // And it must not flag the two shapes that are correct, or it is unusable.
+  const targeted = `
+  const res = await apiFetch('/api/sanitize', { method: 'POST' });
+  await setDocumentFromServer(await res.json(), owner);`;
+  assert.deepEqual(scanUntargetedReloads(targeted), [],
+    'a call that names its target is flagged — the false positive that would force the exemption list to grow');
+
+  const install = `
+  const res = await apiFetch('/api/open', { method: 'POST' });
+  await setDocumentFromServer(await res.json());`;
+  assert.deepEqual(scanUntargetedReloads(install), [],
+    'an Open is flagged — installing a new document into the active view is what Open MEANS');
+
+  // The definition itself must not read as a call site, or the scan reports a
+  // permanent finding nobody can fix and gets suppressed.
+  assert.deepEqual(scanUntargetedReloads('async function setDocumentFromServer(meta, target = view) {}'), [],
+    'the declaration is being counted as a call site');
+});
+
+test('every reload names the view it lands in', () => {
+  // Stimulus: there must BE call sites, or the emptiness below is a scan reading nothing.
+  const sites = APP.match(/(?<![.\w$])setDocumentFromServer\(/g) || [];
+  assert.ok(sites.length >= 20,
+    `only ${sites.length} setDocumentFromServer sites found — the scan is not reading app.js properly`);
+
+  const found = scanUntargetedReloads(APP);
+  assert.deepEqual(found, [],
+    `a reload with no target: it installs the response into whatever view is active when the round-trip returns, wiping that view's overlays, redact marks and undo stack — ${found.map((f) => `${f.route} at app.js:${f.line}`).join(', ')}`);
+});
+
 // The idiom changed in P05.S01/S02: `docMeta` became `view.docMeta` when document state
 // moved onto the view record. This guard was RE-DERIVED to the new idiom rather than
 // loosened until it passed — the distinction P03.S02 had to make when the registry

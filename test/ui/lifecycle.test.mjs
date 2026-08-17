@@ -49,6 +49,13 @@ test('the empty state matches launch, thumbnail grid included', async () => {
   assert.equal(open.wrap, 'has-doc');
   assert.equal(open.pageCount, '/ 3');
   assert.equal(open.thumbs, 3, 'the grid must POPULATE before its emptiness means anything');
+  // counts().pages carries a careful argument about being scoped to the VISIBLE
+  // container (with two views open, a bare selector sums 3 + 5 = 8 and reads as a page
+  // count) — and until the P05 graduation pass it had no reader at all: a correctness
+  // argument protecting a value nobody consulted. Read here, where a document of known
+  // length is already open, so the argument is defended by an assertion rather than by
+  // a comment.
+  assert.equal((await h.counts()).pages, 3, 'the visible viewer must hold one .page per page of the document');
   assert.equal(open.saveDisabled, false);
   assert.ok(open.saveTitle.includes(DOC));
 
