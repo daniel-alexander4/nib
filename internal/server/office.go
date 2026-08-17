@@ -51,7 +51,11 @@ func (s *Server) handleOffice(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	installed := s.setDoc(&document{path: "", data: pdf, sig: sign.Verify(pdf)})
+	installed, cerr := s.addDocCapped(&document{path: "", data: pdf, sig: sign.Verify(pdf)})
+	if cerr != nil {
+		httpError(w, http.StatusConflict, cerr.Error())
+		return
+	}
 	resp := s.docResponse(installed)
 	// Present the converted PDF under the source name with a .pdf extension.
 	base := strings.TrimSuffix(header.Filename, filepath.Ext(header.Filename))

@@ -582,12 +582,79 @@ body > div[id$="Modal"] {
 }
 #bgCanvas { max-width: 504px; max-height: 340px; }
 
+/* The viewer column: the tab strip stacked above the viewer. #main is a flex ROW
+   (sidebar | viewer), so the column is what lets the strip take layout space above
+   the wrap instead of floating over the pages. */
+#viewerCol {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
 /* viewer — PDFViewer requires its container to be absolutely positioned, so it
    lives inside a relatively-positioned wrapper that holds the flex slot. */
 #viewerWrap {
   position: relative;
   flex: 1;
+  min-height: 0;
   background: var(--crust);
+}
+
+/* The document switcher. Appears at two open documents (syncTabs toggles [hidden]),
+   so a single-document session is chrome-identical to what it was before tabs. */
+#tabstrip {
+  display: flex;
+  align-items: stretch;
+  gap: 1px;
+  overflow-x: auto;
+  flex: none;
+  background: var(--crust);
+  border-bottom: 1px solid var(--surface0);
+}
+#tabstrip[hidden] { display: none; }
+#tabstrip .tab {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 240px;
+  padding: 7px 12px;
+  border: none;
+  border-right: 1px solid var(--crust);
+  border-top: 2px solid transparent;
+  background: var(--mantle);
+  /* --text for BOTH states, and the measurement is why rather than a preference.
+     Computed against this file's own two palettes, not guessed: on --mantle in Latte,
+     --subtext0 is 4.06:1 and --subtext1 is 3.25:1, both under AA's 4.5:1 for 12.5px
+     text; on --crust they are 3.73:1 and 2.99:1. --text is 6.57:1 and 6.04:1. Mocha
+     passes on every token, which is exactly how a muted label ships looking fine.
+     (Note --subtext1 is DARKER than --subtext0 in Mocha and LIGHTER in Latte — this
+     file's Latte --subtext1 is Catppuccin's overlay2. Filed; not this slice's to fix,
+     but it is why "use the more muted token" would have made this worse.)
+     The active tab is then distinguished by three things that are not text colour:
+     the crust background, the accent top border, and font-weight — plus aria-selected
+     for anyone who cannot see any of them. */
+  color: var(--text);
+  font-size: 12.5px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+#tabstrip .tab:hover { background: var(--surface0); color: var(--text); }
+#tabstrip .tab:focus-visible { outline: 2px solid var(--blue); outline-offset: -2px; }
+/* The active tab reads as continuous with the page area below it: same background as
+   the viewer, and an accent edge on top. Colour is not the only signal — aria-selected
+   carries it for assistive tech, and the accent bar carries it for anyone who cannot
+   tell the two greys apart. */
+#tabstrip .tab.active {
+  background: var(--crust);
+  color: var(--text);
+  font-weight: 600;
+  border-top-color: var(--blue);
+}
+#tabstrip .tabname {
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 /* signing call-to-action: a floating bar at the top of the viewer when the open
    document carries flags to fill (Start -> Next field -> Save signed document). */
