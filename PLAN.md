@@ -4,8 +4,9 @@ Plan review 2026-08-17 (P07, at Dan's request before S02): structural gate passe
 one **critical** — the desktop launcher's SIGTERM was leaving a stale instance record
 on every activation, because `run()` handled only SIGINT — fixed at the line rather
 than pinned; seven warnings, five adopted as pins below and two carried to S02's gate
-as decisions (what authenticates a hand-off, and whether an on-disk credential that
-lets another local process make Nib act needs its own D-number).
+as decisions. Both were settled the same day via /discuss: **D20** records the
+on-disk-credential posture, and S02's five design decisions are written into the slice.
+The window-mechanism pin is discharged there rather than left standing.
 
 Planning arc started 2026-08-15 (Stage 1 seed, from a completed `/tshoot` →
 `/grill` → `/deepdive` chain rather than a cold brief — the design inputs listed
@@ -394,6 +395,47 @@ order is walked** (§15.6). Without ADRs, D7's law would go on constraining ever
 future async operation while the only record of *what it protects against* — the
 13 corrupting sites, the `save()` case, the id-reuse trap — retired with the
 document that found them.
+
+### D20 — A hand-off credential on disk, single-purpose and separate *(settled 2026-08-17 via /discuss, with the plan review of the same date as its input)*
+P07's hand-off needs the second launch to prove it may tell the running Nib to open
+a path. Doing that at all is **a change of posture, not an implementation detail**,
+which is why it is a decision: today the CSRF token lives only in memory, so no
+co-resident process can drive Nib's API. A credential on disk would be **the first
+thing that lets another local process cause Nib to act**, and that deserves to be
+decided rather than discovered in a diff.
+
+**It is adopted, with three constraints that are the substance of the decision:**
+
+1. **A separate secret, not the probe token.** `internal/instance` says of the probe
+   token that it "is not a capability: it proves identity to `GET /api/instance` and
+   grants nothing else", and reusing it would make that false — every read of the
+   record would become a capability grant. Two fields in one 0600 file cost nothing
+   and keep a leak of the cheap, widely-presented secret from handing over the
+   expensive one.
+2. **One purpose, one route.** The secret authorises `POST /api/handoff` and nothing
+   else. `/api/open`'s guard (CSRF + loopback origin + unlocked vault) is untouched,
+   and the CSRF token never goes to disk — writing *that* down would hand a
+   co-resident process the whole API rather than one verb.
+3. **No new install path.** The hand-off resolves through the same machinery an
+   ordinary open does — `LooksLikePDF`, the size cap, `addDocCapped` — differing only
+   in how it is authenticated. A self-contained handler would be a second,
+   less-checked way to install a document, which is the duplicate-derivation defect
+   this repo has paid for most often.
+
+**What was refused, and why it is recorded:** OS-level peer credentials (a unix
+socket with `SO_PEERCRED`, so the kernel vouches for the uid and no secret touches
+disk) are **genuinely stronger** than any file-based token. They are refused because
+they need a second transport — named pipes on Windows — and so **reintroduce exactly
+the platform split P07 exists to remove**: `singleton` was Linux-only, and that is
+the whole reason this phase exists. Named here rather than omitted, because the
+weaker mechanism was chosen deliberately and a later reader is entitled to know the
+stronger one was on the table.
+
+**The residual, stated plainly:** a process running as the user that can read
+`~/.config/nib/instance.json` can make Nib open a document. It cannot read anything
+it could not already read — it has the user's own access — so the marginal capability
+is "make Nib display a file", bounded further by Open now ADDING rather than
+replacing, so a hand-off cannot swap the document under a user mid-signature.
 
 ---
 
@@ -2840,13 +2882,43 @@ message. Each is defensible and each changes what the record must carry.
 #### P07.S02 — hand-off, and the window the user is looking for
 Scope: a launch carrying a path reads the record, probes, delivers the path to the
 running instance, surfaces its window, and exits; a dead or absent record means
-*become the primary*. Refs: D18, D1.
+*become the primary*. Refs: D18, **D20**, D16, D1.
+
+**(settled 2026-08-17 via /discuss — five decisions, and they are the slice's
+design.)**
+1. **A separate `handoff` secret** in the instance record, beside the probe token —
+   D20's first constraint.
+2. **`POST /api/handoff`**, authorised by that secret alone. It answers the launch
+   usefully — opened / locked / full — because the launch must decide whether to
+   exit or become primary, and a repurposed `/api/open` would answer in a different
+   caller's vocabulary.
+3. **`{path}` and nothing else**, through the ordinary install path. No path
+   allowlist: it would be theatre against a caller that already holds the user's
+   read access, and it would refuse legitimate double-clicks from `/mnt`, `/media`
+   or a USB stick — which v1.101.0's Windows drive work went out of its way to
+   support.
+4. **A locked instance ACCEPTS the hand-off**, queues the path in memory and drains
+   it on unlock. **This is the first double-click of every session, not an edge
+   case** — Nib starts locked. The alternative that writes itself, "cannot
+   authenticate against a locked vault, so become primary", produces two Nibs every
+   morning, which is the phase's own failure mode triggered by its commonest input.
+   Memory only (a queued path dies with the process — no stale state next morning),
+   bounded by the document cap, oldest dropped.
+5. **The window is attempted, not promised.** See the pin below.
+
 Acceptance:
 - A second launch with a path opens that document as a tab in the RUNNING
   instance and exits without binding a port.
-- The running instance's window is what the user ends up looking at.
+- **Per D16**, a hand-off naming a path that is already open activates that
+  document rather than opening a second working copy of the same file.
 - A stale record does not strand the launch: it becomes the primary.
-- The cap and the locked-vault cases each have a defined, user-visible answer.
+- A hand-off refused by the document cap tells the launch so, and the launch says
+  so where a user will see it.
+- **A hand-off to a LOCKED instance is accepted and opens on unlock**, and the
+  launch does not become primary.
+- **After a second launch, the user is looking at a Nib window showing the
+  handed-off document.** Whether that is the same window raised or a new one
+  pointing at the same instance is the BROWSER's call and not Nib's — see the pin.
 
 **(plan-review pin: the takeover is a retry, 2026-08-17 — S02.)** "A stale record does
 not strand the launch: it becomes the primary" is one attempt as written, and two
@@ -2857,15 +2929,21 @@ clear by hand. **What discharges this specifically:** a test that takes over a s
 record from two goroutines and asserts exactly one becomes primary while the other hands
 off — not the single-launch takeover the original clause already covers.
 
-**(plan-review pin: the window has no named mechanism, 2026-08-17 — S02.)** "The running
-instance's window is what the user ends up looking at" is the clause most likely to be
-quietly downgraded during implementation, because **Nib owns no window** — the browser
-does, and asking a browser to raise an existing app window is platform- and
-browser-dependent. Name the mechanism before building, and if the honest answer is "we
-re-open the URL and let the browser decide", say that in the clause rather than leaving
-a promise the implementation cannot keep. **What discharges this specifically:** an
-observation of what the user sees after a second launch, on one named platform — not
-"the hand-off returned 200".
+**(plan-review pin: the window has no named mechanism, 2026-08-17 — S02. DISCHARGED
+the same day via /discuss; the mechanism and its honest limit are recorded here.)**
+The mechanism is `browser.Open` against the running instance's URL — the one Nib
+already has — and the limit is that **no reliable cross-platform raise exists for a
+window you do not own.** Under Wayland it is refused by design, which is most modern
+Linux desktops; `wmctrl`/`xdotool` are X11-only and would be a runtime dependency Nib
+deliberately does not have, working on the developer's machine and silently not on a
+user's. So the browser decides, and on some combinations it produces a second window
+pointing at the same Nib rather than raising the first. **That degraded case is
+survivable rather than broken**: a second window is a second client, and S03's
+reload-restore brings it up showing the same documents including the handed-off one.
+The acceptance clause is therefore written to what the user ends up seeing rather than
+to "the window raised". **What discharges it specifically:** an observation of what is
+on screen after a second launch, on one named platform — not "the hand-off returned
+200".
 
 #### P07.S03 — retire replace-and-kill, and prove it on Windows
 Scope: drop `--replace` from `build/nib.desktop`, retire `ReplaceOthers`, and
