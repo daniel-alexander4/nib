@@ -6,6 +6,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"path/filepath"
 
 	"nib/internal/instance"
 	"nib/internal/pdfops"
@@ -67,11 +68,19 @@ func (s *Server) handleHandoff(w http.ResponseWriter, r *http.Request) {
 		httpError(w, http.StatusBadRequest, "a path is required")
 		return
 	}
+	// Canonicalise ONCE, here, so the comparison below and the install below see the same
+	// string. `handleOpen` cleans (`server.go:337`) and this route did not, so a document
+	// opened through the UI was stored cleaned while a handed-off one was stored raw —
+	// and D16's compare is a string compare. Today's only caller happens to send a clean
+	// path (`initialFile` runs `filepath.Abs`, which cleans), so nothing was broken; the
+	// route's correctness rested on a property of one caller, which is not where a
+	// route's correctness belongs.
+	path := filepath.Clean(req.Path)
 
 	// D16: a path already open is activated, not opened twice. Two tabs on one path are
 	// two independent working copies of the same file, and whichever saves last silently
 	// discards the other's work.
-	if doc := s.docForPath(req.Path); doc != nil {
+	if doc := s.docForPath(path); doc != nil {
 		s.mu.Lock()
 		s.activeID = doc.id
 		s.mu.Unlock()
@@ -79,12 +88,17 @@ func (s *Server) handleHandoff(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !unlocked {
-		s.queuePendingOpen(req.Path)
+	// `unlocked` was read before the body was decoded, so it may already be stale — and
+	// the stale direction is the harmful one. If the vault is adopted in that window, the
+	// drain has already run and found an empty queue, so a path appended afterwards waits
+	// for an unlock that has happened and will not happen again: the document silently
+	// never opens. queuePendingOpen therefore re-checks under the SAME lock adoptVault
+	// sets the vault under, and reports false when there is nothing left to wait for.
+	if !unlocked && s.queuePendingOpen(path) {
 		writeJSON(w, handoffResponse{Result: "queued"})
 		return
 	}
-	if err := s.openHandedOff(req.Path); err != nil {
+	if err := s.openHandedOff(path); err != nil {
 		writeJSON(w, handoffResponse{Result: "refused", Reason: err.Error()})
 		return
 	}
@@ -146,18 +160,28 @@ func (s *Server) docForPath(path string) *document {
 // clicks again. Bounded by the document cap because that is the number that will actually
 // open — queueing more would be promising something the cap then refuses. The OLDEST is
 // dropped, because the most recent double-click is the one the user is waiting on.
-func (s *Server) queuePendingOpen(path string) {
+//
+// Reports whether the path was queued. **False means the vault is already open** — the
+// caller must install it directly rather than leave it waiting for an unlock that has
+// already happened. That check is here, rather than at the call site, because here is
+// where it is under the same lock `adoptVault` sets the vault under: either this sees the
+// vault and declines to queue, or it appends first and the drain that follows finds it.
+func (s *Server) queuePendingOpen(path string) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.vault != nil {
+		return false
+	}
 	for _, p := range s.pendingOpens {
 		if p == path {
-			return // the same file clicked twice is one document, not two
+			return true // the same file clicked twice is one document, not two
 		}
 	}
 	s.pendingOpens = append(s.pendingOpens, path)
 	if len(s.pendingOpens) > maxOpenDocs {
 		s.pendingOpens = s.pendingOpens[len(s.pendingOpens)-maxOpenDocs:]
 	}
+	return true
 }
 
 // drainPendingOpens opens everything a locked instance was handed. Called from adoptVault

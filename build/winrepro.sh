@@ -271,6 +271,11 @@ else
   FAILED=1
 fi
 checknot "and it never bound a port of its own" "$(cat "$WORK/second.log")" 'serving at'
+# A refusal or a queue also ends in a clean exit, so the exit status alone does not say
+# the document arrived. The launch logs both, and neither may appear here: the instance
+# is unlocked and has room.
+checknot "and the hand-off was neither refused nor queued" "$(cat "$WORK/second.log")" 'refused this document'
+checknot "nor deferred to an unlock"                       "$(cat "$WORK/second.log")" 'Nib is locked'
 
 AFTER="$(docs)"
 N_AFTER="$(ndocs "$AFTER")"
@@ -302,6 +307,13 @@ THIRD_RC=$?
 N_THIRD="$(ndocs "$(docs)")"
 if [ "$THIRD_RC" != "0" ] || grep -qF 'serving at' "$WORK/third.log"; then
   echo "  FAIL the already-open launch never reached the running instance (exit $THIRD_RC), so its count check would pass over a hand-off that did not happen"
+  FAILED=1
+elif grep -qF 'refused this document' "$WORK/third.log"; then
+  # `focused` and `refused` are indistinguishable by count — both leave it where it was —
+  # so without this the check would report ok for a hand-off the running instance turned
+  # down. The launch logs a refusal, and that is the only place the difference surfaces.
+  echo "  FAIL the running instance REFUSED the already-open path; the count did not move because nothing was opened, not because it was focused"
+  sed -n '1,10p' "$WORK/third.log"
   FAILED=1
 elif [ "$N_THIRD" = "$N_AFTER" ]; then
   echo "  ok   handing over an already-open path focused it rather than duplicating it"
