@@ -450,8 +450,28 @@ func keyID(line string) string {
 	return f[0] + " " + f[1]
 }
 
-// Validate reports whether raw is a well-formed vault file, for vetting a backup
-// before importing it.
+// Validate reports whether raw is a vault file this machine could actually open,
+// for vetting a backup before importing it.
+//
+// It checks openability and not merely shape, because of what the caller does next:
+// an import OVERWRITES the live vault, in place, with no prior copy. A vault that
+// cannot be opened here is therefore not a recoverable mistake — it destroys the
+// sealed content key and with it the PDF-signing identity every pinned peer has
+// fingerprinted. That the vault is unrecoverable without its key is a deliberate
+// property of this design; reaching that state by picking the wrong file in a
+// dialog is not.
+//
+// The shape checks alone passed all three realistic mistakes: a truncated backup
+// with an intact JSON prefix, someone else's vault, and an old v1 password vault
+// (KDF != nil was never rejected).
+//
+// A slot that is present but whose private key is passphrase-protected COUNTS AS
+// OPENABLE. This is the case that decides the whole shape of the check: that key
+// is on this machine and the backup is genuinely the user's, we simply cannot
+// prove it without prompting. Refusing it would turn a data-loss bug into a
+// can't-restore-my-own-backup bug, which is the same harm wearing the opposite
+// sign. So the bar is "at least one slot is a candidate on this machine", not
+// "at least one slot opens right now".
 func Validate(raw []byte) error {
 	var env envelope
 	if err := json.Unmarshal(raw, &env); err != nil {
@@ -460,7 +480,43 @@ func Validate(raw []byte) error {
 	if env.Version == 0 || len(env.Cipher) == 0 || len(env.Nonce) == 0 {
 		return errors.New("not a vault backup")
 	}
-	return nil
+	if env.Version < 2 || len(env.SSH) == 0 {
+		// A v1 password vault parses perfectly and has no key slots at all, so
+		// importing one would replace a working vault with a file this build has no
+		// path to open. Migration is a separate, deliberate route (see Migrate).
+		return errors.New("this backup predates SSH-key sealing and cannot be imported directly")
+	}
+
+	var locked bool
+	for _, slot := range env.SSH {
+		key, ok, uerr := unwrapSlot(slot, nil)
+		if !ok {
+			// Present-but-locked is a candidate; no key at all is not.
+			if errors.Is(uerr, sshkey.ErrPassphraseRequired) || errors.Is(uerr, sshkey.ErrWrongPassphrase) {
+				locked = true
+			}
+			continue
+		}
+		// The slot opened. Prove the ciphertext it guards opens too, so a corrupt
+		// or truncated body is refused here rather than after it has replaced the
+		// only good copy.
+		plain, derr := decrypt(key, env.Nonce, env.Cipher)
+		zero(key)
+		if derr != nil {
+			return errors.New("backup is corrupt: its contents do not decrypt")
+		}
+		var c Contents
+		uerr = json.Unmarshal(plain, &c)
+		zero(plain)
+		if uerr != nil {
+			return errors.New("backup is corrupt: its contents do not parse")
+		}
+		return nil
+	}
+	if locked {
+		return nil
+	}
+	return errors.New("this backup is sealed to a key this machine does not have")
 }
 
 // --- contents accessors -------------------------------------------------------

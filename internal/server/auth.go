@@ -385,7 +385,15 @@ func (s *Server) handleVaultExport(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleVaultImport replaces the vault with an uploaded backup, then re-attempts
-// unlock (it only opens if this machine's SSH key matches a slot in the backup).
+// unlock.
+//
+// The write below is destructive and has no undo — it overwrites the live vault in
+// place — so vault.Validate is not a formality here but the only thing standing
+// between a mis-picked file and the permanent loss of the signing identity. It
+// proves the backup is openable ON THIS MACHINE before the overwrite, and its
+// message is passed through rather than flattened: "sealed to a key this machine
+// does not have" and "predates SSH-key sealing" send the user somewhere different,
+// and the generic refusal this used to return sent them nowhere.
 func (s *Server) handleVaultImport(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, 16<<20)
 	raw, err := io.ReadAll(r.Body)
@@ -394,7 +402,7 @@ func (s *Server) handleVaultImport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := vault.Validate(raw); err != nil {
-		httpError(w, http.StatusBadRequest, "not a valid vault backup")
+		httpError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	if err := writeFileAtomic(vault.Path(s.configDir), raw); err != nil {
