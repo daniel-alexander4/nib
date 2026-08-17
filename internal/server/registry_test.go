@@ -90,8 +90,13 @@ func TestEveryDocumentResolutionIsHandled(t *testing.T) {
 	if resolveSites != 17 {
 		t.Errorf("expected 17 resolveDoc sites, found %d — update this deliberately if intended", resolveSites)
 	}
-	if directSites != 7 {
-		t.Errorf("expected 7 direct docFor sites, found %d — update this deliberately if intended", directSites)
+	// 8, not 7: P06.S02's handleCloseView resolves with docFor rather than resolveDoc,
+	// because its not-found branch is a 409 ("that document is no longer open") and
+	// resolveDoc's is a 404. Bumped deliberately, which is what the number is for — the
+	// guard went red on the first run after the route landed and is the only thing in
+	// the tree that would have noticed a resolution site appearing.
+	if directSites != 8 {
+		t.Errorf("expected 8 direct docFor sites, found %d — update this deliberately if intended", directSites)
 	}
 }
 

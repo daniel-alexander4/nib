@@ -59,6 +59,10 @@ const BOOT_ROUTES = {
   '/api/images': [],
   '/api/recent': [],
   '/api/doc': { name: '', path: '', canSave: false, signature: { state: '' }, canUndo: false, canRedo: false },
+  // Close-view answers with whatever is active AFTER the close — the zero response when
+  // nothing is left, which is what this default is. A test that needs the neighbour
+  // named passes its own.
+  '/api/close-view': { name: '', path: '', canSave: false, signature: { state: '' }, canUndo: false, canRedo: false },
 };
 
 // boot builds the document, installs the globals app.js needs, and imports the
