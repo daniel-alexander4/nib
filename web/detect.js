@@ -8,11 +8,23 @@
 // string `s` with per-char x-centre `cx` and height `ch`, plus a `words` list
 // with pixel x-spans. Shared by the circle-a-choice detectors below.
 export function buildTextRows(items) {
+  // One-entry memo keyed on the ARRAY IDENTITY. Five detectors (findYesNo,
+  // findCircleOne, findPipeChoices, findSlashTemplates, findRunChoices) each call this
+  // with the same `items` array on every Detect click, and the row grouping below is
+  // O(n²) — so the same quadratic pass ran five times over the same input.
+  //
+  // Identity, not contents: a different array recomputes, so a caller that builds a new
+  // item list gets new rows. The returned rows are SHARED rather than fresh, which is
+  // safe only because no caller mutates them — verified across all five, and the reason
+  // this is a memo rather than a cache with a copy.
+  if (buildTextRows._for === items && items.length) return buildTextRows._rows;
   const rows = [];
   for (const it of items.slice().sort((a, b) => a.y - b.y)) {
     const row = rows.find((r) => Math.abs(r.y - it.y) <= Math.max(6, it.h * 0.6));
     if (row) row.items.push(it); else rows.push({ y: it.y, h: it.h, items: [it] });
   }
+  buildTextRows._for = items;
+  buildTextRows._rows = rows;
   const mctx = (buildTextRows._ctx ||= document.createElement('canvas').getContext('2d'));
   mctx.font = '16px sans-serif';
   for (const row of rows) {
@@ -51,10 +63,20 @@ export function buildTextRows(items) {
 // underscore run, so when the real ink in the choice band resolves into exactly
 // one word-cluster per choice, snap each box's x-extent to its cluster. If the
 // count doesn't match (multi-word choices, touching glyphs), keep the estimate.
-export function snapChoices(canvas, choices, marker) {
+// `pixels` is optional and is the whole performance point: the caller loops over choice
+// groups, and reading the full canvas per group costs a ~13 MB getImageData each time for
+// a picture that has not changed. pixelsOf() below reads it once; passing nothing keeps
+// the old self-contained behaviour for any other caller.
+export function pixelsOf(canvas) {
+  const W = canvas.width, H = canvas.height;
+  return { data: canvas.getContext('2d').getImageData(0, 0, W, H).data, W, H };
+}
+
+export function snapChoices(canvas, choices, marker, pixels) {
   if (choices.length < 2) return choices;
-  const ctx = canvas.getContext('2d'), W = canvas.width, H = canvas.height;
-  const data = ctx.getImageData(0, 0, W, H).data;
+  const px = pixels || pixelsOf(canvas);
+  const W = px.W, H = px.H;
+  const data = px.data;
   const dark = (x, y) => { if (x < 0 || y < 0 || x >= W || y >= H) return false; const i = (y * W + x) * 4; return data[i + 3] >= 40 && Math.max(data[i], data[i + 1], data[i + 2]) < 160; };
   const h = choices[0].y1 - choices[0].y0;
   const baseY = Math.round(Math.max(...choices.map((c) => c.y1)) - h * 0.28);
@@ -315,6 +337,12 @@ export function detectRegions(canvas) {
   // anti-aliased thin black rules count but coloured section-dividers/callouts do
   // not — those aren't fillable fields.
   const dark = (x, y) => {
+    // The bounds check the other three pixel predicates in this file already have.
+    // Without it `dark(x - 1, y)` at x = 0 indexes (y*w - 1)*4 — the PREVIOUS ROW'S LAST
+    // PIXEL — and six call sites do exactly that on the left edge, so a rule touching the
+    // margin was tested against unrelated ink. (A y underflow read undefined and answered
+    // false, which is wrong but harmless; the x one wraps to real data.)
+    if (x < 0 || y < 0 || x >= w || y >= h) return false;
     const i = (y * w + x) * 4;
     if (data[i + 3] < 40) return false;
     const r = data[i], g = data[i + 1], b = data[i + 2];

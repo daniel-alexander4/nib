@@ -23,6 +23,7 @@ import {
   findPipeChoices,
   findRunChoices,
   snapChoices,
+  pixelsOf,
   dedupeGroups,
   buildTextRows,
 } from './detect.js';
@@ -8290,6 +8291,10 @@ els.detectBtn.onclick = async () => {
   // 3. "Circle one" choices (incl. Y/N) become a circle-my-answer widget: a
   //    radio set of choices, each circled (pill around a word) when picked.
   const choiceGroups = dedupeGroups([...ynItems, ...findCircleOne(textItems), ...findSlashTemplates(textItems), ...findPipeChoices(textItems), ...findRunChoices(textItems, cells)]);
+  // The canvas is read ONCE for the whole loop. snapChoices used to read it per group —
+  // a full getImageData over a page-sized canvas, ~13 MB each, for a picture that does
+  // not change between groups. Skipped entirely when there are no groups.
+  const groupPixels = choiceGroups.length ? pixelsOf(canvas) : null;
   for (const grp of choiceGroups) {
     const choices = snapChoices(canvas, grp.choices, grp.marker);
     const cf = choices.map((c) => ({ rect: [c.x0 / W, c.y0 / H, c.x1 / W, c.y1 / H], word: !!c.word }));
