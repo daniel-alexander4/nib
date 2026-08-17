@@ -351,6 +351,20 @@ test('the armed-tool and selection state is per view, and the transient state is
   // And the mirror: the transient drag state must STAY module-level. Moving it onto the
   // record would look like consistency and would be wrong — it is aborted on a switch, so
   // a per-view copy is state nobody should ever read back.
+  //
+  // The stimulus first, exactly as the PER_VIEW / PER_VIEW_ENGINE / PER_VIEW_TOOLS scans
+  // do it. This was the one inventory in the file with no population probe: twenty-four
+  // bare doesNotMatch assertions with nothing establishing the names still exist, so
+  // renaming or deleting sbStart/cropDiv/shCanvas left all twenty-four passing over an
+  // empty population — a zero that cannot be told from health, in the file that spells
+  // that failure mode out three separate times.
+  // Word-boundary, not includes(): a rename to shCanvasRenamed still CONTAINS
+  // "shCanvas", so a substring probe stays green over exactly the edit it is meant
+  // to catch. Proven by trying it.
+  for (const name of TRANSIENT) {
+    assert.match(CODE, new RegExp(`(?<![\\w$])${name}(?![\\w$])`),
+      `${name} does not appear at all — the transient scan is not reading what it thinks`);
+  }
   for (const name of TRANSIENT) {
     assert.doesNotMatch(CODE, new RegExp(`(?<![.\\w$])view\\.${name}\\b`),
       `${name} was moved onto the view record — transient drag state is aborted on a switch, never restored`);
