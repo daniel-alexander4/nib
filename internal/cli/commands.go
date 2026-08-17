@@ -945,8 +945,10 @@ func describeStatus(st sign.Status) string {
 func cmdTimestamp(args []string) int {
 	fs := flag.NewFlagSet("nib timestamp", flag.ContinueOnError)
 	var doVerify bool
+	var force bool
 	fs.BoolVar(&doVerify, "verify", false, "check each file against its .ots proof instead of creating one")
-	fs.Usage = usageFunc(fs, "nib timestamp [--verify] FILE...", "Create an OpenTimestamps proof (FILE.ots) for each file, or with --verify\ncheck each file against its existing FILE.ots.")
+	fs.BoolVar(&force, "force", false, "re-stamp even where a .ots proof already exists (discards it)")
+	fs.Usage = usageFunc(fs, "nib timestamp [--verify] [--force] FILE...", "Create an OpenTimestamps proof (FILE.ots) for each file, or with --verify\ncheck each file against its existing FILE.ots.\n\nA file that already has a proof is skipped, so re-running over a directory is\nsafe; --force re-stamps and discards the existing proof.")
 	if code, ok := parse(fs, args); !ok {
 		return code
 	}
@@ -957,13 +959,34 @@ func cmdTimestamp(args []string) int {
 	if doVerify {
 		return timestampVerify(fs.Args())
 	}
-	return timestampCreate(fs.Args())
+	return timestampCreate(fs.Args(), force)
 }
 
-func timestampCreate(files []string) int {
+// timestampCreate stamps each file, skipping one that already has a proof unless
+// force is set.
+//
+// The skip is the important part, and it is not politeness. A .ots proof starts
+// PENDING and becomes anchored to a Bitcoin block hours to days later; re-stamping
+// replaces a confirmed proof with a fresh pending one and the anchoring is not
+// recoverable. The README documents `for f in *.pdf; do nib timestamp "$f"; done`,
+// which a user will naturally run twice — so the unguarded write turned an ordinary
+// repeat into silent destruction of every proof in the directory.
+//
+// watchTimestamp has always had this guard; the two paths simply disagreed about
+// the same invariant. Skipping (rather than erroring) also matches the
+// ErrNotEncrypted-passes-through precedent for idempotent batch runs: a second pass
+// over a directory should be a no-op that exits 0, not a failure.
+func timestampCreate(files []string, force bool) int {
 	client := safeClient()
 	worst := 0
 	for _, p := range files {
+		proofPath := p + ".ots"
+		if !force {
+			if _, err := os.Stat(proofPath); err == nil {
+				fmt.Printf("%s: skipped (%s exists; --force to re-stamp)\n", p, proofPath)
+				continue
+			}
+		}
 		data, err := os.ReadFile(p)
 		if err != nil {
 			errf("%v", err)
@@ -979,7 +1002,6 @@ func timestampCreate(files []string) int {
 			worst = max(worst, 1)
 			continue
 		}
-		proofPath := p + ".ots"
 		if err := os.WriteFile(proofPath, proof, 0o644); err != nil {
 			errf("%v", err)
 			worst = max(worst, 1)

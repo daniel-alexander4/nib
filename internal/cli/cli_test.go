@@ -1031,3 +1031,65 @@ func makeP12(t *testing.T, cn, passphrase string) []byte {
 	}
 	return pfx
 }
+
+// TestTimestampDoesNotClobberAnExistingProof pins the guard on a destructive write.
+//
+// A .ots proof starts pending and is anchored to a Bitcoin block hours to days
+// later. Re-stamping replaces a confirmed proof with a fresh pending one and the
+// anchoring cannot be recovered — so the unguarded write turned the README's own
+// `for f in *.pdf; do nib timestamp "$f"; done` into silent destruction of every
+// proof in the directory on a second run. watchTimestamp already had this guard;
+// the two paths disagreed about one invariant.
+//
+// All three arms are offline by construction: the skip returns before any calendar
+// is contacted, and the two non-skip arms use a missing input file so they fail at
+// the read rather than on the network. That is also what makes them a positive
+// control — without them, a guard that skipped unconditionally would pass.
+func TestTimestampDoesNotClobberAnExistingProof(t *testing.T) {
+	t.Run("an existing proof is left untouched", func(t *testing.T) {
+		dir := t.TempDir()
+		pdf := filepath.Join(dir, "doc.pdf")
+		if err := os.WriteFile(pdf, []byte("%PDF-1.7\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		proof := pdf + ".ots"
+		original := []byte("a confirmed proof that took days to anchor")
+		if err := os.WriteFile(proof, original, 0o644); err != nil {
+			t.Fatal(err)
+		}
+
+		if code := timestampCreate([]string{pdf}, false); code != 0 {
+			t.Errorf("skipping an already-stamped file should exit 0, got %d", code)
+		}
+		got, err := os.ReadFile(proof)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !bytes.Equal(got, original) {
+			t.Errorf("the existing proof was overwritten: had %q, now %q", original, got)
+		}
+	})
+
+	t.Run("a file with no proof is not skipped", func(t *testing.T) {
+		// No .ots beside it, so the guard must let it through to the read — which
+		// fails, because the input does not exist. A guard that skipped everything
+		// would return 0 here.
+		missing := filepath.Join(t.TempDir(), "absent.pdf")
+		if code := timestampCreate([]string{missing}, false); code == 0 {
+			t.Error("a file with no proof was skipped — the guard is refusing everything, not just re-stamps")
+		}
+	})
+
+	t.Run("--force gets past the guard", func(t *testing.T) {
+		dir := t.TempDir()
+		proof := filepath.Join(dir, "absent.pdf.ots")
+		if err := os.WriteFile(proof, []byte("existing"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		// The proof exists, so without force this would skip and exit 0. With force
+		// it must proceed to the read and fail on the missing input.
+		if code := timestampCreate([]string{filepath.Join(dir, "absent.pdf")}, true); code == 0 {
+			t.Error("--force still skipped a file that already had a proof")
+		}
+	})
+}
