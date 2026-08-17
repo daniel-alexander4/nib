@@ -59,6 +59,10 @@ const BOOT_ROUTES = {
   '/api/images': [],
   '/api/recent': [],
   '/api/doc': { name: '', path: '', canSave: false, signature: { state: '' }, canUndo: false, canRedo: false },
+  // On the boot path since P06.S03: the client reconciles against what the server holds
+  // before it does anything else. Empty is the honest default for a harness whose server
+  // holds nothing; a test that needs a restore passes its own.
+  '/api/docs': { docs: [], activeId: '' },
   // Close-view answers with whatever is active AFTER the close — the zero response when
   // nothing is left, which is what this default is. A test that needs the neighbour
   // named passes its own.
@@ -136,6 +140,11 @@ export async function boot({ routes = {}, search = '' } = {}) {
       );
     }
     const body = typeof table[key] === 'function' ? table[key](opts) : table[key];
+    // A route may hand back a whole Response when the STATUS is the thing under test —
+    // a 409, say. Everything else keeps the 200-with-JSON default, so no existing route
+    // has to say so. Added for P06.S03, whose all-tabs-stale case is entirely about what
+    // the client does when the server refuses an id it no longer holds.
+    if (body instanceof Response) return body;
     return new Response(JSON.stringify(body), {
       status: 200,
       headers: { 'Content-Type': 'application/json' },
