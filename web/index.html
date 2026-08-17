@@ -302,8 +302,13 @@
           <button id="selDeleteBtn" title="Delete selected pages">Delete</button>
           <button id="selClearBtn" title="Clear selection">Clear</button>
         </div>
-        <div id="thumbGrid"></div>
+        <!-- Each open document gets its own .thumbgrid here, built by newView() in
+             app.js (ADR-002), so a hidden document keeps its rendered thumbnails. The
+             rows above are shared chrome for whichever document is active. -->
       </div>
+      <!-- #outline stays one unique id: the tab machinery resolves panels by
+           getElementById and the link styles are `#outline a` descendants. Each view's
+           .outlinelist is built into it by newView(). -->
       <div id="outline" class="panel"></div>
       <div id="library" class="panel">
         <p class="libhint libnote">Visual marks only — a drawn signature, initials or stamp is a picture on the page, not a cryptographic signature. Use the <strong>Sign</strong> tab to add a cryptographic signature.</p>

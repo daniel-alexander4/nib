@@ -161,3 +161,64 @@ test('the crop sweep cannot reach another view’s marks', async () => {
     'the sweep reached another view and removed a mark from a document the user is not looking at');
   decoy.remove();
 });
+
+// ── P05.S05 — the sidebars ──────────────────────────────────────────────────
+//
+// Same decoy technique as the sweeps above, and the same fidelity rule: the decoy is built
+// to the shape newView() produces, with a real `.thumbwrap` carrying a `dataset.page`,
+// because a decoy that differs from the real thing tests the difference and not the rule.
+
+test('each view builds its own sidebar containers into the shared panels', () => {
+  const thumbs = doc.getElementById('thumbs');
+  const outline = doc.getElementById('outline');
+
+  assert.equal(doc.getElementById('thumbGrid'), null,
+    'a static #thumbGrid is back — with several views that id is no longer unique');
+  assert.equal(thumbs.querySelectorAll('.thumbgrid').length, 1, 'the boot view built no grid');
+  assert.equal(outline.querySelectorAll('.outlinelist').length, 1, 'the boot view built no outline list');
+
+  // #outline must stay ONE id: the tab machinery resolves panels by getElementById and the
+  // link styling is a `#outline a` descendant selector.
+  assert.ok(outline.classList.contains('panel'), '#outline stopped being the panel node');
+});
+
+test('a build aimed at one view cannot clear another view grid', async () => {
+  await openDocument();
+  const live = wrap.querySelector('.viewerContainer'); // the active view's viewer container
+  assert.ok(live, 'setup: no active view');
+
+  const thumbs = doc.getElementById('thumbs');
+  const liveGrid = thumbs.querySelector('.thumbgrid:not([hidden])');
+  assert.ok(liveGrid, 'setup: the active view has no visible grid');
+
+  // A decoy grid in the shape newView() builds, holding a real thumbnail.
+  const decoy = doc.createElement('div');
+  decoy.className = 'thumbgrid';
+  decoy.hidden = true;
+  const dw = doc.createElement('div');
+  dw.className = 'thumbwrap';
+  dw.dataset.page = '7';
+  decoy.appendChild(dw);
+  thumbs.appendChild(decoy);
+
+  // Reopening rebuilds the ACTIVE view's grid. jsdom renders no canvas, so exactly one
+  // .thumbwrap lands in the live grid before the render rejects — measured, and the reason
+  // the old "the grid stays empty at this tier" comment was wrong.
+  // A sentinel in the ACTIVE grid, so the assertion below has a positive half. Without it
+  // this test passes against a build that never ran at all — the open route regressing, the
+  // button disabled by a mode change, settle() too short — because the decoy keeps its
+  // thumbnail either way. That is the same one-directional vacuity the split-box test above
+  // spells out, and this file's own header names; it went in one-directional anyway.
+  const sentinel = doc.createElement('div');
+  sentinel.className = 'thumbwrap';
+  sentinel.dataset.page = '99';
+  liveGrid.appendChild(sentinel);
+
+  await openDocument({ numPages: 2 });
+
+  assert.equal(sentinel.isConnected, false,
+    'the rebuild never cleared the active view grid — so the decoy surviving proves nothing');
+  assert.equal(decoy.querySelectorAll('.thumbwrap').length, 1,
+    'a build cleared another view grid — the sidebars are still document-scoped');
+  decoy.remove();
+});

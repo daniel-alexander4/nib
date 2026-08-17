@@ -1869,12 +1869,128 @@ pointer-capture gesture closures `abortDrags` cannot reach, `pageOp` plus 19 unp
 listed site-by-site in the pending item. A new item covers Open orphaning every other view and
 Close-all never asking about their unsaved work; both are P06-shaped.
 
-#### P05.S05 — the sidebars
-Scope: per-view thumbnail and outline containers, per-view `docGen`. Refs: D3, and the
-subsystem-round pin.
+#### P05.S05 — the sidebars *(done 2026-08-16, v1.105.4)*
+Scope: per-view thumbnail and outline containers; the drag subsystem re-homed and
+capture-pinned. Refs: D3, ADR-002, and the subsystem-round pin.
+
+**(scope correction, 2026-08-16 — half of this slice shipped three slices ago.)** The scope
+line says "per-view thumbnail and outline containers, **per-view `docGen`**". `docGen` became
+per-view in **S01** (`app.js:1308`, guarded at `view.test.mjs:42`). Only the containers are
+left. Recorded rather than silently skipped, because a scope line that names work already done
+reads later as work that was dropped.
+
+**(corrects S04, and the phase's own decision is the reason.)** The phase-open decision chose
+per-view containers over rebuild-on-activation in those words — *"rebuild-on-activation is
+precisely what ADR-002 exists to avoid"* — and S04's `repaintForActiveView` rebuilds both
+sidebars on every switch. That was the honest interim while the containers were shared: there
+was nowhere else to render. This slice deletes the rebuild, and with it the `selectedPages`
+snapshot-and-restore that exists **only** because `buildThumbnails` calls `clearSelection`.
+
+It also retires the `owner !== view` half of three staleness guards S04 added
+(`buildThumbnails` twice, `buildOutline` once). Those exist solely because the grid is shared —
+the comment says so — and once it is not, they abort **exactly the background build this
+slice's second acceptance clause requires to finish**. `gen !== owner.docGen` alone is exact,
+because `owner` is captured and `docGen` is per-view.
+
+**(deepdive pin — the drag subsystem is the hazard, and no existing guard can see it.)** Four
+listeners are bound once at module scope to `els.thumbGrid` (`app.js:3240-3243`). Per-view
+grids leave every later view's thumbnails `draggable` (set at `:3082`) and completely inert —
+the same shape as S03's pointer listeners, except that S03's guard **cannot catch it**: its
+regexes key on `addEventListener('pointer` and these are `dragstart`/`dragover`/`drop`/
+`dragend`. The slice owes the counterpart guard.
+
+**The worst single line is `onThumbDragEnd`'s restore** (`app.js:3234`). It re-appends every
+snapshotted node into a grid. Written as a resolve-at-call-time `view.thumbGrid`, a cancelled
+drag whose view is no longer active **physically relocates one document's `.thumbwrap` nodes
+into another's grid** — after which the next drop reads `dataset.page` off those nodes
+(`:3226`) and fires `pageOp('reorder')` against the wrong document. **No `docGen` comparison
+catches it, because the drag never touches `docGen`**: this is ADR-001's law applied to a DOM
+node rather than a document id. It is correct today only by accident of ordering —
+`activateView` calls `abortDrags()` before the swap. Capturing the grid at `dragstart` makes it
+immune to ordering rather than dependent on it.
+
+**(measurement correction, 2026-08-16 — two comments assert a number that is false.)**
+`lifecycle.test.mjs:124-127` and `stub-pdfjs.mjs:52-55` both justify not asserting the
+thumbnail grid at tier 2 by saying jsdom's missing canvas leaves it empty. **Measured through
+the real harness: the grid holds exactly 1 `.thumbwrap`, not 0** — `buildThumbnails` appends
+the wrapper *before* the render that rejects, so one lands every time. The conclusion (do not
+assert it there) still holds; the reason does not, and a green written against "always 0" would
+have been an accident rather than a result. Also measured: `#outline` has **2** children with
+no outline present (the Edit button and the empty-state div), so `lifecycle.test.mjs:107`'s
+`> 0` passes on chrome alone.
+
+**(memory, stated rather than inherited.)** ADR-002 accepts hidden DOM and says it is *"bounded
+by the open-document cap"*. **That cap does not exist** — not in count, not in bytes, in Go or
+JS; D9 defers it to P06. A per-view grid costs roughly **35 MiB of canvas and 2,100 DOM nodes
+per hidden 300-page document**, on top of the page DOM. Built eagerly as decided, because
+arrivals are the only multi-view path so the exposure is one document at a time — but the bound
+the ADR names is planned, not real, and belongs in P06 with the cap rather than being mitigated
+here with a lazy-build state machine.
+
+Tasks:
+1. T01 — `newView()` builds a `.thumbgrid` into the stable `#thumbs` and an `.outlinelist`
+   into the stable `#outline`, hidden unless first.
+2. T02 — delete the static `#thumbGrid`; `#outline` stays a unique panel id, because the tab
+   machinery resolves panels by `getElementById` and `#outline a` matches through the wrapper.
+3. T03 — both builders write to the owner's container.
+4. T04 — `markCurrentThumb`, `markSelectedThumbs`, `clearSelection` take the owner.
+5. T05 — drop the `owner !== view` half of the three staleness guards, and rewrite the comments
+   that justify them by "the shared grid".
+6. T06 — `markSelectedThumbs` writes the shared `#thumbSelBar` only when its owner is active.
+7. T07 — split the `pagechanging` handler: the thumbnail highlight is this view's own DOM and
+   runs ungated; the page-number inputs stay gated. Correct the two-category comment.
+8. T08 — `activateView` toggles the containers' `hidden`; the rebuild block and the
+   snapshot-restore dance are deleted.
+9. T09 — remove the `target === view` gate on the load path's builds.
+10. T10 — re-home the four drag listeners to `#thumbs`, with an origin guard.
+11. T11 — capture `dragGrid` and `dragView` at `dragstart`; the drop refuses on a changed view.
+12. T12 — close-all removes every view's containers; the arrival rollback removes its own.
+13. T13 — the tests: three `getElementById('thumbGrid')` sites, `counts().thumbs`, and the
+    post-close emptiness assertions, which now mean "no view has any".
+14. T14 — the drag-listener guard, a decoy-grid test, and the two corrected comments.
+
 Acceptance:
 - The two sidebars show the active document's content and nothing else.
-- A background document finishing its build cannot abort the foreground's.
+- A background document finishing its build cannot abort the foreground's — **and its own
+  build finishes**, which is the corollary the shared grid made impossible.
+- A cancelled drag cannot move one view's thumbnails into another's grid, asserted directly.
+- The four drag listeners are on the stable parent, asserted by name — the pointer guard
+  cannot see them.
+- Single-view behaviour unchanged; all four tiers green.
+
+**(diff review, 2026-08-16 — the lead finding was a regression this slice introduced, and its
+own task list had named the fix.)** T10 reads "re-home the four drag listeners to `#thumbs`,
+**with an origin guard**". The guard went on `dragstart` only. Because the listeners now sit on
+`#thumbs`, whose subtree holds the append row and the selection bar **above** the grid,
+releasing a dragged page onto that bar changed silently from *cancel* to *commit a
+whole-document reorder* — before the re-homing, a release outside the grid produced no drop
+event at all. Fixed with `overDragGrid` on both remaining handlers, and driven live in both
+directions: a drag inside the grid still reorders (`4,1,2,3,5`), a release on the bar sends
+nothing.
+
+**That is the third time in this phase a specified multi-site fix landed incompletely while the
+narrative moved on** — a scripted edit that aborted before writing (S04), a rename that missed
+its call site (S04), and now a guard applied to one handler of three. The shape is not
+carelessness about the fix; each was *reported* complete on the strength of having been
+composed.
+
+Also fixed: `dragDropped` was set **before** the wrong-view refusal, so the refusal disabled the
+revert it depends on and would have left the grid permuted against a server that never
+reordered; `newView()` now removes what it appended if the `PDFViewer` constructor throws (an
+orphan `.viewerContainer` is transparent, `inset:0` and never hidden — it sits over the active
+document swallowing its pointer events); and `edit.onclick` on the outline panel was the last
+handler in the file resolving the active view at click time, sitting directly under the
+paragraph that states the rule.
+
+**(and the decoy test went in one-directional.)** The new per-view-grid test asserted only that
+a decoy grid survived, never that the active grid was cleared — so it would have passed against
+a build that never ran. It was written into the file whose header explains that exact vacuity,
+four slices after the same defect was found in the same file. Fixed with a sentinel and proven
+red. *Knowing the rule is not the same as applying it to the instrument in hand.*
+
+**(version, 2026-08-16 — corrected from the gate.)** Presented there as a minor bump because
+per-view sidebars are user-facing. They are not: with one document open nothing visible changes,
+and the multi-document behaviour they enable is unreachable until P06. Patch, matching S03/S04.
 
 #### P05.S06 — the fourteenth binding: `overlayHistory`
 **(added 2026-08-16 by S03's deepdive — Dan's call, option A.)** Scope: `overlayHistory`

@@ -139,7 +139,10 @@ export async function launch() {
       return page.evaluate(() => ({
         overlays: document.querySelectorAll('.ovl').length,
         markers: document.querySelectorAll('.ovl-marker').length,
-        thumbs: document.getElementById('thumbGrid').children.length,
+        // The VISIBLE view's grid, matching the `pages` idiom below: each open document
+        // has its own `.thumbgrid` since P05.S05, and a bare class selector would sum
+        // across them.
+        thumbs: document.querySelector('.thumbgrid:not([hidden])')?.children.length ?? 0,
         // The visible view's pages, not every visible container's summed — with two
         // views open a sum would silently report 3 + 5 = 8 and read as a page count.
         pages: document.querySelector('.viewerContainer:not([hidden])')?.querySelectorAll('.page').length ?? 0,
