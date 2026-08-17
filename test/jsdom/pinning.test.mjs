@@ -33,12 +33,16 @@ const APP = fs.readFileSync(path.join(REPO, 'web', 'app.js'), 'utf8');
 // /api/assemble are byte-in/byte-out and never reach commitMutation), and
 // '/api/attachments' was the read route; the mutating one is '/api/attachments/add'.
 //
-// Membership is "the handler commits into the ADDRESSED document" — commitMutation,
-// commitBarrier, or a direct doc.data write under the lock. That is what makes a
-// misaddressed request a corruption rather than a wrong answer.
+// Membership is "a misaddressed request DAMAGES the addressed document" — which is
+// mostly "the handler commits into it" (commitMutation, commitBarrier, or a direct
+// doc.data write under the lock), and as of P06.S02 also `/api/close-view`, which
+// destroys it outright. The old wording said "commits into", and a close commits
+// nothing; it is nonetheless the route where getting the address wrong costs the user
+// the most, so the membership rule is stated by consequence rather than by mechanism.
 const MUTATING = [
   '/api/save', '/api/pages', '/api/redact', '/api/outline', '/api/ocr',
   '/api/sanitize', '/api/decrypt', '/api/attachments/add', '/api/undo', '/api/redo',
+  '/api/close-view',
 ];
 
 test('every route in the MUTATING inventory is a real POST route on the server', () => {
