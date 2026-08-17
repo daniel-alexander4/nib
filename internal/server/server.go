@@ -710,6 +710,32 @@ func (s *Server) registerLocked(doc *document) {
 // so the free half travels with it.
 const maxOpenDocs = 8
 
+// maxOpenBytes is D9's other half: the aggregate `doc.data` the registry will hold.
+//
+// **512 MiB, chosen against a measurement rather than assumed** — D9 says in as many
+// words that the byte figure is "chosen against a measurement in P06", and P06.S04 is
+// that measurement. It is recorded in PLAN.md with its method; the parts that decide
+// this constant:
+//
+//   - Eight documents at maxPDFBytes is **1.6 GB** of `doc.data`. That is the exposure
+//     the count cap alone leaves, and it is the number this bounds.
+//   - 512 MiB admits eight ordinary documents — eight 60 MB scans is 480 MB — and
+//     refuses only the pathological set. A cap that refuses real work is a cap users
+//     route around.
+//   - It is 2× `maxUndoBytes`, so the two server-side bounds are the same order and the
+//     whole server ceiling is under a gigabyte, which is a number someone can hold.
+//
+// **It counts `doc.data` and nothing else, deliberately.** The undo and redo rings are
+// already bounded by ADR-003's global `maxUndoBytes`; counting them here would make two
+// bounds interact in a way neither states. And the CLIENT cost — page DOM, thumbnail
+// canvas, the pdf.js proxy — cannot be seen from here at all. The measurement covers it
+// and this constant does not pretend to: what actually bounds the client is the COUNT
+// cap, because the measurement found the per-view canvas cost is set by the viewport
+// rather than by the document's length (~12–22 MiB per view whether it holds 3 pages or
+// 300, since pdf.js renders only what is near the viewport and a hidden view keeps what
+// it rendered).
+const maxOpenBytes = 512 << 20
+
 // ErrTooManyOpen refuses an open at the cap. A sentinel rather than a bare string so
 // the route can answer 409 for this and 500 for anything else, and so the test can
 // assert the specific refusal rather than being satisfied by any error at all.
@@ -720,6 +746,12 @@ const maxOpenDocs = 8
 // Close view and the per-tab ×, so the instruction is now true and this line changed
 // with the feature rather than after it.
 var ErrTooManyOpen = errors.New("too many documents open (limit " + strconv.Itoa(maxOpenDocs) + ") — close one first")
+
+// ErrTooManyBytes refuses an open that would cross the aggregate byte ceiling. Separate
+// from ErrTooManyOpen because the two say different things to a user: one means "close
+// a tab", the other means "this document is too large to hold alongside the others",
+// and a single message covering both would tell half of them the wrong thing.
+var ErrTooManyBytes = errors.New("the open documents would exceed " + strconv.Itoa(maxOpenBytes>>20) + " MiB — close a large one first")
 
 // addDocCapped is addDoc for the five USER-initiated install routes: open, open-url,
 // upload, combine, office. It refuses at maxOpenDocs.
@@ -744,6 +776,16 @@ func (s *Server) addDocCapped(doc *document) (*document, error) {
 	defer s.mu.Unlock()
 	if len(s.docs) >= maxOpenDocs {
 		return nil, ErrTooManyOpen
+	}
+	// Whichever binds first (D9), and the caller is told WHICH. Summed under the same
+	// lock hold as the append, for the reason the count check is: a caller that measured
+	// first would leave a window for a concurrent open to land in between.
+	total := len(doc.data)
+	for _, d := range s.docs {
+		total += len(d.data)
+	}
+	if total > maxOpenBytes {
+		return nil, ErrTooManyBytes
 	}
 	s.registerLocked(doc)
 	return doc, nil
