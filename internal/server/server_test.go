@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"nib/internal/pdfops"
 	"nib/internal/testpdf"
 )
 
@@ -222,5 +223,63 @@ func TestOpenAcceptsOffsetHeader(t *testing.T) {
 	resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("open(offset header) status = %d, want 200", resp.StatusCode)
+	}
+}
+
+// The flags cache answers from memory when the bytes have not changed, and re-parses
+// when they have.
+//
+// FlagsJSON is a full PDF parse (api.Properties), and docResponse is built by every
+// document route's reply — /api/docs builds one per open document, so a boot restore with
+// eight tabs parsed eight whole PDFs to answer a question none of them had changed. The
+// cache is keyed on slice IDENTITY, which is only sound because doc.data is always
+// replaced wholesale; this test is what would notice if a future writer started mutating
+// it in place, because the stale answer shows up here as flags that did not change when
+// the document did.
+func TestDocResponseFlagsCacheInvalidatesWithTheBytes(t *testing.T) {
+	_, srv := startServerWith(t)
+	plain, err := testpdf.Form()
+	if err != nil {
+		t.Fatal(err)
+	}
+	withFlags, err := pdfops.SetFlags(plain, []byte(`[{"page":1,"kind":"marker"}]`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := addDocument(srv, withFlags)
+
+	srv.mu.Lock()
+	var doc *document
+	for _, d := range srv.docs {
+		if d.id == id {
+			doc = d
+		}
+	}
+	srv.mu.Unlock()
+	if doc == nil {
+		t.Fatal("setup: the document was not registered")
+	}
+
+	first := srv.docResponse(doc)
+	if len(first.Flags) == 0 {
+		t.Fatal("setup: the crafted document reports no flags, so nothing below distinguishes a cache hit from a miss")
+	}
+	if got := srv.docResponse(doc); string(got.Flags) != string(first.Flags) {
+		t.Errorf("a cached response disagrees with the parse it cached: %s vs %s", got.Flags, first.Flags)
+	}
+	srv.mu.Lock()
+	populated := doc.flagsFor != nil
+	srv.mu.Unlock()
+	if !populated {
+		t.Fatal("the cache was never populated, so this test is measuring the uncached path twice")
+	}
+
+	// Replace the bytes with a document carrying NO flags. A cache keyed on anything
+	// weaker than the bytes themselves would keep reporting the old flags here.
+	srv.mu.Lock()
+	doc.data = plain
+	srv.mu.Unlock()
+	if got := srv.docResponse(doc); len(got.Flags) != 0 {
+		t.Errorf("after the document's bytes were replaced with a flagless PDF, docResponse still reports flags %s — the cache did not invalidate", got.Flags)
 	}
 }

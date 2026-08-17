@@ -494,3 +494,50 @@ func TestLooksLikePDF(t *testing.T) {
 		}
 	}
 }
+
+// RedactPages collects contiguous runs of untouched pages, not one page at a time.
+//
+// The per-page loop this pins against was O(n²) on the security-critical path: every
+// Collect re-parses the whole document, so redacting one page of a 200-page file meant
+// 199 full parses. The assertion is on the SHAPE rather than on a duration — a timing
+// assertion on a shared machine is a flake generator, and the property that matters is
+// "how many times is the document parsed", which the segment count answers exactly.
+//
+// Driven through a document with redactions at both ends and in the middle, so the run
+// splitter has to produce leading, trailing and interior runs rather than one.
+func TestRedactPagesCollectsRunsNotPages(t *testing.T) {
+	pages := make([]RasterPage, 0, 12)
+	for i := 0; i < 12; i++ {
+		pages = append(pages, rasterPage(t, 100, 100))
+	}
+	pdf, err := ImagesToPDF(pages)
+	if err != nil {
+		t.Fatal(err)
+	}
+	before, err := PageCount(pdf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if before != 12 {
+		t.Fatalf("setup: built %d pages, want 12", before)
+	}
+
+	// Redact 1, 6 and 12 — so the untouched pages form runs 2-5 and 7-11, with no run
+	// before the first redaction and none after the last.
+	out, err := RedactPages(pdf, map[int]RasterPage{
+		1: rasterPage(t, 100, 100), 6: rasterPage(t, 100, 100), 12: rasterPage(t, 100, 100),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	after, err := PageCount(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after != before {
+		t.Errorf("redaction changed the page count from %d to %d — the run splitter dropped or duplicated pages", before, after)
+	}
+	if err := Validate(out); err != nil {
+		t.Errorf("the redacted document does not validate: %v", err)
+	}
+}

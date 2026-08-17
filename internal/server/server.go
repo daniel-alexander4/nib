@@ -99,6 +99,21 @@ type document struct {
 	undo [][]byte // prior document states, oldest first
 	redo [][]byte // states rolled back by undo
 
+	// flags caches FlagsJSON(data): the embedded signing placeholders, whose extraction
+	// is a FULL PDF PARSE (api.Properties). Without the cache every docResponse paid one
+	// — and docResponse is built by every document route's reply, including /api/docs,
+	// which builds one PER OPEN DOCUMENT. A boot restore with eight tabs parsed eight
+	// whole PDFs to answer a question none of them had changed the answer to.
+	//
+	// flagsFor is the exact slice `flags` was computed from, and identity is the
+	// staleness test: doc.data is always REPLACED wholesale and never mutated in place
+	// (all five writers assign a fresh slice), so a different backing array means
+	// different bytes. That is the same invariant docResponse's unlocked read already
+	// rests on — this cache adds no new assumption, and breaking that invariant breaks
+	// both at once.
+	flags    json.RawMessage
+	flagsFor []byte
+
 	// historyEvicted records that this document's history was dropped to keep the
 	// global budget, rather than never having existed. Without it the two are
 	// indistinguishable on the wire — `canUndo:false` reads identically for "you
@@ -1022,15 +1037,36 @@ func (s *Server) docResponse(doc *document) docResponse {
 	// change under the parse. That invariant is what makes the unlocked read safe;
 	// mutating doc.data in place would silently reintroduce the race.
 	data := doc.data
+	cached, fresh := doc.flags, sameBytes(doc.flagsFor, data)
 	s.mu.Unlock()
 
 	// Surface embedded signing placeholders so the recipient's UI can rebuild
 	// them on open (the read half of the flag round-trip; the write half is
 	// /api/flags). A parse failure just means "no flags" — never blocks the open.
+	if fresh {
+		resp.Flags = cached
+		return resp
+	}
 	if flags, err := pdfops.FlagsJSON(data); err == nil && json.Valid(flags) {
 		resp.Flags = flags
 	}
+	// Store it back, but only if this document still holds the bytes it was computed
+	// from: another request may have replaced them while the parse ran, and caching a
+	// result against bytes the document no longer has is worse than not caching.
+	s.mu.Lock()
+	if s.isRegisteredLocked(doc) && sameBytes(doc.data, data) {
+		doc.flags, doc.flagsFor = resp.Flags, data
+	}
+	s.mu.Unlock()
 	return resp
+}
+
+// sameBytes reports whether two slices are the SAME slice — same backing array and
+// length — rather than whether they compare equal. Identity is the question here: it is
+// what makes the flags cache's staleness check O(1) instead of a byte comparison over a
+// document that can be hundreds of megabytes.
+func sameBytes(a, b []byte) bool {
+	return len(a) == len(b) && (len(a) == 0 || &a[0] == &b[0])
 }
 
 // docBytes snapshots a document's current bytes under the lock.
