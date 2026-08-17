@@ -3,6 +3,8 @@ package pdfops
 import (
 	"embed"
 	"fmt"
+	"os"
+	"path/filepath"
 
 	"github.com/pdfcpu/pdfcpu/pkg/font"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
@@ -97,21 +99,72 @@ func ocrFontFor(lang string) string {
 	}
 }
 
+// installedOCRFont reports whether pdfcpu already holds this face on disk.
+//
+// The .gob is named for the font's PostScript name, which is exactly what the keys
+// of ocrFontFiles are (see the DroidSansFallback and NanumGothic notes there, where
+// the PostScript name and the .ttf filename deliberately differ).
+//
+// Existence and non-emptiness, not a full integrity check: the .gob holds an
+// unexported pdfcpu struct, so nothing outside that package can decode one to
+// verify it. The trade this makes is worth stating — rewriting unconditionally, as
+// this used to, meant a .gob left truncated by a crash was repaired on the next
+// start, and now it is not. That is acceptable because the unconditional rewrite was
+// itself the main way such a file came to exist: it kept a non-atomic write open on
+// every startup. Removing the cause beats repairing the effect. A .gob that is
+// corrupt anyway is repaired by deleting it (or the whole font dir) — pdfcpu and
+// this function then reinstall from the embedded originals.
+func installedOCRFont(name string) bool {
+	fi, err := os.Stat(filepath.Join(font.UserFontDir, name+".gob"))
+	return err == nil && fi.Size() > 0
+}
+
 // InstallOCRFonts writes the vendored non-Latin OCR fonts into pdfcpu's user-font
 // dir so StampTextLayer can stamp Thai/Devanagari. pdfcpu loads its in-memory font
 // registry exactly once (sync.Once) on the first font operation, so the .gob files
 // must be on disk before then: call this once at startup, before serving any
 // request. font.InstallFontFromBytes only writes the font (it does not trigger the
 // load), so installing here and letting the first op lazy-load picks them all up.
+// It installs only what is MISSING, and that is a correctness requirement rather
+// than an optimization. pdfcpu's installer writes each .gob directly to its final
+// path and then re-reads it to verify (font/install.go, writeGob then readGob) —
+// there is no temp-and-rename — so while one process is rewriting a font, any other
+// process reading that directory sees a truncated file. Because the font dir is
+// shared (~/.config/pdfcpu/fonts) and the registry load is lazy and once-only, the
+// reader gets "failed to load user fonts: unexpected EOF" and loses EVERY non-Latin
+// face at once, not just the one being written.
+//
+// Rewriting all thirteen fonts on every startup held that window open on every run.
+// Reproduced by `go test ./...`, where internal/pdfops and internal/server run in
+// parallel and both call this: TestStampTextLayerCJK failed on chi_tra and jpn while
+// passing whenever the package was run alone. That intermittency is what made the
+// symptom look environmental — it was filed as a suspected truncated write from a
+// full disk, and it is really two writers and a non-atomic library.
+//
+// Two nib processes starting together hit the same race in production, which is why
+// this is not a test-only fix. A cold start where both find the directory empty can
+// still collide, so an install that fails is retried once before it is reported: the
+// second attempt finds the other process's completed file and skips it.
 func InstallOCRFonts() error {
 	model.NewDefaultConfiguration() // sets font.UserFontDir (+ installs Roboto if absent)
 	for name, path := range ocrFontFiles {
+		if installedOCRFont(name) {
+			continue
+		}
 		bb, err := ocrFontFS.ReadFile(path)
 		if err != nil {
 			return err
 		}
 		if err := font.InstallFontFromBytes(font.UserFontDir, name, bb); err != nil {
-			return fmt.Errorf("install OCR font %s: %w", name, err)
+			// A concurrent installer of the same font is the expected cause. Re-check
+			// rather than retrying blind: if the file is there now, someone else
+			// finished it and this is a success, not a failure to paper over.
+			if installedOCRFont(name) {
+				continue
+			}
+			if err2 := font.InstallFontFromBytes(font.UserFontDir, name, bb); err2 != nil {
+				return fmt.Errorf("install OCR font %s: %w", name, err2)
+			}
 		}
 	}
 	return nil
