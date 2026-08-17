@@ -1992,7 +1992,7 @@ red. *Knowing the rule is not the same as applying it to the instrument in hand.
 per-view sidebars are user-facing. They are not: with one document open nothing visible changes,
 and the multi-document behaviour they enable is unreachable until P06. Patch, matching S03/S04.
 
-#### P05.S06 — the fourteenth binding: `overlayHistory`
+#### P05.S06 — the fourteenth binding: `overlayHistory` *(done 2026-08-16, v1.105.5)*
 **(added 2026-08-16 by S03's deepdive — Dan's call, option A.)** Scope: `overlayHistory`
 (`app.js:6446`) onto the view record. Refs: D5, D12, and the measurement correction in
 the phase-open notes.
@@ -2031,6 +2031,71 @@ Acceptance:
 - `hasEditsSinceOpen` (`:1480`) reads the owning view's stack, not whichever is active.
 - The phase-open enumeration says **fourteen** bindings, and the exit criterion names
   this one.
+
+**(deepdive trigger, 2026-08-16 — evaluated, not fired, and recorded rather than skipped.)**
+The surface is 20 sites in one file with no wire, disk or schema reach, and this seam has
+already been dived twice: S03's diff review found the stored closures, S04's deepdive
+enumerated the three helpers, and both findings are written above. A third pass would
+re-derive what is recorded. The recorded claims were re-verified at the line instead.
+
+**(found while verifying, and not previously recorded.)** `clearOverlayHistory()` sits
+**below** S04's `if (owner !== view) return;` inside `clearOverlays`. That guard is correct
+for the draw-mode exits, which repaint shared toolbar buttons — but the undo stack is per-view
+DATA, not shared chrome, so once it moves onto the record a background reload would keep a
+stale stack whose closures point at elements that have been removed. It moves above the
+return, beside `overlayFields` and `redactMarks`.
+
+Tasks:
+1. T01 — `overlayHistory` onto `newView()`.
+2. T02 — `recordOverlayEdit(cmd, owner)` pushes to the owner's stack; the five recording
+   sites pass theirs.
+3. T03 — `detachField`, `reattachField`, `layoutFieldNow` take the owning view, and the
+   stored closures capture it.
+4. T04 — `removeField` takes its owner: it reads `activeMarker`/`fillTarget` and is called
+   from a keydown handler bound to one view's element.
+5. T05 — `undoAny`/`redoAny`/`reflectUndoControls`/`hasEditsSinceOpen` read the ACTIVE view's
+   stack, which is correct: the keystroke aims at what the user can see.
+6. T06 — `clearOverlayHistory(owner)` moves above the early return in `clearOverlays`.
+7. T07 — the guards: the binding joins the per-view scan, plus a behavioural test that a
+   command recorded on one view cannot be drained through another.
+8. T08 — the phase enumeration says fourteen; this amendment.
+
+**(diff review, 2026-08-16 — a deferral that rested on a claim I had repeated and that is
+false.)** The review found the deferral of `placeIntoMarker` resting on "no second view is
+creatable below P06". **That is wrong**: `pollRecv` calls `openArrivalInNewView`
+(`app.js:974`), live since S04, so a second view exists in production today for anyone doing a
+live co-sign. What P06 adds is a way to create one *without a pinned peer* — which is what a
+TEST needs, and the two had been conflated in several places in this plan.
+
+The distinction inverts the framing: the cross-view hazards this phase closes are reachable
+now, not latent until P06. It also made the deferral wrong on the merits — the comment's list
+of what needed threading omitted `makeStamp`, which is called inside the awaited `Image.onload`
+and pushes to `view.overlayFields` while appending into a `pv` captured from the *other* view.
+An arrival landing mid-image-load would register the stamp in the arrival's fields with its
+element in this document's page div, and the arrival's bake would burn it on at this document's
+coordinates. **Fixed here** — `placeIntoMarker` captures at entry and threads through
+`makeStamp` and `removeField`; the shared-chrome repaint is gated rather than threaded.
+
+Also fixed: the owner scan accepted `, owner)` anywhere within its window, so a command
+containing `removeField(f, false, owner)` would have counted as owned with no owner on the
+outer call — it now requires `}, owner)`, proven red against exactly that shape. And three
+drifted comments, including a SAFETY count that said "three" when there are five and was
+already wrong at four before this diff.
+
+**(a test deleted rather than kept, 2026-08-16.)** The first behavioural guard written for this
+slice asserted the undo button starts disabled — and passed identically against a shared stack,
+so it tested the per-view property not at all. No overlay can be placed at tier 2 (every
+`getBoundingClientRect` is 0, so `pageAt` never resolves a page), which means the stack cannot
+be made non-empty there and the clause is genuinely unexercisable at any tier. The absence is
+documented in `perview.test.mjs` with the reason, rather than papered over with a green that
+would have read as coverage for the clause it was written under.
+
+**(decision, 2026-08-16 — the closures capture their owner even though the stack makes it
+redundant.)** With a per-view stack drained only when its view is active, the owner IS the
+active view at drain time, so reading the module `view` inside a stored closure would be
+correct today. The capture goes in anyway: it makes the property hold by construction rather
+than by depending on that invariant. Same argument as S05's `dragGrid`, and S05 is where
+relying on an ordering accident nearly cost a destructive reorder.
 
 **(dimension-review pin: the one hot path this feature has, 2026-08-15)** Switching
 is a `display` toggle and opening is a user action, so neither is per-frame. But
