@@ -196,7 +196,7 @@ body { display: flex; flex-direction: column; }
    specificity to win the left/right tug-of-war). */
 .dropdown.dropdown-right { left: auto; right: 0; }
 
-button, .filebtn {
+button {
   background: var(--surface0);
   color: var(--text);
   border: 1px solid var(--surface1);
@@ -205,7 +205,7 @@ button, .filebtn {
   cursor: pointer;
   font: inherit;
 }
-button:hover, .filebtn:hover { background: var(--surface1); }
+button:hover { background: var(--surface1); }
 button:disabled { opacity: 0.5; cursor: not-allowed; }
 
 input[type="text"], input[type="search"], input[type="number"], input[type="password"] {
@@ -928,7 +928,6 @@ input.ovl-check { appearance: auto; accent-color: #1a7f37; background: transpare
 .dropdown .sep { height: 1px; background: var(--surface1); margin: 4px 2px; }
 /* keyboard-shortcut hint, pushed to the right edge of a dropdown command */
 .dropdown button { display: flex; align-items: center; }
-.shortcut { margin-left: auto; padding-left: 1.5em; color: var(--subtext0); font-size: 12px; }
 
 /* modal form controls (finalize, profile) */
 .sigcard label { display: flex; flex-direction: column; gap: 4px; font-size: 13px; color: var(--subtext0); }

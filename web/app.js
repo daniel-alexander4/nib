@@ -2067,7 +2067,10 @@ async function setDocumentFromServer(meta, target = view) {
   // outgoing document's scale is not this one's.
   target.hasScale = false;
   target.docMeta = meta;
-  if (meta.name && meta.name !== '.') target.originalName = meta.name;
+  // No `!== '.'` guard any more: the server emits an EMPTY name for a path-less
+  // document rather than filepath.Base("")'s ".", so the falsy check is the whole test.
+  // The sentinel and the compensation were two bugs holding each other up.
+  if (meta.name) target.originalName = meta.name;
   resetSharedDocState(target); // was clearOverlays() — see the four modes it never covered
   let doc;
   try {

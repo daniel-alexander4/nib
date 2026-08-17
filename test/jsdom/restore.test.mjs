@@ -30,9 +30,13 @@ const A = { id: 'test-epoch:1', name: 'alpha.pdf', path: '/tmp/alpha.pdf', canSa
 // It is the case the acceptance calls out, and the one that mattered most before this
 // slice: with no boot restore, a document with no path was unreachable for the rest of
 // the process's life, because the only way back to a document was to open it by path.
-// It also exercises the strip's name fallback, since docResponse.Name is "." —
-// filepath.Base("") — for every path-less document.
-const B = { id: 'test-epoch:2', name: '.', path: '', canSave: false, signature: { state: 'unsigned' }, canUndo: false, canRedo: false };
+// It also exercises the strip's name fallback. That fallback used to fire on the string
+// ".", because docResponse.Name was filepath.Base("") for every path-less document and
+// the client filtered the sentinel back out — one side emitting nonsense and the other
+// papering over it. As of v1.108.13 the server emits an EMPTY name, so this fixture
+// models that; the assertion ("Untitled" in the strip) is unchanged, because what is
+// being tested is the fallback, not the shape of the thing that triggers it.
+const B = { id: 'test-epoch:2', name: '', path: '', canSave: false, signature: { state: 'unsigned' }, canUndo: false, canRedo: false };
 
 // Mutable, so a test can change what the server holds under a running client — which is
 // the whole of the stale case.
