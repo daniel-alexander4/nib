@@ -2608,13 +2608,46 @@ Acceptance:
 - ADR-002's "bounded by the open-document cap" stops being a forward reference: a
   dated note records that the bound it names now exists.
 
-#### P06.S05 — The model written down
+#### P06.S05 — The model written down *(done 2026-08-17, v1.106.4)*
 Scope: README and the in-app help describe multiple open documents; `CLAUDE.md`
 gains the operation-pinning law. Refs: D7.
 Acceptance:
 - README and the ⚙ help describe tabs, Close view, Close all and the cap.
 - `CLAUDE.md` states D7 as a repo law, so a change made without reading this plan
   cannot unknowingly break it.
+
+**(premise correction, 2026-08-17, P06.S05 — the criterion as written defeats
+itself.)** `/CLAUDE.md` is **git-ignored and untracked** (`.gitignore:14`), so a law
+kept only there is invisible to a fresh clone — which is precisely the reasoning
+`CLAUDE.md` itself gives for the build contract living in `CONTRIBUTING.md`. The
+three multiple-documents laws (pinning; every reload names its view; `views` has
+exactly three mutators, each re-rendering the strip) therefore land in
+**`CONTRIBUTING.md`**, each naming the guard that enforces it, and `CLAUDE.md` keeps
+a pointer. The criterion's intent — "a change made without reading this plan cannot
+unknowingly break it" — is met by the committed file and could not have been met by
+the ignored one.
+
+**(found during implementation, 2026-08-17.)** The README's Close section was wrong in
+two places rather than merely incomplete, which turned this from "add a paragraph" into
+"correct what is there": it said Close returns the viewer to "Open a PDF to begin."
+(true only of the LAST document now), and it carried a caveat ending "…starts a new
+one, **which replaces the first**" — never quite right, and now doubly wrong, since a
+second nib is a separate process with its own documents and replaces nothing. Both
+sentences were true when they were written.
+
+**Acceptance ledger — 4 rows, all met.** README describes tabs, switching and both
+bounds of the cap ✅, and Close view / Close all ✅ (the section is rewritten, not
+appended to); the ⚙ About modal — the app's only always-reachable explanatory surface —
+gains "Working with several documents" ✅; the operation-pinning law is stated where a
+change made without reading this plan will meet it ✅, in `CONTRIBUTING.md` per the
+correction above, with all three laws and the guard that enforces each. Seam rows
+V64–V66.
+
+**The guard checks numbers, not prose** (`TestDocsREADMEMatchesTheCaps`): the README's
+"eight documents, or 512 MB" must match `maxOpenDocs` and `maxOpenBytes`. A guard over
+prose fails on rewording, gets loosened, and then guards nothing; a guard over the
+figures catches the case a reader would actually act on. Proven red from both sides —
+moving the constant, and moving the README.
 
 ### P07 — Single instance
 Goal: opening a PDF from the OS reaches the running nib as a new tab instead of

@@ -86,3 +86,45 @@ func TestSourceIsFormatted(t *testing.T) {
 		t.Errorf("unformatted files (run: gofmt -w .):\n  %s", strings.Join(bad, "\n  "))
 	}
 }
+
+// TestDocsREADMEMatchesTheCaps keeps the README's cap figures from drifting off the
+// constants they describe.
+//
+// **Numbers, not prose.** Seven of the P05 phase-close review's findings were comments
+// that outlived their code, and a README paragraph is the same failure with a wider
+// audience — but a guard over prose is a guard that fails on rewording, gets loosened,
+// and then guards nothing. What can be checked mechanically is the part a reader will
+// act on: "eight documents, or 512 MB of them". If someone raises maxOpenBytes and the
+// README still says 512, a user plans around a number that is not true.
+//
+// The same shape verify_test.go already uses for the tier table: assert that what the
+// document states is what the code does, for the states that are checkable.
+func TestDocsREADMEMatchesTheCaps(t *testing.T) {
+	readme, err := os.ReadFile("README.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	src, err := os.ReadFile("internal/server/server.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(readme)
+
+	// The stimulus: the README must actually describe the caps, or every assertion
+	// below is a scan over a document that says nothing — health reported over silence.
+	if !strings.Contains(text, "whichever comes first") {
+		t.Fatal("the README no longer describes the open-document caps, so this guard covers nothing")
+	}
+
+	for _, c := range []struct{ decl, phrase, what string }{
+		{"maxOpenDocs = 8", "eight documents", "the document-count cap"},
+		{"maxOpenBytes = 512 << 20", "512 MB", "the aggregate byte ceiling"},
+	} {
+		if !strings.Contains(string(src), c.decl) {
+			t.Errorf("%s is no longer `%s` — the README's figure is now describing something else", c.what, c.decl)
+		}
+		if !strings.Contains(text, c.phrase) {
+			t.Errorf("the README does not state %s as %q — a reader plans around a number that is not true", c.what, c.phrase)
+		}
+	}
+}

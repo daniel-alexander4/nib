@@ -460,17 +460,36 @@ A file that isn't a PDF is refused with a message rather than opening an empty
 viewer — the header is looked for in the first 1024 bytes, the same window
 pdf.js allows, so a document with a little junk before its header still opens.
 
-**Close** (File tab) puts the document down without quitting: the viewer returns
-to "Open a PDF to begin.", the undo history is dropped, and Nib keeps running
-ready for the next file. If anything has been edited since the document was
-opened it asks first — and it asks about edits *since the last save*, because
-that is what Nib can actually tell: saving deliberately leaves the undo history
-intact, so a save does not silence the question.
+### Several documents at once
+Opening a document **adds** it — the one you had stays open. A strip of tabs
+appears above the page as soon as there are two, and clicking one switches to it.
+Each document keeps its own scroll position, page, zoom, form fills and typed
+overlay values while you are on another, because Nib hides the document you leave
+rather than tearing it down and rebuilding it later.
 
-One caveat, until single-instance handling lands: opening a second PDF from your
-file manager doesn't reach the running Nib — it starts a new one, which replaces
-the first without that prompt. Use **Open…** or **Close** from inside the app if
-you have unsaved work.
+A **reload of the browser window brings them all back**, on the document you were
+looking at. Nib's documents live in the local Nib process rather than in the page,
+so refreshing — or recovering from a browser crash — asks it what is still open
+instead of starting empty.
+
+Nib holds **eight documents, or 512 MB of them, whichever comes first**, and says
+so rather than degrading. Two limits because one does not bound the other: eight
+documents is anywhere from a few hundred KB to well over a gigabyte, since Nib
+accepts documents up to 200 MB each.
+
+**Close view** puts down the document you are looking at and moves to the next
+tab; **Close all** puts down every one. With a single document open there is just
+**Close**, and the app looks exactly as it did before tabs existed. Either way, if
+anything has been edited since a document was opened, Nib asks first — and it asks
+about edits *since the last save*, because that is what it can actually tell:
+saving deliberately leaves the undo history intact, so a save does not silence the
+question. Closing the last document returns the viewer to "Open a PDF to begin."
+with Nib still running, ready for the next file.
+
+One caveat, until single-instance handling lands: opening a PDF from your file
+manager doesn't reach the Nib you already have running — it starts a *second* Nib,
+with its own set of documents. Use **Open…** from inside the app to add a document
+to the session you are already in.
 
 The same folder browser backs every destination picker (Save As, and both
 splits). On Windows it lists your **drives** once you reach the top of one:
