@@ -5797,6 +5797,23 @@ function startedInActiveView(e) {
   return e.target.closest('.viewerContainer') === view.container;
 }
 
+// onExistingOverlay: a pointerdown that landed inside an overlay belongs to that
+// overlay's own controls — its × button, its resize handle, its text box — and not to
+// whichever placement tool happens to be armed.
+//
+// Without it the tool acts FIRST. Placement listens on `pointerdown` on #viewerWrap
+// while a delete button only calls `stopPropagation()` on its `click`, and pointerdown
+// runs first and is never stopped: clicking a flag's × with the flag tool still armed
+// planted a SECOND flag under the cursor and masked the delete (measured by the tier-3
+// harness: 1 marker in, 2 out). The note tool has the same shape, and the drag-draw
+// tools start a stray drag from the button.
+//
+// Same shape and the same position as startedInActiveView, in all ten pointer handlers,
+// because it is the same kind of rule: whose gesture is this.
+function onExistingOverlay(e) {
+  return !!e.target.closest('.ovl');
+}
+
 function pageAt(x, y) {
   for (let i = 0; i < (view.pdfDocument?.numPages || 0); i++) {
     const pv = view.viewer.getPageView(i);
@@ -5816,6 +5833,7 @@ function sizeMark(div, r, a, b) {
 els.viewerWrap.addEventListener('pointerdown', (e) => {
   if (!view.redactMode) return;
   if (!startedInActiveView(e)) return;
+  if (onExistingOverlay(e)) return;
   redHit = pageAt(e.clientX, e.clientY);
   if (!redHit) return;
   redStart = { x: e.clientX, y: e.clientY };
@@ -6070,6 +6088,7 @@ els.splitBoxBtn.onclick = () => {
 els.viewerWrap.addEventListener('pointerdown', (e) => {
   if (!view.splitBoxMode) return;
   if (!startedInActiveView(e)) return;
+  if (onExistingOverlay(e)) return;
   sbHit = pageAt(e.clientX, e.clientY);
   if (!sbHit || sbHit.n !== view.sbPage) return; // only the page the split started on
   sbStart = { x: e.clientX, y: e.clientY };
@@ -6162,6 +6181,7 @@ els.cropBtn.onclick = () => {
 els.viewerWrap.addEventListener('pointerdown', (e) => {
   if (!view.cropMode) return;
   if (!startedInActiveView(e)) return;
+  if (onExistingOverlay(e)) return;
   cropHit = pageAt(e.clientX, e.clientY);
   if (!cropHit || cropHit.n !== view.cropPage) return; // measure on the page you started on
   clearCropRect(); // a single keep-rectangle: a fresh draw replaces the old one
@@ -6229,6 +6249,7 @@ function reflectEdit() {
 els.viewerWrap.addEventListener('pointerdown', (e) => {
   if (!view.editMode) return;
   if (!startedInActiveView(e)) return;
+  if (onExistingOverlay(e)) return;
   edHit = pageAt(e.clientX, e.clientY);
   if (!edHit) return;
   edStart = { x: e.clientX, y: e.clientY };
@@ -6440,13 +6461,22 @@ function setMarkerMode(m) {
 els.viewerWrap.addEventListener('pointerdown', (e) => {
   if (!view.markerMode) return;
   if (!startedInActiveView(e)) return;
+  // The one placement tool that does NOT take onExistingOverlay's blanket bail, because
+  // for this tool one overlay IS a placement target: a detected blank, which the flag
+  // tool converts. That is the documented primary flow — Detect, pick a flag, click a
+  // blank — so a plain `if (onExistingOverlay(e)) return;` here would fix the × and
+  // break the flow it exists for. Every OTHER overlay under the cursor is its own
+  // control, and the flag's × is the one that bites.
+  const ovl = e.target.closest('.ovl');
+  if (ovl) {
+    const field = view.overlayFields.find((f) => f.kind === 'text' && f.el === ovl);
+    if (!field) return;
+    e.preventDefault();
+    return void convertFieldToFlag(field, view.markerMode);
+  }
   const hit = pageAt(e.clientX, e.clientY);
   if (!hit) return;
   e.preventDefault();
-  // Snap to a detected blank if the click landed on one (the primary flow: Detect,
-  // then flag each blank); otherwise free-place a default flag (the fallback).
-  const field = view.overlayFields.find((f) => f.kind === 'text' && f.el.contains(e.target));
-  if (field) return void convertFieldToFlag(field, view.markerMode);
   const r = hit.r, [fw, fh] = MARKER_SIZES[view.markerMode];
   const fx = Math.min(Math.max((e.clientX - r.left) / r.width - fw / 2, 0), 1 - fw);
   const fy = Math.min(Math.max((e.clientY - r.top) / r.height - fh / 2, 0), 1 - fh);
@@ -7117,6 +7147,7 @@ els.borderBtn.onclick = () => {
 els.viewerWrap.addEventListener('pointerdown', (e) => {
   if (!view.borderMode) return;
   if (!startedInActiveView(e)) return;
+  if (onExistingOverlay(e)) return;
   bdHit = pageAt(e.clientX, e.clientY);
   if (!bdHit) return;
   bdStart = { x: e.clientX, y: e.clientY };
@@ -7205,6 +7236,7 @@ els.dropdownBtn.onclick = () => {
 els.viewerWrap.addEventListener('pointerdown', (e) => {
   if (!view.dropdownMode) return;
   if (!startedInActiveView(e)) return;
+  if (onExistingOverlay(e)) return;
   ddHit = pageAt(e.clientX, e.clientY);
   if (!ddHit) return;
   ddStart = { x: e.clientX, y: e.clientY };
@@ -7300,6 +7332,7 @@ els.radioBtn.onclick = () => {
 els.viewerWrap.addEventListener('pointerdown', (e) => {
   if (!view.radioMode) return;
   if (!startedInActiveView(e)) return;
+  if (onExistingOverlay(e)) return;
   rdHit = pageAt(e.clientX, e.clientY);
   if (!rdHit) return;
   rdStart = { x: e.clientX, y: e.clientY };
@@ -7480,6 +7513,7 @@ function shapeMarkPNG(wPts, hPts, f) {
 els.viewerWrap.addEventListener('pointerdown', (e) => {
   if (!view.shapeMode) return;
   if (!startedInActiveView(e)) return;
+  if (onExistingOverlay(e)) return;
   shHit = pageAt(e.clientX, e.clientY);
   if (!shHit) return;
   shStart = { x: e.clientX, y: e.clientY };
@@ -7579,6 +7613,7 @@ els.noteBtn.onclick = () => {
 els.viewerWrap.addEventListener('pointerdown', async (e) => {
   if (!view.noteMode) return;
   if (!startedInActiveView(e)) return;
+  if (onExistingOverlay(e)) return;
   const hit = pageAt(e.clientX, e.clientY);
   if (!hit) return;
   e.preventDefault();
