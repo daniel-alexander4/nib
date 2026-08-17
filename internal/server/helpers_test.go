@@ -103,11 +103,12 @@ func openTestServer(t *testing.T, pdf []byte) *Server {
 // startServerWith returns a running test server AND the Server behind it, so a
 // test can put the registry into a state the public API cannot yet reach.
 //
-// setDoc still replaces (the add path is P03.S05), so there is no route that opens
-// a second document — but the routing this slice exists to prove is about
-// *addressing* documents, not about how they arrived. Building the registry
-// directly is the honest way to test that a slice early, and it is confined to
-// this helper rather than repeated per test.
+// **Corrected 2026-08-17 (P06.S01): /api/open now ADDS, so a route does open a
+// second document** — the sentence here said otherwise, and it said it in the very
+// helper whose reason for existing was that no such route existed. Prefer driving
+// the real routes where a test can; this helper stays for the tests that need a
+// registry state the routes cannot reach cheaply (nine documents, a document with a
+// pre-loaded history), which is a narrower job than it used to have.
 func startServerWith(t *testing.T) (*httptest.Server, *Server) {
 	t.Helper()
 	t.Setenv("HOME", t.TempDir())
@@ -117,12 +118,28 @@ func startServerWith(t *testing.T) (*httptest.Server, *Server) {
 	return ts, srv
 }
 
-// addDocument puts a second document into the registry directly, returning its id.
+// addDocument puts another document into the registry directly, returning its id.
+//
+// **Through registerLocked, not by minting an id here.** This used to do its own
+// `s.nextSeq++; docID{...}; append`, which is a second derivation of the rule
+// registerLocked's comment calls "the ONE place an id is issued … a second issuer
+// would defeat the law by collision instead of by reuse". Every multi-document test
+// that exercises ADR-001 built its second document that way, so a regression in
+// registerLocked would have left all of them green — the guard and the thing it
+// guards derived separately from the same idea. Found by the P05 phase-close review.
 func addDocument(s *Server, data []byte) docID {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.nextSeq++
-	d := &document{id: docID{Epoch: s.epoch, Seq: s.nextSeq}, data: data}
-	s.docs = append(s.docs, d)
+	// The active id is preserved across the call, because this helper's job is to
+	// add a document in the BACKGROUND and registerLocked also activates — which is
+	// right for production (every real add is a document the user just asked for or
+	// received) and wrong here: the eviction tests need an inactive document that
+	// grows, and TestEvictionSparesTheActiveDocumentWhenAnInactiveOneGrows caught it
+	// immediately. Saving and restoring the id is the small price of keeping the
+	// id-issuing rule in one place instead of re-deriving it in the tests.
+	was := s.activeID
+	d := &document{data: data}
+	s.registerLocked(d)
+	s.activeID = was
 	return d.id
 }

@@ -60,7 +60,7 @@ const els = {
   zoomInBtn: $('zoomInBtn'), zoomOutBtn: $('zoomOutBtn'), fitBtn: $('fitBtn'),
   sigBadge: $('sigBadge'), saveBtn: $('saveBtn'), statusCluster: $('statusCluster'),
   themeToggle: $('themeToggle'),
-  viewerWrap: $('viewerWrap'), empty: $('empty'),
+  viewerWrap: $('viewerWrap'), empty: $('empty'), tabstrip: $('tabstrip'),
   thumbs: $('thumbs'), outline: $('outline'),
   outlineModal: $('outlineModal'), outlineEditList: $('outlineEditList'),
   outlineAddBtn: $('outlineAddBtn'), outlineCancel: $('outlineCancel'), outlineSave: $('outlineSave'),
@@ -1097,9 +1097,10 @@ async function declineRecv() {
 // view. Every overlay element and typed value on the document the user was working on went
 // through clearOverlays(), and that document survived only on the server, unreachable.
 //
-// This is also the ONLY path that makes a second view exist. A user Open still replaces,
-// here and on the server, because an added view is unreachable without the tab strip —
-// that pairing is P06's.
+// **No longer the only path that makes a second view exist (P06.S01).** A user Open now
+// adds too, on the server and here, and the tab strip makes the result reachable — the
+// pairing this comment said was P06's. The build-load-activate body below became
+// openInNewView so both paths run one implementation rather than two that agree today.
 async function openArrivalInNewView() {
   // UNPINNED, deliberately. A co-signature applied out of band ADDS a document and
   // makes it active (D10); the document this client currently names is still open and
@@ -1115,29 +1116,49 @@ async function openArrivalInNewView() {
     if (!res.ok) { toast('co-signed, but could not refresh the view'); return; }
     const meta = await res.json();
 
-    // The new view is built and loaded BEFORE the switch, so a failure part-way through
-    // leaves the user on the document they had rather than on a half-built one. newView()
-    // hides it automatically because another container already exists, which is also what
-    // makes this the first exercise of the hidden-load path.
-    const arrival = newView();
-    views.push(arrival);
-    await setDocumentFromServer(meta, arrival);
-    // The liveness test is `pdfDocument`, and it is only sound because this view is
-    // FRESH: all four of setDocumentFromServer's early returns leave it null on a new
-    // record. A reused view could carry one from a previous load.
-    if (!arrival.pdfDocument) { // the load refused; drop the empty view rather than switch to it
-      arrival.container.remove();
-      arrival.thumbGrid.remove();
-      arrival.outlineList.remove();
-      // Guarded, because a Close can land during the load above: closeDocument resets
-      // `views` to [view], indexOf returns -1, and splice(-1, 1) would remove the LAST
-      // element — the live active view — leaving `views` without it.
-      const i = views.indexOf(arrival);
-      if (i >= 0) views.splice(i, 1);
-      return;
-    }
-    activateView(arrival);
+    // installOpened, not openInNewView directly: after a Close there is one EMPTY view,
+    // and building a second one beside it would put an "Untitled" tab in the strip for a
+    // view holding no document. Before the strip existed that was invisible; it is the
+    // sort of thing a new surface exposes rather than causes.
+    if (!(await installOpened(meta))) return;
   } catch { toast('co-signed, but could not refresh the view'); }
+}
+
+// openInNewView builds a view for `meta`, loads the document into it while it is
+// hidden, and activates it. Returns false when the load refused, having left no
+// half-built view behind.
+//
+// One implementation for both callers — the co-sign arrival and every user Open —
+// because they are the same three steps and the failure handling is the part that is
+// easy to get subtly different. The repo has paid for that before: `openBrowse` and
+// `browseDir` were one folder browser written twice behind four dialogs, and the two
+// copies had drifted.
+//
+// **The view is built and loaded BEFORE the switch**, so a failure part-way through
+// leaves the user on the document they had rather than on a half-built one. newView()
+// hides it automatically when another container already exists, which is what makes
+// this the hidden-load path — and, since P06.S01, what makes that path reachable by
+// ordinary use rather than only by a live co-sign.
+async function openInNewView(meta) {
+  const v = newView();
+  addView(v);
+  await setDocumentFromServer(meta, v);
+  // The liveness test is `pdfDocument`, and it is only sound because this view is
+  // FRESH: all four of setDocumentFromServer's early returns leave it null on a new
+  // record. A reused view could carry one from a previous load.
+  if (!v.pdfDocument) { // the load refused; drop the empty view rather than switch to it
+    v.container.remove();
+    v.thumbGrid.remove();
+    v.outlineList.remove();
+    // removeView is a no-op when the view is already gone, which it can be: a Close
+    // can land during the load above and resetViews drops everything but the active
+    // view. The bare `views.splice(views.indexOf(v), 1)` this replaces would have
+    // removed the LAST element on indexOf -1 — the live active view.
+    removeView(v);
+    return false;
+  }
+  activateView(v);
+  return true;
 }
 
 // endRecv stops polling, discards the isolated preview, and closes the modal.
@@ -1305,6 +1326,11 @@ els.keyCreateBtn.onclick = () => addKey({ mode: 'create', keyPath: els.keyAddPat
 // this is the only place the four pdf.js objects and the two DOM nodes appear by bare
 // name, so every other site in the file must reach them through the record. The
 // source guard in view.test.mjs excludes exactly this function's body for that reason.
+// viewSeq numbers view containers so each gets a unique DOM id. Monotonic and never
+// reused, for the same reason document ids are (ADR-001): a recycled id makes a stale
+// aria-controls or querySelector resolve to the wrong view while still resolving.
+let viewSeq = 0;
+
 function newView() {
   const v = {
     // SAFETY — marks drawn on this document, baked by /api/redact through
@@ -1444,6 +1470,11 @@ function newView() {
   // than under it.
   v.container = document.createElement('div');
   v.container.className = 'viewerContainer';
+  // A unique id per view, which is what lets the tab strip's aria-controls name the
+  // region each tab switches to. NOT the static #viewerContainer P05.S03 deleted —
+  // that one was a single id for a thing there can be several of; this is one id each.
+  v.container.id = 'viewerContainer-' + (++viewSeq);
+  v.container.setAttribute('role', 'tabpanel');
   const pagesEl = document.createElement('div');
   pagesEl.className = 'pdfViewer viewerPages';
   v.container.appendChild(pagesEl);
@@ -1576,10 +1607,97 @@ function newView() {
 let view = newView();
 
 // Every open view, in creation order. The ACTIVE one is `view`; the rest are hidden with
-// their page DOM intact (ADR-002). Only arrivals add to this today — a user Open still
-// replaces, both here and on the server, and making Open add is P06's along with the tab
-// strip that would make an added view reachable.
+// their page DOM intact (ADR-002). Since P06.S01 a user Open adds here too, not only an
+// arrival, and the tab strip below makes the result reachable.
 const views = [view];
+
+// addView / removeView / resetViews are the ONLY places `views` changes, and every one of
+// them re-renders the strip.
+//
+// The alternative — call syncTabs() after each mutation — is a hand-maintained list of
+// obligations, and this repo has now been bitten four separate times by exactly that
+// shape: a keep-list that omitted `radio`, a route inventory reconciled against nothing, a
+// scanner whose population was never probed, a pinning guard that policed one of a law's
+// two halves. The rule that survives is the server's, one layer over: registerLocked is
+// "the ONE place an id is issued … a second issuer would defeat the law by collision".
+// Same argument, same shape — a second mutator leaves the strip describing a set of
+// documents that is not the set the app holds, and nothing would say so.
+//
+// A source guard in view.test.mjs refuses `views.push`, `views.splice` and `views.length =`
+// anywhere outside these three, so a fourth mutator fails a test rather than a user.
+function addView(v) {
+  views.push(v);
+  syncTabs();
+  return v;
+}
+
+// removeView drops one view if it is present, and is a NO-OP when it is not. Both halves
+// are load-bearing: the arrival/open failure path calls it on a view a concurrent Close may
+// already have dropped, and the bare `views.splice(views.indexOf(v), 1)` it replaces would
+// have spliced at -1 on a miss — removing the LAST element, which is the live active view.
+function removeView(v) {
+  const i = views.indexOf(v);
+  if (i < 0) return false;
+  views.splice(i, 1);
+  syncTabs();
+  return true;
+}
+
+// resetViews collapses to the single view given — what a Close ALL leaves behind. The
+// caller has already torn down the others' DOM; this is the bookkeeping half.
+function resetViews(keep) {
+  views.length = 0;
+  views.push(keep);
+  syncTabs();
+}
+
+// syncTabs renders the document switcher from `views`. Called by the three mutators
+// above, by activateView (the active marker moves), and at the end of a load (the name
+// arrives with the document, not with the view).
+//
+// **Rebuilt wholesale rather than patched.** Eight buttons is nothing to rebuild, and a
+// diffing render is a second model of the same list — the failure mode being a strip that
+// describes a set of documents the app does not hold, which is the whole thing the single
+// mutator seam exists to prevent. Cheap and total beats clever and drifting.
+//
+// The strip is hidden below two documents: the logged phase-open default, so a
+// single-document session is chrome-identical to what it was before tabs.
+function syncTabs() {
+  const strip = els.tabstrip;
+  if (!strip) return; // the jsdom harness boots the real index.html, so this is defensive only
+  // Which tab had focus, so a rebuild does not throw a keyboard user back to the body.
+  // Rebuilding wholesale is the right call for eight buttons — see above — but it
+  // destroys the focused element, and "the control you were on vanished" is a real
+  // regression for anyone not using a mouse, not a cosmetic one.
+  const focusedIndex = [...strip.children].indexOf(document.activeElement);
+  strip.hidden = views.length < 2;
+  strip.textContent = '';
+  if (strip.hidden) return;
+  for (const v of views) {
+    const b = document.createElement('button');
+    b.className = 'tab' + (v === view ? ' active' : '');
+    b.type = 'button';
+    b.setAttribute('role', 'tab');
+    // Names the region this tab switches to. A tablist whose tabs control nothing is
+    // ARIA that announces a widget and then cannot describe it — worse than plain
+    // buttons, because the promise is louder.
+    if (v.container.id) b.setAttribute('aria-controls', v.container.id);
+    // aria-selected, not colour alone: the active tab differs from the rest by two
+    // greys and an accent bar, neither of which a screen reader can report.
+    b.setAttribute('aria-selected', v === view ? 'true' : 'false');
+    const name = document.createElement('span');
+    name.className = 'tabname';
+    // The same fallback the rest of the app uses for a path-less document. `docMeta.name`
+    // is "." for every upload, combine, office conversion and arrival — filepath.Base("")
+    // — which is why originalName is the field to read and why it is guarded.
+    name.textContent = v.originalName || 'Untitled';
+    b.appendChild(name);
+    b.title = v.docMeta && v.docMeta.path ? v.docMeta.path : (v.originalName || 'Untitled');
+    b.onclick = () => activateView(v);
+    strip.appendChild(b);
+  }
+  if (focusedIndex >= 0) strip.children[Math.min(focusedIndex, strip.children.length - 1)]?.focus();
+}
 
 // Modals whose contents are derived from ONE document: page ranges bounded by its
 // numPages, element references into its page DOM, bytes rendered from it, an outline read
@@ -1656,6 +1774,7 @@ function activateView(v) {
 
   // ── D: repaint the shared chrome ────────────────────────────────────────────
   repaintForActiveView();
+  syncTabs(); // the active marker moves with the view
 }
 
 // abortDrags cancels any gesture in flight and removes its preview node. Transient state
@@ -1840,6 +1959,11 @@ async function setDocumentFromServer(meta, target = view) {
   // and is ready the moment the user switches to it.
   buildThumbnails(gen, target).catch((e) => console.error('thumbnails failed', e));
   buildOutline(gen, target).catch((e) => console.error('outline failed', e));
+  // The tab's label comes from the DOCUMENT, which only exists now — addView ran before
+  // this load and rendered a tab with whatever name the view had then (none, for a fresh
+  // one). Re-rendered here rather than pre-seeded, so the strip cannot show a stale name
+  // after a reload replaces a document in place.
+  syncTabs();
 }
 
 // closeDocument puts the open document down and returns the app to exactly the
@@ -1883,8 +2007,7 @@ function closeDocument() {
     v.thumbGrid.remove();
     v.outlineList.remove();
   }
-  views.length = 0;
-  views.push(view);
+  resetViews(view);
 
   // The same quiescing a switch does, for the same reason: a gesture in flight holds live
   // nodes that setDocument(null) is about to detach, and a document-bound modal outlives
@@ -1985,6 +2108,33 @@ async function requestClose() {
 }
 els.closeBtn.onclick = requestClose;
 
+// installOpened lands a just-opened document in a view — a NEW one, unless the app is
+// still showing the empty state.
+//
+// The exception is what stops the strip growing an empty tab: at launch and after a
+// Close, `views` is one view with no document in it, and the first Open belongs there.
+// The condition is deliberately the stricter `views.length === 1 && !view.pdfDocument`
+// rather than `!view.pdfDocument` alone: an empty ACTIVE view alongside a loaded one is
+// not reachable today, and if it ever becomes reachable, adding a view is harmless while
+// reusing one would strand whatever the other view holds.
+//
+// Since P06.S01 the server ADDS on every one of these routes, so a client that kept
+// re-pointing the active view would leave the previous document open server-side and
+// unreachable here — which is the orphaning this slice exists to end, arriving from the
+// other direction.
+async function installOpened(meta) {
+  if (views.length === 1 && !view.pdfDocument) {
+    // Named explicitly, though `view` is also the default. The condition guarantees
+    // there is exactly one view, so the default would be correct — but "every reload
+    // names the view it lands in" is a law that is worth nothing if it is followed
+    // except where someone judged it unnecessary, and the guard that enforces it
+    // cannot read a condition three lines up.
+    await setDocumentFromServer(meta, view);
+    return !!view.pdfDocument;
+  }
+  return openInNewView(meta);
+}
+
 async function openPath(path) {
   if (!path) return;
   const res = await apiFetch('/api/open', {
@@ -1992,8 +2142,11 @@ async function openPath(path) {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ path }),
   });
+  // errText surfaces the server's own message, which is what carries the cap refusal
+  // ("too many documents open (limit 8) — close one first"). A generic fallback here
+  // would tell a user at the cap that opening failed and not why.
   if (!res.ok) return toast(await errText(res, 'could not open file'));
-  await setDocumentFromServer(await res.json());
+  await installOpened(await res.json());
 }
 
 async function uploadFile(file) {
@@ -2001,7 +2154,7 @@ async function uploadFile(file) {
   form.append('file', file);
   const res = await apiFetch('/api/upload', { method: 'POST', body: form });
   if (!res.ok) return toast(await errText(res, 'could not open file'));
-  await setDocumentFromServer(await res.json());
+  await installOpened(await res.json());
 }
 
 // Office → PDF: pick a Word/Excel/PowerPoint/OpenDocument file, convert it on the
@@ -2018,7 +2171,7 @@ els.officeInput.onchange = async () => {
   try {
     const res = await apiFetch('/api/office', { method: 'POST', body: form });
     if (!res.ok) return toast(await errText(res, 'could not convert file'));
-    await setDocumentFromServer(await res.json());
+    await installOpened(await res.json());
   } catch {
     toast('could not convert file');
   }
@@ -2030,8 +2183,18 @@ async function openURL(url) {
     body: JSON.stringify({ url }),
   });
   if (!res.ok) return toast(await errText(res, 'could not fetch URL'));
-  view.originalName = (url.split('/').pop() || '').split('?')[0] || 'document.pdf';
-  await setDocumentFromServer(await res.json());
+  // Named before the install and applied after it, to whichever view actually took the
+  // document: installOpened may build a NEW view, and this was writing the name onto
+  // whatever happened to be active when the fetch returned.
+  const urlName = (url.split('/').pop() || '').split('?')[0] || 'document.pdf';
+  // Gated on the install having SUCCEEDED, and this is the bug the return value exists
+  // to prevent rather than a defensive flourish: on a failed load `view` is still
+  // whatever the user was looking at, so an ungated assignment renames THAT document
+  // after a fetch that never produced one.
+  if (await installOpened(await res.json())) {
+    view.originalName = urlName;
+    syncTabs();
+  }
 }
 
 // --- combine several PDFs into one new document ------------------------------
@@ -2091,8 +2254,11 @@ els.combineGo.onclick = async () => {
   const form = new FormData();
   for (const f of combineFiles) form.append('file', f, f.name);
   const res = await apiFetch('/api/combine', { method: 'POST', body: form });
-  if (!res.ok) return toast('could not combine the PDFs');
-  await setDocumentFromServer(await res.json());
+  // errText rather than a fixed string, so the cap refusal reaches the user with its
+  // own wording instead of "could not combine the PDFs", which would be a lie: the
+  // combine succeeded and the ninth document is what was refused.
+  if (!res.ok) return toast(await errText(res, 'could not combine the PDFs'));
+  await installOpened(await res.json());
   els.combineModal.hidden = true;
   combineFiles = [];
   toast('Combined — reorder pages by dragging thumbnails, then Save As to keep it');
@@ -7400,6 +7566,19 @@ function resetSharedDocState(owner = view) {
   document.querySelectorAll('[data-mode]:not(.cmmode)').forEach((b) => b.classList.remove('active'));
   reflectAnnoControls();
   els.viewerWrap.style.cursor = '';
+  // Compare goes with the document it was computed against (D11).
+  //
+  // The switch path already did this — activateView calls closeDocBoundModals — and the
+  // OPEN path never did, which is the standing defect: `closeCmpDoc` had four call sites
+  // and setDocumentFromServer was not among them, so opening a different document left
+  // the modal on screen showing a cached text diff of the PREVIOUS document against the
+  // picked file, with the viewer behind it showing something else. `cmpText` is a cache,
+  // so the stale content was retained rather than re-derived on the next look. Reachable
+  // by ordinary use: #compareModal has no scrim, so Open… stays clickable while Compare
+  // is open. Its home is here because this is the shared reset — the exact place whose
+  // job is to stop the open and close paths disagreeing.
+  els.compareModal.hidden = true;
+  closeCmpDoc();
 }
 // DETECTED_KINDS is exactly what makeField produces — the auto-detected widgets a
 // re-run of Detect is entitled to replace. Everything else on the page was put

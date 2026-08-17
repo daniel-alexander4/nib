@@ -127,7 +127,18 @@ curl -fsS -X POST "$BASE/api/ssh/enroll" -H 'Content-Type: application/json' \
 }
 
 export NIB_UI_BASE="$BASE" NIB_UI_BROWSER="$BROWSER" NIB_UI_WORK="$WORK"
-out="$(node --test test/ui/ 2>&1)"
+# --test-concurrency=1: the files run SERIALLY, because they share one nib process.
+#
+# node --test runs files in parallel by default, and this tier hands every file the same
+# server — one registry, one active document. That was already unsound and was masked by
+# Open REPLACING: whatever a sibling file did, the next open reset the registry to one
+# document. P06.S01 makes Open add, and the masking goes with it — observed immediately,
+# as a 30s waitForFunction timeout in tabs.test.mjs while lifecycle.test.mjs's Close
+# (which is close-ALL server-side until P06.S02) emptied the registry underneath it, and
+# as opens refused by the eight-document cap once files stopped clearing up after each
+# other. Serial is the honest mode for a shared mutable server; per-file servers would be
+# the alternative and cost a build and an enrol each.
+out="$(node --test --test-concurrency=1 test/ui/ 2>&1)"
 code=$?
 echo "$out"
 
@@ -144,7 +155,10 @@ fi
 # file count is the external number; a per-test literal would go red on every new
 # test and train the next person to bump it.
 files="$(find test/ui -maxdepth 1 -name '*.test.mjs' | wc -l | tr -d ' ')"
-expect_files=2
+# Three since P06.S01 added tabs.test.mjs, which is where P05's carried acceptance
+# clause (re-fit and dpr-heal on activation) finally gets driven — both halves are
+# about layout and a device pixel ratio, neither of which exists at tier 2.
+expect_files=3
 if [ "$files" -ne "$expect_files" ]; then
   echo "FAIL: expected $expect_files browser UI test files, found $files — a test file was added or dropped." >&2
   echo "      If deliberate, update expect_files in this script." >&2
