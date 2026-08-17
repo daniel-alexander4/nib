@@ -1181,7 +1181,21 @@ func SetPageLabels(pdf []byte, ranges []PageLabelRange) ([]byte, error) {
 			label["S"] = types.Name(s)
 		}
 		if r.Prefix != "" {
-			label["P"] = types.StringLiteral(types.EncodeUTF16String(r.Prefix))
+			// ESCAPED, not merely encoded. A StringLiteral is written verbatim —
+			// pdfcpu's PDFString() is `fmt.Sprintf("(%s)", s)` — so a prefix carrying
+			// a PDF string metacharacter escapes its own literal. The prefix arrives
+			// from client JSON (server/pages.go, the "pagelabels" op) and is otherwise
+			// unvalidated, and both failure modes are silent to the user typing it:
+			// an unbalanced "(" makes the whole PageLabels tree unreadable, so every
+			// later op — all of which go through ReadValidateAndOptimize — fails on a
+			// document that opened fine; a ")" truncates the label at that character
+			// and strews the remainder through the object stream as loose tokens.
+			// "Exhibit 1) " is an ordinary legal label, not a hostile input.
+			esc, err := types.EscapedUTF16String(r.Prefix)
+			if err != nil {
+				return nil, fmt.Errorf("page-label prefix %q: %w", r.Prefix, err)
+			}
+			label["P"] = types.StringLiteral(*esc)
 		}
 		if r.First > 1 {
 			label["St"] = types.Integer(r.First)
@@ -1217,6 +1231,11 @@ func SetLang(pdf []byte, lang string) ([]byte, error) {
 		if err != nil {
 			return err
 		}
+		// Unescaped deliberately, and only safe because of where lang comes from:
+		// OCRLangToBCP47 is a map lookup over a fixed table, so a tag is always a
+		// short ASCII BCP 47 code with no PDF string metacharacter in it. Anything
+		// that ever routes a user-supplied string here must escape it the way
+		// SetPageLabels does — a StringLiteral is written verbatim.
 		root["Lang"] = types.StringLiteral(lang)
 		return nil
 	})

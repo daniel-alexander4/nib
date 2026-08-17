@@ -67,3 +67,68 @@ func TestSetPageLabelsRejects(t *testing.T) {
 		}
 	}
 }
+
+// TestSetPageLabelsEscapesPrefix pins the escaping of the one field a user types
+// freely. A /P entry is a PDF string literal written verbatim by pdfcpu, so a
+// prefix carrying "(" or ")" escapes its own literal.
+//
+// Measured before the fix, on exactly these inputs:
+//   - "Exhibit 1) x"  -> the label came back truncated to "Exhibit 1", with the
+//     remainder strewn through the object stream as loose tokens.
+//   - "Exhibit (1 x"  -> the whole PageLabels number tree became unreadable
+//     ("missing Kids or Nums entry"), so every later op on that document failed,
+//     because they all go through ReadValidateAndOptimize.
+//
+// The test asserts the ROUND TRIP, not just that a PDF came out. Asserting only
+// that SetPageLabels returned no error, or that the bytes start with %PDF, passes
+// against both failures above — which is why the original test (prefix "A-", no
+// assertion on the value read back) was green over this for the life of the feature.
+func TestSetPageLabelsEscapesPrefix(t *testing.T) {
+	for _, prefix := range []string{
+		"Exhibit 1) x",  // closes the literal early
+		"Exhibit (1 x",  // opens one that is never closed
+		`Ex\hibit `,     // the escape character itself
+		"Ex(1)h ",       // balanced: legal already, must not regress
+		"Plain-A ",      // the ordinary case
+	} {
+		t.Run(prefix, func(t *testing.T) {
+			out, err := SetPageLabels(threePagePDF(t), []PageLabelRange{
+				{Start: 1, Style: "decimal", First: 1, Prefix: prefix},
+			})
+			if err != nil {
+				t.Fatalf("SetPageLabels(%q): %v", prefix, err)
+			}
+			ctx, err := api.ReadValidateAndOptimize(bytes.NewReader(out), model.NewDefaultConfiguration())
+			if err != nil {
+				t.Fatalf("prefix %q made the document unreadable: %v", prefix, err)
+			}
+			root, err := ctx.XRefTable.Catalog()
+			if err != nil {
+				t.Fatal(err)
+			}
+			d, err := ctx.DereferenceDict(root["PageLabels"])
+			if err != nil || d == nil {
+				t.Fatalf("PageLabels missing after re-read: %v", err)
+			}
+			nums, err := ctx.DereferenceArray(d["Nums"])
+			if err != nil || len(nums) < 2 {
+				t.Fatalf("Nums broken: %v (%d entries)", err, len(nums))
+			}
+			lbl, err := ctx.DereferenceDict(nums[1])
+			if err != nil {
+				t.Fatal(err)
+			}
+			sl, ok := lbl["P"].(types.StringLiteral)
+			if !ok {
+				t.Fatalf("/P is %T, want StringLiteral", lbl["P"])
+			}
+			got, err := types.StringLiteralToString(sl)
+			if err != nil {
+				t.Fatalf("/P will not decode: %v", err)
+			}
+			if got != prefix {
+				t.Errorf("prefix did not round-trip: wrote %q, read back %q", prefix, got)
+			}
+		})
+	}
+}
