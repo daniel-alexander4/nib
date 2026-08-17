@@ -2879,7 +2879,7 @@ double-clicks a PDF, the running nib is locked, and something has to happen —
 deliver-and-queue, surface-the-window-and-let-them-unlock, or refuse with a
 message. Each is defensible and each changes what the record must carry.
 
-#### P07.S02 — hand-off, and the window the user is looking for
+#### P07.S02 — hand-off, and the window the user is looking for *(done 2026-08-17, v1.108.0)*
 Scope: a launch carrying a path reads the record, probes, delivers the path to the
 running instance, surfaces its window, and exits; a dead or absent record means
 *become the primary*. Refs: D18, **D20**, D16, D1.
@@ -2906,6 +2906,48 @@ design.)**
    bounded by the document cap, oldest dropped.
 5. **The window is attempted, not promised.** See the pin below.
 
+- T01 — factor `adoptVaultLocked(v)`: the vault+CSRF assignment duplicated in
+  `ensureUnlocked` and `handleUnlock`, so the drain hooks ONCE.
+- T02 — a `handoff` secret in the instance record, beside the probe token (D20).
+- T03 — `POST /api/handoff`, authorised by that secret and a loopback origin,
+  resolving through the ordinary install path; answers opened / queued / refused /
+  focused.
+- T04 — the pending-open queue: bounded by the document cap, oldest dropped,
+  memory only, drained by T01's hook.
+- T05 — invert the launch order: read the record and probe BEFORE `net.Listen`.
+- T06 — takeover: remove-then-create with a bounded retry (plan-review pin).
+- T07 — seam rows V75–V81.
+
+**(grill, 2026-08-17 — two findings changed the slice's shape.)**
+1. **`--replace`'s retirement moves here from S03, because without it S02 ships a
+   feature the ordinary path cannot reach.** `build/nib.desktop` is
+   `Exec=nib --replace %f` — the same line for a menu click and a file-manager
+   double-click — so a double-click SIGTERMs the running Nib, which (since v1.107.1)
+   correctly removes its own record on the way out, and the new launch then probes,
+   finds nothing, and becomes primary. **The hand-off would never fire through the
+   path users actually take**, and the slice's acceptance would be verifiable only by
+   hand-running the binary: verify-by-proxy, which is the shape this project keeps
+   catching one gate too late. S03 keeps `ReplaceOthers`'s removal and the Windows
+   harness.
+2. **The drain hook has two homes before it has one.** `s.vault = v; s.csrf =
+   newToken()` sits identically in `ensureUnlocked` (`auth.go:81`) and `handleUnlock`
+   (`:357`). Hooking the queue drain into both is the duplicate derivation this repo
+   has paid for repeatedly. T01 factors it first.
+3. **The launch order inverts.** `main` binds and then publishes; the probe must
+   happen BEFORE `net.Listen`, or a launch that is about to hand off has already
+   taken a port — and under a pinned `NIB_ADDR` it would fail to bind before it ever
+   got the chance to hand off.
+4. **The launch is invisible.** A double-clicked launch has no terminal, so a cap
+   refusal or a bad path must surface **in the running instance's UI**, not only in
+   the exiting process's stderr.
+
+**Defaults taken, each reversible:** a bare launch (no path) surfaces the running
+instance and exits too — D18's framing is "the app has tabs yet the OS still opens a
+second window", and clicking the menu item twice is the same gap; `/api/handoff`
+carries a loopback-origin check on top of the secret, defence in depth at the cost of
+one wrap; two attempts at takeover, then serve without a record, because a launch
+that loses two races is better off running than refusing to start.
+
 Acceptance:
 - A second launch with a path opens that document as a tab in the RUNNING
   instance and exits without binding a port.
@@ -2919,6 +2961,36 @@ Acceptance:
 - **After a second launch, the user is looking at a Nib window showing the
   handed-off document.** Whether that is the same window raised or a new one
   pointing at the same instance is the BROWSER's call and not Nib's — see the pin.
+
+**(found during implementation, 2026-08-17.)** The grill's fourth finding — "the launch
+is invisible, so its failures must surface in the running instance's UI" — was written
+into the plan and then **not implemented**: the first pass logged refusals to the
+launch's stderr only, which a double-click never shows. Caught at the ledger, not by a
+test, because no clause had an instrument for it. It now travels as a **code** on the
+URL the launch surfaces (`?notice=handoff-refused`), mapped to words in the UI — so
+nothing attacker-influenced is rendered and the wording lives where wording is edited.
+**Its honest limit, recorded rather than implied:** it arrives only when the browser
+opens a NEW window for that URL; if the browser focuses the existing one, that page
+never reloads and never sees the parameter — the same reason Nib cannot promise to raise
+a window it does not own.
+
+**Acceptance ledger — 7 rows: 6 met, 1 not exercised.** Every met row was driven **live,
+against two real processes**, not only in unit tests: a second launch with a path opens
+it in the running instance ✅ and **exits without binding** ✅ (`exit=0`, `pgrep -c` = 1);
+D16 focus — the same path twice leaves one document ✅; a stale record does not strand the
+launch ✅ (a planted record naming the dead `127.0.0.1:1` was taken over, and the taker
+served 200); a hand-off refused by the cap tells the launch ✅ and now says so where a
+user can see it ✅; **a hand-off to a LOCKED instance is accepted and opens on unlock** ✅
+— handed off while `/api/status` reported `setup`, then the document was present after
+enrolling a key. Seam rows V75–V81.
+
+**⏳ NOT EXERCISED — "after a second launch, the user is looking at a Nib window showing
+the handed-off document".** Every live drive ran with `NIB_NO_BROWSER=1`, and what the
+clause asks about is the **browser's** behaviour when handed a URL: whether it raises the
+existing app window or opens a second one at the same instance. Observing it needs a
+windowed desktop session rather than a headless harness. **Carried to S03**, which
+already plans a windowed wine run — and the pin below already says the outcome is the
+browser's call and not Nib's, so what S03 owes is the observation, not a mechanism.
 
 **(plan-review pin: the takeover is a retry, 2026-08-17 — S02.)** "A stale record does
 not strand the launch: it becomes the primary" is one attempt as written, and two

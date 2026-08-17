@@ -283,6 +283,17 @@ test('switching away and back preserves the zoom you set', async () => {
   await switched(7);
   await page.click(tabSel(1));
   await switched(3);
+  // **Wait for the re-render to settle before measuring.** `switched` waits for the page
+  // count and for a `.page` to exist, neither of which means the page has been laid out
+  // at its scale yet — so reading offsetWidth here caught a mid-transition width and the
+  // test failed once in about six runs, passing on re-run. A flaky acceptance test is
+  // worse than a missing one: it teaches everyone to press the button again, and the
+  // sixth failure that is real gets pressed away with the five that were not.
+  await rendered();
+  await page.waitForFunction((w) => {
+    const p = document.querySelector('.viewerContainer:not([hidden]) .page');
+    return p && Math.abs(p.offsetWidth - w) < 2;
+  }, zoomed);
 
   const back = await page.evaluate(() => document.querySelector('.viewerContainer:not([hidden]) .page').offsetWidth);
   assert.ok(Math.abs(back - zoomed) < 2,

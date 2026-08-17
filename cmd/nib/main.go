@@ -27,7 +27,6 @@ import (
 	"nib/internal/instance"
 	"nib/internal/safe"
 	"nib/internal/server"
-	"nib/internal/singleton"
 	"nib/internal/vault"
 )
 
@@ -58,16 +57,25 @@ func run() int {
 		return code
 	}
 
-	replace := flag.Bool("replace", false, "terminate any other running Nib instance before starting")
+	// --replace is accepted and IGNORED (P07.S02), and it is kept only because a
+	// desktop entry installed by an older package still passes it. Retiring the flag
+	// outright would make those launches fail to parse; retiring the BEHAVIOUR is the
+	// point, and that is done — a launch no longer SIGTERMs its siblings, it hands off
+	// to them. `singleton.ReplaceOthers` and this flag go together in P07.S03.
+	replace := flag.Bool("replace", false, "accepted and ignored; superseded by hand-off (P07)")
 	flag.Parse()
 	log.Printf("Nib %s", version)
-
-	// The desktop launcher passes --replace so clicking the menu item kills the
-	// previous window's server and starts fresh.
 	if *replace {
-		if n := singleton.ReplaceOthers(); n > 0 {
-			log.Printf("replaced %d running instance(s)", n)
-		}
+		log.Printf("--replace is ignored: a second launch now hands off to the running instance")
+	}
+
+	// **Hand off BEFORE binding anything.** The order matters and it is not obvious:
+	// bind-then-probe means a launch that is about to hand off has already taken a
+	// port, and under a pinned NIB_ADDR it would fail to bind and exit before ever
+	// reaching the hand-off it should have made.
+	cfgDir := vault.DefaultDir()
+	if handedOff(cfgDir, initialFile()) {
+		return 0
 	}
 
 	// Listen on a random loopback port so the app is never network-exposed.
@@ -103,13 +111,17 @@ func run() int {
 	// A failure here is logged and not fatal. The record is how a LATER launch finds
 	// this one; a nib that cannot write it still serves the user in front of it, and
 	// refusing to start would trade a working app for a missing convenience.
-	cfgDir := vault.DefaultDir()
 	probeToken, err := instance.NewToken()
 	if err != nil {
 		log.Printf("could not mint an instance token: %v", err)
 	}
+	handoffSecret, herr := instance.NewToken()
+	if herr != nil {
+		log.Printf("could not mint a hand-off secret: %v", herr)
+		probeToken = ""
+	}
 	if probeToken != "" {
-		rec := instance.Record{Addr: addr, Token: probeToken, Version: version}
+		rec := instance.Record{Addr: addr, Token: probeToken, Handoff: handoffSecret, Version: version}
 		switch err := instance.Create(cfgDir, rec); {
 		case err == nil:
 			// Deferred, and that only works because run() RETURNS rather than
@@ -132,6 +144,7 @@ func run() int {
 
 	s := server.New(nib.WebFS(), nib.LegalFS(), vault.DefaultDir(), version)
 	s.SetInstanceToken(probeToken)
+	s.SetHandoffSecret(handoffSecret)
 	srv := &http.Server{Handler: s.Handler()}
 	// A serve failure signals the main goroutine instead of exiting from here.
 	// log.Fatalf calls os.Exit, which skips every deferred function AND the explicit
@@ -212,4 +225,74 @@ func initialFile() string {
 		return arg
 	}
 	return abs
+}
+
+// handedOff tries to give this launch's work to an already-running Nib. It reports
+// whether this process is done — true means exit, false means become the primary.
+//
+// **The takeover is a bounded retry, not one attempt** (plan-review pin, 2026-08-17).
+// Two launches can race the same stale record: both probe, both fail, both remove, and
+// `Create` is O_EXCL so one loses. The loser must re-probe the winner rather than give
+// up or bind a second server. Two rounds, and then this process serves without a record
+// — a launch that loses twice is better off running than refusing to start; it simply
+// will not be findable by the next one.
+func handedOff(cfgDir, path string) bool {
+	for attempt := 0; attempt < 2; attempt++ {
+		rec, err := instance.Read(cfgDir)
+		if err != nil {
+			// No record, or one too damaged to use. Unreadable is treated as ABSENT
+			// rather than as an error the user must clear by hand: a truncated write
+			// or a filled disk must never turn into "delete this file to start Nib".
+			return false
+		}
+		if !instance.Probe(rec) {
+			// Stale: the instance died and its record outlived it. Clear it and let
+			// the caller take over — or, if another launch clears it first and wins
+			// the create, find that on the next round.
+			_ = instance.Remove(cfgDir)
+			continue
+		}
+		result, reason, err := instance.HandOff(rec, path)
+		if err != nil {
+			log.Printf("could not hand off to the running instance: %v", err)
+			return false
+		}
+		// **The launch is invisible, so the message has to travel with the window.** A
+		// double-clicked launch has no terminal: its stderr goes nowhere a user will
+		// look, so a refusal logged here alone is a refusal nobody receives.
+		//
+		// A CODE, not a sentence. The launch tells the UI which thing happened and the
+		// UI owns the words — so there is no attacker-influenced text rendered in the
+		// page (the only party who can call this already holds the hand-off secret,
+		// but a code has no injection surface at all rather than one closed by
+		// remembering to use textContent), and the wording stays where wording is
+		// translated and edited.
+		notice := ""
+		switch result {
+		case "refused":
+			log.Printf("the running instance refused this document: %s", reason)
+			notice = "handoff-refused"
+		case "queued":
+			log.Printf("Nib is locked; this document opens when you unlock it")
+			notice = "handoff-queued"
+		}
+		// Surface the running instance's window. The mechanism is the one Nib already
+		// has, and its limit is recorded in PLAN.md: no reliable cross-platform raise
+		// exists for a window you do not own — Wayland refuses it by design — so the
+		// browser decides, and on some combinations this produces a second window
+		// pointing at the same Nib rather than raising the first. That is survivable:
+		// a second window is a second client, and the reload restore brings it up
+		// showing the same documents including this one.
+		if os.Getenv("NIB_NO_BROWSER") == "" {
+			url := "http://" + rec.Addr + "/"
+			if notice != "" {
+				url += "?notice=" + notice
+			}
+			if _, err := browser.Open(url); err != nil {
+				log.Printf("could not surface the running window: %v", err)
+			}
+		}
+		return true
+	}
+	return false
 }

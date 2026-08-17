@@ -150,6 +150,14 @@ type Server struct {
 	// identify against.
 	instanceToken string
 
+	// handoffSecret authorises POST /api/handoff (D20). Separate from instanceToken:
+	// one proves identity, the other grants a verb.
+	handoffSecret string
+
+	// pendingOpens holds paths handed off while the vault was locked, drained by
+	// adoptVault. Memory only and bounded — see queuePendingOpen.
+	pendingOpens []string
+
 	sess session // armed live co-signing listener (Nib's one routable surface)
 }
 
@@ -185,6 +193,7 @@ func (s *Server) Handler() http.Handler {
 	// Public — reachable before the vault is unlocked.
 	mux.HandleFunc("GET /api/status", s.handleStatus)
 	mux.HandleFunc("GET /api/instance", s.handleInstance)
+	mux.HandleFunc("POST /api/handoff", requirePublicLoopback(s.handleHandoff))
 	mux.HandleFunc("GET /api/update/check", s.handleUpdateCheck)
 	mux.HandleFunc("POST /api/ssh/enroll", requirePublicLoopback(s.handleEnroll))
 	mux.HandleFunc("POST /api/ssh/migrate", requirePublicLoopback(s.handleMigrate))
