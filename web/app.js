@@ -7262,13 +7262,25 @@ function resetSharedDocState(owner = view) {
   reflectAnnoControls();
   els.viewerWrap.style.cursor = '';
 }
-// clearDetected drops only auto-detected fields (text/check/circleone), keeping
-// user-placed stamps, text edits, and sign/date/initial markers so re-running
-// Detect doesn't wipe a signature/quick-stamp, a cover-and-replace edit, or a
-// placed marker.
+// DETECTED_KINDS is exactly what makeField produces — the auto-detected widgets a
+// re-run of Detect is entitled to replace. Everything else on the page was put
+// there by the user.
+const DETECTED_KINDS = ['text', 'check', 'circleone'];
+
+// clearDetected drops only auto-detected fields, keeping user-placed stamps, text
+// edits, markers, boxes, notes, shapes, dropdowns and radio groups — so re-running
+// Detect doesn't wipe a signature, a cover-and-replace edit, or a placed field.
+//
+// Stated as what to DELETE, not what to keep. The keep-list this replaces named
+// seven kinds and omitted 'radio', so re-running Detect silently destroyed every
+// radio group the user had drawn — with its typed option strings — while its
+// sibling 'dropdown', created ninety lines earlier by near-identical code,
+// survived. A keep-list has to be updated every time a kind is added and fails
+// DESTRUCTIVELY when it is not; a delete-list of the three detected kinds fails
+// safe, because an unrecognised kind is kept.
 function clearDetected() {
   view.overlayFields = view.overlayFields.filter((f) => {
-    if (f.kind === 'stamp' || f.kind === 'edit' || f.kind === 'marker' || f.kind === 'box' || f.kind === 'note' || f.kind === 'shape' || f.kind === 'dropdown') return true;
+    if (!DETECTED_KINDS.includes(f.kind)) return true;
     f.el.remove();
     return false;
   });

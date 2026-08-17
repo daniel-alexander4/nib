@@ -380,13 +380,32 @@ input[type="search"] { width: 100%; }
 }
 .libimg:hover .del { display: block; }
 
-/* signature draw modal */
-#sigModal, #saveAsModal, #openModal, #keysModal, #bgModal, #aboutModal, #sigDetailsModal,
-#sessionRecvModal, #sessionInitModal, #sessionSendModal {
+/* Every modal dialog. Selected structurally, not by name.
+ *
+ * This was a hand-kept list of ten ids, grown one at a time through v1.16.0 and
+ * then abandoned: index.html declares 37 `*Modal` divs and the other 27 had no CSS
+ * rule at all. Measured in a real browser — #finalizeModal, #compareModal,
+ * #encryptModal and #peersModal all computed to `position: static`, transparent,
+ * `display: block`. Since `body` is a flex column, un-hiding one made it a flex
+ * ITEM: the dialog appeared in flow at the bottom of the page, full width, with no
+ * scrim, squashing #main — and with no scrim the toolbar behind stayed clickable,
+ * so Save and Close were live while a dialog was "open".
+ *
+ * `body > div[id$="Modal"]` is the same predicate app.js already uses to find
+ * modals for its global keydown guard, so the two now agree by construction rather
+ * than by someone remembering to update both. `.comparecard` (a wide variant of
+ * .sigcard) is evidence this was always meant to be centered.
+ *
+ * A dialog that ever needs to opt out should get a class, not a removal from a
+ * list — the list is what failed. */
+body > div[id$="Modal"] {
   position: fixed; inset: 0; z-index: 110;
   background: rgba(17, 17, 27, 0.7);
   display: flex; align-items: center; justify-content: center;
 }
+/* `hidden` must still win over the display above, or every dialog is permanently
+ * open — the attribute is the only thing that closes them. */
+body > div[id$="Modal"][hidden] { display: none; }
 
 /* signature-details modal: one row per signer */
 .sigdetails { display: flex; flex-direction: column; gap: 8px; min-width: 340px; max-width: 460px; }
@@ -919,6 +938,12 @@ input.ovl-check { appearance: auto; accent-color: #1a7f37; background: transpare
 /* toast for errors */
 #toast {
   position: fixed;
+  /* Above every overlay: modals sit at 110, #authOverlay at 100, #introOverlay at
+   * 200. With no z-index the toast lost to all of them, so an error raised while a
+   * dialog was open rendered BEHIND the scrim and was invisible — precisely when
+   * the user needs it, since most toasts report a failed operation and most
+   * operations are started from a dialog. */
+  z-index: 300;
   bottom: 18px;
   left: 50%;
   transform: translateX(-50%);
