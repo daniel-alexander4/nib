@@ -18,7 +18,7 @@ func (s *Server) handleOutlineGet(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	items, err := pdfops.Outline(doc.data)
+	items, err := pdfops.Outline(s.docBytes(doc))
 	if err != nil {
 		httpError(w, http.StatusInternalServerError, "could not read the outline: "+err.Error())
 		return
