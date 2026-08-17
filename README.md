@@ -690,8 +690,12 @@ behind a per-user key that only Windows itself may write. Right-click a PDF →
 **Open with** → **Choose another app** → **Nib**, and tick *Always use this app*
 if you want it to stick.
 
-Opening several PDFs — from Explorer, from a Linux file manager, or from the
-command line — gives you **one Nib holding them all**, a tab each. The second
+Opening several PDFs *through Nib* — from Explorer, from a Linux file manager's
+**Open with**, or from the command line — gives you **one Nib holding them all**,
+a tab each. (On Linux a plain double-click reaches whatever your desktop has set
+as the PDF handler, which is usually not Nib; `xdg-mime default nib.desktop
+application/pdf` changes that, and it is deliberately your call rather than
+something the package does behind your back.) The second
 launch finds the running one, hands it the path, and exits; if Nib is locked at
 the time, the document opens as soon as you unlock. This works the same on every
 platform. It used to be Linux-only and it worked by killing the running process
