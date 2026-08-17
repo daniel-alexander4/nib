@@ -2,12 +2,17 @@ package vault
 
 import (
 	"bytes"
+	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/json"
+	"encoding/pem"
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+
+	"golang.org/x/crypto/ssh"
 
 	"nib/internal/sshkey"
 )
@@ -366,4 +371,133 @@ func TestAddRemoveKey(t *testing.T) {
 	if err := reopened.RemoveKey(pubA); !errors.Is(err, ErrNoSuchKey) {
 		t.Errorf("RemoveKey missing: err = %v, want ErrNoSuchKey", err)
 	}
+}
+
+// TestValidateRefusesWhatCannotBeOpenedHere pins the check that guards a
+// destructive import. handleVaultImport overwrites the live vault in place with no
+// prior copy, so a backup that passes Validate and then cannot be opened destroys
+// the signing identity permanently.
+//
+// Before this check, Validate looked only at JSON shape plus three non-empty
+// fields, and ALL THREE realistic mistakes below passed it. The positive controls
+// at the end are what stop a check that simply refuses everything from passing.
+func TestValidateRefusesWhatCannotBeOpenedHere(t *testing.T) {
+	// A real, openable backup taken from a vault sealed to this machine's key.
+	dir := t.TempDir()
+	pub, keyPath := newKey(t)
+	if _, err := Create(dir, pub, keyPath); err != nil {
+		t.Fatal(err)
+	}
+	good, err := os.ReadFile(Path(dir))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	t.Run("a backup sealed to someone else's key is refused", func(t *testing.T) {
+		// Another machine's vault: well-formed, complete, and sealed to a key whose
+		// private half is not here. This is the mis-picked-file case.
+		otherDir := t.TempDir()
+		otherPub, otherKeyPath := newKey(t)
+		if _, err := Create(otherDir, otherPub, otherKeyPath); err != nil {
+			t.Fatal(err)
+		}
+		raw, err := os.ReadFile(Path(otherDir))
+		if err != nil {
+			t.Fatal(err)
+		}
+		// Remove the private key so no slot has a candidate on this machine.
+		if err := os.Remove(otherKeyPath); err != nil {
+			t.Fatal(err)
+		}
+		if err := Validate(raw); err == nil {
+			t.Fatal("a vault sealed to an absent key passed validation — importing it would destroy the live vault")
+		}
+	})
+
+	t.Run("a v1 password vault is refused", func(t *testing.T) {
+		v1Dir := t.TempDir()
+		writeV1Vault(t, v1Dir, "pw", Contents{Profile: map[string]string{"email": "dan@x.com"}})
+		raw, err := os.ReadFile(Path(v1Dir))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := Validate(raw); err == nil {
+			t.Fatal("a v1 password vault passed validation — it has no key slots and this build cannot open it")
+		}
+	})
+
+	t.Run("a truncated backup is refused", func(t *testing.T) {
+		// Truncation that leaves the JSON prefix intact is the shape that used to
+		// slip through: the fields Validate checked were all near the front.
+		if err := Validate(good[:len(good)/2]); err == nil {
+			t.Fatal("a half-written backup passed validation")
+		}
+	})
+
+	t.Run("a corrupt body is refused", func(t *testing.T) {
+		var env envelope
+		if err := json.Unmarshal(good, &env); err != nil {
+			t.Fatal(err)
+		}
+		env.Cipher[len(env.Cipher)/2] ^= 0xff // flip a bit inside the sealed contents
+		raw, err := json.Marshal(env)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := Validate(raw); err == nil {
+			t.Fatal("a backup whose contents do not decrypt passed validation")
+		}
+	})
+
+	// --- positive controls -------------------------------------------------
+	// Without these, a Validate that returned an error unconditionally would pass
+	// every assertion above.
+
+	t.Run("the user's own backup is accepted", func(t *testing.T) {
+		if err := Validate(good); err != nil {
+			t.Fatalf("a genuine, openable backup was refused: %v", err)
+		}
+	})
+
+	t.Run("a backup whose key is passphrase-protected is accepted", func(t *testing.T) {
+		// The case that decides the check's shape: the key IS on this machine, we
+		// just cannot test it without prompting. Refusing here would mean a user
+		// with an encrypted key could never restore their own backup.
+		encDir := t.TempDir()
+		encKeyPath, encPub := encryptedKeyFixture(t, t.TempDir(), "hunter2")
+		if _, err := Create(encDir, encPub, encKeyPath); err != nil {
+			t.Fatal(err)
+		}
+		raw, err := os.ReadFile(Path(encDir))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := Validate(raw); err != nil {
+			t.Fatalf("a backup sealed to a passphrase-protected key on this machine was refused: %v", err)
+		}
+	})
+}
+
+// encryptedKeyFixture writes a passphrase-protected ed25519 key and returns its
+// path and authorized_keys line. Mirrors sshkey's own test fixture, which lives in
+// that package and is not importable here.
+func encryptedKeyFixture(t *testing.T, dir, passphrase string) (keyPath, pubLine string) {
+	t.Helper()
+	pub, priv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	block, err := ssh.MarshalPrivateKeyWithPassphrase(priv, "nib-test", []byte(passphrase))
+	if err != nil {
+		t.Fatal(err)
+	}
+	keyPath = filepath.Join(dir, "id_ed25519_enc")
+	if err := os.WriteFile(keyPath, pem.EncodeToMemory(block), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	sshPub, err := ssh.NewPublicKey(pub)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return keyPath, strings.TrimSpace(string(ssh.MarshalAuthorizedKey(sshPub)))
 }
