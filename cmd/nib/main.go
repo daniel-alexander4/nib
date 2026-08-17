@@ -19,6 +19,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"syscall"
 
 	"nib"
 	"nib/internal/browser"
@@ -162,7 +163,16 @@ func run() int {
 	}
 
 	// Run until interrupted, then shut down cleanly.
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	//
+	// **SIGTERM as well as SIGINT, and that is not tidiness.** This process publishes an
+	// instance record and removes it on the way out, and an unhandled SIGTERM kills it
+	// without running a single deferred function — so the record outlives the instance.
+	// The signal is not hypothetical: `build/nib.desktop` passes `--replace` on every
+	// activation and `singleton.ReplaceOthers` sends exactly SIGTERM, so before this
+	// line every desktop double-click left a stale record behind, pointing at a dead
+	// process, while the launch that killed it found ErrExists and published nothing.
+	// Found by P07's plan review, at the line.
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	code := 0
 	select {
