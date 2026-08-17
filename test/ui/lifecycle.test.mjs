@@ -111,7 +111,10 @@ test('the close prompt fires from a placed overlay alone', async () => {
   h.answerDialogs(false); // cancel — this doubles as the cancel-is-safe check
   await closeDoc();
   assert.equal(h.dialogs.length, 1, 'a document with a placed overlay must prompt');
-  assert.match(h.dialogs[0], /since the last save/);
+  // "unsaved" since v1.108.7. It read "since the last save" while the app could only
+  // answer "since it was opened" — a save cleared none of the four signals — so the
+  // hedge was the honest wording then and is the inaccurate one now.
+  assert.match(h.dialogs[0], /unsaved/);
 
   // Cancel left everything alone.
   const kept = await chrome();
