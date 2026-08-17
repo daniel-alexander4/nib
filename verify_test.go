@@ -26,7 +26,13 @@ func TestVerifyContractIsTrue(t *testing.T) {
 	// All three conditions matter: a script that exists but is not executable
 	// fails for the reader in a way the doc will not explain, and a script named
 	// nowhere is one nobody runs.
-	for _, cmd := range []string{"build/jsdomtest.sh", "build/uirepro.sh"} {
+	// winrepro.sh is not one of the three tiers — it is the out-of-loop Windows
+	// harness — but it is held to the same three conditions, because as of P07.S03
+	// it carries a claim nothing else in the tree can make: that a second launch
+	// hands its document to the running instance on the platform where double-click
+	// is the ordinary way in. A harness that quietly stopped existing would take
+	// that claim with it and no tier would notice.
+	for _, cmd := range []string{"build/jsdomtest.sh", "build/uirepro.sh", "build/winrepro.sh"} {
 		info, err := os.Stat(cmd)
 		if err != nil {
 			t.Errorf("%s is named in the contract but does not exist: %v", cmd, err)

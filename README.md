@@ -690,14 +690,19 @@ behind a per-user key that only Windows itself may write. Right-click a PDF →
 **Open with** → **Choose another app** → **Nib**, and tick *Always use this app*
 if you want it to stick.
 
-Opening several PDFs from Explorer gives you a window each. That differs from
-the Linux desktop entry, which passes `--replace` and reuses one window; the
-process-replacement that relies on is Linux-only.
+Opening several PDFs — from Explorer, from a Linux file manager, or from the
+command line — gives you **one Nib holding them all**, a tab each. The second
+launch finds the running one, hands it the path, and exits; if Nib is locked at
+the time, the document opens as soon as you unlock. This works the same on every
+platform. It used to be Linux-only and it worked by killing the running process
+and taking its place, which meant a second double-click could take an unsaved
+document down with it.
 
 Windows behaviour can be checked without a Windows machine: `./build/winrepro.sh`
 builds `nib.exe`, runs it headless under [wine](https://www.winehq.org/) in a
 throwaway prefix, and drives the same HTTP calls the UI makes — drive
-enumeration, `~\` expansion, unreadable-folder reporting, save containment. The
+enumeration, `~\` expansion, unreadable-folder reporting, save containment, and
+a genuine second launch handing its document to the first. The
 places `path/filepath` answers differently on Windows are exactly the ones a
 Linux test suite can't reach. It skips cleanly when wine isn't installed.
 

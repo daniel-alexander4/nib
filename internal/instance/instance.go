@@ -6,11 +6,12 @@
 // to knock on and no name to look up. Everything P07 does rests on the record this
 // package writes.
 //
-// **It replaces a Linux-only mechanism rather than extending one.** `internal/singleton`
-// finds siblings by walking `/proc` and comparing `exe` symlinks, and its non-Linux build
-// is `func ReplaceOthers() int { return 0 }` — so on Windows, where `nib register` makes
-// double-click the ordinary path, nothing has ever handled a second launch. A file plus a
-// port works the same everywhere, which is the point.
+// **It replaced a Linux-only mechanism rather than extending one.** `internal/singleton`
+// (deleted in P07.S03) found siblings by walking `/proc` and comparing `exe` symlinks,
+// SIGTERMed them, and its non-Linux build was `func ReplaceOthers() int { return 0 }` —
+// so on Windows, where `nib register` makes double-click the ordinary path, nothing had
+// ever handled a second launch. A file plus a port works the same everywhere, which is
+// the point, and it hands the document over instead of killing the process holding it.
 package instance
 
 import (

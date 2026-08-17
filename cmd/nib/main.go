@@ -57,11 +57,17 @@ func run() int {
 		return code
 	}
 
-	// --replace is accepted and IGNORED (P07.S02), and it is kept only because a
-	// desktop entry installed by an older package still passes it. Retiring the flag
-	// outright would make those launches fail to parse; retiring the BEHAVIOUR is the
-	// point, and that is done — a launch no longer SIGTERMs its siblings, it hands off
-	// to them. `singleton.ReplaceOthers` and this flag go together in P07.S03.
+	// --replace is accepted and IGNORED, permanently.
+	//
+	// **Not a step on the way to removing it.** An older installed desktop entry still
+	// passes `--replace`, and Go's flag package exits non-zero on an unknown flag — so
+	// deleting this turns a stale `.desktop` into a launch that fails outright, with an
+	// error the user never sees because a double-click has no terminal. The BEHAVIOUR is
+	// what was retired (P07.S02/S03): a launch hands off to its siblings instead of
+	// SIGTERMing them, and `internal/singleton`, which did the killing, is gone.
+	//
+	// Guarded by TestReplaceIsAcceptedAndHarmless, which is the only thing standing
+	// between "this comment" and someone tidying the flag away.
 	replace := flag.Bool("replace", false, "accepted and ignored; superseded by hand-off (P07)")
 	flag.Parse()
 	log.Printf("Nib %s", version)
@@ -180,11 +186,17 @@ func run() int {
 	// **SIGTERM as well as SIGINT, and that is not tidiness.** This process publishes an
 	// instance record and removes it on the way out, and an unhandled SIGTERM kills it
 	// without running a single deferred function — so the record outlives the instance.
-	// The signal is not hypothetical: `build/nib.desktop` passes `--replace` on every
-	// activation and `singleton.ReplaceOthers` sends exactly SIGTERM, so before this
-	// line every desktop double-click left a stale record behind, pointing at a dead
-	// process, while the launch that killed it found ErrExists and published nothing.
-	// Found by P07's plan review, at the line.
+	// **The reason has outlived the case that found it, and that is the point.** P07's
+	// plan review found it in a caller that no longer exists: `build/nib.desktop` passed
+	// `--replace` on every activation and `singleton.ReplaceOthers` sent exactly SIGTERM,
+	// so every desktop double-click left a stale record pointing at a dead process while
+	// the launch that killed it found ErrExists and published nothing. S02 dropped the
+	// flag from the desktop entry and S03 deleted the package, so that particular sender
+	// is gone — and SIGTERM is still what a session logout, a `systemctl stop`, a
+	// container stop and a plain `kill` all send. Stated this way round because the
+	// obvious tidy-up after deleting `singleton` is to conclude nothing sends SIGTERM
+	// any more and trim this line, which quietly restores the stale-record bug for every
+	// user who logs out instead of closing the window.
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	code := 0
