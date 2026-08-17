@@ -39,6 +39,15 @@ func Attachments(pdf []byte) ([]AttachmentInfo, error) {
 		if name == "" {
 			name = a.ID // the add path keys the name tree on ID; FileName mirrors it
 		}
+		// Through attachmentName, like every other name path in this file. This one
+		// was raw, and it is the one the user sees and acts on: server/attachments.go
+		// hands the listed name to sendDownload, which puts it in a
+		// Content-Disposition filename — and the name comes from an untrusted PDF.
+		// attachmentName exists precisely because "any downstream disk write must
+		// never see a dot-path"; the guard was simply not applied here.
+		if clean := attachmentName(name); clean != "" {
+			name = clean
+		}
 		out = append(out, AttachmentInfo{Name: name, Desc: a.Desc})
 	}
 	// The same RVO context that populated the name tree exposes the page tree, so

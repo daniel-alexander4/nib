@@ -1831,11 +1831,12 @@ async function setDocumentFromServer(meta, target = view) {
 // closeDocument puts the open document down and returns the app to exactly the
 // state it launches in — the client half of POST /api/close (v1.102.6).
 //
-// It has NO caller yet, deliberately: P01.S04 adds the Close control in the File
-// toolbar and the unsaved-work confirm that guards it, and that is what makes
-// this live. Until then the teardown is complete but unreachable from the UI,
-// which is also why its behaviour is verified through the open path (which shares
-// resetSharedDocState) rather than by driving a Close.
+// Its caller is requestClose, which is bound to els.closeBtn and runs the
+// unsaved-work confirm first. (This comment used to say it had NO caller "yet" and
+// that its behaviour was therefore verified through the open path rather than by
+// driving a Close — every clause of which became false when P01.S04 landed the
+// control, and a reader trusting it would not go looking for the close-all
+// behaviour that makes editedViews necessary.)
 //
 // Order is load-bearing in two places. view.pdfDocument is nulled FIRST, before
 // anything that can throw, so a failure part-way through cannot leave a

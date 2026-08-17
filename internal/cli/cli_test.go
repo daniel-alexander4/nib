@@ -1093,3 +1093,97 @@ func TestTimestampDoesNotClobberAnExistingProof(t *testing.T) {
 		}
 	})
 }
+
+// TestWriteAtomicFollowsASymlink pins the in-place rewrite against a link.
+//
+// os.Stat follows a symlink to read the mode, but CreateTemp+Rename replaces the
+// LINK — so `nib optimize -w link.pdf` used to destroy the link, leave the real file
+// untouched, and write the output into the link's directory. A watch directory of
+// symlinks into a document tree is the case that makes this ordinary rather than
+// exotic.
+func TestWriteAtomicFollowsASymlink(t *testing.T) {
+	dir := t.TempDir()
+	real := filepath.Join(dir, "real.pdf")
+	link := filepath.Join(dir, "link.pdf")
+	if err := os.WriteFile(real, []byte("ORIGINAL"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(real, link); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+
+	if err := writeAtomic(link, []byte("REWRITTEN")); err != nil {
+		t.Fatal(err)
+	}
+
+	// The link must still be a link...
+	fi, err := os.Lstat(link)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fi.Mode()&os.ModeSymlink == 0 {
+		t.Error("the symlink was replaced by a regular file — the link is gone and the real file was not updated")
+	}
+	// ...and the REAL file must carry the new bytes.
+	got, err := os.ReadFile(real)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != "REWRITTEN" {
+		t.Errorf("the target was not rewritten: %q", got)
+	}
+}
+
+// TestWatchIgnoresFilesAlreadyPresent pins what `nib watch` has always claimed to
+// do — "each PDF ADDED to it" (watch.go), "each new PDF" (the command table),
+// "dropped into DIR" (README) — and did not.
+//
+// scanOnce walks every settled .pdf in the directory, so pointing
+// `nib watch ~/Documents --do sanitize` at an existing folder rewrote every PDF
+// already in it, in place. This drives scanOnce directly with the baseline
+// watchLoop now takes, rather than starting the daemon.
+func TestWatchIgnoresFilesAlreadyPresent(t *testing.T) {
+	dir := t.TempDir()
+	existing := filepath.Join(dir, "already-here.pdf")
+	if err := os.WriteFile(existing, []byte("%PDF-1.7\nOLD"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	var acted []string
+	act := func(path string) (string, error) {
+		acted = append(acted, filepath.Base(path))
+		return "acted", nil
+	}
+
+	seen := map[string]fileState{}
+	processed := map[string]bool{}
+	failed := map[string]fileState{}
+
+	// The baseline watchLoop takes before its first scan.
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range entries {
+		processed[filepath.Join(dir, e.Name())] = true
+	}
+
+	// Two scans: a file must settle (size+mtime unchanged) before it is acted on.
+	scanOnce(dir, seen, processed, failed, act)
+	scanOnce(dir, seen, processed, failed, act)
+	if len(acted) != 0 {
+		t.Errorf("a pre-existing file was processed: %v — the watch rewrote a file the user never dropped in", acted)
+	}
+
+	// The positive control: a file that ARRIVES must still be acted on, or a watch
+	// that ignored everything would pass the assertion above.
+	arrived := filepath.Join(dir, "dropped-in.pdf")
+	if err := os.WriteFile(arrived, []byte("%PDF-1.7\nNEW"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	scanOnce(dir, seen, processed, failed, act)
+	scanOnce(dir, seen, processed, failed, act)
+	if len(acted) != 1 || acted[0] != "dropped-in.pdf" {
+		t.Errorf("a newly-arrived file was not processed: acted = %v", acted)
+	}
+}

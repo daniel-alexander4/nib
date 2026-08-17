@@ -116,3 +116,40 @@ func TestColName(t *testing.T) {
 		}
 	}
 }
+
+// TestGridToCSVNeutralizesFormulas pins the one output format here that carries no
+// type information. The grid is table text extracted from an untrusted PDF, so a
+// cell beginning = + - @ becomes a live formula when the file is opened in Excel or
+// LibreOffice. XLSX and ODS are inert by construction (t="inlineStr",
+// office:value-type="string"); CSV was not.
+func TestGridToCSVNeutralizesFormulas(t *testing.T) {
+	out, err := GridToCSV([][]string{
+		{"=HYPERLINK(\"http://evil\",\"click\")", "+1+1", "-2+3", "@SUM(A1)"},
+		{"\t=cmd|' /c calc'!A0", "ordinary", "-", "12.50"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := string(out)
+
+	// Every formula trigger must be quoted out. Asserted per cell rather than by
+	// scanning for "=" anywhere: a value may legitimately contain one.
+	for _, dangerous := range []string{"=HYPERLINK", "+1+1", "-2+3", "@SUM(A1)", "=cmd|"} {
+		idx := strings.Index(got, dangerous)
+		if idx < 1 {
+			t.Fatalf("%q not found in output (or at position 0): %q", dangerous, got)
+		}
+		if got[idx-1] != '\'' {
+			t.Errorf("cell %q is not neutralized — it would execute on open; output: %q", dangerous, got)
+		}
+	}
+
+	// The positive control: ordinary values must survive untouched, or a guard that
+	// prefixed everything would pass every assertion above.
+	if !strings.Contains(got, "ordinary") || strings.Contains(got, "'ordinary") {
+		t.Errorf("an ordinary cell was altered: %q", got)
+	}
+	if !strings.Contains(got, "12.50") || strings.Contains(got, "'12.50") {
+		t.Errorf("a numeric cell was altered: %q", got)
+	}
+}

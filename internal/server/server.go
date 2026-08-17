@@ -385,8 +385,17 @@ func (s *Server) handleClose(w http.ResponseWriter, r *http.Request) {
 	}
 	s.setDoc(nil)
 	// The zero response, built from a nil document rather than from "nothing is
-	// active": after S05 a close leaves the OTHER documents open, and re-resolving
-	// active here would describe a document the user did not just close.
+	// active".
+	//
+	// NOT because other documents stay open — they do not. setDoc(nil) clears the
+	// whole registry, so a close is a CLOSE ALL, matching the client's own
+	// closeDocument ("Close is CLOSE ALL"). This comment used to assert the
+	// opposite in so many words, positioned exactly where a reader would look for
+	// the guarantee. Per-document close is P06's, with the tab strip.
+	//
+	// The reason the response is built from nil is narrower: re-resolving "active"
+	// after a close would describe whatever the registry answers next, which is not
+	// the document the user just closed.
 	writeJSON(w, s.docResponse(nil))
 }
 
