@@ -656,6 +656,29 @@ body > div[id$="Modal"] {
   overflow: hidden;
   text-overflow: ellipsis;
 }
+/* The per-tab close. --text, not a muted token, for the reason measured on the label
+   above: both muted tokens are under AA in the light theme. It is a hit target as much
+   as a glyph, so it carries its own padding and radius rather than relying on the ×. */
+#tabstrip .tabclose {
+  flex: none;
+  border: none;
+  padding: 0;
+  background: transparent;
+  font: inherit;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  border-radius: 4px;
+  color: var(--text);
+  opacity: 0.65;
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+}
+#tabstrip .tabclose:hover { background: var(--surface1); opacity: 1; }
+#tabstrip .tabclose:focus-visible { outline: 2px solid var(--blue); outline-offset: 1px; opacity: 1; }
 /* signing call-to-action: a floating bar at the top of the viewer when the open
    document carries flags to fill (Start -> Next field -> Save signed document). */
 #signBanner {

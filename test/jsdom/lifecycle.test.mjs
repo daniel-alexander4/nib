@@ -37,8 +37,18 @@ async function openDocument({ numPages = 3, outline = null } = {}) {
   await settle();
 }
 
+// Close ALL, which is what every test in this file means: each asserts the LAUNCH
+// state, and the launch state is what you get when nothing is open.
+//
+// Before P06.S01 an Open replaced, so exactly one document was open however many tests
+// had run and #closeBtn was close-all by definition. Views now accumulate across the
+// tests in this file, so the control that returns the app to launch is #closeAllBtn
+// once it is showing. Pointed at explicitly rather than left to #closeBtn, whose
+// meaning now depends on how many documents happen to be open — which would make these
+// tests pass or fail on their position in the file.
 async function closeDocument() {
-  document.getElementById('closeBtn').click();
+  const all = document.getElementById('closeAllBtn');
+  (all && !all.hidden ? all : document.getElementById('closeBtn')).click();
   await settle();
 }
 
