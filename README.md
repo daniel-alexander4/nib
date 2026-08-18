@@ -673,6 +673,12 @@ later from the **⚙ menu → Manage authorized keys…**.
 Builds Nib for your machine, packages a `.deb`, installs it, and adds **Nib** to
 your applications menu (under Office). Run it again any time to upgrade in place.
 
+The package **recommends** a Chromium-family browser (or `xdg-utils` and any
+browser registered as the handler), because that is how Nib shows its UI — it has
+no window of its own. `apt` installs recommends by default, so this only matters
+if you install with `--no-install-recommends` on a machine with no browser at all:
+Nib will start, bind its loopback port, and have nothing to display itself in.
+
 ### Other platforms
 ```sh
 ./build.sh
