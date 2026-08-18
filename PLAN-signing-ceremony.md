@@ -18,6 +18,11 @@ both Dan's calls: D16's deadline superseded with backoff, candidate-expiry and
 mapping-refresh consequences adopted alongside it; D17's roles chosen pre-connection
 with a conflict stopping the ceremony for a retry rather than resolving itself.
 Stage 2 still has not run).
+Reviewed 2026-08-17 (**plan-review pass** — structural gate passed; 13 findings, all
+dispositioned **adopt**: 3 critical (the verification string's grindability, the
+rendezvous key's authentication and blast radius, and caveat 7 binding in a gate that did
+not enforce it), 7 warnings, 3 info. Pins written below at D4, D6, D12, D16, D1, caveats
+4 and 7, and P01–P06. No decision was struck or rewritten. Stage 2 still has not run.)
 SME packs: **crypto (core tier)** — `go.mod` declares `filippo.io/age`,
 `golang.org/x/crypto`, `edwards25519`, `hpke`, `go-pkcs12`, `digitorus/pdfsign`
 (inferred, trigger 1); the consensus tier does not fire — two sequential
@@ -29,10 +34,19 @@ by the sibling plan in this repo (`PLAN.md:17`), corroborated by
 **Where this plan and the original brief differ, the plan wins.**
 
 **Sibling plan:** this repo currently carries a second, unrelated feature plan —
-`PLAN.md`, "Multiple open documents in Nib", in flight with P01.S01 shipped at
-v1.102.4. The two are independent and neither supersedes the other. `/createcode`
-must be told which plan it is walking. This split is deliberate (D1) and ends when
-one of the two retires into CLAUDE.md + ADRs per STANDARDS §15.6.
+`PLAN.md`, "Multiple open documents in Nib". The two are independent and neither
+supersedes the other. `/createcode` must be told which plan it is walking. This split is
+deliberate (D1) and ends when one of the two retires into CLAUDE.md + ADRs per
+STANDARDS §15.6.
+
+**(plan-review pin: the split's end-condition has fired, 2026-08-17.)** This paragraph
+read "in flight with P01.S01 shipped at v1.102.4" — stale. **`PLAN.md` closed 2026-08-17
+at v1.108.4**: all seven phases, P07's ledger 6 met / 0 not met / 0 not exercised. So the
+condition named in the sentence above is now **met for `PLAN.md`**, and its retirement into
+CLAUDE.md + ADRs is *owed work, not a hypothetical* — recorded here because a trigger that
+fires with nobody watching is indistinguishable from one that never fired. **What
+discharges this specifically:** `PLAN.md` retired per STANDARDS §15.6 and this paragraph
+reduced to naming this plan alone — not merely correcting the version number above.
 
 This plan covers **one feature project inside the existing `nib` repo**: replacing
 the current **Collaboration** process with a **Signing Ceremony** — two people who
@@ -132,6 +146,40 @@ the verification strings on the two screens derive from different inputs and can
 match. The spoken comparison catches precisely the attack the shortened name opens.
 Skippable confirmation would leave the pin silently at 66 bits, which L2 forbids.
 
+**(plan-review pin: the verification string is a 2²² target, not a 2⁴⁴ one — 2026-08-17,
+adopted by Dan.)** The paragraph above says a man-in-the-middle "must run two separate
+handshakes, so the verification strings … cannot match." **They can be made to match.**
+Four words from a 2048-word list is **44 bits**, and the string derives from "both identity
+keys plus the handshake transcript" — the identity keys are pinned, **the transcript is
+not**. A MITM chooses its own ephemeral contribution on each leg *after* seeing that
+victim's, so it can enumerate candidates on the A-leg, enumerate on the B-leg, and search
+for a collision **between the two sets**. That is a birthday problem over 44 bits:
+**~2²² cheap operations — seconds on one machine**, inside the window where two people are
+still saying hello. This is the textbook short-authentication-string failure, and ZRTP and
+PGPfone both carry a commitment step for exactly this reason.
+
+*The consequence for this decision's central claim:* **the composed strength is 66 bits,
+not 66 + 44.** An adversary who has paid 2⁶⁶ to grind a matching key gets the spoken check
+for free. Caveat 5's conditional — "if the verification step is ever weakened, this number
+becomes the whole security of the pairing" — is therefore **already true, unweakened**.
+
+*What is required:* the string must be derived only over **committed** values. Each side
+sends `H(nonce ‖ contribution)` before either reveals its contribution, and the string is
+computed over revealed values checked against those commitments; a peer that reveals after
+receiving is rejected before any string exists. With the commitment the attacker must
+*guess* (2⁻⁴⁴ per attempt, and a wrong guess is seen by two humans); without it, it
+searches.
+
+**What discharges this specifically:** the new P01.S04 acceptance bullet driving an
+out-of-order reveal — **not** the three bullets already there, every one of which
+(identical words per session, different words across sessions, different words under
+identity substitution) is satisfied by the grindable design. That is why this pin adds a
+criterion rather than conjoining a clause to an existing one.
+
+*Owed, and Dan's to make, not this pass's:* the mechanism paragraph above is now wrong as
+written and wants amending through `/discuss` — a plan-review pass marks the spot and never
+rewrites a decision.
+
 ### D5 — The name does not rotate *(settled 2026-08-15 via /discuss, auto-adopted)*
 
 One name per identity, stable for the life of the key.
@@ -157,6 +205,44 @@ It must be designed in, not left to a library default.
 *Alternatives rejected:* DNS cache-timing (anycast resolvers mean the two parties
 may read different caches — a silent failure); Bitcoin `addr` gossip (propagation in
 hours, far too slow for a live ceremony).
+
+**(plan-review pin: the record is public, permanent and unauthenticated — 2026-08-17,
+adopted by Dan.)** This decision, **D5** (names never rotate) and **D8/D16/D17** (both
+sides dial everything published, at 250 ms for 30 s then 1 s, against a 300 s deadline)
+compose into a defect none of them contains alone. Names are the *public* pairing
+identifier — saying yours aloud is the feature — so the rendezvous key is computable by
+anyone who learns both, and it is **the same key forever**.
+
+- **Nib becomes a packet cannon someone else aims.** A third party who knows both names
+  publishes arbitrary `IP:port` candidates and both Nibs punch at them: ~390 packets per
+  candidate per side over the deadline, from two hosts, with **no cap on candidate count
+  anywhere in this plan**. **L1 does not cover this** — it guarantees a lying rendezvous
+  can never substitute a *signer*, and says nothing about the rendezvous making Nib emit
+  traffic at a victim. D16's backoff bounds the rate; nothing bounds N.
+- **A permanent correlation handle.** A stable key under a public DHT tells anyone who
+  knows two names every time those two people sign, and both their IP addresses. D17
+  already refuses to publish the ceremony *role* because it would "add metadata to exactly
+  the surface the plan is already watching"; that reasoning is right and is simply not
+  applied to the endpoints themselves.
+
+*Both halves are adopted.* **(i) The published record is encrypted** under a key derived
+from both names — free, since both sides know both names by construction, and it takes the
+record from readable-and-writable by any DHT scraper to readable-and-writable only by
+someone who already holds both names. **(ii) Candidate count and total punch budget are
+capped as law** — see the D16 pin — because someone who *does* know both names can still
+publish, and confidentiality alone does not bound emission.
+
+*Rejected:* signing the record with the identity key. The counterparty holds only 66 bits
+of the fingerprint from the name, not the public key, so there is nothing to verify against
+until after a handshake — chicken-and-egg. Also rejected: a per-ceremony key from a shared
+secret, there being no shared secret before the ceremony, which is the problem the DHT
+exists to solve.
+
+**What discharges this specifically:** P04's new third-party-flood criterion, driven by
+publishing N+50 candidates. **Not** the existing "a hostile or absent DHT degrades to the
+next tier without ever affecting which peer is accepted" — a hostile DHT that floods a
+bystander satisfies that bullet completely, because nothing about which peer is accepted
+changed.
 
 ### D7 — The session transport ~~moves from TCP to QUIC~~ **gains QUIC alongside TCP (2026-08-16, D14)** *(settled 2026-08-15 via /discuss, auto-adopted; amended 2026-08-16)*
 
@@ -289,6 +375,15 @@ and verification design. Named here as a phase gate, not a footnote.
 *Why:* this changes an authentication surface on a product whose output has legal
 weight, and the planning playbook asks for external gates to be named at Stage 1.
 
+**(plan-review pin: a gate named in no phase is not a gate — 2026-08-17, adopted by Dan.)**
+This decision says "named here as a phase gate, not a footnote", and then no phase's exit
+criteria mention it — including P06's. Adopted with a change of *placement*: the review
+happens **twice**, and the first is the one that matters. The pairing and verification
+design is settled in **P01**, and P02–P06 stack on it; a reviewer meeting it for the first
+time at P06 finds it five phases deep. **C1 is the evidence** — a 2²² grindable SAS,
+invisible to every acceptance bullet P01.S04 already carried, is exactly what an outside
+crypto reader is for. Both P01 and P06 gain the gate as their own exit criterion.
+
 ### D13 — The UI surface is renamed Collaborate → Signing Ceremony *(settled 2026-08-15 — Dan's instruction)*
 
 The mode tab (`web/index.html:30`) and the role-picker flow (`:257`) are renamed and
@@ -416,6 +511,20 @@ blank spinner, and the user can abandon at any point — the deadline bounds the
 - **The port mapping must be refreshed, not merely short-leased.** D15's lease is
   shorter than 300 s by design, so refresh-while-armed moves from incidental to
   load-bearing: without it the mapping dies during its own tier's race.
+
+**(plan-review pin: the race needs a size bound, not only a rate bound — 2026-08-17,
+adopted by Dan.)** The backoff above bounds *how fast* the race emits and nothing bounds
+*how much*: candidate count is unbounded, and under the D6 pin an attacker supplies the
+candidates. Two figures join the constant block above and are **law, not tunable** — the
+distinction the table's own preamble draws: a **maximum number of distinct candidates per
+ceremony**, and a **global packet ceiling for the whole race**. Exceeding either drops the
+excess and reports it rather than failing the ceremony.
+
+**(plan-review pin: nothing asserts the clocks are independent — 2026-08-17, adopted by
+Dan.)** The paragraph below warns that "neither clock may be implemented in terms of the
+other", and no criterion in any phase observes it. **What discharges this specifically:** a
+guard that lets the connect deadline elapse in full and then shows the exchange budget
+undiminished — not the presence of two constants in the source.
 
 *Not to be confused with the existing session clocks.* `exchangeDeadline`
 (`internal/p2p/session.go:29`, 6 minutes) budgets an *established* session — handshake,
@@ -566,7 +675,8 @@ shortened name without the spoken check would be the silent downgrade L2 forbids
 Connectivity is untouched; this phase still runs over the manual address.
 
 Exit criteria:
-- A user never sees a hex fingerprint in the normal pairing path, and never types one.
+- A user never sees a hex fingerprint in the normal pairing path, and never types one — **settled 2026-08-17 (plan-review, W7): "normal pairing path" means the default pairing screen; hex is reachable only behind the advanced disclosure, never merely de-emphasised in place.** P01.S02's "hex moves to a secondary position" admitted a second reading in which hex is still on screen, and two builders would each have cited the plan.
+- **An outside cryptographic reviewer has read the pairing and verification design, including the commitment step, before P02 opens. (added 2026-08-17, plan-review, D12 pin — the first of D12's two gates.)**
 - A ceremony cannot reach the signing exchange until both sides confirm the verification string.
 - Peers pinned by hex before this phase still work (D10), proven by a test that pins the old way and connects the new way.
 - The name↔fingerprint encoding round-trips on a fixed vector corpus.
@@ -577,6 +687,7 @@ Acceptance:
 - Round-trip holds for a corpus of fixed vectors, including all-zero and all-ones fingerprints.
 - Decoding rejects a wrong-length phrase, an out-of-list word, and a transposition, each with a distinct error.
 - The wordlist's licence is recorded in THIRD-PARTY-NOTICES.md if it carries one.
+- **The wordlist is frozen: a checksum over the list file is asserted by a test, and changing any word fails it. (added 2026-08-17, plan-review, caveat 4 pin.)** The fixed-vector corpus above cannot serve — it is computed from the list and moves with it.
 Tasks: *(written at slice-grill time)*
 
 #### P01.S02 — Show the user their own name
@@ -599,6 +710,7 @@ Acceptance:
 - Both endpoints of one session derive identical words.
 - Two sessions between the same pair derive different words.
 - A test that substitutes a different peer identity produces different words on the two sides — the man-in-the-middle case, driven rather than asserted.
+- **The string is derived only over committed values, and a peer that reveals its contribution after receiving the other's is rejected before any string is derived — driven by a harness that replays the exchange out of order. (added 2026-08-17, plan-review C1, D4 pin.)** The three bullets above are all satisfied by a design a man-in-the-middle can birthday-grind at ~2²²; this one is the only clause that can see it.
 Tasks: *(written at slice-grill time)*
 
 #### P01.S05 — Make it mandatory
@@ -613,7 +725,8 @@ Tasks: *(written at slice-grill time)*
 ### P02 — QUIC session transport **(TCP retained beside it — amended 2026-08-16, D14)**
 Goal: ~~re-base `Dial`/`Listen` onto QUIC~~ **give the session a QUIC path beside its existing TCP one (2026-08-16)**, with `SessionTLS()` reused unchanged, still over the manual address, so the transport change is proven in isolation before any discovery depends on it.
 Exit criteria:
-- A full ceremony completes over QUIC between two machines using the manual address.
+- A full ceremony completes over QUIC between two machines using the manual address. **(Dan-only run — added 2026-08-17, plan-review W4: this repo's three test tiers are single-host, and `pending.md` already carries "VERIFY: Two-machine live co-sign over Tailscale" as the standing acknowledgement. Marked here rather than rediscovered at the phase gate.)**
+- **The selected QUIC library accepts an externally-supplied `net.PacketConn` and completes a ceremony over it — proven by a spike that binds the socket first and hands it in, not by reading the library's documentation. (added 2026-08-17, plan-review C3, caveat 7.)** Without this, tiers 3 and 4 cannot be built on the library P02 chooses, and P02 is redone. Pairs naturally with caveat 1's `VerifyPeerCertificate` spike — one spike answers both.
 - **A full ceremony still completes over TCP between the same two machines, after the QUIC path exists. (added 2026-08-16, D14)**
 - The pinned-peer callback demonstrably rejects a non-pinned peer under QUIC, driven red.
 - ~~`Initiate`, `Receive` and `coSignExchange` are unchanged.~~ **`coSignExchange` is unchanged; `Initiate`, `Receive`, `SendDocument` and `ReceiveDocument` are re-typed off `*tls.Conn` to a stream plus an already-verified fingerprint, and one set of session-logic tests runs green over both transports. (superseded 2026-08-16 — the original criterion was unmeetable: those four are typed to `*tls.Conn` today, see the D7 pin.)**
@@ -625,27 +738,32 @@ Goal: two Nibs on the same network find each other with no address typed and no 
 Exit criteria:
 - A ceremony completes on a LAN with no address entered anywhere and no outbound internet traffic.
 - Discovery announces the name's public bits only — never anything that could influence which peer is accepted (L1).
-- Behaviour on Windows is verified on Windows, not inferred.
+- Behaviour on Windows is verified on Windows, not inferred — **on real Windows, as a Dan-only run (added 2026-08-17, plan-review W3).** `build/winrepro.sh` runs `nib.exe` under **wine**, which was defensible for `path/filepath` behaviour at the sibling plan's P07 and is not defensible here: wine models neither multicast nor interface enumeration. A green `winrepro` may not discharge this bullet.
 
 Slices *(sketch)*: multicast announce/browse; resolving a discovered peer to a candidate; the L1 guard; the Windows pass.
 
 ### P04 — Endpoint exchange over the DHT
-Goal: the two sides learn each other's public endpoints, and their own, with no server.
+Goal: the two sides learn each other's public endpoints, and their own, with no server. **(plan-review note, 2026-08-17, I1 — the framing still understates the blast radius, as D8's own correction records: the DHT is the signalling channel for tiers 2, 3 **and** 4, so an unreachable DHT collapses three tiers at once and leaves only LAN and manual. Carried as a Stage 2 grill target; recorded here so the next pass does not re-derive it.)**
 Exit criteria:
 - Each side learns its own public `IP:port` and its NAT class from DHT responses alone.
 - A published endpoint is retrievable by the peer computing the same key from the two names.
 - Bootstrap works from a cached node list with no hostname resolution (D6).
 - A hostile or absent DHT degrades to the next tier without ever affecting which peer is accepted (L1).
+- **The published record is encrypted under a key derived from both names: a DHT scraper holding neither name sees opaque bytes and can neither read nor forge a candidate. (added 2026-08-17, plan-review C2, D6 pin.)**
+- **A record published by a party who knows both names but holds neither identity key yields no more than N candidates; the N+1th is dropped and reported — driven by publishing N+50. (added 2026-08-17, plan-review C2.)** The bullet above it cannot see this: a hostile DHT that floods a bystander never affects which peer is accepted, and so satisfies it completely.
+- **The DHT library shares the session's local socket rather than opening its own, proven by a spike. (added 2026-08-17, plan-review C3, caveat 7.)** A self-address probe on a different socket measures a mapping the session will never use.
 
 Slices *(sketch)*: library selection and cached bootstrap; self-address probe and NAT classification; the derived rendezvous key; publish/fetch with expiry; the L1 guard.
 
 ### P05 — The ladder
 Goal: tiers 2, **3** and ~~3~~ **4** exist **(renumbered 2026-08-16, D8)**, all tiers race concurrently, and the manual path is demoted.
 Exit criteria:
-- IPv6-to-IPv6 completes with neither side forwarding a port.
-- IPv4-to-IPv4 completes through at least one endpoint-independent NAT.
+- IPv6-to-IPv6 completes with neither side forwarding a port. **(Dan-only run — plan-review W4, 2026-08-17.)**
+- IPv4-to-IPv4 completes through at least one endpoint-independent NAT. **(Dan-only run — plan-review W4, 2026-08-17.)**
 - **A ceremony completes with both ends behind endpoint-*dependent* NAT when exactly one side obtains a port mapping — the case tier 4 cannot serve. (added 2026-08-16, D15)**
-- **A mapping is never held while no ceremony is armed, and is gone from the router after teardown, cancel and crash alike — driven, not asserted. (added 2026-08-16, D15)**
+- **A mapping is never held while no ceremony is armed, and is explicitly deleted from the router on teardown and on cancel — driven, not asserted. (added 2026-08-16, D15; split 2026-08-17, plan-review W1)**
+- **After SIGKILL the mapping is absent from the router within one lease period — driven by killing the process and polling. (added 2026-08-17, plan-review W1.)** The original bullet said "gone … after teardown, cancel and crash alike", which is unmeetable as written: a crashed process deletes nothing, and D15's actual mechanism for that case is lease expiry. One sentence covering all three let a builder satisfy two and call it done.
+- **When the two DHT observations caveat 9 depends on do not arrive, cause 3 degrades to cause 4 and that is the expected outcome, not a defect. (added 2026-08-17, plan-review I2.)** Stated as acceptance because it will otherwise read as a bug to whoever first tests it.
 - **Every tier that ends in a dialable address completes over TCP as well as QUIC, proven with UDP blocked. (added 2026-08-16, D14)**
 - All tiers are attempted concurrently; the first to complete is used and the rest are cancelled.
 - **A candidate arriving late joins the race in flight; no tier waits on another tier's gathering. (added 2026-08-16, D16)**
@@ -667,6 +785,7 @@ Exit criteria:
 - **While a ceremony is armed, the screen discloses that a temporary router opening was requested and names the port; when no mapping was obtained it says so rather than staying silent. (added 2026-08-16, D15)**
 - The advanced fallback is reachable but never on the default path.
 - Documentation and README updated in the same phase (STANDARDS docs-parity).
+- **The outside cryptographic review of D12 has been completed against the shipped design and its findings dispositioned — the second of D12's two gates, the first being at P01. (added 2026-08-17, plan-review W2.)** D12 called itself a phase gate and named no phase; this is that phase.
 
 Slices *(sketch)*: the renamed tab and flow; the connect-and-confirm screen; failure surfaces; docs and README.
 
@@ -690,10 +809,10 @@ re-verified.
 1. **The QUIC library invokes `VerifyPeerCertificate` exactly as `crypto/tls` does**, with `InsecureSkipVerify` set and `RequireAnyClientCert` honoured. The entire pinned-peer model rides on it. If false, D7 needs rework, not adjustment.
 2. **DHT responses carry the requester's port, not only its IP.** P04's self-address probe depends on it; without the port, IPv4 punching loses its input.
 3. **Multicast discovery behaves on Windows** as it does on Linux. Recent releases show Windows-specific paths needing their own handling (`v1.101.0`, `v1.102.1`).
-4. **A suitable wordlist exists with a licence compatible with AGPLv3 distribution**, and with phonetic distinctness good enough to read over a phone.
+4. **A suitable wordlist exists with a licence compatible with AGPLv3 distribution**, and with phonetic distinctness good enough to read over a phone. **(plan-review pin, 2026-08-17, adopted by Dan: the list must be FROZEN at first release.)** The name is an *encoding* of the fingerprint (D3) that never rotates (D5), so this list defines the meaning of every name ever spoken — and this caveat leaves selection open on *phonetic distinctness* grounds, which is precisely the reason someone later swaps a word. Do that and every user's name silently changes, and a name written on paper or read over a phone last year now decodes to a **different fingerprint**. Stored pins survive because they are bytes (D10, P01.S03); spoken ones do not. **What discharges this specifically:** P01.S01's checksum guard over the list file, failing on any change — not the fixed-vector corpus, which is computed *from* the list and therefore moves with it.
 5. **~66 bits is the intended floor** given D4's mandatory verification. If the verification step is ever weakened, this number becomes the whole security of the pairing.
 6. **A Go port-mapping library covering PCP, NAT-PMP and UPnP-IGD exists under a licence compatible with AGPLv3 distribution** (D15). If only some protocols are covered, the tier still ships — with narrower router coverage, recorded rather than assumed. *(added 2026-08-16)*
-7. **The mapped port, the DHT self-address probe and the live session must all be the same local socket.** A NAT mapping — learned or requested — is a function of the *internal* `IP:port`, so a mapping obtained on the DHT socket or on a throwaway socket is useless for a session that listens elsewhere, even under a perfectly endpoint-independent NAT. This constrains library selection in **both P02 and P04**: the QUIC library must accept an existing `net.PacketConn` and the DHT must be willing to share it. Load-bearing for tiers 3 and 4 alike, and not currently reflected in either phase's slice sketch. *(added 2026-08-16)*
+7. **The mapped port, the DHT self-address probe and the live session must all be the same local socket.** A NAT mapping — learned or requested — is a function of the *internal* `IP:port`, so a mapping obtained on the DHT socket or on a throwaway socket is useless for a session that listens elsewhere, even under a perfectly endpoint-independent NAT. This constrains library selection in **both P02 and P04**: the QUIC library must accept an existing `net.PacketConn` and the DHT must be willing to share it. Load-bearing for tiers 3 and 4 alike, and not currently reflected in either phase's slice sketch. *(added 2026-08-16)* **(plan-review pin, 2026-08-17, adopted by Dan: now reflected, and it had to be.)** This caveat identified the constraint, named the two phases it binds, and recorded that neither enforced it — and **P02 is the next phase built, with library selection as its first slice.** A QUIC library that owns its own socket passes every exit criterion P02 carried (a ceremony completes, the pinned callback rejects, the core is re-typed) and makes tiers 3 and 4 unbuildable three phases later. P02 and P04 now each carry a socket-sharing criterion of their own.
 8. **Carrier-side PCP deployment is not assumed.** RFC 6887 was specified with carrier-grade NAT in mind, but whether carriers actually answer PCP is unverified and, on present evidence, mostly no. The CGNAT case stays D9's until measured. *(added 2026-08-16)*
 9. **Two DHT observations are enough to separate the mapping classes, and the DHT will answer two distinct nodes within D16's probe budget.** D19's diagnosis rests on it; a two-server STUN check is the established form, but that the BitTorrent DHT's response pattern supplies the same two observations in ~8 s is unverified. If it does not, cause 3 degrades to cause 4 — a worse message, not a broken ladder. *(added 2026-08-16)*
 
