@@ -654,10 +654,16 @@ your vault. (Defaults to dark.)
 
 ### Run from source
 ```sh
-go build -o nib ./cmd/nib
+go build -ldflags "-X main.version=$(cat VERSION)" -o nib ./cmd/nib
 ./nib [file.pdf]
 ```
-The whole UI is embedded in the binary — nothing to fetch at runtime. Nib opens
+The whole UI is embedded in the binary — nothing to fetch at runtime.
+
+The `-ldflags` is what stamps the build with its version. Without it `main.version`
+keeps its compile-time default of `dev`, and the version pill then reports `dev`
+rather than the release it was built from — which this README used to promise it
+"always shows". `build.sh` and `install.sh` pass the same flag; this line is for
+building by hand. Nib opens
 its window in your installed Chrome / Edge / Brave / Chromium (app mode), or
 falls back to a normal browser tab.
 
@@ -798,14 +804,17 @@ nib sanitize -w *.pdf          # scrub a whole folder in place
 nib optimize in.pdf -o - | nib sanitize - -o out.pdf   # compose in a pipeline
 ```
 
-For `optimize`, `merge`, `sanitize`, `sign`, `rotate`, `pages`, `encrypt`, `decrypt`, `nup`, `pagenum`, `pagelabels`, and `fill` (JSON mode), a filename of `-` reads a PDF
-from stdin, and `-o -` writes the result to stdout (refused when stdout is a
-terminal), so the commands chain together.
+For `optimize`, `merge`, `sanitize`, `sign`, `rotate`, `pages`, `encrypt`,
+`decrypt`, `nup`, `normalize`, `pagenum`, `pagelabels`, `fill` (JSON or XFDF),
+and `export-xfdf`, a filename of `-` reads a PDF from stdin, and `-o -` writes
+the result to stdout (refused when stdout is a terminal), so the commands chain
+together.
 
-`optimize` and `sanitize` take `-w`/`--in-place` to rewrite each file given
-instead of writing a single `-o` output — the batch form for a folder. Each
-rewrite is atomic (written through a temp file and renamed over the original, so
-a failure never corrupts it) and preserves the file's permissions.
+`decrypt`, `encrypt`, `normalize`, `nup`, `optimize`, `pagelabels`, `pagenum`,
+`pages`, `rotate`, and `sanitize` take `-w`/`--in-place` to rewrite each file
+given instead of writing a single `-o` output — the batch form for a folder.
+Each rewrite is atomic (written through a temp file and renamed over the
+original, so a failure never corrupts it) and preserves the file's permissions.
 
 `nib sign` reads the certificate passphrase from `--password-file FILE`, the
 `NIB_P12_PASSWORD` environment variable, or — when run in a terminal with neither

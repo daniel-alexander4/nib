@@ -416,7 +416,16 @@ func eachPage(xt *model.XRefTable, root types.Dict, fn func(page types.Dict, nr 
 		return
 	}
 	nr := 0
-	seen := map[int]bool{}
+	// onPath, not a global seen-set. The set was there to stop a malformed tree recursing
+	// forever, and it did — but it also SKIPPED a page object referenced twice, so the
+	// numbering diverged from the viewer's: pdf.js walks the tree without deduplicating and
+	// shows two pages, while Scan counted one and reported every later finding a page early.
+	// On a security scan that sends the user to the wrong page to look at what was found.
+	//
+	// Scoped to the current path instead: a reference back to an ancestor is a cycle and is
+	// refused; the same object appearing twice in different places is a duplicate, is
+	// counted twice, and matches what the reader renders.
+	onPath := map[int]bool{}
 	var walk func(node types.Dict, depth int)
 	walk = func(node types.Dict, depth int) {
 		if node == nil || depth > 50 {
@@ -429,14 +438,18 @@ func eachPage(xt *model.XRefTable, root types.Dict, fn func(page types.Dict, nr 
 			return
 		}
 		for _, k := range kids {
+			n := -1
 			if ir, ok := k.(types.IndirectRef); ok {
-				n := ir.ObjectNumber.Value()
-				if seen[n] {
-					continue
+				n = ir.ObjectNumber.Value()
+				if onPath[n] {
+					continue // a cycle: this node is its own ancestor
 				}
-				seen[n] = true
+				onPath[n] = true
 			}
 			walk(derefDict(xt, k), depth+1)
+			if n >= 0 {
+				delete(onPath, n)
+			}
 		}
 	}
 	walk(pages, 0)
