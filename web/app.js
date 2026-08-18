@@ -122,7 +122,7 @@ const els = {
   createPath: $('createPath'), authWarn: $('authWarn'), armedPill: $('armedPill'),
   repointRow: $('repointRow'), repointPath: $('repointPath'),
   repointPw: $('repointPw'), repointGo: $('repointGo'),
-  introOverlay: $('introOverlay'), introGo: $('introGo'),
+  introBlock: $('introBlock'),
   authSubmit: $('authSubmit'), authError: $('authError'),
   addImageBtn: $('addImageBtn'), drawSigBtn: $('drawSigBtn'), addImageInput: $('addImageInput'),
   imageGrid: $('imageGrid'), saveForSigningBtn: $('saveForSigningBtn'),
@@ -349,18 +349,6 @@ els.keyChoice.addEventListener('change', syncKeyMode);
 
 // The first-run intro popup explains the SSH key before the wizard; it stays up
 // until the user clicks the backdrop (off the card).
-let introSeen = false;
-// dismissIntro is the ONE exit, so the button, the backdrop click and Escape cannot
-// drift apart — the overlay's whole defect was having exactly one of the three, expressed
-// as prose rather than as a control.
-function dismissIntro() {
-  els.introOverlay.hidden = true;
-  introSeen = true;
-}
-els.introGo.onclick = dismissIntro;
-els.introOverlay.addEventListener('click', (e) => {
-  if (e.target === els.introOverlay) { dismissIntro(); }
-});
 
 // applyStatus drives the UI from /api/status.
 function applyStatus(st) {
@@ -491,8 +479,12 @@ function applyStatus(st) {
   els.authForm.querySelector('input[value="create"]').checked = !haveCandidates;
   els.authSubmit.textContent = st.state === 'migrate' ? 'Migrate' : 'Enable';
   syncKeyMode();
-  // First run only: introduce the SSH key before the user picks one.
-  if (st.state === 'setup' && !introSeen) els.introOverlay.hidden = false;
+  // First run only, and IN the card rather than over it (v1.109.3). Set on every render
+  // rather than once per session: the old overlay was shown by this line and hidden only
+  // by the user, so a status change while it was up left it stranded over a surface it no
+  // longer described — a key-missing screen wearing a welcome card. Driving it from the
+  // state each time means it cannot outlive the state it belongs to.
+  els.introBlock.hidden = st.state !== 'setup';
 }
 
 async function refreshStatus() {
@@ -7155,13 +7147,6 @@ document.addEventListener('click', (e) => { if (!e.target.closest('.menu')) clos
 document.addEventListener('keydown', (e) => {
   if (e.key !== 'Escape') return;
   closeMenu();
-  // The intro overlay sits above the auth overlay (z-index 200 vs 100) and is not a
-  // *Modal, so it is checked first — it is also the one that traps a first-run user.
-  if (els.introOverlay && !els.introOverlay.hidden) {
-    e.preventDefault();
-    dismissIntro();
-    return;
-  }
   const open = [...document.querySelectorAll('div[id$="Modal"]:not([hidden])')];
   const top = open[open.length - 1];
   if (!top) return;
