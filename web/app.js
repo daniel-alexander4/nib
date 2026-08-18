@@ -119,7 +119,7 @@ const els = {
   authOverlay: $('authOverlay'), authForm: $('authForm'), authTitle: $('authTitle'),
   authHint: $('authHint'), authPw: $('authPw'), authPwLabel: $('authPwLabel'), migrateRow: $('migrateRow'),
   keyChoice: $('keyChoice'), keySelect: $('keySelect'), keyPath: $('keyPath'),
-  createPath: $('createPath'), authWarn: $('authWarn'),
+  createPath: $('createPath'), authWarn: $('authWarn'), armedPill: $('armedPill'),
   repointRow: $('repointRow'), repointPath: $('repointPath'),
   repointPw: $('repointPw'), repointGo: $('repointGo'),
   introOverlay: $('introOverlay'),
@@ -980,6 +980,25 @@ els.sinGo.onclick = sessionInit;
 // channel in an isolated preview (never the main viewer — that would discard the
 // open document's unsaved edits), and co-sign it with explicit consent. The session
 // is one-shot: it tears down after a single accept, decline, or timeout.
+// reflectArmed shows or hides the persistent armed-session indicator.
+//
+// **Why this exists at all.** An armed co-signing session is a separate lifecycle from
+// the open document: internal/server/session.go calls setDoc() when an exchange
+// completes, so after the user closes their document a completed co-sign can make a
+// document appear again with NO user action. That is not a defect in the close route —
+// arming a session IS a request to receive a document, and disarming on close would
+// destroy state the user set up independently, silently. The defect is that nothing told
+// the user it could happen: after a Close the app looked idle, and it wasn't.
+//
+// So the behaviour is left alone and the STATE is surfaced. Deliberately in the header
+// rather than in the receive dialog, because the dialog is exactly what is not on screen
+// when this matters. Checked (2026-08-17) that P06's tabs do NOT resolve this on their
+// own: an arrival after a Close still lands in the single empty view, because after a
+// Close there is nothing to arrive beside.
+function reflectArmed(on) {
+  if (els.armedPill) els.armedPill.hidden = !on;
+}
+
 let recvPoll = 0; // token; bump to invalidate any in-flight poll or preview render
 let recvStage = 'arm'; // arm | wait | consent | applying | declining
 let recvMode = 'cosign'; // cosign | receive — receive saves a one-way transfer, no signing
@@ -1050,6 +1069,7 @@ async function armRecv() {
   els.srvWaitAddr.textContent = st.address || bind;
   els.srvWaitPeer.textContent = recvArmedLabel;
   recvStage = 'wait';
+  reflectArmed(true);
   showRecvView('srvWait');
   const token = ++recvPoll;
   setTimeout(() => pollRecv(token), 1200);
@@ -1064,6 +1084,7 @@ async function pollRecv(token) {
   try { st = await (await apiFetch('/api/session/status')).json(); }
   catch { return; } // 401 is handled by apiFetch; anything else stops this poll
   if (token !== recvPoll) return;
+  reflectArmed(!!st.armed); // the server can disarm on its own (a timeout), and then so does this
   if (st.pending && recvStage === 'wait') {
     recvStage = 'consent';
     showConsent(st.pending);
@@ -1271,6 +1292,7 @@ async function openInNewView(meta) {
 function endRecv() {
   recvPoll++; // invalidate any in-flight poll / preview render
   recvStage = 'arm';
+  reflectArmed(false);
   els.srvPreview.innerHTML = '';
   els.srvAccept.disabled = false; els.srvDecline.disabled = false;
   els.sessionRecvModal.hidden = true;
@@ -2395,6 +2417,9 @@ async function requestClose() {
   closeDocument();
 }
 els.repointGo.onclick = () => repointKey();
+// Clicking the indicator reopens the dialog it belongs to — an indicator that only
+// informs leaves the user knowing something is armed and with no way to reach it.
+els.armedPill.onclick = () => { els.sessionRecvModal.hidden = false; };
 els.closeBtn.onclick = () => closeView();
 els.closeAllBtn.onclick = requestClose;
 
