@@ -68,6 +68,23 @@ func SupportedMarkdownExt(ext string) bool {
 	return ext == "md" || ext == "markdown"
 }
 
+// UnprintableMarkdown reports the runes in a Markdown source that the conversion CANNOT
+// print — neither the Base-14 core fonts nor any face Nib supplies covers them.
+//
+// It exists because mdpdf.Unsupported had no caller outside its own tests, and its whole
+// purpose is to be called: pdfcpu maps a rune it cannot encode to a SPACE rather than
+// erroring, so a document silently loses characters and there is nothing to catch
+// afterwards. The guard has to run BEFORE the PDF becomes a record, and only a caller can
+// decide what to do about it — which is why this reports rather than refuses.
+//
+// Asked with Nib's own font pool, so it answers the question that matters here ("will this
+// print in Nib?") rather than the narrower one mdpdf.Unsupported answers on its own
+// ("would this print with no fonts supplied?"). Since v1.109.0 those differ for most of the
+// world's scripts.
+func UnprintableMarkdown(data []byte) []rune {
+	return mdpdf.UnsupportedWith(string(data), markdownFallbackFonts())
+}
+
 // SupportedDocExt reports whether ext converts to PDF via ConvertDocToPDF,
 // natively (Markdown) or through LibreOffice (office formats).
 func SupportedDocExt(ext string) bool {

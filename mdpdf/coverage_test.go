@@ -3,6 +3,7 @@ package mdpdf
 import (
 	"strings"
 	"testing"
+	"unicode"
 )
 
 // The Base-14 core fonts encode WinAnsi (CP1252); pdfcpu SILENTLY replaces
@@ -79,5 +80,33 @@ func TestFormatRunes(t *testing.T) {
 	}
 	if got := FormatRunes(nil); got != "" {
 		t.Errorf("FormatRunes(nil) = %q, want empty", got)
+	}
+}
+
+// UnsupportedWith reports only what NOTHING can print — the core fonts or a supplied face.
+//
+// The pair matters because a guard that cries wolf is worse than none. Once ConvertWithFonts
+// existed, the original Unsupported would have reported every Cyrillic or CJK rune in a
+// document that now prints them perfectly, and a warning nobody can act on is a warning
+// people learn to skip.
+func TestUnsupportedWithHonoursTheSuppliedFonts(t *testing.T) {
+	const thai = "สวัสดี"
+
+	// The premise: these runes are outside the core fonts. If that stops being true the
+	// rest of this test is measuring nothing.
+	if len(Unsupported(thai)) == 0 {
+		t.Fatalf("setup: %q is reported as printable by the core fonts", thai)
+	}
+
+	covering := Font{Name: "X", Data: []byte{0}, Covers: []*unicode.RangeTable{unicode.Thai}}
+	if got := UnsupportedWith(thai, []Font{covering}); len(got) != 0 {
+		t.Errorf("text a supplied font covers is still reported unprintable: %s", FormatRunes(got))
+	}
+
+	// And a font that does NOT cover it changes nothing — the guard must not be satisfied
+	// by the mere presence of a fallback.
+	other := Font{Name: "Y", Data: []byte{0}, Covers: []*unicode.RangeTable{unicode.Greek}}
+	if got := UnsupportedWith(thai, []Font{other}); len(got) == 0 {
+		t.Error("supplying an unrelated font silenced the warning — any fallback would then look like coverage of everything")
 	}
 }
