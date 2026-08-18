@@ -1065,7 +1065,7 @@ func (s *Server) docResponse(doc *document) docResponse {
 	}
 	resp := docResponse{
 		ID:             doc.id.String(),
-		Name:           filepath.Base(doc.path),
+		Name:           docName(doc.path),
 		Path:           doc.path,
 		CanSave:        doc.path != "",
 		Signature:      doc.sig,
@@ -1103,6 +1103,21 @@ func (s *Server) docResponse(doc *document) docResponse {
 	}
 	s.mu.Unlock()
 	return resp
+}
+
+// docName is the document's display name, and it is EMPTY for a path-less document
+// rather than ".".
+//
+// filepath.Base("") returns ".", so every uploaded, combined, converted or arrived
+// document published a name of "." — a meaningless sentinel on the wire that the client
+// then papered over with `if (meta.name && meta.name !== '.')`. One side emitting
+// nonsense and the other filtering it is two bugs holding each other up; the empty
+// string says "no name" in a way the client's own falsy check already handles.
+func docName(path string) string {
+	if path == "" {
+		return ""
+	}
+	return filepath.Base(path)
 }
 
 // sameBytes reports whether two slices are the SAME slice — same backing array and

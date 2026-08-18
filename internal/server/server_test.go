@@ -324,3 +324,18 @@ func TestSecurityHeaders(t *testing.T) {
 		t.Errorf("Referrer-Policy = %q, want no-referrer", got)
 	}
 }
+
+// A path-less document publishes an EMPTY name, not ".".
+//
+// filepath.Base("") is ".", so every uploaded, combined, converted or arrived document
+// used to publish "." — and web/app.js filtered it back out with `meta.name !== '.'`.
+// One side emitting a meaningless sentinel and the other papering over it is two bugs
+// holding each other up: either alone leaves the tab strip showing a full stop.
+func TestPathlessDocumentHasNoName(t *testing.T) {
+	if got := docName(""); got != "" {
+		t.Errorf("docName(\"\") = %q, want \"\" — a path-less document has no name, and %q is what filepath.Base returns for one", got, got)
+	}
+	if got := docName("/tmp/a/report.pdf"); got != "report.pdf" {
+		t.Errorf("docName lost the base name for a real path: %q", got)
+	}
+}
