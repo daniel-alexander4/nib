@@ -233,18 +233,34 @@ func RedactPages(original []byte, raster map[int]RasterPage) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
+	// One Collect per contiguous RUN of untouched pages, not per page. Each Collect
+	// re-parses the whole document, so the per-page loop this replaces was O(n²) on the
+	// security-critical path: redacting one page of a 200-page file meant 199 full parses.
+	// Runs make it O(number of runs) — two, for a single redacted page in the middle.
 	segments := make([]io.ReadSeeker, 0, n)
-	for i := 1; i <= n; i++ {
-		var seg []byte
+	for i := 1; i <= n; {
 		if page, ok := raster[i]; ok {
-			seg, err = ImagesToPDF([]RasterPage{page})
-		} else {
-			seg, err = Collect(original, []string{strconv.Itoa(i)}) // extract page i, vector intact
+			seg, err := ImagesToPDF([]RasterPage{page})
+			if err != nil {
+				return nil, err
+			}
+			segments = append(segments, bytes.NewReader(seg))
+			i++
+			continue
 		}
+		j := i
+		for j <= n {
+			if _, redacted := raster[j]; redacted {
+				break
+			}
+			j++
+		}
+		seg, err := Collect(original, []string{fmt.Sprintf("%d-%d", i, j-1)}) // vector intact
 		if err != nil {
 			return nil, err
 		}
 		segments = append(segments, bytes.NewReader(seg))
+		i = j
 	}
 	var out bytes.Buffer
 	if err := api.MergeRaw(segments, &out, false, model.NewDefaultConfiguration()); err != nil {
