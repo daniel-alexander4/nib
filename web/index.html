@@ -395,7 +395,12 @@
       <p class="introwarn">That key is the only way in. Keep it safe and back it up —
         if you lose every authorized key, the vault (and your signatures) can't be
         recovered.</p>
-      <p class="introhint">Click anywhere outside this box to continue</p>
+      <!-- A real control, not prose. Every other overlay in Nib expresses its exit as a
+           button (openCancel, saveAsCancel, bsCancel, psCancel, authSubmit); this one
+           said "click outside" in 12px muted text at ~3.6:1 contrast — below AA, not
+           reachable by keyboard, and invisible to a screen reader as an action. The
+           backdrop click still works for anyone who learned it. -->
+      <button id="introGo" class="primary" type="button">Get started</button>
     </div>
   </div>
 
