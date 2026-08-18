@@ -4,8 +4,13 @@
 // be imported on its own, without the rest of Nib.
 //
 // The output uses the PDF Base-14 core fonts (Helvetica for body text, Courier
-// for code), so no font files are embedded and coverage is limited to Latin
-// (WinAnsi) text. Images and tables are skipped; links render as their text.
+// for code), so Convert embeds no font files and coverage is limited to Latin
+// (WinAnsi) text — anything else renders as spaces, which is what Unsupported
+// exists to warn about. ConvertWithFonts takes a pool of embeddable faces and
+// sets each word the core fonts cannot print in the first one that covers it,
+// so a document with one Greek word embeds one face and nothing else changes.
+// The FONTS ARE THE CALLER'S: this package holds none, which is what keeps it
+// importable on its own. Images and tables are skipped; links render as their text.
 //
 // Beyond Markdown rendering, the package provides in-memory PDF-assembly
 // primitives: AssemblePacket concatenates a cover PDF with exhibit files
@@ -49,10 +54,27 @@ const (
 // headingSizes maps heading level 1-6 to point size (always bold).
 var headingSizes = [6]int{20, 16, 13, 12, 11, 11}
 
-// Convert renders CommonMark Markdown to a paginated US Letter PDF.
-func Convert(md []byte) ([]byte, error) {
+// Convert renders CommonMark Markdown to a paginated US Letter PDF using the Base-14
+// core fonts only — nothing is embedded, and coverage is WinAnsi (Latin) as a result.
+// Text outside that repertoire renders as spaces; see Unsupported, and ConvertWithFonts
+// for how to print it.
+func Convert(md []byte) ([]byte, error) { return ConvertWithFonts(md, nil) }
+
+// ConvertWithFonts is Convert with a fallback pool for scripts the core fonts cannot
+// print — Cyrillic, Greek, CJK, Arabic, Devanagari and the rest.
+//
+// A word containing runes WinAnsi has no glyph for is set in the first supplied Font
+// whose Covers include them; everything else stays on the core fonts, so a document with
+// one Greek word embeds one face and the rest of the file is unchanged. A word nothing
+// supplied can print keeps the core font and still renders as spaces — substituting a
+// face that cannot print it either would only move the blanks, and Unsupported still
+// reports it either way.
+func ConvertWithFonts(md []byte, fallbacks []Font) ([]byte, error) {
+	if err := installFallbacks(fallbacks); err != nil {
+		return nil, err
+	}
 	doc := goldmark.New().Parser().Parse(text.NewReader(md))
-	r := &renderer{src: md, l: newLayout()}
+	r := &renderer{src: md, l: newLayout(), fonts: fallbacks}
 	r.blocks(doc, 0, nil)
 	spec, err := r.l.spec()
 	if err != nil {
@@ -67,8 +89,9 @@ func Convert(md []byte) ([]byte, error) {
 
 // renderer walks the goldmark AST and drives the layout.
 type renderer struct {
-	src []byte
-	l   *layout
+	src   []byte
+	l     *layout
+	fonts []Font
 }
 
 // blocks lays out the children of n. A non-nil marker (list bullet/number)
@@ -84,25 +107,25 @@ func (r *renderer) block(n ast.Node, indent float64, marker *word) {
 	switch t := n.(type) {
 	case *ast.Heading:
 		lvl := min(t.Level, 6)
-		sty := style{fontBold, headingSizes[lvl-1]}
+		sty := style{font: fontBold, size: headingSizes[lvl-1]}
 		// Keep the heading with at least two body lines; break early otherwise.
-		bodyLead := style{fontBody, sizeBody}.leading()
+		bodyLead := style{font: fontBody, size: sizeBody}.leading()
 		r.l.need(0.8*float64(sty.size) + sty.leading() + 2*bodyLead + paraGap)
 		r.l.gap(0.8 * float64(sty.size))
 		r.l.para(r.inline(n, sty.size), indent, marker, sty.leading())
 		r.l.gap(4)
 	case *ast.Paragraph:
-		r.l.para(r.inline(n, 0), indent, marker, style{fontBody, sizeBody}.leading())
+		r.l.para(r.inline(n, 0), indent, marker, style{font: fontBody, size: sizeBody}.leading())
 		r.l.gap(paraGap)
 	case *ast.TextBlock: // paragraph inside a tight list item
-		r.l.para(r.inline(n, 0), indent, marker, style{fontBody, sizeBody}.leading())
+		r.l.para(r.inline(n, 0), indent, marker, style{font: fontBody, size: sizeBody}.leading())
 		r.l.gap(tightGap)
 	case *ast.List:
 		num := t.Start
 		for li := t.FirstChild(); li != nil; li = li.NextSibling() {
-			m := word{[]frag{{"•", style{fontBody, sizeBody}}}}
+			m := word{[]frag{{"•", style{font: fontBody, size: sizeBody}}}}
 			if t.IsOrdered() {
-				m = word{[]frag{{strconv.Itoa(num) + ".", style{fontBody, sizeBody}}}}
+				m = word{[]frag{{strconv.Itoa(num) + ".", style{font: fontBody, size: sizeBody}}}}
 				num++
 			}
 			r.blocks(li, indent+listIndent, &m)
@@ -128,7 +151,7 @@ func (r *renderer) block(n ast.Node, indent float64, marker *word) {
 // inline collects the inline content of a block into styled words.
 // headSize > 0 sets the heading base size (headings render bold).
 func (r *renderer) inline(n ast.Node, headSize int) []word {
-	in := &inliner{src: r.src, headSize: headSize}
+	in := &inliner{src: r.src, headSize: headSize, fonts: r.fonts}
 	for c := n.FirstChild(); c != nil; c = c.NextSibling() {
 		in.node(c)
 	}
@@ -151,6 +174,7 @@ func (r *renderer) codeLines(n ast.Node) []string {
 // whitespace between them in the source (so `**bold**.` wraps as one word).
 type inliner struct {
 	src      []byte
+	fonts    []Font // fallback faces for words the core fonts cannot print
 	headSize int
 	bold     int
 	italic   int
@@ -204,20 +228,36 @@ func (in *inliner) children(n ast.Node) {
 }
 
 // addText appends s in the current style, breaking words on whitespace.
+//
+// The style is resolved PER WORD rather than once for the whole string, because a word
+// containing non-WinAnsi runes has to change face: see pickFont, which is also why the
+// split happens here — this is already the place that knows where words end.
 func (in *inliner) addText(s string) {
 	sty := in.style()
 	for s != "" {
 		i := strings.IndexAny(s, " \t\n")
 		if i < 0 {
-			in.append(s, sty)
+			in.append(s, in.faceFor(s, sty))
 			return
 		}
 		if i > 0 {
-			in.append(s[:i], sty)
+			in.append(s[:i], in.faceFor(s[:i], sty))
 		}
 		in.flush()
 		s = strings.TrimLeft(s[i:], " \t\n")
 	}
+}
+
+// faceFor returns sty with its font swapped for a fallback when the core font cannot
+// print this word. Non-core styles carry `core: false` so width() stops byte-encoding —
+// pdfcpu measures a user font by RUNE and a core font by BYTE, and using the wrong one
+// makes every following fragment on the line land in the wrong place.
+func (in *inliner) faceFor(word string, sty style) style {
+	name := pickFont(word, sty, in.fonts)
+	if name == "" || name == sty.font {
+		return sty
+	}
+	return style{font: name, size: sty.size, embedded: true}
 }
 
 // append adds text to the word being built, merging same-style tails.
@@ -250,18 +290,18 @@ func (in *inliner) style() style {
 		size = in.headSize
 	}
 	if in.code > 0 {
-		return style{fontCode, max(size-1, 4)}
+		return style{font: fontCode, size: max(size-1, 4)}
 	}
 	b := in.bold > 0 || in.headSize > 0
 	switch {
 	case b && in.italic > 0:
-		return style{fontBoldItalic, size}
+		return style{font: fontBoldItalic, size: size}
 	case b:
-		return style{fontBold, size}
+		return style{font: fontBold, size: size}
 	case in.italic > 0:
-		return style{fontItalic, size}
+		return style{font: fontItalic, size: size}
 	}
-	return style{fontBody, size}
+	return style{font: fontBody, size: size}
 }
 
 // spec serializes the laid-out pages as a pdfcpu "create" JSON document.

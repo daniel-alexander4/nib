@@ -23,13 +23,23 @@ const (
 type style struct {
 	font string
 	size int
+	// embedded marks a fallback face (ConvertWithFonts) rather than one of the Base-14
+	// core fonts. It exists for width(): the two are measured differently, and using the
+	// core rule on an embedded face inflates every multi-byte word.
+	embedded bool
 }
 
-// width measures text as the PDF will carry it: pdfcpu counts BYTES for core
-// fonts, so the string must be measured in its encoded form or every
-// non-ASCII rune inflates the measurement and shifts the rest of the line
-// (see encodedWidth).
+// width measures text as the PDF will carry it.
+//
+// pdfcpu counts BYTES for core fonts, so a core-font string must be measured in its
+// ENCODED form or every non-ASCII rune inflates the measurement and shifts the rest of
+// the line (see encodedWidth). An embedded font is measured by RUNE, so the same
+// transformation there would double-count exactly the text the fallback exists to print —
+// a Greek or CJK word would reserve twice the space it occupies.
 func (s style) width(text string) float64 {
+	if s.embedded {
+		return font.TextWidth(text, s.font, s.size)
+	}
 	return font.TextWidth(encodedWidth(text), s.font, s.size)
 }
 
@@ -158,7 +168,7 @@ func (l *layout) line(words []word, x float64) {
 // code emits preformatted lines in the monospace style, hard-wrapping any line
 // wider than the content width (Courier is fixed-pitch, so a rune count works).
 func (l *layout) code(lines []string, indent float64) {
-	sty := style{fontCode, sizeCode}
+	sty := style{font: fontCode, size: sizeCode}
 	maxChars := int((contentW - indent) / sty.width("M"))
 	if maxChars < 1 {
 		maxChars = 1

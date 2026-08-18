@@ -78,7 +78,13 @@ func SupportedDocExt(ext string) bool {
 // Go and is always available; everything else goes through LibreOffice.
 func ConvertDocToPDF(data []byte, ext string) ([]byte, error) {
 	if SupportedMarkdownExt(ext) {
-		return mdpdf.Convert(data)
+		// With Nib's vendored faces, so a Markdown file containing Cyrillic, Greek, CJK,
+		// Arabic or an Indic script prints instead of rendering as spaces. mdpdf itself
+		// holds no fonts on purpose — it lives at the repo root so other projects can
+		// import it, and a package that reached in here would drag Nib's OCR machinery
+		// along with it. Nib is the caller that already has the fonts, so Nib supplies
+		// them.
+		return mdpdf.ConvertWithFonts(data, markdownFallbackFonts())
 	}
 	return ConvertOfficeToPDF(data, ext)
 }

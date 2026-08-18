@@ -2,12 +2,71 @@ package mdpdf
 
 import (
 	"bytes"
+	"os"
 	"strings"
 	"testing"
+	"unicode"
 
 	"github.com/pdfcpu/pdfcpu/pkg/api"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
+	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/types"
 )
+
+// readTestFont supplies a real TTF for the fallback tests. It uses one of the faces Nib
+// already vendors for OCR — a font this repo ships anyway, rather than a fixture invented
+// for the test. mdpdf itself does not depend on that directory (the whole point of Font is
+// that the caller brings the bytes); only this test reaches for it, and it skips rather
+// than fails where it is absent, because mdpdf is meant to be importable on its own.
+func readTestFont(t *testing.T) []byte {
+	t.Helper()
+	b, err := os.ReadFile("../internal/pdfops/fonts/NotoSansThai-Regular.ttf")
+	if err != nil {
+		t.Skipf("no vendored TTF to test embedding with: %v", err)
+	}
+	return b
+}
+
+// embeddedFaces returns the BaseFont names in a PDF, read through pdfcpu rather than by
+// searching the bytes.
+//
+// The byte search is the obvious version and it is vacuous: pdfcpu writes object streams,
+// so a font name lives COMPRESSED inside one and `bytes.Contains(pdf, "NotoSansThai")` is
+// false for a document that does embed it. (The same trap cost a scan_test.go assertion in
+// this repo the same week; it is written out here so the next person meets it as a comment
+// rather than as an hour.)
+func embeddedFaces(t *testing.T, pdf []byte) []string {
+	t.Helper()
+	// ReadValidateAndOptimize, not ReadContext: the plain reader leaves font dictionaries
+	// unresolved, so the walk below finds ZERO fonts in a document that certainly has one
+	// — measured, on a core-font render. Optimizing is what populates them.
+	ctx, err := api.ReadValidateAndOptimize(bytes.NewReader(pdf), model.NewDefaultConfiguration())
+	if err != nil {
+		t.Fatalf("re-reading the PDF: %v", err)
+	}
+	var out []string
+	for _, e := range ctx.XRefTable.Table {
+		if e == nil {
+			continue
+		}
+		d, ok := e.Object.(types.Dict)
+		if !ok {
+			continue
+		}
+		if n := d.NameEntry("BaseFont"); n != nil {
+			out = append(out, *n)
+		}
+	}
+	return out
+}
+
+func hasFace(faces []string, want string) bool {
+	for _, f := range faces {
+		if strings.Contains(f, want) {
+			return true
+		}
+	}
+	return false
+}
 
 func render(t *testing.T, md string) []byte {
 	t.Helper()
@@ -74,7 +133,7 @@ func TestConvertPaginates(t *testing.T) {
 func plainWords(s string) []word {
 	var out []word
 	for _, w := range strings.Fields(s) {
-		out = append(out, word{[]frag{{w, style{fontBody, sizeBody}}}})
+		out = append(out, word{[]frag{{w, style{font: fontBody, size: sizeBody}}}})
 	}
 	return out
 }
@@ -91,7 +150,7 @@ func TestWrapWordsRespectsWidth(t *testing.T) {
 		var w float64
 		for i, wd := range ln {
 			if i > 0 {
-				w += style{fontBody, sizeBody}.width(" ")
+				w += style{font: fontBody, size: sizeBody}.width(" ")
 			}
 			w += wd.width()
 			got++
@@ -106,7 +165,7 @@ func TestWrapWordsRespectsWidth(t *testing.T) {
 }
 
 func TestSplitLongWord(t *testing.T) {
-	long := word{[]frag{{strings.Repeat("a", 200), style{fontBody, sizeBody}}}}
+	long := word{[]frag{{strings.Repeat("a", 200), style{font: fontBody, size: sizeBody}}}}
 	const maxW = 50
 	parts := splitWord(long, maxW)
 	if len(parts) < 2 {
@@ -169,5 +228,90 @@ func TestChunks(t *testing.T) {
 	}
 	if got := chunks("", 5); len(got) != 1 || got[0] != "" {
 		t.Fatalf("chunks of empty: %v", got)
+	}
+}
+
+// Non-Latin text prints when a fallback face is supplied, and does not when none is.
+//
+// The Base-14 core fonts are WinAnsi, and pdfcpu maps any rune outside that repertoire to
+// a SPACE rather than erroring — so Thai, Cyrillic and CJK rendered as blanks inside a
+// perfectly valid PDF that nothing could tell from a correct one. That silence is what
+// makes this worth a test rather than an eyeball: the failure has no error and no
+// exception, only absent ink.
+//
+// The face's name is NotoSansThai-Regular because pdfcpu names an installed face by the
+// PostScript name inside the TTF and ignores the one it is handed — a fixture calling it
+// something else installs successfully and then cannot be referred to at all.
+func TestConvertWithFontsPrintsNonLatin(t *testing.T) {
+	const thai = "สวัสดีครับ"
+
+	// The premise, asserted rather than assumed: these runes are genuinely outside what
+	// the core fonts can print. If that ever stops being true, the rest measures nothing.
+	if got := Unsupported(thai); len(got) == 0 {
+		t.Fatalf("setup: %q is reported as fully printable by the core fonts, so there is nothing for a fallback to fix", thai)
+	}
+
+	face := Font{
+		Name:   "NotoSansThai-Regular",
+		Data:   readTestFont(t),
+		Covers: []*unicode.RangeTable{unicode.Thai},
+	}
+	out, err := ConvertWithFonts([]byte(thai), []Font{face})
+	if err != nil {
+		t.Fatalf("ConvertWithFonts: %v", err)
+	}
+	// The face has to be named IN the file: selected but not embedded would leave a
+	// document referring to a font the reader does not have.
+	faces := embeddedFaces(t, out)
+	if !hasFace(faces, "NotoSansThai") {
+		t.Errorf("the supplied fallback face is not in the output (fonts present: %v) — the word was set in the core font after all, which renders it as spaces", faces)
+	}
+
+	// The control. Without the fallback the same text reaches no embedded face, so the
+	// assertion above is about the pool rather than about something pdfcpu does anyway.
+	plain, err := Convert([]byte(thai))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if hasFace(embeddedFaces(t, plain), "NotoSansThai") {
+		t.Error("Convert with no fallbacks embedded the face anyway — the pool is leaking between calls")
+	}
+}
+
+// A word nothing supplied can print keeps the core font rather than being set in a face
+// that also lacks it. Substituting there would only move the blanks, and the caller's
+// Unsupported check is what is supposed to catch it.
+func TestConvertWithFontsLeavesUncoveredTextAlone(t *testing.T) {
+	const greek = "Καλημέρα" // Greek, against a face supplied for Thai
+	face := Font{
+		Name:   "NotoSansThai-Regular",
+		Data:   readTestFont(t),
+		Covers: []*unicode.RangeTable{unicode.Thai},
+	}
+	out, err := ConvertWithFonts([]byte(greek), []Font{face})
+	if err != nil {
+		t.Fatalf("ConvertWithFonts: %v", err)
+	}
+	if hasFace(embeddedFaces(t, out), "NotoSansThai") {
+		t.Error("Greek text was set in a face declared to cover only Thai — the coverage declaration is not being honoured, so the blanks moved instead of going away")
+	}
+	if got := Unsupported(greek); len(got) == 0 {
+		t.Error("Unsupported no longer reports text no supplied font covers — that is the caller's only warning before the PDF becomes a record")
+	}
+}
+
+// A Font whose Name is not the PostScript name inside its TTF fails with a message that
+// says so, rather than installing successfully and panicking later from inside pdfcpu.
+func TestConvertWithFontsRejectsAMisnamedFace(t *testing.T) {
+	_, err := ConvertWithFonts([]byte("hello"), []Font{{
+		Name:   "NotTheRealPostScriptName",
+		Data:   readTestFont(t),
+		Covers: []*unicode.RangeTable{unicode.Thai},
+	}})
+	if err == nil {
+		t.Fatal("a face installed under a different name than it was given was accepted — the next symptom is a panic several frames inside pdfcpu")
+	}
+	if !strings.Contains(err.Error(), "PostScript name") {
+		t.Errorf("the error does not name the cause: %v", err)
 	}
 }
