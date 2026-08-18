@@ -315,3 +315,34 @@ func TestConvertWithFontsRejectsAMisnamedFace(t *testing.T) {
 		t.Errorf("the error does not name the cause: %v", err)
 	}
 }
+
+// Deeply nested quotes do not collapse the wrap width to nothing.
+//
+// Each level indents and nothing bounded it, so past a certain depth wrapWords had a
+// negative budget and emitted ONE RUNE PER LINE for the rest of the document. Forty `>`
+// characters is not a document anyone writes, but it is one anyone can paste, and the
+// result is not an error — it is hundreds of pages of single characters.
+func TestDeepQuoteNestingStaysReadable(t *testing.T) {
+	// Long enough that one-rune-per-line overflows pages. The first draft used a single
+	// short sentence and PASSED against the unfixed code: nine words emitted one rune at a
+	// time is still only ~45 lines, which fits on one page, so a page count could not tell
+	// the two apart. The defect is a line-count explosion; the input has to be long enough
+	// for that to become a page count.
+	sentence := strings.Repeat("the quick brown fox jumps over the lazy dog. ", 6)
+	deep := strings.Repeat("> ", 40) + sentence + "\n"
+	shallow := "> " + sentence + "\n"
+
+	deepPDF := render(t, deep)
+	shallowPDF := render(t, shallow)
+
+	deepPages := pageCount(t, deepPDF)
+	shallowPages := pageCount(t, shallowPDF)
+	if shallowPages != 1 {
+		t.Fatalf("setup: the unnested control is %d pages, so a page-count comparison says nothing", shallowPages)
+	}
+	// One sentence cannot need more than a page however deeply it is quoted. Unbounded,
+	// the same sentence became one character per line.
+	if deepPages > 1 {
+		t.Errorf("a single sentence nested 40 deep rendered across %d pages — the indent consumed the wrap width and the text is being emitted one rune at a time", deepPages)
+	}
+}
