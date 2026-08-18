@@ -5971,7 +5971,40 @@ function pageAt(x, y) {
   }
   return null;
 }
+// clampToRect pins a pointer position inside a page's content rect.
+//
+// **Every box tool measures against the page the drag STARTED on**, and nothing bounded the
+// other end. Page divs are `overflow: visible` (pdf_viewer.css), and in continuous scroll
+// the next page is directly below — so a drag from near the bottom of page N carried on
+// into page N+1, and the preview, absolutely positioned inside page N's div, painted right
+// over page N+1's content.
+//
+// On the redaction tool that is not a cosmetic overflow, it is the worst failure this app
+// has: the user watches a black rectangle cover text on the next page, applies, and that
+// text is untouched. applyRedact groups marks BY PAGE and flattens only the pages named, so
+// page N+1 is never rasterised at all — its content stays selectable in the output. The
+// mark is the user's only evidence at Apply time, and it was showing coverage that was
+// never going to happen.
+//
+// Clamping rather than splitting the drag across pages: on a security path the conservative
+// answer is that what you see marked is exactly what gets removed. The box visibly stops at
+// the page edge, which is honest feedback, and a user who wants both pages draws two boxes.
+// Splitting one gesture into per-page marks is the nicer gesture and is NOT done here —
+// more moving parts on the one path where being wrong is unrecoverable.
+function clampToRect(r, p) {
+  return {
+    x: Math.min(Math.max(p.x, r.left), r.left + r.width),
+    y: Math.min(Math.max(p.y, r.top), r.top + r.height),
+  };
+}
+
+// sizeMark clamps BOTH ends, so every preview drawn through it is bounded by its page —
+// seven tools fixed at one site. Each tool's pointerup clamps again for the fraction it
+// records: a preview that stops at the edge while the recorded box does not would be the
+// same lie with an extra step.
 function sizeMark(div, r, a, b) {
+  a = clampToRect(r, a);
+  b = clampToRect(r, b);
   div.style.left = (Math.min(a.x, b.x) - r.left) + 'px';
   div.style.top = (Math.min(a.y, b.y) - r.top) + 'px';
   div.style.width = Math.abs(b.x - a.x) + 'px';
@@ -5996,9 +6029,14 @@ els.viewerWrap.addEventListener('pointermove', (e) => {
 els.viewerWrap.addEventListener('pointerup', (e) => {
   if (!redStart) return;
   const r = redHit.r;
-  const x0 = Math.min(redStart.x, e.clientX), y0 = Math.min(redStart.y, e.clientY);
-  const fw = Math.abs(e.clientX - redStart.x) / r.width;
-  const fh = Math.abs(e.clientY - redStart.y) / r.height;
+  // Clamped to the page this drag started on — see clampToRect. Unclamped, a box dragged
+  // onto the next page recorded a fraction past 1, applyRedact never flattened that page,
+  // and the content the user watched go black survived intact.
+  const rp = clampToRect(r, { x: e.clientX, y: e.clientY });
+  const rs = clampToRect(r, redStart);
+  const x0 = Math.min(rs.x, rp.x), y0 = Math.min(rs.y, rp.y);
+  const fw = Math.abs(rp.x - rs.x) / r.width;
+  const fh = Math.abs(rp.y - rs.y) / r.height;
   if (fw > 0.005 && fh > 0.005) {
     view.redactMarks.push({ page: redHit.n, fx: (x0 - r.left) / r.width, fy: (y0 - r.top) / r.height, fw, fh });
   } else {
@@ -6251,9 +6289,12 @@ els.viewerWrap.addEventListener('pointermove', (e) => {
 els.viewerWrap.addEventListener('pointerup', (e) => {
   if (!sbStart) return;
   const r = sbHit.r;
-  const x0 = Math.min(sbStart.x, e.clientX), y0 = Math.min(sbStart.y, e.clientY);
-  const fw = Math.abs(e.clientX - sbStart.x) / r.width;
-  const fh = Math.abs(e.clientY - sbStart.y) / r.height;
+  // Clamped to the page the drag started on — see clampToRect. A page fraction outside
+  // [0,1] describes a box that is not on the page it names.
+  const sp = clampToRect(r, { x: e.clientX, y: e.clientY }), ss = clampToRect(r, sbStart);
+  const x0 = Math.min(ss.x, sp.x), y0 = Math.min(ss.y, sp.y);
+  const fw = Math.abs(sp.x - ss.x) / r.width;
+  const fh = Math.abs(sp.y - ss.y) / r.height;
   if (fw > 0.01 && fh > 0.01) {
     view.splitRects.push({ fx: (x0 - r.left) / r.width, fy: (y0 - r.top) / r.height, fw, fh });
   } else {
@@ -6345,9 +6386,12 @@ els.viewerWrap.addEventListener('pointermove', (e) => {
 els.viewerWrap.addEventListener('pointerup', (e) => {
   if (!cropStart) return;
   const r = cropHit.r;
-  const x0 = Math.min(cropStart.x, e.clientX), y0 = Math.min(cropStart.y, e.clientY);
-  const fw = Math.abs(e.clientX - cropStart.x) / r.width;
-  const fh = Math.abs(e.clientY - cropStart.y) / r.height;
+  // Clamped to the page the drag started on — see clampToRect. A page fraction outside
+  // [0,1] describes a box that is not on the page it names.
+  const cp = clampToRect(r, { x: e.clientX, y: e.clientY }), cs = clampToRect(r, cropStart);
+  const x0 = Math.min(cs.x, cp.x), y0 = Math.min(cs.y, cp.y);
+  const fw = Math.abs(cp.x - cs.x) / r.width;
+  const fh = Math.abs(cp.y - cs.y) / r.height;
   cropStart = null; cropHit = null;
   if (fw > 0.01 && fh > 0.01) {
     view.cropRect = { fx: (x0 - r.left) / r.width, fy: (y0 - r.top) / r.height, fw, fh };
@@ -6412,9 +6456,12 @@ els.viewerWrap.addEventListener('pointermove', (e) => {
 els.viewerWrap.addEventListener('pointerup', async (e) => {
   if (!edStart) return;
   const r = edHit.r, hit = edHit;
-  const x0 = Math.min(edStart.x, e.clientX), y0 = Math.min(edStart.y, e.clientY);
-  const fw = Math.abs(e.clientX - edStart.x) / r.width;
-  const fh = Math.abs(e.clientY - edStart.y) / r.height;
+  // Clamped to the page the drag started on — see clampToRect. A page fraction outside
+  // [0,1] describes a box that is not on the page it names.
+  const ep = clampToRect(r, { x: e.clientX, y: e.clientY }), es = clampToRect(r, edStart);
+  const x0 = Math.min(es.x, ep.x), y0 = Math.min(es.y, ep.y);
+  const fw = Math.abs(ep.x - es.x) / r.width;
+  const fh = Math.abs(ep.y - es.y) / r.height;
   const fx0 = (x0 - r.left) / r.width, fy0 = (y0 - r.top) / r.height;
   edDiv.remove();
   edStart = null; edDiv = null; edHit = null;
@@ -7339,11 +7386,14 @@ els.viewerWrap.addEventListener('pointerup', async (e) => {
   bdDiv.remove();
   bdStart = null; bdDiv = null; bdHit = null;
   const r = hit.r;
-  const fw = Math.abs(e.clientX - start.x) / r.width;
-  const fh = Math.abs(e.clientY - start.y) / r.height;
+  // Clamped to the page the drag started on — see clampToRect. A page fraction outside
+  // [0,1] describes a box that is not on the page it names.
+  const bp = clampToRect(r, { x: e.clientX, y: e.clientY }), bs = clampToRect(r, start);
+  const fw = Math.abs(bp.x - bs.x) / r.width;
+  const fh = Math.abs(bp.y - bs.y) / r.height;
   if (fw < 0.01 || fh < 0.01) return; // ignore a stray click
-  const fx0 = (Math.min(start.x, e.clientX) - r.left) / r.width;
-  const fy0 = (Math.min(start.y, e.clientY) - r.top) / r.height;
+  const fx0 = (Math.min(bs.x, bp.x) - r.left) / r.width;
+  const fy0 = (Math.min(bs.y, bp.y) - r.top) / r.height;
   const owner = view; // captured before the await — everything after it names this document
   const base = (await owner.pdfDocument.getPage(hit.n)).getViewport({ scale: 1 }); // PDF points
   makeBox([fx0, fy0, fx0 + fw, fy0 + fh], { page: hit.n, pageW: base.width, pageH: base.height }, owner);
@@ -7427,11 +7477,14 @@ els.viewerWrap.addEventListener('pointerup', async (e) => {
   ddDiv.remove();
   ddStart = null; ddDiv = null; ddHit = null;
   const r = hit.r;
-  const fw = Math.abs(e.clientX - start.x) / r.width;
-  const fh = Math.abs(e.clientY - start.y) / r.height;
+  // Clamped to the page the drag started on — see clampToRect. A page fraction outside
+  // [0,1] describes a box that is not on the page it names.
+  const bp = clampToRect(r, { x: e.clientX, y: e.clientY }), bs = clampToRect(r, start);
+  const fw = Math.abs(bp.x - bs.x) / r.width;
+  const fh = Math.abs(bp.y - bs.y) / r.height;
   if (fw < 0.01 || fh < 0.01) return; // ignore a stray click
-  const fx0 = (Math.min(start.x, e.clientX) - r.left) / r.width;
-  const fy0 = (Math.min(start.y, e.clientY) - r.top) / r.height;
+  const fx0 = (Math.min(bs.x, bp.x) - r.left) / r.width;
+  const fy0 = (Math.min(bs.y, bp.y) - r.top) / r.height;
   const owner = view; // captured before the await — see makeBox's caller
   const base = (await owner.pdfDocument.getPage(hit.n)).getViewport({ scale: 1 });
   makeDropdown([fx0, fy0, fx0 + fw, fy0 + fh], { page: hit.n, pageW: base.width, pageH: base.height }, owner);
@@ -7523,11 +7576,14 @@ els.viewerWrap.addEventListener('pointerup', async (e) => {
   rdDiv.remove();
   rdStart = null; rdDiv = null; rdHit = null;
   const r = hit.r;
-  const fw = Math.abs(e.clientX - start.x) / r.width;
-  const fh = Math.abs(e.clientY - start.y) / r.height;
+  // Clamped to the page the drag started on — see clampToRect. A page fraction outside
+  // [0,1] describes a box that is not on the page it names.
+  const bp = clampToRect(r, { x: e.clientX, y: e.clientY }), bs = clampToRect(r, start);
+  const fw = Math.abs(bp.x - bs.x) / r.width;
+  const fh = Math.abs(bp.y - bs.y) / r.height;
   if (fw < 0.01 || fh < 0.01) return; // ignore a stray click
-  const fx0 = (Math.min(start.x, e.clientX) - r.left) / r.width;
-  const fy0 = (Math.min(start.y, e.clientY) - r.top) / r.height;
+  const fx0 = (Math.min(bs.x, bp.x) - r.left) / r.width;
+  const fy0 = (Math.min(bs.y, bp.y) - r.top) / r.height;
   const owner = view; // captured before the await — see makeBox's caller
   const base = (await owner.pdfDocument.getPage(hit.n)).getViewport({ scale: 1 });
   makeRadio([fx0, fy0, fx0 + fw, fy0 + fh], { page: hit.n, pageW: base.width, pageH: base.height }, owner);
@@ -7700,7 +7756,10 @@ els.viewerWrap.addEventListener('pointermove', (e) => {
   const w = clampWeight(els.borderWidthInput.value);
   const isLine = shapeType === 'line' || shapeType === 'arrow';
   const pad = isLine ? shapePad(w) : 0; // px; head/cap room (none for rect/ellipse)
-  const g = shapeGeom(shStart.x - r.left, shStart.y - r.top, e.clientX - r.left, e.clientY - r.top, pad, pad);
+  // Clamped like every other tool's preview — sizeMark does this for the seven that use it,
+  // and the shape tool paints its own canvas, so it does the same here.
+  const sp = clampToRect(r, { x: e.clientX, y: e.clientY }), ss = clampToRect(r, shStart);
+  const g = shapeGeom(ss.x - r.left, ss.y - r.top, sp.x - r.left, sp.y - r.top, pad, pad);
   shCanvas.style.left = g.x0 + 'px'; shCanvas.style.top = g.y0 + 'px';
   shCanvas.width = Math.max(1, Math.round(g.w)); shCanvas.height = Math.max(1, Math.round(g.h));
   paintShape(shCanvas.getContext('2d'), shCanvas.width, shCanvas.height, shapeType, els.shapeFill.checked, selectedHlColor, w, g.from, g.to);
@@ -7710,8 +7769,12 @@ els.viewerWrap.addEventListener('pointerup', async (e) => {
   const hit = shHit, start = shStart;
   shCanvas.remove(); shStart = null; shCanvas = null; shHit = null;
   const r = hit.r;
+  // Clamped to the page the drag started on — see clampToRect. The shape tool draws onto
+  // its own canvas rather than through sizeMark, so its preview is bounded by the same
+  // clamp applied to the geometry below rather than by sizeMark's.
+  const shp = clampToRect(r, { x: e.clientX, y: e.clientY }), shs = clampToRect(r, start);
   const isLine = shapeType === 'line' || shapeType === 'arrow';
-  const fw = Math.abs(e.clientX - start.x) / r.width, fh = Math.abs(e.clientY - start.y) / r.height;
+  const fw = Math.abs(shp.x - shs.x) / r.width, fh = Math.abs(shp.y - shs.y) / r.height;
   if (isLine ? (fw < 0.005 && fh < 0.005) : (fw < 0.01 || fh < 0.01)) return; // ignore a stray click
   const owner = view; // captured before the await — see makeBox's caller
   const base = (await owner.pdfDocument.getPage(hit.n)).getViewport({ scale: 1 }); // PDF points
@@ -7719,8 +7782,8 @@ els.viewerWrap.addEventListener('pointerup', async (e) => {
   // axis) and inset the endpoints so the head clears the box edge; this also makes
   // an axis-aligned line's box non-degenerate. rect/ellipse keep a tight bbox.
   const pad = isLine ? shapePad(clampWeight(els.borderWidthInput.value)) : 0;
-  const g = shapeGeom((start.x - r.left) / r.width, (start.y - r.top) / r.height,
-                      (e.clientX - r.left) / r.width, (e.clientY - r.top) / r.height,
+  const g = shapeGeom((shs.x - r.left) / r.width, (shs.y - r.top) / r.height,
+                      (shp.x - r.left) / r.width, (shp.y - r.top) / r.height,
                       pad / base.width, pad / base.height);
   makeShape([g.x0, g.y0, g.x0 + g.w, g.y0 + g.h],
     { page: hit.n, pageW: base.width, pageH: base.height, type: shapeType, fill: els.shapeFill.checked, from: g.from, to: g.to }, owner);
