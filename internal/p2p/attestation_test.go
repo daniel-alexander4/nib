@@ -98,3 +98,4 @@ func TestCrossBindRequiresValidity(t *testing.T) {
 		t.Errorf("a tampered co-signature must not cross-bind: %+v", bBad)
 	}
 }
+

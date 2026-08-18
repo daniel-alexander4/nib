@@ -28,9 +28,16 @@ const defaultIntent = "I agree to sign this document."
 // Attestation is one party's identity+intent confirmation. The signer's own
 // identity comes from the signing certificate; this records what is not already
 // in the signature: which counterparty the signer accepts (by SHA-256 SPKI
-// fingerprint, see sign.Fingerprint) and the intent. It is the single source for
-// both the visible appearance block and the signed /Reason, so the two cannot
-// disagree.
+// fingerprint, see sign.Fingerprint) and the intent.
+//
+// It is the source of BOTH the visible appearance block (AppearanceLines) and the signed
+// /Reason (reason). It is not, however, ENFORCED to be: Contribute takes an already
+// rasterised appearance image from its caller and signs it alongside a /Reason built here,
+// and no code compares the two — a bitmap cannot be checked against a string. This comment
+// used to assert that the two "cannot disagree", which was a promise nothing kept. What is
+// true: the client renders the appearance from AppearanceLines, so they agree by
+// construction on the path Nib actually uses, and a caller that supplied something else
+// would produce a document whose picture and whose signed text differ.
 type Attestation struct {
 	Signer            string    // signer's identity common name (-> signature Name)
 	AcceptedPeer      string    // hex SHA-256 SPKI of the accepted counterparty (-> /Reason)
@@ -38,6 +45,24 @@ type Attestation struct {
 	Intent            string    // what the signer agrees to (-> /Reason, appearance)
 	When              time.Time // signing time
 }
+
+// attestationTag marks a /Reason as one this package WROTE, and ReadAttestations requires
+// it before reading the peer token.
+//
+// **What it fixes.** Without it, any signature whose reason merely contained a bracketed
+// 64-hex token parsed as a co-signing attestation — and an ordinary Finalize signature's
+// reason is free text the signer types. A reason carrying a crafted [SPKI:…] therefore
+// reached crossBind and could be reported as accepting a co-signer.
+//
+// **What it does NOT prove, and this matters more than what it does.** The reason is signed
+// by the signer's own key, so a signer who wants to can type this tag as easily as anything
+// else. It cannot distinguish "Nib's co-sign flow produced this" from "the signer wrote
+// it": both are the same key asserting the same string. What it removes is the INCIDENTAL
+// case — a reason that collides by accident or by copy-paste — and it makes the format
+// self-describing. The verdict built on it is worded accordingly, and correctly: the UI
+// says each signature ATTESTS to the other's key, which is a claim about what was asserted
+// rather than about which program asserted it.
+const attestationTag = "[NibCoSign:1]"
 
 // spkiToken matches the machine-readable peer fingerprint embedded in /Reason.
 var spkiToken = regexp.MustCompile(`\[SPKI:([0-9a-fA-F]{64})\]`)
@@ -64,7 +89,7 @@ func safeText(s string) string {
 // signature panel yet round-trips exactly. The user-controlled label and intent
 // are bracket-stripped so they can't forge the token (see safeText).
 func (a Attestation) reason() string {
-	return fmt.Sprintf("Accepts %s [SPKI:%s]. %s", safeText(a.AcceptedPeerLabel), a.AcceptedPeer, safeText(a.intent()))
+	return fmt.Sprintf("%s Accepts %s [SPKI:%s]. %s", attestationTag, safeText(a.AcceptedPeerLabel), a.AcceptedPeer, safeText(a.intent()))
 }
 
 // AppearanceLines is the visible attestation block text, one entry per line — the
@@ -107,8 +132,13 @@ func ReadAttestations(pdf []byte) []SignerAttestation {
 	out := make([]SignerAttestation, 0, len(st.Signers))
 	for _, s := range st.Signers {
 		sa := SignerAttestation{Signer: s.Name, Fingerprint: s.Fingerprint, Reason: s.Reason, When: s.When, Valid: s.Valid}
-		if m := spkiToken.FindStringSubmatch(s.Reason); m != nil {
-			sa.AcceptedPeer = m[1]
+		// The tag is required, not just the token — see attestationTag. safeText strips
+		// brackets from the label and intent this package interpolates, so a co-signer
+		// cannot smuggle either marker through the fields it controls.
+		if strings.Contains(s.Reason, attestationTag) {
+			if m := spkiToken.FindStringSubmatch(s.Reason); m != nil {
+				sa.AcceptedPeer = m[1]
+			}
 		}
 		out = append(out, sa)
 	}

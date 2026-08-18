@@ -8,6 +8,7 @@ import (
 	"errors"
 	"io"
 	"mime/multipart"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -760,5 +761,95 @@ func TestSessionArmRejectsUnpinnedPeer(t *testing.T) {
 	resp.Body.Close()
 	if resp.StatusCode == http.StatusOK {
 		t.Error("armed for an unpinned peer")
+	}
+}
+
+// A finished session's teardown does not close the one that replaced it.
+//
+// A session's accept goroutine can live for minutes — p2p.Receive spans the user's
+// consent, the signing and a 128 MiB write — and arm() refuses only while a listener is
+// present. So the user can Cancel and arm a NEW session while the old goroutine is still
+// winding down, and its `defer disarm()` used to close whatever was armed by then. The
+// user then sits waiting on a receive that a predecessor tore down, and is told "no peer
+// connected" for a session that never had its chance.
+//
+// Driven at the session struct rather than over TLS: the race is entirely about which
+// listener a teardown names, and a networked reproduction would add a peer, a handshake
+// and a timing window to test a comparison.
+func TestDisarmDoesNotCloseALaterSession(t *testing.T) {
+	var se session
+
+	lnA, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lnA.Close()
+	if !se.arm(lnA) {
+		t.Fatal("setup: the first session did not arm")
+	}
+
+	// The user cancels, then arms again — the sequence that makes the old goroutine's
+	// teardown dangerous.
+	se.disarm()
+	lnB, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lnB.Close()
+	if !se.arm(lnB) {
+		t.Fatal("setup: the second session did not arm, so there is nothing for the old teardown to damage")
+	}
+
+	// Now the FIRST session's goroutine finishes and runs its deferred teardown.
+	se.disarmIf(lnA)
+
+	se.mu.Lock()
+	armed := se.ln
+	se.mu.Unlock()
+	if armed != lnB {
+		t.Errorf("after the previous session's teardown fired, the armed listener is %v, want the second session's. The user armed a new session and a predecessor closed it — they wait for a peer that can no longer reach them.", armed)
+	}
+
+	// And the unconditional form still works, because Cancel and shutdown mean exactly it.
+	se.disarm()
+	se.mu.Lock()
+	armed = se.ln
+	se.mu.Unlock()
+	if armed != nil {
+		t.Error("an explicit disarm left the session armed")
+	}
+}
+
+// The same, for the consent request — where the consequence is worse: an unconditional
+// clear discards a LATER session's pending consent, abandoning a peer's document while the
+// user is looking at it.
+func TestClearPendingDoesNotDropALaterSessionsConsent(t *testing.T) {
+	var se session
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	if !se.arm(ln) {
+		t.Fatal("setup: could not arm")
+	}
+
+	old := &pendingReq{resp: make(chan sessionDecision, 1)}
+	if !se.setPending(old) {
+		t.Fatal("setup: could not set the first pending request")
+	}
+	current := &pendingReq{resp: make(chan sessionDecision, 1)}
+	if !se.setPending(current) {
+		t.Fatal("setup: could not set the second pending request")
+	}
+
+	// The earlier confirmer's defer fires.
+	se.clearPendingIf(old)
+
+	se.mu.Lock()
+	got := se.pending
+	se.mu.Unlock()
+	if got != current {
+		t.Error("a finished confirmer's teardown discarded the consent request that replaced it — the peer's document is dropped from under the user while they are reviewing it")
 	}
 }
