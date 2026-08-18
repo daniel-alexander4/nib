@@ -290,10 +290,21 @@ test('switching away and back preserves the zoom you set', async () => {
   // worse than a missing one: it teaches everyone to press the button again, and the
   // sixth failure that is real gets pressed away with the five that were not.
   await rendered();
+  // **On failure this has to say WHICH failure it is.** A bare waitForFunction times out
+  // with nothing but a stack, and the two things it can mean want opposite fixes: a
+  // near miss is a tolerance too tight for the restore path, and a return to fit-width
+  // is the zoom being discarded — the regression this test exists to catch. Three
+  // sessions read the same 30-second timeout without being able to tell them apart.
   await page.waitForFunction((w) => {
     const p = document.querySelector('.viewerContainer:not([hidden]) .page');
     return p && Math.abs(p.offsetWidth - w) < 2;
-  }, zoomed);
+  }, zoomed).catch(async () => {
+    const actual = await page.evaluate(() => document.querySelector('.viewerContainer:not([hidden]) .page')?.offsetWidth ?? -1);
+    const near = Math.abs(actual - zoomed) < 20;
+    assert.fail(`the page settled at ${actual}px, not the ${zoomed}px it was left at (fit-width for this document is ${fitted}px). ${near
+      ? 'A NEAR MISS, so the 2px tolerance is too tight for the restore path and the final assertion below needs the same widening.'
+      : 'NOT a near miss — the zoom was discarded, which is the regression this test exists to catch.'}`);
+  });
 
   const back = await page.evaluate(() => document.querySelector('.viewerContainer:not([hidden]) .page').offsetWidth);
   assert.ok(Math.abs(back - zoomed) < 2,

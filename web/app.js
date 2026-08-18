@@ -1490,6 +1490,14 @@ function newView() {
     // false, which is what lets a switch preserve zoom (P06 exit criterion) while still
     // rescuing a view that never got one (P05's carried clause).
     hasScale: false,
+    // Whether the scale in effect is one the USER chose, as opposed to one we fitted
+    // for them. It is a different question from `hasScale` and it has to be, because
+    // the two automatic fits answer to it differently: the widest-page refine at
+    // `pagesloaded` must not run over a zoom (it lands AFTER the load, and on a long
+    // document that is long after the user could have zoomed), while activateView's
+    // rescue-fit must not run over one either. A view with a user scale is a view
+    // whose scale is nobody else's to set.
+    userScale: false,
     outlineItems: [],
     originalName: '', // basename of the opened file, for default export names
 
@@ -1725,8 +1733,12 @@ function newView() {
     v.viewer.currentScaleValue = 'page-width'; // immediate fit (page 1) so there's no 100%-then-fit flash…
   });
   // …then refine to the widest page once every page view is populated and the layout
-  // has settled (pagesinit is too early — see fitWidestWidth).
-  v.eventBus.on('pagesloaded', () => fitWidestWidth(v));
+  // has settled (pagesinit is too early — see fitWidestWidth) — UNLESS the user has
+  // already chosen a scale. The refine used to be unconditional, and "once every page
+  // view is populated" is late: on a long document a zoom made while it was still
+  // loading was overwritten the instant it finished. The same silent loss of the user's
+  // zoom that P06's exit criterion names at the switch, through the load door instead.
+  v.eventBus.on('pagesloaded', () => { if (!v.userScale) fitWidestWidth(v); });
   v.eventBus.on('pagechanging', (e) => {
     // The thumbnail highlight CHANGED CATEGORY in P05.S05. With a shared grid it was
     // shared chrome and belonged behind the gate; with a per-view grid it is this view's
@@ -1951,7 +1963,11 @@ function activateView(v) {
   // away and switched back was handed fit-width, silently, every time. Nothing else
   // depended on the re-fit happening on every activation — the resize listener heals dpr
   // and does not re-fit at all — so the narrow version loses nothing.
-  if (!v.hasScale) fitWidestWidth(v);
+  // `userScale` covers the second door onto the same defect: a view whose fit no-opped
+  // (activated before any page view was populated, so `maxW` was 0) still reads
+  // hasScale false, and re-fitting it on the NEXT activation would discard a zoom the
+  // user has set in the meantime.
+  if (!v.hasScale && !v.userScale) fitWidestWidth(v);
   // Explicitly, not via the bus: a re-fit that computes the SAME scale fires no
   // `scalechanging`, so the self-serving path cannot be relied on to have run.
   relayoutOverlays(v);
@@ -2120,6 +2136,7 @@ async function setDocumentFromServer(meta, target = view) {
   // A different document in the same view needs its own fit: page sizes differ, so the
   // outgoing document's scale is not this one's.
   target.hasScale = false;
+  target.userScale = false; // and its own scale is not the outgoing document's, chosen or not
   target.docMeta = meta;
   // No `!== '.'` guard any more: the server emits an EMPTY name for a path-less
   // document rather than filepath.Base("")'s ".", so the falsy check is the whole test.
@@ -8580,9 +8597,12 @@ function prevPage() { if (view.pdfDocument && view.viewer.currentPageNumber > 1)
 function nextPage() { if (view.pdfDocument && view.viewer.currentPageNumber < view.pdfDocument.numPages) view.viewer.currentPageNumber++; }
 function firstPage() { if (view.pdfDocument) view.viewer.currentPageNumber = 1; }
 function lastPage() { if (view.pdfDocument) view.viewer.currentPageNumber = view.pdfDocument.numPages; }
-function zoomIn() { view.viewer.currentScale = view.viewer.currentScale * 1.15; }
-function zoomOut() { view.viewer.currentScale = view.viewer.currentScale / 1.15; }
-function fitWidth() { fitWidestWidth(view); }
+// Every one of these records that the scale is now the user's — see `userScale`. Fit is
+// the one that CLEARS it: the user asking for fit-width is the user handing the scale
+// back, so a later refine to the widest page is welcome rather than an override.
+function zoomIn() { view.userScale = true; view.viewer.currentScale = view.viewer.currentScale * 1.15; }
+function zoomOut() { view.userScale = true; view.viewer.currentScale = view.viewer.currentScale / 1.15; }
+function fitWidth() { view.userScale = false; fitWidestWidth(view); }
 // fitWidestWidth fits the WIDEST page in the document to the container width and
 // locks it as a NUMERIC scale, so a mixed-size document scrolls smoothly. A named
 // 'page-width' re-fits to whichever page scrolls into view (pdf.js recomputes it
@@ -8659,6 +8679,7 @@ window.addEventListener('wheel', (e) => {
   const pixelMode = e.deltaMode === WheelEvent.DOM_DELTA_PIXEL;
   if (pixelMode && !ctrlHeld) {
     // Trackpad pinch: continuous factor per event.
+    view.userScale = true; // the user choosing a scale, same as the buttons — see `userScale`
     view.viewer.updateScale({ scaleFactor: 2 ** (-e.deltaY / 100), origin, drawingDelay: 400 });
   } else {
     // Notched wheel: one zoom step per notch, same 1.15 factor as the buttons.
@@ -8666,6 +8687,10 @@ window.addEventListener('wheel', (e) => {
     const steps = Math.trunc(wheelTicks);
     if (steps) {
       wheelTicks -= steps;
+      // Inside `if (steps)`, not above it: a fraction of a notch moves nothing, and
+      // marking the view user-scaled for it would suppress the widest-page refine
+      // over a gesture that changed no scale at all.
+      view.userScale = true;
       view.viewer.updateScale({ scaleFactor: 1.15 ** steps, origin, drawingDelay: 400 });
     }
   }
