@@ -20,6 +20,11 @@ after(() => h.browser.close());
 const DOC = writeFixture('doc.pdf', { pages: 3, label: 'doc A page' });
 const OTHER = writeFixture('other.pdf', { pages: 5, label: 'doc B page' });
 const BIG = writeFixture('big.pdf', { pages: 80, label: 'big page' });
+// 2000 pages, the LAST of them twice as wide as the rest. Both numbers are load-bearing
+// and the test below says why: the page count is what makes the load slow enough to act
+// inside, and the odd page out is what makes both edges of the load window visible in
+// the DOM.
+const MIXED = writeFixture('mixed.pdf', { pages: 2000, label: 'mixed page', widePage: 2000 });
 
 const chrome = () => page.evaluate(() => ({
   wrap: document.getElementById('viewerWrap').className,
@@ -194,5 +199,70 @@ test('a failed close tears nothing down', async () => {
   assert.equal(status, 200, 'the server must still be serving the document');
 
   await page.unroute('**/api/close');
+  await closeDoc();
+});
+
+// The visible view's widths. Scoped to `:not([hidden])` for the reason harness.mjs
+// spells out: with several containers in the wrap a bare selector measures whichever
+// one the document ordered first, which need not be the one on screen.
+const widths = () => page.evaluate(() => {
+  const c = document.querySelector('.viewerContainer:not([hidden])');
+  const pages = c ? c.querySelectorAll('.page') : [];
+  return {
+    container: c?.clientWidth ?? 0,
+    first: pages[0]?.offsetWidth ?? 0,
+    last: pages[pages.length - 1]?.offsetWidth ?? 0,
+    count: pages.length,
+  };
+});
+
+test('a zoom set while the document is still loading is not thrown away', async () => {
+  // **The load door onto the defect P06's exit criterion names at the switch door.**
+  // `pagesinit` fits page one immediately so there is no 100%-then-fit flash, and
+  // `pagesloaded` refines that to the WIDEST page once every page view is populated.
+  // The refine was unconditional — so a zoom made in between, on a document long enough
+  // that "in between" is a real interval, was overwritten the moment the load finished.
+  // Silently, and with the user's hand still on the button.
+  //
+  // This is also the mechanism behind tabs.test.mjs's intermittently-flaky zoom test:
+  // there the refine landed after the zoom and before the switch, and the switch then
+  // had nothing to preserve.
+  await h.openDocument(MIXED, 2000);
+
+  // ── the test is only meaningful inside the load window, so it reads whether it is ──
+  // openDocument returns at `pagesinit`, where pdf.js has sized every page div from
+  // PAGE ONE's viewport — so page 1 fills the container and the wide last page is still
+  // reported portrait. Both are checked: either one failing means the document finished
+  // loading before the zoom, and nothing below could have failed.
+  const opening = await widths();
+  assert.equal(opening.count, 2000, `setup: ${opening.count} page divs, want 2000`);
+  assert.ok(opening.first / opening.container > 0.9,
+    `setup: page 1 is ${opening.first}px in a ${opening.container}px container — the widest-page refine has ALREADY run, so the load window closed before this test acted and the assertion at the end cannot fail`);
+  assert.ok(opening.last < opening.first * 1.5,
+    `setup: the last page is already ${opening.last}px against page 1's ${opening.first}px, so it has resolved its own size and the document is loaded — same reason, the window has closed`);
+
+  // The user zooms, inside the window.
+  await page.click('#zoomInBtn');
+  await page.click('#zoomInBtn');
+  const zoomed = (await widths()).first;
+  assert.ok(zoomed > opening.first * 1.1,
+    `setup: zooming moved page 1 from ${opening.first}px to ${zoomed}px, which is not a change this test can see`);
+
+  // ── then the load finishes ────────────────────────────────────────────────────────
+  // The wide page is the LAST one, so its div reaching its true width means every page
+  // resolved — which is the condition `pagesloaded` fires on. The settle after it is a
+  // bound, not a tuning: the handler runs synchronously off that same promise chain, so
+  // if the zoom is going to be overwritten it has been overwritten already.
+  await page.waitForFunction(() => {
+    const pages = document.querySelectorAll('.viewerContainer:not([hidden]) .page');
+    const last = pages[pages.length - 1];
+    return last && last.offsetWidth > pages[0].offsetWidth * 1.5;
+  });
+  await page.waitForTimeout(300);
+
+  const after = (await widths()).first;
+  assert.ok(Math.abs(after - zoomed) < 2,
+    `page 1 is ${after}px, not the ${zoomed}px the user zoomed it to: the fit that lands when the document finishes loading overwrote a scale the user had already chosen`);
+
   await closeDoc();
 });

@@ -18,13 +18,20 @@ import { WORK } from './harness.mjs';
 // here is stubbed.
 // `form: true` adds a single AcroForm text field to page one.
 //
+// `widePage: n` makes page n twice as wide as the rest (1224x792 against 612x792).
+// It exists for one thing: pdf.js sizes every page div from PAGE ONE's viewport at
+// `pagesinit` and only gives each page its true size as that page resolves, so a
+// document whose pages are all the same size cannot tell "still loading" from
+// "loaded" by looking at the DOM. One differently-shaped page makes both edges of
+// the load window observable, which is what lets a test prove it ran inside it.
+//
 // It exists for one acceptance clause and it is worth saying which: P06's "switching
 // preserves … form fills". A form fill is a pdf.js `annotationStorage` value, which is a
 // different mechanism from a Nib overlay — the overlay lives in our DOM, the fill lives
 // in pdf.js's — and the two are preserved for the same underlying reason (the view is
 // hidden, never torn down). "Same reason" is exactly the argument that lets an
 // unexercised clause read as met, so the clause gets its own fixture and its own drive.
-export function makePDF({ pages = 3, label = 'page', form = false } = {}) {
+export function makePDF({ pages = 3, label = 'page', form = false, widePage = 0 } = {}) {
   const objs = [];
   const add = (s) => objs.push(s);
   const kids = [];
@@ -38,7 +45,8 @@ export function makePDF({ pages = 3, label = 'page', form = false } = {}) {
   add(`<< /Type /Pages /Kids [${kids.join(' ')}] /Count ${pages} >>`);
   for (let i = 0; i < pages; i++) {
     const annots = form && i === 0 ? ` /Annots [${fieldObj} 0 R]` : '';
-    add(`<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents ${4 + i * 2} 0 R /Resources << /Font << /F1 ${fontObj} 0 R >> >>${annots} >>`);
+    const box = i + 1 === widePage ? '[0 0 1224 792]' : '[0 0 612 792]';
+    add(`<< /Type /Page /Parent 2 0 R /MediaBox ${box} /Contents ${4 + i * 2} 0 R /Resources << /Font << /F1 ${fontObj} 0 R >> >>${annots} >>`);
     // Distinct text per page, so "a different document opened" is observable
     // rather than asserted.
     const content = `BT /F1 36 Tf 72 700 Td (${label} ${i + 1} of ${pages}) Tj ET`;
