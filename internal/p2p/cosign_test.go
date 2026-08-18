@@ -6,6 +6,7 @@ import (
 	"image"
 	"image/color"
 	"image/png"
+	"strings"
 	"testing"
 	"time"
 
@@ -190,5 +191,77 @@ func TestReadAttestationsCrossBinding(t *testing.T) {
 	}
 	if !two[0].Matched || !two[1].Matched {
 		t.Errorf("mutual co-signing should cross-bind both: %+v", two)
+	}
+}
+
+// A signature whose reason merely CONTAINS a peer token is not read as a co-signing
+// attestation, and cannot reach Matched.
+//
+// A Finalize signature's /Reason is free text the signer types (internal/server/finalize.go
+// passes it straight through). Before the tag, ANY reason carrying a bracketed 64-hex token
+// parsed as an attestation — so a signer could type one naming the other party's
+// fingerprint, and crossBind would then report their own signature as accepting a
+// co-signer of the document. A forged trust verdict, from a field the forger controls.
+//
+// **Driven through ReadAttestations against a really-signed document**, not through a
+// re-implementation of its parse. The first draft of this test inlined the tag-and-token
+// check and asserted on that — which is a test of the copy, not of the code, and is exactly
+// the shape that let a gap in riskyActions hide from the test built on the same map.
+//
+// The tag does not prove Nib produced the reason: the signer's key signs whatever string
+// they choose, and they could type the tag too (attestationTag says so at length). What it
+// removes is the incidental case. Both directions are pinned here.
+func TestCraftedReasonIsNotReadAsAnAttestation(t *testing.T) {
+	base, err := testpdf.Form()
+	if err != nil {
+		t.Fatal(err)
+	}
+	certA, keyA, _ := sign.GenerateIdentity("Alice")
+	certB, keyB, _ := sign.GenerateIdentity("Mallory")
+	fpA := fp(t, certA)
+	now := time.Date(2026, 6, 8, 12, 0, 0, 0, time.UTC)
+
+	// Alice co-signs properly: a real attestation accepting Mallory.
+	prepared, err := PrepareDocument(base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	docA := contribute(t, prepared, certA, keyA, Attestation{
+		Signer: "Alice", AcceptedPeer: fp(t, certB), AcceptedPeerLabel: "Mallory", When: now,
+	})
+
+	// Mallory signs ORDINARILY — a plain Finalize — with a hand-typed reason carrying a
+	// token naming Alice's fingerprint. That is the whole attack: no co-sign flow, no
+	// agreement, just a string.
+	crafted := "Approved for release. [SPKI:" + fpA + "]"
+	docB, err := sign.SignApproval(docA, certB, keyB, sign.Options{
+		Name: "Mallory", Reason: crafted, When: now,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	atts := ReadAttestations(docB)
+	if len(atts) != 2 {
+		t.Fatalf("expected two signers, got %d", len(atts))
+	}
+	var mallory *SignerAttestation
+	for i := range atts {
+		if atts[i].Signer == "Mallory" {
+			mallory = &atts[i]
+		}
+	}
+	if mallory == nil {
+		t.Fatal("setup: Mallory's signature is not in the document, so nothing below is about it")
+	}
+	// The stimulus: the crafted token really is in the signed reason.
+	if !strings.Contains(mallory.Reason, fpA) {
+		t.Fatalf("setup: the crafted reason did not survive into the signature: %q", mallory.Reason)
+	}
+	if mallory.AcceptedPeer != "" {
+		t.Errorf("a plain signature with a hand-typed [SPKI:…] was read as accepting peer %s — an ordinary reason becomes a co-signing attestation", mallory.AcceptedPeer)
+	}
+	if mallory.Matched {
+		t.Error("the crafted signature was cross-bound as a confirmed co-signer — the UI would report it as attesting to Alice's key")
 	}
 }
