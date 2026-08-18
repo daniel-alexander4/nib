@@ -122,7 +122,7 @@ const els = {
   createPath: $('createPath'), authWarn: $('authWarn'), armedPill: $('armedPill'),
   repointRow: $('repointRow'), repointPath: $('repointPath'),
   repointPw: $('repointPw'), repointGo: $('repointGo'),
-  introOverlay: $('introOverlay'),
+  introOverlay: $('introOverlay'), introGo: $('introGo'),
   authSubmit: $('authSubmit'), authError: $('authError'),
   addImageBtn: $('addImageBtn'), drawSigBtn: $('drawSigBtn'), addImageInput: $('addImageInput'),
   imageGrid: $('imageGrid'), saveForSigningBtn: $('saveForSigningBtn'),
@@ -350,8 +350,16 @@ els.keyChoice.addEventListener('change', syncKeyMode);
 // The first-run intro popup explains the SSH key before the wizard; it stays up
 // until the user clicks the backdrop (off the card).
 let introSeen = false;
+// dismissIntro is the ONE exit, so the button, the backdrop click and Escape cannot
+// drift apart — the overlay's whole defect was having exactly one of the three, expressed
+// as prose rather than as a control.
+function dismissIntro() {
+  els.introOverlay.hidden = true;
+  introSeen = true;
+}
+els.introGo.onclick = dismissIntro;
 els.introOverlay.addEventListener('click', (e) => {
-  if (e.target === els.introOverlay) { els.introOverlay.hidden = true; introSeen = true; }
+  if (e.target === els.introOverlay) { dismissIntro(); }
 });
 
 // applyStatus drives the UI from /api/status.
@@ -7130,7 +7138,38 @@ for (const bar of [els.menubar, els.toolbar]) {
 }
 // Close on any click outside an open menu — including the toolbar's edit icons.
 document.addEventListener('click', (e) => { if (!e.target.closest('.menu')) closeMenu(); });
-document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeMenu(); });
+// Escape closes what is open, in one place. Before this, `closeMenu()` was the ONLY
+// thing in the file bound to Escape: none of the 37 *Modal dialogs closed on it, and the
+// first-run intro overlay had no close control of any kind — a keyboard-only or
+// screen-reader user on first run had no announced way past it to the setup form beneath.
+//
+// It CLICKS the dialog's own cancel rather than hiding the element, and that is the whole
+// design: hiding would skip the cleanup each cancel performs — saveAsCancel drops the
+// pending export's bytes, srvCancel disarms a live listening session, compareClose tears
+// down a second pdf.js document. A dismissal that skipped those would leave state behind
+// that the same button, clicked, removes. Every one of the 37 has such a control and they
+// follow one naming convention, checked across the whole file.
+//
+// The LAST open dialog in document order is the one dismissed: dialogs stack in that
+// order, and Escape means "the one in front of me".
+document.addEventListener('keydown', (e) => {
+  if (e.key !== 'Escape') return;
+  closeMenu();
+  // The intro overlay sits above the auth overlay (z-index 200 vs 100) and is not a
+  // *Modal, so it is checked first — it is also the one that traps a first-run user.
+  if (els.introOverlay && !els.introOverlay.hidden) {
+    e.preventDefault();
+    dismissIntro();
+    return;
+  }
+  const open = [...document.querySelectorAll('div[id$="Modal"]:not([hidden])')];
+  const top = open[open.length - 1];
+  if (!top) return;
+  e.preventDefault();
+  const dismiss = top.querySelector('button[id$="Cancel"], button[id$="Close"]');
+  if (dismiss) dismiss.click();
+  else top.hidden = true; // a dialog with no cancel control: hide it rather than trap the user
+});
 
 async function saveSettings(body) {
   try {
