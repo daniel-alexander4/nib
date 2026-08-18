@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"testing"
@@ -237,6 +238,69 @@ func TestSourceIsFormatted(t *testing.T) {
 //
 // The same shape verify_test.go already uses for the tier table: assert that what the
 // document states is what the code does, for the states that are checkable.
+// The README's -w/--in-place list names every command that actually offers it.
+//
+// It named two — optimize and sanitize — while ten wire the flag. Someone reading the
+// README would not know that `nib rotate -w *.pdf` works, and someone changing the set has
+// nothing telling them the README exists. The list drifted because keeping it accurate was
+// nobody's job in particular; this makes it the compiler's.
+//
+// Derived from the flag registration, which is the mechanical marker: a command supports
+// -w exactly when it calls inPlaceFlag. The stdin/`-` list in the same section is NOT
+// guarded here and that is a real gap, named rather than left silent — reading from stdin
+// has no single marker (it goes through readInput, singleInput and runTransform in
+// different shapes), so deriving it would mean a scan that is wrong in a way nobody
+// notices, which is worse than an unguarded sentence.
+func TestREADMEListsEveryInPlaceCommand(t *testing.T) {
+	src, err := os.ReadFile("internal/cli/commands.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	readme, err := os.ReadFile("README.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Walk the file remembering the enclosing `func cmdX`, and record those that register
+	// the in-place flag.
+	var cmds []string
+	cur := ""
+	fnRe := regexp.MustCompile(`^func cmd([A-Za-z]+)\(`)
+	for _, line := range strings.Split(string(src), "\n") {
+		if m := fnRe.FindStringSubmatch(line); m != nil {
+			cur = strings.ToLower(m[1])
+		}
+		if strings.Contains(line, "inPlaceFlag(fs") && cur != "" {
+			cmds = append(cmds, cur)
+			cur = "" // one registration per command
+		}
+	}
+	// The stimulus. A scan that matched nothing would report the README complete forever.
+	if len(cmds) < 5 {
+		t.Fatalf("only %d in-place commands found in internal/cli/commands.go — the scan is not reading it", len(cmds))
+	}
+
+	// The sentence that lists them, so a command named anywhere else in the README (in the
+	// command table, say) does not count as documented here.
+	at := strings.Index(string(readme), "`--in-place` to rewrite each file")
+	if at == -1 {
+		t.Fatal("the README no longer has the in-place paragraph this checks")
+	}
+	start := strings.LastIndex(string(readme)[:at], "\n\n")
+	para := string(readme)[start:at]
+
+	var missing []string
+	for _, c := range cmds {
+		if !strings.Contains(para, "`"+c+"`") {
+			missing = append(missing, c)
+		}
+	}
+	sort.Strings(missing)
+	if len(missing) > 0 {
+		t.Errorf("these commands take -w/--in-place and the README's list does not name them: %s", strings.Join(missing, ", "))
+	}
+}
+
 func TestDocsREADMEMatchesTheCaps(t *testing.T) {
 	readme, err := os.ReadFile("README.md")
 	if err != nil {
