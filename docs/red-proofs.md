@@ -20,13 +20,35 @@ is the point. A row is only added after the red was observed — never from inte
 - **Check that fired** — the tier and the assertion, by name.
 - **What it said** — the failure message, quoted where it carries the diagnosis.
 
-## What this ledger is not
+## Re-proving a row on demand
 
-It is not a fixture mode. There is no `--fixture` switch that replays these on demand, so
-re-proving a row is a manual edit-run-revert. That is a real gap and it is named here
-rather than left for someone to discover: the cheap half (this record) is done, the
-expensive half (a mode that reintroduces a defect on request and asserts the specific
-assertion fires) is not.
+`./build/redproof.sh <name>` replays a recorded row: it exports HEAD to a throwaway tree,
+applies the row's defect as a patch, runs the named check, and **asserts the check FAILS**.
+`./build/redproof.sh` with no argument lists what is recorded.
+
+**It is not a `--fixture` switch in the product, deliberately.** The obvious shape is a flag
+the app reads that turns a defect back on, and this repo has paid for that shape once already:
+`toolbarStyle` shipped half-built and its default would have hidden the toolbar for every
+existing vault — "a loaded gun, not inert" (v1.109.1). A switch whose whole purpose is to
+break the program is the same gun with a better excuse, and it would ship in the binary users
+run. So nothing is added to the product; each row is a patch against the tracked tree,
+applied to a copy.
+
+It distinguishes the two ways a replay can go wrong, because they mean opposite things:
+
+- **the patch did not apply** → the row is STALE; the code moved under it;
+- **the patch applied and the check still passed** → the check no longer catches its own
+  defect, which is this file's claim being false.
+
+Each row's defect is generated with `git diff`, never typed: a hand-written diff gets its line
+numbers wrong and then fails as "stale" for a reason that has nothing to do with the code —
+the one failure this script must not invent.
+
+**Not every row is recorded yet.** Two are (`empty-state-message`, tier 2;
+`risky-actions-rendition`, tier 1), which is what proves the shape rather than what finishes
+the job; the rest are still prose here and can be added one `.sh` + `.patch` pair at a time.
+Saying so is the point — a partially-mechanised ledger that claimed to be complete would be
+the same failure this file exists to fix.
 
 ---
 
