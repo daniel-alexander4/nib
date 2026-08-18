@@ -120,6 +120,8 @@ const els = {
   authHint: $('authHint'), authPw: $('authPw'), authPwLabel: $('authPwLabel'), migrateRow: $('migrateRow'),
   keyChoice: $('keyChoice'), keySelect: $('keySelect'), keyPath: $('keyPath'),
   createPath: $('createPath'), authWarn: $('authWarn'),
+  repointRow: $('repointRow'), repointPath: $('repointPath'),
+  repointPw: $('repointPw'), repointGo: $('repointGo'),
   introOverlay: $('introOverlay'),
   authSubmit: $('authSubmit'), authError: $('authError'),
   addImageBtn: $('addImageBtn'), drawSigBtn: $('drawSigBtn'), addImageInput: $('addImageInput'),
@@ -210,6 +212,29 @@ const all = (sel) => document.querySelectorAll(sel);
 // with no prompt. csrf is the per-process token issued when the vault unlocks.
 let csrf = null;
 let authState = 'setup'; // setup | migrate | key-missing | ready
+
+// repointKey is the key-missing recovery: unlock with a key the user points at, and have
+// the server rewrite the slot's recorded path so the NEXT launch finds it too. Without
+// that rewrite the user would re-type the path on every start, having been told it was
+// fixed.
+async function repointKey() {
+  const keyPath = els.repointPath.value.trim();
+  if (!keyPath) { els.authError.textContent = 'Enter the path to your SSH private key'; return; }
+  els.repointGo.disabled = true;
+  try {
+    const res = await fetch('/api/ssh/repoint', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ keyPath, passphrase: els.repointPw.value }),
+    });
+    if (!res.ok) { els.authError.textContent = await errText(res, 'could not unlock with that key'); return; }
+    els.authError.textContent = '';
+    els.repointPw.value = '';
+    await refreshStatus();
+  } finally {
+    els.repointGo.disabled = false;
+  }
+}
 let gsAvailable = false; // Ghostscript installed (from /api/status) → offer the general PDF/A converter
 let loAvailable = false; // LibreOffice installed (from /api/status) → offer office-document → PDF conversion
 
@@ -426,12 +451,19 @@ function applyStatus(st) {
 
   if (st.state === 'key-missing') {
     els.authTitle.textContent = 'Unlock key not found';
-    els.authHint.textContent = `Nib can't read the SSH key it was set up with (${st.keyPath || 'unknown path'}). Restore that key file, then retry.`;
+    // Two ways out, and the second one is the addition: the vault is sealed to the key's
+    // PUBLIC half, so a private key found anywhere on disk opens it. Before this the only
+    // offered action was "restore that key file", pointing at a path that may be
+    // meaningless — `id_ed25519` with no directory, or a folder literally named `~`.
+    els.authHint.textContent = `Nib can't read the SSH key it was set up with (${st.keyPath || 'unknown path'}). Put that file back and retry, or tell Nib where it is now.`;
     els.authWarn.hidden = true;
     els.keyChoice.hidden = true;
+    els.repointRow.hidden = false;
+    if (!els.repointPath.value) els.repointPath.value = st.keyPath || '';
     els.authSubmit.textContent = 'Retry';
     return;
   }
+  els.repointRow.hidden = true;
   els.keyChoice.hidden = false;
   els.authWarn.hidden = false;
   els.authTitle.textContent = st.state === 'migrate' ? 'Migrate to SSH-key unlock' : 'Set up Nib';
@@ -2362,6 +2394,7 @@ async function requestClose() {
   if (!res.ok) return toast(await errText(res, 'could not close the document'));
   closeDocument();
 }
+els.repointGo.onclick = () => repointKey();
 els.closeBtn.onclick = () => closeView();
 els.closeAllBtn.onclick = requestClose;
 
