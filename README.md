@@ -155,7 +155,9 @@ becomes the open document, ready to mark up, fill, sign, or save.
 
 **Markdown converts natively**, in pure Go, with no external tool: headings,
 emphasis, lists, blockquotes, and code blocks render as crisp selectable text
-(Latin scripts; images and tables are skipped). For office formats, rendering
+(images and tables are skipped). Non-Latin text prints too — Cyrillic, Greek,
+CJK, Korean, Arabic, Hebrew, Thai and the Indic scripts — using the same faces
+Nib already ships for OCR, embedded only when the document actually needs one. For office formats, rendering
 office layout is something pure Go can't do, so Nib shells out to
 **[LibreOffice](https://www.libreoffice.org/)** in headless mode; like
 Ghostscript it's strictly optional and **detected at runtime** (never bundled, so
