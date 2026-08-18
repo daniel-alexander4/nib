@@ -377,6 +377,44 @@ test('switching away and back preserves a form fill', async () => {
   await page.waitForFunction(() => document.querySelectorAll('#tabstrip .tab').length === 2);
 });
 
+test('an armed annotation tool belongs to its document, not to the toolbar', async () => {
+  // M7–M9's "annotation tool toggles", and at this tier the interesting property is not
+  // that the button lights up — it is that the armed state is the DOCUMENT's. `activeTool`
+  // is per view (P05.S05), the toolbar is one shared strip for N documents, and a tool that
+  // followed the strip would arm the next document the user switched to without them ever
+  // pressing anything. That is the wrong-document class this whole phase is about.
+  assert.equal(await tabCount(), 2, `setup: ${await tabCount()} tabs, want 2`);
+  await page.click(tabSel(1));
+  await switched(3);
+  const onA = await page.$eval('.pageCount', (el) => el.textContent);
+
+  await h.mode('edit');
+  await page.click('#highlightToolBtn');
+  await page.waitForFunction(() => document.getElementById('highlightToolBtn').classList.contains('active'));
+  // The colour swatches are the tool's own chrome and are revealed by arming it, so they
+  // are a second, independent observable of the same state — a class toggle that got out of
+  // step with what the toolbar actually offers would pass on the button alone.
+  assert.equal(await page.$eval('#hlColors', (el) => el.hidden), false,
+    'setup: arming Highlight did not reveal its colours, so the tool is not really armed');
+
+  await page.click(tabSel(2));
+  await page.waitForFunction((n) => document.querySelector('.pageCount').textContent !== n, onA);
+
+  assert.equal(await page.$eval('#highlightToolBtn', (el) => el.classList.contains('active')), false,
+    'Highlight is still armed on the other document — the armed tool followed the shared toolbar instead of staying with the document it was armed on, so the next click draws on a document nobody armed');
+  assert.equal(await page.$eval('#hlColors', (el) => el.hidden), true,
+    'the highlight colours are still on screen for a document with no highlight tool armed');
+
+  await page.click(tabSel(1));
+  await switched(3);
+  assert.equal(await page.$eval('#highlightToolBtn', (el) => el.classList.contains('active')), true,
+    'the document came back with the tool the user had armed on it disarmed — per-view state that survives a switch is the point of ADR-002');
+
+  // Disarmed before leaving, or every later click in this file draws a highlight.
+  await page.click('#highlightToolBtn');
+  await page.waitForFunction(() => !document.getElementById('highlightToolBtn').classList.contains('active'));
+});
+
 test('a reload with ONE document open comes back showing it', async () => {
   // The N=1 case, stated separately in the acceptance because it is the defect that
   // predates tabs: before this slice a reload came back showing ZERO documents while the
