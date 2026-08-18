@@ -501,3 +501,76 @@ func encryptedKeyFixture(t *testing.T, dir, passphrase string) (keyPath, pubLine
 	}
 	return keyPath, strings.TrimSpace(string(ssh.MarshalAuthorizedKey(sshPub)))
 }
+
+// A vault whose recorded key path no longer resolves recovers when the user points at
+// the key — and the recorded path is REWRITTEN, so the next launch finds it too.
+//
+// The rewrite is the half that makes it a repair. Without it the user re-types the path
+// on every start, having been told it was fixed — and v1.102.2 (which stopped NEW
+// enrollments recording an unstable path) does nothing for a vault that already holds
+// one, which on Windows is the ordinary case: the working directory differs between an
+// Explorer double-click, an "Open with", and a shortcut.
+func TestOpenSSHAtRepointsAMovedKey(t *testing.T) {
+	dir := t.TempDir()
+	pub, keyPath := newKey(t)
+	if _, err := Create(dir, pub, keyPath); err != nil {
+		t.Fatal(err)
+	}
+
+	// Move the key somewhere the vault does not know about.
+	moved := filepath.Join(t.TempDir(), "id_ed25519")
+	raw, err := os.ReadFile(keyPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(moved, raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	os.Remove(keyPath)
+
+	// The stimulus: without it, "OpenSSHAt worked" would be indistinguishable from
+	// "the ordinary unlock path was working all along".
+	if _, err := OpenSSH(dir); !errors.Is(err, ErrKeyMissing) {
+		t.Fatalf("setup: OpenSSH still unlocks after the key moved (err = %v), so this test proves nothing", err)
+	}
+
+	if _, err := OpenSSHAt(dir, moved, nil); err != nil {
+		t.Fatalf("OpenSSHAt with the key's new location: %v", err)
+	}
+
+	// The repair: the ORDINARY path now works, with no further help.
+	if _, err := OpenSSH(dir); err != nil {
+		t.Errorf("after a repoint, the ordinary OpenSSH still fails (%v) — the recorded KeyPath was not rewritten, so the next launch lands in key-missing again", err)
+	}
+	slots, err := Slots(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(slots) == 0 || slots[0].KeyPath != moved {
+		t.Errorf("the slot records %q, want the key's new location %q", slots[0].KeyPath, moved)
+	}
+}
+
+// Pointing at a key that does not open this vault is refused, and refused as
+// ErrKeyMissing rather than by accidentally succeeding through some other slot or
+// through the ~/.ssh sweep that the ordinary unlock path performs.
+func TestOpenSSHAtRefusesAForeignKey(t *testing.T) {
+	dir := t.TempDir()
+	pub, keyPath := newKey(t)
+	if _, err := Create(dir, pub, keyPath); err != nil {
+		t.Fatal(err)
+	}
+	_, otherPath := newKey(t) // a perfectly good key, for a different vault
+	if _, err := OpenSSHAt(dir, otherPath, nil); !errors.Is(err, ErrKeyMissing) {
+		t.Errorf("OpenSSHAt with a key that seals nothing here: err = %v, want ErrKeyMissing", err)
+	}
+	// And the recorded path is untouched — a failed repoint must not overwrite the one
+	// piece of information that would let a correct attempt succeed.
+	slots, err := Slots(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if slots[0].KeyPath != keyPath {
+		t.Errorf("a REFUSED repoint rewrote the slot's key path to %q (was %q)", slots[0].KeyPath, keyPath)
+	}
+}

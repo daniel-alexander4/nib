@@ -230,6 +230,76 @@ func OpenSSHWithPassphrase(dir string, passphrase []byte) (*Vault, error) {
 	return openSSH(dir, passphrase)
 }
 
+// OpenSSHAt unlocks the vault using a private key the user has POINTED AT, and — on
+// success — rewrites the matching slot's recorded KeyPath to that location.
+//
+// **This is the recovery half of the key-path fix.** v1.102.2 stopped new enrollments
+// recording a path that will not survive the next launch (a `~`-prefixed or relative one,
+// anchored to whatever the process CWD happened to be), and did nothing for a vault that
+// already holds one. Such a user lands in `key-missing`, whose only offered action was
+// "restore that key file, then retry" — pointing at a path that may be meaningless, like
+// a directory literally named `~`. The vault is not lost: it is still sealed to that
+// key's PUBLIC half, so if the private key can be found anywhere on disk it unwraps.
+// The gap was purely that there was no way to say where.
+//
+// The rewrite is what makes it a repair rather than a one-off unlock — otherwise the next
+// launch lands in `key-missing` again and the user re-types the path forever.
+//
+// Note what this cannot do: if the key file is genuinely gone, nothing recovers the
+// vault. That is the documented "lose every authorized key and the vault is
+// unrecoverable" property, not a bug, and this function reports ErrKeyMissing for it.
+func OpenSSHAt(dir, keyPath string, passphrase []byte) (*Vault, error) {
+	env, err := readEnvelope(dir)
+	if err != nil {
+		return nil, err
+	}
+	if env.Version < 2 || len(env.SSH) == 0 {
+		return nil, ErrNeedsMigration
+	}
+	var slotErr error
+	for i, slot := range env.SSH {
+		// The SUPPLIED path only. unwrapSlot would also sweep ~/.ssh and try the slot's
+		// own recorded path, and either would make "the key you pointed at opened it"
+		// untrue — the KeyPath rewrite below would then record a path that did not do
+		// the unwrapping.
+		key, uerr := sshkey.Unwrap(slot.Wrapped, keyPath, slot.PubKey, passphrase)
+		if uerr != nil {
+			if slotErr == nil || errors.Is(uerr, sshkey.ErrWrongPassphrase) || errors.Is(uerr, sshkey.ErrPassphraseRequired) {
+				slotErr = uerr
+			}
+			continue
+		}
+		plain, derr := decrypt(key, env.Nonce, env.Cipher)
+		if derr != nil {
+			zero(key)
+			continue
+		}
+		var c Contents
+		derr = json.Unmarshal(plain, &c)
+		zero(plain)
+		if derr != nil {
+			zero(key)
+			return nil, fmt.Errorf("corrupt vault contents: %w", derr)
+		}
+		env.SSH[i].KeyPath = keyPath // the repair
+		v := &Vault{path: Path(dir), key: key, ssh: env.SSH, current: slot.PubKey, contents: c, builtinImages: loadBuiltinSignatures()}
+		// Saved immediately: an unlock that did not persist the new path leaves the user
+		// in key-missing on the next launch, having been told it was fixed.
+		if serr := v.Save(); serr != nil {
+			return nil, serr
+		}
+		return v, nil
+	}
+	switch {
+	case errors.Is(slotErr, sshkey.ErrWrongPassphrase):
+		return nil, ErrWrongPassphrase
+	case errors.Is(slotErr, sshkey.ErrPassphraseRequired):
+		return nil, ErrKeyLocked
+	default:
+		return nil, ErrKeyMissing
+	}
+}
+
 // openSSH unlocks via the enrolled SSH slots. passphrase nil is the promptless
 // path (unencrypted key, with the ~/.ssh candidate fallback); a non-nil passphrase
 // targets the enrolled key path only and decrypts it in memory. When no slot
