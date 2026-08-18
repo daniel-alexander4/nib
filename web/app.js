@@ -1832,6 +1832,14 @@ function activateView(v) {
   // divs, and a pointerup arriving after the swap would write the drag into whichever
   // document is active by then.
   abortDrags();
+  // An armed fill target is transient the same way a half-drawn box is: `fillMarker`
+  // parks a flag awaiting the NEXT Library click, and that click now belongs to another
+  // document. Disarmed rather than threaded — the user has not chosen an image yet, so
+  // there is nothing in flight to finish, and threading it would fill a flag on a
+  // document that is not on screen with no sign that anything happened. `activeMarker`
+  // deliberately stays: it is where the user had got to in the signing walk, which is
+  // document progress rather than a pending gesture.
+  out.fillTarget = null;
   // Captured before hiding, because a display:none element reports scrollTop 0.
   out.scrollTop = out.container.scrollTop;
   out.pageNumber = out.viewer.currentPageNumber;
@@ -1881,9 +1889,26 @@ function activateView(v) {
   syncTabs(); // the active marker moves with the view
 }
 
+// activeGestures holds one `end` per pointer-capture gesture currently in flight —
+// the stamp and marker drags, which are the only gestures whose state lives in a
+// closure rather than in the module-level drag vars below.
+//
+// They need a registry because `setPointerCapture` is released when the element leaves
+// the DOM, NOT when it is hidden: an inactive view is `display:none` and still in the
+// document, so its stamp keeps receiving `pointermove` after a switch. Unregistered,
+// that continuation lays the field out against whichever document is active — reading
+// the new view's page geometry and pushing the move onto the new view's history. There
+// is no cancel hook on a captured pointer, so each gesture registers its own.
+const activeGestures = new Set();
+function cancelGestures() {
+  for (const end of [...activeGestures]) end(); // each `end` removes itself
+  activeGestures.clear(); // belt and braces: an `end` that threw would otherwise leak
+}
+
 // abortDrags cancels any gesture in flight and removes its preview node. Transient state
 // is aborted, never restored: a half-drawn box belongs to a moment, not to a document.
 function abortDrags() {
+  cancelGestures();
   for (const d of [redDiv, sbDiv, cropDiv, edDiv, bdDiv, ddDiv, rdDiv, shCanvas]) d?.remove();
   redStart = redDiv = redHit = null;
   sbStart = sbDiv = sbHit = null;
@@ -4340,22 +4365,27 @@ els.outlineSave.onclick = async () => {
 // too high (the line/letter no longer matched). bitmapUrl is a library image
 // (/api/images/{id}) or a data: URL for a generated stamp.
 async function placeStamp(bitmapUrl) {
-  if (!view.pdfDocument) { toast('Open a PDF first'); return; }
-  const n = view.viewer.currentPageNumber;
-  const pv = view.viewer.getPageView(n - 1);
+  // `docGen` alone guarded the wrong hazard: it detects a RELOAD of this view, and says
+  // nothing about the active view having become a different document. Two views can hold
+  // the same generation number, so the check passed and the stamp was registered on the
+  // active document while its element was appended into this one's page div.
+  const owner = view;
+  if (!owner.pdfDocument) { toast('Open a PDF first'); return; }
+  const n = owner.viewer.currentPageNumber;
+  const pv = owner.viewer.getPageView(n - 1);
   if (!pv?.div || !pv.viewport) { toast('Scroll the page into view, then try again'); return; }
-  const base = (await view.pdfDocument.getPage(n)).getViewport({ scale: 1 }); // PDF points
-  const gen = view.docGen;
+  const base = (await owner.pdfDocument.getPage(n)).getViewport({ scale: 1 }); // PDF points
+  const gen = owner.docGen;
   const img = new Image();
   img.onload = () => {
-    if (gen !== view.docGen) return; // a reload superseded this placement — pv.div is now detached
+    if (gen !== owner.docGen) return; // a reload superseded this placement — pv.div is now detached
     const W = pv.div.clientWidth, H = pv.div.clientHeight;
     const aspect = (img.naturalWidth / img.naturalHeight) || 1;
     const dispW = Math.min(W * 0.3, img.naturalWidth || W * 0.3);
     const dispH = dispW / aspect;
     const x = (W - dispW) / 2, y = (H - dispH) / 2;
     const frac = [x / W, y / H, (x + dispW) / W, (y + dispH) / H];
-    makeStamp(bitmapUrl, aspect, frac, { page: n, pageW: base.width, pageH: base.height }, pv);
+    makeStamp(bitmapUrl, aspect, frac, { page: n, pageW: base.width, pageH: base.height }, pv, owner);
   };
   img.onerror = () => toast('could not load image');
   img.src = bitmapUrl;
@@ -4381,7 +4411,7 @@ function makeStamp(src, aspect, frac, opts, pv, owner = view) {
   el.append(img, handle, del);
   f.el = el;
 
-  const remove = () => deleteField(f);
+  const remove = () => deleteField(f, true, owner);
   del.onclick = (e) => { e.stopPropagation(); remove(); };
   el.addEventListener('keydown', (e) => { if (e.key === 'Delete' || e.key === 'Backspace') remove(); });
   enableStampGestures(f, el, handle);
@@ -4396,18 +4426,29 @@ function makeStamp(src, aspect, frac, opts, pv, owner = view) {
 // handle), updating the field's page-fraction rect. Pointer math is in page-div
 // pixels; resize preserves the image aspect and everything clamps to the page.
 function enableStampGestures(f, el, handle) {
-  let mode = null, sx = 0, sy = 0, start = null;
+  let mode = null, sx = 0, sy = 0, start = null, owner = null, pid = null;
+  // `end` is BOTH the normal finish and the abort, deliberately one function: the two
+  // paths cannot then drift, and abortDrags() reaches it through activeGestures. It
+  // clears `mode`, which is what makes a later pointermove and a later pointerup no-ops
+  // — an aborted gesture must not move the field and must not record a command.
+  const end = () => {
+    mode = null; start = null; owner = null;
+    if (pid !== null) { try { el.releasePointerCapture(pid); } catch { /* already released */ } pid = null; }
+    activeGestures.delete(end);
+  };
   const begin = (m) => (e) => {
     if (m === 'drag' && e.target.closest('.stamp-resize, .stamp-del')) return;
     e.preventDefault(); e.stopPropagation();
     mode = m; sx = e.clientX; sy = e.clientY; start = f.frac.slice();
+    owner = view; pid = e.pointerId;
     el.setPointerCapture(e.pointerId);
+    activeGestures.add(end);
   };
   el.addEventListener('pointerdown', begin('drag'));
   handle.addEventListener('pointerdown', begin('resize'));
   el.addEventListener('pointermove', (e) => {
     if (!mode) return;
-    const pv = view.viewer.getPageView(f.page - 1);
+    const pv = owner.viewer.getPageView(f.page - 1);
     if (!pv?.div) return;
     const W = pv.div.clientWidth, H = pv.div.clientHeight;
     const dx = (e.clientX - sx) / W, dy = (e.clientY - sy) / H;
@@ -4429,10 +4470,12 @@ function enableStampGestures(f, el, handle) {
     }
     layoutField(f, pv);
   });
-  el.addEventListener('pointerup', (e) => {
-    if (mode && start && f.frac.join() !== start.join()) recordMove(f, start.slice(), f.frac.slice());
-    mode = null;
-    try { el.releasePointerCapture(e.pointerId); } catch { /* already released */ }
+  el.addEventListener('pointerup', () => {
+    // Read before end() clears them; a gesture aborted by a switch has mode null here,
+    // so the move is neither applied nor recorded onto the document now on screen.
+    const wasMode = mode, wasStart = start, wasOwner = owner;
+    end();
+    if (wasMode && wasStart && f.frac.join() !== wasStart.join()) recordMove(f, wasStart.slice(), f.frac.slice(), wasOwner);
   });
 }
 
@@ -6213,8 +6256,9 @@ els.viewerWrap.addEventListener('pointerup', async (e) => {
 // addEdit reads the text run under the drawn box and its style, then builds the
 // prefilled, covered edit overlay. frac is the box in page fractions (top-left).
 async function addEdit(hit, frac) {
+  const owner = view; // captured at entry: everything below runs past several awaits
   const n = hit.n, pv = hit.pv;
-  const page = await view.pdfDocument.getPage(n);
+  const page = await owner.pdfDocument.getPage(n);
   const base = page.getViewport({ scale: 1 });
   const pageW = base.width, pageH = base.height; // PDF points
   // Box in PDF points (bottom-left origin) for the text-overlap test.
@@ -6248,12 +6292,12 @@ async function addEdit(hit, frac) {
   // Widen the cover a touch so ascenders/descenders of the original are hidden.
   const my = 0.15 * (frac[3] - frac[1]), mx = 0.01 * (frac[2] - frac[0]);
   const coverFrac = [Math.max(0, frac[0] - mx), Math.max(0, frac[1] - my), Math.min(1, frac[2] + mx), Math.min(1, frac[3] + my)];
-  const f = makeEditField(frac, { page: n, pageW, pageH, text, size, color, bg, font, coverFrac }, pv);
+  const f = makeEditField(frac, { page: n, pageW, pageH, text, size, color, bg, font, coverFrac }, pv, owner);
   f.el.focus();
   f.el.select();
 }
 
-function makeEditField(frac, opts, pv) {
+function makeEditField(frac, opts, pv, owner = view) {
   const f = {
     page: opts.page, frac, pageW: opts.pageW, pageH: opts.pageH, kind: 'edit',
     font: opts.font, size: opts.size, color: opts.color, bg: opts.bg, coverFrac: opts.coverFrac,
@@ -6268,10 +6312,10 @@ function makeEditField(frac, opts, pv) {
   el.style.fontWeight = /Bold/.test(opts.font) ? '700' : '400';
   el.style.fontStyle = /(Italic|Oblique)/.test(opts.font) ? 'italic' : 'normal';
   f.el = el;
-  view.overlayFields.push(f);
+  owner.overlayFields.push(f);
   layoutField(f, pv);
   pv.div.appendChild(el);
-  recordAdd(f);
+  recordAdd(f, owner);
   return f;
 }
 
@@ -6486,17 +6530,25 @@ function removeField(f, record = true, owner = view) {
 // honour the signing-mode gates — a frozen flag (locked preparer copy) ignores the
 // pointer entirely; a received flag fills but can't be dragged.
 function enableMarkerGestures(f, el) {
-  let down = null, moved = false;
+  let down = null, moved = false, owner = null, pid = null;
+  // One `end` for the normal finish and the abort — see enableStampGestures for why.
+  const end = () => {
+    down = null; owner = null;
+    if (pid !== null) { try { el.releasePointerCapture(pid); } catch { /* already released */ } pid = null; }
+    activeGestures.delete(end);
+  };
   el.addEventListener('pointerdown', (e) => {
     if (e.target.closest('.marker-del')) return;
     if (!flagsFillable() && !flagsEditable()) return; // frozen placeholder
     e.preventDefault(); e.stopPropagation();
     down = { x: e.clientX, y: e.clientY, frac: f.frac.slice() }; moved = false;
+    owner = view; pid = e.pointerId;
     el.setPointerCapture(e.pointerId);
+    activeGestures.add(end);
   });
   el.addEventListener('pointermove', (e) => {
     if (!down || !flagsEditable()) return; // a recipient signs but can't reshape the layout
-    const pv = view.viewer.getPageView(f.page - 1); if (!pv?.div) return;
+    const pv = owner.viewer.getPageView(f.page - 1); if (!pv?.div) return;
     const W = pv.div.clientWidth, H = pv.div.clientHeight;
     if (Math.abs(e.clientX - down.x) + Math.abs(e.clientY - down.y) > 3) moved = true;
     const [x0, y0, x1, y1] = down.frac, w = x1 - x0, h = y1 - y0;
@@ -6504,10 +6556,12 @@ function enableMarkerGestures(f, el) {
     const ny = Math.min(Math.max(y0 + (e.clientY - down.y) / H, 0), 1 - h);
     f.frac = [nx, ny, nx + w, ny + h]; layoutField(f, pv);
   });
-  el.addEventListener('pointerup', (e) => {
-    try { el.releasePointerCapture(e.pointerId); } catch { /* already released */ }
-    const wasDown = down; down = null;
-    if (wasDown && moved && f.frac.join() !== wasDown.frac.join()) recordMove(f, wasDown.frac.slice(), f.frac.slice());
+  el.addEventListener('pointerup', () => {
+    const wasDown = down, wasOwner = owner;
+    end();
+    // An aborted gesture has `down` null, so neither branch runs: a switch mid-press
+    // must not move the flag AND must not count as the click that fills it.
+    if (wasDown && moved && f.frac.join() !== wasDown.frac.join()) recordMove(f, wasDown.frac.slice(), f.frac.slice(), wasOwner);
     else if (wasDown && !moved && flagsFillable()) fillMarker(f);
   });
 }
@@ -6575,7 +6629,7 @@ async function placeIntoMarker(f, src) {
   const pv = owner.viewer.getPageView(f.page - 1);
   if (!pv?.div) return toast('Scroll the page into view, then try again');
   const base = (await owner.pdfDocument.getPage(f.page)).getViewport({ scale: 1 });
-  const next = nextMarkerAfter(f);
+  const next = nextMarkerAfter(f, owner);
   await new Promise((resolve) => {
     const img = new Image();
     img.onload = () => {
@@ -6599,8 +6653,8 @@ async function placeIntoMarker(f, src) {
 
 // nextMarkerAfter returns the next unfilled marker after f in reading order
 // (page, then top-to-bottom, then left-to-right), wrapping to the first if none.
-function nextMarkerAfter(f) {
-  const markers = view.overlayFields.filter((o) => o.kind === 'marker' && o !== f)
+function nextMarkerAfter(f, owner = view) {
+  const markers = owner.overlayFields.filter((o) => o.kind === 'marker' && o !== f)
     .sort((a, b) => a.page - b.page || a.frac[1] - b.frac[1] || a.frac[0] - b.frac[0]);
   for (const m of markers) {
     if (m.page > f.page || (m.page === f.page && (m.frac[1] > f.frac[1] || (m.frac[1] === f.frac[1] && m.frac[0] >= f.frac[0])))) return m;
@@ -7087,13 +7141,14 @@ els.viewerWrap.addEventListener('pointerup', async (e) => {
   if (fw < 0.01 || fh < 0.01) return; // ignore a stray click
   const fx0 = (Math.min(start.x, e.clientX) - r.left) / r.width;
   const fy0 = (Math.min(start.y, e.clientY) - r.top) / r.height;
-  const base = (await view.pdfDocument.getPage(hit.n)).getViewport({ scale: 1 }); // PDF points
-  makeBox([fx0, fy0, fx0 + fw, fy0 + fh], { page: hit.n, pageW: base.width, pageH: base.height });
+  const owner = view; // captured before the await — everything after it names this document
+  const base = (await owner.pdfDocument.getPage(hit.n)).getViewport({ scale: 1 }); // PDF points
+  makeBox([fx0, fy0, fx0 + fw, fy0 + fh], { page: hit.n, pageW: base.width, pageH: base.height }, owner);
 });
 
 // makeBox registers a draggable/resizable outline overlay (kind 'box'), styled
 // live with the chosen color and thickness; collectStamps bakes it via boxPNG.
-function makeBox(frac, opts) {
+function makeBox(frac, opts, owner = view) {
   const f = { page: opts.page, frac, pageW: opts.pageW, pageH: opts.pageH, kind: 'box',
     color: selectedHlColor, weight: clampWeight(els.borderWidthInput.value) };
   const el = document.createElement('div');
@@ -7107,16 +7162,16 @@ function makeBox(frac, opts) {
   el.append(handle, del);
   f.el = el;
 
-  const remove = () => deleteField(f);
+  const remove = () => deleteField(f, true, owner);
   del.onclick = (ev) => { ev.stopPropagation(); remove(); };
   el.addEventListener('keydown', (ev) => { if (ev.key === 'Delete' || ev.key === 'Backspace') remove(); });
   enableStampGestures(f, el, handle);
 
-  view.overlayFields.push(f);
-  const pv = view.viewer.getPageView(f.page - 1);
+  owner.overlayFields.push(f);
+  const pv = owner.viewer.getPageView(f.page - 1);
   pv.div.appendChild(el);
   layoutField(f, pv);
-  recordAdd(f);
+  recordAdd(f, owner);
 }
 
 // --- Dropdown tool: place a fillable dropdown (combobox) field ----------------
@@ -7173,14 +7228,15 @@ els.viewerWrap.addEventListener('pointerup', async (e) => {
   if (fw < 0.01 || fh < 0.01) return; // ignore a stray click
   const fx0 = (Math.min(start.x, e.clientX) - r.left) / r.width;
   const fy0 = (Math.min(start.y, e.clientY) - r.top) / r.height;
-  const base = (await view.pdfDocument.getPage(hit.n)).getViewport({ scale: 1 });
-  makeDropdown([fx0, fy0, fx0 + fw, fy0 + fh], { page: hit.n, pageW: base.width, pageH: base.height });
+  const owner = view; // captured before the await — see makeBox's caller
+  const base = (await owner.pdfDocument.getPage(hit.n)).getViewport({ scale: 1 });
+  makeDropdown([fx0, fy0, fx0 + fw, fy0 + fh], { page: hit.n, pageW: base.width, pageH: base.height }, owner);
 });
 
 // makeDropdown registers a draggable/resizable dropdown overlay (kind 'dropdown')
 // with an inline comma-separated options input; the options ride to the server in
 // collectAuthorFields, where each becomes a combobox choice.
-function makeDropdown(frac, opts) {
+function makeDropdown(frac, opts, owner = view) {
   const f = { page: opts.page, frac, pageW: opts.pageW, pageH: opts.pageH, kind: 'dropdown' };
   const el = document.createElement('div');
   el.className = 'ovl ovl-dropdown';
@@ -7198,17 +7254,17 @@ function makeDropdown(frac, opts) {
   el.append(input, caret, handle, del);
   f.el = el; f.optsInput = input;
 
-  const remove = () => deleteField(f);
+  const remove = () => deleteField(f, true, owner);
   del.onclick = (ev) => { ev.stopPropagation(); remove(); };
   // Delete/Backspace removes the field only when the box (not the options input) is focused.
   el.addEventListener('keydown', (ev) => { if ((ev.key === 'Delete' || ev.key === 'Backspace') && ev.target === el) remove(); });
   enableStampGestures(f, el, handle);
 
-  view.overlayFields.push(f);
-  const pv = view.viewer.getPageView(f.page - 1);
+  owner.overlayFields.push(f);
+  const pv = owner.viewer.getPageView(f.page - 1);
   pv.div.appendChild(el);
   layoutField(f, pv);
-  recordAdd(f);
+  recordAdd(f, owner);
   input.focus();
 }
 
@@ -7267,14 +7323,15 @@ els.viewerWrap.addEventListener('pointerup', async (e) => {
   if (fw < 0.01 || fh < 0.01) return; // ignore a stray click
   const fx0 = (Math.min(start.x, e.clientX) - r.left) / r.width;
   const fy0 = (Math.min(start.y, e.clientY) - r.top) / r.height;
-  const base = (await view.pdfDocument.getPage(hit.n)).getViewport({ scale: 1 });
-  makeRadio([fx0, fy0, fx0 + fw, fy0 + fh], { page: hit.n, pageW: base.width, pageH: base.height });
+  const owner = view; // captured before the await — see makeBox's caller
+  const base = (await owner.pdfDocument.getPage(hit.n)).getViewport({ scale: 1 });
+  makeRadio([fx0, fy0, fx0 + fw, fy0 + fh], { page: hit.n, pageW: base.width, pageH: base.height }, owner);
 });
 
 // makeRadio registers a draggable/resizable radio-group overlay (kind 'radio')
 // with an inline comma-separated choices input (≥2); the options ride to the
 // server in collectAuthorFields, where each becomes a radio button value.
-function makeRadio(frac, opts) {
+function makeRadio(frac, opts, owner = view) {
   const f = { page: opts.page, frac, pageW: opts.pageW, pageH: opts.pageH, kind: 'radio' };
   const el = document.createElement('div');
   el.className = 'ovl ovl-radio';
@@ -7292,17 +7349,17 @@ function makeRadio(frac, opts) {
   el.append(input, caret, handle, del);
   f.el = el; f.optsInput = input;
 
-  const remove = () => deleteField(f);
+  const remove = () => deleteField(f, true, owner);
   del.onclick = (ev) => { ev.stopPropagation(); remove(); };
   // Delete/Backspace removes the field only when the box (not the choices input) is focused.
   el.addEventListener('keydown', (ev) => { if ((ev.key === 'Delete' || ev.key === 'Backspace') && ev.target === el) remove(); });
   enableStampGestures(f, el, handle);
 
-  view.overlayFields.push(f);
-  const pv = view.viewer.getPageView(f.page - 1);
+  owner.overlayFields.push(f);
+  const pv = owner.viewer.getPageView(f.page - 1);
   pv.div.appendChild(el);
   layoutField(f, pv);
-  recordAdd(f);
+  recordAdd(f, owner);
   input.focus();
 }
 
@@ -7450,7 +7507,8 @@ els.viewerWrap.addEventListener('pointerup', async (e) => {
   const isLine = shapeType === 'line' || shapeType === 'arrow';
   const fw = Math.abs(e.clientX - start.x) / r.width, fh = Math.abs(e.clientY - start.y) / r.height;
   if (isLine ? (fw < 0.005 && fh < 0.005) : (fw < 0.01 || fh < 0.01)) return; // ignore a stray click
-  const base = (await view.pdfDocument.getPage(hit.n)).getViewport({ scale: 1 }); // PDF points
+  const owner = view; // captured before the await — see makeBox's caller
+  const base = (await owner.pdfDocument.getPage(hit.n)).getViewport({ scale: 1 }); // PDF points
   // Line/arrow: grow the holding box by an arrowhead-sized margin (in points, per
   // axis) and inset the endpoints so the head clears the box edge; this also makes
   // an axis-aligned line's box non-degenerate. rect/ellipse keep a tight bbox.
@@ -7459,12 +7517,12 @@ els.viewerWrap.addEventListener('pointerup', async (e) => {
                       (e.clientX - r.left) / r.width, (e.clientY - r.top) / r.height,
                       pad / base.width, pad / base.height);
   makeShape([g.x0, g.y0, g.x0 + g.w, g.y0 + g.h],
-    { page: hit.n, pageW: base.width, pageH: base.height, type: shapeType, fill: els.shapeFill.checked, from: g.from, to: g.to });
+    { page: hit.n, pageW: base.width, pageH: base.height, type: shapeType, fill: els.shapeFill.checked, from: g.from, to: g.to }, owner);
 });
 
 // makeShape registers a draggable/resizable shape overlay (kind 'shape') whose
 // canvas redraws via layoutField; collectStamps bakes it via shapeMarkPNG.
-function makeShape(frac, opts) {
+function makeShape(frac, opts, owner = view) {
   const f = { page: opts.page, frac, pageW: opts.pageW, pageH: opts.pageH, kind: 'shape',
     type: opts.type, fill: opts.fill, from: opts.from, to: opts.to,
     color: selectedHlColor, weight: clampWeight(els.borderWidthInput.value) };
@@ -7480,16 +7538,16 @@ function makeShape(frac, opts) {
   el.append(canvas, handle, del);
   f.el = el; f.canvas = canvas;
 
-  const remove = () => deleteField(f);
+  const remove = () => deleteField(f, true, owner);
   del.onclick = (ev) => { ev.stopPropagation(); remove(); };
   el.addEventListener('keydown', (ev) => { if (ev.key === 'Delete' || ev.key === 'Backspace') remove(); });
   enableStampGestures(f, el, handle);
 
-  view.overlayFields.push(f);
-  const pv = view.viewer.getPageView(f.page - 1);
+  owner.overlayFields.push(f);
+  const pv = owner.viewer.getPageView(f.page - 1);
   pv.div.appendChild(el);
   layoutField(f, pv);
-  recordAdd(f);
+  recordAdd(f, owner);
 }
 
 // --- comment notes -----------------------------------------------------------
@@ -7527,15 +7585,16 @@ els.viewerWrap.addEventListener('pointerdown', async (e) => {
   const r = hit.r;
   const fx = (e.clientX - r.left) / r.width;
   const fy = (e.clientY - r.top) / r.height;
-  const base = (await view.pdfDocument.getPage(hit.n)).getViewport({ scale: 1 }); // PDF points
+  const owner = view; // captured before the await — see makeBox's caller
+  const base = (await owner.pdfDocument.getPage(hit.n)).getViewport({ scale: 1 }); // PDF points
   const fw = Math.min(0.3, 150 / r.width), fh = Math.min(0.2, 72 / r.height); // default card size
-  makeNote([fx, fy, Math.min(fx + fw, 1), Math.min(fy + fh, 1)], { page: hit.n, pageW: base.width, pageH: base.height });
+  makeNote([fx, fy, Math.min(fx + fw, 1), Math.min(fy + fh, 1)], { page: hit.n, pageW: base.width, pageH: base.height }, owner);
   exitNote(); exitDropdown(); exitRadio(); // place one; re-click the tool for another
 });
 
 // makeNote registers a draggable note card (kind 'note') with an inline comment
 // textarea; collectNotes turns it into a /Text annotation at bake.
-function makeNote(frac, opts) {
+function makeNote(frac, opts, owner = view) {
   const f = { page: opts.page, frac, pageW: opts.pageW, pageH: opts.pageH, kind: 'note', text: '' };
   const el = document.createElement('div');
   el.className = 'ovl ovl-note';
@@ -7556,15 +7615,15 @@ function makeNote(frac, opts) {
   el.append(head, ta, handle);
   f.el = el;
 
-  const remove = () => deleteField(f);
+  const remove = () => deleteField(f, true, owner);
   del.onclick = (ev) => { ev.stopPropagation(); remove(); };
   enableStampGestures(f, el, handle);
 
-  view.overlayFields.push(f);
-  const pv = view.viewer.getPageView(f.page - 1);
+  owner.overlayFields.push(f);
+  const pv = owner.viewer.getPageView(f.page - 1);
   pv.div.appendChild(el);
   layoutField(f, pv);
-  recordAdd(f);
+  recordAdd(f, owner);
   ta.focus();
 }
 
@@ -8045,15 +8104,18 @@ async function bakedForm(owner = view) {
 }
 
 els.detectBtn.onclick = async () => {
-  if (!view.pdfDocument) { toast('Open a PDF first'); return; }
+  // Captured at entry: a page render and a getTextContent sit between here and the
+  // makeField calls at the end, and each of those builds a field for THIS document.
+  const owner = view;
+  if (!owner.pdfDocument) { toast('Open a PDF first'); return; }
   clearDetected();
-  const n = view.viewer.currentPageNumber;
-  const pv = view.viewer.getPageView(n - 1);
+  const n = owner.viewer.currentPageNumber;
+  const pv = owner.viewer.getPageView(n - 1);
   if (!pv?.div || !pv.viewport) { toast('Scroll the page into view, then try again'); return; }
 
   // Render the page to an offscreen canvas at a consistent resolution, so
   // detection doesn't depend on the current zoom (faint thin rules need it).
-  const page = await view.pdfDocument.getPage(n);
+  const page = await owner.pdfDocument.getPage(n);
   const base = page.getViewport({ scale: 1 });
   const pageW = base.width, pageH = base.height; // PDF points
   const dvp = page.getViewport({ scale: Math.min(3, 1600 / pageW) });
@@ -8099,7 +8161,7 @@ els.detectBtn.onclick = async () => {
   // 1. Blank table cells each become their own text input.
   for (const c of cells) {
     if (c.filled) continue; // a cell with printed text / no blank space — skip
-    makeField('text', [c.x0 / W, c.y0 / H, c.x1 / W, c.y1 / H], { page: n, pageW, pageH }, pv);
+    makeField('text', [c.x0 / W, c.y0 / H, c.x1 / W, c.y1 / H], { page: n, pageW, pageH }, pv, owner);
     added++;
   }
 
@@ -8115,7 +8177,7 @@ els.detectBtn.onclick = async () => {
     let kind = 'text';
     if (r.box && cssW <= 28 && cssH <= 28) kind = 'check';
     else if (!r.box) fy0 = fy1 - aboveLine;
-    makeField(kind, [fx0, fy0, fx1, fy1], { page: n, pageW, pageH }, pv);
+    makeField(kind, [fx0, fy0, fx1, fy1], { page: n, pageW, pageH }, pv, owner);
     added++;
   }
 
@@ -8127,7 +8189,7 @@ els.detectBtn.onclick = async () => {
     const cf = choices.map((c) => ({ rect: [c.x0 / W, c.y0 / H, c.x1 / W, c.y1 / H], word: !!c.word }));
     const x0 = Math.min(...cf.map((c) => c.rect[0])), y0 = Math.min(...cf.map((c) => c.rect[1]));
     const x1 = Math.max(...cf.map((c) => c.rect[2])), y1 = Math.max(...cf.map((c) => c.rect[3]));
-    makeField('circleone', [x0, y0, x1, y1], { page: n, pageW, pageH, choices: cf }, pv);
+    makeField('circleone', [x0, y0, x1, y1], { page: n, pageW, pageH, choices: cf }, pv, owner);
     added++;
   }
 
@@ -8139,7 +8201,7 @@ els.detectBtn.onclick = async () => {
 // (page fractions, top-left origin) and registers it. kinds: text, check,
 // circleone (circle one of N choices). Signatures aren't a field kind — place a
 // signature image from the library instead.
-function makeField(kind, frac, opts, pv) {
+function makeField(kind, frac, opts, pv, owner = view) {
   const f = { page: opts.page, frac, pageW: opts.pageW, pageH: opts.pageH, kind };
   if (kind === 'check') {
     f.el = document.createElement('input');
@@ -8175,7 +8237,7 @@ function makeField(kind, frac, opts, pv) {
     f.el.type = 'text';
     f.el.className = 'ovl ovl-text';
   }
-  view.overlayFields.push(f);
+  owner.overlayFields.push(f);
   layoutField(f, pv);
   pv.div.appendChild(f.el);
   return f;

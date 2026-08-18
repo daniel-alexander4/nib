@@ -89,6 +89,19 @@ a local `CLAUDE.md`.
    the server applies them to whatever is active when the request arrives. Capture
    the id before the first `await` and pass it as `apiFetch`'s `docId`.
    *Guarded by* `test/jsdom/pinning.test.mjs` — "no mutating call is unpinned".
+
+   The law has a **third** failure mode on the client, and it fails independently of
+   the other two: a gesture holding a `setPointerCapture` keeps receiving
+   `pointermove` after its view is hidden, because capture is released when the
+   element leaves the DOM and `display:none` does not remove it. Such a gesture
+   cannot pin an owner and carry on — a hidden container reports `clientWidth` 0, so
+   continuing would lay the field out against nothing. It must be **cancelled**:
+   `enableStampGestures` and `enableMarkerGestures` register an `end` in
+   `activeGestures`, and `abortDrags()` drains it. Anything new that takes a pointer
+   capture registers there too.
+   *Guarded by* `test/ui/gestures.test.mjs` — "a drag in flight when the user switches
+   documents neither moves the flag nor records onto the new document" (tier 3: jsdom
+   has neither `setPointerCapture` nor layout).
 2. **Every reload names the view it lands in.** The same law's other half, and they
    fail apart: `setDocumentFromServer(meta)` with no target writes into whatever
    view is active when the round-trip *returns*, wiping that view's overlays, redact
