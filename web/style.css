@@ -34,15 +34,37 @@
   --surface2: #acb0be;
   --overlay0: #9ca0b0;
   --text: #4c4f69;
-  --subtext0: #6c6f85;
-  /* Catppuccin Latte's own subtext1. It read #7c7f93 — which is Latte's OVERLAY2 — so
-     the two muted tokens were inverted relative to every other Catppuccin surface and
-     relative to the dark theme, where --subtext1 is correctly the higher-contrast of the
-     pair. Measured on --mantle at 12.5px: 3.25:1 before (below AA), 5.14:1 now, against
-     --subtext0's 4.06:1. The trap it created: "use the more muted token" made LIGHT mode
-     worse, and the dark theme — where the ordering was right — is where the palette gets
-     read during development. */
-  --subtext1: #5c5f77;
+  /* **The two muted tokens DEVIATE from Catppuccin Latte here, deliberately (Dan's call,
+     2026-08-18), and this is the only place in either palette that does.**
+
+     Latte's own values are --subtext0 #6c6f85 and --subtext1 #5c5f77, and neither clears
+     WCAG AA for the small text they carry: measured against the four surfaces muted text
+     actually sits on, subtext0 is 4.37 / 4.06 / 3.73 / 3.20 (base / mantle / crust /
+     surface0) and subtext1 is 5.53 / 5.14 / 4.73 / 4.05. Thirty-eight rules use subtext0,
+     so this was a token problem and not a usage problem.
+
+     Latte has nothing between subtext0 and --text to promote to: darkening subtext0 far
+     enough to clear 4.5:1 on --crust lands on #5e6177, three hex digits from Latte's
+     subtext1 — the two-step scale collapses into one. So both steps move down the same
+     grey-blue axis instead, keeping the hierarchy AND clearing AA:
+
+       --subtext0  5.37 / 4.99 / 4.59 / 3.93     (was 4.37 / 4.06 / 3.73 / 3.20)
+       --subtext1  6.24 / 5.81 / 5.34 / 4.57     (was 5.53 / 5.14 / 4.73 / 4.05)
+       --text      7.06 / 6.57 / 6.04 / 5.17     (unchanged)
+
+     Three even steps, all lighter than --text, ordered as every other Catppuccin surface
+     orders them. subtext0 still does not clear AA on --surface0 (3.93) — one rule put
+     muted text on that background and it uses --subtext1 instead.
+
+     The DARK theme is untouched and stays pure Mocha: subtext0 is 7.89:1 on --mantle
+     there, so it never had this problem. test/jsdom/theme.test.mjs computes all of this
+     from this file rather than trusting these numbers.
+
+     The history this replaces: --subtext1 once read #7c7f93 — Latte's OVERLAY2 — so the
+     pair was inverted relative to the dark theme, and "use the more muted token" made
+     light mode worse while making dark mode better. */
+  --subtext0: #5e6178;
+  --subtext1: #545770;
   --blue: #1e66f5;
   --green: #40a02b;
   --red: #d20f39;
@@ -237,7 +259,9 @@ input[type="search"] { width: 100%; }
   font-weight: 600;
   white-space: nowrap;
 }
-.badge-none     { background: var(--surface0); color: var(--subtext0); }
+/* --subtext1, not --subtext0: this is the one rule that puts muted text on --surface0,
+   where subtext0 is 3.93:1 in the light theme and subtext1 is 4.57:1. */
+.badge-none     { background: var(--surface0); color: var(--subtext1); }
 .badge-unsigned { background: var(--surface0); color: var(--blue); }
 /* color-mix, not a hardcoded rgba: those three literals were Mocha's green/red/yellow,
    so in the light theme the TEXT followed the theme variable and the tint did not — a

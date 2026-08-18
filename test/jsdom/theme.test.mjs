@@ -70,16 +70,39 @@ test('--subtext1 is the HIGHER-contrast muted token in every theme', () => {
   }
 });
 
-test('--subtext1 meets AA for normal text in every theme', () => {
-  // 4.5:1 is AA for normal-size text. --subtext0 is NOT asserted here: it sits at 4.06:1
-  // in the light theme and is a separate, still-open item on the pending list. Naming
-  // that rather than quietly asserting only the token that passes — a guard that tests
-  // exactly what is already true teaches nothing about what is not.
+test('BOTH muted tokens meet AA on every surface muted text sits on', () => {
+  // 4.5:1 is AA for normal-size text. --subtext0 used to be excluded here, with a comment
+  // saying it sat at 4.06:1 in the light theme and was a separate open item — a guard
+  // asserting only the token that already passed. It is asserted now because the light
+  // theme deliberately left Catppuccin Latte to make it true (see web/style.css).
+  //
+  // --surface0 is excluded from the sweep and named rather than silently dropped:
+  // --subtext0 is 3.93:1 there and ONE rule puts muted text on that background
+  // (.badge-none), which uses --subtext1 (4.57:1) for exactly this reason.
   for (const t of THEMES) {
     const p = palette(t.selector);
-    const c = contrast(p.subtext1, p.mantle);
-    assert.ok(c >= 4.5,
-      `--subtext1 in the ${t.name} theme is ${c.toFixed(2)}:1 on --mantle, below AA's 4.5:1 for normal text`);
+    for (const token of ['subtext0', 'subtext1']) {
+      for (const surface of ['base', 'mantle', 'crust']) {
+        const c = contrast(p[token], p[surface]);
+        assert.ok(c >= 4.5,
+          `--${token} in the ${t.name} theme is ${c.toFixed(2)}:1 on --${surface}, below AA's 4.5:1 for normal text`);
+      }
+    }
+  }
+});
+
+test('the muted scale stays a scale — three distinguishable steps under --text', () => {
+  // The cost of clearing AA by darkening is that the steps converge, and converged far
+  // enough they stop being a hierarchy: three tokens all reading as body text. Each step
+  // must be a real one, and every muted token must stay LIGHTER than --text — a "muted"
+  // token darker than the body colour is not muted, it is emphasis.
+  for (const t of THEMES) {
+    const p = palette(t.selector);
+    const [text, s1, s0] = [p.text, p.subtext1, p.subtext0].map((c) => contrast(c, p.mantle));
+    assert.ok(text > s1 && s1 > s0,
+      `the ${t.name} theme's muted scale is not ordered on --mantle: --text ${text.toFixed(2)}, --subtext1 ${s1.toFixed(2)}, --subtext0 ${s0.toFixed(2)}`);
+    assert.ok(text / s1 >= 1.05 && s1 / s0 >= 1.05,
+      `the ${t.name} theme's muted steps have collapsed into each other on --mantle (--text ${text.toFixed(2)} / --subtext1 ${s1.toFixed(2)} / --subtext0 ${s0.toFixed(2)}): the tokens are still three names but no longer three visible weights`);
   }
 });
 

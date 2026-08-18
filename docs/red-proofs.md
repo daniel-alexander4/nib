@@ -60,6 +60,8 @@ assertion fires) is not.
 | A renamed document id, from P03 | `docid.test.mjs` | fails naming the id |
 | An `UNREAD_KNOWN` entry for a field that no longer exists (v1.109.1) | `every field of every published shape has a reader…` | "UNREAD_KNOWN names fields that no longer exist on any published shape" |
 | The first-run intro left as a separate stacked overlay (v1.109.4) | `firstrun.test.mjs`, three of its four | the warning shown twice, two stacked overlays, and the pitch shown to a returning user |
+| Catppuccin Latte's own `--subtext0` (#6c6f85) restored in the light theme (v1.109.18) | `BOTH muted tokens meet AA on every surface muted text sits on` | "--subtext0 in the light theme is 4.37:1 on --base, below AA's 4.5:1 for normal text" |
+| The two light muted tokens collapsed onto one value (v1.109.18) | `the muted scale stays a scale` **and** `--subtext1 is the HIGHER-contrast muted token` | "the light theme's muted scale is not ordered on --mantle: --text 6.57, --subtext1 5.81, --subtext0 5.81" — two guards, because a collapse is both an ordering failure and a hierarchy failure |
 | A `:empty::after` message put back into `web/style.css` (v1.109.14) | `no empty-state message is generated content` | names the offending selector and says why: "cannot be selected or copied and is not reliably announced — build a real element instead" |
 
 ## Tier 3 — `./build/uirepro.sh`
