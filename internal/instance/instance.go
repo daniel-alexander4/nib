@@ -21,6 +21,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -68,8 +69,19 @@ type Record struct {
 	// in one 0600 file cost nothing and keep a leak of the cheap, widely-presented
 	// secret from handing over the expensive one.
 	Handoff string `json:"handoff"`
-	// Version is the running build, so a launch can report a mismatch rather than
-	// hand a path to an instance that may not understand it.
+	// Version is the running build. It is read by HandOff, and ONLY on the failure
+	// path: when the running instance answers and refuses, the error names its version
+	// and calls out a mismatch with the launching build.
+	//
+	// It deliberately does not gate the hand-off. This comment used to say the field
+	// existed "so a launch can report a mismatch rather than hand a path to an instance
+	// that may not understand it" — a promise nothing implemented, and one that would
+	// have been wrong to implement as written: refusing on mismatch strands a
+	// double-click with no window at all, on Windows, where the launch has no terminal
+	// and the refusal would go nowhere a user looks. The route already answers the
+	// question exactly — a shape it does not understand comes back as a non-200 — so a
+	// version comparison guessing at the same thing in advance would be a second,
+	// weaker mechanism that can refuse a hand-off which would have worked.
 	Version string `json:"version"`
 }
 
@@ -219,7 +231,9 @@ func Probe(rec Record) bool {
 // worked" does not answer it: `opened` and `focused` mean exit; `queued` means exit, the
 // user will see it when they unlock; `refused` means exit but say so. Only an error
 // means "that instance is not usable — become the primary".
-func HandOff(rec Record, path string) (result string, reason string, err error) {
+// HandOff posts path to the running instance. `myVersion` is the LAUNCHING build, used
+// only to annotate a refusal — see Record.Version.
+func HandOff(rec Record, path, myVersion string) (result string, reason string, err error) {
 	if rec.Handoff == "" {
 		return "", "", errors.New("the instance record carries no hand-off secret")
 	}
@@ -240,7 +254,23 @@ func HandOff(rec Record, path string) (result string, reason string, err error) 
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return "", "", errors.New("the running instance refused the hand-off")
+		// The running instance ANSWERED and refused, which is the one failure where its
+		// version is evidence: a build that does not know this route answers 404 here.
+		// A connection error above is deliberately left unannotated — nothing answered,
+		// so there is no version involved and naming one would invent a cause.
+		//
+		// Its version is reported either way, because "which instance refused" is a fact
+		// worth having; the MISMATCH is called out only when there is one, so an
+		// identical-version failure does not read as version skew and send the reader
+		// off in the wrong direction.
+		running := rec.Version
+		if running == "" {
+			running = "unknown"
+		}
+		if myVersion != "" && running != myVersion {
+			return "", "", fmt.Errorf("the running instance (version %s) refused the hand-off from this build (version %s) with HTTP %d — the two builds differ, which is the likeliest cause", running, myVersion, resp.StatusCode)
+		}
+		return "", "", fmt.Errorf("the running instance (version %s) refused the hand-off with HTTP %d", running, resp.StatusCode)
 	}
 	var out struct {
 		Result string `json:"result"`
