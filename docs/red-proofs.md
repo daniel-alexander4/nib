@@ -71,6 +71,8 @@ assertion fires) is not.
 | Rebuild-on-activation, the design ADR-002 refuses by name (P06) | 8 of 19 tier-3 tests | recorded at P06's close; the best red-proof in the tree at the time |
 | Zoom discarded on activation (P06) | `switching away and back preserves the zoom you set` | 1375px → 1040px |
 | A box drawn across a page boundary is unclamped (v1.109.5) | `a redaction drag that crosses onto the next page is bounded by the page it started on` | "ends at 719.5px, past page 1's bottom edge at 524.8px — it is painted over page 2" |
+| `bakedBytes` never bakes annotation storage — `getData()` unconditionally (v1.109.13) | `a form fill reaches the file on disk when you Save` | "the saved file does not carry \"typed into the form and saved\" — it is byte-identical to the 849 bytes that were there before the save, so nothing was written at all" |
+| **None — this one was LIVE.** Autofill wrote to `annotationStorage` and never touched the rendered input (v1.109.13) | `autofill from the saved profile visibly updates the rendered form` | "the rendered input still shows [\"typed into the form and saved\"] … ten seconds after the toast said the fields were filled". Not a reintroduced defect: the check went red against shipped code on its first run, which is the strongest form of the same evidence |
 | The `pagesloaded` widest-page refine runs unconditionally, over a zoom the user set while the document was still loading (v1.109.12) | `a zoom set while the document is still loading is not thrown away` | "page 1 is 520px, not the 1375px the user zoomed it to: the fit that lands when the document finishes loading overwrote a scale the user had already chosen" |
 
 ## Vacuous greens caught, and how
