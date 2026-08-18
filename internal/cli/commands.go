@@ -8,6 +8,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"nib/mdpdf"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -126,6 +127,18 @@ func cmdOffice(args []string) int {
 	if err != nil {
 		errf("%v", err)
 		return 1
+	}
+	// Warn BEFORE the conversion becomes a record. pdfcpu maps a rune it cannot encode to
+	// a SPACE rather than erroring, so a name or a heading silently loses characters in a
+	// perfectly valid PDF — there is nothing to catch afterwards, which is why this is a
+	// warning at the point of conversion rather than an error anywhere.
+	//
+	// A warning, not a refusal: a document with one unprintable rune is still worth
+	// converting, and the person running the command is the one who can judge that. On
+	// stderr, so `nib office in.md -o -` piped to a file still emits a clean PDF.
+	if bad := pdfops.UnprintableMarkdown(data); len(bad) > 0 {
+		errf("warning: %d character(s) cannot be printed and will render as blanks: %s",
+			len(bad), mdpdf.FormatRunes(bad))
 	}
 	pdf, err := pdfops.ConvertDocToPDF(data, ext)
 	if err != nil {

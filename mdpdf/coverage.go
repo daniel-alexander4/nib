@@ -21,11 +21,31 @@ import (
 // Latin-1 accents (é, ö, ñ, å) and the CP1252 extras (curly quotes, en/em
 // dashes, €) are all printable and are NOT reported. An empty result means
 // the text renders exactly as written.
-func Unsupported(text string) []rune {
+func Unsupported(text string) []rune { return UnsupportedWith(text, nil) }
+
+// UnsupportedWith is Unsupported for a caller using ConvertWithFonts: a rune counts only
+// if the core fonts cannot print it AND no supplied fallback covers it.
+//
+// Without this the guard became useless the moment fallbacks existed — it would report
+// every Cyrillic or CJK rune in a document that now prints them perfectly, and a warning
+// that cries wolf is worse than none. The pair is what makes the check honest for both
+// callers: Convert's coverage is the core fonts, ConvertWithFonts' is the core fonts plus
+// whatever the caller brought.
+func UnsupportedWith(text string, fonts []Font) []rune {
 	var out []rune
 	seen := map[rune]bool{}
 	for _, r := range text {
 		if printable(r) || seen[r] {
+			continue
+		}
+		covered := false
+		for _, f := range fonts {
+			if f.covers(r) {
+				covered = true
+				break
+			}
+		}
+		if covered {
 			continue
 		}
 		seen[r] = true
