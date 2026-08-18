@@ -1209,7 +1209,14 @@ async function openArrivalInNewView() {
 async function openInNewView(meta) {
   const v = newView();
   addView(v);
-  await setDocumentFromServer(meta, v);
+  // Caught, so the cleanup below is reached on the THROW path too. Without this, an
+  // exception anywhere in the load left the half-built view in `views` with a tab in the
+  // strip for a document that never arrived — the cleanup ran only on the return path.
+  try {
+    await setDocumentFromServer(meta, v);
+  } catch (e) {
+    console.error('loading a document into a new view threw', e);
+  }
   // The liveness test is `pdfDocument`, and it is only sound because this view is
   // FRESH: all four of setDocumentFromServer's early returns leave it null on a new
   // record. A reused view could carry one from a previous load.
@@ -4840,6 +4847,15 @@ async function browseDir(path, t = saveAsDirEls(), onFile = null) {
 }
 
 function openSaveAs(blob, defaultName, title) {
+  // One dialog, one set of bytes. `saveAsBlob` is a single module global, so a second
+  // export finishing while this dialog is open used to replace both the bytes and the
+  // name field under the user — including a name they had already typed. Refusing is
+  // the honest answer: the cost is that the second export must be re-run, and the
+  // alternative is writing bytes the user did not think they were writing.
+  if (!els.saveAsModal.hidden) {
+    toast('Finish the save already open first, then export again');
+    return;
+  }
   saveAsBlob = blob;
   els.saveAsTitle.textContent = title || 'Save';
   els.saveAsName.value = defaultName;

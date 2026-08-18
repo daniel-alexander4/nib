@@ -114,3 +114,31 @@ func TestFillFormXFDFErrors(t *testing.T) {
 		t.Error("malformed XFDF should error")
 	}
 }
+
+// A field carrying BOTH a value and qualified children keeps its own value.
+//
+// flattenField returned early as soon as it saw children, so the parent's value was
+// dropped silently — and XFDF permits exactly that shape. Silent is the operative word:
+// the import reported success and the field simply did not fill.
+func TestFlattenFieldKeepsAParentsOwnValue(t *testing.T) {
+	xml := []byte(`<?xml version="1.0" encoding="UTF-8"?>
+<xfdf xmlns="http://ns.adobe.com/xfdf/">
+  <fields>
+    <field name="address">
+      <value>1 High Street</value>
+      <field name="city"><value>Ipswich</value></field>
+    </field>
+  </fields>
+</xfdf>`)
+	got, err := parseXFDF(xml)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The child, which always worked — the stimulus that says the parse ran at all.
+	if v := got["address.city"]; len(v) == 0 || v[0] != "Ipswich" {
+		t.Fatalf("setup: the qualified child did not parse; got %#v", got)
+	}
+	if v := got["address"]; len(v) == 0 || v[0] != "1 High Street" {
+		t.Errorf("the parent field's own value was dropped because it also has children; got %#v", got)
+	}
+}

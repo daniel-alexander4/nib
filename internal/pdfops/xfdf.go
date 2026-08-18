@@ -168,13 +168,20 @@ func flattenField(f *xfdfField, prefix string, out map[string][]string) {
 	if prefix != "" {
 		name = prefix + "." + f.Name
 	}
-	if len(f.Fields) > 0 {
-		for i := range f.Fields {
-			flattenField(&f.Fields[i], name, out)
-		}
-		return
+	// A field's OWN values are emitted whether or not it also has children. The early
+	// return this replaces dropped them silently: <field name="a"><value>x</value>
+	// <field name="b">…</field></field> lost "x" entirely, and XFDF permits exactly that
+	// — a parent field with a value of its own and qualified children beneath it.
+	if len(f.Values) > 0 {
+		out[name] = f.Values
 	}
-	out[name] = f.Values
+	// Nested a→b builds the same key as a flat "a.b", so a document containing both is
+	// ambiguous. LAST occurrence wins, which is what this has always done and what most
+	// parsers do with a repeated key; stated here so it is a decision rather than an
+	// accident of document order.
+	for i := range f.Fields {
+		flattenField(&f.Fields[i], name, out)
+	}
 }
 
 // xfdfCheckboxValue maps a checkbox's boolean state to its XFDF value — the "Yes"
