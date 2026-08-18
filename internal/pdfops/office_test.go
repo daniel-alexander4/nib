@@ -3,7 +3,12 @@ package pdfops
 import (
 	"archive/zip"
 	"bytes"
+	"strings"
 	"testing"
+
+	"github.com/pdfcpu/pdfcpu/pkg/api"
+	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
+	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/types"
 )
 
 // minimalDOCX builds the smallest valid Word document carrying one line of text —
@@ -110,5 +115,62 @@ func TestSupportedDocExt(t *testing.T) {
 	}
 	if SupportedOfficeExt(".md") {
 		t.Error("SupportedOfficeExt(.md) = true — Markdown must not route to LibreOffice")
+	}
+}
+
+// A Markdown file containing non-Latin text converts with that text PRESENT.
+//
+// The Base-14 core fonts mdpdf uses are WinAnsi, and pdfcpu maps anything outside that to
+// a SPACE rather than erroring — so Cyrillic, Greek, CJK and the Indic scripts came out
+// blank in a valid PDF that nothing could tell from a correct one. mdpdf gained a fallback
+// pool; this asserts the wiring, which is the half that could be right in the library and
+// missing in Nib.
+//
+// Driven through ConvertDocToPDF — the route the office surface actually calls — rather
+// than through mdpdf directly, because "mdpdf can do it" and "Nib does it" are different
+// claims and only the second one reaches a user.
+func TestConvertDocToPDFPrintsNonLatinMarkdown(t *testing.T) {
+	// One from each family the pool covers, so a face dropped from
+	// markdownFallbackFonts fails here rather than in whichever script nobody tests.
+	for _, tc := range []struct{ name, text, face string }{
+		{"thai", "สวัสดีครับ", "NotoSansThai"},
+		{"cjk", "文書の署名", "DroidSansFallback"},
+		{"arabic", "مرحبا بالعالم", "NotoSansArabic"},
+		{"hangul", "안녕하세요", "NanumGothic"},
+		{"devanagari", "नमस्ते दुनिया", "NotoSansDevanagari"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			out, err := ConvertDocToPDF([]byte("# "+tc.text+"\n\n"+tc.text+"\n"), ".md")
+			if err != nil {
+				t.Fatalf("ConvertDocToPDF: %v", err)
+			}
+			if err := Validate(out); err != nil {
+				t.Fatalf("the converted PDF does not validate: %v", err)
+			}
+			ctx, err := api.ReadValidateAndOptimize(bytes.NewReader(out), model.NewDefaultConfiguration())
+			if err != nil {
+				t.Fatalf("re-reading: %v", err)
+			}
+			var faces []string
+			for _, e := range ctx.XRefTable.Table {
+				if e == nil {
+					continue
+				}
+				if d, ok := e.Object.(types.Dict); ok {
+					if b := d.NameEntry("BaseFont"); b != nil {
+						faces = append(faces, *b)
+					}
+				}
+			}
+			found := false
+			for _, f := range faces {
+				if strings.Contains(f, tc.face) {
+					found = true
+				}
+			}
+			if !found {
+				t.Errorf("%s text converted without embedding %s (fonts present: %v) — it was set in a core font, which renders it as spaces", tc.name, tc.face, faces)
+			}
+		})
 	}
 }
