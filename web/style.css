@@ -1004,7 +1004,14 @@ input.ovl-check { appearance: auto; accent-color: #1a7f37; background: transpare
   display: flex;
   flex-direction: column;
   gap: 12px;
-  width: 320px;
+  /* Sized to fit rather than to a number. The card this absorbed was a fixed 380px with
+     no max-height in a container with no overflow rule, so at 683x384 — a 1366x768 Windows
+     laptop at 200% display scaling — it overflowed top and bottom and was CLIPPED, taking
+     its only instruction with it. This card is now the one carrying that content, so it
+     inherits the fix rather than the bug. */
+  width: min(360px, calc(100vw - 32px));
+  max-height: calc(100vh - 32px);
+  overflow-y: auto;
   padding: 28px;
   background: var(--mantle);
   border: 1px solid var(--surface0);
@@ -1026,44 +1033,16 @@ input.ovl-check { appearance: auto; accent-color: #1a7f37; background: transpare
 /* Separate the warning from the key-mode options so it stops reading as part of them. */
 #authForm .authnote { margin-top: 2px; padding-top: 12px; border-top: 1px solid var(--surface0); }
 
-/* First-run intro popup — sits over the setup wizard until clicked off. */
-#introOverlay {
-  position: fixed;
-  inset: 0;
-  background: rgba(17, 17, 27, 0.7);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 200;
-}
-.introcard {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-  /* Was a fixed 380px with no max-height, in a container with no overflow rule: at a
-     683x384 viewport (a 1366x768 Windows laptop at 200% display scaling) the card
-     overflowed top and bottom and was CLIPPED, taking its only instruction with it. */
-  width: min(380px, calc(100vw - 32px));
-  max-height: calc(100vh - 32px);
-  overflow-y: auto;
-  padding: 28px;
-  background: var(--mantle);
-  border: 1px solid var(--surface0);
-  border-radius: 12px;
-  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.55);
-}
-.introcard h2 { margin: 0; font-weight: 600; }
-.introcard p { margin: 0; color: var(--subtext0); font-size: 13px; line-height: 1.5; }
-.introcard .introwarn { color: var(--yellow); }
-/* .introhint is gone with the prose it styled — the card has a button now, and the
-   hint was 12px --overlay0 (~3.6:1, below AA) carrying the only instruction. */
-.introcard #introGo { margin-top: 4px; align-self: stretch; }
+/* The first-run explanation, inside the setup card (v1.109.3). It was a separate
+   full-screen overlay at z-index 200; see #authForm's sizing note for what it left behind. */
+#introBlock { display: flex; flex-direction: column; gap: 12px; }
 
 /* toast for errors */
 #toast {
   position: fixed;
-  /* Above every overlay: modals sit at 110, #authOverlay at 100, #introOverlay at
-   * 200. With no z-index the toast lost to all of them, so an error raised while a
+  /* Above every overlay: modals sit at 110 and #authOverlay at 100. (There was a third,
+   * the first-run intro at 200, until it was folded into the setup card.) With no z-index
+   * the toast lost to all of them, so an error raised while a
    * dialog was open rendered BEHIND the scrim and was invisible — precisely when
    * the user needs it, since most toasts report a failed operation and most
    * operations are started from a dialog. */

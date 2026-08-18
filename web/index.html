@@ -382,34 +382,27 @@
 
   <!-- First-run intro: explains what the SSH key is and protects, shown over the
        setup wizard until the user clicks off it. -->
-  <div id="introOverlay" hidden>
-    <div class="introcard">
-      <img class="brand brand-lg" src="./nib.svg" alt="Nib" />
-      <h2>Welcome to Nib</h2>
-      <p>Nib protects sensitive information — your <strong>signature images</strong>,
-        signing identity, and saved files — in an <strong>encrypted vault</strong> on
-        this computer.</p>
-      <p>An <strong>SSH key is required</strong> to lock and unlock that vault. It's a
-        small key file on your machine, so there's no password to remember. You can use
-        a key you already have, or let Nib create one for you.</p>
-      <p class="introwarn">That key is the only way in. Keep it safe and back it up —
-        if you lose every authorized key, the vault (and your signatures) can't be
-        recovered.</p>
-      <!-- A real control, not prose. Every other overlay in Nib expresses its exit as a
-           button (openCancel, saveAsCancel, bsCancel, psCancel, authSubmit); this one
-           said "click outside" in 12px muted text at ~3.6:1 contrast — below AA, not
-           reachable by keyboard, and invisible to a screen reader as an action. The
-           backdrop click still works for anyone who learned it. -->
-      <button id="introGo" class="primary" type="button">Get started</button>
-    </div>
-  </div>
-
   <!-- First-run wizard / recovery: unlock Nib with an SSH key. -->
   <div id="authOverlay" hidden>
     <form id="authForm">
       <img class="brand brand-lg" src="./nib.svg" alt="Nib" />
       <h2 id="authTitle">Set up Nib</h2>
       <p id="authHint"></p>
+
+      <!-- First-run explanation, in the SAME card as the choice it explains (v1.109.3).
+           It used to be a separate full-screen overlay stacked above this one, which cost
+           three things: the user read it and then dismissed it, deciding after the
+           explanation was gone; the "only way in" warning was stated twice, here and
+           there; and the upper overlay swallowed every click aimed at this form. Hidden
+           for every state but setup — a returning user knows what the key is and needs
+           the form, not the pitch. -->
+      <div id="introBlock" hidden>
+        <p>Nib protects sensitive information — your <strong>signature images</strong>,
+          signing identity, and saved files — in an <strong>encrypted vault</strong> on
+          this computer.</p>
+        <p>An <strong>SSH key</strong> locks and unlocks that vault: a small key file on
+          your machine, so there is no password to remember.</p>
+      </div>
 
       <!-- password/passphrase row: the old vault password (migrate state) or the
            SSH key's passphrase (key-locked state); the label switches per state. -->
