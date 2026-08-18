@@ -1094,3 +1094,51 @@ input.ovl-check { appearance: auto; accent-color: #1a7f37; background: transpare
  * budget (ADR-003). Marked rather than disabled — undo still reaches the entries
  * that remain, and the tooltip says what happened. */
 #undoBtn.evicted { border-color: var(--yellow); }
+
+/* ── pdf.js image assets Nib supplies itself ─────────────────────────────────
+   The vendored pdf.js references 32 images and ships ONE (annotation-note.svg,
+   added by Nib in v1.43.0). Most of the missing 31 belong to pdf.js's own default
+   viewer chrome — the toolbar, the sidebar tree, the message bars — which Nib
+   replaces wholesale and correctly never loads. SEVEN are on paths Nib's own UI
+   reaches, so each was a live 404 and a missing visual: the four editing cursors
+   for the Text / Draw / Highlight tools Nib exposes, the two per-annotation
+   toolbar icons (which rendered blank), and the page loading indicator.
+
+   They are Nib's own drawings in Nib's own asset path, NOT copies dropped into
+   web/vendor/. Two reasons: the vendor tree is what gen-notices.sh attributes to
+   third parties, so Nib-authored files there would be mislabelled; and pdf.js
+   exposes every one of these as a CSS custom property, which is a supported
+   extension point rather than a patch to vendored code.
+
+   `loading-icon.gif` is the exception in kind: pdf.js hard-codes its url() in a
+   rule rather than behind a property, so the rule is overridden — with a CSS
+   animation rather than a GIF, which is crisper on a high-dpi display and follows
+   the theme instead of baking a colour into an image.
+
+   The set is guarded by test/jsdom/pdfjsassets.test.mjs, which is the half that
+   matters: this drifted because nothing checked it, and the next pdf.js bump can
+   add a reference exactly as quietly. */
+.pdfViewer,
+.textLayer {
+  --editorFreeText-editing-cursor: url(img/pdfjs/cursor-editorFreeText.svg) 0 16, text;
+  --draw-cursor: url(img/pdfjs/cursor-editorInk.svg) 0 16, pointer;
+  --editorInk-editing-cursor: url(img/pdfjs/cursor-editorInk.svg) 0 16, pointer;
+  --editorFreeHighlight-editing-cursor: url(img/pdfjs/cursor-editorFreeHighlight.svg) 1 18, pointer;
+  --editorHighlight-editing-cursor: url(img/pdfjs/cursor-editorTextHighlight.svg) 24 24, text;
+  --clear-signature-button-icon: url(img/pdfjs/editor-toolbar-delete.svg);
+  --comment-popup-delete-button-icon: url(img/pdfjs/editor-toolbar-delete.svg);
+  --alt-text-add-image: url(img/pdfjs/editor-toolbar-edit.svg);
+}
+.pdfViewer .page.loadingIcon::after {
+  background: none;
+  border: 3px solid var(--surface1);
+  border-top-color: var(--blue);
+  border-radius: 50%;
+  width: 32px;
+  height: 32px;
+  top: 50%;
+  left: 50%;
+  margin: -16px 0 0 -16px;
+  animation: nib-page-spin 0.9s linear infinite;
+}
+@keyframes nib-page-spin { to { transform: rotate(360deg); } }
