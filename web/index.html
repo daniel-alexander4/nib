@@ -59,6 +59,12 @@
         <button id="updateGet" type="button" title="Download the latest version for your system"></button>
         <button id="updateDismiss" type="button" title="Dismiss">✕</button>
       </span>
+      <!-- Armed-session indicator. It survives a Close deliberately: arming a session is
+           an independent act, so closing the document does NOT disarm — and a completed
+           co-signature can then make a document appear with no user action at all. This
+           is what stops the empty state saying "nothing is happening" while a listener
+           is up. Click to reopen the receive dialog. -->
+      <button id="armedPill" type="button" hidden title="A co-signing session is armed — click to open it">⏳ waiting for a co-signature</button>
       <span id="sigBadge" class="badge badge-none" title="Signature status">no document</span>
       <button id="sigDetailsBtn" class="badge-link" hidden title="Signature details">details</button>
     </div>
