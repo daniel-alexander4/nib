@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"mime"
 	"mime/multipart"
 	"net/http"
 	"net/url"
@@ -170,8 +171,19 @@ func readFormFile(fh *multipart.FileHeader) ([]byte, error) {
 	return io.ReadAll(f)
 }
 
-func sendDownload(w http.ResponseWriter, name, mime string, data []byte) {
-	w.Header().Set("Content-Type", mime)
-	w.Header().Set("Content-Disposition", `attachment; filename="`+name+`"`)
+func sendDownload(w http.ResponseWriter, name, mediaType string, data []byte) {
+	w.Header().Set("Content-Type", mediaType)
+	// mime.FormatMediaType rather than string concatenation, because ONE caller's name is
+	// attacker-controlled: handleAttachmentExtract passes the filename recorded inside the
+	// PDF. A name containing a double quote broke out of the quoting and could smuggle
+	// further parameters — `evil"; filename="other.exe` — and every other caller passing a
+	// constant is no reason to hand-roll a header that the stdlib formats correctly.
+	// (Go's server already replaces CR and LF in header values, so this is the quoting
+	// half, not the header-splitting half.)
+	disp := mime.FormatMediaType("attachment", map[string]string{"filename": name})
+	if disp == "" { // only when the name cannot be represented at all
+		disp = "attachment"
+	}
+	w.Header().Set("Content-Disposition", disp)
 	_, _ = w.Write(data)
 }

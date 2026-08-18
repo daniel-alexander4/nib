@@ -256,3 +256,264 @@ func TestStripMetadataRemovesIdentifyingMetadata(t *testing.T) {
 		t.Errorf("/ID not regenerated: before=%q after=%q", before, after)
 	}
 }
+
+// annotFacts re-reads a PDF and walks its page annotations DIRECTLY — every /Subtype it
+// finds, and every action /S name reachable through /A and its /Next chain.
+//
+// It exists because the obvious independent check does not work here and quietly passes:
+// pdfcpu writes object streams, so annotation dictionaries are COMPRESSED and a
+// `bytes.Contains(pdf, []byte("/JavaScript"))` is false before the strip as well as
+// after. A byte assertion written against that is vacuous — it is green whatever the
+// strip does. (Measured: craftChainedActionPDF's own output contains none of /JavaScript,
+// /Launch, /GoTo or /Annots as plain bytes.)
+//
+// It walks the object graph itself rather than calling Scan, which is the independence
+// that matters: Scan and StripActive read the same riskyActions map, so a check built on
+// Scan cannot see a type missing from that map.
+func annotFacts(t *testing.T, pdf []byte) (subtypes []string, actions []string) {
+	t.Helper()
+	ctx, err := api.ReadContext(bytes.NewReader(pdf), model.NewDefaultConfiguration())
+	if err != nil {
+		t.Fatalf("re-reading the PDF: %v", err)
+	}
+	xt := ctx.XRefTable
+	root, err := xt.Catalog()
+	if err != nil {
+		t.Fatalf("catalog: %v", err)
+	}
+	var walk func(types.Dict, int)
+	walk = func(act types.Dict, depth int) {
+		if act == nil || depth > 32 {
+			return
+		}
+		if n, ok := act["S"].(types.Name); ok {
+			actions = append(actions, n.Value())
+		}
+		switch next := act["Next"].(type) {
+		case types.Array:
+			for _, a := range next {
+				d, _ := xt.DereferenceDict(a)
+				walk(d, depth+1)
+			}
+		default:
+			if d, _ := xt.DereferenceDict(act["Next"]); d != nil {
+				walk(d, depth+1)
+			}
+		}
+	}
+	eachPage(xt, root, func(page types.Dict, _ int) {
+		arr, _ := xt.DereferenceArray(page["Annots"])
+		for _, a := range arr {
+			annot, _ := xt.DereferenceDict(a)
+			if annot == nil {
+				continue
+			}
+			if n, ok := annot["Subtype"].(types.Name); ok {
+				subtypes = append(subtypes, n.Value())
+			}
+			d, _ := xt.DereferenceDict(annot["A"])
+			walk(d, 0)
+		}
+	})
+	return subtypes, actions
+}
+
+func has(list []string, want string) bool {
+	for _, v := range list {
+		if v == want {
+			return true
+		}
+	}
+	return false
+}
+
+// craftChainedActionPDF builds a page whose Link annotation carries a BENIGN head action
+// (/GoTo) chaining through /Next to a JavaScript action, and a second annotation whose
+// /Next is an ARRAY — both forms §12.6.1 allows.
+func craftChainedActionPDF(t *testing.T) []byte {
+	t.Helper()
+	base, err := ImagesToPDF([]RasterPage{rasterPage(t, 200, 200)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, err := api.ReadValidateAndOptimize(bytes.NewReader(base), model.NewDefaultConfiguration())
+	if err != nil {
+		t.Fatal(err)
+	}
+	pd, _, _, err := ctx.XRefTable.PageDict(1, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pd["Annots"] = types.Array{
+		types.Dict{
+			"Type": types.Name("Annot"), "Subtype": types.Name("Link"),
+			"A": types.Dict{
+				"S":    types.Name("GoTo"), // benign head
+				"Next": types.Dict{"S": types.Name("JavaScript"), "JS": types.StringLiteral("app.alert(2)")},
+			},
+		},
+		types.Dict{
+			"Type": types.Name("Annot"), "Subtype": types.Name("Link"),
+			"A": types.Dict{
+				"S": types.Name("GoTo"),
+				"Next": types.Array{
+					types.Dict{"S": types.Name("GoTo")},
+					types.Dict{"S": types.Name("Launch"), "F": types.StringLiteral("/bin/sh")},
+				},
+			},
+		},
+	}
+	var out bytes.Buffer
+	if err := api.WriteContext(ctx, &out); err != nil {
+		t.Fatal(err)
+	}
+	return out.Bytes()
+}
+
+// A risky action reached through a /Next chain is found and stripped like any other.
+//
+// The review's finding was that a benign head hid the whole chain from both Scan and
+// StripActive: `<< /S /GoTo /Next << /S /JavaScript >> >>` reported clean and survived.
+// Both /Next forms are driven, because a dict and an array are separate code paths and
+// only one of them would have been written first.
+func TestScanAndStripFollowNextChains(t *testing.T) {
+	pdf := craftChainedActionPDF(t)
+
+	rep := must(t, pdf)
+	if !kinds(rep)["action"] {
+		t.Fatalf("a JavaScript action behind a benign /GoTo head was not reported; findings=%+v", rep.Findings)
+	}
+
+	stripped, err := StripActive(pdf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := Validate(stripped); err != nil {
+		t.Fatalf("stripped PDF does not validate: %v", err)
+	}
+	if kinds(must(t, stripped))["action"] {
+		t.Error("StripActive left a chained risky action behind")
+	}
+	// Independent of Scan AND of riskyActions — see annotFacts for why the obvious
+	// byte-level version of this check is vacuous.
+	_, before := annotFacts(t, pdf)
+	if !has(before, "JavaScript") || !has(before, "Launch") {
+		t.Fatalf("setup: the crafted chains do not contain the risky actions this asserts on; found %v", before)
+	}
+	_, after := annotFacts(t, stripped)
+	for _, name := range []string{"JavaScript", "Launch"} {
+		if has(after, name) {
+			t.Errorf("a %s action reachable through /Next survives the strip; actions left: %v", name, after)
+		}
+	}
+}
+
+// The strip is checked against a list this file owns, NOT against riskyActions.
+//
+// This is the finding's real teeth. TestStripActiveRemovesActiveContent verifies the
+// strip by re-running Scan, and Scan and StripActive read the SAME riskyActions map — so
+// an action type missing from the map is missing from the strip and from the check that
+// would have caught it, by construction. A gap in the map was invisible to every test
+// built on it, which is how /Next and six action types went unnoticed.
+//
+// The literal below is therefore deliberately a second, hand-maintained copy. Adding a
+// type to riskyActions without adding it here fails, and so does the reverse. That
+// duplication is the point: two independent statements of a security-relevant set are
+// worth more than one statement checked against itself.
+func TestRiskyActionsCoverTheTypesThatCanRunOrHide(t *testing.T) {
+	want := []string{
+		"JavaScript", "Launch", "SubmitForm", "ImportData", "GoToR", "GoToE", "URI",
+		"Rendition", "Movie", "Sound", "SetOCGState", "GoTo3DView", "Hide",
+	}
+	for _, name := range want {
+		if _, ok := riskyActions[name]; !ok {
+			t.Errorf("%s is an action that can run code, reach outside the document, or change what is visible, and riskyActions does not list it — so Scan does not report it and StripActive does not remove it", name)
+		}
+	}
+	if len(riskyActions) != len(want) {
+		t.Errorf("riskyActions has %d entries and this test names %d — one of them gained a type the other did not, and the whole value of this check is that they are maintained separately", len(riskyActions), len(want))
+	}
+	// Every listed type also needs a human-readable detail, or the scan report tells the
+	// user "SetOCGState action" and leaves them to look it up.
+	for _, name := range want {
+		if actionDetail(name) == name+" action" {
+			t.Errorf("actionDetail(%q) falls through to the generic form — the report will not say what the action does", name)
+		}
+	}
+}
+
+// The tier hierarchy holds in the direction the UI promises: whatever the gentle
+// RemoveFilesAndMedia takes out, the stronger StripActive takes out too.
+//
+// It did not. StripActive left Screen/Movie/Sound/3D/FileAttachment annotations in place
+// while RemoveFilesAndMedia removed them, so "remove all active content" was weaker than
+// "remove files and media" for exactly the annotations whose purpose is to play
+// something. TestTiersDiffer pinned the OTHER direction — the URI action the strip
+// removes and the gentle tier keeps — and a difference in one direction reads as the
+// hierarchy being tested when only half of it is.
+func TestStripActiveIsAtLeastAsStrongAsRemoveFilesAndMedia(t *testing.T) {
+	base, err := ImagesToPDF([]RasterPage{rasterPage(t, 200, 200)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, err := api.ReadValidateAndOptimize(bytes.NewReader(base), model.NewDefaultConfiguration())
+	if err != nil {
+		t.Fatal(err)
+	}
+	pd, _, _, err := ctx.XRefTable.PageDict(1, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// INDIRECT references, not direct dicts, and this is load-bearing rather than style.
+	// pdfcpu's RemoveAnnotations works off ctx.PageAnnots, a cache that validation fills
+	// only for annotations reached through an indirect reference — so with direct dicts
+	// NEITHER tier removes anything and this test passes without the fix it exists for.
+	// Measured that way first: the earlier draft was green against the unfixed code.
+	// Real-world PDFs use indirect refs, so this fixture is also the honest one.
+	screen, err := ctx.XRefTable.IndRefForNewObject(types.Dict{
+		"Type": types.Name("Annot"), "Subtype": types.Name("Screen"), "Rect": types.NewNumberArray(0, 0, 10, 10)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// /Movie is a required entry for a Movie annotation and pdfcpu's writer validates it —
+	// the annotation is silently refused without it.
+	movie, err := ctx.XRefTable.IndRefForNewObject(types.Dict{
+		"Type": types.Name("Annot"), "Subtype": types.Name("Movie"), "Rect": types.NewNumberArray(0, 0, 10, 10),
+		"Movie": types.Dict{"F": types.StringLiteral("clip.avi")}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pd["Annots"] = types.Array{*screen, *movie}
+	var buf bytes.Buffer
+	if err := api.WriteContext(ctx, &buf); err != nil {
+		t.Fatal(err)
+	}
+	pdf := buf.Bytes()
+
+	// The stimulus, read through the object graph rather than the bytes — pdfcpu writes
+	// object streams, so a bytes.Contains here is false for a document that DOES carry
+	// the annotation. This assertion firing is what caught that, on this test's first run.
+	subtypes, _ := annotFacts(t, pdf)
+	if !has(subtypes, "Screen") || !has(subtypes, "Movie") {
+		t.Fatalf("setup: the crafted PDF carries %v, not the media annotations this compares on", subtypes)
+	}
+
+	gentle, err := RemoveFilesAndMedia(pdf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	strong, err := StripActive(pdf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := Validate(strong); err != nil {
+		t.Fatalf("stripped PDF does not validate: %v", err)
+	}
+	gentleLeft, _ := annotFacts(t, gentle)
+	strongLeft, _ := annotFacts(t, strong)
+	for _, subtype := range []string{"Screen", "Movie"} {
+		if !has(gentleLeft, subtype) && has(strongLeft, subtype) {
+			t.Errorf("a %s annotation survives StripActive but not RemoveFilesAndMedia — the stronger tier is weaker than the gentle one for exactly the annotations whose purpose is to play something", subtype)
+		}
+	}
+}
