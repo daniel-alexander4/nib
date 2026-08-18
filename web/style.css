@@ -35,7 +35,14 @@
   --overlay0: #9ca0b0;
   --text: #4c4f69;
   --subtext0: #6c6f85;
-  --subtext1: #7c7f93;
+  /* Catppuccin Latte's own subtext1. It read #7c7f93 — which is Latte's OVERLAY2 — so
+     the two muted tokens were inverted relative to every other Catppuccin surface and
+     relative to the dark theme, where --subtext1 is correctly the higher-contrast of the
+     pair. Measured on --mantle at 12.5px: 3.25:1 before (below AA), 5.14:1 now, against
+     --subtext0's 4.06:1. The trap it created: "use the more muted token" made LIGHT mode
+     worse, and the dark theme — where the ordering was right — is where the palette gets
+     read during development. */
+  --subtext1: #5c5f77;
   --blue: #1e66f5;
   --green: #40a02b;
   --red: #d20f39;
