@@ -105,11 +105,51 @@ test('a document that already carries a stamp says so before you add another', a
     });
 });
 
+test('a render that fails after the metadata changed says so, and can be retried', async () => {
+  // **The P05 finding, driven.** setDocumentFromServer assigns `docMeta` BEFORE awaiting
+  // the render, and two failure paths return after it. The naive fix — put the old meta
+  // back — is wrong: for an operation reload the server HAS applied the operation, so the
+  // new meta names what the server holds and the stale thing is the RENDER. Tearing the
+  // view down is worse, because it loses the document over a failed re-render. So the view
+  // keeps both and says which is which.
+  // The test above leaves its dialog open, over the thumbnails this one has to reach.
+  await page.click('#pnCancel');
+  await page.waitForFunction(() => document.getElementById('pageNumModal').hidden);
+  await h.mode('edit');
+  const before = await pageCount();
+  assert.equal(before, '/ 2', `setup: ${before} pages open, want 2 from the delete above`);
+  await page.waitForFunction(() => document.getElementById('staleBanner').hidden === true);
+
+  // Break the render, not the operation: /api/pages still succeeds, so the server really
+  // does move on and the client really is left holding pixels of the previous version —
+  // which is the exact state the finding is about. Garbage rather than a 500, because a
+  // failed FETCH is a different path from a failed PARSE.
+  await page.route('**/api/pdf*', (route) =>
+    route.fulfill({ status: 200, contentType: 'application/pdf', body: 'not a pdf at all' }));
+
+  await page.hover(`.thumbgrid:not([hidden]) .thumbwrap:nth-child(1)`);
+  await page.click(thumbBtn(1, 'Rotate right'));
+  await page.waitForFunction(() => document.getElementById('staleBanner').hidden === false, null, { timeout: 15000 })
+    .catch(() => { assert.fail('the render failed and nothing on screen said so — the view is showing the previous version under the new document\'s identity, silently'); });
+
+  const msg = await page.$eval('#staleMsg', (el) => el.textContent);
+  assert.match(msg, /previous version/,
+    `the banner reads "${msg}", which does not tell the user what they are looking at`);
+  // The document is STILL THERE. This is the half that makes the design right rather than
+  // merely honest: a teardown would have been simpler and would have lost the pages.
+  assert.equal(await pageCount(), '/ 2', 'the failed re-render tore the document down');
+
+  // Retry, with the render working again — the banner must clear itself.
+  await page.unroute('**/api/pdf*');
+  await page.click('#staleRetry');
+  await page.waitForFunction(() => document.getElementById('staleBanner').hidden === true, null, { timeout: 15000 })
+    .catch(() => { assert.fail('the banner survived a successful retry, so it reports staleness that is over — and the next real one will be ignored'); });
+});
+
 test('this file leaves the shared server as it found it', async () => {
   // Tier 3 runs every file against ONE nib process; a document left open here is a
   // document the next file counts. Observe, clean up, THEN assert — an `after` hook does
   // not run when an assertion throws, which is exactly when the cleanup matters.
-  await page.click('#pnCancel');
   const openPages = (await h.counts()).pages;
   await h.closeDocument();
   const left = await page.evaluate(() => document.querySelectorAll('.viewerContainer .page').length);

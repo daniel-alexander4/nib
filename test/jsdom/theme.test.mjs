@@ -91,6 +91,32 @@ test('BOTH muted tokens meet AA on every surface muted text sits on', () => {
   }
 });
 
+test('--text meets AA on every surface it is set on', () => {
+  // --surface1 is the one that was under: 4.39:1 in the light theme, on a surface carrying
+  // the active toolbar tab, button hover, the thumbnail actions and the stale-render retry.
+  // Body text failing AA is a bigger fact than a muted token failing it, and it was found
+  // while fixing the muted pair rather than by looking for it.
+  for (const t of THEMES) {
+    const p = palette(t.selector);
+    for (const surface of ['base', 'mantle', 'crust', 'surface0', 'surface1']) {
+      const c = contrast(p.text, p[surface]);
+      assert.ok(c >= 4.5,
+        `--text in the ${t.name} theme is ${c.toFixed(2)}:1 on --${surface}, below AA's 4.5:1 — the BODY colour is unreadable there`);
+    }
+  }
+});
+
+test('the active toolbar tab does not carry its label in --blue', () => {
+  // --blue on --surface1 is 4.33:1 dark and 2.79:1 light — under AA in both — and the tab
+  // already has a blue underline doing the signalling. This asserts the specific pairing
+  // rather than the token, because --blue is fine elsewhere and it is this ONE rule that
+  // put an unreadable label on a surface.
+  const rule = CSS_CODE.split('\n').find((l) => l.includes('.tbtab > button.active'));
+  assert.ok(rule, 'the active-tab rule is not in web/style.css — this scan is reading nothing');
+  assert.ok(!/color:\s*var\(--blue\)/.test(rule),
+    `the active tab sets its label colour to --blue again: ${rule.trim()}. It is under AA on --surface1 in both themes; the underline is what signals active.`);
+});
+
 test('the muted scale stays a scale — three distinguishable steps under --text', () => {
   // The cost of clearing AA by darkening is that the steps converge, and converged far
   // enough they stop being a hierarchy: three tokens all reading as body text. Each step

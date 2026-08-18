@@ -299,11 +299,14 @@ test('switching away and back preserves the zoom you set', async () => {
     const p = document.querySelector('.viewerContainer:not([hidden]) .page');
     return p && Math.abs(p.offsetWidth - w) < 2;
   }, zoomed).catch(async () => {
-    const actual = await page.evaluate(() => document.querySelector('.viewerContainer:not([hidden]) .page')?.offsetWidth ?? -1);
-    const near = Math.abs(actual - zoomed) < 20;
-    assert.fail(`the page settled at ${actual}px, not the ${zoomed}px it was left at (fit-width for this document is ${fitted}px). ${near
+    const at = await page.evaluate(() => {
+      const c = document.querySelector('.viewerContainer:not([hidden])');
+      return { width: c?.querySelector('.page')?.offsetWidth ?? -1, src: c?.dataset.scaleSrc ?? '(unstamped)' };
+    });
+    const near = Math.abs(at.width - zoomed) < 20;
+    assert.fail(`the page settled at ${at.width}px, not the ${zoomed}px it was left at (fit-width for this document is ${fitted}px). ${near
       ? 'A NEAR MISS, so the 2px tolerance is too tight for the restore path and the final assertion below needs the same widening.'
-      : 'NOT a near miss — the zoom was discarded, which is the regression this test exists to catch.'}`);
+      : 'NOT a near miss — the zoom was discarded, which is the regression this test exists to catch.'} The last code path to set this view's scale was **${at.src}** (app.js scaleFrom) — that is the door, and it is the thing two previous explanations had to guess at.`);
   });
 
   const back = await page.evaluate(() => document.querySelector('.viewerContainer:not([hidden]) .page').offsetWidth);
