@@ -191,7 +191,11 @@ func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 
 	// Public — reachable before the vault is unlocked.
-	mux.HandleFunc("GET /api/status", s.handleStatus)
+	// requirePublicLoopback on a GET, which every other route reserves for writes — and
+	// deliberately, because this GET IS a write: handleStatus calls ensureUnlocked, which
+	// can run vault.AutoSetup and create a vault. The method-based guard let any web page
+	// the user had open trigger first-run vault creation with a plain cross-site request.
+	mux.HandleFunc("GET /api/status", requirePublicLoopback(s.handleStatus))
 	mux.HandleFunc("GET /api/instance", s.handleInstance)
 	mux.HandleFunc("POST /api/handoff", requirePublicLoopback(s.handleHandoff))
 	mux.HandleFunc("GET /api/update/check", s.handleUpdateCheck)
