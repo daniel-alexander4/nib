@@ -455,6 +455,7 @@
           <button type="button" class="wmpreset" data-wm="VOID">VOID</button>
         </div>
         <input id="fzText" type="text" placeholder="…or type your own" value="FINALIZED" />
+        <p id="fzStamped" class="stampwarn" hidden>This document already carries a stamp — a watermark or page numbers. This watermark draws <strong>on top of</strong> it rather than replacing it.</p>
       </div>
       <div class="wmstyle">
         <div class="wmcontrols">
@@ -897,6 +898,7 @@
     <div class="sigcard">
       <h3>Page numbers</h3>
       <p class="libhint">Stamp a running number onto every page. For Bates numbering, add a prefix and a zero-pad width (e.g. prefix “ABC” + width 6 → ABC000001).</p>
+      <p id="pnStamped" class="stampwarn" hidden>This document already carries a stamp — page numbers or a watermark. Adding more draws them <strong>on top of</strong> what is there; it does not replace it. Undo afterwards if that is not what you wanted.</p>
       <div class="splitcontrols">
         <label>Position
           <select id="pnPosition">
