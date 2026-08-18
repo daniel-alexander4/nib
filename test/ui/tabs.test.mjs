@@ -274,6 +274,11 @@ test('switching away and back preserves the zoom you set', async () => {
   await page.click('#zoomInBtn');
   await page.click('#zoomInBtn');
   const zoomed = await page.evaluate(() => document.querySelector('.viewerContainer:not([hidden]) .page').offsetWidth);
+  // Which view RECORD was zoomed. `newView` already gives every container a unique id
+  // (`viewerContainer-N`, from viewSeq), so the identity is there for free — and "the state
+  // was lost" and "you are looking at a different view" are different bugs with different
+  // fixes.
+  const zoomedView = await page.$eval('.viewerContainer:not([hidden])', (c) => c.id);
   // The stimulus: the zoom must actually have changed the rendered width, or "it came
   // back the same" is true of a control that does nothing.
   assert.ok(zoomed > fitted * 1.1,
@@ -301,12 +306,17 @@ test('switching away and back preserves the zoom you set', async () => {
   }, zoomed).catch(async () => {
     const at = await page.evaluate(() => {
       const c = document.querySelector('.viewerContainer:not([hidden])');
-      return { width: c?.querySelector('.page')?.offsetWidth ?? -1, src: c?.dataset.scaleSrc ?? '(unstamped)' };
+      // Every container, not just the visible one: if two views can satisfy this test's
+      // "3 pages" discriminator, the test has been addressing by an ambiguous name and the
+      // app may be holding one document twice. That is the next question and this answers it.
+      const all = [...document.querySelectorAll('.viewerContainer')].map((x) =>
+        `${x.id}:${x.querySelectorAll('.page').length}p${x.hidden ? '' : ':visible'}`).join(' ');
+      return { width: c?.querySelector('.page')?.offsetWidth ?? -1, src: c?.dataset.scaleSrc ?? '(unstamped)', log: c?.dataset.userScaleLog ?? '(none)', viewId: c?.id ?? '?', all };
     });
     const near = Math.abs(at.width - zoomed) < 20;
     assert.fail(`the page settled at ${at.width}px, not the ${zoomed}px it was left at (fit-width for this document is ${fitted}px). ${near
       ? 'A NEAR MISS, so the 2px tolerance is too tight for the restore path and the final assertion below needs the same widening.'
-      : 'NOT a near miss — the zoom was discarded, which is the regression this test exists to catch.'} The last code path to set this view's scale was **${at.src}** (app.js scaleFrom) — that is the door, and it is the thing two previous explanations had to guess at.`);
+      : 'NOT a near miss — the zoom was discarded, which is the regression this test exists to catch.'} The last code path to set this view's scale was **${at.src}**, and the writes to its userScale flag were **${at.log}** (app.js scaleFrom / setUserScale). Those two together name the door. The view on screen is record **${at.viewId}**; the one that was zoomed was **${zoomedView}**${at.viewId === zoomedView ? ' — the same record, so this is lost state' : ' — a DIFFERENT record, so the document was re-adopted into a new view and the zoom went with the old one'}. Every container: ${at.all}.`);
   });
 
   const back = await page.evaluate(() => document.querySelector('.viewerContainer:not([hidden]) .page').offsetWidth);
