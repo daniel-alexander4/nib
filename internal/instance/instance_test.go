@@ -1,6 +1,7 @@
 package instance
 
 import (
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -193,5 +194,84 @@ func TestTheRecordDoesNotOutliveASIGTERM(t *testing.T) {
 	// And run() must still RETURN rather than os.Exit, or the defers never fire anyway.
 	if !strings.Contains(text, "func main() { os.Exit(run()) }") {
 		t.Error("main no longer wraps run() — os.Exit skips deferred functions, so the record's removal would not run on the error path")
+	}
+}
+
+// A refusal names the running instance's version, and calls out a mismatch only when
+// there is one.
+//
+// Record.Version was written on every launch and read by NOTHING — its own comment
+// promised that a launch could "report a mismatch", and no code anywhere performed one.
+// This is that promise, implemented where it is actually evidence: the running instance
+// answered and refused, which is what a build that does not know this route does (404).
+//
+// The mismatch wording is asserted to be ABSENT for equal versions, not just present for
+// unequal ones. A message that blamed version skew on every refusal would be worse than
+// silence: it sends whoever reads the log to the wrong cause, and every refusal looks like
+// a skew.
+func TestHandOffRefusalNamesTheVersionsAndOnlyBlamesASkewWhenThereIsOne(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// What an older build without the route does.
+		http.Error(w, "not found", http.StatusNotFound)
+	}))
+	defer srv.Close()
+	addr := strings.TrimPrefix(srv.URL, "http://")
+
+	t.Run("versions differ", func(t *testing.T) {
+		rec := Record{Addr: addr, Token: "t", Handoff: "h", Version: "1.90.0"}
+		_, _, err := HandOff(rec, "/tmp/doc.pdf", "1.109.2")
+		if err == nil {
+			t.Fatal("a 404 from the running instance was not reported as a failure")
+		}
+		for _, want := range []string{"1.90.0", "1.109.2", "differ"} {
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("the refusal does not mention %q: %v", want, err)
+			}
+		}
+	})
+
+	t.Run("versions match", func(t *testing.T) {
+		rec := Record{Addr: addr, Token: "t", Handoff: "h", Version: "1.109.2"}
+		_, _, err := HandOff(rec, "/tmp/doc.pdf", "1.109.2")
+		if err == nil {
+			t.Fatal("a 404 from the running instance was not reported as a failure")
+		}
+		if !strings.Contains(err.Error(), "1.109.2") {
+			t.Errorf("the refusal does not name the running instance's version: %v", err)
+		}
+		if strings.Contains(err.Error(), "differ") {
+			t.Errorf("two identical versions were reported as a build mismatch, which sends the reader at the wrong cause: %v", err)
+		}
+	})
+
+	t.Run("a record with no version says so rather than reading blank", func(t *testing.T) {
+		rec := Record{Addr: addr, Token: "t", Handoff: "h"}
+		_, _, err := HandOff(rec, "/tmp/doc.pdf", "1.109.2")
+		if err == nil || !strings.Contains(err.Error(), "unknown") {
+			t.Errorf("a versionless record produced %v; want the version reported as unknown rather than as an empty string", err)
+		}
+	})
+}
+
+// A hand-off that never reaches an instance is NOT annotated with a version.
+//
+// The distinction is the point: nothing answered, so there is no running build to name,
+// and naming one would invent a cause for a failure whose cause is "it is not there".
+func TestHandOffConnectionFailureDoesNotBlameVersions(t *testing.T) {
+	// A port nothing is listening on: bind one, learn its number, release it.
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	addr := ln.Addr().String()
+	ln.Close()
+
+	rec := Record{Addr: addr, Token: "t", Handoff: "h", Version: "1.90.0"}
+	_, _, err = HandOff(rec, "/tmp/doc.pdf", "1.109.2")
+	if err == nil {
+		t.Fatal("handing off to a dead address succeeded")
+	}
+	if strings.Contains(err.Error(), "differ") {
+		t.Errorf("a connection failure was reported as a version mismatch: %v", err)
 	}
 }
