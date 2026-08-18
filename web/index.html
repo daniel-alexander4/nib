@@ -366,6 +366,12 @@
            the server holds the documents, the strip is client state. -->
       <div id="tabstrip" role="tablist" aria-label="Open documents" hidden></div>
       <div id="viewerWrap">
+      <!-- "What you are looking at is not what the server holds." Raised when a render
+           fails after the document's metadata has already been replaced — see markStale. -->
+      <div id="staleBanner" hidden>
+        <span id="staleMsg"></span>
+        <button id="staleRetry" class="primary">Try again</button>
+      </div>
       <div id="signBanner" hidden>
         <span id="signMsg"></span>
         <button id="signDone" hidden>Finish &amp; sign</button>

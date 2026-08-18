@@ -160,6 +160,7 @@ const els = {
   tvExplorer: $('tvExplorer'), tvFile: $('tvFile'), tvResult: $('tvResult'), tvCancel: $('tvCancel'), tvPick: $('tvPick'), tvSave: $('tvSave'),
   fzPreviewMark: $('fzPreviewMark'),
   pnStamped: $('pnStamped'), fzStamped: $('fzStamped'),
+  staleBanner: $('staleBanner'), staleMsg: $('staleMsg'), staleRetry: $('staleRetry'),
   profileModal: $('profileModal'), profileText: $('profileText'),
   profileCancel: $('profileCancel'), profileSave: $('profileSave'),
   saveAsModal: $('saveAsModal'), saveAsTitle: $('saveAsTitle'), saveAsName: $('saveAsName'),
@@ -1518,6 +1519,15 @@ function newView() {
     // rescue-fit must not run over one either. A view with a user scale is a view
     // whose scale is nobody else's to set.
     userScale: false,
+    // Why the pixels on screen are not what `docMeta` describes, or '' when they are.
+    //
+    // `setDocumentFromServer` assigns `docMeta` BEFORE awaiting the render, and two of its
+    // failure paths return after that. Restoring the old meta would be wrong — for an
+    // operation reload the server HAS applied the operation, so the new meta names the
+    // state the server holds and the stale thing is the RENDER. Tearing the view down
+    // would be worse: it loses the user's document because a re-render failed. So the view
+    // keeps both and says which is which.
+    stale: '',
     outlineItems: [],
     originalName: '', // basename of the opened file, for default export names
 
@@ -1751,6 +1761,7 @@ function newView() {
     // S04 exists to solve. Named because this is the FIRST place it bites, before
     // fitWidestWidth's own guard.
     v.viewer.currentScaleValue = 'page-width'; // immediate fit (page 1) so there's no 100%-then-fit flash…
+    scaleFrom(v, 'pagesinit');
   });
   // …then refine to the widest page once every page view is populated and the layout
   // has settled (pagesinit is too early — see fitWidestWidth) — UNLESS the user has
@@ -1758,7 +1769,7 @@ function newView() {
   // view is populated" is late: on a long document a zoom made while it was still
   // loading was overwritten the instant it finished. The same silent loss of the user's
   // zoom that P06's exit criterion names at the switch, through the load door instead.
-  v.eventBus.on('pagesloaded', () => { if (!v.userScale) fitWidestWidth(v); });
+  v.eventBus.on('pagesloaded', () => { if (!v.userScale) fitWidestWidth(v, 'pagesloaded'); });
   v.eventBus.on('pagechanging', (e) => {
     // The thumbnail highlight CHANGED CATEGORY in P05.S05. With a shared grid it was
     // shared chrome and belonged behind the gate; with a per-view grid it is this view's
@@ -1987,7 +1998,7 @@ function activateView(v) {
   // (activated before any page view was populated, so `maxW` was 0) still reads
   // hasScale false, and re-fitting it on the NEXT activation would discard a zoom the
   // user has set in the meantime.
-  if (!v.hasScale && !v.userScale) fitWidestWidth(v);
+  if (!v.hasScale && !v.userScale) fitWidestWidth(v, 'activateView');
   // Explicitly, not via the bus: a re-fit that computes the SAME scale fires no
   // `scalechanging`, so the self-serving path cannot be relied on to have run.
   relayoutOverlays(v);
@@ -2086,6 +2097,7 @@ function repaintForActiveView() {
   setDocControls(open);
   applySignLock();
 
+  paintStale();
   els.signBanner.hidden = !view.signTotal;
   if (view.signTotal) setSignBanner(); // NOT showSignBanner — that resets a recipient's progress
 
@@ -2127,6 +2139,30 @@ function confirmSignatureLoss() {
 // loads a document into a view the user is not looking at. Everything that writes shared
 // chrome below is therefore guarded on `target === view`: a background load must not
 // repaint the foreground's Save label, page count, badge or banner.
+// markStale records that a view's pixels no longer match the document its metadata names,
+// and paints it if that view is the one on screen.
+//
+// **Only when there is something stale to look at.** A load that fails with no previous
+// document leaves an empty view, and telling that user they are seeing an old version
+// would be a lie — the toast the caller already raised is the whole story there.
+function markStale(target, why) {
+  if (!target.pdfDocument) return;
+  target.stale = why + ' You are looking at the previous version; the server has already moved on.';
+  paintStale();
+}
+
+// paintStale renders the ACTIVE view's staleness. Shared chrome, so it reads `view` and
+// never its caller's target: a background load that failed must not put its banner over
+// the document the user is reading. Called from repaintForActiveView too, so switching
+// tabs shows each document's own answer.
+function paintStale() {
+  els.staleBanner.hidden = !view.stale;
+  els.staleMsg.textContent = view.stale || '';
+  // Both banners occupy the same spot over the document. When both are up, drop this one
+  // below the signing one rather than letting z-order decide which fact goes unread.
+  els.staleBanner.classList.toggle('stacked', !!view.signTotal);
+}
+
 async function setDocumentFromServer(meta, target = view) {
   // A refusal body is not a document. The server answers a stale id with
   // `{"error": "..."}` and a 200 body has no `error` field, so this is exact rather
@@ -2179,13 +2215,20 @@ async function setDocumentFromServer(meta, target = view) {
     if (e && e.name === 'PasswordException') {
       if (target === view) openDecryptPrompt();
       else toast('the document that arrived is password-protected — open it to unlock');
+      markStale(target, 'This document is encrypted and could not be displayed.');
       return;
     }
     toast('could not render the document');
     console.error('pdf load failed', e);
+    markStale(target, 'This document could not be displayed.');
     return;
   }
+  // NOT marked stale: a newer load is already in flight for this view and owns what it
+  // shows. Marking here would leave a banner the successful load then has to clear, and
+  // the window in between is exactly when the user is looking.
   if (gen !== target.docGen) return; // a newer load superseded this one
+  target.stale = ''; // this render IS the document `docMeta` names
+  paintStale();
 
   const old = target.pdfDocument;
   target.pdfDocument = doc;
@@ -8657,6 +8700,10 @@ function shapePNG(wPts, hPts, pill) {
   c.stroke();
   return cv.toDataURL('image/png').split(',')[1];
 }
+// Retry is what makes the banner an affordance rather than an epitaph: the common cause is
+// transient, and without this the only way back to the document the server holds is to
+// close the tab and open the file again.
+els.staleRetry.onclick = () => { if (view.docMeta) setDocumentFromServer(view.docMeta, view); };
 els.saveBtn.onclick = save;
 
 // Page navigation + zoom: the toolbar buttons and the keyboard shortcuts share
@@ -8668,9 +8715,23 @@ function lastPage() { if (view.pdfDocument) view.viewer.currentPageNumber = view
 // Every one of these records that the scale is now the user's — see `userScale`. Fit is
 // the one that CLEARS it: the user asking for fit-width is the user handing the scale
 // back, so a later refine to the widest page is welcome rather than an override.
-function zoomIn() { view.userScale = true; view.viewer.currentScale = view.viewer.currentScale * 1.15; }
-function zoomOut() { view.userScale = true; view.viewer.currentScale = view.viewer.currentScale / 1.15; }
-function fitWidth() { view.userScale = false; fitWidestWidth(view); }
+// scaleFrom stamps WHICH code path last set a view's scale onto its container, where a
+// test can read it.
+//
+// It exists because a one-in-ten flake has now outlived two explanations. The zoom test
+// can see that a document came back at fit-width instead of the zoom it was left at; it
+// cannot see WHICH of the four things that set a scale did it, and neither could I — the
+// v1.109.12 fix was reasoned from the code and reported as an explanation rather than a
+// sighting, and a later sighting contradicted it. Three characters of state turn the next
+// occurrence from another round of theorising into a named door.
+//
+// A dataset write on an element that already exists, on paths that are already doing
+// layout — not a hot path, and nothing reads it in production.
+function scaleFrom(owner, src) { if (owner.container) owner.container.dataset.scaleSrc = src; }
+
+function zoomIn() { view.userScale = true; scaleFrom(view, 'zoomIn'); view.viewer.currentScale = view.viewer.currentScale * 1.15; }
+function zoomOut() { view.userScale = true; scaleFrom(view, 'zoomOut'); view.viewer.currentScale = view.viewer.currentScale / 1.15; }
+function fitWidth() { view.userScale = false; fitWidestWidth(view, 'fitWidthButton'); }
 // fitWidestWidth fits the WIDEST page in the document to the container width and
 // locks it as a NUMERIC scale, so a mixed-size document scrolls smoothly. A named
 // 'page-width' re-fits to whichever page scrolls into view (pdf.js recomputes it
@@ -8689,7 +8750,7 @@ function fitWidth() { view.userScale = false; fitWidestWidth(view); }
 // 72pt→96px conversion), so the scale that fits maxW points into `avail` CSS pixels
 // is avail / maxW / PDF_TO_CSS_UNITS. Dropping that divisor zooms every page 4/3 too
 // wide — the widest page then overflows.
-function fitWidestWidth(owner) {
+function fitWidestWidth(owner, fitReason = 'fit') {
   if (!owner.pdfDocument) return;
   let maxW = 0;
   for (let i = 0; i < owner.pdfDocument.numPages; i++) {
@@ -8706,6 +8767,7 @@ function fitWidestWidth(owner) {
   const avail = owner.container.clientWidth - 40; // 40 = pdf.js SCROLLBAR_PADDING
   if (maxW > 0 && avail > 0) {
     owner.viewer.currentScale = avail / maxW / pdfjsLib.PixelsPerInch.PDF_TO_CSS_UNITS;
+    scaleFrom(owner, fitReason);
     owner.hasScale = true; // it applied; activateView need not rescue this view
   }
 }
@@ -8748,6 +8810,7 @@ window.addEventListener('wheel', (e) => {
   if (pixelMode && !ctrlHeld) {
     // Trackpad pinch: continuous factor per event.
     view.userScale = true; // the user choosing a scale, same as the buttons — see `userScale`
+    scaleFrom(view, 'pinch');
     view.viewer.updateScale({ scaleFactor: 2 ** (-e.deltaY / 100), origin, drawingDelay: 400 });
   } else {
     // Notched wheel: one zoom step per notch, same 1.15 factor as the buttons.
@@ -8759,6 +8822,7 @@ window.addEventListener('wheel', (e) => {
       // marking the view user-scaled for it would suppress the widest-page refine
       // over a gesture that changed no scale at all.
       view.userScale = true;
+      scaleFrom(view, 'ctrlWheel');
       view.viewer.updateScale({ scaleFactor: 1.15 ** steps, origin, drawingDelay: 400 });
     }
   }
