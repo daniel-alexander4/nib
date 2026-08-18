@@ -3,8 +3,10 @@ package pdfops
 import (
 	"embed"
 	"fmt"
+	"nib/mdpdf"
 	"os"
 	"path/filepath"
+	"unicode"
 
 	"github.com/pdfcpu/pdfcpu/pkg/font"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
@@ -168,4 +170,54 @@ func InstallOCRFonts() error {
 		}
 	}
 	return nil
+}
+
+// markdownFallbackFonts offers the vendored faces to mdpdf, in the order they should be
+// tried for text the Base-14 core fonts cannot print.
+//
+// **Order is the whole of the policy.** A word is set in the FIRST face whose declared
+// ranges cover its non-WinAnsi runes, so the script-specific faces come before the pan-CJK
+// one: DroidSansFallback carries a great deal besides Han, and putting it first would win
+// words that a purpose-built Noto face sets better. Roboto is not offered — pdfcpu falls
+// back to it for Latin/Cyrillic/Greek on its own, and naming it here would have mdpdf
+// embed a face for text the core fonts already print.
+//
+// The bytes come from the same embedded FS the OCR text layer uses, so nothing new is
+// vendored and nothing is read from disk.
+func markdownFallbackFonts() []mdpdf.Font {
+	specs := []struct {
+		name   string
+		ranges []*unicode.RangeTable
+	}{
+		{"NotoSansThai-Regular", []*unicode.RangeTable{unicode.Thai}},
+		{"NotoSansDevanagari-Regular", []*unicode.RangeTable{unicode.Devanagari}},
+		{"NotoSansBengali-Regular", []*unicode.RangeTable{unicode.Bengali}},
+		{"NotoSansTamil-Regular", []*unicode.RangeTable{unicode.Tamil}},
+		{"NotoSansTelugu-Regular", []*unicode.RangeTable{unicode.Telugu}},
+		{"NotoSansKannada-Regular", []*unicode.RangeTable{unicode.Kannada}},
+		{"NotoSansMalayalam-Regular", []*unicode.RangeTable{unicode.Malayalam}},
+		{"NotoSansGujarati-Regular", []*unicode.RangeTable{unicode.Gujarati}},
+		{"NotoSansGurmukhi-Regular", []*unicode.RangeTable{unicode.Gurmukhi}},
+		{"NotoSansArabic-Regular", []*unicode.RangeTable{unicode.Arabic}},
+		{"NotoSansHebrew-Regular", []*unicode.RangeTable{unicode.Hebrew}},
+		{"NanumGothic", []*unicode.RangeTable{unicode.Hangul}},
+		// Last: broad coverage, so it catches Han, Hiragana, Katakana and anything the
+		// faces above did not claim.
+		{"DroidSansFallback", []*unicode.RangeTable{
+			unicode.Han, unicode.Hiragana, unicode.Katakana, unicode.Bopomofo,
+		}},
+	}
+	out := make([]mdpdf.Font, 0, len(specs))
+	for _, sp := range specs {
+		path, ok := ocrFontFiles[sp.name]
+		if !ok {
+			continue // a face renamed in ocrFontFiles: skip rather than ship an empty Font
+		}
+		bb, err := ocrFontFS.ReadFile(path)
+		if err != nil {
+			continue // embedded, so this cannot fail in a built binary
+		}
+		out = append(out, mdpdf.Font{Name: sp.name, Data: bb, Covers: sp.ranges})
+	}
+	return out
 }
