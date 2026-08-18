@@ -82,3 +82,64 @@ test('--subtext1 meets AA for normal text in every theme', () => {
       `--subtext1 in the ${t.name} theme is ${c.toFixed(2)}:1 on --mantle, below AA's 4.5:1 for normal text`);
   }
 });
+
+// --- empty-state messages are content, not decoration -------------------------
+//
+// Four lists said why they were blank — "No keys enrolled.", "No peers pinned yet.",
+// "Loading the document…", "no sub-folders" — from `:empty::after { content: … }` in this
+// stylesheet. Generated content cannot be selected or copied and is exposed to assistive
+// tech inconsistently, so a load-bearing sentence reached some users and not others. They
+// are real elements now (`emptyNote`, and `li.blank` in the folder browser).
+//
+// A source scan, like the rest of this file: the property is that the STYLESHEET does not
+// carry these strings, and that is a fact about the file rather than about a rendered DOM.
+
+// Comments stripped FIRST. This repo has twice shipped a guard satisfied by prose — a
+// `strings.Contains` matching a doc comment that named the thing instead of the code
+// doing it, and a `.deb` check satisfied by "xdg-utils" inside a comment. The comment
+// above this block names `:empty::after` in exactly the words the scan hunts for.
+const CSS_CODE = CSS.replace(/\/\*[\s\S]*?\*\//g, '');
+const afterRules = [...CSS_CODE.matchAll(/([^{}]+)::(?:after|before)\s*\{([^}]*content:[^}]*)\}/g)]
+  .map((m) => ({ selector: m[1].trim(), body: m[2].trim() }));
+
+test('the ::after scan actually finds generated content', () => {
+  // The stimulus, and it is not ceremony: a regex that matched nothing would make the
+  // assertion below pass over an empty array forever, including on the day someone puts
+  // a message back. There ARE decorative ::before/::after rules here (the menu caret, the
+  // folder and file icons) and they are legitimate — the next test is about which ones.
+  assert.ok(afterRules.length >= 3,
+    `the scan found ${afterRules.length} generated-content rules in web/style.css, so it is not reading the file`);
+});
+
+test('no empty-state message is generated content', () => {
+  const offenders = afterRules.filter((r) => /:empty/.test(r.selector));
+  assert.deepEqual(offenders, [],
+    `these rules put a message in generated content: ${offenders.map((o) => o.selector).join(', ')}. A ':empty::after' string cannot be selected or copied and is not reliably announced — build a real element instead (see emptyNote in web/app.js).`);
+});
+
+test('the muted token those messages use meets AA on the surfaces they sit on', () => {
+  // --crust as well as --mantle: the folder browser and the document preview both set
+  // `background: var(--crust)`, which is the darkest/lightest surface in each theme and
+  // therefore the hardest case, and it is exactly where two of the four messages live.
+  for (const t of THEMES) {
+    const p = palette(t.selector);
+    for (const surface of ['mantle', 'crust', 'base']) {
+      const c = contrast(p.subtext1, p[surface]);
+      assert.ok(c >= 4.5,
+        `--subtext1 in the ${t.name} theme is ${c.toFixed(2)}:1 on --${surface}, below AA's 4.5:1`);
+    }
+  }
+});
+
+test('--overlay0 does NOT meet AA there — which is why the messages moved off it', () => {
+  // The counter-assertion, and the reason the one above is not decoration. These four
+  // messages were `--overlay0`. If overlay0 ever became readable this test fails and
+  // someone gets to delete it; while it does not, this records what the move bought and
+  // stops the previous test reading as "a token we happened to pick is fine".
+  for (const t of THEMES) {
+    const p = palette(t.selector);
+    const c = contrast(p.overlay0, p.crust);
+    assert.ok(c < 4.5,
+      `--overlay0 in the ${t.name} theme is now ${c.toFixed(2)}:1 on --crust, which is AA-compliant — the premise of moving the empty-state messages to --subtext1 no longer holds, and this file should say so`);
+  }
+});

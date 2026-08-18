@@ -494,6 +494,13 @@ body > div[id$="Modal"] {
 .comparecanvas { max-width: 100%; max-height: 62vh; height: auto;
   border: 1px solid var(--surface0); background: #fff; }
 .scan-empty { font-size: 13px; color: var(--green); }
+/* Empty-state messages, as REAL TEXT. These were `:empty::after` content strings, which
+   cost twice: generated content cannot be selected or copied, and assistive tech exposes
+   it inconsistently — so a load-bearing sentence was reaching some users and not others.
+   `--subtext1`, not `--overlay0`: overlay0 measures 3.59:1 on the dark surfaces these sit
+   on and 2.14:1 on the light ones, both below AA for body text. See test/jsdom/theme.test.mjs,
+   which computes it rather than trusting the token's name. */
+.emptynote { margin: 0; font-size: 12px; color: var(--subtext1); }
 .scanmethods { display: flex; flex-direction: column; gap: 6px; }
 .scanmethods button { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; text-align: left; }
 .scanmethods .hint { font-size: 11px; color: var(--subtext0); font-weight: 400; }
@@ -525,7 +532,6 @@ body > div[id$="Modal"] {
 
 /* authorized-keys manager */
 .keyslist { display: flex; flex-direction: column; gap: 6px; min-width: 420px; max-height: 240px; overflow-y: auto; }
-.keyslist:empty::after { content: "No keys enrolled."; color: var(--overlay0); font-size: 12px; }
 .keyrow {
   display: flex; align-items: center; gap: 8px;
   background: var(--crust); border: 1px solid var(--surface0);
@@ -539,7 +545,6 @@ body > div[id$="Modal"] {
 .keyrow .keycur { font-size: 11px; color: var(--green); white-space: nowrap; }
 .keyrow .keydel { color: var(--red); padding: 3px 8px; }
 .peerslist { display: flex; flex-direction: column; gap: 6px; min-width: 420px; max-height: 200px; overflow-y: auto; }
-.peerslist:empty::after { content: "No peers pinned yet."; color: var(--overlay0); font-size: 12px; }
 .peerfp { font-family: ui-monospace, monospace; font-size: 12px; color: var(--text); word-break: break-all; padding: 4px 0; }
 /* fingerprint + copy button, for out-of-band safety-number comparison */
 .fpcompare { display: flex; align-items: flex-start; gap: 8px; }
@@ -554,7 +559,6 @@ body > div[id$="Modal"] {
    entirely apart from the main viewer so the open document is never disturbed */
 .docpreview { max-height: 300px; overflow-y: auto; background: var(--crust); border: 1px solid var(--surface0); border-radius: 8px; padding: 8px; min-width: 420px; }
 .docpreview canvas { display: block; margin: 0 auto 8px; max-width: 100%; box-shadow: 0 1px 4px rgba(0,0,0,0.4); }
-.docpreview:empty::after { content: "Loading the document…"; color: var(--overlay0); font-size: 12px; }
 .keycands { display: flex; flex-wrap: wrap; gap: 6px; }
 .keycands button { font-size: 12px; }
 .keycands:empty { display: none; }
@@ -567,7 +571,6 @@ body > div[id$="Modal"] {
   list-style: none; margin: 0; padding: 4px; min-width: 380px; max-height: 320px;
   overflow-y: auto; border: 1px solid var(--surface0); border-radius: 6px; background: var(--crust);
 }
-.dirlist:empty::after { content: "no sub-folders"; color: var(--overlay0); font-size: 12px; padding: 6px 8px; display: block; }
 .dirlist li { padding: 4px 8px; border-radius: 4px; cursor: pointer; font-size: 13px; }
 .dirlist li::before { content: "📁 "; }
 .dirlist li.file::before { content: "📄 "; }
@@ -575,7 +578,12 @@ body > div[id$="Modal"] {
    only the top of one drive, so these are how the browser reaches the others. */
 .dirlist li.root::before { content: "💽 "; }
 /* The "why is this empty" row: an explanation, not somewhere you can navigate. */
-.dirlist li.idle { cursor: default; color: var(--overlay0); font-size: 12px; }
+.dirlist li.idle { cursor: default; color: var(--subtext1); font-size: 12px; }
+/* "Nothing here" — also not navigable, and NOT a warning: `idle` wears ⚠ because it
+   means the folder could not be READ, which is a different fact from an empty one. */
+.dirlist li.blank { cursor: default; color: var(--subtext1); font-size: 12px; }
+.dirlist li.blank::before { content: none; }
+.dirlist li.blank:hover { background: none; }
 .dirlist li.idle::before { content: "⚠ "; }
 .dirlist li.idle:hover { background: none; }
 .dirlist li:hover { background: var(--surface0); }
