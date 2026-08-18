@@ -3,6 +3,7 @@ package nib
 import (
 	"os"
 	"os/exec"
+	"regexp"
 	"strconv"
 	"strings"
 	"testing"
@@ -116,6 +117,82 @@ func TestVerifyContractIsTrue(t *testing.T) {
 				t.Errorf("docs/red-proofs.md has no entries for %s, so the contract's claim is unbacked for that tier", tier)
 			}
 		}
+	}
+}
+
+// The .deb declares that nib needs a browser, and names the same ones nib looks for.
+//
+// nfpm.yaml had no dependency stanza at all while its own description said nib "runs a
+// loopback-only web app in a chromeless browser window" — so installing on a machine with
+// no browser SUCCEEDED, nib started, bound its loopback port, and had no way to display
+// itself. The user sees a process that did nothing, which is the worst shape a missing
+// dependency can take: not an error, an absence.
+//
+// The candidate names are checked against internal/browser's OWN list rather than against
+// a literal here. That is the point of the test: the packaging and the code that does the
+// looking are two statements of the same fact, and a browser added to one and not the
+// other is exactly the drift that produces a package recommending something nib will
+// never launch.
+func TestPackageDeclaresABrowser(t *testing.T) {
+	spec, err := os.ReadFile("build/nfpm.yaml")
+	if err != nil {
+		t.Fatalf("the package spec is missing: %v", err)
+	}
+	// COMMENT LINES STRIPPED FIRST. Without that, this whole check is satisfied by the
+	// paragraph above the stanza explaining why the stanza exists — a mention is not a
+	// declaration, and the prose here is unusually long precisely because the reasoning
+	// matters. Caught by red-proving it: deleting the recommends block left the comment
+	// behind, and the xdg-utils check went on passing.
+	var live []string
+	for _, line := range strings.Split(string(spec), "\n") {
+		if !strings.HasPrefix(strings.TrimSpace(line), "#") {
+			live = append(live, line)
+		}
+	}
+	pkg := strings.Join(live, "\n")
+	if !strings.Contains(pkg, "recommends:") && !strings.Contains(pkg, "depends:") {
+		t.Fatal("build/nfpm.yaml declares no dependencies, yet its own description says nib runs its UI in a browser window — installing with no browser leaves a process that starts and cannot show itself")
+	}
+	// xdg-utils is the OTHER route: with no Chromium-family binary, Open() falls back to
+	// xdg-open, which is in that package.
+	if !strings.Contains(pkg, "xdg-utils") {
+		t.Error("build/nfpm.yaml does not mention xdg-utils — it is the fallback route internal/browser.tabOpener uses when no Chromium-family browser is found")
+	}
+	src, err := os.ReadFile("internal/browser/browser.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The Linux candidates, read out of the switch arm that serves this package's
+	// platform. A name nib hunts for and the package never mentions is a machine where
+	// nib would have worked and apt did not say so.
+	linux := string(src)
+	// The Linux arm is `default:`, not `case "linux"` — chromiumCandidates serves "linux
+	// and friends" from the default branch. The first draft looked for the case label,
+	// found nothing, and said so: its own stimulus assertion is what caught the wrong
+	// assumption rather than letting the comparison below run over an empty list.
+	at := strings.Index(linux, "default: // linux and friends")
+	if at == -1 {
+		t.Fatal("chromiumCandidates' linux arm is not where this check looks (it read the `default:` branch) — the comparison below would run over an empty list")
+	}
+	arm := linux[at:]
+	if end := strings.Index(arm, "}"); end != -1 {
+		arm = arm[:end]
+	}
+	names := regexp.MustCompile(`"([a-z0-9-]+)"`).FindAllStringSubmatch(arm, -1)
+	if len(names) < 3 {
+		t.Fatalf("only %d browser names parsed out of chromiumCandidates' linux arm — the scan is not reading it", len(names))
+	}
+	var unmentioned []string
+	for _, m := range names {
+		if !strings.Contains(pkg, m[1]) {
+			unmentioned = append(unmentioned, m[1])
+		}
+	}
+	// Not every candidate needs to be a Debian package name — google-chrome-stable is,
+	// microsoft-edge and brave-browser ship their own repos — so this reports rather than
+	// demands the whole set, and fails only if NONE of them is named.
+	if len(unmentioned) == len(names) {
+		t.Errorf("build/nfpm.yaml names none of the browsers nib actually looks for (%v) — whatever it recommends, nib will not launch it in app mode", unmentioned)
 	}
 }
 

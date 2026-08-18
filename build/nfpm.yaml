@@ -10,6 +10,22 @@ maintainer: Dan <daniel@alexander4.org>
 description: |
   Nib — a local tool to fill, sign, and finalize PDFs.
   Runs a loopback-only web app in a chromeless browser window.
+# Nib has no UI of its own: internal/browser.Open() either launches a
+# Chromium-family binary in app mode, or falls back to xdg-open, which needs
+# xdg-utils and a browser registered as the handler. Without one of those two routes
+# the install SUCCEEDS, nib starts, binds its loopback port, and has no way to
+# display itself — the user sees a process that did nothing.
+#
+# Recommends rather than Depends, and the reason is the fallback. A hard dependency on
+# this alternation would refuse to install for someone whose browser is firefox-esr, a
+# snap, a flatpak or a self-managed build — all of which xdg-open handles perfectly
+# well. apt installs recommends by default, so the ordinary user gets a working setup
+# and the unusual one can --no-install-recommends knowingly. The candidate names track
+# internal/browser.chromiumCandidates(); firefox is here because the fallback path can
+# legitimately land there, and that gap is tracked as its own VERIFY item.
+recommends:
+  - chromium | chromium-browser | google-chrome-stable | firefox
+  - xdg-utils
 contents:
   - src: dist/nib
     dst: /usr/bin/nib
