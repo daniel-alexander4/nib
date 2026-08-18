@@ -43,12 +43,16 @@ const (
 	sizeBody = 11
 	sizeCode = 10
 
-	paraGap      = 6.0  // after a paragraph
-	tightGap     = 2.0  // after a tight list item
-	codeGap      = 5.0  // around code blocks
-	listIndent   = 18.0 // per nesting level (also the marker gutter)
-	quoteIndent  = 18.0
-	markerGutter = listIndent
+	paraGap     = 6.0  // after a paragraph
+	tightGap    = 2.0  // after a tight list item
+	codeGap     = 5.0  // around code blocks
+	listIndent  = 18.0 // per nesting level (also the marker gutter)
+	quoteIndent = 18.0
+	// maxBlockIndent caps nested indentation so a deeply nested quote or list cannot push
+	// the wrap width to nothing. Two thirds of the content width leaves room for text at
+	// any depth; see the Blockquote case.
+	maxBlockIndent = contentW * 2 / 3
+	markerGutter   = listIndent
 )
 
 // headingSizes maps heading level 1-6 to point size (always bold).
@@ -132,7 +136,16 @@ func (r *renderer) block(n ast.Node, indent float64, marker *word) {
 		}
 		r.l.gap(paraGap - tightGap)
 	case *ast.Blockquote:
-		r.blocks(t, indent+quoteIndent, marker)
+		// Bounded. Each level indents, and nothing stopped the indent exceeding the
+		// content width — at which point wrapWords has a negative budget and emits ONE
+		// RUNE PER LINE for the rest of the document. A file with forty `>` characters is
+		// not a realistic document, but it is a realistic paste, and the output is not an
+		// error: it is hundreds of pages of single characters.
+		next := indent + quoteIndent
+		if next > maxBlockIndent {
+			next = maxBlockIndent
+		}
+		r.blocks(t, next, marker)
 	case *ast.FencedCodeBlock, *ast.CodeBlock:
 		r.l.gap(codeGap)
 		r.l.code(r.codeLines(n), indent)
