@@ -2201,7 +2201,9 @@ async function setDocumentFromServer(meta, target = view) {
   // false; clearing it unconditionally here is what made it false, and the refine that
   // follows every load then had nothing stopping it. Rotating a page should not reset your
   // zoom either, so this is the right behaviour on its own merits and not only for the test.
-  if (!target.docMeta || target.docMeta.id !== meta.id) target.userScale = false;
+  if (!target.docMeta || target.docMeta.id !== meta.id) {
+    setUserScale(target, false, 'load:' + (target.docMeta && target.docMeta.id ? 'newdoc' : 'firstdoc'));
+  }
   target.docMeta = meta;
   // No `!== '.'` guard any more: the server emits an EMPTY name for a path-less
   // document rather than filepath.Base("")'s ".", so the falsy check is the whole test.
@@ -8738,9 +8740,21 @@ function lastPage() { if (view.pdfDocument) view.viewer.currentPageNumber = view
 // layout — not a hot path, and nothing reads it in production.
 function scaleFrom(owner, src) { if (owner.container) owner.container.dataset.scaleSrc = src; }
 
-function zoomIn() { view.userScale = true; scaleFrom(view, 'zoomIn'); view.viewer.currentScale = view.viewer.currentScale * 1.15; }
-function zoomOut() { view.userScale = true; scaleFrom(view, 'zoomOut'); view.viewer.currentScale = view.viewer.currentScale / 1.15; }
-function fitWidth() { view.userScale = false; fitWidestWidth(view, 'fitWidthButton'); }
+// setUserScale is the ONE writer of `userScale`, and it keeps a short log of who wrote what
+// on the view's own container. `scaleSrc` named the path that re-fitted a zoomed view
+// (`pagesloaded`, which only runs when the flag is false); this answers the next question,
+// which is what made it false. Bounded to the last eight writes so it cannot grow.
+function setUserScale(owner, value, why) {
+  owner.userScale = value;
+  if (!owner.container) return;
+  const log = (owner.container.dataset.userScaleLog || '').split('|').filter(Boolean);
+  log.push(`${why}=${value}`);
+  owner.container.dataset.userScaleLog = log.slice(-8).join('|');
+}
+
+function zoomIn() { setUserScale(view, true, 'zoomIn'); scaleFrom(view, 'zoomIn'); view.viewer.currentScale = view.viewer.currentScale * 1.15; }
+function zoomOut() { setUserScale(view, true, 'zoomOut'); scaleFrom(view, 'zoomOut'); view.viewer.currentScale = view.viewer.currentScale / 1.15; }
+function fitWidth() { setUserScale(view, false, 'fitWidthButton'); fitWidestWidth(view, 'fitWidthButton'); }
 // fitWidestWidth fits the WIDEST page in the document to the container width and
 // locks it as a NUMERIC scale, so a mixed-size document scrolls smoothly. A named
 // 'page-width' re-fits to whichever page scrolls into view (pdf.js recomputes it
@@ -8818,7 +8832,7 @@ window.addEventListener('wheel', (e) => {
   const pixelMode = e.deltaMode === WheelEvent.DOM_DELTA_PIXEL;
   if (pixelMode && !ctrlHeld) {
     // Trackpad pinch: continuous factor per event.
-    view.userScale = true; // the user choosing a scale, same as the buttons — see `userScale`
+    setUserScale(view, true, 'pinch'); // the user choosing a scale, same as the buttons
     scaleFrom(view, 'pinch');
     view.viewer.updateScale({ scaleFactor: 2 ** (-e.deltaY / 100), origin, drawingDelay: 400 });
   } else {
@@ -8830,7 +8844,7 @@ window.addEventListener('wheel', (e) => {
       // Inside `if (steps)`, not above it: a fraction of a notch moves nothing, and
       // marking the view user-scaled for it would suppress the widest-page refine
       // over a gesture that changed no scale at all.
-      view.userScale = true;
+      setUserScale(view, true, 'ctrlWheel');
       scaleFrom(view, 'ctrlWheel');
       view.viewer.updateScale({ scaleFactor: 1.15 ** steps, origin, drawingDelay: 400 });
     }
