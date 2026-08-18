@@ -5870,7 +5870,22 @@ els.autofillBtn.onclick = async () => {
   let count = 0;
   for (const [name, arr] of Object.entries(objs)) {
     if (profile[name] === undefined) continue;
-    for (const o of arr) { view.pdfDocument.annotationStorage.setValue(o.id, { value: profile[name] }); count++; }
+    for (const o of arr) {
+      view.pdfDocument.annotationStorage.setValue(o.id, { value: profile[name] });
+      // **And the element, if one is on screen already.** pdf.js builds a widget's input
+      // FROM storage at render time and never pushes a later storage change into an
+      // element it has already made — and `refresh()` below does not rebuild the
+      // annotation layer either, it re-runs `pageView.update()`. So the storage write
+      // landed, the toast reported N fields filled, and the form the user was looking at
+      // did not move. Storage stays the write of record: it is what a page not yet
+      // rendered reads when it renders.
+      const el = view.container.querySelector(`[data-element-id="${CSS.escape(o.id)}"]`);
+      if (el && (el.tagName === 'TEXTAREA' || el.tagName === 'SELECT'
+        || (el.tagName === 'INPUT' && el.type !== 'checkbox' && el.type !== 'radio'))) {
+        el.value = profile[name];
+      }
+      count++;
+    }
   }
   view.viewer.refresh?.();
   toast(count ? `Filled ${count} field(s) — review and Save` : 'No matching field names');
