@@ -163,9 +163,11 @@ fi
 # file count is the external number; a per-test literal would go red on every new
 # test and train the next person to bump it.
 files="$(find test/ui -maxdepth 1 -name '*.test.mjs' | wc -l | tr -d ' ')"
-# Three since P06.S01 added tabs.test.mjs, which is where P05's carried acceptance
-# clause (re-fit and dpr-heal on activation) finally gets driven — both halves are
-# about layout and a device pixel ratio, neither of which exists at tier 2.
+# Five: smoke, lifecycle and redactbounds, plus tabs.test.mjs (P06.S01, where P05's
+# carried acceptance clause — re-fit and dpr-heal on activation — finally gets driven;
+# both halves are about layout and a device pixel ratio, neither of which exists at
+# tier 2) and gestures.test.mjs. The count said "three" while the literal below said
+# five, which is the sort of drift this guard exists to catch one level down.
 expect_files=5
 if [ "$files" -ne "$expect_files" ]; then
   echo "FAIL: expected $expect_files browser UI test files, found $files — a test file was added or dropped." >&2
