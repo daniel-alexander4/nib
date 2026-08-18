@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"testing"
 )
@@ -24,6 +25,16 @@ func TestNoticesUpToDate(t *testing.T) {
 	}
 	if _, err := exec.LookPath("bash"); err != nil {
 		t.Skip("bash not available; skipping notices freshness guard")
+	}
+	// The generator runs `go list -deps ./cmd/nib`, whose module set is GOOS- and
+	// build-tag-dependent, and the comparison below is byte-for-byte. The committed
+	// file is generated on Linux, so on any other platform this fails on a file the
+	// contributor did not touch and cannot fix — a spurious red that teaches people to
+	// ignore the guard. Gated rather than made platform-agnostic: the file has to be
+	// generated on SOME platform, and pinning that platform is the honest version of
+	// "the committed artifact is the Linux one".
+	if runtime.GOOS != "linux" {
+		t.Skipf("THIRD-PARTY-NOTICES.md is generated on linux and `go list -deps` varies by GOOS; skipping on %s", runtime.GOOS)
 	}
 
 	got := filepath.Join(t.TempDir(), "notices.md")

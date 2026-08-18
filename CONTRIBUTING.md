@@ -72,10 +72,20 @@ wrote down is discovered later by a user.
 
 Every tier here has been **proven red at least once** against a deliberately
 reintroduced defect, and that matters more than any of them being green: a check
-never seen to fail can only ever report pass. Two guards enforce the parts of this
-that rot quietly — `verify_test.go` (the commands in the table above exist and are
-named) and `internal/browser/browser_test.go` (tier 3 hunts for the same browsers
-Nib does). Both are in tier 1, so they run first and for free.
+never seen to fail can only ever report pass.
+
+**The record is `docs/red-proofs.md`** — which defect was put back, which assertion
+fired, and what it said. Until that file existed the claim above was backed by
+nothing a reader could check, and `verify_test.go` guarded only that the *sentence
+was present*: the same failure one level out, in the file that teaches the rule. The
+ledger names its own gap too — there is no fixture mode, so re-proving a row is a
+manual edit-run-revert.
+
+Two guards enforce the parts of this that rot quietly — `verify_test.go` (the tier
+table's rows survive, each tier still states its ceiling **in its own harness file**,
+and the proven-red claim has a ledger behind it) and `internal/browser/browser_test.go`
+(tier 3 hunts for the same browsers Nib does). Both are in tier 1, so they run first
+and for free.
 
 ## The multiple-documents laws
 
