@@ -31,9 +31,13 @@ import (
 // or which peers it accepts without a fresh security review (P2P 12).
 
 const (
-	sessionAcceptTimeout  = 5 * time.Minute  // auto-disarm if no peer connects
-	sessionConsentTimeout = 5 * time.Minute  // decline if the user never responds
-	sessionDialTimeout    = 30 * time.Second // give up establishing the outbound connection
+	sessionAcceptTimeout = 5 * time.Minute // auto-disarm if no peer connects
+	// A connected peer must complete the TLS handshake promptly. Without its own bound, a
+	// connection that opens and then says nothing occupies the accept loop for the entire
+	// arm window — the same denial the handshake loop exists to prevent, one step later.
+	sessionHandshakeTimeout = 30 * time.Second
+	sessionConsentTimeout   = 5 * time.Minute  // decline if the user never responds
+	sessionDialTimeout      = 30 * time.Second // give up establishing the outbound connection
 )
 
 // session is the receive side of a live session: an armed, routable, pinned-peer-only
@@ -268,12 +272,44 @@ func (s *Server) runSession(ln net.Listener, cert, key []byte, label, mode strin
 	// the defer: Stop() runs just after Accept returns, and a timer that fires in that
 	// window would otherwise disarm whatever is armed by then.
 	timer := time.AfterFunc(sessionAcceptTimeout, func() { s.sess.disarmIf(ln) })
-	conn, err := ln.Accept()
-	timer.Stop()
-	if err != nil {
-		s.sess.disarmIf(ln) // listener closed by timeout/disarm, or a real error
-		return
+	defer timer.Stop()
+
+	// **Accept until a peer completes the TLS handshake, not until someone connects.**
+	// tls.Listener.Accept returns on the TCP accept and does no handshake, so ANY
+	// connection consumed the one-shot session: a port scan, a stray dial, a wrong
+	// address — refusal is free for whoever connects and expensive for the user, who has
+	// to notice their session died and arm it again. Handshaking here and looping on
+	// failure means only a peer holding the pinned identity can take the session.
+	//
+	// The loop is bounded by the accept timer above, which closes the listener and makes
+	// Accept return an error — so a peer that fails repeatedly cannot hold this open past
+	// the arm window, and cannot spin it hot for longer than that either.
+	var conn net.Conn
+	for {
+		c, err := ln.Accept()
+		if err != nil {
+			s.sess.disarmIf(ln) // listener closed by timeout/disarm, or a real error
+			return
+		}
+		tc, ok := c.(*tls.Conn)
+		if !ok {
+			c.Close()
+			continue
+		}
+		// A handshake has to be time-bounded on its own, or a peer that connects and
+		// says nothing holds the session for the whole arm window while looking live.
+		// p2p's own SetDeadline replaces this once the exchange starts; Handshake is
+		// idempotent, so calling it there again costs nothing.
+		_ = tc.SetDeadline(time.Now().Add(sessionHandshakeTimeout))
+		if err := tc.Handshake(); err != nil {
+			tc.Close()
+			continue // not our pinned peer, or not TLS at all — the session stays armed
+		}
+		_ = tc.SetDeadline(time.Time{})
+		conn = tc
+		break
 	}
+	timer.Stop()
 	defer s.sess.disarmIf(ln)
 	defer conn.Close()
 	if mode == sessionModeReceive {

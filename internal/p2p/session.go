@@ -28,6 +28,20 @@ const maxFrame = 128 << 20 // 128 MiB
 // are size-capped by maxFrame but were not time-capped).
 const exchangeDeadline = 6 * time.Minute
 
+// postConsentDeadline is a FRESH budget for the I/O that follows the user's decision.
+//
+// The single absolute deadline above has to cover the remote user's whole consent window
+// (5 minutes), so whatever they leave unspent is all that remains for the co-signature and
+// for writing back up to maxFrame — 128 MiB. A user who takes four and a half minutes to
+// read what they are signing leaves ninety seconds for both. The failure lands in the worst
+// possible place: AFTER the local user has signed, so their key has been used on a document
+// the peer never receives.
+//
+// Reset once, at the point the outcome is decided, rather than lengthening the total: a
+// longer absolute budget would let a stalling peer hold the single armed session for longer
+// too, which is the thing exchangeDeadline exists to bound.
+const postConsentDeadline = 2 * time.Minute
+
 // Confirmer is the receiving side's consent gate. Shown the connected peer's
 // attestation (their identity, accepted-peer, and intent, read from the document
 // they signed) and the document itself, it returns whether to co-sign, this user's
@@ -115,6 +129,9 @@ func Receive(conn *tls.Conn, myCertPEM, myKeyPEM []byte, peerLabel string, c Con
 	if err != nil {
 		return nil, err
 	}
+	// The signature exists now. Give the write its own budget rather than whatever the
+	// user's deliberation left over — see postConsentDeadline.
+	_ = conn.SetDeadline(time.Now().Add(postConsentDeadline))
 	if err := writeFrame(conn, final); err != nil {
 		return nil, fmt.Errorf("send co-signed document: %w", err)
 	}
@@ -187,6 +204,10 @@ func ReceiveDocument(conn *tls.Conn, a Accepter) (doc, peerFP []byte, err error)
 	if err != nil {
 		return nil, nil, err
 	}
+	// Same reset as Receive's, for the same reason: the acknowledgement is one byte, but
+	// it is sent after a wait that can have consumed the whole budget, and a sender that
+	// never gets it reports the transfer as failed when the receiver has kept the file.
+	_ = conn.SetDeadline(time.Now().Add(postConsentDeadline))
 	if !accept {
 		_ = writeFrame(conn, []byte{ackDeclined}) // best-effort: tell the sender it was refused
 		return nil, nil, ErrDeclined

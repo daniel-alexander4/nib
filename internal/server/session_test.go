@@ -853,3 +853,65 @@ func TestClearPendingDoesNotDropALaterSessionsConsent(t *testing.T) {
 		t.Error("a finished confirmer's teardown discarded the consent request that replaced it — the peer's document is dropped from under the user while they are reviewing it")
 	}
 }
+
+// A connection that never completes the TLS handshake does not consume the armed session.
+//
+// tls.Listener.Accept returns on the TCP accept and does no handshake, so ANY connection
+// used to take the one-shot session: a port scan, a stray dial, a browser probing the
+// address the user just pasted. Refusal was free for whoever connected and expensive for
+// the user, who had to notice their session had died and arm it again — while the peer they
+// were waiting for could no longer reach them.
+//
+// Driven with a bare TCP dial, which is what a scanner does: connect, send nothing that
+// parses as TLS, close. The session must still be armed afterwards.
+func TestAStrayConnectionDoesNotConsumeTheSession(t *testing.T) {
+	ts, _ := startServer(t)
+	c, csrf := authedClient(t, ts)
+
+	aCert, _, err := sign.GenerateIdentity("Alice")
+	if err != nil {
+		t.Fatal(err)
+	}
+	aFPBytes, _ := sign.Fingerprint(aCert)
+	pinPeer(t, c, csrf, ts.URL, hex.EncodeToString(aFPBytes))
+
+	var armed sessionStatus
+	sessDecode(t, write(t, c, csrf, http.MethodPost, ts.URL+"/api/session/arm", "application/json",
+		jsonBody(armRequest{Fingerprint: hex.EncodeToString(aFPBytes), Bind: "127.0.0.1:0"})), &armed)
+	if !armed.Armed || armed.Address == "" {
+		t.Fatalf("setup: arm failed: %+v", armed)
+	}
+
+	// The stray connection: plain TCP, junk bytes, gone.
+	stray, err := net.DialTimeout("tcp", armed.Address, 5*time.Second)
+	if err != nil {
+		t.Fatalf("setup: could not reach the armed listener at %s: %v", armed.Address, err)
+	}
+	_, _ = stray.Write([]byte("hello?\n"))
+	stray.Close()
+
+	// The session must still be armed. Polled rather than read once: the accept loop
+	// handles the stray connection asynchronously, so an immediate read could observe the
+	// state before the handshake has even been attempted and pass without meaning it.
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		var st sessionStatus
+		sessGet(t, c, ts.URL+"/api/session/status", &st)
+		if !st.Armed {
+			t.Fatal("a bare TCP connection that sent no TLS consumed the armed session — a port scan disarms the user's receive, and the peer they are waiting for can no longer reach them")
+		}
+		if time.Now().After(deadline) {
+			break // stayed armed throughout, which is the property
+		}
+		time.Sleep(150 * time.Millisecond)
+	}
+
+	// And it can still be disarmed normally, so "armed" above is a live session rather
+	// than a stuck flag.
+	write(t, c, csrf, http.MethodPost, ts.URL+"/api/session/disarm", "application/json", nil).Body.Close()
+	var after sessionStatus
+	sessGet(t, c, ts.URL+"/api/session/status", &after)
+	if after.Armed {
+		t.Error("the session could not be disarmed afterwards")
+	}
+}
