@@ -30,7 +30,12 @@
   --mantle: #e6e9ef;
   --crust: #dce0e8;
   --surface0: #ccd0da;
-  --surface1: #bcc0cc;
+  /* Latte's own surface1 is #bcc0cc, where --text measures 4.39:1 — just under AA, and
+     this surface carries real labels (active toolbar tab, button hover, the thumbnail
+     actions, the stale-render retry). Three hex units lighter clears it at 4.53:1 while
+     leaving the surface0→surface1 step visually intact. Second deliberate Latte deviation,
+     same call as the muted pair above. */
+  --surface1: #bfc3cf;
   --surface2: #acb0be;
   --overlay0: #9ca0b0;
   --text: #4c4f69;
@@ -168,7 +173,12 @@ body { display: flex; flex-direction: column; }
 }
 #toolbar .tbtab > button:hover, #toolbar .roletools > button:hover { background: var(--surface0); color: var(--text); }
 #toolbar .tbtab > button:disabled, #toolbar .roletools > button:disabled { opacity: 0.5; cursor: not-allowed; background: transparent; }
-#toolbar .tbtab > button.active, #toolbar .roletools > button.active { color: var(--blue); background: var(--surface1); box-shadow: inset 0 -2px 0 var(--blue); }
+/* The active tab's label is --text, not --blue. --blue on --surface1 is 4.33:1 in the dark
+   theme and 2.79:1 in the light one — under AA in BOTH, and this is a label people read,
+   not an accent. The blue stays as the underline, which is what actually signals "active"
+   and does so without asking anyone to distinguish two greys-on-blue. Colour as the
+   indicator, text as the message — the same rule .stampwarn and #staleBanner follow. */
+#toolbar .tbtab > button.active, #toolbar .roletools > button.active { color: var(--text); background: var(--surface1); box-shadow: inset 0 -2px 0 var(--blue); }
 #toolbar #saveBtn { color: var(--blue); font-weight: 600; }
 /* Dropdown triggers in the toolbar (Recent / Save as / Export under View). */
 #toolbar .menutop {
@@ -766,6 +776,29 @@ body > div[id$="Modal"] {
 #tabstrip .tabclose:focus-visible { outline: 2px solid var(--blue); outline-offset: 1px; opacity: 1; }
 /* signing call-to-action: a floating bar at the top of the viewer when the open
    document carries flags to fill (Start -> Next field -> Save signed document). */
+/* The stale-render banner. Same shape as #signBanner (both sit over the document, both
+   are one shared element for N views) but it sits BELOW it in z-order and offset, because
+   a signing document whose render just failed raises both and neither should hide the
+   other. --peach on the left edge, and the message carries itself in --text: the same
+   colour-is-decoration rule .stampwarn follows, for the same reason (light --peach is
+   2.45:1 on --surface0). */
+#staleBanner {
+  position: absolute; top: 10px; left: 50%; transform: translateX(-50%);
+  z-index: 5; display: flex; align-items: center; gap: 12px;
+  padding: 7px 10px 7px 14px; border-radius: 8px;
+  background: var(--surface0); color: var(--text); font-size: 13px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+  border: 1px solid var(--surface1); border-left: 3px solid var(--peach);
+  max-width: 70%;
+}
+#staleBanner::before { content: "⚠ "; }
+/* Both banners share the same anchor; this is the one that moves. */
+#staleBanner.stacked { top: 58px; }
+#staleBanner #staleRetry {
+  padding: 5px 14px; font-weight: 600; border-radius: 4px; cursor: pointer;
+  background: var(--surface1); color: var(--text); border: 1px solid var(--surface2);
+  white-space: nowrap;
+}
 #signBanner {
   position: absolute; top: 10px; left: 50%; transform: translateX(-50%);
   z-index: 6; display: flex; align-items: center; gap: 12px;
