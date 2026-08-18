@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/pdfcpu/pdfcpu/pkg/api"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
@@ -515,5 +516,68 @@ func TestStripActiveIsAtLeastAsStrongAsRemoveFilesAndMedia(t *testing.T) {
 		if !has(gentleLeft, subtype) && has(strongLeft, subtype) {
 			t.Errorf("a %s annotation survives StripActive but not RemoveFilesAndMedia — the stronger tier is weaker than the gentle one for exactly the annotations whose purpose is to play something", subtype)
 		}
+	}
+}
+
+// eachPage numbers a duplicated page the way a reader renders it, and still refuses a
+// cycle.
+//
+// The walk deduplicated by object number to bound a malformed tree, which also skipped a
+// page object legitimately referenced twice — pdf.js walks without deduplicating and shows
+// two pages, so Scan's numbering ran a page early from that point on and every finding
+// after it pointed at the wrong page. On a security scan that is the number the user acts
+// on: it is where they go to look at what was found.
+//
+// Both halves are driven, because a fix for one is easy to write in a way that breaks the
+// other — dropping the guard entirely fixes the count and hangs on a cycle.
+func TestEachPageCountsDuplicatesAndStopsCycles(t *testing.T) {
+	base, err := ImagesToPDF([]RasterPage{rasterPage(t, 80, 80), rasterPage(t, 80, 80)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, err := api.ReadValidateAndOptimize(bytes.NewReader(base), model.NewDefaultConfiguration())
+	if err != nil {
+		t.Fatal(err)
+	}
+	xt := ctx.XRefTable
+	root, err := xt.Catalog()
+	if err != nil {
+		t.Fatal(err)
+	}
+	pages := derefDict(xt, root["Pages"])
+	kids := derefArray(xt, pages["Kids"])
+	if len(kids) != 2 {
+		t.Fatalf("setup: the fixture has %d kids, want 2", len(kids))
+	}
+
+	// The same page object, referenced a second time — what a hand-built or crafted file
+	// can contain, and what a reader shows as a third page.
+	pages["Kids"] = append(append(types.Array{}, kids...), kids[0])
+	count := 0
+	eachPage(xt, root, func(_ types.Dict, nr int) { count = nr })
+	if count != 3 {
+		t.Errorf("a page object referenced twice was counted %d times, want 3 — the reader shows three pages, so every finding after the duplicate is reported a page early", count)
+	}
+
+	// A cycle: the page-tree node lists itself. The walk must terminate, and must not
+	// count the loop.
+	selfRef, err := xt.IndRefForNewObject(pages)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pages["Kids"] = types.Array{*selfRef, kids[0]}
+	done := make(chan int, 1)
+	go func() {
+		n := 0
+		eachPage(xt, root, func(_ types.Dict, nr int) { n = nr })
+		done <- n
+	}()
+	select {
+	case n := <-done:
+		if n == 0 {
+			t.Error("a cyclic page tree yielded no pages at all — the guard is refusing the real kid too")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("eachPage did not terminate on a cyclic page tree")
 	}
 }
