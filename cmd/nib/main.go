@@ -264,7 +264,7 @@ func handedOff(cfgDir, path string) bool {
 			_ = instance.Remove(cfgDir)
 			continue
 		}
-		result, reason, err := instance.HandOff(rec, path)
+		result, reason, err := instance.HandOff(rec, path, version)
 		if err != nil {
 			log.Printf("could not hand off to the running instance: %v", err)
 			return false
