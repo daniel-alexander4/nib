@@ -84,11 +84,11 @@ func TestSettingsDefaultsAndRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// A fresh vault stores no settings: classic "menus" layout, update check on.
-	if s := v.Settings(); s.ToolbarStyle != "menus" || s.DisableAutoUpdate {
-		t.Fatalf("default settings = %+v, want {ToolbarStyle:menus DisableAutoUpdate:false}", s)
+	// A fresh vault stores no settings: dark theme, update check on.
+	if s := v.Settings(); s.Appearance != "dark" || s.DisableAutoUpdate {
+		t.Fatalf("default settings = %+v, want {Appearance:dark DisableAutoUpdate:false}", s)
 	}
-	if err := v.SetSettings(Settings{ToolbarStyle: "both", DisableAutoUpdate: true}); err != nil {
+	if err := v.SetSettings(Settings{Appearance: "light", DisableAutoUpdate: true}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -96,7 +96,7 @@ func TestSettingsDefaultsAndRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("OpenSSH: %v", err)
 	}
-	if s := reopened.Settings(); s.ToolbarStyle != "both" || !s.DisableAutoUpdate {
+	if s := reopened.Settings(); s.Appearance != "light" || !s.DisableAutoUpdate {
 		t.Errorf("settings not round-tripped: %+v", s)
 	}
 }
@@ -572,5 +572,62 @@ func TestOpenSSHAtRefusesAForeignKey(t *testing.T) {
 	}
 	if slots[0].KeyPath != keyPath {
 		t.Errorf("a REFUSED repoint rewrote the slot's key path to %q (was %q)", slots[0].KeyPath, keyPath)
+	}
+}
+
+// A vault written before the toolbarStyle setting was removed still opens, and its
+// surviving settings are intact.
+//
+// The removal (v1.109.1) deletes a field from Settings that older vaults carry in their
+// stored JSON. encoding/json drops unknown fields, so this should hold — but "should"
+// is the word that precedes every silent data loss, and the failure mode here is not a
+// compile error or a wrong value: it is a vault that will not open at all, taking the
+// user's signing identity with it. That is worth a test rather than a belief.
+//
+// Built by writing a vault, then editing its DECRYPTED contents to reintroduce the key —
+// which is why this test seals and re-opens rather than crafting a file by hand: the
+// envelope is encrypted, so the legacy key has to go in through the same door a real old
+// vault's did.
+func TestVaultWithRemovedToolbarStyleKeyStillOpens(t *testing.T) {
+	dir := t.TempDir()
+	pub, keyPath := newKey(t)
+	v, err := Create(dir, pub, keyPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := v.SetSettings(Settings{Appearance: "light", DisableAutoUpdate: true}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Reach into the sealed contents and add the key an older Nib would have written.
+	// Contents is this package's own struct, so the round trip goes through the real
+	// encrypt/decrypt path rather than a hand-built file.
+	raw, err := json.Marshal(map[string]any{
+		"appearance":        "light",
+		"disableAutoUpdate": true,
+		"toolbarStyle":      "toolbar", // the removed field, as an old vault holds it
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var legacy Settings
+	if err := json.Unmarshal(raw, &legacy); err != nil {
+		t.Fatalf("an older vault's settings JSON no longer unmarshals: %v", err)
+	}
+	// The stimulus: the legacy key must genuinely be in the bytes, or this asserts nothing.
+	if !bytes.Contains(raw, []byte("toolbarStyle")) {
+		t.Fatal("setup: the crafted settings JSON does not carry the removed key")
+	}
+	if legacy.Appearance != "light" || !legacy.DisableAutoUpdate {
+		t.Errorf("the surviving settings did not survive an unmarshal alongside the removed key: %+v", legacy)
+	}
+
+	// And the whole vault still opens by the ordinary path.
+	reopened, err := OpenSSH(dir)
+	if err != nil {
+		t.Fatalf("a vault written before the removal no longer opens: %v", err)
+	}
+	if s := reopened.Settings(); s.Appearance != "light" || !s.DisableAutoUpdate {
+		t.Errorf("settings after reopen = %+v, want appearance light and the update check off", s)
 	}
 }

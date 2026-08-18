@@ -22,38 +22,6 @@ func fetchStatus(t *testing.T, c *http.Client, ts *httptest.Server) statusRespon
 	return st
 }
 
-// A valid toolbar style is persisted and reported back via /api/status.
-func TestSettingsPersistsToolbarStyle(t *testing.T) {
-	ts, _ := startServer(t)
-	c, csrf := authedClient(t, ts)
-
-	resp := write(t, c, csrf, "POST", ts.URL+"/api/settings", "application/json",
-		jsonBody(map[string]any{"toolbarStyle": "both"}))
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("settings status = %d, want 200", resp.StatusCode)
-	}
-	if st := fetchStatus(t, c, ts); st.ToolbarStyle != "both" {
-		t.Fatalf("toolbarStyle = %q, want both", st.ToolbarStyle)
-	}
-}
-
-// An out-of-allowlist toolbar style is rejected and leaves the vault unchanged.
-func TestSettingsRejectsInvalidToolbarStyle(t *testing.T) {
-	ts, _ := startServer(t)
-	c, csrf := authedClient(t, ts)
-
-	resp := write(t, c, csrf, "POST", ts.URL+"/api/settings", "application/json",
-		jsonBody(map[string]any{"toolbarStyle": "garbage"}))
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusBadRequest {
-		t.Fatalf("settings status = %d, want 400", resp.StatusCode)
-	}
-	if st := fetchStatus(t, c, ts); st.ToolbarStyle != "menus" {
-		t.Fatalf("toolbarStyle = %q, want unchanged default menus", st.ToolbarStyle)
-	}
-}
-
 // A valid appearance is persisted and reported back via /api/status.
 func TestSettingsPersistsAppearance(t *testing.T) {
 	ts, _ := startServer(t)
@@ -71,6 +39,11 @@ func TestSettingsPersistsAppearance(t *testing.T) {
 }
 
 // An out-of-allowlist appearance is rejected and leaves the vault unchanged.
+// (Its sibling TestSettingsRejectsInvalidToolbarStyle was deleted with the toolbarStyle
+// setting in v1.109.1. Nothing was lost: the property both asserted is the handler's
+// validate-BEFORE-commit ordering — a handler writing each field as it parsed would return
+// 400 having already stored the bad one — and this test makes exactly that claim, on a
+// field the client actually sends.)
 func TestSettingsRejectsInvalidAppearance(t *testing.T) {
 	ts, _ := startServer(t)
 	c, csrf := authedClient(t, ts)
@@ -130,13 +103,18 @@ func TestSettingsSanitizesHighlightColors(t *testing.T) {
 }
 
 // A partial update touches only the field it carries: toggling the update check
-// must not reset a previously-saved toolbar style.
+// must not reset a previously-saved appearance.
+//
+// Also written against toolbarStyle originally, and also not about it — the claim is that
+// settingsRequest's nil-means-absent contract holds. Re-homed onto a field the client
+// actually sends, which makes it a stronger test than it was: a regression here now breaks
+// something a user would see.
 func TestSettingsPartialUpdatePreservesOtherFields(t *testing.T) {
 	ts, _ := startServer(t)
 	c, csrf := authedClient(t, ts)
 
 	r1 := write(t, c, csrf, "POST", ts.URL+"/api/settings", "application/json",
-		jsonBody(map[string]any{"toolbarStyle": "toolbar"}))
+		jsonBody(map[string]any{"appearance": "light"}))
 	r1.Body.Close()
 	r2 := write(t, c, csrf, "POST", ts.URL+"/api/settings", "application/json",
 		jsonBody(map[string]any{"checkUpdatesOnStartup": false}))
@@ -148,7 +126,7 @@ func TestSettingsPartialUpdatePreservesOtherFields(t *testing.T) {
 	if st.AutoUpdate {
 		t.Error("autoUpdate = true, want false after disabling the startup check")
 	}
-	if st.ToolbarStyle != "toolbar" {
-		t.Errorf("toolbarStyle = %q, want toolbar preserved across the partial update", st.ToolbarStyle)
+	if st.Appearance != "light" {
+		t.Errorf("appearance = %q, want light preserved across the partial update", st.Appearance)
 	}
 }
