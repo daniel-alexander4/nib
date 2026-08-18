@@ -637,8 +637,24 @@ function keyLabel(line) {
   return comment || (blob.length > 22 ? blob.slice(0, 11) + '…' + blob.slice(-8) : blob);
 }
 
+// emptyNote puts an empty-state message into a container as REAL TEXT.
+//
+// These four messages lived in the stylesheet as `:empty::after` content, which cost
+// twice over: generated content cannot be selected or copied, and assistive tech exposes
+// it inconsistently — so a sentence telling the user WHY a list is blank reached some
+// users and not others. The house shape already existed (renderOutlineEditor has built a
+// real element for "No bookmarks yet" all along); these four just never used it.
+function emptyNote(el, text) {
+  const p = document.createElement('p');
+  p.className = 'emptynote';
+  p.textContent = text;
+  el.appendChild(p);
+  return p;
+}
+
 function renderKeys(data) {
   els.keysList.innerHTML = '';
+  if (!data.keys.length) emptyNote(els.keysList, 'No keys enrolled.');
   for (const k of data.keys) {
     const algo = k.pubKey.trim().split(/\s+/)[0] || '';
     const row = document.createElement('div');
@@ -736,6 +752,7 @@ function renderPeers(data) {
   selfFingerprint = data.fingerprint || '';
   els.peerSelfFp.textContent = groupFingerprint(selfFingerprint);
   els.peersList.innerHTML = '';
+  if (!(data.peers || []).length) emptyNote(els.peersList, 'No peers pinned yet.');
   for (const p of data.peers || []) {
     const row = document.createElement('div');
     row.className = 'keyrow';
@@ -1123,6 +1140,7 @@ function showConsent(pending) {
 // document never disturbs the open document or its unsaved edits.
 async function loadPendingPreview(token) {
   els.srvPreview.innerHTML = '';
+  const loading = emptyNote(els.srvPreview, 'Loading the document…');
   let doc;
   try { doc = await pdfjsLib.getDocument({ url: '/api/session/pending-pdf?t=' + Date.now() }).promise; }
   catch { if (token === recvPoll) els.srvPreview.textContent = 'could not render the document'; return; }
@@ -1137,6 +1155,7 @@ async function loadPendingPreview(token) {
       const canvas = document.createElement('canvas');
       canvas.width = Math.ceil(vp.width);
       canvas.height = Math.ceil(vp.height);
+      loading.remove(); // no-op after the first page; the note is gone once anything renders
       els.srvPreview.append(canvas);
       await page.render({ canvasContext: canvas.getContext('2d'), viewport: vp }).promise;
     }
@@ -4914,6 +4933,8 @@ async function browseDir(path, t = saveAsDirEls(), onFile = null) {
   };
   // Say why it's empty, so an unreadable folder can't pass for an empty one.
   if (info.reason) row(LIST_REASON[info.reason] || LIST_REASON.unreadable, 'idle', null);
+  // Rendered LAST would read better, but the rows below can each add one, so the count is
+  // only final at the end of the function — see the tail.
   // At a filesystem root the parent walk is over. On Windows that's only the end
   // of one drive, so the server offers the others here — without this the browser
   // can never leave the drive holding the user's profile.
@@ -4922,6 +4943,10 @@ async function browseDir(path, t = saveAsDirEls(), onFile = null) {
   }
   if (onFile) for (const f of info.files) row(f.name, 'file', () => onFile(f.path));
   for (const d of info.dirs) row(d.name, null, () => browseDir(d.path, t, onFile));
+  // "Nothing here", as a real row rather than a stylesheet `:empty::after`. Checked after
+  // everything above, because `info.reason` and the drive roots are rows too — a folder
+  // that could not be READ is not an empty one and already says so in its own words.
+  if (!t.list.children.length) row('no sub-folders', 'blank', null);
 }
 
 function openSaveAs(blob, defaultName, title) {
