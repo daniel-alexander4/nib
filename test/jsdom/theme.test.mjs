@@ -54,7 +54,7 @@ test('both palettes define the tokens this file reasons about', () => {
   // an empty object — the exact shape of green this repo keeps finding.
   for (const t of THEMES) {
     const p = palette(t.selector);
-    for (const token of ['text', 'subtext0', 'subtext1', 'base', 'mantle']) {
+    for (const token of ['text', 'subtext0', 'subtext1', 'base', 'mantle', 'crust', 'surface0', 'overlay0', 'yellow']) {
       assert.ok(p[token], `the ${t.name} palette has no --${token}, so the scan is not reading it`);
     }
   }
@@ -129,6 +129,28 @@ test('the muted token those messages use meets AA on the surfaces they sit on', 
         `--subtext1 in the ${t.name} theme is ${c.toFixed(2)}:1 on --${surface}, below AA's 4.5:1`);
     }
   }
+});
+
+test('the warning note carries its message in text, not in its colour', () => {
+  // --yellow is a fine warning colour in the dark theme and 2.15:1 on --mantle in the
+  // light one, so `.stampwarn` puts the words in --text on --surface0 and lets the yellow
+  // be a left border. This asserts the pair that carries the MESSAGE, which is the pair a
+  // future "make the warning look more like a warning" edit would move.
+  for (const t of THEMES) {
+    const p = palette(t.selector);
+    const c = contrast(p.text, p.surface0);
+    assert.ok(c >= 4.5,
+      `--text on --surface0 is ${c.toFixed(2)}:1 in the ${t.name} theme, below AA — .stampwarn's words are unreadable there`);
+  }
+  // And the fact that decides it is not symmetric — which the first draft of this test
+  // got wrong by asserting it of BOTH themes. --yellow is 9.89:1 on --surface0 in the
+  // dark theme and 2.45:1 in the light one, so the token is only unusable for text in
+  // ONE of them. One is enough: a warning cannot be readable in one theme and not the
+  // other. (The deeper reason stands whatever these numbers do — colour alone is not an
+  // accessible signal, WCAG 1.4.1 — so this asserts the arithmetic, not the principle.)
+  const failing = THEMES.filter((t) => contrast(palette(t.selector).yellow, palette(t.selector).surface0) < 4.5);
+  assert.ok(failing.length > 0,
+    '--yellow now clears AA on --surface0 in BOTH themes, so the arithmetic no longer forces .stampwarn to keep its words in --text. The design should still not put the message in the colour (WCAG 1.4.1) — change this test only with that reasoning in hand, not because the number moved.');
 });
 
 test('--overlay0 does NOT meet AA there — which is why the messages moved off it', () => {
