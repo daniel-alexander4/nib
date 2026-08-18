@@ -133,7 +133,6 @@ const EXCLUDED = {
 const UNREAD_KNOWN = {
   'updateResponse.managed': 'read in Go by assetURL (internal/server/update.go) BEFORE serialization, to pick a .deb over a raw binary. It is on the wire for no client that wants it. Not counted as read: a field consumed by the code that sets it has no consumer at the far end, which is the whole property here.',
   'imageMeta.mime': 'the image library lists id/name/builtin and the client shows an <img src="/api/images/{id}">, which needs no mime. Informational in a listing API; harmless, and named so it is a decision rather than an oversight.',
-  'Record.version': 'the rendezvous record\'s running-build field. Its own comment says it exists "so a launch can report a mismatch rather than hand a path to an instance that may not understand it" — and no code anywhere reports any mismatch. A P07 residue of exactly the historyEvicted shape: a stated purpose with no implementation. Filed on the pending list.',
 };
 
 // ── The scan ─────────────────────────────────────────────────────────────────
@@ -159,6 +158,25 @@ function scanStructs() {
     }
   }
   return out;
+}
+
+// codeOnly strips comments before anything looks for a read.
+//
+// **A mention is not a read**, and without this the check is satisfied by prose about the
+// field. Measured: `Record.version` was declared read by internal/instance/instance.go,
+// the read was deleted, and this scan still passed — because a doc comment two lines up
+// says "see Record.Version". That is the same weakness the .deb dependency guard had in
+// the previous sweep, in a second file, which is why it is fixed here rather than noted.
+//
+// Mangling a string that contains "//" (a URL) is acceptable: it can only ever REMOVE a
+// candidate read, so the failure direction is a false alarm someone investigates, never a
+// false pass nobody sees.
+function codeOnly(src) {
+  return src
+    .replace(/\/\*[\s\S]*?\*\//g, ' ')
+    .split('\n')
+    .map((l) => l.replace(/\/\/.*$/, ''))
+    .join('\n');
 }
 
 const STRUCTS = scanStructs();
@@ -192,7 +210,7 @@ test('the table covers every shape the packages publish', () => {
 test('every field of every published shape has a reader in the file that declares it as one', () => {
   const cache = new Map();
   const source = (rel) => {
-    if (!cache.has(rel)) cache.set(rel, read(rel));
+    if (!cache.has(rel)) cache.set(rel, codeOnly(read(rel)));
     return cache.get(rel);
   };
 
