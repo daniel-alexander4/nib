@@ -187,34 +187,10 @@ test('nothing bypasses apiFetch to reach a document route', () => {
     'a document route is reached without apiFetch, so it carries no document id and resolves against whatever the SERVER thinks is active');
 });
 
-
-// Every field the server publishes about a document has a client reader.
-//
-// This is the graduation pass's blind spot, closed. That pass walks the seam
-// inventory and asks whether each row's declared reader still reads it — which
-// cannot see a field that was never entered into the inventory at all. The
-// P05 phase-close review found exactly that: `historyEvicted` was set, serialized,
-// and asserted by six Go tests, and `web/app.js` never read it — so ADR-003's
-// "eviction is observable or it is not eviction" was undischarged while every test
-// in the tree was green. A produced-and-never-consumed field is not a wire nit: the
-// whole point of publishing it is that the user is told.
-//
-// Read off the struct rather than from a list, so a field added tomorrow is in scope
-// by default rather than by someone remembering to add it here.
-test('every field docResponse publishes has a reader in app.js', () => {
-  const SRV = fs.readFileSync(path.join(REPO, 'internal', 'server', 'server.go'), 'utf8');
-  const start = SRV.indexOf('type docResponse struct {');
-  assert.ok(start !== -1, 'docResponse is not where this scan looks — it cannot report on what it did not read');
-  const body = SRV.slice(start, SRV.indexOf('\n}', start));
-
-  const APP = fs.readFileSync(path.join(REPO, 'web', 'app.js'), 'utf8');
-  const fields = [...body.matchAll(/`json:"([^",]+)/g)].map((m) => m[1]);
-  // The stimulus. A struct that failed to parse yields no fields, and "all zero of
-  // them have readers" is the green this whole file exists to refuse.
-  assert.ok(fields.length >= 8,
-    `only ${fields.length} json fields parsed out of docResponse — the scan is not reading the struct`);
-
-  const unread = fields.filter((f) => !new RegExp(`\\.${f}(?![\\w$])`).test(APP));
-  assert.deepEqual(unread, [],
-    `the server publishes these and the client never reads them — produced and never consumed, which for a status field means the user is never told: ${unread.join(', ')}`);
-});
+// The `docResponse` reader scan that used to live here is now
+// test/jsdom/published.test.mjs, which covers EVERY shape the server publishes rather
+// than that one — and, more to the point, checks that its own table is complete. This
+// one read docResponse only, so P06's docsResponse and P07's handoffResponse and
+// instance.Record were invisible to it: the same gap, one type over, three times. Left
+// as a pointer rather than deleted silently, because "where did that check go" is a
+// question the next reader will otherwise answer by writing a second one.
