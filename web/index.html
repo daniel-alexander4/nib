@@ -417,6 +417,18 @@
         <input id="createPath" type="text" placeholder="~/.ssh/id_ed25519" spellcheck="false" />
       </div>
 
+      <!-- key-missing recovery: the vault is still sealed to the key's PUBLIC half, so
+           if the private key exists anywhere on disk it opens. Only the location was
+           lost — which is the ordinary case on Windows, where the working directory
+           differs between a double-click, an "Open with" and a shortcut. -->
+      <div id="repointRow" hidden>
+        <label for="repointPath">Where is that key now?</label>
+        <input id="repointPath" type="text" placeholder="/home/you/.ssh/id_ed25519" spellcheck="false" />
+        <label for="repointPw">Passphrase (only if the key has one)</label>
+        <input id="repointPw" type="password" autocomplete="off" />
+        <button type="button" id="repointGo">Point Nib at this key</button>
+      </div>
+
       <p class="error authnote" id="authWarn">Your SSH key becomes the only way in — if you lose it, the vault (including your signing identity) cannot be recovered.</p>
       <button type="submit" id="authSubmit">Enable</button>
       <p id="authError" class="error"></p>

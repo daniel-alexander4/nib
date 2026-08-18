@@ -230,3 +230,49 @@ func TestAddKeyRejectsRelativeKeyPath(t *testing.T) {
 		t.Errorf("a key was written to %s via /api/ssh/keys", stray)
 	}
 }
+
+// The repoint route is a WRITE, and it is refused from a foreign origin like every other
+// pre-unlock write.
+//
+// It runs before the vault opens, so there is no CSRF token to demand and a loopback
+// Origin is the only guard available — the same shape as enroll and unlock. Asserted
+// separately rather than assumed from "it uses requirePublicLoopback", because a route
+// registered with the wrong wrapper looks identical at the call site.
+func TestRepointRejectsForeignOrigin(t *testing.T) {
+	ts, _ := startServerWith(t)
+	body := []byte(`{"keyPath":"/tmp/nowhere/id_ed25519"}`)
+	req, err := http.NewRequest(http.MethodPost, ts.URL+"/api/ssh/repoint", bytes.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Origin", "https://evil.example")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusForbidden {
+		t.Errorf("cross-origin repoint = %d, want 403", resp.StatusCode)
+	}
+}
+
+// A relative or ~-prefixed key path is refused by the RECOVERY route too.
+//
+// This is the point most worth pinning: the state being recovered from is a vault holding
+// exactly such a path, so a recovery that accepted one would write back the very thing
+// that caused it — and report success.
+func TestRepointRejectsUnstableKeyPath(t *testing.T) {
+	ts, _ := startServerWith(t)
+	for _, bad := range []string{"id_ed25519", "./keys/id_ed25519", ""} {
+		body, _ := json.Marshal(map[string]string{"keyPath": bad})
+		resp, err := http.Post(ts.URL+"/api/ssh/repoint", "application/json", bytes.NewReader(body))
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusBadRequest {
+			t.Errorf("repoint with key path %q = %d, want 400 — accepting it would write back the unstable path this route exists to repair", bad, resp.StatusCode)
+		}
+	}
+}

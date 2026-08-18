@@ -376,6 +376,61 @@ func (s *Server) handleUnlock(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, s.currentStatus())
 }
 
+// handleRepoint is the way out of `key-missing` when the key still exists but not where
+// the vault recorded it — the case that bites on Windows, where the CWD differs between an
+// Explorer double-click, an "Open with", and a shortcut, so a relative path recorded at
+// enrollment resolves differently every launch.
+//
+// Public (pre-unlock) and loopback-guarded, exactly like unlock and enroll: there is no
+// CSRF token before the vault opens, so a loopback Origin is the only write guard
+// available. It grants nothing a local caller does not already have — unlocking still
+// requires possessing a private key that unwraps a slot.
+func (s *Server) handleRepoint(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		KeyPath    string `json:"keyPath"`
+		Passphrase string `json:"passphrase"`
+	}
+	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<16)).Decode(&req); err != nil {
+		httpError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	// Normalized through the SAME function enrollment uses, which is the point: a
+	// recovery that accepted a relative or `~`-prefixed path would write back exactly the
+	// kind of path that caused this state.
+	keyPath, err := normalizeKeyPath(req.KeyPath)
+	if err != nil {
+		httpError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	var pass []byte
+	if req.Passphrase != "" {
+		pass = []byte(req.Passphrase)
+	}
+	v, err := vault.OpenSSHAt(s.configDir, keyPath, pass)
+	if err != nil {
+		switch {
+		case errors.Is(err, vault.ErrWrongPassphrase):
+			httpError(w, http.StatusUnauthorized, "wrong passphrase for that key")
+		case errors.Is(err, vault.ErrKeyLocked):
+			httpError(w, http.StatusUnauthorized, "that key is passphrase-protected — enter its passphrase")
+		case errors.Is(err, vault.ErrKeyMissing):
+			// Deliberately specific: "no such file" and "that key does not open this
+			// vault" are different problems with different next steps, and one message
+			// covering both sends the user to the wrong one.
+			if _, sterr := os.Stat(keyPath); sterr != nil {
+				httpError(w, http.StatusBadRequest, "no key file at "+keyPath)
+				return
+			}
+			httpError(w, http.StatusUnauthorized, "that key does not open this vault — it is sealed to a different key")
+		default:
+			httpError(w, http.StatusBadRequest, "could not unlock with that key")
+		}
+		return
+	}
+	s.adoptVault(v)
+	writeJSON(w, s.currentStatus())
+}
+
 func decodeEnroll(w http.ResponseWriter, r *http.Request) (enrollRequest, bool) {
 	var req enrollRequest
 	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<16)).Decode(&req); err != nil {

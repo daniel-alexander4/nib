@@ -169,7 +169,10 @@ test('nothing bypasses apiFetch to reach a document route', () => {
   const allowed = new Set([
     // Pre-unlock and vault-scoped: no document exists yet, or the route is not
     // about one. These cannot carry a document id and must not.
-    '/api/status', '/api/ssh/unlock', '/api/ssh/enroll', '/api/ssh/migrate',
+    // /api/ssh/repoint is the key-missing recovery (v1.108.14): it runs BEFORE the vault
+    // opens, so there is no CSRF token for apiFetch to attach and no document to name.
+    // Guarded server-side by requirePublicLoopback, like its three neighbours here.
+    '/api/status', '/api/ssh/unlock', '/api/ssh/enroll', '/api/ssh/migrate', '/api/ssh/repoint',
     '/api/update/check', '/api/vault/export', '/api/identity',
     // pdf.js issues these fetches itself, so the id rides in the URL rather than a
     // header — D15, decided rather than overlooked.
