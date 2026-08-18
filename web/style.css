@@ -353,11 +353,20 @@ input[type="search"] { width: 100%; }
 }
 .thumbwrap.current .thumb { border-color: var(--blue); }
 .thumbwrap.selected .thumb { border-color: var(--mauve); }
+/* Rotate / rotate / delete, revealed on hover — but NOT with `display: none`, which is
+   what this was. A display:none button cannot be focused, so the only way to rotate or
+   delete a page was to have a pointer: keyboard-only operation of these three actions was
+   impossible, and nothing else in the UI offers per-page rotate at all. Hidden by opacity
+   instead, so they stay in the tab order, and `:focus-within` reveals them for whoever
+   tabs in. `pointer-events` follows the same switch so an invisible button cannot be
+   clicked by accident. (WCAG 2.1.1.) */
 .thumbacts {
   position: absolute; top: 2px; right: 2px;
-  display: none; gap: 3px;
+  display: flex; gap: 3px;
+  opacity: 0; pointer-events: none;
 }
-.thumbwrap:hover .thumbacts { display: flex; }
+.thumbwrap:hover .thumbacts,
+.thumbwrap:focus-within .thumbacts { opacity: 1; pointer-events: auto; }
 .thumbacts button {
   background: var(--surface1); color: var(--text);
   border: 0; border-radius: 4px; padding: 0 6px; line-height: 1.6; cursor: pointer;
@@ -500,6 +509,19 @@ body > div[id$="Modal"] {
    `--subtext1`, not `--overlay0`: overlay0 measures 3.59:1 on the dark surfaces these sit
    on and 2.14:1 on the light ones, both below AA for body text. See test/jsdom/theme.test.mjs,
    which computes it rather than trusting the token's name. */
+/* The "you have already stamped this" note.
+   **The colour is the decoration and the text is the message**, which is the way round
+   WCAG 1.4.1 requires and the way round this palette forces: --yellow is a fine warning
+   colour in the dark theme (13.81:1 on --mantle) and 2.15:1 in the light one — the same
+   failure the empty-state messages above were just moved off. So the caution is carried
+   by a ⚠ and a tinted block, and the words themselves are plain --text on --surface0
+   (8.69:1 dark, 5.17:1 light). Nobody has to see the yellow to get the warning. */
+.stampwarn {
+  margin: 6px 0 0; font-size: 12px; color: var(--text);
+  background: var(--surface0); border-left: 3px solid var(--yellow);
+  border-radius: 4px; padding: 6px 8px;
+}
+.stampwarn::before { content: "⚠ "; }
 .emptynote { margin: 0; font-size: 12px; color: var(--subtext1); }
 .scanmethods { display: flex; flex-direction: column; gap: 6px; }
 .scanmethods button { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; text-align: left; }

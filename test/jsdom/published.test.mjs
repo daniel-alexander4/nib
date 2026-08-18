@@ -65,6 +65,7 @@ const PUBLISHED = [
   { type: 'peer', readers: ['web/app.js'] },
   { type: 'listDirResponse', readers: ['web/app.js'] },
   { type: 'dirEntry', readers: ['web/app.js'] },
+  { type: 'stampsResponse', readers: ['web/app.js'] },
   { type: 'sanitizeResponse', readers: ['web/app.js'] },
   { type: 'decryptResponse', readers: ['web/app.js'] },
   { type: 'updateResponse', readers: ['web/app.js'] },

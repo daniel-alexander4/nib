@@ -615,6 +615,9 @@ readout next to the box shows which match you're on out of the total (`3/12`).
   Nib intercepts this so the document zooms crisply instead of the browser
   scaling the whole UI.
 - **Ctrl/Cmd + S** save, **+O** open, **+F** find, **+B** toggle the sidebar.
+- **Tab** into a page thumbnail's rotate / rotate / delete buttons. They are shown
+  on hover, but they stay in the tab order — per-page rotation is not available
+  anywhere else, so it must not need a mouse.
 
 Navigation keys stand down while you're typing in a field or a dialog is open, so
 they never get in the way of editing.

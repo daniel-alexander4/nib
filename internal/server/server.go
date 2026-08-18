@@ -246,6 +246,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/combine", s.requireUnlocked(s.handleCombine))
 	mux.HandleFunc("GET /api/pdf", s.requireUnlocked(s.handlePDF))
 	mux.HandleFunc("GET /api/doc", s.requireUnlocked(s.handleDoc))
+	mux.HandleFunc("GET /api/stamps", s.requireUnlocked(s.handleStamps))
 	mux.HandleFunc("GET /api/docs", s.requireUnlocked(s.handleDocs))
 	mux.HandleFunc("POST /api/close", s.requireUnlocked(s.handleClose))
 	mux.HandleFunc("POST /api/close-view", s.requireUnlocked(s.handleCloseView))

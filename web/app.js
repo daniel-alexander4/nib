@@ -159,6 +159,7 @@ const els = {
   timestampVerifyBtn: $('timestampVerifyBtn'), tsVerifyModal: $('tsVerifyModal'), tvExplorerOn: $('tvExplorerOn'),
   tvExplorer: $('tvExplorer'), tvFile: $('tvFile'), tvResult: $('tvResult'), tvCancel: $('tvCancel'), tvPick: $('tvPick'), tvSave: $('tvSave'),
   fzPreviewMark: $('fzPreviewMark'),
+  pnStamped: $('pnStamped'), fzStamped: $('fzStamped'),
   profileModal: $('profileModal'), profileText: $('profileText'),
   profileCancel: $('profileCancel'), profileSave: $('profileSave'),
   saveAsModal: $('saveAsModal'), saveAsTitle: $('saveAsTitle'), saveAsName: $('saveAsName'),
@@ -4262,10 +4263,36 @@ function pnPreview() {
     ? `1 page → “${pnFormat(start, start, n)}”`
     : `${n} pages → “${pnFormat(start, start, n)}” … “${pnFormat(start + n - 1, start, n)}”`;
 }
+// warnIfStamped shows a dialog's "already stamped" note, from /api/stamps.
+//
+// Both stamping paths bake onto whatever they are given, so running either twice puts a
+// second set on top of the first — overlapping page numbers, a doubled watermark. The
+// document itself is what knows: pdfcpu files every watermark it writes into an
+// optional-content group, so nothing has to be remembered between sessions or kept in
+// step with the undo ring.
+//
+// Asked HERE, when a dialog opens, and not carried on the document metadata: the answer
+// costs a full PDF parse, and the metadata is rebuilt for every document route's reply.
+//
+// One bit, and the wording says only what the bit supports — the group does not
+// distinguish page numbers from a watermark, so neither does the sentence. A failed
+// probe says nothing at all rather than guessing: this warns, it does not gate, and a
+// dialog that refused to open because a probe failed would be worse than the doubled
+// stamp it is trying to prevent.
+async function warnIfStamped(el) {
+  el.hidden = true;
+  try {
+    const res = await apiFetch('/api/stamps');
+    if (!res.ok) return;
+    el.hidden = !(await res.json()).stamped;
+  } catch { /* offline or refused — the dialog opens either way */ }
+}
+
 function openPageNum() {
   if (!view.pdfDocument) return;
   pnPreview();
   els.pageNumModal.hidden = false;
+  warnIfStamped(els.pnStamped);
 }
 async function pageNumGo() {
   const ok = await pageOp('pagenum', {
@@ -5717,6 +5744,7 @@ els.finalizeBtn.onclick = async () => {
   if (!view.pdfDocument) return;
   await refreshSignAs();
   els.finalizeModal.hidden = false;
+  warnIfStamped(els.fzStamped);
 };
 els.fzCancel.onclick = () => { els.finalizeModal.hidden = true; };
 
