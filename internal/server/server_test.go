@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"nib/internal/pdfops"
@@ -281,5 +282,45 @@ func TestDocResponseFlagsCacheInvalidatesWithTheBytes(t *testing.T) {
 	srv.mu.Unlock()
 	if got := srv.docResponse(doc); len(got.Flags) != 0 {
 		t.Errorf("after the document's bytes were replaced with a flagless PDF, docResponse still reports flags %s — the cache did not invalidate", got.Flags)
+	}
+}
+
+// Every response carries the security headers, and the CSP is the strict one.
+//
+// Asserted on a STATIC asset rather than an API route, because the asset handler is the
+// one that serves the document-rendering page and was the finding's subject. The policy
+// is spelled out rather than merely checked for presence: a CSP that had quietly gained
+// 'unsafe-inline' or 'unsafe-eval' would still be "a CSP", and those two are exactly
+// what the app was verified not to need.
+func TestSecurityHeaders(t *testing.T) {
+	ts, _ := startServerWith(t)
+	res, err := http.Get(ts.URL + "/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer res.Body.Close()
+
+	csp := res.Header.Get("Content-Security-Policy")
+	if csp == "" {
+		t.Fatal("no Content-Security-Policy on the static UI")
+	}
+	for _, want := range []string{
+		"default-src 'self'", "object-src 'none'", "frame-ancestors 'none'",
+		"base-uri 'none'", "style-src 'self'",
+	} {
+		if !strings.Contains(csp, want) {
+			t.Errorf("the CSP is missing %q; got %q", want, csp)
+		}
+	}
+	for _, forbidden := range []string{"'unsafe-inline'", "'unsafe-eval'"} {
+		if strings.Contains(csp, forbidden) {
+			t.Errorf("the CSP contains %s — the app was verified not to need it, so this is a regression rather than a requirement: %q", forbidden, csp)
+		}
+	}
+	if got := res.Header.Get("X-Content-Type-Options"); got != "nosniff" {
+		t.Errorf("X-Content-Type-Options = %q, want nosniff", got)
+	}
+	if got := res.Header.Get("Referrer-Policy"); got != "no-referrer" {
+		t.Errorf("Referrer-Policy = %q, want no-referrer", got)
 	}
 }
