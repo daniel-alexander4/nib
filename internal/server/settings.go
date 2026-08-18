@@ -11,7 +11,6 @@ import (
 // settingsRequest is a partial update — only the non-nil fields are applied, so
 // the UI can save one toggle without resending the others.
 type settingsRequest struct {
-	ToolbarStyle          *string   `json:"toolbarStyle"`
 	Appearance            *string   `json:"appearance"`
 	CheckUpdatesOnStartup *bool     `json:"checkUpdatesOnStartup"`
 	RecentHighlightColors *[]string `json:"recentHighlightColors"` // whole-list replace, newest first
@@ -42,8 +41,8 @@ func sanitizeHighlightColors(in []string) []string {
 	return out
 }
 
-// handleSettings persists the user's UI preferences (toolbar layout, appearance,
-// auto-update check) into the vault. The current values are read back via
+// handleSettings persists the user's UI preferences (appearance, auto-update check,
+// recent highlight colours) into the vault. The current values are read back via
 // /api/status.
 func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 	var req settingsRequest
@@ -53,15 +52,6 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 	}
 	v := vaultFrom(r)
 	cur := v.Settings()
-	if req.ToolbarStyle != nil {
-		switch *req.ToolbarStyle {
-		case "menus", "toolbar", "both":
-			cur.ToolbarStyle = *req.ToolbarStyle
-		default:
-			httpError(w, http.StatusBadRequest, "invalid toolbar style")
-			return
-		}
-	}
 	if req.Appearance != nil {
 		switch *req.Appearance {
 		case "dark", "light":

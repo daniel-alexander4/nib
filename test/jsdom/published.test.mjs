@@ -131,7 +131,6 @@ const EXCLUDED = {
 // one gets fixed; a NEW unread field cannot be parked here without someone writing a
 // line, which is the intended cost.
 const UNREAD_KNOWN = {
-  'statusResponse.toolbarStyle': 'the saved menus|toolbar|both layout preference. The server publishes it, the settings route validates it and the vault stores it, and NOTHING in web/ either sends or reads it — dead end to end, not merely unread. Filed on the pending list.',
   'updateResponse.managed': 'read in Go by assetURL (internal/server/update.go) BEFORE serialization, to pick a .deb over a raw binary. It is on the wire for no client that wants it. Not counted as read: a field consumed by the code that sets it has no consumer at the far end, which is the whole property here.',
   'imageMeta.mime': 'the image library lists id/name/builtin and the client shows an <img src="/api/images/{id}">, which needs no mime. Informational in a listing API; harmless, and named so it is a decision rather than an oversight.',
   'Record.version': 'the rendezvous record\'s running-build field. Its own comment says it exists "so a launch can report a mismatch rather than hand a path to an instance that may not understand it" — and no code anywhere reports any mismatch. A P07 residue of exactly the historyEvicted shape: a stated purpose with no implementation. Filed on the pending list.',
@@ -229,6 +228,20 @@ test('every field of every published shape has a reader in the file that declare
   // NEXT unread field gets parked without anyone noticing.
   assert.deepEqual(fixed, [],
     `these are listed in UNREAD_KNOWN but now HAVE a reader — delete their entries, or the list stops describing anything: ${fixed.join(', ')}`);
+
+  // And the third direction, which this file did NOT have until statusResponse.toolbarStyle
+  // was deleted and nothing noticed. Both loops above only ever walk fields that exist, so
+  // an entry for a field that has been REMOVED is visited by neither and sits there
+  // forever — describing a shape the server no longer publishes, in a list whose whole
+  // purpose is to be an accurate account of what is unread.
+  const known = new Set();
+  for (const entry of PUBLISHED) {
+    const st = STRUCTS.get(entry.type);
+    if (st) for (const f of st.fields) known.add(`${entry.type}.${f}`);
+  }
+  const vanished = Object.keys(UNREAD_KNOWN).filter((k) => !known.has(k)).sort();
+  assert.deepEqual(vanished, [],
+    `UNREAD_KNOWN names fields that no longer exist on any published shape: ${vanished.join(', ')}. They were removed or renamed and the excuse outlived them.`);
 
   // The stimulus for the whole file. An empty PUBLISHED table, or a source read that
   // returned nothing, produces the same two empty arrays as a clean tree.

@@ -116,12 +116,16 @@ type PinnedPeer struct {
 }
 
 // Settings holds the user's togglable UI preferences. Zero values are the
-// defaults: an empty ToolbarStyle means the classic "menus" layout, an empty
-// Appearance means the dark theme, and a false DisableAutoUpdate means the
-// startup update check runs — so an older vault that predates this struct keeps
-// the prior behaviour with no migration.
+// defaults: an empty Appearance means the dark theme and a false
+// DisableAutoUpdate means the startup update check runs — so an older vault that
+// predates this struct keeps the prior behaviour with no migration.
+//
+// A vault written before v1.109.1 also carries a "toolbarStyle" key. It is ignored:
+// encoding/json drops unknown fields, and the next Save writes the struct without
+// it. Nothing is lost, because nothing ever read it — the menus/toolbar/both layout
+// switch was validated here and in the settings route and was never built in the
+// client, so no vault holds a value a user chose.
 type Settings struct {
-	ToolbarStyle          string   `json:"toolbarStyle,omitempty"`          // "menus" (default) | "toolbar" | "both"
 	Appearance            string   `json:"appearance,omitempty"`            // "dark" (default) | "light"
 	DisableAutoUpdate     bool     `json:"disableAutoUpdate,omitempty"`     // skip the startup update check
 	RecentHighlightColors []string `json:"recentHighlightColors,omitempty"` // last-used highlight colors, newest first (#rrggbb)
@@ -777,9 +781,6 @@ func (v *Vault) Settings() Settings {
 	v.mu.Lock()
 	defer v.mu.Unlock()
 	s := v.contents.Settings
-	if s.ToolbarStyle == "" {
-		s.ToolbarStyle = "menus"
-	}
 	if s.Appearance == "" {
 		s.Appearance = "dark"
 	}
