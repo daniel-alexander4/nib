@@ -88,13 +88,38 @@ func (se *session) setReceived(r *receivedInfo) {
 	se.mu.Unlock()
 }
 
-// disarm closes the listener and declines any in-flight consent. Idempotent, so it
-// is safe to call from the accept goroutine's defer, a manual disarm, and shutdown.
-func (se *session) disarm() {
+// disarm closes whatever is armed NOW and declines any in-flight consent. Idempotent.
+//
+// This is the unconditional form, and it is right for the two callers who mean exactly
+// that: the user pressing Cancel, and shutdown. The accept goroutine must NOT use it — see
+// disarmIf.
+func (se *session) disarm() { se.disarmIf(nil) }
+
+// disarmIf closes the session only if `ln` is still the armed listener; nil means
+// unconditional.
+//
+// **The goroutine's defer used to act on whatever was armed when it fired, not on the
+// session it belonged to.** A session's accept goroutine can live for minutes — p2p.Receive
+// spans the user's consent, the signing, and a 128 MiB write — and during that time the
+// user can Cancel and arm a NEW session. arm() only refuses while a listener is present, so
+// the re-arm succeeds. Then the old goroutine finishes and its `defer disarm()` closed the
+// NEW session's listener: the user sits waiting on a receive that was torn down by a
+// predecessor, and sees "no peer connected" for a session that never got its chance.
+//
+// Identity rather than a generation counter, deliberately. The listener is the thing being
+// disarmed and the goroutine already holds it, so there is nothing to keep in sync; a
+// counter is a second truth that has to be incremented in exactly the right place to stay
+// equal to the first.
+func (se *session) disarmIf(ln net.Listener) {
 	se.mu.Lock()
-	ln, p := se.ln, se.pending
+	if ln != nil && se.ln != ln {
+		se.mu.Unlock()
+		return // a later session is armed; this one is already over
+	}
+	cur, p := se.ln, se.pending
 	se.ln, se.addr, se.pending = nil, "", nil
 	se.mu.Unlock()
+	ln = cur
 	if ln != nil {
 		ln.Close()
 	}
@@ -116,9 +141,16 @@ func (se *session) setPending(p *pendingReq) bool {
 	return true
 }
 
-func (se *session) clearPending() {
+// clearPendingIf drops the pending consent only if `p` is still the pending one.
+//
+// Same hazard as disarmIf, and a worse consequence: an unconditional clear fired by a
+// finished confirmer discards a consent request belonging to a LATER session — a peer's
+// document sitting in front of the user, silently abandoned while they were reading it.
+func (se *session) clearPendingIf(p *pendingReq) {
 	se.mu.Lock()
-	se.pending = nil
+	if se.pending == p {
+		se.pending = nil
+	}
 	se.mu.Unlock()
 }
 
@@ -183,10 +215,13 @@ func (sc sessionConfirmer) Confirm(peer p2p.SignerAttestation, doc []byte) (bool
 	// runSession. A declined or timed-out request leaves the open doc untouched.
 	ch := make(chan sessionDecision, 1)
 	view := pendingView{Signer: peer.Signer, Fingerprint: peer.Fingerprint, AcceptedPeer: peer.AcceptedPeer, Reason: peer.Reason, Valid: peer.Valid}
-	if !sc.s.sess.setPending(&pendingReq{view: view, doc: doc, resp: ch}) {
+	// The request is held so the defer can name it: an unconditional clear drops whatever
+	// is pending when it fires, which after a disarm-and-rearm is a LATER session's consent.
+	req := &pendingReq{view: view, doc: doc, resp: ch}
+	if !sc.s.sess.setPending(req) {
 		return false, "", nil, errors.New("session not armed")
 	}
-	defer sc.s.sess.clearPending()
+	defer sc.s.sess.clearPendingIf(req)
 	select {
 	case d := <-ch:
 		return d.accept, d.intent, d.appearance, nil
@@ -207,10 +242,11 @@ type sessionAccepter struct {
 func (sa sessionAccepter) Accept(peerFP, doc []byte) (bool, error) {
 	ch := make(chan sessionDecision, 1)
 	view := pendingView{Signer: sa.label, Fingerprint: hex.EncodeToString(peerFP), Reason: transferReason(doc), Valid: true}
-	if !sa.s.sess.setPending(&pendingReq{view: view, doc: doc, resp: ch}) {
+	req := &pendingReq{view: view, doc: doc, resp: ch}
+	if !sa.s.sess.setPending(req) {
 		return false, errors.New("session not armed")
 	}
-	defer sa.s.sess.clearPending()
+	defer sa.s.sess.clearPendingIf(req)
 	select {
 	case d := <-ch:
 		return d.accept, nil
@@ -228,14 +264,17 @@ func (s *Server) runSession(ln net.Listener, cert, key []byte, label, mode strin
 	// sign code must not crash the desktop process. The defers below (disarm, Close)
 	// still run as the stack unwinds.
 	defer safe.Recover("session")
-	timer := time.AfterFunc(sessionAcceptTimeout, s.sess.disarm)
+	// Every teardown in this goroutine names THIS listener. The timer matters as much as
+	// the defer: Stop() runs just after Accept returns, and a timer that fires in that
+	// window would otherwise disarm whatever is armed by then.
+	timer := time.AfterFunc(sessionAcceptTimeout, func() { s.sess.disarmIf(ln) })
 	conn, err := ln.Accept()
 	timer.Stop()
 	if err != nil {
-		s.sess.disarm() // listener closed by timeout/disarm, or a real error
+		s.sess.disarmIf(ln) // listener closed by timeout/disarm, or a real error
 		return
 	}
-	defer s.sess.disarm()
+	defer s.sess.disarmIf(ln)
 	defer conn.Close()
 	if mode == sessionModeReceive {
 		doc, peerFP, err := p2p.ReceiveDocument(conn.(*tls.Conn), sessionAccepter{s: s, label: label})
