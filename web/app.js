@@ -1478,6 +1478,16 @@ function newView() {
     // deepdive of a different slice to find it.
     overlayHistory: { undo: [], redo: [] },
 
+    // dirty — has this document changed since it was opened or last SAVED. The four
+    // signals it replaces (annotationStorage.size, overlayFields.length, the overlay
+    // undo depth, docMeta.canUndo) answered "since it was opened", and NONE of them is
+    // cleared by a save: a fill with no overlays keeps the same annotationStorage
+    // entries, and the server's handleSave deliberately leaves the undo ring alone. So
+    // the confirm fired on every close after every save, and a prompt that always fires
+    // is one the user learns to dismiss — it stops protecting the close where it
+    // mattered. See hasUnsavedWork for how it is set and cleared.
+    dirty: false,
+
     // SAFETY — 1-based page numbers in THIS document's pagination, driving the bulk
     // rotate / delete / reorder bar. Shared across views it applies one document's page
     // numbers to another's pages, which is a destructive wrong-document operation and not
@@ -2024,6 +2034,14 @@ async function setDocumentFromServer(meta, target = view) {
     return;
   }
   const gen = ++target.docGen;
+  // Every arrival through this sink is a server-side change to the document — the
+  // twenty page operations, undo, redo, OCR, sanitize, decrypt, flatten. Set HERE, at
+  // the one place all of them pass through, rather than at each caller: the asymmetry
+  // is what makes that the right choice. A missed *set* under-reports and loses the
+  // user's work silently; a missed *clear* only prompts when nothing would be lost.
+  // The fresh-open path clears it again in installOpened, which is the single funnel
+  // for open / open-url / upload / combine / office and the boot restore.
+  target.dirty = true;
   // A different document in the same view needs its own fit: page sizes differ, so the
   // outgoing document's scale is not this one's.
   target.hasScale = false;
@@ -2056,6 +2074,11 @@ async function setDocumentFromServer(meta, target = view) {
 
   const old = target.pdfDocument;
   target.pdfDocument = doc;
+  // pdf.js's own change detection, and it is exact where a size comparison is not:
+  // AnnotationStorage.setValue compares each property and fires this only when a value
+  // actually changed, so editing an existing field's text counts while a no-op write
+  // does not. Re-installed per document because the storage belongs to the document.
+  if (doc.annotationStorage) doc.annotationStorage.onSetModified = () => { target.dirty = true; };
   target.viewer.setDocument(target.pdfDocument);
   target.linkService.setDocument(target.pdfDocument, null);
   // Free the superseded document's worker-side resources once the viewer and
@@ -2175,27 +2198,33 @@ function closeDocument() {
   setDocControls(false);
 }
 
-// hasEditsSinceOpen reports whether anything has been changed since the document
-// was opened or last reloaded — pdf.js annotation edits, Nib overlay fields or
-// their undo stack, or a committed server-side operation.
+// hasUnsavedWork reports whether this document has changed since it was opened or last
+// SAVED — which is what the close confirm has always claimed to ask and, until v1.108.7,
+// could not answer.
 //
-// Read the name literally: this is NOT "has unsaved work". A successful save
-// clears none of these. save() reloads only when there are overlay fields
-// (:2023), so an AcroForm fill with no overlays keeps the same annotationStorage
-// entries; and the server's handleSave never touches the undo ring, because undo
-// after a save is deliberate. So this over-reports after a save.
+// It used to read four signals directly: annotationStorage.size, overlayFields.length,
+// the overlay undo depth, and docMeta.canUndo. Every one of them survives a save. save()
+// reloads only when there are overlay fields, so an AcroForm fill with no overlays keeps
+// the same annotationStorage entries; and the server's handleSave never touches the undo
+// ring, because undo-after-save is deliberate. So the confirm fired on EVERY close after
+// EVERY save. The error direction was safe, but the cost was not cosmetic: a prompt that
+// always fires is one the user learns to dismiss, so it stops protecting the close where
+// it mattered.
 //
-// That is the safe direction — it can prompt when nothing would be lost, never
-// the reverse — and the prompt below is worded so it stays true either way. The
-// honest fix is a dirty flag cleared on save, which lands in P04, where operation
-// pinning already rewrites every setDocumentFromServer caller (D17); building it
-// here would mean building it twice.
-function hasEditsSinceOpen(v = view) {
-  return (v.pdfDocument?.annotationStorage?.size || 0) > 0
-    || v.overlayFields.length > 0
-    || v.overlayHistory.undo.length > 0
-    || !!v.docMeta.canUndo;
-}
+// `dirty` is set in four places and cleared in two, and the split is chosen so a mistake
+// falls on the safe side:
+//   set — setDocumentFromServer (the sink every server-side change passes through),
+//         recordOverlayEdit (the funnel for every recorded overlay add/delete/move),
+//         makeField and convertFieldToFlag (the two overlay paths that deliberately
+//         record no command), and pdf.js's own annotationStorage.onSetModified.
+//   cleared — installOpened, the single funnel for every fresh open (to openedDirty(meta),
+//         not to false: see there), and a successful in-place save.
+// A missed set loses work silently; a missed clear only prompts when nothing is at stake.
+//
+// One thing it deliberately does NOT clear: "Save a copy" on a path-less document, which
+// downloads rather than writing a file Nib can see. Nib cannot know the download landed,
+// so that close still prompts.
+function hasUnsavedWork(v = view) { return !!v.dirty; }
 
 // editedViews is what the confirm has to ask, because Close is CLOSE ALL:
 // closeDocument tears down every entry in `views`, while the prompt used to inspect
@@ -2203,7 +2232,7 @@ function hasEditsSinceOpen(v = view) {
 // creates today — the other document's typed overlays, its overlay undo stack and
 // its server history were discarded with NO prompt at all, and the prompt that did
 // fire said "Close this document?".
-function editedViews() { return views.filter((v) => v.pdfDocument && hasEditsSinceOpen(v)); }
+function editedViews() { return views.filter((v) => v.pdfDocument && hasUnsavedWork(v)); }
 
 // tearDownView drops one view's DOM and pdf.js document. The bookkeeping half —
 // removing it from `views` — is removeView's, so the strip re-renders exactly once.
@@ -2248,9 +2277,9 @@ async function closeView(owner = view) {
   // The last document: Close view and Close all are the same act, and the app owes the
   // launch state rather than an emptied view record sitting in the strip.
   if (views.length === 1) return requestClose();
-  if (hasEditsSinceOpen(owner)) {
+  if (hasUnsavedWork(owner)) {
     const name = owner.originalName || 'this document';
-    if (!confirm(`Close ${name}? Any edits made since the last save will be lost.`)) return;
+    if (!confirm(`Close ${name}? Any unsaved changes will be lost.`)) return;
   }
   const doc = owner.docMeta;
   const res = await apiFetch('/api/close-view', { method: 'POST', docId: doc && doc.id });
@@ -2292,10 +2321,10 @@ async function closeView(owner = view) {
 // and has no failure mode of its own, so ordering it first costs nothing.
 async function requestClose() {
   if (!view.pdfDocument) return;
-  // Worded to what the signals actually support: "since the last save" is true
-  // whether or not a save has happened, including when the answer is "nothing".
-  // Worded to what the signals actually support ("since the last save" is true
-  // whether or not a save has happened) AND to how many documents are going away.
+  // The wording tracks what the app can now actually answer. It read "any edits made
+  // since the last save" while the signals could only support "since it was opened" —
+  // hedged, because a save cleared none of them. With a real dirty flag the honest word
+  // is "unsaved", and the count of documents going away is unchanged.
   const edited = editedViews();
   if (edited.length) {
     const many = views.length > 1;
@@ -2303,7 +2332,7 @@ async function requestClose() {
       : edited.length === views.length
         ? `Close all ${views.length} open documents?`
         : `Close all ${views.length} open documents? ${edited.length} of them have edits.`;
-    if (!confirm(`${what} Any edits made since the last save will be lost.`)) return;
+    if (!confirm(`${what} Any unsaved changes will be lost.`)) return;
   }
   const res = await apiFetch('/api/close', { method: 'POST' });
   if (!res.ok) return toast(await errText(res, 'could not close the document'));
@@ -2326,6 +2355,11 @@ els.closeAllBtn.onclick = requestClose;
 // re-pointing the active view would leave the previous document open server-side and
 // unreachable here — which is the orphaning this slice exists to end, arriving from the
 // other direction.
+// installOpened is also where `dirty` is cleared, and it is the right place because it
+// is the single funnel every FRESH open passes through — the five document-installing
+// routes, the co-signature arrival, and the boot restore. A document that has just been
+// opened has no unsaved work by definition; setDocumentFromServer sets the flag for
+// everything that reaches it, and this is the one caller for which that is wrong.
 async function installOpened(meta) {
   if (views.length === 1 && !view.pdfDocument) {
     // Named explicitly, though `view` is also the default. The condition guarantees
@@ -2334,10 +2368,28 @@ async function installOpened(meta) {
     // except where someone judged it unnecessary, and the guard that enforces it
     // cannot read a condition three lines up.
     await setDocumentFromServer(meta, view);
+    view.dirty = openedDirty(meta);
     return !!view.pdfDocument;
   }
-  return openInNewView(meta);
+  const opened = await openInNewView(meta);
+  if (opened) {
+    const v = views.find((x) => x.docMeta && meta.id && x.docMeta.id === meta.id);
+    if (v) v.dirty = openedDirty(meta);
+  }
+  return opened;
 }
+
+// openedDirty is what a freshly installed document's `dirty` starts at, and it is NOT
+// simply false. A genuine open returns canUndo false (the server gives a new document an
+// empty history), so this reads false and the flag clears — which is the whole point of
+// clearing here. But installOpened is ALSO the boot restore, and a browser reload throws
+// away every client-side flag while the server keeps holding documents with operations
+// applied and unsaved. Clearing to false there would be an UNDER-report: close after a
+// reload and the page rotations go without a prompt. canUndo is the server's own answer
+// to "has an operation been applied to this document", so it seeds the flag exactly.
+// It over-reports for a document saved before the reload (handleSave leaves the ring
+// alone, deliberately) — the safe direction, and the one this whole item trades on.
+function openedDirty(meta) { return !!(meta && meta.canUndo); }
 
 // restored guards the boot restore to once per page load. applyStatus runs again after
 // an unlock and after a migration, and a second restore would re-adopt every document
@@ -3184,7 +3236,11 @@ async function save() {
     // If detected fields were baked in, reload so the page shows the stamped
     // text and the transient input widgets are cleared. view.overlayFields is read only
     // once the document is known not to have changed, above.
+    // AFTER the reload, which runs through the sink and therefore re-sets the flag.
+    // Ordering it the other way round would clear the flag and then immediately dirty
+    // the document again — the exact shape of bug this whole item is about.
     if (view.overlayFields.length) await setDocumentFromServer(meta, owner);
+    owner.dirty = false;
   } catch (err) {
     toast('save failed: ' + err.message);
   } finally {
@@ -6492,6 +6548,7 @@ function convertFieldToFlag(field, type) {
   const fh = MARKER_SIZES[type][1];
   const top = Math.max(0, Math.min(fy0, fy1 - fh));
   removeField(field, false); // internal transform — not its own undo step
+  view.dirty = true;         // …and therefore not caught by the funnel either
   const f = buildMarker(type, [fx0, top, fx1, fy1], field.page, false);
   const pv = view.viewer.getPageView(field.page - 1);
   if (pv?.div) { pv.div.appendChild(f.el); layoutField(f, pv); }
@@ -7750,6 +7807,7 @@ function reflectUndoControls(enabled) {
 // stack too), it only ever holds the newest run of un-baked edits, so "client
 // edits first, then server ops" is the correct chronological order for free.
 function recordOverlayEdit(cmd, owner = view) {
+  owner.dirty = true; // the single funnel for every recorded overlay add, delete and move
   owner.overlayHistory.undo.push(cmd);
   owner.overlayHistory.redo = [];
   reflectUndoControls(!!view.pdfDocument);
@@ -8272,6 +8330,7 @@ function makeField(kind, frac, opts, pv, owner = view) {
     f.el.type = 'text';
     f.el.className = 'ovl ovl-text';
   }
+  owner.dirty = true; // detected blanks record no undo command, so the funnel misses them
   owner.overlayFields.push(f);
   layoutField(f, pv);
   pv.div.appendChild(f.el);

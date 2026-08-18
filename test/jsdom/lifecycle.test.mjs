@@ -23,6 +23,12 @@ const h = await boot({
   routes: {
     '/api/open': () => openResponse,
     '/api/close': { name: '', path: '', canSave: false, signature: { state: '' }, canUndo: false, canRedo: false },
+    // A save answers with the document's fresh metadata, and canUndo stays TRUE — the
+    // server's handleSave deliberately leaves the undo ring alone, because undo after a
+    // save is a feature. That is exactly the response that used to leave the app
+    // believing the document was still edited, so the route models it rather than
+    // returning a convenient clean one.
+    '/api/save': () => ({ ...openResponse, canUndo: true }),
   },
 });
 const { document, settle } = h;
@@ -157,9 +163,12 @@ test('closeDocument restores the launch chrome', async () => {
     'no view may keep a thumbnail after a close-all');
 });
 
-// P01.S04 acceptance, and the reason the helper is named hasEditsSinceOpen: each
-// signal is driven ON ITS OWN, so a signal that never fires cannot hide behind
-// the other three.
+// P01.S04 acceptance: each signal is driven ON ITS OWN, so a signal that never fires
+// cannot hide behind the other three. (The helper they were written against was named
+// hasEditsSinceOpen, because "since it was opened" was all four of them could support;
+// v1.108.7 replaced them with a real dirty flag and it is hasUnsavedWork now. The tests
+// stand unchanged apart from the prompt wording — each still drives one input to that
+// flag on its own, which is what made them worth keeping.)
 //
 // Two of the four are reachable at this tier and two are not, and that is stated
 // rather than quietly skipped:
@@ -182,9 +191,13 @@ test('the prompt fires from the server-history signal alone', async (t) => {
 
   assert.equal(h.confirms.length, 1,
     'a document with server-side undo history must prompt before closing');
-  // The wording is part of the contract: the three signals mean "edited since
-  // open", not "unsaved", so the prompt must not claim more than that.
-  assert.match(h.confirms.at(-1), /since the last save/);
+  // The wording is part of the contract, and the contract CHANGED in v1.108.7. It read
+  // "any edits made since the last save" because the signals could only support "since
+  // it was opened" — a save cleared none of them, so claiming "unsaved" would have been
+  // a lie the app could not back. With a real dirty flag it can, and the hedge would now
+  // be the inaccuracy. Asserted rather than dropped: this line is what stops the wording
+  // drifting back to a claim the signals do not support.
+  assert.match(h.confirms.at(-1), /unsaved/);
 });
 
 test('the prompt fires from the pdf.js annotation-storage signal alone', async () => {
@@ -199,6 +212,37 @@ test('the prompt fires from the pdf.js annotation-storage signal alone', async (
   await settle();
   assert.equal(h.confirms.length, 1,
     'a document with pdf.js annotation edits must prompt before closing');
+});
+
+// The whole of the item this file's four signal tests were carried against: the confirm
+// fired on every close after every save, because not one of the four signals is cleared
+// by saving. Driven with the HARDEST of them — a document the server says still has undo
+// history, which is the signal a save provably does not clear — so a pass cannot come
+// from the save having quietly made the document look untouched.
+test('a save clears the prompt, even though the server still reports undo history', async (t) => {
+  t.after(() => { openResponse = docResponse(); });
+  openResponse = docResponse({ canUndo: true, canSave: true, path: DOC });
+  await openDocument();
+
+  // The stimulus assertion. Without it, a "no prompt" at the end is equally consistent
+  // with the save having worked and with the document never having been dirty at all.
+  h.confirms.length = 0;
+  document.getElementById('closeBtn').click();
+  await settle();
+  assert.equal(h.confirms.length, 1,
+    'setup: this document does not prompt BEFORE the save, so the assertion after it proves nothing');
+  await settle();
+
+  await openDocument({ numPages: 3 });   // the cancelled close left it open; re-open clean-slate
+  openResponse = docResponse({ canUndo: true, canSave: true, path: DOC });
+  document.getElementById('saveBtn').click();
+  await settle();
+
+  h.confirms.length = 0;
+  document.getElementById('closeBtn').click();
+  await settle();
+  assert.equal(h.confirms.length, 0,
+    'closing straight after a successful save still prompted. Nothing has changed since the save, so the prompt is claiming work is at risk when none is — and a prompt that always fires is one the user learns to dismiss.');
 });
 
 test('a clean document closes without prompting', async () => {
