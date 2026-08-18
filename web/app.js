@@ -2192,7 +2192,16 @@ async function setDocumentFromServer(meta, target = view) {
   // A different document in the same view needs its own fit: page sizes differ, so the
   // outgoing document's scale is not this one's.
   target.hasScale = false;
-  target.userScale = false; // and its own scale is not the outgoing document's, chosen or not
+  // **Only when a DIFFERENT document lands here.** A reload of the same document — every
+  // page operation, undo, redo, OCR, and the boot restore re-adopting what is already open
+  // — is not a new document and must not throw away the scale the user chose for it.
+  //
+  // This is the door the flake instrument named. `scaleFrom` recorded `pagesloaded` as the
+  // path that re-fitted a view the user had zoomed, which can only happen with `userScale`
+  // false; clearing it unconditionally here is what made it false, and the refine that
+  // follows every load then had nothing stopping it. Rotating a page should not reset your
+  // zoom either, so this is the right behaviour on its own merits and not only for the test.
+  if (!target.docMeta || target.docMeta.id !== meta.id) target.userScale = false;
   target.docMeta = meta;
   // No `!== '.'` guard any more: the server emits an EMPTY name for a path-less
   // document rather than filepath.Base("")'s ".", so the falsy check is the whole test.
