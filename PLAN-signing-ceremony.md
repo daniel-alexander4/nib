@@ -45,6 +45,17 @@ amended; P01, P02, P05, P06 and P07 amended; the CLI scoped out; and the Stage 2
 entry condition rather than a phrase repeated in six datelines.** Three calls were taken on Dan's
 behalf under the ASK ladder and are marked reversible where they sit: the pairing default (D31),
 the CLI (out of scope), and the grill's scheduling (bookkeeping).)
+**Grilled 2026-08-18 — Stage 2 of the arc, at last, on Dan's instruction. Verdict: amended.**
+The pairing design, the ordering law and the resumption model all survived unchanged. One
+structural crack: caveat 7 requires QUIC, the DHT and the mapping probe to share **one UDP
+socket**, and no phase named the component that separates them — see the caveat. **Caveat 10 was
+discharged by measurement rather than argument** (D20). Six changes landed: the demultiplexer
+named in P02 and in library selection; **P07 built before P06**; D26's harness narrowed to the
+HTTP API with its ceiling written down; caveat 10 struck; D29's freeze extended to the attachments
+route; and this document's own framing corrected — after D21/D31 the spoken name describes the
+*fallback*, not the default path. Seam inventory at
+`<project-memory>/instruments/ceremony.md` (11 paths / 12 seams / 9 gap-downs, no hot-path rows).
+Stages 3–6 of the arc still have not run.
 SME packs: **crypto (core tier)** — `go.mod` declares `filippo.io/age`,
 `golang.org/x/crypto`, `edwards25519`, `hpke`, `go-pkcs12`, `digitorus/pdfsign`
 (inferred, trigger 1); the consensus tier does not fire — ~~two~~ **N (2026-08-18)** sequential
@@ -76,8 +87,16 @@ the current **Collaboration** process with a **Signing Ceremony** — ~~two peop
 have never connected before, both running Nib, co-sign a document~~ **two or more people who
 have never connected before, all running Nib, co-sign one document in a proceeding they can
 interrupt and resume (2026-08-18, D20–D25)** — with no port
-forwarding, no VPN, no rendezvous server, and one short spoken name in place of a
-64-character fingerprint. It is not a plan for nib as a whole.
+forwarding, no VPN, no rendezvous server, and ~~one short spoken name in place of a
+64-character fingerprint~~ **one artifact in place of a 64-character fingerprint and a typed
+address: an invitation on the default path, or one short spoken name on the fallback (corrected
+2026-08-18 at the Stage 2 grill — D21 and D31 moved the spoken name off the default path, and
+this sentence still described the design as it stood before them)**. It is not a plan for nib as
+a whole.
+
+*Why the correction matters beyond tidiness:* the spoken name is what **D3's entire rationale**
+argues for, and what caveat 4's freeze-a-wordlist-forever obligation is paid for. Reading this
+paragraph as current would lead a builder to treat the fallback as the product.
 
 ---
 
@@ -908,7 +927,10 @@ checks against is the one they each verified at the start.
   — `PrepareDocument` (`internal/p2p/cosign.go:17`) gains it. The timing is forced by the
   package's own contract: after one clean structural pass, every later revision is a pure signing
   increment (`internal/p2p/attestation.go:1`). Attach it later and every signature already on the
-  file breaks.
+  file breaks. **Both halves measured 2026-08-18 (Stage 2 grill, caveat 10 struck):** a record
+  attached in the pre-signing pass survives three incremental signatures byte-identical with all
+  three valid; the same call *after* signing yields `state=invalid` with every signer
+  `valid=false`. The timing rule is a demonstrated consequence, not a reading of pdfcpu's docs.
 - **Mirrored to `~/nib/ceremonies/<id>/`** with the current document bytes and this user's own
   contribution. That directory is what makes D24 possible at all: the ceremony survives quitting
   Nib, rebooting, and coming back on Thursday.
@@ -1084,6 +1106,21 @@ A new harness — N binaries, N `HOME`/`XDG_CONFIG_HOME` pairs, loopback rendezv
 headlessly — is built as **P02's first slice**, and every ceremony-shaped criterion from P02
 onward is driven by it.
 
+**(Stage 2 grill amendment, 2026-08-18 — it drives the HTTP API, not N browsers, and it states
+what it cannot see.)** Four Chromium instances per four-party run would be expensive and would buy
+nothing the protocol criteria need: the ceremony's decisions are HTTP routes behind an unlocked
+vault on loopback. **The harness drives the API.** Its ceiling, written in its own file exactly as
+the other three tiers write theirs (`CONTRIBUTING.md`'s tier table; `verify_test.go` guards that
+each states its own): **it cannot see the client** — the panel, its roster rendering, its
+enabled-action computation and its locked-vault behaviour stay tier-3, single-instance. What it
+delegates upward is the two-machine run, which stays Dan-only.
+
+*Why this is a narrowing and not a weakening:* the criteria it must drive — a four-party ceremony
+completing, an L3 refusal with the UI bypassed, a hop killed between signature and write, a party
+still armed after three hops — are all **protocol** properties, and P07's L3 criterion explicitly
+requires the UI bypassed. A browser-driven harness would satisfy that clause by driving the thing
+the clause excludes.
+
 *Read at the line, not inferred:* `build/uirepro.sh` sets **one** `HOME` and **one**
 `XDG_CONFIG_HOME` (`:94`–`:110`) and runs **one** binary, so tier 3 is one process, one vault, one
 identity. Tier 2 is jsdom with no server at all. Tier 1 covers the p2p layer properly —
@@ -1181,7 +1218,14 @@ the user's document, their vault, or their machine.
   convener redacting or rotating that tab afterwards, so a mismatch would surface at the far end as
   a refusal instead of at the edit — the worst place to learn it. **Mutating operations refuse on a
   document under a live ceremony and name the ceremony.** Per ADR-001 the ceremony pins the
-  document id; this is the same law facing the other way.
+  document id; this is the same law facing the other way. **(Stage 2 grill, 2026-08-18: the
+  attachments route is one of them, and the refusal is server-side.)** `handleAttachmentAdd`
+  (`internal/server/attachments.go:46`) calls `pdfops.AddAttachment` on whatever is open and
+  commits the result, with **no signature guard** — and the control arm of caveat 10's measurement
+  shows that on a signed document this yields `state=invalid` with every signer `valid=false`. The
+  client does warn (`confirmSignatureLoss`, `web/app.js:3825`), which is why this is a gap in the
+  freeze rather than a live defect — **but a client confirm is not a freeze**, by the same
+  reasoning L3 uses for the contribution gate: a UI that merely asks satisfies nothing.
 - **The invitation secret lives in the vault, not in the mirror.** `~/nib/ceremonies/<id>/` is the
   ordinary output directory — plain files, the same place `saveReceived` writes
   (`internal/server/session.go:338`). The vault is the encrypted store and already holds the
@@ -1257,6 +1301,19 @@ and nothing else. Nothing downstream is built on the fallback existing.
 ---
 
 ## Build order
+
+**Phase numbers are identifiers, not the order. (Stage 2 grill, 2026-08-18.)** They are
+referenced by every pin in this document and by the project memory, so they are *not* renumbered.
+The build order is: **P00 → P01 → P02 → P03 → P04 → P05 → P07 → P06.**
+
+*Why P07 precedes P06:* P07 is **model** work — the roster-prefix gate, the carry route for a
+non-signing convener, `Confirmer`'s shape, the placement policy, hop persistence, the end-state
+machine. P06 is the **view**. Every item in P07 changes something P06 would have rendered, so the
+original order builds the surface twice and reviews it twice. P07 does not need P06 in return: its
+criteria are driven by D26's API harness, and its L3 clause explicitly requires the UI bypassed.
+*The cost, stated rather than discovered:* the plan's first user-visible output moves one phase
+later, extending an already-long invisible stretch (P02–P05). That is a real cost and it is the
+smaller one.
 
 ### P00 — Bootstrap *(pre-satisfied — see D1)*
 nib is a mature repo with VERSION, CLAUDE.md, release machinery and git history.
@@ -1359,12 +1416,13 @@ lets any later phase prove a ceremony at all.**
 Exit criteria:
 - **The multi-instance harness exists and runs a two-instance ceremony end to end: two binaries, two `HOME`/`XDG_CONFIG_HOME` pairs, two vaults, two identities, over loopback, headless and unattended. (added 2026-08-18, D26.)** Driven by *completing a ceremony*, not by the harness starting two processes — a harness that boots two Nibs and asserts nothing is the vacuous green this decision exists to prevent.
 - ~~A full ceremony completes over QUIC between two machines using the manual address. **(Dan-only run — plan-review W4.)**~~ **Amended 2026-08-18 (D26): the single-host case is now driven by the harness above and is no longer Dan-only; the two-*machine* run remains Dan-only and remains the standing `pending.md` VERIFY item, because two hosts on two networks is what the harness cannot model.** The distinction is the point — W4's marker was doing the work of two different claims.
-- **The selected QUIC library accepts an externally-supplied `net.PacketConn` and completes a ceremony over it — proven by a spike that binds the socket first and hands it in, not by reading the library's documentation. (added 2026-08-17, plan-review C3, caveat 7.)** Without this, tiers 3 and 4 cannot be built on the library P02 chooses, and P02 is redone. Pairs naturally with caveat 1's `VerifyPeerCertificate` spike — one spike answers both.
+- **The selected QUIC library accepts an externally-supplied `net.PacketConn` and completes a ceremony over it — proven by a spike that binds the socket first and hands it in, not by reading the library's documentation. (added 2026-08-17, plan-review C3, caveat 7.)**
+- **The QUIC library and the DHT library share one socket through a demultiplexer, proven by driving interleaved QUIC and KRPC traffic at the same port and asserting both arrive intact. (added 2026-08-18, Stage 2 grill, caveat 7 pin.)** The bullet above cannot see this: **each library can accept an external `net.PacketConn` and the pair still be unusable**, because separating them needs a passthrough hook one of them must expose. And the cheap discriminator is refuted by arithmetic — a bencode dict's leading `'d'` (`0x64`) is bit-for-bit a QUIC short-header packet. Without this, tiers 3 and 4 cannot be built on the library P02 chooses, and P02 is redone. Pairs naturally with caveat 1's `VerifyPeerCertificate` spike — one spike answers both.
 - **A full ceremony still completes over TCP between the same two machines, after the QUIC path exists. (added 2026-08-16, D14)**
 - The pinned-peer callback demonstrably rejects a non-pinned peer under QUIC, driven red.
 - ~~`Initiate`, `Receive` and `coSignExchange` are unchanged.~~ **`coSignExchange` is unchanged; `Initiate`, `Receive`, `SendDocument` and `ReceiveDocument` are re-typed off `*tls.Conn` to a stream plus an already-verified fingerprint, and one set of session-logic tests runs green over both transports. (superseded 2026-08-16 — the original criterion was unmeetable: those four are typed to `*tls.Conn` today, see the D7 pin.)**
 
-Slices *(sketch)*: **the multi-instance harness, first, with its ceiling written in its own file as every other tier's is (2026-08-18, D26);** library selection and a spike proving `VerifyPeerCertificate` fires as under `crypto/tls`; the session core re-typed off `*tls.Conn` **(D14)**; QUIC `Dial`/`Listen` added behind that core; the pinned-rejection test ported; ~~the TCP path removed~~ **the TCP dialer kept as a peer behind the same core, with the session-logic tests parameterised over both (2026-08-16, D14)**.
+Slices *(sketch)*: **the multi-instance harness, first, driving the HTTP API, with its ceiling written in its own file as every other tier's is (2026-08-18, D26);** library selection **as a PAIR — QUIC and DHT chosen together against the socket-sharing constraint, never one then the other (2026-08-18, caveat 7 pin)**; **the socket demultiplexer** and a spike proving `VerifyPeerCertificate` fires as under `crypto/tls`; the session core re-typed off `*tls.Conn` **(D14)**; QUIC `Dial`/`Listen` added behind that core; the pinned-rejection test ported; ~~the TCP path removed~~ **the TCP dialer kept as a peer behind the same core, with the session-logic tests parameterised over both (2026-08-16, D14)**.
 
 *Note on the harness's place in the chain:* `CONTRIBUTING.md`'s tier table is the contract, and
 `verify_test.go` guards that each tier states its own ceiling. A fourth harness that does not say
@@ -1389,7 +1447,7 @@ Exit criteria:
 - A hostile or absent DHT degrades to the next tier without ever affecting which peer is accepted (L1).
 - **The published record is encrypted under a key derived from both names: a DHT scraper holding neither name sees opaque bytes and can neither read nor forge a candidate. (added 2026-08-17, plan-review C2, D6 pin.)**
 - **A record published by a party who knows both names but holds neither identity key yields no more than N candidates; the N+1th is dropped and reported — driven by publishing N+50. (added 2026-08-17, plan-review C2.)** The bullet above it cannot see this: a hostile DHT that floods a bystander never affects which peer is accepted, and so satisfies it completely.
-- **The DHT library shares the session's local socket rather than opening its own, proven by a spike. (added 2026-08-17, plan-review C3, caveat 7.)** A self-address probe on a different socket measures a mapping the session will never use.
+- **The DHT library shares the session's local socket rather than opening its own, proven by a spike. (added 2026-08-17, plan-review C3, caveat 7.)** A self-address probe on a different socket measures a mapping the session will never use. **(amended 2026-08-18, Stage 2 grill: "shares" means *through the demultiplexer P02 built*, and the pair was chosen together at P02 — if this phase is where a DHT library is first tried against the QUIC one, P02's selection was not done.)**
 
 Slices *(sketch)*: library selection and cached bootstrap; self-address probe and NAT classification; the derived rendezvous key; publish/fetch with expiry; the L1 guard.
 
@@ -1417,7 +1475,7 @@ Exit criteria:
 
 Slices *(sketch)*: candidate gathering **and the trickle-in race with its two clocks (D16)**; concurrent attempt and cancellation **including the glare tie-break (D17)**; IPv6 tier; **the port-mapping client (PCP → NAT-PMP → UPnP-IGD) and its licence notice; the mapping lease lifecycle and teardown-on-every-path; the armed-only disclosure line in the ceremony screen (D15);** IPv4 punch with keepalives **and symmetric retransmit (D17)**; ~~the CGNAT diagnosis and message~~ **the mapping-class probe and D19's four-cause diagnosis**; **channel-loss behaviour either side of the confirmation gate (D18); the TCP dialer wired into every dialable tier (D14);** manual path demoted to advanced.
 
-### P06 — The Signing Ceremony surface
+### P06 — The Signing Ceremony surface **(built LAST, after P07 — Stage 2 grill, 2026-08-18)**
 Goal: the Collaborate tab becomes the Signing Ceremony, restructured around ~~name-in, connect, confirm, sign~~ **convene, invite, connect, review, sign, deliver — as a sidebar panel rather than a tab of modals (amended 2026-08-18, D13 pin, D24)**.
 **Built roster-shaped from the start (2026-08-18):** a roster of two is a roster, so P06 renders the record's roster and position even while only two-party ceremonies exist. This is deliberate — building a two-party screen here and replacing it in P07 would be the rebuild the phase order exists to avoid.
 Exit criteria:
@@ -1441,7 +1499,7 @@ Exit criteria:
 
 Slices *(sketch)*: the ceremony panel replacing the tab and its three modals; convene-and-invite; the connect-and-confirm screen; the roster and position display; **the roster-shaped consent screen (D27); the end-state surfaces (D28); the document freeze and the attachments label (D29);** failure surfaces; docs and README.
 
-### P07 — More than two parties **(added 2026-08-18 — D22, D23, D24, D25; amended the same day — D27, D28, D29)**
+### P07 — More than two parties **(added 2026-08-18 — D22, D23, D24, D25; amended the same day — D27, D28, D29; built BEFORE P06 — Stage 2 grill)**
 Goal: a ceremony of N parties completes as a convener-driven serial relay, survives being
 interrupted at any hop, and cannot be signed out of order. Last, because it needs the record
 (P01), a working transport (P02), a working ladder (P05) and a roster-shaped surface (P06); the
@@ -1492,10 +1550,35 @@ re-verified.
 5. **~66 bits is the intended floor** given D4's mandatory verification. If the verification step is ever weakened, this number becomes the whole security of the pairing. **(narrowed 2026-08-18, D4/D21: this caveat now binds the *name-only* pairing path alone. A ceremony paired from an invitation pins the full 32 bytes and has no 66-bit floor to defend — which is exactly why the spoken check may drop there and may not drop here. The caveat is narrowed rather than struck because the name-only path is retained, and it is now the only place the plan's original security argument still has to hold.)**
 6. **A Go port-mapping library covering PCP, NAT-PMP and UPnP-IGD exists under a licence compatible with AGPLv3 distribution** (D15). If only some protocols are covered, the tier still ships — with narrower router coverage, recorded rather than assumed. *(added 2026-08-16)*
 7. **The mapped port, the DHT self-address probe and the live session must all be the same local socket.** A NAT mapping — learned or requested — is a function of the *internal* `IP:port`, so a mapping obtained on the DHT socket or on a throwaway socket is useless for a session that listens elsewhere, even under a perfectly endpoint-independent NAT. This constrains library selection in **both P02 and P04**: the QUIC library must accept an existing `net.PacketConn` and the DHT must be willing to share it. Load-bearing for tiers 3 and 4 alike, and not currently reflected in either phase's slice sketch. *(added 2026-08-16)* **(plan-review pin, 2026-08-17, adopted by Dan: now reflected, and it had to be.)** This caveat identified the constraint, named the two phases it binds, and recorded that neither enforced it — and **P02 is the next phase built, with library selection as its first slice.** A QUIC library that owns its own socket passes every exit criterion P02 carried (a ceremony completes, the pinned callback rejects, the core is re-typed) and makes tiers 3 and 4 unbuildable three phases later. P02 and P04 now each carry a socket-sharing criterion of their own.
+
+   **(Stage 2 grill pin, 2026-08-18 — one socket needs a demultiplexer, and the cheap one does
+   not work.)** This caveat says three things must share a socket and treats that as a
+   *library-selection* constraint. It is also an **unbuilt component**, and no phase names it:
+   two protocols arriving on one UDP port must be separated before either library sees them.
+
+   *Why the obvious separator fails — arithmetic, not argument:* every KRPC message on the
+   BitTorrent DHT is a bencode **dictionary**, so its first byte is always `'d'` — `0x64`,
+   binary `0110 0100`. QUIC's header-form bit (`0x80`) is therefore **clear** and its fixed bit
+   (`0x40`) is **set**, which is exactly the encoding of a QUIC **short-header** packet — the
+   steady state of every established connection. The header bits do not separate DHT traffic
+   from session traffic; they collide on the common case, not on an edge. (Bencode integers,
+   lists and strings would separate cleanly. KRPC never sends one at the top level.)
+
+   *What the demultiplexer must key on instead:* the destination connection ID, or an active
+   QUIC path's peer address — QUIC's own mechanism for deciding "not mine". That requires the
+   QUIC library either to expose that decision or to accept unrecognised datagrams being handed
+   elsewhere.
+
+   *What this changes:* **selection is disqualifying in both directions.** A QUIC library that
+   owns its socket is out; a DHT that owns its socket is out; **and so is a pair with no
+   passthrough hook, even when each accepts an external `net.PacketConn` on its own** — which is
+   the case the 2026-08-17 pin above could not see, because it tested each library alone. P02's
+   slices and P04's criterion are amended. Found at Stage 2 rather than at P04, which is the
+   difference between a selection constraint and three phases of rework.
 8. **Carrier-side PCP deployment is not assumed.** RFC 6887 was specified with carrier-grade NAT in mind, but whether carriers actually answer PCP is unverified and, on present evidence, mostly no. The CGNAT case stays D9's until measured. *(added 2026-08-16)*
 9. **Two DHT observations are enough to separate the mapping classes, and the DHT will answer two distinct nodes within D16's probe budget.** D19's diagnosis rests on it; a two-server STUN check is the established form, but that the BitTorrent DHT's response pattern supplies the same two observations in ~8 s is unverified. If it does not, cause 3 degrades to cause 4 — a worse message, not a broken ladder. *(added 2026-08-16)*
 
-10. **A PDF attachment written in the pre-signing pass survives N incremental signatures and stays readable and verifiable.** The whole Ceremony Record model (D20) rides on it, and so does resumption, because the record is what a resumed hop reads. Also unverified: that pdfcpu's attachment API can run inside the same structural pass as `AppendReadme` without a second full rewrite — a second rewrite after a signature is exactly what `PrepareDocument` already refuses. **P01.S06's first acceptance bullet discharges this empirically; reading the library's documentation does not.** *(added 2026-08-18)*
+10. ~~**A PDF attachment written in the pre-signing pass survives N incremental signatures and stays readable and verifiable.**~~ **STRUCK 2026-08-18 — measured at the Stage 2 grill, not argued.** A test PDF through `PrepareDocument` → `pdfops.AddAttachment` → **three** `Contribute` increments: the attachment came back **byte-identical after every one**, `sign.Verify` reported `valid` with 1, 2 and 3 signers, and **every signer verified**. Setup assertions fired first (attachment readable before signing; document `Unsigned` at that point), so the result is not a green over an absence. **The control arm is the more valuable half:** attaching *after* signing returned `state=invalid` with **all three signers `valid=false`** — so D20's "same pre-signing pass" timing is a demonstrated consequence rather than an assumption, and it is what D29's freeze exists to protect. *(The original text, retained: )* The whole Ceremony Record model (D20) rides on it, and so does resumption, because the record is what a resumed hop reads. Also unverified: that pdfcpu's attachment API can run inside the same structural pass as `AppendReadme` without a second full rewrite — a second rewrite after a signature is exactly what `PrepareDocument` already refuses. **P01.S06's first acceptance bullet discharges this empirically; reading the library's documentation does not.** *(added 2026-08-18)*
 11. **The invitation secret's channel-binding mechanism is unchosen.** D21 says the secret binds the channel and deliberately does not say how — a PAKE over the secret, or an HKDF over secret ‖ transcript folded into the session's key confirmation. The choice has a licence consequence and a correctness consequence, and it is now the plan's **largest unreviewed cryptographic surface**, because D12's external gate was withdrawn on 2026-08-18. Named at slice-grill time in P01.S07, and a Stage 2 grill target in its own right. *(added 2026-08-18)*
 
 ## Bookkeeping
