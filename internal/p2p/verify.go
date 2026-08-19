@@ -64,6 +64,12 @@ var (
 // initiator says which side writes first. The two orderings are mirror images and both
 // commit before either reveals — the property does not depend on who goes first, only on
 // no reveal preceding both commitments.
+//
+// **Precondition: conn already carries a deadline.** This function does four blocking
+// reads and sets none of its own, so a peer that opens a connection and then says nothing
+// would hold the listener forever. Its only callers are inside Initiate and Receive, which
+// set exchangeDeadline before anything crosses the wire; stated here because the next
+// caller to be written is the one that will not know.
 func verificationExchange(conn *tls.Conn, initiator bool, myFP, peerFP []byte) (string, error) {
 	mine := make([]byte, contributionLen)
 	if _, err := rand.Read(mine); err != nil {
@@ -80,11 +86,11 @@ func verificationExchange(conn *tls.Conn, initiator bool, myFP, peerFP []byte) (
 		if err = writeFrame(conn, myCommit[:]); err != nil {
 			return "", fmt.Errorf("send commitment: %w", err)
 		}
-		if theirCommit, err = readFrame(conn); err != nil {
+		if theirCommit, err = readFrameMax(conn, sha256.Size); err != nil {
 			return "", fmt.Errorf("receive commitment: %w", err)
 		}
 	} else {
-		if theirCommit, err = readFrame(conn); err != nil {
+		if theirCommit, err = readFrameMax(conn, sha256.Size); err != nil {
 			return "", fmt.Errorf("receive commitment: %w", err)
 		}
 		if err = writeFrame(conn, myCommit[:]); err != nil {
@@ -99,11 +105,11 @@ func verificationExchange(conn *tls.Conn, initiator bool, myFP, peerFP []byte) (
 		if err = writeFrame(conn, mine); err != nil {
 			return "", fmt.Errorf("reveal contribution: %w", err)
 		}
-		if theirs, err = readFrame(conn); err != nil {
+		if theirs, err = readFrameMax(conn, contributionLen); err != nil {
 			return "", fmt.Errorf("receive contribution: %w", err)
 		}
 	} else {
-		if theirs, err = readFrame(conn); err != nil {
+		if theirs, err = readFrameMax(conn, contributionLen); err != nil {
 			return "", fmt.Errorf("receive contribution: %w", err)
 		}
 		if err = writeFrame(conn, mine); err != nil {
