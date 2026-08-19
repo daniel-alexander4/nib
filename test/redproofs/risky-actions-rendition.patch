@@ -1,0 +1,12 @@
+diff --git a/internal/pdfops/scan.go b/internal/pdfops/scan.go
+index a6d6cbc..8c1ec13 100644
+--- a/internal/pdfops/scan.go
++++ b/internal/pdfops/scan.go
+@@ -42,7 +42,6 @@ var riskyActions = map[string]string{
+ 	// action can carry its own JavaScript (§12.6.4.13); Hide and SetOCGState are the
+ 	// hidden-content half of what Scan exists to report, and a document that hides
+ 	// content on open reads as clean without them.
+-	"Rendition":   "high",
+ 	"Movie":       "medium",
+ 	"Sound":       "medium",
+ 	"SetOCGState": "medium",

@@ -1,0 +1,12 @@
+diff --git a/web/style.css b/web/style.css
+index 9bf7eb7..e45521e 100644
+--- a/web/style.css
++++ b/web/style.css
+@@ -556,6 +556,7 @@ body > div[id$="Modal"] {
+   border-radius: 4px; padding: 6px 8px;
+ }
+ .stampwarn::before { content: "⚠ "; }
++.keyslist:empty::after { content: "No keys enrolled."; color: var(--overlay0); font-size: 12px; }
+ .emptynote { margin: 0; font-size: 12px; color: var(--subtext1); }
+ .scanmethods { display: flex; flex-direction: column; gap: 6px; }
+ .scanmethods button { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; text-align: left; }
