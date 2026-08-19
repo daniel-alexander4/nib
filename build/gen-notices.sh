@@ -88,6 +88,30 @@ if [ -f web/vendor/pdfjs/VERSION ]; then
   emit ""
 fi
 
+# The CMap tables ship inside the pdf.js package but are NOT Mozilla's and NOT
+# Apache-2.0: they are Adobe's, under a three-clause BSD licence with its own
+# no-endorsement clause. Attributing them under the pdf.js heading above would
+# name the wrong copyright holder and the wrong licence for 1.7 MB of the tree.
+if [ -d web/vendor/pdfjs/cmaps ]; then
+  emit "## Adobe CMap resources"
+  emit ""
+  emit "Vendored under \`web/vendor/pdfjs/cmaps/\` (the \`.bcmap\` character-map tables"
+  emit "distributed with pdf.js, required to read documents that name a predefined"
+  emit "Adobe CMap encoding). Copyright 1990-2009 Adobe Systems Incorporated. All"
+  emit "rights reserved. Redistributed under the following three-clause BSD licence,"
+  emit "reproduced from \`web/vendor/pdfjs/cmaps/LICENSE\`:"
+  emit ""
+  # Stripped of the PostScript \`%%Copyright:\` prefix each line carries upstream —
+  # the licence text is what must be preserved, and the prefix is an artefact of the
+  # format the file is embedded in.
+  sed -e 's/^%%Copyright: \{0,1\}//' web/vendor/pdfjs/cmaps/LICENSE | sed -e 's/[[:space:]]*$//' >>"$tmp"
+  emit ""
+  emit "Upstream: <https://github.com/adobe-type-tools/cmap-resources>."
+  emit ""
+  emit "---"
+  emit ""
+fi
+
 jsdiff_ver="$(cat web/vendor/diff/VERSION)"
 tesseract_ver="$(cat web/vendor/tesseract/VERSION)"
 pixelmatch_ver="$(cat web/vendor/pixelmatch/VERSION)"
