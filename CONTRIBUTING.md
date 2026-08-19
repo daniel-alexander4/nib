@@ -17,7 +17,7 @@ for things it never looked at.
 | 1 | `go test ./...` | the Go side: server, PDF operations, vault, signing, CLI |
 | 2 | `./build/jsdomtest.sh` | the front end's logic and DOM behaviour, in jsdom |
 | 3 | `./build/uirepro.sh` | the whole app: the real binary, in a real browser |
-| 4 | `./build/pairrepro.sh` | a ceremony between TWO real binaries, two vaults, two identities |
+| 4 | `./build/pairrepro.sh` | a ceremony between TWO real binaries, two vaults, two identities — over BOTH transports |
 
 Add `node --check web/app.js` after editing JavaScript, and `go test -race
 ./internal/server/` after touching anything concurrent.
@@ -68,11 +68,17 @@ is tracked as a `VERIFY` item on the pending list rather than pretended away.
 
 **Tier 4 — `./build/pairrepro.sh`** (ceiling written in `build/pairrepro.sh`)
 Sees: everything above, twice over — two binaries with two homes, two vaults and
-two identities, completing a ceremony between them over loopback. It is the only
-tier that can assert anything a second party observes: that the peer is a
-different identity, that both sides derive the *same* four verification words,
-and that the finished document carries two signatures when read from the
-receiving side rather than reported by the sender.
+two identities, completing a ceremony between them over loopback — **once over
+TCP and once over QUIC** (D14 keeps both). It is the only tier that can assert
+anything a second party observes: that the peer is a different identity, that
+both sides derive the *same* four verification words, and that the finished
+document carries two signatures when read from the receiving side rather than
+reported by the sender.
+
+Everything in that list is transport-blind, which is why the run also **observes
+the socket**: it connects to the armed port over TCP and requires that to succeed
+on the TCP run and fail on the QUIC one. Without it, a build that ignored the
+transport field would run TCP twice and report QUIC coverage it did not have.
 **Cannot see: two networks.** Both instances are on loopback, so NAT, routing,
 MTU and firewalls are invisible — and those are exactly what the connection
 ladder exists to survive. What it delegates upward is the two-machine run, which

@@ -117,6 +117,7 @@ the same failure this file exists to fix.
 |---|---|---|
 | The session is dialled at a port nothing is listening on, so the ceremony never starts (v1.109.49) | the spoken-check stimulus assertion | "instance A was never shown the verification words — the ceremony reached the document exchange without the spoken check (L2)". The point is the ORDER: the harness refuses to grade the ceremony before confirming the gate happened, so a ceremony that never began cannot pass as one that completed |
 | The verification is never confirmed on either side (v1.109.49) | the ceremony itself | `initiate returned HTTP 502` — the gate holds both parties and the session times out, which is the behaviour P01.S05 built |
+| The server ignores the `transport` field, so both runs use TCP (v1.109.53) | the socket probe in `ceremony()` | "[quic] port 18544 answers TCP — the QUIC run is listening on a TCP socket, so it is the TCP path wearing a different label". **Everything else in that function is transport-blind** — same API calls, same words, same signature count — so without this probe the harness would report QUIC coverage it did not have |
 | Both instances given the same identity (v1.109.49) | `both instances have the SAME identity … one key agreeing with itself` | **and the more interesting half: the realistic route to that state does not reach the assertion.** Pointing both instances at one home fails EARLIER — the second enrolment returns 409 because a vault already exists. The assertion was probed directly instead, by reading B's fingerprint from A, and fires. Recorded as defence-in-depth rather than as the primary guard |
 
 
@@ -157,6 +158,15 @@ by check.
 | The document write moved before the spoken check | `TestL2NoDocumentBytesCrossBeforeBothConfirmations` | L2 itself, still firing under the new shape — the guard was re-pointed at the new signatures and re-probed rather than assumed to have survived |
 
 
+## Tier 1 — `internal/p2p` (P02.S05, QUIC behind the core)
+
+| Defect reintroduced | Check that fired | What it said |
+|---|---|---|
+| The QUIC teardown made abrupt again — `CloseWithError` without closing the stream first (v1.109.53) | `TestAWholeCeremonyOverQUIC` | "the ceremony did not complete over QUIC: receive co-signed document: Application error 0x0 (remote)" — the initiator watching the finished document evaporate one frame from the end. **This was found as a real failure, not planted**: closing a QUIC connection is not the polite thing closing a TCP one is |
+| The QUIC listener armed with no pin | `TestQUICRejectsAPeerThatIsNotPinned` | a third identity is handed up by Accept, which is the pinned-peer model gone on this transport |
+| `quicChannel` reports a fingerprint that is not the verified peer's | `TestAQUICSessionEstablishesAChannelOnBothEnds`, `TestAWholeCeremonyOverQUIC` | the two ends hold the wrong peer, and the co-signature fails to cross-bind |
+
+
 ## Vacuous greens caught, and how
 
 Not red proofs — the opposite, and worth as much. Each is a check that was **passing while
@@ -177,3 +187,5 @@ measuring nothing**, found by its own setup assertion or by a deliberate probe.
 | The whole nine-probe battery, on its first run | its patch-applied guard was `git diff --quiet internal/udpmux/`, and `internal/udpmux/` was **untracked** — so `git diff` was silent by construction and the guard could never fire. It reported "did not apply" for all nine, which is the guard failing SAFE; a guard of the opposite polarity would have reported nine greens | the guard itself, which is why it was written before the probes rather than after |
 | `TestAnIncompleteChannelIsRefusedByEveryEntryPoint`' first draft called each entry point synchronously (v1.109.52) | when `check` is weakened the call gets **past** the boundary and blocks forever writing to a pipe with nobody on the other end — so the test **hung** instead of failing. A hang reports nothing and takes the suite with it; this is the tier-2 armed-session hazard in a different package | the probe battery itself timing out on its second probe. Each call now runs with a 3-second bound and names the hang: "it got past the boundary and blocked on the stream" |
 | The population-floor guard's fifth-path regex, on re-typing | it matched `^func ([A-Z]\w+)\(conn \*tls\.Conn`, and after S04 **nothing in `session.go` matches it** — it would have gone quietly to zero and compared 0 against 4, reporting a failure whose message named the wrong problem | re-basing it deliberately as part of the slice, then probing both a `Channel` and a raw `Stream` fifth path. A guard whose subject is re-typed has to be re-typed with it |
+| Tier 4's second ceremony, before the socket probe (v1.109.53) | every assertion in `ceremony()` is transport-blind — the same API calls, the same four words, the same signature count — so a build that ignored the `transport` field would run TCP twice and pass. It would have reported QUIC coverage it did not have | asking what the run would do with the field ignored, then making the answer red. The probe connects to the armed port over TCP and requires success on the TCP run and failure on the QUIC one — the socket family is the one thing the app cannot self-report its way past |
+| The QUIC teardown's first fix waited on BOTH sides | it was correct and cost the full 5-second grace on every ceremony, because each side waited for the other. A green suite hid it as latency rather than failure | timing the test: 5.05s, against 0.06s once the wait was made asymmetric. The protocol is what settles it — in all four entry points the listening side writes last and the dialing side reads last, so only the listener has anything owed |

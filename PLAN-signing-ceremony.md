@@ -2295,11 +2295,56 @@ acceptance clause as a guard: `session.go`, `verify.go` and `channel.go` may not
 `ReceiveDocument` **no longer returns the peer fingerprint** — the caller supplied it in the
 `Channel`, and handing it back invites a caller to trust the echo rather than the value it verified.
 
-#### P02.S05 — QUIC `Dial`/`Listen` behind the core
+#### P02.S05 — QUIC `Dial`/`Listen` behind the core *(done 2026-08-19, v1.109.53)*
 Scope: a QUIC path beside the TCP one, `SessionTLS()` reused unchanged, still over the manual address. Refs: D14.
 Acceptance:
 - A ceremony completes over QUIC in the multi-instance harness.
 - The pinned-peer callback rejects a non-pinned peer under QUIC, **driven red**.
+
+Tasks:
+- T01 — `Conn` (a `Channel` plus its Close) and `Listener` (`Accept() (*Conn, error)`), and the TCP `Dial`/`Listen` reshaped onto them.
+- T02 — `QUICDial`/`QUICListen`/`QUICChannel`, over `internal/udpmux` from the first line.
+- T03 — the server selects a transport: a field on arm, a form value on the two dial routes, defaulting to TCP.
+- T04 — tier 4 runs the whole ceremony over QUIC; the pinned rejection under QUIC driven red.
+- T05 — the guards updated deliberately, race detector, docs.
+
+**The listener had to become an abstraction too** *(2026-08-19)*: the scope names `Dial` and
+`Listen`, and the server holds a `net.Listener` that a QUIC listener is not. Rather than a second
+accept path beside the first, `Listener.Accept()` returns a `*Conn` with its `Channel` already
+established — which is D14's own argument one level up, and it moves each transport's handshake
+timeout and retry-on-wrong-peer into that transport instead of the server.
+
+**It uses the demultiplexer from the first line** *(2026-08-19)*: S03's mux costs one expression
+here (`quic.Transport{Conn: mux.QUIC()}` rather than a bare socket) and means P04 attaches a DHT to
+a socket the session is *already* sharing, instead of changing transport code to make room.
+
+**The connection-ID refinement is NOT built here, and the reason changed** *(2026-08-19)*: the
+pending item filed at S03 names this coordinate. It is wrong. Until P04 attaches a DHT there is no
+KRPC on the socket for the address rule to misroute, so the fix would be unexercised by construction
+and its guard could not fail — which is the exact defect class this repo keeps finding. Re-pointed
+at the coordinate where a DHT and a session share one socket for real.
+
+**No UI** *(2026-08-19)*: the transport is selectable over the API, which is what tier 4 drives, and
+deliberately not exposed in the interface. D8's ladder means the user should never be choosing a
+transport; a toggle shipped now would be a control the ladder exists to remove.
+
+**Closing a QUIC connection is not the polite thing closing a TCP one is** *(2026-08-19, measured)*:
+`CloseWithError` sends CONNECTION_CLOSE immediately and abandons anything unacknowledged, so the
+listening side destroyed the co-signed document in its own deferred `Close` — observed as
+`receive co-signed document: Application error 0x0 (remote)`. The teardown closes the stream first
+and then **waits, on one side only**: in all four entry points the listening side writes last and
+the dialing side reads last, so only the listener has anything owed. Waiting on both was the first
+fix and cost the full grace on every ceremony — **5.05s, against 0.06s asymmetric**. quic-go exposes
+no "everything I wrote is acknowledged" signal; `SendStream`'s own Context is cancelled inside
+`Close`, before any of it is acked.
+
+**A rejected dial returns success on BOTH transports** *(2026-08-19, measured)*: under TLS 1.3 the
+client finishes its handshake before the server has processed the client certificate, so an unpinned
+peer's dial succeeds and the refusal surfaces on the first **read** — `tls: bad certificate` on TCP,
+`CRYPTO_ERROR 0x12a (remote)` on QUIC. Pre-existing and identical on both, not anything QUIC
+introduced, and it costs nothing: the peer never answers, so the verification exchange cannot
+complete and no document byte crosses (L2). Recorded because the obvious test asserts the dial
+fails, and that test would be asserting something untrue.
 
 #### P02.S06 — Both transports, one set of session tests *(D14)*
 Scope: the TCP dialer kept as a peer behind the same core, with the session-logic tests parameterised over both. Refs: D14.

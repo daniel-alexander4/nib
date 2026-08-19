@@ -20,6 +20,18 @@ import (
 )
 
 const (
+	// handshakeTimeout bounds one peer's handshake, so a connection that opens and
+	// says nothing cannot hold an armed session for its whole window while looking
+	// live — the same denial the accept loop exists to prevent, one step later. It is
+	// per-attempt: a peer that fails is dropped and the listener keeps accepting until
+	// the arm window closes.
+	//
+	// Moved here from internal/server's sessionHandshakeTimeout by P02.S05, VALUE
+	// UNCHANGED. It belongs to a transport and not to the server, because what has to
+	// be bounded differs per transport — TLS-over-TCP bounds a handshake, QUIC bounds
+	// a handshake and the first stream — and the server can no longer see either.
+	handshakeTimeout = 30 * time.Second
+
 	// transportSkew backdates the ephemeral cert's NotBefore so a peer whose clock
 	// runs a few minutes ahead still accepts it — the identity cert backdates an
 	// hour for the same reason; this cert lives minutes, so it backdates minutes.
@@ -146,24 +158,78 @@ func mintTransportCert(idCert *x509.Certificate, idKey crypto.Signer) (tls.Certi
 // Dial opens a co-signing session to a peer's armed listener at addr, presenting
 // this user's identity and accepting only the pinned peer at the TLS handshake. The
 // returned conn is a verified mTLS channel; close it when the session ends.
-func Dial(addr string, identityCertPEM, identityKeyPEM, pinnedSPKI []byte, timeout time.Duration) (*tls.Conn, error) {
+func Dial(addr string, identityCertPEM, identityKeyPEM, pinnedSPKI []byte, timeout time.Duration) (*Conn, error) {
 	cfg, err := SessionTLS(identityCertPEM, identityKeyPEM, pinnedSPKI, false)
 	if err != nil {
 		return nil, err
 	}
-	return tls.DialWithDialer(&net.Dialer{Timeout: timeout}, "tcp", addr, cfg)
+	conn, err := tls.DialWithDialer(&net.Dialer{Timeout: timeout}, "tcp", addr, cfg)
+	if err != nil {
+		return nil, err
+	}
+	// The handshake is forced here rather than at the first write, because until it
+	// completes there is no verified peer and no exporter — and a dial that reaches
+	// something other than the pinned peer should fail as a DIAL, not later as a
+	// confusing protocol error inside a session.
+	ch, err := TLSChannel(conn)
+	if err != nil {
+		conn.Close()
+		return nil, err
+	}
+	return &Conn{Channel: ch, closer: conn.Close}, nil
 }
 
 // Listen returns a session listener bound to addr that drops any peer but the
 // pinned one at the TLS handshake. addr is configurable — loopback for tests, a
 // routable bind for a real session; the armed listener (P2P 6) owns the bind and
 // lifecycle. The signing logic lives in Receive.
-func Listen(addr string, identityCertPEM, identityKeyPEM, pinnedSPKI []byte) (net.Listener, error) {
+func Listen(addr string, identityCertPEM, identityKeyPEM, pinnedSPKI []byte) (Listener, error) {
 	cfg, err := SessionTLS(identityCertPEM, identityKeyPEM, pinnedSPKI, true)
 	if err != nil {
 		return nil, err
 	}
-	return tls.Listen("tcp", addr, cfg)
+	ln, err := tls.Listen("tcp", addr, cfg)
+	if err != nil {
+		return nil, err
+	}
+	return &tlsListener{ln: ln}, nil
+}
+
+// tlsListener adapts a TLS listener to Listener. The handshake, its timeout, and what
+// happens to a peer that fails it all live here now — they used to live in the server's
+// accept loop, where only TCP could ever have satisfied them.
+type tlsListener struct{ ln net.Listener }
+
+func (l *tlsListener) Addr() net.Addr { return l.ln.Addr() }
+func (l *tlsListener) Close() error   { return l.ln.Close() }
+
+func (l *tlsListener) Accept() (*Conn, error) {
+	c, err := l.ln.Accept()
+	if err != nil {
+		return nil, err
+	}
+	tc, ok := c.(*tls.Conn)
+	if !ok {
+		c.Close()
+		return nil, errors.New("not a TLS connection")
+	}
+	// A handshake has to be time-bounded on its own, or a peer that connects and says
+	// nothing holds the session for the whole arm window while looking live. The
+	// session core's own SetDeadline replaces this once the exchange starts.
+	if err := tc.SetDeadline(time.Now().Add(handshakeTimeout)); err != nil {
+		tc.Close()
+		return nil, err
+	}
+	ch, err := TLSChannel(tc)
+	if err != nil {
+		tc.Close()
+		return nil, err // not the pinned peer, or not TLS at all — the caller loops
+	}
+	if err := tc.SetDeadline(time.Time{}); err != nil {
+		tc.Close()
+		return nil, err
+	}
+	return &Conn{Channel: ch, closer: tc.Close}, nil
 }
 
 // TLSChannel establishes a Channel over a pinned mTLS connection — the TCP transport

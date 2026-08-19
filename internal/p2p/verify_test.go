@@ -63,12 +63,7 @@ func livePair(t *testing.T, run func(initiator bool, ch Channel, myFP []byte) (s
 			return
 		}
 		defer conn.Close()
-		tc := conn.(*tls.Conn)
-		if err := tc.Handshake(); err != nil {
-			rc <- res{err: err}
-			return
-		}
-		s, e := run(false, channelOf(t, tc), bFP)
+		s, e := run(false, conn.Channel, bFP)
 		rc <- res{s, e}
 	}()
 
@@ -77,7 +72,7 @@ func livePair(t *testing.T, run func(initiator bool, ch Channel, myFP []byte) (s
 		t.Fatal(err)
 	}
 	defer conn.Close()
-	got, err := run(true, channelOf(t, conn), aFP)
+	got, err := run(true, conn.Channel, aFP)
 	if err != nil {
 		t.Fatalf("initiator: %v", err)
 	}
@@ -154,12 +149,7 @@ func TestAManInTheMiddleSeesTwoDifferentStrings(t *testing.T) {
 			return
 		}
 		defer conn.Close()
-		tc := conn.(*tls.Conn)
-		if err := tc.Handshake(); err != nil {
-			legA <- ""
-			return
-		}
-		s, _ := verificationExchange(channelOf(t, tc), false, mFP)
+		s, _ := verificationExchange(conn.Channel, false, mFP)
 		legA <- s
 	}()
 	connA, err := Dial(lnM.Addr().String(), aCert, aKey, mFP, 5*time.Second)
@@ -167,7 +157,7 @@ func TestAManInTheMiddleSeesTwoDifferentStrings(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer connA.Close()
-	aString, err := verificationExchange(channelOf(t, connA), true, aFP)
+	aString, err := verificationExchange(connA.Channel, true, aFP)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -187,12 +177,7 @@ func TestAManInTheMiddleSeesTwoDifferentStrings(t *testing.T) {
 			return
 		}
 		defer conn.Close()
-		tc := conn.(*tls.Conn)
-		if err := tc.Handshake(); err != nil {
-			legB <- ""
-			return
-		}
-		s, _ := verificationExchange(channelOf(t, tc), false, bFP)
+		s, _ := verificationExchange(conn.Channel, false, bFP)
 		legB <- s
 	}()
 	connB, err := Dial(lnB.Addr().String(), mCert, mKey, bFP, 5*time.Second)
@@ -200,7 +185,7 @@ func TestAManInTheMiddleSeesTwoDifferentStrings(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer connB.Close()
-	if _, err := verificationExchange(channelOf(t, connB), true, mFP); err != nil {
+	if _, err := verificationExchange(connB.Channel, true, mFP); err != nil {
 		t.Fatal(err)
 	}
 	bString := <-legB
@@ -251,24 +236,19 @@ func TestARevealAfterSeeingIsRejectedBeforeAnyStringExists(t *testing.T) {
 			return
 		}
 		defer conn.Close()
-		tc := conn.(*tls.Conn)
-		if err := tc.Handshake(); err != nil {
-			sawContribution <- false
-			return
-		}
 		// A dishonest receiver, hand-rolled rather than driven through
 		// verificationExchange — the point is to do what that function refuses to.
 		honest := make([]byte, contributionLen)
 		_, _ = rand.Read(honest)
 		commit := sha256.Sum256(honest)
 
-		_, _ = readFrame(tc)          // the initiator's commitment
-		_ = writeFrame(tc, commit[:]) // commit to `honest`…
-		theirs, err := readFrame(tc)  // …see what they actually sent…
+		_, _ = readFrame(conn.Stream)          // the initiator's commitment
+		_ = writeFrame(conn.Stream, commit[:]) // commit to `honest`…
+		theirs, err := readFrame(conn.Stream)  // …see what they actually sent…
 		sawContribution <- err == nil && len(theirs) == contributionLen
 		chosen := make([]byte, contributionLen)
 		_, _ = rand.Read(chosen)
-		_ = writeFrame(tc, chosen) // …and reveal something else.
+		_ = writeFrame(conn.Stream, chosen) // …and reveal something else.
 	}()
 
 	conn, err := Dial(ln.Addr().String(), aCert, aKey, bFP, 5*time.Second)
@@ -276,7 +256,7 @@ func TestARevealAfterSeeingIsRejectedBeforeAnyStringExists(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer conn.Close()
-	s, err := verificationExchange(channelOf(t, conn), true, aFP)
+	s, err := verificationExchange(conn.Channel, true, aFP)
 
 	// The stimulus, asserted before the response is graded: the dishonest peer really did
 	// get to see the initiator's contribution before choosing. Without this the refusal
@@ -423,16 +403,11 @@ func TestAnOversizedVerificationFrameIsRefusedBeforeAllocating(t *testing.T) {
 			return
 		}
 		defer conn.Close()
-		tc := conn.(*tls.Conn)
-		if err := tc.Handshake(); err != nil {
-			declared <- false
-			return
-		}
-		_, _ = readFrameMax(tc, sha256.Size) // the initiator's commitment
+		_, _ = readFrameMax(conn.Stream, sha256.Size) // the initiator's commitment
 		// A four-byte header claiming the whole document budget, and no body.
 		var hdr [4]byte
 		binary.BigEndian.PutUint32(hdr[:], maxFrame)
-		_, werr := tc.Write(hdr[:])
+		_, werr := conn.Stream.Write(hdr[:])
 		declared <- werr == nil
 	}()
 
@@ -441,8 +416,8 @@ func TestAnOversizedVerificationFrameIsRefusedBeforeAllocating(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer conn.Close()
-	_ = conn.SetDeadline(time.Now().Add(5 * time.Second))
-	_, err = verificationExchange(channelOf(t, conn), true, aFP)
+	_ = conn.Stream.SetDeadline(time.Now().Add(5 * time.Second))
+	_, err = verificationExchange(conn.Channel, true, aFP)
 
 	// Stimulus before response: the oversized header really was sent. Without this the
 	// refusal below could be a closed connection and the test would pass having exercised
@@ -500,14 +475,14 @@ func TestL2NoDocumentBytesCrossBeforeBothConfirmations(t *testing.T) {
 
 	for _, tc := range []struct {
 		name string
-		run  func(t *testing.T, initiator bool, conn *tls.Conn, myFP, peerFP []byte, v Verifier) error
+		run  func(t *testing.T, initiator bool, conn *Conn, myFP, peerFP []byte, v Verifier) error
 	}{
-		{"Initiate", func(t *testing.T, _ bool, conn *tls.Conn, myFP, _ []byte, v Verifier) error {
-			_, e := Initiate(channelOf(t, conn), pdf, myFP, v)
+		{"Initiate", func(t *testing.T, _ bool, conn *Conn, myFP, _ []byte, v Verifier) error {
+			_, e := Initiate(conn.Channel, pdf, myFP, v)
 			return e
 		}},
-		{"SendDocument", func(t *testing.T, _ bool, conn *tls.Conn, myFP, _ []byte, v Verifier) error {
-			return SendDocument(channelOf(t, conn), pdf, myFP, v)
+		{"SendDocument", func(t *testing.T, _ bool, conn *Conn, myFP, _ []byte, v Verifier) error {
+			return SendDocument(conn.Channel, pdf, myFP, v)
 		}},
 	} {
 		t.Run(tc.name+" (dialing side)", func(t *testing.T) {
@@ -542,10 +517,8 @@ func TestL2NoDocumentBytesCrossBeforeBothConfirmations(t *testing.T) {
 					return
 				}
 				defer conn.Close()
-				tc := conn.(*tls.Conn)
-				_ = tc.Handshake()
-				_ = tc.SetReadDeadline(time.Now().Add(5 * time.Second))
-				first, err := readFrame(tc) // deliberately unbounded: measure what arrived
+				_ = conn.Stream.SetDeadline(time.Now().Add(5 * time.Second))
+				first, err := readFrame(conn.Stream) // deliberately unbounded: measure what arrived
 				if err != nil {
 					firstFrame <- -1
 					return
@@ -556,10 +529,10 @@ func TestL2NoDocumentBytesCrossBeforeBothConfirmations(t *testing.T) {
 				mine := make([]byte, contributionLen)
 				_, _ = rand.Read(mine)
 				commit := sha256.Sum256(mine)
-				_ = writeFrame(tc, commit[:])
-				_, _ = readFrameMax(tc, contributionLen)
-				_ = writeFrame(tc, mine)
-				_, _ = readFrame(tc)
+				_ = writeFrame(conn.Stream, commit[:])
+				_, _ = readFrameMax(conn.Stream, contributionLen)
+				_ = writeFrame(conn.Stream, mine)
+				_, _ = readFrame(conn.Stream)
 			}()
 
 			conn, err := Dial(ln.Addr().String(), aCert, aKey, bFP, 5*time.Second)
@@ -714,18 +687,14 @@ func TestAReconnectNeedsItsOwnConfirmation(t *testing.T) {
 				return
 			}
 			defer conn.Close()
-			tc := conn.(*tls.Conn)
-			if err := tc.Handshake(); err != nil {
-				return
-			}
-			_ = runVerification(channelOf(t, tc), false, bFP, okVerifier{})
+			_ = runVerification(conn.Channel, false, bFP, okVerifier{})
 		}()
 		conn, err := Dial(ln.Addr().String(), aCert, aKey, bFP, 5*time.Second)
 		if err != nil {
 			t.Fatal(err)
 		}
 		defer conn.Close()
-		if err := runVerification(channelOf(t, conn), true, aFP, rec); err != nil {
+		if err := runVerification(conn.Channel, true, aFP, rec); err != nil {
 			t.Fatal(err)
 		}
 		<-done

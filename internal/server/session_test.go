@@ -114,7 +114,7 @@ func TestSessionArmReceiveSign(t *testing.T) {
 			return
 		}
 		defer conn.Close()
-		final, e := p2p.Initiate(peerChannel(t, conn), aSigned, aFPBytes, initiatorVerifier)
+		final, e := p2p.Initiate(conn.Channel, aSigned, aFPBytes, initiatorVerifier)
 		if e != nil {
 			errc <- e
 			return
@@ -292,7 +292,7 @@ func TestSessionDeclineLeavesOpenDoc(t *testing.T) {
 			return
 		}
 		defer conn.Close()
-		if _, e := p2p.Initiate(peerChannel(t, conn), aSigned, aFPBytes, okVerifier{}); e == nil {
+		if _, e := p2p.Initiate(conn.Channel, aSigned, aFPBytes, okVerifier{}); e == nil {
 			errc <- nil // a declined round-trip must surface an error to the initiator
 			return
 		}
@@ -403,7 +403,7 @@ func TestSessionQuoteForPendingPeer(t *testing.T) {
 			return
 		}
 		defer conn.Close()
-		_, _ = p2p.Initiate(peerChannel(t, conn), aSigned, aFPBytes, okVerifier{}) // declined below; an error is expected
+		_, _ = p2p.Initiate(conn.Channel, aSigned, aFPBytes, okVerifier{}) // declined below; an error is expected
 		errc <- nil
 	}()
 
@@ -496,7 +496,7 @@ func TestSessionReceiveTransfer(t *testing.T) {
 			return
 		}
 		defer conn.Close()
-		errc <- p2p.SendDocument(peerChannel(t, conn), flagged, aFPBytes, okVerifier{})
+		errc <- p2p.SendDocument(conn.Channel, flagged, aFPBytes, okVerifier{})
 	}()
 
 	waitPending(t, c, ts.URL, aFP)
@@ -570,7 +570,7 @@ func TestSessionReceiveTransferDecline(t *testing.T) {
 			return
 		}
 		defer conn.Close()
-		errc <- p2p.SendDocument(peerChannel(t, conn), base, aFPBytes, okVerifier{})
+		errc <- p2p.SendDocument(conn.Channel, base, aFPBytes, okVerifier{})
 	}()
 
 	waitPending(t, c, ts.URL, aFP)
@@ -623,7 +623,7 @@ func TestSessionSend(t *testing.T) {
 			return
 		}
 		defer conn.Close()
-		doc, e := p2p.ReceiveDocument(peerChannel(t, conn.(*tls.Conn)), autoAccept{}, bFPBytes, okVerifier{})
+		doc, e := p2p.ReceiveDocument(conn.Channel, autoAccept{}, bFPBytes, okVerifier{})
 		if e != nil {
 			errc <- e
 			return
@@ -782,7 +782,7 @@ func TestSessionInitiate(t *testing.T) {
 			return
 		}
 		defer conn.Close()
-		_, e = p2p.Receive(peerChannel(t, conn.(*tls.Conn)), bCert, bKey, "Alice", autoConfirm{intent: "I accept"}, okVerifier{})
+		_, e = p2p.Receive(conn.Channel, bCert, bKey, "Alice", autoConfirm{intent: "I accept"}, okVerifier{})
 		recvErr <- e
 	}()
 
@@ -846,10 +846,7 @@ func TestSessionArmRejectsUnpinnedPeer(t *testing.T) {
 func TestDisarmDoesNotCloseALaterSession(t *testing.T) {
 	var se session
 
-	lnA, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
+	lnA := &stubListener{}
 	defer lnA.Close()
 	if !se.arm(lnA) {
 		t.Fatal("setup: the first session did not arm")
@@ -858,10 +855,7 @@ func TestDisarmDoesNotCloseALaterSession(t *testing.T) {
 	// The user cancels, then arms again — the sequence that makes the old goroutine's
 	// teardown dangerous.
 	se.disarm()
-	lnB, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
+	lnB := &stubListener{}
 	defer lnB.Close()
 	if !se.arm(lnB) {
 		t.Fatal("setup: the second session did not arm, so there is nothing for the old teardown to damage")
@@ -892,10 +886,7 @@ func TestDisarmDoesNotCloseALaterSession(t *testing.T) {
 // user is looking at it.
 func TestClearPendingDoesNotDropALaterSessionsConsent(t *testing.T) {
 	var se session
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
+	ln := &stubListener{}
 	defer ln.Close()
 	if !se.arm(ln) {
 		t.Fatal("setup: could not arm")
@@ -1103,4 +1094,19 @@ func peerChannel(t *testing.T, conn *tls.Conn) p2p.Channel {
 		return p2p.Channel{}
 	}
 	return ch
+}
+
+// stubListener is two distinct p2p.Listener values and nothing else. The test it serves
+// is about disarmIf comparing IDENTITY — that a teardown fired by an old goroutine does
+// not close the session that REPLACED it — so it never accepts, and a real bound socket
+// would only add a port and a cleanup to a test that is entirely about pointer equality.
+type stubListener struct{ closed bool }
+
+func (l *stubListener) Accept() (*p2p.Conn, error) { return nil, net.ErrClosed }
+func (l *stubListener) Close() error               { l.closed = true; return nil }
+
+// Addr must be non-nil: session.arm records ln.Addr().String() as the address it
+// reports in status, so a nil here is a panic at arm rather than a failed assertion.
+func (l *stubListener) Addr() net.Addr {
+	return &net.TCPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 1}
 }

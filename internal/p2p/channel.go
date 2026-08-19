@@ -3,6 +3,7 @@ package p2p
 import (
 	"errors"
 	"io"
+	"net"
 	"time"
 )
 
@@ -75,4 +76,46 @@ func (c Channel) check() error {
 		return errors.New("incomplete channel: no keying-material exporter")
 	}
 	return nil
+}
+
+// Conn is a live transport connection carrying one Channel, plus the means to close
+// the connection underneath it.
+//
+// Close is on this and not on Stream because the two are different things and
+// conflating them would be a resource leak with a plausible-looking cause: closing a
+// QUIC *stream* ends one direction of one conversation and leaves the connection, its
+// transport and its UDP socket open. What a caller means by "I am done with this peer"
+// is always the connection.
+type Conn struct {
+	Channel
+	closer func() error
+}
+
+// Close tears down the connection and everything the transport opened for it.
+func (c *Conn) Close() error {
+	if c == nil || c.closer == nil {
+		return nil
+	}
+	return c.closer()
+}
+
+// Listener is one armed, pinned-peer-only entry point, in whichever transport opened
+// it. Accept hands back a connection whose peer is ALREADY VERIFIED — see Channel.
+//
+// It is not net.Listener, and the difference is the point: a QUIC listener is not one,
+// and a net.Listener's Accept returns a net.Conn that the caller must then handshake
+// and inspect. Every transport does that differently — where the handshake timeout
+// lives, what a wrong peer looks like, whether a stream has to be accepted as well —
+// and pushing it up into the server produced exactly one accept path that only TCP
+// could ever satisfy.
+type Listener interface {
+	// Accept blocks until a peer connects and its identity is verified. An error
+	// means this attempt failed, not that the listener is finished: the caller
+	// loops, so a stray dial or a wrong peer does not consume a one-shot session.
+	// A closed listener reports net.ErrClosed, which is how the loop ends.
+	Accept() (*Conn, error)
+	// Addr is the address actually bound, so a caller that asked for port 0 can
+	// tell the peer where to dial.
+	Addr() net.Addr
+	Close() error
 }
