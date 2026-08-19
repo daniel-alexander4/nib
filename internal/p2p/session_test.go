@@ -82,148 +82,157 @@ func TestConfirmCoSignedRequiresBothSignatures(t *testing.T) {
 // earlier session — so the byte-prefix binding to THIS session's document is the
 // check that must catch it.
 func TestInitiateRejectsReplayedCoSignature(t *testing.T) {
-	aCert, aKey := newIdentity(t) // initiator (Alice)
-	bCert, bKey := newIdentity(t) // malicious peer (Bob)
-	aFP, bFP := fingerprint(t, aCert), fingerprint(t, bCert)
+	eachTransport(t, func(t *testing.T, tr transport) {
+		aCert, aKey := newIdentity(t) // initiator (Alice)
+		bCert, bKey := newIdentity(t) // malicious peer (Bob)
+		aFP, bFP := fingerprint(t, aCert), fingerprint(t, bCert)
 
-	bAcceptsA := Attestation{Signer: "Bob", AcceptedPeer: hex.EncodeToString(aFP), AcceptedPeerLabel: "Alice", Intent: "I accept", When: time.Now()}
+		bAcceptsA := Attestation{Signer: "Bob", AcceptedPeer: hex.EncodeToString(aFP), AcceptedPeerLabel: "Alice", Intent: "I accept", When: time.Now()}
 
-	// An earlier, genuine mutual co-signature between the same two identities.
-	replay := contribute(t, signAsInitiator(t, aCert, aKey, bFP), bCert, bKey, bAcceptsA)
-	if err := confirmCoSigned(replay, bFP, aFP); err != nil {
-		t.Fatalf("fixture is not a valid mutual co-signature: %v", err)
-	}
+		// An earlier, genuine mutual co-signature between the same two identities.
+		replay := contribute(t, signAsInitiator(t, aCert, aKey, bFP), bCert, bKey, bAcceptsA)
+		if err := confirmCoSigned(replay, bFP, aFP); err != nil {
+			t.Fatalf("fixture is not a valid mutual co-signature: %v", err)
+		}
 
-	// A new session: Alice signs afresh; the peer ignores her document and
-	// answers with the old artifact.
-	aSigned := signAsInitiator(t, aCert, aKey, bFP)
-	if bytes.HasPrefix(replay, aSigned) {
-		t.Fatal("degenerate fixture: the replay starts with this session's document")
-	}
+		// A new session: Alice signs afresh; the peer ignores her document and
+		// answers with the old artifact.
+		aSigned := signAsInitiator(t, aCert, aKey, bFP)
+		if bytes.HasPrefix(replay, aSigned) {
+			t.Fatal("degenerate fixture: the replay starts with this session's document")
+		}
 
-	ln, err := Listen("127.0.0.1:0", bCert, bKey, aFP)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer ln.Close()
-
-	recvErr := make(chan error, 1)
-	go func() {
-		conn, err := ln.Accept()
+		ln, err := tr.listen("127.0.0.1:0", bCert, bKey, aFP)
 		if err != nil {
-			recvErr <- err
-			return
+			t.Fatal(err)
+		}
+		defer ln.Close()
+
+		recvErr := make(chan error, 1)
+		go func() {
+			conn, err := ln.Accept()
+			if err != nil {
+				recvErr <- err
+				return
+			}
+			defer conn.Close()
+			if _, err := readFrame(conn.Stream); err != nil {
+				recvErr <- err
+				return
+			}
+			recvErr <- writeFrame(conn.Stream, replay)
+		}()
+
+		conn, err := tr.dial(ln.Addr().String(), aCert, aKey, bFP, 10*time.Second)
+		if err != nil {
+			t.Fatal(err)
 		}
 		defer conn.Close()
-		if _, err := readFrame(conn.Stream); err != nil {
-			recvErr <- err
-			return
+		if _, err := Initiate(conn.Channel, aSigned, aFP, okVerifier{}); err == nil {
+			t.Error("initiator accepted a replayed prior co-signature")
 		}
-		recvErr <- writeFrame(conn.Stream, replay)
-	}()
+		if err := <-recvErr; err != nil {
+			t.Fatalf("malicious peer stub failed: %v", err)
+		}
 
-	conn, err := Dial(ln.Addr().String(), aCert, aKey, bFP, 5*time.Second)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer conn.Close()
-	if _, err := Initiate(conn.Channel, aSigned, aFP, okVerifier{}); err == nil {
-		t.Error("initiator accepted a replayed prior co-signature")
-	}
-	if err := <-recvErr; err != nil {
-		t.Fatalf("malicious peer stub failed: %v", err)
-	}
+	})
 }
 
 func TestSessionRoundTrip(t *testing.T) {
-	aCert, aKey := newIdentity(t) // initiator
-	bCert, bKey := newIdentity(t) // receiver
-	aFP, bFP := fingerprint(t, aCert), fingerprint(t, bCert)
+	eachTransport(t, func(t *testing.T, tr transport) {
+		aCert, aKey := newIdentity(t) // initiator
+		bCert, bKey := newIdentity(t) // receiver
+		aFP, bFP := fingerprint(t, aCert), fingerprint(t, bCert)
 
-	aSigned := signAsInitiator(t, aCert, aKey, bFP)
+		aSigned := signAsInitiator(t, aCert, aKey, bFP)
 
-	ln, err := Listen("127.0.0.1:0", bCert, bKey, aFP) // B accepts A
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer ln.Close()
-
-	recvErr := make(chan error, 1)
-	go func() {
-		conn, err := ln.Accept()
+		ln, err := tr.listen("127.0.0.1:0", bCert, bKey, aFP) // B accepts A
 		if err != nil {
-			recvErr <- err
-			return
+			t.Fatal(err)
+		}
+		defer ln.Close()
+
+		recvErr := make(chan error, 1)
+		go func() {
+			conn, err := ln.Accept()
+			if err != nil {
+				recvErr <- err
+				return
+			}
+			defer conn.Close()
+			_, e := Receive(conn.Channel, bCert, bKey, "Alice", confirmer{accept: true, intent: "I accept"}, okVerifier{})
+			recvErr <- e
+		}()
+
+		conn, err := tr.dial(ln.Addr().String(), aCert, aKey, bFP, 10*time.Second) // A accepts B
+		if err != nil {
+			t.Fatal(err)
 		}
 		defer conn.Close()
-		_, e := Receive(conn.Channel, bCert, bKey, "Alice", confirmer{accept: true, intent: "I accept"}, okVerifier{})
-		recvErr <- e
-	}()
-
-	conn, err := Dial(ln.Addr().String(), aCert, aKey, bFP, 5*time.Second) // A accepts B
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer conn.Close()
-	final, err := Initiate(conn.Channel, aSigned, aFP, okVerifier{})
-	if err != nil {
-		t.Fatalf("initiate: %v", err)
-	}
-	if err := <-recvErr; err != nil {
-		t.Fatalf("receive: %v", err)
-	}
-
-	// The result carries two valid, mutually cross-bound approval signatures.
-	ats := ReadAttestations(final)
-	if len(ats) != 2 {
-		t.Fatalf("want 2 signers, got %d", len(ats))
-	}
-	for _, a := range ats {
-		if !a.Valid {
-			t.Errorf("signer %q signature invalid", a.Signer)
+		final, err := Initiate(conn.Channel, aSigned, aFP, okVerifier{})
+		if err != nil {
+			t.Fatalf("initiate: %v", err)
 		}
-		if !a.Matched {
-			t.Errorf("signer %q not cross-bound to a real co-signer", a.Signer)
+		if err := <-recvErr; err != nil {
+			t.Fatalf("receive: %v", err)
 		}
-	}
+
+		// The result carries two valid, mutually cross-bound approval signatures.
+		ats := ReadAttestations(final)
+		if len(ats) != 2 {
+			t.Fatalf("want 2 signers, got %d", len(ats))
+		}
+		for _, a := range ats {
+			if !a.Valid {
+				t.Errorf("signer %q signature invalid", a.Signer)
+			}
+			if !a.Matched {
+				t.Errorf("signer %q not cross-bound to a real co-signer", a.Signer)
+			}
+		}
+
+	})
 }
 
 func TestSessionReceiverDeclines(t *testing.T) {
-	aCert, aKey := newIdentity(t)
-	bCert, bKey := newIdentity(t)
-	aFP, bFP := fingerprint(t, aCert), fingerprint(t, bCert)
+	eachTransport(t, func(t *testing.T, tr transport) {
+		aCert, aKey := newIdentity(t)
+		bCert, bKey := newIdentity(t)
+		aFP, bFP := fingerprint(t, aCert), fingerprint(t, bCert)
 
-	aSigned := signAsInitiator(t, aCert, aKey, bFP)
+		aSigned := signAsInitiator(t, aCert, aKey, bFP)
 
-	ln, err := Listen("127.0.0.1:0", bCert, bKey, aFP)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer ln.Close()
-
-	recvErr := make(chan error, 1)
-	go func() {
-		conn, err := ln.Accept()
+		ln, err := tr.listen("127.0.0.1:0", bCert, bKey, aFP)
 		if err != nil {
-			recvErr <- err
-			return
+			t.Fatal(err)
+		}
+		defer ln.Close()
+
+		recvErr := make(chan error, 1)
+		go func() {
+			conn, err := ln.Accept()
+			if err != nil {
+				recvErr <- err
+				return
+			}
+			defer conn.Close()
+			_, e := Receive(conn.Channel, bCert, bKey, "Alice", confirmer{accept: false}, okVerifier{})
+			recvErr <- e
+		}()
+
+		conn, err := tr.dial(ln.Addr().String(), aCert, aKey, bFP, 10*time.Second)
+		if err != nil {
+			t.Fatal(err)
 		}
 		defer conn.Close()
-		_, e := Receive(conn.Channel, bCert, bKey, "Alice", confirmer{accept: false}, okVerifier{})
-		recvErr <- e
-	}()
+		if _, err := Initiate(conn.Channel, aSigned, aFP, okVerifier{}); err == nil {
+			t.Error("initiator got a result though the receiver declined")
+		}
+		if err := <-recvErr; err == nil {
+			t.Error("receiver returned nil though it declined")
+		}
 
-	conn, err := Dial(ln.Addr().String(), aCert, aKey, bFP, 5*time.Second)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer conn.Close()
-	if _, err := Initiate(conn.Channel, aSigned, aFP, okVerifier{}); err == nil {
-		t.Error("initiator got a result though the receiver declined")
-	}
-	if err := <-recvErr; err == nil {
-		t.Error("receiver returned nil though it declined")
-	}
+	})
 }
 
 func TestReadFrameRejectsOversizedDeclaredLength(t *testing.T) {

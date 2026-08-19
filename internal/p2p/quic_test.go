@@ -174,63 +174,15 @@ func TestQUICRejectsAPeerThatIsNotPinned(t *testing.T) {
 	}
 }
 
-// TestAWholeCeremonyOverQUIC — the first acceptance clause at the package level, so a
-// failure names the transport rather than surfacing as a shell script timing out. Tier 4
-// drives the same thing through two real binaries.
-func TestAWholeCeremonyOverQUIC(t *testing.T) {
-	aCert, aKey := newIdentity(t)
-	bCert, bKey := newIdentity(t)
-	aFP, bFP := fingerprint(t, aCert), fingerprint(t, bCert)
-
-	aSigned := signAsInitiator(t, aCert, aKey, bFP)
-
-	ln, err := QUICListen("127.0.0.1:0", bCert, bKey, aFP)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer ln.Close()
-
-	recvErr := make(chan error, 1)
-	go func() {
-		c, err := ln.Accept()
-		if err != nil {
-			recvErr <- err
-			return
-		}
-		defer c.Close()
-		_, e := Receive(c.Channel, bCert, bKey, "Alice",
-			confirmer{accept: true, intent: "I accept"}, okVerifier{})
-		recvErr <- e
-	}()
-
-	conn, err := QUICDial(ln.Addr().String(), aCert, aKey, bFP, 10*time.Second)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer conn.Close()
-
-	final, err := Initiate(conn.Channel, aSigned, aFP, okVerifier{})
-	if err != nil {
-		t.Fatalf("the ceremony did not complete over QUIC: %v", err)
-	}
-	if err := <-recvErr; err != nil {
-		t.Fatalf("receiving side: %v", err)
-	}
-	// The document is the deliverable, so the assertion is on it and not on the call
-	// returning nil — the same check TestSessionRoundTrip makes over TCP.
-	ats := ReadAttestations(final)
-	if len(ats) != 2 {
-		t.Fatalf("the document co-signed over QUIC carries %d signers, want 2", len(ats))
-	}
-	for _, a := range ats {
-		if !a.Valid {
-			t.Errorf("signer %q signature invalid over QUIC", a.Signer)
-		}
-		if !a.Matched {
-			t.Errorf("signer %q not cross-bound to a real co-signer over QUIC", a.Signer)
-		}
-	}
-}
+// The whole-ceremony-over-QUIC test used to live here. It is gone on purpose:
+// TestSessionRoundTrip now runs over every entry in the transport table, so a QUIC
+// ceremony is its /quic subtest. Keeping both would be exactly the two sets of
+// session tests P02.S06 exists to collapse into one — and the copy left behind is
+// always the one that stops being updated.
+//
+// What stays in this file is what is TRUE OF THE TRANSPORT rather than of a session:
+// that both ends see the other's verified identity and agree on the channel binding,
+// and that an unpinned identity gets nothing.
 
 // TestTheTwoTransportsAreSelectedByTheSameCore — D14's claim, as a compile-and-run check
 // rather than a reading: the same four entry points serve both, so nothing here names a

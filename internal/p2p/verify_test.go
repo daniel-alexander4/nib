@@ -39,13 +39,13 @@ func channelOf(t *testing.T, conn *tls.Conn) Channel {
 // side to its half of the exchange. Real TLS rather than a pipe, because the string binds
 // the channel through ExportKeyingMaterial and a pipe has no keying material at all —
 // a test over a pipe could not distinguish "bound to this channel" from "not bound".
-func livePair(t *testing.T, run func(initiator bool, ch Channel, myFP []byte) (string, error)) (string, string) {
+func livePair(t *testing.T, tr transport, run func(initiator bool, ch Channel, myFP []byte) (string, error)) (string, string) {
 	t.Helper()
 	aCert, aKey := newIdentity(t)
 	bCert, bKey := newIdentity(t)
 	aFP, bFP := fingerprint(t, aCert), fingerprint(t, bCert)
 
-	ln, err := Listen("127.0.0.1:0", bCert, bKey, aFP)
+	ln, err := tr.listen("127.0.0.1:0", bCert, bKey, aFP)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -67,7 +67,7 @@ func livePair(t *testing.T, run func(initiator bool, ch Channel, myFP []byte) (s
 		rc <- res{s, e}
 	}()
 
-	conn, err := Dial(ln.Addr().String(), aCert, aKey, bFP, 5*time.Second)
+	conn, err := tr.dial(ln.Addr().String(), aCert, aKey, bFP, 10*time.Second)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -83,9 +83,9 @@ func livePair(t *testing.T, run func(initiator bool, ch Channel, myFP []byte) (s
 	return got, r.s
 }
 
-func exchangeBoth(t *testing.T) (string, string) {
+func exchangeBoth(t *testing.T, tr transport) (string, string) {
 	t.Helper()
-	return livePair(t, func(initiator bool, ch Channel, myFP []byte) (string, error) {
+	return livePair(t, tr, func(initiator bool, ch Channel, myFP []byte) (string, error) {
 		return verificationExchange(ch, initiator, myFP)
 	})
 }
@@ -94,25 +94,29 @@ func exchangeBoth(t *testing.T) (string, string) {
 // session, computing from opposite viewpoints, must produce the same four words, or the
 // spoken check fails for honest users and tells them nothing.
 func TestBothSidesDeriveTheSameWords(t *testing.T) {
-	a, b := exchangeBoth(t)
-	if a != b {
-		t.Fatalf("the two sides derived different strings: %q vs %q", a, b)
-	}
-	if n := len(strings.Fields(a)); n != 4 {
-		t.Errorf("the verification string is %d words, want 4: %q", n, a)
-	}
+	eachTransport(t, func(t *testing.T, tr transport) {
+		a, b := exchangeBoth(t, tr)
+		if a != b {
+			t.Fatalf("the two sides derived different strings: %q vs %q", a, b)
+		}
+		if n := len(strings.Fields(a)); n != 4 {
+			t.Errorf("the verification string is %d words, want 4: %q", n, a)
+		}
+	})
 }
 
 // TestTwoSessionsDeriveDifferentWords — the second bullet. A string that repeated between
 // sessions would let an attacker who once overheard it replay it, and would make the
 // check meaningless on the second call between the same two people.
 func TestTwoSessionsDeriveDifferentWords(t *testing.T) {
-	first, _ := exchangeBoth(t)
-	second, _ := exchangeBoth(t)
-	if first == second {
-		t.Errorf("two sessions between fresh pairs produced the same string %q — the "+
-			"derivation is not taking the per-session contributions or the channel binding", first)
-	}
+	eachTransport(t, func(t *testing.T, tr transport) {
+		first, _ := exchangeBoth(t, tr)
+		second, _ := exchangeBoth(t, tr)
+		if first == second {
+			t.Errorf("two sessions between fresh pairs produced the same string %q — the "+
+				"derivation is not taking the per-session contributions or the channel binding", first)
+		}
+	})
 }
 
 // TestAManInTheMiddleSeesTwoDifferentStrings — the third bullet, driven with a real
@@ -486,81 +490,88 @@ func TestL2NoDocumentBytesCrossBeforeBothConfirmations(t *testing.T) {
 		}},
 	} {
 		t.Run(tc.name+" (dialing side)", func(t *testing.T) {
-			aCert, aKey := newIdentity(t)
-			bCert, bKey := newIdentity(t)
-			aFP, bFP := fingerprint(t, aCert), fingerprint(t, bCert)
+			// L2 over both transports. It is the clause most worth parameterising:
+			// "no document bytes cross the wire before both confirmations" is a
+			// property of the ORDERING the core imposes, and the core is the only
+			// thing the two transports share — so a transport that reordered or
+			// coalesced frames would break it without touching the core at all.
+			eachTransport(t, func(t *testing.T, tr transport) {
+				aCert, aKey := newIdentity(t)
+				bCert, bKey := newIdentity(t)
+				aFP, bFP := fingerprint(t, aCert), fingerprint(t, bCert)
 
-			ln, err := Listen("127.0.0.1:0", bCert, bKey, aFP)
-			if err != nil {
-				t.Fatal(err)
-			}
-			defer ln.Close()
-
-			// The instrument is the size of the FIRST frame on the wire, and getting this
-			// wrong is what the first version of this test did.
-			//
-			// It watched the peer's LAST read and asserted no large payload appeared. That
-			// is not the clause. Driven against a build with the document write moved
-			// BEFORE the gate — the exact defect — it still passed: the stream desynchronises,
-			// the peer's later reads return garbage or nothing, and "no large payload at the
-			// end" stays true while the document has already gone.
-			//
-			// The clause is "no document bytes cross the wire before both confirmations".
-			// So: what is the first thing the initiator sends? It must be a 32-byte
-			// commitment. If it is a document, its size says so immediately and
-			// unambiguously.
-			firstFrame := make(chan int, 1)
-			go func() {
-				conn, err := ln.Accept()
+				ln, err := tr.listen("127.0.0.1:0", bCert, bKey, aFP)
 				if err != nil {
-					firstFrame <- -1
-					return
+					t.Fatal(err)
+				}
+				defer ln.Close()
+
+				// The instrument is the size of the FIRST frame on the wire, and getting this
+				// wrong is what the first version of this test did.
+				//
+				// It watched the peer's LAST read and asserted no large payload appeared. That
+				// is not the clause. Driven against a build with the document write moved
+				// BEFORE the gate — the exact defect — it still passed: the stream desynchronises,
+				// the peer's later reads return garbage or nothing, and "no large payload at the
+				// end" stays true while the document has already gone.
+				//
+				// The clause is "no document bytes cross the wire before both confirmations".
+				// So: what is the first thing the initiator sends? It must be a 32-byte
+				// commitment. If it is a document, its size says so immediately and
+				// unambiguously.
+				firstFrame := make(chan int, 1)
+				go func() {
+					conn, err := ln.Accept()
+					if err != nil {
+						firstFrame <- -1
+						return
+					}
+					defer conn.Close()
+					_ = conn.Stream.SetDeadline(time.Now().Add(5 * time.Second))
+					first, err := readFrame(conn.Stream) // deliberately unbounded: measure what arrived
+					if err != nil {
+						firstFrame <- -1
+						return
+					}
+					firstFrame <- len(first)
+					// Then play honest so the initiator reaches its verifier rather than dying
+					// on I/O — the test is about the gate, not about error handling.
+					mine := make([]byte, contributionLen)
+					_, _ = rand.Read(mine)
+					commit := sha256.Sum256(mine)
+					_ = writeFrame(conn.Stream, commit[:])
+					_, _ = readFrameMax(conn.Stream, contributionLen)
+					_ = writeFrame(conn.Stream, mine)
+					_, _ = readFrame(conn.Stream)
+				}()
+
+				conn, err := tr.dial(ln.Addr().String(), aCert, aKey, bFP, 10*time.Second)
+				if err != nil {
+					t.Fatal(err)
 				}
 				defer conn.Close()
-				_ = conn.Stream.SetDeadline(time.Now().Add(5 * time.Second))
-				first, err := readFrame(conn.Stream) // deliberately unbounded: measure what arrived
-				if err != nil {
-					firstFrame <- -1
-					return
+				v := &declining{}
+				err = tc.run(t, true, conn, aFP, bFP, v)
+
+				if v.count() == 0 {
+					t.Fatalf("%s never asked the verifier — the path reaches the document "+
+						"exchange unconfirmed, which is exactly what L2 forbids", tc.name)
 				}
-				firstFrame <- len(first)
-				// Then play honest so the initiator reaches its verifier rather than dying
-				// on I/O — the test is about the gate, not about error handling.
-				mine := make([]byte, contributionLen)
-				_, _ = rand.Read(mine)
-				commit := sha256.Sum256(mine)
-				_ = writeFrame(conn.Stream, commit[:])
-				_, _ = readFrameMax(conn.Stream, contributionLen)
-				_ = writeFrame(conn.Stream, mine)
-				_, _ = readFrame(conn.Stream)
-			}()
-
-			conn, err := Dial(ln.Addr().String(), aCert, aKey, bFP, 5*time.Second)
-			if err != nil {
-				t.Fatal(err)
-			}
-			defer conn.Close()
-			v := &declining{}
-			err = tc.run(t, true, conn, aFP, bFP, v)
-
-			if v.count() == 0 {
-				t.Fatalf("%s never asked the verifier — the path reaches the document "+
-					"exchange unconfirmed, which is exactly what L2 forbids", tc.name)
-			}
-			if !errors.Is(err, ErrVerificationDeclined) {
-				t.Errorf("%s returned %v, want ErrVerificationDeclined — a decline must never "+
-					"read as a network failure, because 'could not connect' invites a retry and "+
-					"a retry is the worst advice when someone is sitting between you", tc.name, err)
-			}
-			switch n := <-firstFrame; {
-			case n < 0:
-				t.Errorf("%s: the peer never received a first frame, so the ordering was not "+
-					"observed and nothing above is measuring L2", tc.name)
-			case n != sha256.Size:
-				t.Errorf("%s put a %d-byte frame on the wire first, before the 32-byte "+
-					"commitment. That is the document, and it crossed before anyone confirmed "+
-					"who they were talking to — the whole of L2.", tc.name, n)
-			}
+				if !errors.Is(err, ErrVerificationDeclined) {
+					t.Errorf("%s returned %v, want ErrVerificationDeclined — a decline must never "+
+						"read as a network failure, because 'could not connect' invites a retry and "+
+						"a retry is the worst advice when someone is sitting between you", tc.name, err)
+				}
+				switch n := <-firstFrame; {
+				case n < 0:
+					t.Errorf("%s: the peer never received a first frame, so the ordering was not "+
+						"observed and nothing above is measuring L2", tc.name)
+				case n != sha256.Size:
+					t.Errorf("%s put a %d-byte frame on the wire first, before the 32-byte "+
+						"commitment. That is the document, and it crossed before anyone confirmed "+
+						"who they were talking to — the whole of L2.", tc.name, n)
+				}
+			})
 		})
 	}
 }
