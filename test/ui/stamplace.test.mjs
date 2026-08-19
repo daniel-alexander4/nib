@@ -47,6 +47,25 @@ after(async () => {
   await h.browser.close();
 });
 
+// canvasPainted waits for pdf.js to have actually painted the page.
+//
+// `openDocument` waits for the page DIV and the page count; the CANVAS inside it arrives
+// later, on pdf.js's own render loop. Reading pixels before it exists gave
+// `redInk()` null and fired this test's setup assertion — "no page canvas was rendered"
+// — in roughly one run in six. That assertion did its job: it refused to grade the
+// response because the stimulus had not happened, which is the whole reason it is
+// written as a setup check rather than left to fail later as a confusing zero.
+//
+// It was already waited for after the REOPEN and not before the first read, which is why
+// the failure looked intermittent rather than constant: the control read is the one that
+// races.
+function canvasPainted() {
+  return page.waitForFunction(() => {
+    const cv = document.querySelector('.viewerContainer:not([hidden]) .page canvas');
+    return cv && cv.width > 0 && cv.height > 0;
+  }, null, { timeout: 20000 });
+}
+
 // redInk scans the visible view's first page canvas and returns the bounding box and
 // centroid of every red pixel, as fractions of the canvas — with (0,0) at the TOP left,
 // the same origin the overlay's own fraction uses, so the two are directly comparable.
@@ -76,6 +95,7 @@ function redInk() {
 test('a stamp bakes where it was placed, not mirrored up the page', async () => {
   await h.openDocument(DOC, 1);
   await h.topOfDocument();
+  await canvasPainted();
 
   // The control, and it is what makes every red pixel below mean something: this
   // document has no red ink in it before the stamp is placed. Without this line the
@@ -152,10 +172,7 @@ test('a stamp bakes where it was placed, not mirrored up the page', async () => 
   await page.waitForFunction(() => document.getElementById('viewerWrap').className !== 'has-doc');
   await h.openDocument(out, 1);
   await h.topOfDocument();
-  await page.waitForFunction(() => {
-    const cv = document.querySelector('.viewerContainer:not([hidden]) .page canvas');
-    return cv && cv.width > 0;
-  });
+  await canvasPainted();
 
   const baked = await redInk();
   assert.ok(baked && baked.n > 0,
