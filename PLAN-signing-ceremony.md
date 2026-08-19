@@ -82,6 +82,14 @@ substance sat at a boundary** — between the ceremony and code the sibling plan
 the record's, and between an end state and the delivery round that runs after it. Pins written at
 D4, D20, D21, D22, D27, D29 ×3, D32 and caveat 7; new criteria at P01.S06, P01.S07 and P07.
 Report: `<project-memory>/plan-reviews/2026-08-18-3.md`.)
+Reviewed 2026-08-18 (**plan-review pass, the fourth** — same remit, and it found what the third had
+described from the outside: **the co-signing channel binding assumes the wire peer is the party who
+signed before you, and D22's hub makes it the carrier.** D22 had called `len(ats) != 1` "the whole
+two-party assumption in the transport"; it is one of three, and the other two refuse at every hop
+under a non-signing convener while `crossBind` reports `Matched: false` on every signature. 1
+critical, 2 warnings, 3 info — **all adopted by Dan.** Pins at D2, D20, D22, D27 and D29 ×2; new
+criteria at P07. **Amending D2's "retained unchanged" claim is owed through `/discuss`.**
+Report: `<project-memory>/plan-reviews/2026-08-18-4.md`.)
 SME packs: **crypto (core tier)** — `go.mod` declares `filippo.io/age`,
 `golang.org/x/crypto`, `edwards25519`, `hpke`, `go-pkcs12`, `digitorus/pdfsign`
 (inferred, trigger 1); the consensus tier does not fire — ~~two~~ **N (2026-08-18)** sequential
@@ -217,7 +225,17 @@ absence still means "not one of ours" (`attestation.go:65`). The existing parse 
 *What was read rather than assumed:* `crossBind` (`internal/p2p/attestation.go:153`) already
 cross-binds each accepted peer against **every other signer** on the document, and
 `confirmCoSigned` (`internal/p2p/session.go:281`) requires this user's signature and the peer's
-while tolerating extras. Both survive N parties unchanged. The two-party assumption is not in
+while tolerating extras. Both survive N parties unchanged.
+
+**(plan-review pin: "unchanged" holds for a chain and fails for a hub — 2026-08-18, adopted by
+Dan.)** The paragraph above is right about the *code* and wrong about the *topology*, which was
+chosen in D22 on the same day. `crossBind` survives N parties when each party's wire peer is their
+**predecessor signer**; D22 makes it the **carrier**, and with a non-signing convener no signer holds
+the accepted fingerprint at all. **This decision's headline is therefore in question:** it retains
+"attestation channel binding" **unchanged**, and that binding is precisely what the hub breaks — see
+the D22 pin for the three checks and the adopted re-basing. **Amending this decision's
+retained-unchanged claim is owed through `/discuss`**; a plan-review pass marks the spot and never
+rewrites a decision. The two-party assumption is not in
 the artifact model; it is in the live path (D22) and in the UI.
 
 ### D3 — The pairing name is derived from the identity fingerprint, not randomly generated *(settled 2026-08-15 via /discuss, auto-adopted)*
@@ -983,7 +1001,7 @@ pass reads from it rather than asking a person**.
 | `id` | 128 random bits | names the hop that resumes; without it "continue" is a guess about which ceremony |
 | `docHash` | SHA-256 of the prepared document | every party agrees to the same bytes, and a resumed hop can prove it |
 | `roster` | ordered `{name, fingerprint, label, signs}` | the order **is** the roster's order; `signs:false` is the non-signing convener (Dan, 2026-08-18) |
-| `intent` | what everyone is agreeing to | today each side types its own sentence; a four-party signing agrees to one thing |
+| `intent` | what everyone is agreeing to — **the only home; see the pin below** | today each side types its own sentence; a four-party signing agrees to one thing |
 | `expires` | the ceremony deadline, in days | D16's clock 3 |
 | `rosterHash` | commitment over all of the above — **axes enumerated below** | the token every signature carries (D2 pin), so all signatures attest to one proceeding |
 
@@ -1002,6 +1020,18 @@ alone.
 one roster to the signers and another to a verifier, differing only in who was obliged to sign, and
 both would hash the same. That is the whole class PLAN-2 exists to catch — an axis short is the
 attack.
+
+**(plan-review pin: `intent` has two homes — 2026-08-18, adopted by Dan.)** The record carries one
+`intent`, justified above as replacing the per-side sentence. But `coSignExchange`
+(`internal/p2p/session.go`) asks the `Confirmer` for **that signer's own** intent and writes it into
+their attestation and their visible block, and D2 keeps the attestation format otherwise unchanged.
+Nothing reconciles the two, so a finished document can say one thing in the record and a different
+thing on each signature block — the same face-versus-signature divergence `Attestation`'s own doc
+comment was corrected for. **Adopted: the record's `intent` is *the* intent.** The per-signer field
+is **populated from it, not typed**, and the consent screen shows it as the thing being agreed to
+rather than a box to fill. **What discharges this specifically:** a P07 criterion in which **every
+signature block on a completed ceremony carries the record's intent verbatim** — not the record
+round-trip bullets, none of which ever read a signature block.
 
 **The record is signed by the convener** and verified by every party against the convener's
 pinned fingerprint. A convener cannot reorder a ceremony in flight, because the order every party
@@ -1186,6 +1216,42 @@ at every hop. The gap is exactly and only the non-signing case.
 *Also owed by this decision, and carried in D27:* the consent gate the peer sees at each hop is
 typed to **one** counterparty, so a fourth signer cannot be shown the three who preceded them.
 
+**(plan-review pin: the channel binding assumes the wire peer signed before you; under a hub it is
+the carrier — 2026-08-18, adopted by Dan.)** This decision says `coSignExchange`'s two-party
+assumption is `len(ats) != 1` and calls that "**the whole** two-party assumption in the transport".
+**It is one of three, and the other two are the security-load-bearing ones.** Read at the line
+(`internal/p2p/session.go`, `coSignExchange`), all three derive from `peerFP`, the TLS-verified wire
+counterparty:
+
+1. `len(ats) != 1` — named above, re-based on the roster prefix by D23.
+2. `peer.Fingerprint != hex(peerFP)` — *"the document was not signed by the connected peer."*
+3. `peer.AcceptedPeer != hex(myFP)` — *"the peer's attestation does not accept you."*
+
+…and the attestation this function writes takes `AcceptedPeer: hex(peerFP)` — **the wire peer**.
+
+**Under this decision's hub, every hop's wire peer is the convener.** With a **non-signing**
+convener — this decision's own option-A clause — the connected peer has signed nothing, so check 2
+**refuses at every hop**, and check 3 refuses because the previous signer accepted the *carrier*,
+not the party now being asked to sign. With a **signing** convener the checks do not refuse cleanly
+either: `ats` is a prefix of N, the code reads `ats[0]`, the convener is `ats[0]` and the party who
+signed immediately before is `ats[k-1]`, and nothing says which the binding is against.
+
+**`crossBind` degrades in the same motion.** `Matched` is set only when *another signer* holds the
+accepted fingerprint, so every party accepting a non-signing convener leaves **`Matched` false on
+every signature of the finished document** — a verifier reads a document whose every signer attests
+to somebody absent.
+
+**Adopted: the attestation binds to the record, not to the wire.** `AcceptedPeer` names the party's
+**predecessor in the roster**; checks 2 and 3 are re-based onto *the document's signers equal the
+record's roster prefix* (which L3 already requires) plus a separate, weaker check that **the wire
+peer is the record's carrier**. **What discharges this specifically:** a P07 criterion in which **a
+four-party ceremony with a non-signing convener completes and every signature on the finished
+document reports `Matched`** — not the existing "every attestation shares one `[NibRoster:…]`
+commitment" bullet, which is satisfied perfectly by a document on which no signature matches any
+other.
+
+*Amending D2 is owed through `/discuss`* — see the pin there.
+
 ### D23 — Order is derived from the record and enforced three times *(settled 2026-08-18 — UX pass)*
 
 Signing out of order must be impossible in three independent places, each of which would catch it
@@ -1330,7 +1396,12 @@ honesty rather than its mechanics, so they move together in one change.
    (`internal/p2p/attestation.go:98`) renders `Accepts: <label> [<short fp>]` — one counterparty —
    and the signature-details copy says each signature attests to *the other's* key. **D2's pin
    fixed the machine-readable half and left the half a human reads.** Both are re-worded to name
-   the roster and the ceremony commitment.
+   the roster and the ceremony commitment. **(plan-review pin, 2026-08-18, adopted by Dan:
+   `AcceptedPeerLabel` is the *local* pinned label — `Receive` takes it from the receiving side's own
+   vault — so across a roster each block renders that signer's private name for their counterparty,
+   and one document can call the same person three things. Harmless, because the fingerprint is the
+   identity and the block already says to trust the signature details over the printed text — but
+   this decision owns what the block says, so it says it.)**
 
 *Why one decision rather than three slices:* they are the same claim told three times, and letting
 them drift is how a document ends up asserting one thing in its signature and another on its face
@@ -1442,9 +1513,25 @@ the user's document, their vault, or their machine.
   so the record appears in the attachments panel whatever the plan says. **It is not hidden** —
   hiding it would be a second and worse surprise — it is labelled for what it is, and removing it
   is refused while the ceremony is live, for the same reason the document is frozen.
+- **(plan-review pin: `nib watch` rewrites signed documents in place — 2026-08-18, adopted by
+  Dan.)** Delivered ceremony documents land in `~/nib/signed/` (`saveReceived`), and `cmdWatch`
+  (`internal/cli/watch.go`) polls a directory running `timestamp | optimize | sanitize` — where
+  **`optimize` and `sanitize` rewrite the file in place**, which on a signed document invalidates
+  every signature, exactly as caveat 10's control arm measured. It also processes **files already
+  present when it starts**, so pointing it at that directory is immediately destructive. *Narrowed
+  honestly:* `os.ReadDir` is **not recursive**, so a watch on `~/nib` reaches neither
+  `~/nib/signed/` nor `~/nib/ceremonies/` — the exposure needs the user to name the subdirectory,
+  which "process my inbox" makes plausible. **The fix belongs in `watch`, not in the ceremony:**
+  `optimize`/`sanitize` refuse a **signed** PDF with a named message. That is a general improvement
+  this plan merely makes likely, so it is carried as a `/pending` item rather than a phase of this
+  plan — recorded here because the ceremony is what makes the directory worth watching.
+
 - **Ended ceremonies are pruned.** The mirror is not a growing archive. A ceremony's directory is
   removed once it has ended and its document has been delivered or saved, and the panel offers the
-  removal for one that ended without delivering.
+  removal for one that ended without delivering. **(plan-review pin, 2026-08-18, adopted by Dan: a
+  restored vault backup resurrects ceremony-scoped pins for ceremonies that have since ended. It is
+  self-limiting — the pins name their ceremony and the mirror is gone — but the panel must not offer
+  a ceremony it cannot load.)**
 
   **(plan-review pin: the lifecycle is end state → delivery → close-out, and pins drop at the END of
   it — 2026-08-18, adopted by Dan.)** Read with D28 and D22, the bullet above and the pin-removal
@@ -1879,6 +1966,8 @@ Exit criteria:
 - **A four-party ceremony's delivery round reaches every party, and their invitation pins are absent afterwards — in that order. (added 2026-08-18, plan-review, D29 lifecycle pin.)** Neither the delivery bullet nor the pin-scoping bullet can produce this alone; the defect is that both are satisfiable while delivery fails.
 - **A delivery round re-run after a mid-round failure leaves exactly one file per party. (added 2026-08-18, plan-review, D22 pin.)** "The finished document reaches every party" is satisfied completely by a round that delivers twice.
 - **A ceremony resumed in a fresh process — with other documents opened first, so the id counter has advanced — acts on its own document and refuses a decoy holding the id it used to have. (added 2026-08-18, plan-review, D29 identity pin.)** The resumption bullet passes with a dangling id, because nothing in it opens a second document.
+- **A four-party ceremony with a NON-SIGNING convener completes, and every signature on the finished document reports `Matched`. (added 2026-08-18, plan-review, D22/D2 pin.)** The "every attestation shares one `[NibRoster:…]` commitment" bullet is satisfied perfectly by a document on which no signature matches any other — this is the clause that sees the hub breaking the channel binding.
+- **Every signature block on a completed ceremony carries the record's intent verbatim. (added 2026-08-18, plan-review, D20 intent pin.)** None of the record round-trip bullets ever reads a signature block.
 - **A completed ceremony whose convener has `signs:false` renders as complete, not as missing a signer. (added 2026-08-18, plan-review, D27 pin.)** The "no signature of theirs" bullet is a fact about the document and says nothing about what the verifier reports.
 
 Slices *(sketch)*: the roster-prefix contribution gate and the L3 guard; `coSignExchange` re-based off `len(ats) != 1`; **the carry route for a non-signing convener (D22 pin); the roster-shaped `Confirmer` (D27); the readme and About rewrite behind the drift guard (D27); the end-state machine (D28); the freeze, the scoped pins and the prune (D29);** the placement policy and page allocation; hop persistence and idempotent re-delivery; the ceremony-scoped arm window; the delivery round; the panel's roster view driven by a real N-party record.
