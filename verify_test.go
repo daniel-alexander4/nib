@@ -35,7 +35,7 @@ func TestVerifyContractIsTrue(t *testing.T) {
 	// hands its document to the running instance on the platform where double-click
 	// is the ordinary way in. A harness that quietly stopped existing would take
 	// that claim with it and no tier would notice.
-	for _, cmd := range []string{"build/jsdomtest.sh", "build/uirepro.sh", "build/winrepro.sh"} {
+	for _, cmd := range []string{"build/jsdomtest.sh", "build/uirepro.sh", "build/pairrepro.sh", "build/winrepro.sh"} {
 		info, err := os.Stat(cmd)
 		if err != nil {
 			t.Errorf("%s is named in the contract but does not exist: %v", cmd, err)
@@ -73,6 +73,8 @@ func TestVerifyContractIsTrue(t *testing.T) {
 		{"CONTRIBUTING.md", "Cannot see: other engines"},
 		{"test/jsdom/boot.mjs", "Where it stops"},
 		{"build/uirepro.sh", "Where it still stops"},
+		{"CONTRIBUTING.md", "Cannot see: two networks"},
+		{"build/pairrepro.sh", "Where it still stops"},
 	} {
 		body := contract
 		if c.file != "CONTRIBUTING.md" {
@@ -94,7 +96,7 @@ func TestVerifyContractIsTrue(t *testing.T) {
 	// and leaving the commands mentioned in a sentence kept this green — and the table
 	// is the part that pairs each command with a tier number and with what it verifies.
 	// Asserted as rows so the structure has to survive, not just the words.
-	for i, cmd := range []string{"`go build ./...`", "`go test ./...`", "`./build/jsdomtest.sh`", "`./build/uirepro.sh`"} {
+	for i, cmd := range []string{"`go build ./...`", "`go test ./...`", "`./build/jsdomtest.sh`", "`./build/uirepro.sh`", "`./build/pairrepro.sh`"} {
 		row := "| " + strconv.Itoa(i) + " | " + cmd
 		if !strings.Contains(contract, row) {
 			t.Errorf("the tier table has lost its row %d (%q) — the commands may still be named in prose, which is what made this check pass over a deleted table", i, row)
@@ -113,7 +115,7 @@ func TestVerifyContractIsTrue(t *testing.T) {
 		if err != nil {
 			t.Fatalf("CONTRIBUTING.md claims every tier has been proven red, and docs/red-proofs.md — the record of it — is missing: %v", err)
 		}
-		for _, tier := range []string{"Tier 1", "Tier 2", "Tier 3"} {
+		for _, tier := range []string{"Tier 1", "Tier 2", "Tier 3", "Tier 4"} {
 			if !strings.Contains(string(ledger), tier) {
 				t.Errorf("docs/red-proofs.md has no entries for %s, so the contract's claim is unbacked for that tier", tier)
 			}

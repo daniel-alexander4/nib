@@ -30,6 +30,7 @@ actors
 acute
 adapt
 addition
+adds
 adjacent
 adjusted
 admit
@@ -202,7 +203,7 @@ bleak
 blended
 bless
 blighted
-blind
+blinking
 blocks
 blooming
 blossom
@@ -324,6 +325,7 @@ civil
 clammy
 clapped
 class
+clatter
 clear
 cleft
 clenched
@@ -393,7 +395,6 @@ crept
 crevices
 cried
 criminal
-crippled
 crisis
 critical
 crooked
@@ -431,7 +432,6 @@ daybreak
 days
 daytime
 dazzled
-deaf
 deal
 dear
 decayed
@@ -491,6 +491,7 @@ dislike
 dismal
 disorder
 disposed
+disquiet
 dissuade
 distance
 divers
@@ -701,6 +702,7 @@ forbade
 forced
 forehead
 forfeit
+forgave
 forks
 forlorn
 form
@@ -840,7 +842,6 @@ heads
 healthy
 heaps
 heart
-heathen
 heavy
 hedge
 heels
@@ -977,8 +978,7 @@ knocked
 knotted
 knows
 knuckles
-labour
-lads
+ladder
 lady
 lament
 lamp
@@ -988,14 +988,14 @@ lantern
 large
 lashes
 lasting
-lately
-latter
+later
+lattice
 laughed
 launched
 lawful
 lawless
 lazily
-leader
+leaden
 league
 leaning
 learn
@@ -1079,10 +1079,10 @@ marsh
 martyr
 masked
 massive
-master
+masts
 matched
 maternal
-matters
+matter
 maxim
 maybe
 meadow
@@ -1171,7 +1171,6 @@ neatly
 neck
 need
 negative
-negro
 nephew
 nervous
 nests
@@ -1350,6 +1349,7 @@ priest
 prime
 prince
 private
+prized
 probable
 procure
 produced
@@ -1838,7 +1838,7 @@ trader
 traffic
 tragedy
 train
-tramp
+trampled
 trance
 travel
 treasure
