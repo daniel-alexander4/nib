@@ -18,6 +18,7 @@ for things it never looked at.
 | 2 | `./build/jsdomtest.sh` | the front end's logic and DOM behaviour, in jsdom |
 | 3 | `./build/uirepro.sh` | the whole app: the real binary, in a real browser |
 | 4 | `./build/pairrepro.sh` | a ceremony between TWO real binaries, two vaults, two identities — over BOTH transports |
+| 5 | `./build/mcastrepro.sh` | link-local discovery between two processes, in a network namespace of its own |
 
 Add `node --check web/app.js` after editing JavaScript, and `go test -race
 ./internal/server/` after touching anything concurrent.
@@ -79,6 +80,21 @@ Everything in that list is transport-blind, which is why the run also **observes
 the socket**: it connects to the armed port over TCP and requires that to succeed
 on the TCP run and fail on the QUIC one. Without it, a build that ignored the
 transport field would run TCP twice and report QUIC coverage it did not have.
+**Tier 5 — `./build/mcastrepro.sh`** (ceiling written in `build/mcastrepro.sh`)
+Sees: two processes discovering each other over **real multicast** — two sockets
+sharing a port, two group memberships, a datagram that crosses a kernel — inside a
+network namespace it creates itself with `unshare -rn`. The namespace is the point:
+a multicast loopback copy traverses INPUT, so a default-deny host swallows discovery
+on Nib's port with **no error at either end**, and a harness on the host would be
+green on a permissive machine and red on a locked-down one without testing this code
+either time. Tier 1's discovery tests skip on such a host — honestly, and a skip is
+not a verification, which is what this tier is for.
+**Cannot see: a network.** A dummy interface has no switch, no IGMP snooping, no
+second machine to disagree with. And it cannot see Windows at all, which is where
+this code's known divergences live: `x/net`'s `SetControlMessage` is unimplemented
+there, IPv4 group joins resolve the interface to an address rather than an index, and
+`FlagRunning` carries no information. Those close on a real-Windows run.
+
 **Cannot see: two networks.** Both instances are on loopback, so NAT, routing,
 MTU and firewalls are invisible — and those are exactly what the connection
 ladder exists to survive. What it delegates upward is the two-machine run, which

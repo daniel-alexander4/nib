@@ -169,6 +169,20 @@ by check.
 | `quicChannel` reports a fingerprint that is not the verified peer's | `TestAQUICSessionEstablishesAChannelOnBothEnds`, `TestSessionRoundTrip/quic` | the two ends hold the wrong peer, and the co-signature fails to cross-bind |
 
 
+## Tier 5 — `./build/mcastrepro.sh` (P03.S02, link-local discovery)
+
+| Defect reintroduced | Check that fired | What it said |
+|---|---|---|
+| The self-filter keyed on the SOURCE ADDRESS instead of the per-process nonce (v1.110.1) | `TestTwoProcessesDiscoverEachOther` | the browser discarded the *peer's* announcement as its own and timed out after 8 s. Both processes are on one host, so their datagrams arrive from the same local address — which is exactly why the nonce exists, and this is the probe that shows it rather than asserting it |
+| `SO_REUSEADDR` not set on the discovery socket | the same test | the second process could not bind port 8446 at all. `net.ListenPacket` does not set it (the stdlib only does when the *bind address* is multicast, and this binds the wildcard), so without it two Nibs on one machine can never discover each other |
+
+## Tier 1 — `internal/discovery` (P03.S02, interface selection)
+
+| Defect reintroduced | Check that fired | What it said |
+|---|---|---|
+| `FlagRunning` made a filter (v1.110.1) | `TestInterfaceSelectionSkipsWhatItShould` | "docker0 was skipped, which means FlagRunning became a filter — it is degenerate on Windows and would make the selection platform-dependent". **This probe was first aimed at tier 5 and came back GREEN** — see the vacuous-green row below |
+
+
 ## Vacuous greens caught, and how
 
 Not red proofs — the opposite, and worth as much. Each is a check that was **passing while
@@ -193,3 +207,5 @@ measuring nothing**, found by its own setup assertion or by a deliberate probe.
 | The QUIC teardown's first fix waited on BOTH sides | it was correct and cost the full 5-second grace on every ceremony, because each side waited for the other. A green suite hid it as latency rather than failure | timing the test: 5.05s, against 0.06s once the wait was made asymmetric. The protocol is what settles it — in all four entry points the listening side writes last and the dialing side reads last, so only the listener has anything owed |
 | The transport table's own guard, first draft (v1.109.54) | it matched `^func ([A-Z]\w*Listen)\(`, which **cannot match `Listen` itself** — it reported one constructor where there are two and failed with a message naming the wrong problem. The same shape as P02.S04's re-typed regex, one slice later | running it. It went red on correct code, which is the cheap direction for this mistake to fall |
 | The transport table's distinctness check, first draft | it compared **names**, so a table of `{"tcp", Listen, Dial}` and `{"quic", Listen, Dial}` passed: two entries, two source constructors, two distinct names, and the whole suite running over TCP twice with every subtest labelled quic. A parameterised suite is only as good as its parameters being different | asking what the guard would allow, then probing it — S2 in the tier-1 table above. Fixed by comparing `reflect.ValueOf(fn).Pointer()` |
+| `build/mcastrepro.sh`'s claim to exercise the no-carrier interface case (v1.110.1) | its comment said *"a dummy interface reports UP but never RUNNING — no carrier"*, so the namespace was claimed to cover the choice not to filter on `FlagRunning`. **A dummy reports `up|broadcast|running`** — measured. A probe making `FlagRunning` a filter therefore stayed green in the namespace, and the coverage the comment claimed lived at tier 1 instead | aiming the probe at tier 5 first and getting a pass. The comment now says what the namespace cannot reach and points at the table test that can. It also records that a dummy lacks the MULTICAST flag and joins anyway, which is why the selection does not require it |
+| `TestTwoProcessesDiscoverEachOther`'s evidence, before the harness guard (v1.110.1) | the test read the browser's stdout, asserted `DISCOVERED` in it, and **threw it away on success** — so `mcastrepro.sh` could not tell a pass about discovery from a pass about anything else | the harness's own "the pass above is not about discovery" guard, which failed on a passing test. Fixed by echoing the evidence with `t.Logf`: evidence a check consumes privately is evidence nobody else can audit |

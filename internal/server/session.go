@@ -21,14 +21,34 @@ import (
 	"nib/internal/sign"
 )
 
-// TRIPWIRE: the armed session listener is Nib's ONLY network-reachable surface —
-// every other listener binds loopback (cmd/nib/main.go, the loopbackOnly guard in
-// server.go). It is opened only by an explicit, vault-unlocked /api/session/arm,
-// binds the address the caller chooses, accepts only the one pinned peer (pinned-
-// peer mTLS, internal/p2p/transport.go), signs only with explicit per-document user
-// consent, and is torn down after one session or on timeout / disarm / shutdown.
+// TRIPWIRE: the armed session listener is Nib's only network-reachable surface that
+// anything can be SENT TO and acted on — every other listener binds loopback
+// (cmd/nib/main.go, the loopbackOnly guard in server.go). It is opened only by an
+// explicit, vault-unlocked /api/session/arm, binds the address the caller chooses,
+// accepts only the one pinned peer (pinned-peer mTLS, internal/p2p/transport.go),
+// signs only with explicit per-document user consent, and is torn down after one
+// session or on timeout / disarm / shutdown.
 // Keep that containment intact: do not widen what arms it, how long it stays open,
 // or which peers it accepts without a fresh security review (P2P 12).
+//
+// **Amended by P03.S02: it is no longer the ONLY socket that receives.**
+// internal/discovery opens a second one — link-local multicast, and armed-only, both
+// authorised in advance by PLAN-signing-ceremony.md's egress enumeration, which is
+// the "fresh security review" the paragraph above demands rather than an exception to
+// it. The distinction that keeps this tripwire meaningful is what the two sockets can
+// be made to DO:
+//
+//   - this listener is where a document arrives and a signature is produced;
+//   - the discovery socket cannot influence which peer is accepted at all. L1, and it
+//     is structural rather than a rule: an announcement carries a NAME, the only way
+//     back to a fingerprint is pairing.Matches against a pin the receiver already
+//     holds, and internal/discovery is guarded against importing the vault, sign or
+//     p2p (TestNothingHereCanReachAnIdentity). The worst a hostile announcer achieves
+//     is wasting a two-second browse.
+//
+// So a discovery datagram is untrusted input to a parser and nothing more — and it is
+// treated as internet-facing, because Go binds a multicast listener to the WILDCARD
+// and it therefore accepts ordinary unicast from anywhere (ADR-007).
 
 const (
 	sessionAcceptTimeout = 5 * time.Minute // auto-disarm if no peer connects
