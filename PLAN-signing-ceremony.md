@@ -2346,11 +2346,24 @@ introduced, and it costs nothing: the peer never answers, so the verification ex
 complete and no document byte crosses (L2). Recorded because the obvious test asserts the dial
 fails, and that test would be asserting something untrue.
 
-#### P02.S06 — Both transports, one set of session tests *(D14)*
+#### P02.S06 — Both transports, one set of session tests *(D14)* *(done 2026-08-19, v1.109.54)*
 Scope: the TCP dialer kept as a peer behind the same core, with the session-logic tests parameterised over both. Refs: D14.
 Acceptance:
 - One set of session-logic tests runs green over both transports.
 - A full ceremony still completes over TCP after the QUIC path exists.
+
+Tasks:
+- T01 — one transport table, and a population guard so a third transport cannot be added without entering it.
+- T02 — the three session-logic tests and the L2 gate parameterised over it.
+- T03 — `livePair` parameterised, so the verification string is derived over both channels.
+- T04 — the QUIC-only ceremony test folded in, because two sets is what this slice exists to remove.
+
+**The table's guard had two holes and both were live** *(2026-08-19)*: its first regex matched names
+ending in `Listen` and so could not match `Listen` itself — the same re-typed-regex shape S04 hit one
+slice earlier — and its distinctness check compared **names**, so a table of `{"tcp", Listen, Dial}`
+and `{"quic", Listen, Dial}` would have run the whole suite over TCP twice with every subtest
+labelled `quic`. A parameterised suite is only as good as its parameters being different, and only
+comparing the function values says they are.
 
 *Sketch retained:* the multi-instance harness, first, driving the HTTP API, with its ceiling written in its own file as every other tier's is (2026-08-18, D26); library selection as a PAIR — QUIC and DHT chosen together against the socket-sharing constraint, never one then the other (2026-08-18, caveat 7 pin); the socket demultiplexer and a spike proving `VerifyPeerCertificate` fires as under `crypto/tls`; the session core re-typed off `*tls.Conn` (D14); QUIC `Dial`/`Listen` added behind that core; the pinned-rejection test ported; the TCP dialer kept as a peer behind the same core, with the session-logic tests parameterised over both (2026-08-16, D14).
 
