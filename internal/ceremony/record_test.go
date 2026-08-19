@@ -1,6 +1,8 @@
 package ceremony
 
 import (
+	"bytes"
+	"encoding/base64"
 	"encoding/hex"
 	"errors"
 	"os"
@@ -645,6 +647,10 @@ func TestTheMirrorHoldsNoSecret(t *testing.T) {
 	if err := r.Sign(cert, key); err != nil {
 		t.Fatal(err)
 	}
+	inv, err := NewInvitation(r)
+	if err != nil {
+		t.Fatal(err)
+	}
 	root := t.TempDir()
 	dir, err := WriteMirror(root, r, nil)
 	if err != nil {
@@ -659,11 +665,33 @@ func TestTheMirrorHoldsNoSecret(t *testing.T) {
 	if len(b) < 100 {
 		t.Fatalf("setup: the mirrored record is %d bytes, which is not a record", len(b))
 	}
-	for _, forbidden := range []string{"secret", "Secret", "invitation", "privateKey"} {
+	// The ACTUAL secret bytes of the invitation THIS ceremony issued — not the word
+	// "secret", and not a freshly-minted one.
+	//
+	// The first draft called NewInvitation *after* writing the mirror, which mints a new
+	// random secret every call: it searched the file for a value that had never existed
+	// anywhere, so it could not have failed. Caught by probing, and it is the same shape as
+	// the vacuity this repo keeps finding — an assertion whose subject was never present.
+	if len(inv.Secret) != SecretLen {
+		t.Fatal("setup: the invitation has no secret, so searching for it proves nothing")
+	}
+	for _, form := range [][]byte{
+		inv.Secret,
+		[]byte(hex.EncodeToString(inv.Secret)),
+		[]byte(base64.StdEncoding.EncodeToString(inv.Secret)),
+		[]byte(base64.RawURLEncoding.EncodeToString(inv.Secret)),
+	} {
+		if bytes.Contains(b, form) {
+			t.Errorf("the invitation secret is in the mirrored record, encoded as %.12s… . The "+
+				"mirror is ordinary files under the user's home; the secret belongs in the vault, "+
+				"which is sealed to the user's SSH key (D29)", form)
+		}
+	}
+	// The field-name scan too, which catches a secret stored in a form this test did not
+	// think of encoding.
+	for _, forbidden := range []string{"secret", "Secret", "privateKey"} {
 		if strings.Contains(string(b), forbidden) {
-			t.Errorf("the mirrored record contains %q. The mirror is ordinary files under the "+
-				"user's home; the invitation secret belongs in the vault, which is sealed to "+
-				"their SSH key (D29)", forbidden)
+			t.Errorf("the mirrored record contains the field name %q", forbidden)
 		}
 	}
 }

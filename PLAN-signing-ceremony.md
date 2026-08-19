@@ -2001,7 +2001,19 @@ nib is a mature repo with VERSION, CLAUDE.md, release machinery and git history.
 Stage 8 scaffolding would write `0.1.0` over a shipping product. Recorded as
 pre-satisfied, exactly as the sibling plan records it.
 
-### P01 — Pairing identity: the name, the record, and the invitation **(amended 2026-08-18)**
+### P01 — Pairing identity: the name, the record, and the invitation **(amended 2026-08-18)** *(done 2026-08-19, v1.109.48)*
+
+**Phase close, 2026-08-19.** Ledger: **14 met / 0 not met / 2 not exercised**, both waiting on
+P07's convene-and-decline machinery and both recorded rather than collapsed — the
+accept-then-decline *flow* (9c) and "after a ceremony is armed" (10's second half). The
+properties they protect are guarded now; the paths through the UI are not.
+**The close found a criterion that had never been built**: invitation-scoped pins (D29). No
+test could fail for a feature nobody wrote, and only walking the criteria verbatim found it.
+Built at the close, red-proved twice. **Caveat 11 discharged** at S07's grill (HKDF, not a
+PAKE). **Caveat 10 discharged empirically** at S06 — and the record's `docHash` was
+re-specified in the same slice, because pdfcpu's rewrite is not idempotent and a byte hash is
+not recomputable by anyone but its writer. Review:
+`<project-memory>/code-reviews/P01-phase-close-2026-08-19.md`.
 Goal: replace the 64-hex exchange with a six-word name, and ~~establish the
 verification string as a mandatory gate~~ **establish the verification string as a gate conditioned
 on the pin's strength (corrected 2026-08-18, plan-review, adopted by Dan — see D4's supersession and
