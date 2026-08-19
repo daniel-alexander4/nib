@@ -2424,12 +2424,24 @@ what the new tier is for. Groups: `239.255.90.90` (RFC 2365 administratively sco
 `ff12::6e69:62` (RFC 4291 transient, link-local) — and **the scope guarantee is the hop limit of 1,
 not the address**, because scope bits are a statement a router may respect and arithmetic is not.
 
-#### P03.S03 — A discovered peer becomes a dialable candidate
+#### P03.S03 — A discovered peer becomes a dialable candidate *(done 2026-08-19, v1.110.2)*
 Scope: match announcements against pinned peers; surface the result. Refs: L1, D16's browse budget.
 Acceptance:
 - An announcement from a **pinned** peer resolves to that peer's fingerprint and address; one from an **unpinned** peer resolves to nothing — both driven, because only the pair distinguishes matching from accepting.
 - `vault.PinnedPeers()` round-trips `Ceremony`, with a test. It does not today (`internal/vault/vault.go:725` drops it), and this is the first slice whose code reads that accessor.
 - The browse window is D16's **2 s**.
+
+Tasks:
+- T01 — `vault.PinnedPeers()` copies `Ceremony`, with a round-trip test.
+- T02 — resolution in `internal/server`, not in `internal/discovery`: S01's L1 guard forbids that package importing the vault, and the layer that holds pins is the layer that decides what to dial.
+- T03 — both directions driven with really-encoded announcements; the 2 s window asserted as a bound, not a sleep.
+- T04 — tier 5 resolves end to end inside the namespace.
+
+**Where the matching lives is decided by S01's guard, not by taste** *(2026-08-19)*:
+`TestNothingHereCanReachAnIdentity` forbids `internal/discovery` importing `internal/vault`,
+`internal/sign` or `internal/p2p`. So resolution cannot live there, and that is the guard doing its
+job rather than an obstacle to route around — discovery stays a link-layer package that knows
+nothing about identity, and `internal/server` joins the two because it already holds both.
 
 #### P03.S04 — A LAN ceremony with no address typed
 Scope: the dial side takes a discovered candidate; the harness drives it. Refs: P03 exit criteria 1.

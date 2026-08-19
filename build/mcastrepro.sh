@@ -56,8 +56,14 @@ echo "building the discovery tests…"
 # Compiled OUTSIDE the namespace: inside it there is no network, and a build that
 # needed to fetch anything would fail for a reason that has nothing to do with
 # multicast. Everything the test needs is in the module cache by now.
-TESTBIN="$(mktemp -d)/discovery.test"
+BINDIR="$(mktemp -d)"
+TESTBIN="$BINDIR/discovery.test"
 go test -c -o "$TESTBIN" ./internal/discovery/ >/dev/null
+# The server's tests too: resolving an announcement to a dialable candidate is the
+# other half of discovery, and it lives in internal/server because internal/discovery
+# is guarded against importing the vault (L1). One namespace, both halves.
+SRVBIN="$BINDIR/server.test"
+go test -c -o "$SRVBIN" ./internal/server/ >/dev/null
 
 run() {
   unshare -rn bash -c '
@@ -74,7 +80,8 @@ run() {
     # the MULTICAST flag and joins anyway, which is why the selection does not require
     # it: the kernel does not enforce it.
     NIB_MCAST_NETNS=1 "$0" -test.run "TestTwoProcessesDiscoverEachOther|TestTheSocketJoinsTheInterfacesItChose|TestOwnAnnouncementsAreFilteredByNonceNotAddress|TestTwoSocketsCanShareThePort" -test.v
-  ' "$TESTBIN"
+    NIB_MCAST_NETNS=1 "$1" -test.run "TestARealAnnouncementResolvesToACandidate" -test.v
+  ' "$TESTBIN" "$SRVBIN"
 }
 
 OUT="$(mktemp)"
@@ -91,7 +98,12 @@ grep -q -- "--- PASS: TestTwoProcessesDiscoverEachOther" "$OUT" \
   || fail "TestTwoProcessesDiscoverEachOther did not PASS inside the namespace — if it SKIPPED, the namespace was not detected and this harness verified nothing"
 grep -q "DISCOVERED" "$OUT" \
   || fail "no process reported discovering another; the pass above is not about discovery"
+grep -q -- "--- PASS: TestARealAnnouncementResolvesToACandidate" "$OUT" \
+  || fail "the resolution test did not PASS inside the namespace"
+grep -q "RESOLVED" "$OUT" \
+  || fail "no announcement was resolved to a candidate; the pass above is not about resolution"
 grep -q -- "--- SKIP" "$OUT" \
   && fail "a test skipped inside the namespace — in here nothing should be unable to run"
 
-echo "PASS: two processes discovered each other over real multicast in a private namespace"
+echo "PASS: two processes discovered each other over real multicast, and an announcement"
+echo "      resolved to a dialable candidate — in a private namespace"
