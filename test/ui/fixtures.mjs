@@ -84,3 +84,55 @@ export function writeFixture(name, opts) {
   fs.writeFileSync(file, makePDF(opts));
   return file;
 }
+
+// makeCJKPDF builds a Type0 document encoded with a PREDEFINED CMap — the one
+// class of PDF that pdf.js cannot decode from the file alone.
+//
+// `/Encoding /UniJIS-UCS2-H` is a named CMap that ships with pdf.js as a separate
+// data file, not compiled into the worker: the worker carries only the LIST of
+// names it recognises and fetches the table from `cMapUrl`. So the mapping from
+// these bytes to CIDs — and, with no `/ToUnicode` here deliberately, to
+// characters — exists nowhere in this file or in the viewer. That is the whole
+// point of the fixture: text comes out of it only if the CMap data was found.
+//
+// The font is deliberately NOT embedded. A Japanese document produced by a
+// Japanese office suite names one of the standard Adobe CJK faces and expects the
+// reader to substitute; that is the document Nib meets, and an embedded font would
+// side-step the CMap question entirely (an embedded CIDFont is normally
+// Identity-H, which pdf.js resolves internally and which would prove nothing).
+export function makeCJKPDF(text = '日本語') {
+  // UniJIS-UCS2-H consumes two bytes per code unit, big-endian — so the string is
+  // written as UTF-16BE and every glyph is addressed by its Unicode code point.
+  const hex = [...text].map((c) => c.codePointAt(0).toString(16).padStart(4, '0')).join('');
+  const content = `BT /F1 36 Tf 72 700 Td <${hex}> Tj ET`;
+  const objs = [
+    '<< /Type /Catalog /Pages 2 0 R >>',
+    '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+    '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>',
+    `<< /Length ${content.length} >>\nstream\n${content}\nendstream`,
+    '<< /Type /Font /Subtype /Type0 /BaseFont /KozMinPr6N-Regular /Encoding /UniJIS-UCS2-H /DescendantFonts [6 0 R] >>',
+    '<< /Type /Font /Subtype /CIDFontType0 /BaseFont /KozMinPr6N-Regular /CIDSystemInfo << /Registry (Adobe) /Ordering (Japan1) /Supplement 6 >> /FontDescriptor 7 0 R /DW 1000 >>',
+    '<< /Type /FontDescriptor /FontName /KozMinPr6N-Regular /Flags 4 /FontBBox [0 -120 1000 880] /ItalicAngle 0 /Ascent 880 /Descent -120 /CapHeight 700 /StemV 80 >>',
+  ];
+
+  let out = '%PDF-1.7\n';
+  const offsets = [];
+  objs.forEach((o, i) => {
+    offsets.push(out.length);
+    out += `${i + 1} 0 obj\n${o}\nendobj\n`;
+  });
+  const xref = out.length;
+  out += `xref\n0 ${objs.length + 1}\n0000000000 65535 f \n`;
+  for (const o of offsets) out += `${String(o).padStart(10, '0')} 00000 n \n`;
+  out += `trailer\n<< /Size ${objs.length + 1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`;
+  return Buffer.from(out, 'latin1');
+}
+
+// writeRawFixture writes already-built bytes into the run's work dir.
+export function writeRawFixture(name, bytes) {
+  const dir = path.join(WORK, 'fixtures');
+  fs.mkdirSync(dir, { recursive: true });
+  const file = path.join(dir, name);
+  fs.writeFileSync(file, bytes);
+  return file;
+}

@@ -35,6 +35,11 @@ var contentTypes = map[string]string{
 	".png":  "image/png",
 	".gz":   "application/gzip", // the vendored tesseract <lang>.traineddata.gz
 	".md":   "text/markdown; charset=utf-8",
+	// The vendored Adobe CMap tables. pdf.js fetches these as raw bytes and parses
+	// them itself, so the type only has to be one the browser will not try to
+	// interpret — and must not be left to the machine, which is this table's whole
+	// reason for existing.
+	".bcmap": "application/octet-stream",
 }
 
 // registerContentTypes pins the table above, overriding whatever the OS told the

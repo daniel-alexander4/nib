@@ -32,6 +32,29 @@ import pixelmatch from './vendor/pixelmatch/pixelmatch.mjs';
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = './vendor/pdfjs/pdf.worker.min.mjs';
 
+// Every getDocument() in this file must carry these, so they live in one object that
+// each call spreads rather than in five literals that can drift apart.
+//
+// `cMapUrl` is not decoration. pdf.js compiles in the NAMES of the ~150 predefined Adobe
+// CMaps and nothing else: the tables live in separate `.bcmap` files it fetches at read
+// time. Without them a document that says `/Encoding /UniJIS-UCS2-H` — which is what a
+// Japanese, Chinese or Korean office suite writes when it names a standard Adobe face —
+// has no route from its bytes to characters, and pdf.js yields an EMPTY text layer:
+// nothing to select, nothing to copy, nothing to search. Measured that way before the
+// tables were vendored (test/ui/cmap.test.mjs).
+//
+// `cMapPacked` says the tables are the binary `.bcmap` form, which is what ships.
+//
+// Deliberately NOT set here, each for a stated reason rather than by omission:
+//   * `standardFontDataUrl` — pdf.js defaults `useSystemFonts: true` and substitutes a
+//     system face for the standard 14, fetching font data only for Symbol and
+//     ZapfDingbats. Vendoring 800 KB for that pair with no case that proves it would be
+//     size behind an untested claim.
+//   * `wasmUrl` / `iccUrl` — JBIG2, JPEG-2000 and ICC colour. pdf.js ships JS fallbacks
+//     for the first two (`*_nowasm_fallback.js`), so these degrade rather than fail, and
+//     each needs its own fixture to tell degraded from broken.
+const PDFJS_OPTS = { cMapUrl: './vendor/pdfjs/cmaps/', cMapPacked: true };
+
 // --- element handles ---------------------------------------------------------
 const $ = (id) => document.getElementById(id);
 const els = {
@@ -1144,7 +1167,7 @@ async function loadPendingPreview(token) {
   els.srvPreview.innerHTML = '';
   const loading = emptyNote(els.srvPreview, 'Loading the document…');
   let doc;
-  try { doc = await pdfjsLib.getDocument({ url: '/api/session/pending-pdf?t=' + Date.now() }).promise; }
+  try { doc = await pdfjsLib.getDocument({ ...PDFJS_OPTS, url: '/api/session/pending-pdf?t=' + Date.now() }).promise; }
   catch { if (token === recvPoll) els.srvPreview.textContent = 'could not render the document'; return; }
   // This function is the doc's sole holder, so it destroys it on every exit —
   // otherwise each consent preview leaks a worker-side document.
@@ -2216,7 +2239,7 @@ async function setDocumentFromServer(meta, target = view) {
     // header would mean opting into its httpHeaders plumbing to gain a uniformity
     // nobody reads (D15). The URL already carries a cache-buster; the id joins it.
     const docParam = meta.id ? '&doc=' + encodeURIComponent(meta.id) : '';
-    doc = await pdfjsLib.getDocument({ url: '/api/pdf?t=' + Date.now() + docParam }).promise;
+    doc = await pdfjsLib.getDocument({ ...PDFJS_OPTS, url: '/api/pdf?t=' + Date.now() + docParam }).promise;
   } catch (e) {
     // An encrypted PDF needs its open password before pdf.js can render it; prompt
     // for it and unlock the working copy rather than dead-end on a generic error.
@@ -2999,7 +3022,7 @@ els.compareInput.onchange = async () => {
   els.compareBody.innerHTML = '<p class="scan-where">Loading…</p>';
   try {
     const buf = new Uint8Array(await f.arrayBuffer());
-    cmpDoc = await pdfjsLib.getDocument({ data: buf }).promise;
+    cmpDoc = await pdfjsLib.getDocument({ ...PDFJS_OPTS, data: buf }).promise;
   } catch {
     els.compareBody.innerHTML = '<p class="scan-where">Could not read that PDF.</p>';
     return;
@@ -5328,7 +5351,7 @@ if (els.ocrBtn) els.ocrBtn.onclick = runOCR;
 // is exactly when "the active view" stops meaning "the document the user acted on".
 async function renderFilledPages(scale, onlyPage, mime, quality, owner = view) {
   const bytes = await bakedBytes(owner.docMeta && owner.docMeta.id, owner);
-  const doc = await pdfjsLib.getDocument({ data: bytes }).promise;
+  const doc = await pdfjsLib.getDocument({ ...PDFJS_OPTS, data: bytes }).promise;
   const pages = [];
   const from = onlyPage || 1;
   const to = onlyPage || doc.numPages;
@@ -5348,7 +5371,7 @@ async function flattenPages(pages, paint, docId = view.docMeta && view.docMeta.i
   const bytes = await bakedBytes();
   // pdf.js detaches the buffer it parses, but `bytes` is also uploaded as the pdf
   // field, so render from a copy and keep the original intact for the upload.
-  const doc = await pdfjsLib.getDocument({ data: bytes.slice() }).promise;
+  const doc = await pdfjsLib.getDocument({ ...PDFJS_OPTS, data: bytes.slice() }).promise;
   const form = new FormData();
   form.append('pdf', new Blob([bytes], { type: 'application/pdf' }), 'doc.pdf');
   for (const n of pages) {
