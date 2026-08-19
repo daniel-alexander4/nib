@@ -1128,17 +1128,28 @@
   <div id="peersModal" hidden>
     <div class="sigcard">
       <h3>Identity &amp; peers</h3>
-      <p class="libhint">Your signing fingerprint identifies you when co-signing. Share it
-        with the other person over a channel you both trust, and pin theirs below after
-        comparing — it's what each signature attests to.</p>
-      <label>Your fingerprint (share this)
+      <p class="libhint">Your six-word name identifies you when co-signing. Read it to the other
+        person over a channel you both trust — a phone call, in the room — and pin theirs below
+        after comparing. It's derived from your signing key, so nobody else can have it.</p>
+      <label>Your name (read this out)
+        <div class="fpcompare">
+          <div id="peerSelfName" class="peername"></div>
+        </div></label>
+      <!-- The hex fingerprint lives behind a disclosure, not merely de-emphasised in place
+           (P01 exit criterion, plan-review W7). <details> rather than a JS toggle: it is
+           keyboard-operable and screen-reader-announced without any script. -->
+      <details class="advanced">
+        <summary>Fingerprint (advanced)</summary>
+        <p class="libhint">The full 64-character value your name encodes the start of. You need it
+          only to pin by hand; reading the six words aloud is the ordinary way.</p>
         <div class="fpcompare">
           <div id="peerSelfFp" class="peerfp"></div>
           <button id="peerSelfCopy" class="copyfp" title="Copy fingerprint">Copy</button>
-        </div></label>
+        </div>
+      </details>
       <div class="sep"></div>
       <div id="peersList" class="peerslist"></div>
-      <label>Pin a peer's fingerprint (compare it first, over a trusted channel)
+      <label>Pin a peer by fingerprint (compare it first, over a trusted channel)
         <textarea id="peerPaste" rows="2" placeholder="64 hex characters" spellcheck="false"></textarea></label>
       <label>Label (a name for this peer)
         <input id="peerLabel" type="text" placeholder="e.g. Alice" spellcheck="false" /></label>
@@ -1260,11 +1271,18 @@
           <input id="srvBind" type="text" value="0.0.0.0:8443" spellcheck="false" /></label>
         <p class="libhint">The peer reaches this address by port-forward or over a VPN you both use
           (e.g. Tailscale). Nib runs no relay of its own.</p>
-        <label>Your fingerprint (the peer pins this)
+        <label>Your name (read this out)
+          <div class="fpcompare">
+            <div id="srvSelfName" class="peername"></div>
+          </div></label>
+        <details class="advanced">
+          <summary>Fingerprint (advanced)</summary>
+          <p class="libhint">What the peer pins by hand, if they are not going by your name.</p>
           <div class="fpcompare">
             <div id="srvSelfFp" class="peerfp"></div>
             <button id="srvSelfCopy" class="copyfp" title="Copy fingerprint">Copy</button>
-          </div></label>
+          </div>
+        </details>
         <div class="sigbtns">
           <button id="srvCancel">Cancel</button>
           <span class="grow"></span>

@@ -113,7 +113,8 @@ const els = {
   keyCandidates: $('keyCandidates'), keyPaste: $('keyPaste'), keyAddPath: $('keyAddPath'),
   keyAddBtn: $('keyAddBtn'), keyCreateBtn: $('keyCreateBtn'), keysClose: $('keysClose'),
   managePeersBtn: $('managePeersBtn'), peersModal: $('peersModal'), peersList: $('peersList'),
-  peerSelfFp: $('peerSelfFp'), peerPaste: $('peerPaste'), peerLabel: $('peerLabel'),
+  peerSelfFp: $('peerSelfFp'), peerSelfName: $('peerSelfName'),
+  peerPaste: $('peerPaste'), peerLabel: $('peerLabel'),
   peerPinBtn: $('peerPinBtn'), peersClose: $('peersClose'),
   extSignerStatus: $('extSignerStatus'), extP12File: $('extP12File'), extP12Pass: $('extP12Pass'),
   extP12Import: $('extP12Import'), extP12Remove: $('extP12Remove'),
@@ -132,7 +133,7 @@ const els = {
   srvTitle: $('srvTitle'), srvArmHint: $('srvArmHint'), srvConsentHint: $('srvConsentHint'),
   srvArm: $('srvArm'), srvWait: $('srvWait'), srvConsent: $('srvConsent'),
   srvPeer: $('srvPeer'), srvNoPeers: $('srvNoPeers'), srvBind: $('srvBind'),
-  srvSelfFp: $('srvSelfFp'), srvSelfCopy: $('srvSelfCopy'),
+  srvSelfFp: $('srvSelfFp'), srvSelfName: $('srvSelfName'), srvSelfCopy: $('srvSelfCopy'),
   srvCancel: $('srvCancel'), srvArmGo: $('srvArmGo'),
   srvWaitAddr: $('srvWaitAddr'), srvWaitPeer: $('srvWaitPeer'), srvDisarm: $('srvDisarm'),
   srvPeerLabel: $('srvPeerLabel'), srvPeerFp: $('srvPeerFp'), srvPeerCopy: $('srvPeerCopy'),
@@ -765,6 +766,22 @@ function groupFingerprint(hex) {
 // Copy buttons hand the peer the exact value to pin (the grouped display has spaces).
 let selfFingerprint = '';
 
+// peerOptionLabel is the one label every peer <select> uses.
+//
+// There are FOUR of them — co-sign, sign-in-person, serve, and send — and before this they
+// carried four copies of the same expression, with the serve one carrying a fifth in its
+// dataset. Four copies of a display rule is four places to forget when the rule changes,
+// which is exactly what happened here: the slice was scoped against three, and the fourth
+// and fifth were found by a count assertion rather than by reading.
+//
+// Hex is deliberately gone from the label. Eight characters of a fingerprint is neither
+// readable nor speakable, and the six words are the identity a person can actually check;
+// the option VALUE still carries the full hex, which is what addresses the peer.
+function peerOptionLabel(p) {
+  if (p.label && p.name) return p.label + ' — ' + p.name;
+  return p.label || p.name || 'Unlabelled peer';
+}
+
 // copyFp puts a full ungrouped fingerprint on the clipboard for out-of-band
 // comparison — the safety-number check that anchors who a live session is with.
 async function copyFp(hex) {
@@ -776,6 +793,16 @@ async function copyFp(hex) {
 function renderPeers(data) {
   selfFingerprint = data.fingerprint || '';
   els.peerSelfFp.textContent = groupFingerprint(selfFingerprint);
+  // The name is read off the payload at each render site rather than into a second
+  // module global beside selfFingerprint. That variable is already written by two
+  // different loaders and is only benign because both write the same value; a parallel
+  // selfName would double a hazard rather than add a field.
+  //
+  // The fallback is NOT the fingerprint. Falling back to hex would put it on the default
+  // screen in exactly the case the criterion is about — and a criterion that holds only
+  // when the happy path fires is not a criterion. Hex has a home two lines below, behind
+  // the disclosure; this slot says the name is missing.
+  els.peerSelfName.textContent = data.name || '(name unavailable)';
   els.peersList.innerHTML = '';
   if (!(data.peers || []).length) emptyNote(els.peersList, 'No peers pinned yet.');
   for (const p of data.peers || []) {
@@ -785,10 +812,17 @@ function renderPeers(data) {
     meta.className = 'keymeta';
     const name = document.createElement('div');
     name.className = 'keyfp';
-    name.textContent = p.label || 'Unlabelled peer';
+    // Titled by what identifies them. A label is what YOU called them and wins when set;
+    // otherwise the six-word name, which is derived from their key and is the thing that
+    // makes an otherwise anonymous row identifiable (D3). "Unlabelled peer" survives only
+    // where neither exists.
+    name.textContent = p.label || p.name || 'Unlabelled peer';
     const fp = document.createElement('div');
     fp.className = 'keysub';
-    fp.textContent = groupFingerprint(p.fingerprint);
+    // The subtitle carries the name only when the label took the title — otherwise the
+    // name is already up there. Never the fingerprint: this row is on the default pairing
+    // screen, and Copy is how hex is reached from here.
+    fp.textContent = (p.label && p.name) ? p.name : '';
     meta.append(name, fp);
     const copy = document.createElement('button');
     copy.className = 'copyfp';
@@ -887,8 +921,10 @@ async function openCosign() {
   els.cosignPeer.innerHTML = '';
   for (const p of peers) {
     const o = document.createElement('option');
+    // The VALUE stays hex: it is the addressing key posted to the co-sign, serve and
+    // send routes, and L1 forbids a name resolving a pin. Only the label changes.
     o.value = p.fingerprint;
-    o.textContent = (p.label || 'Unlabelled peer') + ' — ' + groupFingerprint(p.fingerprint.slice(0, 8)) + '…';
+    o.textContent = peerOptionLabel(p);
     els.cosignPeer.append(o);
   }
   const none = peers.length === 0;
@@ -958,8 +994,10 @@ async function openSessionInit() {
   els.sinPeer.innerHTML = '';
   for (const p of peers) {
     const o = document.createElement('option');
+    // The VALUE stays hex: it is the addressing key posted to the co-sign, serve and
+    // send routes, and L1 forbids a name resolving a pin. Only the label changes.
     o.value = p.fingerprint;
-    o.textContent = (p.label || 'Unlabelled peer') + ' — ' + groupFingerprint(p.fingerprint.slice(0, 8)) + '…';
+    o.textContent = peerOptionLabel(p);
     els.sinPeer.append(o);
   }
   const none = peers.length === 0;
@@ -1075,13 +1113,17 @@ async function openSessionRecv(mode) {
   const data = await res.json();
   selfFingerprint = data.fingerprint || '';
   els.srvSelfFp.textContent = groupFingerprint(selfFingerprint);
+  els.srvSelfName.textContent = data.name || '(name unavailable)';
   const peers = data.peers || [];
   els.srvPeer.innerHTML = '';
   for (const p of peers) {
     const o = document.createElement('option');
     o.value = p.fingerprint;
-    o.dataset.label = p.label || 'Unlabelled peer';
-    o.textContent = (p.label || 'Unlabelled peer') + ' — ' + groupFingerprint(p.fingerprint.slice(0, 8)) + '…';
+    // dataset.label feeds recvArmedLabel, which names the peer in "waiting for …" and in
+    // the consent card's fallback — so it gets the same identity the option shows, or the
+    // two disagree about who you armed for.
+    o.dataset.label = peerOptionLabel(p);
+    o.textContent = peerOptionLabel(p);
     els.srvPeer.append(o);
   }
   const none = peers.length === 0;
@@ -1383,8 +1425,10 @@ async function openSessionSend() {
   els.ssnPeer.innerHTML = '';
   for (const p of peers) {
     const o = document.createElement('option');
+    // The VALUE stays hex: it is the addressing key posted to the co-sign, serve and
+    // send routes, and L1 forbids a name resolving a pin. Only the label changes.
     o.value = p.fingerprint;
-    o.textContent = (p.label || 'Unlabelled peer') + ' — ' + groupFingerprint(p.fingerprint.slice(0, 8)) + '…';
+    o.textContent = peerOptionLabel(p);
     els.ssnPeer.append(o);
   }
   const none = peers.length === 0;

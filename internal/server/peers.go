@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"strings"
 
+	"nib/internal/pairing"
 	"nib/internal/sign"
 	"nib/internal/vault"
 )
@@ -23,13 +24,24 @@ import (
 // peer is one pinned peer in the management view.
 type peer struct {
 	Fingerprint string `json:"fingerprint"` // hex SHA-256 of the peer's SPKI
+	Name        string `json:"name,omitempty"`
 	Label       string `json:"label,omitempty"`
 }
 
 // peersResponse is the management view: the user's own fingerprint (to share
 // out-of-band) plus the pinned peers.
+//
+// Name is the six-word pairing name (D3): an encoding of the leading bits of the
+// fingerprint, so it is a *display* identity rather than a second identifier. It is
+// derived on every read and stored nowhere — the vault holds fingerprints and labels
+// only, and `TestPeerNameIsNeverStored` reads the vault file to prove it.
+//
+// **Nothing addresses a peer by name.** Pinning, co-signing and the serve routes all
+// take the hex fingerprint, and L1 forbids a name resolving a pin; a name that reached
+// those paths would be the design D31 removed.
 type peersResponse struct {
 	Fingerprint string `json:"fingerprint"` // the user's own hex SPKI fingerprint
+	Name        string `json:"name,omitempty"`
 	Peers       []peer `json:"peers"`
 }
 
@@ -47,9 +59,32 @@ func (s *Server) peersPayload(v *vault.Vault) (peersResponse, error) {
 	pinned := v.PinnedPeers()
 	peers := make([]peer, 0, len(pinned))
 	for _, p := range pinned {
-		peers = append(peers, peer{Fingerprint: hex.EncodeToString(p.Fingerprint), Label: p.Label})
+		peers = append(peers, peer{
+			Fingerprint: hex.EncodeToString(p.Fingerprint),
+			Name:        nameOrEmpty(p.Fingerprint),
+			Label:       p.Label,
+		})
 	}
-	return peersResponse{Fingerprint: hex.EncodeToString(fp), Peers: peers}, nil
+	return peersResponse{
+		Fingerprint: hex.EncodeToString(fp),
+		Name:        nameOrEmpty(fp),
+		Peers:       peers,
+	}, nil
+}
+
+// nameOrEmpty derives the six-word pairing name, or "" if it cannot.
+//
+// A name that will not derive must not fail the whole peers view: the fingerprint is
+// the load-bearing value on every one of these paths and the name is a display
+// convenience beside it. The only way it errors is a fingerprint that is not 32 bytes,
+// which the vault cannot hold — so this is a floor under a case that should not happen,
+// not a tolerated one. The client renders hex when the name is absent.
+func nameOrEmpty(fp []byte) string {
+	n, err := pairing.Name(fp)
+	if err != nil {
+		return ""
+	}
+	return n
 }
 
 func (s *Server) handlePeersList(w http.ResponseWriter, r *http.Request) {
