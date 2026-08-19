@@ -19,6 +19,7 @@
 package pairing
 
 import (
+	"crypto/sha256"
 	_ "embed"
 	"errors"
 	"fmt"
@@ -49,8 +50,9 @@ const bitsPerWord = 11
 const NameBits = NameWords * bitsPerWord
 
 var (
-	errWordCount = errors.New("a pairing name is six words")
-	errNotInList = errors.New("not a word from the pairing list")
+	errWordCount      = errors.New("a pairing name is six words")
+	errNotInList      = errors.New("not a word from the pairing list")
+	errFingerprintLen = errors.New("a fingerprint is 32 bytes")
 )
 
 var (
@@ -72,6 +74,10 @@ func load() {
 // allWords returns the wordlist. Unexported: nothing outside this package has a reason
 // to hold 2048 words, and an exported accessor would be one more thing to keep true. The
 // guards that assert the list's own properties live in this package and use it.
+//
+// The slice is the package's own backing array and must not be modified. Stated rather
+// than defended with a copy: the only callers are in this file's own tests, and copying
+// 2048 strings per call to guard against a caller that cannot exist is cost with no reader.
 func allWords() []string {
 	load()
 	return words
@@ -86,8 +92,16 @@ func allWords() []string {
 // not this comment.
 func Name(fp []byte) (string, error) {
 	load()
-	if len(fp)*8 < NameBits {
-		return "", fmt.Errorf("fingerprint is %d bytes, need at least %d", len(fp), (NameBits+7)/8)
+	// Exactly 32, not "enough bytes to read 66 bits".
+	//
+	// The encoding reads nine bytes and never looks at the rest, so a length check
+	// derived from what the encoder touches would accept a nine-byte slice — and hand
+	// back a name IDENTICAL to the one the full fingerprint produces. A truncated or
+	// mistaken value would then present as a correct-looking identity, which is the one
+	// answer this package must never give. There is a single producer of these bytes
+	// (sign.Fingerprint, a SHA-256 of the SPKI) and it has one length.
+	if len(fp) != sha256.Size {
+		return "", fmt.Errorf("%w: got %d", errFingerprintLen, len(fp))
 	}
 	out := make([]string, NameWords)
 	for i := range out {
@@ -130,6 +144,11 @@ func Matches(fp []byte, name string) bool {
 
 // normalize lowercases, collapses whitespace, and checks the shape — the shared front
 // half of Matches and decode, so the two cannot disagree about what a name is.
+//
+// Lowercasing is only safe because every word in the list is lowercase, and Matches
+// compares against Name's output verbatim. That is asserted in wordlist_test.go
+// (TestWordlistProperties); it is named here because this is the line that depends on
+// it, and a capital in the list would break every retyped name from here.
 func normalize(name string) (string, error) {
 	parts := strings.Fields(strings.ToLower(strings.TrimSpace(name)))
 	if len(parts) != NameWords {

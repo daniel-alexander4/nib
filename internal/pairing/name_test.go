@@ -111,11 +111,44 @@ func TestNameIsDerivedNotStored(t *testing.T) {
 	}
 }
 
-// TestNameRefusesAShortFingerprint: 66 bits cannot come from 8 bytes, and silently
-// reading past the end would be a panic in production rather than an error here.
-func TestNameRefusesAShortFingerprint(t *testing.T) {
-	if _, err := Name(make([]byte, 8)); err == nil {
-		t.Error("an 8-byte fingerprint produced a name; 66 bits need 9 bytes")
+// TestNameRequiresAFullFingerprint is the F1 fix, and the interesting case is not the
+// short input — it is the one that WOULD have worked.
+//
+// The encoding reads nine bytes. A guard derived from that ("enough bytes to read 66
+// bits") accepts a nine-byte slice and returns the SAME six words as the full 32-byte
+// fingerprint it was cut from, so a truncated value presents as a correct-looking
+// identity. This test asserts the refusal AND asserts the collision it prevents, because
+// the refusal alone would pass against a guard that merely rejected 8 bytes.
+func TestNameRequiresAFullFingerprint(t *testing.T) {
+	full := sha256.Sum256([]byte("a real identity"))
+	name, err := Name(full[:])
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, n := range []int{0, 8, 9, 16, 31, 33, 64} {
+		if _, err := Name(make([]byte, n)); err == nil {
+			t.Errorf("a %d-byte fingerprint produced a name; a fingerprint is 32 bytes", n)
+		} else if !errors.Is(err, errFingerprintLen) {
+			t.Errorf("%d bytes reported %v, not the length error", n, err)
+		}
+	}
+
+	// The stimulus: those nine bytes really do encode this name, so the guard above is
+	// refusing something that would otherwise have been silently accepted as valid.
+	truncated := full[:9]
+	var padded [32]byte
+	copy(padded[:], truncated)
+	same, err := Name(padded[:])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if same != name {
+		t.Fatalf("setup: the first nine bytes do not determine the name (%q vs %q) — "+
+			"this test is no longer demonstrating the collision it exists for", same, name)
+	}
+	if Matches(truncated, name) {
+		t.Error("Matches accepted a truncated fingerprint against the full one's name")
 	}
 }
 
