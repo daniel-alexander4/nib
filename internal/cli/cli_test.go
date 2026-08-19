@@ -1187,3 +1187,144 @@ func TestWatchIgnoresFilesAlreadyPresent(t *testing.T) {
 		t.Errorf("a newly-arrived file was not processed: acted = %v", acted)
 	}
 }
+
+// signedTestPDF returns a freshly signed PDF, asserting it verifies before any
+// test uses it — a "signed" fixture that was never actually signed would make
+// every refusal assertion below pass for the wrong reason.
+func signedTestPDF(t *testing.T) []byte {
+	t.Helper()
+	certPEM, keyPEM, err := sign.GenerateIdentity("Nib Test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	pdf, err := testpdf.Form()
+	if err != nil {
+		t.Fatal(err)
+	}
+	signed, err := sign.Sign(pdf, certPEM, keyPEM, sign.Options{
+		Name:   "Nib Test",
+		Reason: "Finalized in Nib",
+		When:   time.Date(2026, 8, 19, 12, 0, 0, 0, time.UTC),
+	})
+	if err != nil {
+		t.Fatalf("sign: %v", err)
+	}
+	if st := sign.Verify(signed).State; st != sign.Valid {
+		t.Fatalf("fixture verifies as %q, want valid — the fixture is not signed", st)
+	}
+	return signed
+}
+
+// TestInPlaceRewriteRefusesSignedPDF pins the whole class, not the one instance
+// that was reported: EVERY in-place rewrite door must refuse a signed PDF.
+//
+// A structural rewrite invalidates every signature on the document — the byte
+// ranges the signatures cover no longer exist — and an in-place rewrite has no
+// undo and no second copy. The loss is silent: the output is a perfectly valid
+// PDF that simply no longer proves anything. There are three doors, and a guard
+// on one of them is a guard on none:
+//
+//   - transformInPlace  — `-w` for optimize, sanitize, rotate, normalize,
+//     pagenum, pagelabels and every other runTransform command
+//   - runContinuousPagenum — `pagenum --continuous -w` (its own write site)
+//   - watchTransform    — `nib watch --do optimize|sanitize`
+//
+// Writing to a NEW file is deliberately untouched: the original survives, and
+// deliberately stripping a signature into a copy is a legitimate thing to want.
+func TestInPlaceRewriteRefusesSignedPDF(t *testing.T) {
+	signed := signedTestPDF(t)
+
+	// The premise, asserted rather than quoted. If a structural rewrite ever
+	// stopped destroying signatures, every guard below would be protecting
+	// nothing and this line is what would say so.
+	opt, err := pdfops.Optimize(signed)
+	if err != nil {
+		t.Fatalf("optimize: %v", err)
+	}
+	if st := sign.Verify(opt).State; st == sign.Valid {
+		t.Fatalf("optimizing a signed PDF left it %q — a rewrite no longer destroys signatures, so this guard protects nothing", st)
+	}
+
+	unsigned, err := testpdf.Form()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// write puts a fixture in its own file and returns the path plus its bytes.
+	write := func(name string, data []byte) string {
+		p := filepath.Join(t.TempDir(), name)
+		if err := os.WriteFile(p, data, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+	unchanged := func(t *testing.T, path string, want []byte) {
+		t.Helper()
+		got, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !bytes.Equal(got, want) {
+			t.Errorf("%s was rewritten — the signed document on disk was destroyed", filepath.Base(path))
+		}
+	}
+	rewritten := func(t *testing.T, path string, orig []byte) {
+		t.Helper()
+		got, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if bytes.Equal(got, orig) {
+			t.Errorf("%s was NOT rewritten — a guard that refuses everything would pass the signed assertions for the wrong reason", filepath.Base(path))
+		}
+	}
+
+	t.Run("transformInPlace", func(t *testing.T) {
+		p := write("signed.pdf", signed)
+		if code := transformInPlace([]string{p}, pdfops.Optimize); code == 0 {
+			t.Error("rewriting a signed PDF in place returned success")
+		}
+		unchanged(t, p, signed)
+
+		q := write("plain.pdf", unsigned)
+		if code := transformInPlace([]string{q}, pdfops.Optimize); code != 0 {
+			t.Errorf("rewriting an UNSIGNED PDF in place returned %d, want 0", code)
+		}
+		rewritten(t, q, unsigned)
+	})
+
+	t.Run("continuousPagenum", func(t *testing.T) {
+		st := pdfops.PageNumberStyle{Start: 1, Size: 11, Position: "bc"}
+		p := write("signed.pdf", signed)
+		if code := runContinuousPagenum([]string{p}, st, true, "", ""); code == 0 {
+			t.Error("stamping page numbers onto a signed PDF in place returned success")
+		}
+		unchanged(t, p, signed)
+
+		q := write("plain.pdf", unsigned)
+		if code := runContinuousPagenum([]string{q}, st, true, "", ""); code != 0 {
+			t.Errorf("stamping an UNSIGNED PDF in place returned %d, want 0", code)
+		}
+		rewritten(t, q, unsigned)
+	})
+
+	t.Run("watchTransform", func(t *testing.T) {
+		p := write("signed.pdf", signed)
+		status, err := watchOps["optimize"](p)
+		// A refusal is not a failure: the file will never become eligible, so
+		// scanOnce must record it as done rather than retry it every scan.
+		if err != nil {
+			t.Errorf("watch returned an error for a signed PDF (%v) — scanOnce retries an error forever", err)
+		}
+		if !strings.Contains(status, "skipped") {
+			t.Errorf("watch status = %q, want a skip", status)
+		}
+		unchanged(t, p, signed)
+
+		q := write("plain.pdf", unsigned)
+		if _, err := watchOps["optimize"](q); err != nil {
+			t.Errorf("watch failed on an UNSIGNED PDF: %v", err)
+		}
+		rewritten(t, q, unsigned)
+	})
+}

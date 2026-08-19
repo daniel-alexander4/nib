@@ -56,6 +56,7 @@ the same failure this file exists to fix.
 
 | Defect reintroduced | Check that fired | What it said |
 |---|---|---|
+| No guard on any in-place rewrite door — `transformInPlace`, `runContinuousPagenum`, `watchTransform` (v1.109.33) | `TestInPlaceRewriteRefusesSignedPDF` (all three subtests) | "signed.pdf was rewritten — the signed document on disk was destroyed", and for the watch door "watch status = \"optimized\", want a skip" |
 | pdfcpu stops tagging its stamps with an OCG (simulated by asking for a name it does not use) (v1.109.16) | `TestHasStampLayerSeesPdfcpuOwnStamp` | "a document stamped with page numbers reports NO stamp layer … if that stopped being true, this detector is silently answering false for every document and the double-stamp warning built on it never fires" |
 | `flattenField` returns as soon as a field has children, dropping the parent's own `<value>` (v1.108.11) | `TestFlattenFieldKeepsAParentsOwnValue` | "the parent field's own value was dropped because it also has children; got `map[…]{"address.city":["Ipswich"]}`" |
 | The flags cache keyed on "have I cached anything" instead of on the byte slice (v1.108.10) | `TestDocResponseFlagsCacheInvalidatesWithTheBytes` | "after the document's bytes were replaced with a flagless PDF, docResponse still reports flags …" |

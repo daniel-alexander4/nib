@@ -818,6 +818,11 @@ together.
 given instead of writing a single `-o` output — the batch form for a folder.
 Each rewrite is atomic (written through a temp file and renamed over the
 original, so a failure never corrupts it) and preserves the file's permissions.
+**A signed PDF is refused in place**, by every one of those commands and by
+`nib watch`: a structural rewrite invalidates every signature on a document, and
+in place there is no undo and no second copy — the result would be a valid PDF
+that no longer proves anything. Write to a new file with `-o` if that is what you
+want; the original then survives either way.
 
 `nib sign` reads the certificate passphrase from `--password-file FILE`, the
 `NIB_P12_PASSWORD` environment variable, or — when run in a terminal with neither
@@ -830,7 +835,8 @@ dropped into `DIR` and keeps running until you stop it (Ctrl-C) — the "process
 my inbox" / scheduled-job workflow. It polls (no background file-watching
 dependency), waits for each file to finish copying before acting, and handles
 each file once. `timestamp` writes a `.ots` sidecar; `optimize`/`sanitize`
-rewrite in place. Run `nib <command> -h` for a command's own flags.
+rewrite in place — and so skip any signed PDF that lands in the directory,
+reporting it, rather than silently invalidating its signatures. Run `nib <command> -h` for a command's own flags.
 
 ---
 

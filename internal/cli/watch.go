@@ -191,6 +191,13 @@ func watchTransform(path string, fn func([]byte) ([]byte, error), done string) (
 	if err != nil {
 		return "", err
 	}
+	// A signed document is skipped, not failed: the rewrite would invalidate
+	// every signature on it (see signedInPlace), and nothing about the file will
+	// ever make it eligible — returning an error here would re-report the same
+	// refusal on every scan for as long as the watch runs.
+	if signedInPlace(data) {
+		return "skipped (signed — a rewrite would invalidate it)", nil
+	}
 	res, err := fn(data)
 	if err != nil {
 		return "", err

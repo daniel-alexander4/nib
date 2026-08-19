@@ -459,9 +459,10 @@ func cmdPagenum(args []string) int {
 // runContinuousPagenum stamps a set of files with ONE running page/Bates counter:
 // file 1 starts at --start, each later file continues where the previous ended.
 // Output is either in place (-w) or a non-destructive copy set (--out-dir); exactly
-// one is required (never an implicit overwrite). Every input is read and validated
-// up front, so a bad PDF — or the grand total needed for --total's "of N" — is known
-// before anything is written.
+// one is required (never an implicit overwrite). With --total every input is counted
+// up front, so the grand total behind "of N" is known before anything is written;
+// without it each file is read, stamped and written in turn, so a bad PDF partway
+// through stops the run with the earlier files already numbered.
 func runContinuousPagenum(files []string, st pdfops.PageNumberStyle, inPlace bool, outDir, out string) int {
 	switch {
 	case out != "":
@@ -532,6 +533,10 @@ func runContinuousPagenum(files []string, st pdfops.PageNumberStyle, inPlace boo
 				errf("%s: %v", f, err)
 				return 1
 			}
+		}
+		if inPlace && signedInPlace(b) {
+			errf("%s: %s", f, refuseSignedInPlace)
+			return 1
 		}
 		s := st
 		s.Start = offset
@@ -1160,15 +1165,45 @@ func runTransform(fs *flag.FlagSet, out string, inPlace bool, fn func([]byte) ([
 	return transform(in, out, fn)
 }
 
+// signedInPlace reports whether rewriting pdf in place would destroy a
+// signature. Any structural rewrite invalidates every signature on a document —
+// the byte ranges each signature covers cease to exist — and in place there is
+// no undo and no second copy. The loss is silent, too: the result is a perfectly
+// valid PDF that simply no longer proves anything.
+//
+// So Nib refuses, and says why. This is the destructive twin of the judgment
+// `nib watch` already makes about unattended `sign` (watch.go): an operation
+// whose consequence the user cannot see coming is not a silent default.
+//
+// Writing to a NEW file is deliberately unaffected — the original survives, and
+// deliberately stripping a signature into a copy is a legitimate thing to want.
+// A document with an empty placeholder signature field verifies as Unsigned, so
+// it rewrites normally; there is nothing there to lose.
+func signedInPlace(pdf []byte) bool {
+	return sign.Verify(pdf).State != sign.Unsigned
+}
+
+// refuseSignedInPlace is the one message every in-place door gives, so the
+// remedy reads the same wherever the user meets it.
+const refuseSignedInPlace = "refusing to rewrite a signed PDF in place — that invalidates every signature on it; write the result to a new file instead"
+
 // transformInPlace applies fn to each file and rewrites it atomically. A file
 // that fails to read or transform is reported and skipped; the rest continue,
-// and the worst per-file outcome becomes the exit code.
+// and the worst per-file outcome becomes the exit code. This is the -w door for
+// every runTransform command — optimize, sanitize, rotate, normalize, pagenum,
+// pagelabels and the rest — so the signed-document guard sits here rather than
+// in any one of them.
 func transformInPlace(files []string, fn func([]byte) ([]byte, error)) int {
 	worst := 0
 	for _, p := range files {
 		data, err := os.ReadFile(p)
 		if err != nil {
 			errf("%v", err)
+			worst = max(worst, 1)
+			continue
+		}
+		if signedInPlace(data) {
+			errf("%s: %s", p, refuseSignedInPlace)
 			worst = max(worst, 1)
 			continue
 		}
