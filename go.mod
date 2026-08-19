@@ -14,6 +14,7 @@ require (
 	golang.org/x/crypto v0.54.0
 	golang.org/x/sys v0.47.0
 	golang.org/x/term v0.45.0
+	golang.org/x/time v0.0.0-20220609170525-579cf78fd858
 	software.sslmate.com/src/go-pkcs12 v0.7.2
 )
 
@@ -49,6 +50,5 @@ require (
 	golang.org/x/net v0.56.0 // indirect
 	golang.org/x/sync v0.22.0 // indirect
 	golang.org/x/text v0.40.0 // indirect
-	golang.org/x/time v0.0.0-20220609170525-579cf78fd858 // indirect
 	gopkg.in/yaml.v2 v2.4.0 // indirect
 )

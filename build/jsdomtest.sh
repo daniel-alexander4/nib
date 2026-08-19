@@ -50,9 +50,13 @@ fi
 # next person to bump the number, which is how V11's equality assertion rotted. A
 # file count changes only when someone adds or deletes a file, which is deliberate.
 Nib_files="$(find test/jsdom -maxdepth 1 -name '*.test.mjs' | wc -l | tr -d ' ')"
-# Nine since P06.S03 added restore.test.mjs, which needs its own boot: the restore runs
-# at module-evaluation time and one boot per file is this tier's standing rule.
-Nib_expect_files=15
+# One boot per file is this tier's standing rule — restore.test.mjs needs its own because
+# its restore runs at module-evaluation time, and the same holds for every file since.
+# Sixteen since P01.S02 added peername.test.mjs (v1.109.41). Bumping this literal is the
+# deliberate act the guard exists to force; it went unbumped for nine commits, during which
+# this harness EXITED 1 while still printing "# pass 96 / # fail 0" above it. Read the exit
+# status, not the totals — the totals were true and the tier was red.
+Nib_expect_files=16
 if [ "$Nib_files" -ne "$Nib_expect_files" ]; then
   echo "FAIL: expected $Nib_expect_files jsdom test files, found $Nib_files — a test file was added or dropped." >&2
   echo "      If deliberate, update Nib_expect_files in this script." >&2
