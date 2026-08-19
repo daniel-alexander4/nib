@@ -1,7 +1,6 @@
 package server
 
 import (
-	"crypto/tls"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
@@ -32,12 +31,11 @@ import (
 
 const (
 	sessionAcceptTimeout = 5 * time.Minute // auto-disarm if no peer connects
-	// A connected peer must complete the TLS handshake promptly. Without its own bound, a
-	// connection that opens and then says nothing occupies the accept loop for the entire
-	// arm window — the same denial the handshake loop exists to prevent, one step later.
-	sessionHandshakeTimeout = 30 * time.Second
-	sessionConsentTimeout   = 5 * time.Minute  // decline if the user never responds
-	sessionDialTimeout      = 30 * time.Second // give up establishing the outbound connection
+	// (The handshake bound moved to internal/p2p's handshakeTimeout in P02.S05, value
+	// unchanged: what must be bounded differs per transport, and the server no longer
+	// sees a handshake at all.)
+	sessionConsentTimeout = 5 * time.Minute  // decline if the user never responds
+	sessionDialTimeout    = 30 * time.Second // give up establishing the outbound connection
 )
 
 // session is the receive side of a live session: an armed, routable, pinned-peer-only
@@ -47,7 +45,7 @@ const (
 // state is guarded by mu; it is independent of the Server's document lock.
 type session struct {
 	mu       sync.Mutex
-	ln       net.Listener   // non-nil while armed
+	ln       p2p.Listener   // non-nil while armed
 	addr     string         // bound address, reported in status
 	pending  *pendingReq    // set while a received request awaits the user's consent
 	verify   *pendingVerify // set while the spoken check awaits the user's confirmation
@@ -87,7 +85,7 @@ type sessionDecision struct {
 	appearance []byte
 }
 
-func (se *session) arm(ln net.Listener) bool {
+func (se *session) arm(ln p2p.Listener) bool {
 	se.mu.Lock()
 	defer se.mu.Unlock()
 	if se.ln != nil {
@@ -127,7 +125,7 @@ func (se *session) disarm() { se.disarmIf(nil) }
 // disarmed and the goroutine already holds it, so there is nothing to keep in sync; a
 // counter is a second truth that has to be incremented in exactly the right place to stay
 // equal to the first.
-func (se *session) disarmIf(ln net.Listener) {
+func (se *session) disarmIf(ln p2p.Listener) {
 	se.mu.Lock()
 	if ln != nil && se.ln != ln {
 		se.mu.Unlock()
@@ -348,7 +346,7 @@ func (sa sessionAccepter) Accept(peerFP, doc []byte) (bool, error) {
 // co-signs with the user's consent (making the result the open document) or accepts a
 // one-way document transfer and saves it under ~/nib. It always disarms on exit — one
 // session per arm.
-func (s *Server) runSession(ln net.Listener, cert, key []byte, label, mode string) {
+func (s *Server) runSession(ln p2p.Listener, cert, key []byte, label, mode string) {
 	// This goroutine handles a pinned peer's inbound document; a panic in the p2p or
 	// sign code must not crash the desktop process. The defers below (disarm, Close)
 	// still run as the stack unwinds.
@@ -375,40 +373,28 @@ func (s *Server) runSession(ln net.Listener, cert, key []byte, label, mode strin
 	// The loop is bounded by the accept timer above, which closes the listener and makes
 	// Accept return an error — so a peer that fails repeatedly cannot hold this open past
 	// the arm window, and cannot spin it hot for longer than that either.
-	var conn *tls.Conn
+	var conn *p2p.Conn
 	for {
 		c, err := ln.Accept()
-		if err != nil {
-			s.sess.disarmIf(ln) // listener closed by timeout/disarm, or a real error
+		if err == nil {
+			conn = c
+			break
+		}
+		// net.ErrClosed is the listener being gone — the accept timeout fired, or the
+		// session was disarmed. Anything else is THIS peer failing (not the pinned
+		// identity, no handshake, a stray dial) and the session stays armed, because
+		// refusal is free for whoever connects and expensive for the user.
+		if errors.Is(err, net.ErrClosed) {
+			s.sess.disarmIf(ln)
 			return
 		}
-		tc, ok := c.(*tls.Conn)
-		if !ok {
-			c.Close()
-			continue
-		}
-		// A handshake has to be time-bounded on its own, or a peer that connects and
-		// says nothing holds the session for the whole arm window while looking live.
-		// p2p's own SetDeadline replaces this once the exchange starts; Handshake is
-		// idempotent, so calling it there again costs nothing.
-		_ = tc.SetDeadline(time.Now().Add(sessionHandshakeTimeout))
-		if err := tc.Handshake(); err != nil {
-			tc.Close()
-			continue // not our pinned peer, or not TLS at all — the session stays armed
-		}
-		_ = tc.SetDeadline(time.Time{})
-		conn = tc
-		break
 	}
 	timer.Stop()
 	defer s.sess.disarmIf(ln)
 	defer conn.Close()
-	// One Channel for both modes: the handshake above has already run, so this only
-	// reads the peer's verified fingerprint and the channel's exporter off it.
-	ch, err := p2p.TLSChannel(conn)
-	if err != nil {
-		return // the pinned peer's identity did not survive the handshake
-	}
+	// The Channel arrived established: Accept does not return until the peer's
+	// identity is verified, whichever transport it came in on.
+	ch := conn.Channel
 	if mode == sessionModeReceive {
 		doc, err := p2p.ReceiveDocument(ch, sessionAccepter{s: s, label: label}, myFP, sessionVerifier{s})
 		if err != nil {
@@ -501,9 +487,10 @@ func labelSlug(label string) string {
 const sessionModeReceive = "receive"
 
 type armRequest struct {
-	Fingerprint string `json:"fingerprint"`    // the single peer to accept (hex SPKI)
-	Bind        string `json:"bind"`           // host:port to bind, e.g. "0.0.0.0:8443"
-	Mode        string `json:"mode,omitempty"` // "receive" for a transfer; co-sign otherwise
+	Fingerprint string `json:"fingerprint"`         // the single peer to accept (hex SPKI)
+	Bind        string `json:"bind"`                // host:port to bind, e.g. "0.0.0.0:8443"
+	Mode        string `json:"mode,omitempty"`      // "receive" for a transfer; co-sign otherwise
+	Transport   string `json:"transport,omitempty"` // "quic"; anything else is TCP
 }
 
 type sessionStatus struct {
@@ -555,7 +542,7 @@ func (s *Server) handleSessionArm(w http.ResponseWriter, r *http.Request) {
 		httpError(w, http.StatusInternalServerError, "could not load identity")
 		return
 	}
-	ln, err := p2p.Listen(req.Bind, cert, key, peerFP)
+	ln, err := listenPeer(req.Transport, req.Bind, cert, key, peerFP)
 	if err != nil {
 		httpError(w, http.StatusBadRequest, "could not open listener: "+err.Error())
 		return
@@ -751,18 +738,13 @@ func (s *Server) handleSessionInitiate(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	conn, err := p2p.Dial(address, cert, key, peerFP, sessionDialTimeout)
+	conn, err := dialPeer(r.FormValue("transport"), address, cert, key, peerFP)
 	if err != nil {
 		httpError(w, http.StatusBadGateway, "could not connect to peer: "+err.Error())
 		return
 	}
 	defer conn.Close()
-	ch, err := p2p.TLSChannel(conn)
-	if err != nil {
-		httpError(w, http.StatusBadGateway, "could not establish a session with peer: "+err.Error())
-		return
-	}
-	final, err := p2p.Initiate(ch, signed, myFP, sessionVerifier{s})
+	final, err := p2p.Initiate(conn.Channel, signed, myFP, sessionVerifier{s})
 	if err != nil {
 		httpError(w, http.StatusBadGateway, "co-signing did not complete: "+err.Error())
 		return
@@ -822,18 +804,13 @@ func (s *Server) handleSessionSend(w http.ResponseWriter, r *http.Request) {
 		httpError(w, http.StatusInternalServerError, "could not load identity")
 		return
 	}
-	conn, err := p2p.Dial(address, cert, key, peerFP, sessionDialTimeout)
+	conn, err := dialPeer(r.FormValue("transport"), address, cert, key, peerFP)
 	if err != nil {
 		httpError(w, http.StatusBadGateway, "could not connect to peer: "+err.Error())
 		return
 	}
 	defer conn.Close()
-	ch, err := p2p.TLSChannel(conn)
-	if err != nil {
-		httpError(w, http.StatusBadGateway, "could not establish a session with peer: "+err.Error())
-		return
-	}
-	if err := p2p.SendDocument(ch, pdfBytes, myFP, sessionVerifier{s}); err != nil {
+	if err := p2p.SendDocument(conn.Channel, pdfBytes, myFP, sessionVerifier{s}); err != nil {
 		if errors.Is(err, p2p.ErrDeclined) {
 			writeJSON(w, sendResult{Sent: false, Declined: true})
 			return
@@ -850,4 +827,28 @@ func (s *Server) DisarmSession() { s.sess.disarm() }
 // readJSON decodes a JSON request body, capped (the appearance image rides in it).
 func readJSON(r *http.Request, v any) error {
 	return json.NewDecoder(io.LimitReader(r.Body, maxPDFBytes)).Decode(v)
+}
+
+// transportQUIC is the only value that selects the QUIC path. Everything else — the
+// empty string above all — is TCP, so every caller that predates D14 keeps working.
+//
+// The choice is deliberately not in the interface. D8's connection ladder attempts
+// every tier concurrently and picks the first that completes, which means the user
+// should never be choosing a transport at all; a toggle shipped now would be a control
+// the ladder exists to remove. It is selectable over the API because that is what the
+// multi-instance harness drives.
+const transportQUIC = "quic"
+
+func dialPeer(transport, address string, cert, key, peerFP []byte) (*p2p.Conn, error) {
+	if transport == transportQUIC {
+		return p2p.QUICDial(address, cert, key, peerFP, sessionDialTimeout)
+	}
+	return p2p.Dial(address, cert, key, peerFP, sessionDialTimeout)
+}
+
+func listenPeer(transport, bind string, cert, key, peerFP []byte) (p2p.Listener, error) {
+	if transport == transportQUIC {
+		return p2p.QUICListen(bind, cert, key, peerFP)
+	}
+	return p2p.Listen(bind, cert, key, peerFP)
 }
