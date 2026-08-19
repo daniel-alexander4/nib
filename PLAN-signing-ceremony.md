@@ -66,6 +66,13 @@ through-line: the plan specified mechanisms and left their *numbers* and their *
 — three security bounds that no criterion could have failed, and four interoperating formats with no
 version between two independently-updated Nibs. Stage 7 (`/plan-review`) last ran 2026-08-17, before
 D20–D34 existed, and is owed again.
+Reviewed 2026-08-18 (**plan-review pass, the second** — structural gate passed; the plan's machinery
+is intact, including on a withdrawn decision. 13 findings: **2 critical**, 8 warnings, 3 info. **All
+eight warnings dispositioned adopt by Dan**; pins written at D6, D8, D11, D22, D29, D33, P01 and P04,
+plus a citation rule in Bookkeeping. **Both criticals are consequence findings where two decisions
+settled on different days meet** — `docHash` defined circularly (D20), and invitation pins dropped at
+the end state while delivery runs after it (D29 × D28 × D22) — and are **not yet dispositioned**.
+Report: `<project-memory>/plan-reviews/2026-08-18-2.md`.)
 SME packs: **crypto (core tier)** — `go.mod` declares `filippo.io/age`,
 `golang.org/x/crypto`, `edwards25519`, `hpke`, `go-pkcs12`, `digitorus/pdfsign`
 (inferred, trigger 1); the consensus tier does not fire — ~~two~~ **N (2026-08-18)** sequential
@@ -360,6 +367,16 @@ until after a handshake — chicken-and-egg. Also rejected: a per-ceremony key f
 secret, there being no shared secret before the ceremony, which is the problem the DHT
 exists to solve.
 
+**(plan-review pin: this paragraph now rejects the adopted design — 2026-08-18, adopted by Dan.)**
+"A per-ceremony key from a shared secret, there being no shared secret before the ceremony" is
+**exactly what D21 built**: the invitation carries a 32-byte secret, delivered before anything
+connects, and the UX amendment below re-keys both the rendezvous and the record encryption to it. The
+rejection's premise — that no shared secret can exist before the ceremony — was true when written and
+was falsified by D21, and the amendment superseded the *key derivation* without touching the
+*rejected-alternatives* paragraph that now contradicts it. A builder reading this decision
+top-to-bottom meets the adopted design listed as rejected. **Striking the clause is owed through
+`/discuss`**, since it is a decision's own text.
+
 **What discharges this specifically:** P04's new third-party-flood criterion, driven by
 publishing N+50 candidates. **Not** the existing "a hostile or absent DHT degrades to the
 next tier without ever affecting which peer is accepted" — a hostile DHT that floods a
@@ -473,6 +490,16 @@ and tier 5 (manual). P04's framing understates this. Whether the plan wants a se
 signalling path is a **Stage 2 grill target**, not this pass — D19 cause 2 makes the
 failure legible in the meantime.
 
+**(plan-review pin: the gate this was deferred to has passed — 2026-08-18, adopted by Dan.)** The
+Stage 2 grill ran on 2026-08-18 and **did not address the second signalling path**; nor did it address
+P04's I1 note, which carries the same question. A deferral whose gate has been walked through reads as
+settled to every later reader, which is how a parked question becomes an assumed answer. **Both are
+re-targeted to the P04 slice grill**, where a second signalling path is a build decision with a cost
+rather than a plan question — and P04 is the phase that would have to carry it. **What discharges this
+specifically:** P04's slice grill recording a decision on the second signalling path, adopt or
+decline, with a reason — not any later grill of the plan as a whole, which is the deferral that just
+failed.
+
 ### D9 — The manual address path is demoted, not deleted *(settled 2026-08-15 via /discuss, auto-adopted)*
 
 The host:port field survives, moved out of the primary flow into an advanced
@@ -504,7 +531,14 @@ the hex string denote the same value.
 *Why:* the name is an encoding of the fingerprint (D3), so no stored data changes
 meaning. A migration step would be inventing work.
 
-### D11 — The two repo laws *(settled 2026-08-15 via /discuss, auto-adopted)*
+### D11 — The ~~two~~ **three (2026-08-18)** repo laws *(settled 2026-08-15 via /discuss, auto-adopted)*
+
+**(plan-review pin: the decision index names two laws and there are three — 2026-08-18, adopted by
+Dan.)** L3 arrived through **D23** and is stated in full in *Repo laws* above, but this decision is
+the one a builder reaches from the decision list, and it enumerates L1 and L2 only. L3 is also the
+law most likely to be looked up, because it is the one that refuses at runtime. **What discharges
+this specifically:** this decision naming all three and pointing at D23 for L3's origin — not the
+*Repo laws* section, which already had it and is not where a reader of the decisions looks.
 
 L1 (reachability, never identity) and L2 (no silent downgrade), as stated above.
 Both become named guard tests.
@@ -1052,6 +1086,18 @@ built; a party learns the roster's state when the convener reaches them, and the
 "you are next" on the call does the rest. Persistent presence channels are the one part of this
 design that would touch the tripwire, and they are deferred until someone misses them.
 
+**(plan-review pin: the roster maximum and "one sitting" imply different products — 2026-08-18,
+adopted by Dan.)** D33 caps the roster at **32**, and hops are serial: at up to 300 s connecting
+(D16) plus a six-minute exchange, a full 32-party ceremony is on the order of **six hours of
+continuous convener attention**. "Everyone present in one sitting" does not survive that, and the two
+decisions currently describe different products to whoever reads them first. **Both numbers are kept
+and their roles separated:** 32 is the **hard cap** — what the code refuses past, and what D25 sizes
+signature pages against — and **~8 is the practical single-sitting ceiling**, which is what this
+decision's premise assumes and what the UI should be designed and copy-written for. **What discharges
+this specifically:** this decision stating the sitting ceiling in its own text, so a builder sizing a
+roster picker does not read 32 as the design target — not P07's nine-party layout criterion, which
+exercises the page allocator and says nothing about how long a human sits.
+
 *What this needs from the live path, read at the line:* `coSignExchange` refuses anything but
 exactly one prior signer — `len(ats) != 1` (`internal/p2p/session.go:229`). It becomes "the
 attestations are the record's roster prefix" (D23). That is the whole two-party assumption in the
@@ -1309,6 +1355,16 @@ the user's document, their vault, or their machine.
   removed once it has ended and its document has been delivered or saved, and the panel offers the
   removal for one that ended without delivering.
 
+  **(plan-review pin: an abandoned ceremony is never pruned — 2026-08-18, adopted by Dan.)** The rule
+  above waits on delivery, and D28's **abandoned** state is defined by the convener never coming
+  back — so delivery never happens and that directory lives forever, on every party's machine, for
+  every ceremony that dies quietly. The offer-in-the-panel half needs a person who is still looking.
+  **The prune must also fire on time, independent of delivery:** `expires` plus a stated grace, which
+  is bounded by D33's 30-day maximum. **What discharges this specifically:** a ceremony abandoned
+  before its delivery round, whose directory is gone after expiry with nobody having touched the
+  panel — not the existing "gone after the ceremony has ended and its document has been delivered or
+  saved", which an abandoned ceremony satisfies vacuously by never reaching either state.
+
 ### D30 — The rendezvous is per hop, not per ceremony *(settled 2026-08-18 — holistic pass)*
 
 D6 and D21 derive **one** rendezvous key from the ceremony secret; D22 makes connectivity a
@@ -1409,6 +1465,22 @@ property, so a criterion written against them today could not fail.
 half PLAN-4 exists for. *All four are tunable, not law*, in the sense D16 already defines: the
 structure is the law, the value is a constant.
 
+**(plan-review pin: this contradicts the D16 pin on a security bound — 2026-08-18, adopted by Dan.)**
+The sentence above says all four are tunable. **The 2026-08-17 pin on D16 says the opposite about two
+of them** — the candidate cap and the global packet ceiling "are **law, not tunable** — the
+distinction the table's own preamble draws" — and its reasoning is that under the D6 pin *an attacker
+supplies the candidates*. Two decisions settled a day apart give a builder opposite instructions about
+where a security bound lives.
+
+**The split, adopted:** `N` (candidate cap) and the punch ceiling are **law** — they sit with the
+structure, not in the tunable constant block. The **ceremony-deadline maximum** and the **roster
+maximum** are tunable constants, as this decision says. **What discharges this specifically:** a guard
+that fails if either of the two law figures is reachable from the tunable block — not the P07 bullet
+driving a value past each bound, which passes identically whichever file the constant lives in.
+
+*The amendment to this decision's own sentence is owed through `/discuss`* — a plan-review pass marks
+the spot and never rewrites a decision.
+
 ### D34 — The ceremony's outbound calls are enumerated, and the DHT is disclosed *(settled 2026-08-18 — Stage 5, STANDARDS §9)*
 
 STANDARDS §9 says Nib sends nothing by default and that "any other outbound call is a deliberate,
@@ -1462,9 +1534,16 @@ Stage 8 scaffolding would write `0.1.0` over a shipping product. Recorded as
 pre-satisfied, exactly as the sibling plan records it.
 
 ### P01 — Pairing identity: the name, the record, and the invitation **(amended 2026-08-18)**
-Goal: replace the 64-hex exchange with a six-word name, and establish the
-verification string as a mandatory gate — both in one phase, because shipping the
+Goal: replace the 64-hex exchange with a six-word name, and ~~establish the
+verification string as a mandatory gate~~ **establish the verification string as a gate conditioned
+on the pin's strength (corrected 2026-08-18, plan-review, adopted by Dan — see D4's supersession and
+this phase's third exit criterion)** — both in one phase, because shipping the
 shortened name without the spoken check would be the silent downgrade L2 forbids.
+
+**(plan-review pin: the goal contradicted its own exit criterion — 2026-08-18, adopted by Dan.)** The
+goal read "mandatory gate" while the third criterion below supersedes exactly that, and a goal is what
+a builder reads first and returns to. The correction above is to the *phase's* text, not to a
+decision — D4 carries the decision and is untouched.
 **Amended 2026-08-18 (D20, D21): the phase also builds the Ceremony Record and the invitation,
 because they are what the name attaches to and what makes the check conditional rather than
 mandatory.** Connectivity is untouched; this phase still runs over the manual address.
@@ -1580,7 +1659,7 @@ Exit criteria:
 Slices *(sketch)*: multicast announce/browse; resolving a discovered peer to a candidate; the L1 guard; the Windows pass.
 
 ### P04 — Endpoint exchange over the DHT
-Goal: the two sides learn each other's public endpoints, and their own, with no server. **(plan-review note, 2026-08-17, I1 — the framing still understates the blast radius, as D8's own correction records: the DHT is the signalling channel for tiers 2, 3 **and** 4, so an unreachable DHT collapses three tiers at once and leaves only LAN and manual. Carried as a Stage 2 grill target; recorded here so the next pass does not re-derive it.)**
+Goal: the two sides learn each other's public endpoints, and their own, with no server. **(plan-review note, 2026-08-17, I1 — the framing still understates the blast radius, as D8's own correction records: the DHT is the signalling channel for tiers 2, 3 **and** 4, so an unreachable DHT collapses three tiers at once and leaves only LAN and manual. Carried as a Stage 2 grill target; recorded here so the next pass does not re-derive it.)** **(plan-review pin, 2026-08-18, adopted by Dan: that gate has passed — the Stage 2 grill ran on 2026-08-18 and did not take this up. Re-targeted to this phase's slice grill, with D8's pin carrying the same instruction and the discharging observation.)**
 Exit criteria:
 - Each side learns its own public `IP:port` and its NAT class from DHT responses alone.
 - A published endpoint is retrievable by the peer computing the same key from the two names.
@@ -1743,6 +1822,16 @@ re-verified.
   target" against twelve parked questions, with no phase requiring it — the same defect D12's pin
   named, and D12 is now gone, so this is the only gate left to lose. *Taken by recommendation under
   the ASK ladder: process, not risk appetite.* *(added 2026-08-18)*
+- **Cite by identifier, with the line number as a hint — not the other way round.** *(plan-review
+  pin, 2026-08-18, adopted by Dan.)* This plan's discipline is read-at-the-line, and its citations go
+  stale under ordinary work: three `web/index.html` refs in D13's pin drifted eight lines **on the day
+  they were written** (`:1190`/`:1215`/`:1239` → `:1198`/`:1223`/`:1247`), and D13's body still cites
+  `:257` for a role picker now at `:272`. Two sessions commit to this repo daily, so this is a
+  recurring class rather than an instance — Go citations were spot-checked and held, because Go files
+  moved less. **New citations name the identifier first** — `#sessionInitModal`,
+  `handleAttachmentAdd`, `Confirmer` — so a stale reference degrades to *findable* instead of to
+  *wrong*. Existing citations are corrected as they are touched, not in a sweep: a bulk renumber would
+  be a large diff whose only content is line numbers, and it would be stale again tomorrow.
 - **Three items of the 2026-08-18 holistic pass were taken on Dan's behalf and are reversible where
   they sit:** D31 (the invitation is the default pairing path), the CLI scope-out in *Out of scope*,
   and the grill's scheduling above. Each says at its own site what reversing it costs. *(added
