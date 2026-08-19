@@ -73,6 +73,15 @@ plus a citation rule in Bookkeeping. **Both criticals are consequence findings w
 settled on different days meet** — `docHash` defined circularly (D20), and invitation pins dropped at
 the end state while delivery runs after it (D29 × D28 × D22) — and are **not yet dispositioned**.
 Report: `<project-memory>/plan-reviews/2026-08-18-2.md`.)
+Reviewed 2026-08-18 (**plan-review pass, the third** — Dan's remit: *the seams and the gaps*.
+Structural gate passed. 10 findings: **1 critical**, 6 warnings, 3 info — **and the two criticals
+carried from the second pass. Dan dispositioned ALL of it adopt.** The pass's own finding is that
+after three grills and two reviews there was nothing new *inside* the decisions: **everything of
+substance sat at a boundary** — between the ceremony and code the sibling plan already shipped
+(the pinned document id versus ADR-001's per-process counter), between the invitation's roster and
+the record's, and between an end state and the delivery round that runs after it. Pins written at
+D4, D20, D21, D22, D27, D29 ×3, D32 and caveat 7; new criteria at P01.S06, P01.S07 and P07.
+Report: `<project-memory>/plan-reviews/2026-08-18-3.md`.)
 SME packs: **crypto (core tier)** — `go.mod` declares `filippo.io/age`,
 `golang.org/x/crypto`, `edwards25519`, `hpke`, `go-pkcs12`, `digitorus/pdfsign`
 (inferred, trigger 1); the consensus tier does not fire — ~~two~~ **N (2026-08-18)** sequential
@@ -1012,6 +1021,30 @@ checks against is the one they each verified at the start.
   contribution. That directory is what makes D24 possible at all: the ceremony survives quitting
   Nib, rebooting, and coming back on Thursday.
 
+**(plan-review pin: `docHash` is circular as written, and the pre-signing order decides it —
+2026-08-18, adopted by Dan.)** The table says `docHash` is "SHA-256 of the prepared document", and
+this decision embeds the record **in** that document. Hashing the prepared document hashes the
+record, which contains the hash. A builder must invent the answer and the invention becomes the
+definition — invisibly, which is the failure the `rosterHash` pin one field above was written to
+prevent.
+
+**The definition, adopted:** `docHash` covers the document **after the readme is appended and the
+signature pages are allocated (D25), and immediately before the record is attached** — the last
+well-defined state that is not self-referential.
+
+**The pre-signing pass therefore has three steps and a fixed order:** append the readme → allocate
+signature pages from the roster → hash → attach the record. The order is not a style choice: it
+fixes `docHash`, and it decides which page `stackPlacement` selects, since that function places on
+the **last** page (`internal/p2p/cosign.go`, `stackPlacement`).
+
+**Recoverability, which is the half that makes this checkable by anyone but the convener:** a later
+party holds a document carrying N incremental signatures, and PDF incremental updates make each
+revision a **byte-prefix** of the next — so the pre-record revision is a prefix of what they hold and
+`docHash` is recomputable from it. **What discharges this specifically:** a P01.S06 criterion in
+which **a party at hop 4 recomputes `docHash` from the document it received and matches the record** —
+not the existing round-trip bullet, which the convener's own bytes satisfy without any later party
+ever recomputing anything.
+
 *Why one object rather than four features:* multi-party has no roster to be multi about,
 resumption has nothing to resume from, ordering has no order to enforce, and the spoken check
 exists only because no earlier artifact carried more than 66 bits. All four of Dan's requirements
@@ -1060,6 +1093,17 @@ integrity assumption is therefore the same one the spoken name always had: it tr
 the parties already trust. That was never written down, and a reader would otherwise assume the
 signed record covers it.
 
+**(plan-review pin: the roster has two homes and nothing reconciles them — 2026-08-18, adopted by
+Dan.)** A party pins from the **invitation's** roster and later receives a document carrying the
+convener's signed **record**, which has its own. The pin above *reasons* that tampering yields denial
+— but **no criterion anywhere requires the comparison that would produce it**, so a tampered
+invitation surfaces as an unexplained connection failure rather than as the named refusal the
+reasoning promises. **Adopted:** on first receipt of the document, the party compares the
+invitation's roster against the record's and **refuses by name on mismatch**. **What discharges this
+specifically:** a P01.S07 criterion driven with a **one-byte-altered invitation**, observing the
+named refusal — not the existing "an invitation pins the full 32-byte fingerprint" bullet, which a
+tampered invitation satisfies perfectly by pinning the wrong key at full length.
+
 ### D22 — Topology: a convener hub and a serial baton; the convener may be non-signing *(settled 2026-08-18 — Dan, option A)*
 
 **N parties sign in sequence and the convener carries the baton between them.** The convener
@@ -1106,6 +1150,18 @@ transport; the artifact model never had one (D2 pin).
 *Delivery:* the finished document reaches every party over the existing one-way transfer
 (`SendDocument` / `ReceiveDocument`, `internal/p2p/session.go:166`, `:190`), dialled by the
 convener as a final round. Nothing new is invented for it.
+
+**(plan-review pin: "nothing new is invented for it" is where the delivery round's state went missing
+— 2026-08-18, adopted by Dan.)** D24 makes a **hop** idempotent and says nothing about delivery, and
+the transfer this reuses names its file by wall clock: `receivedName` is
+`slug-YYYYMMDD-HHMMSS.pdf` (`internal/server/session.go`, `receivedName`). So a round that fails at
+party 3 of 4 has **no safe re-run** — re-delivering writes a *second copy* to the two parties who
+already have it, or silently overwrites inside the same second. **Adopted:** delivery is keyed by
+**`(ceremony id, party)`** and is a **no-op** once that party's acknowledgement is recorded, and the
+written filename carries the ceremony id. **What discharges this specifically:** a P07 criterion in
+which **a delivery round re-run after a mid-round failure leaves exactly one file per party** — not
+the existing "the finished document reaches every party" bullet, which a round that delivers twice
+satisfies completely.
 
 **(holistic pin, 2026-08-18 — the non-signing convener has no code path, and would fail its own
 check.)** This decision's own option-A clause collides with the tree, and it is the only place in
@@ -1280,6 +1336,18 @@ honesty rather than its mechanics, so they move together in one change.
 them drift is how a document ends up asserting one thing in its signature and another on its face
 — the precise defect `Attestation`'s own doc comment was corrected for (`attestation.go:30`).
 
+**(plan-review pin: a non-signing convener has no verdict — 2026-08-18, adopted by Dan.)** The D20
+pin puts **`signs`** inside `rosterHash`'s preimage, so a verifier reading a finished document sees a
+roster entry with **no matching signature** — and the only shapes the verdict currently knows are
+signed and missing. Rendering the convener as a missing signer would be wrong on precisely the roster
+shape Dan asked for (D22, option A), and it would be wrong in the direction that matters: a document
+reported as incompletely signed when it is complete. **Adopted:** the verdict distinguishes **roster
+member not obliged to sign** from **obliged and absent**. **What discharges this specifically:** a
+P07 criterion rendering the verdict for a completed ceremony whose convener has `signs:false` and
+observing that it reads as complete — not the existing "the finished document contains no signature
+of theirs" bullet, which is a fact about the *document* and says nothing about what the verifier
+says.
+
 ### D28 — End states: a ceremony ends by completing, declining, expiring, or being abandoned *(settled 2026-08-18 — holistic pass)*
 
 The plan has D19's four **network** failure causes and nothing at all for the failures that are
@@ -1336,6 +1404,29 @@ the user's document, their vault, or their machine.
   identity key and the pinned peers (`internal/vault/vault.go:155`). D21's secret is the first
   genuinely secret value in this design and it goes where the other one is. **The mirror holds the
   document, the record and this user's own contribution — no key material.**
+- **(plan-review pin: the pinned document id cannot survive the restart the ceremony is built to
+  survive — 2026-08-18, adopted by Dan.)** The freeze bullet above says "Per ADR-001 the ceremony
+  pins the document id". **ADR-001 scopes that id to one process**: "Document ids are a monotonic
+  counter for the life of the process", and the ADR states that this is "not an implementation note;
+  it is the load-bearing half", because a reusable id "defeats the law **silently and completely**".
+  D24 makes a ceremony span quitting Nib. On the next launch the counter starts over, so a persisted
+  docId either names nothing or **names a different document**, and every pinning check against it
+  passes — ADR-001's own nightmare, one process boundary out where its guarantee does not reach.
+
+  **Adopted:** the ceremony's identity of its document is **`(ceremony id, docHash)`** — both
+  restart-stable and both already in the record. The docId pin remains a **within-process**
+  mechanism, re-established when the ceremony is loaded and **never persisted**. **What discharges
+  this specifically:** a P07 criterion resuming a ceremony **in a fresh process with other documents
+  opened first, so the counter has advanced**, and showing it acts on its own document and refuses a
+  decoy now holding the id it used to have — not the existing resumption bullet, which passes with a
+  dangling id because nothing in it opens a second document.
+
+- **(plan-review pin: the ceremony's document has two homes — 2026-08-18, adopted by Dan.)** The
+  mirror holds "the current document bytes" (D24); the same document is open in a tab and may have
+  been saved elsewhere by the user. Nothing said which is authoritative on resume. **The mirror is
+  authoritative for the ceremony**; the open tab is a view of it; a divergence is **reported, never
+  silently resolved** — silently preferring either one is how a party signs bytes they did not read.
+
 - **The panel renders while the vault is locked.** Roster, position and next action are local and
   non-secret; the unlock prompt belongs at the moment of signing, not at the moment of looking. A
   resumption screen that demands a password to tell you whose turn it is has misunderstood what it
@@ -1354,6 +1445,28 @@ the user's document, their vault, or their machine.
 - **Ended ceremonies are pruned.** The mirror is not a growing archive. A ceremony's directory is
   removed once it has ended and its document has been delivered or saved, and the panel offers the
   removal for one that ended without delivering.
+
+  **(plan-review pin: the lifecycle is end state → delivery → close-out, and pins drop at the END of
+  it — 2026-08-18, adopted by Dan.)** Read with D28 and D22, the bullet above and the pin-removal
+  bullet below break every ceremony's delivery. *Completed* is an **end state** whose own definition
+  is "every signing party has contributed **and the delivery round runs**"; the convener delivers by
+  **dialling each party**; and arming refuses an unpinned peer outright
+  (`internal/server/session.go`, `handleSessionArm` — "that peer isn't pinned"). Drop the invitation
+  pins when the ceremony *ends* and the finished document reaches **nobody**. The declined path is
+  worse: D28 says the parties who already signed "are told at delivery time", so dropping the pins at
+  the end state closes the one channel to the people who have already committed their signatures.
+
+  **The lifecycle, stated once:** *end state → delivery round → close-out.* Pins are dropped and the
+  mirror pruned at **close-out**, never at the end state. **What discharges this specifically:** a
+  P07 criterion in which **a four-party ceremony's delivery round reaches every party and their
+  invitation pins are absent afterwards** — one observation in the right order, which neither the
+  existing delivery bullet nor the existing pin-scoping bullet can produce alone.
+
+  **(plan-review pin: closing the document's tab is not a mutation, so the freeze above does not
+  reach it — 2026-08-18, adopted by Dan.)** The sibling plan shipped *Close view*, and ADR-003 drops
+  an inactive document's history whole. Closing a live ceremony's tab is **allowed and harmless** —
+  the mirror holds the bytes and the panel is the ceremony's home — but every neighbour of this rule
+  refuses, so a builder will reasonably guess this one does too. Said here so the guess is not made.
 
   **(plan-review pin: an abandoned ceremony is never pruned — 2026-08-18, adopted by Dan.)** The rule
   above waits on delivery, and D28's **abandoned** state is defined by the convener never coming
@@ -1440,6 +1553,18 @@ compare, refuse.
 
 *Not in scope:* the wordlist, which is frozen rather than versioned (caveat 4) — a version would
 invite the swap the freeze exists to forbid.
+
+**(plan-review pin: three of these four are owed at P01, not P07 — 2026-08-18, adopted by Dan.)**
+This decision's only criterion is P07's version-skew bullet, and that is three phases too late for
+two of the four surfaces. **The D20 pin's preimage axes begin "the format version (D32)"**, and
+P01.S06 builds that commitment — so P01 would sign a commitment over a field the plan schedules at
+P07, and adding a field to a signed preimage afterwards is exactly the migration-or-wipe question
+(crypto pack PLAN-6). **Adopted:** the **record's** version lands in **P01.S06** and the
+**invitation's** in **P01.S07**, each with its own criterion; only the **protocol announce** stays
+in P07, where the channel it announces on first exists. **What discharges the P01 half specifically:**
+a record and an invitation each carrying a version at the moment they are first written, driven by
+reading it back — not P07's skew bullet, which tests two versions meeting and says nothing about
+whether the field existed three phases earlier.
 
 ### D33 — The numbers, firmed here rather than at measurement *(settled 2026-08-18 — Stage 6, crypto pack PLAN-4/PLAN-5)*
 
@@ -1617,6 +1742,8 @@ Acceptance:
 - A record whose convener signature does not verify is refused before any pairing, with a distinct message.
 - `PrepareDocument` refuses to embed a record into an already-signed document, for the reason it already refuses the readme.
 - The `[NibRoster:<hash>]` token appears in each signer's `/Reason` and cross-binds; a document whose signers do not share one commitment is reported as such rather than as co-signed.
+- **A party at hop 4 recomputes `docHash` from the document it received — carrying three incremental signatures — and matches the record. (added 2026-08-18, plan-review, D20 pin.)** The round-trip bullet above cannot see this: the convener's own bytes satisfy it without any later party recomputing anything.
+- **The record carries its format version at the moment it is first written, driven by reading it back. (added 2026-08-18, plan-review, D32 pin.)** P07's skew bullet tests two versions meeting and says nothing about whether the field existed three phases earlier — and `rosterHash`'s preimage begins with it.
 Tasks: *(written at slice-grill time)*
 
 #### P01.S07 — The invitation **(added 2026-08-18, D21)**
@@ -1626,6 +1753,8 @@ Acceptance:
 - Consuming an invitation pins every roster fingerprint at full length, and the six-word name is displayed but never decoded into a pin on this path.
 - The rendezvous key and the record encryption derive from the invitation secret, and two ceremonies between the same parties produce different keys (D6 amendment, driven — the point of re-keying).
 - **An invitation is not a signing credential: a party holding a valid invitation but not the roster's private key is refused at the handshake, driven rather than argued. (D21.)**
+- **A one-byte-altered invitation is refused by name when the document arrives, because the party compares the invitation's roster against the record's. (added 2026-08-18, plan-review, D21 pin.)** The full-fingerprint bullet above cannot see it: a tampered invitation satisfies that bullet perfectly by pinning the wrong key at full length.
+- **The invitation carries its format version, driven by reading it back and by presenting one with an unknown version. (added 2026-08-18, plan-review, D32 pin.)**
 Tasks: *(written at slice-grill time)*
 
 ### P02 — QUIC session transport **(TCP retained beside it — amended 2026-08-16, D14)**
@@ -1747,6 +1876,10 @@ Exit criteria:
 - **Every row of `<project-memory>/instruments/ceremony.md` carries a disposition — `keep-live` / `gated` / `deleted` — filled at this phase's close. (added 2026-08-18, verification pack V8.)** An inventory whose disposition column was never filled is a record of intentions; 224 such rows accumulated in another project before anyone noticed. A row whose reader is a standing criterion is never silenced.
 - **Each of D33's four numbers is enforced on the externally-supplied path, driven by supplying a value past the bound. (added 2026-08-18, crypto pack PLAN-4.)** A test that supplies a value *inside* the bound cannot see an unenforced parameter.
 - **A version skew produces a sentence naming the mismatch, not a parse error — driven for the record, the invitation and the ceremony protocol separately. (added 2026-08-18, D32.)**
+- **A four-party ceremony's delivery round reaches every party, and their invitation pins are absent afterwards — in that order. (added 2026-08-18, plan-review, D29 lifecycle pin.)** Neither the delivery bullet nor the pin-scoping bullet can produce this alone; the defect is that both are satisfiable while delivery fails.
+- **A delivery round re-run after a mid-round failure leaves exactly one file per party. (added 2026-08-18, plan-review, D22 pin.)** "The finished document reaches every party" is satisfied completely by a round that delivers twice.
+- **A ceremony resumed in a fresh process — with other documents opened first, so the id counter has advanced — acts on its own document and refuses a decoy holding the id it used to have. (added 2026-08-18, plan-review, D29 identity pin.)** The resumption bullet passes with a dangling id, because nothing in it opens a second document.
+- **A completed ceremony whose convener has `signs:false` renders as complete, not as missing a signer. (added 2026-08-18, plan-review, D27 pin.)** The "no signature of theirs" bullet is a fact about the document and says nothing about what the verifier reports.
 
 Slices *(sketch)*: the roster-prefix contribution gate and the L3 guard; `coSignExchange` re-based off `len(ats) != 1`; **the carry route for a non-signing convener (D22 pin); the roster-shaped `Confirmer` (D27); the readme and About rewrite behind the drift guard (D27); the end-state machine (D28); the freeze, the scoped pins and the prune (D29);** the placement policy and page allocation; hop persistence and idempotent re-delivery; the ceremony-scoped arm window; the delivery round; the panel's roster view driven by a real N-party record.
 
@@ -1800,6 +1933,13 @@ re-verified.
    the case the 2026-08-17 pin above could not see, because it tested each library alone. P02's
    slices and P04's criterion are amended. Found at Stage 2 rather than at P04, which is the
    difference between a selection constraint and three phases of rework.
+
+   **(plan-review pin, 2026-08-18, adopted by Dan: multicast is not in this list, and that is
+   deliberate.)** This caveat names the mapped port, the DHT self-address probe and the live session.
+   **Tier 1's multicast is UDP too and is deliberately outside it** — it is link-local, it carries no
+   NAT mapping, and nothing about it needs to share the session's socket. Recorded so **P03 does not
+   inherit P02's demultiplexer by assumption**, which is the shape of mistake a shared-socket rule
+   invites once it exists.
 8. **Carrier-side PCP deployment is not assumed.** RFC 6887 was specified with carrier-grade NAT in mind, but whether carriers actually answer PCP is unverified and, on present evidence, mostly no. The CGNAT case stays D9's until measured. *(added 2026-08-16)*
 9. **Two DHT observations are enough to separate the mapping classes, and the DHT will answer two distinct nodes within D16's probe budget.** D19's diagnosis rests on it; a two-server STUN check is the established form, but that the BitTorrent DHT's response pattern supplies the same two observations in ~8 s is unverified. If it does not, cause 3 degrades to cause 4 — a worse message, not a broken ladder. *(added 2026-08-16)*
 
