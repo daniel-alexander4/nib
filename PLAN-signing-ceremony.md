@@ -117,6 +117,22 @@ on Dan's instruction** — it had reached 30 exit criteria against a slice sketc
 at P07 and lifecycle and delivery become **P08**; build order is now
 P00 → P01 → P02 → P03 → P04 → P05 → P07 → P08 → P06. Report:
 `<project-memory>/plan-reviews/2026-08-18-6.md`.)
+Amended 2026-08-19 (**the three owed decision-text amendments, via /discuss — Dan.** A plan-review
+pass marks a spot and never rewrites a decision, so three pins had been carrying an unpaid debt
+against the decisions' own words. **D33's** closing *"all four are tunable"* is struck for the
+adopted split — `N` and the punch ceiling are **law**, the deadline and roster maxima are tunable —
+because two decisions settled a day apart gave a builder opposite instructions about where a
+security bound lives. **D6's** *"also rejected: a per-ceremony key from a shared secret"* is struck,
+D21 having built exactly that; and the *first* rejected clause, which the pin did not name, has its
+premise marked stale for the same reason — nobody holds 66 bits since D31, so a record carrying the
+signer's public key is verifiable against a pinned fingerprint. That re-opens a design question and
+it is **deliberately left open and filed against P04** rather than settled in an amendment pass:
+every invited party holds the invitation secret, so within the roster one party can publish
+candidates as another. **D2's** *"retained unchanged"* is corrected in **three** places — the title,
+the untouched-items enumeration, and the UX pin's own closing sentence, which repeated the claim a
+day later — because D22's hub is precisely what breaks the attestation channel binding. What is
+genuinely untouched is now stated positively, so the amendment reads as a correction rather than as
+D2 being in doubt.)
 SME packs: **crypto (core tier)** — `go.mod` declares `filippo.io/age`,
 `golang.org/x/crypto`, `edwards25519`, `hpke`, `go-pkcs12`, `digitorus/pdfsign`
 (inferred, trigger 1); the consensus tier does not fire — ~~two~~ **N (2026-08-18)** sequential
@@ -231,13 +247,24 @@ the dependency creates no licensing conflict.
 *Why:* a separate module would fragment one product; nib is mature (v1.102.4) with
 its own CLAUDE.md and release machinery, and this feature is one surface within it.
 
-### D2 — The existing co-signing cryptography is retained unchanged *(settled 2026-08-15 via /discuss, auto-adopted)*
+### D2 — The existing co-signing cryptography is retained ~~unchanged~~ **unchanged except the attestation's binding target (amended 2026-08-19 via /discuss — Dan; see the D22 pin)** *(settled 2026-08-15 via /discuss, auto-adopted)*
 
 Untouched by this plan: pinned-peer mTLS with SPKI-hash pinning
 (`internal/p2p/transport.go:42`), ephemeral per-session leaf certificates so the
-document-signing key never reaches the TLS layer (`:119`), attestation channel
-binding (`internal/p2p/session.go:205`), and mutual co-signature verification with
+document-signing key never reaches the TLS layer (`:119`), ~~attestation channel
+binding (`internal/p2p/session.go:205`),~~ and mutual co-signature verification with
 the prefix-extension replay bound (`:83`).
+
+**(amended 2026-08-19 via /discuss — Dan: the channel binding is struck from this list, because
+D22's hub is what breaks it.)** `coSignExchange` derives three checks from `peerFP`, the
+TLS-verified **wire** counterparty, and under a hub every hop's wire peer is the convener — so with
+a non-signing convener check 2 refuses at every hop and `crossBind` leaves `Matched` false on every
+signature of the finished document. **The re-basing is adopted in the D22 pin** (the attestation
+binds to the **record**, not to the wire; `AcceptedPeer` names the roster predecessor), and this
+decision no longer claims otherwise. **What remains genuinely untouched, and is the substance of
+this decision:** the pinned-peer mTLS with SPKI-hash pinning, the ephemeral per-session leaf, the
+prefix-extension replay bound, and the `[NibCoSign:1]` tag. The *cryptography* is retained; what
+moves is what the attestation binds **to**.
 
 *Why:* it is built, it is sound, and it is orthogonal to pairing. Re-planning it
 would be scope creep against a surface that already survived review.
@@ -249,8 +276,11 @@ counterparty: `Attestation.AcceptedPeer` is a single hex fingerprint written int
 chain of pairwise claims, not a record of one proceeding. **The signed `/Reason` gains a
 `[NibRoster:<hash>]` token beside the existing `[SPKI:…]`**, committing to the Ceremony Record
 (D20). Everything else in this decision stands untouched: the pinned mTLS, the ephemeral leaf,
-the channel binding, the prefix-extension replay bound, and the `[NibCoSign:1]` tag whose
-absence still means "not one of ours" (`attestation.go:65`). The existing parse is unaffected —
+~~the channel binding,~~ the prefix-extension replay bound, and the `[NibCoSign:1]` tag whose
+absence still means "not one of ours" (`attestation.go:65`). **(amended 2026-08-19 via /discuss —
+Dan: the channel binding is struck here too. It was written a day after the enumeration above and
+repeated the same claim, so correcting only one list would have left this paragraph — the one a
+builder reads last — asserting the opposite.)** The existing parse is unaffected —
 `ReadAttestations` reads the first `[SPKI:…]` and ignores what it does not know.
 
 *What was read rather than assumed:* `crossBind` (`internal/p2p/attestation.go:153`) already
@@ -459,11 +489,23 @@ someone who already holds both names. **(ii) Candidate count and total punch bud
 capped as law** — see the D16 pin — because someone who *does* know both names can still
 publish, and confidentiality alone does not bound emission.
 
-*Rejected:* signing the record with the identity key. The counterparty holds only 66 bits
+*Rejected:* signing the record with the identity key. ~~The counterparty holds only 66 bits
 of the fingerprint from the name, not the public key, so there is nothing to verify against
-until after a handshake — chicken-and-egg. Also rejected: a per-ceremony key from a shared
+until after a handshake — chicken-and-egg.~~ **(premise stale 2026-08-19 via /discuss — Dan.
+D31 collapsed pairing onto the invitation, which pins the FULL 32-byte fingerprint, so nobody
+holds 66 bits of anything; a record carrying the signer's public key is verifiable against a
+pinned fingerprint by hashing its SPKI. The rejection's reasoning is therefore gone. Whether the
+record SHOULD be signed is a live design question and is deliberately NOT settled here — an
+amendment pass may not decide one. It is filed against P04: the record is encrypted under the
+invitation secret, so an outsider cannot write one, but every invited party holds that secret,
+so within the roster one party can publish candidates as another.)**
+~~Also rejected: a per-ceremony key from a shared
 secret, there being no shared secret before the ceremony, which is the problem the DHT
-exists to solve.
+exists to solve.~~ **(struck 2026-08-19 via /discuss — Dan. This is exactly what D21 built: the
+invitation carries a 32-byte secret delivered before anything connects, and this decision's own UX
+amendment re-keys both the rendezvous key and the record encryption to it. The premise — that no
+shared secret can exist before the ceremony — was true when written and was falsified by D21, and a
+builder reading this decision top-to-bottom met the adopted design listed as rejected.)**
 
 **(plan-review pin: this paragraph now rejects the adopted design — 2026-08-18, adopted by Dan.)**
 "A per-ceremony key from a shared secret, there being no shared secret before the ceremony" is
@@ -1824,8 +1866,14 @@ property, so a criterion written against them today could not fail.
   unbounded roster is an unbounded page count; 32 is six pages and is far past any real signing.
 
 *All four are enforced, not documented* — the externally-loaded path is the guarded one, which is the
-half PLAN-4 exists for. *All four are tunable, not law*, in the sense D16 already defines: the
-structure is the law, the value is a constant.
+half PLAN-4 exists for. ~~*All four are tunable, not law*, in the sense D16 already defines: the
+structure is the law, the value is a constant.~~ **(amended 2026-08-19 via /discuss — Dan.) Two are
+law and two are tunable.** `N` (the candidate cap) and the punch ceiling sit with the **structure**,
+because under D6's pin an attacker supplies the candidates and a bound an operator can raise is not a
+bound. The **ceremony-deadline maximum** and the **roster maximum** are tunable constants, in the
+sense D16 defines: the structure is the law, the value is a constant. **What discharges this: a guard
+that fails if either law figure is reachable from the tunable block** — not the P07 bullet driving a
+value past each bound, which passes identically whichever file the constant lives in.
 
 **(plan-review pin: this contradicts the D16 pin on a security bound — 2026-08-18, adopted by Dan.)**
 The sentence above says all four are tunable. **The 2026-08-17 pin on D16 says the opposite about two
