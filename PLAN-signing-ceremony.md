@@ -56,6 +56,16 @@ route; and this document's own framing corrected — after D21/D31 the spoken na
 *fallback*, not the default path. Seam inventory at
 `<project-memory>/instruments/ceremony.md` (11 paths / 12 seams / 9 gap-downs, no hot-path rows).
 Stages 3–6 of the arc still have not run.
+**Stages 3–6 run 2026-08-18 (unattended sweep, Dan's instruction: "like a runpending, don't stop for
+anything but the most serious issues").** Subsystem rounds, flat-spot passes, standards alignment and
+the dimension reviews, dispositioned on the best-and-most-correct test and landed without gates.
+**D32–D34 added; five pins written** — the roster commitment's preimage axes (D20), the nested-clock
+reservation (D16), the invitation as unsigned root of trust (D21), negative fixtures for all three
+law guards (Repo laws), and the seam inventory's graduation pass (P07). **The sweep's own
+through-line: the plan specified mechanisms and left their *numbers* and their *versions* unstated**
+— three security bounds that no criterion could have failed, and four interoperating formats with no
+version between two independently-updated Nibs. Stage 7 (`/plan-review`) last ran 2026-08-17, before
+D20–D34 existed, and is owed again.
 SME packs: **crypto (core tier)** — `go.mod` declares `filippo.io/age`,
 `golang.org/x/crypto`, `edwards25519`, `hpke`, `go-pkcs12`, `digitorus/pdfsign`
 (inferred, trigger 1); the consensus tier does not fire — ~~two~~ **N (2026-08-18)** sequential
@@ -141,6 +151,14 @@ button satisfies nothing. L3 exists because the ordering of a multi-party signin
 of the document, and a property nothing enforces is a convention.
 
 All three laws get guard tests, named at slice-grill time.
+
+**(Stage 6 pin, verification pack V1, 2026-08-18 — a guard with no negative fixture is a guard
+verified by its own absence.)** "Gets a guard test" is half a requirement. **Each of L1, L2 and L3
+ships a negative fixture that plants a violation of *that law specifically*, and each earns a row in
+`docs/red-proofs.md`** — the ledger that already backs `CONTRIBUTING.md`'s proven-red claim. A shared
+fixture will not do: three laws behind one fixture means two can be deleted with it still red, which
+is the exact shape V1 was earned by. This repo has already been bitten by the softer version — a
+guard satisfied by prose in a doc comment, twice in two sweeps.
 
 ---
 
@@ -733,6 +751,15 @@ The arm window therefore becomes a ceremony-scoped decision rather than a consta
 What must not change with it: the listener still accepts exactly **one** pinned peer, and still
 serves exactly **one** session per arm (D22).
 
+**(Stage 6 pin, crypto pack PLAN-8, 2026-08-18 — the outer clock and the inner one can disagree.)**
+A hop admitted one second before the ceremony deadline still gets `exchangeDeadline`'s **six
+minutes**, so the ceremony outlives its own expiry by up to that much — and the party at that hop is
+asked to consent to a signature on a ceremony that has already expired. **The rule: no hop starts
+unless the ceremony deadline exceeds now plus one full exchange budget.** A ceremony inside that
+window ends as *expired* (D28) rather than admitting a hop it cannot honour. This is PLAN-8's
+endpoint question — nesting three clocks means the outer one must reserve the inner one's worst case,
+not merely be larger than it.
+
 *Presentation rule:* the ceremony deadline is the only clock a person may see in human units.
 The other two are the machine's patience; a UI that renders them as "you have 4 minutes left to
 decide" turns a timeout into pressure on the one decision that must not be hurried.
@@ -915,7 +942,23 @@ pass reads from it rather than asking a person**.
 | `roster` | ordered `{name, fingerprint, label, signs}` | the order **is** the roster's order; `signs:false` is the non-signing convener (Dan, 2026-08-18) |
 | `intent` | what everyone is agreeing to | today each side types its own sentence; a four-party signing agrees to one thing |
 | `expires` | the ceremony deadline, in days | D16's clock 3 |
-| `rosterHash` | commitment over all of the above | the token every signature carries (D2 pin), so all signatures attest to one proceeding |
+| `rosterHash` | commitment over all of the above — **axes enumerated below** | the token every signature carries (D2 pin), so all signatures attest to one proceeding |
+
+**(Stage 6 pin, crypto pack PLAN-2, 2026-08-18 — "commitment over all of the above" is a gesture, not
+a specification.)** `rosterHash` is the token every signature in the document carries, and this table
+did not say what it commits to. A slice would have decided, and the decision would have been
+invisible. **The preimage axes, in order, each length-prefixed:** the format version (D32), `id`,
+`docHash`, `intent`, `expires`, and then for each roster entry in order — `fingerprint` (32 raw
+bytes), `signs` (one byte), `label`. **Deliberately excluded, and the exclusion argued:** the
+six-word `name`, because it is a pure function of the fingerprint (D3) and including it would let a
+wordlist change alter a commitment the freeze exists to keep stable; and the invitation secret,
+because verifiers who are not participants must be able to check the commitment from the document
+alone.
+
+*Why `signs` is inside the preimage and not a display field:* without it, a convener could present
+one roster to the signers and another to a verifier, differing only in who was obliged to sign, and
+both would hash the same. That is the whole class PLAN-2 exists to catch — an axis short is the
+attack.
 
 **The record is signed by the convener** and verified by every party against the convener's
 pinned fingerprint. A convener cannot reorder a ceremony in flight, because the order every party
@@ -967,6 +1010,21 @@ product shape, the same class as D4 and D6. **Option A taken 2026-08-18.**
 
 *Unspecified here, deliberately:* the channel-binding mechanism (a PAKE over the secret, or an
 HKDF over secret ‖ transcript) is named at slice-grill time and is **caveat 11**.
+
+**(Stage 6 pin, crypto pack PLAN-1, 2026-08-18 — the invitation is the root of trust and nothing
+signs it.)** D20's record is signed by the convener and verified against the convener's pinned
+fingerprint — but a party learns that fingerprint **from the invitation**, so the invitation is the
+root and it carries no signature. Stated rather than fixed, because the honest answer is that a
+signature would not help: there is nothing to verify it against until the invitation has already been
+trusted.
+
+*What tampering with an invitation actually buys:* **denial, not substitution.** Alter a roster
+fingerprint and that party pins a key nobody holds, so the hop never connects. Insert an attacker's
+own fingerprint and the convener — who holds their own copy of the record — refuses the contribution
+under L3, and the roster commitment on every existing signature no longer matches. The invitation's
+integrity assumption is therefore the same one the spoken name always had: it travels over a channel
+the parties already trust. That was never written down, and a reader would otherwise assume the
+signed record covers it.
 
 ### D22 — Topology: a convener hub and a serial baton; the convener may be non-signing *(settled 2026-08-18 — Dan, option A)*
 
@@ -1298,6 +1356,89 @@ taken on Dan's behalf rather than settled by him. Retiring the fallback strikes 
 second and third bullets, caveat 5, P01.S03's pin path, and the commitment work in P01.S04/S05 —
 and nothing else. Nothing downstream is built on the fallback existing.
 
+### D32 — Every format and protocol the ceremony introduces carries a version, and a skew is refused with a message *(settled 2026-08-18 — Stage 4 flat-spot pass)*
+
+**The ceremony is the first Nib feature where two independently-updated installations must
+interoperate**, and nothing in this plan — or in the p2p code it inherits — announces or negotiates a
+version. Everything else Nib does is single-machine, or already-versioned, or a file format someone
+else specified. A ceremony is four new interoperating surfaces at once.
+
+Four things get an explicit version, and each is an **on-wire identifier**, immutable once shipped
+(STANDARDS §9: "renaming them invalidates every deployed peer"):
+
+| surface | version lives | on skew |
+|---|---|---|
+| **Ceremony Record** (D20) | a `v` field inside the signed record | a party that cannot read the record **refuses the ceremony by name**, never parses partially |
+| **Invitation** (D21) | in the token's text form, before the payload | a reader that does not know the version says so, and says which Nib version it needs |
+| **Ceremony protocol** — hop framing, role exchange, end-state messages | announced on the channel **before** the first frame | mismatch ends the hop with a named error, before any document byte |
+| **`[NibRoster:<hash>]`** (D2 pin) | the tag itself, as `[NibCoSign:1]` already does | an unknown tag reads as "not one of ours", which `ReadAttestations` already does correctly |
+
+**The rule that makes this worth a decision rather than a field:** *a version mismatch must produce a
+sentence, not a parse error.* The failure this prevents is two people on a call, one of whom updated
+last week, watching a ceremony die with `unexpected EOF` — the ladder's whole D19 diagnosis effort
+made pointless by the one failure it does not cover.
+
+*Why announce rather than negotiate:* there is no back-compatibility to preserve (this repo has zero
+users and forbids shims), and a negotiation is a second protocol needing its own version. Announce,
+compare, refuse.
+
+*Not in scope:* the wordlist, which is frozen rather than versioned (caveat 4) — a version would
+invite the swap the freeze exists to forbid.
+
+### D33 — The numbers, firmed here rather than at measurement *(settled 2026-08-18 — Stage 6, crypto pack PLAN-4/PLAN-5)*
+
+Four bounds are stated in this plan as prose and nowhere as values. **An unstated threshold is
+unfalsifiable — any observed value satisfies it** — and three of these four bound a security
+property, so a criterion written against them today could not fail.
+
+- **Candidate cap `N` = 8 per hop.** D6's pin makes the cap law and P04 drives it by "publishing
+  N+50"; neither says what N is. Eight covers every tier the ladder can legitimately produce
+  (LAN, v6, mapped, punched, manual) with margin, and bounds a third party's amplification to
+  8 candidates × 2 hosts.
+- **Total punch budget = 3,000 packets per ceremony**, across all candidates and both sides — the
+  ceiling D6's pin calls for and D16's backoff was sized against (~390/candidate at the stepped
+  cadence). Exceeding it drops and **reports**; it never fails the ceremony.
+- **Ceremony deadline maximum = 30 days.** D16 clock 3 is "days, convener's choice", which is an
+  externally-supplied security parameter with no bound: it governs how long a listener may arm, how
+  long invitation-scoped pins persist (D29), and how long a mirror lives. A convener setting ten
+  years is a config away today.
+- **Roster maximum = 32 parties.** D25 allocates signature pages from the roster length, so an
+  unbounded roster is an unbounded page count; 32 is six pages and is far past any real signing.
+
+*All four are enforced, not documented* — the externally-loaded path is the guarded one, which is the
+half PLAN-4 exists for. *All four are tunable, not law*, in the sense D16 already defines: the
+structure is the law, the value is a constant.
+
+### D34 — The ceremony's outbound calls are enumerated, and the DHT is disclosed *(settled 2026-08-18 — Stage 5, STANDARDS §9)*
+
+STANDARDS §9 says Nib sends nothing by default and that "any other outbound call is a deliberate,
+flagged decision". Today Nib's entire egress is one opt-in GET to the releases API. **The ceremony
+adds five kinds of outbound traffic**, and the plan flags exactly one of them.
+
+Enumerated, one call at a time, as the standard asks:
+
+1. **Multicast announce/browse** (tier 1) — link-local only, armed-only.
+2. **DHT bootstrap + KRPC** (D6) — to a cached node list, armed-only.
+3. **DHT publish/fetch** of the encrypted candidate record (D6, D30).
+4. **Port-mapping requests** — PCP/NAT-PMP/UPnP-IGD to the local gateway (D15), armed-only.
+5. **Punch datagrams and session traffic** to the peer's candidates (D8).
+
+**The disclosure gap this pass found:** D15 already makes Nib *tell the user* it asked the router for
+an opening and name the port — Dan's option A, and right. **Nothing discloses the DHT**, which is the
+larger disclosure by a distance: a ceremony publishes a record to a **public, global, third-party
+network** and contacts strangers' nodes. Under D6's amendment the record is encrypted and its key is
+uncomputable without the invitation, so the *content* is protected — but participation is not
+private, and the user should be told in the same breath they are told about the router.
+
+**So: the ceremony screen discloses, while armed, that Nib is using the BitTorrent DHT to find the
+other party**, in one plain sentence, beside the router line. Not a consent gate — the ceremony
+cannot work without it and a modal per ceremony is friction for no decision — a disclosure, which is
+what §9 asks for.
+
+*Also adopted from §9:* **self-healing.** A corrupt or unreadable ceremony record degrades the panel
+to "this ceremony's record could not be read" and leaves every other ceremony and document working.
+It never blocks startup, and it never requires the user to delete state by hand.
+
 ---
 
 ## Build order
@@ -1490,6 +1631,8 @@ Exit criteria:
 - **The ceremony survives Nib being quit and reopened: the panel renders roster, position and next action from the local record with no network reachable. (added 2026-08-18, D24.)** Driven with the network down, because a resumption screen that silently needs the DHT is the failure this bullet exists to catch.
 - **The screen states that the invitation is a channel secret and not a signing credential, in those terms. (added 2026-08-18, D21.)** A user who forwards an invitation should know what they did and did not give away.
 - **Only the ceremony deadline is ever shown in human units; neither the connect deadline nor the exchange deadline appears as a countdown. (added 2026-08-18, D16 amendment.)**
+- **While armed, the screen discloses that Nib is using the BitTorrent DHT to find the other party — beside the router-opening line, in one plain sentence. (added 2026-08-18, D34, STANDARDS §9.)** D15 already discloses the smaller thing; this is the larger one.
+- **A corrupt or unreadable ceremony record degrades that ceremony's panel entry and leaves every other ceremony and open document working — driven with a truncated record. (added 2026-08-18, D34, STANDARDS §9 self-healing.)**
 - **The consent screen shows every party who has already signed, not one. (added 2026-08-18, D27.)** Driven with a three-signature document, because a two-party fixture cannot tell a roster from a single peer.
 - **The panel renders roster, position and next action with the vault locked, and asks for the password at the moment of signing rather than at the moment of looking. (added 2026-08-18, D29.)**
 - **Each of D28's four end states — completed, declined, expired, abandoned — produces its own message, distinct from each other and from D19's four network causes. (added 2026-08-18, D28.)** Eight distinct outcomes, driven separately; a screen that folds "they declined" into "couldn't establish a connection" fails this.
@@ -1522,6 +1665,9 @@ Exit criteria:
 - **An identity that no longer matches the roster ends the ceremony with a named message and never pairs on the new key. (added 2026-08-18, D28 — the L1 guard covers it.)**
 - **A ceremony directory is gone after the ceremony has ended and its document has been delivered or saved. (added 2026-08-18, D29.)**
 - Documentation and README updated in the same phase (STANDARDS docs-parity).
+- **Every row of `<project-memory>/instruments/ceremony.md` carries a disposition — `keep-live` / `gated` / `deleted` — filled at this phase's close. (added 2026-08-18, verification pack V8.)** An inventory whose disposition column was never filled is a record of intentions; 224 such rows accumulated in another project before anyone noticed. A row whose reader is a standing criterion is never silenced.
+- **Each of D33's four numbers is enforced on the externally-supplied path, driven by supplying a value past the bound. (added 2026-08-18, crypto pack PLAN-4.)** A test that supplies a value *inside* the bound cannot see an unenforced parameter.
+- **A version skew produces a sentence naming the mismatch, not a parse error — driven for the record, the invitation and the ceremony protocol separately. (added 2026-08-18, D32.)**
 
 Slices *(sketch)*: the roster-prefix contribution gate and the L3 guard; `coSignExchange` re-based off `len(ats) != 1`; **the carry route for a non-signing convener (D22 pin); the roster-shaped `Confirmer` (D27); the readme and About rewrite behind the drift guard (D27); the end-state machine (D28); the freeze, the scoped pins and the prune (D29);** the placement policy and page allocation; hop persistence and idempotent re-delivery; the ceremony-scoped arm window; the delivery round; the panel's roster view driven by a real N-party record.
 
