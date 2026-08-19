@@ -150,6 +150,20 @@ out="$(node --test --test-concurrency=1 test/ui/ 2>&1)"
 code=$?
 echo "$out"
 
+# Re-print the failing test names at the END, where a tailed run can still see them.
+#
+# node --test puts each failure inline, hundreds of lines above the summary, so
+# `./build/uirepro.sh | tail` shows "# fail 1" and NOT which test — and a flake observed
+# that way is a flake you cannot name. That happened on 2026-08-19 and cost the sighting:
+# five clean runs afterwards could neither confirm nor rule out what the one failure was.
+# The summary is the cheap fix, and it costs nothing on a green run.
+if [ "$code" -ne 0 ]; then
+  echo
+  echo "── failed ──────────────────────────────────────────────────────────"
+  printf '%s\n' "$out" | grep -E "^not ok " || echo "(no 'not ok' lines — the runner itself failed; read the log above)"
+  echo "────────────────────────────────────────────────────────────────────"
+fi
+
 # Same trap tier 2 found: a runner that discovers no tests also exits 0, and would
 # read as a passing suite forever.
 n="$(printf '%s\n' "$out" | sed -n 's/^# tests \([0-9][0-9]*\)$/\1/p' | tail -1)"
