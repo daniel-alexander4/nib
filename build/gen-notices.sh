@@ -112,6 +112,27 @@ if [ -d web/vendor/pdfjs/cmaps ]; then
   emit ""
 fi
 
+# quic-go and the DHT are Go modules, so the module walk above already attributes them —
+# but their licences are the two the plan had to clear before either could be chosen
+# (caveat 6 wants AGPL-compatible, and the DHT's MPL-2.0 is compatible only through §3.3's
+# Secondary License clause, which names AGPLv3). Naming that here means a future reader does
+# not have to re-derive the compatibility argument from the module list.
+emit "## Note on the two transport dependencies"
+emit ""
+emit "\`github.com/quic-go/quic-go\` is **MIT**. \`github.com/anacrolix/dht/v2\` is the"
+emit "**Mozilla Public License 2.0**, which is compatible with the AGPLv3 through MPL 2.0"
+emit "§3.3 — it permits distribution under a Secondary License, and the AGPLv3 is named as"
+emit "one."
+emit ""
+emit "They are **selected but not yet linked into the binary**: at present they are reached"
+emit "only from tests, so the module walk above — which attributes exactly what ships — does"
+emit "not list them, and it is right not to. They will appear there of their own accord once"
+emit "the session transport uses them. This note records the compatibility argument now, at"
+emit "the point the choice was made, rather than leaving it to be re-derived later."
+emit ""
+emit "---"
+emit ""
+
 jsdiff_ver="$(cat web/vendor/diff/VERSION)"
 tesseract_ver="$(cat web/vendor/tesseract/VERSION)"
 pixelmatch_ver="$(cat web/vendor/pixelmatch/VERSION)"
