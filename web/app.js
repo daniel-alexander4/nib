@@ -1486,7 +1486,7 @@ els.keyCreateBtn.onclick = () => addKey({ mode: 'create', keyPath: els.keyAddPat
 // document its own viewer and DOM, and so the bindings below stop being shared before
 // anything can share them.
 //
-// **Swap-on-switch was refused** (PLAN.md P05 phase-open). Leaving these as module-level
+// **Swap-on-switch was refused** (ADR-002). Leaving these as module-level
 // bindings and saving/restoring them at the switch boundary would cost no reference
 // churn, and would make the module-level values a cache whose correctness depends on
 // nothing async reading them across a switch — precisely the class P04 spent three
@@ -1565,7 +1565,7 @@ function newView() {
     // genuinely frequent path this feature has: relayoutOverlays runs on scroll and
     // zoom. It walks `view.overlayFields`, which is the active view's and only the
     // active view's. A version iterating every open document would turn that path into
-    // an N x regression on the thing a user feels most (PLAN.md P05 hot-path pin).
+    // an N x regression on the thing a user feels most (ADR-002's hot-path constraint).
     overlayFields: [],
 
     // The armed-tool flags and the geometry they capture, per document for the same reason
@@ -8375,7 +8375,7 @@ function layoutField(f, pv) {
 }
 // HOT PATH — runs on scroll and zoom. It walks ONE view's fields, the owning one, and
 // never a collection of views: a version iterating every open document turns the path a
-// user feels most into an N x regression (PLAN.md P05 hot-path pin).
+// user feels most into an N x regression (ADR-002's hot-path constraint).
 function relayoutOverlays(owner) {
   for (const f of owner.overlayFields) {
     const pv = owner.viewer.getPageView(f.page - 1);

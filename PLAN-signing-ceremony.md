@@ -138,26 +138,22 @@ SME packs: **crypto (core tier)** — `go.mod` declares `filippo.io/age`,
 (inferred, trigger 1); the consensus tier does not fire — ~~two~~ **N (2026-08-18)** sequential
 single signers, no aggregate or threshold dependency **— multi-party (D22) is a relay, not a
 quorum, so the tier's trigger still does not fire**. **verification** — declared
-by the sibling plan in this repo (`PLAN.md:17`), corroborated by
+by the sibling plan in this repo (`PLAN.md:17`, since retired), corroborated by
 `mdpdf/coverage.go`'s `Unsupported()` capability oracle. Both declare `plan` in
 `objects`.
 
 **Where this plan and the original brief differ, the plan wins.**
 
-**Sibling plan:** this repo currently carries a second, unrelated feature plan —
-`PLAN.md`, "Multiple open documents in Nib". The two are independent and neither
-supersedes the other. `/createcode` must be told which plan it is walking. This split is
-deliberate (D1) and ends when one of the two retires into CLAUDE.md + ADRs per
-STANDARDS §15.6.
-
-**(plan-review pin: the split's end-condition has fired, 2026-08-17.)** This paragraph
-read "in flight with P01.S01 shipped at v1.102.4" — stale. **`PLAN.md` closed 2026-08-17
-at v1.108.4**: all seven phases, P07's ledger 6 met / 0 not met / 0 not exercised. So the
-condition named in the sentence above is now **met for `PLAN.md`**, and its retirement into
-CLAUDE.md + ADRs is *owed work, not a hypothetical* — recorded here because a trigger that
-fires with nobody watching is indistinguishable from one that never fired. **What
-discharges this specifically:** `PLAN.md` retired per STANDARDS §15.6 and this paragraph
-reduced to naming this plan alone — not merely correcting the version number above.
+**This is the repo's only plan.** ~~Sibling plan: this repo currently carries a second,
+unrelated feature plan — `PLAN.md`, "Multiple open documents in Nib" … `/createcode` must be
+told which plan it is walking.~~ **(discharged 2026-08-19 — Dan.)** `PLAN.md` closed
+2026-08-17 at v1.108.4 (all seven phases; P07's ledger 6 met / 0 not met / 0 not exercised)
+and was **retired per STANDARDS §15.6 on 2026-08-19**: audited for reasoning that lived
+nowhere else, which became **ADR-004** (document id on the wire), **ADR-005** (the
+open-document cap's measured byte figure) and **ADR-006** (the hand-off credential, and the
+stronger mechanism refused); code comments citing it for a measurement or a pin re-pointed at
+those ADRs; the file removed. The split D1 called deliberate has ended, so `/createcode` needs
+no disambiguation — there is one plan and this is it.
 
 This plan covers **one feature project inside the existing `nib` repo**: replacing
 the current **Collaboration** process with a **Signing Ceremony** — ~~two people who
@@ -239,7 +235,8 @@ guard satisfied by prose in a doc comment, twice in two sweeps.
 
 A feature project inside the existing `nib` repo. No new repository, no new Go
 module, no new binary. The plan artifact is this file, `PLAN-signing-ceremony.md`,
-kept beside the sibling `PLAN.md` with a cross-reference in each. License unchanged:
+~~kept beside the sibling `PLAN.md` with a cross-reference in each~~ **now the repo's only
+plan (2026-08-19 — the sibling retired per STANDARDS §15.6; see the header)**. License unchanged:
 **AGPLv3**. The DHT dependency is MPL-2.0, which is AGPL-compatible (MPL 2.0 §3.3
 permits distribution under a Secondary License, and AGPLv3 is named as one) — so
 the dependency creates no licensing conflict.
@@ -2264,7 +2261,7 @@ Slices *(sketch)*: hop persistence, the atomic write and the disk-full path; res
 - ~~**Group ceremonies (more than two parties).** The attestation model is two-party today (`coSignExchange` requires exactly one prior signer, `session.go:207`). Widening it is a separate project.~~ **Struck 2026-08-18 on Dan's instruction — group ceremonies are now the feature (D22, P07).** Two corrections to what this entry claimed: the line is `session.go:229`, not `:207`, and **the attestation model is not two-party** — `buildCoSigned` (`internal/server/cosign.go:223`) counts nothing, `stackPlacement` places an *n*-th block, and `crossBind` already cross-binds every signer against every other. The offline path can produce an N-signature document today. The two-party assumption is one `len(ats) != 1` in the live path and a layout that breaks at the fourth block (D25) — which is why this was cheaper than "a separate project" made it sound, and why the entry is struck rather than deferred.
 - **A relay for the carrier-grade-NAT case.** Excluded by the constraints; the manual path (D9) is the answer instead.
 - **Changing the signature or attestation format.** D2.
-- **The multiple-open-documents feature** — that is `PLAN.md`, independent of this.
+- **The multiple-open-documents feature** — shipped and its plan retired 2026-08-19; the surviving record is `docs/adr/` (ADR-001 through ADR-006) and `CONTRIBUTING.md`'s multiple-documents laws.
 - **Mobile or web clients.** Nib is a desktop app with a loopback UI.
 - **The ceremony on the CLI.** `internal/cli/cli.go:78` carries twenty verbs and no session verb — live co-signing is GUI-only today, and stays so. *Why:* every step that matters in a ceremony **is a consent** — reading what you are about to sign and deciding — so a scriptable ceremony is either an interactive program wearing a CLI's clothes, or the unattended signing this project has already declined. *The revisit trigger, which D22 made plausible for the first time:* a real convener asking for it. A clerk driving a four-party signing is exactly the person who would want to script the invitations, and issuing an invitation is the one part of a ceremony that carries no consent. *(added 2026-08-18, holistic pass — taken by recommendation on Dan's behalf, and reversible: it adds a phase, it does not disturb one.)*
 
@@ -2323,7 +2320,7 @@ re-verified.
 
 - Amendments follow the house mechanics: a dateline clause per pass, tagged pins, strike-and-supersede. No silent rewrites.
 - Every amendment is a commit with a patch bump per this repo's CLAUDE.md.
-- `/createcode` must be told it is walking *this* plan and not `PLAN.md`.
+- ~~`/createcode` must be told it is walking *this* plan and not `PLAN.md`.~~ **(moot 2026-08-19 — `PLAN.md` retired; this is the repo's only plan.)**
 - Residual doubts go to the `/pending` memory lists, not to chat.
 - **L3 gets an ADR in the change that first makes it constrain code** (CLAUDE.md, STANDARDS §11),
   as ADR-001 did for operation pinning. Until then it is a plan law and lives here. *(added 2026-08-18)*

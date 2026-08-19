@@ -289,7 +289,7 @@ func handedOff(cfgDir, path string) bool {
 			notice = "handoff-queued"
 		}
 		// Surface the running instance's window. The mechanism is the one Nib already
-		// has, and its limit is recorded in PLAN.md: no reliable cross-platform raise
+		// has, and its limit is recorded in ADR-006: no reliable cross-platform raise
 		// exists for a window you do not own — Wayland refuses it by design — so the
 		// browser decides, and on some combinations this produces a second window
 		// pointing at the same Nib rather than raising the first. That is survivable:
