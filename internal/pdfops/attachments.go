@@ -2,6 +2,9 @@ package pdfops
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/binary"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"strings"
@@ -168,6 +171,78 @@ func AddAttachment(pdf []byte, name string, data []byte) ([]byte, error) {
 			}
 		}
 		return ctx.AddAttachment(model.Attachment{Reader: bytes.NewReader(data), ID: name}, false)
+	})
+}
+
+// ContentDigest is a SHA-256 over the page count and every page's content stream, in
+// order — a projection of the document that survives operations which change its bytes.
+//
+// **It exists because a byte hash cannot be recomputed by anyone but the writer.** Measured
+// 2026-08-19: pdfcpu's rewrite is not idempotent — normalising the same document twice
+// produces two different files — so "hash the document with the attachment removed" gives
+// the convener one number and every later party a different one. Attaching and then
+// detaching is not an identity either.
+//
+// This is stable where that is not. Measured on the same run: identical across adding an
+// attachment and across three incremental signatures.
+//
+// **What it does not cover, stated rather than discovered:** annotations, form field
+// values, attachments, and metadata. It answers "is this the same document" about the
+// visible content, which is what a ceremony is convened over. Tamper-evidence for
+// everything else is what the signatures are for — they cover the actual bytes, and any
+// edit to them flips the verification verdict.
+func ContentDigest(pdf []byte) (string, error) {
+	ctx, err := api.ReadValidateAndOptimize(bytes.NewReader(pdf), model.NewDefaultConfiguration())
+	if err != nil {
+		return "", err
+	}
+	h := sha256.New()
+	var n [8]byte
+	binary.BigEndian.PutUint64(n[:], uint64(ctx.PageCount))
+	h.Write(n[:])
+	for i := 1; i <= ctx.PageCount; i++ {
+		d, _, _, err := ctx.PageDict(i, false)
+		if err != nil || d == nil {
+			return "", fmt.Errorf("page %d is unreadable: %w", i, err)
+		}
+		c, err := ctx.PageContent(d, i)
+		if err != nil && err != model.ErrNoContent {
+			return "", fmt.Errorf("page %d content: %w", i, err)
+		}
+		binary.BigEndian.PutUint64(n[:], uint64(len(c)))
+		h.Write(n[:]) // length-prefixed, so two pages cannot merge across the boundary
+		h.Write(c)
+	}
+	return hex.EncodeToString(h.Sum(nil)), nil
+}
+
+// RemoveAttachment returns the document without the named attachment, leaving it
+// unchanged when there is nothing by that name.
+//
+// It exists so a value can be computed over "the document apart from this attachment" —
+// the Ceremony Record's docHash, which cannot include the record that contains it. A
+// caller hashing the whole file would produce a number no later party could reproduce,
+// because by then the record is inside.
+//
+// Absent is not an error: the callers that want this are asking "what does this document
+// look like without X", and a document that never had X already looks like that.
+func RemoveAttachment(pdf []byte, name string) ([]byte, error) {
+	name = attachmentName(name)
+	if name == "" {
+		return nil, fmt.Errorf("attachment needs a file name")
+	}
+	return writeMutated(pdf, func(ctx *model.Context) error {
+		existing, err := ctx.ListAttachments()
+		if err != nil {
+			return err
+		}
+		for _, a := range existing {
+			if a.FileName == name || a.ID == name {
+				_, err := ctx.RemoveAttachments([]string{name})
+				return err
+			}
+		}
+		return nil
 	})
 }
 

@@ -44,6 +44,14 @@ type Attestation struct {
 	AcceptedPeerLabel string    // human label the signer pinned for the peer (-> /Reason, appearance)
 	Intent            string    // what the signer agrees to (-> /Reason, appearance)
 	When              time.Time // signing time
+	// RosterHash is the Ceremony Record's commitment, hex, carried as a
+	// [NibRoster:<hash>] token (D2's UX pin, D20). Empty on an ordinary two-party
+	// co-sign, which has no record.
+	//
+	// It is what makes N signatures a record of ONE proceeding rather than a chain of
+	// pairwise claims: signer 3 attesting only to signer 2 says nothing about what signer
+	// 1 agreed to, and every signature carrying the same commitment does.
+	RosterHash string
 }
 
 // attestationTag marks a /Reason as one this package WROTE, and ReadAttestations requires
@@ -67,6 +75,9 @@ const attestationTag = "[NibCoSign:1]"
 // spkiToken matches the machine-readable peer fingerprint embedded in /Reason.
 var spkiToken = regexp.MustCompile(`\[SPKI:([0-9a-fA-F]{64})\]`)
 
+// rosterToken matches the Ceremony Record commitment embedded in /Reason (D20).
+var rosterToken = regexp.MustCompile(`\[NibRoster:([0-9a-fA-F]{64})\]`)
+
 func (a Attestation) intent() string {
 	if a.Intent == "" {
 		return defaultIntent
@@ -89,7 +100,14 @@ func safeText(s string) string {
 // signature panel yet round-trips exactly. The user-controlled label and intent
 // are bracket-stripped so they can't forge the token (see safeText).
 func (a Attestation) reason() string {
-	return fmt.Sprintf("%s Accepts %s [SPKI:%s]. %s", attestationTag, safeText(a.AcceptedPeerLabel), a.AcceptedPeer, safeText(a.intent()))
+	roster := ""
+	if a.RosterHash != "" {
+		// Placed BEFORE the user-controlled text, like the SPKI token, and matched by a
+		// regexp requiring exactly 64 hex — safeText strips brackets from the label and
+		// intent, so neither can forge one.
+		roster = " [NibRoster:" + a.RosterHash + "]"
+	}
+	return fmt.Sprintf("%s Accepts %s [SPKI:%s]%s. %s", attestationTag, safeText(a.AcceptedPeerLabel), a.AcceptedPeer, roster, safeText(a.intent()))
 }
 
 // AppearanceLines is the visible attestation block text, one entry per line — the
@@ -120,6 +138,18 @@ type SignerAttestation struct {
 	// absent or a tampered signature. For two-party mutual co-signing both are
 	// Matched. A broken signature attests to nothing, so it never Matches.
 	Matched bool `json:"matched"`
+	// RosterHash is the Ceremony Record commitment this signature carries ("" on an
+	// ordinary two-party co-sign, which has no record).
+	RosterHash string `json:"rosterHash,omitempty"`
+	// OneProceeding is true when every VALID signature on the document carries the same
+	// non-empty roster commitment.
+	//
+	// False is not "unsigned" and not "invalid" — it is a document whose signers did not
+	// all agree to the same ceremony, which is a distinct thing to report and the reason
+	// this is a separate field rather than folded into Matched. A verifier that said only
+	// "co-signed" about such a document would be describing a proceeding that did not
+	// happen.
+	OneProceeding bool `json:"oneProceeding,omitempty"`
 }
 
 // ReadAttestations returns each signer's attestation from a co-signed PDF, in
@@ -139,10 +169,14 @@ func ReadAttestations(pdf []byte) []SignerAttestation {
 			if m := spkiToken.FindStringSubmatch(s.Reason); m != nil {
 				sa.AcceptedPeer = m[1]
 			}
+			if m := rosterToken.FindStringSubmatch(s.Reason); m != nil {
+				sa.RosterHash = m[1]
+			}
 		}
 		out = append(out, sa)
 	}
 	crossBind(out)
+	markOneProceeding(out)
 	return out
 }
 
@@ -171,4 +205,40 @@ func shortFingerprint(hexFP string) string {
 		return hexFP
 	}
 	return hexFP[0:4] + " " + hexFP[4:8] + " " + hexFP[8:12] + " " + hexFP[12:16] + "..."
+}
+
+// markOneProceeding sets OneProceeding when every VALID signature carries the same
+// non-empty roster commitment (D20, D2's UX pin).
+//
+// Only valid signatures are considered, for the same reason crossBind ignores invalid
+// ones: a broken signature attests to nothing, so letting it vote would let a tampered
+// signature deny a genuine ceremony. And an empty commitment on any valid signature is
+// disqualifying rather than ignored — a signer who carried no record is a signer who
+// agreed to something else.
+func markOneProceeding(ats []SignerAttestation) {
+	first, n := "", 0
+	for _, a := range ats {
+		if !a.Valid {
+			continue
+		}
+		n++
+		if a.RosterHash == "" {
+			return
+		}
+		if first == "" {
+			first = a.RosterHash
+			continue
+		}
+		if a.RosterHash != first {
+			return
+		}
+	}
+	if n == 0 || first == "" {
+		return
+	}
+	for i := range ats {
+		if ats[i].Valid {
+			ats[i].OneProceeding = true
+		}
+	}
 }
