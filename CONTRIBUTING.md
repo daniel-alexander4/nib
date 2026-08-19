@@ -17,11 +17,12 @@ for things it never looked at.
 | 1 | `go test ./...` | the Go side: server, PDF operations, vault, signing, CLI |
 | 2 | `./build/jsdomtest.sh` | the front end's logic and DOM behaviour, in jsdom |
 | 3 | `./build/uirepro.sh` | the whole app: the real binary, in a real browser |
+| 4 | `./build/pairrepro.sh` | a ceremony between TWO real binaries, two vaults, two identities |
 
 Add `node --check web/app.js` after editing JavaScript, and `go test -race
 ./internal/server/` after touching anything concurrent.
 
-Tiers 2 and 3 **skip cleanly** when their dependencies are absent — they print a
+Tiers 2, 3 and 4 **skip cleanly** when their dependencies are absent — they print a
 line saying which one is missing and exit 0. A fresh clone therefore runs 0 and 1
 with no setup at all. To enable the other two: `npm install` (jsdom and
 playwright-core, dev-only, `node_modules/` is git-ignored) and have a
@@ -35,7 +36,7 @@ where double-click is the ordinary way in and where the mechanism it replaced
 never worked at all. It is not part of the routine loop — run it when touching
 path handling, file dialogs, launch/hand-off, or packaging.
 
-## The three tiers, and why there are three
+## The four tiers, and why there are four
 
 They are not redundancy. Each one exists because the tier below it is blind to
 something, and each says so in its own file rather than only here.
@@ -64,6 +65,18 @@ the binary, runs it under a throwaway `HOME`, and drives it in a browser.
 UI in an installed Chromium-family browser (`internal/browser`), so Chromium is
 what users get. The fallback path can still land someone in Firefox, and that gap
 is tracked as a `VERIFY` item on the pending list rather than pretended away.
+
+**Tier 4 — `./build/pairrepro.sh`** (ceiling written in `build/pairrepro.sh`)
+Sees: everything above, twice over — two binaries with two homes, two vaults and
+two identities, completing a ceremony between them over loopback. It is the only
+tier that can assert anything a second party observes: that the peer is a
+different identity, that both sides derive the *same* four verification words,
+and that the finished document carries two signatures when read from the
+receiving side rather than reported by the sender.
+**Cannot see: two networks.** Both instances are on loopback, so NAT, routing,
+MTU and firewalls are invisible — and those are exactly what the connection
+ladder exists to survive. What it delegates upward is the two-machine run, which
+stays a `VERIFY` item on the pending list.
 
 That chain is the point. A gap named and delegated is a decision; a gap nobody
 wrote down is discovered later by a user.

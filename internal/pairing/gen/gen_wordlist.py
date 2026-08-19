@@ -119,6 +119,30 @@ EXCLUDE = {
     "naked", "nude", "warlike", "captive", "hostage", "ransom", "bribe",
 }
 
+# Slurs, epithets and archaic offensive usages.
+#
+# **The authoritative copy of this list is `offensive` in wordlist_test.go**, because that
+# one guards what SHIPS and this script does not run at build time. This copy exists so a
+# regeneration does not have to produce a bad list and then be told about it.
+#
+# It was written after a real one got through: the corpus is 19th-century literature, and
+# every constraint above is about how a word SOUNDS — length, syllables, phonetic distance,
+# multi-book presence. None of them has an opinion about what a word means, so "negro"
+# satisfied all of them and shipped, surfacing in a live verification string during a
+# two-instance harness run.
+OFFENSIVE = {
+    "negro", "negroes", "nigger", "niggers", "darkie", "darky", "coon",
+    "injun", "squaw", "redskin", "halfbreed", "mulatto", "octoroon", "quadroon",
+    "gypsy", "gipsy", "gypsies", "heathen", "heathens", "infidel", "papist",
+    "jewess", "mahometan", "mohammedan", "chinaman", "chinamen", "oriental",
+    "eskimo", "hottentot", "kaffir", "dago", "wop", "yid",
+    "savage", "savages", "slave", "slaves", "master", "masters",
+    "idiot", "imbecile", "lunatic", "moron", "spastic", "cripple", "crippled",
+    "blind", "deaf", "dumb", "lame", "leper", "lepers",
+    "whore", "harlot", "wench", "strumpet", "bastard", "sodomy",
+    "tramp", "vagrant", "beggar", "queer",
+}
+
 
 def _with_inflections(words):
     """Expand the exclusion set over ordinary English inflections.
@@ -138,7 +162,7 @@ def _with_inflections(words):
     return out
 
 
-EXCLUDE = _with_inflections(EXCLUDE)
+EXCLUDE = _with_inflections(EXCLUDE) | _with_inflections(OFFENSIVE)
 
 
 def fetch(url):

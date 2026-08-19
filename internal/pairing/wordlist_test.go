@@ -16,7 +16,7 @@ import (
 // *display* change rather than a silent authentication failure. The guard stays because
 // a label people learn to recognise should not move quietly; what relaxed is the
 // promise, from "never" to "not without a version bump and a note".
-const wordlistSHA256 = "17f6dcb6e56b91b495a4d1aadf41aa0de67b8a7b4d9e813c691a3c9ccbb79446"
+const wordlistSHA256 = "b8cfdd245b0c21adbf76e2f5bcbbe28c019a51ae10612783563e201d58464de9"
 
 // TestWordlistIsFrozen is the checksum guard caveat 4 asks for.
 func TestWordlistIsFrozen(t *testing.T) {
@@ -123,6 +123,60 @@ func TestWordlistCarriesNoTrailingBlank(t *testing.T) {
 	for i, l := range lines {
 		if l != strings.TrimSpace(l) {
 			t.Errorf("line %d (%q) carries surrounding whitespace", i+1, l)
+		}
+	}
+}
+
+// offensive is the list of words that must never appear in the pairing list.
+//
+// **This is the guard that matters, and it is in Go rather than in the generator,
+// because the generator does not run at build time and the artifact is what ships.**
+// A regeneration against a different corpus, or a hand-edit, has to pass here.
+//
+// It was written after a real one got through. The corpus is 19th-century public-domain
+// literature, and the constraints that produced the list — length, syllables, phonetic
+// distance, multi-book presence — are all about how a word SOUNDS. None of them has an
+// opinion about what a word means, so "negro" satisfied every one of them and shipped.
+// It surfaced in a two-instance harness run as part of a live verification string:
+// "gathered negro flushed gift". These words are read aloud, by strangers, about a legal
+// document.
+//
+// Slurs and epithets first, then archaic offensive usages the period supplies, then a
+// small set of words that are not slurs but are cruel to hand someone at random —
+// disability terms used as insults, and words about ownership of people.
+var offensive = []string{
+	"negro", "negroes", "nigger", "niggers", "darkie", "darky", "coon",
+	"injun", "squaw", "redskin", "halfbreed", "mulatto", "octoroon", "quadroon",
+	"gypsy", "gipsy", "gypsies", "heathen", "heathens", "infidel", "papist",
+	"jewess", "mahometan", "mohammedan", "chinaman", "chinamen", "oriental",
+	"eskimo", "hottentot", "kaffir", "dago", "wop", "yid",
+	"savage", "savages", "slave", "slaves", "master", "masters",
+	"idiot", "imbecile", "lunatic", "moron", "spastic", "cripple", "crippled",
+	"blind", "deaf", "dumb", "lame", "leper", "lepers",
+	"whore", "harlot", "wench", "strumpet", "bastard", "sodomy",
+	"tramp", "vagrant", "beggar", "queer",
+}
+
+// TestWordlistCarriesNothingOffensive is the guard the list did not have.
+//
+// Every other constraint on the list is about sound. A word can be three syllables of
+// clean phonetics, present in forty books, two phoneme-edits from everything else, and
+// still be the last thing anyone wants read down a phone line to a stranger.
+func TestWordlistCarriesNothingOffensive(t *testing.T) {
+	in := make(map[string]bool, len(allWords()))
+	for _, w := range allWords() {
+		in[w] = true
+	}
+	// The stimulus: the map really was built. A membership test against an empty map
+	// finds nothing and passes.
+	if len(in) != 1<<bitsPerWord {
+		t.Fatalf("setup: the index holds %d words, so nothing below was checked", len(in))
+	}
+	for _, w := range offensive {
+		if in[w] {
+			t.Errorf("the pairing list contains %q. These words are read ALOUD, by strangers, "+
+				"about a document with legal weight — and every other constraint on this list "+
+				"is about how a word sounds, so nothing else would ever catch it.", w)
 		}
 	}
 }

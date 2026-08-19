@@ -111,6 +111,15 @@ the same failure this file exists to fix.
 | **None — this one was LIVE.** Autofill wrote to `annotationStorage` and never touched the rendered input (v1.109.13) | `autofill from the saved profile visibly updates the rendered form` | "the rendered input still shows [\"typed into the form and saved\"] … ten seconds after the toast said the fields were filled". Not a reintroduced defect: the check went red against shipped code on its first run, which is the strongest form of the same evidence |
 | The `pagesloaded` widest-page refine runs unconditionally, over a zoom the user set while the document was still loading (v1.109.12) | `a zoom set while the document is still loading is not thrown away` | "page 1 is 520px, not the 1375px the user zoomed it to: the fit that lands when the document finishes loading overwrote a scale the user had already chosen" |
 
+## Tier 4 — `./build/pairrepro.sh`
+
+| Defect reintroduced | Check that fired | What it said |
+|---|---|---|
+| The session is dialled at a port nothing is listening on, so the ceremony never starts (v1.109.49) | the spoken-check stimulus assertion | "instance A was never shown the verification words — the ceremony reached the document exchange without the spoken check (L2)". The point is the ORDER: the harness refuses to grade the ceremony before confirming the gate happened, so a ceremony that never began cannot pass as one that completed |
+| The verification is never confirmed on either side (v1.109.49) | the ceremony itself | `initiate returned HTTP 502` — the gate holds both parties and the session times out, which is the behaviour P01.S05 built |
+| Both instances given the same identity (v1.109.49) | `both instances have the SAME identity … one key agreeing with itself` | **and the more interesting half: the realistic route to that state does not reach the assertion.** Pointing both instances at one home fails EARLIER — the second enrolment returns 409 because a vault already exists. The assertion was probed directly instead, by reading B's fingerprint from A, and fires. Recorded as defence-in-depth rather than as the primary guard |
+
+
 ## Vacuous greens caught, and how
 
 Not red proofs — the opposite, and worth as much. Each is a check that was **passing while

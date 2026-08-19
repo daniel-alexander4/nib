@@ -2208,7 +2208,50 @@ Exit criteria:
 - The pinned-peer callback demonstrably rejects a non-pinned peer under QUIC, driven red.
 - ~~`Initiate`, `Receive` and `coSignExchange` are unchanged.~~ **`coSignExchange` is unchanged; `Initiate`, `Receive`, `SendDocument` and `ReceiveDocument` are re-typed off `*tls.Conn` to a stream plus an already-verified fingerprint, and one set of session-logic tests runs green over both transports. (superseded 2026-08-16 — the original criterion was unmeetable: those four are typed to `*tls.Conn` today, see the D7 pin.)**
 
-Slices *(sketch)*: **the multi-instance harness, first, driving the HTTP API, with its ceiling written in its own file as every other tier's is (2026-08-18, D26);** library selection **as a PAIR — QUIC and DHT chosen together against the socket-sharing constraint, never one then the other (2026-08-18, caveat 7 pin)**; **the socket demultiplexer** and a spike proving `VerifyPeerCertificate` fires as under `crypto/tls`; the session core re-typed off `*tls.Conn` **(D14)**; QUIC `Dial`/`Listen` added behind that core; the pinned-rejection test ported; ~~the TCP path removed~~ **the TCP dialer kept as a peer behind the same core, with the session-logic tests parameterised over both (2026-08-16, D14)**.
+~~Slices *(sketch)*: the multi-instance harness, first, driving the HTTP API…~~ **Firmed 2026-08-19 at phase-open. The sketch's seven items become six slices: "the pinned-rejection test ported" and "the session-logic tests parameterised over both" are one piece of work, not two, and splitting them would mean writing the parameterised harness twice.** *(Sketch retained below the slices.)*
+
+#### P02.S01 — The multi-instance harness *(done 2026-08-19, v1.109.49)* *(D26; the phase's first slice by its own amendment)*
+Scope: a fourth tier that runs **two** real nib binaries against each other over loopback, headless and unattended, driving each one's HTTP API. Refs: D26, `CONTRIBUTING.md`'s tier table.
+Acceptance:
+- Two binaries, two `HOME`/`XDG_CONFIG_HOME` pairs, two vaults, two identities — asserted to be *different* identities, because one vault reused is the shape that makes every later assertion vacuous.
+- **A ceremony completes end to end**, driven by *completing* it: one instance arms, the other initiates, both confirm the spoken check on their own APIs, consent is given, and the returned document carries two valid signatures. **A harness that boots two Nibs and asserts nothing is the vacuous green D26 exists to prevent.**
+- The harness skips cleanly when its dependencies are absent, as tiers 2 and 3 do.
+- **Its ceiling is written in its own file** as every other tier's is (`verify_test.go` guards that each tier states one): **it cannot see two networks**, and what it delegates upward is the Dan-only two-machine run.
+- The tier is added to `CONTRIBUTING.md`'s table and to `verify_test.go`'s guard, or the contract describes three tiers while four exist.
+
+#### P02.S02 — Library selection, as a pair *(caveat 7 pin)*
+Scope: choose the QUIC and DHT libraries **together**, against the socket-sharing constraint, with a spike that binds a `net.PacketConn` first and hands it in. Refs: caveat 6, caveat 7, D8, D15.
+Acceptance:
+- Each candidate accepts an externally-supplied `net.PacketConn` — **proven by a spike, not by reading the documentation**.
+- **The pair is evaluated as a pair**: a QUIC library and a DHT library that each accept an external conn can still be unusable together, because separating them needs a passthrough hook one of them must expose. A candidate with no hook is disqualified even if it passes the bullet above.
+- Licences are AGPLv3-compatible and recorded in `THIRD-PARTY-NOTICES.md`.
+- The spike also answers caveat 1: `VerifyPeerCertificate` is invoked exactly as `crypto/tls` does it, with `InsecureSkipVerify` set and `RequireAnyClientCert` honoured. One spike, two caveats.
+
+#### P02.S03 — The socket demultiplexer *(caveat 7's Stage-2 pin)*
+Scope: separate QUIC and KRPC arriving on one UDP port. Refs: caveat 7.
+Acceptance:
+- Interleaved QUIC and KRPC traffic at the same port, both arriving intact — driven, not argued.
+- **The cheap discriminator is asserted to be wrong**, in a test, so nobody re-derives it: a bencode dict's leading `'d'` (`0x64`) has the QUIC header-form bit clear and the fixed bit set, which is exactly a QUIC short header. The collision is on the steady state, not an edge.
+
+#### P02.S04 — The session core re-typed off `*tls.Conn` *(D14)*
+Scope: `Initiate`, `Receive`, `SendDocument` and `ReceiveDocument` take a stream plus an already-verified fingerprint; `coSignExchange` is unchanged. Refs: D14, D7 pin.
+Acceptance:
+- The four entry points no longer name `*tls.Conn`; `coSignExchange` is untouched.
+- Everything P01 hung on those signatures still holds — the verification gate, the L2 guard's population floor, the four-path enumeration.
+
+#### P02.S05 — QUIC `Dial`/`Listen` behind the core
+Scope: a QUIC path beside the TCP one, `SessionTLS()` reused unchanged, still over the manual address. Refs: D14.
+Acceptance:
+- A ceremony completes over QUIC in the multi-instance harness.
+- The pinned-peer callback rejects a non-pinned peer under QUIC, **driven red**.
+
+#### P02.S06 — Both transports, one set of session tests *(D14)*
+Scope: the TCP dialer kept as a peer behind the same core, with the session-logic tests parameterised over both. Refs: D14.
+Acceptance:
+- One set of session-logic tests runs green over both transports.
+- A full ceremony still completes over TCP after the QUIC path exists.
+
+*Sketch retained:* the multi-instance harness, first, driving the HTTP API, with its ceiling written in its own file as every other tier's is (2026-08-18, D26); library selection as a PAIR — QUIC and DHT chosen together against the socket-sharing constraint, never one then the other (2026-08-18, caveat 7 pin); the socket demultiplexer and a spike proving `VerifyPeerCertificate` fires as under `crypto/tls`; the session core re-typed off `*tls.Conn` (D14); QUIC `Dial`/`Listen` added behind that core; the pinned-rejection test ported; the TCP dialer kept as a peer behind the same core, with the session-logic tests parameterised over both (2026-08-16, D14).
 
 *Note on the harness's place in the chain:* `CONTRIBUTING.md`'s tier table is the contract, and
 `verify_test.go` guards that each tier states its own ceiling. A fourth harness that does not say
