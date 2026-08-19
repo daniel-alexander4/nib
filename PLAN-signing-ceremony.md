@@ -2219,7 +2219,7 @@ Acceptance:
 - **Its ceiling is written in its own file** as every other tier's is (`verify_test.go` guards that each tier states one): **it cannot see two networks**, and what it delegates upward is the Dan-only two-machine run.
 - The tier is added to `CONTRIBUTING.md`'s table and to `verify_test.go`'s guard, or the contract describes three tiers while four exist.
 
-#### P02.S02 — Library selection, as a pair *(caveat 7 pin)*
+#### P02.S02 — Library selection, as a pair *(done 2026-08-19, v1.109.50)* *(caveat 7 pin)*
 Scope: choose the QUIC and DHT libraries **together**, against the socket-sharing constraint, with a spike that binds a `net.PacketConn` first and hands it in. Refs: caveat 6, caveat 7, D8, D15.
 Acceptance:
 - Each candidate accepts an externally-supplied `net.PacketConn` — **proven by a spike, not by reading the documentation**.
@@ -2433,6 +2433,23 @@ re-verified.
    steady state of every established connection. The header bits do not separate DHT traffic
    from session traffic; they collide on the common case, not on an edge. (Bencode integers,
    lists and strings would separate cleanly. KRPC never sends one at the top level.)
+
+   **(implementation pin, 2026-08-19, P02.S02's selection spike — the library's own hook is
+   built on the refuted discriminator.)** This pin says a pair is disqualified if neither
+   library exposes a passthrough hook. **quic-go exposes one — `Transport.ReadNonQUICPacket`
+   — and it is unusable for KRPC**, because its classifier is exactly the arithmetic above:
+   `IsPotentialQUICPacket(b) = b&0x40 > 0` (`internal/wire/header.go`), and a bencode dict's
+   `'d'` = 0x64 has that bit set. Measured before it was read: a hand-sent KRPC ping vanished,
+   with and without a DHT attached; a fixed-bit-CLEAR datagram (STUN's shape) arrived. So the
+   hook works and cannot carry bencode.
+
+   **What this corrects:** the passthrough hook is **not** the property that makes a pair
+   selectable, and testing for one would have disqualified the only viable pair. What matters
+   is that **both libraries accept an externally-supplied `net.PacketConn`**, so a
+   demultiplexer *we* write can own the socket and hand each a shim. Both do —
+   `quic.Transport.Conn` and `dht.ServerConfig.Conn`, each proven by a spike that binds first
+   and hands in. **Selected: quic-go v0.61.0 (MIT) and anacrolix/dht v2.24.0 (MPL-2.0).**
+   P02.S03 builds the demultiplexer, and it keys on peer address, not on a leading byte.
 
    *What the demultiplexer must key on instead:* the destination connection ID, or an active
    QUIC path's peer address — QUIC's own mechanism for deciding "not mine". That requires the
