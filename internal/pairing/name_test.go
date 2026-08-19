@@ -293,3 +293,62 @@ func TestMatchesRejectsMalformed(t *testing.T) {
 		t.Error("Matches accepted a short fingerprint")
 	}
 }
+
+// --- the verification string --------------------------------------------------
+
+// TestVerificationIsFourWordsOfTheSameList: the spoken check reuses S01's list, so the
+// two renderings cannot drift in their bit convention — they share one packer, and this
+// asserts the shared behaviour rather than the sharing.
+func TestVerificationIsFourWords(t *testing.T) {
+	w := allWords()
+
+	zero := make([]byte, 32)
+	got, err := Verification(zero)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := strings.Join([]string{w[0], w[0], w[0], w[0]}, " ")
+	if got != want {
+		t.Errorf("Verification(all zero) = %q, want %q", got, want)
+	}
+
+	ones := bytes.Repeat([]byte{0xFF}, 32)
+	got, err = Verification(ones)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want = strings.Join([]string{w[2047], w[2047], w[2047], w[2047]}, " ")
+	if got != want {
+		t.Errorf("Verification(all ones) = %q, want %q", got, want)
+	}
+}
+
+// TestVerificationSharesTheNamePacker pins the property that matters when two renderings
+// live in one package: they read the SAME bits the same way. A four-word string is the
+// first four words of the six-word name of the same bytes — not because anything depends
+// on that, but because if it ever stopped being true, the two had drifted.
+func TestVerificationSharesTheNamePacker(t *testing.T) {
+	d := sha256.Sum256([]byte("shared packer"))
+	name, err := Name(d[:])
+	if err != nil {
+		t.Fatal(err)
+	}
+	vs, err := Verification(d[:])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := vs, strings.Join(strings.Fields(name)[:VerificationWords], " "); got != want {
+		t.Errorf("the four-word rendering is %q but the six-word one starts %q — the two "+
+			"bit-packers have drifted, and each would still round-trip against itself", got, want)
+	}
+}
+
+func TestVerificationRefusesAShortDigest(t *testing.T) {
+	// 44 bits needs 6 bytes; 5 must be refused rather than read past the end.
+	if _, err := Verification(make([]byte, 5)); !errors.Is(err, errDigestLen) {
+		t.Errorf("a 5-byte digest gave %v, want the length error", err)
+	}
+	if _, err := Verification(make([]byte, 6)); err != nil {
+		t.Errorf("a 6-byte digest was refused: %v", err)
+	}
+}

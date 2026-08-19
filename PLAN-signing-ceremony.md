@@ -2075,8 +2075,21 @@ Acceptance:
 - A name that decodes to a fingerprint no peer presents fails at the handshake, not at pin time — L1 holds: nothing about reachability decided identity.
 Tasks: *(written at slice-grill time)*
 
-#### P01.S04 — The verification string
+#### P01.S04 — The verification string *(done 2026-08-19, v1.109.43)*
 Scope: derive four words from the completed session and display them on both sides. Refs: D4.
+
+**(slice-grill notes, 2026-08-19.)**
+- **The commitment is the slice, not a detail of it.** Three of the four acceptance bullets are satisfied by *any* per-session derivation; only the fourth — the out-of-order reveal — can see the 2²² birthday search D4's pin describes. It is built first and everything else hangs off it.
+- **One 32-byte uniformly random contribution serves as its own nonce.** D4's pin writes the commitment as `H(nonce ‖ contribution)`, which anticipates a structured or low-entropy contribution; 32 random bytes carry 256 bits and hashing them is preimage-resistant on its own. Recorded as a deliberate simplification of the pin's *form*, not of its substance — what the pin requires is that the string derive only over values committed before either side saw the other's, and that is unchanged.
+- **The string binds the channel as well as the contributions.** D4 says "both identity keys plus the handshake transcript"; `ExportKeyingMaterial` is what makes the transcript half true, and it is also what lets D18's clause (a confirmation computed on one channel is rejected on any other) be met at S05 rather than needing a second mechanism then.
+
+Tasks:
+- **T01 — `pairing.Verification`**: four words (44 bits) from a digest, reusing S01's list and bit-packing. The 6-word and 4-word renderings share one packer or they will drift.
+- **T02 — the commit/reveal exchange** in `internal/p2p`, before any document bytes: commitments both ways, then reveals, each checked against the commitment it was promised by.
+- **T03 — the derivation**: `KDF(fpA ‖ fpB ‖ cA ‖ cB ‖ exporter)`, ordered canonically so both sides compute the same value from opposite viewpoints.
+- **T04 — the out-of-order harness**: a peer that reveals a contribution not matching its commitment is refused *before any string exists*, driven rather than asserted.
+- **T05 — the MITM case**: two legs, two different peer identities, and the two strings must differ.
+- **T06 — seam inventory rows.**
 Acceptance:
 - Both endpoints of one session derive identical words.
 - Two sessions between the same pair derive different words.
