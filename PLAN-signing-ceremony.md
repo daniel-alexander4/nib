@@ -106,6 +106,17 @@ grill's finding: the first instinct was to exchange timestamps on the channel, a
 precisely what has failed. **Five pins** at D21, D24, D29 and D34 close the rest: atomic persist,
 disk-full honesty, no second ceremony on one document, a re-issued invitation, and self-healing
 widened from *corrupt* to *unreadable or absent*. Criteria at P05 and P07.
+Reviewed 2026-08-18 (**plan-review pass, the sixth — coherence.** Warranted rather than routine: the
+collapse to one pairing path touched decisions written across four days, and **retirement is where
+dangling references live.** No criticals; the mechanics held — 38 pins, no pin-versus-pin conflict.
+**Four warnings, all the same defect: the collapse did not finish.** D19 still said *four* causes
+while D35 and P05 said five; the opening paragraph still sold two pairing paths, having drifted
+*twice*; D4's heading and a mid-decision blockquote still carried the retired conditional; and D18
+described behaviour on a path that no longer exists. **All four adopted and corrected.** **P07 split
+on Dan's instruction** — it had reached 30 exit criteria against a slice sketch, so the model stays
+at P07 and lifecycle and delivery become **P08**; build order is now
+P00 → P01 → P02 → P03 → P04 → P05 → P07 → P08 → P06. Report:
+`<project-memory>/plan-reviews/2026-08-18-6.md`.)
 SME packs: **crypto (core tier)** — `go.mod` declares `filippo.io/age`,
 `golang.org/x/crypto`, `edwards25519`, `hpke`, `go-pkcs12`, `digitorus/pdfsign`
 (inferred, trigger 1); the consensus tier does not fire — ~~two~~ **N (2026-08-18)** sequential
@@ -138,15 +149,19 @@ have never connected before, both running Nib, co-sign a document~~ **two or mor
 have never connected before, all running Nib, co-sign one document in a proceeding they can
 interrupt and resume (2026-08-18, D20–D25)** — with no port
 forwarding, no VPN, no rendezvous server, and ~~one short spoken name in place of a
-64-character fingerprint~~ **one artifact in place of a 64-character fingerprint and a typed
-address: an invitation on the default path, or one short spoken name on the fallback (corrected
-2026-08-18 at the Stage 2 grill — D21 and D31 moved the spoken name off the default path, and
-this sentence still described the design as it stood before them)**. It is not a plan for nib as
-a whole.
+64-character fingerprint~~ ~~one artifact in place of a 64-character fingerprint and a typed
+address: an invitation on the default path, or one short spoken name on the fallback~~ **one
+invitation in place of a 64-character fingerprint and a typed address (2026-08-18, D31 collapsed —
+there is one pairing path; the six-word name is a spoken identity and pins nothing)**. It is not a
+plan for nib as a whole.
 
-*Why the correction matters beyond tidiness:* the spoken name is what **D3's entire rationale**
-argues for, and what caveat 4's freeze-a-wordlist-forever obligation is paid for. Reading this
-paragraph as current would lead a builder to treat the fallback as the product.
+**(plan-review pin: this paragraph has now drifted twice — 2026-08-18, adopted by Dan.)** It was
+corrected at the Stage 2 grill for describing the pre-D21 design, and the correction itself went
+stale within hours when Dan collapsed the two paths. It is the **first prose in the document**,
+which is why it drifts: every amendment pass edits the decision it is changing and few think to
+re-read the opening. *What is true now, in one clause:* the invitation is the only way to pair, and
+the four-word verification string confirms that the invitation arrived intact (D4's second
+supersession).
 
 ---
 
@@ -271,7 +286,7 @@ confirm "yes, that is me" — and nothing derives a pin from it. The derivation 
 (this decision's substance) is **kept**: a name that is a function of the key still means a name
 cannot be claimed by someone else, which is what makes it usable as a spoken identity at all.
 
-### D4 — Six words, and the verification string is mandatory ~~always~~ **exactly when the pin is short (2026-08-18)** *(settled 2026-08-15 via /discuss — Dan; amended 2026-08-18 — Dan)*
+### D4 — Six words, and the verification string is mandatory ~~always~~ ~~exactly when the pin is short (2026-08-18)~~ **— it confirms the invitation arrived intact, and is required whenever the parties have a voice channel (2026-08-18, second supersession)** *(settled 2026-08-15 via /discuss — Dan; amended twice 2026-08-18 — Dan)*
 
 The name is **six words** from a 2048-word list, encoding ~66 bits of the
 fingerprint. After the channel is established both sides display a **four-word
@@ -334,11 +349,14 @@ moments, and it recurs on every resumption.
 
 **The supersession, stated as a rule rather than as a relaxation:**
 
-> **The verification string is mandatory exactly when the pin is short.** A ceremony paired from
+> ~~**The verification string is mandatory exactly when the pin is short.** A ceremony paired from
 > an **invitation** (D21) pins the counterparty's **full 32-byte fingerprint** and shares a
 > 32-byte secret, so the pin is at full strength and the check is displayed as reassurance, not
 > as a gate. A ceremony paired from a **spoken six-word name alone** pins ~66 bits, and there the
-> string stays **mandatory, with no skip**, exactly as this decision originally required.
+> string stays **mandatory, with no skip**, exactly as this decision originally required.~~
+>
+> **(struck 2026-08-18 by the second supersession below — there is one pairing path and one pin
+> strength, so there is nothing left to condition on. The rule that replaced it is stated there.)**
 
 *Why this is L2-honest and not an L2 breach:* L2 forbids completing a ceremony at less than full
 assurance without the user knowing. The original mandate was the compensating control for a
@@ -1001,14 +1019,15 @@ not session state.
 *Why the law gets easier to live with rather than harder:* under D4's supersession the
 re-confirmation on the new channel is **machine-to-machine on the invited path**, so a party
 whose Wi-Fi dropped re-confirms without being asked to do anything. D18 was the decision whose
-cost was a repeated human step; option A pays that cost off. On the name-only path the law is
-felt exactly as originally written, and correctly so.
+cost was a repeated human step; option A pays that cost off. ~~On the name-only path the law is
+felt exactly as originally written, and correctly so.~~ **(struck 2026-08-18, plan-review, adopted
+by Dan: there is no name-only path. The sentence before this one is now the whole truth.)**
 
 *The one thing the hop must not do:* re-sign. A hop that has already produced a signature
 **re-delivers** it (D24) — otherwise resumption stacks a second block from the same identity on
 the page, which is wrong as a record and, per D25, wrong as a layout.
 
-### D19 — Failure is diagnosed on the mapping/filtering axis, and names four distinct causes *(settled 2026-08-16 via /discuss, auto-adopted; supersedes the CGNAT framing in P05)*
+### D19 — Failure is diagnosed on the mapping/filtering axis, and names ~~four~~ **five (2026-08-18, D35)** distinct causes *(settled 2026-08-16 via /discuss, auto-adopted; supersedes the CGNAT framing in P05)*
 
 The ladder classifies NAT behaviour on the **RFC 4787 axis — mapping behaviour
 (endpoint-independent vs endpoint-dependent) and filtering behaviour** — not on
@@ -1016,7 +1035,7 @@ whether the NAT is carrier-grade. The classification comes free from the DHT pro
 comparing the mapped `IP:port` reported by **two different DHT nodes** distinguishes
 the two mapping classes, exactly as a two-server STUN check does.
 
-Four causes, four messages — where the plan previously had one:
+~~Four~~ **Five (2026-08-18)** causes, ~~four~~ **five** messages — where the plan previously had one:
 
 1. **The peer never published.** They are not armed, or they are on a different
    ceremony. → "The other side hasn't started their ceremony yet."
@@ -1039,6 +1058,16 @@ person who will open the details.
 **L1 pin:** the classification is **diagnostic only**. Nothing it produces may
 influence which peer is accepted; it changes messages and tier preference, never the
 pin check. The L1 guard covers it.
+
+5. **The clocks disagree.** *(added 2026-08-18, D35.)* The peer's ephemeral certificate was
+   rejected on its validity window, and the window's own `NotBefore`/`NotAfter` say by how much and
+   in which direction. → "This machine's clock is about N minutes behind the other side's." **The
+   only one of the five that names a fix the user can perform in ten seconds** — and the one that,
+   before D35, arrived as cause 4's "something else".
+
+   *(plan-review pin, 2026-08-18, adopted by Dan: this decision's heading and list said **four** while
+   D35 and P05's criteria said **five**. The decision that owns the taxonomy is the one a builder
+   implements from, so the taxonomy is corrected here rather than referenced from elsewhere.)*
 
 *Depends on:* caveat 7 — the classification is only meaningful if the probe runs on
 the same local socket the session will use.
@@ -1904,7 +1933,8 @@ named.** That is what this decision does.
 
 **Phase numbers are identifiers, not the order. (Stage 2 grill, 2026-08-18.)** They are
 referenced by every pin in this document and by the project memory, so they are *not* renumbered.
-The build order is: **P00 → P01 → P02 → P03 → P04 → P05 → P07 → P06.**
+The build order is: ~~**P00 → P01 → P02 → P03 → P04 → P05 → P07 → P06.**~~
+**P00 → P01 → P02 → P03 → P04 → P05 → P07 → P08 → P06 (2026-08-18, P07 split).**
 
 *Why P07 precedes P06:* P07 is **model** work — the roster-prefix gate, the carry route for a
 non-signing convener, `Confirmer`'s shape, the placement policy, hop persistence, the end-state
@@ -2115,7 +2145,7 @@ Exit criteria:
 
 Slices *(sketch)*: the ceremony panel replacing the tab and its three modals; convene-and-invite; the connect-and-confirm screen; the roster and position display; **the roster-shaped consent screen (D27); the end-state surfaces (D28); the document freeze and the attachments label (D29);** failure surfaces; docs and README.
 
-### P07 — More than two parties **(added 2026-08-18 — D22, D23, D24, D25; amended the same day — D27, D28, D29; built BEFORE P06 — Stage 2 grill)**
+### P07 — More than two parties: **the model** **(added 2026-08-18 — D22, D23, D25, D27; amended the same day — D28, D29; built BEFORE P06 — Stage 2 grill; **split 2026-08-18, plan-review: lifecycle and delivery moved to P08**)**
 Goal: a ceremony of N parties completes as a convener-driven serial relay, survives being
 interrupted at any hop, and cannot be signed out of order. Last, because it needs the record
 (P01), a working transport (P02), a working ladder (P05) and a roster-shaped surface (P06); the
@@ -2127,33 +2157,56 @@ Exit criteria:
 - **The signature blocks of a nine-party ceremony are all on the page and none overlaps the readme body — driven by rendering and measuring, not by asserting a rect. (D25.)** The measurement is the point: the defect this closes is invisible to every assertion about placement arithmetic, because the arithmetic is what is wrong.
 - **A ceremony cannot grow a party after the first signature: the attempt is refused with a distinct message naming a new ceremony as the answer. (D25 — pages are allocated up front.)**
 - **A contribution offered by the wrong party, or onto a document with the wrong prefix, is refused by the L3 guard in Go with a named error — driven for both cases separately, and with the UI bypassed. (D23, L3.)** A test that drives it through the panel proves the panel, not the law.
-- **A hop interrupted after its signature exists re-delivers on resumption and never re-signs; the finished document carries exactly one block per signer. (D24.)** Driven by killing the process between the signature and the write — the case `internal/p2p/session.go:135` discards today.
-- **A party who arms and waits through three earlier hops is still armed when the baton arrives. (D16 amendment.)**
-- **The finished document reaches every party, including those whose hop completed hours earlier. (D22 delivery round.)**
 - **Every criterion in this phase is driven by the multi-instance harness (D26), not by hand. (added 2026-08-18.)** A four-party ceremony verified once, manually, at the phase gate is the shape of check this repo has already been burned by.
 - **A non-signing convener completes a ceremony over the carry route, and the finished document contains no signature of theirs. (added 2026-08-18, D22 pin.)** Driven — and note it cannot pass on `Initiate`, which demands the caller's own signature back, so a green here is evidence the third route exists.
 - **The appended trust page describes a ceremony of N, the About dialog says the same thing, and the drift guard is green. (added 2026-08-18, D27.)** The guard (`internal/p2p/readme_test.go:61`) is what makes this one criterion rather than two that can drift.
 - **A nine-party document's visible blocks and signature details each name the ceremony rather than one neighbour. (added 2026-08-18, D27.)**
-- **Each of D28's end states is driven at the protocol level, not only in the UI: a decline at hop 3 ends the ceremony, and the parties who already signed learn of it. (added 2026-08-18, D28.)**
-- **An identity that no longer matches the roster ends the ceremony with a named message and never pairs on the new key. (added 2026-08-18, D28 — the L1 guard covers it.)**
-- **A ceremony directory is gone after the ceremony has ended and its document has been delivered or saved. (added 2026-08-18, D29.)**
-- **The contribution write is atomic: a process killed mid-write leaves the previous state or the complete contribution, never a prefix. (added 2026-08-18, gap #15.)** The re-delivery criterion cannot see this — it never writes twice.
-- **A disk-full persist reports "signed but not saved" and does not attempt delivery. (added 2026-08-18, gap #17.)**
-- **Convening a second ceremony on a document already under a live one is refused, server-side and by name. (added 2026-08-18, gap #28.)** The mutation criterion cannot see it, because convening is not a mutation.
-- **A ceremony whose mirror directory has been deleted by hand degrades that panel entry and leaves every other ceremony and open document working. (added 2026-08-18, gap #19.)**
-- **An invitation re-issued to one party mid-ceremony completes, with every other party's state untouched. (added 2026-08-18, gap #24.)** The convene criteria only ever issue once.
 - Documentation and README updated in the same phase (STANDARDS docs-parity).
 - **Every row of `<project-memory>/instruments/ceremony.md` carries a disposition — `keep-live` / `gated` / `deleted` — filled at this phase's close. (added 2026-08-18, verification pack V8.)** An inventory whose disposition column was never filled is a record of intentions; 224 such rows accumulated in another project before anyone noticed. A row whose reader is a standing criterion is never silenced.
 - **Each of D33's four numbers is enforced on the externally-supplied path, driven by supplying a value past the bound. (added 2026-08-18, crypto pack PLAN-4.)** A test that supplies a value *inside* the bound cannot see an unenforced parameter.
 - **A version skew produces a sentence naming the mismatch, not a parse error — driven for the record, the invitation and the ceremony protocol separately. (added 2026-08-18, D32.)**
-- **A four-party ceremony's delivery round reaches every party, and their invitation pins are absent afterwards — in that order. (added 2026-08-18, plan-review, D29 lifecycle pin.)** Neither the delivery bullet nor the pin-scoping bullet can produce this alone; the defect is that both are satisfiable while delivery fails.
-- **A delivery round re-run after a mid-round failure leaves exactly one file per party. (added 2026-08-18, plan-review, D22 pin.)** "The finished document reaches every party" is satisfied completely by a round that delivers twice.
-- **A ceremony resumed in a fresh process — with other documents opened first, so the id counter has advanced — acts on its own document and refuses a decoy holding the id it used to have. (added 2026-08-18, plan-review, D29 identity pin.)** The resumption bullet passes with a dangling id, because nothing in it opens a second document.
 - **A four-party ceremony with a NON-SIGNING convener completes, and every signature on the finished document reports `Matched`. (added 2026-08-18, plan-review, D22/D2 pin.)** The "every attestation shares one `[NibRoster:…]` commitment" bullet is satisfied perfectly by a document on which no signature matches any other — this is the clause that sees the hub breaking the channel binding.
 - **Every signature block on a completed ceremony carries the record's intent verbatim. (added 2026-08-18, plan-review, D20 intent pin.)** None of the record round-trip bullets ever reads a signature block.
 - **A completed ceremony whose convener has `signs:false` renders as complete, not as missing a signer. (added 2026-08-18, plan-review, D27 pin.)** The "no signature of theirs" bullet is a fact about the document and says nothing about what the verifier reports.
 
-Slices *(sketch)*: the roster-prefix contribution gate and the L3 guard; `coSignExchange` re-based off `len(ats) != 1`; **the carry route for a non-signing convener (D22 pin); the roster-shaped `Confirmer` (D27); the readme and About rewrite behind the drift guard (D27); the end-state machine (D28); the freeze, the scoped pins and the prune (D29);** the placement policy and page allocation; hop persistence and idempotent re-delivery; the ceremony-scoped arm window; the delivery round; the panel's roster view driven by a real N-party record.
+Slices *(sketch)*: the roster-prefix contribution gate and the L3 guard; `coSignExchange` re-based off `len(ats) != 1` **and off the wire peer (D22/D2 pin)**; the carry route for a non-signing convener (D22 pin); the roster-shaped `Confirmer` (D27); the readme and About rewrite behind the drift guard (D27); the placement policy and page allocation; the record's intent populating every block (D20 pin).
+
+**(plan-review pin: this phase was one phase doing two jobs — 2026-08-18, adopted by Dan.)** P07 had
+reached **30 exit criteria against a slice sketch**, having absorbed pins from five review passes,
+and a phase with thirty criteria and no slices is a phase nobody can close: `/createcode` walks
+slices. The criteria clustered cleanly in two, which is the tell. **The model stays here; lifecycle
+and delivery become P08.** Phase numbers remain identifiers rather than an order, so nothing
+renumbers — see the build order note above.
+
+### P08 — More than two parties: **lifecycle and delivery** **(added 2026-08-18 — split out of P07 at the sixth plan-review)**
+Goal: a ceremony survives interruption, ends in exactly one of D28's four states, delivers its
+finished document to every party, and leaves nothing behind. P07 gives it a model that works for N
+parties; this phase gives that model a life longer than one sitting.
+
+*Why the split lands here and not elsewhere:* every criterion below is about **time and state** —
+what persists, what resumes, what is delivered, what is removed. Every criterion left in P07 is
+about **shape** — who may sign, what a signature attests to, where a block goes. A slice grill can
+hold one of those in its head; it could not hold both.
+
+Exit criteria:
+- **A hop interrupted after its signature exists re-delivers on resumption and never re-signs; the finished document carries exactly one block per signer. (D24.)** Driven by killing the process between the signature and the write — the case `internal/p2p/session.go:135` discards today.
+- **The contribution write is atomic: a process killed mid-write leaves the previous state or the complete contribution, never a prefix. (gap #15.)** The re-delivery criterion cannot see this — it never writes twice.
+- **A disk-full persist reports "signed but not saved" and does not attempt delivery. (gap #17.)**
+- **A ceremony resumed in a fresh process — with other documents opened first, so the id counter has advanced — acts on its own document and refuses a decoy holding the id it used to have. (D29 identity pin.)** The resumption bullet alone passes with a dangling id, because nothing in it opens a second document.
+- **A party who arms and waits through three earlier hops is still armed when the baton arrives. (D16 amendment.)**
+- **Each of D28's end states is driven at the protocol level, not only in the UI: a decline at hop 3 ends the ceremony, and the parties who already signed learn of it. (D28.)**
+- **An identity that no longer matches the roster ends the ceremony with a named message and never pairs on the new key. (D28 — the L1 guard covers it.)**
+- **The finished document reaches every party, including those whose hop completed hours earlier. (D22 delivery round.)**
+- **A four-party ceremony's delivery round reaches every party, and their invitation pins are absent afterwards — in that order. (D29 lifecycle pin.)** Neither the delivery bullet nor the pin-scoping bullet can produce this alone; the defect is that both are satisfiable while delivery fails.
+- **A delivery round re-run after a mid-round failure leaves exactly one file per party. (D22 pin.)** "The finished document reaches every party" is satisfied completely by a round that delivers twice.
+- **A ceremony directory is gone after the ceremony has ended and its document has been delivered or saved. (D29.)**
+- **A ceremony whose mirror directory has been deleted by hand degrades that panel entry and leaves every other ceremony and open document working. (gap #19.)**
+- **Convening a second ceremony on a document already under a live one is refused, server-side and by name. (gap #28.)** The mutation criterion cannot see it, because convening is not a mutation.
+- **An invitation re-issued to one party mid-ceremony completes, with every other party's state untouched. (gap #24.)** The convene criteria only ever issue once.
+- **Every criterion in this phase is driven by the multi-instance harness (D26), not by hand.**
+- Documentation and README updated in the same phase (STANDARDS docs-parity).
+
+Slices *(sketch)*: hop persistence, the atomic write and the disk-full path; resumption in a fresh process; the ceremony-scoped arm window; the end-state machine; the delivery round and its per-party keying; the prune, the scoped pins and the convene refusal.
 
 ---
 
