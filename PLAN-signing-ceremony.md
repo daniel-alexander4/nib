@@ -2372,14 +2372,64 @@ comparing the function values says they are.
 what it cannot see would be the one exception to a rule this repo enforces in tier 1 — so it says
 it: **it cannot see two networks**, and what it delegates upward is the Dan-only run.
 
-### P03 — Local discovery (tier 1)
+### P03 — Local discovery (tier 1) *(in progress)*
 Goal: two Nibs on the same network find each other with no address typed and no internet.
 Exit criteria:
 - A ceremony completes on a LAN with no address entered anywhere and no outbound internet traffic.
 - Discovery announces the name's public bits only — never anything that could influence which peer is accepted (L1).
 - Behaviour on Windows is verified on Windows, not inferred — **on real Windows, as a Dan-only run (added 2026-08-17, plan-review W3).** `build/winrepro.sh` runs `nib.exe` under **wine**, which was defensible for `path/filepath` behaviour at the sibling plan's P07 and is not defensible here: wine models neither multicast nor interface enumeration. A green `winrepro` may not discharge this bullet.
 
-Slices *(sketch)*: multicast announce/browse; resolving a discovered peer to a candidate; the L1 guard; the Windows pass.
+Slices *(firmed 2026-08-19 at phase-open; sketch retained below)*. **The sketch's four items become five slices.** "The L1 guard" is not separable from designing the announcement — you cannot decide the format without deciding what it may carry, and the guard *is* that decision expressed as a test — so it folds into S01; and "a ceremony with no address typed" is pulled out of "resolving a candidate" because it is the phase's first exit criterion and owes a driven run of its own.
+
+Two carve-outs, written here so neither is inherited by assumption:
+
+- **The multicast socket is never `internal/udpmux`** — caveat 7's plan-review pin says so directly, and the mux exists for a NAT-mapping reason that link-local traffic does not have.
+- **D16's 300 s connect deadline against `sessionDialTimeout = 30 s` (`internal/server/session.go:39`) is P05's, not P03's.** Tier 1 is browse-then-dial inside a 2 s browse budget and fits in 30 s with room. The ladder's restructure belongs to the phase that builds the ladder.
+
+#### P03.S01 — The announcement, and what it may say *(L1; ADR-007)* *(done 2026-08-19, v1.110.0)*
+Scope: the announcement record's wire format, its parser, and the guard that nothing in it can reach acceptance. Refs: L1, D3, caveat 3.
+Acceptance:
+- The announcement carries the six-word **name** and the bound port and nothing else — asserted against the encoder's output, not by reading the struct.
+- **No code path turns an announcement into a pin or a peer selection** (L1), guarded at the source.
+- The parser refuses an oversize, truncated or malformed datagram **without allocating on its content**, and creates no state from an unauthenticated one.
+- ADR-007 records the format, why it is the name and not the fingerprint, and why the socket is treated as internet-facing on every platform.
+
+Tasks:
+- T01 — `internal/discovery`: the announcement record, its encoder and its parser.
+- T02 — the parser's refusals, each probed red: oversize, truncated, wrong magic, wrong version, a name that is not six words.
+- T03 — the L1 guard: no exported path from an announcement to a fingerprint or a pin.
+- T04 — ADR-007, and the seam inventory rows.
+
+#### P03.S02 — Announce and browse over multicast
+Scope: the multicast socket, interface selection, announce-while-armed, passive browse. Refs: caveat 3, caveat 7's carve-out, the `session.go` tripwire.
+Acceptance:
+- Two processes discover each other over **real multicast**, driven — not a model of it.
+- The interfaces joined are **asserted**, not whatever the stdlib chose: a link-local join must skip loopback and point-to-point, and must not depend on `FlagRunning`, which is degenerate on Windows.
+- The `TRIPWIRE` comment at `internal/server/session.go:24` is amended **in the same change**, naming link-local and armed-only and citing the plan's egress enumeration — it currently claims the armed listener is the *only* network-reachable surface, which this slice falsifies.
+- Nothing in the announce or browse path imports `internal/udpmux`.
+
+#### P03.S03 — A discovered peer becomes a dialable candidate
+Scope: match announcements against pinned peers; surface the result. Refs: L1, D16's browse budget.
+Acceptance:
+- An announcement from a **pinned** peer resolves to that peer's fingerprint and address; one from an **unpinned** peer resolves to nothing — both driven, because only the pair distinguishes matching from accepting.
+- `vault.PinnedPeers()` round-trips `Ceremony`, with a test. It does not today (`internal/vault/vault.go:725` drops it), and this is the first slice whose code reads that accessor.
+- The browse window is D16's **2 s**.
+
+#### P03.S04 — A LAN ceremony with no address typed
+Scope: the dial side takes a discovered candidate; the harness drives it. Refs: P03 exit criteria 1.
+Acceptance:
+- A ceremony completes **with no address entered anywhere** — driven in the multi-instance harness, inside a network namespace so the run is hermetic and independent of the host firewall.
+- **No outbound internet traffic, asserted rather than suppressed.** `NIB_NO_UPDATE_CHECK=1` (`build/uirepro.sh:114`) silences the one known caller; it does not observe absence, and the criterion says no traffic.
+
+#### P03.S05 — The Windows pass *(caveat 3 — the run is Dan's)*
+Scope: everything a real-Windows verification needs, short of the run. Refs: caveat 3, P03 exit criteria 3.
+Acceptance:
+- The two measured Windows divergences have **named, deliberate handling**: `x/net`'s `SetControlMessage` is a `TODO` returning `errNotImplemented` there, so a control message is nil with no error and interface filtering silently disappears; and IPv4 group join resolves the interface to an **address** (`setIPv4MreqToInterface`), so an interface with no IPv4 lease is joinable on Linux and refused on Windows.
+- **Parked by construction:** the run itself. The phase's own criterion says a green `winrepro` may not discharge it, because wine models neither multicast nor interface enumeration.
+
+**The port is Nib's own, not `5353`** *(2026-08-19, measured)*: a multicast loopback copy traverses INPUT, so on a default-deny desktop discovery is **silently dead on any port the firewall does not already permit** — measured on the development machine, where `224.0.0.251:5353` delivers and `224.0.0.251:15400` times out with no error at either end. The alternative, sharing the mDNS group, was refused: it puts non-mDNS bytes on a port other implementations parse as mDNS, and doing it properly means speaking DNS-SD, which is a phase of its own. So the cost is paid where it is visible instead — **hearing your own loopback copy is a firewall-independent liveness check on the send path**, and a browse that hears neither a peer nor itself can say which of the two failed.
+
+~~Slices *(sketch)*: multicast announce/browse; resolving a discovered peer to a candidate; the L1 guard; the Windows pass.~~ *(retained; superseded by the firmed slices above.)*
 
 ### P04 — Endpoint exchange over the DHT
 Goal: the two sides learn each other's public endpoints, and their own, with no server. **(plan-review note, 2026-08-17, I1 — the framing still understates the blast radius, as D8's own correction records: the DHT is the signalling channel for tiers 2, 3 **and** 4, so an unreachable DHT collapses three tiers at once and leaves only LAN and manual. Carried as a Stage 2 grill target; recorded here so the next pass does not re-derive it.)** **(plan-review pin, 2026-08-18, adopted by Dan: that gate has passed — the Stage 2 grill ran on 2026-08-18 and did not take this up. Re-targeted to this phase's slice grill, with D8's pin carrying the same instruction and the discharging observation.)**
