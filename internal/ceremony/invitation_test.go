@@ -1,0 +1,319 @@
+package ceremony
+
+import (
+	"bytes"
+	"errors"
+	"strings"
+	"testing"
+)
+
+func invited(t *testing.T) (Record, Invitation) {
+	t.Helper()
+	cert, key, cfp := identity(t, "Convener")
+	_, _, afp := identity(t, "A")
+	r := draft(t, cfp, afp)
+	if err := r.Sign(cert, key); err != nil {
+		t.Fatal(err)
+	}
+	inv, err := NewInvitation(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return r, inv
+}
+
+// TestAnInvitationRoundTripsThroughAPaste is the first acceptance clause, and the paste is
+// the point: an invitation travels through email and chat, so the forms it must survive
+// are the forms those tools produce.
+func TestAnInvitationRoundTripsThroughAPaste(t *testing.T) {
+	_, inv := invited(t)
+	text, err := inv.Encode()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(text, "nib-invite-v1:") {
+		t.Errorf("the text form does not announce what it is: %.30s", text)
+	}
+
+	for _, mangled := range []string{
+		text,
+		"  " + text + "  ",
+		text[:40] + "\n" + text[40:],        // a mail client's line break
+		text[:20] + "\r\n   " + text[20:],   // a quoted reply's wrap and indent
+		"\n" + text[:60] + "\n" + text[60:], // pasted across three lines
+	} {
+		back, err := ParseInvitation(mangled)
+		if err != nil {
+			t.Fatalf("a pasted invitation was refused (%v) for input %.50q", err, mangled)
+		}
+		if back.ID != inv.ID || !bytes.Equal(back.Secret, inv.Secret) {
+			t.Error("the round trip lost the id or the secret")
+		}
+		if len(back.Roster) != len(inv.Roster) {
+			t.Fatalf("the round trip lost roster entries: %d, want %d", len(back.Roster), len(inv.Roster))
+		}
+		for i := range back.Roster {
+			if back.Roster[i].Fingerprint != inv.Roster[i].Fingerprint {
+				t.Errorf("roster entry %d changed across the round trip", i)
+			}
+		}
+	}
+}
+
+// TestACorruptedInvitationIsRefusedWholly is the other half of that clause: "refused with a
+// distinct error rather than a partial pairing".
+//
+// **Wholly** is the substance. A partially-applied invitation pins some parties and
+// silently omits others, and the user has no way to see which — so the failure has to be
+// all-or-nothing, and the message has to distinguish "you pasted the wrong thing" from
+// "what you pasted arrived damaged".
+func TestACorruptedInvitationIsRefusedWholly(t *testing.T) {
+	_, inv := invited(t)
+	text, err := inv.Encode()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// The stimulus: the intact form really does parse, so every refusal below is about the
+	// damage rather than about the format being unreadable in general.
+	if _, err := ParseInvitation(text); err != nil {
+		t.Fatalf("setup: the intact invitation does not parse: %v", err)
+	}
+
+	body := strings.TrimPrefix(text, "nib-invite-v1:")
+	flip := func(s string, i int) string {
+		b := []byte(s)
+		if b[i] == 'A' {
+			b[i] = 'B'
+		} else {
+			b[i] = 'A'
+		}
+		return string(b)
+	}
+	for _, c := range []struct {
+		name string
+		text string
+		want error
+	}{
+		{"a flipped character mid-payload", "nib-invite-v1:" + flip(body, len(body)/2), ErrInvitationCorrupt},
+		{"a truncated payload", "nib-invite-v1:" + body[:len(body)/2], ErrInvitationCorrupt},
+		{"the checksum removed", "nib-invite-v1:" + strings.Split(body, ".")[0], ErrInvitationCorrupt},
+		{"an ordinary sentence", "here is the link I promised", ErrInvitationFormat},
+		{"an empty string", "", ErrInvitationFormat},
+		{"a future version", "nib-invite-v9:abc.dead", ErrInvitationVersion},
+	} {
+		got, err := ParseInvitation(c.text)
+		if !errors.Is(err, c.want) {
+			t.Errorf("%s: got %v, want %v", c.name, err, c.want)
+		}
+		if len(got.Roster) != 0 || len(got.Secret) != 0 {
+			t.Errorf("%s: a refused invitation still returned %d roster entries and %d secret "+
+				"bytes — a partial pairing is worse than none, because it pins some parties and "+
+				"silently omits others", c.name, len(got.Roster), len(got.Secret))
+		}
+	}
+}
+
+// TestARosterEntryMustBeAFullFingerprint: the invited path's whole claim is a 256-bit pin.
+// An entry that is not a full fingerprint has to be refused, not truncated or padded.
+func TestARosterEntryMustBeAFullFingerprint(t *testing.T) {
+	_, inv := invited(t)
+	inv.Roster[1].Fingerprint = "abcd" // 66 bits' worth would look like this
+	text, err := inv.Encode()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ParseInvitation(text); !errors.Is(err, ErrInvitationCorrupt) {
+		t.Errorf("an invitation with a short fingerprint gave %v — the invited path is a "+
+			"256-bit pin, and a short entry is the one corruption that must never pass", err)
+	}
+}
+
+// --- key derivation -----------------------------------------------------------
+
+// TestTheSecretKeysEverythingAndKeysThemDifferently is the third acceptance clause plus the
+// domain separation that keeps it safe.
+//
+// Two ceremonies between the same parties must produce different keys — that is the point
+// of re-keying to the secret rather than to the names, which are public by design. And no
+// two purposes may share a key: a rendezvous key that equalled a record key would let
+// anyone who could find the record decrypt it.
+func TestTheSecretKeysEverythingAndKeysThemDifferently(t *testing.T) {
+	_, one := invited(t)
+	_, two := invited(t)
+
+	rk1, err := one.RendezvousKey(0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rk2, err := two.RendezvousKey(0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Equal(rk1, rk2) {
+		t.Error("two ceremonies produced the same rendezvous key — the derivation is not " +
+			"taking the secret, so a stable pair of people would publish under one key forever")
+	}
+
+	rec1, err := one.RecordKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Equal(rk1, rec1) {
+		t.Error("the rendezvous key and the record key are the same value — anyone who could " +
+			"find the record could decrypt it")
+	}
+
+	bind1, err := one.BindingMAC([]byte("exporter"), "initiator")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Equal(bind1, rec1) || bytes.Equal(bind1, rk1) {
+		t.Error("the channel binding shares a key with another purpose")
+	}
+
+	// Per hop (D30): two hops of one ceremony must not publish under the same key.
+	hop1, err := one.RendezvousKey(1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Equal(rk1, hop1) {
+		t.Error("two hops of one ceremony share a rendezvous key — an observer who learns " +
+			"one hop's key can follow the rest (D30)")
+	}
+}
+
+// --- caveat 11: the channel binding -------------------------------------------
+
+// TestTheBindingProvesTheSecretOnThisChannel is caveat 11's mechanism, driven.
+//
+// Three properties, and each is a separate way the binding could be useless:
+// a peer without the secret cannot produce the MAC; a MAC from one channel does not verify
+// on another; and the two directions are distinct, so the initiator's MAC cannot be
+// reflected back as the responder's.
+func TestTheBindingProvesTheSecretOnThisChannel(t *testing.T) {
+	_, inv := invited(t)
+	_, other := invited(t)
+	exporter := bytes.Repeat([]byte{7}, 32)
+
+	mine, err := inv.BindingMAC(exporter, "initiator")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The stimulus: the honest case verifies, so every refusal below is about the attack.
+	if err := inv.CheckBindingMAC(exporter, "initiator", mine); err != nil {
+		t.Fatalf("setup: an honest MAC does not verify: %v", err)
+	}
+
+	theirs, err := other.BindingMAC(exporter, "initiator")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := inv.CheckBindingMAC(exporter, "initiator", theirs); err == nil {
+		t.Error("a MAC computed with a DIFFERENT invitation's secret verified — the binding " +
+			"proves nothing about holding this ceremony's secret")
+	}
+
+	otherChannel := bytes.Repeat([]byte{9}, 32)
+	if err := inv.CheckBindingMAC(otherChannel, "initiator", mine); err == nil {
+		t.Error("a MAC captured on one channel verified on another — a recording of one " +
+			"session would be replayable into the next")
+	}
+
+	if err := inv.CheckBindingMAC(exporter, "responder", mine); err == nil {
+		t.Error("the initiator's MAC verified as the responder's — an attacker who can echo " +
+			"bytes would look like a peer holding the secret")
+	}
+
+	if _, err := inv.BindingMAC(nil, "initiator"); err == nil {
+		t.Error("a MAC was produced with no channel binding material, so it binds no channel")
+	}
+}
+
+// --- the record comparison ----------------------------------------------------
+
+// TestAOneByteAlteredInvitationIsRefusedByName is the plan-review pin on D21.
+//
+// Nothing signs the invitation, so tampering cannot be caught when it is read. It is caught
+// at the first moment there is an independently-signed copy of the roster to compare
+// against — the record inside the document. The full-fingerprint clause cannot see this: a
+// tampered invitation satisfies it perfectly by pinning the WRONG key at full length.
+func TestAOneByteAlteredInvitationIsRefusedByName(t *testing.T) {
+	rec, inv := invited(t)
+
+	// The stimulus: an untampered invitation matches, so the refusals below are the
+	// tampering and not a comparison that always fails.
+	if err := inv.MatchesRecord(rec); err != nil {
+		t.Fatalf("setup: an honest invitation does not match its own record: %v", err)
+	}
+
+	_, _, outsider := identity(t, "Outsider")
+	for _, c := range []struct {
+		name string
+		mut  func(i *Invitation)
+		says string
+	}{
+		{"a fingerprint swapped", func(i *Invitation) { i.Roster[1].Fingerprint = outsider },
+			"party 2"},
+		{"the signs flag flipped", func(i *Invitation) { i.Roster[0].Signs = true },
+			"not signing"},
+		{"a party added", func(i *Invitation) { i.Roster = append(i.Roster, Party{Fingerprint: outsider, Signs: true}) },
+			"parties"},
+		{"the ceremony id changed", func(i *Invitation) { i.ID = "0123456789abcdef0123456789abcdef" },
+			"ceremony"},
+	} {
+		bad := inv
+		bad.Roster = append([]Party(nil), inv.Roster...)
+		c.mut(&bad)
+		err := bad.MatchesRecord(rec)
+		if !errors.Is(err, ErrRosterMismatch) {
+			t.Errorf("%s: got %v, want a roster mismatch", c.name, err)
+			continue
+		}
+		// "Refused BY NAME" — the message has to say which party, or the user is told
+		// something is wrong and given nothing to act on.
+		if !strings.Contains(err.Error(), c.says) {
+			t.Errorf("%s: the refusal says %q, which does not name what differs", c.name, err)
+		}
+	}
+}
+
+// TestAnInvitationIsNotASigningCredential (D21).
+//
+// The property is structural and is asserted as such rather than dressed as a handshake
+// drive: an invitation carries fingerprints and a secret, and **no private key**. A holder
+// therefore has nothing to sign with, which is why an intercepted invitation reaches the
+// rendezvous and stops at the handshake — the pin is the fingerprint and mTLS demands the
+// key behind it.
+//
+// The handshake half of that is P02's transport, already guarded by
+// `TestSessionTLSRefusesUnpinnedPeer`; what this slice owes is that the invitation does not
+// smuggle a key into it.
+func TestAnInvitationIsNotASigningCredential(t *testing.T) {
+	_, inv := invited(t)
+	text, err := inv.Encode()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, marker := range []string{"PRIVATE KEY", "BEGIN EC", "BEGIN RSA", "privateKey", "keyPEM"} {
+		if strings.Contains(text, marker) {
+			t.Errorf("the invitation's text form contains %q — an invitation is not a signing "+
+				"credential, and an intercepted one must stop at the handshake", marker)
+		}
+	}
+	// And the parsed form carries no key-shaped field. Checked on the decoded struct rather
+	// than only on the text, so an encoding change cannot quietly reintroduce one.
+	back, err := ParseInvitation(text)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(back.Secret) != SecretLen {
+		t.Fatalf("setup: the parsed invitation has no secret, so this test is not looking at "+
+			"a real one (%d bytes)", len(back.Secret))
+	}
+	for _, p := range back.Roster {
+		if len(p.Fingerprint) != 64 {
+			t.Errorf("roster entry carries %d characters, want a 64-hex fingerprint", len(p.Fingerprint))
+		}
+	}
+}

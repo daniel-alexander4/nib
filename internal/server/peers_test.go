@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"encoding/hex"
 	"encoding/json"
+	"io"
 	"net/http"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -195,5 +197,60 @@ func TestPeerNameIsNeverStored(t *testing.T) {
 				"the derivation that produced it, so a wordlist or encoding change shows the user a "+
 				"name their key no longer encodes, with nothing to say the two disagree.", n)
 		}
+	}
+}
+
+// TestPinningRefusesASixWordName drives P01's exit criterion the way it asks to be driven:
+// "no screen anywhere accepts a six-word name as a way to pin a peer — driven by
+// ATTEMPTING it and observing the refusal, not by observing its absence from the default
+// screen."
+//
+// The distinction is the criterion's own: an absence is satisfied by hiding a field, and a
+// refusal is satisfied only by removing the path. L1 is what is at stake — nothing about a
+// name may resolve a pin — and the six-word name commits to 66 bits of a fingerprint, so a
+// name accepted here would pin whichever of 2^190 keys shared those bits.
+func TestPinningRefusesASixWordName(t *testing.T) {
+	ts, _ := startServer(t)
+	c, csrf := authedClient(t, ts)
+
+	// A real name, derived from a real fingerprint — not a made-up phrase. A refusal of
+	// "six arbitrary words" would not show that the NAME path is closed.
+	fp := bytes.Repeat([]byte{0xCD}, 32)
+	name, err := pairing.Name(fp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(strings.Fields(name)) != 6 {
+		t.Fatalf("setup: %q is not a six-word name", name)
+	}
+
+	for _, attempt := range []string{name, strings.ToUpper(name), " " + name + " "} {
+		resp := write(t, c, csrf, "POST", ts.URL+"/api/peers/pin", "application/json",
+			strings.NewReader(`{"fingerprint":`+strconv.Quote(attempt)+`,"label":"By name"}`))
+		body, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if resp.StatusCode == http.StatusOK {
+			t.Errorf("pinning by the six-word name %q was ACCEPTED. Nothing about a name may "+
+				"resolve a pin (L1): the name commits to 66 bits, so this pins whichever key "+
+				"happens to share them.", attempt)
+		}
+		if !strings.Contains(string(body), "fingerprint") {
+			t.Errorf("the refusal for %q says %q, which does not tell the user what is wanted",
+				attempt, string(body))
+		}
+	}
+
+	// The positive control: the hex form of the SAME identity is still accepted, or the
+	// refusals above would pass against a route that refuses everything.
+	resp := write(t, c, csrf, "POST", ts.URL+"/api/peers/pin", "application/json",
+		strings.NewReader(`{"fingerprint":"`+hex.EncodeToString(fp)+`","label":"By hex"}`))
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("pinning by hex returned %d — the refusals above prove nothing if the route "+
+			"refuses everything", resp.StatusCode)
+	}
+	if got := getPeers(t, c, ts.URL); len(got.Peers) != 1 {
+		t.Errorf("after one hex pin and three name attempts the peer list holds %d entries, "+
+			"want 1", len(got.Peers))
 	}
 }
