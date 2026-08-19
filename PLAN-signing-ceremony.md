@@ -100,6 +100,12 @@ chain stayed honest. **An attacker who controls the delivery channel replaces th
 invitation** — their fingerprint as convener, their roster, their signed record — and every check
 passes, because both halves of every comparison are theirs. D3, D4, D21 and D31 amended; caveat 5
 struck and caveat 4 relaxed; P01.S03 struck and P01.S04/S05 amended.
+**Amended 2026-08-18 (the seven gaps from the disruption walk-through).** **D35 added** — a
+disagreeing clock is diagnosed from the certificate the failed handshake already holds, which is the
+grill's finding: the first instinct was to exchange timestamps on the channel, and the channel is
+precisely what has failed. **Five pins** at D21, D24, D29 and D34 close the rest: atomic persist,
+disk-full honesty, no second ceremony on one document, a re-issued invitation, and self-healing
+widened from *corrupt* to *unreadable or absent*. Criteria at P05 and P07.
 SME packs: **crypto (core tier)** — `go.mod` declares `filippo.io/age`,
 `golang.org/x/crypto`, `edwards25519`, `hpke`, `go-pkcs12`, `digitorus/pdfsign`
 (inferred, trigger 1); the consensus tier does not fire — ~~two~~ **N (2026-08-18)** sequential
@@ -1148,6 +1154,14 @@ be spoken.** Multi-party needs a distributable invitation whether or not it carr
 the secret is free — and it is the thing that removes the human step rather than merely
 tolerating it. The six-word name (D3) is untouched and stays the human identity.
 
+**(pin: a lost invitation is re-issued, not re-convened — 2026-08-18, gap #24.)** D28 says re-running
+a ceremony is "a new record, with a new id and new invitations", which is right for a ceremony whose
+*terms* changed and far too heavy for someone who deleted an email. **Re-issuing the same invitation
+is safe and is the answer:** the id, the roster and the secret are unchanged, so nothing about the
+ceremony's identity or its cryptography moves, and the record every party already verified still
+matches. *What discharges this specifically:* re-issuing to one party mid-ceremony and completing,
+with the other parties' state untouched — not the convene criteria, which only ever issue once.
+
 *Dan's call, not the process's:* it trades the plan's purest property — one short name and
 nothing copyable — for the removal of every post-connection exchange. That is risk appetite and
 product shape, the same class as D4 and D6. **Option A taken 2026-08-18.**
@@ -1354,6 +1368,22 @@ unit of resumption is the **hop**, `(ceremony id, roster index)`.
   for Amir* from the local record with no network at all (D13 pin: a panel, not a modal).
 - **The ceremony deadline (D16 clock 3) bounds it**, and it is the only clock shown in days.
 
+**(pin: the persist must not tear, and it must not fail silently — 2026-08-18, gaps #15 and #17.)**
+This decision makes "persist before deliver" the property that keeps a used key from vanishing, and
+says nothing about the write itself. Two failures land on exactly that path:
+
+- **A torn write.** Power loss mid-write leaves a partial contribution that reads as *a* contribution.
+  The repo already has an atomic-write helper (added for the CLI's in-place edits, which chmods the
+  temp file to the original's mode before the rename); **the ceremony's persist uses it**. *What
+  discharges this specifically:* killing the process mid-write and observing that the mirror holds
+  either the previous state or the complete contribution and never a prefix — not the re-delivery
+  criterion, which never writes twice.
+- **A full disk.** The signature exists and cannot be written, which is this decision's own defect
+  with the mitigation removed. **The signature is held in memory, the delivery is not attempted, and
+  the failure is reported as "signed but not saved — do not close Nib"** — the only honest sentence
+  available, because closing Nib is what destroys it. Reporting it as an ordinary write error invites
+  exactly that.
+
 **The defect this exists to close, read at the line:** `p2p.Receive` builds the co-signed document
 and *then* writes it back; if that write fails it returns the error
 (`internal/p2p/session.go:135`) and the caller discards everything
@@ -1535,6 +1565,14 @@ the user's document, their vault, or their machine.
   client does warn (`confirmSignatureLoss`, `web/app.js:3825`), which is why this is a gap in the
   freeze rather than a live defect — **but a client confirm is not a freeze**, by the same
   reasoning L3 uses for the contribution gate: a UI that merely asks satisfies nothing.
+  **(pin: convening twice on one document is refused too — 2026-08-18, gap #28.)** The freeze stops
+  *mutation* and said nothing about *convening*. Two records on one document would both carry a
+  `docHash` that matches it, two rosters would both claim it, and the signature pages allocated by
+  the first would be sized for the first roster alone. **A document already under a live ceremony
+  refuses to start another**, by the same rule and with the same server-side placement. *What
+  discharges this specifically:* attempting to convene on a document that already has a live
+  ceremony and observing the named refusal — the mutation criterion cannot see it, because convening
+  is not a mutation.
 - **The invitation secret lives in the vault, not in the mirror.** `~/nib/ceremonies/<id>/` is the
   ordinary output directory — plain files, the same place `saveReceived` writes
   (`internal/server/session.go:338`). The vault is the encrypted store and already holds the
@@ -1806,6 +1844,60 @@ what §9 asks for.
 to "this ceremony's record could not be read" and leaves every other ceremony and document working.
 It never blocks startup, and it never requires the user to delete state by hand.
 
+**(pin: widen "corrupt" to "unreadable or absent" — 2026-08-18, gaps #18 and #19.)** The rule above
+was written for a *corrupt record* and two neighbouring situations fall outside its wording. **A
+mirror directory deleted by hand** is not corruption — it is absence, and the panel must degrade the
+same way rather than fail on a missing file. **A locked vault** is the third state: the panel renders
+from local, non-secret state (D29), so a ceremony whose party has not unlocked is *legible but not
+actionable*, and it must say which. There is one consequence worth naming for the far side: a party
+who has not unlocked **is not armed**, so the convener sees D19's cause 1, "hasn't started their
+ceremony yet" — which is true and is the best available answer, since nothing on the convener's side
+can distinguish a locked machine from an absent one.
+
+### D35 — A disagreeing clock is diagnosed from the certificate we already hold *(settled 2026-08-18 — grill of gap #16)*
+
+**The plan runs three clocks, a 30-day deadline, candidate expiry and signature timestamps, and had
+never mentioned the system clock being wrong.** Two failures hide behind that, at different
+magnitudes, and the smaller one bites far more often.
+
+**The effective tolerance is five minutes, not fifteen.** `mintTransportCert`
+(`internal/p2p/transport.go`) sets the ephemeral leaf's `NotBefore` to `now − transportSkew` (5 min)
+and `NotAfter` to `now + transportTTL` (15 min), and `verifyPinnedPeer` rejects outside that window.
+A verifier may therefore be up to **15 minutes ahead** of the minter but only **5 minutes behind** —
+and because **both sides verify each other's leaf**, whichever side is behind is the one that fails.
+The pair's usable budget is the tighter direction: **±5 minutes**.
+
+**Beyond that the handshake fails, and today it fails as D19's cause 4 — "unexplained".** A laptop
+that slept, a VM, or a machine whose NTP is blocked by the same corporate firewall that blocks the
+DHT's UDP: two people on a call watch the ceremony die with "couldn't establish a connection", and
+nothing on either screen mentions time.
+
+**The decision:** *do not widen the window; diagnose it.* Widening `transportSkew` would loosen the
+replay bound on the ephemeral key — a security parameter traded away to paper over a message.
+
+**Where the diagnosis comes from, and this is the grill's finding:** the check that rejects
+**already holds the peer's certificate**, parsed, with its `NotBefore` and `NotAfter` in hand. Those
+two values *are* the peer's clock. So a validity-window rejection reports **how far apart the two
+clocks are and in which direction**, derived from bytes already in memory — **no extra round trip,
+no new wire field, and no channel, which matters because the handshake is exactly what has failed.**
+
+**D19 gains a fifth cause: the clocks disagree** — plain language first ("this machine's clock is
+about 12 minutes behind the other side's"), technical detail behind the disclosure. It is the only
+cause of the five that names a fix the user can perform in ten seconds.
+
+*The second failure, and it is the lesser one:* against a **days-long** ceremony deadline a party
+whose clock is a month out silently expires a live ceremony or honours a dead one. Once a channel
+exists this is cheap to catch — the same comparison, on a value the peers can now exchange — and the
+same fifth-cause message covers it. **Deliberately not solved by anchoring:** an external time
+source (OpenTimestamps, a TSA) would put a network dependency inside the one design whose premise is
+that it has none, and it would not help the handshake, which fails first.
+
+*Also considered and rejected:* making the convener's clock authoritative. It is not a new trust —
+the convener already chooses `expires` — but it does not help a party judge whether *it* is inside
+the window, because that judgment needs a local `now` whatever the reference is. **The honest
+position is that a wrong clock cannot be fixed from outside the machine; it can only be detected and
+named.** That is what this decision does.
+
 ---
 
 ## Build order
@@ -1981,6 +2073,8 @@ Exit criteria:
 - **After SIGKILL the mapping is absent from the router within one lease period — driven by killing the process and polling. (added 2026-08-17, plan-review W1.)** The original bullet said "gone … after teardown, cancel and crash alike", which is unmeetable as written: a crashed process deletes nothing, and D15's actual mechanism for that case is lease expiry. One sentence covering all three let a builder satisfy two and call it done.
 - **When the two DHT observations caveat 9 depends on do not arrive, cause 3 degrades to cause 4 and that is the expected outcome, not a defect. (added 2026-08-17, plan-review I2.)** Stated as acceptance because it will otherwise read as a bug to whoever first tests it.
 - **Every tier that ends in a dialable address completes over TCP as well as QUIC, proven with UDP blocked. (added 2026-08-16, D14)**
+- **A peer whose clock is more than the transport's tolerance out produces D19's fifth cause — naming the direction and the approximate size of the disagreement — and never cause 4. (added 2026-08-18, D35.)** Driven by skewing one instance's clock, not by asserting on a constant: the tolerance is asymmetric (`−transportSkew` / `+transportTTL`) and both sides verify each other, so the test must skew in **both** directions to find the binding one.
+- **The diagnosis is derived from the rejected peer's own certificate, with no additional round trip and no new wire field. (added 2026-08-18, D35.)** A test that reads the skew from a value the peers exchanged cannot see this — the handshake it is diagnosing is the thing that failed.
 - All tiers are attempted concurrently; the first to complete is used and the rest are cancelled.
 - **A candidate arriving late joins the race in flight; no tier waits on another tier's gathering. (added 2026-08-16, D16)**
 - **Simultaneous success on both sides converges on one channel by the lower-fingerprint rule, driven by forcing the glare rather than waiting to observe it. (added 2026-08-16, D17)**
@@ -2043,6 +2137,11 @@ Exit criteria:
 - **Each of D28's end states is driven at the protocol level, not only in the UI: a decline at hop 3 ends the ceremony, and the parties who already signed learn of it. (added 2026-08-18, D28.)**
 - **An identity that no longer matches the roster ends the ceremony with a named message and never pairs on the new key. (added 2026-08-18, D28 — the L1 guard covers it.)**
 - **A ceremony directory is gone after the ceremony has ended and its document has been delivered or saved. (added 2026-08-18, D29.)**
+- **The contribution write is atomic: a process killed mid-write leaves the previous state or the complete contribution, never a prefix. (added 2026-08-18, gap #15.)** The re-delivery criterion cannot see this — it never writes twice.
+- **A disk-full persist reports "signed but not saved" and does not attempt delivery. (added 2026-08-18, gap #17.)**
+- **Convening a second ceremony on a document already under a live one is refused, server-side and by name. (added 2026-08-18, gap #28.)** The mutation criterion cannot see it, because convening is not a mutation.
+- **A ceremony whose mirror directory has been deleted by hand degrades that panel entry and leaves every other ceremony and open document working. (added 2026-08-18, gap #19.)**
+- **An invitation re-issued to one party mid-ceremony completes, with every other party's state untouched. (added 2026-08-18, gap #24.)** The convene criteria only ever issue once.
 - Documentation and README updated in the same phase (STANDARDS docs-parity).
 - **Every row of `<project-memory>/instruments/ceremony.md` carries a disposition — `keep-live` / `gated` / `deleted` — filled at this phase's close. (added 2026-08-18, verification pack V8.)** An inventory whose disposition column was never filled is a record of intentions; 224 such rows accumulated in another project before anyone noticed. A row whose reader is a standing criterion is never silenced.
 - **Each of D33's four numbers is enforced on the externally-supplied path, driven by supplying a value past the bound. (added 2026-08-18, crypto pack PLAN-4.)** A test that supplies a value *inside* the bound cannot see an unenforced parameter.
