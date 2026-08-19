@@ -120,6 +120,26 @@ the same failure this file exists to fix.
 | Both instances given the same identity (v1.109.49) | `both instances have the SAME identity … one key agreeing with itself` | **and the more interesting half: the realistic route to that state does not reach the assertion.** Pointing both instances at one home fails EARLIER — the second enrolment returns 409 because a vault already exists. The assertion was probed directly instead, by reading B's fingerprint from A, and fires. Recorded as defence-in-depth rather than as the primary guard |
 
 
+## Tier 1 — `internal/udpmux` (P02.S03, the socket demultiplexer)
+
+Nine probes, each restoring one defect the router exists to refuse. All nine went red; the
+patch-applied check is not decoration — the first attempt at this battery verified the patch
+with `git diff`, which is silent on an **untracked** package, so every probe reported
+"did not apply" and none ran.
+
+| Defect reintroduced | Check that fired | What it said |
+|---|---|---|
+| The router keys on `b&0x40` — the cheap discriminator, as the whole router (v1.109.51) | `TestQUICAndKRPCInterleavedOnOnePort` | `a KRPC ping on the shared port failed: after 1 tries: transaction timed out (A: {… RoutedByPeer:0 RoutedToDHT:0})` — a bencode `'d'` is routed to QUIC and every DHT query on the shared port dies |
+| Everything routed to QUIC | `TestTheCheapDiscriminatorIsWrong` | "a KRPC ping did not reach the DHT view — the cheap discriminator is in the path" |
+| An inbound long header ALSO learns the sender | `TestAnInboundLongHeaderTeachesNothing` | "Peers = 50 after 50 inbound long headers, want 0 — remote input is growing the table" |
+| An outbound QUIC write teaches the router nothing | `TestAShortHeaderReachesQUICOnlyAfterWeHaveWrittenThere` | "Learned = 0 — the write taught the router nothing", so the steady state of every session goes to the DHT |
+| An expired peer is never refreshed (the half-TTL fast path made unconditional) | `TestAPeerExpires` | "a re-written address did not become a peer again" — a session outliving `peerTTL` could never be re-learned |
+| Closing one view closes the shared socket | `TestClosingOneViewLeavesTheOtherRunning` | "the shared socket died with one view" — which is what `quic.Transport.Close` or `dht.Server.Close` would do to the other protocol without the shim |
+| The deadline error is not `os.ErrDeadlineExceeded` (so not `Temporary()`) | `TestADeadlineExpiresAndUnexpires` | "the deadline error is not Temporary(); quic-go's listen loop would treat a transport close as a fatal read error instead of a shutdown" |
+| `SetReadDeadline` made a no-op | `TestQUICTransportCloseReturnsOverTheShim` | "quic.Transport.Close hung on the shim — its read loop was never unblocked". It would have hung **in a defer at the end of a passing test**, which is the worst place to learn it |
+| A deadline that cannot be un-expired (the zero-time branch of `set` deleted) | `TestADeadlineExpiresAndUnexpires` | "a read after the deadline was reset to zero never returned" — see the vacuous-green row below, because this probe passed the first time it was run |
+
+
 ## Vacuous greens caught, and how
 
 Not red proofs — the opposite, and worth as much. Each is a check that was **passing while
@@ -136,3 +156,5 @@ measuring nothing**, found by its own setup assertion or by a deliberate probe.
 | The keyboard-reachability assertion's first draft read `getComputedStyle(...).opacity` | a `display: none` element reports **opacity 1** — display and opacity are independent — so the assertion was green with the defect put back, and `page.focus()` does not require visibility either | probing it: the defect was restored and the test still passed. Replaced with `getClientRects().length > 0` and `document.activeElement === b`, which are what "focusable" actually means |
 | `a zoom set while the document is still loading is not thrown away`' first draft used a 200-page fixture | 200 pages load fast enough that `pagesloaded` had already fired before the test could zoom — the window it exists to act inside had closed, so its final assertion could not have failed whatever the code did | its own setup assertion, which reads whether the widest-page refine has run rather than assuming it has not: "page 1 is 520px in a 1080px container — the widest-page refine has ALREADY run". Widened to 2000 pages |
 | `TestCraftedReasonIsNotReadAsAnAttestation`' first draft inlined the tag-and-token check | a test of the copy, not of the code — the same shape that let a gap in `riskyActions` hide from the test built on the same map | rewritten to drive `ReadAttestations` against a really-signed document |
+| The un-expiry half of `TestADeadlineExpiresAndUnexpires` (v1.109.51) | it reset the deadline to zero and then called the `arrives` helper — which sets a deadline **of its own**, and setting a FUTURE deadline recreates the channel too. So the assertion was satisfied by the helper, not by the reset under test, and stayed green with the zero-time branch of `set` deleted | probing that branch and getting a PASS. Replaced with a read that must block and then succeed: reset, start a blocking read, sleep, then send |
+| The whole nine-probe battery, on its first run | its patch-applied guard was `git diff --quiet internal/udpmux/`, and `internal/udpmux/` was **untracked** — so `git diff` was silent by construction and the guard could never fire. It reported "did not apply" for all nine, which is the guard failing SAFE; a guard of the opposite polarity would have reported nine greens | the guard itself, which is why it was written before the probes rather than after |

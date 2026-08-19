@@ -130,6 +130,11 @@ emit "not list them, and it is right not to. They will appear there of their own
 emit "the session transport uses them. This note records the compatibility argument now, at"
 emit "the point the choice was made, rather than leaving it to be re-derived later."
 emit ""
+emit "\`golang.org/x/time\` (**BSD-3-Clause**) is in the same position and is listed as a direct"
+emit "requirement for the same reason: P02.S03's demultiplexer test gives each DHT server its"
+emit "own rate limiter, because \`dht.DefaultSendLimiter\` is a process-wide global. It is"
+emit "reached only from tests and so does not appear in the walk above either."
+emit ""
 emit "---"
 emit ""
 

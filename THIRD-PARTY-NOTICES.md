@@ -1191,6 +1191,11 @@ not list them, and it is right not to. They will appear there of their own accor
 the session transport uses them. This note records the compatibility argument now, at
 the point the choice was made, rather than leaving it to be re-derived later.
 
+`golang.org/x/time` (**BSD-3-Clause**) is in the same position and is listed as a direct
+requirement for the same reason: P02.S03's demultiplexer test gives each DHT server its
+own rate limiter, because `dht.DefaultSendLimiter` is a process-wide global. It is
+reached only from tests and so does not appear in the walk above either.
+
 ---
 
 ## jsdiff 7.0.0

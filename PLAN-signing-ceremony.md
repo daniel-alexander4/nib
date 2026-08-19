@@ -2227,11 +2227,33 @@ Acceptance:
 - Licences are AGPLv3-compatible and recorded in `THIRD-PARTY-NOTICES.md`.
 - The spike also answers caveat 1: `VerifyPeerCertificate` is invoked exactly as `crypto/tls` does it, with `InsecureSkipVerify` set and `RequireAnyClientCert` honoured. One spike, two caveats.
 
-#### P02.S03 — The socket demultiplexer *(caveat 7's Stage-2 pin)*
+#### P02.S03 — The socket demultiplexer *(caveat 7's Stage-2 pin)* *(done 2026-08-19, v1.109.51)*
 Scope: separate QUIC and KRPC arriving on one UDP port. Refs: caveat 7.
 Acceptance:
 - Interleaved QUIC and KRPC traffic at the same port, both arriving intact — driven, not argued.
 - **The cheap discriminator is asserted to be wrong**, in a test, so nobody re-derives it: a bencode dict's leading `'d'` (`0x64`) has the QUIC header-form bit clear and the fixed bit set, which is exactly a QUIC short header. The collision is on the steady state, not an edge.
+
+Tasks:
+- T01 — `internal/udpmux`: one owned socket, two `net.PacketConn` views, the two routing rules.
+- T02 — the routing rules as unit tests, each probed red.
+- T03 — the driven half: real quic-go and real anacrolix/dht on one port, interleaved.
+- T04 — race detector, seam inventory, notices, red-proof ledger.
+
+**Built as two rules, not one** *(2026-08-19)*: a **long-header** packet (`0x80` set) is QUIC —
+unambiguous, because a bencode dictionary's `'d'` can never set that bit — and this is what lets
+an inbound connection bootstrap from an address never seen before. Everything else from an address
+**this process has sent QUIC to** is QUIC; the rest is KRPC. The peer table is learned **only from
+our own outbound writes**, never from an inbound packet, so it grows with this process's own
+connections rather than with a stranger's forged long headers.
+
+**The one thing it gets wrong, recorded rather than defended:** a DHT node at the same `IP:port` as
+an active QUIC peer is routed to QUIC and its message is lost. The rule only ever over-claims for
+QUIC, so a **session is never misrouted** — the cost is that two peers' DHT nodes cannot query each
+other while a session is open, which the DHT already tolerates as an unresponsive node. Asserted in
+a test of its own so it stays a measured property. The exact fix — routing short headers on the
+destination connection ID via a `quic.Transport.ConnectionIDGenerator` that registers what it issues
+— is **filed, not built**: a mis-wired generator would break the *session* rather than a DHT query,
+which is the worse failure of the two, and P05 wiring the transport is when that trade changes.
 
 #### P02.S04 — The session core re-typed off `*tls.Conn` *(D14)*
 Scope: `Initiate`, `Receive`, `SendDocument` and `ReceiveDocument` take a stream plus an already-verified fingerprint; `coSignExchange` is unchanged. Refs: D14, D7 pin.
@@ -2455,6 +2477,21 @@ re-verified.
    QUIC path's peer address — QUIC's own mechanism for deciding "not mine". That requires the
    QUIC library either to expose that decision or to accept unrecognised datagrams being handed
    elsewhere.
+
+   **(implementation pin, 2026-08-19, P02.S03 — built, and the caveat understated one rule.)**
+   This caveat offers two keys and treats them as alternatives. **Neither alone is enough**, and
+   the built demultiplexer uses both: an active peer address cannot speak for a connection that
+   has not been established yet, so an inbound dial from a stranger would be handed to the DHT
+   and the ceremony could never be *received*. The **long header** covers exactly that gap and is
+   sound in the one direction it is used — a bencode dictionary's `'d'` can never set `0x80`. So
+   the rules are long-header-first, then peer address, then DHT.
+
+   *And a property the caveat did not ask for, which turned out to matter more than the choice of
+   key:* **where the peer table learns from.** Learning on an inbound long header is the obvious
+   reading and it is wrong — the table would then grow from unauthenticated remote input, and
+   forged long headers from spoofed addresses would grow it without bound. It learns from **our
+   own outbound writes** only. Deciding whether an Initial packet is genuine remains quic-go's
+   job, which is equipped to do it; the mux just declines to remember the sender.
 
    *What this changes:* **selection is disqualifying in both directions.** A QUIC library that
    owns its socket is out; a DHT that owns its socket is out; **and so is a pair with no
