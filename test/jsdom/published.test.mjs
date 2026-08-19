@@ -74,6 +74,7 @@ const PUBLISHED = [
   { type: 'sessionStatus', readers: ['web/app.js'] },
   { type: 'receivedInfo', readers: ['web/app.js'] },
   { type: 'pendingView', readers: ['web/app.js'] },
+  { type: 'verifyView', readers: ['web/app.js'] },
   { type: 'sendResult', readers: ['web/app.js'] },
   { type: 'externalSignerInfo', readers: ['web/app.js'] },
 

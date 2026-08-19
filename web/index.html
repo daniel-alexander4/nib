@@ -1125,6 +1125,23 @@
 
   <!-- Identity & peers: your signing fingerprint, and the peers you've pinned
        out-of-band for co-signing. -->
+  <!-- The spoken check (D4, L2). Shown on BOTH sides, before any document byte moves,
+       whether this Nib is waiting for a peer or reaching out to one. -->
+  <div id="verifyModal" hidden>
+    <div class="sigcard">
+      <h3>Check you're talking to the right person</h3>
+      <p class="libhint">Read these four words to the other person, out loud, on a call or in
+        the room. They should see exactly the same four. If they don't, someone else is on the
+        line — stop, and don't send the document.</p>
+      <div id="verifyWords" class="verifywords"></div>
+      <div class="sigbtns">
+        <button id="verifyCancel">They don't match</button>
+        <span class="grow"></span>
+        <button id="verifyConfirm" class="primary">They match</button>
+      </div>
+    </div>
+  </div>
+
   <div id="peersModal" hidden>
     <div class="sigcard">
       <h3>Identity &amp; peers</h3>

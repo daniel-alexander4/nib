@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -84,6 +85,7 @@ func TestSessionArmReceiveSign(t *testing.T) {
 	// Alice prepares + signs a doc accepting Bob, dials in, and waits for Bob to sign.
 	result := make(chan []byte, 1)
 	errc := make(chan error, 1)
+	initiatorVerifier := &recordingVerifier{}
 	go func() {
 		base, e := testpdf.Form()
 		if e != nil {
@@ -112,13 +114,50 @@ func TestSessionArmReceiveSign(t *testing.T) {
 			return
 		}
 		defer conn.Close()
-		final, e := p2p.Initiate(conn, aSigned, aFPBytes)
+		final, e := p2p.Initiate(conn, aSigned, aFPBytes, initiatorVerifier)
 		if e != nil {
 			errc <- e
 			return
 		}
 		result <- final
 	}()
+
+	// Bob's UI: the SPOKEN CHECK comes first, before any document byte (L2). The status
+	// poller surfaces the four words; the user confirms them on a separate request, which
+	// is why the blocking session goroutine can wait on it.
+	vdeadline := time.Now().Add(10 * time.Second)
+	var serverWords string
+	for {
+		if time.Now().After(vdeadline) {
+			t.Fatal("no verification appeared — the session reached the document exchange " +
+				"without asking anyone to confirm who they were talking to (L2)")
+		}
+		select {
+		case e := <-errc:
+			t.Fatalf("initiator: %v", e)
+		default:
+		}
+		var st sessionStatus
+		sessGet(t, c, ts.URL+"/api/session/status", &st)
+		if st.Verify != nil {
+			serverWords = st.Verify.Words
+			break
+		}
+		if st.Pending != nil {
+			t.Fatal("a document arrived for consent before the verification was confirmed — " +
+				"document bytes crossed the wire unverified")
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	if n := len(strings.Fields(serverWords)); n != 4 {
+		t.Fatalf("the verification words are %q, which is not four words", serverWords)
+	}
+	vr := write(t, c, csrf, http.MethodPost, ts.URL+"/api/session/verify", "application/json",
+		jsonBody(map[string]any{"confirmed": true}))
+	if vr.StatusCode != http.StatusOK {
+		t.Fatalf("verify status = %d", vr.StatusCode)
+	}
+	vr.Body.Close()
 
 	// Bob's UI: poll status until the request is pending, then accept it.
 	deadline := time.Now().Add(10 * time.Second)
@@ -147,6 +186,15 @@ func TestSessionArmReceiveSign(t *testing.T) {
 		t.Fatalf("respond status = %d", rr.StatusCode)
 	}
 	rr.Body.Close()
+
+	// Both sides derived the same words, driven through the real server rather than
+	// through two halves of one function. This is the acceptance clause that the spoken
+	// check is worth speaking: if the two screens disagreed, honest users would read a
+	// mismatch as an attack.
+	if got := initiatorVerifier.seen(); got != serverWords {
+		t.Errorf("the initiator was shown %q and the receiver %q — the two ends of one "+
+			"session derived different words", got, serverWords)
+	}
 
 	// The initiator receives a doubly-signed result.
 	select {
@@ -244,7 +292,7 @@ func TestSessionDeclineLeavesOpenDoc(t *testing.T) {
 			return
 		}
 		defer conn.Close()
-		if _, e := p2p.Initiate(conn, aSigned, aFPBytes); e == nil {
+		if _, e := p2p.Initiate(conn, aSigned, aFPBytes, okVerifier{}); e == nil {
 			errc <- nil // a declined round-trip must surface an error to the initiator
 			return
 		}
@@ -252,18 +300,10 @@ func TestSessionDeclineLeavesOpenDoc(t *testing.T) {
 	}()
 
 	// Wait for the request to park.
-	deadline := time.Now().Add(10 * time.Second)
-	for {
-		if time.Now().After(deadline) {
-			t.Fatal("no pending request appeared")
-		}
-		var st sessionStatus
-		sessGet(t, c, ts.URL+"/api/session/status", &st)
-		if st.Pending != nil {
-			break
-		}
-		time.Sleep(50 * time.Millisecond)
-	}
+	// waitPending walks the spoken check on the way — since P01.S05 no consent request can
+	// exist until it has been confirmed, so a loop that polled only for Pending would time
+	// out saying nothing about why.
+	waitPending(t, c, ts.URL, aFP)
 
 	// While parked: the received doc is served from pending-pdf (Alice's one
 	// signature), and the open doc is still Bob's untouched, unsigned PDF.
@@ -363,22 +403,14 @@ func TestSessionQuoteForPendingPeer(t *testing.T) {
 			return
 		}
 		defer conn.Close()
-		_, _ = p2p.Initiate(conn, aSigned, aFPBytes) // declined below; an error is expected
+		_, _ = p2p.Initiate(conn, aSigned, aFPBytes, okVerifier{}) // declined below; an error is expected
 		errc <- nil
 	}()
 
-	deadline := time.Now().Add(10 * time.Second)
-	for {
-		if time.Now().After(deadline) {
-			t.Fatal("no pending request appeared")
-		}
-		var st sessionStatus
-		sessGet(t, c, ts.URL+"/api/session/status", &st)
-		if st.Pending != nil {
-			break
-		}
-		time.Sleep(50 * time.Millisecond)
-	}
+	// waitPending walks the spoken check on the way — since P01.S05 no consent request can
+	// exist until it has been confirmed, so a loop that polled only for Pending would time
+	// out saying nothing about why.
+	waitPending(t, c, ts.URL, aFP)
 
 	var q cosignQuote
 	sessDecode(t, write(t, c, csrf, http.MethodPost, ts.URL+"/api/session/quote", "application/json",
@@ -464,7 +496,7 @@ func TestSessionReceiveTransfer(t *testing.T) {
 			return
 		}
 		defer conn.Close()
-		errc <- p2p.SendDocument(conn, flagged)
+		errc <- p2p.SendDocument(conn, flagged, aFPBytes, okVerifier{})
 	}()
 
 	waitPending(t, c, ts.URL, aFP)
@@ -538,7 +570,7 @@ func TestSessionReceiveTransferDecline(t *testing.T) {
 			return
 		}
 		defer conn.Close()
-		errc <- p2p.SendDocument(conn, base)
+		errc <- p2p.SendDocument(conn, base, aFPBytes, okVerifier{})
 	}()
 
 	waitPending(t, c, ts.URL, aFP)
@@ -591,7 +623,7 @@ func TestSessionSend(t *testing.T) {
 			return
 		}
 		defer conn.Close()
-		doc, _, e := p2p.ReceiveDocument(conn.(*tls.Conn), autoAccept{})
+		doc, _, e := p2p.ReceiveDocument(conn.(*tls.Conn), autoAccept{}, bFPBytes, okVerifier{})
 		if e != nil {
 			errc <- e
 			return
@@ -604,6 +636,13 @@ func TestSessionSend(t *testing.T) {
 		t.Fatal(err)
 	}
 	body, ct := sendForm(t, base, bFP, ln.Addr().String())
+
+	// The SENDING side confirms the spoken check too, and its handler blocks while it
+	// waits — so the confirmation has to arrive on a different request, concurrently. That
+	// is not a test artefact: it is exactly the shape the UI needs, because the user who
+	// clicked Send has a request in flight and can only answer on another one.
+	go confirmVerificationVia(t, c, csrf, ts.URL)
+
 	var res sendResult
 	sessDecode(t, write(t, c, csrf, http.MethodPost, ts.URL+"/api/session/send", ct, body), &res)
 	if !res.Sent {
@@ -622,17 +661,40 @@ func TestSessionSend(t *testing.T) {
 	}
 }
 
-// waitPending polls session status until a request from fp is parked, or fails.
+// waitPending walks the session's gates until the consent request appears.
+//
+// **It confirms the spoken check on the way**, because since P01.S05 no document byte
+// crosses before that gate — so a helper that polled only for `Pending` would wait ten
+// seconds and report "no pending request appeared", which is true and says nothing about
+// why. Four tests failed exactly that way when the gate landed. The verification is a
+// precondition of a consent request existing at all, so it belongs in the same wait.
 func waitPending(t *testing.T, c *http.Client, baseURL, fp string) {
 	t.Helper()
+	csrf := csrfFor(t, c, baseURL)
 	deadline := time.Now().Add(10 * time.Second)
+	confirmed := false
 	for {
 		if time.Now().After(deadline) {
-			t.Fatal("no pending request appeared")
+			if !confirmed {
+				t.Fatal("no verification and no pending request appeared — the session never " +
+					"reached the spoken check")
+			}
+			t.Fatal("the verification was confirmed but no pending request followed")
 		}
 		var st sessionStatus
 		sessGet(t, c, baseURL+"/api/session/status", &st)
+		if st.Verify != nil && !confirmed {
+			r := write(t, c, csrf, http.MethodPost, baseURL+"/api/session/verify", "application/json",
+				jsonBody(map[string]any{"confirmed": true}))
+			r.Body.Close()
+			confirmed = true
+			continue
+		}
 		if st.Pending != nil {
+			if !confirmed {
+				t.Fatal("a document arrived for consent without the spoken check ever being " +
+					"shown — document bytes crossed the wire unverified (L2)")
+			}
 			if st.Pending.Fingerprint != fp {
 				t.Errorf("pending peer = %s, want %s", st.Pending.Fingerprint, fp)
 			}
@@ -720,7 +782,7 @@ func TestSessionInitiate(t *testing.T) {
 			return
 		}
 		defer conn.Close()
-		_, e = p2p.Receive(conn.(*tls.Conn), bCert, bKey, "Alice", autoConfirm{intent: "I accept"})
+		_, e = p2p.Receive(conn.(*tls.Conn), bCert, bKey, "Alice", autoConfirm{intent: "I accept"}, okVerifier{})
 		recvErr <- e
 	}()
 
@@ -731,6 +793,11 @@ func TestSessionInitiate(t *testing.T) {
 	}
 	body, ct := initiateForm(t, base, pageImage(t, 120, 40),
 		map[string]string{"fingerprint": bFP, "intent": "I agree"}, ln.Addr().String())
+
+	// Same shape as the send test: the initiating handler blocks on the local user's
+	// spoken check, so the confirmation arrives on another request.
+	go confirmVerificationVia(t, c, csrf, ts.URL)
+
 	resp := write(t, c, csrf, http.MethodPost, ts.URL+"/api/session/initiate", ct, body)
 	if resp.StatusCode != http.StatusOK {
 		b, _ := io.ReadAll(resp.Body)
@@ -914,4 +981,110 @@ func TestAStrayConnectionDoesNotConsumeTheSession(t *testing.T) {
 	if after.Armed {
 		t.Error("the session could not be disarmed afterwards")
 	}
+}
+
+// recordingVerifier confirms the spoken check and remembers what it was shown, so a test
+// can compare the two ends of one session. Recording rather than merely accepting: an
+// auto-accepting verifier proves the gate was passed and says nothing about whether both
+// sides were shown the same thing.
+type recordingVerifier struct {
+	mu    sync.Mutex
+	words string
+	calls int
+}
+
+func (r *recordingVerifier) ConfirmVerification(words string) (bool, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.words = words
+	r.calls++
+	return true, nil
+}
+
+func (r *recordingVerifier) seen() string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.words
+}
+
+func (r *recordingVerifier) count() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.calls
+}
+
+// confirmVerificationVia polls the status route for the spoken check and confirms it.
+//
+// **Self-contained on purpose: it is called from a goroutine.** The sending side's handler
+// blocks while it waits for this, so the confirmation must arrive on another request — and
+// `t.Fatal` from a non-test goroutine does not stop the test, it just fails to report. So
+// this uses the http client directly rather than the Fatal-ing helpers, and reports with
+// Errorf. `go vet` catches the mistake, which is how this shape was arrived at.
+func confirmVerificationVia(t *testing.T, c *http.Client, csrf, base string) {
+	t.Helper()
+	deadline := time.Now().Add(20 * time.Second)
+	for time.Now().Before(deadline) {
+		resp, err := c.Get(base + "/api/session/status")
+		if err != nil {
+			time.Sleep(50 * time.Millisecond)
+			continue
+		}
+		var st sessionStatus
+		_ = json.NewDecoder(resp.Body).Decode(&st)
+		resp.Body.Close()
+		if st.Verify == nil {
+			time.Sleep(50 * time.Millisecond)
+			continue
+		}
+		req, err := http.NewRequest(http.MethodPost, base+"/api/session/verify",
+			strings.NewReader(`{"confirmed":true}`))
+		if err != nil {
+			t.Errorf("build verify request: %v", err)
+			return
+		}
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("X-CSRF-Token", csrf)
+		vr, err := c.Do(req)
+		if err != nil {
+			t.Errorf("verify request: %v", err)
+			return
+		}
+		vr.Body.Close()
+		if vr.StatusCode != http.StatusOK {
+			t.Errorf("verify status = %d", vr.StatusCode)
+		}
+		return
+	}
+	t.Errorf("no verification appeared within 20s — either the gate did not fire, or the " +
+		"session reached the document exchange without it (L2)")
+}
+
+// okVerifier confirms the spoken check without looking, for the far side of a test whose
+// subject is something else. Named so a reader sees the gate was satisfied deliberately.
+type okVerifier struct{}
+
+func (okVerifier) ConfirmVerification(string) (bool, error) { return true, nil }
+
+// peerFPForTest is the SPKI fingerprint of a test identity's cert.
+func peerFPForTest(t *testing.T, certPEM []byte) []byte {
+	t.Helper()
+	fp, err := sign.Fingerprint(certPEM)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return fp
+}
+
+// csrfFor reads the CSRF token off /api/status, so a helper that needs to POST does not
+// have to be handed one through every call site it already has.
+func csrfFor(t *testing.T, c *http.Client, baseURL string) string {
+	t.Helper()
+	var st struct {
+		CSRF string `json:"csrf"`
+	}
+	sessGet(t, c, baseURL+"/api/status", &st)
+	if st.CSRF == "" {
+		t.Fatal("no CSRF token on /api/status")
+	}
+	return st.CSRF
 }

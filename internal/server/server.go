@@ -235,6 +235,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/session/disarm", s.requireUnlocked(s.handleSessionDisarm))
 	mux.HandleFunc("GET /api/session/status", s.requireUnlocked(s.handleSessionStatus))
 	mux.HandleFunc("GET /api/session/pending-pdf", s.requireUnlocked(s.handleSessionPendingPDF))
+	mux.HandleFunc("POST /api/session/verify", s.requireUnlocked(s.handleSessionVerify))
 	mux.HandleFunc("POST /api/session/respond", s.requireUnlocked(s.handleSessionRespond))
 	mux.HandleFunc("POST /api/session/quote", s.requireUnlocked(s.handleSessionQuote))
 	mux.HandleFunc("POST /api/session/initiate", s.requireUnlocked(s.handleSessionInitiate))
