@@ -2,7 +2,7 @@
 # Tier 4 of Nib's test harness: run TWO real nib binaries against each other and
 # complete a ceremony between them — once per transport, TCP and QUIC (D14).
 #
-# Usage: ./build/pairrepro.sh [--keep]
+# Usage: ./build/pairrepro.sh [--keep|--lan]
 #
 # ── Why a fourth tier ────────────────────────────────────────────────────────
 # Tiers 1-3 all run ONE Nib. A ceremony is two people on two machines, and every
@@ -56,6 +56,63 @@ for dep in go curl python3; do
     echo "$dep not installed; skipping the two-instance ceremony tests"; exit 0; }
 done
 
+# ── LAN mode: a ceremony with no address typed anywhere ──────────────────────
+# `--lan` re-execs this whole harness inside a network namespace of its own, and
+# runs the ceremony with NO bind address and NO peer address — the armed side
+# announces on the link, the dialing side browses for it.
+#
+# **Why a namespace, again.** The same reason tier 5 needs one: a multicast
+# loopback copy traverses INPUT, so a default-deny host swallows discovery on
+# Nib's port with no error at either end. On the development machine this run
+# would fail for the firewall's reasons rather than the code's.
+#
+# **And why the namespace has a DEFAULT ROUTE INTO A DUMMY**, which looks wrong
+# and is the whole point. P03's exit criterion says the ceremony completes with
+# "no outbound internet traffic", and that has to be ASSERTED, not assumed. An
+# nft output counter is the instrument — but measured, a namespace with no
+# default route reads ZERO EVEN AFTER A REAL CONNECT ATTEMPT, because the kernel
+# refuses at the routing stage and the packet never reaches the output hook. The
+# assertion would then be true of a process trying constantly. A black-hole
+# default route makes attempts into real packets the counter can see: probed at
+# 0 before, 2 after a connect to 1.1.1.1.
+LAN=0
+[ "${1:-}" = "--lan" ] && LAN=1
+if [ "$LAN" = "1" ] && [ "${NIB_LAN_NS:-}" != "1" ]; then
+  for dep in unshare ip nft; do
+    command -v "$dep" >/dev/null 2>&1 || { echo "SKIP: $dep is not installed (--lan needs it)"; exit 0; }
+  done
+  unshare -rn true 2>/dev/null || { echo "SKIP: unprivileged network namespaces are unavailable here"; exit 0; }
+  echo "building nib outside the namespace…"
+  PREBUILT="$(mktemp -d)/nib"
+  go build -o "$PREBUILT" ./cmd/nib || { echo "FAIL: could not build nib" >&2; exit 1; }
+  exec unshare -rn bash -c '
+    set -e
+    ip link set lo up
+    ip link add d0 type dummy
+    ip link set d0 up
+    ip addr add 10.9.0.1/24 dev d0
+    ip route add default dev d0          # the black hole; see above
+    nft add table inet egress
+    nft add chain inet egress out "{ type filter hook output priority 0 ; }"
+    nft add rule inet egress out ip daddr != 10.9.0.0/24 ip daddr != 127.0.0.0/8 \
+      ip daddr != 224.0.0.0/4 counter comment "offlink"
+    NIB_LAN_NS=1 NIB_PAIR_BIN="$1" exec "$2" --lan
+  ' _ "$PREBUILT" "$0"
+fi
+
+# Reads the off-link packet counter the namespace installed.
+offlink_packets() {
+  nft -j list table inet egress 2>/dev/null \
+    | python3 -c 'import json,sys
+d=json.load(sys.stdin)
+for o in d.get("nftables",[]):
+    r=o.get("rule")
+    if not r: continue
+    for e in r.get("expr",[]):
+        if "counter" in e: print(e["counter"]["packets"]); raise SystemExit
+print(0)'
+}
+
 KEEP=0
 [ "${1:-}" = "--keep" ] && KEEP=1
 
@@ -93,8 +150,14 @@ for p in "$PORT_A" "$PORT_B"; do
   fi
 done
 
-echo "building nib…"
-go build -o "$WORK/nib" ./cmd/nib || fail "could not build nib"
+if [ -n "${NIB_PAIR_BIN:-}" ]; then
+  # Built outside the namespace: inside it there is no network, and the black-hole
+  # default route would make any fetch hang rather than fail fast.
+  cp "$NIB_PAIR_BIN" "$WORK/nib"
+else
+  echo "building nib…"
+  go build -o "$WORK/nib" ./cmd/nib || fail "could not build nib"
+fi
 
 # jq is not assumed; python3 reads the fields.
 jget() { python3 -c 'import json,sys;d=json.load(sys.stdin);
@@ -211,8 +274,18 @@ ceremony() { # transport port outfile
     -d "{\"path\":\"$WORK/doc.pdf\"}" >/dev/null || fail "[$transport] A could not open the document"
 
   # B arms a receive session for co-signing, on this transport.
+  #
+  # In LAN mode the bind is OMITTED ENTIRELY — nothing types an address anywhere,
+  # which is P03's first exit criterion stated as a shell command. B binds
+  # ephemerally and announces the port it got; A learns it from the link.
+  local armbody
+  if [ "$port" = "lan" ]; then
+    armbody="{\"fingerprint\":\"$FP_A\",\"mode\":\"cosign\",\"transport\":\"$transport\"}"
+  else
+    armbody="{\"fingerprint\":\"$FP_A\",\"bind\":\"127.0.0.1:$port\",\"mode\":\"cosign\",\"transport\":\"$transport\"}"
+  fi
   curl -fsS -X POST "$B/api/session/arm" -H 'Content-Type: application/json' -H "X-CSRF-Token: $CSRF_B" \
-    -d "{\"fingerprint\":\"$FP_A\",\"bind\":\"127.0.0.1:$port\",\"mode\":\"cosign\",\"transport\":\"$transport\"}" >/dev/null \
+    -d "$armbody" >/dev/null \
     || fail "[$transport] B could not arm a session"
 
   # THE assertion that makes this two transports rather than one run twice.
@@ -226,7 +299,9 @@ ceremony() { # transport port outfile
   # A stray TCP connect is also exactly what the accept loop is built to shrug
   # off, so the tcp branch doubles as a check that a wrong dial does not consume
   # the armed session — the ceremony below still completes after it.
-  if (exec 3<>"/dev/tcp/127.0.0.1/$port") 2>/dev/null; then
+  if [ "$port" = "lan" ]; then
+    :  # no fixed port to probe — the whole point is that nobody chose one
+  elif (exec 3<>"/dev/tcp/127.0.0.1/$port") 2>/dev/null; then
     exec 3<&- 3>&-
     [ "$transport" = "tcp" ] || fail "[$transport] port $port answers TCP — the QUIC run is listening on a TCP socket, so it is the TCP path wearing a different label"
   else
@@ -263,7 +338,7 @@ ceremony() { # transport port outfile
   curl -sS -X POST "$A/api/session/initiate" -H "X-CSRF-Token: $CSRF_A" \
     -F "pdf=@$WORK/doc.pdf" -F "appearance=@$WORK/sig.png" \
     -F "params={\"fingerprint\":\"$FP_B\",\"intent\":\"I agree to co-sign\"}" \
-    -F "address=127.0.0.1:$port" -F "transport=$transport" \
+    $( [ "$port" = "lan" ] || printf %s "-F address=127.0.0.1:$port" ) -F "transport=$transport" \
     -o "$init_out" -w '%{http_code}' > "$WORK/initiate.code" 2>"$WORK/initiate.err"
   local code
   code="$(cat "$WORK/initiate.code")"
@@ -277,6 +352,13 @@ ceremony() { # transport port outfile
   # The stimulus, asserted before anything is graded: the spoken check really
   # happened on BOTH sides. Without this, a ceremony that completed because the
   # gate never fired would pass every assertion below.
+  # If the initiate never got off the ground, say THAT — the words check fires first by
+  # design (stimulus before grading), and without this it reports a missing spoken check
+  # for a ceremony that never reached one. Probed: with the armed side's announcer
+  # disabled, this used to blame L2 for what was actually "peer not found on the link".
+  if [ -z "$words_a" ] && [ "$code" != "200" ]; then
+    fail "[$transport] initiate returned HTTP $code before any spoken check: $(head -c 300 "$init_out" 2>/dev/null)"
+  fi
   [ -n "$words_a" ] || fail "[$transport] instance A was never shown the verification words — the ceremony reached the document exchange without the spoken check (L2)"
   [ -n "$words_b" ] || fail "[$transport] instance B was never shown the verification words"
   [ "$(echo "$words_a" | wc -w)" = 4 ] || fail "[$transport] A's verification string is not four words: $words_a"
@@ -301,6 +383,31 @@ print(f"[{sys.argv[2]}] the finished document carries {n} signatures")
 PYSIG
   WORDS="$words_a"
 }
+
+if [ "$LAN" = "1" ]; then
+  # The egress counter must be able to FIRE, or asserting it is zero says nothing.
+  # This is the stimulus assertion, and it is not decoration: the first version of
+  # this instrument used a namespace with no default route and read zero after a real
+  # connect attempt, because the kernel refused at routing before the output hook.
+  before="$(offlink_packets)"
+  timeout 2 bash -c 'exec 3<>/dev/tcp/1.1.1.1/80' 2>/dev/null || true
+  provoked="$(offlink_packets)"
+  [ "$provoked" -gt "$before" ] \
+    || fail "the off-link packet counter did not move for a deliberate connect to 1.1.1.1 ($before -> $provoked) — it cannot see outbound traffic, so asserting zero below would prove nothing"
+  echo "egress counter proven live: $before -> $provoked on a deliberate connect"
+  nft reset counters table inet egress >/dev/null 2>&1 || true
+  baseline="$(offlink_packets)"
+
+  ceremony tcp lan "$WORK/final.lan.pdf"
+  WORDS_LAN="$WORDS"
+
+  after="$(offlink_packets)"
+  [ "$after" = "$baseline" ] \
+    || fail "the ceremony emitted $((after - baseline)) packets destined off the link — P03's exit criterion says a LAN ceremony completes with NO outbound internet traffic"
+  echo "PASS: a ceremony completed with no address typed anywhere, and nothing left the link"
+  echo "      words: $WORDS_LAN"
+  exit 0
+fi
 
 ceremony tcp "$SESSION_PORT" "$WORK/final.tcp.pdf"
 WORDS_TCP="$WORDS"
