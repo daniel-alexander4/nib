@@ -338,14 +338,27 @@ func writeFrame(w io.Writer, b []byte) error {
 
 // readFrame reads a length-prefixed message, rejecting a declared length over the
 // cap *before* allocating — the length prefix is attacker-controlled.
-func readFrame(r io.Reader) ([]byte, error) {
+func readFrame(r io.Reader) ([]byte, error) { return readFrameMax(r, maxFrame) }
+
+// readFrameMax is readFrame bounded by what the caller actually expects.
+//
+// maxFrame is 128 MiB because a document frame legitimately is. A frame whose expected
+// size is 32 bytes has no business admitting that: a peer can declare 128 MiB in four
+// bytes and make the listener allocate it before anything looks at the contents. The
+// peer must be pinned to get this far, which lowers the severity and does not remove it —
+// a pinned peer is a person you have agreed to sign with, not a person you have agreed to
+// let allocate 128 MiB per connection.
+//
+// So every fixed-size frame reads with its own bound and the general reader keeps the
+// document's.
+func readFrameMax(r io.Reader, max uint32) ([]byte, error) {
 	var hdr [4]byte
 	if _, err := io.ReadFull(r, hdr[:]); err != nil {
 		return nil, err
 	}
 	n := binary.BigEndian.Uint32(hdr[:])
-	if n > maxFrame {
-		return nil, fmt.Errorf("declared frame too large: %d bytes", n)
+	if n > max {
+		return nil, fmt.Errorf("declared frame too large: %d bytes (max %d)", n, max)
 	}
 	buf := make([]byte, n)
 	if _, err := io.ReadFull(r, buf); err != nil {

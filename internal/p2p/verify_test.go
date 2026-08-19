@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"crypto/tls"
+	"encoding/binary"
 	"errors"
 	"strings"
 	"testing"
@@ -366,5 +367,71 @@ func TestTheDerivationIsViewpointIndependent(t *testing.T) {
 	if fromA != fromB {
 		t.Errorf("the two viewpoints derive %q and %q — the canonical ordering is wrong, so "+
 			"honest peers would see a mismatch and read it as an attack", fromA, fromB)
+	}
+}
+
+// TestAnOversizedVerificationFrameIsRefusedBeforeAllocating: a peer that declares 128 MiB
+// where 32 bytes are expected is refused on the header.
+//
+// maxFrame is 128 MiB because a document frame legitimately is, and the verification
+// frames were reading with that bound — so a pinned peer could make the listener allocate
+// 128 MiB with four bytes. Being pinned lowers the severity and does not remove it: a
+// pinned peer is someone you agreed to sign with, not someone you agreed to let allocate.
+//
+// The assertion is on the ERROR, because "did not allocate" is not observable from here.
+// What is observable is that the refusal names the bound it applied — and the bound it
+// names is the small one, which it could only know if the small-bounded reader ran.
+func TestAnOversizedVerificationFrameIsRefusedBeforeAllocating(t *testing.T) {
+	aCert, aKey := newIdentity(t)
+	bCert, bKey := newIdentity(t)
+	aFP, bFP := fingerprint(t, aCert), fingerprint(t, bCert)
+
+	ln, err := Listen("127.0.0.1:0", bCert, bKey, aFP)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+
+	declared := make(chan bool, 1)
+	go func() {
+		conn, err := ln.Accept()
+		if err != nil {
+			declared <- false
+			return
+		}
+		defer conn.Close()
+		tc := conn.(*tls.Conn)
+		if err := tc.Handshake(); err != nil {
+			declared <- false
+			return
+		}
+		_, _ = readFrameMax(tc, sha256.Size) // the initiator's commitment
+		// A four-byte header claiming the whole document budget, and no body.
+		var hdr [4]byte
+		binary.BigEndian.PutUint32(hdr[:], maxFrame)
+		_, werr := tc.Write(hdr[:])
+		declared <- werr == nil
+	}()
+
+	conn, err := Dial(ln.Addr().String(), aCert, aKey, bFP, 5*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	_ = conn.SetDeadline(time.Now().Add(5 * time.Second))
+	_, err = verificationExchange(conn, true, aFP, bFP)
+
+	// Stimulus before response: the oversized header really was sent. Without this the
+	// refusal below could be a closed connection and the test would pass having exercised
+	// nothing.
+	if !<-declared {
+		t.Fatal("setup: the oversized header was never sent, so the bound was not tested")
+	}
+	if err == nil {
+		t.Fatal("a frame declaring the full document budget was accepted where 32 bytes are expected")
+	}
+	if !strings.Contains(err.Error(), "max 32") {
+		t.Errorf("refused with %v — the message does not name the 32-byte bound, so the "+
+			"general 128 MiB reader may still be the one that ran", err)
 	}
 }

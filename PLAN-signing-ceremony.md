@@ -2068,7 +2068,8 @@ Tasks:
 - **T06 — seam inventory rows.**
 
 #### ~~P01.S03 — Accept a name wherever a fingerprint is accepted~~ **STRUCK 2026-08-18 — Dan's collapse to one pairing path (D31). No name decodes to a pin, so there is nothing for this slice to build.** *(retained below)*
-#### P01.S03 — Accept a name wherever a fingerprint is accepted
+#### P01.S03 — Accept a name wherever a fingerprint is accepted *(struck 2026-08-18 — retained text, not a slice)*
+**(marker added 2026-08-19: the retained copy carried no status marker, and `/createcode` resumes by scanning top-down for the first slice heading WITHOUT one — so a resume would have selected a struck slice and started building the pin-by-name path D31 removed. The strike above was already unambiguous to a reader and invisible to the scan.)**
 Scope: `parseFingerprint`'s callers accept a six-word phrase and resolve it to a pin. Refs: D3, D10.
 Acceptance:
 - Pinning by name and pinning by the equivalent hex produce a byte-identical stored pin.
