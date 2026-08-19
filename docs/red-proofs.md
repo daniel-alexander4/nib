@@ -93,6 +93,7 @@ the same failure this file exists to fix.
 
 | Defect reintroduced | Check that fired | What it said |
 |---|---|---|
+| `rectPoints` drops the screen-to-PDF y flip — `(1-fy1)*pageH` becomes `fy0*pageH` (v1.109.34) | `a stamp bakes where it was placed, not mirrored up the page` | "the baked stamp's centre is 0.256 down the page but it was placed at 0.740 — off by 48.4% of the page height. It is in the OPPOSITE half: the screen-to-PDF y flip in rectPoints is wrong, and every stamp, border, checkbox and circled choice bakes at the wrong end of the page." |
 | The marker drag reads the ACTIVE view at fire time and `abortDrags` cannot reach the gesture (v1.108.5) | `a drag in flight when the user switches documents neither moves the flag nor records onto the new document` | "the flag moved from 334.29px to 554.29px after its document was switched away" — a measured number, which is why this row is worth more than the others |
 | The placement handler acts on a pointerdown aimed at an overlay's × (v1.108.6) | `the close prompt fires from overlay history alone` — via `harness.mjs`'s `deleteMarker` | its own `=== 0` wait never completes, because the deleted flag is replaced by a new one |
 | Rebuild-on-activation, the design ADR-002 refuses by name (P06) | 8 of 19 tier-3 tests | recorded at P06's close; the best red-proof in the tree at the time |
