@@ -90,6 +90,16 @@ under a non-signing convener while `crossBind` reports `Matched: false` on every
 critical, 2 warnings, 3 info — **all adopted by Dan.** Pins at D2, D20, D22, D27 and D29 ×2; new
 criteria at P07. **Amending D2's "retained unchanged" claim is owed through `/discuss`.**
 Report: `<project-memory>/plan-reviews/2026-08-18-4.md`.)
+**Amended 2026-08-18 (the collapse to one pairing path — Dan's decision, after the 256-versus-66
+analysis).** Pinning by six-word name is **retired**; the invitation is the only way to pair. The
+four-word verification string **survives with a different job**: it confirms that the invitation
+arrived intact, which is a claim about the *delivery channel* rather than about the pin's length.
+**The correction that forced it:** an earlier pin held that tampering with an invitation buys
+"denial, not substitution". That assumed an attacker altering one field while the rest of the trust
+chain stayed honest. **An attacker who controls the delivery channel replaces the whole
+invitation** — their fingerprint as convener, their roster, their signed record — and every check
+passes, because both halves of every comparison are theirs. D3, D4, D21 and D31 amended; caveat 5
+struck and caveat 4 relaxed; P01.S03 struck and P01.S04/S05 amended.
 SME packs: **crypto (core tier)** — `go.mod` declares `filippo.io/age`,
 `golang.org/x/crypto`, `edwards25519`, `hpke`, `go-pkcs12`, `digitorus/pdfsign`
 (inferred, trigger 1); the consensus tier does not fire — ~~two~~ **N (2026-08-18)** sequential
@@ -245,8 +255,15 @@ already computes. The name is an *encoding* of the pin, not a label attached to 
 
 *Why:* it collapses two exchanges into one. A random name would still require the
 fingerprint to be exchanged separately for pinning — which is the exact friction
-this feature exists to remove. Because the name commits to the key, typing a name
-*is* pinning a peer.
+this feature exists to remove. ~~Because the name commits to the key, typing a name
+*is* pinning a peer.~~
+
+**(amended 2026-08-18 — Dan, the collapse to one path.)** **The name no longer pins anything.**
+Typing a name *was* pinning a peer while name-only pairing existed; with pairing collapsed onto the
+invitation (D31), the six-word name is a **display identity** — shown beside a signature, spoken to
+confirm "yes, that is me" — and nothing derives a pin from it. The derivation from the fingerprint
+(this decision's substance) is **kept**: a name that is a function of the key still means a name
+cannot be claimed by someone else, which is what makes it usable as a spoken identity at all.
 
 ### D4 — Six words, and the verification string is mandatory ~~always~~ **exactly when the pin is short (2026-08-18)** *(settled 2026-08-15 via /discuss — Dan; amended 2026-08-18 — Dan)*
 
@@ -335,6 +352,36 @@ its precondition unreachable rather than by disagreeing with it.
 *What is kept:* the six-word name (D3), unchanged and still derived from the fingerprint. It
 remains the human identity — spoken to confirm "yes, that is me", shown beside every signature
 in the roster. It stops being the sole carrier of the authentication.
+
+**(second supersession, 2026-08-18 — Dan's decision. The check survives; what it is FOR changes.)**
+The rule adopted this morning — *mandatory exactly when the pin is short* — was built on the premise
+that the spoken words compensate for a truncated pin. **That premise was wrong about what the
+invited path actually rests on.** With pairing collapsed onto the invitation (D31) there is no short
+pin left anywhere, and yet the check is more necessary than the conditional rule made it, because
+the thing it should have been confirming was never the pin.
+
+> **The verification string confirms that the invitation arrived intact.** It is a claim about the
+> **delivery channel**, not about how many bits are pinned. It is **offered on every ceremony** and
+> **required whenever the parties have a voice channel** — which, in a proceeding people schedule
+> and attend together, is the ordinary case.
+
+*Why the channel is the thing that needs confirming:* everything a party knows about a ceremony —
+the convener's fingerprint, the roster, the secret — arrives in the invitation, and the signed
+record inside the document is verified against a convener fingerprint **learned from that same
+invitation**. An attacker who controls the delivery channel does not tamper; they **replace**, and
+every check passes because both halves of every comparison are theirs. Nothing else in this design
+can see that. Two people who recognise each other's voices can.
+
+*The consequence for the commitment step, which reverses this morning's call:* **it is mandatory on
+the only remaining path.** An attacker who substituted both invitations is running two pinned
+sessions and can birthday-grind the four words to match across them — the ~2²² search the
+2026-08-17 pin describes. That attack was thought to need a defeated 66-bit pin; it needs only a
+defeated *channel*. So `H(nonce ‖ contribution)` before either side reveals, and a peer that reveals
+after receiving is rejected before any string exists — **unconditionally**, not on the fallback path
+that no longer exists.
+
+*What this deletes:* the conditional rule above, the two-assurance-levels distinction it created,
+and the L2 restatement D31 needed to keep it honest. **One path, one rule.**
 
 ### D5 — The name does not rotate *(settled 2026-08-15 via /discuss, auto-adopted)*
 
@@ -1115,13 +1162,32 @@ root and it carries no signature. Stated rather than fixed, because the honest a
 signature would not help: there is nothing to verify it against until the invitation has already been
 trusted.
 
-*What tampering with an invitation actually buys:* **denial, not substitution.** Alter a roster
+~~*What tampering with an invitation actually buys:* **denial, not substitution.** Alter a roster
 fingerprint and that party pins a key nobody holds, so the hop never connects. Insert an attacker's
 own fingerprint and the convener — who holds their own copy of the record — refuses the contribution
-under L3, and the roster commitment on every existing signature no longer matches. The invitation's
+under L3, and the roster commitment on every existing signature no longer matches.~~ The invitation's
 integrity assumption is therefore the same one the spoken name always had: it travels over a channel
 the parties already trust. That was never written down, and a reader would otherwise assume the
 signed record covers it.
+
+**(CORRECTED 2026-08-18 — Dan's decision. "Denial, not substitution" is wrong for the attacker who
+matters.)** The struck analysis holds for an attacker who **alters one field** while the rest of the
+trust chain stays honest. An attacker who **controls the delivery channel does not alter — they
+replace.** They issue their own invitation carrying their own fingerprint as convener, their own
+roster, and their own signed record. Every check the recipient can perform passes, **because both
+halves of every comparison are theirs**: the record's signature verifies against the convener
+fingerprint the recipient holds, and the recipient holds it because the attacker sent it.
+
+**So the invited path's entire security rests on the integrity of the channel that carried the
+invitation, and nothing in the ceremony verifies that channel.** This is now the single point of
+failure of the whole design, stated plainly because it was previously stated as its opposite.
+
+*What answers it:* not a signature on the invitation — there is nothing to verify one against until
+the invitation is already trusted, which is why this decision rejected signing it in the first
+place. **The answer is the four-word verification string, re-purposed by D4's second supersession**:
+two people who recognise each other's voices confirming that the words match is the one check an
+email-level attacker cannot pass, and the only one in this design anchored outside the channel under
+attack.
 
 **(plan-review pin: the roster has two homes and nothing reconciles them — 2026-08-18, adopted by
 Dan.)** A party pins from the **invitation's** roster and later receives a document carrying the
@@ -1584,7 +1650,24 @@ lower-fingerprint glare tie-break likewise ranges over the hop's two fingerprint
 rather than a redesign — but an unsaid sentence here is a builder's guess, and D17 was written
 when there was only one possible pair.
 
-### D31 — Two pairing paths, and the invitation is the default *(settled 2026-08-18 — taken by recommendation on Dan's behalf; **reversible**)*
+### D31 — ~~Two pairing paths, and the invitation is the default~~ **ONE pairing path: the invitation (superseded 2026-08-18 — Dan)** *(settled 2026-08-18 — taken by recommendation on Dan's behalf; **superseded the same day by Dan's own decision**)*
+
+**Superseded: pairing by six-word name is retired, and the invitation is the only path.** Dan's
+reasoning, and it is correct: the 66-bit pin is *strictly worse* than the 256-bit one and buys
+nothing it does not. What the reversal below adds is that the thing worth keeping from the fallback
+was never its pin — it was the **voice**, and that survives as D4's re-purposed verification string.
+
+**What retires with it:** this decision's own second and third bullets, **caveat 5** (the 66-bit
+floor), **P01.S03** (pin-by-name), and D4's *mandatory-exactly-when-the-pin-is-short* conditional
+with the two assurance levels it created. **What does not retire:** the six-word name itself (D3),
+now display-only, and therefore **P01.S01 and P01.S02**, which build the encoding and show it.
+
+**And one obligation relaxes — see caveat 4.** With no name ever decoding to a pin, a wordlist
+change no longer makes a name decode to a *different fingerprint*; it makes a display label change.
+That is a breaking UI change rather than a silent authentication failure, which is a materially
+smaller thing to promise forever.
+
+*Retained below, unaltered, as the superseded decision.*
 
 After D21 the plan has two ways to pair: an **invitation** carrying full fingerprints and a secret,
 and the original **spoken six-word name** carrying ~66 bits. Both survive, and the plan now says
@@ -1772,12 +1855,12 @@ process, not risk appetite.*
 Exit criteria:
 - A user never sees a hex fingerprint in the normal pairing path, and never types one — **settled 2026-08-17 (plan-review, W7): "normal pairing path" means the default pairing screen; hex is reachable only behind the advanced disclosure, never merely de-emphasised in place.** P01.S02's "hex moves to a secondary position" admitted a second reading in which hex is still on screen, and two builders would each have cited the plan.
 - ~~**An outside cryptographic reviewer has read the pairing and verification design, including the commitment step, before P02 opens.**~~ **Struck 2026-08-18 — D12 withdrawn on Dan's instruction. This phase carries no external gate.**
-- ~~A ceremony cannot reach the signing exchange until both sides confirm the verification string.~~ **Superseded 2026-08-18 (D4): a ceremony paired from a six-word name alone cannot reach the signing exchange until both sides confirm; a ceremony paired from an invitation cannot reach it until the machines confirm, and asks the users for nothing. Both are driven, and the *conditioning* is what is driven — a short pin that skips the check fails the L2 guard.**
+- ~~A ceremony cannot reach the signing exchange until both sides confirm the verification string.~~ ~~**Superseded 2026-08-18 (D4): a ceremony paired from a six-word name alone… the *conditioning* is what is driven.**~~ **Re-superseded 2026-08-18 (D4's second supersession, D31): the verification string is offered on every ceremony and required whenever a voice channel exists, and the commitment step is unconditional. Driven by an out-of-order reveal on an ordinary invited ceremony — the case the earlier wording scoped to a path that no longer exists.**
 - Peers pinned by hex before this phase still work (D10), proven by a test that pins the old way and connects the new way.
 - The name↔fingerprint encoding round-trips on a fixed vector corpus.
 - **A Ceremony Record round-trips through the document: written in the pre-signing pass, readable after N incremental signatures, and its convener signature verifies. (added 2026-08-18, D20 — this is caveat 10 discharged empirically, not by reading pdfcpu's documentation.)**
 - **An invitation pins the full 32-byte fingerprint, and a ceremony built from one never derives a pin from the six-word name — driven by an invitation whose name and fingerprint disagree, which must be refused rather than resolved either way. (added 2026-08-18, D21.)**
-- **The default pairing screen offers the invitation; name-only pairing is reachable only behind the advanced disclosure, and that screen states that the spoken check is required on it. (added 2026-08-18, D31.)** Same reading rule as W7's: "default" means the screen the user lands on, never the weaker path merely placed lower.
+- ~~**The default pairing screen offers the invitation; name-only pairing is reachable only behind the advanced disclosure…**~~ **Superseded 2026-08-18 (D31 collapsed): there is no second pairing screen to place anywhere. Replaced by:** **no screen anywhere accepts a six-word name as a way to pin a peer — driven by attempting it and observing the refusal, not by observing its absence from the default screen. (2026-08-18.)** An absence is satisfied by hiding the field; a refusal is satisfied only by removing the path.
 - **A pin created by consuming an invitation is marked with its ceremony and is gone when the ceremony ends; a pin the user promoted survives. (added 2026-08-18, D29.)** Driven by accepting an invitation and then declining the ceremony — the case that otherwise leaves strangers in the peer list for good.
 - **The invitation secret is never written to `~/nib/ceremonies/`, driven by searching the mirror for it after a ceremony is armed. (added 2026-08-18, D29.)** A test that asserts the vault *contains* it cannot see the copy left on disk beside the document.
 
@@ -1797,6 +1880,7 @@ Acceptance:
 - The name shown is derived from the live identity, not stored — deriving twice yields the same words.
 Tasks: *(written at slice-grill time)*
 
+#### ~~P01.S03 — Accept a name wherever a fingerprint is accepted~~ **STRUCK 2026-08-18 — Dan's collapse to one pairing path (D31). No name decodes to a pin, so there is nothing for this slice to build.** *(retained below)*
 #### P01.S03 — Accept a name wherever a fingerprint is accepted
 Scope: `parseFingerprint`'s callers accept a six-word phrase and resolve it to a pin. Refs: D3, D10.
 Acceptance:
@@ -1813,14 +1897,14 @@ Acceptance:
 - **The string is derived only over committed values, and a peer that reveals its contribution after receiving the other's is rejected before any string is derived — driven by a harness that replays the exchange out of order. (added 2026-08-17, plan-review C1, D4 pin.)** The three bullets above are all satisfied by a design a man-in-the-middle can birthday-grind at ~2²²; this one is the only clause that can see it. **(retained 2026-08-18: it now scopes to the name-only path, which is the only one where C1's precondition still exists. See D4's amendment — the criterion is kept, not narrowed away, because the path is kept.)**
 Tasks: *(written at slice-grill time)*
 
-#### P01.S05 — Make it mandatory **when the pin is short (amended 2026-08-18, D4)**
-Scope: the ceremony fails closed until both sides confirm ~~— always~~ **— always on the name-only path, and until the machines confirm on the invited path**. Refs: D4, D11 (L2), **D21**.
+#### P01.S05 — Make it mandatory ~~when the pin is short (amended 2026-08-18, D4)~~ **— unconditionally (re-amended 2026-08-18, D4's second supersession)**
+Scope: the ceremony fails closed until both sides confirm. ~~— always on the name-only path, and until the machines confirm on the invited path.~~ **One path, one rule: the string is offered on every ceremony and required whenever the parties have a voice channel, and the commitment step is unconditional.** Refs: D4, D11 (L2), **D21**, **D31**.
 Acceptance:
 - No document bytes cross the wire before both confirmations are recorded.
 - Declining, or timing out, ends the session with a distinct, user-legible outcome — not the same error as a network failure.
 - A guard test named for L2 fails if any path reaches the signing exchange unconfirmed.
 - **A confirmation computed on one channel is rejected on any other, driven by reconnecting mid-ceremony rather than asserted. (added 2026-08-16, D18)**
-- **The check is conditioned on the pin's strength, not on the flow: a ceremony holding a 66-bit pin that reaches the signing exchange without a human confirmation fails the L2 guard, driven by handing the invited path a short pin. (added 2026-08-18, D4.)** The three bullets above are all satisfied by conditioning on "did the user arrive via the invite screen", which is the reading that would quietly restore the downgrade L2 forbids.
+- ~~**The check is conditioned on the pin's strength, not on the flow…**~~ **Superseded 2026-08-18 (D4's second supersession, D31): there is one path and one pin strength, so there is nothing to condition on. Replaced by:** **the commitment step is unconditional — a peer that reveals its contribution after receiving the other's is rejected before any string exists, driven on the ordinary invited ceremony rather than on a fallback. (2026-08-18.)** The out-of-order-reveal criterion in P01.S04 was scoped to the name-only path; that path is gone and the criterion is not — it moves here and applies always, because the attacker it stops needs only a defeated delivery channel, not a defeated pin.
 
 #### P01.S06 — The Ceremony Record **(added 2026-08-18, D20)**
 Scope: the record's format, its convener signature, its embedding in the pre-signing pass, and the `~/nib/ceremonies/<id>/` mirror. Refs: D20, D2 pin.
@@ -1993,8 +2077,8 @@ re-verified.
 1. **The QUIC library invokes `VerifyPeerCertificate` exactly as `crypto/tls` does**, with `InsecureSkipVerify` set and `RequireAnyClientCert` honoured. The entire pinned-peer model rides on it. If false, D7 needs rework, not adjustment.
 2. **DHT responses carry the requester's port, not only its IP.** P04's self-address probe depends on it; without the port, IPv4 punching loses its input.
 3. **Multicast discovery behaves on Windows** as it does on Linux. Recent releases show Windows-specific paths needing their own handling (`v1.101.0`, `v1.102.1`).
-4. **A suitable wordlist exists with a licence compatible with AGPLv3 distribution**, and with phonetic distinctness good enough to read over a phone. **(plan-review pin, 2026-08-17, adopted by Dan: the list must be FROZEN at first release.)** The name is an *encoding* of the fingerprint (D3) that never rotates (D5), so this list defines the meaning of every name ever spoken — and this caveat leaves selection open on *phonetic distinctness* grounds, which is precisely the reason someone later swaps a word. Do that and every user's name silently changes, and a name written on paper or read over a phone last year now decodes to a **different fingerprint**. Stored pins survive because they are bytes (D10, P01.S03); spoken ones do not. **What discharges this specifically:** P01.S01's checksum guard over the list file, failing on any change — not the fixed-vector corpus, which is computed *from* the list and therefore moves with it.
-5. **~66 bits is the intended floor** given D4's mandatory verification. If the verification step is ever weakened, this number becomes the whole security of the pairing. **(narrowed 2026-08-18, D4/D21: this caveat now binds the *name-only* pairing path alone. A ceremony paired from an invitation pins the full 32 bytes and has no 66-bit floor to defend — which is exactly why the spoken check may drop there and may not drop here. The caveat is narrowed rather than struck because the name-only path is retained, and it is now the only place the plan's original security argument still has to hold.)**
+4. **A suitable wordlist exists with a licence compatible with AGPLv3 distribution**, and with phonetic distinctness good enough to read over a phone. **(RELAXED 2026-08-18 — Dan's collapse to one pairing path.** The freeze below was justified by names decoding to fingerprints: swap a word and a name written on paper last year decodes to a *different key*. **With D31 retired, no name ever decodes to a pin** — a wordlist change alters a *displayed label*, which is a breaking UI change and not a silent authentication failure. The checksum guard is kept, because a label people learn to recognise should still not move quietly; the *forever* is downgraded to *not without a version bump and a note*. **This also discharges the pending item filed after the Stage 2 grill**, which asked where the freeze's cost should be stated — the cost is now small enough that the question dissolves.)** **(plan-review pin, 2026-08-17, adopted by Dan: the list must be FROZEN at first release.)** The name is an *encoding* of the fingerprint (D3) that never rotates (D5), so this list defines the meaning of every name ever spoken — and this caveat leaves selection open on *phonetic distinctness* grounds, which is precisely the reason someone later swaps a word. Do that and every user's name silently changes, and a name written on paper or read over a phone last year now decodes to a **different fingerprint**. Stored pins survive because they are bytes (D10, P01.S03); spoken ones do not. **What discharges this specifically:** P01.S01's checksum guard over the list file, failing on any change — not the fixed-vector corpus, which is computed *from* the list and therefore moves with it.
+5. ~~**~66 bits is the intended floor** given D4's mandatory verification.~~ **STRUCK 2026-08-18 — Dan's collapse to one pairing path (D31). There is no 66-bit pin anywhere in the design: the name never decodes to a pin, so there is no floor to defend.** *Retained below for the record:* **~66 bits is the intended floor** given D4's mandatory verification. If the verification step is ever weakened, this number becomes the whole security of the pairing. **(narrowed 2026-08-18, D4/D21: this caveat now binds the *name-only* pairing path alone. A ceremony paired from an invitation pins the full 32 bytes and has no 66-bit floor to defend — which is exactly why the spoken check may drop there and may not drop here. The caveat is narrowed rather than struck because the name-only path is retained, and it is now the only place the plan's original security argument still has to hold.)**
 6. **A Go port-mapping library covering PCP, NAT-PMP and UPnP-IGD exists under a licence compatible with AGPLv3 distribution** (D15). If only some protocols are covered, the tier still ships — with narrower router coverage, recorded rather than assumed. *(added 2026-08-16)*
 7. **The mapped port, the DHT self-address probe and the live session must all be the same local socket.** A NAT mapping — learned or requested — is a function of the *internal* `IP:port`, so a mapping obtained on the DHT socket or on a throwaway socket is useless for a session that listens elsewhere, even under a perfectly endpoint-independent NAT. This constrains library selection in **both P02 and P04**: the QUIC library must accept an existing `net.PacketConn` and the DHT must be willing to share it. Load-bearing for tiers 3 and 4 alike, and not currently reflected in either phase's slice sketch. *(added 2026-08-16)* **(plan-review pin, 2026-08-17, adopted by Dan: now reflected, and it had to be.)** This caveat identified the constraint, named the two phases it binds, and recorded that neither enforced it — and **P02 is the next phase built, with library selection as its first slice.** A QUIC library that owns its own socket passes every exit criterion P02 carried (a ceremony completes, the pinned callback rejects, the core is re-typed) and makes tiers 3 and 4 unbuildable three phases later. P02 and P04 now each carry a socket-sharing criterion of their own.
 
