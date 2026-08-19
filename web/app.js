@@ -113,6 +113,8 @@ const els = {
   keyCandidates: $('keyCandidates'), keyPaste: $('keyPaste'), keyAddPath: $('keyAddPath'),
   keyAddBtn: $('keyAddBtn'), keyCreateBtn: $('keyCreateBtn'), keysClose: $('keysClose'),
   managePeersBtn: $('managePeersBtn'), peersModal: $('peersModal'), peersList: $('peersList'),
+  verifyModal: $('verifyModal'), verifyWords: $('verifyWords'),
+  verifyConfirm: $('verifyConfirm'), verifyCancel: $('verifyCancel'),
   peerSelfFp: $('peerSelfFp'), peerSelfName: $('peerSelfName'),
   peerPaste: $('peerPaste'), peerLabel: $('peerLabel'),
   peerPinBtn: $('peerPinBtn'), peersClose: $('peersClose'),
@@ -1039,7 +1041,15 @@ async function sessionInit() {
     form.append('params', JSON.stringify({ fingerprint, intent, when: q.when }));
     form.append('appearance', png, 'attestation.png');
     form.append('address', address);
-    const res = await apiFetch('/api/session/initiate', { method: 'POST', body: form, docId: opDoc && opDoc.id });
+    // The spoken check happens while this request is in flight — the server is blocked
+    // waiting for it — so the poller runs beside the call, not before or after it.
+    const stopVerify = startVerifyPoll();
+    let res;
+    try {
+      res = await apiFetch('/api/session/initiate', { method: 'POST', body: form, docId: opDoc && opDoc.id });
+    } finally {
+      stopVerify();
+    }
     if (!res.ok) { toast(await errText(res, 'co-signing did not complete')); return; }
     els.sessionInitModal.hidden = true;
     await setDocumentFromServer(await res.json(), owner);
@@ -1159,6 +1169,57 @@ async function armRecv() {
   setTimeout(() => pollRecv(token), 1200);
 }
 
+// --- the spoken check (D4, L2) ------------------------------------------------
+// Both sides must confirm four words before ANY document byte crosses. The words are
+// derived from the session on both machines and are shown here; one party reads them out.
+//
+// **It runs for both roles, and the initiating role is the one that is easy to miss.** The
+// receiving side is already polling, so its card falls out of the poller below. The
+// initiating side is blocked inside its own /api/session/initiate or /send request — the
+// server is waiting on this answer while that request is in flight — so the confirmation
+// has to arrive on a SEPARATE request. Hence a poller of its own, started beside the call
+// and stopped when it returns. Without it the gate is mandatory and unanswerable: a
+// co-sign would hang for the consent window and then time out, every time.
+let verifyPoll = 0;
+
+function showVerify(words) {
+  els.verifyWords.textContent = words;
+  els.verifyModal.hidden = false;
+}
+
+async function answerVerify(confirmed) {
+  els.verifyModal.hidden = true;
+  try {
+    await apiFetch('/api/session/verify', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ confirmed }),
+    });
+  } catch { /* the session will time out and say so; a toast here would be a second story */ }
+  if (!confirmed) toast('Stopped — the words did not match');
+}
+els.verifyConfirm.onclick = () => answerVerify(true);
+els.verifyCancel.onclick = () => answerVerify(false);
+
+// startVerifyPoll watches for the spoken check while an outbound request is in flight.
+// Returns a stop function; the caller stops it in a finally, so a failed request does not
+// leave a poller running against the next session.
+function startVerifyPoll() {
+  const token = ++verifyPoll;
+  let shown = false;
+  const tick = async () => {
+    if (token !== verifyPoll) return;
+    try {
+      const st = await (await apiFetch('/api/session/status')).json();
+      if (token !== verifyPoll) return;
+      if (st.verify && !shown) { shown = true; showVerify(st.verify.words); }
+    } catch { /* keep polling; the request in flight owns the error reporting */ }
+    if (token === verifyPoll) setTimeout(tick, 800);
+  };
+  tick();
+  return () => { verifyPoll++; els.verifyModal.hidden = true; };
+}
+
 // pollRecv drives the receive state machine off /api/session/status: a pending
 // request promotes the wait view to consent; the session disarming ends the flow
 // (reloading the open document if our accept was applied).
@@ -1169,6 +1230,12 @@ async function pollRecv(token) {
   catch { return; } // 401 is handled by apiFetch; anything else stops this poll
   if (token !== recvPoll) return;
   reflectArmed(!!st.armed); // the server can disarm on its own (a timeout), and then so does this
+  // The spoken check comes BEFORE the document, so it is checked before `pending`.
+  if (st.verify) {
+    if (els.verifyModal.hidden) showVerify(st.verify.words);
+  } else if (!els.verifyModal.hidden) {
+    els.verifyModal.hidden = true; // the server moved on (answered elsewhere, or timed out)
+  }
   if (st.pending && recvStage === 'wait') {
     recvStage = 'consent';
     showConsent(st.pending);
@@ -1470,7 +1537,13 @@ async function sendToPeer() {
     const form = await sendableForm();
     form.append('fingerprint', opt.value);
     form.append('address', address);
-    const res = await apiFetch('/api/session/send', { method: 'POST', body: form });
+    const stopVerify = startVerifyPoll();
+    let res;
+    try {
+      res = await apiFetch('/api/session/send', { method: 'POST', body: form });
+    } finally {
+      stopVerify();
+    }
     if (!res.ok) { toast(await errText(res, 'could not send')); return; }
     const r = await res.json();
     // Three outcomes, because the server publishes two booleans and reading only one

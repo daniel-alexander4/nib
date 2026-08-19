@@ -1218,3 +1218,12 @@ input.ovl-check { appearance: auto; accent-color: #1a7f37; background: transpare
   animation: nib-page-spin 0.9s linear infinite;
 }
 @keyframes nib-page-spin { to { transform: rotate(360deg); } }
+
+/* The four spoken words. Large, spaced, and in the body face — they are read ALOUD, and
+   the monospace treatment used for a fingerprint says "compare this character by
+   character", which is the opposite of what these are for. */
+.verifywords {
+  font-size: 26px; font-weight: 600; letter-spacing: .02em; line-height: 1.4;
+  color: var(--text); text-align: center; padding: 18px 10px; margin: 6px 0 2px;
+  background: var(--surface0); border-radius: 8px; word-spacing: .35em;
+}

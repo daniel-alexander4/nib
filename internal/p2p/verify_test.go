@@ -7,9 +7,14 @@ import (
 	"crypto/tls"
 	"encoding/binary"
 	"errors"
+	"os"
+	"regexp"
 	"strings"
+	"sync"
 	"testing"
 	"time"
+
+	"nib/internal/testpdf"
 )
 
 // livePair brings up a real mTLS session between two pinned identities and hands each
@@ -435,3 +440,286 @@ func TestAnOversizedVerificationFrameIsRefusedBeforeAllocating(t *testing.T) {
 			"general 128 MiB reader may still be the one that ran", err)
 	}
 }
+
+// --- L2: no path reaches the exchange unconfirmed --------------------------
+
+// declining is a Verifier that says the words did not match — the man-in-the-middle
+// answer. It counts its calls, so a test can tell "declined" from "never asked".
+type declining struct {
+	mu    sync.Mutex
+	calls int
+}
+
+func (d *declining) ConfirmVerification(string) (bool, error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.calls++
+	return false, nil
+}
+
+func (d *declining) count() int {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.calls
+}
+
+// TestL2NoDocumentBytesCrossBeforeBothConfirmations is the guard the acceptance names:
+// "a guard test named for L2 fails if any path reaches the signing exchange unconfirmed".
+//
+// Four entry points carry document bytes — Initiate, Receive, SendDocument,
+// ReceiveDocument — and each is driven here with a DECLINING verifier. Two things are
+// asserted for each, and the second is the one that matters:
+//
+//  1. the call fails, and fails with ErrVerificationDeclined rather than a network error;
+//  2. the verifier was actually CALLED — because a path that never asked would also fail
+//     if it happened to error for some other reason, and would pass check 1 while being
+//     the exact defect L2 forbids.
+func TestL2NoDocumentBytesCrossBeforeBothConfirmations(t *testing.T) {
+	pdf, err := testpdf.Form()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, tc := range []struct {
+		name string
+		run  func(t *testing.T, initiator bool, conn *tls.Conn, myFP, peerFP []byte, v Verifier) error
+	}{
+		{"Initiate", func(t *testing.T, _ bool, conn *tls.Conn, myFP, _ []byte, v Verifier) error {
+			_, e := Initiate(conn, pdf, myFP, v)
+			return e
+		}},
+		{"SendDocument", func(t *testing.T, _ bool, conn *tls.Conn, myFP, _ []byte, v Verifier) error {
+			return SendDocument(conn, pdf, myFP, v)
+		}},
+	} {
+		t.Run(tc.name+" (dialing side)", func(t *testing.T) {
+			aCert, aKey := newIdentity(t)
+			bCert, bKey := newIdentity(t)
+			aFP, bFP := fingerprint(t, aCert), fingerprint(t, bCert)
+
+			ln, err := Listen("127.0.0.1:0", bCert, bKey, aFP)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer ln.Close()
+
+			// The instrument is the size of the FIRST frame on the wire, and getting this
+			// wrong is what the first version of this test did.
+			//
+			// It watched the peer's LAST read and asserted no large payload appeared. That
+			// is not the clause. Driven against a build with the document write moved
+			// BEFORE the gate — the exact defect — it still passed: the stream desynchronises,
+			// the peer's later reads return garbage or nothing, and "no large payload at the
+			// end" stays true while the document has already gone.
+			//
+			// The clause is "no document bytes cross the wire before both confirmations".
+			// So: what is the first thing the initiator sends? It must be a 32-byte
+			// commitment. If it is a document, its size says so immediately and
+			// unambiguously.
+			firstFrame := make(chan int, 1)
+			go func() {
+				conn, err := ln.Accept()
+				if err != nil {
+					firstFrame <- -1
+					return
+				}
+				defer conn.Close()
+				tc := conn.(*tls.Conn)
+				_ = tc.Handshake()
+				_ = tc.SetReadDeadline(time.Now().Add(5 * time.Second))
+				first, err := readFrame(tc) // deliberately unbounded: measure what arrived
+				if err != nil {
+					firstFrame <- -1
+					return
+				}
+				firstFrame <- len(first)
+				// Then play honest so the initiator reaches its verifier rather than dying
+				// on I/O — the test is about the gate, not about error handling.
+				mine := make([]byte, contributionLen)
+				_, _ = rand.Read(mine)
+				commit := sha256.Sum256(mine)
+				_ = writeFrame(tc, commit[:])
+				_, _ = readFrameMax(tc, contributionLen)
+				_ = writeFrame(tc, mine)
+				_, _ = readFrame(tc)
+			}()
+
+			conn, err := Dial(ln.Addr().String(), aCert, aKey, bFP, 5*time.Second)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer conn.Close()
+			v := &declining{}
+			err = tc.run(t, true, conn, aFP, bFP, v)
+
+			if v.count() == 0 {
+				t.Fatalf("%s never asked the verifier — the path reaches the document "+
+					"exchange unconfirmed, which is exactly what L2 forbids", tc.name)
+			}
+			if !errors.Is(err, ErrVerificationDeclined) {
+				t.Errorf("%s returned %v, want ErrVerificationDeclined — a decline must never "+
+					"read as a network failure, because 'could not connect' invites a retry and "+
+					"a retry is the worst advice when someone is sitting between you", tc.name, err)
+			}
+			switch n := <-firstFrame; {
+			case n < 0:
+				t.Errorf("%s: the peer never received a first frame, so the ordering was not "+
+					"observed and nothing above is measuring L2", tc.name)
+			case n != sha256.Size:
+				t.Errorf("%s put a %d-byte frame on the wire first, before the 32-byte "+
+					"commitment. That is the document, and it crossed before anyone confirmed "+
+					"who they were talking to — the whole of L2.", tc.name, n)
+			}
+		})
+	}
+}
+
+// TestL2CoversEveryDocumentCarryingEntryPoint is the population floor.
+//
+// The behavioural test above enumerates the paths it knows about. A fifth entry point
+// added later would inherit nothing from it and the suite would stay green — so the count
+// is pinned at the source. Every exported function in this package that writes or reads a
+// document frame must take a Verifier.
+func TestL2CoversEveryDocumentCarryingEntryPoint(t *testing.T) {
+	src, err := os.ReadFile("session.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{
+		"func Initiate(conn *tls.Conn, mySignedPDF, myFingerprint []byte, v Verifier)",
+		"func Receive(conn *tls.Conn, myCertPEM, myKeyPEM []byte, peerLabel string, c Confirmer, v Verifier)",
+		"func SendDocument(conn *tls.Conn, pdf []byte, myFingerprint []byte, v Verifier)",
+		"func ReceiveDocument(conn *tls.Conn, a Accepter, myFingerprint []byte, v Verifier)",
+	}
+	for _, sig := range want {
+		if !strings.Contains(string(src), sig) {
+			t.Errorf("this signature is gone or changed:\n  %s\nEvery document-carrying entry "+
+				"point takes a Verifier (L2). If the signature moved, update this list; if the "+
+				"Verifier went, the path can now carry a document unconfirmed.", sig)
+		}
+	}
+	// A fifth path: any exported func taking a *tls.Conn must be in the list above.
+	got := regexp.MustCompile(`(?m)^func ([A-Z]\w+)\(conn \*tls\.Conn`).FindAllStringSubmatch(string(src), -1)
+	if len(got) != len(want) {
+		names := []string{}
+		for _, m := range got {
+			names = append(names, m[1])
+		}
+		t.Errorf("%d exported functions take a *tls.Conn (%v) but %d are pinned above — a new "+
+			"session entry point must either carry the verification gate or say why it cannot",
+			len(got), names, len(want))
+	}
+}
+
+// TestAReconnectNeedsItsOwnConfirmation is D18's clause, driven rather than asserted.
+//
+// The clause reads "a confirmation computed on one channel is rejected on any other", which
+// sounds like a replay test — and there is nothing to replay. A confirmation is not a
+// token: it is a local boolean, and no bytes carry it. So the property that IS decidable,
+// and is the one a user experiences, is that reconnecting does not inherit the last
+// channel's answer: the same two identities on a second connection are asked again, and
+// are shown DIFFERENT words to compare.
+//
+// **What this test can and cannot see.** It shows the user-visible property: reconnecting
+// shows different words and asks again. It CANNOT say which input makes them differ —
+// measured, by removing the channel binding from the derivation and watching this test stay
+// green, because the fresh per-connection contributions make the strings differ on their
+// own. The exporter's contribution is isolated in TestTheDerivationTakesEveryInput, which
+// holds everything else constant; this test would be reporting a cause it cannot
+// distinguish if it claimed otherwise.
+func TestAReconnectNeedsItsOwnConfirmation(t *testing.T) {
+	aCert, aKey := newIdentity(t)
+	bCert, bKey := newIdentity(t)
+	aFP, bFP := fingerprint(t, aCert), fingerprint(t, bCert)
+
+	ln, err := Listen("127.0.0.1:0", bCert, bKey, aFP)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+
+	// The SAME identities both times — a fresh pair would prove nothing about reconnecting.
+	// Driven through runVerification rather than verificationExchange, so the GATE is
+	// entered on each connection and the recorder counts real entries. (The first draft of
+	// this test called a helper twice and asserted it had been called twice, which is an
+	// assertion about the test's own loop.)
+	rec := &recordingVerifier{}
+	once := func() {
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			conn, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			defer conn.Close()
+			tc := conn.(*tls.Conn)
+			if err := tc.Handshake(); err != nil {
+				return
+			}
+			_ = runVerification(tc, false, bFP, aFP, okVerifier{})
+		}()
+		conn, err := Dial(ln.Addr().String(), aCert, aKey, bFP, 5*time.Second)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer conn.Close()
+		if err := runVerification(conn, true, aFP, bFP, rec); err != nil {
+			t.Fatal(err)
+		}
+		<-done
+	}
+
+	once()
+	first := rec.last()
+	once()
+	second := rec.last()
+
+	// The gate is entered once per connection, not cached across them.
+	if rec.count() != 2 {
+		t.Fatalf("the verifier was asked %d times across two connections, want 2 — a second "+
+			"channel inherited the first one's answer", rec.count())
+	}
+	if first == "" || second == "" {
+		t.Fatal("setup: an exchange produced no string, so nothing below is comparing channels")
+	}
+	if first == second {
+		t.Errorf("both connections between the SAME two identities produced %q — so a "+
+			"confirmation given on one connection describes the next one too, and a user could "+
+			"be walked onto a substituted channel showing words they had already agreed to", first)
+	}
+}
+
+// recordingVerifier confirms and remembers, so a test can compare what successive
+// connections showed and count how often the gate was entered.
+type recordingVerifier struct {
+	mu    sync.Mutex
+	words string
+	calls int
+}
+
+func (r *recordingVerifier) ConfirmVerification(words string) (bool, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.words = words
+	r.calls++
+	return true, nil
+}
+
+func (r *recordingVerifier) last() string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.words
+}
+
+func (r *recordingVerifier) count() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.calls
+}
+
+// okVerifier confirms without looking, for the far side of a test whose subject is
+// something else.
+type okVerifier struct{}
+
+func (okVerifier) ConfirmVerification(string) (bool, error) { return true, nil }

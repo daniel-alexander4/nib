@@ -79,8 +79,22 @@ func Listen(addr string, identityCertPEM, identityKeyPEM, pinnedSPKI []byte) (ne
 // already prepared and signed, receives the fully co-signed result, and confirms
 // the peer actually co-signed it and accepted this user. mySignedPDF is the output
 // of the local prepare + Contribute; myFingerprint is this user's SPKI pin.
-func Initiate(conn *tls.Conn, mySignedPDF, myFingerprint []byte) ([]byte, error) {
+func Initiate(conn *tls.Conn, mySignedPDF, myFingerprint []byte, v Verifier) ([]byte, error) {
 	_ = conn.SetDeadline(time.Now().Add(exchangeDeadline))
+	// The spoken check, before a single document byte (L2). The handshake is forced here
+	// rather than left to the first write, because the verification needs the peer's
+	// verified identity and the channel's exporter — both of which only exist once it has
+	// completed, and both of which the string binds.
+	if err := conn.Handshake(); err != nil {
+		return nil, err
+	}
+	peerFP, err := verifiedPeerFingerprint(conn.ConnectionState())
+	if err != nil {
+		return nil, err
+	}
+	if err := runVerification(conn, true, myFingerprint, peerFP, v); err != nil {
+		return nil, err
+	}
 	if err := writeFrame(conn, mySignedPDF); err != nil {
 		return nil, fmt.Errorf("send document: %w", err)
 	}
@@ -97,10 +111,6 @@ func Initiate(conn *tls.Conn, mySignedPDF, myFingerprint []byte) ([]byte, error)
 	if !bytes.HasPrefix(final, mySignedPDF) {
 		return nil, errors.New("returned document is not the one sent this session")
 	}
-	peerFP, err := verifiedPeerFingerprint(conn.ConnectionState())
-	if err != nil {
-		return nil, err
-	}
 	if err := confirmCoSigned(final, peerFP, myFingerprint); err != nil {
 		return nil, err
 	}
@@ -112,13 +122,22 @@ func Initiate(conn *tls.Conn, mySignedPDF, myFingerprint []byte) ([]byte, error)
 // the Confirmer for consent and intent, contributes this user's signature, and sends
 // the result back — returning the co-signed document so the receiver keeps it too.
 // peerLabel is this user's pinned label for the peer (for display).
-func Receive(conn *tls.Conn, myCertPEM, myKeyPEM []byte, peerLabel string, c Confirmer) ([]byte, error) {
+func Receive(conn *tls.Conn, myCertPEM, myKeyPEM []byte, peerLabel string, c Confirmer, v Verifier) ([]byte, error) {
 	_ = conn.SetDeadline(time.Now().Add(exchangeDeadline))
 	if err := conn.Handshake(); err != nil {
 		return nil, err
 	}
 	peerFP, err := verifiedPeerFingerprint(conn.ConnectionState())
 	if err != nil {
+		return nil, err
+	}
+	myFP, err := ownFingerprint(myCertPEM)
+	if err != nil {
+		return nil, err
+	}
+	// Before the document is read, not after: reading it first would mean the peer's bytes
+	// had already crossed by the time the user was asked who they were talking to.
+	if err := runVerification(conn, false, myFP, peerFP, v); err != nil {
 		return nil, err
 	}
 	inbound, err := readFrame(conn)
@@ -163,12 +182,24 @@ type Accepter interface {
 // signed and nothing comes back — the pinned-mTLS channel is a plain authenticated
 // courier, used to hand a flagged PDF to a peer for signing or to return the signed
 // result. The pin is enforced by the TLS config, exactly as in Initiate.
-func SendDocument(conn *tls.Conn, pdf []byte) error {
+func SendDocument(conn *tls.Conn, pdf []byte, myFingerprint []byte, v Verifier) error {
 	_ = conn.SetDeadline(time.Now().Add(exchangeDeadline))
+	if err := conn.Handshake(); err != nil {
+		return err
+	}
+	peerFP, err := verifiedPeerFingerprint(conn.ConnectionState())
+	if err != nil {
+		return err
+	}
+	// A one-way transfer carries document bytes too, so it carries the same gate. The
+	// clause is about document bytes, not about co-signing.
+	if err := runVerification(conn, true, myFingerprint, peerFP, v); err != nil {
+		return err
+	}
 	if err := writeFrame(conn, pdf); err != nil {
 		return fmt.Errorf("send document: %w", err)
 	}
-	ack, err := readFrame(conn)
+	ack, err := readFrameMax(conn, 1)
 	if err != nil {
 		return fmt.Errorf("await receipt: %w", err)
 	}
@@ -187,13 +218,16 @@ func SendDocument(conn *tls.Conn, pdf []byte) error {
 // returns the document plus the peer's verified fingerprint after acknowledging. On
 // decline it returns ErrDeclined and sends no acknowledgement, so the sender learns
 // the document was not kept.
-func ReceiveDocument(conn *tls.Conn, a Accepter) (doc, peerFP []byte, err error) {
+func ReceiveDocument(conn *tls.Conn, a Accepter, myFingerprint []byte, v Verifier) (doc, peerFP []byte, err error) {
 	_ = conn.SetDeadline(time.Now().Add(exchangeDeadline))
 	if err := conn.Handshake(); err != nil {
 		return nil, nil, err
 	}
 	peerFP, err = verifiedPeerFingerprint(conn.ConnectionState())
 	if err != nil {
+		return nil, nil, err
+	}
+	if err := runVerification(conn, false, myFingerprint, peerFP, v); err != nil {
 		return nil, nil, err
 	}
 	inbound, err := readFrame(conn)

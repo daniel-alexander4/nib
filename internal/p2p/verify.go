@@ -10,6 +10,7 @@ import (
 	"fmt"
 
 	"nib/internal/pairing"
+	"nib/internal/sign"
 )
 
 // The spoken verification string (D4), and the commitment step that is the whole of its
@@ -183,4 +184,69 @@ func deriveVerification(ekm, myFP, peerFP, mine, theirs []byte) (string, error) 
 	h.Write(hiC)
 	h.Write(ekm)
 	return pairing.Verification(h.Sum(nil))
+}
+
+// Verifier is the spoken-check gate (D4, L2).
+//
+// Both sides are shown the same four words and must confirm they match what the other
+// person read aloud. It is called after the commit/reveal exchange and **before any
+// document byte crosses the wire** — that ordering is the point, not a detail of it: a
+// check that ran after the document moved would tell the user their document had already
+// gone to whoever they were actually talking to.
+type Verifier interface {
+	// ConfirmVerification shows words and reports whether the user confirmed the match.
+	// Return ErrVerificationTimedOut for "no answer" so it stays distinguishable from
+	// "said no"; any other error is treated as a failure of this gate, never as a
+	// network fault.
+	ConfirmVerification(words string) (bool, error)
+}
+
+var (
+	// ErrVerificationDeclined: the user looked at the words and said they did not match.
+	// That is the man-in-the-middle signal, and it must never be reported as a network
+	// error — "could not connect" invites a retry, which is the worst possible advice
+	// when someone is sitting between you.
+	ErrVerificationDeclined = errors.New("the verification words were not confirmed")
+	// ErrVerificationTimedOut: nobody answered. Distinct from declining, because it means
+	// something different to the user and to whoever reads the log.
+	ErrVerificationTimedOut = errors.New("nobody confirmed the verification words in time")
+)
+
+// runVerification is the gate every document-carrying entry point passes through.
+//
+// conn must already carry a deadline — see verificationExchange. Every caller in this
+// package sets exchangeDeadline before anything crosses the wire.
+func runVerification(conn *tls.Conn, initiator bool, myFP, peerFP []byte, v Verifier) error {
+	if v == nil {
+		// A nil Verifier is not "skip the check" — it is a caller that forgot, and the
+		// whole of L2 is that no path reaches the exchange unconfirmed. Refusing here
+		// means a forgotten gate fails closed instead of silently opening.
+		return errors.New("no verifier: the spoken check cannot be skipped")
+	}
+	words, err := verificationExchange(conn, initiator, myFP, peerFP)
+	if err != nil {
+		return err
+	}
+	ok, err := v.ConfirmVerification(words)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return ErrVerificationDeclined
+	}
+	return nil
+}
+
+// ownFingerprint is this user's SPKI fingerprint from their identity PEM.
+//
+// Receive and ReceiveDocument hold the cert and not the fingerprint, and the verification
+// string binds both identities — so it is derived here rather than added to their
+// signatures. It routes through sign.Fingerprint, the one place the value is computed, so
+// a pin and a verification string can never disagree about what this identity is.
+func ownFingerprint(certPEM []byte) ([]byte, error) {
+	fp, err := sign.Fingerprint(certPEM)
+	if err != nil {
+		return nil, fmt.Errorf("own fingerprint: %w", err)
+	}
+	return fp, nil
 }

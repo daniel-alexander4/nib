@@ -2098,7 +2098,21 @@ Acceptance:
 - **The string is derived only over committed values, and a peer that reveals its contribution after receiving the other's is rejected before any string is derived — driven by a harness that replays the exchange out of order. (added 2026-08-17, plan-review C1, D4 pin.)** The three bullets above are all satisfied by a design a man-in-the-middle can birthday-grind at ~2²²; this one is the only clause that can see it. **(retained 2026-08-18: it now scopes to the name-only path, which is the only one where C1's precondition still exists. See D4's amendment — the criterion is kept, not narrowed away, because the path is kept.)**
 Tasks: *(written at slice-grill time)*
 
-#### P01.S05 — Make it mandatory ~~when the pin is short (amended 2026-08-18, D4)~~ **— unconditionally (re-amended 2026-08-18, D4's second supersession)**
+#### P01.S05 — Make it mandatory ~~when the pin is short (amended 2026-08-18, D4)~~ **— unconditionally (re-amended 2026-08-18, D4's second supersession)** *(done 2026-08-19, v1.109.45)*
+
+**(slice-grill notes, 2026-08-19.)**
+- **Four entry points carry document bytes, not one.** `Initiate`, `Receive`, `SendDocument` and `ReceiveDocument`. The clause is "no document bytes cross the wire before both confirmations are recorded", so the gate goes on all four; a guard that enumerates them needs a population floor or a fifth path added later inherits nothing.
+- **The confirmation is not a token, so "rejected on any other channel" cannot be a replay test.** D18's clause reads as though a confirmation could be carried; there is nothing to carry — it is a local boolean. What is testable is that a reconnect **requires a fresh confirmation**, because the string is bound to the channel through the exporter. Driven by counting confirmations across a reconnect.
+- **This changes the wire ordering, and two nibs of different versions will not interoperate.** Recorded rather than versioned: the session is nib-to-nib, both ends are the same product, and a clean failure on a version mismatch is the honest outcome. Noted so P08's delivery work does not discover it.
+- **F2 from S04's review is discharged here**: `verificationExchange` assumes conn already carries a deadline, and the callers this slice writes set `exchangeDeadline` before anything crosses the wire.
+
+Tasks:
+- **T01 — the `Verifier` gate**: an interface both sides call with the four words, plus distinct `ErrVerificationDeclined` / `ErrVerificationTimedOut` so a refusal never reads as a network failure.
+- **T02 — wire all four entry points**, verification before any document byte.
+- **T03 — the L2 guard**: for each path, a declining verifier produces an error AND the peer receives zero document frames — with a source-scan population floor so a fifth path cannot be added without one.
+- **T04 — the reconnect drive**: a second channel requires a second confirmation, and the two strings differ.
+- **T05 — the server bridge**: a `sessionVerifier` beside the existing consent bridges, parking the words for the UI on the same pattern.
+- **T06 — seam inventory rows.**
 Scope: the ceremony fails closed until both sides confirm. ~~— always on the name-only path, and until the machines confirm on the invited path.~~ **One path, one rule: the string is offered on every ceremony and required whenever the parties have a voice channel, and the commitment step is unconditional.** Refs: D4, D11 (L2), **D21**, **D31**.
 Acceptance:
 - No document bytes cross the wire before both confirmations are recorded.

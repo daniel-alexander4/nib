@@ -47,10 +47,23 @@ const (
 // state is guarded by mu; it is independent of the Server's document lock.
 type session struct {
 	mu       sync.Mutex
-	ln       net.Listener  // non-nil while armed
-	addr     string        // bound address, reported in status
-	pending  *pendingReq   // set while a received request awaits the user's consent
-	received *receivedInfo // last accepted transfer, read by the poller after disarm
+	ln       net.Listener   // non-nil while armed
+	addr     string         // bound address, reported in status
+	pending  *pendingReq    // set while a received request awaits the user's consent
+	verify   *pendingVerify // set while the spoken check awaits the user's confirmation
+	received *receivedInfo  // last accepted transfer, read by the poller after disarm
+}
+
+// pendingVerify is the spoken verification string waiting on the user (D4, L2).
+//
+// A SEPARATE field from `pending`, not a variant of it, because the two gates answer
+// different questions at different points: this one asks "are you talking to who you think
+// you are" before a single document byte moves, and `pending` asks "will you sign this"
+// after the document has arrived and been reviewed. Folding them into one field would let
+// a consent decision satisfy a verification, which is the whole of what L2 forbids.
+type pendingVerify struct {
+	words string
+	resp  chan bool
 }
 
 // pendingReq is a received request (a co-sign or a plain transfer) blocked on the
@@ -120,8 +133,8 @@ func (se *session) disarmIf(ln net.Listener) {
 		se.mu.Unlock()
 		return // a later session is armed; this one is already over
 	}
-	cur, p := se.ln, se.pending
-	se.ln, se.addr, se.pending = nil, "", nil
+	cur, p, pv := se.ln, se.pending, se.verify
+	se.ln, se.addr, se.pending, se.verify = nil, "", nil, nil
 	se.mu.Unlock()
 	ln = cur
 	if ln != nil {
@@ -130,6 +143,15 @@ func (se *session) disarmIf(ln net.Listener) {
 	if p != nil {
 		select {
 		case p.resp <- sessionDecision{accept: false}:
+		default:
+		}
+	}
+	// A disarm during the spoken check releases it too, refusing. Without this the peer's
+	// goroutine sits on a channel nobody will ever write to until the session deadline —
+	// the same hazard the consent release above exists for, one gate earlier.
+	if pv != nil {
+		select {
+		case pv.resp <- false:
 		default:
 		}
 	}
@@ -182,6 +204,23 @@ func (se *session) pendingFingerprint() string {
 	return se.pending.view.Fingerprint
 }
 
+// respondVerify resolves the spoken check. Returns false when nothing is waiting, so a
+// stray confirmation cannot be recorded against a session that has moved on.
+func (se *session) respondVerify(ok bool) bool {
+	se.mu.Lock()
+	pv := se.verify
+	se.mu.Unlock()
+	if pv == nil {
+		return false
+	}
+	select {
+	case pv.resp <- ok:
+		return true
+	default:
+		return false
+	}
+}
+
 func (se *session) respond(d sessionDecision) bool {
 	se.mu.Lock()
 	p := se.pending
@@ -204,6 +243,9 @@ func (se *session) status() sessionStatus {
 	if se.pending != nil {
 		pv := se.pending.view
 		st.Pending = &pv
+	}
+	if se.verify != nil {
+		st.Verify = &verifyView{Words: se.verify.words}
 	}
 	return st
 }
@@ -232,6 +274,49 @@ func (sc sessionConfirmer) Confirm(peer p2p.SignerAttestation, doc []byte) (bool
 	case <-time.After(sessionConsentTimeout):
 		return false, "", nil, nil
 	}
+}
+
+// sessionVerifier is the spoken-check bridge: p2p calls it with the four words, on both
+// sides, before any document byte. It parks them for the UI and blocks on the user.
+//
+// Timing out returns p2p.ErrVerificationTimedOut rather than a bare false, so "nobody was
+// at the machine" stays distinguishable from "the words did not match" — which are the
+// same outcome for the session and completely different facts about what happened.
+type sessionVerifier struct{ s *Server }
+
+func (sv sessionVerifier) ConfirmVerification(words string) (bool, error) {
+	ch := make(chan bool, 1)
+	pv := &pendingVerify{words: words, resp: ch}
+	sv.s.sess.setVerify(pv)
+	defer sv.s.sess.clearVerifyIf(pv)
+	select {
+	case ok := <-ch:
+		return ok, nil
+	case <-time.After(sessionConsentTimeout):
+		return false, p2p.ErrVerificationTimedOut
+	}
+}
+
+// setVerify parks the spoken check. Unlike setPending it does NOT require an armed
+// listener: verification happens on both roles, and the dialing side has no listener at
+// all. Refusing there would have made the gate unreachable for whoever initiated — which
+// is half of "both sides confirm".
+func (se *session) setVerify(pv *pendingVerify) bool {
+	se.mu.Lock()
+	defer se.mu.Unlock()
+	se.verify = pv
+	return true
+}
+
+// clearVerifyIf drops the pending verification only if `pv` is still the pending one —
+// the same identity guard clearPendingIf carries, for the same reason: an unconditional
+// clear fired by a finished check discards a LATER session's.
+func (se *session) clearVerifyIf(pv *pendingVerify) {
+	se.mu.Lock()
+	if se.verify == pv {
+		se.verify = nil
+	}
+	se.mu.Unlock()
 }
 
 // sessionAccepter is the consent bridge for a plain one-way transfer: p2p.ReceiveDocument
@@ -268,6 +353,12 @@ func (s *Server) runSession(ln net.Listener, cert, key []byte, label, mode strin
 	// sign code must not crash the desktop process. The defers below (disarm, Close)
 	// still run as the stack unwinds.
 	defer safe.Recover("session")
+	// This user's own fingerprint, for the verification string — it binds both identities,
+	// and this goroutine holds the cert rather than the fingerprint.
+	myFP, err := sign.Fingerprint(cert)
+	if err != nil {
+		return
+	}
 	// Every teardown in this goroutine names THIS listener. The timer matters as much as
 	// the defer: Stop() runs just after Accept returns, and a timer that fires in that
 	// window would otherwise disarm whatever is armed by then.
@@ -313,14 +404,14 @@ func (s *Server) runSession(ln net.Listener, cert, key []byte, label, mode strin
 	defer s.sess.disarmIf(ln)
 	defer conn.Close()
 	if mode == sessionModeReceive {
-		doc, peerFP, err := p2p.ReceiveDocument(conn.(*tls.Conn), sessionAccepter{s: s, label: label})
+		doc, peerFP, err := p2p.ReceiveDocument(conn.(*tls.Conn), sessionAccepter{s: s, label: label}, myFP, sessionVerifier{s})
 		if err != nil {
 			return // declined, timed out, or a protocol error — nothing saved
 		}
 		s.saveReceived(doc, peerFP, label)
 		return
 	}
-	final, err := p2p.Receive(conn.(*tls.Conn), cert, key, label, sessionConfirmer{s})
+	final, err := p2p.Receive(conn.(*tls.Conn), cert, key, label, sessionConfirmer{s}, sessionVerifier{s})
 	if err != nil {
 		return // declined, timed out, or a protocol error — nothing to apply
 	}
@@ -412,8 +503,16 @@ type armRequest struct {
 type sessionStatus struct {
 	Armed    bool          `json:"armed"`
 	Address  string        `json:"address,omitempty"`
+	Verify   *verifyView   `json:"verify,omitempty"`
 	Pending  *pendingView  `json:"pending,omitempty"`
 	Received *receivedInfo `json:"received,omitempty"`
+}
+
+// verifyView is the four words the user must confirm against what the other person reads
+// aloud. It carries nothing else — no fingerprint, no peer label — because anything else
+// on this card is something to read INSTEAD of the words.
+type verifyView struct {
+	Words string `json:"words"`
 }
 
 type pendingView struct {
@@ -485,6 +584,26 @@ func (s *Server) handleSessionPendingPDF(w http.ResponseWriter, r *http.Request)
 	w.Header().Set("Content-Type", "application/pdf")
 	w.Header().Set("Cache-Control", "no-store")
 	_, _ = w.Write(doc)
+}
+
+// handleSessionVerify records the user's answer to the spoken check (D4, L2).
+//
+// A separate route from /respond, because it answers a different question at a different
+// point: this one is asked before any document byte moves, and /respond after the document
+// has been read. One route taking both would let a consent answer resolve a verification.
+func (s *Server) handleSessionVerify(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Confirmed bool `json:"confirmed"`
+	}
+	if err := readJSON(r, &req); err != nil {
+		httpError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if !s.sess.respondVerify(req.Confirmed) {
+		httpError(w, http.StatusConflict, "no verification is waiting")
+		return
+	}
+	writeJSON(w, map[string]bool{"ok": true})
 }
 
 func (s *Server) handleSessionRespond(w http.ResponseWriter, r *http.Request) {
@@ -632,7 +751,7 @@ func (s *Server) handleSessionInitiate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer conn.Close()
-	final, err := p2p.Initiate(conn, signed, myFP)
+	final, err := p2p.Initiate(conn, signed, myFP, sessionVerifier{s})
 	if err != nil {
 		httpError(w, http.StatusBadGateway, "co-signing did not complete: "+err.Error())
 		return
@@ -687,13 +806,18 @@ func (s *Server) handleSessionSend(w http.ResponseWriter, r *http.Request) {
 		httpError(w, http.StatusInternalServerError, "could not load identity")
 		return
 	}
+	myFP, err := sign.Fingerprint(cert)
+	if err != nil {
+		httpError(w, http.StatusInternalServerError, "could not load identity")
+		return
+	}
 	conn, err := p2p.Dial(address, cert, key, peerFP, sessionDialTimeout)
 	if err != nil {
 		httpError(w, http.StatusBadGateway, "could not connect to peer: "+err.Error())
 		return
 	}
 	defer conn.Close()
-	if err := p2p.SendDocument(conn, pdfBytes); err != nil {
+	if err := p2p.SendDocument(conn, pdfBytes, myFP, sessionVerifier{s}); err != nil {
 		if errors.Is(err, p2p.ErrDeclined) {
 			writeJSON(w, sendResult{Sent: false, Declined: true})
 			return
