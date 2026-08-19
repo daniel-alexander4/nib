@@ -1137,6 +1137,12 @@ wordlist change alter a commitment the freeze exists to keep stable; and the inv
 because verifiers who are not participants must be able to check the commitment from the document
 alone.
 
+**(implementation pin, 2026-08-19 — `docHash` cannot be a hash of the document's bytes, and this was settled by measurement.)** The table says *"SHA-256 of the prepared document"*, and the plan-review pin requires a party at hop 4 to **recompute** it. Those two cannot both be true of a byte hash: the record contains the hash, so the document carrying the record is not what was hashed. The obvious repair — hash it with the record stripped — **also fails**, and not marginally: **pdfcpu's rewrite is not idempotent.** Normalising the same document twice produces two different files (measured 2026-08-19), so attach-then-detach is not an identity and the convener and a later party compute different numbers from the same document every time.
+
+**Adopted: `docHash` is a content digest** — SHA-256 over the page count and every page's content stream, each length-prefixed (`pdfops.ContentDigest`). Measured on the same run: **identical across adding the record attachment and across three incremental signatures**, which is what makes the hop-4 clause buildable at all.
+
+**The narrowing is stated rather than left to be discovered.** It covers what is on the pages and **not** annotations, form field values, attachments or metadata — so a form value could change without moving `docHash`. That is acceptable here and the reason is not "it is unlikely": the signatures cover the real bytes and flip to invalid on any edit, so document integrity is already carried by a stronger mechanism. `docHash` answers the narrower question the record needs — *is this the document the ceremony was convened over* — and answers it in a way every party can check. **What discharges this specifically:** the recompute after three incremental signatures, driven; not the convener's own round-trip, which is satisfied without anyone recomputing anything.
+
 *Why `signs` is inside the preimage and not a display field:* without it, a convener could present
 one roster to the signers and another to a verifier, differing only in who was obliged to sign, and
 both would hash the same. That is the whole class PLAN-2 exists to catch — an axis short is the
@@ -2121,7 +2127,22 @@ Acceptance:
 - **A confirmation computed on one channel is rejected on any other, driven by reconnecting mid-ceremony rather than asserted. (added 2026-08-16, D18)**
 - ~~**The check is conditioned on the pin's strength, not on the flow…**~~ **Superseded 2026-08-18 (D4's second supersession, D31): there is one path and one pin strength, so there is nothing to condition on. Replaced by:** **the commitment step is unconditional — a peer that reveals its contribution after receiving the other's is rejected before any string exists, driven on the ordinary invited ceremony rather than on a fallback. (2026-08-18.)** The out-of-order-reveal criterion in P01.S04 was scoped to the name-only path; that path is gone and the criterion is not — it moves here and applies always, because the attacker it stops needs only a defeated delivery channel, not a defeated pin.
 
-#### P01.S06 — The Ceremony Record **(added 2026-08-18, D20)**
+#### P01.S06 — The Ceremony Record **(added 2026-08-18, D20)** *(done 2026-08-19, v1.109.46)*
+
+**(slice-grill notes, 2026-08-19.)**
+- **The preimage is the slice's security content**, and PLAN-2 already specified it axis by axis. Building it from the table above rather than from the pin would have shipped a commitment that omits `signs` — which is the attack the pin names, not a detail of it.
+- **The record is a PDF attachment, embedded in the pre-signing pass.** Caveat 10 was discharged by measurement on 2026-08-18: it survives three incremental signatures byte-identical, and attaching *after* signing invalidates every signature. That measurement is what makes `PrepareDocument` the only place this can happen.
+- **`docHash` is over the prepared document — the bytes with the readme and the record's own attachment slot already in place — and the record cannot contain its own hash.** So the hash is taken over the document as prepared *without* the record, and the record is attached after. A later party recomputes the same way: strip the record, hash what is left. Stated because "SHA-256 of the prepared document" admits a reading in which the record hashes itself.
+- **The hop-4 clause is drivable here and does not need P07.** Three incremental signatures on one document, then recompute — no multi-party machinery required, only a document that has been signed three times.
+
+Tasks:
+- **T01 — the record type and its canonical preimage**: length-prefixed, in PLAN-2's order, version first; `signs` inside it; the six-word name and the invitation secret deliberately out.
+- **T02 — the convener signature** over the preimage, and verification from the document alone.
+- **T03 — embed and extract** as a PDF attachment; `docHash` over the document with the record removed, so a later party can recompute it.
+- **T04 — `PrepareDocument` carries the record**, and still refuses an already-signed document.
+- **T05 — the `[NibRoster:<hash>]` token** in each signer's `/Reason`, and a cross-bind report when signers do not share one commitment.
+- **T06 — the `~/nib/ceremonies/<id>/` mirror.**
+- **T07 — seam inventory rows.**
 Scope: the record's format, its convener signature, its embedding in the pre-signing pass, and the `~/nib/ceremonies/<id>/` mirror. Refs: D20, D2 pin.
 Acceptance:
 - A record survives N incremental signatures and is still readable and still verifies (caveat 10, driven).

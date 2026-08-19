@@ -248,3 +248,57 @@ func ParseIdentity(certPEM, keyPEM []byte) (*x509.Certificate, crypto.Signer, er
 	}
 	return cert, signer, nil
 }
+
+// SignDigest signs a 32-byte digest with the identity's private key (ECDSA P-256,
+// ASN.1 DER), for artifacts that are not PDFs.
+//
+// Separate from Sign, which produces a PKCS#7 embedded in a PDF's signature dictionary —
+// a different container for a different job. This one exists for the Ceremony Record
+// (D20), which is signed before any document is signed and must be verifiable by a party
+// holding only the record.
+//
+// It takes a DIGEST rather than a message, deliberately: the caller decides what the
+// preimage is, and for the record that decision is a specified list of length-prefixed
+// axes. A function taking a message would invite a second, implicit preimage.
+func SignDigest(digest []byte, keyPEM []byte) ([]byte, error) {
+	if len(digest) != sha256.Size {
+		return nil, fmt.Errorf("digest is %d bytes, want %d", len(digest), sha256.Size)
+	}
+	blk, _ := pem.Decode(keyPEM)
+	if blk == nil {
+		return nil, errors.New("invalid private key PEM")
+	}
+	key, err := x509.ParseECPrivateKey(blk.Bytes)
+	if err != nil {
+		k, err2 := x509.ParsePKCS8PrivateKey(blk.Bytes)
+		if err2 != nil {
+			return nil, fmt.Errorf("parse private key: %w", err)
+		}
+		ec, ok := k.(*ecdsa.PrivateKey)
+		if !ok {
+			return nil, errors.New("private key is not ECDSA")
+		}
+		key = ec
+	}
+	return ecdsa.SignASN1(rand.Reader, key, digest)
+}
+
+// VerifyDigest checks a SignDigest signature against the certificate's public key.
+func VerifyDigest(digest, sig, certPEM []byte) error {
+	blk, _ := pem.Decode(certPEM)
+	if blk == nil {
+		return errors.New("invalid certificate PEM")
+	}
+	cert, err := x509.ParseCertificate(blk.Bytes)
+	if err != nil {
+		return err
+	}
+	pub, ok := cert.PublicKey.(*ecdsa.PublicKey)
+	if !ok {
+		return errors.New("certificate key is not ECDSA")
+	}
+	if !ecdsa.VerifyASN1(pub, digest, sig) {
+		return errors.New("signature does not verify")
+	}
+	return nil
+}
