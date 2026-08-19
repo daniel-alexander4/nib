@@ -5,7 +5,6 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"crypto/subtle"
-	"crypto/tls"
 	"errors"
 	"fmt"
 
@@ -71,7 +70,14 @@ var (
 // would hold the listener forever. Its only callers are inside Initiate and Receive, which
 // set exchangeDeadline before anything crosses the wire; stated here because the next
 // caller to be written is the one that will not know.
-func verificationExchange(conn *tls.Conn, initiator bool, myFP, peerFP []byte) (string, error) {
+func verificationExchange(ch Channel, initiator bool, myFP []byte) (string, error) {
+	// Checked here as well as at the entry points: this is the only function that both
+	// writes to the stream and reads the exporter, so an incomplete Channel reaching it
+	// by any route should be a named error rather than a nil dereference.
+	if err := ch.check(); err != nil {
+		return "", err
+	}
+	conn, peerFP := ch.Stream, ch.PeerFP
 	mine := make([]byte, contributionLen)
 	if _, err := rand.Read(mine); err != nil {
 		return "", fmt.Errorf("generate contribution: %w", err)
@@ -129,7 +135,7 @@ func verificationExchange(conn *tls.Conn, initiator bool, myFP, peerFP []byte) (
 		return "", errCommitmentBroken
 	}
 
-	return verificationString(conn.ConnectionState(), myFP, peerFP, mine, theirs)
+	return verificationString(ch.Export, myFP, peerFP, mine, theirs)
 }
 
 // verificationString derives the four words both sides compare.
@@ -147,10 +153,13 @@ func verificationExchange(conn *tls.Conn, initiator bool, myFP, peerFP []byte) (
 // Ordering is canonical — the two fingerprints sorted, and the two contributions in the
 // same order as the fingerprints they came from — so the two sides, which see the pair
 // from opposite viewpoints, hash identical bytes.
-func verificationString(cs tls.ConnectionState, myFP, peerFP, mine, theirs []byte) (string, error) {
+func verificationString(export Exporter, myFP, peerFP, mine, theirs []byte) (string, error) {
 	// RFC 5705 exporter. A fixed label and no context: the label namespaces this use, and
-	// the material is already unique per connection.
-	ekm, err := cs.ExportKeyingMaterial("EXPORTER-nib-verification", nil, 32)
+	// the material is already unique per connection. Taken as a function rather than off a
+	// tls.ConnectionState so this path does not name TLS: QUIC's exporter is the same
+	// method on the same struct, and a spike confirmed the two ends agree on its 32 bytes
+	// over a real QUIC connection (TestSpikeEKMWorksUnderQUIC).
+	ekm, err := export("EXPORTER-nib-verification", nil, 32)
 	if err != nil {
 		return "", fmt.Errorf("channel binding: %w", err)
 	}
@@ -214,16 +223,16 @@ var (
 
 // runVerification is the gate every document-carrying entry point passes through.
 //
-// conn must already carry a deadline — see verificationExchange. Every caller in this
-// package sets exchangeDeadline before anything crosses the wire.
-func runVerification(conn *tls.Conn, initiator bool, myFP, peerFP []byte, v Verifier) error {
+// ch.Stream must already carry a deadline — see verificationExchange. Every caller in
+// this package sets exchangeDeadline before anything crosses the wire.
+func runVerification(ch Channel, initiator bool, myFP []byte, v Verifier) error {
 	if v == nil {
 		// A nil Verifier is not "skip the check" — it is a caller that forgot, and the
 		// whole of L2 is that no path reaches the exchange unconfirmed. Refusing here
 		// means a forgotten gate fails closed instead of silently opening.
 		return errors.New("no verifier: the spoken check cannot be skipped")
 	}
-	words, err := verificationExchange(conn, initiator, myFP, peerFP)
+	words, err := verificationExchange(ch, initiator, myFP)
 	if err != nil {
 		return err
 	}

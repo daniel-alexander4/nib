@@ -140,6 +140,23 @@ with `git diff`, which is silent on an **untracked** package, so every probe rep
 | A deadline that cannot be un-expired (the zero-time branch of `set` deleted) | `TestADeadlineExpiresAndUnexpires` | "a read after the deadline was reset to zero never returned" — see the vacuous-green row below, because this probe passed the first time it was run |
 
 
+## Tier 1 — `internal/p2p` (P02.S04, the session core re-typed off `*tls.Conn`)
+
+Seven probes. The re-typing moved every document-carrying entry point onto a `Channel`, so
+each probe puts back a property the old signature enforced by type and the new one enforces
+by check.
+
+| Defect reintroduced | Check that fired | What it said |
+|---|---|---|
+| `Initiate` stops calling `Channel.check` (v1.109.52) | `TestAnIncompleteChannelIsRefusedByEveryEntryPoint/Initiate` | "a Channel with no peerfp did not return — it got past the boundary and blocked on the stream". **The hang is the finding**: see the vacuous-green row below |
+| `check` stops caring about the exporter | the same test, all four entry points | a session would run with the spoken check bound to no channel at all |
+| The core names `*tls.Conn` again | `TestTheSessionCoreDoesNotNameATransport` | "session.go names *tls.Conn … a transport type in here is D14's two-transports-one-core rule broken at the signature" |
+| A fifth document-carrying entry point taking a `Channel`, with no `Verifier` | `TestL2CoversEveryDocumentCarryingEntryPoint` | "5 exported functions take a Channel or a Stream ([SendQuietly Initiate Receive SendDocument ReceiveDocument]) but 4 are pinned above" |
+| The same, taking a raw `Stream` — the hole one type further down | the same guard | caught, which is why the re-based regex matches `Stream` as well as `Channel` |
+| `TLSChannel` returns a fingerprint that is not the verified one | `TestBothSidesDeriveTheSameWords` | the two ends derive different words, so the spoken check fails for honest users — which is what a channel built on an unverified identity is worth |
+| The document write moved before the spoken check | `TestL2NoDocumentBytesCrossBeforeBothConfirmations` | L2 itself, still firing under the new shape — the guard was re-pointed at the new signatures and re-probed rather than assumed to have survived |
+
+
 ## Vacuous greens caught, and how
 
 Not red proofs — the opposite, and worth as much. Each is a check that was **passing while
@@ -158,3 +175,5 @@ measuring nothing**, found by its own setup assertion or by a deliberate probe.
 | `TestCraftedReasonIsNotReadAsAnAttestation`' first draft inlined the tag-and-token check | a test of the copy, not of the code — the same shape that let a gap in `riskyActions` hide from the test built on the same map | rewritten to drive `ReadAttestations` against a really-signed document |
 | The un-expiry half of `TestADeadlineExpiresAndUnexpires` (v1.109.51) | it reset the deadline to zero and then called the `arrives` helper — which sets a deadline **of its own**, and setting a FUTURE deadline recreates the channel too. So the assertion was satisfied by the helper, not by the reset under test, and stayed green with the zero-time branch of `set` deleted | probing that branch and getting a PASS. Replaced with a read that must block and then succeed: reset, start a blocking read, sleep, then send |
 | The whole nine-probe battery, on its first run | its patch-applied guard was `git diff --quiet internal/udpmux/`, and `internal/udpmux/` was **untracked** — so `git diff` was silent by construction and the guard could never fire. It reported "did not apply" for all nine, which is the guard failing SAFE; a guard of the opposite polarity would have reported nine greens | the guard itself, which is why it was written before the probes rather than after |
+| `TestAnIncompleteChannelIsRefusedByEveryEntryPoint`' first draft called each entry point synchronously (v1.109.52) | when `check` is weakened the call gets **past** the boundary and blocks forever writing to a pipe with nobody on the other end — so the test **hung** instead of failing. A hang reports nothing and takes the suite with it; this is the tier-2 armed-session hazard in a different package | the probe battery itself timing out on its second probe. Each call now runs with a 3-second bound and names the hang: "it got past the boundary and blocked on the stream" |
+| The population-floor guard's fifth-path regex, on re-typing | it matched `^func ([A-Z]\w+)\(conn \*tls\.Conn`, and after S04 **nothing in `session.go` matches it** — it would have gone quietly to zero and compared 0 against 4, reporting a failure whose message named the wrong problem | re-basing it deliberately as part of the slice, then probing both a `Channel` and a raw `Stream` fifth path. A guard whose subject is re-typed has to be re-typed with it |

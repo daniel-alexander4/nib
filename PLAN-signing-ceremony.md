@@ -2255,11 +2255,45 @@ destination connection ID via a `quic.Transport.ConnectionIDGenerator` that regi
 — is **filed, not built**: a mis-wired generator would break the *session* rather than a DHT query,
 which is the worse failure of the two, and P05 wiring the transport is when that trade changes.
 
-#### P02.S04 — The session core re-typed off `*tls.Conn` *(D14)*
+#### P02.S04 — The session core re-typed off `*tls.Conn` *(D14)* *(done 2026-08-19, v1.109.52)*
 Scope: `Initiate`, `Receive`, `SendDocument` and `ReceiveDocument` take a stream plus an already-verified fingerprint; `coSignExchange` is unchanged. Refs: D14, D7 pin.
 Acceptance:
 - The four entry points no longer name `*tls.Conn`; `coSignExchange` is untouched.
 - Everything P01 hung on those signatures still holds — the verification gate, the L2 guard's population floor, the four-path enumeration.
+
+Tasks:
+- T01 — `Channel`/`Stream`/`Exporter`, and `TLSChannel` as the one place the handshake, the peer fingerprint and the exporter are taken together.
+- T02 — the four entry points re-typed onto `Channel`.
+- T03 — `verify.go` off `*tls.Conn` too: `verificationExchange` and `verificationString`.
+- T04 — the call sites in `internal/server/session.go`, and the three test files.
+- T05 — a zero-value `Channel` is refused at each entry point, probed red.
+
+**The scope line understated the surface** *(2026-08-19)*: `runVerification`, `verificationExchange`
+and `verificationString` name `*tls.Conn` or `tls.ConnectionState` as well, and the last of the three
+needs `ExportKeyingMaterial` — D4's channel binding. So the re-typing is not four signatures, it is
+the whole verification path with them.
+
+**And the constraint that would have blocked it does not exist** *(2026-08-19, measured)*: quic-go
+contains no `ekm` of its own, which reads like a hard stop for the channel binding under QUIC. It is
+not — a spike over a real QUIC connection got a **32-byte exporter output on both ends, agreeing**
+(`TestSpikeEKMWorksUnderQUIC`). Kept as a standing spike beside caveat 1's, because it is the same
+kind of claim: load-bearing, about a dependency, and cheap to re-ask.
+
+**Built as a `Channel`, not three parameters** *(2026-08-19)*: `Stream` (read, write, `SetDeadline`),
+the **already-verified** `PeerFP`, and `Export`, the RFC 5705 exporter. Three adjacent `[]byte`
+parameters would have been silently transposable; more importantly, all three are properties a
+transport has **already established**, so a zero value is not an incomplete argument list but an
+unauthenticated session with a verification string bound to nothing — `Channel.check` refuses one at
+every entry point, and each refusal is probed red.
+
+`Dial`, `Listen`, `TLSChannel` and `verifiedPeerFingerprint` moved into `transport.go`, so the whole
+of the package's TLS knowledge is one file and **S05 adds `QUICChannel` beside `TLSChannel`** rather
+than threading a second transport through the core. `TestTheSessionCoreDoesNotNameATransport` is the
+acceptance clause as a guard: `session.go`, `verify.go` and `channel.go` may not contain the string
+`*tls.Conn` at all, and `transport.go` exports exactly one function that does.
+
+`ReceiveDocument` **no longer returns the peer fingerprint** — the caller supplied it in the
+`Channel`, and handing it back invites a caller to trust the echo rather than the value it verified.
 
 #### P02.S05 — QUIC `Dial`/`Listen` behind the core
 Scope: a QUIC path beside the TCP one, `SessionTLS()` reused unchanged, still over the manual address. Refs: D14.

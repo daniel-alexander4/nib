@@ -114,7 +114,7 @@ func TestSessionArmReceiveSign(t *testing.T) {
 			return
 		}
 		defer conn.Close()
-		final, e := p2p.Initiate(conn, aSigned, aFPBytes, initiatorVerifier)
+		final, e := p2p.Initiate(peerChannel(t, conn), aSigned, aFPBytes, initiatorVerifier)
 		if e != nil {
 			errc <- e
 			return
@@ -292,7 +292,7 @@ func TestSessionDeclineLeavesOpenDoc(t *testing.T) {
 			return
 		}
 		defer conn.Close()
-		if _, e := p2p.Initiate(conn, aSigned, aFPBytes, okVerifier{}); e == nil {
+		if _, e := p2p.Initiate(peerChannel(t, conn), aSigned, aFPBytes, okVerifier{}); e == nil {
 			errc <- nil // a declined round-trip must surface an error to the initiator
 			return
 		}
@@ -403,7 +403,7 @@ func TestSessionQuoteForPendingPeer(t *testing.T) {
 			return
 		}
 		defer conn.Close()
-		_, _ = p2p.Initiate(conn, aSigned, aFPBytes, okVerifier{}) // declined below; an error is expected
+		_, _ = p2p.Initiate(peerChannel(t, conn), aSigned, aFPBytes, okVerifier{}) // declined below; an error is expected
 		errc <- nil
 	}()
 
@@ -496,7 +496,7 @@ func TestSessionReceiveTransfer(t *testing.T) {
 			return
 		}
 		defer conn.Close()
-		errc <- p2p.SendDocument(conn, flagged, aFPBytes, okVerifier{})
+		errc <- p2p.SendDocument(peerChannel(t, conn), flagged, aFPBytes, okVerifier{})
 	}()
 
 	waitPending(t, c, ts.URL, aFP)
@@ -570,7 +570,7 @@ func TestSessionReceiveTransferDecline(t *testing.T) {
 			return
 		}
 		defer conn.Close()
-		errc <- p2p.SendDocument(conn, base, aFPBytes, okVerifier{})
+		errc <- p2p.SendDocument(peerChannel(t, conn), base, aFPBytes, okVerifier{})
 	}()
 
 	waitPending(t, c, ts.URL, aFP)
@@ -623,7 +623,7 @@ func TestSessionSend(t *testing.T) {
 			return
 		}
 		defer conn.Close()
-		doc, _, e := p2p.ReceiveDocument(conn.(*tls.Conn), autoAccept{}, bFPBytes, okVerifier{})
+		doc, e := p2p.ReceiveDocument(peerChannel(t, conn.(*tls.Conn)), autoAccept{}, bFPBytes, okVerifier{})
 		if e != nil {
 			errc <- e
 			return
@@ -782,7 +782,7 @@ func TestSessionInitiate(t *testing.T) {
 			return
 		}
 		defer conn.Close()
-		_, e = p2p.Receive(conn.(*tls.Conn), bCert, bKey, "Alice", autoConfirm{intent: "I accept"}, okVerifier{})
+		_, e = p2p.Receive(peerChannel(t, conn.(*tls.Conn)), bCert, bKey, "Alice", autoConfirm{intent: "I accept"}, okVerifier{})
 		recvErr <- e
 	}()
 
@@ -1087,4 +1087,20 @@ func csrfFor(t *testing.T, c *http.Client, baseURL string) string {
 		t.Fatal("no CSRF token on /api/status")
 	}
 	return st.CSRF
+}
+
+// peerChannel establishes a p2p.Channel over a completed mTLS connection, exactly as the
+// server's own call sites do. Built through p2p.TLSChannel rather than assembled here so
+// a test cannot keep passing while the constructor stops reading the peer's fingerprint
+// off the verified chain.
+func peerChannel(t *testing.T, conn *tls.Conn) p2p.Channel {
+	t.Helper()
+	ch, err := p2p.TLSChannel(conn)
+	if err != nil {
+		// Errorf, not Fatalf: several call sites are inside accept goroutines, where
+		// FailNow is not legal. The zero Channel then fails p2p's own check.
+		t.Errorf("establish channel: %v", err)
+		return p2p.Channel{}
+	}
+	return ch
 }
