@@ -48,6 +48,22 @@ const switched = (pages) => page.waitForFunction(
   pages,
 );
 
+// settled waits until EVERY open view has rendered pages — not just the visible one.
+//
+// **`switched()` is a state check, and after a reload that is not enough.** It waits for the
+// shared page-count readout and for a `.page` in the visible container, both of which can
+// already be true of the view you are leaving. Probed directly: at the start of the
+// zoom test, `viewerContainer-1:3p:VISIBLE viewerContainer-2:0p` — the second document was
+// still loading, so `switched(3)` returned instantly and the test acted on a half-settled
+// app. That is how a test could zoom one view and later measure another, which is what four
+// sessions of "the zoom was lost" actually was.
+//
+// The same distinction harness.mjs's openDocument documents for itself ("a transition check
+// rather than a state check — the same distinction this whole phase keeps turning on, and
+// this helper got it wrong first time"). This file's helper had it wrong too.
+const settled = () => page.waitForFunction(() =>
+  [...document.querySelectorAll('.viewerContainer')].every((c) => c.querySelectorAll('.page').length > 0));
+
 // The visible view's geometry: the one container that is not hidden, and the first page
 // inside it. Scoped to `:not([hidden])` for the reason harness.mjs spells out — with
 // several containers in the wrap, a bare selector measures whichever one the document
@@ -267,6 +283,9 @@ test('switching away and back preserves the zoom you set', async () => {
   //
   // Two documents are open from the tests above.
   assert.equal(await tabCount(), 2, `setup: ${await tabCount()} tabs, want 2`);
+  // Both documents finished loading BEFORE anything is clicked. The test above ends with a
+  // reload, whose restore is still adopting when this one starts.
+  await settled();
   await page.click(tabSel(1));
   await switched(3);
 
@@ -318,6 +337,13 @@ test('switching away and back preserves the zoom you set', async () => {
       ? 'A NEAR MISS, so the 2px tolerance is too tight for the restore path and the final assertion below needs the same widening.'
       : 'NOT a near miss — the zoom was discarded, which is the regression this test exists to catch.'} The last code path to set this view's scale was **${at.src}**, and the writes to its userScale flag were **${at.log}** (app.js scaleFrom / setUserScale). Those two together name the door. The view on screen is record **${at.viewId}**; the one that was zoomed was **${zoomedView}**${at.viewId === zoomedView ? ' — the same record, so this is lost state' : ' — a DIFFERENT record, so the document was re-adopted into a new view and the zoom went with the old one'}. Every container: ${at.all}.`);
   });
+
+  // The view identity, asserted rather than assumed. "The zoom was discarded" and "you are
+  // measuring a different view than you zoomed" produce the same number and want opposite
+  // fixes, and this test could not tell them apart for four sessions.
+  const backView = await page.$eval('.viewerContainer:not([hidden])', (c) => c.id);
+  assert.equal(backView, zoomedView,
+    `the view on screen after switching back is ${backView}, but the one that was zoomed was ${zoomedView} — the tab strip's position ${1} did not lead back to the same view record, so nothing below is about preserving zoom at all`);
 
   const back = await page.evaluate(() => document.querySelector('.viewerContainer:not([hidden]) .page').offsetWidth);
   assert.ok(Math.abs(back - zoomed) < 2,
