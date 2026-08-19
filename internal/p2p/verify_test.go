@@ -17,11 +17,29 @@ import (
 	"nib/internal/testpdf"
 )
 
+// channelOf establishes a Channel over a completed mTLS connection, failing the test if
+// the peer's identity or the exporter is not available. It is TLSChannel and not a
+// hand-built Channel on purpose: a test that assembled the struct itself could keep
+// passing while TLSChannel stopped reading the fingerprint off the verified chain.
+// It reports with Errorf and returns the zero Channel rather than calling Fatalf,
+// because several call sites are inside accept goroutines and FailNow is only legal on
+// the goroutine running the test. A zero Channel then fails Channel.check at the entry
+// point — a clean named error rather than a nil dereference.
+func channelOf(t *testing.T, conn *tls.Conn) Channel {
+	t.Helper()
+	ch, err := TLSChannel(conn)
+	if err != nil {
+		t.Errorf("establish channel: %v", err)
+		return Channel{}
+	}
+	return ch
+}
+
 // livePair brings up a real mTLS session between two pinned identities and hands each
 // side to its half of the exchange. Real TLS rather than a pipe, because the string binds
 // the channel through ExportKeyingMaterial and a pipe has no keying material at all —
 // a test over a pipe could not distinguish "bound to this channel" from "not bound".
-func livePair(t *testing.T, run func(initiator bool, conn *tls.Conn, myFP, peerFP []byte) (string, error)) (string, string) {
+func livePair(t *testing.T, run func(initiator bool, ch Channel, myFP []byte) (string, error)) (string, string) {
 	t.Helper()
 	aCert, aKey := newIdentity(t)
 	bCert, bKey := newIdentity(t)
@@ -50,7 +68,7 @@ func livePair(t *testing.T, run func(initiator bool, conn *tls.Conn, myFP, peerF
 			rc <- res{err: err}
 			return
 		}
-		s, e := run(false, tc, bFP, aFP)
+		s, e := run(false, channelOf(t, tc), bFP)
 		rc <- res{s, e}
 	}()
 
@@ -59,7 +77,7 @@ func livePair(t *testing.T, run func(initiator bool, conn *tls.Conn, myFP, peerF
 		t.Fatal(err)
 	}
 	defer conn.Close()
-	got, err := run(true, conn, aFP, bFP)
+	got, err := run(true, channelOf(t, conn), aFP)
 	if err != nil {
 		t.Fatalf("initiator: %v", err)
 	}
@@ -72,8 +90,8 @@ func livePair(t *testing.T, run func(initiator bool, conn *tls.Conn, myFP, peerF
 
 func exchangeBoth(t *testing.T) (string, string) {
 	t.Helper()
-	return livePair(t, func(initiator bool, conn *tls.Conn, myFP, peerFP []byte) (string, error) {
-		return verificationExchange(conn, initiator, myFP, peerFP)
+	return livePair(t, func(initiator bool, ch Channel, myFP []byte) (string, error) {
+		return verificationExchange(ch, initiator, myFP)
 	})
 }
 
@@ -141,7 +159,7 @@ func TestAManInTheMiddleSeesTwoDifferentStrings(t *testing.T) {
 			legA <- ""
 			return
 		}
-		s, _ := verificationExchange(tc, false, mFP, aFP)
+		s, _ := verificationExchange(channelOf(t, tc), false, mFP)
 		legA <- s
 	}()
 	connA, err := Dial(lnM.Addr().String(), aCert, aKey, mFP, 5*time.Second)
@@ -149,7 +167,7 @@ func TestAManInTheMiddleSeesTwoDifferentStrings(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer connA.Close()
-	aString, err := verificationExchange(connA, true, aFP, mFP)
+	aString, err := verificationExchange(channelOf(t, connA), true, aFP)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -174,7 +192,7 @@ func TestAManInTheMiddleSeesTwoDifferentStrings(t *testing.T) {
 			legB <- ""
 			return
 		}
-		s, _ := verificationExchange(tc, false, bFP, mFP)
+		s, _ := verificationExchange(channelOf(t, tc), false, bFP)
 		legB <- s
 	}()
 	connB, err := Dial(lnB.Addr().String(), mCert, mKey, bFP, 5*time.Second)
@@ -182,7 +200,7 @@ func TestAManInTheMiddleSeesTwoDifferentStrings(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer connB.Close()
-	if _, err := verificationExchange(connB, true, mFP, bFP); err != nil {
+	if _, err := verificationExchange(channelOf(t, connB), true, mFP); err != nil {
 		t.Fatal(err)
 	}
 	bString := <-legB
@@ -258,7 +276,7 @@ func TestARevealAfterSeeingIsRejectedBeforeAnyStringExists(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer conn.Close()
-	s, err := verificationExchange(conn, true, aFP, bFP)
+	s, err := verificationExchange(channelOf(t, conn), true, aFP)
 
 	// The stimulus, asserted before the response is graded: the dishonest peer really did
 	// get to see the initiator's contribution before choosing. Without this the refusal
@@ -424,7 +442,7 @@ func TestAnOversizedVerificationFrameIsRefusedBeforeAllocating(t *testing.T) {
 	}
 	defer conn.Close()
 	_ = conn.SetDeadline(time.Now().Add(5 * time.Second))
-	_, err = verificationExchange(conn, true, aFP, bFP)
+	_, err = verificationExchange(channelOf(t, conn), true, aFP)
 
 	// Stimulus before response: the oversized header really was sent. Without this the
 	// refusal below could be a closed connection and the test would pass having exercised
@@ -485,11 +503,11 @@ func TestL2NoDocumentBytesCrossBeforeBothConfirmations(t *testing.T) {
 		run  func(t *testing.T, initiator bool, conn *tls.Conn, myFP, peerFP []byte, v Verifier) error
 	}{
 		{"Initiate", func(t *testing.T, _ bool, conn *tls.Conn, myFP, _ []byte, v Verifier) error {
-			_, e := Initiate(conn, pdf, myFP, v)
+			_, e := Initiate(channelOf(t, conn), pdf, myFP, v)
 			return e
 		}},
 		{"SendDocument", func(t *testing.T, _ bool, conn *tls.Conn, myFP, _ []byte, v Verifier) error {
-			return SendDocument(conn, pdf, myFP, v)
+			return SendDocument(channelOf(t, conn), pdf, myFP, v)
 		}},
 	} {
 		t.Run(tc.name+" (dialing side)", func(t *testing.T) {
@@ -586,10 +604,10 @@ func TestL2CoversEveryDocumentCarryingEntryPoint(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := []string{
-		"func Initiate(conn *tls.Conn, mySignedPDF, myFingerprint []byte, v Verifier)",
-		"func Receive(conn *tls.Conn, myCertPEM, myKeyPEM []byte, peerLabel string, c Confirmer, v Verifier)",
-		"func SendDocument(conn *tls.Conn, pdf []byte, myFingerprint []byte, v Verifier)",
-		"func ReceiveDocument(conn *tls.Conn, a Accepter, myFingerprint []byte, v Verifier)",
+		"func Initiate(ch Channel, mySignedPDF, myFingerprint []byte, v Verifier)",
+		"func Receive(ch Channel, myCertPEM, myKeyPEM []byte, peerLabel string, c Confirmer, v Verifier)",
+		"func SendDocument(ch Channel, pdf []byte, myFingerprint []byte, v Verifier)",
+		"func ReceiveDocument(ch Channel, a Accepter, myFingerprint []byte, v Verifier)",
 	}
 	for _, sig := range want {
 		if !strings.Contains(string(src), sig) {
@@ -598,16 +616,59 @@ func TestL2CoversEveryDocumentCarryingEntryPoint(t *testing.T) {
 				"Verifier went, the path can now carry a document unconfirmed.", sig)
 		}
 	}
-	// A fifth path: any exported func taking a *tls.Conn must be in the list above.
-	got := regexp.MustCompile(`(?m)^func ([A-Z]\w+)\(conn \*tls\.Conn`).FindAllStringSubmatch(string(src), -1)
+	// A fifth path. Re-based from "*tls.Conn" to "Channel" by P02.S04, and the re-basing
+	// is the point: the old regex was `^func ([A-Z]\w+)\(conn \*tls\.Conn`, which now
+	// matches NOTHING in this file — it would have gone quietly to zero and compared 0
+	// against 4, reporting a failure whose message named the wrong problem. A guard whose
+	// subject is re-typed has to be re-typed with it.
+	//
+	// Stream as well as Channel: a new entry point taking a raw Stream would bypass both
+	// the Verifier and Channel.check, which is the same hole one type further down.
+	got := regexp.MustCompile(`(?m)^func ([A-Z]\w+)\((?:ch Channel|s Stream|conn Stream)`).FindAllStringSubmatch(string(src), -1)
 	if len(got) != len(want) {
 		names := []string{}
 		for _, m := range got {
 			names = append(names, m[1])
 		}
-		t.Errorf("%d exported functions take a *tls.Conn (%v) but %d are pinned above — a new "+
-			"session entry point must either carry the verification gate or say why it cannot",
+		t.Errorf("%d exported functions take a Channel or a Stream (%v) but %d are pinned above "+
+			"— a new session entry point must either carry the verification gate or say why it cannot",
 			len(got), names, len(want))
+	}
+}
+
+// TestTheSessionCoreDoesNotNameATransport is P02.S04's acceptance clause as a guard.
+//
+// D14 keeps TCP beside QUIC, and two transports cannot share one core while the core
+// names one of them in its signatures. So the rule is stronger than "the four entry
+// points changed shape": the whole session and verification path must not mention
+// *tls.Conn at all, and the package's entire TLS surface must be the one constructor
+// that exists to bridge it.
+func TestTheSessionCoreDoesNotNameATransport(t *testing.T) {
+	for _, f := range []string{"session.go", "verify.go", "channel.go"} {
+		src, err := os.ReadFile(f)
+		if err != nil {
+			t.Fatal(err)
+		}
+		// Stimulus first: this really is the file that carries the core. Without it the
+		// absence below is equally true of an empty file or a renamed one.
+		if !strings.Contains(string(src), "func ") {
+			t.Fatalf("%s has no functions in it — the check below would pass on anything", f)
+		}
+		if strings.Contains(string(src), "*tls.Conn") {
+			t.Errorf("%s names *tls.Conn. The session core takes a Channel; a transport type "+
+				"in here is D14's two-transports-one-core rule broken at the signature.", f)
+		}
+	}
+	// And the bridge is exactly one function, in the one file that is allowed to know
+	// what a transport is — so there is a single place to read to learn how a Channel
+	// comes into existence, and a single place S05 adds QUICChannel beside.
+	src, err := os.ReadFile("transport.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := regexp.MustCompile(`(?m)^func ([A-Z]\w+)\(conn \*tls\.Conn`).FindAllStringSubmatch(string(src), -1)
+	if len(got) != 1 || got[0][1] != "TLSChannel" {
+		t.Errorf("transport.go exports %v taking a *tls.Conn, want exactly [TLSChannel]", got)
 	}
 }
 
@@ -657,14 +718,14 @@ func TestAReconnectNeedsItsOwnConfirmation(t *testing.T) {
 			if err := tc.Handshake(); err != nil {
 				return
 			}
-			_ = runVerification(tc, false, bFP, aFP, okVerifier{})
+			_ = runVerification(channelOf(t, tc), false, bFP, okVerifier{})
 		}()
 		conn, err := Dial(ln.Addr().String(), aCert, aKey, bFP, 5*time.Second)
 		if err != nil {
 			t.Fatal(err)
 		}
 		defer conn.Close()
-		if err := runVerification(conn, true, aFP, bFP, rec); err != nil {
+		if err := runVerification(channelOf(t, conn), true, aFP, rec); err != nil {
 			t.Fatal(err)
 		}
 		<-done

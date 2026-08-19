@@ -133,7 +133,7 @@ func TestInitiateRejectsReplayedCoSignature(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer conn.Close()
-	if _, err := Initiate(conn, aSigned, aFP, okVerifier{}); err == nil {
+	if _, err := Initiate(channelOf(t, conn), aSigned, aFP, okVerifier{}); err == nil {
 		t.Error("initiator accepted a replayed prior co-signature")
 	}
 	if err := <-recvErr; err != nil {
@@ -162,7 +162,7 @@ func TestSessionRoundTrip(t *testing.T) {
 			return
 		}
 		defer conn.Close()
-		_, e := Receive(conn.(*tls.Conn), bCert, bKey, "Alice", confirmer{accept: true, intent: "I accept"}, okVerifier{})
+		_, e := Receive(channelOf(t, conn.(*tls.Conn)), bCert, bKey, "Alice", confirmer{accept: true, intent: "I accept"}, okVerifier{})
 		recvErr <- e
 	}()
 
@@ -171,7 +171,7 @@ func TestSessionRoundTrip(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer conn.Close()
-	final, err := Initiate(conn, aSigned, aFP, okVerifier{})
+	final, err := Initiate(channelOf(t, conn), aSigned, aFP, okVerifier{})
 	if err != nil {
 		t.Fatalf("initiate: %v", err)
 	}
@@ -215,7 +215,7 @@ func TestSessionReceiverDeclines(t *testing.T) {
 			return
 		}
 		defer conn.Close()
-		_, e := Receive(conn.(*tls.Conn), bCert, bKey, "Alice", confirmer{accept: false}, okVerifier{})
+		_, e := Receive(channelOf(t, conn.(*tls.Conn)), bCert, bKey, "Alice", confirmer{accept: false}, okVerifier{})
 		recvErr <- e
 	}()
 
@@ -224,7 +224,7 @@ func TestSessionReceiverDeclines(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer conn.Close()
-	if _, err := Initiate(conn, aSigned, aFP, okVerifier{}); err == nil {
+	if _, err := Initiate(channelOf(t, conn), aSigned, aFP, okVerifier{}); err == nil {
 		t.Error("initiator got a result though the receiver declined")
 	}
 	if err := <-recvErr; err == nil {

@@ -13,6 +13,7 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
+	"net"
 	"time"
 
 	"nib/internal/sign"
@@ -140,4 +141,58 @@ func mintTransportCert(idCert *x509.Certificate, idKey crypto.Signer) (tls.Certi
 		return tls.Certificate{}, err
 	}
 	return tls.Certificate{Certificate: [][]byte{der, idCert.Raw}, PrivateKey: ephKey}, nil
+}
+
+// Dial opens a co-signing session to a peer's armed listener at addr, presenting
+// this user's identity and accepting only the pinned peer at the TLS handshake. The
+// returned conn is a verified mTLS channel; close it when the session ends.
+func Dial(addr string, identityCertPEM, identityKeyPEM, pinnedSPKI []byte, timeout time.Duration) (*tls.Conn, error) {
+	cfg, err := SessionTLS(identityCertPEM, identityKeyPEM, pinnedSPKI, false)
+	if err != nil {
+		return nil, err
+	}
+	return tls.DialWithDialer(&net.Dialer{Timeout: timeout}, "tcp", addr, cfg)
+}
+
+// Listen returns a session listener bound to addr that drops any peer but the
+// pinned one at the TLS handshake. addr is configurable — loopback for tests, a
+// routable bind for a real session; the armed listener (P2P 6) owns the bind and
+// lifecycle. The signing logic lives in Receive.
+func Listen(addr string, identityCertPEM, identityKeyPEM, pinnedSPKI []byte) (net.Listener, error) {
+	cfg, err := SessionTLS(identityCertPEM, identityKeyPEM, pinnedSPKI, true)
+	if err != nil {
+		return nil, err
+	}
+	return tls.Listen("tcp", addr, cfg)
+}
+
+// TLSChannel establishes a Channel over a pinned mTLS connection — the TCP transport
+// D14 retains beside QUIC.
+//
+// This is the one place the handshake is forced, and the reason has not changed with
+// the re-typing: the peer's verified identity and the channel's exporter both come into
+// existence only when the handshake completes, and the verification string binds both.
+// Leaving it to the first write would derive that string from a channel that does not
+// exist yet.
+func TLSChannel(conn *tls.Conn) (Channel, error) {
+	if err := conn.Handshake(); err != nil {
+		return Channel{}, err
+	}
+	cs := conn.ConnectionState()
+	fp, err := verifiedPeerFingerprint(cs)
+	if err != nil {
+		return Channel{}, err
+	}
+	return Channel{Stream: conn, PeerFP: fp, Export: cs.ExportKeyingMaterial}, nil
+}
+
+// verifiedPeerFingerprint reads the verified peer's SPKI fingerprint from a
+// completed handshake. PeerCertificates is [leaf, identity] and verification has
+// already passed (the handshake would have failed otherwise), so the identity cert
+// there is the pinned peer.
+func verifiedPeerFingerprint(cs tls.ConnectionState) ([]byte, error) {
+	if len(cs.PeerCertificates) < 2 {
+		return nil, errors.New("peer presented no identity certificate")
+	}
+	return sign.FingerprintCert(cs.PeerCertificates[1]), nil
 }

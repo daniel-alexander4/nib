@@ -375,7 +375,7 @@ func (s *Server) runSession(ln net.Listener, cert, key []byte, label, mode strin
 	// The loop is bounded by the accept timer above, which closes the listener and makes
 	// Accept return an error — so a peer that fails repeatedly cannot hold this open past
 	// the arm window, and cannot spin it hot for longer than that either.
-	var conn net.Conn
+	var conn *tls.Conn
 	for {
 		c, err := ln.Accept()
 		if err != nil {
@@ -403,15 +403,21 @@ func (s *Server) runSession(ln net.Listener, cert, key []byte, label, mode strin
 	timer.Stop()
 	defer s.sess.disarmIf(ln)
 	defer conn.Close()
+	// One Channel for both modes: the handshake above has already run, so this only
+	// reads the peer's verified fingerprint and the channel's exporter off it.
+	ch, err := p2p.TLSChannel(conn)
+	if err != nil {
+		return // the pinned peer's identity did not survive the handshake
+	}
 	if mode == sessionModeReceive {
-		doc, peerFP, err := p2p.ReceiveDocument(conn.(*tls.Conn), sessionAccepter{s: s, label: label}, myFP, sessionVerifier{s})
+		doc, err := p2p.ReceiveDocument(ch, sessionAccepter{s: s, label: label}, myFP, sessionVerifier{s})
 		if err != nil {
 			return // declined, timed out, or a protocol error — nothing saved
 		}
-		s.saveReceived(doc, peerFP, label)
+		s.saveReceived(doc, ch.PeerFP, label)
 		return
 	}
-	final, err := p2p.Receive(conn.(*tls.Conn), cert, key, label, sessionConfirmer{s}, sessionVerifier{s})
+	final, err := p2p.Receive(ch, cert, key, label, sessionConfirmer{s}, sessionVerifier{s})
 	if err != nil {
 		return // declined, timed out, or a protocol error — nothing to apply
 	}
@@ -751,7 +757,12 @@ func (s *Server) handleSessionInitiate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer conn.Close()
-	final, err := p2p.Initiate(conn, signed, myFP, sessionVerifier{s})
+	ch, err := p2p.TLSChannel(conn)
+	if err != nil {
+		httpError(w, http.StatusBadGateway, "could not establish a session with peer: "+err.Error())
+		return
+	}
+	final, err := p2p.Initiate(ch, signed, myFP, sessionVerifier{s})
 	if err != nil {
 		httpError(w, http.StatusBadGateway, "co-signing did not complete: "+err.Error())
 		return
@@ -817,7 +828,12 @@ func (s *Server) handleSessionSend(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer conn.Close()
-	if err := p2p.SendDocument(conn, pdfBytes, myFP, sessionVerifier{s}); err != nil {
+	ch, err := p2p.TLSChannel(conn)
+	if err != nil {
+		httpError(w, http.StatusBadGateway, "could not establish a session with peer: "+err.Error())
+		return
+	}
+	if err := p2p.SendDocument(ch, pdfBytes, myFP, sessionVerifier{s}); err != nil {
 		if errors.Is(err, p2p.ErrDeclined) {
 			writeJSON(w, sendResult{Sent: false, Declined: true})
 			return

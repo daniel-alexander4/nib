@@ -1,6 +1,7 @@
 package p2p
 
 import (
+	"bytes"
 	"context"
 	"crypto/x509"
 	"errors"
@@ -304,5 +305,100 @@ func TestSpikeTheDHTTakesAnExternalPacketConn(t *testing.T) {
 	}
 	if n == 0 || buf[0] != 'd' {
 		t.Errorf("the reply is not a bencode dictionary (%d bytes, first byte %q)", n, buf[0])
+	}
+}
+
+// TestSpikeEKMWorksUnderQUIC — caveat 1's sibling, and it exists because the obvious
+// reading of the source says it should fail.
+//
+// D4's verification string is bound to the channel through RFC 5705 keying material
+// (verificationString). Under TCP that is tls.ConnectionState.ExportKeyingMaterial, whose
+// `ekm` function the stdlib populates. quic-go contains no `ekm` of its own anywhere —
+// which reads like a hard stop for the channel binding on the transport P02 is adding,
+// and would mean D4 needs a second mechanism rather than an adaptation.
+//
+// It is not a stop. Measured over a real QUIC connection: both ends get 32 bytes and they
+// AGREE. Kept as a standing spike rather than deleted after the fact, for exactly caveat
+// 1's reason — a load-bearing claim about a dependency, cheap to re-ask, and the arc's own
+// failure-mode #1 is a "verified" claim that was never re-verified.
+func TestSpikeEKMWorksUnderQUIC(t *testing.T) {
+	aCert, aKey := newIdentity(t)
+	bCert, bKey := newIdentity(t)
+	aFP, bFP := fingerprint(t, aCert), fingerprint(t, bCert)
+
+	srvConn, err := net.ListenPacket("udp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer srvConn.Close()
+	cliConn, err := net.ListenPacket("udp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cliConn.Close()
+	srvTr := &quic.Transport{Conn: srvConn}
+	defer srvTr.Close()
+	cliTr := &quic.Transport{Conn: cliConn}
+	defer cliTr.Close()
+
+	srvTLS, err := SessionTLS(bCert, bKey, aFP, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cliTLS, err := SessionTLS(aCert, aKey, bFP, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	srvTLS.NextProtos = []string{"nib-ekm"}
+	cliTLS.NextProtos = []string{"nib-ekm"}
+
+	ln, err := srvTr.Listen(srvTLS, &quic.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	type out struct {
+		ekm []byte
+		err error
+	}
+	srv := make(chan out, 1)
+	go func() {
+		c, err := ln.Accept(ctx)
+		if err != nil {
+			srv <- out{err: err}
+			return
+		}
+		cs := c.ConnectionState().TLS
+		ekm, err := cs.ExportKeyingMaterial("EXPORTER-nib-verification", nil, 32)
+		srv <- out{ekm, err}
+	}()
+
+	c, err := cliTr.Dial(ctx, srvConn.LocalAddr(), cliTLS, &quic.Config{})
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	cliCS := c.ConnectionState().TLS
+	cliEKM, err := cliCS.ExportKeyingMaterial("EXPORTER-nib-verification", nil, 32)
+	if err != nil {
+		t.Fatalf("the QUIC channel has no keying-material exporter: %v — D4's channel "+
+			"binding cannot be carried over this transport as written", err)
+	}
+	s := <-srv
+	if s.err != nil {
+		t.Fatalf("server side: %v", s.err)
+	}
+	// Both halves matter and neither implies the other: 32 bytes on one end says the
+	// exporter exists, and equality says the two ends derived the SAME channel — which is
+	// the property the verification string actually rests on.
+	if len(cliEKM) != 32 || len(s.ekm) != 32 {
+		t.Fatalf("exporter returned %d and %d bytes, want 32 each", len(cliEKM), len(s.ekm))
+	}
+	if !bytes.Equal(cliEKM, s.ekm) {
+		t.Fatalf("the two ends derived DIFFERENT keying material (%x vs %x) — a verification "+
+			"string bound to it would never match for honest users", cliEKM, s.ekm)
 	}
 }
