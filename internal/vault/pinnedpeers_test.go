@@ -2,6 +2,7 @@ package vault
 
 import (
 	"bytes"
+	"encoding/hex"
 	"testing"
 )
 
@@ -59,5 +60,73 @@ func TestPinnedPeersRoundTrip(t *testing.T) {
 	got := re.PinnedPeers()
 	if len(got) != 1 || !bytes.Equal(got[0].Fingerprint, fpB) {
 		t.Errorf("after remove, peers = %+v, want only Bob", got)
+	}
+}
+
+// TestAnInvitationsPinsAreGoneWhenTheCeremonyEnds is P01's D29 exit criterion, driven the
+// way it asks: "a pin created by consuming an invitation is marked with its ceremony and is
+// gone when the ceremony ends; a pin the user promoted survives".
+//
+// The case it exists for: accepting an invitation and then DECLINING the ceremony. Without
+// the scope, the strangers on that roster stay in the peer list for good — the user pinned
+// four people to read one document and is left pinned to them permanently.
+func TestAnInvitationsPinsAreGoneWhenTheCeremonyEnds(t *testing.T) {
+	dir := t.TempDir()
+	pub, keyPath := newKey(t)
+	v, err := Create(dir, pub, keyPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	mine := bytes.Repeat([]byte{0x11}, 32)   // someone the user pinned themselves
+	theirs := bytes.Repeat([]byte{0x22}, 32) // a stranger from the roster
+	both := bytes.Repeat([]byte{0x33}, 32)   // on the roster AND already a user pin
+
+	if err := v.AddPinnedPeer(mine, "My colleague"); err != nil {
+		t.Fatal(err)
+	}
+	if err := v.AddPinnedPeer(both, "Also my colleague"); err != nil {
+		t.Fatal(err)
+	}
+	const ceremony = "0123456789abcdef0123456789abcdef"
+	for _, fp := range [][]byte{theirs, both} {
+		if err := v.AddCeremonyPeer(fp, "From the invitation", ceremony); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// The stimulus: all three are pinned before the prune, so "gone afterwards" is not
+	// true of something that was never there.
+	if n := len(v.PinnedPeers()); n != 3 {
+		t.Fatalf("setup: %d pins before the prune, want 3", n)
+	}
+
+	n, err := v.PruneCeremonyPeers(ceremony)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 1 {
+		t.Errorf("the prune removed %d pins, want 1 — only the stranger belongs to the ceremony", n)
+	}
+
+	left := map[string]bool{}
+	for _, p := range v.PinnedPeers() {
+		left[hex.EncodeToString(p.Fingerprint)] = true
+	}
+	if left[hex.EncodeToString(theirs)] {
+		t.Error("a pin created by consuming an invitation survived the ceremony — the user is " +
+			"left pinned to a stranger they met to read one document (D29)")
+	}
+	if !left[hex.EncodeToString(mine)] {
+		t.Error("a pin the USER made was removed by a ceremony's prune")
+	}
+	if !left[hex.EncodeToString(both)] {
+		t.Error("a peer the user had already pinned was removed because a ceremony also named " +
+			"them — an invitation must not be able to take away a relationship the user made")
+	}
+
+	// An empty id must not match every user pin and delete the lot.
+	if _, err := v.PruneCeremonyPeers(""); err == nil {
+		t.Error("pruning with an empty ceremony id was accepted — that matches every user pin")
 	}
 }

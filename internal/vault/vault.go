@@ -113,6 +113,14 @@ type Identity struct {
 type PinnedPeer struct {
 	Fingerprint []byte `json:"fingerprint"`
 	Label       string `json:"label,omitempty"`
+	// Ceremony is the id of the ceremony whose invitation created this pin, or "" for one
+	// the user made themselves (D29).
+	//
+	// It exists so an invitation's pins can be taken away again. Consuming an invitation
+	// pins every party on its roster — people the user has never met and may never meet
+	// again — and without a scope those strangers stay in the peer list for good. A pin
+	// the user promoted has no ceremony and survives every prune.
+	Ceremony string `json:"ceremony,omitempty"`
 }
 
 // Settings holds the user's togglable UI preferences. Zero values are the
@@ -722,19 +730,62 @@ func (v *Vault) PinnedPeers() []PinnedPeer {
 // AddPinnedPeer pins a peer by fingerprint and label and persists. Re-pinning an
 // existing fingerprint updates its label rather than duplicating it.
 func (v *Vault) AddPinnedPeer(fingerprint []byte, label string) error {
+	return v.addPinned(fingerprint, label, "")
+}
+
+// AddCeremonyPeer pins a peer for the duration of one ceremony (D29).
+//
+// **An existing pin is never downgraded to a ceremony pin.** If the user already pinned
+// this peer themselves, the pin stays theirs and survives the prune — a ceremony must not
+// be able to take away a relationship the user established, and an invitation naming
+// someone already in the peer list is the ordinary case, not an attack.
+func (v *Vault) AddCeremonyPeer(fingerprint []byte, label, ceremony string) error {
+	return v.addPinned(fingerprint, label, ceremony)
+}
+
+func (v *Vault) addPinned(fingerprint []byte, label, ceremony string) error {
 	v.mu.Lock()
 	defer v.mu.Unlock()
 	for i := range v.contents.PinnedPeers {
 		if bytes.Equal(v.contents.PinnedPeers[i].Fingerprint, fingerprint) {
 			v.contents.PinnedPeers[i].Label = label
+			// Promotion is one-way: a user pin stays a user pin, and a ceremony pin becomes
+			// a user pin the moment the user pins it themselves.
+			if ceremony == "" {
+				v.contents.PinnedPeers[i].Ceremony = ""
+			}
 			return v.save()
 		}
 	}
 	v.contents.PinnedPeers = append(v.contents.PinnedPeers, PinnedPeer{
 		Fingerprint: append([]byte(nil), fingerprint...),
 		Label:       label,
+		Ceremony:    ceremony,
 	})
 	return v.save()
+}
+
+// PruneCeremonyPeers removes every pin created by the named ceremony, leaving pins the
+// user made themselves (D29). Returns how many were removed.
+func (v *Vault) PruneCeremonyPeers(ceremony string) (int, error) {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	if ceremony == "" {
+		// An empty ceremony id would match every user pin and delete the lot. Refusing is
+		// the only safe reading: there is no ceremony called "".
+		return 0, errors.New("prune needs a ceremony id")
+	}
+	var kept []PinnedPeer
+	n := 0
+	for _, p := range v.contents.PinnedPeers {
+		if p.Ceremony == ceremony {
+			n++
+			continue
+		}
+		kept = append(kept, p)
+	}
+	v.contents.PinnedPeers = kept
+	return n, v.save()
 }
 
 // RemovePinnedPeer unpins the peer with the given fingerprint (no-op if absent).

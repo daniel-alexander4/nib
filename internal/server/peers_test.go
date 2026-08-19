@@ -189,14 +189,25 @@ func TestPeersCarryTheirSixWordName(t *testing.T) {
 // Assertion 1 alone cannot see storage that agrees with the derivation, which is exactly
 // why 2 exists and why it is a structural check rather than a behavioural one.
 func TestPeerNameIsNeverStored(t *testing.T) {
+	// **Narrowed 2026-08-19.** This forbade every field but Fingerprint and Label, which was
+	// wider than the property it exists for and blocked a legitimate change: D29's
+	// invitation-scoped pins need a Ceremony field, and a scope is a fact about how the pin
+	// came to exist rather than a value derived from the key. What must never be persisted
+	// is anything DERIVED from the fingerprint — the name above all.
 	pp := reflect.TypeOf(vault.PinnedPeer{})
 	for i := 0; i < pp.NumField(); i++ {
-		if n := pp.Field(i).Name; n != "Fingerprint" && n != "Label" {
+		n := pp.Field(i).Name
+		if strings.Contains(strings.ToLower(n), "name") || strings.Contains(strings.ToLower(n), "word") {
 			t.Errorf("vault.PinnedPeer gained a %q field. The six-word name is DERIVED from the "+
 				"fingerprint on every read (D3) and must not be persisted: a stored name outlives "+
 				"the derivation that produced it, so a wordlist or encoding change shows the user a "+
 				"name their key no longer encodes, with nothing to say the two disagree.", n)
 		}
+	}
+	// The stimulus: the type really was inspected. A reflect call on the wrong type would
+	// loop zero times and pass.
+	if pp.NumField() == 0 {
+		t.Fatal("setup: vault.PinnedPeer has no fields, so nothing above was inspected")
 	}
 }
 
