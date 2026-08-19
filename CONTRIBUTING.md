@@ -89,7 +89,7 @@ and for free.
 
 ## The multiple-documents laws
 
-Nib holds several documents at once (`PLAN.md` P03–P06). Three rules constrain code
+Nib holds several documents at once (see `docs/adr/`). Three rules constrain code
 whose author will never read the plan that produced them, so they are written here —
 in the committed file a fresh clone actually gets — rather than only in an ADR or in
 a local `CLAUDE.md`.

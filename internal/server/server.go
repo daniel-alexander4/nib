@@ -833,7 +833,7 @@ const maxOpenDocs = 8
 //
 // **512 MiB, chosen against a measurement rather than assumed** — D9 says in as many
 // words that the byte figure is "chosen against a measurement in P06", and P06.S04 is
-// that measurement. It is recorded in PLAN.md with its method; the parts that decide
+// that measurement. It is recorded in ADR-005 with its method; the parts that decide
 // this constant:
 //
 //   - Eight documents at maxPDFBytes is **1.6 GB** of `doc.data`. That is the exposure

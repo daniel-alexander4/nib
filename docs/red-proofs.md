@@ -6,7 +6,8 @@ being green: a check never seen to fail can only ever report pass."
 
 **That sentence was, until v1.108.12, backed by nothing a reader could check.** There was no
 record of which defect was reintroduced, which assertion fired, or when — the evidence
-existed as prose in `PLAN.md`, scattered across phase notes, and `verify_test.go` guarded
+existed as prose in the multiple-documents plan (since retired), scattered across phase
+notes, and `verify_test.go` guarded
 only that the *claim was present in the file*, not that it was true. That is the same
 failure one level out, in the guard that teaches the rule.
 

@@ -193,7 +193,7 @@ func (s *Server) trimHistoryLocked(grown *document) {
 	// Depth first, on the document that grew. This is unchanged behaviour and the
 	// cap that binds in every realistic case — 30 states of an ordinary PDF is far
 	// below the byte budget, which is why single-document behaviour is unaffected by
-	// the budget's move to the pair (see PLAN.md P03.S04's premise pin).
+	// the budget's move to the pair (see ADR-003, which records that premise).
 	for len(grown.undo) > maxUndoDepth {
 		grown.undo[0] = nil
 		grown.undo = grown.undo[1:]
@@ -251,7 +251,7 @@ func (s *Server) handleUndo(w http.ResponseWriter, r *http.Request) {
 	// whole reason D15 chose a header. An earlier exit criterion said these two
 	// routes would "stop being bodyless"; it predates D15 and assumed a body was
 	// how an id arrives. Adding one here would edit exactly the schema the header
-	// exists to leave alone. See PLAN.md P03.S02.
+	// exists to leave alone. See ADR-004.
 	doc, err := s.docFor(r)
 	if err != nil {
 		httpError(w, http.StatusConflict, "that document is no longer open")
@@ -281,7 +281,7 @@ func (s *Server) handleRedo(w http.ResponseWriter, r *http.Request) {
 	// whole reason D15 chose a header. An earlier exit criterion said these two
 	// routes would "stop being bodyless"; it predates D15 and assumed a body was
 	// how an id arrives. Adding one here would edit exactly the schema the header
-	// exists to leave alone. See PLAN.md P03.S02.
+	// exists to leave alone. See ADR-004.
 	doc, err := s.docFor(r)
 	if err != nil {
 		httpError(w, http.StatusConflict, "that document is no longer open")

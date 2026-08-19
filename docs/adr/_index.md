@@ -21,10 +21,23 @@ author has read the plan, and a **client architecture** (ADR-002) whose rational
 is a set of empirical findings about pdf.js and the DOM that are not recoverable
 from reading the resulting code.
 
-And the plan those decisions live in is temporary. `PLAN.md` retires once its
-build order is walked (`STANDARDS.md` §15.6) — so without this directory the
-reasoning would go with it, leaving a law in the codebase with no surviving record
-of what it protects against.
+And the plan those decisions lived in was temporary. `PLAN.md` retired once its
+build order was walked (`STANDARDS.md` §15.6) — so without this directory the
+reasoning would have gone with it, leaving a law in the codebase with no surviving
+record of what it protects against.
+
+**That retirement happened on 2026-08-19** (all seven phases closed 2026-08-17 at
+v1.108.4). Before the file was removed it was audited for reasoning that existed
+nowhere else, and three decisions were written up here as ADR-004, ADR-005 and
+ADR-006 — the wire protocol for document identity, the open-document cap's measured
+byte figure, and the hand-off credential's security posture including the stronger
+mechanism that was refused. Code comments that cited `PLAN.md` for a measurement or
+a pin now cite the ADR that carries it. The file itself remains in git history; what
+is gone is the working document, which is what retirement means.
+
+A dated note inside ADR-002 still refers to `PLAN.md` in the present tense. That is
+left as written: an ADR's text is the record of what was known when it was written,
+and that note is superseded two paragraphs later within the same document.
 
 **Earlier decisions are deliberately not backfilled.** Loopback-only binding, the
 SSH-key-sealed vault, the single embedded binary, client-side fill through pdf.js
@@ -42,3 +55,10 @@ home today.
   destroyed, because an overlay's value lives in the DOM
 - [ADR-003: Global history budget](003-global-history-budget.md) — the undo/redo
   byte budget is one figure for all open documents and bounds the undo+redo pair
+- [ADR-004: Document id on the wire](004-document-id-on-the-wire.md) — an
+  `X-Nib-Doc` header, optional only for the CLI, with a per-process epoch and 409
+  for a document the server no longer holds
+- [ADR-005: Open-document cap](005-open-document-cap.md) — count **and** aggregate
+  bytes, refusing on whichever binds first, with the byte figure's method
+- [ADR-006: Hand-off credential](006-handoff-credential.md) — a separate on-disk
+  secret authorising one route, and why kernel-vouched peer credentials were refused
