@@ -39,6 +39,18 @@ const NameWords = 6
 // bitsPerWord is fixed by the list length: 2048 = 2^11.
 const bitsPerWord = 11
 
+// VerificationWords is the number of words in a session verification string (D4): four,
+// read aloud by one party and confirmed by the other after a channel is established.
+const VerificationWords = 4
+
+// VerificationBits is 44. Four words is all the design allows — the check is spoken, and
+// a longer string is one people stop reading to the end of — so the security argument
+// cannot rest on its width. It rests on the commitment step: with contributions committed
+// before either side sees the other's, an attacker must GUESS the string (2⁻⁴⁴ per
+// attempt, and a wrong guess is heard by two people) rather than SEARCH for a collision
+// between two legs, which at 44 bits is a birthday problem costing about 2²² — seconds.
+const VerificationBits = VerificationWords * bitsPerWord
+
 // NameBits is how much of the fingerprint a name commits to — 66 bits.
 //
 // All of it is payload; there is no checksum. Six words is 66 bits with nothing left
@@ -53,6 +65,7 @@ var (
 	errWordCount      = errors.New("a pairing name is six words")
 	errNotInList      = errors.New("not a word from the pairing list")
 	errFingerprintLen = errors.New("a fingerprint is 32 bytes")
+	errDigestLen      = errors.New("a verification digest is too short")
 )
 
 var (
@@ -103,11 +116,33 @@ func Name(fp []byte) (string, error) {
 	if len(fp) != sha256.Size {
 		return "", fmt.Errorf("%w: got %d", errFingerprintLen, len(fp))
 	}
-	out := make([]string, NameWords)
-	for i := range out {
-		out[i] = words[bitsAt(fp, i*bitsPerWord)]
+	return render(fp, NameWords), nil
+}
+
+// Verification renders the leading [VerificationBits] of digest as four words — the
+// spoken check both sides compare once a channel is up (D4).
+//
+// digest is the output of the session's own derivation, not a fingerprint: what makes the
+// two sides agree is that they hashed the same committed values, and what makes two
+// sessions differ is that those values are fresh each time. This function only renders.
+func Verification(digest []byte) (string, error) {
+	load()
+	if len(digest)*8 < VerificationBits {
+		return "", fmt.Errorf("%w: got %d bytes, need at least %d",
+			errDigestLen, len(digest), (VerificationBits+7)/8)
 	}
-	return strings.Join(out, " "), nil
+	return render(digest, VerificationWords), nil
+}
+
+// render is the one bit-packer. Both renderings share it deliberately: two copies of
+// "split big-endian into 11-bit indices" is two places for the convention to drift, and
+// the drift would be invisible — each would round-trip against itself.
+func render(b []byte, n int) string {
+	out := make([]string, n)
+	for i := range out {
+		out[i] = words[bitsAt(b, i*bitsPerWord)]
+	}
+	return strings.Join(out, " ")
 }
 
 // bitsAt reads the 11 bits starting at bit offset off, big-endian.
