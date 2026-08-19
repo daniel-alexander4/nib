@@ -62,3 +62,5 @@ home today.
   bytes, refusing on whichever binds first, with the byte figure's method
 - [ADR-006: Hand-off credential](006-handoff-credential.md) — a separate on-disk
   secret authorising one route, and why kernel-vouched peer credentials were refused
+- [ADR-007: Discovery announcement](007-discovery-announcement.md) — the name, a
+  port and a nonce; never the pin, and the socket treated as hostile everywhere
