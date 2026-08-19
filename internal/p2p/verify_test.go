@@ -654,6 +654,36 @@ func TestTheSessionCoreDoesNotNameATransport(t *testing.T) {
 	if len(got) != 1 || got[0][1] != "TLSChannel" {
 		t.Errorf("transport.go exports %v taking a *tls.Conn, want exactly [TLSChannel]", got)
 	}
+
+	// And the WHOLE package builds a Channel in exactly as many places as there are
+	// transports. Added at P02's phase close, because the graduation pass found the
+	// check above claiming more reach than it had: it counts *tls.Conn functions in
+	// ONE file, so P02.S05 added a second Channel constructor — `quicChannel`,
+	// unexported, in quic.go — without it firing, which is precisely the deliberate
+	// update the row said it would force.
+	//
+	// Every constructor here is a place PeerFP could come from something that was not
+	// verified, so a third should be a decision somebody made on purpose.
+	var all []byte
+	for _, f := range []string{"transport.go", "quic.go", "channel.go", "session.go", "verify.go"} {
+		b, err := os.ReadFile(f)
+		if err != nil {
+			t.Fatal(err)
+		}
+		all = append(all, b...)
+	}
+	ctors := regexp.MustCompile(`(?m)^func (\w+)\([^)]*\) \(Channel, error\)`).
+		FindAllStringSubmatch(string(all), -1)
+	if len(ctors) != len(transports) {
+		names := []string{}
+		for _, m := range ctors {
+			names = append(names, m[1])
+		}
+		t.Errorf("the package builds a Channel in %d places (%v) but there are %d transports. "+
+			"Each constructor is a place the peer's verified identity enters the core, so a new "+
+			"one is either a new transport — put it in the table — or a way in that nothing tests.",
+			len(ctors), names, len(transports))
+	}
 }
 
 // TestAReconnectNeedsItsOwnConfirmation is D18's clause, driven rather than asserted.

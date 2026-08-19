@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -543,6 +544,10 @@ func (s *Server) handleSessionArm(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ln, err := listenPeer(req.Transport, req.Bind, cert, key, peerFP)
+	if errors.Is(err, errUnknownTransport) {
+		httpError(w, http.StatusBadRequest, err.Error())
+		return
+	}
 	if err != nil {
 		httpError(w, http.StatusBadRequest, "could not open listener: "+err.Error())
 		return
@@ -739,6 +744,10 @@ func (s *Server) handleSessionInitiate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	conn, err := dialPeer(r.FormValue("transport"), address, cert, key, peerFP)
+	if errors.Is(err, errUnknownTransport) {
+		httpError(w, http.StatusBadRequest, err.Error())
+		return
+	}
 	if err != nil {
 		httpError(w, http.StatusBadGateway, "could not connect to peer: "+err.Error())
 		return
@@ -805,6 +814,10 @@ func (s *Server) handleSessionSend(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	conn, err := dialPeer(r.FormValue("transport"), address, cert, key, peerFP)
+	if errors.Is(err, errUnknownTransport) {
+		httpError(w, http.StatusBadRequest, err.Error())
+		return
+	}
 	if err != nil {
 		httpError(w, http.StatusBadGateway, "could not connect to peer: "+err.Error())
 		return
@@ -837,9 +850,36 @@ func readJSON(r *http.Request, v any) error {
 // should never be choosing a transport at all; a toggle shipped now would be a control
 // the ladder exists to remove. It is selectable over the API because that is what the
 // multi-instance harness drives.
-const transportQUIC = "quic"
+const (
+	transportTCP  = "tcp"
+	transportQUIC = "quic"
+)
+
+// errUnknownTransport names what was asked for and what exists.
+var errUnknownTransport = errors.New(`transport must be "tcp" or "quic"`)
+
+// checkTransport refuses a value it does not recognise instead of falling back.
+//
+// The empty string is TCP, because every caller that predates D14 sends nothing and
+// must keep working. Anything else non-empty is an ERROR, and that is the part worth
+// arguing: silently treating "QUIC" or a typo as TCP produces the two failures that
+// are hardest to diagnose. Either the two sides disagree — one arms a TCP listener,
+// the other dials QUIC at the same port, and the user is shown "could not connect to
+// peer" for what is a spelling mistake — or they agree on the fallback and the user
+// believes they are on a transport they are not.
+func checkTransport(transport string) error {
+	switch transport {
+	case "", transportTCP, transportQUIC:
+		return nil
+	default:
+		return fmt.Errorf("%w, not %q", errUnknownTransport, transport)
+	}
+}
 
 func dialPeer(transport, address string, cert, key, peerFP []byte) (*p2p.Conn, error) {
+	if err := checkTransport(transport); err != nil {
+		return nil, err
+	}
 	if transport == transportQUIC {
 		return p2p.QUICDial(address, cert, key, peerFP, sessionDialTimeout)
 	}
@@ -847,6 +887,9 @@ func dialPeer(transport, address string, cert, key, peerFP []byte) (*p2p.Conn, e
 }
 
 func listenPeer(transport, bind string, cert, key, peerFP []byte) (p2p.Listener, error) {
+	if err := checkTransport(transport); err != nil {
+		return nil, err
+	}
 	if transport == transportQUIC {
 		return p2p.QUICListen(bind, cert, key, peerFP)
 	}
