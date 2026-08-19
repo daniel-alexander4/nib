@@ -1110,3 +1110,39 @@ func (l *stubListener) Close() error               { l.closed = true; return nil
 func (l *stubListener) Addr() net.Addr {
 	return &net.TCPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 1}
 }
+
+// TestAnUnknownTransportIsRefusedNotSilentlyDowngraded.
+//
+// Introduced by P02.S05 and caught at P02's phase close: the selector was
+// `transport == "quic"`, so every other value — "QUIC", "Quic", a typo, "udp" —
+// silently chose TCP. The two failures that produces are the hardest kind to
+// diagnose. Either the sides disagree, and a spelling mistake is reported to the
+// user as "could not connect to peer"; or they agree on the fallback, and the user
+// believes they are on a transport they are not.
+//
+// The empty string stays TCP, because every caller that predates D14 sends nothing.
+func TestAnUnknownTransportIsRefusedNotSilentlyDowngraded(t *testing.T) {
+	// Stimulus: the values that ARE accepted are accepted. Without this, "every
+	// input is refused" passes the loop below and breaks the product.
+	for _, ok := range []string{"", "tcp", "quic"} {
+		if err := checkTransport(ok); err != nil {
+			t.Fatalf("transport %q was refused: %v — the accepted set is wrong and the "+
+				"refusals below prove nothing", ok, err)
+		}
+	}
+	for _, bad := range []string{"QUIC", "Quic", "quic ", "tcp/ip", "udp", "quick", "TCP"} {
+		err := checkTransport(bad)
+		if err == nil {
+			t.Errorf("transport %q was accepted and silently means TCP", bad)
+			continue
+		}
+		if !errors.Is(err, errUnknownTransport) {
+			t.Errorf("transport %q failed with %v, not as an unknown transport — the route "+
+				"would report it as a peer problem rather than the caller's", bad, err)
+		}
+		// The message must name what was sent, or a typo is invisible in a log.
+		if !strings.Contains(err.Error(), bad) {
+			t.Errorf("the error for %q does not quote it: %v", bad, err)
+		}
+	}
+}
