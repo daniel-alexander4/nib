@@ -794,7 +794,7 @@ func (s *Server) handleSessionInitiate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
-		httpError(w, http.StatusBadGateway, "could not connect to peer: "+err.Error())
+		httpError(w, http.StatusBadGateway, connectFailure(err))
 		return
 	}
 	defer conn.Close()
@@ -868,7 +868,7 @@ func (s *Server) handleSessionSend(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
-		httpError(w, http.StatusBadGateway, "could not connect to peer: "+err.Error())
+		httpError(w, http.StatusBadGateway, connectFailure(err))
 		return
 	}
 	defer conn.Close()
@@ -923,6 +923,26 @@ func checkTransport(transport string) error {
 	default:
 		return fmt.Errorf("%w, not %q", errUnknownTransport, transport)
 	}
+}
+
+// connectFailure turns a dial error into the sentence D19 asks for.
+//
+// **Without this, cause 5 arrives wearing cause 4's headline AND a false claim.** The dial
+// error is wrapped by dialAny as "tried N address(es), none answered as the pinned peer",
+// which is exactly right when nobody answered as the pinned peer — and exactly wrong when
+// the peer WAS the pinned peer and the two machines disagree about the time. The user was
+// told to check an address that is correct, about a peer that is right, while the ten-second
+// fix went unmentioned inside the wrapper.
+//
+// D19's fifth cause is the only one naming a fix a user can perform immediately, and P05's
+// criterion requires it "and never cause 4". So it is lifted out of the wrapping rather than
+// concatenated onto it.
+func connectFailure(err error) string {
+	var skew *p2p.ClockSkewError
+	if errors.As(err, &skew) {
+		return skew.Error()
+	}
+	return "could not connect to peer: " + err.Error()
 }
 
 func dialPeer(transport, address string, cert, key, peerFP []byte) (*p2p.Conn, error) {
