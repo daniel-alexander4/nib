@@ -17,13 +17,25 @@ import (
 // — not chunking — is the right bound, mirroring the URL-fetch size limits.
 const maxFrame = 128 << 20 // 128 MiB
 
-// exchangeDeadline is the absolute time budget for one whole session exchange
-// (handshake, frames both ways, and the wait on the REMOTE user's consent —
-// the initiator's read of the result blocks for the peer's entire decision).
-// It must exceed the receiving side's consent window (the server's
-// sessionConsentTimeout, 5 min) plus transfer and signing margin; without it a
-// peer that stalls mid-frame ties up the single armed session forever (frames
-// are size-capped by maxFrame but were not time-capped).
+// exchangeDeadline is the budget for one PHASE of a session — never for the whole of it.
+//
+// It must exceed the receiving side's consent window (the server's sessionConsentTimeout,
+// 5 min) plus transfer and signing margin; without it a peer that stalls mid-frame ties up
+// the single armed session forever (frames are size-capped by maxFrame but were not
+// time-capped).
+//
+// **It is re-armed after every local human gate, and that is a correctness property.**
+// `SetDeadline` is absolute wall-clock, so a user reading the four words on screen spends
+// the wire budget while no byte is moving. Since P01.S05 there are now TWO human waits in
+// one exchange — the spoken check (both roles) and the receiver's consent — and the
+// justification above is arithmetic for ONE. Left un-armed, two ordinary users each taking
+// ~3.5 minutes at their prompts, comfortably inside the windows the product advertises,
+// blow a six-minute absolute budget: the initiator's read times out AFTER the responder
+// has co-signed and saved, so both users have signed and only one holds the artifact.
+//
+// So each of the four entry points re-arms after `runVerification` returns, and the two
+// receiving ones re-arm again after consent (postConsentDeadline). The invariant is that
+// no single budget ever spans more than one human wait.
 const exchangeDeadline = 6 * time.Minute
 
 // postConsentDeadline is a FRESH budget for the I/O that follows the user's decision.
@@ -65,6 +77,9 @@ func Initiate(ch Channel, mySignedPDF, myFingerprint []byte, v Verifier) ([]byte
 	if err := runVerification(ch, true, myFingerprint, v); err != nil {
 		return nil, err
 	}
+	// Re-armed: the gate above spent wall-clock while nothing was on the wire. See
+	// exchangeDeadline — no budget may span more than one human wait.
+	_ = conn.SetDeadline(time.Now().Add(exchangeDeadline))
 	if err := writeFrame(conn, mySignedPDF); err != nil {
 		return nil, fmt.Errorf("send document: %w", err)
 	}
@@ -108,6 +123,9 @@ func Receive(ch Channel, myCertPEM, myKeyPEM []byte, peerLabel string, c Confirm
 	if err := runVerification(ch, false, myFP, v); err != nil {
 		return nil, err
 	}
+	// Re-armed: the gate above spent wall-clock while nothing was on the wire. See
+	// exchangeDeadline — no budget may span more than one human wait.
+	_ = conn.SetDeadline(time.Now().Add(exchangeDeadline))
 	inbound, err := readFrame(conn)
 	if err != nil {
 		return nil, fmt.Errorf("receive document: %w", err)
@@ -161,6 +179,9 @@ func SendDocument(ch Channel, pdf []byte, myFingerprint []byte, v Verifier) erro
 	if err := runVerification(ch, true, myFingerprint, v); err != nil {
 		return err
 	}
+	// Re-armed: the gate above spent wall-clock while nothing was on the wire. See
+	// exchangeDeadline — no budget may span more than one human wait.
+	_ = conn.SetDeadline(time.Now().Add(exchangeDeadline))
 	if err := writeFrame(conn, pdf); err != nil {
 		return fmt.Errorf("send document: %w", err)
 	}
@@ -194,6 +215,9 @@ func ReceiveDocument(ch Channel, a Accepter, myFingerprint []byte, v Verifier) (
 	if err := runVerification(ch, false, myFingerprint, v); err != nil {
 		return nil, err
 	}
+	// Re-armed: the gate above spent wall-clock while nothing was on the wire. See
+	// exchangeDeadline — no budget may span more than one human wait.
+	_ = conn.SetDeadline(time.Now().Add(exchangeDeadline))
 	inbound, err := readFrame(conn)
 	if err != nil {
 		return nil, fmt.Errorf("receive document: %w", err)

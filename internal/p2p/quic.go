@@ -23,11 +23,31 @@ import (
 const alpn = "nib/1"
 
 // quicIdle is how long a QUIC connection may sit with nothing on it before the
-// transport closes it. It is deliberately longer than the session core's own
-// exchangeDeadline: the core's deadline is what should end a stalled session, with a
-// message about the session, and an idle timeout firing first would replace that with
-// a transport error.
-const quicIdle = 5 * time.Minute
+// transport closes it, and quicKeepAlive is why it never gets there during a ceremony.
+//
+// The doc here used to say quicIdle was "deliberately longer than the session core's own
+// exchangeDeadline". It was 5 minutes against the core's 6 — **shorter**, and the sentence
+// had been false since the constant was written. With KeepAlivePeriod left at zero
+// (quic-go: "If set to 0, then no keep alive is sent") a QUIC session emitted NOTHING
+// while a user read the four words on screen, and a five-minute prompt ended the
+// connection with a transport error instead of the session's own message. On the
+// receiving side that lands after coSignExchange has already used the key — the exact
+// signature-exists-but-the-write-fails outcome postConsentDeadline was written to prevent,
+// one layer down where that fix cannot see it.
+//
+// **The fix is the keep-alive, not a bigger number**, and the reason is a coupling in
+// another package: `udpmux.peerTTL` is also 5 minutes, and a connection that outlives its
+// mux state starts routing short headers to the DHT — which `UseConnectionIDs`'s own doc
+// calls "the worse failure of the two". Raising quicIdle past peerTTL trades this defect
+// for that one. A keep-alive fixes both at once: the packets keep the connection up AND
+// refresh the mux's connection-id entry, so the two five-minute constants stop being a
+// pair that has to be kept in step across a package boundary.
+//
+// A ceremony is never actually idle — the humans are thinking. This says so on the wire.
+const (
+	quicIdle      = 5 * time.Minute
+	quicKeepAlive = 30 * time.Second
+)
 
 // closeGrace bounds how long the LISTENING side waits for the peer to finish reading
 // what it already wrote. It returns as soon as the peer closes, so this is the ceiling
@@ -36,7 +56,7 @@ const closeGrace = 5 * time.Second
 
 // quicConfig is the same on both ends.
 func quicConfig() *quic.Config {
-	return &quic.Config{MaxIdleTimeout: quicIdle}
+	return &quic.Config{MaxIdleTimeout: quicIdle, KeepAlivePeriod: quicKeepAlive}
 }
 
 // QUICDial opens a QUIC session to a pinned peer and returns it with its Channel
