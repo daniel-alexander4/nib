@@ -67,6 +67,7 @@ type screened struct {
 	net.PacketConn
 	dropped          *atomic.Uint64
 	refusedResponses *atomic.Uint64
+	responses        *atomic.Uint64
 }
 
 // ReadFrom skips what would kill the process and hands the rest through untouched.
@@ -89,6 +90,19 @@ func (s *screened) ReadFrom(p []byte) (int, net.Addr, error) {
 		if killsGetHandler(m) {
 			s.refusedResponses.Add(1)
 			continue
+		}
+		if m.Y == krpc.YResponse {
+			// Counted because otherwise "this response was delivered and correctly NOT
+			// refused" has no observable at all: the library discards a reply to an unknown
+			// transaction, so a test asserting the refusal counter did not move passes just
+			// as well when the datagram never arrived. Measured — every Stats field was
+			// identical before and after.
+			//
+			// It answers an operator question too, which is why it is a counter and not a
+			// test hook: zero here with queries going out is "nothing is replying to us",
+			// which is a different fact from "replies arrive and we drop them" (see
+			// RefusedResponses) and wants different advice.
+			s.responses.Add(1)
 		}
 		return n, addr, nil
 	}
@@ -196,7 +210,7 @@ func decodeScreened(b []byte) (m krpc.Msg, ok bool) {
 // through.
 //
 // `handleQuery` binds `args := m.A` and then, for `announce_peer` and `put`, reads
-// `args.Token` with no nil check (server.go:508, :540, :573). `get_peers` guards the
+// `args.Token` with no nil check (server.go:507 binds it; :540, :573 read it). `get_peers` guards the
 // same field one case earlier — the check exists, it was simply not applied to the other
 // two. So a query with **no `a` dict at all** is a nil dereference: 34 bytes of
 // `d1:q13:announce_peer1:t2:zz1:y1:qe`, or 23 of the `put` equivalent, and the process

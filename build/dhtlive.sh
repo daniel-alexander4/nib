@@ -64,7 +64,15 @@ NIB_LIVE_DHT=1 go test ./internal/rendezvous/ -run 'TestLive' -v -count=1 \
 # so a cold bootstrap yields an empty table. That is not a defect in the probe and
 # must not be a red; it is also emphatically not a pass, because nothing was
 # exercised. So it exits 0 saying SKIP, loudly, and says what was not verified.
-if grep -q "UNREACHABLE:" "$OUT"; then
+#
+# **Scoped PER TEST, and it was not always.** When this harness ran one named test, a
+# whole-file grep for UNREACHABLE was the same thing as asking about that test. Once it
+# began running every TestLive*, the same grep started reporting "the self-address probe is
+# UNVERIFIED" whenever the *publish/fetch* test skipped — a false sentence about a test
+# that had just passed — while suppressing the probe's own evidence lines and exiting
+# before the per-test block below could run. A gate that widens with its subject has to be
+# re-scoped with it.
+if grep -q -- "--- SKIP: TestLiveSelfAddressProbe" "$OUT"; then
   # No trailing space in the pattern: the test emits "UNREACHABLE: ...", and requiring
   # a space after the word dropped the one line that says WHY the run skipped.
   sed -n 's/^[[:space:]]*[a-z_]*\.go:[0-9]*: //; /^\(LOCAL\|BOOTSTRAP\|UNREACHABLE\)/p' "$OUT"

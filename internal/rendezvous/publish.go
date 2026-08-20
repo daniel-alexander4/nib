@@ -1,10 +1,12 @@
 package rendezvous
 
 import (
+	"cmp"
 	"context"
 	"crypto/ed25519"
 	"errors"
 	"fmt"
+	"math"
 	"sync/atomic"
 	"time"
 
@@ -105,8 +107,29 @@ func (s *Server) Publish(ctx context.Context, seed, salt, value []byte) error {
 	// must both bump it and re-sign — seq is inside the signed preimage
 	// (bep44/item.go:114-124). Returning the same seq with different bytes is refused by
 	// every remote node AND by our own store, silently, which is exactly the case that
-	// arises when the candidate set changes and republishing matters most.
+	// arises when the candidate set changes. (P04.S03 ships no republish loop — one publish
+	// covers a 300 s race against a 2 h item lifetime — so this is a guard against a future
+	// caller, not against a loop that exists.)
+	var seqCeiling bool
 	stats, err := getput.Put(ctx, target, s.dht, salt, func(seq int64) bep44.Put {
+		// seq+1 must not wrap, and the attack that makes it wrap is cheap.
+		//
+		// The hop's ed25519 key comes from the invitation secret, so EVERY roster member
+		// can write at our target. One publishing at math.MaxInt64 makes this `seq + 1`
+		// overflow to math.MinInt64 — Go wraps signed overflow silently, no panic, no
+		// error. Our own store accepts it (there is no prior item locally, so
+		// CheckIncoming never runs), every remote refuses it with
+		// ErrSequenceNumberLessThanCurrent, getput.Put shadows all of those and returns
+		// nil, and Publish reports success having stored nothing anywhere.
+		//
+		// Preemption by an invitation holder is a known and accepted in-roster power, but
+		// as a RACE the honest party re-wins by publishing higher. Overflow makes it
+		// permanent. Refusing here turns a silent permanent block into an error the caller
+		// can act on and a counter someone can read.
+		if seq >= math.MaxInt64-1 {
+			seqCeiling = true
+			return bep44.Put{}
+		}
 		p := bep44.Put{V: value, Salt: salt, Seq: seq + 1}
 		k := pub
 		p.K = &k
@@ -119,6 +142,11 @@ func (s *Server) Publish(ctx context.Context, seed, salt, value []byte) error {
 		// fields. A plain read here is a data race and -race will say so.
 		s.publishNodes.Store(uint64(atomic.LoadUint32(&stats.NumResponses)))
 	}
+	if seqCeiling {
+		s.publishSeqCeiling.Add(1)
+		return errors.New("rendezvous: the sequence number at this key is at its ceiling — " +
+			"somebody who holds this ceremony's invitation has taken the key")
+	}
 	if err != nil {
 		return err
 	}
@@ -130,7 +158,7 @@ func (s *Server) Publish(ctx context.Context, seed, salt, value []byte) error {
 //
 // # Two traps in the return value, both inverted from the normal Go contract
 //
-// `getput.Get`'s ctx.Done() arm sets err and does NOT touch ret (getput.go:112), so a
+// `getput.Get`'s ctx.Done() arm sets err and does NOT touch ret (getput.go:113-114), so a
 // perfectly good record can come back beside a non-nil error — a caller writing the
 // ordinary `if err != nil { return }` discards records it successfully fetched. And
 // `ret.Seq` is pre-set to math.MinInt64 (getput.go:94), so testing `Seq == 0` for
@@ -177,6 +205,19 @@ func (s *Server) Fetch(ctx context.Context, seed, salt []byte) ([]byte, int64, e
 		s.fetched.Add(1)
 		return value, res.Seq, nil
 	}
+	// A cancelled or timed-out traversal is NOT an empty fetch.
+	//
+	// getput.Get sets err = ctx.Err() and leaves ret alone, so a caller's cancellation and
+	// our own budget expiring both arrive here — and the first version of this function
+	// returned ErrNoRecord for them, which the ladder reports as "your peer has not
+	// published yet". It also counted them in fetchEmpty, whose own documentation says it
+	// must never be summed with a transport failure. Both were wrong in the same place.
+	if ctxErr := ctx.Err(); ctxErr != nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		s.fetchAborted.Add(1)
+		return nil, 0, fmt.Errorf("rendezvous: the lookup did not finish (%d node(s) had "+
+			"answered): %w", answered, cmp.Or(ctxErr, err))
+	}
+
 	s.fetchEmpty.Add(1)
 
 	// Nothing came back. Two very different facts wear that outcome, and the ladder shows

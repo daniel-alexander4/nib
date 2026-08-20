@@ -47,7 +47,7 @@ How Nib's feature set lines up against the three best-known PDF editors.
 | Single self-contained binary, cross-platform ‡ | ✅ | ❌ | ❌ | ❌ |
 | **Price** | 🟢 **Free** | 🔴 Subscription | 🔴 Paid | 🟡 Free tier |
 
-<sub>† Office conversion uses LibreOffice if it's installed — optional, detected at runtime, never bundled. ‡ One portable binary for Linux / macOS / Windows (PDF-XChange Editor is Windows-only). § Every document feature works with no network at all. Two things do use it, both started by you and never in the background: the release check, and **remote co-signing**, which finds your peer over the public BitTorrent DHT. See [What leaves your computer](#what-leaves-your-computer).</sub>
+<sub>† Office conversion uses LibreOffice if it's installed — optional, detected at runtime, never bundled. ‡ One portable binary for Linux / macOS / Windows (PDF-XChange Editor is Windows-only). § No account, no telemetry, no analytics, and every editing feature works with no network at all. A few features do reach the network — timestamping, timestamp verification, opening a document by URL, remote co-signing, and the update check — each one started by you and never in the background. All of them are listed in [What leaves your computer](#what-leaves-your-computer).</sub>
 
 Acrobat, Foxit and PDF-XChange are mature commercial editors that do plenty Nib
 doesn't aim to — full WYSIWYG content editing, prepress, cloud collaboration. The
@@ -439,10 +439,12 @@ There are two ways to exchange the document:
   alongside whatever you already had open, not on top of it** — your own document stays
   open, with anything you had typed or marked on it untouched.
 
-**Reachability for live sessions.** Nib runs no relay, rendezvous, or NAT-traversal
-infrastructure of its own (that would mean a server, and Nib has none). The dialing
-peer reaches the receiver's armed listener directly, so the receiver makes their
-chosen `host:port` reachable one of two ways:
+**Reachability for live sessions.** Nib operates no relay, rendezvous, or NAT-traversal
+infrastructure of its own — that would mean a server, and Nib has none. (It can *borrow*
+someone else's: the peer-finding work uses the public BitTorrent DHT as a meeting point,
+which is described under [What leaves your computer](#what-leaves-your-computer). Nothing
+in it is run by us.) Today the dialing peer reaches the receiver's armed listener directly,
+so the receiver makes their chosen `host:port` reachable one of two ways:
 
 - **Port-forward** the chosen port on their router to their machine, or
 - **Share a private network** you both already trust — a VPN such as **Tailscale**
@@ -657,48 +659,59 @@ your vault. (Defaults to dark.)
 
 ### What leaves your computer
 
-Everything Nib does to a document — editing, redaction, OCR, signing, export —
-happens on your machine, and your documents never leave it. But Nib is not a
-program that never touches the network, and the honest list is short enough to
-print in full.
+Nib edits, redacts, OCRs, signs and exports **on your machine**. It is not a program that
+never touches the network, though, and the list below is meant to be complete rather than
+reassuring — every one of these is something *you* start, none of them runs in the
+background, and Nib has no telemetry, analytics or crash reporting of any kind.
 
-| When | What goes out | Who sees it |
+| When | What goes out | Who receives it |
 |---|---|---|
-| At startup, unless turned off | A version query to GitHub | GitHub |
-| **Only while you run a remote co-signing ceremony** | Your public IP and port, and an **encrypted** record of it | strangers on the BitTorrent DHT — see below |
-| While a co-signing session is armed | A routable listener that accepts one pinned peer | the peer you pinned |
-| Never | Documents, document contents, telemetry, analytics, crash reports | — |
+| At startup, unless turned off | A version query | GitHub |
+| You click the version pill to update | The download of the new build | GitHub |
+| **You timestamp a document** (`nib timestamp`, or Finalize with timestamping) | A **SHA-256 of the document** — never the document | four public OpenTimestamps calendar servers |
+| **You verify a timestamp** | The transaction/block lookup for the proof | up to three public block explorers |
+| **You Finalize with an RFC-3161 timestamp authority** | A **digest of the signature** | the TSA URL *you* typed |
+| **You open a document by URL** | The request for that document | the host you named |
+| **You run a co-signing session** | The document itself, to your counterpart, over a channel pinned to their key | the peer you pinned — and anyone who scans the port can see it is open |
+| **You run `nib rendezvous`** | Queries that reveal this machine's public IP | strangers on the BitTorrent DHT |
+| Never, under any circumstances | Telemetry, analytics, crash reports, usage data, your document contents to *us* | — |
 
-**Remote co-signing and the BitTorrent DHT.** To sign with someone who is not on
-your network, the two copies of Nib have to find each other without a server in
-the middle — Nib does not run one, and does not want to. It uses the **public
-BitTorrent DHT** as a meeting point: a large, open, distributed index that anyone
-may read and write. Nib publishes one small record there saying *"here is where I
-can be reached"*, and reads the matching one from your counterpart.
+The row that surprises people is the co-signing one: **remote co-signing sends the document
+to the person you are signing with.** That is the feature. The pin means only they can
+receive it, and nothing else leaves — but "your documents never leave your computer" is not
+true of a flow whose purpose is to hand a document to someone else, and it would be
+dishonest to print it here.
 
-What that means concretely, stated plainly because you cannot consent to what you
-have not been told:
+#### The BitTorrent DHT
 
-- **The record's contents are encrypted** with a key derived from the invitation
-  you and your counterpart exchanged privately. Someone who does not hold that
-  invitation sees opaque bytes.
-- **The fact that you are there is not hidden.** Publishing to the DHT means
-  speaking to strangers' computers, and those computers learn your public IP
-  address and roughly when — the same way they would for anyone using the DHT.
-  Encryption protects the message; it cannot hide the envelope.
-- **It happens only during a ceremony you start**, and stops when the ceremony
-  ends. Nib does not join the DHT at startup, in the background, or when you are
-  merely editing a document.
-- **Nib is a client, not a server, there.** It asks and it publishes its own
-  record; it refuses requests to store other people's data.
-- **Local ceremonies never touch it.** If your counterpart is on the same network,
-  Nib finds them over the local link and the DHT is not used at all.
-- **"Records expire" means Nib stops republishing.** The copies already handed to
-  other people's computers age out on their schedule. There is no recall button,
-  and nobody could honestly offer you one.
+To sign with someone who is not on your network, two copies of Nib have to find each other
+without a server in the middle — Nib runs none and does not want to. The design uses the
+**public BitTorrent DHT**, a large open index anyone may read and write, as a meeting point:
+each side publishes a small encrypted record saying where it can be reached, and reads its
+counterpart's.
 
-If none of that is acceptable for a particular document, sign it locally or on
-the same network — those paths use no internet at all.
+Stated plainly, because you cannot consent to what you have not been told:
+
+- **The record's contents are encrypted** under a key derived from the invitation you and
+  your counterpart exchanged privately. Someone holding neither sees opaque bytes.
+- **The fact that you are there is not hidden.** Publishing means speaking to strangers'
+  computers, and they learn your public IP address and roughly when — the same way they
+  would for anyone using the DHT. Encryption protects the message, not the envelope.
+- **Nib does not store other people's data there.** It publishes its own record and asks
+  questions; requests to store someone else's bytes are refused. It does answer ordinary
+  DHT queries while it is running, and it serves its own record for about two hours, so it
+  is a participant rather than a pure spectator.
+- **"Records expire" is not a delete button.** Your Nib stops republishing and the record
+  carries a signed expiry that other Nibs refuse to act on once it passes — but the copies
+  already handed to strangers age out on their own schedule. There is no recall, and nobody
+  could honestly offer you one.
+- **Today, the only thing in Nib that joins the DHT is the `nib rendezvous` diagnostic**,
+  which prints a warning before it opens a socket and publishes nothing. Remote co-signing
+  currently needs a `host:port` you type. As the peer-finding work lands, an armed ceremony
+  will use the DHT too, and it will do so only while the ceremony is running.
+
+If none of that is acceptable for a particular document, sign it locally or on the same
+network, and don't run `nib rendezvous` — those paths use no internet at all.
 
 ---
 
@@ -793,9 +806,9 @@ otherwise the raw binary).
 
 This is the only call Nib makes **on its own** — the only one you never asked
 for — and it's a **version query — no document data, no telemetry**: your
-documents never leave your computer. It is not the only call Nib can make:
-remote co-signing uses the network too, but only while *you* are running a
-ceremony, and it is described under
+documents never leave your computer. It is not the only call Nib can make —
+timestamping, opening by URL and co-signing all use the network when you ask
+them to — and every one of them is listed under
 [What leaves your computer](#what-leaves-your-computer). Turn the
 startup check off from **⚙ Settings → Check for updates on startup** (saved in
 your vault), or set `NIB_NO_UPDATE_CHECK=1` to force it off regardless (clicking
@@ -845,6 +858,8 @@ isn't a known command (a PDF path, or nothing) still opens the app as usual.
 | `nib outline IN [--json]` | List the document's bookmark outline (indented by level, or JSON). |
 | `nib register` / `nib unregister` | **Windows only.** Add or remove Nib from Explorer's "Open with" menu for PDFs (per-user, no admin). Windows reserves the *default* handler for the user to pick. |
 | `nib watch DIR --do OP` | Run `timestamp`/`optimize`/`sanitize` on each PDF added to `DIR`, until interrupted. |
+| `nib discover` | Report what link-local peer discovery can see from this machine: which interfaces were joined and why, whether announcements left, and what came back. Local network only. |
+| `nib rendezvous` | Report whether the BitTorrent DHT that remote co-signing uses is reachable, and what this machine's public address looks like from outside. **Contacts the public internet** — it prints a notice before it opens a socket. Publishes nothing. |
 | `nib version` | Print the version. |
 
 Commands that produce a PDF write it to `-o`/`--out`; `timestamp` writes a

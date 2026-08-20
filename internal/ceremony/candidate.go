@@ -1,6 +1,7 @@
 package ceremony
 
 import (
+	"bytes"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/binary"
@@ -73,6 +74,19 @@ const candidateDomain = "nib-candidate-record-v1"
 
 // CandidateFormatVersion is inside the preimage, first after the domain tag (D32).
 const CandidateFormatVersion = 1
+
+// MaxCandidateLife caps how far ahead a record may claim to be valid.
+//
+// Expires is the ENTIRE freshness margin — BEP-44's seq cannot be signed (see
+// candidateAAD) and a recorded ciphertext is replayable by anyone who saw it — so a reader
+// that accepts any future instant accepts a record a storing node can re-serve for as long
+// as the publisher felt like writing. Verify used to do exactly that: `Expires: 9999-01-01`
+// passed. The ceiling belongs at the reader, because the publisher's good manners are not
+// a property the reader can check.
+//
+// Comfortably above D16's 300 s connect deadline plus margin, and far below anything that
+// would make a stale endpoint useful to an attacker.
+const MaxCandidateLife = time.Hour
 
 // MaxCandidates bounds one record. Eight is D33's candidate cap and the DHT's own bucket
 // size, and it keeps the sealed record inside BEP-44's value cap with room to spare.
@@ -165,29 +179,18 @@ func (c CandidateRecord) preimage() ([]byte, error) {
 	if len(c.SPKI) == 0 {
 		return nil, errors.New("candidate record has no public key")
 	}
-	var b []byte
-	lp := func(v []byte) {
-		var n [8]byte
-		binary.BigEndian.PutUint64(n[:], uint64(len(v)))
-		b = append(b, n[:]...)
-		b = append(b, v...)
-	}
-	num := func(n int) []byte {
-		var v [8]byte
-		binary.BigEndian.PutUint64(v[:], uint64(n))
-		return v[:]
-	}
-	lp([]byte(candidateDomain))
-	lp(num(c.Version))
-	lp([]byte(c.CeremonyID))
-	lp(num(c.Hop))
-	lp(c.SPKI)
-	lp([]byte(c.Expires.UTC().Format(time.RFC3339)))
-	lp(num(len(c.Addrs)))
+	var p preimageBuilder
+	p.addString(candidateDomain)
+	p.addUint(uint64(c.Version))
+	p.addString(c.CeremonyID)
+	p.addUint(uint64(c.Hop))
+	p.add(c.SPKI)
+	p.addString(c.Expires.UTC().Format(time.RFC3339))
+	p.addUint(uint64(len(c.Addrs)))
 	for _, a := range c.Addrs {
-		lp([]byte(a.String()))
+		p.addString(a.String())
 	}
-	return b, nil
+	return p.bytes(), nil
 }
 
 // Sign fills SPKI and Sig from the identity's certificate and key.
@@ -269,6 +272,10 @@ func (c CandidateRecord) Verify(inv Invitation, hop int, want string, now time.T
 	if !now.Before(c.Expires) {
 		return fmt.Errorf("%w: it expired at %s", ErrCandidateExpired, c.Expires.UTC().Format(time.RFC3339))
 	}
+	if c.Expires.After(now.Add(MaxCandidateLife)) {
+		return fmt.Errorf("%w: it claims to be valid until %s, more than %s from now",
+			ErrCandidateExpired, c.Expires.UTC().Format(time.RFC3339), MaxCandidateLife)
+	}
 	return nil
 }
 
@@ -296,7 +303,7 @@ func (c CandidateRecord) Verify(inv Invitation, hop int, want string, now time.T
 // the salt travels in cleartext in the put, the seq is picked by the traversal. Binding
 // them here means an attacker who rewrites any of them gets a decryption failure rather
 // than a record that reads as ours under different circumstances.
-func (c CandidateRecord) Seal(recordKey, salt []byte, hop int, seq int64) ([]byte, error) {
+func (c CandidateRecord) Seal(recordKey, salt []byte, hop int) ([]byte, error) {
 	if len(c.Sig) == 0 {
 		return nil, errors.New("cannot seal an unsigned candidate record")
 	}
@@ -304,6 +311,18 @@ func (c CandidateRecord) Seal(recordKey, salt []byte, hop int, seq int64) ([]byt
 	if err != nil {
 		return nil, err
 	}
+	// The signature must cover THESE fields, not the ones the struct had when Sign ran.
+	//
+	// Seal used to check only that Sig was non-empty, so a record mutated between Sign and
+	// Seal — one more candidate appended, an expiry nudged — sealed perfectly well and the
+	// peer refused it with ErrCandidateSignature, which reads as tampering in transit when
+	// the truth is a local mistake two calls earlier. Verifying here turns a
+	// remote-looking mystery into a local error at the line that caused it.
+	sum := sha256.Sum256(pre)
+	if err := sign.VerifyDigestSPKI(sum[:], c.Sig, c.SPKI); err != nil {
+		return nil, fmt.Errorf("this candidate record was modified after it was signed: %w", err)
+	}
+
 	var n [8]byte
 	binary.BigEndian.PutUint64(n[:], uint64(len(c.Sig)))
 	plain := append(append([]byte{}, pre...), n[:]...)
@@ -317,7 +336,7 @@ func (c CandidateRecord) Seal(recordKey, salt []byte, hop int, seq int64) ([]byt
 	if _, err := rand.Read(nonce); err != nil {
 		return nil, err
 	}
-	out := aead.Seal(nonce, nonce, plain, candidateAAD(salt, hop, seq))
+	out := aead.Seal(nonce, nonce, plain, candidateAAD(salt, hop))
 	if len(out) > MaxSealedRecord {
 		return nil, fmt.Errorf("%w: %d bytes, cap is %d", ErrCandidateTooBig, len(out), MaxSealedRecord)
 	}
@@ -327,7 +346,7 @@ func (c CandidateRecord) Seal(recordKey, salt []byte, hop int, seq int64) ([]byt
 // OpenCandidate decrypts and parses. It does NOT verify — Verify is a separate call
 // because a caller needs the roster and the expected fingerprint to do it, and folding
 // them in would let a caller who has neither believe it had checked something.
-func OpenCandidate(recordKey, salt []byte, hop int, seq int64, sealed []byte) (CandidateRecord, error) {
+func OpenCandidate(recordKey, salt []byte, hop int, sealed []byte) (CandidateRecord, error) {
 	aead, err := chacha20poly1305.NewX(recordKey)
 	if err != nil {
 		return CandidateRecord{}, err
@@ -336,7 +355,7 @@ func OpenCandidate(recordKey, salt []byte, hop int, seq int64, sealed []byte) (C
 		return CandidateRecord{}, ErrCandidateFormat
 	}
 	nonce, ct := sealed[:chacha20poly1305.NonceSizeX], sealed[chacha20poly1305.NonceSizeX:]
-	plain, err := aead.Open(nil, nonce, ct, candidateAAD(salt, hop, seq))
+	plain, err := aead.Open(nil, nonce, ct, candidateAAD(salt, hop))
 	if err != nil {
 		return CandidateRecord{}, ErrCandidateFormat
 	}
@@ -345,23 +364,27 @@ func OpenCandidate(recordKey, salt []byte, hop int, seq int64, sealed []byte) (C
 
 // candidateAAD is the associated data, built the same length-prefixed way as the preimage
 // so the same reasoning about boundaries applies.
-func candidateAAD(salt []byte, hop int, seq int64) []byte {
-	var b []byte
-	lp := func(v []byte) {
-		var n [8]byte
-		binary.BigEndian.PutUint64(n[:], uint64(len(v)))
-		b = append(b, n[:]...)
-		b = append(b, v...)
-	}
-	var h, s [8]byte
-	binary.BigEndian.PutUint64(h[:], uint64(hop))
-	binary.BigEndian.PutUint64(s[:], uint64(seq))
-	lp([]byte(candidateDomain))
-	lp([]byte{byte(CandidateFormatVersion)})
-	lp(salt)
-	lp(h[:])
-	lp(s[:])
-	return b
+// # Why `seq` is NOT here, though an earlier version bound it
+//
+// BEP-44's sequence number is chosen by the publish traversal AFTER the value is sealed
+// (`getput.go` computes autoSeq, then calls the callback). A sealer therefore has to guess
+// it, and the reader passes whatever the traversal actually used — so binding it made every
+// fetched record unopenable in production, reporting ErrCandidateFormat, which blames the
+// peer's build for a number the local publisher could not observe. The whole test suite
+// missed it because every test passed the literal 1 to both sides.
+//
+// And it defended against nobody. An outsider cannot republish at all: the BEP-44 signature
+// needs the hop seed, which comes from the invitation secret. An insider holds both that
+// seed and this record key, so they re-seal at any seq they like. A storing node re-serving
+// a recorded tuple serves it at its ORIGINAL seq, which binding permits. Freshness is the
+// signed Expires field's job, and always was.
+func candidateAAD(salt []byte, hop int) []byte {
+	var p preimageBuilder
+	p.addString(candidateDomain)
+	p.addUint(uint64(CandidateFormatVersion))
+	p.add(salt)
+	p.addUint(uint64(hop))
+	return p.bytes()
 }
 
 // parseCandidate walks the length-prefixed plaintext.
@@ -373,6 +396,7 @@ func candidateAAD(salt []byte, hop int, seq int64) []byte {
 // ignores an error is the ordinary mistake on a path that reads from strangers.
 func parseCandidate(b []byte) (CandidateRecord, error) {
 	var c CandidateRecord
+	all := b
 	next := func() ([]byte, bool) {
 		if len(b) < 8 {
 			return nil, false
@@ -436,12 +460,34 @@ func parseCandidate(b []byte) (CandidateRecord, error) {
 		}
 		c.Addrs = append(c.Addrs, ap)
 	}
+	consumed := all[:len(all)-len(b)] // the preimage: everything before the signature chunk
 	if c.Sig, ok = next(); !ok || len(c.Sig) == 0 {
 		return CandidateRecord{}, ErrCandidateFormat
 	}
 	if len(b) != 0 {
 		// Trailing bytes are not tolerated: they are outside the signature and outside
 		// the AAD, so accepting them would be accepting unauthenticated data.
+		return CandidateRecord{}, ErrCandidateFormat
+	}
+
+	// The received bytes must be the ONLY bytes that encode this record.
+	//
+	// Verify checks the signature over a preimage RE-BUILT from the parsed struct, not
+	// over what arrived. Several inputs round-trip to different bytes than they came in
+	// as — `2026-08-20T12:00:00.999999999Z` and `2026-08-20T17:00:00+05:00` both
+	// canonicalise, and `[0:0:0:0:0:0:0:1]:80` becomes `[::1]:80`. Every one is
+	// semantically identical today, so there is no exploit; what there is, is a gap
+	// between the doc's claim that "the thing signed and the thing sent are the same
+	// bytes" and what the code enforces. The plaintext is malleable inside the envelope by
+	// any record-key holder, and the day an axis with weaker canonicalisation is added
+	// that malleability is a signature bypass.
+	//
+	// Closing it costs one re-encode and makes the claim true rather than nearly true.
+	again, err := c.preimage()
+	if err != nil {
+		return CandidateRecord{}, ErrCandidateFormat
+	}
+	if !bytes.Equal(again, consumed) {
 		return CandidateRecord{}, ErrCandidateFormat
 	}
 	return c, nil
