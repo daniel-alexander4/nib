@@ -68,7 +68,7 @@ func (s *Server) handleRedact(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !s.commitBarrier(doc, result) {
-		httpError(w, http.StatusNotFound, "no document open")
+		httpError(w, http.StatusConflict, "that document is no longer open")
 		return
 	}
 	writeJSON(w, s.docResponse(doc))

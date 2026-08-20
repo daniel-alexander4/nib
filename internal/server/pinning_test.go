@@ -9,7 +9,11 @@ import (
 	"path/filepath"
 	"testing"
 
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"nib/internal/testpdf"
+	"strings"
 )
 
 // P04.S01's headline acceptance, and the only place in this plan where the failure is
@@ -237,4 +241,80 @@ func (c *closeOnFirstRead) Read(p []byte) (int, error) {
 	n := copy(p, c.data[c.off:])
 	c.off += n
 	return n, nil
+}
+
+// TestACommitFailureIsAlwaysA409 — ADR-004 rule 3, structurally.
+//
+// *"An id naming a document the server no longer holds is 409, never 404. 404 already means
+// 'no document open'; a closed tab is a different fact, and the client must tell them apart
+// to remove the tab rather than blank the app."*
+//
+// By the time `commitMutation`/`commitBarrier` returns false, `resolveDoc` has already
+// produced a non-nil document — so the ONLY way to reach the failure branch is a close
+// landing mid-flight, which is exactly the fact the ADR assigns 409. Eight handlers
+// answered 404 there, and `web/app.js` hooks 409 to reconcile and drop the stale tab while
+// 404 gets no handling at all: closing one tab during a long operation on it left a tab
+// where every subsequent action failed.
+//
+// A source guard rather than eight route tests, because the defect is a class — the ninth
+// handler to be written is the one this has to catch. `undo.go`'s own contract comment
+// still said "answer 404" when this was written, which is how eight copies stayed wrong.
+func TestACommitFailureIsAlwaysA409(t *testing.T) {
+	files, err := filepath.Glob("*.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var branches int
+	for _, f := range files {
+		if strings.HasSuffix(f, "_test.go") {
+			continue
+		}
+		src, err := os.ReadFile(f)
+		if err != nil {
+			t.Fatal(err)
+		}
+		fset := token.NewFileSet()
+		file, err := parser.ParseFile(fset, f, src, 0)
+		if err != nil {
+			continue
+		}
+		ast.Inspect(file, func(n ast.Node) bool {
+			ifs, ok := n.(*ast.IfStmt)
+			if !ok {
+				return true
+			}
+			// `if !s.commitMutation(...)` / `if !s.commitBarrier(...)`
+			un, ok := ifs.Cond.(*ast.UnaryExpr)
+			if !ok || un.Op != token.NOT {
+				return true
+			}
+			call, ok := un.X.(*ast.CallExpr)
+			if !ok {
+				return true
+			}
+			sel, ok := call.Fun.(*ast.SelectorExpr)
+			if !ok || (sel.Sel.Name != "commitMutation" && sel.Sel.Name != "commitBarrier") {
+				return true
+			}
+			branches++
+			body := string(src[fset.Position(ifs.Body.Pos()).Offset:fset.Position(ifs.Body.End()).Offset])
+			if strings.Contains(body, "StatusNotFound") {
+				t.Errorf("%s:%d: a %s failure answers 404. ADR-004: a document the server no "+
+					"longer holds is 409, never 404 — and the client only reconciles on 409, "+
+					"so this leaves a tab where everything fails",
+					f, fset.Position(ifs.Pos()).Line, sel.Sel.Name)
+			}
+			if !strings.Contains(body, "StatusConflict") {
+				t.Errorf("%s:%d: a %s failure answers neither 409 nor anything this guard "+
+					"recognises — it must be 409", f, fset.Position(ifs.Pos()).Line, sel.Sel.Name)
+			}
+			return true
+		})
+	}
+	// The floor. Eight handlers had this branch when the guard was written; zero means the
+	// matcher stopped matching and every assertion above ran over nothing.
+	if branches < 8 {
+		t.Fatalf("found %d commit-failure branch(es); expected at least 8 — the matcher has gone blind", branches)
+	}
+	t.Logf("%d commit-failure branches, all 409", branches)
 }

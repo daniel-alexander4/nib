@@ -45,15 +45,23 @@ func (s *Server) handleSanitize(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Read ONCE, and this is the state the undo entry records.
+	//
+	// commitMutation's contract: "Callers pass the input they actually operated on … so
+	// undo restores precisely the pre-op document." Calling docBytes twice — as the
+	// operation's input and again as the commit's — lets a concurrent mutation land in
+	// between, so the undo entry records the NEW bytes as the state to return to and a
+	// later undo restores a document that never existed.
+	before := s.docBytes(doc)
 	var result []byte
 	var err error
 	switch r.FormValue("method") {
 	case "strip":
-		result, err = pdfops.StripActive(s.docBytes(doc))
+		result, err = pdfops.StripActive(before)
 	case "safe":
-		result, err = pdfops.RemoveFilesAndMedia(s.docBytes(doc))
+		result, err = pdfops.RemoveFilesAndMedia(before)
 	case "metadata":
-		result, err = pdfops.StripMetadata(s.docBytes(doc))
+		result, err = pdfops.StripMetadata(before)
 	default:
 		httpError(w, http.StatusBadRequest, "unknown method")
 		return
@@ -67,8 +75,8 @@ func (s *Server) handleSanitize(w http.ResponseWriter, r *http.Request) {
 	}
 
 	residual, _ := pdfops.Scan(result)
-	if !s.commitMutation(doc, s.docBytes(doc), result) {
-		httpError(w, http.StatusNotFound, "no document open")
+	if !s.commitMutation(doc, before, result) {
+		httpError(w, http.StatusConflict, "that document is no longer open")
 		return
 	}
 	writeJSON(w, sanitizeResponse{docResponse: s.docResponse(doc), Ok: true, Residual: residual})
@@ -125,7 +133,15 @@ func (s *Server) handleDecrypt(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	result, err := pdfops.RemovePassword(s.docBytes(doc), r.FormValue("password"))
+	// Read ONCE, and this is the state the undo entry records.
+	//
+	// commitMutation's contract: "Callers pass the input they actually operated on … so
+	// undo restores precisely the pre-op document." Calling docBytes twice — as the
+	// operation's input and again as the commit's — lets a concurrent mutation land in
+	// between, so the undo entry records the NEW bytes as the state to return to and a
+	// later undo restores a document that never existed.
+	before := s.docBytes(doc)
+	result, err := pdfops.RemovePassword(before, r.FormValue("password"))
 	if err != nil {
 		switch {
 		case errors.Is(err, pdfops.ErrWrongPassword):
@@ -137,8 +153,8 @@ func (s *Server) handleDecrypt(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
-	if !s.commitMutation(doc, s.docBytes(doc), result) {
-		httpError(w, http.StatusNotFound, "no document open")
+	if !s.commitMutation(doc, before, result) {
+		httpError(w, http.StatusConflict, "that document is no longer open")
 		return
 	}
 	writeJSON(w, decryptResponse{docResponse: s.docResponse(doc), Ok: true})

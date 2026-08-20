@@ -613,7 +613,9 @@ func (s *Server) handlePDF(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/pdf")
 	w.Header().Set("Cache-Control", "no-store")
-	_, _ = w.Write(doc.data)
+	// Through docBytes, like the other thirteen readers. This was the last handler
+	// reading the field directly — the thing docBytes' own doc forbids by name.
+	_, _ = w.Write(s.docBytes(doc))
 }
 
 // handleSave persists filled PDF bytes produced by pdf.js saveDocument(). For a
