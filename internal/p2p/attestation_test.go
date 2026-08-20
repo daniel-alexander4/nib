@@ -57,7 +57,14 @@ func TestShortFingerprint(t *testing.T) {
 // that ReadAttestations would parse instead of the real accepted peer.
 func TestReasonResistsTokenInjection(t *testing.T) {
 	real := "ffeeddccbbaa00998877665544332211ffeeddccbbaa00998877665544332211"
-	spoof := "aaaa" + "0000000000000000000000000000000000000000000000000000000000" // 64 hex
+	// 64 hex characters, and the count is the whole test.
+	//
+	// This was "aaaa" + 58 zeros = **62**, and spkiToken requires exactly 64 followed by
+	// "]". So the injected [SPKI:<62hex>] could never match whether or not safeText
+	// stripped the brackets: with safeText replaced by the identity function this test
+	// still passed. It is the ONLY test of safeText, and safeText is the only defence
+	// attestation.go names.
+	spoof := "aaaa" + strings.Repeat("0", 60) // 4 + 60 = 64
 	att := Attestation{
 		Signer:            "Nib User",
 		AcceptedPeer:      real,

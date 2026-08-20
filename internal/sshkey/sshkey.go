@@ -129,9 +129,7 @@ func Unwrap(wrapped []byte, keyPath, pubLine string, passphrase []byte) ([]byte,
 // to privPath and the public key to privPath+".pub". It returns the public key
 // as an authorized_keys line. It refuses to overwrite an existing file.
 func Generate(privPath string) (pubLine string, err error) {
-	if _, err := os.Stat(privPath); err == nil {
-		return "", os.ErrExist
-	}
+	// The refusal is O_EXCL's, not a Stat's. See the write below.
 	pub, priv, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
 		return "", err
@@ -143,8 +141,28 @@ func Generate(privPath string) (pubLine string, err error) {
 	if err := os.MkdirAll(filepath.Dir(privPath), 0o700); err != nil {
 		return "", err
 	}
-	if err := os.WriteFile(privPath, pem.EncodeToMemory(block), 0o600); err != nil {
+	// O_CREATE|O_EXCL, because this doc comment says "It refuses to overwrite an existing
+	// file" and `os.Stat` + `os.WriteFile` does not enforce that: WriteFile is O_TRUNC, so
+	// any Stat error other than ErrNotExist fell through to a truncating write — as did the
+	// TOCTOU window between the two calls. The file in question is typically
+	// ~/.ssh/id_ed25519: the user's SSH identity AND the key the vault's content key is
+	// sealed to, so truncating it is permanent vault loss with no recovery path.
+	//
+	// This makes the contract the kernel's job rather than a check beside it, and the
+	// existing TestGenerateRefusesOverwrite now tests the real mechanism.
+	f, err := os.OpenFile(privPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if err != nil {
+		if os.IsExist(err) {
+			return "", os.ErrExist
+		}
 		return "", err
+	}
+	if _, werr := f.Write(pem.EncodeToMemory(block)); werr != nil {
+		f.Close()
+		return "", werr
+	}
+	if cerr := f.Close(); cerr != nil {
+		return "", cerr
 	}
 	sshPub, err := ssh.NewPublicKey(pub)
 	if err != nil {
