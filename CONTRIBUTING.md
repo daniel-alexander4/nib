@@ -41,6 +41,12 @@ a check that reaches the public internet imports every stranger's outage into yo
 build. Run it when touching `internal/rendezvous`, the seed list, or NAT
 classification.
 
+Setting `NIB_LIVE_SEEDS=ip:port[,ip:port...]` additionally drives the invitation-seed
+rescue path — a machine whose shipped list fails bootstrapping from addresses an
+invitation carried. The addresses are an **input** rather than a lookup because Nib must
+never resolve a name on the bootstrap path, and a live seed test is the one place tempted
+to. Without the variable that one test skips and the rest of the harness is unchanged.
+
 There is also `./build/winrepro.sh`, which runs the Windows binary under wine to
 check the places `path/filepath` answers differently, and to run a **second
 launch** against a live first one — the single-instance hand-off, on the platform

@@ -50,6 +50,11 @@ func TestBootstrapResolvesNoHostname(t *testing.T) {
 		"ResolveTCPAddr":         "resolves a host:port string, which may be a hostname",
 		"GlobalBootstrapAddrs":   "the library's hostname bootstrap — exactly what D6 forbids",
 		"NewDefaultServerConfig": "the default config, whose StartingNodes IS the hostname bootstrap",
+		// AddNode fires `go s.Ping(addr)` for any zero-id node (server.go:391-394), with a
+		// context Ping discards — one uncancellable goroutine per seed, all at once. An
+		// invitation may carry eight, and a hostile one would carry eight it chose.
+		// StartingNodes is the path Open already uses and is evaluated lazily.
+		"AddNode": "spawns an uncancellable ping goroutine per node; seeds go through StartingNodes",
 	}
 	for name, f := range pkg.Files {
 		ast.Inspect(f, func(n ast.Node) bool {

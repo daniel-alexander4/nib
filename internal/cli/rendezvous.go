@@ -230,6 +230,10 @@ func runRendezvous(out, errw io.Writer, budget time.Duration, selfTest bool) int
 		st.Published, st.PublishAttempts, st.PublishNodes, st.PublishSeqCeiling)
 	fmt.Fprintf(out, "fetch           %d/%d found, %d empty, %d aborted, %d undecodable, %d node(s) answered\n",
 		st.Fetched, st.FetchAttempts, st.FetchEmpty, st.FetchAborted, st.FetchUndecodable, st.FetchNodes)
+	// AFTER the self-test, which is the only thing that can supply seeds. Printed from the
+	// snapshot taken before it, this line could only ever say nothing — the counter it
+	// reads is written 300 lines later.
+	fmt.Fprint(out, invitationSeedNote(st))
 	if !selfTest {
 		fmt.Fprintf(out, "                (this command publishes and fetches nothing; all zero is correct — "+
 			"pass --self-test to drive them)\n")
@@ -268,9 +272,15 @@ func verdict(st rendezvous.Stats, self rendezvous.SelfAddress, bootErr, probeErr
 		case bootErr != nil:
 			why = "The bootstrap did not finish: " + bootErr.Error() + "."
 		case st.Responses > 0:
+			which := "the shipped seed addresses"
+			if st.InvitationSeedsUsed {
+				// Naming the shipped list here would be a confident wrong diagnosis: the
+				// table was built from the invitation's addresses, so "your seed list is
+				// stale" sends the user to fix the wrong thing.
+				which = "the addresses tried (shipped AND invitation-supplied)"
+			}
 			why = fmt.Sprintf("%d reply/replies DID reach us, so this network is not "+
-				"blocking UDP — the shipped seed addresses answered but led nowhere, which "+
-				"is what a stale seed list looks like.", st.Responses)
+				"blocking UDP — %s answered but led nowhere.", st.Responses, which)
 		default:
 			why = "Nothing replied at all, which usually means outbound UDP is blocked here."
 		}
@@ -321,6 +331,30 @@ func coldNote(seeds int) string {
 		return "  (cold start — no usable node cache)"
 	}
 	return ""
+}
+
+// invitationSeedNote reports the eclipse-relevant fact: this table came from a list
+// somebody else chose, after everything Nib ships had failed.
+func invitationSeedNote(st rendezvous.Stats) string {
+	switch {
+	case st.InvitationSeeds == 0:
+		return ""
+	case st.InvitationSeedsUsed:
+		return fmt.Sprintf("  %d invitation-supplied address(es), AND THEY WERE USED — "+
+			"everything Nib ships failed first,\n                        so this routing "+
+			"table came from a list the invitation's sender chose\n", st.InvitationSeeds)
+	case st.InvitationSeedsTried:
+		// The third state, and it existed before this branch did. TRIED with USED false is
+		// a machine whose shipped list failed AND whose invitation seeds then failed too —
+		// the worst case this diagnostic has to describe, and it was printing "the shipped
+		// list worked" over it.
+		return fmt.Sprintf("  %d invitation-supplied address(es), tried and they answered "+
+			"nothing either\n                        (the shipped list had already "+
+			"failed) — this machine reached no DHT at all\n", st.InvitationSeeds)
+	default:
+		return fmt.Sprintf("  %d invitation-supplied address(es), unused (the shipped list "+
+			"worked)\n", st.InvitationSeeds)
+	}
 }
 
 func classLine(c rendezvous.Class) string {
@@ -422,6 +456,33 @@ func runSelfTest(ctx context.Context, out io.Writer, rz *rendezvous.Server, self
 		Roster:              []ceremony.Party{{Fingerprint: fpHex, Signs: true}},
 		Secret:              secret,
 		ConvenerFingerprint: fpHex,
+	}
+
+	// Seeds, sampled from the live table — the producing half of D6's second half, and the
+	// only production caller of the seed validator.
+	//
+	// A validator with no caller is this repo's recorded lesson twice over (P03's "a guard
+	// tested a predicate and not that anything called it"), and this slice's own acceptance
+	// asks for a caller by name. It is possible here only because seeds reach the DHT
+	// through `Seed()` AFTER `Open` — the socket opens long before an invitation exists, so
+	// a third `Open` parameter could never have been fed from one.
+	inv.Seeds = rz.SeedSample(ceremony.MaxSeeds)
+	if len(inv.Seeds) > 0 {
+		// Round-trip them through the wire form, so what is exercised is the real
+		// validating path a recipient runs and not a helper call.
+		text, eerr := inv.Encode()
+		if eerr != nil {
+			fmt.Fprintf(out, "  seed encode: %v\n", eerr)
+			return false
+		}
+		back, perr := ceremony.ParseInvitation(text)
+		if perr != nil {
+			fmt.Fprintf(out, "  seed round trip: %v\n", perr)
+			return false
+		}
+		fmt.Fprintf(out, "  sampled %d seed(s) from the live table; %d survived the "+
+			"invitation round trip (%d chars)\n", len(inv.Seeds), len(back.Seeds), len(text))
+		rz.Seed(back.Seeds)
 	}
 
 	const hop = 0

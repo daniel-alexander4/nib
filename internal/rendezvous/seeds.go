@@ -25,6 +25,28 @@ import "net"
 //	82.221.103.244:6881  router.utorrent.com      silent
 //	185.157.221.247:6881 dht.libtorrent.org       silent
 //
+// # One of the three was not dead, it was on the wrong port (2026-08-20)
+//
+// `dht.libtorrent.org` listens on **25401**, not 6881. Re-measured through P04.S06's live
+// harness, one seed at a time, each from a cold table:
+//
+//	185.157.221.247:25401  ->  26 nodes learned
+//	185.157.221.247:6881   ->   2 nodes learned
+//	212.129.33.59 + 87.98.162.88 (:6881)  ->  25 nodes learned
+//	67.215.246.10 + 82.221.103.244 (:6881)  ->  0 nodes learned
+//
+// So the list was carrying a transcription error and reading it as rot. "Silent" is a
+// verdict about an address, and an address is a host AND a port — the 2026-08-19 pass
+// varied the host and held the port fixed at the one every guide prints, which cannot
+// distinguish a dead host from a live one listening elsewhere. The port is corrected below;
+// the two routers really are silent and are kept for the reason the next paragraph gives.
+//
+// This also revises the gloomiest sentence here: the shipped list is **not** uniformly
+// failing. One run in the same session bootstrapped to 25 nodes off the transmissionbt
+// pair alone, with the invitation seeds never reached. What the day actually shows is a
+// list with two dead entries, one mistyped entry and two that work intermittently — which
+// is a thin margin, not an outage, and is still the argument for D6's second half.
+//
 // Three of the five shipped were already dead the day the list was written, and
 // router.bittorrent.com and router.utorrent.com are the two every guide still names. A
 // sixth, dht.aelitis.com, was dead too and is not shipped. That is the honest state of
@@ -41,13 +63,15 @@ import "net"
 //
 // The durable mechanism is the cache, not this list. One successful contact replaces it
 // forever, and D6's second half — seed nodes carried in the invitation, filed against
-// P04.S03 — is what keeps the common case from ever consulting it.
+// P04.S06 — is what keeps the common case from ever consulting it.
 func seedNodes() []*net.UDPAddr {
 	return []*net.UDPAddr{
 		{IP: net.IPv4(212, 129, 33, 59), Port: 6881},
 		{IP: net.IPv4(87, 98, 162, 88), Port: 6881},
 		{IP: net.IPv4(67, 215, 246, 10), Port: 6881},
 		{IP: net.IPv4(82, 221, 103, 244), Port: 6881},
-		{IP: net.IPv4(185, 157, 221, 247), Port: 6881},
+		// 25401, not 6881 — see the re-measurement above. Shipping this on the port
+		// every guide prints made a live node look like a fourth dead one.
+		{IP: net.IPv4(185, 157, 221, 247), Port: 25401},
 	}
 }

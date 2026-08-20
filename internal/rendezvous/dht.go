@@ -23,12 +23,16 @@ package rendezvous
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"math/big"
 	"net"
+	"net/netip"
 	"os"
 	"path/filepath"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -36,6 +40,8 @@ import (
 	"github.com/anacrolix/dht/v2"
 	"github.com/anacrolix/dht/v2/krpc"
 	"golang.org/x/time/rate"
+
+	"nib/internal/addrscope"
 )
 
 // bootstrapFile is where the cached node list lives.
@@ -64,6 +70,27 @@ type Stats struct {
 	// Seeds is how many shipped seed addresses were used because the cache was
 	// empty. Non-zero means this was a cold start.
 	Seeds int
+	// InvitationSeeds is how many bootstrap addresses a caller supplied out of band, and
+	// InvitationSeedsUsed says whether they were actually consulted.
+	//
+	// **A sibling rather than a contribution to Seeds, and the reason is the rot alarm.**
+	// Seeds means "how many SHIPPED addresses were used because the cache was empty", and
+	// `Bootstrapped == 0 while Seeds > 0` is what tells an operator that every address Nib
+	// ships is dead. Folding invitation seeds into it would leave that alarm unable to
+	// separate "our list rotted" from "the invitation's seeds were bad or hostile", and
+	// would make `nib rendezvous` print "cold start — no usable node cache" on a machine
+	// with a perfectly good cache.
+	InvitationSeeds int
+	// InvitationSeedsUsed is also the eclipse flag: true means this routing table was
+	// bootstrapped from addresses somebody else chose, after everything Nib ships had
+	// failed. Every downstream bound still holds — addrscope bounds which victim, the
+	// candidate cap bounds fan-out, D33 bounds packets — but the fact that the table came
+	// from a stranger's list is worth being able to read.
+	// InvitationSeedsTried is set once the demonstrated-failure retry has run. TRIED and
+	// USED are different facts: a retry that reached nothing leaves this true and USED
+	// false, and the operator note must not then claim the shipped list worked.
+	InvitationSeedsTried bool
+	InvitationSeedsUsed  bool
 	// Bootstrapped is how many nodes the bootstrap traversals ADDED to the table — not
 	// how many seeds replied, which is a different question this cannot answer, since
 	// the traversal learns nodes from nodes. **Zero while Seeds is non-zero is the rot
@@ -193,6 +220,15 @@ type Server struct {
 	fetchAborted      atomic.Uint64
 	publishSeqCeiling atomic.Uint64
 
+	// mu guards the invitation seeds, which a caller may set at any time while the
+	// library's own goroutine reads them from the StartingNodes closure.
+	mu       sync.Mutex
+	invSeeds []netip.AddrPort
+	// self is the probed public endpoint, kept so the seed sampler can refuse to ship it.
+	self          netip.AddrPort
+	invSeedsTried bool
+	invSeedsUsed  bool
+
 	observed       atomic.Uint64
 	rejectedLength atomic.Uint64
 	rejectedPort   atomic.Uint64
@@ -304,12 +340,23 @@ func Open(conn net.PacketConn, dir string) (*Server, error) {
 		// still right, because "the cache, deliberately" and "nothing, by omission"
 		// should not look identical in the source.
 		StartingNodes: func() ([]dht.Addr, error) {
+			s.mu.Lock()
+			var extra []netip.AddrPort
+			if s.invSeedsTried {
+				extra = append(extra, s.invSeeds...)
+			}
+			s.mu.Unlock()
 			out := make([]dht.Addr, 0, len(nodes)+len(seeds))
 			for _, n := range nodes {
 				out = append(out, dht.NewAddr(n.Addr.UDP()))
 			}
 			for _, a := range seeds {
 				out = append(out, dht.NewAddr(a))
+			}
+			for _, ap := range extra {
+				// net.UDPAddrFromAddrPort, never ResolveUDPAddr — the guard forbids the
+				// resolver by name, and the type forbids a hostname by construction.
+				out = append(out, dht.NewAddr(net.UDPAddrFromAddrPort(ap)))
 			}
 			return out, nil
 		},
@@ -327,33 +374,38 @@ func (s *Server) Nodes() []krpc.NodeInfo { return s.dht.Nodes() }
 
 // Stats reports what happened.
 func (s *Server) Stats() Stats {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	return Stats{
-		Nodes:             s.dht.NumNodes(),
-		Loaded:            s.loaded,
-		Saved:             s.saved.Load(),
-		CacheRejected:     s.cacheRejected,
-		Seeds:             s.seeds,
-		Bootstrapped:      s.bootstrapped.Load(),
-		Screened:          s.screened.Load(),
-		RefusedQueries:    s.refusedQueries.Load(),
-		RefusedResponses:  s.refusedResponses.Load(),
-		Responses:         s.responses.Load(),
-		RefusedStores:     s.refusedStores.Load(),
-		PublishAttempts:   s.publishAttempts.Load(),
-		Published:         s.published.Load(),
-		PublishNodes:      s.publishNodes.Load(),
-		FetchAttempts:     s.fetchAttempts.Load(),
-		Fetched:           s.fetched.Load(),
-		FetchEmpty:        s.fetchEmpty.Load(),
-		FetchUndecodable:  s.fetchUndecodable.Load(),
-		FetchNodes:        s.fetchNodes.Load(),
-		FetchAborted:      s.fetchAborted.Load(),
-		PublishSeqCeiling: s.publishSeqCeiling.Load(),
-		Observed:          s.observed.Load(),
-		RejectedLength:    s.rejectedLength.Load(),
-		RejectedPort:      s.rejectedPort.Load(),
-		RejectedScope:     s.rejectedScope.Load(),
-		Disagreements:     s.disagreements.Load(),
+		Nodes:                s.dht.NumNodes(),
+		Loaded:               s.loaded,
+		Saved:                s.saved.Load(),
+		CacheRejected:        s.cacheRejected,
+		Seeds:                s.seeds,
+		InvitationSeeds:      len(s.invSeeds),
+		InvitationSeedsTried: s.invSeedsTried,
+		InvitationSeedsUsed:  s.invSeedsUsed,
+		Bootstrapped:         s.bootstrapped.Load(),
+		Screened:             s.screened.Load(),
+		RefusedQueries:       s.refusedQueries.Load(),
+		RefusedResponses:     s.refusedResponses.Load(),
+		Responses:            s.responses.Load(),
+		RefusedStores:        s.refusedStores.Load(),
+		PublishAttempts:      s.publishAttempts.Load(),
+		Published:            s.published.Load(),
+		PublishNodes:         s.publishNodes.Load(),
+		FetchAttempts:        s.fetchAttempts.Load(),
+		Fetched:              s.fetched.Load(),
+		FetchEmpty:           s.fetchEmpty.Load(),
+		FetchUndecodable:     s.fetchUndecodable.Load(),
+		FetchNodes:           s.fetchNodes.Load(),
+		FetchAborted:         s.fetchAborted.Load(),
+		PublishSeqCeiling:    s.publishSeqCeiling.Load(),
+		Observed:             s.observed.Load(),
+		RejectedLength:       s.rejectedLength.Load(),
+		RejectedPort:         s.rejectedPort.Load(),
+		RejectedScope:        s.rejectedScope.Load(),
+		Disagreements:        s.disagreements.Load(),
 	}
 }
 
@@ -382,6 +434,65 @@ func (s *Server) Ping(ctx context.Context, addr *net.UDPAddr) error {
 // observations, so "bootstrapped" and "able to see ourselves" are two states and this
 // is the step between them.
 func (s *Server) Bootstrap(ctx context.Context) error {
+	err := s.bootstrapOnce(ctx)
+
+	// Invitation seeds are a LAST RESORT, and the trigger is demonstrated failure rather
+	// than an empty cache file.
+	//
+	// The obvious branch — use them when the cache is empty — tests the wrong thing.
+	// `Open`'s `len(nodes) == 0` asks whether the FILE is empty, not whether it works, so a
+	// machine carrying forty stale cached nodes would never reach the seeds at all. That is
+	// precisely the machine invitation seeds exist for: it has spoken to the DHT before,
+	// its cache is worthless now, and `Bootstrapped` reads 0 with `Seeds` 0 and nothing
+	// says why.
+	//
+	// Trying them only after a real bootstrap produced nothing also bounds the exposure.
+	// Seeds are attacker-controllable and permanently unsigned, so a design that consults
+	// them on every run hands whoever wrote the invitation a read receipt per run and a
+	// standing chance to eclipse the routing table. Here they are reached only by a machine
+	// that already cannot bootstrap any other way.
+	s.mu.Lock()
+	retry := s.dht.NumNodes() == 0 && len(s.invSeeds) > 0 && !s.invSeedsTried
+	if retry {
+		// Set BEFORE the retry, because the closure reads it to decide whether to emit the
+		// seeds at all. "Tried" is all this can honestly mean at this point.
+		//
+		// A caller whose context is already dead burns the one shot without reaching a
+		// single seed, and that is deliberate: re-arming on a failed attempt is what turns
+		// "consulted at most once per process" into "consulted on every retry", which is
+		// the read receipt and the standing eclipse chance the one-shot exists to bound.
+		// The run whose context died has failed anyway, and the CLI reports it.
+		s.invSeedsTried = true
+	}
+	s.mu.Unlock()
+	if !retry {
+		return err
+	}
+
+	err2 := s.bootstrapOnce(ctx)
+
+	// USED is a separate fact from TRIED, and conflating them made the eclipse disclosure
+	// lie. The retry runs on the caller's context, which the first attempt may already have
+	// exhausted — measured: `err=context deadline exceeded, InvitationSeedsUsed=true,
+	// Nodes=0, Bootstrapped=0`. That reported "this routing table came from a list the
+	// invitation's sender chose" about a table that came from nothing at all. The flag the
+	// operator reads is now set only if the table is actually populated after the retry.
+	if s.dht.NumNodes() > 0 {
+		s.mu.Lock()
+		s.invSeedsUsed = true
+		s.mu.Unlock()
+		// The attempt that decided the table owns the verdict. Keeping the first error
+		// would report a failure over a working table — and the caller prints it.
+		return nil
+	}
+	if err2 != nil {
+		return err2
+	}
+	return err
+}
+
+// bootstrapOnce is one traversal, counting what it added.
+func (s *Server) bootstrapOnce(ctx context.Context) error {
 	before := s.dht.NumNodes()
 	_, err := s.dht.BootstrapContext(ctx)
 	// Read ONCE. Called twice — for the comparison and again for the subtraction — a
@@ -392,6 +503,92 @@ func (s *Server) Bootstrap(ctx context.Context) error {
 		s.bootstrapped.Add(uint64(after - before))
 	}
 	return err
+}
+
+// SeedSample picks up to n live nodes to put in an invitation — the producing half of
+// D6's second half.
+//
+// **Random per call, and that is a privacy property rather than a nicety.** A stable seed
+// set is a watermark: two invitations sharing one would link them to a single issuer, and a
+// recipient's bootstrap tells whoever chose the addresses that this invitation was opened,
+// from this IP, at this moment. Sampling fresh each time removes the first of those; the
+// second is inherent to the mechanism and is what the disclosure exists for.
+//
+// It cannot leak the issuer's own endpoint: a DHT routing table holds other nodes, never
+// self. Filtered through addrscope anyway, because a table entry is something strangers
+// put there.
+func (s *Server) SeedSample(n int) []netip.AddrPort {
+	s.mu.Lock()
+	self := s.self
+	s.mu.Unlock()
+	return sampleSeeds(s.dht.Nodes(), self, n)
+}
+
+// sampleSeeds is the pure half, separated from the query that feeds it for the same reason
+// `classify` is: a hermetic table can only ever hold loopback nodes, which the predicate
+// correctly refuses — so driving the filter through a live Server tests nothing. An earlier
+// version of the test did exactly that: `SeedSample` stubbed to return nil kept it green,
+// because its loop body never ran.
+func sampleSeeds(nodes []krpc.NodeInfo, self netip.AddrPort, n int) []netip.AddrPort {
+	if n <= 0 {
+		return nil
+	}
+	var usable []netip.AddrPort
+	for _, ni := range nodes {
+		a, ok := netip.AddrFromSlice(ni.Addr.IP)
+		if !ok || ni.Addr.Port <= 0 || ni.Addr.Port > 0xffff {
+			continue
+		}
+		ap := netip.AddrPortFrom(a.Unmap(), uint16(ni.Addr.Port))
+		// Never our own endpoint — ENFORCED, not asserted.
+		//
+		// The doc used to rest this on the library refusing to store its own node in the
+		// routing table, which is a check on the ID and not the address: a second Nib on
+		// this host, or another peer behind the same office NAT, has a different id and the
+		// same public IP. Shipping that to every recipient and every mail server in between
+		// is the disclosure this slice says must not happen.
+		if self.IsValid() && ap.Addr() == self.Addr() {
+			continue
+		}
+		if addrscope.Seed(ap) {
+			usable = append(usable, ap)
+		}
+	}
+	if len(usable) <= n {
+		return slices.Clone(usable)
+	}
+	// Fisher-Yates over crypto/rand: an invitation is a security artifact and a predictable
+	// sample is a predictable watermark.
+	for i := len(usable) - 1; i > 0; i-- {
+		j, err := rand.Int(rand.Reader, big.NewInt(int64(i+1)))
+		if err != nil {
+			// A half-shuffled prefix would silently lose the anti-watermark property this
+			// function's whole doc rests on. crypto/rand does not fail on a modern kernel,
+			// so refusing costs nothing and keeps the claim true.
+			return nil
+		}
+		k := int(j.Int64())
+		usable[i], usable[k] = usable[k], usable[i]
+	}
+	return slices.Clone(usable[:n])
+}
+
+// Seed supplies bootstrap addresses a caller obtained out of band — D6's second half, the
+// seeds an invitation carries.
+//
+// **Opaque `netip.AddrPort`, and after Open rather than through it.** After, because
+// `StartingNodes` is evaluated lazily at every traversal, and because the caller that has
+// an invitation does not necessarily have one when the socket opens. `netip.AddrPort`
+// because it is structurally incapable of holding a hostname — a stronger statement of D6's
+// no-resolver rule than the name blacklist that guards this package, and one that survives
+// a rename.
+//
+// This package never learns where they came from. Validation is the caller's, and lives
+// where the invitation is (L1: this package may not read one).
+func (s *Server) Seed(addrs []netip.AddrPort) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.invSeeds = append(s.invSeeds[:0], addrs...)
 }
 
 // Close saves the node list and stops the DHT. **It does not close the socket** —
@@ -463,6 +660,23 @@ func (s *Server) loadNodes() ([]krpc.NodeInfo, error) {
 
 // saveNodes writes the routing table back.
 func (s *Server) saveNodes() error {
+	// A table built from somebody else's addresses is NOT written down.
+	//
+	// Without this the eclipse outlives the ceremony: the invitation's seeds answer, their
+	// neighbours become the persistent cache, and every future run bootstraps from an
+	// attacker-chosen list with Seeds 0, InvitationSeeds 0 and InvitationSeedsUsed false —
+	// no trace on the machine of where the table came from. The written answer to the
+	// eclipse chain bounds what a hostile seed can do *during* a ceremony; this is what
+	// stops it becoming permanent.
+	//
+	// The cost is one cold start next time, which is exactly the situation invitation
+	// seeds exist to rescue.
+	s.mu.Lock()
+	fromStranger := s.invSeedsUsed
+	s.mu.Unlock()
+	if fromStranger {
+		return nil
+	}
 	n, err := writeNodes(s.dir, s.dht.Nodes())
 	if err != nil {
 		return err
