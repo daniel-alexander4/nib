@@ -419,6 +419,10 @@ func (i Invitation) RecordSalt(hop int, fingerprint string) ([]byte, error) {
 // role distinguishes the two directions so the initiator's MAC cannot be replayed back as
 // the responder's — a reflection that would otherwise let an attacker who can echo bytes
 // look like a peer holding the secret.
+// bindingDomain separates the MAC preimage from every other length-prefixed structure this
+// package builds. The MAC input had no tag at all.
+const bindingDomain = "nib-invitation-binding-preimage-v1"
+
 func (i Invitation) BindingMAC(exporter []byte, role string) ([]byte, error) {
 	if len(exporter) == 0 {
 		return nil, errors.New("no channel binding material")
@@ -427,9 +431,21 @@ func (i Invitation) BindingMAC(exporter []byte, role string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
+	// Through preimageBuilder, like every other signed input in this package — its own
+	// doc calls itself "the one length-prefix encoder every signed preimage in this
+	// package uses", and this was the exception that made the sentence false.
+	//
+	// Bare concatenation is ambiguous: ("a","bc") and ("ab","c") write identical bytes and
+	// produce one MAC. Two mitigations existed and neither was written down or asserted —
+	// the key is purpose-derived, so confusion needs the same key, and the only roles ever
+	// passed happen to be the same length. `role` is a free string parameter on an exported
+	// method, so neither is a property of the code.
+	var pb preimageBuilder
+	pb.addString(bindingDomain)
+	pb.addString(role)
+	pb.add(exporter)
 	m := hmac.New(sha256.New, k)
-	m.Write([]byte(role))
-	m.Write(exporter)
+	m.Write(pb.bytes())
 	return m.Sum(nil), nil
 }
 
@@ -475,6 +491,27 @@ func (i Invitation) MatchesRecord(r Record) error {
 		if a.Signs != b.Signs {
 			return fmt.Errorf("%w: party %d is %s in the invitation and %s in the document's record",
 				ErrRosterMismatch, n+1, signsWord(a.Signs), signsWord(b.Signs))
+		}
+	}
+	// The convener, which this check skipped entirely — while ConvenerFingerprint's own doc
+	// said it exists "so a party can check the record's signer against what the invitation
+	// told them to expect". That check was the one thing the field was for, and it did not
+	// exist; the field was written at two sites and read nowhere.
+	//
+	// It matters because the roster hash does not bind who convened: any roster member can
+	// re-sign an unchanged roster and `Record.Verify` still passes, since it only asks that
+	// the signer appear SOMEWHERE in the roster. The invitation is the second, independent
+	// statement of who it should have been.
+	if i.ConvenerFingerprint != "" {
+		conv, ok := r.Convener()
+		if !ok {
+			return fmt.Errorf("%w: the document's record is signed by nobody in its own roster",
+				ErrRosterMismatch)
+		}
+		if conv.Fingerprint != i.ConvenerFingerprint {
+			return fmt.Errorf("%w: the invitation says %s convened and the document's record "+
+				"is signed by %s", ErrRosterMismatch,
+				short(i.ConvenerFingerprint), short(conv.Fingerprint))
 		}
 	}
 	return nil

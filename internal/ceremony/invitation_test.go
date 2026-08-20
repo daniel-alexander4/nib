@@ -378,3 +378,106 @@ func TestAnInvitationIsNotASigningCredential(t *testing.T) {
 		}
 	}
 }
+
+// TestAnInvitationCatchesARecordConvenedBySomeoneElse.
+//
+// `ConvenerFingerprint`'s doc says it exists "so a party can check the record's signer
+// against what the invitation told them to expect". `MatchesRecord` compared the id, the
+// fingerprints and the signs flags — and never the convener. The field was written at two
+// sites and **read nowhere**: the check it exists for did not exist.
+//
+// It matters because `RosterHash` does not bind who convened. `Record.Verify` asks only
+// that the signer appear SOMEWHERE in the roster, so any roster member can re-sign an
+// unchanged roster with their own key and the record still verifies — and `Convener()` then
+// names them. The invitation is the second, independent statement of who it should be.
+func TestAnInvitationCatchesARecordConvenedBySomeoneElse(t *testing.T) {
+	cert, key, cfp := identity(t, "Convener")
+	certA, keyA, afp := identity(t, "A")
+	rec := draft(t, cfp, afp)
+	if err := rec.Sign(cert, key); err != nil {
+		t.Fatal(err)
+	}
+	inv, err := NewInvitation(rec)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// STIMULUS: the honest pair must match, or the refusal below proves nothing.
+	if err := inv.MatchesRecord(rec); err != nil {
+		t.Fatalf("setup: the honest invitation and record do not match: %v", err)
+	}
+
+	// The OTHER roster member re-signs the IDENTICAL roster with their own key.
+	forged := rec
+	if err := forged.Sign(certA, keyA); err != nil {
+		t.Fatal(err)
+	}
+
+	// STIMULUS, and it is the finding: the forgery VERIFIES. Nothing about the record
+	// itself can see it — the roster hash is byte-identical, so RosterToken is too.
+	if err := forged.Verify(); err != nil {
+		t.Fatalf("setup: the re-signed record does not verify, so this is not the attack "+
+			"the check is for: %v", err)
+	}
+	origTok, _ := rec.RosterToken()
+	forgedTok, _ := forged.RosterToken()
+	if origTok != forgedTok {
+		t.Fatalf("setup: the roster token changed (%s vs %s) — then the record alone can "+
+			"already tell, and MatchesRecord is not the only thing that could catch this",
+			origTok, forgedTok)
+	}
+	if conv, ok := forged.Convener(); !ok || conv.Fingerprint == cfp {
+		t.Fatalf("setup: Convener() still names the original convener")
+	}
+
+	if err := inv.MatchesRecord(forged); !errors.Is(err, ErrRosterMismatch) {
+		t.Errorf("MatchesRecord accepted a record convened by a different roster member: "+
+			"%v. A verifier reading the finished document cannot tell which of them "+
+			"convened, and the invitation is the only independent statement of it", err)
+	}
+}
+
+// TestTheBindingMACCannotBeSlidAcrossItsFieldBoundary.
+//
+// `BindingMAC` concatenated `role` and `exporter` with no length prefixes and no domain
+// tag, bypassing `preimageBuilder` — whose own doc calls itself "the one length-prefix
+// encoder every signed preimage in this package uses", which this made false.
+//
+// Bare concatenation is ambiguous: ("a","bc") and ("ab","c") write identical bytes. Two
+// mitigations existed and neither was written down or asserted — the key is purpose-derived
+// so confusion needs the same key, and the only roles anyone passes happen to be the same
+// length. `role` is a free string parameter on an exported method, so neither is a property
+// of the code.
+func TestTheBindingMACCannotBeSlidAcrossItsFieldBoundary(t *testing.T) {
+	_, inv := invited(t)
+
+	a, err := inv.BindingMAC([]byte("bc"), "a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := inv.BindingMAC([]byte("c"), "ab")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Equal(a, b) {
+		t.Error(`BindingMAC("bc","a") == BindingMAC("c","ab") — the boundary between the ` +
+			"role and the channel binding can be slid, so one MAC attests to two different " +
+			"(role, exporter) pairs")
+	}
+
+	// The control: the same inputs must still agree with themselves, or the fix is just noise.
+	again, err := inv.BindingMAC([]byte("bc"), "a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(a, again) {
+		t.Fatal("BindingMAC is not deterministic")
+	}
+	// And the property the MAC exists for: the two roles must differ, so a reflection of
+	// the initiator's MAC cannot pass as the responder's.
+	init, _ := inv.BindingMAC([]byte("x"), "initiator")
+	resp, _ := inv.BindingMAC([]byte("x"), "responder")
+	if bytes.Equal(init, resp) {
+		t.Error("the two roles produce one MAC — a reflection passes as a peer holding the secret")
+	}
+}

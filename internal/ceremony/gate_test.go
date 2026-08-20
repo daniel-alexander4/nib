@@ -90,13 +90,20 @@ func TestOneKeyYieldsNoMoreThanNAcrossTheWholeRace(t *testing.T) {
 func TestAnOverCapRecordIsRefusedWhole(t *testing.T) {
 	g, inv, certA, keyA, fpA := gateFor(t)
 
-	// Hand-build the plaintext: MaxCandidates+50 addresses, framed exactly as preimage()
+	// Hand-build the plaintext: MaxCandidates+1 addresses, framed exactly as preimage()
 	// does, because preimage() itself refuses to produce this.
+	//
+	// **+1, not +50.** The +50 version sealed to 1,859 bytes — past MaxSealedRecord and
+	// past BEP-44's own 1000-byte value cap, so it is a record no peer could ever deliver.
+	// Once the read path grew its own size ceiling (v1.116.6) that record was refused as
+	// TOO BIG before the candidate cap was reached, and this test failed. It was measuring
+	// the cap through a stimulus the cap would never see. +1 is the shape an attacker
+	// actually has: a record that fits the wire and carries one candidate too many.
 	spki, err := signCandidateSPKIForTest(t, certA, keyA)
 	if err != nil {
 		t.Fatal(err)
 	}
-	n := MaxCandidates + 50
+	n := MaxCandidates + 1
 	var p preimageBuilder
 	p.addString(candidateDomain)
 	p.addUint(uint64(CandidateFormatVersion))
@@ -562,5 +569,42 @@ func TestAHostileDocumentCannotCarryAnUnboundedRoster(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "limit") {
 		t.Fatalf("refused for the wrong reason: %v", err)
+	}
+}
+
+// TestAnOverSizeSealedRecordIsRefusedAtTheRead.
+//
+// `MaxSealedRecord` was a producer-only bound: `Seal` refused over 996 bytes and `Accept`
+// handed a slice of any length to `aead.Open`, which allocates `len(ct)`. The only thing
+// bounding it was anacrolix/dht's bencode check — in a package L1 forbids this one from
+// importing, so the ceiling was a hope about a transitive dependency rather than a property
+// of this package.
+func TestAnOverSizeSealedRecordIsRefusedAtTheRead(t *testing.T) {
+	g, _, _, _, _ := gateFor(t)
+
+	// Well-formed enough to reach the AEAD, and far past the ceiling.
+	huge := make([]byte, MaxSealedRecord*64)
+	if _, err := rand.Read(huge[:64]); err != nil {
+		t.Fatal(err)
+	}
+	err := g.Accept(huge, time.Now())
+	if !errors.Is(err, ErrCandidateTooBig) {
+		t.Fatalf("a %d-byte record was not refused at the read: %v", len(huge), err)
+	}
+	if g.Stats().RefusedSealed != 1 {
+		t.Errorf("RefusedSealed = %d, want 1 — an over-size record must be countable",
+			g.Stats().RefusedSealed)
+	}
+
+	// The boundary, and it is the assertion that stops the ceiling being "refuse
+	// everything": a record exactly at the cap must still be admitted to the AEAD. It
+	// fails there (these are random bytes), which is a DIFFERENT refusal — and that is the
+	// point: the size gate did not swallow it.
+	atCap := make([]byte, MaxSealedRecord)
+	if _, err := rand.Read(atCap); err != nil {
+		t.Fatal(err)
+	}
+	if err := g.Accept(atCap, time.Now()); errors.Is(err, ErrCandidateTooBig) {
+		t.Error("a record exactly at MaxSealedRecord was refused as over-cap")
 	}
 }

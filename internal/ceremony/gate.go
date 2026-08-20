@@ -2,6 +2,7 @@ package ceremony
 
 import (
 	"errors"
+	"fmt"
 	"net/netip"
 	"time"
 )
@@ -148,6 +149,19 @@ func (g *CandidateGate) Salt() []byte { return g.salt }
 // It returns the error so a caller can log or diagnose, but the counters are the report:
 // the acceptance says a counter something reads, not a log line.
 func (g *CandidateGate) Accept(sealed []byte, now time.Time) error {
+	// The ceiling, HERE, at the read — not only at Seal.
+	//
+	// MaxSealedRecord was a producer-only bound: `Seal` refused over 996 bytes and `Accept`
+	// took a slice of any length straight to `aead.Open`, which allocates len(ct). The only
+	// thing bounding it was anacrolix/dht's bencode check, in a package L1 forbids this one
+	// from importing — so the ceiling was a hope about a transitive dependency rather than a
+	// property of this package. Both other doors in this package already argue the opposite:
+	// validateSeeds is "called at BOTH doors, and that is the whole point", and
+	// parseCandidate is "Refused HERE, at the parse, not at the dialer".
+	if len(sealed) > MaxSealedRecord {
+		g.stats.RefusedSealed++
+		return fmt.Errorf("%w: %d bytes, cap is %d", ErrCandidateTooBig, len(sealed), MaxSealedRecord)
+	}
 	rec, err := OpenCandidate(g.key, g.salt, g.hop, sealed)
 	if err != nil {
 		switch {

@@ -2,7 +2,10 @@ package ceremony
 
 import (
 	"bytes"
+	"crypto/rand"
 	"encoding/binary"
+	"errors"
+	"golang.org/x/crypto/chacha20poly1305"
 	"net/netip"
 	"strconv"
 	"strings"
@@ -715,5 +718,83 @@ func TestTheSealedCapMatchesWhatBep44WillActuallyAccept(t *testing.T) {
 	if next := len(strconv.Itoa(MaxSealedRecord+1)) + 1 + MaxSealedRecord + 1; next <= 1000 {
 		t.Errorf("MaxSealedRecord is %d but %d would still fit (%d bencoded) — the cap is "+
 			"needlessly tight", MaxSealedRecord, MaxSealedRecord+1, next)
+	}
+}
+
+// TestAVersionSkewedRecordSaysSoInsteadOfAccusingThePeer.
+//
+// `candidateAAD` used to bind the BUILD's `CandidateFormatVersion` constant — not the
+// record's wire version, which cannot be known before decryption. So the first bump of that
+// constant would make every v1 ciphertext in flight fail `aead.Open`, surfacing as
+// `ErrCandidateSealed`: *"this record was not written for this ceremony, or has been
+// altered"* — an accusation of tampering where the truth is that two builds disagree about
+// a format. `record.go` spends six lines refusing exactly that for the sibling format, in
+// this same package, under D32.
+//
+// Driven by sealing a record whose wire version is not this build's, which is precisely the
+// artifact a peer one version ahead publishes.
+func TestAVersionSkewedRecordSaysSoInsteadOfAccusingThePeer(t *testing.T) {
+	g, inv, certA, keyA, fpA := gateFor(t)
+	spki, err := signCandidateSPKIForTest(t, certA, keyA)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var p preimageBuilder
+	p.addString(candidateDomain)
+	p.addUint(uint64(CandidateFormatVersion + 1)) // a peer one version ahead
+	p.addString(inv.ID)
+	p.addUint(uint64(testHop))
+	p.add(spki)
+	p.addString(time.Now().Add(time.Minute).UTC().Format(time.RFC3339))
+	p.addUint(1)
+	p.addString("93.184.216.34:34154")
+	var l [8]byte
+	binary.BigEndian.PutUint64(l[:], 8)
+	plain := append(p.bytes(), l[:]...)
+	plain = append(plain, make([]byte, 8)...)
+
+	rk, err := inv.RecordKey(testHop)
+	if err != nil {
+		t.Fatal(err)
+	}
+	salt, err := inv.RecordSalt(testHop, fpA)
+	if err != nil {
+		t.Fatal(err)
+	}
+	aead, err := chacha20poly1305.NewX(rk)
+	if err != nil {
+		t.Fatal(err)
+	}
+	nonce := make([]byte, chacha20poly1305.NonceSizeX)
+	if _, err := rand.Read(nonce); err != nil {
+		t.Fatal(err)
+	}
+	// The AAD is HAND-BUILT here, not taken from candidateAAD, and that is the whole
+	// test. Sealing with the function under test moves both sides together — which is
+	// exactly how the original defect hid: every test passed the same literal to both
+	// ends, so an AAD that bound the build's version constant looked fine. This states
+	// the wire contract independently: domain, salt, hop, and NO version.
+	var a preimageBuilder
+	a.addString(candidateDomain)
+	a.add(salt)
+	a.addUint(uint64(testHop))
+	sealed := aead.Seal(nonce, nonce, plain, a.bytes())
+
+	err = g.Accept(sealed, time.Now())
+	// The whole finding is WHICH refusal this is. Sealed means "somebody tampered with
+	// this, or it is not for this ceremony" — a statement about the peer's honesty. Version
+	// means "your builds disagree" — a statement about software.
+	if errors.Is(err, ErrCandidateSealed) {
+		t.Fatalf("a version-skewed record was refused as SEALED (%v) — that accuses a "+
+			"counterparty of tampering when the truth is that two builds disagree about "+
+			"the format, which is the exact failure D32 exists to prevent", err)
+	}
+	if !errors.Is(err, ErrVersion) && !errors.Is(err, ErrCandidateFormat) {
+		t.Errorf("a version-skewed record was refused as %v; want the version to be named", err)
+	}
+	if g.Stats().RefusedSealed != 0 {
+		t.Errorf("RefusedSealed = %d — a version skew must not read as tampering in the "+
+			"counters either, since their sum is the preemption signal",
+			g.Stats().RefusedSealed)
 	}
 }
