@@ -216,6 +216,20 @@ between them and a silent failure on a platform no tier can reach.
 | `internal/discovery` imports the vault | `TestResolutionLivesOutsideTheDiscoveryPackage`, rewritten over the AST | the guard now checks the invariant instead of a string in a neighbouring file |
 
 
+## Tier 1 — `internal/udpmux` and `internal/rendezvous` (P04.S01)
+
+| Defect reintroduced | Check that fired | What it said |
+|---|---|---|
+| The connection-id rule removed, back to the address rule (v1.111.0) | `TestKRPCFromAQUICPeerReachesTheDHT` | the ping to a host we hold a QUIC session with times out — **this is the collision P02.S03 documented and left, driven at last** |
+| An unknown connection id falls back to the address rule | the same test | the fallback must stop the moment ids are registered, or the collision survives the fix |
+| Ids registered but never consulted | the same test | a table nothing reads is the address rule wearing a new name |
+| One of the two `quic.Transport` constructions loses its generator | `TestBothTransportsWireTheConnectionIDGenerator` | "1 of 2 … install a connection-id generator". **The failure is silent by design** — the mux falls back so the session keeps working, and only a DHT reply from a session peer is swallowed |
+| `Open` accepts a nil connection | `TestTheDHTIsNeverGivenANilConn` | `dht.NewServer` opens its OWN socket, and caveat 7 is that the probe and the session must be one socket. **This one failed against the code as first written** |
+| An empty routing table truncates a good cache | `TestAnEmptyTableDoesNotTruncateAGoodCache` | one bad network day would become a permanently cold start |
+| A corrupt cache is misread rather than refused | `TestACorruptCacheIsRefusedRatherThanMisread` | a partial record becomes a node at an address nobody is at |
+| The hostname bootstrap made reachable | `TestBootstrapResolvesNoHostname` | D6 forbids it: a DNS lookup is a third party learning who starts a ceremony and when |
+
+
 ## Vacuous greens caught, and how
 
 Not red proofs — the opposite, and worth as much. Each is a check that was **passing while
@@ -252,3 +266,7 @@ measuring nothing**, found by its own setup assertion or by a deliberate probe.
 | `TestOffLinkSourcesAreRejected` tested the predicate, not the wiring | removing `onLink`'s call from the read loop left it **green**: a predicate with no caller passes its own unit test perfectly. This is the "guard with no callers" shape, self-inflicted | the probe. Fixed by driving a real off-link datagram in the namespace, which needed a third dummy interface on a subnet the socket does not join |
 | `TestResolutionLivesOutsideTheDiscoveryPackage` | it asserted a neighbouring **file contained a string** — satisfiable by a comment, or by a leftover after the guard was deleted. **Fourth instance** of this hole here, and written one file away from the third fix | a review agent. Now parses `internal/discovery` and asserts the invariant itself: that package imports no vault, sign or p2p |
 | Two tests silently deleted by an edit | rewriting one test truncated the file, taking `TestARealAnnouncementResolvesToACandidate` and `TestALinkLocalCandidateCarriesItsZone` with it. `go test ./...` stayed green — **it cannot tell you a test stopped existing**, the same finding P07 recorded | `mcastrepro.sh` greps for a *specific* PASS line and reported "the resolution test did not PASS inside the namespace". A harness that names its expected tests catches what the suite cannot |
+| `Stats.Resolutions`, in `internal/rendezvous`'s first draft (v1.111.0) | a counter incremented by `Add(0)` — it could only ever be zero — with a comment arguing that *made it worth asserting*. Asserting a constant proves nothing about the code meant to keep it constant. It is the vacuous instrument stated as a virtue | writing the comment and not believing it. Replaced by an AST guard over the things that can actually appear: `LookupHost`, `ResolveUDPAddr`, `GlobalBootstrapAddrs`, `NewDefaultServerConfig` |
+| The same file's claim about a nil `StartingNodes` | the comment said leaving it nil "is opting into exactly what D6 forbids" — hostname bootstrap. **False.** `NewServer` fills in `Conn`, `Logger`, `Store` and `SendLimiter` and leaves `StartingNodes` alone; nil means *no bootstrap at all* (`server.go:1268`). The hostname fallback lives in `NewDefaultServerConfig`, which this code never calls | reading `NewServer` after writing the claim rather than before. Setting the field is still right — "the cache, deliberately" and "nothing, by omission" should not look identical — but for a different reason than the one written down |
+| `TestKRPCFromAQUICPeerReachesTheDHT`'s first assertion point | it read `RoutedByCID` immediately after `Dial` and got 0 — because a handshake is all LONG headers and `Dial` returns the moment it completes. That is the rule having nothing yet to decide, not the rule failing | the numbers not matching the story: `RoutedLongHeader:2, RoutedByCID:0`. Fixed by writing to a stream first, which is when short headers start |
+| The same test with the generator wired on ONE end | it still failed, and the reason is the finding: B's mux learns A as a QUIC peer from **its own handshake writes**, so B swallowed A's ping by the same address rule at the other end of the same exchange. **The collision is symmetric and a one-sided fix is not a fix** | wiring only the side under test, which seemed like isolation and was a hole |

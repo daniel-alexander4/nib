@@ -95,6 +95,12 @@ type Mux struct {
 	mu    sync.RWMutex
 	peers map[netip.AddrPort]time.Time
 
+	// cidMu guards the connection-ID table and its length. Separate from mu because
+	// the two are read on different rules and a short-header packet touches only one.
+	cidMu  sync.RWMutex
+	cidLen int
+	cids   map[string]time.Time
+
 	// now is fixed at construction so the read loop never observes it changing.
 	// A test that reassigned it on a live Mux would race with route().
 	now func() time.Time
@@ -104,6 +110,7 @@ type Mux struct {
 	// Seam-inventory counters (class 1). Read by the mux's own tests and by
 	// Stats, which is what a diagnosability route would report.
 	longHeader atomic.Uint64
+	byCID      atomic.Uint64
 	byPeer     atomic.Uint64
 	toDHT      atomic.Uint64
 	learned    atomic.Uint64
@@ -115,7 +122,15 @@ type Mux struct {
 type Stats struct {
 	// RoutedLongHeader — datagrams sent to QUIC by rule 1 (0x80 set).
 	RoutedLongHeader uint64
-	// RoutedByPeer — datagrams sent to QUIC by rule 2 (known peer address).
+	// RoutedByCID — datagrams sent to QUIC because their destination connection ID
+	// is one this endpoint issued. Exact, and the rule that removes the address
+	// rule's one collision.
+	RoutedByCID uint64
+	// RoutedByPeer — datagrams sent to QUIC by the ADDRESS rule, which applies only
+	// while no connection ID has ever been registered. **Non-zero after a QUIC
+	// transport is running is a wiring failure**: it means the connection-ID
+	// generator was never installed, and the mux is back on the rule whose collision
+	// swallows a DHT reply from a session peer.
 	RoutedByPeer uint64
 	// RoutedToDHT — datagrams that matched neither rule.
 	RoutedToDHT uint64
@@ -161,6 +176,7 @@ func (m *Mux) Stats() Stats {
 	m.mu.RUnlock()
 	return Stats{
 		RoutedLongHeader: m.longHeader.Load(),
+		RoutedByCID:      m.byCID.Load(),
 		RoutedByPeer:     m.byPeer.Load(),
 		RoutedToDHT:      m.toDHT.Load(),
 		Learned:          m.learned.Load(),
@@ -193,12 +209,93 @@ func (m *Mux) route(p []byte, addr net.Addr) *side {
 		m.longHeader.Add(1)
 		return m.quic
 	}
+	if known, any := m.knownCID(p); known {
+		m.byCID.Add(1)
+		return m.quic
+	} else if any {
+		// Connection IDs ARE registered and this is not one of them, so the packet
+		// is not for any connection this endpoint owns. That is a decision the
+		// address rule cannot make, and it is the whole point: a KRPC reply from a
+		// host we also have a QUIC session with reaches the DHT.
+		m.toDHT.Add(1)
+		return m.dht
+	}
 	if m.isQUICPeer(addr) {
 		m.byPeer.Add(1)
 		return m.quic
 	}
 	m.toDHT.Add(1)
 	return m.dht
+}
+
+// UseConnectionIDs tells the mux how long this endpoint's connection IDs are, and
+// switches short-header routing onto them.
+//
+// **The address rule survives only until the first ID is registered**, and that
+// asymmetry is deliberate. Routing on the connection ID is exact; routing on the
+// address over-claims for QUIC and swallows a DHT reply from a session peer — the
+// collision P02.S03 documented and P04.S01 hit on its first driven test. But a
+// generator that a later change forgets to install would send EVERY short header to
+// the DHT and break the session, which is the worse failure of the two. So the mux
+// falls back to the address rule while it has been told nothing, and stops the moment
+// it has been told something.
+//
+// Stats().RoutedByPeer is what makes a missed wiring visible rather than silent.
+func (m *Mux) UseConnectionIDs(length int) {
+	m.cidMu.Lock()
+	m.cidLen = length
+	if m.cids == nil {
+		m.cids = map[string]time.Time{}
+	}
+	m.cidMu.Unlock()
+}
+
+// RegisterConnectionID records an ID this endpoint has issued.
+//
+// quic-go has no hook for a RETIRED id, so entries expire on the same TTL the peer
+// table uses, refreshed whenever one is matched. A live connection refreshes
+// constantly; a closed one falls out.
+func (m *Mux) RegisterConnectionID(cid []byte) {
+	if len(cid) == 0 {
+		return
+	}
+	now := m.now()
+	m.cidMu.Lock()
+	if m.cids == nil {
+		m.cids = map[string]time.Time{}
+	}
+	if m.cidLen == 0 {
+		m.cidLen = len(cid)
+	}
+	m.cids[string(cid)] = now.Add(peerTTL)
+	for k, exp := range m.cids {
+		if !now.Before(exp) {
+			delete(m.cids, k)
+		}
+	}
+	m.cidMu.Unlock()
+}
+
+// knownCID reports whether a short-header packet carries an ID we issued, and whether
+// any ID is registered at all. The second return is what keeps the address rule alive
+// until the generator is wired.
+func (m *Mux) knownCID(p []byte) (known, any bool) {
+	m.cidMu.RLock()
+	n, have := m.cidLen, len(m.cids) > 0
+	if !have || n <= 0 || len(p) < 1+n {
+		m.cidMu.RUnlock()
+		return false, have
+	}
+	exp, ok := m.cids[string(p[1:1+n])]
+	fresh := ok && m.now().Before(exp)
+	m.cidMu.RUnlock()
+	if fresh {
+		// Refresh on use: a connection that is still carrying traffic keeps its id.
+		m.cidMu.Lock()
+		m.cids[string(p[1:1+n])] = m.now().Add(peerTTL)
+		m.cidMu.Unlock()
+	}
+	return fresh, true
 }
 
 // peerKey reduces an address to the comparable key the table is built on. It is a

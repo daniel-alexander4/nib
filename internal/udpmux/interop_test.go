@@ -370,3 +370,119 @@ func isLocalSendFault(err error) bool {
 	}
 	return strings.Contains(err.Error(), "error writing ")
 }
+
+// cidGen mirrors what internal/p2p installs on its transports: it registers every
+// connection id this endpoint issues with the mux, so short headers route on the
+// DESTINATION connection id rather than on the sender's address.
+type cidGen struct {
+	m *Mux
+	n int
+}
+
+func (g *cidGen) ConnectionIDLen() int { return g.n }
+
+func (g *cidGen) GenerateConnectionID() (quic.ConnectionID, error) {
+	b := make([]byte, g.n)
+	if _, err := rand.Read(b); err != nil {
+		return quic.ConnectionID{}, err
+	}
+	g.m.RegisterConnectionID(b)
+	return quic.ConnectionIDFromBytes(b), nil
+}
+
+// TestKRPCFromAQUICPeerReachesTheDHT is the collision this package documented and left,
+// now closed — and it is here because this is where the rule lives.
+//
+// The address rule over-claims for QUIC: a datagram from an address we have sent QUIC
+// to goes to the QUIC view, so a KRPC reply from a host we ALSO hold a session with is
+// swallowed. P02.S03 recorded that as a bounded, one-sided cost. P04.S01's first
+// driven test hit it in the shape that matters — a rendezvous ping to a peer we are
+// mid-session with — and measured it: with no session, the ping succeeds; with one, it
+// times out and the mux reports RoutedByPeer.
+//
+// The fix routes on the connection id, which is exact. This drives BOTH halves, and
+// the pair is the point: the same ping, to the same host, with and without a QUIC
+// session in flight.
+func TestKRPCFromAQUICPeerReachesTheDHT(t *testing.T) {
+	a, b := newNode(t), newNode(t)
+
+	// The generator on BOTH ends, which is what the product does (QUICDial and
+	// QUICListen each install one) and is not optional.
+	//
+	// Wiring only A was the first attempt and it still failed — because B's mux
+	// learns A as a "QUIC peer" from B's own handshake WRITES, so B swallowed A's
+	// ping by the same address rule, at the other end of the same exchange. The
+	// collision is symmetric; a fix on one side is not a fix.
+	tr := &quic.Transport{Conn: a.mux.QUIC(), ConnectionIDGenerator: &cidGen{m: a.mux, n: 8}}
+	defer tr.Close()
+	srvTr := &quic.Transport{Conn: b.mux.QUIC(), ConnectionIDGenerator: &cidGen{m: b.mux, n: 8}}
+	defer srvTr.Close()
+
+	ln, err := srvTr.Listen(&tls.Config{
+		Certificates: []tls.Certificate{selfSigned(t)}, NextProtos: []string{"nib-cid"},
+	}, &quic.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	go func() { ln.Accept(ctx) }()
+
+	// Stimulus: with no QUIC session at all, A can reach B over KRPC. Without this,
+	// "it worked with a session" is not distinguishable from a link that always works
+	// — and more importantly, a link that never does.
+	if res := a.dht.Ping(b.mux.LocalAddr().(*net.UDPAddr)); res.Err != nil {
+		t.Fatalf("with NO QUIC session, the ping already fails (%v) — nothing below is "+
+			"about the collision", res.Err)
+	}
+
+	// Now a real QUIC session A->B, which is what taught the old rule that B is a
+	// "QUIC peer" and made it swallow B's KRPC replies.
+	conn, err := tr.Dial(ctx, b.mux.LocalAddr(), &tls.Config{
+		InsecureSkipVerify: true, NextProtos: []string{"nib-cid"},
+	}, &quic.Config{})
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer conn.CloseWithError(0, "")
+
+	// Traffic AFTER the handshake, because that is when short headers start — the
+	// handshake itself is all long headers, and Dial returns the moment it completes.
+	// The first version asserted here and read RoutedByCID:0 with RoutedLongHeader:2,
+	// which is the rule not yet having anything to decide rather than the rule failing.
+	st, err := conn.OpenStreamSync(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.Write(make([]byte, 4096)); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) && a.mux.Stats().RoutedByCID == 0 {
+		time.Sleep(20 * time.Millisecond)
+	}
+	before := a.mux.Stats()
+	if before.RoutedByCID == 0 {
+		t.Fatalf("no datagram routed by connection id after a completed handshake and a "+
+			"stream write (%+v) — the generator is not wired, so the rule under test "+
+			"never ran", before)
+	}
+
+	if res := a.dht.Ping(b.mux.LocalAddr().(*net.UDPAddr)); res.Err != nil {
+		t.Fatalf("the KRPC ping to a host we hold a QUIC session with failed: %v "+
+			"(mux %+v) — this is the collision the connection-id rule exists to remove",
+			res.Err, a.mux.Stats())
+	}
+
+	// And the address rule must NOT have been what saved it: once ids are registered,
+	// a short header that is not one of ours goes to the DHT, full stop.
+	if st := a.mux.Stats(); st.RoutedByPeer != before.RoutedByPeer {
+		t.Errorf("RoutedByPeer advanced %d -> %d while connection ids were registered — the "+
+			"address rule is still deciding, and it is the rule with the collision",
+			before.RoutedByPeer, st.RoutedByPeer)
+	}
+	t.Logf("CIDROUTE byCID=%d byPeer=%d toDHT=%d",
+		a.mux.Stats().RoutedByCID, a.mux.Stats().RoutedByPeer, a.mux.Stats().RoutedToDHT)
+}

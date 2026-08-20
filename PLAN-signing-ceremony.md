@@ -2486,7 +2486,7 @@ in its output rather than as silence.
 
 ~~Slices *(sketch)*: multicast announce/browse; resolving a discovered peer to a candidate; the L1 guard; the Windows pass.~~ *(retained; superseded by the firmed slices above.)*
 
-### P04 — Endpoint exchange over the DHT
+### P04 — Endpoint exchange over the DHT *(in progress)*
 Goal: the two sides learn each other's public endpoints, and their own, with no server. **(plan-review note, 2026-08-17, I1 — the framing still understates the blast radius, as D8's own correction records: the DHT is the signalling channel for tiers 2, 3 **and** 4, so an unreachable DHT collapses three tiers at once and leaves only LAN and manual. Carried as a Stage 2 grill target; recorded here so the next pass does not re-derive it.)** **(plan-review pin, 2026-08-18, adopted by Dan: that gate has passed — the Stage 2 grill ran on 2026-08-18 and did not take this up. Re-targeted to this phase's slice grill, with D8's pin carrying the same instruction and the discharging observation.)**
 Exit criteria:
 - Each side learns its own public `IP:port` and its NAT class from DHT responses alone.
@@ -2497,7 +2497,82 @@ Exit criteria:
 - **A record published by a party who knows both names but holds neither identity key yields no more than N candidates; the N+1th is dropped and reported — driven by publishing N+50. (added 2026-08-17, plan-review C2.)** The bullet above it cannot see this: a hostile DHT that floods a bystander never affects which peer is accepted, and so satisfies it completely.
 - **The DHT library shares the session's local socket rather than opening its own, proven by a spike. (added 2026-08-17, plan-review C3, caveat 7.)** A self-address probe on a different socket measures a mapping the session will never use. **(amended 2026-08-18, Stage 2 grill: "shares" means *through the demultiplexer P02 built*, and the pair was chosen together at P02 — if this phase is where a DHT library is first tried against the QUIC one, P02's selection was not done.)**
 
-Slices *(sketch)*: library selection and cached bootstrap; self-address probe and NAT classification; the derived rendezvous key; publish/fetch with expiry; the L1 guard.
+**The second signalling path: DECLINED** *(2026-08-19, P04's slice grill — this is the discharge D8's pin asks for by name, and the pin is explicit that only a decision recorded here settles it, not a later grill of the plan as a whole).*
+
+D8's correction stands and is not in dispute: the DHT signals for tiers 2, 3 **and** 4, so an unreachable DHT collapses three at once and leaves only LAN and manual. The question was whether the plan should carry a second automatic signalling path. It should not.
+
+- **The fallback exists and is already legible.** Tiers 1 and 5 survive, and D19 cause 2 exists precisely to *say so to the user* rather than leave a blank failure.
+- **The participants already hold a second channel, and it cost nothing.** They exchanged the invitation (D21) out of band. If the DHT is unreachable they can pass a `host:port` on the same channel. A second automatic path would rebuild in software what the humans already have.
+- **What adopting costs is what decides it:** a second third-party network dependency, a second library and licence, a second unauthenticated ingress surface, and a second thing to keep working — permanently — on a design whose founding premise is no servers. That is a large standing cost to shorten a fallback that is one field typed once.
+
+***Revisit trigger:*** any flow where two parties who have **no prior channel** must reach each other. This reasoning rests entirely on the ceremony being arranged between people who already know each other; strangers-meeting would remove its foundation, not weaken it.
+
+Slices *(firmed 2026-08-19 at phase-open; sketch retained below)*. **Two of the sketch's five items had already been overtaken by earlier phases**, which is what firming against the tree is for:
+
+- *"library selection and cached bootstrap"* — **selection is done.** P02.S02 chose anacrolix/dht v2.24.0 and quic-go as a *pair*, against the socket-sharing constraint, exactly as this phase's last exit criterion demands ("if this phase is where a DHT library is first tried against the QUIC one, P02's selection was not done"). Only cached bootstrap remains.
+- *"the derived rendezvous key"* — **largely built.** `Invitation.RendezvousKey(hop)` and `RecordKey()` shipped with P01.S07 (D30's per-hop keying). What remains is *using* them, which belongs with the record.
+
+#### P04.S01 — The DHT on the shared socket, with cached bootstrap *(D6, caveat 7)* *(done 2026-08-19, v1.111.0)*
+Scope: attach a `dht.Server` to the demultiplexer's DHT view; persist and reload a node list. Refs: D6, caveat 7's amendment.
+Acceptance:
+- A DHT and a live QUIC session share **one** socket, driven — through `internal/udpmux`, which is what caveat 7's amendment means by "shares".
+- Bootstrap works from a **cached node list with no hostname resolution** — asserted by observing that no name is resolved, not by the absence of a hostname in a config.
+- The node list survives a restart: written on close, reloaded on start, and the reload is driven.
+
+**S01 absorbs the connection-ID routing, and the measurement is why** *(2026-08-19, Reality drift)*:
+P02.S03 shipped the demultiplexer keying on **peer address**, documented its one collision — a DHT
+node at the same `IP:port` as an active QUIC peer is routed to QUIC and lost — and filed the exact
+fix against "wherever a DHT and a session share one socket for real". **That is here, and the very
+first test to drive both hit it:** A pings C with no QUIC anywhere and gets a reply; A pings B, with
+whom A has a QUIC session, and the query **times out**, with A's mux reporting `RoutedByPeer:1` —
+B's KRPC reply routed to the QUIC view and discarded.
+
+So this is not a refinement to schedule; **S01's own driven clause cannot pass without it.** The
+filed item's warning stands and shapes the fix: a mis-wired generator would break the *session*
+rather than a DHT query, which is the worse failure, so the wiring needs a guard of its own.
+
+Tasks:
+- T01 — `internal/rendezvous`: a DHT server over `udpmux.Mux.DHT()`, opened and closed with the socket.
+- T05 — the demultiplexer routes short headers on the **destination connection ID**, and the address rule survives only where no connection ID has ever been registered.
+- T02 — the node cache: dump on close, reload on start, under `~/nib`.
+- T03 — the no-resolution guard: nothing on the bootstrap path resolves a hostname.
+- T04 — driven at tier 5: a DHT and a QUIC session on one socket, and a restart that reloads.
+
+#### P04.S02 — The self-address probe and NAT classification *(D19, caveat 9)*
+Scope: learn this host's own public endpoint from DHT responses, and classify the mapping. Refs: D19, caveat 2, caveat 9.
+Acceptance:
+- This side learns its own public `IP:port` **from DHT responses alone**, and the port is observed **on the wire from a real node**, not inferred from the type carrying a port field (see the phase-open note: the representation is settled, the behaviour is not).
+- Two observations from **different** nodes distinguish the two mapping classes (D19).
+- Caveat 9 — that two distinct nodes answer inside D16's probe budget — is discharged by measurement, or its degradation to cause 4 is recorded rather than assumed.
+
+#### P04.S03 — The published record: signed, encrypted, expiring *(D6, D30, C2)*
+Scope: publish and fetch the candidate record under the per-hop rendezvous key. Refs: D6, D21, D30, plan-review C2.
+Acceptance:
+- A published endpoint is **retrievable by the peer computing the same key from the two names**.
+- A DHT scraper holding **neither name** sees opaque bytes and can neither read nor forge a candidate.
+- Records expire.
+- **The in-roster forgery question is settled, adopt or decline, with a reason** — the pending item filed 2026-08-19 asks whether an invited party can publish *as another*, since D6's amendment gives every roster member the encryption secret. BEP-44 mutable items are **ed25519-signed by construction** (`bep44.Put` carries `K [32]byte` and `Sig [64]byte`, and the target derives from the key plus salt), so a per-party key makes the DHT itself refuse the write. That shape is cheap and available; the slice must decide it rather than inherit it.
+
+#### P04.S04 — The flood cap *(plan-review C2)*
+Scope: bound how many candidates one rendezvous key may yield. Refs: plan-review C2.
+Acceptance:
+- **A record published by a party who knows both names but holds neither identity key yields no more than N candidates; the N+1th is dropped and reported — driven by publishing N+50.**
+- The report is a counter something reads, not a log line — the criterion says *reported*, and P03 established what an unread counter is worth.
+
+#### P04.S05 — The L1 guard and graceful degradation *(L1, D19)*
+Scope: prove the rendezvous cannot influence acceptance, and that its absence degrades rather than breaks. Refs: L1, D19.
+Acceptance:
+- **A hostile or absent DHT degrades to the next tier without ever affecting which peer is accepted (L1)** — driven in both directions, because a guard that only sees the absent case cannot see the hostile one.
+- The degradation is the message D19 names, not a generic failure.
+
+**Both open measurements answered at the type level** *(2026-08-19, phase-open)*, and neither forces an amendment:
+
+- **A BEP-44 value is capped at 1000 bytes** (`bep44/item.go:132`). A candidate record of a few hundred bytes fits with room, so S03's record needs no splitting.
+- **The KRPC `ip` field carries a PORT, not only an address** — `krpc.Msg.IP` is a `NodeAddr{IP net.IP; Port int}`, the BEP-42 compact 6-byte form. **Caveat 2's premise therefore holds structurally.**
+
+*What that does NOT settle, and S02 still owes:* whether real DHT nodes actually **populate** it. Reading the type proves the library can represent a port; it does not prove one comes back. Caveat 2 is discharged on the representation and **still open on the wire**, which is a distinction worth keeping — the arc's failure-mode #1 is a "verified" claim about a dependency that was verified against documentation rather than behaviour.
+
+~~Slices *(sketch)*: library selection and cached bootstrap; self-address probe and NAT classification; the derived rendezvous key; publish/fetch with expiry; the L1 guard.~~ *(retained; superseded by the firmed slices above.)*
 
 ### P05 — The ladder
 Goal: tiers 2, **3** and ~~3~~ **4** exist **(renumbered 2026-08-16, D8)**, all tiers race concurrently, and the manual path is demoted.
