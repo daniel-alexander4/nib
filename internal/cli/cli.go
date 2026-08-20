@@ -101,6 +101,7 @@ var commands = map[string]func([]string) int{
 	"register":    cmdRegister,
 	"unregister":  cmdUnregister,
 	"discover":    cmdDiscover,
+	"rendezvous":  cmdRendezvous,
 }
 
 func printUsage(w *os.File) {
@@ -135,6 +136,8 @@ These subcommands run headlessly, without a browser:
   nib attachments IN [--json]     list embedded files (--extract NAME / --add FILE)
   nib outline IN [--json]         list the document's bookmark outline
   nib discover [--seconds N]      report what link-local peer discovery can see here
+  nib rendezvous [--seconds N]    report whether the DHT remote co-signing uses is
+                                  reachable (contacts the public internet)
   nib watch DIR --do OP           run timestamp/optimize/sanitize on each new PDF
   nib version                     print the version
 

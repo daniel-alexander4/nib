@@ -70,7 +70,20 @@ func TestNothingHereCanReachAnIdentity(t *testing.T) {
 	}
 
 	// 2. No exported symbol names or CARRIES an identity — names and types both.
-	fp := regexp.MustCompile(`(?i)fingerprint|spki|pubkey|publickey|identity|certificate`)
+	// **Widened at P04.S03**, which is the slice that made the gap live. The original
+	// alternation matches `ed25519.PublicKey` (via `publickey`) but NOT
+	// `ed25519.PrivateKey`, `ed25519.Seed` or a bare `[32]byte` — so the natural WRITE
+	// signature for a BEP-44 publisher would have sailed straight through the guard
+	// written to keep key material out of this package, while the read signature tripped
+	// it as a false positive. A guard that is wrong in both directions on the one change
+	// it was built for is how guards get loosened until they guard nothing.
+	//
+	// `ed25519` is added rather than `key`/`seed`/`secret`: an opaque `seed []byte`
+	// handed in by the caller is the COMPLIANT shape here — it is how the rendezvous key
+	// crosses the line without this package being able to derive it — so banning the word
+	// would forbid the very thing L1 requires. What must not appear is a KEY TYPE, which
+	// is a package this file can name exactly.
+	fp := regexp.MustCompile(`(?i)fingerprint|spki|pubkey|publickey|privatekey|ed25519|identity|certificate`)
 	exported, sawType := 0, false
 	for name, f := range pkg.Files {
 		ast.Inspect(f, func(n ast.Node) bool {

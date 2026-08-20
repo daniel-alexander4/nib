@@ -42,12 +42,12 @@ How Nib's feature set lines up against the three best-known PDF editors.
 | Merge, split, rotate, crop, N-up, Bates, page labels | ✅ | ✅ | ✅ | ✅ |
 | AES-256 encryption | ✅ | ✅ | ✅ | ✅ |
 | **Scriptable command line** / batch a folder | ✅ | ❌ | ❌ | 🟡 |
-| Runs 100% offline, no account, no telemetry | ✅ | ❌ | 🟡 | ✅ |
+| Runs offline §, no account, no telemetry | ✅ | ❌ | 🟡 | ✅ |
 | **Free & open source** (AGPLv3) | ✅ | ❌ | ❌ | ❌ |
 | Single self-contained binary, cross-platform ‡ | ✅ | ❌ | ❌ | ❌ |
 | **Price** | 🟢 **Free** | 🔴 Subscription | 🔴 Paid | 🟡 Free tier |
 
-<sub>† Office conversion uses LibreOffice if it's installed — optional, detected at runtime, never bundled. ‡ One portable binary for Linux / macOS / Windows (PDF-XChange Editor is Windows-only).</sub>
+<sub>† Office conversion uses LibreOffice if it's installed — optional, detected at runtime, never bundled. ‡ One portable binary for Linux / macOS / Windows (PDF-XChange Editor is Windows-only). § Every document feature works with no network at all. Two things do use it, both started by you and never in the background: the release check, and **remote co-signing**, which finds your peer over the public BitTorrent DHT. See [What leaves your computer](#what-leaves-your-computer).</sub>
 
 Acrobat, Foxit and PDF-XChange are mature commercial editors that do plenty Nib
 doesn't aim to — full WYSIWYG content editing, prepress, cloud collaboration. The
@@ -633,11 +633,15 @@ Tap the **sun/moon** button in the top-right to switch between the dark
 your vault. (Defaults to dark.)
 
 ### Private by design
-- Binds **`127.0.0.1` only** — never reachable from the network; writes are
-  guarded by a per-process CSRF token and a loopback-origin check. The one
-  deliberate exception is a **live co-signing session you arm yourself**: while
-  armed, Nib opens a single routable listener that accepts only the one peer whose
-  key you pinned, and tears it down after one exchange (see *Co-sign with a peer*).
+- The web interface binds **`127.0.0.1` only** — never reachable from the
+  network; writes are guarded by a per-process CSRF token and a loopback-origin
+  check. Two deliberate exceptions, both of which you start and neither of which
+  runs in the background. First, a **live co-signing session you arm yourself**:
+  while armed, Nib opens a single routable listener that accepts only the one peer
+  whose key you pinned, and tears it down after one exchange (see *Co-sign with a
+  peer*). Second, **finding a peer for a remote ceremony**, which speaks to the
+  public BitTorrent DHT — that one is worth reading in full under
+  [What leaves your computer](#what-leaves-your-computer).
 - Your image library, signing identity, autofill profile, and recent files live
   in one **AES-256-GCM vault**, encrypted at rest.
 - The vault is **sealed to your SSH key**: it unlocks at startup with *no
@@ -650,6 +654,51 @@ your vault. (Defaults to dark.)
   file still can't open the vault without the passphrase. (An unencrypted key
   keeps the no-prompt startup.) `ssh-agent` is not used: the vault is unlocked by
   decrypting to the key, an operation agents don't perform.
+
+### What leaves your computer
+
+Everything Nib does to a document — editing, redaction, OCR, signing, export —
+happens on your machine, and your documents never leave it. But Nib is not a
+program that never touches the network, and the honest list is short enough to
+print in full.
+
+| When | What goes out | Who sees it |
+|---|---|---|
+| At startup, unless turned off | A version query to GitHub | GitHub |
+| **Only while you run a remote co-signing ceremony** | Your public IP and port, and an **encrypted** record of it | strangers on the BitTorrent DHT — see below |
+| While a co-signing session is armed | A routable listener that accepts one pinned peer | the peer you pinned |
+| Never | Documents, document contents, telemetry, analytics, crash reports | — |
+
+**Remote co-signing and the BitTorrent DHT.** To sign with someone who is not on
+your network, the two copies of Nib have to find each other without a server in
+the middle — Nib does not run one, and does not want to. It uses the **public
+BitTorrent DHT** as a meeting point: a large, open, distributed index that anyone
+may read and write. Nib publishes one small record there saying *"here is where I
+can be reached"*, and reads the matching one from your counterpart.
+
+What that means concretely, stated plainly because you cannot consent to what you
+have not been told:
+
+- **The record's contents are encrypted** with a key derived from the invitation
+  you and your counterpart exchanged privately. Someone who does not hold that
+  invitation sees opaque bytes.
+- **The fact that you are there is not hidden.** Publishing to the DHT means
+  speaking to strangers' computers, and those computers learn your public IP
+  address and roughly when — the same way they would for anyone using the DHT.
+  Encryption protects the message; it cannot hide the envelope.
+- **It happens only during a ceremony you start**, and stops when the ceremony
+  ends. Nib does not join the DHT at startup, in the background, or when you are
+  merely editing a document.
+- **Nib is a client, not a server, there.** It asks and it publishes its own
+  record; it refuses requests to store other people's data.
+- **Local ceremonies never touch it.** If your counterpart is on the same network,
+  Nib finds them over the local link and the DHT is not used at all.
+- **"Records expire" means Nib stops republishing.** The copies already handed to
+  other people's computers age out on their schedule. There is no recall button,
+  and nobody could honestly offer you one.
+
+If none of that is acceptable for a particular document, sign it locally or on
+the same network — those paths use no internet at all.
 
 ---
 
@@ -742,8 +791,12 @@ startup check off — and, when a newer release exists, offers to download the
 build matching your OS and architecture (a `.deb` for a package install,
 otherwise the raw binary).
 
-This is the only call Nib makes on its own, and it's a **version query — no
-document data, no telemetry**: your documents never leave your computer. Turn the
+This is the only call Nib makes **on its own** — the only one you never asked
+for — and it's a **version query — no document data, no telemetry**: your
+documents never leave your computer. It is not the only call Nib can make:
+remote co-signing uses the network too, but only while *you* are running a
+ceremony, and it is described under
+[What leaves your computer](#what-leaves-your-computer). Turn the
 startup check off from **⚙ Settings → Check for updates on startup** (saved in
 your vault), or set `NIB_NO_UPDATE_CHECK=1` to force it off regardless (clicking
 the version pill still checks either way). Nib only notifies and downloads — it never installs or replaces

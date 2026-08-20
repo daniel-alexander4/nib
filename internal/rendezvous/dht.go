@@ -31,6 +31,7 @@ import (
 	"path/filepath"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/anacrolix/dht/v2"
 	"github.com/anacrolix/dht/v2/krpc"
@@ -79,6 +80,53 @@ type Stats struct {
 	// that kills the decoder and one that kills `announce_peer` say different things
 	// about who is sending it. Same reading: non-zero and still running.
 	RefusedQueries uint64
+	// RefusedResponses is inbound RESPONSES dropped before the BEP-44 get path read
+	// them — door three. **Non-zero means somebody who holds our hop key sent a reply
+	// shaped to kill us**, and the reachable set is small and named: a node that stored
+	// our record, an observer of the put that told it, or a holder of the invitation.
+	// Separate from Screened and RefusedQueries for the same reason those two are
+	// separate from each other: three doors, three keys, and which one someone knocked
+	// on says something different about who they are.
+	RefusedResponses uint64
+	// RefusedStores is inbound `put` / `announce_peer` queries refused because Nib is a
+	// DHT client and does not store other people's data. **A steady non-zero is
+	// ordinary** — it is the DHT asking, and Nib declining — so unlike the other two
+	// refusal counters this one is not an alarm. It is here to show the refusal is
+	// happening at all, because the failure it guards against is silent: a future
+	// change that sets `ServerConfig.Store` or drops the gate turns Nib back into an
+	// unbounded store and nothing else would say so.
+	RefusedStores uint64
+
+	// PublishAttempts is calls to Publish that got past their local checks. Zero while a
+	// ceremony is armed means the republish loop never ticked — a wiring failure, not a
+	// network one.
+	PublishAttempts uint64
+	// Published is publishes whose token-gathering traversal completed. **It is NOT
+	// "records stored by anybody"**, and the name is deliberately not `PublishAccepted`:
+	// getput.Put shadows every per-node error and returns nil regardless
+	// (exts/getput/getput.go:155-172), so no honest counter here can claim acceptance.
+	Published uint64
+	// PublishNodes is how many nodes ANSWERED the traversal that collected write tokens,
+	// from the last publish. It is the closest true statement available to "we found
+	// somewhere to write". Zero with PublishAttempts non-zero means the routing table led
+	// nowhere.
+	PublishNodes uint64
+	// FetchAttempts, Fetched, FetchEmpty split the three outcomes that want different
+	// advice: nothing ran / a record came back / the traversal completed and nobody had
+	// one. FetchEmpty is the ORDINARY state before a peer publishes and must never be
+	// summed with a transport failure.
+	FetchAttempts uint64
+	Fetched       uint64
+	FetchEmpty    uint64
+	// FetchUndecodable is a value that arrived and was not bencode. Its own counter
+	// because it means somebody served us something shaped wrong, which is a different
+	// fact from an absent record and from a record that failed its signature.
+	FetchUndecodable uint64
+	// FetchNodes is how many nodes answered the last fetch traversal. **It is what makes
+	// an empty fetch legible**: zero means the record's absence is not evidence of
+	// anything, because we reached nobody who could have had it. Non-zero with
+	// FetchEmpty means the DHT is reachable and the peer has not published yet.
+	FetchNodes uint64
 
 	// Observed is replies that carried a usable `ip` field.
 	Observed uint64
@@ -114,8 +162,19 @@ type Server struct {
 	saved         atomic.Uint64
 	bootstrapped  atomic.Uint64
 
-	screened       atomic.Uint64
-	refusedQueries atomic.Uint64
+	screened         atomic.Uint64
+	refusedQueries   atomic.Uint64
+	refusedResponses atomic.Uint64
+	refusedStores    atomic.Uint64
+
+	publishAttempts  atomic.Uint64
+	published        atomic.Uint64
+	publishNodes     atomic.Uint64
+	fetchAttempts    atomic.Uint64
+	fetched          atomic.Uint64
+	fetchEmpty       atomic.Uint64
+	fetchUndecodable atomic.Uint64
+	fetchNodes       atomic.Uint64
 
 	observed       atomic.Uint64
 	rejectedLength atomic.Uint64
@@ -143,7 +202,7 @@ func Open(conn net.PacketConn, dir string) (*Server, error) {
 
 	// Nothing reaches the library's decoder unscreened. See screen.go: 21 bytes of
 	// UDP from any host kill the process otherwise, on a goroutine nothing here owns.
-	conn = &screened{PacketConn: conn, dropped: &s.screened}
+	conn = &screened{PacketConn: conn, dropped: &s.screened, refusedResponses: &s.refusedResponses}
 
 	nodes, err := s.loadNodes()
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
@@ -190,9 +249,29 @@ func Open(conn net.PacketConn, dir string) (*Server, error) {
 		// path, and under a genuine flood dropping is the right backpressure —
 		// blocking would park a goroutine per attacker packet.
 		SendLimiter: rate.NewLimiter(250, 64),
-		// The second door. See gateQuery: a query carrying no arguments dict is a nil
-		// dereference inside handleQuery, on a goroutine nothing here can recover.
+		// The second and fourth doors. See gateQuery: a query carrying no arguments dict
+		// is a nil dereference inside handleQuery, on a goroutine nothing here can
+		// recover — and `put`/`announce_peer` are refused as policy, because Nib is a
+		// DHT client and will not hold strangers' bytes.
 		OnQuery: s.gateQuery,
+		// Exp is what our own store serves BY, and leaving it unset does not mean
+		// "never expire" — it means "expire everything, immediately".
+		//
+		// `NewServer` defaults `Store` and `SendLimiter` for a caller-supplied config
+		// (server.go:212-224) but NOT `Exp`; `Exp: 2 * time.Hour` lives only in
+		// `NewDefaultServerConfig` (server.go:167), which caveat 7 forbids us. With the
+		// zero value, `bep44.NewWrapper(store, 0)` makes `Wrapper.Get` compute
+		// `created.Add(0).After(now)` — false for any item stored even a nanosecond ago
+		// — so it deletes the item and answers not-found (bep44/store.go:50-64).
+		//
+		// The consequence is not abstract: **our own published record is deleted the
+		// first time anyone reads it, including us.** Nib would be one of the nodes
+		// holding its own rendezvous record and would serve it to nobody.
+		//
+		// Two hours is BEP-44's own recommended item lifetime and the library's own
+		// default. It bounds nothing else, because gateQuery refuses inbound writes —
+		// the only things in this store are records we put there ourselves.
+		Exp: 2 * time.Hour,
 		// The cached list, and nothing else.
 		//
 		// **Read before it was written down, because the obvious belief is wrong.**
@@ -232,19 +311,29 @@ func (s *Server) Nodes() []krpc.NodeInfo { return s.dht.Nodes() }
 // Stats reports what happened.
 func (s *Server) Stats() Stats {
 	return Stats{
-		Nodes:          s.dht.NumNodes(),
-		Loaded:         s.loaded,
-		Saved:          s.saved.Load(),
-		CacheRejected:  s.cacheRejected,
-		Seeds:          s.seeds,
-		Bootstrapped:   s.bootstrapped.Load(),
-		Screened:       s.screened.Load(),
-		RefusedQueries: s.refusedQueries.Load(),
-		Observed:       s.observed.Load(),
-		RejectedLength: s.rejectedLength.Load(),
-		RejectedPort:   s.rejectedPort.Load(),
-		RejectedScope:  s.rejectedScope.Load(),
-		Disagreements:  s.disagreements.Load(),
+		Nodes:            s.dht.NumNodes(),
+		Loaded:           s.loaded,
+		Saved:            s.saved.Load(),
+		CacheRejected:    s.cacheRejected,
+		Seeds:            s.seeds,
+		Bootstrapped:     s.bootstrapped.Load(),
+		Screened:         s.screened.Load(),
+		RefusedQueries:   s.refusedQueries.Load(),
+		RefusedResponses: s.refusedResponses.Load(),
+		RefusedStores:    s.refusedStores.Load(),
+		PublishAttempts:  s.publishAttempts.Load(),
+		Published:        s.published.Load(),
+		PublishNodes:     s.publishNodes.Load(),
+		FetchAttempts:    s.fetchAttempts.Load(),
+		Fetched:          s.fetched.Load(),
+		FetchEmpty:       s.fetchEmpty.Load(),
+		FetchUndecodable: s.fetchUndecodable.Load(),
+		FetchNodes:       s.fetchNodes.Load(),
+		Observed:         s.observed.Load(),
+		RejectedLength:   s.rejectedLength.Load(),
+		RejectedPort:     s.rejectedPort.Load(),
+		RejectedScope:    s.rejectedScope.Load(),
+		Disagreements:    s.disagreements.Load(),
 	}
 }
 

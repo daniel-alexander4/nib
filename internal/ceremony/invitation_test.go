@@ -2,6 +2,8 @@ package ceremony
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"strings"
 	"testing"
@@ -142,11 +144,11 @@ func TestTheSecretKeysEverythingAndKeysThemDifferently(t *testing.T) {
 	_, one := invited(t)
 	_, two := invited(t)
 
-	rk1, err := one.RendezvousKey(0)
+	rk1, err := one.HopSeed(0)
 	if err != nil {
 		t.Fatal(err)
 	}
-	rk2, err := two.RendezvousKey(0)
+	rk2, err := two.HopSeed(0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -155,7 +157,7 @@ func TestTheSecretKeysEverythingAndKeysThemDifferently(t *testing.T) {
 			"taking the secret, so a stable pair of people would publish under one key forever")
 	}
 
-	rec1, err := one.RecordKey()
+	rec1, err := one.RecordKey(0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -173,7 +175,7 @@ func TestTheSecretKeysEverythingAndKeysThemDifferently(t *testing.T) {
 	}
 
 	// Per hop (D30): two hops of one ceremony must not publish under the same key.
-	hop1, err := one.RendezvousKey(1)
+	hop1, err := one.HopSeed(1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -181,6 +183,65 @@ func TestTheSecretKeysEverythingAndKeysThemDifferently(t *testing.T) {
 		t.Error("two hops of one ceremony share a rendezvous key — an observer who learns " +
 			"one hop's key can follow the rest (D30)")
 	}
+
+	// And the RECORD key is per hop too, which it was not until P04.S03.
+	//
+	// This is the clause D30 asks P05 to drive ("a party cannot read the candidates of a
+	// hop it is not in") and it was unsatisfiable while one key decrypted every hop.
+	// Asserting it here, at the derivation, is what makes it true before anything is
+	// built on top of it.
+	recHop1, err := one.RecordKey(1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Equal(rec1, recHop1) {
+		t.Error("two hops of one ceremony share a RECORD key — per-hop addressing without " +
+			"per-hop encryption means the ciphertext of a hop you are not in decrypts with " +
+			"the key you already hold (D30)")
+	}
+	if bytes.Equal(recHop1, hop1) {
+		t.Error("the hop's record key and its ed25519 seed are the same value")
+	}
+
+	// The salt is keyed: two parties differ, and neither is a function anyone else can
+	// recognise. An unkeyed salt would index Nib identities in the public DHT.
+	fpA := strings.Repeat("a1", sha256.Size)
+	fpB := strings.Repeat("b2", sha256.Size)
+	sA, err := one.RecordSalt(0, fpA)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sB, err := one.RecordSalt(0, fpB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Equal(sA, sB) {
+		t.Error("both parties of a hop derive the same salt — they would publish to one " +
+			"target and the higher seq would silently clobber the other")
+	}
+	if bytes.Contains(sA, mustHex(t, fpA)) {
+		t.Error("the salt contains the fingerprint verbatim — the salt travels in cleartext " +
+			"in every put, so this publishes a permanent identity pin to every storing node")
+	}
+	sHop1, err := one.RecordSalt(1, fpA)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Equal(sA, sHop1) {
+		t.Error("one party's salt is the same at two hops — the two records collide")
+	}
+	if _, err := one.RecordSalt(0, "not-a-fingerprint"); err == nil {
+		t.Error("a short fingerprint was accepted as salt input")
+	}
+}
+
+func mustHex(t *testing.T, s string) []byte {
+	t.Helper()
+	b, err := hex.DecodeString(s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return b
 }
 
 // --- caveat 11: the channel binding -------------------------------------------

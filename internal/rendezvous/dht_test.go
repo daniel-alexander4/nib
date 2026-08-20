@@ -87,14 +87,14 @@ func TestTheDHTIsNeverGivenANilConn(t *testing.T) {
 
 // TestTheNodeCacheRoundTrips — D6's "populated on first contact" needs the cache to
 // survive a restart, which is the half a single run cannot show.
-func TestTheNodeCacheRoundTrips(t *testing.T) {
+// Renamed at P04.S03 from TestTheNodeCacheRoundTrips, which is what it claimed and not
+// what it did: the body asserts one thing — that a missing cache is not an error — and
+// would have stayed green with writeNodes and the whole load path deleted. It also opened
+// a UDP socket it never used, the fingerprint of a rewrite that dropped the body. The
+// round trip it was named for IS covered, by TestTheCacheCarriesIPv6 and
+// TestTheNodeCacheSurvivesARestart; what was missing was a test whose name matched it.
+func TestAMissingNodeCacheIsNotAnError(t *testing.T) {
 	dir := t.TempDir()
-	pc, err := net.ListenPacket("udp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer pc.Close()
-
 	s := &Server{dir: dir}
 	// A first run with no cache must not be an error — it is the ordinary first run.
 	if _, err := s.loadNodes(); !os.IsNotExist(err) {

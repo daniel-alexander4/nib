@@ -182,14 +182,30 @@ func (i Invitation) derive(info string, n int) ([]byte, error) {
 	return out, nil
 }
 
-// RendezvousKey is the DHT key for one hop (D6's amendment, D30).
+// HopSeed is the ed25519 seed the hop publishes under (D6's amendment, D30).
+//
+// **Renamed from RendezvousKey at P04.S03**, and the rename is the finding. The old name
+// said "the DHT key for one hop", which reads as an *address* — something publishable,
+// loggable, usable as a cache directory name. It is not. Seeded into
+// `ed25519.NewKeyFromSeed`, these 32 bytes ARE the BEP-44 private key for the hop, i.e.
+// the write authority for both parties' records under it. This repo already writes
+// ceremony state to plain files under `~/nib/ceremonies/<id>/` and P04 is a phase full of
+// diagnostics; a future slice that named a cache directory or emitted a counter by "the
+// rendezvous key" would hand any local reader the ability to overwrite both records. The
+// value that must stay secret and the value that may be logged should not be the same
+// bytes, and after this rename there is no address-shaped name to reach for.
 //
 // **Per hop, not per ceremony**: D30 requires two hops of one ceremony to publish under
-// different keys, so an observer who learns one hop's key cannot follow the rest. The hop
-// index is in the info string rather than mixed into the salt, so the derivation is one
-// call with one shape.
-func (i Invitation) RendezvousKey(hop int) ([]byte, error) {
-	return i.derive(fmt.Sprintf("nib-rendezvous-v1/hop-%d", hop), 32)
+// different keys, so an observer who learns one hop cannot follow the rest. The hop index
+// is in the info string rather than mixed into the salt, so the derivation is one call
+// with one shape.
+//
+// What the resulting BEP-44 signature proves, stated precisely so it is not over-read:
+// *whoever wrote this held the invitation*. Every roster member derives this seed from
+// the same secret, so it is a GROUP credential — it authorises a write, it does not name
+// a speaker. Naming the speaker is the inner ECDSA signature's job (see candidate.go).
+func (i Invitation) HopSeed(hop int) ([]byte, error) {
+	return i.derive(fmt.Sprintf("nib-bep44-seed-v1/hop-%d", hop), 32)
 }
 
 // RecordKey encrypts the published candidate record (D6's amendment).
@@ -197,8 +213,44 @@ func (i Invitation) RendezvousKey(hop int) ([]byte, error) {
 // Keyed on the SECRET rather than on the names: names are the public identifier this plan
 // exists to have people say aloud, so a key derived from them is obfuscation against a
 // scraper and not confidentiality against the party the pin is actually worried about.
-func (i Invitation) RecordKey() ([]byte, error) {
-	return i.derive("nib-record-v1", 32)
+//
+// **Per hop as of P04.S03, and it was not before.** Per-hop *addressing* shipped at
+// P01.S07; per-hop *encryption* did not — this was `derive("nib-record-v1", 32)` with no
+// hop, so one key decrypted every hop of the ceremony. That made D30's own P05 acceptance
+// clause — "a party cannot read the candidates of a hop it is not in" — unsatisfiable by
+// construction, since every roster member holds the secret and therefore that one key.
+// With the hop in the info string the clause is buildable, and cross-hop replay becomes an
+// AEAD failure as well as a signature failure: two independent defences rather than one.
+//
+// What it still does not buy: any roster member can derive ANY hop's key from the secret.
+// The boundary is the roster, not below it.
+func (i Invitation) RecordKey(hop int) ([]byte, error) {
+	return i.derive(fmt.Sprintf("nib-record-v1/hop-%d", hop), 32)
+}
+
+// RecordSalt is the BEP-44 salt separating the two parties publishing under one hop.
+//
+// A hop has two parties and both publish. Sharing one target would mean the higher-seq
+// write silently clobbered the other, so the two need distinct targets — that is what the
+// salt is for, and it is addressing, not authentication (both parties hold the same
+// private key, so either can write at either salt; only the inner signature separates
+// them).
+//
+// **It is KEYED, and that is the security-relevant part.** The salt travels in cleartext
+// in every put and is held by every storing node, and the target is a plain
+// `sha1(pubkey ‖ salt)`. A salt that was the party's fingerprint — or any unkeyed function
+// of it — would turn the public DHT into a searchable index of Nib identities: a
+// fingerprint is the permanent, never-rotated pin people hand out on a card or a QR code,
+// so anyone holding one could watch for that salt and learn every ceremony that person
+// runs and when. Deriving it through HKDF means both parties compute both salts by
+// construction while nobody else can recognise either.
+//
+// 32 bytes, comfortably inside BEP-44's 64-byte salt cap (bep44/item.go:140).
+func (i Invitation) RecordSalt(hop int, fingerprint string) ([]byte, error) {
+	if _, err := hex.DecodeString(fingerprint); err != nil || len(fingerprint) != sha256.Size*2 {
+		return nil, errors.New("record salt needs a full hex fingerprint")
+	}
+	return i.derive(fmt.Sprintf("nib-rendezvous-salt-v1/hop-%d/party-%s", hop, fingerprint), 32)
 }
 
 // --- caveat 11: the channel binding -------------------------------------------
