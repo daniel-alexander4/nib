@@ -11,7 +11,6 @@ package ceremony
 import (
 	"crypto/rand"
 	"crypto/sha256"
-	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -108,50 +107,60 @@ var (
 // wordlist change alter this commitment. And the invitation secret, because a verifier who
 // was not a participant must be able to check this from the document alone.
 func (r Record) RosterHash() ([]byte, error) {
-	h := sha256.New()
-	writeLP := func(b []byte) {
-		var n [8]byte
-		binary.BigEndian.PutUint64(n[:], uint64(len(b)))
-		h.Write(n[:])
-		h.Write(b)
-	}
-	// The domain tag, FIRST and length-prefixed (P04.S03).
+	return rosterDigest(r)
+}
+
+// rosterPreimage is the exact byte string RosterHash digests.
+//
+// Split out at P04.S03 so the preimage can be ASSERTED rather than merely described. The
+// domain tag added there was covered by nothing — deleting it left the whole repo green —
+// because a function that returns only a digest gives a test nothing to look at. See
+// preimage.go.
+func rosterPreimage(r Record) ([]byte, error) {
+	var p preimageBuilder
+	// The domain tag, FIRST (P04.S03).
 	//
 	// This identity key signs more than one kind of message now — the Ceremony Record
-	// here, and P04.S03's candidate record — and `sign.SignDigest` signs a bare 32-byte
-	// digest (identity.go:263-284): it does not re-hash and it does not know what the
-	// digest means. Two preimage languages built from the same length-prefixed chunks,
-	// with no tag to tell them apart, are two message types one signature can satisfy.
+	// here, and the candidate record — and `sign.SignDigest` signs a bare 32-byte digest
+	// (identity.go): it does not re-hash and it does not know what the digest means. Two
+	// preimage languages built from the same length-prefixed chunks, with no tag to tell
+	// them apart, are two message types one signature can satisfy.
 	//
-	// The candidate record's preimage carries attacker-influenceable bytes (a candidate
-	// is an IP:port learned from DHT nodes, and P04.S02 established that a node controls
-	// the `ip` field it returns), so the direction that matters is a candidate record
-	// coaxed into also parsing as a roster preimage — which would forge a ConvenerSig for
-	// a ceremony the signer never convened. No such collision is demonstrated; the tag
-	// makes the question unrepresentable rather than merely unlikely, and it costs one
-	// chunk.
-	writeLP([]byte(rosterDomain))
-	var ver [8]byte
-	binary.BigEndian.PutUint64(ver[:], uint64(r.Version))
-	writeLP(ver[:])
-	writeLP([]byte(r.ID))
-	writeLP([]byte(r.DocHash))
-	writeLP([]byte(r.Intent))
-	writeLP([]byte(r.Expires.UTC().Format(time.RFC3339)))
-	for _, p := range r.Roster {
-		fp, err := hex.DecodeString(p.Fingerprint)
+	// The candidate record's preimage carries attacker-influenceable bytes (a candidate is
+	// an IP:port learned from DHT nodes, and P04.S02 established that a node controls the
+	// `ip` field it returns), so the direction that matters is a candidate record coaxed
+	// into also parsing as a roster preimage — which would forge a ConvenerSig for a
+	// ceremony the signer never convened. No such collision is demonstrated; the tag makes
+	// the question unrepresentable rather than merely unlikely, and it costs one chunk.
+	p.addString(rosterDomain)
+	p.addUint(uint64(r.Version))
+	p.addString(r.ID)
+	p.addString(r.DocHash)
+	p.addString(r.Intent)
+	p.addString(r.Expires.UTC().Format(time.RFC3339))
+	for _, party := range r.Roster {
+		fp, err := hex.DecodeString(party.Fingerprint)
 		if err != nil || len(fp) != sha256.Size {
-			return nil, fmt.Errorf("roster entry %q has an invalid fingerprint", p.Label)
+			return nil, fmt.Errorf("roster entry %q has an invalid fingerprint", party.Label)
 		}
-		writeLP(fp)
-		var s byte
-		if p.Signs {
-			s = 1
+		p.add(fp)
+		var sg byte
+		if party.Signs {
+			sg = 1
 		}
-		writeLP([]byte{s})
-		writeLP([]byte(p.Label))
+		p.add([]byte{sg})
+		p.addString(party.Label)
 	}
-	return h.Sum(nil), nil
+	return p.bytes(), nil
+}
+
+func rosterDigest(r Record) ([]byte, error) {
+	pre, err := rosterPreimage(r)
+	if err != nil {
+		return nil, err
+	}
+	sum := sha256.Sum256(pre)
+	return sum[:], nil
 }
 
 // RosterToken is the [NibRoster:<hash>] token each signature's /Reason carries, so every

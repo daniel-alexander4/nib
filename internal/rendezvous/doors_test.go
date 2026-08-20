@@ -122,9 +122,17 @@ func TestAResponseCarryingSeqIsNotRefused(t *testing.T) {
 	n := newNode(t)
 	before := n.rz.Stats().RefusedResponses
 	send(t, n.addr, ok)
-	// Give the read loop the same budget the refusal test allows, then assert it did NOT
-	// move. A sleep is the honest instrument for a negative: there is no event to wait on.
-	time.Sleep(300 * time.Millisecond)
+
+	// ARRIVAL EVIDENCE, and without it this half of the test is vacuous.
+	//
+	// A negative assertion on a counter cannot tell "delivered, correctly not refused"
+	// from "never delivered at all" — measured, every field of Stats was identical before
+	// and after, so this test passed with the send() deleted. Stats().Responses exists to
+	// close that: it counts replies that reached the library, so a non-zero here says the
+	// datagram arrived AND passed the screen, which is exactly the claim being made.
+	waitFor(t, "the response to be seen by the screen",
+		func() bool { return n.rz.Stats().Responses == 1 })
+
 	if got := n.rz.Stats().RefusedResponses; got != before {
 		t.Fatalf("a well-formed BEP-44 response was refused (%d -> %d)", before, got)
 	}

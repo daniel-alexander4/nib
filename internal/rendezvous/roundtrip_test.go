@@ -3,6 +3,7 @@ package rendezvous
 import (
 	"bytes"
 	"context"
+	"math"
 	"net"
 	"sync"
 	"testing"
@@ -172,8 +173,20 @@ func TestAPublishedRecordIsRetrievableByThePeer(t *testing.T) {
 	if seq < 1 {
 		t.Fatalf("fetched seq %d, want >= 1", seq)
 	}
-	if s := sub.rz.Stats(); s.Fetched != 1 || s.FetchEmpty != 0 {
-		t.Fatalf("fetch counters wrong: %+v", s)
+	fs := sub.rz.Stats()
+	if fs.Fetched != 1 || fs.FetchEmpty != 0 || fs.FetchAborted != 0 {
+		t.Fatalf("fetch counters wrong: %+v", fs)
+	}
+	// FetchNodes on the SUCCESS path — the counter whose false-zero this slice fixed and
+	// then shipped with no instrument at all. A mutation audit reintroduced the bug and
+	// every package stayed green.
+	if fs.FetchNodes == 0 {
+		t.Error("FetchNodes is 0 after a fetch that returned a record — the counter whose " +
+			"whole job is to make an empty fetch legible is recording a false zero, and " +
+			"nothing else in the repo would notice")
+	}
+	if fs.FetchAttempts != 1 || fs.PublishAttempts != 0 {
+		t.Errorf("attempt counters wrong on the fetching node: %+v", fs)
 	}
 }
 
@@ -311,5 +324,131 @@ func TestWeServeOurOwnPublishedRecord(t *testing.T) {
 	}
 	if !bytes.Equal(got, record) {
 		t.Fatalf("we served %q, published %q", got, record)
+	}
+}
+
+// TestAValueThatIsNotBencodeIsCountedAsUndecodable — FetchUndecodable, driven.
+//
+// Somebody served us something shaped wrong. That is a different fact from an absent record
+// and from one that failed its signature, and it had a counter that nothing read.
+func TestAValueThatIsNotBencodeIsCountedAsUndecodable(t *testing.T) {
+	st := &storer{items: map[bep44.Target]*bep44.Item{}}
+	fake := newFakeNode(t, "127.0.0.13", func(q krpc.Msg, id krpc.ID) []byte {
+		if q.A == nil {
+			return nil
+		}
+		r := krpc.Return{ID: id}
+		if q.Q == "get" {
+			tok := "tok"
+			r.Token = &tok
+			// A value that is not bencode at all. It must still satisfy getput's target
+			// and signature checks to reach our decode, so it is served as raw bytes the
+			// library will hand back verbatim.
+			r.V = []byte("\xff\xff not bencode \xff\xff")
+		}
+		b, err := bencode.Marshal(krpc.Msg{T: q.T, Y: krpc.YResponse, R: &r})
+		if err != nil {
+			return nil
+		}
+		return b
+	})
+	_ = st
+
+	n := nodeSeeded(t, fake)
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	_, _, err := n.rz.Fetch(ctx, bytes.Repeat([]byte{4}, 32), []byte("undec"))
+	if err == nil {
+		t.Fatal("a non-bencode value was accepted as a record")
+	}
+	s := n.rz.Stats()
+	if s.FetchUndecodable == 0 && s.FetchEmpty == 0 {
+		t.Fatalf("neither undecodable nor empty was counted: %+v", s)
+	}
+}
+
+// TestAnAbortedLookupIsNotAnEmptyFetch.
+//
+// getput.Get sets err = ctx.Err() and leaves ret alone, so a cancelled lookup used to come
+// back as ErrNoRecord — which the ladder reports as "your peer has not published yet" — and
+// to increment FetchEmpty, whose own doc forbids exactly that.
+func TestAnAbortedLookupIsNotAnEmptyFetch(t *testing.T) {
+	_, fake := newStorer(t, "127.0.0.14")
+	n := nodeSeeded(t, fake)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // already dead
+	_, _, err := n.rz.Fetch(ctx, bytes.Repeat([]byte{6}, 32), []byte("aborted"))
+	if err == nil {
+		t.Fatal("a cancelled fetch reported success")
+	}
+	if err == ErrNoRecord {
+		t.Fatal("a cancelled lookup came back as ErrNoRecord — the ladder would tell the " +
+			"user their peer has not published, when the truth is that we stopped asking")
+	}
+	s := n.rz.Stats()
+	if s.FetchAborted != 1 {
+		t.Errorf("FetchAborted = %d, want 1 (%+v)", s.FetchAborted, s)
+	}
+	if s.FetchEmpty != 0 {
+		t.Errorf("a cancelled lookup was counted as an empty fetch (FetchEmpty=%d)", s.FetchEmpty)
+	}
+}
+
+// TestASeqAtItsCeilingIsRefusedRatherThanWrapped.
+//
+// Every roster member can write at our target. One publishing at math.MaxInt64 makes our
+// seq+1 wrap to math.MinInt64 with no panic and no error; every remote then refuses the put,
+// getput.Put swallows it, and Publish reports success having stored nothing. That turns a
+// preemption race the honest party can re-win into a permanent silent block.
+func TestASeqAtItsCeilingIsRefusedRatherThanWrapped(t *testing.T) {
+	seed := bytes.Repeat([]byte{8}, 32)
+	salt := []byte("squatted")
+	_, pub, err := keyPair(seed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	target := bep44.MakeMutableTarget(pub, salt)
+
+	// A node that claims a record at the maximum sequence number, correctly signed — which
+	// a holder of the invitation can genuinely produce.
+	priv, _, _ := keyPair(seed)
+	victimSeq := int64(math.MaxInt64)
+	squat := []byte("squat")
+	sig := bep44.Sign(priv, salt, victimSeq, bencode.MustMarshal(squat))
+	fake := newFakeNode(t, "127.0.0.15", func(q krpc.Msg, id krpc.ID) []byte {
+		if q.A == nil {
+			return nil
+		}
+		r := krpc.Return{ID: id}
+		if q.Q == "get" {
+			tok := "tok"
+			r.Token = &tok
+			if bep44.Target(q.A.Target) == target {
+				r.V = bencode.MustMarshal(squat)
+				r.K = pub
+				copy(r.Sig[:], sig)
+				s := victimSeq
+				r.Seq = &s
+			}
+		}
+		b, err := bencode.Marshal(krpc.Msg{T: q.T, Y: krpc.YResponse, R: &r})
+		if err != nil {
+			return nil
+		}
+		return b
+	})
+
+	n := nodeSeeded(t, fake)
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	err = n.rz.Publish(ctx, seed, salt, []byte("ours"))
+	if err == nil {
+		t.Fatal("publishing over a MaxInt64 squat reported SUCCESS — seq+1 wrapped to " +
+			"MinInt64, every remote refused it, and getput.Put returned nil")
+	}
+	if s := n.rz.Stats(); s.PublishSeqCeiling != 1 {
+		t.Errorf("PublishSeqCeiling = %d, want 1 — the one form of in-roster preemption "+
+			"that is permanent rather than a race", s.PublishSeqCeiling)
 	}
 }

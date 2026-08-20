@@ -96,10 +96,14 @@ type Stats struct {
 	// change that sets `ServerConfig.Store` or drops the gate turns Nib back into an
 	// unbounded store and nothing else would say so.
 	RefusedStores uint64
+	// Responses is inbound replies that reached the library. **Zero while queries are
+	// going out is "nothing is answering us"** — a different fact from RefusedResponses
+	// (replies arrive and we drop them) and from an empty routing table, and the three
+	// want different advice.
+	Responses uint64
 
 	// PublishAttempts is calls to Publish that got past their local checks. Zero while a
-	// ceremony is armed means the republish loop never ticked — a wiring failure, not a
-	// network one.
+	// ceremony is armed is a wiring failure, not a network one — nothing even tried.
 	PublishAttempts uint64
 	// Published is publishes whose token-gathering traversal completed. **It is NOT
 	// "records stored by anybody"**, and the name is deliberately not `PublishAccepted`:
@@ -127,6 +131,16 @@ type Stats struct {
 	// anything, because we reached nobody who could have had it. Non-zero with
 	// FetchEmpty means the DHT is reachable and the peer has not published yet.
 	FetchNodes uint64
+	// FetchAborted is lookups that did not finish — the caller cancelled, or the budget
+	// expired. **Split from FetchEmpty deliberately**: an unfinished lookup says nothing
+	// about whether a record exists, and folding the two would make the ladder tell a user
+	// their peer has not published when the truth is that we stopped asking.
+	FetchAborted uint64
+	// PublishSeqCeiling is publishes refused because the sequence number at our own key is
+	// at its ceiling. **Non-zero means somebody holding this ceremony's invitation has
+	// taken the key** — the in-roster preemption power, in the one form that is permanent
+	// rather than a race we can re-win.
+	PublishSeqCeiling uint64
 
 	// Observed is replies that carried a usable `ip` field.
 	Observed uint64
@@ -166,15 +180,18 @@ type Server struct {
 	refusedQueries   atomic.Uint64
 	refusedResponses atomic.Uint64
 	refusedStores    atomic.Uint64
+	responses        atomic.Uint64
 
-	publishAttempts  atomic.Uint64
-	published        atomic.Uint64
-	publishNodes     atomic.Uint64
-	fetchAttempts    atomic.Uint64
-	fetched          atomic.Uint64
-	fetchEmpty       atomic.Uint64
-	fetchUndecodable atomic.Uint64
-	fetchNodes       atomic.Uint64
+	publishAttempts   atomic.Uint64
+	published         atomic.Uint64
+	publishNodes      atomic.Uint64
+	fetchAttempts     atomic.Uint64
+	fetched           atomic.Uint64
+	fetchEmpty        atomic.Uint64
+	fetchUndecodable  atomic.Uint64
+	fetchNodes        atomic.Uint64
+	fetchAborted      atomic.Uint64
+	publishSeqCeiling atomic.Uint64
 
 	observed       atomic.Uint64
 	rejectedLength atomic.Uint64
@@ -202,7 +219,7 @@ func Open(conn net.PacketConn, dir string) (*Server, error) {
 
 	// Nothing reaches the library's decoder unscreened. See screen.go: 21 bytes of
 	// UDP from any host kill the process otherwise, on a goroutine nothing here owns.
-	conn = &screened{PacketConn: conn, dropped: &s.screened, refusedResponses: &s.refusedResponses}
+	conn = &screened{PacketConn: conn, dropped: &s.screened, refusedResponses: &s.refusedResponses, responses: &s.responses}
 
 	nodes, err := s.loadNodes()
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
@@ -311,29 +328,32 @@ func (s *Server) Nodes() []krpc.NodeInfo { return s.dht.Nodes() }
 // Stats reports what happened.
 func (s *Server) Stats() Stats {
 	return Stats{
-		Nodes:            s.dht.NumNodes(),
-		Loaded:           s.loaded,
-		Saved:            s.saved.Load(),
-		CacheRejected:    s.cacheRejected,
-		Seeds:            s.seeds,
-		Bootstrapped:     s.bootstrapped.Load(),
-		Screened:         s.screened.Load(),
-		RefusedQueries:   s.refusedQueries.Load(),
-		RefusedResponses: s.refusedResponses.Load(),
-		RefusedStores:    s.refusedStores.Load(),
-		PublishAttempts:  s.publishAttempts.Load(),
-		Published:        s.published.Load(),
-		PublishNodes:     s.publishNodes.Load(),
-		FetchAttempts:    s.fetchAttempts.Load(),
-		Fetched:          s.fetched.Load(),
-		FetchEmpty:       s.fetchEmpty.Load(),
-		FetchUndecodable: s.fetchUndecodable.Load(),
-		FetchNodes:       s.fetchNodes.Load(),
-		Observed:         s.observed.Load(),
-		RejectedLength:   s.rejectedLength.Load(),
-		RejectedPort:     s.rejectedPort.Load(),
-		RejectedScope:    s.rejectedScope.Load(),
-		Disagreements:    s.disagreements.Load(),
+		Nodes:             s.dht.NumNodes(),
+		Loaded:            s.loaded,
+		Saved:             s.saved.Load(),
+		CacheRejected:     s.cacheRejected,
+		Seeds:             s.seeds,
+		Bootstrapped:      s.bootstrapped.Load(),
+		Screened:          s.screened.Load(),
+		RefusedQueries:    s.refusedQueries.Load(),
+		RefusedResponses:  s.refusedResponses.Load(),
+		Responses:         s.responses.Load(),
+		RefusedStores:     s.refusedStores.Load(),
+		PublishAttempts:   s.publishAttempts.Load(),
+		Published:         s.published.Load(),
+		PublishNodes:      s.publishNodes.Load(),
+		FetchAttempts:     s.fetchAttempts.Load(),
+		Fetched:           s.fetched.Load(),
+		FetchEmpty:        s.fetchEmpty.Load(),
+		FetchUndecodable:  s.fetchUndecodable.Load(),
+		FetchNodes:        s.fetchNodes.Load(),
+		FetchAborted:      s.fetchAborted.Load(),
+		PublishSeqCeiling: s.publishSeqCeiling.Load(),
+		Observed:          s.observed.Load(),
+		RejectedLength:    s.rejectedLength.Load(),
+		RejectedPort:      s.rejectedPort.Load(),
+		RejectedScope:     s.rejectedScope.Load(),
+		Disagreements:     s.disagreements.Load(),
 	}
 }
 

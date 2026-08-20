@@ -69,10 +69,40 @@ func TestVerifyContractIsTrue(t *testing.T) {
 		if len(names) == 0 {
 			t.Fatal("no TestLive* functions found — this guard would pass on nothing")
 		}
-		if !strings.Contains(string(harness), "-run 'TestLive'") {
-			t.Errorf("build/dhtlive.sh does not run every TestLive* (it has %d to run); "+
-				"a named -run means a new live test is executed by nothing and nothing says so",
-				len(names))
+		// Match the INVOCATION LINE, not the file.
+		//
+		// A whole-file `strings.Contains` is satisfied by the pattern appearing in a
+		// comment — this repo's own recurring hole, previously found in `published.test.mjs`
+		// and in a `.deb` guard satisfied by a word inside a comment. It also false-reds on
+		// the functionally identical unquoted form. So: find the actual `go test` line, read
+		// its -run pattern, and check that pattern really selects every discovered name.
+		var pattern string
+		for _, line := range strings.Split(string(harness), "\n") {
+			t := strings.TrimSpace(line)
+			if strings.HasPrefix(t, "#") || !strings.Contains(t, "go test") {
+				continue
+			}
+			m := regexp.MustCompile(`-run\s+'?"?([^\s'"]+)'?"?`).FindStringSubmatch(t)
+			if m != nil {
+				pattern = m[1]
+			}
+		}
+		if pattern == "" {
+			t.Fatal("build/dhtlive.sh has no `go test … -run` invocation line — this guard " +
+				"would pass on a harness that runs nothing")
+		}
+		re, err := regexp.Compile(pattern)
+		if err != nil {
+			t.Fatalf("build/dhtlive.sh's -run pattern %q does not compile: %v", pattern, err)
+		}
+		for _, n := range names {
+			// Go's -run is an unanchored match against the test name.
+			if !re.MatchString(n[1]) {
+				t.Errorf("build/dhtlive.sh runs -run %q, which does not select %s. A live "+
+					"test is gated behind NIB_LIVE_DHT, so `go test ./...` skips it too — "+
+					"it would be executed by NOTHING and every tier would stay green.",
+					pattern, n[1])
+			}
 		}
 	}
 

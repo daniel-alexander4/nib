@@ -84,6 +84,27 @@ func TestNothingHereCanReachAnIdentity(t *testing.T) {
 	// would forbid the very thing L1 requires. What must not appear is a KEY TYPE, which
 	// is a package this file can name exactly.
 	fp := regexp.MustCompile(`(?i)fingerprint|spki|pubkey|publickey|privatekey|ed25519|identity|certificate`)
+
+	// A POSITIVE CONTROL for the pattern itself.
+	//
+	// The stimulus guards below prove the WALK is not vacuous — that it collected exported
+	// symbols and rendered types. Nothing proved the PATTERN still matches anything: an
+	// edit that broke the alternation would leave a walk over real symbols scoring zero
+	// hits, which is indistinguishable from a clean package.
+	for _, bad := range []string{
+		"priv ed25519.PrivateKey", "ed25519.PublicKey", "fp fingerprint",
+		"spki []byte", "cert certificate",
+	} {
+		if !fp.MatchString(bad) {
+			t.Fatalf("the identity pattern does not match %q — it has stopped matching "+
+				"anything, and every check below then scores zero on a dirty package "+
+				"exactly as it does on a clean one", bad)
+		}
+	}
+	if fp.MatchString("conn net.PacketConn dir string") {
+		t.Fatal("the identity pattern matches an ordinary signature — it would refuse " +
+			"everything, which is the other way a guard stops discriminating")
+	}
 	exported, sawType := 0, false
 	for name, f := range pkg.Files {
 		ast.Inspect(f, func(n ast.Node) bool {
@@ -152,6 +173,47 @@ func TestNothingHereCanReachAnIdentity(t *testing.T) {
 	}
 	if types_ == 0 {
 		t.Fatal("no exported types were inspected; the type check is vacuous")
+	}
+
+	// 2c. A bare fixed-size byte array in an exported signature.
+	//
+	// The pattern above cannot see `[32]byte`, and the widening comment used to imply it
+	// could. That type is exactly the shape of a BEP-44 public key — and of the value
+	// `keyPair` returns — so an exported `func HopKey() [32]byte` would carry key material
+	// straight past the guard written to keep key material out. Measured: it did.
+	//
+	// A TYPE check rather than a name check, because there is no word to match: the whole
+	// hazard is that the type says nothing about itself. Opaque `[]byte` stays allowed —
+	// that is the compliant shape L1 requires, since it is how the rendezvous key crosses
+	// the line without this package being able to derive it. A fixed 32- or 64-byte array
+	// is not opaque; it is a key or a signature wearing no name.
+	arrayKey := regexp.MustCompile(`^\[(32|64)\]byte$`)
+	arraysChecked := 0
+	for name, f := range pkg.Files {
+		ast.Inspect(f, func(n ast.Node) bool {
+			fd, ok := n.(*ast.FuncDecl)
+			if !ok || !fd.Name.IsExported() {
+				return true
+			}
+			for _, fl := range []*ast.FieldList{fd.Type.Params, fd.Type.Results} {
+				if fl == nil {
+					continue
+				}
+				for _, prm := range fl.List {
+					arraysChecked++
+					if arrayKey.MatchString(types.ExprString(prm.Type)) {
+						t.Errorf("%s: exported %s carries a bare %s — that is the shape of a "+
+							"BEP-44 key, and no name on it can be matched. Hand it across as "+
+							"opaque []byte, as the rendezvous key already is.",
+							name, fd.Name.Name, types.ExprString(prm.Type))
+					}
+				}
+			}
+			return true
+		})
+	}
+	if arraysChecked == 0 {
+		t.Fatal("the array walk inspected no parameters at all — it would pass on nothing")
 	}
 
 	// 3. The learned address must never become our own DHT node id.

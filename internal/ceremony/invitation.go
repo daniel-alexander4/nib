@@ -154,13 +154,24 @@ func ParseInvitation(text string) (Invitation, error) {
 	if len(inv.Secret) != SecretLen {
 		return Invitation{}, ErrInvitationCorrupt
 	}
-	for _, p := range inv.Roster {
-		if b, err := hex.DecodeString(p.Fingerprint); err != nil || len(b) != sha256.Size {
+	for i, p := range inv.Roster {
+		b, err := hex.DecodeString(p.Fingerprint)
+		if err != nil || len(b) != sha256.Size {
 			// A roster entry that is not a full fingerprint is the one corruption that
 			// must never be tolerated: the whole point of the invited path is that the pin
 			// is 256 bits.
 			return Invitation{}, ErrInvitationCorrupt
 		}
+		// Normalise the case HERE, once, because hex.DecodeString accepts both and every
+		// consumer downstream compares the STRING.
+		//
+		// Left alone, an uppercase fingerprint is a legitimate roster entry that breaks
+		// the ceremony two different ways. The two parties derive different DHT salts and
+		// never find each other — silently, indistinguishable from an offline peer. And if
+		// they did meet, `Fingerprint()` always emits lowercase, so the record would be
+		// refused with ErrCandidateAuthor: *"signed by someone other than the party it
+		// claims"* — an accusation of impersonation over a difference in letter case.
+		inv.Roster[i].Fingerprint = strings.ToLower(p.Fingerprint)
 	}
 	return inv, nil
 }
@@ -247,10 +258,16 @@ func (i Invitation) RecordKey(hop int) ([]byte, error) {
 //
 // 32 bytes, comfortably inside BEP-44's 64-byte salt cap (bep44/item.go:140).
 func (i Invitation) RecordSalt(hop int, fingerprint string) ([]byte, error) {
-	if _, err := hex.DecodeString(fingerprint); err != nil || len(fingerprint) != sha256.Size*2 {
+	raw, err := hex.DecodeString(fingerprint)
+	if err != nil || len(raw) != sha256.Size {
 		return nil, errors.New("record salt needs a full hex fingerprint")
 	}
-	return i.derive(fmt.Sprintf("nib-rendezvous-salt-v1/hop-%d/party-%s", hop, fingerprint), 32)
+	// Keyed on the DECODED bytes, not the string. hex.DecodeString accepts either case, so
+	// interpolating the text would make `AB12…` and `ab12…` derive different salts for the
+	// same peer — two parties publishing to two targets and never meeting. Case is
+	// normalised at ParseInvitation as well; this is the same fact enforced structurally,
+	// where it cannot be undone by a caller that built an Invitation some other way.
+	return i.derive(fmt.Sprintf("nib-rendezvous-salt-v1/hop-%d/party-%x", hop, raw), 32)
 }
 
 // --- caveat 11: the channel binding -------------------------------------------
