@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"testing"
@@ -274,5 +275,73 @@ func TestRepointRejectsUnstableKeyPath(t *testing.T) {
 		if resp.StatusCode != http.StatusBadRequest {
 			t.Errorf("repoint with key path %q = %d, want 400 — accepting it would write back the unstable path this route exists to repair", bad, resp.StatusCode)
 		}
+	}
+}
+
+// TestASubResourceGetCannotReachTheVault.
+//
+// `requirePublicLoopback` was put on `GET /api/status` because *"the method-based guard let
+// any web page the user had open trigger first-run vault creation with a plain cross-site
+// request"* — handleStatus calls ensureUnlocked, which can run vault.AutoSetup. It stopped
+// `fetch()` and nothing else: browsers send **no Origin** on sub-resource GETs, so an
+// `<img src="http://127.0.0.1:PORT/api/status">` on any open page passed the guard.
+//
+// The population is what matters here. A test that only drove `Origin: https://evil` would
+// have passed against the shipped code — that case was already refused. The case that was
+// not refused is the one with no Origin at all.
+func TestASubResourceGetCannotReachTheVault(t *testing.T) {
+	for _, c := range []struct {
+		name     string
+		headers  map[string]string
+		wantPass bool
+		why      string
+	}{
+		{
+			name:     "img tag on a hostile page",
+			headers:  map[string]string{"Sec-Fetch-Site": "cross-site", "Sec-Fetch-Mode": "no-cors"},
+			wantPass: false,
+			why:      "no Origin is sent for a sub-resource GET, so this passed the shipped guard",
+		},
+		{
+			name:     "script tag on a hostile page",
+			headers:  map[string]string{"Sec-Fetch-Site": "cross-site", "Sec-Fetch-Dest": "script"},
+			wantPass: false,
+			why:      "same shape, different element",
+		},
+		{
+			name:     "cross-site fetch, which the shipped guard did catch",
+			headers:  map[string]string{"Origin": "https://evil.example", "Sec-Fetch-Site": "cross-site"},
+			wantPass: false,
+			why:      "the positive control: this must stay refused",
+		},
+		// The controls. A guard that refuses everything is an outage, not a fix.
+		{
+			name:     "Nib's own UI",
+			headers:  map[string]string{"Sec-Fetch-Site": "same-origin"},
+			wantPass: true,
+			why:      "an ordinary same-origin GET sends no Origin either — requiring Origin would break the app",
+		},
+		{
+			name:     "the user typing the URL",
+			headers:  map[string]string{"Sec-Fetch-Site": "none"},
+			wantPass: true,
+			why:      "a user-initiated navigation",
+		},
+		{
+			name:     "a client that sends no metadata at all",
+			headers:  nil,
+			wantPass: true,
+			why:      "curl and the CLI — falls back to the Origin rule, unchanged",
+		},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, "/api/status", nil)
+			for k, v := range c.headers {
+				req.Header.Set(k, v)
+			}
+			if got := originIsLoopback(req); got != c.wantPass {
+				t.Errorf("originIsLoopback = %v, want %v — %s", got, c.wantPass, c.why)
+			}
+		})
 	}
 }
