@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"nib/internal/rendezvous"
+	"os"
 )
 
 // The verdict's branches, table-tested.
@@ -144,9 +145,31 @@ func TestTheBannerSaysWhetherItPublishes(t *testing.T) {
 }
 
 // The banner must be printed before anything opens a socket or publishes.
+//
+// **This test reaches the public BitTorrent DHT, and until v1.116.8 it did so in tier 1.**
+// Its own comment claimed "a budget too small to do anything", and the arithmetic refutes
+// that: `probeShare = max(budget/3, 8s)` is 8 s and `bootShare = max(budget-8s, 1s)` is
+// 1 s, so `time.Millisecond` buys a nine-second live run. `go test ./...` is the tier
+// CONTRIBUTING says a fresh clone runs unaided, so a contributor's first test run performed
+// the exact act `banner()` exists to disclose and invite Ctrl-C on. It measured
+// sub-second only on machines with no route out, which is also why it stayed unnoticed.
+//
+// Gated on `-short` being absent AND the same opt-in the live DHT tests use, so the
+// property (ordering of the output) is still asserted hermetically below while the network
+// half is opt-in. See build/dhtlive.sh.
 func TestTheBannerPrecedesTheSocket(t *testing.T) {
+	if os.Getenv("NIB_LIVE_DHT") == "" {
+		// The hermetic half: banner() alone, which is what the assertions are about.
+		got := banner(false)
+		if !strings.HasPrefix(got, "nib rendezvous diagnostic") {
+			t.Fatalf("the first thing printed was not the disclosure:\n%.200s", got)
+		}
+		if i := strings.Index(got, "local socket"); i >= 0 && i < strings.Index(got, "Ctrl-C") {
+			t.Error("the socket line precedes the Ctrl-C invitation")
+		}
+		return
+	}
 	var buf strings.Builder
-	// A budget too small to do anything: the run bails, but the banner must already be out.
 	runRendezvous(&buf, io.Discard, time.Millisecond, false)
 	got := buf.String()
 	if !strings.HasPrefix(got, "nib rendezvous diagnostic") {
@@ -217,5 +240,29 @@ func TestTheNoteDistinguishesTriedFromUnused(t *testing.T) {
 	}
 	if !strings.Contains(used, "sender chose") {
 		t.Errorf("the used note stopped naming whose list built the table: %q", used)
+	}
+}
+
+// TestTheProbeVerdictCannotReportSuccessWithoutObservingAnything.
+//
+// The `Observed == 0` arm — "the DHT is reachable but nothing reported our address back" —
+// returned exit **0**. That is the diagnostic failing to establish the fact it was run to
+// establish, reported as a pass to any script or pasted `echo $?`. The self-test arm one
+// screen above already treats the same shape as non-zero, with the comment "the mode whose
+// entire purpose is to prove the publish path works must be able to say that it didn't".
+func TestTheProbeVerdictCannotReportSuccessWithoutObservingAnything(t *testing.T) {
+	// STIMULUS/control: a run that DID observe must still exit 0, or this is just a
+	// diagnostic that always fails.
+	good := rendezvous.Stats{Nodes: 40, Observed: 16, Responses: 40}
+	if _, code := verdict(good, rendezvous.SelfAddress{
+		V4: rendezvous.Class{Mapping: rendezvous.MappingEndpointIndependent, Agreed: 16, Sources: 16},
+	}, nil, nil, false); code != 0 {
+		t.Fatalf("a healthy probe exited %d, want 0 — the control does not hold", code)
+	}
+
+	bad := rendezvous.Stats{Nodes: 40, Observed: 0, Responses: 40}
+	msg, code := verdict(bad, rendezvous.SelfAddress{}, nil, nil, false)
+	if code == 0 {
+		t.Errorf("a probe that observed NOTHING exited 0:\n%s", msg)
 	}
 }

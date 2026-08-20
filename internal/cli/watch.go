@@ -13,6 +13,7 @@ import (
 
 	"nib/internal/ots"
 	"nib/internal/pdfops"
+	"syscall"
 )
 
 // cmdWatch polls a directory and runs an operation on each PDF added to it,
@@ -75,7 +76,7 @@ type fileState struct {
 }
 
 func watchLoop(dir string, interval int, opName string, act watchAction) int {
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	fmt.Fprintf(os.Stderr, "nib: watching %s — %s each new PDF (scan every %ds); Ctrl-C to stop\n", dir, opName, interval)
 
@@ -137,6 +138,21 @@ func scanOnce(dir string, seen map[string]fileState, processed map[string]bool, 
 		}
 		info, err := e.Info()
 		if err != nil {
+			continue
+		}
+		// REGULAR FILES ONLY, and a symlink is the reason.
+		//
+		// `DirEntry.Info()` is an Lstat, so a symlink named `x.pdf` passed the extension
+		// filter; `watchTransform` then read THROUGH it and `writeAtomic` — which calls
+		// `filepath.EvalSymlinks` — renamed over the TARGET. Anyone who can drop a file
+		// into the watched directory (the documented "process my inbox" and shared
+		// scan-drop uses) caused an unrequested in-place rewrite of any PDF elsewhere on
+		// disk the user can write, outside the directory the watch was pointed at.
+		// `--do sanitize` strips that document's metadata irreversibly.
+		//
+		// `writeAtomic`'s symlink-following is deliberate and stays — it is for `-w` on a
+		// path the USER named, which is a different provenance from directory discovery.
+		if !info.Mode().IsRegular() {
 			continue
 		}
 		st := fileState{info.Size(), info.ModTime()}
