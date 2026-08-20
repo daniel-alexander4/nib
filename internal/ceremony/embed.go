@@ -94,7 +94,8 @@ func CheckDocument(pdf []byte) (Record, error) {
 	}
 	if got != r.DocHash {
 		return r, fmt.Errorf("the document does not match the ceremony record: it hashes to %s "+
-			"and the record was written for %s — these are not the same document", got[:16], r.DocHash[:16])
+			"and the record was written for %s — these are not the same document",
+			short(got), short(r.DocHash))
 	}
 	return r, nil
 }

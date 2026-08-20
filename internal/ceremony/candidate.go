@@ -401,10 +401,24 @@ func OpenCandidate(recordKey, salt []byte, hop int, sealed []byte) (CandidateRec
 // seed and this record key, so they re-seal at any seq they like. A storing node re-serving
 // a recorded tuple serves it at its ORIGINAL seq, which binding permits. Freshness is the
 // signed Expires field's job, and always was.
+//
+// # The VERSION is excluded too, and for the D32 reason
+//
+// It used to be here, as the build's `CandidateFormatVersion` **constant** — not the
+// record's wire version, which cannot be known before decryption. So the first bump of that
+// constant would have made every v1 ciphertext in flight fail `aead.Open`, surfacing as
+// `ErrCandidateSealed`: *"this record was not written for this ceremony, or has been
+// altered"*. That is an accusation of tampering where the truth is that two builds disagree
+// about a format — precisely what `record.go`'s D32 note spends six lines refusing, for the
+// sibling format, in the same package.
+//
+// Nothing is lost by the exclusion: the version IS bound, in the signed preimage
+// (`preimage()`), and range-checked at `Verify`. Excluding it here is what lets that check
+// be REACHED — a version-skewed record now decrypts, fails the version check, and says so.
+// The version is NOT in here, and that exclusion is argued — see below.
 func candidateAAD(salt []byte, hop int) []byte {
 	var p preimageBuilder
 	p.addString(candidateDomain)
-	p.addUint(uint64(CandidateFormatVersion))
 	p.add(salt)
 	p.addUint(uint64(hop))
 	return p.bytes()
