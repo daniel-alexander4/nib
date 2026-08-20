@@ -230,6 +230,36 @@ between them and a silent failure on a platform no tier can reach.
 | The hostname bootstrap made reachable | `TestBootstrapResolvesNoHostname` | D6 forbids it: a DNS lookup is a third party learning who starts a ceremony and when |
 
 
+## Tier 1 and the live harness — `internal/rendezvous` (P04.S02, the self-address probe)
+
+Ten defects reintroduced one at a time against the shipped tests, each reverted before the
+next. The tenth was not reintroduced at all — it was **observed happening**, which is the
+only reason the send-limiter fix exists.
+
+| Defect reintroduced | Check that fired | What it said |
+|---|---|---|
+| The DHT view handed to `dht.NewServer` unscreened (v1.111.1) | Tier 1 — `TestTwentyOneBytesCannotKillTheProcess` | the test binary **died**: `panic: runtime error: makeslice: len out of range`, in `krpc.(*NodeAddr).UnmarshalBinary` on `dht.(*Server).serve`. 21 bytes of UDP from any host |
+| `netip.AddrFromSlice`'s refusal dropped, so a truncated `ip` is believed | Tier 1 — `TestABogonSelfAddressIsRefusedUnderItsOwnCause/a_FOUR-byte_ip_field` | "rejected length=0 port=0 scope=1 … refused, but filed under the wrong cause, and a 4-byte field (silent corruption) must never be summed with a bogon" |
+| `sourcePrefix` counting per node instead of per /24 and /48 | Tier 1 — `TestClassifyIsThreeValuedAndCountsSources/two_nodes_in_one_/24_are_ONE_source` | "Sources = 2, want 1 — two nodes behind one NAT are one destination; counting them as two would resolve the clause with a number that cannot answer it" |
+| The largest group wins with no majority test | Tier 1 — the same test, `one_liar_against_ONE_honest_node_wins_nothing` | "Mapping = endpoint-independent, want endpoint-dependent — with two sources and no majority the honest answer is that we cannot tell" |
+| One observation treated as enough to classify | Tier 1 — `TestTwoNodesAreNeededToClassify` | "Mapping = endpoint-independent with one source, want unknown — this is caveat 9's degradation to D19 cause 4" |
+| `writeNodes` back to `To4()`, dropping every IPv6 node | Tier 1 — `TestTheCacheCarriesIPv6` | "writeNodes wrote 1 of 2 nodes — the v6 one was dropped, which on a v6-only host means no cache is ever written and every run is a cold start" |
+| `Ping` returning `res.Err` instead of `res.ToError()` | Tier 1 — `TestAKRPCErrorReplyIsNotALiveNode` | "a node that answered with a KRPC error counted as live — the reply arrived, so the transaction succeeded" |
+| The L1 guard reading parameter **names** only, as `internal/discovery`'s does | Tier 1 — `TestNothingHereCanReachAnIdentity`'s own stimulus | "the walk collected no TYPE text — it is reading names only, which is the exact hole this guard was written to close" |
+| `Open` refusing to start over an unreadable cache again | Tier 1 — `TestAnUnreadableCacheIsAColdStartNotARefusalToRun` | "Open refused to start over a corrupt cache — one damaged byte in a bootstrap hint file must not be the reason Nib cannot open a document" |
+| **Not reintroduced — observed.** The library's process-global `DefaultSendLimiter` (v1.111.0) | Tier 1 — `TestTheNodeCacheSurvivesARestart`, under the full package run only | "ping: after 1 tries: transaction timed out". The counters added to that failure message named it: `B mux RoutedToDHT:1` with `A mux RoutedToDHT:0` — B received the query and its reply was never sent, because `reply()` writes with `wait=false` and drops when the shared burst is gone |
+
+### The slice's own review added five more
+
+| Defect reintroduced | Check that fired | What it said |
+|---|---|---|
+| The `OnQuery` gate unwired, reopening the handler door (v1.111.1) | Tier 1 — `TestAQueryWithNoArgumentsCannotKillTheProcess` | the test binary **died**: `panic: runtime error: invalid memory address or nil pointer dereference`, `dht.(*Server).handleQuery` at `server.go:540`, from 34 bytes |
+| The gate refusing every query instead of malformed ones | Tier 1 — `TestAWellFormedQueryIsStillAnswered` | "no reply to a well-formed ping — a node that stops answering gets dropped from other nodes' routing tables, and our own reachability goes with it" |
+| The gate counting into `Screened` rather than its own cause | Tier 1 — `TestAQueryWithNoArgumentsCannotKillTheProcess` | "Screened = 2 — these went through the decoder screen, and counting them there would merge two different doors into one number" |
+| `MaxStrLen` dropped from the screen's decoder | Tier 1 — `TestAnAllocationBombIsDroppedNotDecodedTwice` | "the bomb passed the screen — the library then decodes it too"; 10 screened bombs allocated 1.3 GB |
+| `0.0.0.0/8` and `240.0.0.0/4` removed from `reservedRanges` | Tier 1 — `TestIsPublishableAgainstTheRangesGoDoesNotCover` | "isPublishable(0.1.2.3) = true (IsGlobalUnicast reports true) — this becomes a candidate both sides punch hundreds of packets at" |
+| A `Fingerprint` field added to an exported struct | Tier 1 — `TestNothingHereCanReachAnIdentity` | "exported type Observation names or carries an identity — L1 forbids this package holding one at all" |
+
 ## Vacuous greens caught, and how
 
 Not red proofs — the opposite, and worth as much. Each is a check that was **passing while
@@ -237,6 +267,11 @@ measuring nothing**, found by its own setup assertion or by a deliberate probe.
 
 | The check | Why it was vacuous | What exposed it |
 |---|---|---|
+| `TestAKRPCErrorReplyIsNotALiveNode`'s stimulus (P04.S02) | It called `net.DialUDP` and checked the error, labelled "the node is reachable and DOES answer". `connect(2)` on a UDP socket **sends no packet** — it succeeds against a closed port, an unbound port, and a fake node whose goroutine has already exited | the slice's own diff review. Replaced with a real send and read |
+| `screen.go`'s comment, "nothing reaches the library's decoder unscreened" (P04.S02) | True, and it read as a clean bill of health for a class it half-covered. A query that decodes perfectly still killed the handler — 34 bytes | two review agents independently, and the second door was measured by fuzzing every query type rather than reasoned about |
+| `observation`'s explicit `len(ip.IP)` check (P04.S02) | **Unreachable.** `netip.AddrFromSlice` already accepts 4 and 16 bytes and nothing else, so the branch below it could never run — two doors onto one refusal, one of them untestable | the red-proof pass: disabling the length check left `TestABogonSelfAddressIsRefusedUnderItsOwnCause` **green**. Collapsed to one door, which then went red |
+| `build/dhtlive.sh`'s evidence block (P04.S02) | Printed **nothing**. The `sed` stripped leading whitespace but not `go test`'s `live_test.go:53: ` prefix, so no line matched and the harness reported PASS with no evidence under it | running it and reading the output instead of the exit status |
+| The `internal/rendezvous` package doc's claim that "a guard enforces that" (P04.S01) | There was **no such guard** — the L1 import check existed only in `internal/discovery`. A claim about code, written in the code, reading as verification | writing the guard the comment promised |
 | `TestScanAndStripFollowNextChains`' first draft asserted `bytes.Contains(pdf, "/JavaScript")` | pdfcpu writes OBJECT STREAMS, so the string is absent from a document that *does* carry the action — green whatever the strip did | a probe printing the byte presence BEFORE the strip; replaced with `annotFacts`, which walks the object graph |
 | `TestStripActiveIsAtLeastAsStrongAsRemoveFilesAndMedia`' first draft used direct annotation dicts | `RemoveAnnotations` works off `ctx.PageAnnots`, filled only for annotations reached by an INDIRECT reference — so neither tier removed anything and the test passed against unfixed code | its own setup assertion, then a probe printing what each tier left |
 | `test/ui/gestures.test.mjs`' cleanup loop conditioned on the tab count | `syncTabs` renders no tabs below two documents, so the loop stopped with the last document still open | 13 sibling tier-3 tests failing on the next run |

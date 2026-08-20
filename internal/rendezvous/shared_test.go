@@ -88,7 +88,12 @@ func TestTheNodeCacheSurvivesARestart(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	if err := a.rz.Ping(ctx, b.addr); err != nil {
-		t.Fatalf("ping: %v", err)
+		// Both muxes, because "ping timed out" names no side and this failure has
+		// already had three different causes. RoutedToDHT on B with nothing on A is a
+		// reply that was never sent — which is what a drained send limiter looks like.
+		t.Fatalf("ping: %v\n  A mux: %+v\n  B mux: %+v\n  screened: A=%d B=%d",
+			err, a.mux.Stats(), b.mux.Stats(),
+			a.rz.Stats().Screened, b.rz.Stats().Screened)
 	}
 	// Stimulus: A really learned a node, so "the cache has one" is not true of a
 	// table that was always empty.
