@@ -1175,3 +1175,46 @@ func TestAnUnknownSessionModeIsRefusedNotSilentlyDowngraded(t *testing.T) {
 		}
 	}
 }
+
+// TestASecondSpokenCheckCannotDisplaceTheOneOnScreen.
+//
+// `setVerify` assigned unconditionally while `clearVerifyIf` beside it carries an identity
+// guard — two halves of one invariant disagreeing. Two gates can genuinely be in flight (an
+// armed receive session while the user posts /api/session/send), and the second overwrote
+// the first: the displaced goroutine sat on a channel nobody would write to until its
+// five-minute timeout, and `respondVerify` routed the user's answer to whichever was
+// current.
+//
+// The user cannot tell them apart — `verifyView` deliberately carries no fingerprint and no
+// peer label, which is right for one gate and is exactly what makes two unanswerable.
+func TestASecondSpokenCheckCannotDisplaceTheOneOnScreen(t *testing.T) {
+	_, s := startServerWith(t)
+
+	first := &pendingVerify{words: "one two three four", resp: make(chan bool, 1)}
+	if !s.sess.setVerify(first) {
+		t.Fatal("setup: the first gate was refused with nothing pending")
+	}
+	// STIMULUS: the first gate is really the one parked. Without this the refusal below
+	// could be a setVerify that refuses everything.
+	if pending := s.sess.currentVerify(); pending != first {
+		t.Fatalf("setup: the parked gate is not the first one (%+v)", pending)
+	}
+
+	second := &pendingVerify{words: "five six seven eight", resp: make(chan bool, 1)}
+	if s.sess.setVerify(second) {
+		t.Error("a second session's spoken check displaced the one already on screen — the " +
+			"user's answer then belongs to words they never saw, and the first session " +
+			"hangs on a channel nobody will write to")
+	}
+	if pending := s.sess.currentVerify(); pending != first {
+		t.Errorf("the parked gate changed after a second setVerify; the incumbent must survive")
+	}
+
+	// And the seat frees up properly: after the incumbent clears, the next one is admitted.
+	// A refusal that never lifts would make the gate a one-shot for the process.
+	s.sess.clearVerifyIf(first)
+	if !s.sess.setVerify(second) {
+		t.Error("the verification seat did not free after the incumbent cleared")
+	}
+	s.sess.clearVerifyIf(second)
+}

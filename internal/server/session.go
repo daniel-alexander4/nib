@@ -303,10 +303,18 @@ func (sc sessionConfirmer) Confirm(peer p2p.SignerAttestation, doc []byte) (bool
 // same outcome for the session and completely different facts about what happened.
 type sessionVerifier struct{ s *Server }
 
+// errVerifyBusy is returned when another session's spoken check is already on screen.
+var errVerifyBusy = errors.New("another co-signing session is already waiting for the spoken check — finish or cancel that one first")
+
 func (sv sessionVerifier) ConfirmVerification(words string) (bool, error) {
 	ch := make(chan bool, 1)
 	pv := &pendingVerify{words: words, resp: ch}
-	sv.s.sess.setVerify(pv)
+	if !sv.s.sess.setVerify(pv) {
+		// A gate is already on screen for another session. Declining is the fail-closed
+		// answer: silently displacing it would route this user's answer to words they
+		// never saw, and waiting would hang until a five-minute timeout with nothing shown.
+		return false, errVerifyBusy
+	}
 	defer sv.s.sess.clearVerifyIf(pv)
 	select {
 	case ok := <-ch:
@@ -320,11 +328,40 @@ func (sv sessionVerifier) ConfirmVerification(words string) (bool, error) {
 // listener: verification happens on both roles, and the dialing side has no listener at
 // all. Refusing there would have made the gate unreachable for whoever initiated — which
 // is half of "both sides confirm".
+//
+// # It will not displace a live gate, and the INCUMBENT wins
+//
+// This used to assign unconditionally, while `clearVerifyIf` right below carries an
+// identity guard for the mirror case — the two halves of one invariant disagreeing. Two
+// gates can genuinely be in flight (an armed receive session while the user posts
+// /api/session/send), and the second overwrote the first: the displaced goroutine then sat
+// on a channel nobody would ever write to until its five-minute timeout, and `respondVerify`
+// routed the user's answer to whichever was current.
+//
+// The user cannot tell them apart. `verifyView` deliberately carries no fingerprint and no
+// peer label — sound reasoning for ONE gate, and exactly what makes two unanswerable — so a
+// silent swap means they confirm four words belonging to a session they never saw.
+//
+// The incumbent wins because they may already be reading its words and about to answer.
+// The newcomer is refused, which fails closed: its ConfirmVerification declines, and that
+// session ends with a reason instead of hanging until a timeout.
 func (se *session) setVerify(pv *pendingVerify) bool {
 	se.mu.Lock()
 	defer se.mu.Unlock()
+	if se.verify != nil {
+		return false
+	}
 	se.verify = pv
 	return true
+}
+
+// currentVerify reports which gate is parked, for tests that must distinguish the
+// incumbent from a newcomer. verifyView deliberately carries only the words, so it cannot
+// tell two gates apart — which is the user's problem and is why setVerify refuses.
+func (se *session) currentVerify() *pendingVerify {
+	se.mu.Lock()
+	defer se.mu.Unlock()
+	return se.verify
 }
 
 // clearVerifyIf drops the pending verification only if `pv` is still the pending one —
