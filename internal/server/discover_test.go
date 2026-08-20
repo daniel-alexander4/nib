@@ -11,8 +11,10 @@ import (
 	"testing"
 	"time"
 
+	"fmt"
 	"nib/internal/discovery"
 	"nib/internal/pairing"
+	"nib/internal/sign"
 	"nib/internal/vault"
 )
 
@@ -501,5 +503,94 @@ func TestALinkLocalCandidateCarriesItsZone(t *testing.T) {
 	}
 	if strings.Contains(got2.Addr, "%") {
 		t.Errorf("a non-link-local candidate %q carries a zone", got2.Addr)
+	}
+}
+
+// TestOneHostCannotFloodTheCandidateList.
+//
+// `resolve` builds the candidate address from the observed source host plus the port
+// **from the datagram payload**, so one on-link host needs no address spoofing: it
+// announces the six-word name — broadcast in the clear every 500 ms, and this file's own
+// comment says it is not a secret — with a different port each time, and every datagram
+// becomes another candidate. `dialAny` then walked all of them at 30 s each inside an HTTP
+// handler.
+//
+// Note the shape of the fix being tested: the cap must be MORE than one, or it
+// reintroduces the capture attack that returning every address exists to defeat.
+func TestOneHostCannotFloodTheCandidateList(t *testing.T) {
+	fp := fpOf(5)
+	pins := []vault.PinnedPeer{{Fingerprint: fp, Label: "Ada"}}
+
+	// One host, 200 announcements, one port apart. No spoofing.
+	var script []struct {
+		seen discovery.Seen
+		err  error
+	}
+	for i := 0; i < 200; i++ {
+		script = append(script, struct {
+			seen discovery.Seen
+			err  error
+		}{seen: announcementFrom(t, fp, uint16(20000+i), "10.0.0.9")})
+	}
+	fb := &fakeBrowser{script: script}
+	got := browsePeers(fb, pins, 2*time.Second)
+
+	// STIMULUS: the flood must actually have produced candidates, or the cap below is
+	// being credited for a resolve that rejected everything.
+	if len(got) == 0 {
+		t.Fatal("setup: the flood produced no candidates at all, so nothing was capped")
+	}
+	if len(got) > maxLANCandidates {
+		t.Errorf("browsePeers returned %d candidates from ONE host; the cap is %d. At "+
+			"sessionDialTimeout each that is %v of a wedged /api/session/initiate",
+			len(got), maxLANCandidates, time.Duration(len(got))*lanDialTimeout)
+	}
+	// The control, and it is the whole reason the cap is not 1: two hosts claiming one
+	// name must BOTH survive, or an attacker announcing first captures the browse and the
+	// genuine peer is unreachable. TestTwoHostsClaimingOneNameBothBecomeCandidates is the
+	// direct test of that; this is the bound that must not swallow it.
+	if maxLANCandidates < 2 {
+		t.Fatal("maxLANCandidates < 2 reintroduces the capture attack")
+	}
+}
+
+// TestDialAnyStopsEvenWithCandidatesLeft — the half the cap does not cover.
+//
+// A cap bounds how many candidates there are and says nothing about how long each takes.
+// Real credentials, because with nil ones `SessionTLS` refuses before any dial — which is
+// what `TestDialAnyTriesEveryCandidate` does, so it never contacts a candidate at all and
+// its "2 address(es)" assertion reads `len(addrs)` rather than attempts made.
+func TestDialAnyStopsEvenWithCandidatesLeft(t *testing.T) {
+	if testing.Short() {
+		t.Skip("this test spends real wall-clock on dial timeouts")
+	}
+	cert, key, err := sign.GenerateIdentity("Ada")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var addrs []string
+	for i := 0; i < maxLANCandidates; i++ {
+		// 203.0.113.0/24 is TEST-NET-3: routable-shaped and allocated to nobody, so a
+		// dial hangs to its timeout rather than being refused. That is the attacker's case
+		// — a refused connection costs nothing and is not the shape that wedges a handler.
+		addrs = append(addrs, fmt.Sprintf("203.0.113.%d:9", i+1))
+	}
+	start := time.Now()
+	_, derr := dialAny("tcp", addrs, cert, key, make([]byte, 32))
+	elapsed := time.Since(start)
+
+	if derr == nil {
+		t.Fatal("dialAny connected to TEST-NET-3")
+	}
+	// STIMULUS: it must actually have attempted a dial. A walk that returned instantly on
+	// a credential error would satisfy the bound below while contacting nothing.
+	if elapsed < time.Second {
+		t.Fatalf("dialAny returned in %v with error %v — it cannot have attempted a dial, "+
+			"so the budget is not what stopped it", elapsed, derr)
+	}
+	if elapsed > lanDialBudget+lanDialTimeout+5*time.Second {
+		t.Errorf("dialAny took %v over %d candidates; the budget is %v. Unbounded, this is "+
+			"the wedged handler an on-link host holds open by announcing ports",
+			elapsed, len(addrs), lanDialBudget)
 	}
 }
