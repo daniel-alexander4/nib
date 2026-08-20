@@ -45,6 +45,23 @@ func Routable(a netip.Addr) bool {
 //
 // 80 and 443 are not UDP reflectors in any deployed service, so admitting them costs
 // nothing the floor was protecting.
+//
+// # The residual, stated rather than left implicit
+//
+// `Seed` below refuses the same two ports, and its argument — that they are the ports
+// likeliest to belong to an unrelated third party's web server, so aiming UDP at them is
+// unsolicited traffic at somebody's HTTPS endpoint — is true of a QUIC candidate here too.
+// The exception is kept anyway, and the difference is volume and attribution, not harm:
+//
+//   - A candidate is inside a record signed by an identity in the roster, so an address
+//     offered here is attributable to a party the convener invited.
+//   - It is dialled once, by at most the roster, during one ceremony: a handful of QUIC
+//     Initials. A seed goes into a routing table, is re-pinged, and is handed to traversals.
+//   - HTTP/3 makes UDP/443 a real deployment, so a peer on exactly D14's network genuinely
+//     may be reachable there. No deployed DHT node listens on 443.
+//
+// So the exception is bounded and named. Do not read the sentence above it as a claim that
+// UDP at 443 is harmless — it is a claim that it does not *amplify*, which is less.
 const MinPort = 1024
 
 var portExceptions = map[uint16]bool{80: true, 443: true}
@@ -55,6 +72,22 @@ func Target(ap netip.AddrPort) bool {
 		return false
 	}
 	return ap.Port() >= MinPort || portExceptions[ap.Port()]
+}
+
+// Seed is Routable plus the port floor, for a DHT bootstrap address.
+//
+// **Deliberately not Target**, and the difference is the transport. Target's 80 and 443
+// exceptions exist for D14's TCP fallback — the networks where outbound TCP is permitted
+// and UDP is not, and a peer's only reachable inbound port is plausibly 443. A DHT seed is
+// spoken to over **UDP only**: it is fed to a KRPC traversal and pinged on the shared
+// socket. So the exceptions buy a seed nothing, and cost it the thing the floor was for —
+// 80 and 443 are the two ports likeliest to belong to an unrelated third party's web
+// server, and an attacker-supplied seed list of them turns every recipient's bootstrap into
+// unsolicited UDP at somebody's HTTPS endpoint.
+//
+// One table, three predicates, each stating which question it answers.
+func Seed(ap netip.AddrPort) bool {
+	return ap.Port() >= MinPort && Routable(ap.Addr())
 }
 
 // SharedSpace reports CGNAT space (100.64/10), which is a distinct fact from unroutable —

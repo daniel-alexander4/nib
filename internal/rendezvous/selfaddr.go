@@ -159,6 +159,16 @@ func (s *Server) ProbeSelf(ctx context.Context) (SelfAddress, error) {
 	out.V6 = classify(out.Observations, true)
 	s.disagreements.Add(uint64(disagreements(out.Observations, out.V4) +
 		disagreements(out.Observations, out.V6)))
+	// Remember the endpoint, so SeedSample can refuse to put it in an invitation. A node
+	// at our own public address is a second Nib on this host or a peer behind the same NAT
+	// — different node id, same IP — and the library's own self-check is on the id.
+	s.mu.Lock()
+	if out.V4.Addr.IsValid() {
+		s.self = out.V4.Addr
+	} else if out.V6.Addr.IsValid() {
+		s.self = out.V6.Addr
+	}
+	s.mu.Unlock()
 	return out, nil
 }
 

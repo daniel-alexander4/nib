@@ -2,6 +2,12 @@
 # Nib's ONE non-hermetic harness: the self-address probe against the real BitTorrent DHT.
 #
 # Usage: ./build/dhtlive.sh
+#        NIB_LIVE_SEEDS=ip:port[,ip:port...] ./build/dhtlive.sh
+#
+# NIB_LIVE_SEEDS is P04.S06's rescue path: seeds the OPERATOR resolved, standing in for
+# ones an invitation would carry. Nib must never resolve a name on the bootstrap path and
+# a live seed test is the one place tempted to, so the addresses are an input rather than
+# a lookup. Without it that test skips and everything else here runs unchanged.
 #
 # ── Why this is out of the routine loop ──────────────────────────────────────
 # Every numbered tier is hermetic, and tier 3 was deliberately MADE hermetic (v1.109.3)
@@ -101,6 +107,22 @@ else
   cat "$OUT"; fail "TestLivePublishAndFetch neither passed nor skipped — it failed"
 fi
 
+# The invitation-seed rescue, reported separately for the same reason publish/fetch is —
+# with a THIRD outcome of its own, because this one has two ways of not running. Absent
+# NIB_LIVE_SEEDS the mechanism was never offered any seeds; present but with a working
+# shipped list, the mechanism is correctly never entered. Neither is evidence, and neither
+# is a defect, and calling both "skipped" would hide which of them happened.
+SEEDRESCUE="not attempted — set NIB_LIVE_SEEDS to drive it"
+if [ -n "${NIB_LIVE_SEEDS:-}" ]; then
+  if grep -q -- "--- PASS: TestLiveInvitationSeedsRescue" "$OUT"; then
+    SEEDRESCUE="verified — invitation seeds bootstrapped a machine the shipped list could not"
+  elif grep -q -- "--- SKIP: TestLiveInvitationSeedsRescue" "$OUT"; then
+    SEEDRESCUE="SKIPPED — either the shipped list worked (path never entered) or the supplied seeds answered nothing; UNVERIFIED by this run"
+  else
+    cat "$OUT"; fail "TestLiveInvitationSeedsRescue neither passed nor skipped — it failed"
+  fi
+fi
+
 # Evidence, not just a green. Each of these is a separate claim the pass does not make.
 grep -q "BOOTSTRAP" "$OUT" || fail "no bootstrap line — the seed list was never exercised"
 grep -q "OBSERVED"  "$OUT" || fail "no node reported our address; the pass above is not about the wire"
@@ -113,3 +135,4 @@ sed -n 's/^[[:space:]]*[a-z_]*\.go:[0-9]*: //; /^\(LOCAL\|BOOTSTRAP\|OBSERVED\|P
 echo "PASS: a real DHT node reported this host's public endpoint, port included, and the"
 echo "      mapping classified — from a cold start with no cached nodes"
 echo "      publish/fetch round trip: $PUBFETCH"
+echo "      invitation-seed rescue:   $SEEDRESCUE"

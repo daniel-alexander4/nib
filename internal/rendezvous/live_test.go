@@ -8,6 +8,8 @@ import (
 	"net"
 	"net/netip"
 	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -312,4 +314,107 @@ func TestLivePublishAndFetch(t *testing.T) {
 	}
 	t.Logf("OBSERVED the published record retrieved from strangers: %d bytes at seq %d, "+
 		"%d node(s) answered", len(got), seq, fst.FetchNodes)
+}
+
+// TestLiveInvitationSeedsRescueAMachineTheShippedListCannot is S06's own live proof.
+//
+// # Why it exists, and why it is not a duplicate of the probe above
+//
+// The probe cold-starts from the SHIPPED list. This slice's mechanism is what happens when
+// that list fails — and on the day it was written the shipped list *was* failing, on every
+// run: `nib rendezvous --self-test` reported "2 replies DID reach us, so this network is
+// not blocking UDP — the shipped seed addresses answered but led nowhere", three of the five
+// having been dead since the day the list was typed. That is exactly D6's second half being
+// needed rather than hypothesised, so it is the condition to verify under, not to wait out.
+//
+// The seeds come from `NIB_LIVE_SEEDS` (comma-separated `ip:port`), resolved by the
+// OPERATOR outside the product. Nib must never resolve a name on the bootstrap path, and
+// this test would be the one place tempted to — so the temptation is answered by making the
+// addresses an input.
+//
+// It drives four facts a hermetic test cannot reach:
+//
+//  1. seeds are consulted only after a real bootstrap failed (`InvitationSeedsTried`);
+//  2. a table built from them reports USED, so the eclipse disclosure is truthful;
+//  3. the resulting table is NOT persisted — an eclipse must not outlive the ceremony;
+//  4. the shipped list is consulted FIRST, which is the acceptance clause as amended.
+func TestLiveInvitationSeedsRescueAMachineTheShippedListCannot(t *testing.T) {
+	if os.Getenv("NIB_LIVE_DHT") == "" {
+		t.Skip("set NIB_LIVE_DHT=1 (or run ./build/dhtlive.sh) — this test uses the public network")
+	}
+	raw := os.Getenv("NIB_LIVE_SEEDS")
+	if raw == "" {
+		t.Skip("set NIB_LIVE_SEEDS=ip:port[,ip:port...] — the operator resolves these, not Nib")
+	}
+	var seeds []netip.AddrPort
+	for _, f := range strings.Split(raw, ",") {
+		ap, err := netip.ParseAddrPort(strings.TrimSpace(f))
+		if err != nil {
+			t.Fatalf("NIB_LIVE_SEEDS entry %q: %v", f, err)
+		}
+		seeds = append(seeds, ap)
+	}
+
+	dir := t.TempDir()
+	pc, err := net.ListenPacket("udp", ":0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pc.Close()
+	m := udpmux.New(pc)
+	defer m.Close()
+
+	s, err := Open(m.DHT(), dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+
+	s.Seed(seeds)
+	// STIMULUS: the seeds must have survived validation, or every assertion below is about
+	// an empty list and passes for the wrong reason.
+	if got := s.Stats().InvitationSeeds; got != len(seeds) {
+		t.Fatalf("InvitationSeeds = %d, supplied %d — the validator refused some and this "+
+			"test would then be measuring the shipped list", got, len(seeds))
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	defer cancel()
+	err = s.Bootstrap(ctx)
+	st := s.Stats()
+	t.Logf("BOOTSTRAP err=%v shipped=%d invitation=%d tried=%v used=%v nodes=%d learned=%d",
+		err, st.Seeds, st.InvitationSeeds, st.InvitationSeedsTried, st.InvitationSeedsUsed,
+		st.Nodes, st.Bootstrapped)
+
+	if st.Seeds == 0 {
+		t.Error("the shipped list was never consulted — the acceptance clause is that a " +
+			"machine reaches the invitation's seeds only by failing without them first, " +
+			"and a run that skipped straight to them has not shown that")
+	}
+	if st.Nodes > 0 && !st.InvitationSeedsTried {
+		t.Skip("the shipped list worked today, so this slice's path was never entered — " +
+			"not a failure, but nothing here was verified either")
+	}
+	if !st.InvitationSeedsTried {
+		t.Fatalf("no table and the seeds were never tried: %v", err)
+	}
+	if st.Nodes == 0 {
+		t.Skipf("the operator-supplied seeds answered nothing either (err=%v) — the "+
+			"mechanism ran and the network did not cooperate; supply live addresses", err)
+	}
+
+	if !st.InvitationSeedsUsed {
+		t.Error("a table was built after the seed retry and USED is false — the disclosure " +
+			"an operator reads would credit the shipped list for a stranger's table")
+	}
+	// The eclipse must not outlive the ceremony.
+	if err := s.Close(); err != nil {
+		t.Fatalf("close: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "dht-nodes")); !os.IsNotExist(err) {
+		t.Errorf("a table bootstrapped from invitation seeds was WRITTEN to %s (stat err "+
+			"%v) — every future run would then start from an attacker-chosen list with "+
+			"InvitationSeeds 0 and nothing on the machine saying where the table came from",
+			dir, err)
+	}
 }

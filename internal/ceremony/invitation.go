@@ -11,9 +11,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/netip"
 	"strings"
 
 	"golang.org/x/crypto/hkdf"
+
+	"nib/internal/addrscope"
 )
 
 // The invitation (D21): one per party, carrying the ceremony id, the roster with FULL
@@ -44,6 +47,19 @@ import (
 //
 // Thirty-two is six signature pages and is far past any real signing.
 const MaxRoster = 32
+
+// MaxSeeds bounds how many DHT bootstrap addresses one invitation may carry.
+//
+// Eight, for the reasons the shipped list already demonstrates: you need ONE live node and
+// the traversal expands from there, and the shipped list's own measured failure rate (three
+// of five dead on the day it was written) puts P(all eight dead) near 1.7%. It also bounds
+// what an invitation can aim: eight datagrams at addresses the sender chose, per recipient.
+//
+// And it keeps the invitation pasteable. A two-party invitation is ~570-700 characters
+// today; eight IPv4 seeds add ~240. The QR claim in Encode's doc has never been enforced or
+// tested, and base64url cannot use QR's alphanumeric mode, so the real ceiling is byte
+// mode — comfortable at ~940 characters and not comfortable if this were unbounded.
+const MaxSeeds = 8
 
 // SecretLen is 32 bytes of uniform randomness.
 //
@@ -88,6 +104,80 @@ type Invitation struct {
 	// ConvenerFingerprint identifies who convened, so a party can check the record's
 	// signer against what the invitation told them to expect.
 	ConvenerFingerprint string `json:"convener"`
+	// Seeds are DHT bootstrap addresses (D6's second half), so the common case does not
+	// depend on a shipped list that rots — three of the five Nib ships were dead the day
+	// they were written.
+	//
+	// **This is the only field that will never have a signed counterpart.** MatchesRecord
+	// compares the id, the roster and the signs flags against the convener-signed Record,
+	// and a Record has no seeds to compare against — so unlike every other field here,
+	// tampering with these can never be made loud. They are therefore treated throughout as
+	// what they are: attacker-controllable input to a bootstrap path, validated at both
+	// doors, capped, and consulted only when nothing else works.
+	//
+	// `omitempty`, and NO version bump: an invitation without seeds encodes byte-identically
+	// to today's, and Go drops unknown fields silently, so a build that predates this field
+	// ignores it and falls back to the shipped list. That is exactly the degradation wanted.
+	// Bumping InvitationVersion would instead make every older build refuse the whole
+	// invitation — "made by a newer version of Nib" — over an optional bootstrap hint it
+	// does not need. Recorded against D32 rather than assumed: D32's rule is that a skew
+	// produces a sentence, and here there is no skew to produce one for.
+	Seeds []netip.AddrPort `json:"seeds,omitempty"`
+	// SeedsDropped is how many of the seeds offered were not addresses Nib will dial.
+	//
+	// Never serialized — it is an observation about the invitation just parsed, not a field
+	// of it. The acceptance says a bad entry is "dropped and counted", and a count nobody
+	// can read is not counted; this is where a caller reads it.
+	SeedsDropped int `json:"-"`
+}
+
+// ErrInvitationSeeds: the seed list is unusable as a whole.
+var ErrInvitationSeeds = errors.New("this invitation's bootstrap addresses are unusable")
+
+// validateSeeds refuses an unusable list and drops unusable entries, returning the kept
+// seeds and how many were dropped.
+//
+// # Called at BOTH doors, and that is the whole point
+//
+// P04.S04 shipped MaxRoster in ParseInvitation alone, and its review found that this bound
+// the RECIPIENTS and left the convener — the party that dials every hop and emits every
+// packet — entirely unbounded, because a convener never parses its own invitation. Seed
+// validation in one door only would repeat that defect verbatim.
+//
+// # What is dropped and what is refused, stated as the code actually behaves
+//
+// The split is **routable-versus-not**, not malformed-versus-not, and an earlier version of
+// this comment claimed the opposite — naming as "dropped" the one case that is in fact
+// refused wholesale. A syntactically malformed entry never reaches here: `netip.AddrPort`
+// unmarshals through `UnmarshalText`, so one bad character aborts the whole `json.Unmarshal`
+// and the invitation dies at `ErrInvitationCorrupt`. `TestAHostnameCannotBeASeed` asserts
+// exactly that.
+//
+// So: an address that PARSES but is not somewhere Nib will send UDP — loopback, private,
+// CGNAT, a low port, a duplicate — is dropped and counted, because a list of eight from a
+// stranger is expected to contain some rubbish and refusing the invitation over it would
+// hand an attacker a denial of honest invitations. An oversized list cannot be a mistake,
+// so it is loud.
+func validateSeeds(in []netip.AddrPort) (kept []netip.AddrPort, dropped int, err error) {
+	if len(in) > MaxSeeds {
+		return nil, 0, fmt.Errorf("%w: %d addresses, the limit is %d",
+			ErrInvitationSeeds, len(in), MaxSeeds)
+	}
+	seen := make(map[netip.AddrPort]bool, len(in))
+	for _, ap := range in {
+		// IsValid explicitly, though the port floor would also catch it. Measured:
+		// `{"seeds":[""]}` and `{"seeds":[null]}` both unmarshal with a NIL error into a
+		// zero AddrPort, so the refusal exists either way — but resting it on "port 0 is
+		// below MinPort" makes it a property inherited from another rule rather than one
+		// this function states, and `Seed()` takes whatever a caller hands it.
+		if !ap.IsValid() || seen[ap] || !addrscope.Seed(ap) {
+			dropped++
+			continue
+		}
+		seen[ap] = true
+		kept = append(kept, ap)
+	}
+	return kept, dropped, nil
 }
 
 // NewInvitation builds an invitation for a record, generating the secret.
@@ -116,6 +206,23 @@ func NewInvitation(r Record) (Invitation, error) {
 // into a refusal rather than a partial parse. base64url so it survives being put in a URL
 // or a QR code without escaping.
 func (i Invitation) Encode() (string, error) {
+	// The producing door. See validateSeeds: a convener never parses its own invitation, so
+	// a rule enforced only at the parse binds everyone except the party that acts on it.
+	//
+	// **A producer REFUSES rather than drops.** At the parse, dropping is right — the list
+	// came from a stranger and some rubbish is expected. Here the list is the convener's
+	// own, so silently shipping fewer addresses than they chose is a producer that lies
+	// about what it sent. If a sampler ever hands this an address Nib would itself refuse,
+	// that is a bug upstream and it should be loud.
+	kept, dropped, err := validateSeeds(i.Seeds)
+	if err != nil {
+		return "", err
+	}
+	if dropped > 0 {
+		return "", fmt.Errorf("%w: %d of %d are not addresses Nib would dial",
+			ErrInvitationSeeds, dropped, len(i.Seeds))
+	}
+	i.Seeds = kept
 	b, err := json.Marshal(i)
 	if err != nil {
 		return "", err
@@ -188,6 +295,15 @@ func ParseInvitation(text string) (Invitation, error) {
 		// claims"* — an accusation of impersonation over a difference in letter case.
 		inv.Roster[i].Fingerprint = strings.ToLower(p.Fingerprint)
 	}
+	// Seeds last, and the whole-refusal discipline applies: an over-cap list returns the
+	// ZERO invitation, never a partly-filtered one. A caller that ignores the error is the
+	// ordinary mistake, and a half-applied invitation is worse than none.
+	kept, dropped, err := validateSeeds(inv.Seeds)
+	if err != nil {
+		return Invitation{}, err
+	}
+	inv.Seeds = kept
+	inv.SeedsDropped = dropped
 	return inv, nil
 }
 

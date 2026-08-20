@@ -157,3 +157,65 @@ func TestTheBannerPrecedesTheSocket(t *testing.T) {
 			"come before anything opens")
 	}
 }
+
+// The eclipse note is the disclosure half of the seed work, and it had no test.
+func TestTheInvitationSeedNoteSaysWhichWayItWent(t *testing.T) {
+	if got := invitationSeedNote(rendezvous.Stats{}); got != "" {
+		t.Errorf("no seeds supplied and it said %q", got)
+	}
+	unused := invitationSeedNote(rendezvous.Stats{InvitationSeeds: 3})
+	if !strings.Contains(unused, "unused") {
+		t.Errorf("seeds supplied and not needed, but the note does not say so: %q", unused)
+	}
+	used := invitationSeedNote(rendezvous.Stats{InvitationSeeds: 3, InvitationSeedsUsed: true})
+	if !strings.Contains(used, "sender chose") {
+		t.Errorf("the table came from the invitation's addresses and the note does not say "+
+			"so — that is the eclipse fact the acceptance asks to be readable: %q", used)
+	}
+	if strings.Contains(unused, "sender chose") {
+		t.Error("unused seeds are reported as though the table came from them")
+	}
+}
+
+// And the verdict must not blame the shipped list for a table built from an invitation.
+func TestTheVerdictDoesNotBlameTheShippedListForInvitationSeeds(t *testing.T) {
+	shipped, _ := verdict(rendezvous.Stats{Nodes: 0, Seeds: 5, Responses: 2},
+		rendezvous.SelfAddress{}, nil, nil, false)
+	if !strings.Contains(shipped, "shipped seed addresses") {
+		t.Errorf("a shipped-list failure is not named as one: %q", shipped)
+	}
+	viaInv, _ := verdict(rendezvous.Stats{Nodes: 0, Seeds: 5, Responses: 2, InvitationSeedsUsed: true},
+		rendezvous.SelfAddress{}, nil, nil, false)
+	if strings.Contains(viaInv, "shipped seed addresses answered") {
+		t.Errorf("the invitation's addresses were tried too, and the verdict sends the user "+
+			"to fix the shipped list: %q", viaInv)
+	}
+}
+
+// TestTheNoteDistinguishesTriedFromUnused.
+//
+// The two-branch note collapsed three states into two: the default arm said "the shipped
+// list worked" about a machine where nothing worked at all. Tried-and-failed is the state
+// an operator most needs named, because it is the only one where the answer is neither
+// "fine" nor "your ceremony partner chose your view of the DHT".
+func TestTheNoteDistinguishesTriedFromUnused(t *testing.T) {
+	unused := invitationSeedNote(rendezvous.Stats{InvitationSeeds: 3})
+	tried := invitationSeedNote(rendezvous.Stats{InvitationSeeds: 3, InvitationSeedsTried: true})
+	used := invitationSeedNote(rendezvous.Stats{
+		InvitationSeeds: 3, InvitationSeedsTried: true, InvitationSeedsUsed: true,
+	})
+
+	if unused == tried || tried == used || unused == used {
+		t.Fatalf("two of the three states print the same line:\nunused=%q\ntried=%q\nused=%q",
+			unused, tried, used)
+	}
+	if !strings.Contains(unused, "the shipped list worked") {
+		t.Errorf("the unused note stopped saying the shipped list worked: %q", unused)
+	}
+	if strings.Contains(tried, "worked") {
+		t.Errorf("the tried-and-failed note claims something worked: %q", tried)
+	}
+	if !strings.Contains(used, "sender chose") {
+		t.Errorf("the used note stopped naming whose list built the table: %q", used)
+	}
+}
