@@ -1959,12 +1959,41 @@ unfalsifiable — any observed value satisfies it** — and three of these four 
 property, so a criterion written against them today could not fail.
 
 - **Candidate cap `N` = 8 per hop.** D6's pin makes the cap law and P04 drives it by "publishing
-  N+50"; neither says what N is. Eight covers every tier the ladder can legitimately produce
+  N+50"; neither says what N is. Eight covers every tier the ladder can legitimately produce **(amended 2026-08-20: three, not five — P04.S04's address rule makes a private address unsignable and a typed manual address never enters a record, so LAN and manual candidates cannot exist. The constant is unchanged; its stated reason was stale.)**
   (LAN, v6, mapped, punched, manual) with margin, and bounds a third party's amplification to
   8 candidates × 2 hosts.
-- **Total punch budget = 3,000 packets per ceremony**, across all candidates and both sides — the
-  ceiling D6's pin calls for and D16's backoff was sized against (~390/candidate at the stepped
-  cadence). Exceeding it drops and **reports**; it never fails the ceremony.
+- **Total punch budget = 3,000 packets per ~~ceremony~~ HOP**, across all candidates, **per side ~~and both sides~~**
+  — the ceiling D6's pin calls for and D16's backoff was sized against (~390/candidate at the
+  stepped cadence). Exceeding it drops and **reports**; it never fails the ceremony.
+  **(amended 2026-08-20 — Dan, option A, at P04.S04's slice grill. The unit was wrong and the two
+  law figures contradicted each other.)** At the stepped cadence one hop with a full candidate set
+  is 8 × 390 = **3,120 packets per side**, so a *per-ceremony* budget was exhausted inside the first
+  hop: N = 8 was unreachable, and in a 31-hop ceremony hops 2–31 would get **zero packets**. Two
+  figures both declared law cannot both be built.
+  *Why the unit and not either value:* D16's clock 2 is "one connect deadline for the whole
+  **ceremony's connection attempt**", and D22 makes connectivity a sequence of pairs — so a hop IS
+  the connection attempt, with its own deadline and its own race. A packet budget scoped differently
+  from the deadline it accompanies was the anomaly. The two rejected alternatives fixed only the
+  arithmetic inside hop 1 and left the multi-party defect: cutting N to 3 fits one hop and still
+  starves hop 2 (and breaks N's own coverage argument — eight was chosen to span LAN, v6, mapped,
+  punched and manual with margin); cheapening the cadence to fit 31 hops into 3,000 yields ~6 packets
+  per candidate, which is not a punch but a coin flip, since punching works by both sides
+  retransmitting until their mappings coincide.
+  ***"Per side" is the second half of the same correction, found by this slice's own code
+  review.*** The original text said "across all candidates **and both sides**", which is
+  (a) arithmetically inconsistent with the amendment above — under it one hop demands 6,240
+  against 3,000, a **52% shortfall** rather than the ~4% below — and (b) **unimplementable**:
+  there is no mechanism by which two peers share a packet counter, so neither machine could
+  ever enforce it. The per-side reading is the only buildable one and the only one the
+  arithmetic uses. The ceremony-wide worst case is therefore 31 hops × 3,000 × 2 sides.
+  *The 3,120-vs-3,000 gap inside one hop is a rounding artifact, not a conflict* — the budget drops
+  and reports, so the tail of the last candidate's retries is trimmed by ~4%, which is the mechanism
+  working as designed.
+  *What this re-opens, and where it is closed:* 31 hops × 3,000 is 93,000 packets per ceremony. That
+  number exists only because the **roster maximum below is documented here and enforced nowhere in code**, so
+  P04.S04 builds it and the ceiling becomes stated and bounded rather than emergent. Accepted on the
+  ground that supplying candidates at all requires the invitation secret, so the actor is a roster
+  member or an invitation interceptor — never an anonymous internet reflector.
 - **Ceremony deadline maximum = 30 days.** D16 clock 3 is "days, convener's choice", which is an
   externally-supplied security parameter with no bound: it governs how long a listener may arm, how
   long invitation-scoped pins persist (D29), and how long a mirror lives. A convener setting ten
@@ -2709,7 +2738,7 @@ Tasks:
 - T08 — `build/dhtlive.sh`: out-of-loop like `winrepro.sh`, opt-in, skipping cleanly,
   running the product's own probe against the real DHT.
 
-#### P04.S03 — The published record: signed, encrypted, expiring *(D6, D30, C2)* *(done 2026-08-20, v1.112.0)*
+#### P04.S03 — The published record: signed, encrypted, expiring *(D6, D30, C2)* *(done 2026-08-20, v1.112.0; its code review ran late and its fixes landed v1.112.1)*
 Scope: publish and fetch the candidate record under the per-hop rendezvous key. Refs: D6, D21, D30, plan-review C2.
 
 **Scope split at the slice grill (2026-08-20).** D6's second half — *seed nodes carried in the
@@ -2755,11 +2784,28 @@ Tasks:
 - T08 — the PLAN amendments this grill earned.
 - T09 — the coverage, red-proved, with the vacuity guards the grill named.
 
-#### P04.S04 — The flood cap *(plan-review C2)*
-Scope: bound how many candidates one rendezvous key may yield. Refs: plan-review C2.
-Acceptance:
-- **A record published by a party who knows both names but holds neither identity key yields no more than N candidates; the N+1th is dropped and reported — driven by publishing N+50.**
+#### P04.S04 — The flood cap *(plan-review C2, D33)* *(done 2026-08-20, v1.113.0)*
+Scope: bound how many candidates one rendezvous key may yield. Refs: plan-review C2, D33.
+
+Acceptance *(amended 2026-08-20 at the slice grill — three premise corrections, each measured)*:
+- ~~**A record published by a party who knows both names but holds neither identity key yields no more than N candidates**~~ **A record from the counterparty yields no more than N candidates, and a KEY yields no more than N across the whole race.** Two corrections. *The actor:* post-P04.S03 a party holding neither identity key is refused as a **forgery** before the candidates are ADMITTED (the list is parsed first, so `MaxCandidates` and the address rule both apply before `Verify` runs — but a forger can never reach the accumulator) — driven, the refusal is `ErrCandidateAuthor` — so the criterion as written is satisfied by a check that never reaches the cap, which is a vacuous green by construction. The only actor whose candidates a fetcher honours is the counterparty. *The unit:* "one rendezvous key" is a target yielding a **sequence** of records over D16's 300 s race, not one record, and D16's clock 1 expects candidates to **trickle** — so a per-message bound cannot see the accumulation the criterion is about.
+- ~~the N+1th is dropped and reported~~ **an over-cap RECORD is refused whole; the N+1th CANDIDATE is dropped from the accumulated set and reported.** Both shapes are right, at different objects. A record is one signed statement: keeping 8 of 12 acts on a statement the signer never made, and since **the attacker orders the list**, "keep the first N" hands them the selection. The accumulated set is assembled locally from several valid records, and dropping there is what "never fails the ceremony" asks for. Refusing one record does not fail the ceremony either — the ladder falls to the next tier (D19 cause 2). The same reasoning P04.S06 already commits to for the seed list.
+- ~~driven by publishing N+50~~ **driven by admitting N+50 at the parse boundary.** Measured: 58 candidates seals to **1,873 bytes against a 996-byte ceiling**, so BEP-44 refuses it before any datagram leaves — the plan's stimulus cannot be published at all. And `Sign` refuses to build one, so the driver must hand-build the preimage or it tests a constructor that declines to produce the stimulus.
 - The report is a counter something reads, not a log line — the criterion says *reported*, and P03 established what an unread counter is worth.
+- **Every refusal cause is separately counted** *(added 2026-08-20)*. `ErrCandidateFormat` currently fuses an over-cap record with a wrong-key ciphertext — measured, both return the same sentinel — so "reported" is unbuildable until the taxonomy is split.
+- **A candidate address that is not a routable public unicast target is refused** *(added 2026-08-20)*. Measured: `127.0.0.1:22`, `[::1]:53`, `192.168.1.1:53`, `10.0.0.1:11211`, `224.0.0.1:5353`, `255.255.255.255:9`, `100.64.0.1:123` and `1.2.3.4:0` all seal, open and **verify end-to-end** today. Under P05's punch that is an inside-the-LAN port sweep run from the victim's own host plus UDP reflection at 53/123/11211. The cap's own arithmetic — "8 candidates × 2 hosts" — assumes legitimate distinct targets and bounds neither.
+- **Duplicate candidates are collapsed** *(added 2026-08-20)*. Eight copies of one address concentrate the entire per-candidate budget on one victim, which is the worst case the cap does not bound.
+- **The roster is bounded** *(added 2026-08-20, D33's third figure)* — unenforced today, and it is the real per-ceremony multiplier now that the punch budget is per hop.
+
+Tasks:
+- T01 — split the error taxonomy: `ErrCandidateTooMany` and an AEAD-failure sentinel out of `ErrCandidateFormat`, so a cause can be counted.
+- T02 — drive the existing read-path cap. Deleting `n > MaxCandidates` leaves the whole repo green today, which is what D33's own discharge clause forbids by name.
+- T03 — the address predicate: `isPublishable`'s range table moved where both packages reach it, **with `Unmap()`** (a v4-mapped `::ffff:240.0.0.1` clears a v4-prefix loop — measured) and a port floor.
+- T04 — the hop-scoped gate: owns the cap, the dedupe, the taxonomy and the counters; composes `OpenCandidate`/`Verify` rather than replacing them, so the separation those two argue for survives.
+- T05 — the counters, one per cause, plus `Accepted` and `DroppedOverCap`. This also discharges P04.S03's filed preemption item: "a record was present and failed the inner check" is the sum of the refusals, against `FetchEmpty` for "nothing was there".
+- T06 — the roster cap (D33).
+- T07 — a standing reader: `nib rendezvous --self-test`, opt-in, with its own banner, publishing and fetching one throwaway record.
+- T08 — the coverage, red-proved, and the PLAN amendments this grill earned.
 
 #### P04.S05 — The L1 guard and graceful degradation *(L1, D19)*
 Scope: prove the rendezvous cannot influence acceptance, and that its absence degrades rather than breaks. Refs: L1, D19.

@@ -34,6 +34,17 @@ import (
 // against the record's when the document arrives (MatchesRecord), which is the first
 // moment there is an independent copy to check it against.
 
+// MaxRoster bounds how many parties one invitation may name (D33).
+//
+// **Enforced here at P04.S04; D33 documented it and no code enforced it.** D25 allocates
+// signature pages from the roster length, so an unbounded roster is an unbounded page
+// count — and since P04.S04 made the punch budget per HOP, the roster is now also the
+// multiplier on a ceremony's total emitted packets. A 10,000-entry roster parsed cleanly
+// before this, giving 9,999 hops.
+//
+// Thirty-two is six signature pages and is far past any real signing.
+const MaxRoster = 32
+
 // SecretLen is 32 bytes of uniform randomness.
 //
 // The length is the whole of caveat 11's answer. At 32 bytes there is no dictionary to
@@ -153,6 +164,10 @@ func ParseInvitation(text string) (Invitation, error) {
 	}
 	if len(inv.Secret) != SecretLen {
 		return Invitation{}, ErrInvitationCorrupt
+	}
+	if len(inv.Roster) == 0 || len(inv.Roster) > MaxRoster {
+		return Invitation{}, fmt.Errorf("%w: it names %d parties (the limit is %d)",
+			ErrInvitationCorrupt, len(inv.Roster), MaxRoster)
 	}
 	for i, p := range inv.Roster {
 		b, err := hex.DecodeString(p.Fingerprint)

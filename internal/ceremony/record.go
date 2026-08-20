@@ -213,6 +213,18 @@ func (r Record) Verify() error {
 	if r.Version != FormatVersion {
 		return fmt.Errorf("%w: %d (this build writes %d)", ErrVersion, r.Version, FormatVersion)
 	}
+	// The roster bound belongs HERE too, not only in ParseInvitation.
+	//
+	// A Record arrives from external input — Extract(pdf) → Decode → Verify — and the
+	// CONVENER, who is the party that dials every hop and emits every packet, never parses
+	// its own invitation. So a cap enforced only on the pasted-invitation path binds the
+	// recipients and leaves the emitter unbounded, which is the half that matters now that
+	// P04.S04 made the punch budget per hop. D25 also allocates signature pages from this
+	// length, so an unbounded roster is an unbounded page count.
+	if len(r.Roster) == 0 || len(r.Roster) > MaxRoster {
+		return fmt.Errorf("%w: it names %d parties (the limit is %d)",
+			ErrRosterMismatch, len(r.Roster), MaxRoster)
+	}
 	h, err := r.RosterHash()
 	if err != nil {
 		return err

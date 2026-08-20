@@ -30,7 +30,16 @@ import (
 // Run executes a headless subcommand. It reports handled=false (so main
 // continues to the desktop boot) when args is empty or its first element is not
 // a known verb; otherwise it runs the command and returns its exit code.
+// buildVersion is the version Run was given, kept so the DIAGNOSTICS can name the build.
+//
+// `nib rendezvous` and `nib discover` exist to be pasted to somebody else, and a report
+// that does not say which build produced it costs a round trip every time.
+var buildVersion = "dev"
+
 func Run(args []string, version string) (handled bool, code int) {
+	if version != "" {
+		buildVersion = version
+	}
 	if len(args) == 0 {
 		return false, 0
 	}

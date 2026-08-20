@@ -13,6 +13,7 @@ import (
 
 	"golang.org/x/crypto/chacha20poly1305"
 
+	"nib/internal/addrscope"
 	"nib/internal/sign"
 )
 
@@ -115,6 +116,20 @@ var (
 	ErrCandidateExpired = errors.New("the candidate record has expired")
 	// ErrCandidateTooBig: it will not fit in a BEP-44 value.
 	ErrCandidateTooBig = errors.New("the candidate record is too large to publish")
+	// ErrCandidateTooMany: it carries more candidates than the cap allows.
+	//
+	// **Split out of ErrCandidateFormat at P04.S04, because the fusion made the slice's
+	// own acceptance unbuildable.** "The N+1th is dropped and REPORTED" needs a cause that
+	// can be counted, and a sentinel shared with "this ciphertext was written under the
+	// wrong key" counts two unrelated facts into one number. Measured: both returned the
+	// identical error before this split.
+	ErrCandidateTooMany = errors.New("the candidate record carries more endpoints than Nib will act on")
+	// ErrCandidateSealed: the AEAD refused it — wrong key, wrong salt, wrong hop, or
+	// tampered. Deliberately ONE error for all four: they are indistinguishable to the
+	// holder of the right key, and pretending otherwise would be an oracle.
+	ErrCandidateSealed = errors.New("this record was not written for this ceremony, or has been altered")
+	// ErrCandidateUnroutable: a candidate address is not somewhere Nib will aim traffic.
+	ErrCandidateUnroutable = errors.New("the candidate record names an address Nib will not dial")
 	// ErrCandidateContext: it is validly signed, by the right party, for a DIFFERENT
 	// ceremony or hop. Its own error because it is the only failure here that implicates
 	// nobody: the signer did nothing wrong, and someone in between moved their record.
@@ -178,6 +193,14 @@ func (c CandidateRecord) preimage() ([]byte, error) {
 	}
 	if len(c.SPKI) == 0 {
 		return nil, errors.New("candidate record has no public key")
+	}
+	for _, a := range c.Addrs {
+		// Symmetric with the parse: we will not publish an address we would refuse to
+		// receive. Without this, a bug upstream turns Nib into the thing this rule exists
+		// to protect other people from.
+		if !addrscope.Target(a) {
+			return nil, fmt.Errorf("%w: %s", ErrCandidateUnroutable, a)
+		}
 	}
 	var p preimageBuilder
 	p.addString(candidateDomain)
@@ -357,7 +380,7 @@ func OpenCandidate(recordKey, salt []byte, hop int, sealed []byte) (CandidateRec
 	nonce, ct := sealed[:chacha20poly1305.NonceSizeX], sealed[chacha20poly1305.NonceSizeX:]
 	plain, err := aead.Open(nil, nonce, ct, candidateAAD(salt, hop))
 	if err != nil {
-		return CandidateRecord{}, ErrCandidateFormat
+		return CandidateRecord{}, ErrCandidateSealed
 	}
 	return parseCandidate(plain)
 }
@@ -446,8 +469,18 @@ func parseCandidate(b []byte) (CandidateRecord, error) {
 	}
 	c.Expires = t
 	n, ok := num()
-	if !ok || n < 0 || n > MaxCandidates {
+	if !ok || n < 0 {
 		return CandidateRecord{}, ErrCandidateFormat
+	}
+	// The cap, on the READ path, ahead of the loop that allocates — so it bounds an
+	// attacker and not merely an honest publisher. Its own sentinel, so the refusal can be
+	// counted as what it is (P04.S04).
+	//
+	// The byte cap is not a substitute for this and the numbers say why: measured, 8
+	// candidates seal to 573 bytes and **24 still fit** under the 996-byte ceiling, three
+	// times D33's N. Deleting this line left the whole repo green until P04.S04 drove it.
+	if n > MaxCandidates {
+		return CandidateRecord{}, fmt.Errorf("%w: %d, cap is %d", ErrCandidateTooMany, n, MaxCandidates)
 	}
 	for i := 0; i < n; i++ {
 		v, ok := next()
@@ -457,6 +490,21 @@ func parseCandidate(b []byte) (CandidateRecord, error) {
 		ap, err := netip.ParseAddrPort(string(v))
 		if err != nil {
 			return CandidateRecord{}, ErrCandidateFormat
+		}
+		// Refused HERE, at the parse, not at the dialer.
+		//
+		// Measured before this existed: `127.0.0.1:22`, `[::1]:53`, `192.168.1.1:53`,
+		// `10.0.0.1:11211`, `224.0.0.1:5353`, `255.255.255.255:9`, `100.64.0.1:123` and
+		// `1.2.3.4:0` all sealed, opened and VERIFIED end to end. Under the punch that is
+		// an inside-the-LAN port sweep run from the victim's own host, a broadcast
+		// amplifier, and UDP reflection at 53/123/11211 — and the cap's own arithmetic
+		// ("8 candidates × 2 hosts") silently assumes legitimate distinct targets.
+		//
+		// At the parse rather than the dialer because a record carrying one is not a
+		// record with a bad entry, it is evidence of a modified peer: `Sign` cannot
+		// produce one, so no honest publisher emits it.
+		if !addrscope.Target(ap) {
+			return CandidateRecord{}, fmt.Errorf("%w: %s", ErrCandidateUnroutable, ap)
 		}
 		c.Addrs = append(c.Addrs, ap)
 	}

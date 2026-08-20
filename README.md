@@ -673,7 +673,7 @@ background, and Nib has no telemetry, analytics or crash reporting of any kind.
 | **You Finalize with an RFC-3161 timestamp authority** | A **digest of the signature** | the TSA URL *you* typed |
 | **You open a document by URL** | The request for that document | the host you named |
 | **You run a co-signing session** | The document itself, to your counterpart, over a channel pinned to their key | the peer you pinned — and anyone who scans the port can see it is open |
-| **You run `nib rendezvous`** | Queries that reveal this machine's public IP | strangers on the BitTorrent DHT |
+| **You run `nib rendezvous`** | Queries that reveal this machine's public IP — and with `--self-test`, one small encrypted record too | strangers on the BitTorrent DHT |
 | Never, under any circumstances | Telemetry, analytics, crash reports, usage data, your document contents to *us* | — |
 
 The row that surprises people is the co-signing one: **remote co-signing sends the document
@@ -705,10 +705,13 @@ Stated plainly, because you cannot consent to what you have not been told:
   carries a signed expiry that other Nibs refuse to act on once it passes — but the copies
   already handed to strangers age out on their own schedule. There is no recall, and nobody
   could honestly offer you one.
-- **Today, the only thing in Nib that joins the DHT is the `nib rendezvous` diagnostic**,
-  which prints a warning before it opens a socket and publishes nothing. Remote co-signing
-  currently needs a `host:port` you type. As the peer-finding work lands, an armed ceremony
-  will use the DHT too, and it will do so only while the ceremony is running.
+- **Today, the only thing in Nib that joins the DHT is the `nib rendezvous` diagnostic.**
+  By default it only asks questions and publishes nothing. With `--self-test` it also
+  publishes one throwaway record and fetches it back, so that the counters it reports have
+  a live path — it prints a notice saying so before it opens a socket, and that record is
+  encrypted under a one-off key tied to no ceremony and to no identity of yours. Remote
+  co-signing currently needs a `host:port` you type. As the peer-finding work lands, an
+  armed ceremony will use the DHT too, and only while the ceremony is running.
 
 If none of that is acceptable for a particular document, sign it locally or on the same
 network, and don't run `nib rendezvous` — those paths use no internet at all.
@@ -859,7 +862,7 @@ isn't a known command (a PDF path, or nothing) still opens the app as usual.
 | `nib register` / `nib unregister` | **Windows only.** Add or remove Nib from Explorer's "Open with" menu for PDFs (per-user, no admin). Windows reserves the *default* handler for the user to pick. |
 | `nib watch DIR --do OP` | Run `timestamp`/`optimize`/`sanitize` on each PDF added to `DIR`, until interrupted. |
 | `nib discover` | Report what link-local peer discovery can see from this machine: which interfaces were joined and why, whether announcements left, and what came back. Local network only. |
-| `nib rendezvous` | Report whether the BitTorrent DHT that remote co-signing uses is reachable, and what this machine's public address looks like from outside. **Contacts the public internet** — it prints a notice before it opens a socket. Publishes nothing. |
+| `nib rendezvous` | Report whether the BitTorrent DHT that remote co-signing uses is reachable, and what this machine's public address looks like from outside. **Contacts the public internet** — it prints a notice before it opens a socket. Publishes nothing unless you add `--self-test`, which also publishes one throwaway record and fetches it back. |
 | `nib version` | Print the version. |
 
 Commands that produce a PDF write it to `-o`/`--out`; `timestamp` writes a
