@@ -12,8 +12,15 @@ import (
 	"syscall"
 	"time"
 
+	"crypto/rand"
+	"encoding/hex"
+	"net/netip"
+	"nib/internal/ceremony"
 	"nib/internal/rendezvous"
+	"nib/internal/sign"
 	"nib/internal/udpmux"
+	"runtime"
+	"strings"
 )
 
 // cmdRendezvous is the DHT diagnostic, and the standing reader for this subsystem's
@@ -46,6 +53,8 @@ import (
 func cmdRendezvous(args []string) int {
 	fs := flag.NewFlagSet("rendezvous", flag.ContinueOnError)
 	secs := fs.Int("seconds", 30, "how long to give the bootstrap and probe")
+	selfTest := fs.Bool("self-test", false,
+		"additionally publish one throwaway record and fetch it back (writes to the public DHT)")
 	fs.Usage = usageFunc(fs, "nib rendezvous [--seconds N]",
 		"Report whether this machine can reach the BitTorrent DHT that remote co-signing\n"+
 			"uses to find a peer: bootstrap, routing table, observed public address, and\n"+
@@ -57,16 +66,40 @@ func cmdRendezvous(args []string) int {
 		fmt.Fprintln(os.Stderr, "nib rendezvous: --seconds must be at least 1")
 		return 2
 	}
-	return runRendezvous(os.Stdout, os.Stderr, time.Duration(*secs)*time.Second)
+	return runRendezvous(os.Stdout, os.Stderr, time.Duration(*secs)*time.Second, *selfTest)
 }
 
-func runRendezvous(out, errw io.Writer, budget time.Duration) int {
-	fmt.Fprintf(out, "nib rendezvous diagnostic\n\n")
-	fmt.Fprintf(out, "  This contacts the PUBLIC BitTorrent DHT — the same network remote\n")
-	fmt.Fprintf(out, "  co-signing uses to find your peer. Strangers' computers will see this\n")
-	fmt.Fprintf(out, "  machine's public IP address, as they would for anyone using the DHT.\n")
-	fmt.Fprintf(out, "  Nothing about your documents is sent, and nothing is published here:\n")
-	fmt.Fprintf(out, "  this command only asks questions. Ctrl-C now if that is not wanted.\n\n")
+// banner is the disclosure, extracted so it can be asserted.
+//
+// It is the only user-facing statement of what this command sends, and it is prose — which
+// rots exactly like a doc comment and is guarded by nothing unless it is testable. Twice in
+// one arc a claim of this kind went stale in this repo: the README said Nib made only one
+// network call, and then said this command published nothing on the day it started to.
+func banner(selfTest bool) string {
+	var b strings.Builder
+	b.WriteString("nib rendezvous diagnostic\n\n")
+	b.WriteString("  This contacts the PUBLIC BitTorrent DHT — the same network remote\n")
+	b.WriteString("  co-signing uses to find your peer. Strangers' computers will see this\n")
+	b.WriteString("  machine's public IP address, as they would for anyone using the DHT.\n")
+	if selfTest {
+		b.WriteString("\n  --self-test is on, so this run also PUBLISHES one throwaway record and\n")
+		b.WriteString("  fetches it back. It is encrypted under a one-off key made for this run,\n")
+		b.WriteString("  tied to no ceremony and to no identity of yours — but publishing means\n")
+		b.WriteString("  handing bytes to about eight strangers' computers.\n")
+		b.WriteString("  There is no recall. Your copy stops being served when this command\n")
+		b.WriteString("  exits; theirs age out on their own schedule, typically a couple of hours.\n")
+		b.WriteString("  The bytes are opaque to them, but its size and shape do identify it as\n")
+		b.WriteString("  a Nib self-test alongside your IP address.\n")
+		b.WriteString("  Ctrl-C now if that is not wanted.\n\n")
+	} else {
+		b.WriteString("  Nothing about your documents is sent, and nothing is published here:\n")
+		b.WriteString("  this command only asks questions. Ctrl-C now if that is not wanted.\n\n")
+	}
+	return b.String()
+}
+
+func runRendezvous(out, errw io.Writer, budget time.Duration, selfTest bool) int {
+	fmt.Fprint(out, banner(selfTest))
 
 	pc, err := net.ListenPacket("udp", ":0")
 	if err != nil {
@@ -130,6 +163,7 @@ func runRendezvous(out, errw io.Writer, budget time.Duration) int {
 		bootShare = time.Second
 	}
 
+	fmt.Fprintf(out, "nib %s on %s/%s\n", buildVersion, runtime.GOOS, runtime.GOARCH)
 	fmt.Fprintf(out, "local socket    %s\n", m.LocalAddr())
 	fmt.Fprintf(out, "bootstrapping   (up to %s of a %s budget)\n", bootShare, budget)
 	bootCtx, bootCancel := context.WithTimeout(ctx, bootShare)
@@ -184,13 +218,31 @@ func runRendezvous(out, errw io.Writer, budget time.Duration) int {
 	// had grown a behaviour its own banner denies. All of them, because a counter that
 	// appears in no output is a counter that cannot be wrong in a way anyone notices, and
 	// the four fetch-legibility fields are the ones whose job is to be read by a human.
-	fmt.Fprintf(out, "publish         %d/%d succeeded, %d node(s) held tokens, %d refused at the seq ceiling\n",
+	// The self-test runs BEFORE the counters print, so they print once and describe the run
+	// that just happened. Printing them either side produced two blocks, the first of which
+	// was all zeros and read as a failure.
+	selfTestFailed := false
+	if selfTest {
+		selfTestFailed = !runSelfTest(ctx, out, rz, self)
+		st = rz.Stats()
+	}
+	fmt.Fprintf(out, "\npublish         %d/%d succeeded, %d node(s) held tokens, %d refused at the seq ceiling\n",
 		st.Published, st.PublishAttempts, st.PublishNodes, st.PublishSeqCeiling)
 	fmt.Fprintf(out, "fetch           %d/%d found, %d empty, %d aborted, %d undecodable, %d node(s) answered\n",
 		st.Fetched, st.FetchAttempts, st.FetchEmpty, st.FetchAborted, st.FetchUndecodable, st.FetchNodes)
-	fmt.Fprintf(out, "                (this command publishes and fetches nothing; all zero is correct)\n")
+	if !selfTest {
+		fmt.Fprintf(out, "                (this command publishes and fetches nothing; all zero is correct — "+
+			"pass --self-test to drive them)\n")
+	}
 
 	line, code := verdict(st, self, bootErr, probeErr, ctx.Err() != nil)
+	if selfTestFailed && code == 0 {
+		// The mode whose entire purpose is to prove the publish path works must be able to
+		// say that it didn't. Without this, `nib rendezvous --self-test` prints
+		// "publish failed" and exits 0, which is invisible to anything scripted.
+		line += "\n  BUT the self-test did not complete — see above."
+		code = 1
+	}
 	fmt.Fprintf(out, "\n%s\n", line)
 	return code
 }
@@ -313,4 +365,145 @@ func realCacheLine() string {
 	}
 	return fmt.Sprintf("%s, %d bytes, last written %s", path, fi.Size(),
 		fi.ModTime().Format(time.RFC3339))
+}
+
+// runSelfTest drives the publish/fetch path and the candidate gate end to end.
+//
+// Returns false if it did not complete, so the command's exit code can say so.
+//
+// # Why this exists rather than a test
+//
+// `internal/ceremony`'s gate counts every reason a candidate record can be refused, and
+// P03's recorded lesson is that a counter nobody can read is worth nothing. Until the
+// ladder exists (P05) there is no product path that reads them, and a test as the only
+// reader is exactly what that lesson forbids. So the diagnostic grows a mode that exercises
+// the real path against the real network — the same answer `nib discover` was for the
+// link-local counters one phase ago.
+//
+// **What it can and cannot prove, stated so the doc does not overclaim.** It proves the
+// fields are wired, formatted and reachable on a live path. It cannot drive the eight
+// refusal counters: it builds a valid record and feeds it to its own gate, so those are
+// structurally zero here. Driving each cause is `TestEveryRefusalCauseIsCountedSeparately`
+// and its siblings — test-only readers, which is the half of P03's lesson this does not
+// discharge.
+//
+// It uses a throwaway identity and a random one-off invitation secret: no vault, no
+// ceremony, nothing of the user's on the wire beyond what any DHT participant reveals.
+func runSelfTest(ctx context.Context, out io.Writer, rz *rendezvous.Server, self rendezvous.SelfAddress) bool {
+	fmt.Fprintf(out, "\nself-test — publishing one throwaway record and fetching it back\n")
+	fmt.Fprintf(out, "  (publish and fetch each get up to %s of their own, so this phase can\n", rendezvous.PublishBudget)
+	fmt.Fprintf(out, "   take a couple of minutes and a long pause here is not a hang)\n")
+
+	certPEM, keyPEM, err := sign.GenerateIdentity("nib self-test")
+	if err != nil {
+		fmt.Fprintf(out, "  could not make a throwaway identity: %v\n", err)
+		return false
+	}
+	fp, err := sign.Fingerprint(certPEM)
+	if err != nil {
+		fmt.Fprintf(out, "  %v\n", err)
+		return false
+	}
+	fpHex := hex.EncodeToString(fp)
+
+	secret := make([]byte, ceremony.SecretLen)
+	if _, err := rand.Read(secret); err != nil {
+		fmt.Fprintf(out, "  %v\n", err)
+		return false
+	}
+	id := make([]byte, 16)
+	if _, err := rand.Read(id); err != nil {
+		fmt.Fprintf(out, "  %v\n", err)
+		return false
+	}
+	inv := ceremony.Invitation{
+		Version:             ceremony.InvitationVersion,
+		ID:                  hex.EncodeToString(id),
+		Roster:              []ceremony.Party{{Fingerprint: fpHex, Signs: true}},
+		Secret:              secret,
+		ConvenerFingerprint: fpHex,
+	}
+
+	const hop = 0
+	gate, err := ceremony.NewCandidateGate(inv, hop, fpHex)
+	if err != nil {
+		fmt.Fprintf(out, "  %v\n", err)
+		return false
+	}
+
+	// The candidate is OUR OWN observed address, not a constant.
+	//
+	// It was `93.184.216.34` — example.com, a real third party's allocation — because the
+	// documentation ranges reserved for exactly this purpose are (correctly) refused by
+	// addrscope. Publishing a signed record that names a stranger as a candidate is
+	// harmless only while nothing dials it, and "nothing dials it" is a property of an
+	// unfinished ladder rather than of this code. Our own probed address is already public
+	// by this point in the run and belongs to us.
+	target := self.V4.Addr
+	if !target.IsValid() {
+		target = self.V6.Addr
+	}
+	if !target.IsValid() {
+		fmt.Fprintf(out, "  skipped: the probe did not establish this machine's own public\n")
+		fmt.Fprintf(out, "  address, and the self-test will not name a stranger's as a candidate\n")
+		return true // not a failure of the publish path; nothing was attempted
+	}
+	rec := ceremony.CandidateRecord{
+		CeremonyID: inv.ID, Hop: hop,
+		Expires: time.Now().Add(5 * time.Minute),
+		Addrs:   []netip.AddrPort{target},
+	}
+	if err := rec.Sign(certPEM, keyPEM); err != nil {
+		fmt.Fprintf(out, "  sign: %v\n", err)
+		return false
+	}
+	key, err := inv.RecordKey(hop)
+	if err != nil {
+		fmt.Fprintf(out, "  %v\n", err)
+		return false
+	}
+	sealed, err := rec.Seal(key, gate.Salt(), hop)
+	if err != nil {
+		fmt.Fprintf(out, "  seal: %v\n", err)
+		return false
+	}
+	seed, err := inv.HopSeed(hop)
+	if err != nil {
+		fmt.Fprintf(out, "  %v\n", err)
+		return false
+	}
+
+	started := time.Now()
+	fmt.Fprintf(out, "  publishing %d bytes…\n", len(sealed))
+	if err := rz.Publish(ctx, seed, gate.Salt(), sealed); err != nil {
+		fmt.Fprintf(out, "  publish failed after %s: %v\n", time.Since(started).Round(time.Millisecond), err)
+		return false
+	}
+	fmt.Fprintf(out, "  published in %s; fetching it back…\n", time.Since(started).Round(time.Millisecond))
+	started = time.Now()
+	got, seq, err := rz.Fetch(ctx, seed, gate.Salt())
+	if err != nil {
+		fmt.Fprintf(out, "  fetch failed after %s: %v\n", time.Since(started).Round(time.Millisecond), err)
+		fmt.Fprintf(out, "  (for THIS command that means the put reached no node we could read\n")
+		fmt.Fprintf(out, "   back from — getput.Put cannot report a per-node refusal)\n")
+		return false
+	}
+	if err := gate.Accept(got, time.Now()); err != nil {
+		fmt.Fprintf(out, "  the record came back in %s and the gate REFUSED it: %v\n",
+			time.Since(started).Round(time.Millisecond), err)
+		return false
+	}
+	g := gate.Stats()
+	fmt.Fprintf(out, "  round trip OK in %s at seq %d\n", time.Since(started).Round(time.Millisecond), seq)
+	fmt.Fprintf(out, "  gate            %d record(s) offered, %d refused; %d candidate address(es) accepted\n",
+		g.Records(), g.Refused(), g.Accepted)
+	fmt.Fprintf(out, "                  dropped: over-cap %d, duplicate %d, re-offered %d, empty records %d\n",
+		g.DroppedOverCap, g.DroppedDuplicate, g.Reoffered, g.EmptyRecords)
+	fmt.Fprintf(out, "                  refused: sealed %d, format %d, too-many %d, unroutable %d,\n",
+		g.RefusedSealed, g.RefusedFormat, g.RefusedTooMany, g.RefusedUnroutable)
+	fmt.Fprintf(out, "                           signature %d, author %d, context %d, expired %d\n",
+		g.RefusedSignature, g.RefusedAuthor, g.RefusedContext, g.RefusedExpired)
+	fmt.Fprintf(out, "  (a non-zero refusal here with an empty fetch elsewhere is how in-roster\n")
+	fmt.Fprintf(out, "   preemption is told apart from a peer who simply has not published)\n")
+	return true
 }

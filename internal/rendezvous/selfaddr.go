@@ -9,7 +9,9 @@ import (
 	"time"
 
 	"github.com/anacrolix/dht/v2"
+
 	"github.com/anacrolix/dht/v2/krpc"
+	"nib/internal/addrscope"
 )
 
 // probeBudget is D16's clock-1 allowance for the DHT self-address probe.
@@ -199,61 +201,20 @@ func (s *Server) observation(from netip.Addr, ip krpc.NodeAddr) (Observation, bo
 
 // isPublishable refuses an address we must never treat as our own public endpoint.
 //
-// The stake is not tidiness. This address gets published as a candidate, and D8/D16/D33
-// have both sides punch at every candidate — hundreds of packets each, from two hosts.
-// A node that reports our address as a stranger's has aimed that at them, and D6's own
-// pin is explicit that L1 does not cover this: L1 stops a lying rendezvous substituting
-// a *signer*, and says nothing about it making Nib emit traffic at a victim.
-func isPublishable(a netip.Addr) bool {
-	if !a.IsValid() || a.IsUnspecified() || a.IsLoopback() || a.IsMulticast() ||
-		a.IsLinkLocalUnicast() || a.IsLinkLocalMulticast() || a.IsInterfaceLocalMulticast() ||
-		a.IsPrivate() || !a.IsGlobalUnicast() {
-		return false
-	}
-	if isSharedAddressSpace(a) {
-		return false // 100.64/10 is inside the carrier's NAT; nobody outside can dial it
-	}
-	for _, p := range reservedRanges {
-		if p.Contains(a) {
-			return false
-		}
-	}
-	return true
-}
-
-// reservedRanges are addresses that are not a usable public endpoint for this host, and
-// the list is explicit because Go's own predicates do not cover them.
+// **The rule moved to internal/addrscope at P04.S04** and this is a one-line delegate. It
+// is not only ours any more: P04.S04 needs the same predicate for the candidate addresses a
+// PEER publishes, which are parsed in internal/ceremony — a package this one may never
+// import and which may not import this one back. A second copy would have drifted, and the
+// tree already demonstrates that (internal/server/fetch.go carries a weaker one).
 //
-// `netip.Addr.IsGlobalUnicast` excludes only the unspecified address, loopback,
-// multicast and link-local (plus 0.0.0.0 and 255.255.255.255 by name). Everything below
-// passes it — measured, one by one — so relying on that predicate alone let through
-// 0.0.0.0/8, the whole of 240/4, and the 6to4 relay anycast prefix, which is the one on
-// this list that reaches a real machine somebody else owns.
-//
-// The bar for inclusion is "a responder claiming we live here is broken or aiming us",
-// not "unusual". Each entry names why, so a future reader can argue with it.
-var reservedRanges = []netip.Prefix{
-	netip.MustParsePrefix("0.0.0.0/8"),       // "this network", RFC 1122
-	netip.MustParsePrefix("192.0.2.0/24"),    // documentation, RFC 5737
-	netip.MustParsePrefix("198.51.100.0/24"), // documentation
-	netip.MustParsePrefix("203.0.113.0/24"),  // documentation
-	netip.MustParsePrefix("198.18.0.0/15"),   // benchmarking, RFC 2544
-	netip.MustParsePrefix("192.88.99.0/24"),  // 6to4 relay ANYCAST, RFC 7526 — never a host
-	netip.MustParsePrefix("240.0.0.0/4"),     // reserved, RFC 1112
+// The stake, unchanged: this address gets published as a candidate, and D8/D16/D33 have
+// both sides punch at every candidate. A node that reports our address as a stranger's has
+// aimed that at them, and D6's own pin is explicit that L1 does not cover it — L1 stops a
+// lying rendezvous substituting a *signer*, and says nothing about it making Nib emit
+// traffic at a victim.
+func isPublishable(a netip.Addr) bool { return addrscope.Routable(a) }
 
-	netip.MustParsePrefix("2001:db8::/32"),  // documentation, RFC 3849
-	netip.MustParsePrefix("3fff::/20"),      // documentation, RFC 9637 — the newer half
-	netip.MustParsePrefix("2001::/32"),      // Teredo, RFC 4380
-	netip.MustParsePrefix("2002::/16"),      // 6to4, RFC 7526 (deprecated)
-	netip.MustParsePrefix("64:ff9b::/96"),   // NAT64, RFC 6052 — a destination, not a source
-	netip.MustParsePrefix("64:ff9b:1::/48"), // NAT64 local-use, RFC 8215
-	netip.MustParsePrefix("100::/64"),       // discard-only, RFC 6666
-	netip.MustParsePrefix("5f00::/16"),      // SRv6 SIDs, RFC 9602
-}
-
-var sharedAddressSpace = netip.MustParsePrefix("100.64.0.0/10")
-
-func isSharedAddressSpace(a netip.Addr) bool { return a.Is4() && sharedAddressSpace.Contains(a) }
+func isSharedAddressSpace(a netip.Addr) bool { return addrscope.SharedSpace(a) }
 
 // probeTargets picks nodes to ask, one per source prefix.
 //

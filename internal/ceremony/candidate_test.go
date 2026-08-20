@@ -18,7 +18,7 @@ func addrs(t *testing.T, n int) []netip.AddrPort {
 	t.Helper()
 	var out []netip.AddrPort
 	for i := 0; i < n; i++ {
-		out = append(out, netip.MustParseAddrPort("198.51.100."+itoa(i+1)+":34154"))
+		out = append(out, netip.MustParseAddrPort("93.184.216."+itoa(i+1)+":34154"))
 	}
 	return out
 }
@@ -173,7 +173,7 @@ func TestAScraperHoldingNeitherTheInvitationNorTheSecretSeesOpaqueBytes(t *testi
 	if bytes.Contains(sealed, []byte(inv.ID)) {
 		t.Error("the ceremony id appears verbatim in the sealed record")
 	}
-	if bytes.Contains(sealed, []byte("198.51.100.1")) {
+	if bytes.Contains(sealed, []byte("93.184.216.1")) {
 		t.Error("a candidate address appears verbatim in the sealed record")
 	}
 }
@@ -358,7 +358,7 @@ func TestAFullRecordFitsInABep44Value(t *testing.T) {
 	// this phase exists to build.
 	var six []netip.AddrPort
 	for i := 0; i < MaxCandidates; i++ {
-		six = append(six, netip.MustParseAddrPort("[2001:db8:1234:5678:9abc:def0:1234:"+itoa(4096+i)+"]:65535"))
+		six = append(six, netip.MustParseAddrPort("[2606:4700:4700:1234:9abc:def0:1234:"+itoa(4096+i)+"]:65535"))
 	}
 	c6 := CandidateRecord{CeremonyID: inv.ID, Hop: testHop, Expires: time.Now().Add(time.Hour), Addrs: six}
 	if err := c6.Sign(certA, keyA); err != nil {
@@ -627,7 +627,7 @@ func TestSealRefusesARecordModifiedAfterSigning(t *testing.T) {
 		t.Fatalf("setup: the unmodified record did not seal: %v", err)
 	}
 
-	c.Addrs = append(c.Addrs, netip.MustParseAddrPort("203.0.113.9:1"))
+	c.Addrs = append(c.Addrs, netip.MustParseAddrPort("93.184.216.99:34155"))
 	if _, err := c.Seal(rk, salt, testHop); err == nil {
 		t.Fatal("a record modified after signing sealed cleanly — the peer would refuse it " +
 			"as tampering in transit, which points at the wrong machine entirely")

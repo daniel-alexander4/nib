@@ -41,7 +41,10 @@ var ErrNoRecord = errors.New("no record published under this key")
 // (2 s, transaction.go:24 with dht.go:24-27) and convergence takes several rounds, so a
 // budget under ~30 s systematically fails to reach the nodes that hold the record while
 // looking exactly like "nobody published one".
-const publishBudget = 45 * time.Second
+// PublishBudget is exported so a diagnostic can tell the user how long a phase may take.
+const PublishBudget = 45 * time.Second
+
+const publishBudget = PublishBudget
 
 // keyPair turns an opaque 32-byte seed into the hop's BEP-44 identity.
 //

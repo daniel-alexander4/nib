@@ -2,8 +2,10 @@ package cli
 
 import (
 	"errors"
+	"io"
 	"strings"
 	"testing"
+	"time"
 
 	"nib/internal/rendezvous"
 )
@@ -107,5 +109,51 @@ func TestClassLineNeverPrintsAnUnsetAddress(t *testing.T) {
 				"yields literal garbage on exactly the NAT class where remote co-signing is "+
 				"hardest", m, got)
 		}
+	}
+}
+
+// The banner is the disclosure surface, and it had no guard.
+//
+// Twice in one arc a prose claim about network behaviour went stale in this repo: the
+// README said Nib made only one call on its own, and then said this command published
+// nothing on the day --self-test started publishing. Prose rots exactly like a doc comment.
+func TestTheBannerSaysWhetherItPublishes(t *testing.T) {
+	plain := banner(false)
+	if !strings.Contains(plain, "nothing is published here") {
+		t.Errorf("the plain banner does not say it publishes nothing:\n%s", plain)
+	}
+	if strings.Contains(plain, "PUBLISHES") {
+		t.Errorf("the plain banner claims to publish:\n%s", plain)
+	}
+
+	self := banner(true)
+	if !strings.Contains(self, "PUBLISHES") {
+		t.Errorf("the --self-test banner does not say it publishes:\n%s", self)
+	}
+	if strings.Contains(self, "nothing is published here") {
+		t.Errorf("the --self-test banner still claims it publishes nothing — this is the "+
+			"exact staleness that has already happened twice:\n%s", self)
+	}
+	// The irreversibility, which is the part a user cannot get back.
+	for _, must := range []string{"no recall", "Ctrl-C"} {
+		if !strings.Contains(self, must) {
+			t.Errorf("the --self-test banner omits %q — it is the branch with the "+
+				"irreversible side effect, so it is the one that needs both:\n%s", must, self)
+		}
+	}
+}
+
+// The banner must be printed before anything opens a socket or publishes.
+func TestTheBannerPrecedesTheSocket(t *testing.T) {
+	var buf strings.Builder
+	// A budget too small to do anything: the run bails, but the banner must already be out.
+	runRendezvous(&buf, io.Discard, time.Millisecond, false)
+	got := buf.String()
+	if !strings.HasPrefix(got, "nib rendezvous diagnostic") {
+		t.Fatalf("the first thing printed was not the disclosure:\n%.200s", got)
+	}
+	if i := strings.Index(got, "local socket"); i >= 0 && i < strings.Index(got, "Ctrl-C") {
+		t.Error("the socket line precedes the Ctrl-C invitation — the disclosure must " +
+			"come before anything opens")
 	}
 }
