@@ -2443,11 +2443,25 @@ Tasks:
 job rather than an obstacle to route around — discovery stays a link-layer package that knows
 nothing about identity, and `internal/server` joins the two because it already holds both.
 
-#### P03.S04 — A LAN ceremony with no address typed
+#### P03.S04 — A LAN ceremony with no address typed *(done 2026-08-19, v1.110.3)*
 Scope: the dial side takes a discovered candidate; the harness drives it. Refs: P03 exit criteria 1.
 Acceptance:
 - A ceremony completes **with no address entered anywhere** — driven in the multi-instance harness, inside a network namespace so the run is hermetic and independent of the host firewall.
 - **No outbound internet traffic, asserted rather than suppressed.** `NIB_NO_UPDATE_CHECK=1` (`build/uirepro.sh:114`) silences the one known caller; it does not observe absence, and the criterion says no traffic.
+
+Tasks:
+- T01 — the armed side announces while armed, and stops when it disarms.
+- T02 — an empty `bind` binds ephemerally, and an empty `address` browses instead of refusing.
+- T03 — the harness: two nibs in a namespace, a ceremony with neither address typed.
+- T04 — the egress counter, with its own stimulus assertion.
+
+**The obvious egress instrument is vacuous, and that is measured** *(2026-08-19)*: an nft output
+counter inside a namespace reads **zero after a real connect attempt**, because with no default
+route the kernel refuses at the routing stage and the packet never reaches the output hook — so
+"no outbound traffic" would be true of a process that tried constantly. The namespace therefore
+gets a **black-hole default route**, which makes attempts real packets the counter can see: probed
+at 0 before, **2 after a connect to 1.1.1.1**. The assertion runs that provoke first, so a counter
+that could never fire fails the harness rather than passing it.
 
 #### P03.S05 — The Windows pass *(caveat 3 — the run is Dan's)*
 Scope: everything a real-Windows verification needs, short of the run. Refs: caveat 3, P03 exit criteria 3.

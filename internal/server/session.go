@@ -368,6 +368,16 @@ func (sa sessionAccepter) Accept(peerFP, doc []byte) (bool, error) {
 // one-way document transfer and saves it under ~/nib. It always disarms on exit — one
 // session per arm.
 func (s *Server) runSession(ln p2p.Listener, cert, key []byte, label, mode string) {
+	// Announce on the link for as long as this session is armed — the plan's egress
+	// enumeration authorises multicast "armed-only", and this is where that is true
+	// rather than merely intended. It never fails the session: a host with no usable
+	// interface, or a firewall that swallows the group, must still be able to run a
+	// ceremony over a typed address.
+	if port := portOf(ln); port > 0 {
+		if ann, err := startAnnouncing(cert, port); err == nil {
+			defer ann.Close()
+		}
+	}
 	// This goroutine handles a pinned peer's inbound document; a panic in the p2p or
 	// sign code must not crash the desktop process. The defers below (disarm, Close)
 	// still run as the stack unwinds.
@@ -554,16 +564,21 @@ func (s *Server) handleSessionArm(w http.ResponseWriter, r *http.Request) {
 		httpError(w, http.StatusBadRequest, "that peer isn't pinned — pin their fingerprint first")
 		return
 	}
-	if req.Bind == "" {
-		httpError(w, http.StatusBadRequest, "a bind address is required (e.g. 0.0.0.0:8443)")
-		return
+	// An empty bind is the LAN path, not a mistake. The peer will learn the port from
+	// the announcement, so there is nothing for a user to type and nothing to agree in
+	// advance — which is the whole of P03's first exit criterion. Ephemeral rather than
+	// a fixed default because two Nibs on one machine must both be able to arm, and a
+	// hardcoded port makes the second one fail for a reason the user cannot act on.
+	bind := req.Bind
+	if bind == "" {
+		bind = "0.0.0.0:0"
 	}
 	cert, key, err := identity(v)
 	if err != nil {
 		httpError(w, http.StatusInternalServerError, "could not load identity")
 		return
 	}
-	ln, err := listenPeer(req.Transport, req.Bind, cert, key, peerFP)
+	ln, err := listenPeer(req.Transport, bind, cert, key, peerFP)
 	if errors.Is(err, errUnknownTransport) {
 		httpError(w, http.StatusBadRequest, err.Error())
 		return
@@ -720,11 +735,11 @@ func (s *Server) handleSessionInitiate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer cleanup()
+	// An empty address is the LAN path, not a mistake. It is resolved further down,
+	// AFTER the peer's fingerprint is parsed and its pin confirmed: a browse needs the
+	// pin to match against, and asking the link about a peer this user has not pinned
+	// would be discovery choosing who to talk to, which is what L1 forbids.
 	address := r.FormValue("address")
-	if address == "" {
-		httpError(w, http.StatusBadRequest, "a peer address is required")
-		return
-	}
 	pdfBytes, ok := formFileBytes(w, r, "pdf")
 	if !ok {
 		return
@@ -760,6 +775,10 @@ func (s *Server) handleSessionInitiate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	signed, ok := s.buildCoSigned(w, pdfBytes, cert, key, att, appearance)
+	if !ok {
+		return
+	}
+	address, ok = s.peerAddress(w, v, address, peerFP)
 	if !ok {
 		return
 	}
@@ -805,11 +824,11 @@ func (s *Server) handleSessionSend(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer cleanup()
+	// An empty address is the LAN path, not a mistake. It is resolved further down,
+	// AFTER the peer's fingerprint is parsed and its pin confirmed: a browse needs the
+	// pin to match against, and asking the link about a peer this user has not pinned
+	// would be discovery choosing who to talk to, which is what L1 forbids.
 	address := r.FormValue("address")
-	if address == "" {
-		httpError(w, http.StatusBadRequest, "a peer address is required")
-		return
-	}
 	peerFP, err := parseFingerprint(r.FormValue("fingerprint"))
 	if err != nil {
 		httpError(w, http.StatusBadRequest, "not a valid fingerprint")
@@ -831,6 +850,10 @@ func (s *Server) handleSessionSend(w http.ResponseWriter, r *http.Request) {
 	myFP, err := sign.Fingerprint(cert)
 	if err != nil {
 		httpError(w, http.StatusInternalServerError, "could not load identity")
+		return
+	}
+	address, ok = s.peerAddress(w, v, address, peerFP)
+	if !ok {
 		return
 	}
 	conn, err := dialPeer(r.FormValue("transport"), address, cert, key, peerFP)

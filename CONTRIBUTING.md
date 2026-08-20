@@ -18,6 +18,7 @@ for things it never looked at.
 | 2 | `./build/jsdomtest.sh` | the front end's logic and DOM behaviour, in jsdom |
 | 3 | `./build/uirepro.sh` | the whole app: the real binary, in a real browser |
 | 4 | `./build/pairrepro.sh` | a ceremony between TWO real binaries, two vaults, two identities — over BOTH transports |
+| 4b | `./build/pairrepro.sh --lan` | the same ceremony with **no address typed anywhere**, in a namespace, asserting nothing left the link |
 | 5 | `./build/mcastrepro.sh` | link-local discovery between two processes, in a network namespace of its own |
 
 Add `node --check web/app.js` after editing JavaScript, and `go test -race
@@ -94,6 +95,17 @@ second machine to disagree with. And it cannot see Windows at all, which is wher
 this code's known divergences live: `x/net`'s `SetControlMessage` is unimplemented
 there, IPv4 group joins resolve the interface to an address rather than an index, and
 `FlagRunning` carries no information. Those close on a real-Windows run.
+
+**`--lan` is the same harness with the addresses removed** — the armed side omits its
+bind and announces, the dialing side omits the address and browses. It re-execs into a
+network namespace, for the reason tier 5 does: a default-deny host swallows discovery
+silently. That namespace is given a **black-hole default route**, which looks wrong and
+is the instrument: P03's criterion says the ceremony completes with no outbound internet
+traffic, and an nft output counter in a namespace with *no* route reads **zero even
+after a real connect attempt**, because the kernel refuses at routing before the output
+hook. With the route, attempts become packets the counter sees. The run provokes a
+deliberate connection first and **fails if the counter does not move**, so a counter that
+could never fire cannot pass for silence.
 
 **Cannot see: two networks.** Both instances are on loopback, so NAT, routing,
 MTU and firewalls are invisible — and those are exactly what the connection
