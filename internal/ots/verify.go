@@ -148,23 +148,45 @@ func VerifyProof(ctx context.Context, client *http.Client, sources []BlockSource
 		return nil, errors.New("proof carries no Bitcoin attestation")
 	}
 
-	s := attested[0]
-	root, err := s.compute(p.digest)
-	if err != nil {
-		return nil, err
+	// Every attestation, not only the first.
+	//
+	// Judging by `attested[0]` alone meant an attacker who PREPENDS a bogus attestation to
+	// a genuine proof makes the user read "proof does not verify" for a validly timestamped
+	// document — and a legitimate multi-branch proof whose first branch uses an op `compute`
+	// declines was a hard error even though a later branch would have confirmed.
+	var lastErr error
+	var sawBranch bool
+	for _, s := range attested {
+		root, err := s.compute(p.digest)
+		if err != nil {
+			// A branch this build cannot walk (an op `compute` declines) is not a verdict
+			// about the document — a later branch may still confirm it.
+			lastErr = err
+			continue
+		}
+		merkle, t, n, err := fetchAgreedHeader(ctx, sources, minAgree, s.height)
+		if err != nil {
+			// A network refusal IS terminal: it is the same for every branch, and
+			// retrying it per attestation would multiply the requests without changing
+			// the answer.
+			return nil, err
+		}
+		sawBranch = true
+		if !bytes.Equal(root, merkle) {
+			// This branch does not attest to this document; another may.
+			continue
+		}
+		res := &VerifyResult{State: StateConfirmed, Height: s.height, Time: t, Sources: n}
+		if upgradedAny {
+			res.Upgraded = serialize(p.digest, updated) // a now self-contained proof to persist
+		}
+		return res, nil
 	}
-	merkle, t, n, err := fetchAgreedHeader(ctx, sources, minAgree, s.height)
-	if err != nil {
-		return nil, err
+	if !sawBranch && lastErr != nil {
+		// Every branch was unwalkable, so we have no opinion rather than a negative one.
+		return nil, lastErr
 	}
-	if !bytes.Equal(root, merkle) {
-		return &VerifyResult{State: StateInvalid}, nil
-	}
-	res := &VerifyResult{State: StateConfirmed, Height: s.height, Time: t, Sources: n}
-	if upgradedAny {
-		res.Upgraded = serialize(p.digest, updated) // a now self-contained proof to persist
-	}
-	return res, nil
+	return &VerifyResult{State: StateInvalid}, nil
 }
 
 // serialize emits the .ots bytes for a proof: the standard preamble plus each
@@ -212,6 +234,14 @@ func fetchAgreedHeader(ctx context.Context, sources []BlockSource, minAgree int,
 		merkle []byte
 		t      time.Time
 	}
+	// Both fields are cross-checked, not just the merkle root.
+	//
+	// This compared `r.merkle` across sources and then returned `results[0].t` — and
+	// `results` is appended from N goroutines under a mutex, so `results[0]` is whichever
+	// explorer answered FIRST. The block TIME, which is the entire product of a timestamp
+	// verification, came from one unagreed source; a hostile explorer cannot forge that a
+	// proof verifies (agreement on the root still has to hold against the others) but it
+	// could re-date a genuine attestation, and it can always be the fastest responder.
 	var (
 		mu      sync.Mutex
 		results []res
@@ -239,6 +269,9 @@ func fetchAgreedHeader(ctx context.Context, sources []BlockSource, minAgree int,
 	for _, r := range results[1:] {
 		if !bytes.Equal(r.merkle, results[0].merkle) {
 			return nil, time.Time{}, 0, errors.New("block explorers disagree on the block — refusing to trust")
+		}
+		if !r.t.Equal(results[0].t) {
+			return nil, time.Time{}, 0, errors.New("block explorers disagree on the block's time — refusing to trust")
 		}
 	}
 	return results[0].merkle, results[0].t, len(results), nil
@@ -530,6 +563,21 @@ func NewEsplora(base string, client *http.Client) BlockSource {
 	return esplora{base: strings.TrimRight(base, "/"), client: client}
 }
 
+// isBlockHash reports whether s is exactly 64 lowercase-or-uppercase hex characters.
+func isBlockHash(s string) bool {
+	if len(s) != 64 {
+		return false
+	}
+	for _, c := range s {
+		switch {
+		case c >= '0' && c <= '9', c >= 'a' && c <= 'f', c >= 'A' && c <= 'F':
+		default:
+			return false
+		}
+	}
+	return true
+}
+
 type esplora struct {
 	base   string
 	client *http.Client
@@ -540,7 +588,18 @@ func (e esplora) BlockHeader(ctx context.Context, height uint64) ([]byte, time.T
 	if err != nil {
 		return nil, time.Time{}, err
 	}
-	hdrHex, err := e.get(ctx, e.base+"/block/"+strings.TrimSpace(string(hashHex))+"/header")
+	// The hash is checked before it becomes a path segment.
+	//
+	// `hashHex` is up to 64 KiB of whatever the explorer returned, interpolated straight
+	// into the next URL — so one source controlled path segments, `?` and `#` in Nib's
+	// follow-up call. Scheme and host are fixed, so this was never SSRF to a third party;
+	// it let a compromised explorer redirect the second call within its own API surface,
+	// and it also catches an HTML error page being pasted into the path.
+	hash := strings.TrimSpace(string(hashHex))
+	if !isBlockHash(hash) {
+		return nil, time.Time{}, fmt.Errorf("%s returned something that is not a block hash", e.base)
+	}
+	hdrHex, err := e.get(ctx, e.base+"/block/"+hash+"/header")
 	if err != nil {
 		return nil, time.Time{}, err
 	}

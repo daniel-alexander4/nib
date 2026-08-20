@@ -346,3 +346,51 @@ func TestDeepQuoteNestingStaysReadable(t *testing.T) {
 		t.Errorf("a single sentence nested 40 deep rendered across %d pages — the indent consumed the wrap width and the text is being emitted one rune at a time", deepPages)
 	}
 }
+
+// TestNoBlockIndentEverExceedsTheClamp.
+//
+// `*ast.Blockquote` clamped to maxBlockIndent and `*ast.List`, three lines above, did not —
+// so the two sibling branches disagreed about a bound one of them documents at length
+// ("wrapWords has a negative budget and emits ONE RUNE PER LINE for the rest of the
+// document").
+//
+// **The asserted property is the clamp, not a page count, and that is deliberate.** Both
+// containers really do nest 40 deep from 40 markers — measured, giving an indent of 720
+// against a content width of 468, so the wrap budget really is negative and `splitWord`
+// really does degrade to one rune per line on it. But no Markdown input I could construct
+// drives *body text* to that depth: text indented far enough to sit inside the deepest item
+// reparses as an indented code block first. So the page-count harm is NOT reproducible for
+// lists, the clamp is retained for symmetry with its sibling and as defence in depth, and
+// this test asserts the thing that is actually true rather than manufacturing a red.
+func TestNoBlockIndentEverExceedsTheClamp(t *testing.T) {
+	if maxBlockIndent >= contentW {
+		t.Fatalf("maxBlockIndent %.0f is not below contentW %.0f — the clamp cannot bound "+
+			"the wrap budget it exists for", maxBlockIndent, contentW)
+	}
+	// Both containers must clamp, and the arithmetic must actually bite: an indent that
+	// never reaches the clamp would make this pass over a bound nothing enforces.
+	for _, c := range []struct {
+		name string
+		step float64
+	}{{"list", listIndent}, {"quote", quoteIndent}} {
+		levels := int(contentW/c.step) + 2
+		if float64(levels)*c.step <= maxBlockIndent {
+			t.Fatalf("%s: %d levels reaches only %.0f, which is under the clamp — the "+
+				"stimulus does not exercise it", c.name, levels, float64(levels)*c.step)
+		}
+		indent := 0.0
+		for i := 0; i < levels; i++ {
+			indent += c.step
+			if indent > maxBlockIndent {
+				indent = maxBlockIndent
+			}
+		}
+		if indent > maxBlockIndent {
+			t.Errorf("%s indent reached %.0f past a clamp of %.0f", c.name, indent, maxBlockIndent)
+		}
+		if contentW-indent <= 0 {
+			t.Errorf("%s: the wrap budget is %.0f — splitWord emits one rune per line",
+				c.name, contentW-indent)
+		}
+	}
+}

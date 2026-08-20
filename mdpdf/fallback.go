@@ -9,6 +9,7 @@ import (
 
 	"github.com/pdfcpu/pdfcpu/pkg/font"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
+	"strings"
 )
 
 // Font is an embeddable face for text the Base-14 core fonts cannot print.
@@ -101,6 +102,10 @@ func installFallbacks(fonts []Font) error {
 // process performs its first font operation, which is a constraint a package cannot state
 // and a caller cannot honour.
 func registerMetrics(name string) error {
+	// Before the path is built, because this one gob-decodes what it opens.
+	if !safeFontName(name) {
+		return fmt.Errorf("refusing to load a font named %q", name)
+	}
 	font.UserFontMetricsLock.RLock()
 	_, ok := font.UserFontMetrics[name]
 	font.UserFontMetricsLock.RUnlock()
@@ -126,7 +131,38 @@ func registerMetrics(name string) error {
 // named for the PostScript name, which is what Font.Name carries. Existence and
 // non-emptiness rather than an integrity check: the .gob holds an unexported pdfcpu
 // struct, so nothing outside that package can decode one to verify it.
+// safeFontName reports whether a font name may be used as a path component.
+//
+// mdpdf documents itself as a root package other projects import, so `Font.Name` is API
+// surface rather than an internal constant — and it is joined into a path and the result is
+// **gob-decoded**. A `../` in it makes that an arbitrary file, and `encoding/gob` over
+// untrusted bytes is an allocation hazard at minimum. Nib's own caller passes constants, so
+// there is no live exploit; this is the cost of the package being importable.
+func safeFontName(name string) bool {
+	if name == "" || len(name) > 128 {
+		return false
+	}
+	// A charset check alone is not enough: "." and ".." are made entirely of permitted
+	// characters and are exactly the two names that traverse. Caught by the guard's own
+	// case list rather than by reasoning about it.
+	if name == "." || name == ".." || strings.Contains(name, "..") {
+		return false
+	}
+	for _, c := range name {
+		switch {
+		case c >= 'A' && c <= 'Z', c >= 'a' && c <= 'z', c >= '0' && c <= '9',
+			c == '.', c == '_', c == '-':
+		default:
+			return false
+		}
+	}
+	return true
+}
+
 func installedFallback(name string) bool {
+	if !safeFontName(name) {
+		return false
+	}
 	fi, err := os.Stat(filepath.Join(font.UserFontDir, name+".gob"))
 	return err == nil && fi.Size() > 0
 }

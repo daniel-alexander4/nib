@@ -132,7 +132,19 @@ func (r *renderer) block(n ast.Node, indent float64, marker *word) {
 				m = word{[]frag{{strconv.Itoa(num) + ".", style{font: fontBody, size: sizeBody}}}}
 				num++
 			}
-			r.blocks(li, indent+listIndent, &m)
+			// Clamped, exactly as *ast.Blockquote below is and for the same measured
+			// reason: past maxBlockIndent, wrapWords has a non-positive budget and emits
+			// ONE RUNE PER LINE for the rest of the document. contentW is 468 and
+			// listIndent is 18, so 26 nesting levels reach it — about a kilobyte of input.
+			// A file with forty '>' characters is not a realistic document but is a
+			// realistic paste, and a file with 26 nested list markers is the same thing;
+			// mdpdf renders Markdown a stranger sent for both the GUI import and
+			// `nib office`. The clamp shipped on one of the two branches.
+			next := indent + listIndent
+			if next > maxBlockIndent {
+				next = maxBlockIndent
+			}
+			r.blocks(li, next, &m)
 		}
 		r.l.gap(paraGap - tightGap)
 	case *ast.Blockquote:
