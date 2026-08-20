@@ -2,6 +2,7 @@ package discovery
 
 import (
 	"net"
+	"os"
 	"strings"
 	"testing"
 )
@@ -114,3 +115,89 @@ func TestDescribeNamesEveryInterfaceAndItsVerdict(t *testing.T) {
 			"when there is nothing is the case it is most needed for")
 	}
 }
+
+// TestTheIPv4SelectionNeedsAnIPv4Address is the second Windows divergence, at the level
+// the pure function can reach.
+//
+// On Windows an IPv4 group join resolves the interface to an ADDRESS —
+// setIPv4MreqToInterface walks ifi.Addrs() and fails without an IPv4 one — where Linux
+// uses the interface INDEX. So an interface with IPv6 up and DHCP still pending is
+// joinable on Linux and refused on Windows, and no Linux test would ever show it.
+//
+// Requiring the address on BOTH platforms makes the chosen set identical on both, which
+// is worth more than the one interface it costs. The driven half of this, on a real
+// IPv6-only interface, is in the namespace — see mcastrepro.sh.
+func TestTheIPv4SelectionNeedsAnIPv4Address(t *testing.T) {
+	// The two calls differ in exactly one argument, and that argument must be the
+	// only thing that decides an IPv6-only interface's fate.
+	v6only := []net.Addr{&net.IPNet{IP: net.ParseIP("fd00::1"), Mask: net.CIDRMask(64, 128)}}
+	dual := []net.Addr{
+		&net.IPNet{IP: net.ParseIP("fd00::1"), Mask: net.CIDRMask(64, 128)},
+		&net.IPNet{IP: net.IPv4(10, 0, 0, 1), Mask: net.CIDRMask(24, 32)},
+	}
+	if HasIPv4(v6only) {
+		t.Error("an IPv6-only interface reports an IPv4 address")
+	}
+	if !HasIPv4(dual) {
+		t.Fatal("a dual-stack interface reports no IPv4 address; the assertion above is not " +
+			"about the distinction it claims to be")
+	}
+}
+
+// TestAnIPv6OnlyInterfaceIsSkippedForTheIPv4Group is the driven half, and it needs a real
+// interface with a real address — which is why it runs only inside the namespace
+// build/mcastrepro.sh creates, where a v6-only dummy exists.
+//
+// net.Interface.Addrs() queries the kernel by index, so this distinction cannot be faked:
+// the table test above exercises HasIPv4 on synthetic addresses, and only a real
+// interface exercises the SELECTION.
+func TestAnIPv6OnlyInterfaceIsSkippedForTheIPv4Group(t *testing.T) {
+	if os.Getenv("NIB_MCAST_NETNS") != "1" {
+		t.Skip("not in a prepared network namespace — run build/mcastrepro.sh")
+	}
+	all, err := net.Interfaces()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Stimulus: the namespace really does contain an interface with IPv6 and no IPv4.
+	// Without it, "the v4 set is smaller" would be true of a namespace that never had
+	// one, and this test would pass while exercising nothing.
+	var v6only string
+	for _, ifi := range all {
+		if ifi.Flags&net.FlagLoopback != 0 {
+			continue
+		}
+		addrs, _ := ifi.Addrs()
+		if len(addrs) > 0 && !HasIPv4(addrs) {
+			v6only = ifi.Name
+		}
+	}
+	if v6only == "" {
+		t.Fatalf("this namespace has no IPv6-only interface, so the divergence is unexercised: %v",
+			describeAll(all))
+	}
+
+	in := func(set []net.Interface, name string) bool {
+		for _, i := range set {
+			if i.Name == name {
+				return true
+			}
+		}
+		return false
+	}
+	if in(chooseInterfaces(all, true), v6only) {
+		t.Errorf("%s has no IPv4 address and was chosen for the IPv4 group. On Windows that "+
+			"join is resolved by ADDRESS and would be refused, so Linux and Windows would "+
+			"pick different interfaces — the divergence this requirement exists to remove",
+			v6only)
+	}
+	if !in(chooseInterfaces(all, false), v6only) {
+		t.Errorf("%s was skipped for the IPv6 group too. IPv6 joins are index-based on every "+
+			"platform; excluding it there costs an interface for no reason", v6only)
+	}
+	t.Logf("IPV6ONLY %s excluded from the v4 group, kept for v6", v6only)
+}
+
+// describeAll is describe() over an empty chosen set, for a failure message.
+func describeAll(all []net.Interface) string { return describe(all, nil) }

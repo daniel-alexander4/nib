@@ -100,6 +100,7 @@ var commands = map[string]func([]string) int{
 	"outline":     cmdOutline,
 	"register":    cmdRegister,
 	"unregister":  cmdUnregister,
+	"discover":    cmdDiscover,
 }
 
 func printUsage(w *os.File) {
@@ -133,6 +134,7 @@ These subcommands run headlessly, without a browser:
   nib export-xfdf IN -o OUT        export a form's field data as XFDF (Acrobat/Foxit interchange)
   nib attachments IN [--json]     list embedded files (--extract NAME / --add FILE)
   nib outline IN [--json]         list the document's bookmark outline
+  nib discover [--seconds N]      report what link-local peer discovery can see here
   nib watch DIR --do OP           run timestamp/optimize/sanitize on each new PDF
   nib version                     print the version
 

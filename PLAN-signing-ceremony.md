@@ -2463,11 +2463,24 @@ gets a **black-hole default route**, which makes attempts real packets the count
 at 0 before, **2 after a connect to 1.1.1.1**. The assertion runs that provoke first, so a counter
 that could never fire fails the harness rather than passing it.
 
-#### P03.S05 — The Windows pass *(caveat 3 — the run is Dan's)*
+#### P03.S05 — The Windows pass *(caveat 3 — the run is Dan's)* *(done 2026-08-19, v1.110.4 — the run parked, by construction)*
 Scope: everything a real-Windows verification needs, short of the run. Refs: caveat 3, P03 exit criteria 3.
 Acceptance:
 - The two measured Windows divergences have **named, deliberate handling**: `x/net`'s `SetControlMessage` is a `TODO` returning `errNotImplemented` there, so a control message is nil with no error and interface filtering silently disappears; and IPv4 group join resolves the interface to an **address** (`setIPv4MreqToInterface`), so an interface with no IPv4 lease is joinable on Linux and refused on Windows.
 - **Parked by construction:** the run itself. The phase's own criterion says a green `winrepro` may not discharge it, because wine models neither multicast nor interface enumeration.
+
+Tasks:
+- T01 — `nib discover`, the diagnostic: what was joined and why, what was sent, what came back.
+- T02 — a guard that nothing decides on the arrival interface, since on Windows it is nil with a nil error.
+- T03 — a guard that the IPv4 selection differs from the IPv6 one exactly where Windows needs it to.
+- T04 — `winrepro.sh` states that it cannot discharge this, and `verify_test.go` guards the statement.
+
+**The artifact this slice owes is something Dan can RUN** *(2026-08-19)*: "the run is Dan's" is only
+meaningful if there is something to run. Without a diagnostic, a real-Windows verification means
+building a test binary and reading Go output — so the slice ships `nib discover`, which prints the
+interface selection with a reason per interface, announces, listens, and reports the counters that
+separate *"I said nothing"* from *"I said it and nobody answered"*. Both Windows divergences surface
+in its output rather than as silence.
 
 **The port is Nib's own, not `5353`** *(2026-08-19, measured)*: a multicast loopback copy traverses INPUT, so on a default-deny desktop discovery is **silently dead on any port the firewall does not already permit** — measured on the development machine, where `224.0.0.251:5353` delivers and `224.0.0.251:15400` times out with no error at either end. The alternative, sharing the mDNS group, was refused: it puts non-mDNS bytes on a port other implementations parse as mDNS, and doing it properly means speaking DNS-SD, which is a phase of its own. So the cost is paid where it is visible instead — **hearing your own loopback copy is a firewall-independent liveness check on the send path**, and a browse that hears neither a peer nor itself can say which of the two failed.
 

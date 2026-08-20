@@ -77,6 +77,7 @@ func TestVerifyContractIsTrue(t *testing.T) {
 		{"build/pairrepro.sh", "Where it still stops"},
 		{"CONTRIBUTING.md", "Cannot see: a network"},
 		{"CONTRIBUTING.md", "black-hole default route"},
+		{"build/winrepro.sh", "What this harness CANNOT discharge"},
 		{"build/mcastrepro.sh", "Where it still stops"},
 	} {
 		body := contract

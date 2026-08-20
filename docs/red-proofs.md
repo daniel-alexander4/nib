@@ -192,6 +192,18 @@ by check.
 | The app opens a connection to 1.1.1.1 during the ceremony | the egress counter | "the ceremony emitted 2 packets destined off the link — P03's exit criterion says a LAN ceremony completes with NO outbound internet traffic" |
 
 
+## Tier 1 — `internal/discovery` (P03.S05, the Windows divergences)
+
+Both are invisible on Linux by construction, so the guards are the only thing standing
+between them and a silent failure on a platform no tier can reach.
+
+| Defect reintroduced | Check that fired | What it said |
+|---|---|---|
+| A filter on the arrival interface (v1.110.4) | `TestNothingDecidesOnTheArrivalInterface` | "mcast.go uses the arrival interface (IfIndex). On Windows the control message is nil with a NIL ERROR, so any decision made on it silently accepts everything there" |
+| One of the two `SetControlMessage` errors discarded | the same guard, after it was made to count | "1 of 2 SetControlMessage calls have their error checked" — see the vacuous-green row: at first it asked whether *any* were, and the probe passed |
+| The IPv4 selection stops requiring an IPv4 address (tier 5) | `TestAnIPv6OnlyInterfaceIsSkippedForTheIPv4Group`, on a real v6-only interface in the namespace | the v4 group would be joined on an interface Windows refuses, so the two platforms would choose different interfaces — the divergence the requirement exists to remove |
+
+
 ## Vacuous greens caught, and how
 
 Not red proofs — the opposite, and worth as much. Each is a check that was **passing while
@@ -221,3 +233,5 @@ measuring nothing**, found by its own setup assertion or by a deliberate probe.
 | The egress counter itself, in its first form (v1.110.3) | an nft output counter in a namespace with **no default route** reads **zero after a real connect attempt** — the kernel refuses at the routing stage and the packet never reaches the output hook. "No outbound traffic" would have been true of a process trying constantly | probing the instrument before trusting it: 0 before *and* 0 after a deliberate connect to 1.1.1.1. Fixed with a black-hole default route (0 → **2**), and the harness now runs that provoke every time and **fails if the counter does not move** |
 | The armed-side-announcer probe, first attempt | patched `if ann, err := startAnnouncing(...); err == nil` to `… && false`, which still **calls** `startAnnouncing` — the announcer started anyway and only the deferred close was skipped. Reported GREEN, and I nearly recorded a vacuous test | the result being implausible: discovery cannot be optional when nothing types an address. Re-probed at the function itself, where it is red |
 | A probe's restore, when the run times out | the probe loop's `cp`-back never ran after a `timeout` killed it mid-iteration, so **the next run silently inherited the patch** and I misattributed its output to the following probe | the error text naming a defect the current probe could not produce. The lesson is the loop's, not the test's: a probe harness must restore in a trap, not after the command |
+| `TestNothingDecidesOnTheArrivalInterface`, first version (v1.110.4) | it used `strings.Contains` over the source for `IfIndex` — and matched the **comment in `mcast.go` that explains why nothing uses it**. A guard failing on its own documentation, and the third instance of this hole here after the `.deb` guard and `published.test.mjs` | running it: it failed against correct code, naming a comment. Rewritten over the **AST**, where a selector expression exists and a comment does not |
+| The same guard's `SetControlMessage` half | it asked whether such an error check existed *anywhere* in the package. There are **two** call sites, v4 and v6, so discarding one left the other satisfying it — the probe came back GREEN | probing exactly that. Now it counts call sites against checked call sites, which is the population-floor shape the repo already uses elsewhere |

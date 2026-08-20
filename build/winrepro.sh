@@ -15,6 +15,28 @@
 # the same HTTP calls the browser UI makes. Requires wine; skips cleanly without
 # it, the same way the poppler/Ghostscript/veraPDF tests do.
 #
+# ── What this harness CANNOT discharge ───────────────────────────────────────
+# **Link-local discovery.** wine models neither multicast group membership nor
+# interface enumeration, and the two Windows divergences Nib's discovery code has
+# to survive are precisely there:
+#
+#   - x/net's SetControlMessage is unimplemented on Windows (control_windows.go is
+#     a TODO returning errNotImplemented), so a received control message is nil
+#     with a NIL ERROR and any filter written on the arrival interface silently
+#     accepts everything;
+#   - an IPv4 group join resolves the interface to an ADDRESS rather than an index
+#     (setIPv4MreqToInterface), so an interface whose IPv4 lease has not arrived is
+#     joinable on Linux and refused on Windows.
+#
+# A green run of THIS script says nothing about either. P03's exit criterion says
+# so in as many words — "a green winrepro may not discharge this bullet" — and the
+# thing that does is `nib discover` on a real Windows machine, which prints the
+# interface selection, whether announcements left the host, and whether the
+# platform supplied an arrival interface at all.
+#
+# Nothing here should ever grow a discovery check: it would be a green nobody
+# could act on.
+
 # --keep leaves the wine prefix and the server running for poking at by hand.
 set -uo pipefail
 cd "$(dirname "$0")/.."
