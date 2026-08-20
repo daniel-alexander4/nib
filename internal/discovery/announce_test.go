@@ -270,3 +270,45 @@ func TestNothingHereCanReachAnIdentity(t *testing.T) {
 		})
 	}
 }
+
+// TestEncodeRefusesWhatParseWouldReject closes the loop Encode's own doc promises.
+//
+// It says "It refuses to encode one that would not parse", and bounding the name at the
+// length byte's 0xff did not keep that: six 40-character words is 245 bytes, encodes to
+// 261, and Parse rejects it at the 256-byte cap. The two ends of the format disagreed
+// about what is legal — the one thing check() exists to prevent — and it was unreachable
+// from the product only because pairing.Name is at most 53 bytes. An invariant held by a
+// caller is not held by the check that claims to hold it.
+func TestEncodeRefusesWhatParseWouldReject(t *testing.T) {
+	// Stimulus: a name that is legal by every OTHER rule — six words, each within the
+	// per-word bounds, total under the length byte's 255 — encodes and parses.
+	ok := Announcement{Name: aName(t, 3), Port: 8443}
+	if _, err := ok.Encode(); err != nil {
+		t.Fatalf("a real name does not encode (%v); the refusal below proves nothing", err)
+	}
+
+	long := Announcement{Name: strings.TrimSpace(strings.Repeat(strings.Repeat("a", 40)+" ", 6)), Port: 8443}
+	if n := len(strings.Fields(long.Name)); n != 6 {
+		t.Fatalf("the fixture is %d words, not 6 — it would be refused for the wrong reason", n)
+	}
+	if len(long.Name) > 0xff {
+		t.Fatalf("the fixture is %d bytes, over the length byte — it would be refused for "+
+			"the wrong reason", len(long.Name))
+	}
+	if headerLen+len(long.Name) <= MaxDatagram {
+		t.Fatalf("the fixture encodes to %d bytes, inside the %d cap — it does not exercise "+
+			"the disagreement", headerLen+len(long.Name), MaxDatagram)
+	}
+
+	b, err := long.Encode()
+	if err == nil {
+		// The defect, stated as what it costs: the encoder produced a datagram its own
+		// parser refuses.
+		_, perr := Parse(b)
+		t.Fatalf("Encode produced %d bytes and Parse says %v — the encoder and the parser "+
+			"disagree about what is legal", len(b), perr)
+	}
+	if !errors.Is(err, ErrMalformed) {
+		t.Errorf("refused as %v, want ErrMalformed", err)
+	}
+}

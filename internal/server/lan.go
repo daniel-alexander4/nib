@@ -7,10 +7,12 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"sync"
 	"sync/atomic"
 	"time"
 
 	"nib/internal/discovery"
+	"nib/internal/p2p"
 	"nib/internal/pairing"
 	"nib/internal/sign"
 	"nib/internal/vault"
@@ -29,9 +31,14 @@ const announceEvery = 500 * time.Millisecond
 // is also what keeps the exposure small: a Nib that is not expecting anybody says
 // nothing at all.
 type lanAnnouncer struct {
-	sock  *discovery.Socket
-	stop  chan struct{}
-	done  chan struct{}
+	sock *discovery.Socket
+	stop chan struct{}
+	done chan struct{}
+	// once, not a check-then-close. The doc on Close claims idempotence because two
+	// callers can reach it, and a select/default pair is exactly the shape where two
+	// concurrent callers both take default and the second close() panics. Socket.Close
+	// in the same phase already used sync.Once, so the right shape was to hand.
+	once  sync.Once
 	sent  atomic.Uint64
 	fails atomic.Uint64
 }
@@ -87,11 +94,7 @@ func (a *lanAnnouncer) Close() {
 	if a == nil {
 		return
 	}
-	select {
-	case <-a.stop:
-	default:
-		close(a.stop)
-	}
+	a.once.Do(func() { close(a.stop) })
 	<-a.done
 	a.sock.Close()
 }
@@ -125,14 +128,14 @@ var errNoPeerOnTheLink = errors.New("that peer is not announcing on this network
 // fingerprint that will be pinned at the handshake is the one from the vault. An
 // announcer who lies reaches a TLS handshake that rejects it, which is L1's promise
 // spent exactly where it was meant to be.
-func findPeerOnLAN(v *vault.Vault, peerFP []byte) (string, error) {
+func findPeerOnLAN(v *vault.Vault, peerFP []byte) ([]string, error) {
 	var nonce [8]byte
 	if _, err := rand.Read(nonce[:]); err != nil {
-		return "", err
+		return nil, err
 	}
 	sock, err := discovery.Open(nonce)
 	if err != nil {
-		return "", fmt.Errorf("could not listen on this network: %w", err)
+		return nil, fmt.Errorf("could not listen on this network: %w", err)
 	}
 	defer sock.Close()
 
@@ -146,13 +149,22 @@ func findPeerOnLAN(v *vault.Vault, peerFP []byte) (string, error) {
 		}
 	}
 	if len(pins) == 0 {
-		return "", errors.New("that peer isn't pinned")
+		return nil, errors.New("that peer isn't pinned")
 	}
 
+	// EVERY address, in the order they were heard. One peer can legitimately announce
+	// from two addresses (dual stack), and two different hosts can claim one name —
+	// the name is public. Returning only the first meant an attacker who announced
+	// faster than the real peer denied the tier outright, with the genuine address
+	// discarded where no caller could reach it.
+	var addrs []string
 	for _, c := range browsePeers(sock, pins, browseWindow) {
-		return c.Addr, nil
+		addrs = append(addrs, c.Addr)
 	}
-	return "", fmt.Errorf("%w (listened for %s on %v)", errNoPeerOnTheLink, browseWindow, sock.Interfaces())
+	if len(addrs) == 0 {
+		return nil, fmt.Errorf("%w (listened for %s on %v)", errNoPeerOnTheLink, browseWindow, sock.Interfaces())
+	}
+	return addrs, nil
 }
 
 // portOf reads the bound port off a listener, for the announcement to carry.
@@ -177,14 +189,35 @@ func portOf(ln interface{ Addr() net.Addr }) int {
 // tell me where they are and they are not on this network" is a different message from
 // "I could not reach the address you gave me", and a user can act on each differently —
 // the first says try the manual path, the second says check the address.
-func (s *Server) peerAddress(w http.ResponseWriter, v *vault.Vault, address string, peerFP []byte) (string, bool) {
+func (s *Server) peerAddresses(w http.ResponseWriter, v *vault.Vault, address string, peerFP []byte) ([]string, bool) {
 	if address != "" {
-		return address, true
+		return []string{address}, true
 	}
 	found, err := findPeerOnLAN(v, peerFP)
 	if err != nil {
 		httpError(w, http.StatusBadGateway, err.Error())
-		return "", false
+		return nil, false
 	}
 	return found, true
+}
+
+// dialAny tries each candidate in order and returns the first connection that
+// establishes. Trying only the first was the defect: on a link where anything else
+// announces the same name, the genuine peer may not be first.
+func dialAny(transport string, addrs []string, cert, key, peerFP []byte) (*p2p.Conn, error) {
+	var last error
+	for _, a := range addrs {
+		conn, err := dialPeer(transport, a, cert, key, peerFP)
+		if err == nil {
+			return conn, nil
+		}
+		if errors.Is(err, errUnknownTransport) {
+			return nil, err // a caller error, not a peer's; do not try the rest
+		}
+		last = err
+	}
+	if last == nil {
+		last = errors.New("no candidate addresses")
+	}
+	return nil, fmt.Errorf("tried %d address(es), none answered as the pinned peer: %w", len(addrs), last)
 }

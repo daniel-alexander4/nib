@@ -3,6 +3,8 @@ package server
 import (
 	"bytes"
 	"crypto/sha256"
+	"go/parser"
+	"go/token"
 	"net"
 	"os"
 	"strings"
@@ -231,21 +233,105 @@ func TestBrowseWindowIsD16sTwoSeconds(t *testing.T) {
 	}
 }
 
-// TestResolutionLivesOutsideTheDiscoveryPackage records WHY this file is here.
+// TestResolutionLivesOutsideTheDiscoveryPackage records WHY this file is here, and it
+// checks the INVARIANT rather than a proxy for it.
 //
-// internal/discovery is guarded against importing vault, sign or p2p — L1 made
-// structural. That guard is the reason resolution lives in internal/server, and a
-// future change that "tidies" it back into discovery would break the guard rather than
-// this test. This one exists so the reason is discoverable from the code that depends
-// on it, rather than only from the guard that forbids the alternative.
+// The first version asserted that ../discovery/announce_test.go *contained the string*
+// "nib/internal/vault" — satisfied by a comment, by a leftover "we used to guard against
+// nib/internal/vault" after the guard was deleted, or by the string anywhere at all. That
+// is the strings-in-a-file hole, and it is the FOURTH instance in this repo: the .deb
+// guard satisfied by a comment, published.test.mjs satisfied by a doc comment,
+// TestNothingDecidesOnTheArrivalInterface matching "IfIndex" in its own explanation — and
+// then this, written one file away from the third fix.
+//
+// So it parses the discovery package and asserts what actually matters: that package
+// cannot see a pin, which is L1 made structural and the reason resolution lives here.
 func TestResolutionLivesOutsideTheDiscoveryPackage(t *testing.T) {
-	src, err := os.ReadFile("../discovery/announce_test.go")
+	fset := token.NewFileSet()
+	pkgs, err := parser.ParseDir(fset, "../discovery", func(fi os.FileInfo) bool {
+		return !strings.HasSuffix(fi.Name(), "_test.go")
+	}, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !bytes.Contains(src, []byte("nib/internal/vault")) {
-		t.Error("internal/discovery no longer guards against importing the vault — if that " +
-			"guard went, the reason this resolution lives in internal/server went with it")
+	pkg, ok := pkgs["discovery"]
+	if !ok || len(pkg.Files) == 0 {
+		t.Fatal("could not parse internal/discovery — the check below would pass on nothing")
+	}
+	for name, f := range pkg.Files {
+		for _, imp := range f.Imports {
+			switch strings.Trim(imp.Path.Value, `"`) {
+			case "nib/internal/vault", "nib/internal/sign", "nib/internal/p2p":
+				t.Errorf("%s imports %s. internal/discovery cannot be allowed to see a pin — "+
+					"that is L1 made structural, and it is the whole reason this resolution "+
+					"lives in internal/server instead", name, imp.Path.Value)
+			}
+		}
+	}
+}
+
+// TestTwoHostsClaimingOneNameBothBecomeCandidates.
+//
+// The name is broadcast in the clear every 500 ms and is displayed beside a signature —
+// it is not a secret. So two different HOSTS can claim one peer's name, and the earlier
+// dedupe (by fingerprint alone) threw the loser away: an attacker announcing faster than
+// the real peer captured the browse outright, and the genuine address was discarded
+// where no caller could reach it. The dial still failed at the pin, so identity held —
+// but the LAN tier was deniable by anyone who knew a name.
+func TestTwoHostsClaimingOneNameBothBecomeCandidates(t *testing.T) {
+	fp := fpOf(61)
+	pins := []vault.PinnedPeer{{Fingerprint: fp, Label: "Bea"}}
+
+	// The impostor announces first, as an attacker would — faster and earlier.
+	fb := &fakeBrowser{script: []struct {
+		seen discovery.Seen
+		err  error
+	}{
+		{seen: announcementFrom(t, fp, 8443, "10.0.0.99")}, // not the real Bea
+		{seen: announcementFrom(t, fp, 8443, "10.0.0.2")},  // the real one, second
+		{seen: announcementFrom(t, fp, 8443, "10.0.0.99")}, // repeats are still deduped
+	}}
+
+	got := browsePeers(fb, pins, 400*time.Millisecond)
+
+	// Stimulus: the script really was consumed, so "two candidates" is not one arrival
+	// counted twice.
+	if !fb.closed {
+		t.Fatalf("the browse stopped after %d of %d reads", fb.i, len(fb.script))
+	}
+	if len(got) != 2 {
+		t.Fatalf("browse returned %d candidates, want 2 — one address per host, deduped per "+
+			"address rather than per peer: %+v", len(got), got)
+	}
+	if got[0].Addr != "10.0.0.99:8443" || got[1].Addr != "10.0.0.2:8443" {
+		t.Errorf("candidates are %q and %q, want the impostor first (heard first) and the "+
+			"real one second — order is first-heard, and BOTH must survive",
+			got[0].Addr, got[1].Addr)
+	}
+	// Both carry the pinned fingerprint: the wire never supplies one, so an impostor's
+	// candidate is still pinned to the real identity and fails at the handshake.
+	for _, c := range got {
+		if !bytes.Equal(c.Fingerprint, fp) {
+			t.Errorf("candidate %q carries a fingerprint from somewhere other than the vault", c.Addr)
+		}
+	}
+}
+
+// TestDialAnyTriesEveryCandidate — the other half. Returning both is useless if only the
+// first is dialled.
+func TestDialAnyTriesEveryCandidate(t *testing.T) {
+	// Two addresses that cannot connect; what matters is that BOTH were attempted, which
+	// the error reports. A single-candidate dialAny would say "1 address(es)".
+	_, err := dialAny("tcp", []string{"127.0.0.1:1", "127.0.0.1:2"}, nil, nil, nil)
+	if err == nil {
+		t.Fatal("dialling two dead addresses succeeded")
+	}
+	if !strings.Contains(err.Error(), "2 address(es)") {
+		t.Errorf("error says %q — it must name how many were tried, or a silent "+
+			"first-only dial is indistinguishable from a real exhaustion", err)
+	}
+	if _, err := dialAny("tcp", nil, nil, nil, nil); err == nil {
+		t.Error("dialling an empty candidate list succeeded")
 	}
 }
 
@@ -311,15 +397,27 @@ func TestARealAnnouncementResolvesToACandidate(t *testing.T) {
 	pins := []vault.PinnedPeer{{Fingerprint: peerFP, Label: "Bea"}}
 	got := browsePeers(browser, pins, 3*time.Second)
 
-	if len(got) != 1 {
-		t.Fatalf("browsed a real link and resolved %d candidates, want 1: %+v (stats %+v, %s)",
-			len(got), got, browser.Stats(), browser.Describe())
+	// One candidate PER ADDRESS, not per peer — a host with three interfaces and two
+	// families legitimately announces from several addresses, and all of them are worth
+	// keeping so the caller can try each. (This assertion said "want 1" until the
+	// dedupe was changed from per-fingerprint to per-address; that change is what stops
+	// an impostor's announcement from displacing the real peer's.)
+	if len(got) == 0 {
+		t.Fatalf("browsed a real link and resolved nothing (stats %+v, %s)",
+			browser.Stats(), browser.Describe())
 	}
-	if !bytes.Equal(got[0].Fingerprint, peerFP) {
-		t.Errorf("resolved to %x, want the pinned %x", got[0].Fingerprint, peerFP)
-	}
-	if got[0].Label != "Bea" {
-		t.Errorf("label %q, want the pinned label", got[0].Label)
+	for _, c := range got {
+		if !bytes.Equal(c.Fingerprint, peerFP) {
+			t.Errorf("candidate %q carries %x, want the pinned %x", c.Addr, c.Fingerprint, peerFP)
+		}
+		if c.Label != "Bea" {
+			t.Errorf("candidate %q has label %q, want the pinned label", c.Addr, c.Label)
+		}
+		// Every one must be dialable — including the link-local ones, which is where
+		// the missing-zone defect lived.
+		if _, err := net.ResolveUDPAddr("udp", c.Addr); err != nil {
+			t.Errorf("candidate %q does not resolve: %v", c.Addr, err)
+		}
 	}
 	host, port, err := net.SplitHostPort(got[0].Addr)
 	if err != nil {
@@ -327,13 +425,6 @@ func TestARealAnnouncementResolvesToACandidate(t *testing.T) {
 	}
 	if port != "8443" {
 		t.Errorf("candidate port %q, want the announced 8443", port)
-	}
-	// Not merely "parses as an IP" — that was the first version of this assertion and
-	// it passed on a zoneless fe80:: address, which is exactly what the code was
-	// producing and is NOT DIALABLE (`connect: invalid argument`). The candidate must
-	// resolve as an address something could actually dial.
-	if _, err := net.ResolveUDPAddr("udp", got[0].Addr); err != nil {
-		t.Errorf("candidate address %q does not resolve: %v", got[0].Addr, err)
 	}
 	ip := net.ParseIP(host)
 	if i := strings.IndexByte(host, '%'); i >= 0 {

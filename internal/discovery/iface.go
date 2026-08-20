@@ -54,16 +54,34 @@ import (
 // FlagMulticast is not required either: the kernel does not enforce it (measured — a
 // join on an interface without it succeeds), and on Windows it is derived from a
 // media-type whitelist with a TODO in the source, so a working adapter can lack it.
+// flagsAllow is the FLAG half of the decision, split out so it can be tested at all.
+//
+// The first version of this file made the flag decision inline, and its table test built
+// synthetic net.Interface values to exercise it. That does not work and passed by luck:
+// Addrs() queries the KERNEL by index, so a fixture with Index: 3 reports the addresses
+// of the host's interface 3. On the development machine those happened to be non-empty,
+// so the docker0 row survived the address filter; on a CI container with only lo and
+// eth0 it would be dropped and the test would fail claiming "FlagRunning became a
+// filter", which is the wrong diagnosis entirely.
+//
+// A decision that queries the kernel cannot be table-tested. So the decision and the
+// query are separate, and this half is pure.
+func flagsAllow(f net.Flags) bool {
+	switch {
+	case f&net.FlagUp == 0:
+		return false
+	case f&net.FlagLoopback != 0:
+		return false
+	case f&net.FlagPointToPoint != 0:
+		return false
+	}
+	return true
+}
+
 func chooseInterfaces(all []net.Interface, wantV4 bool) []net.Interface {
 	var out []net.Interface
 	for _, ifi := range all {
-		if ifi.Flags&net.FlagUp == 0 {
-			continue
-		}
-		if ifi.Flags&net.FlagLoopback != 0 {
-			continue
-		}
-		if ifi.Flags&net.FlagPointToPoint != 0 {
+		if !flagsAllow(ifi.Flags) {
 			continue
 		}
 		addrs, err := ifi.Addrs()

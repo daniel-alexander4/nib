@@ -56,6 +56,13 @@ func cmdDiscover(args []string) int {
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
+	// A non-positive window would skip both loops and then print "VERDICT: nothing was
+	// sent. Discovery cannot work from this machine" — a confident, wrong diagnosis
+	// about a machine where nothing was attempted.
+	if *secs <= 0 {
+		fmt.Fprintln(os.Stderr, "nib discover: --seconds must be at least 1")
+		return 2
+	}
 	return runDiscover(os.Stdout, os.Stderr, time.Duration(*secs)*time.Second, *quiet)
 }
 
@@ -116,14 +123,31 @@ func runDiscover(out, errw io.Writer, listen time.Duration, quiet bool) int {
 
 	ann := discovery.Announcement{Name: name, Port: 8443, Nonce: nonce}
 	deadline := time.Now().Add(listen)
+	// Stopped and JOINED before the socket closes. Without the join the goroutine can
+	// wake past the deadline, call Announce on a closed socket, and print "announce
+	// failed: use of closed network connection" after the verdict — and, because
+	// runDiscover takes writers, race with a test's buffer.
+	stop := make(chan struct{})
+	done := make(chan struct{})
+	defer func() { close(stop); <-done }()
 	go func() {
+		defer close(done)
 		for time.Now().Before(deadline) {
+			select {
+			case <-stop:
+				return
+			default:
+			}
 			if n, err := sock.Announce(ann); err != nil {
 				fmt.Fprintf(errw, "announce failed: %v\n", err)
 			} else if n == 0 {
 				fmt.Fprintln(errw, "announce reached no interface")
 			}
-			time.Sleep(500 * time.Millisecond)
+			select {
+			case <-stop:
+				return
+			case <-time.After(500 * time.Millisecond):
+			}
 		}
 	}()
 

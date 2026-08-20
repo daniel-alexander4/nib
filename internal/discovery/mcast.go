@@ -67,6 +67,12 @@ type Stats struct {
 	Foreign uint64
 	// Malformed is datagrams that claimed to be ours and were not.
 	Malformed uint64
+	// OffLink is datagrams discarded because their source is not on a link this
+	// socket joined. **Non-zero means somebody is sending link-local discovery
+	// traffic from off the link**, which is not a thing that happens by accident —
+	// Go binds a multicast listener to the WILDCARD, so this port takes ordinary
+	// unicast from any host that can route to it.
+	OffLink uint64
 	// NoControlMessage is set when the platform could not supply the arrival
 	// interface. It is not an error and not a fallback: it is Windows, where
 	// x/net's SetControlMessage is unimplemented, and it is recorded because a
@@ -88,6 +94,7 @@ type Socket struct {
 
 	ifis  []net.Interface
 	all   []net.Interface
+	nets  []*net.IPNet // the joined links' networks, for the on-link test
 	nonce [nonceLen]byte
 
 	group4Addr *net.UDPAddr
@@ -101,6 +108,7 @@ type Socket struct {
 	own        atomic.Uint64
 	peers      atomic.Uint64
 	foreign    atomic.Uint64
+	offLink    atomic.Uint64
 	malformed  atomic.Uint64
 	noCM       atomic.Bool
 }
@@ -195,6 +203,14 @@ func open(all []net.Interface, nonce [nonceLen]byte) (*Socket, error) {
 	}
 	for _, ifi := range joined {
 		s.ifis = append(s.ifis, ifi)
+		// The link's networks, so a source address can be tested against them.
+		if addrs, err := ifi.Addrs(); err == nil {
+			for _, a := range addrs {
+				if n, ok := a.(*net.IPNet); ok {
+					s.nets = append(s.nets, n)
+				}
+			}
+		}
 	}
 	s.interfaces = len(s.ifis)
 	return s, nil
@@ -287,6 +303,22 @@ func (s *Socket) Read(deadline time.Time) (Seen, error) {
 	}
 	ua, _ := src.(*net.UDPAddr)
 
+	// Off-link sources are discarded BEFORE parsing, and this is a real boundary
+	// rather than tidiness. Go binds a multicast listener to the wildcard, so this
+	// port accepts ordinary unicast from any host that can route to it — measured, a
+	// unicast datagram to 127.0.0.1:8446 parses and is returned as a peer. Without
+	// this, anyone who can land a packet here can inject a candidate for any peer
+	// whose six-word name they know, and names are public by design.
+	//
+	// The scope guarantee on the way OUT is the hop limit; on the way IN there is
+	// none, and this is it. It does not stop an on-link attacker spoofing a source —
+	// nothing at this layer could — but it removes every attacker who is not on the
+	// link, which is the whole of the remote case.
+	if !s.onLink(ua) {
+		s.offLink.Add(1)
+		return Seen{}, ErrNotOurs
+	}
+
 	a, perr := Parse(buf[:n])
 	switch {
 	case errors.Is(perr, ErrNotOurs):
@@ -308,6 +340,27 @@ func (s *Socket) Read(deadline time.Time) (Seen, error) {
 	return Seen{Announcement: a, From: ua}, nil
 }
 
+// onLink reports whether a source address is on one of the links this socket joined.
+//
+// Loopback counts: two Nibs on one machine is a case the design serves, and tier 4's
+// LAN run depends on it. Link-local counts because that is what the address family is
+// for and a peer may have no other address yet.
+func (s *Socket) onLink(ua *net.UDPAddr) bool {
+	if ua == nil || ua.IP == nil {
+		return false
+	}
+	ip := ua.IP
+	if ip.IsLoopback() || ip.IsLinkLocalUnicast() {
+		return true
+	}
+	for _, n := range s.nets {
+		if n.Contains(ip) {
+			return true
+		}
+	}
+	return false
+}
+
 // Stats reports what happened. Safe to call concurrently.
 func (s *Socket) Stats() Stats {
 	return Stats{
@@ -317,6 +370,7 @@ func (s *Socket) Stats() Stats {
 		Own:              s.own.Load(),
 		Peers:            s.peers.Load(),
 		Foreign:          s.foreign.Load(),
+		OffLink:          s.offLink.Load(),
 		Malformed:        s.malformed.Load(),
 		NoControlMessage: s.noCM.Load(),
 	}

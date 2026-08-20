@@ -99,6 +99,14 @@ func resolve(pins []vault.PinnedPeer, s discovery.Seen) (candidate, bool) {
 //
 // Announcements repeat, so the same peer is seen several times in two seconds; the
 // caller wants a candidate list, not a packet log.
+// It returns EVERY distinct address seen, not one per peer.
+//
+// Deduping by fingerprint alone was a defect with a security consequence: two different
+// HOSTS can claim one name — the name is broadcast in the clear every 500 ms and is
+// displayed beside a signature, so it is not a secret — and the loser was thrown away
+// rather than returned. An attacker announcing faster than the real peer therefore
+// captured the browse outright and the genuine address was unreachable to any caller.
+// Keyed on fingerprint AND address, so the caller gets both and can try both.
 func browsePeers(b browser, pins []vault.PinnedPeer, window time.Duration) []candidate {
 	deadline := time.Now().Add(window)
 	seen := map[string]candidate{}
@@ -119,13 +127,12 @@ func browsePeers(b browser, pins []vault.PinnedPeer, window time.Duration) []can
 		if !ok {
 			continue
 		}
-		key := string(c.Fingerprint)
+		// Fingerprint AND address. A dual-stack peer arrives twice from two of its
+		// own addresses and both are worth keeping; two different hosts claiming one
+		// name is the attack above, and keeping both is what lets the caller get past
+		// it. Order is first-seen, which is at least the faster path first.
+		key := string(c.Fingerprint) + "\x00" + c.Addr
 		if _, dup := seen[key]; dup {
-			// First seen wins. A dual-stack peer announces on both groups, so it
-			// arrives twice with two different addresses; overwriting would leave
-			// the value and the first-seen ordering describing different arrivals,
-			// and "whichever family happened to be last" is not a choice anyone
-			// made. Whichever answered first is at least the faster path.
 			continue
 		}
 		order = append(order, key)
