@@ -2,13 +2,6 @@ package rendezvous
 
 import (
 	"context"
-	"crypto/ecdsa"
-	"crypto/elliptic"
-	"crypto/rand"
-	"crypto/tls"
-	"crypto/x509"
-	"crypto/x509/pkix"
-	"math/big"
 	"net"
 	"os"
 	"testing"
@@ -17,36 +10,15 @@ import (
 	"nib/internal/udpmux"
 )
 
-// The driven half of P04.S01: a DHT and a live QUIC session on ONE socket.
+// Shared fixtures for this package's driven tests.
 //
-// This is caveat 7's clause, and its amendment is specific — "shares" means through
-// the demultiplexer P02 built, not by any other arrangement. So the test opens one
-// UDP socket, wraps it in a Mux, hands the QUIC view to quic-go and the DHT view to
-// this package, and drives both AT THE SAME TIME. Either alone would pass a weaker
-// claim.
-//
-// quic-go and anacrolix/dht are imported by this test file only; the shipped binary
-// reaches neither from here.
-
-func selfSigned(t *testing.T) tls.Certificate {
-	t.Helper()
-	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		t.Fatal(err)
-	}
-	tmpl := &x509.Certificate{
-		SerialNumber: big.NewInt(1),
-		Subject:      pkix.Name{CommonName: "rendezvous-interop"},
-		NotBefore:    time.Now().Add(-time.Hour),
-		NotAfter:     time.Now().Add(time.Hour),
-		DNSNames:     []string{"rendezvous-interop"},
-	}
-	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return tls.Certificate{Certificate: [][]byte{der}, PrivateKey: key}
-}
+// **The DHT-and-QUIC-on-one-socket clause is NOT here**, and this comment used to say it
+// was — it described a test that opens one socket, hands the QUIC view to quic-go and the
+// DHT view to this package, and drives both at once. No such test is in this file; it
+// lives in internal/udpmux, for the reason set out below. A doc comment describing
+// verification that is somewhere else reads exactly like verification that is here, which
+// is the shape l1_test.go's header was written to punish. The dead `selfSigned` helper
+// that test would have needed was removed with it (P04.S03).
 
 type node struct {
 	mux  *udpmux.Mux

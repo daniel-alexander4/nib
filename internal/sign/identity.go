@@ -283,6 +283,58 @@ func SignDigest(digest []byte, keyPEM []byte) ([]byte, error) {
 	return ecdsa.SignASN1(rand.Reader, key, digest)
 }
 
+// VerifyDigestSPKI checks a SignDigest signature against a raw SubjectPublicKeyInfo.
+//
+// The certificate is 501 bytes and the SPKI inside it is 91 (measured, P-256). Anywhere
+// the verifier's carrier has a hard size budget — P04.S03's candidate record lives inside
+// BEP-44's 1000-byte value cap — the cert does not fit beside the payload and the SPKI
+// does, with room.
+//
+// Nothing is lost by carrying the smaller one. The pin IS the SHA-256 of these exact
+// bytes (see fingerprintOf), so a reader can both verify the signature and check the
+// signer against a pinned fingerprint from the SPKI alone. The certificate's other fields
+// — subject, validity, serial — are not consulted by either operation: Nib's identity is
+// self-signed and its trust comes entirely from the pin.
+func VerifyDigestSPKI(digest, sig, spki []byte) error {
+	pub, err := x509.ParsePKIXPublicKey(spki)
+	if err != nil {
+		return fmt.Errorf("parse public key: %w", err)
+	}
+	ec, ok := pub.(*ecdsa.PublicKey)
+	if !ok {
+		return errors.New("public key is not ECDSA")
+	}
+	if len(digest) != sha256.Size {
+		return fmt.Errorf("digest is %d bytes, want %d", len(digest), sha256.Size)
+	}
+	if !ecdsa.VerifyASN1(ec, digest, sig) {
+		return errors.New("signature does not verify")
+	}
+	return nil
+}
+
+// SPKIFromCert returns the raw SubjectPublicKeyInfo from a certificate PEM — the 91
+// bytes a size-bounded carrier can afford where the 501-byte certificate cannot.
+func SPKIFromCert(certPEM []byte) ([]byte, error) {
+	blk, _ := pem.Decode(certPEM)
+	if blk == nil {
+		return nil, errors.New("invalid certificate PEM")
+	}
+	cert, err := x509.ParseCertificate(blk.Bytes)
+	if err != nil {
+		return nil, err
+	}
+	return cert.RawSubjectPublicKeyInfo, nil
+}
+
+// FingerprintSPKI is the pin computed from a raw SubjectPublicKeyInfo — the same value
+// Fingerprint and FingerprintCert produce, routed through the same one-line definition so
+// a pin, a verified signer and a candidate record's author all hash identical bytes.
+func FingerprintSPKI(spki []byte) []byte {
+	sum := sha256.Sum256(spki)
+	return sum[:]
+}
+
 // VerifyDigest checks a SignDigest signature against the certificate's public key.
 func VerifyDigest(digest, sig, certPEM []byte) error {
 	blk, _ := pem.Decode(certPEM)

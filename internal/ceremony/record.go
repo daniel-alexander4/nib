@@ -28,7 +28,19 @@ import (
 // versions of the format cannot produce the same rosterHash even if every other field
 // matches, so a party running a different version is refused rather than silently
 // agreeing to a record it parsed differently.
-const FormatVersion = 1
+//
+// **Bumped to 2 (2026-08-20, P04.S03).** The preimage gained a leading domain tag, so a
+// record signed by a v1 build hashes differently and its signature no longer verifies.
+// Without the bump the failure would surface as `ErrBadConvenerSignature` — "the record
+// was altered after it was written" — which is a *wrong* sentence, not merely a terse
+// one: it accuses a counterparty of tampering when the truth is that the two builds
+// disagree about the format. D32's rule is that a version mismatch produces a sentence,
+// and this makes it the right one.
+const FormatVersion = 2
+
+// rosterDomain separates this preimage from every other thing the identity key signs.
+// On-wire identifier: immutable once shipped (STANDARDS §9).
+const rosterDomain = "nib-ceremony-record-v1"
 
 // Party is one entry in the roster. The order of the roster IS the signing order.
 type Party struct {
@@ -103,6 +115,22 @@ func (r Record) RosterHash() ([]byte, error) {
 		h.Write(n[:])
 		h.Write(b)
 	}
+	// The domain tag, FIRST and length-prefixed (P04.S03).
+	//
+	// This identity key signs more than one kind of message now — the Ceremony Record
+	// here, and P04.S03's candidate record — and `sign.SignDigest` signs a bare 32-byte
+	// digest (identity.go:263-284): it does not re-hash and it does not know what the
+	// digest means. Two preimage languages built from the same length-prefixed chunks,
+	// with no tag to tell them apart, are two message types one signature can satisfy.
+	//
+	// The candidate record's preimage carries attacker-influenceable bytes (a candidate
+	// is an IP:port learned from DHT nodes, and P04.S02 established that a node controls
+	// the `ip` field it returns), so the direction that matters is a candidate record
+	// coaxed into also parsing as a roster preimage — which would forge a ConvenerSig for
+	// a ceremony the signer never convened. No such collision is demonstrated; the tag
+	// makes the question unrepresentable rather than merely unlikely, and it costs one
+	// chunk.
+	writeLP([]byte(rosterDomain))
 	var ver [8]byte
 	binary.BigEndian.PutUint64(ver[:], uint64(r.Version))
 	writeLP(ver[:])

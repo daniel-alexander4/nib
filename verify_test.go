@@ -49,6 +49,33 @@ func TestVerifyContractIsTrue(t *testing.T) {
 		}
 	}
 
+	// dhtlive.sh must run EVERY live test, not one named test.
+	//
+	// It ran `-run TestLiveSelfAddressProbe` — a single literal name — and nothing
+	// checked that against the package. A live test added by a later slice would be
+	// gated behind NIB_LIVE_DHT, therefore skipped by `go test ./...`, therefore never
+	// executed by anything at all, and every tier would stay green. That is the vacuous
+	// green one level out: the harness reports a pass for the tests it happens to name.
+	{
+		live, err := os.ReadFile("internal/rendezvous/live_test.go")
+		if err != nil {
+			t.Fatalf("cannot read the live tests: %v", err)
+		}
+		harness, err := os.ReadFile("build/dhtlive.sh")
+		if err != nil {
+			t.Fatalf("cannot read build/dhtlive.sh: %v", err)
+		}
+		names := regexp.MustCompile(`(?m)^func (TestLive\w*)\(`).FindAllStringSubmatch(string(live), -1)
+		if len(names) == 0 {
+			t.Fatal("no TestLive* functions found — this guard would pass on nothing")
+		}
+		if !strings.Contains(string(harness), "-run 'TestLive'") {
+			t.Errorf("build/dhtlive.sh does not run every TestLive* (it has %d to run); "+
+				"a named -run means a new live test is executed by nothing and nothing says so",
+				len(names))
+		}
+	}
+
 	// The two Go commands have no file to check, so only their presence in the
 	// contract can be asserted.
 	for _, cmd := range []string{"go build ./...", "go test ./..."} {

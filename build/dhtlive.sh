@@ -53,7 +53,7 @@ OUT="$(mktemp)"
 trap 'rm -f "$OUT"' EXIT
 
 echo "probing the public DHT (this leaves the machine)…"
-NIB_LIVE_DHT=1 go test ./internal/rendezvous/ -run TestLiveSelfAddressProbe -v -count=1 \
+NIB_LIVE_DHT=1 go test ./internal/rendezvous/ -run 'TestLive' -v -count=1 \
   >"$OUT" 2>&1 || { cat "$OUT"; fail "the live probe did not pass — read the message above; it names which of no-network, dead-seeds and a broken probe it was"; }
 
 # THREE outcomes, not two, and collapsing the third into either of the others is the
@@ -79,6 +79,20 @@ fi
 grep -q -- "--- PASS: TestLiveSelfAddressProbe" "$OUT" \
   || { cat "$OUT"; fail "TestLiveSelfAddressProbe did not PASS — if it SKIPPED, NIB_LIVE_DHT did not reach it and this harness verified nothing"; }
 
+# The publish/fetch clause is reported SEPARATELY, and a skip of it is not a failure.
+#
+# P04.S03's acceptance — "a published endpoint is retrievable by the peer" — is a claim
+# about strangers, and strangers are entitled to be unreachable. But a skip must never be
+# summed with a pass: this harness's whole discipline is that "it would not talk to us" is
+# not evidence the code works. So the two outcomes print different sentences.
+if grep -q -- "--- PASS: TestLivePublishAndFetch" "$OUT"; then
+  PUBFETCH="verified"
+elif grep -q -- "--- SKIP: TestLivePublishAndFetch" "$OUT"; then
+  PUBFETCH="SKIPPED — the DHT did not answer; the publish/fetch round trip is UNVERIFIED by this run"
+else
+  cat "$OUT"; fail "TestLivePublishAndFetch neither passed nor skipped — it failed"
+fi
+
 # Evidence, not just a green. Each of these is a separate claim the pass does not make.
 grep -q "BOOTSTRAP" "$OUT" || fail "no bootstrap line — the seed list was never exercised"
 grep -q "OBSERVED"  "$OUT" || fail "no node reported our address; the pass above is not about the wire"
@@ -86,7 +100,8 @@ grep -q "CLASSIFIED" "$OUT" || fail "nothing was classified; D19's test did not 
 
 # Strip go test's "    live_test.go:53: " prefix before matching, or this prints nothing
 # at all and the harness reports a green with no evidence under it.
-sed -n 's/^[[:space:]]*[a-z_]*\.go:[0-9]*: //; /^\(LOCAL\|BOOTSTRAP\|OBSERVED\|PROBE\|CLASSIFIED\|TRANSLATED\|NOTE\) /p' "$OUT"
+sed -n 's/^[[:space:]]*[a-z_]*\.go:[0-9]*: //; /^\(LOCAL\|BOOTSTRAP\|OBSERVED\|PROBE\|CLASSIFIED\|TRANSLATED\|NOTE\|PUBLISHER\|PUBLISHED\|HARVESTED\|FETCHER\|UNREACHABLE\) /p' "$OUT"
 
 echo "PASS: a real DHT node reported this host's public endpoint, port included, and the"
 echo "      mapping classified — from a cold start with no cached nodes"
+echo "      publish/fetch round trip: $PUBFETCH"

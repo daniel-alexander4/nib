@@ -466,8 +466,10 @@ nobody to ask, and the record has nowhere to go. Adopted in two halves:
 - **Seed nodes carried in the invitation** (D21), so the common case never consults the
   shipped list and a stale or blocked list is not fatal. This is the argument that
   declined the second signalling path, applied again: the participants already hold a
-  channel and it cost nothing. **Filed against P04.S03**, being a change to the
-  invitation's payload rather than to bootstrap.
+  channel and it cost nothing. ~~**Filed against P04.S03**~~ **Filed against P04.S06
+  (moved 2026-08-20, S03's slice grill)**, being a change to the invitation's payload
+  rather than to bootstrap — which is exactly why it is its own slice and not a rider on
+  the record's.
 
 *Unchanged:* hostname bootstrap stays refused, and `GlobalBootstrapAddrs`,
 `NewDefaultServerConfig` and every resolver stay forbidden on the bootstrap path. The
@@ -882,10 +884,28 @@ the structure above is the law:
 | multicast browse | 2 s |
 | port-mapping request (all three protocols) | 3 s |
 | DHT self-address probe | 8 s |
-| DHT candidate fetch | every 2 s for the first 30 s, then every 5 s |
+| DHT candidate fetch | ~~every 2 s for the first 30 s, then every 5 s~~ **one traversal with a ≥30 s budget, the next started when the last returned (amended 2026-08-20, P04.S03's grill)** |
 | punch retransmit cadence | 250 ms for the first 30 s, then 1 s |
 | published candidate expiry | > connect deadline + margin (D17) |
 | **overall connect deadline** | ~~60 s~~ **300 s (Dan, 2026-08-16)** |
+
+**(amended 2026-08-20 — P04.S03's slice grill, a premise correction; D16's own text says these
+values are "tunable, not law", so the structure is untouched.)** *"Every 2 s"* was unbuildable, and
+the reason is a property of the traversal rather than of the number. `getput.Get` has **no early
+return for a mutable item** (`goto receiveResults`, `exts/getput/getput.go:110`), and mutable is
+forced on us: an immutable BEP-44 target is `sha1(bencode(V))`, which a fetcher would have to
+already hold the record to compute. `defaultMaxQuerySends = 1` (`transaction.go:24`) with a flat 2 s
+timeout (`dht.go:24-27`, `server.go:1052-1057`) means **every unanswered query costs 2 s**, and at
+Alpha 15 against Nib's own measured ~60 % reply rate essentially every round pays it. So a 2 s
+budget expires inside traversal round 1 every single time; `op.queried` is per-operation, so each
+attempt restarts from our own routing table and **never reaches the eight nodes that actually store
+the record**. The ladder would show "DHT: no candidate" for the full 300 s while the record sat
+there, retrievable. One traversal with a real budget, polled for its result, is the shape that works.
+
+*A companion trap, recorded because it inverts the normal Go contract:* `getput.Get`'s `ctx.Done()`
+arm sets `err` and **does not touch `ret`** (`getput.go:112`), so a perfectly good record can be
+returned alongside a non-nil error. `ret.Seq` is pre-set to `math.MinInt64` (`:94`), so a `Seq == 0`
+emptiness check is wrong too. The result must be read as `(ret, err)` jointly.
 
 *Why trickle rather than gather-then-dial:* the tiers have latencies an order of
 magnitude apart. LAN answers in milliseconds; the DHT round trip is seconds. Waiting
@@ -2574,10 +2594,10 @@ in its output rather than as silence.
 Goal: the two sides learn each other's public endpoints, and their own, with no server. **(plan-review note, 2026-08-17, I1 — the framing still understates the blast radius, as D8's own correction records: the DHT is the signalling channel for tiers 2, 3 **and** 4, so an unreachable DHT collapses three tiers at once and leaves only LAN and manual. Carried as a Stage 2 grill target; recorded here so the next pass does not re-derive it.)** **(plan-review pin, 2026-08-18, adopted by Dan: that gate has passed — the Stage 2 grill ran on 2026-08-18 and did not take this up. Re-targeted to this phase's slice grill, with D8's pin carrying the same instruction and the discharging observation.)**
 Exit criteria:
 - Each side learns its own public `IP:port` and its NAT class from DHT responses alone.
-- A published endpoint is retrievable by the peer computing the same key from the two names.
+- A published endpoint is retrievable by the peer computing the same key ~~from the two names~~ **from the invitation secret** *(amended 2026-08-20, P04.S03's grill — D6's amendment re-keyed this to the secret and `RecordKey`'s own comment refuses name-derivation by name; a builder satisfying the old text ships obfuscation and passes the gate)*.
 - Bootstrap works from a cached node list with no hostname resolution (D6).
 - A hostile or absent DHT degrades to the next tier without ever affecting which peer is accepted (L1).
-- **The published record is encrypted under a key derived from both names: a DHT scraper holding neither name sees opaque bytes and can neither read nor forge a candidate. (added 2026-08-17, plan-review C2, D6 pin.)**
+- **The published record is encrypted under a key derived from ~~both names~~ the invitation secret: a DHT scraper holding ~~neither name~~ neither the invitation nor the secret sees opaque bytes and can neither read nor forge a candidate. (added 2026-08-17, plan-review C2, D6 pin; *amended 2026-08-20, P04.S03's grill — same correction*.)** **"Cannot forge" is graded `not measurable at this granularity`**: no instrument resolves it. What is measurable is that a record written under the wrong key is refused, which is narrower, and is what the ledger will say.
 - **A record published by a party who knows both names but holds neither identity key yields no more than N candidates; the N+1th is dropped and reported — driven by publishing N+50. (added 2026-08-17, plan-review C2.)** The bullet above it cannot see this: a hostile DHT that floods a bystander never affects which peer is accepted, and so satisfies it completely.
 - **The DHT library shares the session's local socket rather than opening its own, proven by a spike. (added 2026-08-17, plan-review C3, caveat 7.)** A self-address probe on a different socket measures a mapping the session will never use. **(amended 2026-08-18, Stage 2 grill: "shares" means *through the demultiplexer P02 built*, and the pair was chosen together at P02 — if this phase is where a DHT library is first tried against the QUIC one, P02's selection was not done.)**
 
@@ -2689,13 +2709,51 @@ Tasks:
 - T08 — `build/dhtlive.sh`: out-of-loop like `winrepro.sh`, opt-in, skipping cleanly,
   running the product's own probe against the real DHT.
 
-#### P04.S03 — The published record: signed, encrypted, expiring *(D6, D30, C2)*
+#### P04.S03 — The published record: signed, encrypted, expiring *(D6, D30, C2)* *(done 2026-08-20, v1.112.0)*
 Scope: publish and fetch the candidate record under the per-hop rendezvous key. Refs: D6, D21, D30, plan-review C2.
+
+**Scope split at the slice grill (2026-08-20).** D6's second half — *seed nodes carried in the
+invitation* — was filed against this slice and is **moved to P04.S06**. It is not in this slice's
+acceptance, it is a second wire format (D21's invitation, not this record), and its attack surface
+is its own: an unsigned invitation names arbitrary IP:port, a cold-start table has nothing else to
+consult, and the chain ends at D33's 3,000 punch packets aimed at an attacker-chosen victim. One
+gate each rather than one gate for both.
+
 Acceptance:
-- A published endpoint is **retrievable by the peer computing the same key from the two names**.
-- A DHT scraper holding **neither name** sees opaque bytes and can neither read nor forge a candidate.
+- A published endpoint is **retrievable by the peer computing the same key ~~from the two names~~ from the invitation secret** *(amended 2026-08-20 — Reality drift; see the correction below)*.
+- A DHT scraper holding **neither ~~name~~ the invitation** sees opaque bytes and can neither read nor forge a candidate *(same amendment)*.
 - Records expire.
-- **The in-roster forgery question is settled, adopt or decline, with a reason** — the pending item filed 2026-08-19 asks whether an invited party can publish *as another*, since D6's amendment gives every roster member the encryption secret. BEP-44 mutable items are **ed25519-signed by construction** (`bep44.Put` carries `K [32]byte` and `Sig [64]byte`, and the target derives from the key plus salt), so a per-party key makes the DHT itself refuse the write. That shape is cheap and available; the slice must decide it rather than inherit it.
+- **The in-roster forgery question is settled, adopt or decline, with a reason** — the pending item filed 2026-08-19 asks whether an invited party can publish *as another*, since D6's amendment gives every roster member the encryption secret. ~~BEP-44 mutable items are **ed25519-signed by construction** (`bep44.Put` carries `K [32]byte` and `Sig [64]byte`, and the target derives from the key plus salt), so a per-party key makes the DHT itself refuse the write. That shape is cheap and available; the slice must decide it rather than inherit it.~~ **The proposed shape is REFUTED — see "What the grill refuted" below. Settled: ADOPT an inner ECDSA identity signature.**
+- **The disclosure lands with the publishing, not at P06** *(added 2026-08-20)* — see the D34 ordering correction below.
+- **Neither door the DHT is currently open through is left open** *(added 2026-08-20)*.
+
+**What the grill refuted** *(2026-08-20, three deepdive agents + four persona seats, every claim re-verified at the line)*. Four premises this slice rested on are false against the tree:
+
+1. **The identity key cannot sign a BEP-44 item.** `sign.GenerateIdentity` makes an **ECDSA P-256** key (`internal/sign/identity.go:60`, signing at `:283`, verifying at `:300`). BEP-44's `K` is a 32-byte **ed25519** public key with a 64-byte ed25519 signature (`bep44/item.go:23-25`).
+2. **A per-party key derived from the secret stops nothing.** Every roster member holds the `Secret` (`invitation.go:74-76`), so every member derives every party's key. The DHT would refuse no write any member wishes to make. What the BEP-44 signature actually proves is *"whoever wrote this held the invitation"* — a **group credential**, not a speaker.
+   **Therefore: the inner ECDSA identity signature is the only construct that separates the authenticity boundary (the party) from the confidentiality boundary (the ceremony), which is what the pending item says a multi-party ceremony needs.** D31 removed the chicken-and-egg by pinning the full 32-byte fingerprint, so there is something to verify against. Cost measured: SPKI DER 91 B + ASN.1 sig 71 B = 162 B of the 996 B budget.
+3. **"From the two names" is superseded text.** D6's amendment re-keyed the record to the invitation secret, and `RecordKey`'s own comment refuses name-derivation by name: *"names are the public identifier this plan exists to have people say aloud, so a key derived from them is obfuscation against a scraper and not confidentiality"* (`invitation.go:197-199`). **A builder satisfying the criterion as written ships the weaker thing and passes the gate.** Both bullets amended above; the identical phrasing at the phase level is amended too.
+4. **D16's DHT fetch cadence cannot work.** `getput.Get` has no early return for a mutable item (`goto receiveResults`, `exts/getput/getput.go:110`), and mutable is forced on us — an immutable target is `sha1(bencode(V))`, which you must already hold the record to compute. `defaultMaxQuerySends = 1` (`transaction.go:24`) with a flat 2 s timeout (`dht.go:24-27`, `server.go:1052-1057`) means every unanswered query costs 2 s, and at Alpha 15 against Nib's own measured ~60 % reply rate essentially every round pays it. A 2 s budget expires inside round 1, always; `op.queried` is per-operation, so each attempt restarts from our routing table and **never reaches the eight nodes that store the record**. D16's own text says its numbers are *"tunable, not law — the structure above is the law"*, so this is a premise amendment and not a decision strike. Amended at D16.
+
+**Two doors the DHT is open through today, neither of which this slice created** *(2026-08-20)*:
+- **Nib is an unbounded remote memory sink.** `dht.go:171-220` sets no `Store`, so `NewServer` installs `bep44.NewMemory()` (`server.go:219-220`) — a bare `map[Target]*Item`, no cap, no eviction (`bep44/memory.go:21-28`). Eviction happens only on a read of that exact target, so an attacker who puts and never gets leaves entries resident forever. **Closed by refusing inbound `put`/`announce_peer` at `gateQuery`**: Nib is a DHT *client*; it needs to issue put/get, not serve them.
+- **A third remote process kill.** `exts/getput/getput.go:55` dereferences `*r.Seq` inside a `&&` once the target matches; `Seq` is `*int64, omitempty` (`krpc/msg.go:85`). The library's **own server guards this exact field** on the inbound `put` (`server.go:578-583`) — the check exists and was applied in one direction only, the identical asymmetry P04.S02 found at the query handler. Reachable by the ~8 nodes that stored the record, an on-path observer of the `put`, and **any roster member** — in a two-party ceremony, the counterparty. Closed in `screened`, which already decodes every inbound datagram.
+- **And `ServerConfig.Exp` is unset**, so `Wrapper.Get` computes `created.Add(0).After(now)` → false → deletes and returns not-found for **every** item (`bep44/store.go:50-64`). `Exp: 2 * time.Hour` exists only in `NewDefaultServerConfig` (`server.go:167`), which Nib does not use. Nib serves nothing, including its own record.
+
+**The D34 ordering correction** *(2026-08-20)*. D34 puts the DHT disclosure on the ceremony screen, which is **P06 — built LAST, after P07**. Nothing in `README.md`, `web/` or `docs/` mentions the DHT to a user today (verified by grep). Three shipped claims become false the moment this slice lands: `README.md:45` *"Runs 100% offline, no account, no telemetry ✅"*, `:745` *"This is the only call Nib makes on its own"*, and `:636` *"Binds `127.0.0.1` only — never reachable from the network"*. **Publishing a user's IP to a public global network several phases before the sentence that tells them is the wrong order however the phases are numbered**, so the disclosure lands here. D34 is not struck — its ceremony-screen line is still owed at P06.
+
+**Also settled here, and deliberately not built:** the interesting in-roster power is **preemption, not forgery**. Any invitation holder can publish at `seq = MaxInt64`; `CheckIncoming` then refuses every later write at that target (`bep44/item.go:151-165`), and the honest party's failure looks exactly like an offline peer. The inner signature does not stop it. A counter that distinguishes *"a record was present and failed the inner check"* from *"nothing was there"* is what makes it visible; filed for P04.S04, whose scope is already the flood cap.
+
+Tasks:
+- T01 — the disclosure: `README.md`'s three claims restated, and a line in `nib`'s own output.
+- T02 — close both doors: `gateQuery` refuses inbound `put`/`announce_peer`; `screened` drops a response carrying `k` with no `seq`; `ServerConfig.Exp` set so our own record is served.
+- T03 — keys and domain tags in `internal/ceremony`: `RecordKey(hop)` (per hop, so D30's P05 clause becomes satisfiable at all); a separate `nib-bep44-seed-v1/hop-%d` for the ed25519 seed, so the value that may be logged is not the write authority; a **secret-keyed** salt; and a domain tag as the first chunk of every preimage this identity key signs — `RosterHash` has none today.
+- T04 — the candidate record: length-prefixed preimage binding version, ceremony id, hop, party, publisher SPKI, expiry and candidates, with the exclusions written down as `RosterHash` does; ECDSA via `sign.SignDigest`; XChaCha20-Poly1305, 24-byte random nonce, AAD = salt‖hop‖version‖seq.
+- T05 — publish and fetch in `internal/rendezvous`, opaque bytes only (L1 forbids importing `ceremony` and `sign`, and its comment names this slice).
+- ~~T06 — the republish loop: this package's first background goroutine.~~ **DROPPED during implementation (2026-08-20), and the reason is a simplification rather than a deferral.** D16 requires only that *"a published record outlives the race that depends on it"* — the connect deadline is 300 s, the record carries its own expiry, and a BEP-44 item lives ~2 h at each storer (`server.go:167`). One publish therefore covers the whole race with an order of magnitude to spare, and a refresh loop would be machinery with no requirement behind it. Dropping it also removes, rather than manages, this package's first background goroutine and every hazard that came with it: a `sync.Once` self-deadlock if the loop ever called `Close`, a lifetime context used as a per-attempt budget, and a monotonic ticker that does not advance across suspend while the storers' wall-clock expiry does. If a later phase needs a rendezvous that outlives one race, it can add the loop against a real requirement.
+- T07 — counters, and a standing reader for them: **`nib rendezvous`**, the DHT's analogue of P03.S05's `nib discover` and for the same reason. Before it, this package had **thirteen counters and no reader outside its own tests**, because nothing in the shipped binary imported it at all.
+- T08 — the PLAN amendments this grill earned.
+- T09 — the coverage, red-proved, with the vacuity guards the grill named.
 
 #### P04.S04 — The flood cap *(plan-review C2)*
 Scope: bound how many candidates one rendezvous key may yield. Refs: plan-review C2.
@@ -2718,6 +2776,28 @@ Acceptance:
 
 ~~Slices *(sketch)*: library selection and cached bootstrap; self-address probe and NAT classification; the derived rendezvous key; publish/fetch with expiry; the L1 guard.~~ *(retained; superseded by the firmed slices above.)*
 
+#### P04.S06 — Seed nodes carried in the invitation **(added 2026-08-20 — split out of P04.S03 at its slice grill)** *(D6, D21)*
+Scope: D6's second half. The invitation carries DHT seed addresses so the common case never
+consults the shipped list, and a stale or blocked list is not fatal. Refs: D6, D21, D32.
+
+*Why it is a slice and not a task of S03:* it moves a **different** wire format — D21's
+invitation, not the candidate record — and it is the only invitation field that will **never**
+have a signed counterpart. `MatchesRecord` compares id, roster and `signs` flags
+(`invitation.go:260-281`) and the `Record` has no seeds to compare against, so seeds are
+permanently unauthenticated attacker-controllable data. That earns its own gate.
+
+Acceptance:
+- A cold-start machine bootstraps from invitation-carried seeds without consulting the shipped list.
+- **Seeds are parsed with `netip.ParseAddrPort` and never a resolver** — which *structurally* cannot resolve a hostname, a stronger statement of D6 than `dht_test.go`'s name blacklist. Driven by feeding it `router.bittorrent.com:6881` and asserting the refusal, because the blacklist is name-based and would pass `ParseAddrPort` silently.
+- **A seed that is not a routable public unicast address is refused**, reusing `selfaddr.go`'s `reservedRanges` table rather than writing a third copy — the second one (`internal/server/fetch.go:66`) is already weaker than the first. Plus a port floor, which removes NTP/DNS/SNMP/SSDP from the target space at no cost.
+- **The count is capped and an over-cap list is refused, not truncated** — silent truncation hides the attack. A bad *entry* is a transcription error and is dropped-and-counted; an oversized *list* cannot be, so it is loud.
+- **Something calls the validator** — a guard on the predicate alone is P03's recorded lesson repeated (*"a guard tested a predicate and not that anything called it"*).
+- **`Stats().Seeds` keeps its meaning, or gains a sibling.** Its doc says "how many **shipped** seed addresses were used" and `Bootstrapped == 0 while Seeds > 0` is the **rot alarm** for the shipped list (`dht.go:63-72`). Counting invitation seeds into it makes the alarm unable to distinguish "our list rotted" from "the invitation's seeds were bad", and `live_test.go:54-57` asserts on it.
+- **The eclipse chain is answered in writing**, adopt or accept-with-reason: hostile seeds → a cold-start table containing nothing else → `probeTargets` draws every probe target from that table → the attacker controls every `ip` field → `classify`'s strict-majority rule is satisfied by two VMs in two /24s → the believed public endpoint is the attacker's choice → **D33's 3,000 punch packets are aimed at a victim of their choosing, from the user's IP**. `isPublishable` bounds *which* victim; it does not stop the chain, and a majority rule is no defence when the attacker owns the electorate.
+- **A unique seed address per invitation is a read receipt**, and it defeats the reason D6 refused hostnames. DNS tells the resolver operator; an attacker-supplied literal tells the attacker directly, with the recipient's real IP and an exact timestamp, before any ceremony begins. The user is told that opening an invitation causes outbound contact to addresses **the sender chose** — a different consent question from "Nib uses the DHT", needing its own sentence.
+- **Never `dht.Server.AddNode` for seeds** — a zero-id node fires `go s.Ping(...)` (`server.go:391-394`), one uncancellable goroutine per seed, and `Ping` already discards its context. `StartingNodes` is the path `Open` already uses.
+- The seed list never carries the issuer's own endpoint, and is not a stable per-issuer identifier — otherwise the invitation discloses the convener's home IP to every recipient and every mail server between, and two invitations from one issuer link by their seed set.
+
 ### P05 — The ladder
 Goal: tiers 2, **3** and ~~3~~ **4** exist **(renumbered 2026-08-16, D8)**, all tiers race concurrently, and the manual path is demoted.
 Exit criteria:
@@ -2738,7 +2818,7 @@ Exit criteria:
 - **Losing the channel before confirmation re-races and re-confirms; losing it after confirmation ~~fails the ceremony~~ **restarts the hop and re-delivers rather than re-signs (amended 2026-08-18, D18, D24)**. Both are driven. (added 2026-08-16, D18)**
 - **The armed listener's wait is bounded by the ceremony, not by a five-minute constant, and still accepts exactly one pinned peer and serves exactly one session. (added 2026-08-18, D16 amendment.)** `sessionAcceptTimeout` is 5 min today (`internal/server/session.go:34`), which disarms a party waiting their turn; this is the only bullet in the plan that moves the TRIPWIRE (`internal/server/session.go:24`), and the two clauses it must *not* move are named in it rather than left implied.
 - **The three clocks are independent: letting the connect deadline elapse in full leaves both the exchange budget and the ceremony deadline undiminished. (added 2026-08-18, D16 amendment — extends the 2026-08-17 two-clock guard to the third.)**
-- **The rendezvous key is derived per hop: two hops of one ceremony publish under different keys, and a party cannot read the candidates of a hop it is not in. (added 2026-08-18, D30.)** Driven with a three-party record — a two-party ceremony has exactly one hop and cannot distinguish a per-hop key from a per-ceremony one, so the obvious test is the vacuous one.
+- **The rendezvous key is derived per hop: two hops of one ceremony publish under different keys, and a party cannot read the candidates of a hop it is not in. (added 2026-08-18, D30.)** **(2026-08-20, P04.S03's grill: the second clause was UNSATISFIABLE against shipped code and is now buildable.** Per-hop *addressing* shipped at P01.S07; per-hop *encryption* did not — `RecordKey()` was `derive("nib-record-v1", 32)` with no hop, so one key decrypted every hop and every roster member holds it. S03 makes `RecordKey` per hop. Note what this still does **not** buy, so the clause is not over-read: it excludes a party from a hop's *ciphertext*, and every roster member can still derive any hop's key from the secret. D30's motivating harm — "every party can read every other party's IP addresses" — is bounded by the roster, not below it.)** Driven with a three-party record — a two-party ceremony has exactly one hop and cannot distinguish a per-hop key from a per-ceremony one, so the obvious test is the vacuous one.
 - **The race and the glare tie-break are scoped to the current hop: a convener holding candidates for a later party never dials them during this hop. (added 2026-08-18, D30.)**
 - ~~Both ends behind carrier-grade NAT fails with an explanation that names the fallback, not a generic timeout **— and the fallback it names is the one that actually applies: a shared VPN or a manual address one side can accept, not a port-forward the carrier's NAT forbids (amended 2026-08-16, D9 pin)**.~~ **Each of D19's four causes produces its own message, and the mapping-class test distinguishes the two NAT classes from two DHT observations. Cause 3's message names port mapping and a shared VPN — never a port-forward the carrier's NAT forbids. (superseded 2026-08-16, D19)**
 

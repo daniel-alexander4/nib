@@ -1,7 +1,10 @@
 package rendezvous
 
 import (
+	"bytes"
 	"context"
+	"encoding/binary"
+	"github.com/anacrolix/dht/v2/krpc"
 	"net"
 	"net/netip"
 	"os"
@@ -167,4 +170,146 @@ func TestLiveSelfAddressProbe(t *testing.T) {
 				"wire by a real node, which is the clause", local.Port, self)
 		}
 	}
+}
+
+// TestLivePublishAndFetch is P04.S03's acceptance clause against the real network.
+//
+// # Why this cannot be a loopback test, in the same way the probe could not
+//
+// The hermetic round trip (roundtrip_test.go) drives publish and fetch against a fake
+// storer, and it proves the protocol: the put leaves the machine, a node verifies the
+// signature, a DIFFERENT node fetches it back. What it cannot prove is that real DHT
+// nodes — which choose for themselves whether to store anything, and enforce their own
+// size, seq and token rules — accept what Nib sends. "A published endpoint is retrievable
+// by the peer" is a claim about strangers, and only strangers can discharge it.
+//
+// # And it must not be satisfiable by our own store
+//
+// dht.Server.Put writes locally before sending (server.go:1081) and our get handler
+// serves from that same store, so a single-process publish-then-fetch proves nothing.
+// This closes the publisher's socket before fetching, and fetches from a SECOND server on
+// a SECOND socket with its own empty cache. Anything that comes back was held by someone
+// else.
+func TestLivePublishAndFetch(t *testing.T) {
+	if os.Getenv("NIB_LIVE_DHT") == "" {
+		t.Skip("set NIB_LIVE_DHT=1 (or run ./build/dhtlive.sh) — this test uses the public network")
+	}
+
+	// A seed nobody else will be using. Derived from the clock so two runs do not collide
+	// on one target and read each other's records — which would look like success while
+	// measuring the previous run.
+	seed := make([]byte, 32)
+	binary.BigEndian.PutUint64(seed, uint64(time.Now().UnixNano()))
+	copy(seed[8:], []byte("nib-p04-s03-live-probe"))
+	salt := []byte("live")
+	record := []byte("nib-live-candidate-record-" + time.Now().UTC().Format(time.RFC3339Nano))
+
+	// warm is the fetcher's starting table, harvested from the publisher before it closes.
+	//
+	// This is NOT a shortcut around the property under test. The record's location is not
+	// in it — only node addresses — and the publisher is closed before the fetch, so
+	// nothing it holds can answer. What it avoids is a third cold bootstrap in one run:
+	// the shipped seed list is five IP literals, three were dead the day they were
+	// written, and the survivors stop returning nodes to `find_node` under repeated use
+	// within a single session. Measured here: the publisher bootstrapped on attempt 2 and
+	// the fetcher, minutes later, could not bootstrap at all — so the test SKIPPED
+	// without ever asking its own question. A warm cache is also what a real Nib has;
+	// a cold one is D6's second half, which is P04.S06's subject.
+	var warm []krpc.NodeInfo
+
+	open := func(what string) (*Server, *udpmux.Mux, *net.UDPAddr) {
+		pc, err := net.ListenPacket("udp", ":0")
+		if err != nil {
+			t.Fatalf("%s socket: %v", what, err)
+		}
+		m := udpmux.New(pc)
+		dir := t.TempDir()
+		if len(warm) > 0 {
+			if _, err := writeNodes(dir, warm); err != nil {
+				t.Fatalf("%s cache: %v", what, err)
+			}
+		}
+		s, err := Open(m.DHT(), dir)
+		if err != nil {
+			m.Close()
+			t.Fatalf("%s open: %v", what, err)
+		}
+		return s, m, m.LocalAddr().(*net.UDPAddr)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 180*time.Second)
+	defer cancel()
+
+	pub, pubMux, pubAddr := open("publisher")
+	t.Logf("PUBLISHER socket %v", pubAddr)
+	for attempt := 1; attempt <= 3; attempt++ {
+		if err := pub.Bootstrap(ctx); err != nil {
+			t.Fatalf("publisher bootstrap: %v", err)
+		}
+		if pub.Stats().Nodes > 0 {
+			break
+		}
+		t.Logf("publisher bootstrap attempt %d gained nothing; retrying", attempt)
+	}
+	st := pub.Stats()
+	t.Logf("PUBLISHER TABLE %d node(s) from %d seed(s)", st.Nodes, st.Seeds)
+	if st.Nodes == 0 {
+		pub.Close()
+		pubMux.Close()
+		t.Skipf("UNREACHABLE: the publisher could not build a routing table (%d seeds, "+
+			"%d gained). The DHT is a third party and this is not evidence the publish "+
+			"path is broken.", st.Seeds, st.Bootstrapped)
+	}
+
+	if err := pub.Publish(ctx, seed, salt, record); err != nil {
+		pub.Close()
+		pubMux.Close()
+		t.Fatalf("publish: %v", err)
+	}
+	st = pub.Stats()
+	t.Logf("PUBLISHED %d byte(s); %d node(s) answered the token traversal", len(record), st.PublishNodes)
+	if st.PublishNodes == 0 {
+		pub.Close()
+		pubMux.Close()
+		t.Skipf("UNREACHABLE: no node answered the traversal that collects write tokens, "+
+			"so there was nowhere to write. (Published=%d is not a claim that anyone "+
+			"stored it — getput.Put cannot report that.)", st.Published)
+	}
+
+	// Harvest the table, then the publisher goes away BEFORE the fetch. That ordering is
+	// what makes the result mean something: whatever answers the fetch is not us.
+	warm = pub.Nodes()
+	t.Logf("HARVESTED %d node address(es) for the fetcher's cache — addresses only; the "+
+		"record's whereabouts are not among them, and the publisher is about to close", len(warm))
+	pub.Close()
+	pubMux.Close()
+
+	sub, subMux, subAddr := open("fetcher")
+	defer func() { sub.Close(); subMux.Close() }()
+	t.Logf("FETCHER socket %v (a different socket, a different empty cache)", subAddr)
+	for attempt := 1; attempt <= 3; attempt++ {
+		if err := sub.Bootstrap(ctx); err != nil {
+			t.Fatalf("fetcher bootstrap: %v", err)
+		}
+		if sub.Stats().Nodes > 0 {
+			break
+		}
+	}
+	if sub.Stats().Nodes == 0 {
+		t.Skip("UNREACHABLE: the fetcher could not build a routing table")
+	}
+
+	got, seq, err := sub.Fetch(ctx, seed, salt)
+	fst := sub.Stats()
+	if err != nil {
+		t.Skipf("UNREACHABLE: nothing came back (%v). %d node(s) answered the fetch "+
+			"traversal. With FetchNodes>0 this means the network reached us and nobody "+
+			"was holding the record — which on a public DHT can happen to an honest "+
+			"publish, so it is reported as a skip rather than a failure.", err, fst.FetchNodes)
+	}
+	if !bytes.Equal(got, record) {
+		t.Fatalf("OBSERVED a record of %d bytes and it is not the one published", len(got))
+	}
+	t.Logf("OBSERVED the published record retrieved from strangers: %d bytes at seq %d, "+
+		"%d node(s) answered", len(got), seq, fst.FetchNodes)
 }
