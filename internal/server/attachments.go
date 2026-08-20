@@ -43,13 +43,21 @@ func (s *Server) handleAttachmentAdd(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	result, err := pdfops.AddAttachment(s.docBytes(doc), r.FormValue("name"), data)
+	// Read ONCE, and this is the state the undo entry records.
+	//
+	// commitMutation's contract: "Callers pass the input they actually operated on … so
+	// undo restores precisely the pre-op document." Calling docBytes twice — as the
+	// operation's input and again as the commit's — lets a concurrent mutation land in
+	// between, so the undo entry records the NEW bytes as the state to return to and a
+	// later undo restores a document that never existed.
+	before := s.docBytes(doc)
+	result, err := pdfops.AddAttachment(before, r.FormValue("name"), data)
 	if err != nil {
 		httpError(w, http.StatusBadRequest, "could not add attachment: "+err.Error())
 		return
 	}
-	if !s.commitMutation(doc, s.docBytes(doc), result) {
-		httpError(w, http.StatusNotFound, "no document open")
+	if !s.commitMutation(doc, before, result) {
+		httpError(w, http.StatusConflict, "that document is no longer open")
 		return
 	}
 	writeJSON(w, s.docResponse(doc))

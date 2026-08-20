@@ -237,7 +237,7 @@ func (s *Server) handleAssemble(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if !s.commitBarrier(doc, pdf) {
-			httpError(w, http.StatusNotFound, "no document open")
+			httpError(w, http.StatusConflict, "that document is no longer open")
 			return
 		}
 		writeJSON(w, s.docResponse(doc))

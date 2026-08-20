@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"mime/multipart"
 	"net/http"
+	"net/http/httptest"
 	"sync"
 	"testing"
 
@@ -368,6 +369,11 @@ func TestDocResponseRacesMutation(t *testing.T) {
 // existed; /api/scan trips it on the first round.
 func TestDocumentReadRoutesRaceMutation(t *testing.T) {
 	readRoutes := []struct{ name, method, path string }{
+		// /api/pdf was MISSING from this list until v1.116.3, and it was the one route
+		// still reading doc.data directly — so the guard written because "a guard whose
+		// population is one is not a guard for the class it appears to cover" reproduced
+		// that exact shape for the last offender. pdf.js fetches this on every re-render.
+		{"pdf", http.MethodGet, "/api/pdf"},
 		{"scan", http.MethodGet, "/api/scan"},
 		{"outline", http.MethodGet, "/api/outline"},
 		{"attachments", http.MethodGet, "/api/attachments"},
@@ -455,5 +461,69 @@ func TestDocumentReadRoutesRaceMutation(t *testing.T) {
 		if reads[rt.name] == 0 {
 			t.Errorf("no %s read succeeded — that half of the race never ran, so -race saw nothing there", rt.name)
 		}
+	}
+}
+
+// TestUndoingPastTheBudgetEvicts — ADR-003's undo side, which nothing checked.
+//
+// ADR-003 bounds the undo+redo **pair** against one global budget. `handleRedo` trimmed on
+// its push and `handleUndo` did not, and the push is not byte-neutral: undoing a large OCR
+// or optimize result moves a big `doc.data` onto redo while popping a small `prev`. So the
+// undo path could walk the global total past the ceiling with nothing evicting — on a
+// budget whose whole purpose is that the memory ceiling does not scale with what the user
+// opens.
+//
+// Driven through `handleUndo` rather than by calling `trimHistoryLocked`, because the
+// defect was never in the trimmer; it was in one of the two callers not calling it.
+func TestUndoingPastTheBudgetEvicts(t *testing.T) {
+	const budget = 64 << 10
+	s := evictionServer(t, budget)
+	active := s.activeDoc()
+
+	// A small pre-op state and a large current one: undo pops `small` and pushes the
+	// large `doc.data` onto redo, so the total GROWS across the undo.
+	small := []byte("x")
+	large := make([]byte, budget)
+	s.mu.Lock()
+	active.undo = append(active.undo, small)
+	active.data = large
+	s.mu.Unlock()
+
+	// An inactive document holding history the trimmer is allowed to evict, so there is
+	// something for the pressure to act on.
+	otherID := addDocument(s, []byte("second"))
+	other := documentByID(s, otherID)
+	s.mu.Lock()
+	other.undo = append(other.undo, make([]byte, budget/2))
+	s.mu.Unlock()
+
+	// STIMULUS: the undo must actually happen, and it must actually push bytes. Without
+	// this the assertion below is satisfied by a handler that did nothing at all.
+	s.mu.Lock()
+	beforeRedo := len(active.redo)
+	s.mu.Unlock()
+
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/undo", nil)
+	req.Header.Set("X-Nib-Doc", active.id.String())
+	s.handleUndo(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("setup: undo returned %d", rr.Code)
+	}
+
+	s.mu.Lock()
+	grewRedo := len(active.redo) > beforeRedo
+	total := s.historyBytesLocked()
+	otherEntries := len(other.undo)
+	s.mu.Unlock()
+
+	if !grewRedo {
+		t.Fatal("setup: the undo pushed nothing onto redo, so no budget pressure was created")
+	}
+	if total > budget {
+		t.Errorf("history is %d bytes against a %d budget after an undo, and %d inactive "+
+			"entries survive — handleUndo pushed onto redo without trimming, so the "+
+			"ceiling ADR-003 exists to hold does not hold on this path",
+			total, budget, otherEntries)
 	}
 }

@@ -54,7 +54,15 @@ func (s *Server) handleOCR(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, s.docResponse(doc))
 		return
 	}
-	result, err := pdfops.StampTextLayer(s.docBytes(doc), body.Words, body.Lang)
+	// Read ONCE, and this is the state the undo entry records.
+	//
+	// commitMutation's contract: "Callers pass the input they actually operated on … so
+	// undo restores precisely the pre-op document." Calling docBytes twice — as the
+	// operation's input and again as the commit's — lets a concurrent mutation land in
+	// between, so the undo entry records the NEW bytes as the state to return to and a
+	// later undo restores a document that never existed.
+	before := s.docBytes(doc)
+	result, err := pdfops.StampTextLayer(before, body.Words, body.Lang)
 	if err != nil {
 		log.Printf("ocr: stamp failed (%d words, lang %q): %v", len(body.Words), body.Lang, err)
 		httpError(w, http.StatusUnprocessableEntity, "could not add the text layer")
@@ -75,8 +83,8 @@ func (s *Server) handleOCR(w http.ResponseWriter, r *http.Request) {
 			log.Printf("ocr: could not set document language %q: %v", tag, lerr)
 		}
 	}
-	if !s.commitMutation(doc, s.docBytes(doc), result) {
-		httpError(w, http.StatusNotFound, "no document open")
+	if !s.commitMutation(doc, before, result) {
+		httpError(w, http.StatusConflict, "that document is no longer open")
 		return
 	}
 	writeJSON(w, s.docResponse(doc))

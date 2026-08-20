@@ -42,9 +42,19 @@ const (
 // for in-place ops — so undo restores precisely the pre-op document (including any
 // overlay the client baked into the input).
 //
-// It reports whether the commit landed: false means no document is open and the
-// work was discarded. Callers MUST check it and answer 404 rather than replying
-// 200 with an empty docResponse — a success reply for discarded work. The check
+// It reports whether the commit landed: false means the document this operation was
+// pinned to is no longer registered and the work was discarded. Callers MUST check it and
+// answer **409**, not 200 with an empty docResponse (a success reply for discarded work)
+// and not 404.
+//
+// **409, and this comment said 404 until v1.116.3.** ADR-004 postdates it: *"An id naming a
+// document the server no longer holds is 409, never 404. 404 already means 'no document
+// open'; a closed tab is a different fact, and the client must tell them apart to remove the
+// tab rather than blank the app."* By the time this returns false `resolveDoc` has already
+// produced a non-nil document, so the ONLY way to get here is a close landing mid-flight —
+// which is exactly the fact ADR-004 assigns 409. `web/app.js` hooks 409 to reconcile and
+// drop the stale tab; a 404 gets no such handling, so closing one tab during a long
+// operation on it left a tab where everything failed. The check
 // belongs here and not in the caller because only this function holds the lock
 // across the test and the write; a caller that tested the document first would leave a
 // window for a close to land in between, which is the very defect.
@@ -268,6 +278,11 @@ func (s *Server) handleUndo(w http.ResponseWriter, r *http.Request) {
 	doc.undo[last] = nil
 	doc.undo = doc.undo[:last]
 	doc.redo = append(doc.redo, doc.data)
+	// Trimmed here as handleRedo trims on its own push. ADR-003 bounds the undo+redo
+	// PAIR against one global budget, and this push is not byte-neutral: undoing a large
+	// OCR or optimize result moves a big doc.data onto redo while popping a small prev,
+	// so without this the total walks past the ceiling with nothing evicting.
+	s.trimHistoryLocked(doc)
 	doc.data = prev
 	doc.sig = sign.Verify(prev)
 	s.mu.Unlock()
