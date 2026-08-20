@@ -2400,13 +2400,29 @@ Tasks:
 - T03 — the L1 guard: no exported path from an announcement to a fingerprint or a pin.
 - T04 — ADR-007, and the seam inventory rows.
 
-#### P03.S02 — Announce and browse over multicast
+#### P03.S02 — Announce and browse over multicast *(done 2026-08-19, v1.110.1)*
 Scope: the multicast socket, interface selection, announce-while-armed, passive browse. Refs: caveat 3, caveat 7's carve-out, the `session.go` tripwire.
 Acceptance:
 - Two processes discover each other over **real multicast**, driven — not a model of it.
 - The interfaces joined are **asserted**, not whatever the stdlib chose: a link-local join must skip loopback and point-to-point, and must not depend on `FlagRunning`, which is degenerate on Windows.
 - The `TRIPWIRE` comment at `internal/server/session.go:24` is amended **in the same change**, naming link-local and armed-only and citing the plan's egress enumeration — it currently claims the armed listener is the *only* network-reachable surface, which this slice falsifies.
 - Nothing in the announce or browse path imports `internal/udpmux`.
+
+Tasks:
+- T01 — interface selection as a **pure function** over `[]net.Interface`, so the choice is table-testable without a machine that happens to have a docker bridge.
+- T02 — the socket: `x/net/ipv4`+`ipv6` over one `net.ListenConfig` with `SO_REUSEADDR`, joined per chosen interface.
+- T03 — announce once per interface; read with the self-nonce filter.
+- T04 — two processes discover each other over real multicast, driven.
+- T05 — the tripwire amendment, and the seam inventory.
+
+**The driven clause needed a fifth tier** *(2026-08-19)*: "two processes discover each other over
+real multicast" cannot be verified on the development host, because a multicast loopback copy
+traverses INPUT and a default-deny firewall swallows it silently. `build/mcastrepro.sh` creates its
+own network namespace with `unshare -rn`, so the host's rules do not decide the result; tier 1's
+discovery tests **skip** on such a host rather than fail, and a skip is not a verification, which is
+what the new tier is for. Groups: `239.255.90.90` (RFC 2365 administratively scoped) and
+`ff12::6e69:62` (RFC 4291 transient, link-local) — and **the scope guarantee is the hop limit of 1,
+not the address**, because scope bits are a statement a router may respect and arithmetic is not.
 
 #### P03.S03 — A discovered peer becomes a dialable candidate
 Scope: match announcements against pinned peers; surface the result. Refs: L1, D16's browse budget.
