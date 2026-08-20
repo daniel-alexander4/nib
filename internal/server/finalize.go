@@ -68,6 +68,14 @@ func (s *Server) handleFinalize(w http.ResponseWriter, r *http.Request) {
 	var err error
 	if p.Watermark.Text != "" {
 		pdfBytes, err = pdfops.StampWatermark(pdfBytes, p.Watermark.Text, p.Watermark.WatermarkStyle)
+		if errors.Is(err, pdfops.ErrStampTextUnrepresentable) {
+			// 400 and the whole sentence, because this one is the user's to fix and the
+			// alternative was baking something they did not type onto a document this
+			// same handler is about to SIGN. "could not stamp watermark" would send them
+			// looking for a broken document.
+			httpError(w, http.StatusBadRequest, err.Error())
+			return
+		}
 		if err != nil {
 			httpError(w, http.StatusInternalServerError, "could not stamp watermark")
 			return

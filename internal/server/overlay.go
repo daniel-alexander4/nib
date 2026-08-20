@@ -3,6 +3,7 @@ package server
 import (
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"net/http"
 
 	"nib/internal/pdfops"
@@ -69,6 +70,10 @@ func (s *Server) handleBake(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	out, err := pdfops.StampFields(pdfBytes, fields)
+	if errors.Is(err, pdfops.ErrStampTextUnrepresentable) {
+		httpError(w, http.StatusBadRequest, err.Error())
+		return
+	}
 	if err != nil {
 		httpError(w, http.StatusInternalServerError, "could not stamp fields: "+err.Error())
 		return
