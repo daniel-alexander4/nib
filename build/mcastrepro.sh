@@ -81,6 +81,13 @@ run() {
     ip link add d2 type dummy
     ip link set d2 up
     ip addr add fd00:9::1/64 dev d2
+    # A THIRD interface on a subnet of its own. The off-link test builds a socket that
+    # joins d0 only and then sends from the d3 address, which is a real source address on
+    # a link the socket did not join — the one shape that exercises the ingress scope
+    # check without spoofing.
+    ip link add d3 type dummy
+    ip link set d3 up
+    ip addr add 10.99.0.1/24 dev d3
     # Note what this does NOT reach: a dummy interface reports up|broadcast|RUNNING
     # (measured — an earlier version of this comment claimed the opposite, and a probe
     # that made FlagRunning a filter stayed green here, which is how the false claim
@@ -88,7 +95,7 @@ run() {
     # is covered by the tier-1 table test, not by this namespace. A dummy also lacks
     # the MULTICAST flag and joins anyway, which is why the selection does not require
     # it: the kernel does not enforce it.
-    NIB_MCAST_NETNS=1 "$0" -test.run "TestTwoProcessesDiscoverEachOther|TestTheSocketJoinsTheInterfacesItChose|TestOwnAnnouncementsAreFilteredByNonceNotAddress|TestTwoSocketsCanShareThePort|TestAnIPv6OnlyInterfaceIsSkippedForTheIPv4Group" -test.v
+    NIB_MCAST_NETNS=1 "$0" -test.run "TestTwoProcessesDiscoverEachOther|TestTheSocketJoinsTheInterfacesItChose|TestOwnAnnouncementsAreFilteredByNonceNotAddress|TestTwoSocketsCanShareThePort|TestAnIPv6OnlyInterfaceIsSkippedForTheIPv4Group|TestAnOffLinkUnicastIsDroppedByTheReadLoop" -test.v
     NIB_MCAST_NETNS=1 "$1" -test.run "TestARealAnnouncementResolvesToACandidate" -test.v
   ' "$TESTBIN" "$SRVBIN"
 }
@@ -107,6 +114,8 @@ grep -q -- "--- PASS: TestTwoProcessesDiscoverEachOther" "$OUT" \
   || fail "TestTwoProcessesDiscoverEachOther did not PASS inside the namespace — if it SKIPPED, the namespace was not detected and this harness verified nothing"
 grep -q "DISCOVERED" "$OUT" \
   || fail "no process reported discovering another; the pass above is not about discovery"
+grep -q -- "--- PASS: TestAnOffLinkUnicastIsDroppedByTheReadLoop" "$OUT" \
+  || fail "the off-link ingress test did not PASS — the scope check is unexercised"
 grep -q -- "--- PASS: TestAnIPv6OnlyInterfaceIsSkippedForTheIPv4Group" "$OUT" \
   || fail "the IPv6-only interface test did not PASS — the Windows IPv4-join divergence is unexercised"
 grep -q -- "--- PASS: TestARealAnnouncementResolvesToACandidate" "$OUT" \

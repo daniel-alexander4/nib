@@ -2372,12 +2372,12 @@ comparing the function values says they are.
 what it cannot see would be the one exception to a rule this repo enforces in tier 1 — so it says
 it: **it cannot see two networks**, and what it delegates upward is the Dan-only run.
 
-### P03 — Local discovery (tier 1) *(in progress)*
+### P03 — Local discovery (tier 1) *(done 2026-08-19, v1.110.5)*
 Goal: two Nibs on the same network find each other with no address typed and no internet.
-Exit criteria:
-- A ceremony completes on a LAN with no address entered anywhere and no outbound internet traffic.
-- Discovery announces the name's public bits only — never anything that could influence which peer is accepted (L1).
-- Behaviour on Windows is verified on Windows, not inferred — **on real Windows, as a Dan-only run (added 2026-08-17, plan-review W3).** `build/winrepro.sh` runs `nib.exe` under **wine**, which was defensible for `path/filepath` behaviour at the sibling plan's P07 and is not defensible here: wine models neither multicast nor interface enumeration. A green `winrepro` may not discharge this bullet.
+Exit criteria *(reconciled 2026-08-19, v1.110.5 — ledger in `code-reviews/P03-phase-close-2026-08-19.md`; **5 met / 2 not exercised**, and both unexercised rows are Dan-only runs this plan already carved out rather than gaps found at the gate)*:
+- ✅/⚠️ A ceremony completes on a LAN with no address entered anywhere and no outbound internet traffic. *Driven on one host: no `bind` and no `address` sent at all, and the egress counter zero across the ceremony with its ability to fire proved **per family** first. **Not exercised across two machines on a real switch** — the namespace has dummy interfaces and no L2 segment worth the name, which is the standing VERIFY item.*
+- ✅ Discovery announces the name's public bits only — never anything that could influence which peer is accepted (L1).
+- ⚠️ Behaviour on Windows is verified on Windows, not inferred — **on real Windows, as a Dan-only run (added 2026-08-17, plan-review W3).** `build/winrepro.sh` runs `nib.exe` under **wine**, which was defensible for `path/filepath` behaviour at the sibling plan's P07 and is not defensible here: wine models neither multicast nor interface enumeration. A green `winrepro` may not discharge this bullet.
 
 Slices *(firmed 2026-08-19 at phase-open; sketch retained below)*. **The sketch's four items become five slices.** "The L1 guard" is not separable from designing the announcement — you cannot decide the format without deciding what it may carry, and the guard *is* that decision expressed as a test — so it folds into S01; and "a ceremony with no address typed" is pulled out of "resolving a candidate" because it is the phase's first exit criterion and owes a driven run of its own.
 

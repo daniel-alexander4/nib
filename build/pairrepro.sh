@@ -91,26 +91,37 @@ if [ "$LAN" = "1" ] && [ "${NIB_LAN_NS:-}" != "1" ]; then
     ip link add d0 type dummy
     ip link set d0 up
     ip addr add 10.9.0.1/24 dev d0
+    ip -6 addr add fd00:9::1/64 dev d0
     ip route add default dev d0          # the black hole; see above
+    ip -6 route add default dev d0       # …and its IPv6 half, so the v6 counter can fire
     nft add table inet egress
     nft add chain inet egress out "{ type filter hook output priority 0 ; }"
+    # TWO rules, one per family. `ip daddr` in an inet table matches IPv4 ONLY, so a
+    # single rule is blind to IPv6 — and the stimulus probe below was IPv4, which means
+    # it proved the counter live for exactly the family the rule could see and could not
+    # detect its own blind spot. Measured: 0 -> 2 on an IPv4 connect, UNCHANGED on an
+    # IPv6 one. Nib announces on an IPv6 group and dials whichever family the browse
+    # resolved, so the missing half was the half most likely to carry real traffic.
     nft add rule inet egress out ip daddr != 10.9.0.0/24 ip daddr != 127.0.0.0/8 \
-      ip daddr != 224.0.0.0/4 counter comment "offlink"
+      ip daddr != 224.0.0.0/4 counter comment "offlink4"
+    nft add rule inet egress out ip6 daddr != fd00:9::/64 ip6 daddr != ::1 \
+      ip6 daddr != ff00::/8 ip6 daddr != fe80::/10 counter comment "offlink6"
     NIB_LAN_NS=1 NIB_PAIR_BIN="$1" exec "$2" --lan
   ' _ "$PREBUILT" "$0"
 fi
 
 # Reads the off-link packet counter the namespace installed.
 offlink_packets() {
+  # The SUM across both family rules. Reading only the first was the IPv6 blind spot.
   nft -j list table inet egress 2>/dev/null \
     | python3 -c 'import json,sys
-d=json.load(sys.stdin)
+d=json.load(sys.stdin); t=0
 for o in d.get("nftables",[]):
     r=o.get("rule")
     if not r: continue
     for e in r.get("expr",[]):
-        if "counter" in e: print(e["counter"]["packets"]); raise SystemExit
-print(0)'
+        if "counter" in e: t += e["counter"]["packets"]
+print(t)'
 }
 
 KEEP=0
@@ -389,12 +400,18 @@ if [ "$LAN" = "1" ]; then
   # This is the stimulus assertion, and it is not decoration: the first version of
   # this instrument used a namespace with no default route and read zero after a real
   # connect attempt, because the kernel refused at routing before the output hook.
+  # Provoked in BOTH families, separately, because one rule per family means one blind
+  # spot per family. A single IPv4 probe passed while the IPv6 rule did not exist.
   before="$(offlink_packets)"
   timeout 2 bash -c 'exec 3<>/dev/tcp/1.1.1.1/80' 2>/dev/null || true
+  mid="$(offlink_packets)"
+  [ "$mid" -gt "$before" ] \
+    || fail "the off-link counter did not move for an IPv4 connect to 1.1.1.1 ($before -> $mid) — it cannot see outbound IPv4, so asserting zero below would prove nothing"
+  timeout 2 bash -c 'exec 3<>/dev/tcp/2606:4700:4700::1111/80' 2>/dev/null || true
   provoked="$(offlink_packets)"
-  [ "$provoked" -gt "$before" ] \
-    || fail "the off-link packet counter did not move for a deliberate connect to 1.1.1.1 ($before -> $provoked) — it cannot see outbound traffic, so asserting zero below would prove nothing"
-  echo "egress counter proven live: $before -> $provoked on a deliberate connect"
+  [ "$provoked" -gt "$mid" ] \
+    || fail "the off-link counter did not move for an IPv6 connect ($mid -> $provoked) — it is IPv6-BLIND, which is what an \`ip daddr\` rule in an inet table is by itself, and Nib announces on an IPv6 group"
+  echo "egress counter proven live in both families: $before -> $mid (v4) -> $provoked (v6)"
   nft reset counters table inet egress >/dev/null 2>&1 || true
   baseline="$(offlink_packets)"
 

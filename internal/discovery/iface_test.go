@@ -27,55 +27,46 @@ const (
 // TestInterfaceSelectionSkipsWhatItShould is the table the pure function exists for.
 //
 // Every row is a real machine's real interface: a wifi card, a docker bridge with
-// nothing attached, a WireGuard tun, an interface whose DHCP lease has not landed.
-// None of them is reachable by testing on whatever host happens to run the suite.
+// nothing attached, a WireGuard tun, an interface that is down.
+//
+// **It tests flagsAllow, not chooseInterfaces, and that is the point.** The first
+// version built synthetic net.Interface values and passed them to chooseInterfaces —
+// which calls Addrs(), which queries the KERNEL BY INDEX. A fixture with Index: 3
+// reported the host's interface-3 addresses, so the docker0 row survived the address
+// filter only because this machine's third interface happens to have one. On a host
+// where it does not — a CI container with lo and eth0 — the row is dropped and the test
+// fails claiming "FlagRunning became a filter", which is not what went wrong.
+//
+// A decision that queries the kernel cannot be table-tested, so the decision was split
+// out. The address half is hasV4/HasIPv4 below, pure and synthetic; the two together on
+// a REAL interface are driven in the namespace.
 func TestInterfaceSelectionSkipsWhatItShould(t *testing.T) {
-	// Interfaces with no index cannot report addresses, so this table is about the
-	// FLAG decisions only; hasV4 is tested directly below.
-	all := []net.Interface{
-		ifi("lo", 1, up|run|loop),
-		ifi("wlp1s0", 2, up|run|bc|mc),
-		ifi("docker0", 3, up|bc|mc), // UP but no carrier — the idle-bridge case
-		ifi("wg0", 4, up|run|p2p),   // a VPN
-		ifi("eth9", 5, 0),           // down
-	}
-
-	// Stimulus: the fixture really contains each interesting case, so a selection
-	// that returned nothing would not pass by accident.
-	if len(all) != 5 {
-		t.Fatalf("the table lost a case: %d rows", len(all))
-	}
-
-	got := chooseInterfaces(all, false)
-	names := map[string]bool{}
-	for _, i := range got {
-		names[i.Name] = true
-	}
-
-	// Every one of these is skipped for a DIFFERENT reason, so they are asserted
-	// separately — a single "want [wlp1s0 docker0]" would pass with the loopback and
-	// point-to-point rules collapsed into one.
-	if names["lo"] {
-		t.Error("loopback was joined. IP_MULTICAST_LOOP already delivers a local copy, so " +
-			"joining lo duplicates every datagram")
-	}
-	if names["wg0"] {
-		t.Error("a point-to-point interface was joined — a link-local join on a VPN either " +
-			"does nothing or leaks who is signing on this LAN into the tunnel")
-	}
-	if names["eth9"] {
-		t.Error("a down interface was joined")
-	}
-	// docker0 IS selected, and that is deliberate: FlagRunning would exclude it on
-	// Linux and carries no information on Windows, where it is set from the same
-	// condition as FlagUp. Selecting on it would mean two different things per
-	// platform, so it is reported and not filtered.
-	if !names["docker0"] {
-		t.Error("docker0 was skipped, which means FlagRunning became a filter — it is " +
-			"degenerate on Windows and would make the selection platform-dependent")
-	}
-	if !names["wlp1s0"] {
-		t.Fatal("the ordinary wifi interface was not selected; nothing else here matters")
+	for _, tc := range []struct {
+		name  string
+		flags net.Flags
+		want  bool
+		why   string
+	}{
+		{"lo", up | run | loop, false,
+			"loopback: IP_MULTICAST_LOOP already delivers a local copy, so joining lo " +
+				"duplicates every datagram"},
+		{"wlp1s0", up | run | bc | mc, true, "an ordinary wifi interface"},
+		{"docker0", up | bc | mc, true,
+			"UP but no carrier. Selected DELIBERATELY: FlagRunning would exclude it on " +
+				"Linux and carries no information on Windows, where it is set from the same " +
+				"condition as FlagUp, so filtering on it would mean two different things per " +
+				"platform"},
+		{"wg0", up | run | p2p, false,
+			"point-to-point: no L2 broadcast domain, and a join either does nothing or " +
+				"leaks who is signing on this LAN into a VPN"},
+		{"eth9", 0, false, "down"},
+		{"eth8", mc | bc, false, "not up, whatever else it advertises"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := flagsAllow(tc.flags); got != tc.want {
+				t.Errorf("flagsAllow(%v) = %v, want %v — %s", tc.flags, got, tc.want, tc.why)
+			}
+		})
 	}
 }
 

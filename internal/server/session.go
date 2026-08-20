@@ -368,6 +368,16 @@ func (sa sessionAccepter) Accept(peerFP, doc []byte) (bool, error) {
 // one-way document transfer and saves it under ~/nib. It always disarms on exit — one
 // session per arm.
 func (s *Server) runSession(ln p2p.Listener, cert, key []byte, label, mode string) {
+	// This goroutine handles a pinned peer's inbound document; a panic in the p2p or
+	// sign code must not crash the desktop process. The defers below (disarm, Close)
+	// still run as the stack unwinds.
+	//
+	// **First, before anything else defers.** safe.Recover's own contract says it must
+	// be "deferred at the very top of a goroutine body", and the announcer block used
+	// to sit above it — so on LIFO unwind the recover had already returned by the time
+	// ann.Close() ran, and a panic there would have taken the process down. That is not
+	// hypothetical: Close was a check-then-close that two callers could panic on.
+	defer safe.Recover("session")
 	// Announce on the link for as long as this session is armed — the plan's egress
 	// enumeration authorises multicast "armed-only", and this is where that is true
 	// rather than merely intended. It never fails the session: a host with no usable
@@ -378,10 +388,6 @@ func (s *Server) runSession(ln p2p.Listener, cert, key []byte, label, mode strin
 			defer ann.Close()
 		}
 	}
-	// This goroutine handles a pinned peer's inbound document; a panic in the p2p or
-	// sign code must not crash the desktop process. The defers below (disarm, Close)
-	// still run as the stack unwinds.
-	defer safe.Recover("session")
 	// This user's own fingerprint, for the verification string — it binds both identities,
 	// and this goroutine holds the cert rather than the fingerprint.
 	myFP, err := sign.Fingerprint(cert)
@@ -778,11 +784,11 @@ func (s *Server) handleSessionInitiate(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	address, ok = s.peerAddress(w, v, address, peerFP)
+	addrs, ok := s.peerAddresses(w, v, address, peerFP)
 	if !ok {
 		return
 	}
-	conn, err := dialPeer(r.FormValue("transport"), address, cert, key, peerFP)
+	conn, err := dialAny(r.FormValue("transport"), addrs, cert, key, peerFP)
 	if errors.Is(err, errUnknownTransport) {
 		httpError(w, http.StatusBadRequest, err.Error())
 		return
@@ -852,11 +858,11 @@ func (s *Server) handleSessionSend(w http.ResponseWriter, r *http.Request) {
 		httpError(w, http.StatusInternalServerError, "could not load identity")
 		return
 	}
-	address, ok = s.peerAddress(w, v, address, peerFP)
+	addrs, ok := s.peerAddresses(w, v, address, peerFP)
 	if !ok {
 		return
 	}
-	conn, err := dialPeer(r.FormValue("transport"), address, cert, key, peerFP)
+	conn, err := dialAny(r.FormValue("transport"), addrs, cert, key, peerFP)
 	if errors.Is(err, errUnknownTransport) {
 		httpError(w, http.StatusBadRequest, err.Error())
 		return

@@ -147,6 +147,17 @@ func (a Announcement) check() error {
 	if len(a.Name) > 0xff {
 		return fmt.Errorf("%w: name too long", ErrMalformed)
 	}
+	// Against the DATAGRAM cap, not just the length byte. Encode's doc promises it
+	// "refuses to encode one that would not parse", and bounding the name at 0xff alone
+	// did not keep that promise: six 40-character words is 245 bytes, encodes to 261,
+	// and Parse rejects it as over the 256-byte cap. The two ends of the format
+	// disagreed about what is legal, which is the one thing this function exists to
+	// prevent. Unreachable from the product only because pairing.Name is at most 53
+	// bytes — an invariant held by a caller, not by the check that claims to hold it.
+	if headerLen+len(a.Name) > MaxDatagram {
+		return fmt.Errorf("%w: %d bytes exceeds the %d-byte cap", ErrMalformed,
+			headerLen+len(a.Name), MaxDatagram)
+	}
 	return nil
 }
 

@@ -393,3 +393,156 @@ func TestNothingDecidesOnTheArrivalInterface(t *testing.T) {
 			"unchecked call is enough to make Stats().NoControlMessage wrong.", checked, calls)
 	}
 }
+
+// TestOffLinkSourcesAreRejected is the ingress scope boundary.
+//
+// Go binds a multicast listener to the WILDCARD, so this port accepts ordinary unicast
+// from any host that can route to it — that was measured, not inferred: a unicast
+// datagram sent to 127.0.0.1:8446 parsed and came back as a peer. The hop limit is the
+// scope guarantee on the way OUT; on the way IN there was none, so anyone who could land
+// a packet here could inject a candidate for any peer whose six-word name they knew, and
+// names are public by design.
+//
+// This does not stop an on-link attacker spoofing a source — nothing at this layer could
+// — but it removes every attacker who is not on the link.
+func TestOffLinkSourcesAreRejected(t *testing.T) {
+	_, lan, err := net.ParseCIDR("192.168.1.0/24")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := &Socket{nets: []*net.IPNet{lan}}
+
+	for _, tc := range []struct {
+		ip   string
+		want bool
+		why  string
+	}{
+		{"192.168.1.9", true, "on a joined link's subnet"},
+		{"127.0.0.1", true, "loopback — two Nibs on one machine is a case the design serves, " +
+			"and tier 4's LAN run depends on it"},
+		{"::1", true, "loopback, v6"},
+		{"fe80::1", true, "link-local: what the family is for, and a peer may have no other " +
+			"address yet"},
+		{"8.8.8.8", false, "off-link — the remote injection case"},
+		{"192.168.2.9", false, "a private address on a DIFFERENT subnet is still not on our link"},
+		{"2606:4700::1111", false, "a routable v6 address off-link"},
+	} {
+		t.Run(tc.ip, func(t *testing.T) {
+			got := s.onLink(&net.UDPAddr{IP: net.ParseIP(tc.ip), Port: 1})
+			if got != tc.want {
+				t.Errorf("onLink(%s) = %v, want %v — %s", tc.ip, got, tc.want, tc.why)
+			}
+		})
+	}
+	// A nil address is not on any link. The read loop can produce one if the source is
+	// not a UDPAddr, and defaulting that to "on-link" would be the wrong direction.
+	if s.onLink(nil) {
+		t.Error("a nil source counted as on-link")
+	}
+	// And with NO joined networks nothing routable is on-link — the failure direction
+	// must be closed, not open.
+	empty := &Socket{}
+	if empty.onLink(&net.UDPAddr{IP: net.ParseIP("192.168.1.9")}) {
+		t.Error("with no joined links, a routable address counted as on-link — a socket that " +
+			"joined nothing must accept nothing, not everything")
+	}
+}
+
+// TestAnOffLinkUnicastIsDroppedByTheReadLoop drives the scope check where it lives.
+//
+// TestOffLinkSourcesAreRejected tests the PREDICATE. That is not the same claim, and a
+// probe proved it: removing the call from Read left that test green, because a predicate
+// with no caller passes its own unit test perfectly. This one sends a real datagram from
+// a real address on a link the socket did not join.
+//
+// It needs two subnets, so it runs only in the namespace build/mcastrepro.sh builds.
+func TestAnOffLinkUnicastIsDroppedByTheReadLoop(t *testing.T) {
+	if os.Getenv("NIB_MCAST_NETNS") != "1" {
+		t.Skip("not in a prepared network namespace — run build/mcastrepro.sh")
+	}
+	all, err := net.Interfaces()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var onIf, offIf net.Interface
+	for _, ifi := range all {
+		switch ifi.Name {
+		case "d0":
+			onIf = ifi
+		case "d3":
+			offIf = ifi
+		}
+	}
+	if onIf.Name == "" || offIf.Name == "" {
+		t.Skipf("this namespace lacks d0/d3; the off-link case is unexercised (have %v)",
+			describeAll(all))
+	}
+	offIP := firstV4(t, offIf)
+
+	var nonce [nonceLen]byte
+	nonce[0] = 0x5a
+	// Joined on d0 ONLY, so d3's address is genuinely off-link for this socket.
+	sock, err := open([]net.Interface{onIf}, nonce)
+	if err != nil {
+		t.Fatalf("open on d0 only: %v", err)
+	}
+	defer sock.Close()
+
+	send := func(from net.IP, payload []byte) {
+		t.Helper()
+		c, err := net.DialUDP("udp4",
+			&net.UDPAddr{IP: from},
+			&net.UDPAddr{IP: firstV4(t, onIf), Port: Port})
+		if err != nil {
+			t.Fatalf("dial from %s: %v", from, err)
+		}
+		defer c.Close()
+		if _, err := c.Write(payload); err != nil {
+			t.Fatalf("write from %s: %v", from, err)
+		}
+	}
+
+	good, err := Announcement{Name: aName(t, 33), Port: 8443, Nonce: [nonceLen]byte{1}}.Encode()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Stimulus: the SAME datagram from an ON-link source is accepted. Without this,
+	// "the off-link one was dropped" is equally true of a socket dropping everything.
+	send(firstV4(t, onIf), good)
+	if _, err := sock.Read(time.Now().Add(2 * time.Second)); err != nil {
+		t.Fatalf("an on-link unicast was not accepted (%v) — the assertion below would pass "+
+			"for a socket that accepts nothing", err)
+	}
+	before := sock.Stats()
+
+	// And now the same bytes from off-link.
+	send(offIP, good)
+	got, err := sock.Read(time.Now().Add(2 * time.Second))
+	if err == nil {
+		t.Fatalf("an off-link unicast from %s was returned as a peer: %+v — anyone who can "+
+			"route a packet to this port could inject a candidate for any peer whose "+
+			"six-word name they know, and names are public by design", offIP, got)
+	}
+	if st := sock.Stats(); st.OffLink != before.OffLink+1 {
+		t.Errorf("OffLink went %d -> %d, want +1 — it was rejected, but not as off-link, so "+
+			"the counter a diagnostic reads would not show the attack",
+			before.OffLink, st.OffLink)
+	}
+	t.Logf("OFFLINK %s rejected, on-link %s accepted", offIP, firstV4(t, onIf))
+}
+
+func firstV4(t *testing.T, ifi net.Interface) net.IP {
+	t.Helper()
+	addrs, err := ifi.Addrs()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, a := range addrs {
+		if n, ok := a.(*net.IPNet); ok && n.IP.To4() != nil {
+			return n.IP
+		}
+	}
+	t.Fatalf("%s has no IPv4 address", ifi.Name)
+	return nil
+}
