@@ -130,3 +130,70 @@ func TestAnInvitationsPinsAreGoneWhenTheCeremonyEnds(t *testing.T) {
 		t.Error("pruning with an empty ceremony id was accepted — that matches every user pin")
 	}
 }
+
+// TestPinnedPeersReportsWhetherAPinIsCeremonyScoped.
+//
+// D29's whole feature is that a pin created from an invitation is *marked*, so it can be
+// pruned when the ceremony ends and a user-promoted pin can survive. That mark was
+// stored correctly and pruned correctly — and dropped by this accessor, so no caller
+// outside this package could ever see it.
+//
+// It was not a live defect: nothing outside asked, which is precisely what made it
+// invisible. It was a loaded gun — a public field on a public struct returned by a
+// public accessor, always the zero value, with no test able to fail for it. The first
+// code to ask "is this pin ceremony-scoped?" would have got a wrong answer silently.
+// Found by reading the accessor at P03's phase-open; fixed here, in the first slice
+// whose own code reads it.
+func TestPinnedPeersReportsWhetherAPinIsCeremonyScoped(t *testing.T) {
+	dir := t.TempDir()
+	pub, keyPath := newKey(t)
+	v, err := Create(dir, pub, keyPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	user := bytes.Repeat([]byte{0xa1}, 32)
+	guest := bytes.Repeat([]byte{0xa2}, 32)
+	const ceremony = "fedcba9876543210fedcba9876543210"
+
+	if err := v.AddPinnedPeer(user, "My colleague"); err != nil {
+		t.Fatal(err)
+	}
+	if err := v.AddCeremonyPeer(guest, "From the invitation", ceremony); err != nil {
+		t.Fatal(err)
+	}
+
+	byFP := map[string]PinnedPeer{}
+	for _, p := range v.PinnedPeers() {
+		byFP[hex.EncodeToString(p.Fingerprint)] = p
+	}
+	// The stimulus: both pins came back at all, so an assertion about their fields is
+	// not being made about an empty list.
+	if len(byFP) != 2 {
+		t.Fatalf("setup: %d pins returned, want 2", len(byFP))
+	}
+
+	if got := byFP[hex.EncodeToString(guest)].Ceremony; got != ceremony {
+		t.Errorf("a ceremony-scoped pin reports Ceremony = %q, want %q — D29's mark does not "+
+			"survive the accessor, so no caller outside this package can tell it apart from a "+
+			"pin the user made deliberately", got, ceremony)
+	}
+	// And the other direction, which is the half that makes the first meaningful: a
+	// user pin must NOT claim a ceremony. A copy that filled the field unconditionally
+	// would pass the assertion above.
+	if got := byFP[hex.EncodeToString(user)].Ceremony; got != "" {
+		t.Errorf("a pin the user made reports Ceremony = %q, want empty", got)
+	}
+
+	// Promotion is one-way: re-pinning a ceremony peer as a user peer clears the mark,
+	// so it survives the prune. Asserted through the accessor because that is now the
+	// thing under test.
+	if err := v.AddPinnedPeer(guest, "Promoted"); err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range v.PinnedPeers() {
+		if bytes.Equal(p.Fingerprint, guest) && p.Ceremony != "" {
+			t.Errorf("after promotion the pin still reports Ceremony = %q", p.Ceremony)
+		}
+	}
+}

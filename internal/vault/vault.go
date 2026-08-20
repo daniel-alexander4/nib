@@ -722,7 +722,18 @@ func (v *Vault) PinnedPeers() []PinnedPeer {
 	defer v.mu.Unlock()
 	out := make([]PinnedPeer, len(v.contents.PinnedPeers))
 	for i, p := range v.contents.PinnedPeers {
-		out[i] = PinnedPeer{Fingerprint: append([]byte(nil), p.Fingerprint...), Label: p.Label}
+		// Ceremony is copied, and its absence used to be a live trap: this accessor
+		// rebuilt each pin from Fingerprint and Label only, so every caller outside
+		// this package saw Ceremony == "" on ALL pins and could not tell a
+		// ceremony-scoped pin (D29) from a user pin. The lifecycle worked — addPinned
+		// and PruneCeremonyPeers read v.contents directly — which is exactly what
+		// made it invisible: a public field on a public struct that was always the
+		// zero value, with no test able to fail for it.
+		out[i] = PinnedPeer{
+			Fingerprint: append([]byte(nil), p.Fingerprint...),
+			Label:       p.Label,
+			Ceremony:    p.Ceremony,
+		}
 	}
 	return out
 }
