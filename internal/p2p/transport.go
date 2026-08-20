@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"math/big"
 	"net"
+	"sync/atomic"
 	"time"
 
 	"nib/internal/sign"
@@ -77,7 +78,7 @@ func SessionTLS(identityCertPEM, identityKeyPEM, pinnedSPKI []byte, server bool)
 		// callback relies solely on rawCerts and callers read the verified peer there.
 		InsecureSkipVerify: true,
 		VerifyPeerCertificate: func(rawCerts [][]byte, _ [][]*x509.Certificate) error {
-			_, err := verifyPinnedPeer(rawCerts, pinnedSPKI, time.Now())
+			_, err := verifyPinnedPeer(rawCerts, pinnedSPKI, timeNow())
 			return err
 		},
 	}
@@ -87,6 +88,31 @@ func SessionTLS(identityCertPEM, identityKeyPEM, pinnedSPKI []byte, server bool)
 		cfg.ClientAuth = tls.RequireAnyClientCert
 	}
 	return cfg, nil
+}
+
+// timeNow is the clock the pinned-peer check reads, indirected for one reason only:
+// **the property that matters about D19's cause 5 is that the typed error survives the TLS
+// boundary**, and that cannot be asserted by calling verifyPinnedPeer directly.
+//
+// crypto/tls could plausibly wrap, replace or discard an error returned from
+// VerifyPeerCertificate — it sends an alert and the peer sees something quite different —
+// so a unit test of the error type would be the vacuous version of this check: green while
+// no caller could ever recover the cause. Measured: it survives, and now a test says so.
+// It is an atomic.Value and not a plain var because handshakes run concurrently: a test
+// swapping the clock races every in-flight VerifyPeerCertificate, and `go test -race`
+// says so. A seam added for testability that introduces a data race into the thing it
+// tests is worse than no seam.
+var clock atomic.Value // func() time.Time
+
+func init() { clock.Store(time.Now) }
+
+func timeNow() time.Time { return clock.Load().(func() time.Time)() }
+
+// setClock swaps the clock and returns a restore func. Tests only.
+func setClock(f func() time.Time) func() {
+	prev := clock.Load().(func() time.Time)
+	clock.Store(f)
+	return func() { clock.Store(prev) }
 }
 
 // verifyPinnedPeer is the pinned-peer check, run inside VerifyPeerCertificate on
@@ -119,10 +145,75 @@ func verifyPinnedPeer(rawCerts [][]byte, pinnedSPKI []byte, now time.Time) ([]by
 		return nil, fmt.Errorf("peer leaf not signed by its pinned identity: %w", err)
 	}
 	// FRESHNESS: bounds the replay window of a leaked per-session ephemeral key.
-	if now.Before(leaf.NotBefore) || now.After(leaf.NotAfter) {
-		return nil, errors.New("peer transport certificate is expired or not yet valid")
+	//
+	// The refusal carries the DIRECTION and the MAGNITUDE, which is D19's fifth cause.
+	// Both numbers are in hand here and were thrown away: the error said "expired or not
+	// yet valid", which is two opposite facts in one sentence and names neither. Cause 5
+	// is the only one of the five that names a fix a user can perform in ten seconds, and
+	// before D35 it arrived as cause 4's "something else".
+	if now.Before(leaf.NotBefore) {
+		// Their certificate starts in OUR future: our clock is behind theirs.
+		return nil, &ClockSkewError{Behind: true, By: leaf.NotBefore.Sub(now)}
+	}
+	if now.After(leaf.NotAfter) {
+		// It ended in our past. Ambiguous by construction — a certificate genuinely older
+		// than transportTTL looks identical to a clock that is far enough ahead — so the
+		// message says what was observed and offers the clock as the likely cause rather
+		// than asserting it.
+		return nil, &ClockSkewError{Behind: false, By: now.Sub(leaf.NotAfter)}
 	}
 	return fp, nil
+}
+
+// ClockSkewError is D19's fifth cause: the peer's ephemeral certificate was refused on its
+// validity window, and the window says by how much and in which direction.
+//
+// A typed error rather than a message, and it lives here rather than in the server, because
+// the numbers exist only at the refusal site — `verifyPinnedPeer` is the one place that
+// holds `now`, `NotBefore` and `NotAfter` together, and it is called from inside TLS's
+// VerifyPeerCertificate hook where nothing else can see them.
+//
+// **Note the asymmetry, because a message that ignores it will be wrong half the time.**
+// `transportSkew` backdates NotBefore by 5 minutes and `transportTTL` runs 15 minutes
+// forward, so the two directions have different tolerances and both sides verify each
+// other. A skew that trips one machine may not trip the other.
+type ClockSkewError struct {
+	// Behind is true when THIS machine's clock is behind the peer's — their certificate
+	// is not yet valid here. False means their certificate has already expired here,
+	// which is either a genuinely old certificate or a clock that is ahead.
+	Behind bool
+	// By is how far outside the window we are, which is a LOWER BOUND on the skew: the
+	// window has its own width, so a clock can be wrong by up to transportSkew (behind)
+	// or transportTTL (ahead) without tripping anything at all.
+	By time.Duration
+}
+
+func (e *ClockSkewError) Error() string {
+	// Rounded to the minute: the sub-second precision is noise against a human clock, and
+	// D19 asks for a sentence somebody can act on.
+	by := e.By.Round(time.Minute)
+	if by == 0 {
+		by = time.Minute // "about 0 minutes" is not a sentence
+	}
+	if e.Behind {
+		return fmt.Sprintf("this machine's clock is at least %s behind the other side's — "+
+			"check the date and time on this computer", roughly(by))
+	}
+	return fmt.Sprintf("the other side's certificate expired %s ago here, which usually "+
+		"means this machine's clock is at least that far ahead — check the date and time "+
+		"on this computer", roughly(by))
+}
+
+// roughly renders a duration the way a person would say it.
+func roughly(d time.Duration) string {
+	switch {
+	case d < time.Hour:
+		return fmt.Sprintf("%d minute(s)", int(d.Minutes()))
+	case d < 24*time.Hour:
+		return fmt.Sprintf("%.1f hour(s)", d.Hours())
+	default:
+		return fmt.Sprintf("%.1f day(s)", d.Hours()/24)
+	}
 }
 
 // mintTransportCert generates a fresh ephemeral ECDSA key and a short-lived leaf
@@ -138,7 +229,11 @@ func mintTransportCert(idCert *x509.Certificate, idKey crypto.Signer) (tls.Certi
 	if err != nil {
 		return tls.Certificate{}, err
 	}
-	now := time.Now()
+	// Minted on the SAME clock the verifier reads, so a skewed machine mints a skewed
+	// certificate — which is what a genuinely wrong clock does. Reading time.Now() here
+	// while the check reads timeNow() skews half the machine, and a test built on that can
+	// only ever drive one direction.
+	now := timeNow()
 	tmpl := x509.Certificate{
 		SerialNumber:          serial,
 		Subject:               pkix.Name{CommonName: "nib-transport"},

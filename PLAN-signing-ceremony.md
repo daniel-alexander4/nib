@@ -202,7 +202,15 @@ on, and the third exists to make a multi-party proceeding safe to interrupt.
 **L1 — The rendezvous path affects reachability only, never identity.** Nothing
 learned from the DHT, from multicast, or from any other network source may
 influence *which* peer is accepted. Acceptance is decided solely by the pinned
-fingerprint (`internal/p2p/transport.go:83`) and the verification string. A
+fingerprint (~~`internal/p2p/transport.go:83`~~ **the `subtle.ConstantTimeCompare(fp, pinnedSPKI)`
+in `verifyPinnedPeer`, `internal/p2p/transport.go` — corrected 2026-08-20 at P04.S05**) and the
+verification string.
+
+*Cited by SYMBOL and not by line, and the reason is a measurement.* Line 83 was the closing brace
+of the `tls.Config` literal, so the law cited punctuation. The correction first read
+`transport.go:110-111` — and **that was stale before the same commit finished**, because adding the
+clock seam a few lines above pushed the comparison to 136. A line number in a law is a citation
+that rots on every edit above it; a symbol name does not. A
 rendezvous layer that lies can waste time; it can never substitute a signer.
 
 **L2 — No silent downgrade.** Any path that would complete a ceremony at less than
@@ -2625,7 +2633,7 @@ Exit criteria:
 - Each side learns its own public `IP:port` and its NAT class from DHT responses alone.
 - A published endpoint is retrievable by the peer computing the same key ~~from the two names~~ **from the invitation secret** *(amended 2026-08-20, P04.S03's grill — D6's amendment re-keyed this to the secret and `RecordKey`'s own comment refuses name-derivation by name; a builder satisfying the old text ships obfuscation and passes the gate)*.
 - Bootstrap works from a cached node list with no hostname resolution (D6).
-- A hostile or absent DHT degrades to the next tier without ever affecting which peer is accepted (L1).
+- A hostile or absent DHT degrades to the next tier without ever affecting which peer is accepted (L1). **(amended 2026-08-20 at P04.S05: the two halves close at different phases, and leaving this whole is what would make P04 unclosable.** *"Without ever affecting which peer is accepted"* closes HERE, driven at both tiers over both transports. *"Degrades to the next tier"* moves to **P05**, because there is no tier ordering in the tree to degrade through — `peerAddresses` is a two-way if/else and `findPeerOnLAN` says so in terms. The slice-level clause was amended first; amending only there would have left this one claiming a coverage the phase cannot have.)**
 - **The published record is encrypted under a key derived from ~~both names~~ the invitation secret: a DHT scraper holding ~~neither name~~ neither the invitation nor the secret sees opaque bytes and can neither read nor forge a candidate. (added 2026-08-17, plan-review C2, D6 pin; *amended 2026-08-20, P04.S03's grill — same correction*.)** **"Cannot forge" is graded `not measurable at this granularity`**: no instrument resolves it. What is measurable is that a record written under the wrong key is refused, which is narrower, and is what the ledger will say.
 - **A record published by a party who knows both names but holds neither identity key yields no more than N candidates; the N+1th is dropped and reported — driven by publishing N+50. (added 2026-08-17, plan-review C2.)** The bullet above it cannot see this: a hostile DHT that floods a bystander never affects which peer is accepted, and so satisfies it completely.
 - **The DHT library shares the session's local socket rather than opening its own, proven by a spike. (added 2026-08-17, plan-review C3, caveat 7.)** A self-address probe on a different socket measures a mapping the session will never use. **(amended 2026-08-18, Stage 2 grill: "shares" means *through the demultiplexer P02 built*, and the pair was chosen together at P02 — if this phase is where a DHT library is first tried against the QUIC one, P02's selection was not done.)**
@@ -2807,11 +2815,24 @@ Tasks:
 - T07 — a standing reader: `nib rendezvous --self-test`, opt-in, with its own banner, publishing and fetching one throwaway record.
 - T08 — the coverage, red-proved, and the PLAN amendments this grill earned.
 
-#### P04.S05 — The L1 guard and graceful degradation *(L1, D19)*
+#### P04.S05 — The L1 guard and graceful degradation *(L1, D19)* *(done 2026-08-20, v1.114.0)*
 Scope: prove the rendezvous cannot influence acceptance, and that its absence degrades rather than breaks. Refs: L1, D19.
-Acceptance:
-- **A hostile or absent DHT degrades to the next tier without ever affecting which peer is accepted (L1)** — driven in both directions, because a guard that only sees the absent case cannot see the hostile one.
-- The degradation is the message D19 names, not a generic failure.
+
+Acceptance *(amended 2026-08-20 at the slice grill; the deepdive read the acceptance path this plan did not author, and three clauses named things that do not exist yet)*:
+- ~~**A hostile or absent DHT degrades to the next tier**~~ **The tier-degradation half MOVES TO P05.** There is no tier ordering in the tree to degrade *through*: `peerAddresses` is a two-way if/else — typed address, else LAN browse — and `findPeerOnLAN`'s own doc says the browse is *"deliberately the whole of it for now: the caller reports that rather than falling through to a tier that does not exist yet."* No instrument at this slice can resolve the clause, and building a tier ladder inside S05 would be building P05.
+- **without ever affecting which peer is accepted (L1)** — **this is the slice, and it has never been driven.** Every `Dial` in the tree pins the listener it reaches, with two exceptions that are different attacks: one where the dialer was *tricked into pinning the impostor* (the MITM case, caught by the spoken string) and one where the *dialer* is the wrong identity. **Nothing anywhere dials an address whose listener is not the pinned peer**, which is exactly what a lying rendezvous produces.
+- **driven in both directions** — the absent case (`errNoPeerOnTheLink` reports rather than hangs) and the hostile case. **The hostile case is driven as an untrusted ADDRESS arriving at the dial, not as a hostile DHT**, because nothing in the shipped binary consumes the DHT — `internal/cli/rendezvous.go` is its only importer in the tree. Same threat, different stimulus, and the ledger says so rather than implying a DHT was driven.
+- ~~The degradation is the message D19 names, not a generic failure.~~ **Cause 5 lands here; causes 1–3 move to P05.** Cause 4 is the *generic* failure the clause forbids and is the only thing the ceremony path produces today. Causes 1–3 each need a rendezvous consumer or a tier ordering. **Cause 5 fits entirely inside this slice**: `verifyPinnedPeer` holds `now`, `leaf.NotBefore` and `leaf.NotAfter` at the refusal and discards all three into a bare error with no direction and no magnitude — and by D19's own text it is *"the only one of the five that names a fix the user can perform in ten seconds."*
+- **The CONSUMER side of L1 gains its first guard** *(added 2026-08-20)*. Five AST-walking guards exist in the tree and all five are producer-side; none walks `internal/server` or `internal/p2p`. An import-shaped guard cannot work at the consumer — that package's whole job is to hold both halves — so it must be value-shaped, and there is exactly one place it is sharp: `internal/server`'s `candidate` struct carries a **pinned fingerprint and a discovered address in one object**.
+- **The guard ships with a negative fixture and a red-proof row** *(added 2026-08-20)*. Every existing L1 row is against the producer-side guard; none plants a consumer-side violation.
+
+Tasks:
+- T01 — correct L1's citation (done above): it pointed at a closing brace.
+- T02 — the driven L1 test at both tiers: `internal/p2p` over the transport table, and `internal/server` through `/api/session/initiate` with a real fingerprint and an impostor's address.
+- T03 — each assertion gets its stimulus (the same rig with the correct pin connects) and asserts the **named** error, not merely non-nil. QUIC needs a different assertion from TCP: a rejected QUIC dial returns *success* and the refusal surfaces on the first read.
+- T04 — D19 cause 5: a typed error out of `verifyPinnedPeer` carrying direction and magnitude, and the sentence it produces.
+- T05 — the consumer-side guard over `candidate`'s composite literal, plus the pin chokepoint (`dialPeer`, `listenPeer`, `dialAny`).
+- T06 — the negative fixture and its `docs/red-proofs.md` row.
 
 **Both open measurements answered at the type level** *(2026-08-19, phase-open)*, and neither forces an amendment:
 
