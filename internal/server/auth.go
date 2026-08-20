@@ -131,7 +131,28 @@ func (s *Server) requireUnlocked(next http.HandlerFunc) http.HandlerFunc {
 
 // originIsLoopback allows requests with no Origin (same-origin) and rejects any
 // cross-site Origin.
+//
+// **An absent Origin is not evidence of same-origin, and `Sec-Fetch-Site` is.** Browsers
+// omit Origin on sub-resource GETs — `<img src>`, `<script src>`, `<link>` — so any page
+// the user had open could reach a route guarded only by this, which is exactly what
+// `requirePublicLoopback` was added to `GET /api/status` to stop. It stopped `fetch()`
+// (which does send Origin) and nothing else. Origin cannot simply be *required* instead:
+// browsers omit it on ordinary same-origin GETs too, so Nib's own UI would be refused.
+//
+// `Sec-Fetch-Site` is the header that answers the question directly, and it is sent on
+// every request by every browser Nib will launch in — the Chromium family, by
+// construction (`internal/browser`). It is trusted here for the reason it exists: it is a
+// forbidden header name, so page script cannot set or forge it.
 func originIsLoopback(r *http.Request) bool {
+	// Checked FIRST, because it is the only one of the two that can see the sub-resource
+	// case. `none` is a user-initiated navigation (typing the URL, a bookmark).
+	switch r.Header.Get("Sec-Fetch-Site") {
+	case "same-origin", "same-site", "none":
+		return true
+	case "": // no metadata (curl, an older client) — fall through to Origin
+	default: // "cross-site" and anything unrecognised
+		return false
+	}
 	origin := r.Header.Get("Origin")
 	if origin == "" {
 		return true

