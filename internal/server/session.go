@@ -946,13 +946,23 @@ func connectFailure(err error) string {
 }
 
 func dialPeer(transport, address string, cert, key, peerFP []byte) (*p2p.Conn, error) {
+	return dialPeerWithin(transport, address, cert, key, peerFP, sessionDialTimeout)
+}
+
+// dialPeerWithin is dialPeer with the timeout named by the caller.
+//
+// The LAN walk passes a much shorter one — see lanDialTimeout. sessionDialTimeout is sized
+// for an address a user TYPED, where patience across a slow internet path is the point; a
+// candidate heard on the local segment either answers in milliseconds or is not there, and
+// the difference is what an on-link flood multiplies.
+func dialPeerWithin(transport, address string, cert, key, peerFP []byte, timeout time.Duration) (*p2p.Conn, error) {
 	if err := checkTransport(transport); err != nil {
 		return nil, err
 	}
 	if transport == transportQUIC {
-		return p2p.QUICDial(address, cert, key, peerFP, sessionDialTimeout)
+		return p2p.QUICDial(address, cert, key, peerFP, timeout)
 	}
-	return p2p.Dial(address, cert, key, peerFP, sessionDialTimeout)
+	return p2p.Dial(address, cert, key, peerFP, timeout)
 }
 
 func listenPeer(transport, bind string, cert, key, peerFP []byte) (p2p.Listener, error) {

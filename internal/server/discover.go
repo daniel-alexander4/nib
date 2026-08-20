@@ -107,6 +107,28 @@ func resolve(pins []vault.PinnedPeer, s discovery.Seen) (candidate, bool) {
 // rather than returned. An attacker announcing faster than the real peer therefore
 // captured the browse outright and the genuine address was unreachable to any caller.
 // Keyed on fingerprint AND address, so the caller gets both and can try both.
+//
+// # And CAPPED, because that fix created the next attack
+//
+// The address is the observed source host plus the port **from the datagram payload**
+// (`resolve` above). So one on-link host needs no address spoofing at all: it announces the
+// six-word name — which the armed side broadcasts in the clear every 500 ms, and which this
+// very comment records is not a secret — with a different port each time, and every
+// datagram becomes another distinct candidate. `dialAny` then walked all of them serially
+// at 30 s each inside an HTTP handler, so a few hundred datagrams wedged
+// `/api/session/initiate` for hours.
+//
+// The cap has to be more than one, or it reintroduces the capture attack above; the whole
+// point is that the genuine peer must still be reachable when something else is also
+// announcing. Eight is well past any real host's address count (a dual-stack machine with
+// several interfaces is two or three) and small enough that the walk is bounded.
+//
+// The cap alone is not the fix. `dialAny` also takes a total budget — see `lanDialBudget`
+// — because a cap bounds how many candidates there are and says nothing about how long each
+// one is allowed to take.
+// maxLANCandidates bounds what one browse may hand to the dialer. See browsePeers.
+const maxLANCandidates = 8
+
 func browsePeers(b browser, pins []vault.PinnedPeer, window time.Duration) []candidate {
 	deadline := time.Now().Add(window)
 	seen := map[string]candidate{}
@@ -137,6 +159,11 @@ func browsePeers(b browser, pins []vault.PinnedPeer, window time.Duration) []can
 		}
 		order = append(order, key)
 		seen[key] = c
+		if len(order) >= maxLANCandidates {
+			// Stop reading rather than keep accumulating: the window's remaining time
+			// buys nothing once the list is full, and draining it is the flood's goal.
+			break
+		}
 	}
 	out := make([]candidate, 0, len(order))
 	for _, k := range order {

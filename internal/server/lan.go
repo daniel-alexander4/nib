@@ -201,13 +201,41 @@ func (s *Server) peerAddresses(w http.ResponseWriter, v *vault.Vault, address st
 	return found, true
 }
 
+// lanDialBudget bounds the WHOLE walk, not each hop.
+//
+// `sessionDialTimeout` bounds one dial; nothing bounded the loop. With N candidates that is
+// N×30 s inside an HTTP handler on a server with no WriteTimeout, and N was unbounded until
+// `maxLANCandidates` — see browsePeers, where an on-link host produces a fresh candidate per
+// datagram by varying the announced port. Capping N was the other half; this is the half
+// that holds even if the cap is later raised, because it bounds the thing the user
+// experiences (a wedged request) rather than the thing the attacker controls (a count).
+const (
+	lanDialBudget = 20 * time.Second
+	// lanDialTimeout is per candidate, and it is much shorter than sessionDialTimeout on
+	// purpose. That constant (30 s) is sized for an address a user TYPED — a peer across
+	// the internet behind a slow path, where patience is the whole point. These candidates
+	// are link-local: the peer is on the same segment and answers in milliseconds, so six
+	// seconds is already generous and thirty is only ever spent on something that is not
+	// there. It is the count multiplier in the attack above.
+	lanDialTimeout = 6 * time.Second
+)
+
 // dialAny tries each candidate in order and returns the first connection that
 // establishes. Trying only the first was the defect: on a link where anything else
 // announces the same name, the genuine peer may not be first.
 func dialAny(transport string, addrs []string, cert, key, peerFP []byte) (*p2p.Conn, error) {
 	var last error
+	deadline := time.Now().Add(lanDialBudget)
+	var tried int
 	for _, a := range addrs {
-		conn, err := dialPeer(transport, a, cert, key, peerFP)
+		if tried > 0 && time.Now().After(deadline) {
+			// `tried > 0` so a slow clock or a long TLS handshake can never make this
+			// return without having dialled anything at all.
+			last = fmt.Errorf("gave up after %v and %d address(es): %w", lanDialBudget, tried, last)
+			break
+		}
+		tried++
+		conn, err := dialPeerWithin(transport, a, cert, key, peerFP, lanDialTimeout)
 		if err == nil {
 			return conn, nil
 		}
