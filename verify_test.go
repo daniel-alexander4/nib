@@ -35,7 +35,7 @@ func TestVerifyContractIsTrue(t *testing.T) {
 	// hands its document to the running instance on the platform where double-click
 	// is the ordinary way in. A harness that quietly stopped existing would take
 	// that claim with it and no tier would notice.
-	for _, cmd := range []string{"build/jsdomtest.sh", "build/uirepro.sh", "build/pairrepro.sh", "build/mcastrepro.sh", "build/winrepro.sh"} {
+	for _, cmd := range []string{"build/jsdomtest.sh", "build/uirepro.sh", "build/pairrepro.sh", "build/mcastrepro.sh", "build/winrepro.sh", "build/dhtlive.sh"} {
 		info, err := os.Stat(cmd)
 		if err != nil {
 			t.Errorf("%s is named in the contract but does not exist: %v", cmd, err)
@@ -79,6 +79,7 @@ func TestVerifyContractIsTrue(t *testing.T) {
 		{"CONTRIBUTING.md", "black-hole default route"},
 		{"build/winrepro.sh", "What this harness CANNOT discharge"},
 		{"build/mcastrepro.sh", "Where it still stops"},
+		{"build/dhtlive.sh", "What this harness CANNOT discharge"},
 	} {
 		body := contract
 		if c.file != "CONTRIBUTING.md" {

@@ -448,6 +448,40 @@ Endpoints are published to and fetched from the BitTorrent DHT under a key deriv
 from the two names. Bootstrapping uses a **cached node list**, populated on first
 contact — not hardcoded bootstrap hostnames.
 
+**(amended 2026-08-19, P04.S02 — Dan's call, "best, most correct for all of these".)**
+"Populated on first contact" never said first contact with *what*, and the slice that
+needed an answer measured the consequence: **a fresh install reaches the DHT never.**
+The four public bootstrap routers answer a query and **none returns the BEP-42 `ip`
+field** (0 of 5 addresses), nothing in the tree seeds `~/nib/dht-nodes`, and hostname
+bootstrap is forbidden here — so the routing table is empty, the self-address probe has
+nobody to ask, and the record has nowhere to go. Adopted in two halves:
+
+- **A shipped seed list of IP literals**, consulted only when the cache is empty and
+  replaced by the cache on first success. This keeps *both* reasons hostnames were
+  refused — no DNS lookup telling a third party who starts a ceremony and when, and no
+  single point that fails on a network which blocks or rewrites DNS — while giving a
+  genuinely cold machine somewhere to start. Measured at P04.S02: seeding the five
+  router addresses and traversing from them yields 28 nodes and 16 self-address
+  observations inside 30 s.
+- **Seed nodes carried in the invitation** (D21), so the common case never consults the
+  shipped list and a stale or blocked list is not fatal. This is the argument that
+  declined the second signalling path, applied again: the participants already hold a
+  channel and it cost nothing. **Filed against P04.S03**, being a change to the
+  invitation's payload rather than to bootstrap.
+
+*Unchanged:* hostname bootstrap stays refused, and `GlobalBootstrapAddrs`,
+`NewDefaultServerConfig` and every resolver stay forbidden on the bootstrap path. The
+seed list is IP literals precisely so the guard that enforces that does not move.
+
+*And the second half is not a nicety — measured within the hour.* Of the five addresses
+shipped, **three were already dead** the day the list was written, including
+`router.bittorrent.com` and `router.utorrent.com`, the two every guide still names. Then
+heavy use of the two live ones got them to keep answering `ping` while returning **no
+nodes** to `find_node`, so three consecutive cold starts bootstrapped to an empty table;
+patience recovered it. A two-address list is a single point of failure and this is what
+hitting one looks like. The cache is the durable mechanism and the invitation is what
+keeps a cold start rare.
+
 *Why Dan's call:* the DHT is not centralised, but it is a peer-discovery system
 being used for peer discovery, which brushes the "nothing designed for the purpose"
 constraint. That is a judgment about the constraint's intent.
@@ -1070,9 +1104,33 @@ the page, which is wrong as a record and, per D25, wrong as a layout.
 
 The ladder classifies NAT behaviour on the **RFC 4787 axis — mapping behaviour
 (endpoint-independent vs endpoint-dependent) and filtering behaviour** — not on
-whether the NAT is carrier-grade. The classification comes free from the DHT probe:
+whether the NAT is carrier-grade. The classification comes from a DHT probe:
 comparing the mapped `IP:port` reported by **two different DHT nodes** distinguishes
-the two mapping classes, exactly as a two-server STUN check does.
+the two mapping classes. ~~It comes free from the DHT probe~~, ~~exactly as a
+two-server STUN check does~~.
+
+**(amended 2026-08-19, P04.S02 — Dan's call, "best, most correct for all of these".)**
+Both struck clauses were wrong, and the slice that implemented the sentence is what
+found them.
+
+- ~~"comes **free**"~~ — it does not. It needs distinctness rules (two DHT nodes behind
+  one NAT are one destination, so the count is over **/24 and /48 prefixes**, not over
+  nodes), per-family scoping, a bogon filter, corroboration across nodes, and a third
+  value. Each is small; together they are the slice.
+- ~~"exactly as a two-server STUN check does"~~ — it is *analogous*, and the difference
+  is load-bearing. RFC 5780 uses a server the client chose, with a known alternate
+  address **and alternate port**. The DHT offers no alternate port, no assurance that
+  two responders are topologically distinct, and every responder is an anonymous
+  stranger with an incentive to lie.
+
+*What the probe actually resolves*, stated so nothing downstream over-reads it:
+**one bit** — endpoint-independent versus the merged {address-dependent,
+address-and-port-dependent}. Separating those two needs a second observation from the
+*same* address on a *different* port, which the DHT cannot be asked for.
+**Filtering behaviour is not measured at all**, and it is half of what decides whether
+a punch succeeds. And the reading is a snapshot of one allocation rather than a property
+of the NAT: Linux MASQUERADE preserves a free source port, so a conditionally-symmetric
+NAT reads as endpoint-independent until that port is contended.
 
 ~~Four~~ **Five (2026-08-18)** causes, ~~four~~ **five** messages — where the plan previously had one:
 
@@ -1082,10 +1140,36 @@ the two mapping classes, exactly as a two-server STUN check does.
    network that blocks outbound UDP. → names the LAN and manual/VPN paths, which are
    the two that survive (D14).
 3. **The peer published but nothing connects, and the mapping classes explain it.**
-   Both ends endpoint-dependent with no port mapping obtained. → says a direct
-   connection is not possible between these two networks, and names the two things
-   that fix it: either side enabling port mapping on their router, or a VPN both
-   already run.
+   ~~Both ends~~ **this side (2026-08-19)** endpoint-dependent with no port mapping
+   obtained. → says a direct connection is not possible between these two networks, and
+   names the two things that fix it: either side enabling port mapping on their router,
+   or a VPN both already run.
+
+   **(amended 2026-08-19, P04.S02 — Dan's call, "best, most correct for all of these".)**
+   Two corrections, both found by building the probe rather than by reading the decision.
+
+   **The predicate becomes one-sided.** "Both ends" is a joint predicate over two hosts
+   and **nothing carries the peer's class** — P04.S03's record defines no such field — so
+   as written this cause could never be computed, and would degrade to cause 4 *even when
+   both probes succeeded*. That is not caveat 9's degradation; it is a cause that never
+   fires. Adding the field was considered and **refused**: D17 already declined to publish
+   the ceremony *role* because it "would add metadata to exactly the surface the plan is
+   already watching", a NAT class is the same category of metadata on the same surface,
+   and every roster member holds the encryption secret — so a forged "I am
+   endpoint-dependent" would make the other side give up early with a *confident wrong*
+   message, which is worse than a vague one. One-sided is weaker, honest, and always
+   computable.
+
+   **The advice becomes conditional, because as written it is wrong for the population
+   that most often triggers it.** "Either side enabling port mapping on their router" is
+   what D9's pin says must not be said to someone behind CGNAT, who "cannot port-forward,
+   having no control of the carrier's NAT", and caveat 8 records that carriers mostly do
+   not answer PCP. The sting is that a CGNAT violating RFC 4787's Paired pooling hands out
+   a different external IP per destination — which is *precisely* what makes two
+   observations disagree and lands the user in this cause. So port-forwarding is offered
+   only on evidence the user controls a NAT: the mapped address is **not** in
+   `100.64.0.0/10`, **and** D15's port-mapping tier got an answer. Otherwise the message
+   names the VPN path and stops.
 4. **The peer published, the classes do not explain it.** Something else — filtering,
    a firewall, an asymmetric failure. → an honest "couldn't establish a connection"
    with the per-tier detail available.
@@ -2538,12 +2622,72 @@ Tasks:
 - T03 — the no-resolution guard: nothing on the bootstrap path resolves a hostname.
 - T04 — driven at tier 5: a DHT and a QUIC session on one socket, and a restart that reloads.
 
-#### P04.S02 — The self-address probe and NAT classification *(D19, caveat 9)*
+#### P04.S02 — The self-address probe and NAT classification *(D19, caveat 9)* *(done 2026-08-19, v1.111.1)*
 Scope: learn this host's own public endpoint from DHT responses, and classify the mapping. Refs: D19, caveat 2, caveat 9.
 Acceptance:
 - This side learns its own public `IP:port` **from DHT responses alone**, and the port is observed **on the wire from a real node**, not inferred from the type carrying a port field (see the phase-open note: the representation is settled, the behaviour is not).
 - Two observations from **different** nodes distinguish the two mapping classes (D19).
 - Caveat 9 — that two distinct nodes answer inside D16's probe budget — is discharged by measurement, or its degradation to cause 4 is recorded rather than assumed.
+
+**The field this slice exists to read is a remote process kill, and the slice absorbs the
+fix** *(2026-08-19, Reality drift)*: `krpc.NodeAddr.UnmarshalBinary` does
+`make(net.IP, len(b)-2)` with no length check (`nodeaddr.go:35`); bencode's decoder
+**re-panics runtime errors** deliberately (`decode.go:45`); and the decode runs on the
+goroutine `dht.NewServer` starts (`server.go:247`), which nothing Nib writes can recover.
+**Reproduced through Nib's own mux:** 21 bytes — `d2:ip0:1:t2:zz1:y1:re` — from any host
+that can send one datagram to the session port, with a well-formed ping answered first to
+prove the stimulus. No session, no routing-table entry, no race required. Its silent
+sibling: a **4-byte** `ip` field returns *no error* and yields a plausible port from a
+message that never contained one, so caveat 2's clause cannot be satisfied by reading
+`Reply.IP.Port` alone.
+
+It is not yet reachable in a shipped binary — `internal/rendezvous` has no importer
+outside its own tests — which is exactly why it is fixed **here** rather than filed: S02
+and S03 are the slices that would ship it.
+
+**And there was a second door, which the first fix could not see** *(2026-08-19, found by
+the slice's own review, both agents independently)*. `handleQuery` binds `args := m.A` and
+reads `args.Token` for `announce_peer` and `put` with no nil check, while `get_peers`
+guards exactly that field one case earlier — so **34 bytes of
+`d1:q13:announce_peer1:t2:zz1:y1:qe` is a nil dereference**, on the same unrecoverable
+goroutine. These datagrams *decode perfectly*, so the decode screen passes them, correctly
+and uselessly. Screening the decoder is not screening the library. Closed with an
+`OnQuery` gate, and the rule is general rather than a list of the two query names: every
+query type was fuzzed against three shapes of `a`, and **only an entirely absent
+arguments dict crashes anything** — an empty one is survivable everywhere.
+
+**A third, cheaper attack came out of the same review** and is fixed with it: bencode
+allocates a declared string length before reading it, with a ~128 MiB ceiling
+`bencode.Unmarshal` cannot lower, so **17 bytes buy 134,221,493 bytes of allocation**. The
+screen now decodes under a bound of the datagram's own length — a string longer than its
+container cannot exist — and drops on that error, so neither decoder pays it. Measured
+after: 640 bytes.
+
+**Three further defects in P04.S01's own code**, all on this slice's path and all found by
+driving it: `Ping` takes a `ctx` the library discards (`context.TODO()`,
+`server.go:1064`); it returns `res.Err`, so a node answering a **KRPC error** counts as
+alive; and `writeNodes` drops every non-IPv4 node, which with the empty-table guard means
+a v6-only host writes no cache and cold-starts forever.
+
+Tasks:
+- T01 — screen the DHT view: decode each datagram with the library's **own** decoder under
+  `recover`, and drop what does not survive. It cannot drift from the library's parsing
+  rules, because it asks them.
+- T02 — `Ping` honours its context (`Query`) and its errors (`ToError()`).
+- T03 — the node cache carries IPv6 (20 + 16 + 2 bytes), and an unreadable cache stops
+  being fatal — which is what its own comment already claimed.
+- T04 — the seed list of IP literals, consulted only when the cache is empty (D6's
+  amendment), plus a bootstrap traversal that turns seeds into a usable table.
+- T05 — the probe: up to 16 nodes in **distinct /24 and /48 prefixes** inside D16's 8 s,
+  rejecting an `ip` whose decoded length is not 4 or 16, whose port is 0, or which is
+  loopback / private / CGNAT / link-local / documentation — a counter per cause.
+- T06 — three-valued classification, `MappingUnknown` as the **zero value**, per family,
+  compared with `net.IP.Equal`; a strict majority across ≥2 distinct prefixes gives
+  endpoint-independent, so a lying node is outvoted rather than obeyed.
+- T07 — the L1 guard this package's doc already claims to have, **repaired**: it walks
+  parameter and result *types*, not only names, and forbids `dht.ServerConfig.PublicIP`.
+- T08 — `build/dhtlive.sh`: out-of-loop like `winrepro.sh`, opt-in, skipping cleanly,
+  running the product's own probe against the real DHT.
 
 #### P04.S03 — The published record: signed, encrypted, expiring *(D6, D30, C2)*
 Scope: publish and fetch the candidate record under the per-hop rendezvous key. Refs: D6, D21, D30, plan-review C2.

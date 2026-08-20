@@ -7,7 +7,7 @@ half-answers.
 
 ## The build & verify contract
 
-Run all four after a change. Each states what it can see, and — more importantly —
+Run them all after a change. Each states what it can see, and — more importantly —
 what it cannot, because a check whose blind spots are undocumented gets trusted
 for things it never looked at.
 
@@ -31,6 +31,16 @@ playwright-core, dev-only, `node_modules/` is git-ignored) and have a
 Chromium-family browser on `PATH` — the same browser Nib itself needs to show its
 UI, so if Nib runs at all, tier 3 can run.
 
+There is also `./build/dhtlive.sh`, the **one harness that is not hermetic**. It runs
+the self-address probe against the real BitTorrent DHT, because P04.S02's acceptance
+requires this host's mapped port to be observed *on the wire from a real node* and no
+hermetic tier can show that: two `anacrolix/dht` servers on loopback do set the BEP-42
+`ip` field, so a local test proves the plumbing and nothing about the network. It is
+deliberately out of the routine loop for the same reason tier 3 was made hermetic —
+a check that reaches the public internet imports every stranger's outage into your
+build. Run it when touching `internal/rendezvous`, the seed list, or NAT
+classification.
+
 There is also `./build/winrepro.sh`, which runs the Windows binary under wine to
 check the places `path/filepath` answers differently, and to run a **second
 launch** against a live first one — the single-instance hand-off, on the platform
@@ -38,7 +48,7 @@ where double-click is the ordinary way in and where the mechanism it replaced
 never worked at all. It is not part of the routine loop — run it when touching
 path handling, file dialogs, launch/hand-off, or packaging.
 
-## The four tiers, and why there are four
+## The tiers, and why there is more than one
 
 They are not redundancy. Each one exists because the tier below it is blind to
 something, and each says so in its own file rather than only here.

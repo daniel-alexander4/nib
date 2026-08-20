@@ -31,10 +31,10 @@ import (
 	"path/filepath"
 	"sync"
 	"sync/atomic"
-	"time"
 
 	"github.com/anacrolix/dht/v2"
 	"github.com/anacrolix/dht/v2/krpc"
+	"golang.org/x/time/rate"
 )
 
 // bootstrapFile is where the cached node list lives.
@@ -56,6 +56,50 @@ type Stats struct {
 	Loaded int
 	// Saved is how many were written back on close.
 	Saved uint64
+	// CacheRejected is true when a node cache existed and could not be parsed. The
+	// run continues as a cold start, so without this field the two are
+	// indistinguishable — and they want different advice.
+	CacheRejected bool
+	// Seeds is how many shipped seed addresses were used because the cache was
+	// empty. Non-zero means this was a cold start.
+	Seeds int
+	// Bootstrapped is how many nodes the bootstrap traversals ADDED to the table — not
+	// how many seeds replied, which is a different question this cannot answer, since
+	// the traversal learns nodes from nodes. **Zero while Seeds is non-zero is the rot
+	// alarm**: nothing reachable came of every address Nib ships, which will eventually
+	// be true and is otherwise invisible.
+	Bootstrapped uint64
+
+	// Screened is datagrams dropped before the library's decoder saw them, each of
+	// which would have panicked the process. **Non-zero is an attack or a badly
+	// broken node** — and either way Nib is alive to report it.
+	Screened uint64
+	// RefusedQueries is inbound queries stopped before the library's HANDLERS saw
+	// them — a different door and therefore a different counter, because a datagram
+	// that kills the decoder and one that kills `announce_peer` say different things
+	// about who is sending it. Same reading: non-zero and still running.
+	RefusedQueries uint64
+
+	// Observed is replies that carried a usable `ip` field.
+	Observed uint64
+	// RejectedLength, RejectedPort and RejectedScope are replies whose `ip` was
+	// refused, split by cause rather than summed. A 4-byte `ip` decodes into a
+	// PLAUSIBLE port with no error, so a length refusal is silent corruption caught;
+	// a scope refusal is somebody pointing us at a victim. Lumping them would make
+	// the interesting one unreadable.
+	RejectedLength uint64
+	RejectedPort   uint64
+	RejectedScope  uint64
+	// Disagreements is observations that differed from a majority **that formed
+	// anyway** — the lying-node case specifically, which is the one with no other
+	// signal.
+	//
+	// Zero under an endpoint-dependent classification is STRUCTURAL, not quiet: there
+	// is no winning group to be outside of, and the classification is itself the
+	// report. A first version of this comment claimed non-zero meant "either real
+	// endpoint-dependence or a liar", which the code never did and which would have
+	// had a reader looking for the wrong thing.
+	Disagreements uint64
 }
 
 // Server is a DHT bound to a socket somebody else owns.
@@ -64,8 +108,20 @@ type Server struct {
 	dir  string
 	once sync.Once
 
-	loaded int
-	saved  atomic.Uint64
+	loaded        int
+	cacheRejected bool
+	seeds         int
+	saved         atomic.Uint64
+	bootstrapped  atomic.Uint64
+
+	screened       atomic.Uint64
+	refusedQueries atomic.Uint64
+
+	observed       atomic.Uint64
+	rejectedLength atomic.Uint64
+	rejectedPort   atomic.Uint64
+	rejectedScope  atomic.Uint64
+	disagreements  atomic.Uint64
 }
 
 // Open starts a DHT on the supplied connection.
@@ -85,18 +141,58 @@ func Open(conn net.PacketConn, dir string) (*Server, error) {
 	}
 	s := &Server{dir: dir}
 
+	// Nothing reaches the library's decoder unscreened. See screen.go: 21 bytes of
+	// UDP from any host kill the process otherwise, on a goroutine nothing here owns.
+	conn = &screened{PacketConn: conn, dropped: &s.screened}
+
 	nodes, err := s.loadNodes()
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
-		// A corrupt cache is not fatal — it is a first run with extra steps. Said
-		// out loud rather than swallowed, because "no nodes" and "nodes I could not
-		// read" want different advice.
-		return nil, fmt.Errorf("read the cached node list: %w", err)
+		// A corrupt cache is not fatal — it is a first run with extra steps.
+		//
+		// This comment said exactly that from the day it was written, and the code
+		// under it returned an error, so an unreadable `dht-nodes` file stopped Nib
+		// from starting at all. The comment was right; the code now agrees with it,
+		// and Stats().CacheRejected is how the difference stays visible instead of
+		// being swallowed.
+		s.cacheRejected = true
+		nodes = nil
 	}
 	s.loaded = len(nodes)
+
+	// A genuinely cold machine has nowhere to start, which is what D6's 2026-08-19
+	// amendment exists to fix. Seeds are consulted ONLY when the cache is empty, so a
+	// machine that has ever spoken to the DHT never touches them again.
+	var seeds []*net.UDPAddr
+	if len(nodes) == 0 {
+		seeds = seedNodes()
+		s.seeds = len(seeds)
+	}
 
 	cfg := &dht.ServerConfig{
 		Conn:       conn,
 		NoSecurity: false,
+		// Nib's own rate limit, not the library's package-level one.
+		//
+		// `dht.DefaultSendLimiter` is a **process-global** `rate.Limiter` shared by
+		// every Server (server.go:222-224), and replies go through it with
+		// `wait=false` (server.go:691, :813) — so when the burst is gone a reply is
+		// not delayed, it is **dropped**, and `reply()` only logs it. A node that
+		// stops answering gets dropped from other nodes' routing tables, and nothing
+		// here would say why.
+		//
+		// Found by driving it: the self-address probe's 16-query fan-out plus
+		// bootstrap drained the shared burst, and a ping between two of our own
+		// servers then timed out with the receiving side's mux showing the query had
+		// arrived. Owning the limiter makes the rate a property of Nib rather than of
+		// whatever else shares the process.
+		//
+		// `WaitToReply` stays false on purpose: this is an unauthenticated inbound
+		// path, and under a genuine flood dropping is the right backpressure —
+		// blocking would park a goroutine per attacker packet.
+		SendLimiter: rate.NewLimiter(250, 64),
+		// The second door. See gateQuery: a query carrying no arguments dict is a nil
+		// dereference inside handleQuery, on a goroutine nothing here can recover.
+		OnQuery: s.gateQuery,
 		// The cached list, and nothing else.
 		//
 		// **Read before it was written down, because the obvious belief is wrong.**
@@ -112,9 +208,12 @@ func Open(conn net.PacketConn, dir string) (*Server, error) {
 		// still right, because "the cache, deliberately" and "nothing, by omission"
 		// should not look identical in the source.
 		StartingNodes: func() ([]dht.Addr, error) {
-			out := make([]dht.Addr, 0, len(nodes))
+			out := make([]dht.Addr, 0, len(nodes)+len(seeds))
 			for _, n := range nodes {
 				out = append(out, dht.NewAddr(n.Addr.UDP()))
+			}
+			for _, a := range seeds {
+				out = append(out, dht.NewAddr(a))
 			}
 			return out, nil
 		},
@@ -133,17 +232,57 @@ func (s *Server) Nodes() []krpc.NodeInfo { return s.dht.Nodes() }
 // Stats reports what happened.
 func (s *Server) Stats() Stats {
 	return Stats{
-		Nodes:  s.dht.NumNodes(),
-		Loaded: s.loaded,
-		Saved:  s.saved.Load(),
+		Nodes:          s.dht.NumNodes(),
+		Loaded:         s.loaded,
+		Saved:          s.saved.Load(),
+		CacheRejected:  s.cacheRejected,
+		Seeds:          s.seeds,
+		Bootstrapped:   s.bootstrapped.Load(),
+		Screened:       s.screened.Load(),
+		RefusedQueries: s.refusedQueries.Load(),
+		Observed:       s.observed.Load(),
+		RejectedLength: s.rejectedLength.Load(),
+		RejectedPort:   s.rejectedPort.Load(),
+		RejectedScope:  s.rejectedScope.Load(),
+		Disagreements:  s.disagreements.Load(),
 	}
 }
 
-// Ping is the one query this slice needs: it is how a cached node is confirmed
-// live, and how the table is populated on a first run.
+// Ping confirms a node is live, and populates the table on a first run.
+//
+// Two things here are deliberate and were both wrong in the first version.
+//
+// It goes through Query rather than the library's Ping, because `Server.Ping` passes
+// `context.TODO()` (server.go:1064) — so this function took a context and silently
+// discarded it, and every caller's deadline was decoration.
+//
+// And it returns `ToError()` rather than `res.Err`, because a node that answers with a
+// KRPC *error reply* leaves `Err` nil: the query succeeded, the answer was "no". Read
+// the old way, a node refusing us counted as a healthy one.
 func (s *Server) Ping(ctx context.Context, addr *net.UDPAddr) error {
-	res := s.dht.Ping(addr)
-	return res.Err
+	res := s.dht.Query(ctx, dht.NewAddr(addr), "ping", dht.QueryInput{})
+	return res.ToError()
+}
+
+// Bootstrap turns whatever starting nodes exist — the cache, or the seeds on a cold
+// machine — into a usable routing table.
+//
+// The self-address probe needs this and cannot substitute for it: measured against the
+// public DHT on 2026-08-19, the bootstrap routers answer queries but **none of them
+// returns the `ip` field** the probe reads. A router-only table yields zero
+// observations, so "bootstrapped" and "able to see ourselves" are two states and this
+// is the step between them.
+func (s *Server) Bootstrap(ctx context.Context) error {
+	before := s.dht.NumNodes()
+	_, err := s.dht.BootstrapContext(ctx)
+	// Read ONCE. Called twice — for the comparison and again for the subtraction — a
+	// table that shrank in between yields a negative int, and converting that to uint64
+	// makes it roughly eighteen quintillion.
+	after := s.dht.NumNodes()
+	if after > before {
+		s.bootstrapped.Add(uint64(after - before))
+	}
+	return err
 }
 
 // Close saves the node list and stops the DHT. **It does not close the socket** —
@@ -157,23 +296,57 @@ func (s *Server) Close() error {
 	return err
 }
 
-// loadNodes reads the cache. The format is the compact 6-byte form BEP-5 already
-// uses on the wire, so there is no second encoding to keep in step with the first.
+// nodeRecord is the on-disk size of one cached node: a 20-byte id, a 16-byte address,
+// and a 2-byte port.
+//
+// # Why 16 bytes and not the 6-byte compact form BEP-5 uses on the wire
+//
+// It was 26 bytes, mirroring the wire, and that quietly excluded IPv6 entirely: the
+// writer skipped every node whose address had no IPv4 form, and the "an empty table
+// must not truncate a good cache" rule then meant a v6-only host wrote **no cache at
+// all, ever**, and cold-started on every single run. The existing restart test could
+// not see it, because it runs on 127.0.0.1.
+//
+// So the record stores the 16-byte form and an IPv4 node goes in v4-mapped. Fixed-size
+// records keep the corruption check ("is it a multiple of the record size") exactly as
+// cheap as it was, which a tagged or variable-length encoding would not.
+const nodeRecord = 20 + 16 + 2
+
+// cacheMagic prefixes the file so its layout is stated rather than inferred.
+//
+// Without it the only check available is "is the length a multiple of the record
+// size", and record sizes collide: the previous 26-byte layout and this 38-byte one
+// share a multiple at 494 bytes, so a cache holding exactly **19 old records parses
+// cleanly as 13 new ones** — thirteen node addresses assembled from the wrong offsets.
+// That is worse than a refusal in a way that matters: a non-empty node list means the
+// seed addresses are NOT consulted, so the run bootstraps from thirteen fictions and a
+// cold start it could have recovered from becomes one it cannot.
+//
+// Eight bytes, and any future layout change becomes a version bump rather than an
+// arithmetic coincidence away from silent corruption.
+const cacheMagic = "NIBdht01"
+
+// loadNodes reads the cache.
 func (s *Server) loadNodes() ([]krpc.NodeInfo, error) {
 	b, err := os.ReadFile(filepath.Join(s.dir, bootstrapFile))
 	if err != nil {
 		return nil, err
 	}
-	const rec = 26 // 20-byte node id + 6-byte compact IPv4 endpoint
-	if len(b)%rec != 0 {
-		return nil, fmt.Errorf("cached node list is %d bytes, not a multiple of %d", len(b), rec)
+	if len(b) < len(cacheMagic) || string(b[:len(cacheMagic)]) != cacheMagic {
+		return nil, fmt.Errorf("cached node list does not begin with %q — it was written by "+
+			"a different version of Nib, or it is not ours", cacheMagic)
 	}
-	out := make([]krpc.NodeInfo, 0, len(b)/rec)
-	for i := 0; i+rec <= len(b); i += rec {
+	b = b[len(cacheMagic):]
+	if len(b)%nodeRecord != 0 {
+		return nil, fmt.Errorf("cached node list is %d bytes of records, not a multiple of %d",
+			len(b), nodeRecord)
+	}
+	out := make([]krpc.NodeInfo, 0, len(b)/nodeRecord)
+	for i := 0; i+nodeRecord <= len(b); i += nodeRecord {
 		var ni krpc.NodeInfo
 		copy(ni.ID[:], b[i:i+20])
-		ni.Addr.IP = net.IP(append([]byte(nil), b[i+20:i+24]...))
-		ni.Addr.Port = int(binary.BigEndian.Uint16(b[i+24 : i+26]))
+		ni.Addr.IP = net.IP(append([]byte(nil), b[i+20:i+36]...))
+		ni.Addr.Port = int(binary.BigEndian.Uint16(b[i+36 : i+38]))
 		out = append(out, ni)
 	}
 	return out, nil
@@ -196,15 +369,16 @@ func (s *Server) saveNodes() error {
 // The same lesson P03 learned about interface selection: a decision entangled with
 // the thing it queries is a decision no test can put in a state.
 func writeNodes(dir string, nodes []krpc.NodeInfo) (uint64, error) {
-	buf := make([]byte, 0, len(nodes)*26)
+	buf := make([]byte, 0, len(cacheMagic)+len(nodes)*nodeRecord)
+	buf = append(buf, cacheMagic...)
 	var n uint64
 	for _, ni := range nodes {
-		v4 := ni.Addr.IP.To4()
-		if v4 == nil || ni.Addr.Port <= 0 || ni.Addr.Port > 0xffff {
-			continue // IPv4 entries only; the compact form has no room for v6
+		ip16 := ni.Addr.IP.To16()
+		if ip16 == nil || ni.Addr.Port <= 0 || ni.Addr.Port > 0xffff {
+			continue
 		}
 		buf = append(buf, ni.ID[:]...)
-		buf = append(buf, v4...)
+		buf = append(buf, ip16...)
 		buf = binary.BigEndian.AppendUint16(buf, uint16(ni.Addr.Port))
 		n++
 	}
@@ -226,20 +400,4 @@ func writeNodes(dir string, nodes []krpc.NodeInfo) (uint64, error) {
 		return 0, err
 	}
 	return n, nil
-}
-
-// waitForNodes is a helper for callers that need a usable table before querying.
-func (s *Server) waitForNodes(ctx context.Context, want int) error {
-	t := time.NewTicker(50 * time.Millisecond)
-	defer t.Stop()
-	for {
-		if s.dht.NumNodes() >= want {
-			return nil
-		}
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-t.C:
-		}
-	}
 }
