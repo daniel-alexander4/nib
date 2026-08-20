@@ -220,12 +220,24 @@ func TestSeedsTriedButUselessIsNotReportedAsUsed(t *testing.T) {
 	_ = n.rz.Bootstrap(ctx)
 
 	st := n.rz.Stats()
-	// STIMULUS: the retry really did run, or this asserts nothing.
+	// STIMULUS: the retry really did RUN.
+	//
+	// InvitationSeeds alone proves only that Seed() was called — with just that check,
+	// deleting the whole retry block from Bootstrap left this test green: seeds 1, used
+	// false, nodes 0, all as asserted. The flag that says the retry happened is the one
+	// that has to be checked, and it is the flag this test is named for.
 	if st.InvitationSeeds != 1 {
 		t.Fatalf("InvitationSeeds = %d — the seeds were never supplied", st.InvitationSeeds)
 	}
+	if !st.InvitationSeedsTried {
+		t.Fatal("the retry never ran, so 'tried but useless' is not what this measured — " +
+			"delete Bootstrap's retry block and the rest of this test still passes")
+	}
 	if st.Nodes != 0 {
-		t.Skip("the dead seeds unexpectedly produced a table; nothing to assert")
+		// Not a Skip: a fixture pointing at 127.0.0.1:2 that produces a routing table
+		// means the fixture is broken, and skipping hides that.
+		t.Fatalf("the dead seeds produced %d node(s) — the fixture is not what this test "+
+			"assumes", st.Nodes)
 	}
 	if st.InvitationSeedsUsed {
 		t.Error("the seeds were tried and produced nothing, and the disclosure says the " +
@@ -250,3 +262,50 @@ func TestSeedsTriedButUselessIsNotReportedAsUsed(t *testing.T) {
 // Recorded here rather than as a lock plus a doc comment claiming to enforce something
 // `s.mu` already enforces. `TestSeedsTriedButUselessIsNotReportedAsUsed` above is the guard
 // that does have reach, and it is over the fact that actually went wrong: TRIED vs USED.
+
+// TestTheShippedListsRotAlarmSurvivesAnInvitationRescue.
+//
+// `dht.go`'s own doc: *"Zero while Seeds is non-zero is the rot alarm"* — the signal that
+// every address Nib ships is dead. Both bootstrap attempts added to the same
+// `bootstrapped` counter, so on the machine invitation seeds exist for (shipped list dead,
+// seeds rescue it) `Stats()` reported `Seeds: 5, Bootstrapped: 25` and the alarm read "the
+// shipped list worked" on a run where every shipped address had failed.
+//
+// The plan defends the `Seeds` term of that comparison by name. The confounding landed on
+// the other term.
+func TestTheShippedListsRotAlarmSurvivesAnInvitationRescue(t *testing.T) {
+	n := nodeWithCache(t, deadCache(t))
+	// A seed that answers, standing in for the invitation's list. The shipped list is
+	// unreachable from this test's namespace, so attempt one gains nothing — which is the
+	// machine under test.
+	fake := newFakeNode(t, "127.0.0.14", reports("93.184.216.34", 4000))
+	ap, ok := netip.AddrFromSlice(fake.addr.IP)
+	if !ok {
+		t.Fatal("the fake node's address is not an IP")
+	}
+	n.rz.Seed([]netip.AddrPort{netip.AddrPortFrom(ap.Unmap(), uint16(fake.addr.Port))})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	_ = n.rz.Bootstrap(ctx)
+
+	st := n.rz.Stats()
+	// STIMULUS: the retry ran and the seeds actually produced a table. Without both, the
+	// assertion below is about a run where nothing happened.
+	if !st.InvitationSeedsTried {
+		t.Skip("the retry did not run here; nothing to attribute")
+	}
+	if st.Nodes == 0 {
+		t.Skip("the invitation seed produced no table; nothing to attribute")
+	}
+
+	if st.Bootstrapped != 0 {
+		t.Errorf("Bootstrapped = %d after a run where only the INVITATION's seeds worked "+
+			"— the shipped list's rot alarm (Bootstrapped==0 while Seeds>0) cannot fire "+
+			"on the one machine it exists for", st.Bootstrapped)
+	}
+	if st.InvitationBootstrapped == 0 {
+		t.Error("InvitationBootstrapped = 0 — the nodes the seeds gained are attributed to " +
+			"nobody, which is the opposite mistake")
+	}
+}

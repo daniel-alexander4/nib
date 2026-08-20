@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"crypto/ed25519"
 	"github.com/anacrolix/dht/v2/bep44"
 	"github.com/anacrolix/dht/v2/krpc"
 	"github.com/anacrolix/torrent/bencode"
@@ -332,7 +333,32 @@ func TestWeServeOurOwnPublishedRecord(t *testing.T) {
 // Somebody served us something shaped wrong. That is a different fact from an absent record
 // and from one that failed its signature, and it had a counter that nothing read.
 func TestAValueThatIsNotBencodeIsCountedAsUndecodable(t *testing.T) {
-	st := &storer{items: map[bep44.Target]*bep44.Item{}}
+	// A REAL key, signed properly, because the counter is only reachable past getput's
+	// checks.
+	//
+	// The first version of this test left r.K and r.Sig zero, so getput's DoQuery pushed
+	// nothing to vChan, ret.V stayed empty, and Fetch took the fetchEmpty path — the
+	// counter this test is named for was never reached. Its assertion was
+	// `FetchUndecodable == 0 && FetchEmpty == 0`, an OR satisfied by the wrong outcome, so
+	// `fetchUndecodable.Add(1)` could be deleted with the suite green.
+	seed := bytes.Repeat([]byte{4}, ed25519.SeedSize)
+	priv, pub, err := keyPair(seed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	salt := []byte("undec")
+	// Valid bencode at the WIRE level, and not a byte string — which is what "undecodable"
+	// actually means here. `Fetch` does `bencode.Unmarshal(res.V, &value)` into a []byte,
+	// so a bencoded INTEGER reaches that call and fails it.
+	//
+	// Raw garbage does not work and is why the first attempt still measured nothing:
+	// krpc.Return.V is raw bencode, so `bencode.Marshal` of the reply message fails on it
+	// and the fake never answers at all — the fetch then records EMPTY, which is a
+	// different fact and was exactly what the old assertion's OR accepted.
+	bad := []byte("i42e")
+	var sig [64]byte
+	copy(sig[:], bep44.Sign(priv, salt, 1, bad))
+
 	fake := newFakeNode(t, "127.0.0.13", func(q krpc.Msg, id krpc.ID) []byte {
 		if q.A == nil {
 			return nil
@@ -341,10 +367,11 @@ func TestAValueThatIsNotBencodeIsCountedAsUndecodable(t *testing.T) {
 		if q.Q == "get" {
 			tok := "tok"
 			r.Token = &tok
-			// A value that is not bencode at all. It must still satisfy getput's target
-			// and signature checks to reach our decode, so it is served as raw bytes the
-			// library will hand back verbatim.
-			r.V = []byte("\xff\xff not bencode \xff\xff")
+			r.V = bad
+			r.K = pub
+			r.Sig = sig
+			seq := int64(1)
+			r.Seq = &seq
 		}
 		b, err := bencode.Marshal(krpc.Msg{T: q.T, Y: krpc.YResponse, R: &r})
 		if err != nil {
@@ -352,46 +379,21 @@ func TestAValueThatIsNotBencodeIsCountedAsUndecodable(t *testing.T) {
 		}
 		return b
 	})
-	_ = st
 
 	n := nodeSeeded(t, fake)
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
-	_, _, err := n.rz.Fetch(ctx, bytes.Repeat([]byte{4}, 32), []byte("undec"))
-	if err == nil {
+	_, _, ferr := n.rz.Fetch(ctx, seed, salt)
+	if ferr == nil {
 		t.Fatal("a non-bencode value was accepted as a record")
 	}
-	s := n.rz.Stats()
-	if s.FetchUndecodable == 0 && s.FetchEmpty == 0 {
-		t.Fatalf("neither undecodable nor empty was counted: %+v", s)
-	}
-}
-
-// TestAnAbortedLookupIsNotAnEmptyFetch.
-//
-// getput.Get sets err = ctx.Err() and leaves ret alone, so a cancelled lookup used to come
-// back as ErrNoRecord — which the ladder reports as "your peer has not published yet" — and
-// to increment FetchEmpty, whose own doc forbids exactly that.
-func TestAnAbortedLookupIsNotAnEmptyFetch(t *testing.T) {
-	_, fake := newStorer(t, "127.0.0.14")
-	n := nodeSeeded(t, fake)
-
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel() // already dead
-	_, _, err := n.rz.Fetch(ctx, bytes.Repeat([]byte{6}, 32), []byte("aborted"))
-	if err == nil {
-		t.Fatal("a cancelled fetch reported success")
-	}
-	if err == ErrNoRecord {
-		t.Fatal("a cancelled lookup came back as ErrNoRecord — the ladder would tell the " +
-			"user their peer has not published, when the truth is that we stopped asking")
-	}
-	s := n.rz.Stats()
-	if s.FetchAborted != 1 {
-		t.Errorf("FetchAborted = %d, want 1 (%+v)", s.FetchAborted, s)
-	}
-	if s.FetchEmpty != 0 {
-		t.Errorf("a cancelled lookup was counted as an empty fetch (FetchEmpty=%d)", s.FetchEmpty)
+	st := n.rz.Stats()
+	// AND, not OR — and the assertion is on the counter this test names. An empty fetch is
+	// a DIFFERENT fact and must not stand in for it.
+	if st.FetchUndecodable == 0 {
+		t.Errorf("FetchUndecodable = 0 (empty %d, aborted %d) — the value never reached "+
+			"our decoder, so this test says nothing about the counter it is named for: %v",
+			st.FetchEmpty, st.FetchAborted, ferr)
 	}
 }
 

@@ -86,6 +86,14 @@ type Stats struct {
 	// failed. Every downstream bound still holds — addrscope bounds which victim, the
 	// candidate cap bounds fan-out, D33 bounds packets — but the fact that the table came
 	// from a stranger's list is worth being able to read.
+	// InvitationBootstrapped is how many nodes the INVITATION's seeds contributed.
+	//
+	// Separate from Bootstrapped for the same reason InvitationSeeds is separate from
+	// Seeds: `Bootstrapped == 0 while Seeds > 0` is the shipped list's rot alarm, and
+	// crediting the retry's nodes to it makes the alarm unable to fire on exactly the
+	// machine the seeds rescued.
+	InvitationBootstrapped uint64
+
 	// InvitationSeedsTried is set once the demonstrated-failure retry has run. TRIED and
 	// USED are different facts: a retry that reached nothing leaves this true and USED
 	// false, and the operator note must not then claim the shipped list worked.
@@ -225,7 +233,11 @@ type Server struct {
 	mu       sync.Mutex
 	invSeeds []netip.AddrPort
 	// self is the probed public endpoint, kept so the seed sampler can refuse to ship it.
-	self          netip.AddrPort
+	self netip.AddrPort
+	// invBootstrapped is what the INVITATION's seeds gained, kept apart from bootstrapped
+	// so the shipped list's rot alarm stays readable. See Bootstrap.
+	invBootstrapped atomic.Uint64
+
 	invSeedsTried bool
 	invSeedsUsed  bool
 
@@ -377,35 +389,36 @@ func (s *Server) Stats() Stats {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return Stats{
-		Nodes:                s.dht.NumNodes(),
-		Loaded:               s.loaded,
-		Saved:                s.saved.Load(),
-		CacheRejected:        s.cacheRejected,
-		Seeds:                s.seeds,
-		InvitationSeeds:      len(s.invSeeds),
-		InvitationSeedsTried: s.invSeedsTried,
-		InvitationSeedsUsed:  s.invSeedsUsed,
-		Bootstrapped:         s.bootstrapped.Load(),
-		Screened:             s.screened.Load(),
-		RefusedQueries:       s.refusedQueries.Load(),
-		RefusedResponses:     s.refusedResponses.Load(),
-		Responses:            s.responses.Load(),
-		RefusedStores:        s.refusedStores.Load(),
-		PublishAttempts:      s.publishAttempts.Load(),
-		Published:            s.published.Load(),
-		PublishNodes:         s.publishNodes.Load(),
-		FetchAttempts:        s.fetchAttempts.Load(),
-		Fetched:              s.fetched.Load(),
-		FetchEmpty:           s.fetchEmpty.Load(),
-		FetchUndecodable:     s.fetchUndecodable.Load(),
-		FetchNodes:           s.fetchNodes.Load(),
-		FetchAborted:         s.fetchAborted.Load(),
-		PublishSeqCeiling:    s.publishSeqCeiling.Load(),
-		Observed:             s.observed.Load(),
-		RejectedLength:       s.rejectedLength.Load(),
-		RejectedPort:         s.rejectedPort.Load(),
-		RejectedScope:        s.rejectedScope.Load(),
-		Disagreements:        s.disagreements.Load(),
+		Nodes:                  s.dht.NumNodes(),
+		Loaded:                 s.loaded,
+		Saved:                  s.saved.Load(),
+		CacheRejected:          s.cacheRejected,
+		Seeds:                  s.seeds,
+		InvitationSeeds:        len(s.invSeeds),
+		InvitationBootstrapped: s.invBootstrapped.Load(),
+		InvitationSeedsTried:   s.invSeedsTried,
+		InvitationSeedsUsed:    s.invSeedsUsed,
+		Bootstrapped:           s.bootstrapped.Load(),
+		Screened:               s.screened.Load(),
+		RefusedQueries:         s.refusedQueries.Load(),
+		RefusedResponses:       s.refusedResponses.Load(),
+		Responses:              s.responses.Load(),
+		RefusedStores:          s.refusedStores.Load(),
+		PublishAttempts:        s.publishAttempts.Load(),
+		Published:              s.published.Load(),
+		PublishNodes:           s.publishNodes.Load(),
+		FetchAttempts:          s.fetchAttempts.Load(),
+		Fetched:                s.fetched.Load(),
+		FetchEmpty:             s.fetchEmpty.Load(),
+		FetchUndecodable:       s.fetchUndecodable.Load(),
+		FetchNodes:             s.fetchNodes.Load(),
+		FetchAborted:           s.fetchAborted.Load(),
+		PublishSeqCeiling:      s.publishSeqCeiling.Load(),
+		Observed:               s.observed.Load(),
+		RejectedLength:         s.rejectedLength.Load(),
+		RejectedPort:           s.rejectedPort.Load(),
+		RejectedScope:          s.rejectedScope.Load(),
+		Disagreements:          s.disagreements.Load(),
 	}
 }
 
@@ -469,7 +482,20 @@ func (s *Server) Bootstrap(ctx context.Context) error {
 		return err
 	}
 
+	// The retry's gains are counted SEPARATELY.
+	//
+	// Both attempts added to s.bootstrapped, so on the machine invitation seeds exist for
+	// — shipped list dead, seeds rescue it — Stats() reported `Seeds: 5, Bootstrapped: 25`
+	// and the rot alarm documented above ("Zero while Seeds is non-zero is the rot alarm")
+	// read "the shipped list worked" on a run where every shipped address was dead. The
+	// plan defends the Seeds term of that comparison by name; the confounding landed on
+	// the other term.
+	before := s.bootstrapped.Load()
 	err2 := s.bootstrapOnce(ctx)
+	if gained := s.bootstrapped.Load() - before; gained > 0 {
+		s.bootstrapped.Add(^(gained - 1)) // subtract: these nodes came from the seeds
+		s.invBootstrapped.Add(gained)
+	}
 
 	// USED is a separate fact from TRIED, and conflating them made the eclipse disclosure
 	// lie. The retry runs on the caller's context, which the first attempt may already have
