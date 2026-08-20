@@ -2,6 +2,7 @@ package p2p
 
 import (
 	"context"
+	"crypto/rand"
 	"errors"
 	"net"
 	"time"
@@ -63,7 +64,7 @@ func QUICDial(addr string, identityCertPEM, identityKeyPEM, pinnedSPKI []byte, t
 		return nil, err
 	}
 	mux := udpmux.New(sock)
-	tr := &quic.Transport{Conn: mux.QUIC()}
+	tr := &quic.Transport{Conn: mux.QUIC(), ConnectionIDGenerator: newCIDGen(mux)}
 
 	// One closer for the whole stack, so a caller that defers Close does not have to
 	// know a QUIC session owns a transport and a socket as well as a connection.
@@ -134,7 +135,7 @@ func QUICListen(addr string, identityCertPEM, identityKeyPEM, pinnedSPKI []byte)
 		return nil, err
 	}
 	mux := udpmux.New(sock)
-	tr := &quic.Transport{Conn: mux.QUIC()}
+	tr := &quic.Transport{Conn: mux.QUIC(), ConnectionIDGenerator: newCIDGen(mux)}
 	ln, err := tr.Listen(cfg, quicConfig())
 	if err != nil {
 		tr.Close()
@@ -266,3 +267,41 @@ func quicChannel(qc *quic.Conn, st *quic.Stream) (Channel, error) {
 // ever drops SetDeadline the failure should be here, naming the reason, rather than at
 // whichever call site happens to be compiled first.
 var _ Stream = (*quic.Stream)(nil)
+
+// cidLen is how long the connection IDs this endpoint issues are.
+//
+// Eight bytes: long enough that a bencode dictionary or a stray datagram matching one
+// by chance is 2^-64, short enough to cost nothing per packet. quic-go's own default
+// is four; the mux looks these up on every short header, so a wider id buys
+// separation from the DHT traffic sharing the socket for one extra word of hashing.
+const cidLen = 8
+
+// cidGen issues this endpoint's connection IDs and tells the demultiplexer about each
+// one — which is what lets the mux route a short header on its DESTINATION connection
+// id rather than on the sender's address.
+//
+// It matters because the address rule over-claims: a DHT node at the same IP:port as
+// an active QUIC peer was routed to QUIC and its reply lost. P02.S03 documented that
+// and left it; P04.S01's first driven test hit it, because a rendezvous ping to a host
+// we also hold a session with is exactly the shape.
+//
+// Every id this endpoint issues comes through here — dial (transport.go:277), accept
+// (server.go:812, :912) and rotation (conn_id_generator.go:138) all call the
+// generator — so the table is complete by construction.
+type cidGen struct{ mux *udpmux.Mux }
+
+func newCIDGen(m *udpmux.Mux) *cidGen {
+	m.UseConnectionIDs(cidLen)
+	return &cidGen{mux: m}
+}
+
+func (g *cidGen) ConnectionIDLen() int { return cidLen }
+
+func (g *cidGen) GenerateConnectionID() (quic.ConnectionID, error) {
+	b := make([]byte, cidLen)
+	if _, err := rand.Read(b); err != nil {
+		return quic.ConnectionID{}, err
+	}
+	g.mux.RegisterConnectionID(b)
+	return quic.ConnectionIDFromBytes(b), nil
+}

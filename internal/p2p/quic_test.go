@@ -3,6 +3,7 @@ package p2p
 import (
 	"encoding/hex"
 	"errors"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -195,5 +196,36 @@ func TestTheTwoTransportsAreSelectedByTheSameCore(t *testing.T) {
 	}
 	if !errors.Is(errChannelIncomplete, errChannelIncomplete) {
 		t.Fatal("unreachable")
+	}
+}
+
+// TestBothTransportsWireTheConnectionIDGenerator is the wiring guard the filed item
+// asked for, and it is here because the failure it prevents is silent.
+//
+// The mux falls back to routing on the peer ADDRESS while no connection id has been
+// registered — deliberately, because a generator a later change forgets to install
+// would otherwise send every short header to the DHT and break the SESSION, which is
+// the worse of the two failures. The cost of that safety net is that a missed wiring
+// looks like nothing at all: the session still works, and only a DHT reply from a host
+// we hold a session with is quietly swallowed.
+//
+// So the wiring is asserted at the source. Both constructors, because it was wiring
+// ONE end that made the first driven test still fail: B's mux learns A as a QUIC peer
+// from its own handshake writes, so a fix on one side is not a fix.
+func TestBothTransportsWireTheConnectionIDGenerator(t *testing.T) {
+	src, err := os.ReadFile("quic.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Stimulus: the file really constructs the transports this guard is about.
+	n := strings.Count(string(src), "&quic.Transport{")
+	if n == 0 {
+		t.Fatal("quic.go constructs no transports; the count below would pass on nothing")
+	}
+	if got := strings.Count(string(src), "ConnectionIDGenerator: newCIDGen("); got != n {
+		t.Errorf("%d of %d quic.Transport constructions install a connection-id generator. "+
+			"An unwired one does not fail loudly — the mux falls back to the address rule "+
+			"and the session keeps working, while a DHT reply from a session peer is "+
+			"silently swallowed.", got, n)
 	}
 }
