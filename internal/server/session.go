@@ -519,6 +519,31 @@ func labelSlug(label string) string {
 
 // --- HTTP handlers (all behind requireUnlocked: vault-unlocked, CSRF, loopback origin) ---
 
+// sessionModeCoSign is the other member, and it had no Go name at all until v1.116.11.
+//
+// The mode was used raw — `if mode == sessionModeReceive`, and anything else co-signed —
+// which is byte-for-byte the defect `checkTransport` was written to refuse, with the
+// argument spelled out over sixteen lines and a test named
+// `TestAnUnknownTransportIsRefusedNotSilentlyDowngraded`. "Receive", "recieve" and
+// "transfer" all silently armed a CO-SIGNING listener when the user asked for a transfer.
+// The client already had a name for it (`'cosign'`, web/app.js); Go knew it only by
+// negation, which is also why the display↔code pair had drifted.
+const sessionModeCoSign = "cosign"
+
+// checkSessionMode refuses a mode this build does not know, rather than defaulting.
+func checkSessionMode(mode string) error {
+	switch mode {
+	case sessionModeReceive, sessionModeCoSign, "":
+		// "" is co-sign, kept because it is what older clients send and the route has
+		// always treated it that way — an accepted spelling, not a silent fallback.
+		return nil
+	}
+	return fmt.Errorf("%w: %q (this build knows %q and %q)",
+		errUnknownSessionMode, mode, sessionModeCoSign, sessionModeReceive)
+}
+
+var errUnknownSessionMode = errors.New("unknown session mode")
+
 // sessionModeReceive arms the listener to accept a one-way document transfer (save to
 // ~/nib); any other mode value co-signs.
 const sessionModeReceive = "receive"
@@ -568,6 +593,11 @@ func (s *Server) handleSessionArm(w http.ResponseWriter, r *http.Request) {
 	label, ok := pinnedLabel(v, peerFP)
 	if !ok {
 		httpError(w, http.StatusBadRequest, "that peer isn't pinned — pin their fingerprint first")
+		return
+	}
+	// Refused, not defaulted. See checkSessionMode.
+	if err := checkSessionMode(req.Mode); err != nil {
+		httpError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	// An empty bind is the LAN path, not a mistake. The peer will learn the port from

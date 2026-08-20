@@ -51,14 +51,14 @@ func (s *Server) handleOffice(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	installed, cerr := s.addDocCapped(&document{path: "", data: pdf, sig: sign.Verify(pdf)})
+	// Present the converted PDF under the source name with a .pdf extension. Recorded ON
+	// the document, so /api/docs and a reload report it too — see document.name.
+	base := strings.TrimSuffix(header.Filename, filepath.Ext(header.Filename))
+	installed, cerr := s.addDocCapped(&document{path: "", name: base + ".pdf", data: pdf, sig: sign.Verify(pdf)})
 	if cerr != nil {
 		httpError(w, http.StatusConflict, cerr.Error())
 		return
 	}
 	resp := s.docResponse(installed)
-	// Present the converted PDF under the source name with a .pdf extension.
-	base := strings.TrimSuffix(header.Filename, filepath.Ext(header.Filename))
-	resp.Name = base + ".pdf"
 	writeJSON(w, resp)
 }

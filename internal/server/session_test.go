@@ -1146,3 +1146,32 @@ func TestAnUnknownTransportIsRefusedNotSilentlyDowngraded(t *testing.T) {
 		}
 	}
 }
+
+// TestAnUnknownSessionModeIsRefusedNotSilentlyDowngraded.
+//
+// `req.Mode` was used raw — `if mode == sessionModeReceive`, anything else co-signs. That
+// is byte-for-byte the defect `checkTransport` was written to refuse, with the argument
+// spelled out over sixteen lines and a sibling test of nearly this name. "Receive",
+// "recieve" and "transfer" all silently armed a CO-SIGNING listener when the user asked for
+// a one-way transfer — which is the difference between showing someone a document and
+// putting your signing key on it.
+func TestAnUnknownSessionModeIsRefusedNotSilentlyDowngraded(t *testing.T) {
+	// The controls FIRST: both real modes, and the empty string older clients send, must
+	// still be accepted. A validator that refuses everything is an outage.
+	for _, ok := range []string{sessionModeReceive, sessionModeCoSign, ""} {
+		if err := checkSessionMode(ok); err != nil {
+			t.Fatalf("checkSessionMode(%q) refused a mode this build ships: %v", ok, err)
+		}
+	}
+	for _, bad := range []string{"Receive", "recieve", "transfer", "RECEIVE", "co-sign", "send"} {
+		err := checkSessionMode(bad)
+		if !errors.Is(err, errUnknownSessionMode) {
+			t.Errorf("checkSessionMode(%q) = %v — this armed a co-signing listener for a "+
+				"user who asked for a transfer", bad, err)
+		}
+		// The message must quote what was sent, or a client typo is undiagnosable.
+		if err != nil && !strings.Contains(err.Error(), bad) {
+			t.Errorf("the refusal for %q does not quote it: %v", bad, err)
+		}
+	}
+}

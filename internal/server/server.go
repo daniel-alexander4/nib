@@ -87,6 +87,15 @@ type document struct {
 	// document was uploaded through the browser (no server-side path), in which
 	// case it cannot be saved in place.
 	path string
+	// name is the display name for a document with no path.
+	//
+	// Three routes (/api/upload, /api/combine, /api/office) set docResponse.Name after the
+	// fact and it was stored nowhere, so `docName(doc.path)` returned "" for them forever
+	// after — and `GET /api/docs` reported that. The client only assigns originalName when
+	// meta.name is truthy, so after a reload the tab rendered "Untitled" and export
+	// defaults reverted to "document". That is the second half of the very defect
+	// /api/docs was built to fix: it restored their REACHABILITY and not their identity.
+	name string
 	data []byte
 	sig  sign.Status
 
@@ -466,14 +475,16 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 		httpError(w, http.StatusUnsupportedMediaType, "that file isn't a PDF")
 		return
 	}
-	installed, err := s.addDocCapped(&document{path: "", data: data, sig: sign.Verify(data)})
+	// The uploaded filename is recorded ON the document, so /api/docs and a reload report
+	// it too. It used to be patched onto this one response and stored nowhere.
+	installed, err := s.addDocCapped(&document{
+		path: "", name: header.Filename, data: data, sig: sign.Verify(data),
+	})
 	if err != nil {
 		httpError(w, http.StatusConflict, err.Error())
 		return
 	}
-	resp := s.docResponse(installed)
-	resp.Name = header.Filename
-	writeJSON(w, resp)
+	writeJSON(w, s.docResponse(installed))
 }
 
 // handleClose puts the open document down without quitting: setDoc(nil) drops the
@@ -1074,7 +1085,7 @@ func (s *Server) docResponse(doc *document) docResponse {
 	}
 	resp := docResponse{
 		ID:             doc.id.String(),
-		Name:           docName(doc.path),
+		Name:           doc.displayName(),
 		Path:           doc.path,
 		CanSave:        doc.path != "",
 		Signature:      doc.sig,
@@ -1127,6 +1138,16 @@ func docName(path string) string {
 		return ""
 	}
 	return filepath.Base(path)
+}
+
+// displayName is the document's name: its path's base, or the one recorded at install for
+// a document that has no path. One accessor, so the three routes that used to patch the
+// response after the fact cannot drift from what /api/docs reports.
+func (d *document) displayName() string {
+	if n := docName(d.path); n != "" {
+		return n
+	}
+	return d.name
 }
 
 // sameBytes reports whether two slices are the SAME slice — same backing array and

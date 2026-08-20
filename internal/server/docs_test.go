@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"nib/internal/sign"
+	"nib/internal/testpdf"
 	"testing"
 )
 
@@ -94,4 +96,56 @@ func ids(d docsResponse) []string {
 		out = append(out, x.ID)
 	}
 	return out
+}
+
+// TestAPathlessDocumentKeepsItsNameAcrossAReload.
+//
+// Three routes — /api/upload, /api/combine, /api/office — set `docResponse.Name` after the
+// fact and stored it nowhere. `docName(doc.path)` returns "" for a path-less document, so
+// `GET /api/docs` reported `Name: ""` for them forever after; `web/app.js` only assigns
+// `originalName` when `meta.name` is truthy, so a reload rendered the tab as "Untitled" and
+// export defaults reverted to "document".
+//
+// That is the second half of the defect /api/docs was built to fix — its own comment names
+// uploads, combines and office conversions as the population, and it restored their
+// REACHABILITY without their identity.
+func TestAPathlessDocumentKeepsItsNameAcrossAReload(t *testing.T) {
+	_, s := startServerWith(t)
+	pdf, err := testpdf.Form()
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc := &document{path: "", name: "Lease Agreement.pdf", data: pdf, sig: sign.Verify(pdf)}
+	installed, err := s.addDocCapped(doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// STIMULUS: the install response names it, which is what always worked.
+	if got := s.docResponse(installed).Name; got != "Lease Agreement.pdf" {
+		t.Fatalf("the install response does not name the document (%q) — this test is not "+
+			"measuring the reload", got)
+	}
+
+	// The reload: a fresh GET /api/docs, which is what the client rebuilds tabs from.
+	rr := httptest.NewRecorder()
+	s.handleDocs(rr, httptest.NewRequest(http.MethodGet, "/api/docs", nil))
+	var out docsResponse
+	if err := json.Unmarshal(rr.Body.Bytes(), &out); err != nil {
+		t.Fatal(err)
+	}
+	var found bool
+	for _, d := range out.Docs {
+		if d.ID != installed.id.String() {
+			continue
+		}
+		found = true
+		if d.Name != "Lease Agreement.pdf" {
+			t.Errorf("/api/docs reports Name %q for an uploaded document — the client "+
+				"renders that tab as Untitled and exports default to \"document\"", d.Name)
+		}
+	}
+	if !found {
+		t.Fatal("the document is not in /api/docs at all")
+	}
 }
