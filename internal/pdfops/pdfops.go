@@ -120,7 +120,7 @@ func RemovePages(pdf []byte, pages []string) ([]byte, error) {
 	if err := api.RemovePages(bytes.NewReader(pdf), &out, pages, nil); err != nil {
 		return nil, err
 	}
-	return out.Bytes(), nil
+	return carryDocumentState(pdf, out.Bytes())
 }
 
 // Collect keeps only the given pages, in the exact order given (e.g.
@@ -132,7 +132,88 @@ func Collect(pdf []byte, order []string) ([]byte, error) {
 	if err := api.Collect(bytes.NewReader(pdf), &out, order, nil); err != nil {
 		return nil, err
 	}
-	return out.Bytes(), nil
+	return carryDocumentState(pdf, out.Bytes())
+}
+
+// carryDocumentState copies the page-INDEPENDENT catalog entries from src onto dst.
+//
+// # What was lost, measured rather than assumed
+//
+// `api.Collect` builds a brand-new context (`pdfcpu.ExtractPages` →
+// `CreateContextWithXRefTable` → `AddPages`) and migrates only the selected page dicts, the
+// AcroForm fields whose widgets are on those pages, and `Names["Dests"]`. Everything else in
+// the catalog is left behind.
+//
+// **And `RemovePages` loses the same things**, which is the part worth writing down: a
+// review filed this as "two page operations in the same switch, opposite behaviour" — delete
+// keeps them, everything else drops them. Measured on a five-page document carrying an
+// outline, /Lang and an attachment, both doors returned `outline=false lang=false
+// attach=false`. The asymmetry was not real; the loss was total.
+//
+// For the ceremony that is the sharp end: `nib-ceremony.json` is an ATTACHMENT, so
+// reordering or deleting a page after `PrepareDocument` destroyed the record and the handler
+// returned 200.
+//
+// # And what is deliberately NOT carried
+//
+// `/Outlines` and `/PageLabels` are page-INDEXED. An outline destination names a page
+// object, and after a Collect those objects are new and in a different order; a page label
+// range names a page index. Copying either across a reorder produces a document whose
+// contents page sends the reader to the wrong place — which is worse than not having one,
+// because it is wrong rather than absent. Restoring them properly means remapping every
+// destination through the same order the operation applied, which is per-operation work and
+// a different change. `Outline`/`SetOutline` exist for a caller that wants to do it.
+//
+// So: /Lang, /Metadata (XMP) and the embedded-files name tree, all of which mean the same
+// thing whatever order the pages are in.
+func carryDocumentState(src, dst []byte) ([]byte, error) {
+	// /Lang is a plain string in the catalog, so it copies directly.
+	sctx, err := api.ReadValidateAndOptimize(bytes.NewReader(src), model.NewDefaultConfiguration())
+	if err != nil {
+		return dst, nil // the source is what the operation already read; do not fail on it
+	}
+	sroot, err := sctx.XRefTable.Catalog()
+	if err != nil {
+		return dst, nil
+	}
+	if lang, ok := sroot.Find("Lang"); ok {
+		dst, err = writeMutated(dst, func(ctx *model.Context) error {
+			root, cerr := ctx.XRefTable.Catalog()
+			if cerr != nil {
+				return cerr
+			}
+			root["Lang"] = lang
+			return nil
+		})
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	// Attachments go back through THIS PACKAGE'S OWN primitives, not by copying the name
+	// tree across.
+	//
+	// The obvious splice — lift `Names["EmbeddedFiles"]` from the source catalog and drop it
+	// into the destination — does not work and does not fail loudly: those are indirect refs
+	// into the SOURCE xref, so in the new context they dangle. Measured, the result did not
+	// even re-read: "dict=fileSpecDict required entry=F missing". Extract-and-re-add costs a
+	// rewrite per attachment and produces a document a reader accepts.
+	names, err := Attachments(src)
+	if err != nil || len(names) == 0 {
+		return dst, nil
+	}
+	for _, a := range names {
+		data, xerr := ExtractAttachment(src, a.Name)
+		if xerr != nil {
+			continue // an attachment we cannot read is one we cannot carry; skip, never fail
+		}
+		next, aerr := AddAttachment(dst, a.Name, data)
+		if aerr != nil {
+			continue
+		}
+		dst = next
+	}
+	return dst, nil
 }
 
 // InsertBlank inserts a blank page immediately after the given page (1-based).
