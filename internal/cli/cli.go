@@ -20,6 +20,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"nib/internal/addrscope"
 	"os"
 	"path/filepath"
 	"strings"
@@ -309,17 +310,10 @@ func requireHTTPScheme(u *url.URL) error {
 	return nil
 }
 
+// blockPrivateIP refuses any address `addrscope.Routable` refuses, at connect time on the
+// resolved IP. **Shared with `internal/server`'s copy since P04's phase close** — the two
+// were byte-identical, both weaker than the repo's own table, and duplicating a security
+// predicate is how one of them gets fixed.
 func blockPrivateIP(_, address string, _ syscall.RawConn) error {
-	host, _, err := net.SplitHostPort(address)
-	if err != nil {
-		return err
-	}
-	ip := net.ParseIP(host)
-	if ip == nil {
-		return fmt.Errorf("could not parse dial address %q", address)
-	}
-	if ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsUnspecified() {
-		return fmt.Errorf("refusing to connect to non-public address %s", ip)
-	}
-	return nil
+	return addrscope.RefuseNonPublicDialAddress(address)
 }

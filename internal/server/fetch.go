@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"nib/internal/addrscope"
 	"syscall"
 	"time"
 )
@@ -47,26 +48,20 @@ func requireHTTPScheme(u *url.URL) error {
 	return nil
 }
 
-// blockPrivateIP is a net.Dialer.Control hook that refuses to connect to
-// loopback, private, link-local (incl. cloud-metadata 169.254.169.254) or
-// unspecified addresses. It runs at connect time on the actually-resolved IP, so
-// it also defeats DNS rebinding. Unlike the user-typed-URL paths (see the
-// TRIPWIRE above, where LAN targets are deliberately allowed), this guards URLs
-// taken from untrusted FILE content — there is no user choosing the host, so a
-// hostile file is exactly the "remote caller" that TRIPWIRE assumed didn't exist.
+// blockPrivateIP is a net.Dialer.Control hook that refuses to connect to any address
+// `addrscope.Routable` refuses — loopback, private, link-local (incl. cloud-metadata
+// 169.254.169.254), unspecified, multicast, shared address space, and the reserved
+// prefixes. It runs at connect time on the actually-resolved IP, so it also defeats DNS
+// rebinding. Unlike the user-typed-URL paths (see the TRIPWIRE above, where LAN targets
+// are deliberately allowed), this guards URLs taken from untrusted FILE content — there is
+// no user choosing the host, so a hostile file is exactly the "remote caller" that
+// TRIPWIRE assumed didn't exist.
+//
+// **The predicate moved to `internal/addrscope` at P04's phase close**, where the address
+// table already lived. Written out here it had drifted to the stdlib's vocabulary and let
+// nine classes through, 100.64/10 among them — see `RefuseNonPublicDialAddress`.
 func blockPrivateIP(network, address string, _ syscall.RawConn) error {
-	host, _, err := net.SplitHostPort(address)
-	if err != nil {
-		return err
-	}
-	ip := net.ParseIP(host)
-	if ip == nil {
-		return fmt.Errorf("could not parse dial address %q", address)
-	}
-	if ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsUnspecified() {
-		return fmt.Errorf("refusing to connect to non-public address %s", ip)
-	}
-	return nil
+	return addrscope.RefuseNonPublicDialAddress(address)
 }
 
 // untrustedFetchClient dials only public http(s) hosts, for URLs that come from

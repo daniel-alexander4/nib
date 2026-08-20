@@ -2627,7 +2627,7 @@ in its output rather than as silence.
 
 ~~Slices *(sketch)*: multicast announce/browse; resolving a discovered peer to a candidate; the L1 guard; the Windows pass.~~ *(retained; superseded by the firmed slices above.)*
 
-### P04 — Endpoint exchange over the DHT *(in progress)*
+### P04 — Endpoint exchange over the DHT *(done 2026-08-20, v1.116.0 — 6 slices, ledger 12 met / 0 not met / 1 not exercised (clause 4b, moved to P05 by amendment) / 1 not measurable at this granularity (conceded in the clause's own text). Close-out: `code-reviews/P04-phase-close-2026-08-20.md`)*
 Goal: the two sides learn each other's public endpoints, and their own, with no server. **(plan-review note, 2026-08-17, I1 — the framing still understates the blast radius, as D8's own correction records: the DHT is the signalling channel for tiers 2, 3 **and** 4, so an unreachable DHT collapses three tiers at once and leaves only LAN and manual. Carried as a Stage 2 grill target; recorded here so the next pass does not re-derive it.)** **(plan-review pin, 2026-08-18, adopted by Dan: that gate has passed — the Stage 2 grill ran on 2026-08-18 and did not take this up. Re-targeted to this phase's slice grill, with D8's pin carrying the same instruction and the discharging observation.)**
 Exit criteria:
 - Each side learns its own public `IP:port` and its NAT class from DHT responses alone.

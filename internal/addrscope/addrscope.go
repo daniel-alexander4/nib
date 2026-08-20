@@ -1,6 +1,10 @@
 package addrscope
 
-import "net/netip"
+import (
+	"fmt"
+	"net"
+	"net/netip"
+)
 
 // Routable reports whether an address may be treated as a real, dialable public host.
 //
@@ -145,3 +149,46 @@ var reserved = []netip.Prefix{
 }
 
 var sharedSpace = netip.MustParsePrefix("100.64.0.0/10")
+
+// RefuseNonPublicDialAddress is the `net.Dialer.Control` predicate, in the one place the
+// address table lives.
+//
+// # Why it is here and not written out at each dialer
+//
+// It was written out at each dialer — twice, byte-identically, in `internal/server` and
+// `internal/cli` — and P04's phase review measured what the copies had drifted into. Both
+// tested `IsLoopback || IsPrivate || IsLinkLocalUnicast || IsLinkLocalMulticast ||
+// IsUnspecified`, which is Go's stdlib vocabulary and not this repo's table. Nine classes
+// `Routable` refuses passed both copies:
+//
+//	::7f00:1  ::a00:1  ::c0a8:101  ::6440:1   IPv4-compatible IPv6 (::7f00:1 IS 127.0.0.1)
+//	100.64.0.1                                shared address space — the carrier's NAT
+//	255.255.255.255  0.1.2.3  240.0.0.1       broadcast, 0/8, 240/4
+//	198.18.0.1  2001:20::1                    benchmarking, ORCHIDv2
+//
+// **The reachable one is 100.64/10**, and it is not exotic: on mobile broadband and any
+// carrier-NAT'd consumer line those addresses reach the carrier's own equipment and the
+// subscriber's CPE, and `IsPrivate` does not cover them because they are not RFC 1918.
+// Measured on this machine, the IPv4-compatible v6 forms did NOT route to loopback — the
+// kernel declined the dial — so that class is a gap in the predicate rather than a
+// demonstrated bypass, and is recorded as the weaker claim it is.
+//
+// These hooks guard URLs taken from **untrusted file content** (the calendar URL inside an
+// `.ots` proof), where there is no user choosing the host. The user-typed-URL paths
+// deliberately allow LAN targets and do not use this.
+func RefuseNonPublicDialAddress(address string) error {
+	host, _, err := net.SplitHostPort(address)
+	if err != nil {
+		return err
+	}
+	// The dial address is always a resolved literal — this hook runs after resolution,
+	// which is what makes it a DNS-rebinding defence and not merely a URL check.
+	a, err := netip.ParseAddr(host)
+	if err != nil {
+		return fmt.Errorf("could not parse dial address %q", address)
+	}
+	if !Routable(a) {
+		return fmt.Errorf("refusing to connect to non-public address %s", a)
+	}
+	return nil
+}

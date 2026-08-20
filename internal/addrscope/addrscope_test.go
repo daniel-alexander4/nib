@@ -1,7 +1,15 @@
 package addrscope
 
 import (
+	"go/ast"
+	"go/parser"
+	"go/token"
+	"io/fs"
+	"net"
 	"net/netip"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -84,4 +92,125 @@ func TestSharedSpaceIsAnswerableSeparately(t *testing.T) {
 			t.Errorf("SharedSpace(%s) = true", s)
 		}
 	}
+}
+
+// TestTheDialHookRefusesWhatTheStdlibVocabularyMissed is P04's phase-review finding.
+//
+// Every address here passed BOTH hand-written copies of this hook, which tested Go's
+// `IsLoopback || IsPrivate || IsLinkLocalUnicast || IsLinkLocalMulticast || IsUnspecified`
+// — the stdlib's vocabulary, not this repo's table — on the path that fetches URLs out of
+// untrusted file content.
+func TestTheDialHookRefusesWhatTheStdlibVocabularyMissed(t *testing.T) {
+	// The exact predicate both copies carried, so this test measures the DIFFERENCE and
+	// cannot silently agree with itself.
+	stdlibVocabulary := func(host string) bool {
+		ip := net.ParseIP(host)
+		return !(ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() ||
+			ip.IsLinkLocalMulticast() || ip.IsUnspecified())
+	}
+
+	missed := []struct{ addr, why string }{
+		{"::7f00:1", "IPv4-compatible IPv6 — this IS 127.0.0.1"},
+		{"::a00:1", "IPv4-compatible IPv6 — 10.0.0.1"},
+		{"::c0a8:101", "IPv4-compatible IPv6 — 192.168.1.1"},
+		{"::6440:1", "IPv4-compatible IPv6 — 100.64.0.1"},
+		{"100.64.0.1", "shared address space: the carrier's NAT and the subscriber's CPE"},
+		{"255.255.255.255", "broadcast"},
+		{"0.1.2.3", "0.0.0.0/8"},
+		{"240.0.0.1", "240.0.0.0/4, reserved"},
+		{"198.18.0.1", "benchmarking range"},
+		{"2001:20::1", "ORCHIDv2"},
+	}
+	for _, m := range missed {
+		// STIMULUS: assert the OLD predicate really did admit it. Without this the test
+		// grades the new hook against a list that might have been safe all along, and
+		// would stay green if the finding had never been real.
+		if !stdlibVocabulary(m.addr) {
+			t.Errorf("%s (%s): the stdlib vocabulary already refused this, so it is not "+
+				"evidence of the gap — remove it or the list overstates the finding",
+				m.addr, m.why)
+			continue
+		}
+		if err := RefuseNonPublicDialAddress(net.JoinHostPort(m.addr, "80")); err == nil {
+			t.Errorf("%s (%s): admitted by the dial hook", m.addr, m.why)
+		}
+	}
+
+	// The control. A hook that refuses everything is not a fix, it is an outage — these
+	// clients fetch public OpenTimestamps calendars and block explorers.
+	for _, ok := range []string{"93.184.216.34", "2606:4700:4700::1111"} {
+		if err := RefuseNonPublicDialAddress(net.JoinHostPort(ok, "443")); err != nil {
+			t.Errorf("%s: refused a public host — the timestamp paths would stop working: %v",
+				ok, err)
+		}
+	}
+
+	// A malformed dial address must not be admitted by falling through.
+	if err := RefuseNonPublicDialAddress("not-an-address"); err == nil {
+		t.Error("a malformed dial address was admitted")
+	}
+	if err := RefuseNonPublicDialAddress("example.com:80"); err == nil {
+		t.Error("a NAME was admitted — this hook runs after resolution, and admitting a " +
+			"name means it ran somewhere it cannot do its job")
+	}
+}
+
+// TestBothDialHooksCallTheSharedPredicate is P03's recorded lesson applied: "a guard tested
+// a predicate and not that anything called it". The predicate above can be perfect while a
+// third copy of the old five-term test sits in a dialer, which is exactly the state this
+// phase review found.
+func TestBothDialHooksCallTheSharedPredicate(t *testing.T) {
+	root := filepath.Join("..", "..")
+	var dialers, delegating int
+	err := filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() || !strings.HasSuffix(p, ".go") ||
+			strings.HasSuffix(p, "_test.go") || strings.Contains(p, "node_modules") {
+			return nil
+		}
+		src, err := os.ReadFile(p)
+		if err != nil {
+			return err
+		}
+		fset := token.NewFileSet()
+		f, err := parser.ParseFile(fset, p, src, 0)
+		if err != nil {
+			return nil
+		}
+		ast.Inspect(f, func(n ast.Node) bool {
+			fn, ok := n.(*ast.FuncDecl)
+			if !ok || fn.Body == nil {
+				return true
+			}
+			// A dial-control hook by SHAPE, not by name: a rename must not disarm this.
+			if fn.Type.Params == nil || len(fn.Type.Params.List) == 0 {
+				return true
+			}
+			last := fn.Type.Params.List[len(fn.Type.Params.List)-1]
+			sel, ok := last.Type.(*ast.SelectorExpr)
+			if !ok || sel.Sel.Name != "RawConn" {
+				return true
+			}
+			dialers++
+			body := string(src[fset.Position(fn.Body.Pos()).Offset:fset.Position(fn.Body.End()).Offset])
+			if strings.Contains(body, "RefuseNonPublicDialAddress") {
+				delegating++
+			} else {
+				t.Errorf("%s: %s is a dial-control hook that does NOT delegate to "+
+					"addrscope.RefuseNonPublicDialAddress — a fourth copy of the address "+
+					"table, and the copies are how one of them stays weak", p, fn.Name.Name)
+			}
+			return true
+		})
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The floor. Zero hooks found means the shape matcher stopped matching and every
+	// assertion above ran on nothing.
+	if dialers < 2 {
+		t.Fatalf("found %d dial-control hook(s) in the tree; expected at least the two in "+
+			"internal/server and internal/cli — the matcher has gone blind", dialers)
+	}
+	t.Logf("%d dial-control hook(s), %d delegating", dialers, delegating)
 }
