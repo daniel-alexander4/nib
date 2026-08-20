@@ -78,6 +78,11 @@ func chooseInterfaces(all []net.Interface, wantV4 bool) []net.Interface {
 	return out
 }
 
+// HasIPv4 is exported for the diagnostic, which prints it per interface — on Windows an
+// IPv4 group join resolves the interface to an ADDRESS, so this is the difference between
+// an interface that will join there and one that will not.
+func HasIPv4(addrs []net.Addr) bool { return hasV4(addrs) }
+
 func hasV4(addrs []net.Addr) bool {
 	for _, a := range addrs {
 		var ip net.IP

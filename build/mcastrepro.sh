@@ -72,6 +72,15 @@ run() {
     ip link add d0 type dummy
     ip link set d0 up
     ip addr add 10.9.0.1/24 dev d0
+    # A SECOND interface with only an IPv6 address. This is the Windows divergence made
+    # visible on Linux: an IPv4 group join on Windows resolves the interface to an
+    # ADDRESS (setIPv4MreqToInterface walks ifi.Addrs()), so an interface whose IPv4
+    # lease has not arrived is joinable here and refused there. Requiring the address on
+    # both platforms keeps the chosen set identical, and this is the only interface in
+    # the tree that can exercise it without a Windows machine.
+    ip link add d2 type dummy
+    ip link set d2 up
+    ip addr add fd00:9::1/64 dev d2
     # Note what this does NOT reach: a dummy interface reports up|broadcast|RUNNING
     # (measured — an earlier version of this comment claimed the opposite, and a probe
     # that made FlagRunning a filter stayed green here, which is how the false claim
@@ -79,7 +88,7 @@ run() {
     # is covered by the tier-1 table test, not by this namespace. A dummy also lacks
     # the MULTICAST flag and joins anyway, which is why the selection does not require
     # it: the kernel does not enforce it.
-    NIB_MCAST_NETNS=1 "$0" -test.run "TestTwoProcessesDiscoverEachOther|TestTheSocketJoinsTheInterfacesItChose|TestOwnAnnouncementsAreFilteredByNonceNotAddress|TestTwoSocketsCanShareThePort" -test.v
+    NIB_MCAST_NETNS=1 "$0" -test.run "TestTwoProcessesDiscoverEachOther|TestTheSocketJoinsTheInterfacesItChose|TestOwnAnnouncementsAreFilteredByNonceNotAddress|TestTwoSocketsCanShareThePort|TestAnIPv6OnlyInterfaceIsSkippedForTheIPv4Group" -test.v
     NIB_MCAST_NETNS=1 "$1" -test.run "TestARealAnnouncementResolvesToACandidate" -test.v
   ' "$TESTBIN" "$SRVBIN"
 }
@@ -98,6 +107,8 @@ grep -q -- "--- PASS: TestTwoProcessesDiscoverEachOther" "$OUT" \
   || fail "TestTwoProcessesDiscoverEachOther did not PASS inside the namespace — if it SKIPPED, the namespace was not detected and this harness verified nothing"
 grep -q "DISCOVERED" "$OUT" \
   || fail "no process reported discovering another; the pass above is not about discovery"
+grep -q -- "--- PASS: TestAnIPv6OnlyInterfaceIsSkippedForTheIPv4Group" "$OUT" \
+  || fail "the IPv6-only interface test did not PASS — the Windows IPv4-join divergence is unexercised"
 grep -q -- "--- PASS: TestARealAnnouncementResolvesToACandidate" "$OUT" \
   || fail "the resolution test did not PASS inside the namespace"
 grep -q "RESOLVED" "$OUT" \

@@ -4,6 +4,9 @@ import (
 	"crypto/rand"
 	"errors"
 	"fmt"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"net"
 	"os"
 	"os/exec"
@@ -282,5 +285,111 @@ func runRole(t *testing.T, role string) {
 		}
 		fmt.Printf("NOTHING (%+v) %s\n", s.Stats(), s.Describe())
 		t.Fatal("browsed for 8s and discovered nothing")
+	}
+}
+
+// TestNothingDecidesOnTheArrivalInterface is the first Windows divergence as a guard.
+//
+// x/net's SetControlMessage is unimplemented on Windows — control_windows.go, both
+// families, is a TODO returning errNotImplemented — and Windows compiles
+// payload_nocmsg.go, whose ReadFrom returns a nil control message with a NIL ERROR.
+// So a filter written the natural defensive way,
+//
+//	if cm != nil && cm.IfIndex != want { continue }
+//
+// silently accepts everything there, and one written without the nil guard panics.
+// Neither shows up in any test that runs on Linux.
+//
+// The handling is to decide nothing on it: the self-filter is the nonce, in the
+// payload. This asserts that stays true, because the tempting change — "only accept
+// announcements from interfaces we joined" — looks like a security improvement and is
+// a no-op on the platform where it matters.
+func TestNothingDecidesOnTheArrivalInterface(t *testing.T) {
+	// Parsed, not grepped. The first version used strings.Contains over the source and
+	// matched the WORD "IfIndex" inside the comment in mcast.go that explains why
+	// nothing uses it — a guard failing on its own documentation. That is the third
+	// instance of this hole in this repo (the .deb guard satisfied by a comment,
+	// published.test.mjs satisfied by a doc comment), so it is parsed here: a selector
+	// expression is in the AST and a comment is not.
+	fset := token.NewFileSet()
+	pkgs, err := parser.ParseDir(fset, ".", func(fi os.FileInfo) bool {
+		return !strings.HasSuffix(fi.Name(), "_test.go")
+	}, 0) // no ParseComments: comments are not in the tree at all
+	if err != nil {
+		t.Fatal(err)
+	}
+	pkg, ok := pkgs["discovery"]
+	if !ok || len(pkg.Files) == 0 {
+		t.Fatal("no non-test files parsed — the check below would pass on nothing")
+	}
+
+	// Stimulus: the package really does read from the socket, so "it never touches the
+	// arrival interface" is a fact about a reader and not about an empty package.
+	reads := false
+	for _, f := range pkg.Files {
+		ast.Inspect(f, func(n ast.Node) bool {
+			if sel, ok := n.(*ast.SelectorExpr); ok && sel.Sel.Name == "ReadFrom" {
+				reads = true
+			}
+			return true
+		})
+	}
+	if !reads {
+		t.Fatal("nothing in this package reads from a socket; the guard below is vacuous")
+	}
+
+	for name, f := range pkg.Files {
+		ast.Inspect(f, func(n ast.Node) bool {
+			sel, ok := n.(*ast.SelectorExpr)
+			if ok && sel.Sel.Name == "IfIndex" {
+				t.Errorf("%s uses the arrival interface (IfIndex). On Windows the control "+
+					"message is nil with a NIL ERROR, so any decision made on it silently "+
+					"accepts everything there. The self-filter is the nonce, in the payload.",
+					name)
+			}
+			return true
+		})
+	}
+
+	// And EVERY SetControlMessage error must be checked, not merely one of them.
+	//
+	// The first version asked whether such a check existed anywhere in the package.
+	// There are two calls — v4 and v6 — so discarding one left the other satisfying
+	// the guard, and a probe that did exactly that came back GREEN. Counted now:
+	// every call site must sit in an if-with-init, which is what puts its error into
+	// Stats().NoControlMessage.
+	calls, checked := 0, 0
+	for _, f := range pkg.Files {
+		ast.Inspect(f, func(n ast.Node) bool {
+			if sel, ok := n.(*ast.SelectorExpr); ok && sel.Sel.Name == "SetControlMessage" {
+				calls++
+			}
+			ifst, ok := n.(*ast.IfStmt)
+			if !ok || ifst.Init == nil {
+				return true
+			}
+			as, ok := ifst.Init.(*ast.AssignStmt)
+			if !ok {
+				return true
+			}
+			for _, rhs := range as.Rhs {
+				call, ok := rhs.(*ast.CallExpr)
+				if !ok {
+					continue
+				}
+				if sel, ok := call.Fun.(*ast.SelectorExpr); ok && sel.Sel.Name == "SetControlMessage" {
+					checked++
+				}
+			}
+			return true
+		})
+	}
+	if calls == 0 {
+		t.Fatal("nothing calls SetControlMessage; the count below would pass on an absence")
+	}
+	if checked != calls {
+		t.Errorf("%d of %d SetControlMessage calls have their error checked. On Windows that "+
+			"error is the only signal the arrival interface will be unavailable, and one "+
+			"unchecked call is enough to make Stats().NoControlMessage wrong.", checked, calls)
 	}
 }

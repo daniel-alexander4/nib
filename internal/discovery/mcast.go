@@ -32,8 +32,10 @@ import (
 // Doing that honestly means speaking DNS-SD, which is a phase of its own. ADR-007
 // records the trade and where the cost is paid instead.
 const (
-	group4 = "239.255.90.90"
-	group6 = "ff12::6e69:62"
+	// Group4 and Group6 are exported because the diagnostic prints them and a firewall
+	// rule names them. A number a user must be told is not an internal.
+	Group4 = "239.255.90.90"
+	Group6 = "ff12::6e69:62"
 	// Port is the discovery port. Exported because a diagnostic and a firewall rule
 	// both need to name it, and a number a user must be told is not an internal.
 	Port = 8446
@@ -154,8 +156,8 @@ func open(all []net.Interface, nonce [nonceLen]byte) (*Socket, error) {
 	}
 
 	s := &Socket{pc: pc, all: all, nonce: nonce}
-	s.group4Addr = &net.UDPAddr{IP: net.ParseIP(group4), Port: Port}
-	s.group6Addr = &net.UDPAddr{IP: net.ParseIP(group6), Port: Port}
+	s.group4Addr = &net.UDPAddr{IP: net.ParseIP(Group4), Port: Port}
+	s.group6Addr = &net.UDPAddr{IP: net.ParseIP(Group6), Port: Port}
 	s.p4 = ipv4.NewPacketConn(pc)
 	s.p6 = ipv6.NewPacketConn(pc)
 
