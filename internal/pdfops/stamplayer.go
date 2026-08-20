@@ -1,5 +1,13 @@
 package pdfops
 
+import (
+	"errors"
+	"fmt"
+	"strings"
+
+	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/format"
+)
+
 // Detecting a stamp the document already carries.
 //
 // StampPageNumbers and StampWatermark both bake onto whatever they are given, so
@@ -87,4 +95,63 @@ func HasStampLayer(pdf []byte) (bool, error) {
 		}
 	}
 	return false, nil
+}
+
+// ErrStampTextUnrepresentable is returned when text cannot be baked as written.
+//
+// pdfcpu's watermark engine has no working escape for its placeholder tokens, so a few
+// inputs — text where a run of `%` is followed by one of its placeholder letters — cannot
+// be rendered as typed. Nib refuses those rather than baking something else, because on
+// the finalize path the result is signed.
+var ErrStampTextUnrepresentable = errors.New("this text cannot be stamped as written: pdfcpu's watermark engine has no working escape, so a % it would read as a placeholder — and a run of two or more % — cannot be rendered literally")
+
+// stampText prepares user text for pdfcpu's watermark engine — the ONE place that
+// decision is made, because it was made three different ways in four call sites.
+//
+// # What pdfcpu does with a %, measured against v0.13.0
+//
+//	"CONFIDENTIAL 100%" -> "CONFIDENTIAL 100"   the % is silently DROPPED
+//	"50%P"              -> "503"                %P is the page count
+//	"%v"                -> "v0.13.0 dev"        the LIBRARY VERSION, in the document
+//	"%"                 -> ""                   empty, and pdfcpu then computes a nil
+//	                                            bounding box and panics
+//
+// Nib bakes these marks onto a document and then, on the finalize path, **signs it**. So a
+// dropped % or a substituted page count is not a rendering nit: it is a signed document
+// whose visible text is not what the signer typed. `%v` is the sharpest — the signer types
+// two characters and certifies a dependency's version string.
+//
+// # `%%` is not an escape, and believing it was is what this function replaced
+//
+// Three of the four sites had a policy and all three were wrong. `StampPageNumbers`
+// **stripped** the character (an alteration, just a quieter one). `StampFields` and
+// `StampWatermark` did nothing. `StampTextLayer` doubled it and its comment claimed that
+// "also stops e.g. an OCR'd %P turning into a page count" — measured, it does not:
+//
+//	"%%P"    -> "%3"
+//	"%%%%P"  -> "%%%3"
+//
+// The doubling emits one `%` and advances a SINGLE character, so the trailing `%` in the
+// run pairs with the letter and substitutes anyway. No number of `%` produces a literal
+// `%P`; it is unrepresentable through this API.
+//
+// # So the transform is VERIFIED, not trusted
+//
+// This escapes and then renders the result through pdfcpu itself, refusing when what comes
+// back is not what went in. That is deliberately not a table of placeholder letters: a
+// hardcoded `p/P/t/v` is a second copy of pdfcpu's grammar that drifts the first time the
+// library adds a token, and this package already learned that lesson in `coverage.go` —
+// ask the encoder rather than keeping a table beside it.
+//
+// A caller gets ("", nil) when there is nothing to draw and should skip; empty text is the
+// input that panics.
+func stampText(s string) (string, error) {
+	if strings.TrimSpace(s) == "" {
+		return "", nil
+	}
+	esc := strings.ReplaceAll(s, "%", "%%")
+	if got, _ := format.Text(esc, "", 1, 1); got != s {
+		return "", fmt.Errorf("%w (%q would be baked as %q)", ErrStampTextUnrepresentable, s, got)
+	}
+	return esc, nil
 }

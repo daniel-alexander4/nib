@@ -66,7 +66,12 @@ func StampTextLayer(pdf []byte, words []Word, lang string) ([]byte, error) {
 		// computes a nil bounding box and panics (nil-pointer deref deep in the stamp
 		// path). Escape every % to %% so it renders as a literal % and never triggers
 		// substitution (this also stops e.g. an OCR'd "%P" turning into a page count).
-		text := strings.ReplaceAll(w.Text, "%", "%%")
+		text, err := stampText(w.Text)
+		if err != nil || text == "" {
+			// OCR text is a scan's own words, not something a user can retype, so an
+			// unrepresentable run is skipped rather than failing the whole layer.
+			continue
+		}
 		wm, err := api.TextWatermark(text, desc, true, false, types.POINTS)
 		if err != nil {
 			return nil, err

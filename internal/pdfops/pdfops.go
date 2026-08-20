@@ -891,7 +891,14 @@ func StampFields(pdf []byte, fields []Field) ([]byte, error) {
 		// Anchor the text near the field's bottom-left (small inset), in points.
 		desc := fmt.Sprintf("fontname:%s, points:%d, scalefactor:1 abs, position:bl, offset:%.1f %.1f, fillcolor:%s, rotation:0",
 			coreFont(f.Font), pts, f.Rect[0]+2, f.Rect[1]+2, color)
-		wm, err := api.TextWatermark(f.Text, desc, true, false, types.POINTS)
+		ftext, err := stampText(f.Text)
+		if err != nil {
+			return nil, err
+		}
+		if ftext == "" {
+			continue
+		}
+		wm, err := api.TextWatermark(ftext, desc, true, false, types.POINTS)
 		if err != nil {
 			return nil, err
 		}
@@ -1011,7 +1018,11 @@ func clampUnit(v, lo, hi float64) float64 {
 // styled by st. Finalize applies it before signing so the certification covers
 // the watermark.
 func StampWatermark(pdf []byte, text string, st WatermarkStyle) ([]byte, error) {
-	if strings.TrimSpace(text) == "" {
+	wtext, err := stampText(text)
+	if err != nil {
+		return nil, err
+	}
+	if wtext == "" {
 		return pdf, nil
 	}
 	st = st.sanitize()
@@ -1019,7 +1030,7 @@ func StampWatermark(pdf []byte, text string, st WatermarkStyle) ([]byte, error) 
 		st.Scale, st.Color, st.Opacity, st.Angle)
 	// Always drawn on top: a "behind" watermark is hidden by any page with an
 	// opaque background, inconsistently per page — opacity gives the subtle look.
-	wm, err := api.TextWatermark(text, desc, true, false, types.POINTS)
+	wm, err := api.TextWatermark(wtext, desc, true, false, types.POINTS)
 	if err != nil {
 		return nil, err
 	}
@@ -1106,9 +1117,9 @@ func StampPageNumbers(pdf []byte, st PageNumberStyle) ([]byte, error) {
 	if pad > 12 {
 		pad = 12
 	}
-	// A '%' in the prefix would be read as a pdfcpu placeholder token (%p/%P/…),
-	// so strip it — the number itself is formatted here, not by pdfcpu.
-	prefix := strings.ReplaceAll(st.Prefix, "%", "")
+	// The prefix is the user's text and keeps its % — see stampText. This line used to
+	// DELETE the character, which is an alteration of what was typed, just a quiet one.
+	prefix := st.Prefix
 	ox, oy := pageNumOffset(pos)
 
 	wms := map[int][]*model.Watermark{}
@@ -1123,7 +1134,14 @@ func StampPageNumbers(pdf []byte, st PageNumberStyle) ([]byte, error) {
 		}
 		desc := fmt.Sprintf("fontname:Helvetica, points:%d, scalefactor:1 abs, position:%s, offset:%.1f %.1f, fillcolor:%s, rotation:0",
 			size, pos, ox, oy, color)
-		wm, err := api.TextWatermark(label, desc, true, false, types.POINTS)
+		ltext, err := stampText(label)
+		if err != nil {
+			return nil, err
+		}
+		if ltext == "" {
+			continue
+		}
+		wm, err := api.TextWatermark(ltext, desc, true, false, types.POINTS)
 		if err != nil {
 			return nil, err
 		}
