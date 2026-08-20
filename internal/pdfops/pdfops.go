@@ -1286,6 +1286,13 @@ func ExportFormJSON(pdf []byte) ([]byte, error) {
 
 // ExportFormCSV returns the form field data as two columns: field name and value.
 // It reuses pdfcpu's own JSON export (the single source of truth) and reshapes it.
+// Every cell goes through csvSafe, the same guard GridToCSV uses.
+//
+// csvSafe's own argument applies here verbatim — a cell beginning = + - @ becomes a live
+// formula the moment the file opens in Excel or LibreOffice — and AcroForm names and values
+// from an arbitrary opened PDF are exactly as untrusted as extracted table text. One
+// emitter had the guard and the other did not, for the same threat and the same output
+// format, and this one reaches a download from both the GUI and the CLI.
 func ExportFormCSV(pdf []byte) ([]byte, error) {
 	jsonData, err := ExportFormJSON(pdf)
 	if err != nil {
@@ -1300,22 +1307,22 @@ func ExportFormCSV(pdf []byte) ([]byte, error) {
 	_ = cw.Write([]string{"field", "value"})
 	for _, f := range fg.Forms {
 		for _, x := range f.TextFields {
-			_ = cw.Write([]string{x.Name, x.Value})
+			_ = cw.Write([]string{csvSafe(x.Name), csvSafe(x.Value)})
 		}
 		for _, x := range f.DateFields {
-			_ = cw.Write([]string{x.Name, x.Value})
+			_ = cw.Write([]string{csvSafe(x.Name), csvSafe(x.Value)})
 		}
 		for _, x := range f.CheckBoxes {
-			_ = cw.Write([]string{x.Name, strconv.FormatBool(x.Value)})
+			_ = cw.Write([]string{csvSafe(x.Name), strconv.FormatBool(x.Value)})
 		}
 		for _, x := range f.RadioButtonGroups {
-			_ = cw.Write([]string{x.Name, x.Value})
+			_ = cw.Write([]string{csvSafe(x.Name), csvSafe(x.Value)})
 		}
 		for _, x := range f.ComboBoxes {
-			_ = cw.Write([]string{x.Name, x.Value})
+			_ = cw.Write([]string{csvSafe(x.Name), csvSafe(x.Value)})
 		}
 		for _, x := range f.ListBoxes {
-			_ = cw.Write([]string{x.Name, joinValues(x.Values)})
+			_ = cw.Write([]string{csvSafe(x.Name), csvSafe(joinValues(x.Values))})
 		}
 	}
 	cw.Flush()

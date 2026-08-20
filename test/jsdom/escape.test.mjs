@@ -15,7 +15,9 @@
 // One boot per file — see boot.mjs.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { boot } from './boot.mjs';
+import fs from 'node:fs';
+import path from 'node:path';
+import { boot, REPO } from './boot.mjs';
 
 const h = await boot({ routes: {} });
 const { document: doc, settle } = h;
@@ -75,4 +77,46 @@ test('every dialog has a control Escape can reach', () => {
     .map((m) => m.id);
   assert.deepEqual(trapped, [],
     `these dialogs have no Cancel/Close button, so the Escape handler has nothing to click and they cannot be dismissed from the keyboard: ${trapped.join(', ')}`);
+});
+
+// The CSP comment in server.go claims the app has "no inline event handlers, no eval, no
+// new Function, no insertAdjacentHTML, and every innerHTML assignment a static literal".
+// The last clause was already false: app.js has one template literal interpolating a page
+// counter. That is harmless — the values are integers — but the sentence is what the next
+// person adding an innerHTML assignment will rely on, so the property is asserted rather
+// than described.
+test('no innerHTML assignment takes anything but a literal or a number', () => {
+  const files = ['app.js', 'detect.js'];
+  let sites = 0;
+  for (const f of files) {
+    const src = fs.readFileSync(path.join(REPO, 'web', f), 'utf8');
+    const lines = src.split('\n').filter((l) => !l.trim().startsWith('//'));
+    for (const line of lines) {
+      const m = /\.innerHTML\s*=\s*(.+)$/.exec(line);
+      if (!m) continue;
+      sites++;
+      const rhs = m[1].trim();
+      // The RHS may be followed by a terminator and closing braces on a one-line arrow —
+      // `x.innerHTML = \`…\`; };` — so match the literal itself rather than requiring it
+      // to end the line. The first draft required that and went red against a site it
+      // should have accepted.
+      const plain = /^(['"])(?:(?!\1).)*\1/.test(rhs);
+      const tm = /^`([^`]*)`/.exec(rhs);
+      const tmpl = tm !== null;
+      const interps = tmpl ? [...tm[1].matchAll(/\$\{([^}]*)\}/g)].map((x) => x[1].trim()) : [];
+      // An ALLOWLIST of interpolated expressions, not a regex trying to prove a bare
+      // identifier is numeric — it cannot, and a predicate that admits any identifier
+      // admits the user-controlled ones this exists to keep out. Adding an interpolation
+      // means adding it here, which is the review the CSP comment's claim deserves.
+      const ALLOWED = ['++done', 'total'];
+      const numeric = interps.every((e) => ALLOWED.includes(e));
+      assert.ok(plain || (tmpl && numeric),
+        `${f}: an innerHTML assignment takes a value this guard cannot prove is a literal `
+        + `or a number — that is the CSP comment's claim, and the sandbox is what is left `
+        + `if it is wrong:\n  ${line.trim()}`);
+    }
+  }
+  // The floor: the app has innerHTML sites and always has. Zero means the scan stopped
+  // matching and every assertion above ran over nothing.
+  assert.ok(sites >= 5, `found ${sites} innerHTML site(s) — the scanner has gone blind`);
 });

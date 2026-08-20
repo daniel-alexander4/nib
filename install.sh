@@ -1,6 +1,11 @@
 #!/usr/bin/env bash
 # Build Nib for this machine, package it as a .deb, and install it — giving a
-# menu item under Office that kills any running instance and starts anew.
+# menu item under Office.
+#
+# It used to say the menu item "kills any running instance and starts anew". That was true
+# until P07 deleted internal/singleton, which did the killing; the .desktop entry is a
+# plain `Exec=nib %f`, and a second launch now hands its document to the running instance
+# (cmd/nib/main.go says so in terms). A false sentence in a script users run.
 #
 # Usage: ./install.sh [version]   (version defaults to the VERSION file)
 set -euo pipefail

@@ -4,6 +4,7 @@ import (
 	"archive/zip"
 	"bytes"
 	"io"
+	"os"
 	"strings"
 	"testing"
 )
@@ -152,4 +153,73 @@ func TestGridToCSVNeutralizesFormulas(t *testing.T) {
 	if !strings.Contains(got, "12.50") || strings.Contains(got, "'12.50") {
 		t.Errorf("a numeric cell was altered: %q", got)
 	}
+}
+
+// TestFormCSVIsAsGuardedAsTableCSV.
+//
+// `csvSafe` exists with the argument written out — *"the grid is table text extracted from
+// an UNTRUSTED PDF… a CSV cell beginning `= + - @` becomes a live formula the moment the
+// file is opened in Excel or LibreOffice"* — and was applied by `GridToCSV` and tested with
+// `=HYPERLINK` and `=cmd|' /c calc'!A0`. `ExportFormCSV` wrote field names and values raw.
+// Those come from the AcroForm of an arbitrary opened PDF, which is exactly as untrusted as
+// table text, and they go out as a download from both the GUI and `nib`.
+//
+// Asserted through csvSafe's own behaviour on the four lead characters rather than by
+// building a hostile PDF, because the finding is that one emitter skipped a guard the other
+// applies — a property of the call sites.
+func TestFormCSVIsAsGuardedAsTableCSV(t *testing.T) {
+	for _, c := range []string{
+		"=HYPERLINK(\"http://evil\",\"click\")",
+		"+1+1",
+		"-1+1",
+		"@SUM(A1)",
+		"=cmd|' /c calc'!A0",
+	} {
+		got := csvSafe(c)
+		if got == c {
+			t.Errorf("csvSafe(%q) returned it unchanged — this cell is a live formula in "+
+				"Excel and LibreOffice", c)
+		}
+	}
+	// The control: ordinary values must survive untouched, or every exported form is
+	// mangled to close a hole in a few of them.
+	for _, c := range []string{"Jane Smith", "1 High Street", "2026-08-20", "", "12345"} {
+		if got := csvSafe(c); got != c {
+			t.Errorf("csvSafe(%q) = %q — an ordinary field value was altered", c, got)
+		}
+	}
+
+	// And the call sites, which is where the defect actually was.
+	src, err := os.ReadFile("pdfops.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := string(src)
+	start := strings.Index(body, "func ExportFormCSV")
+	if start < 0 {
+		t.Fatal("ExportFormCSV is gone — this guard is looking for a function that does not exist")
+	}
+	end := strings.Index(body[start:], "\ncw.Flush()")
+	fn := body[start:]
+	if end > 0 {
+		fn = body[start : start+end]
+	}
+	var writes, guarded int
+	for _, line := range strings.Split(fn, "\n") {
+		if !strings.Contains(line, "cw.Write(") {
+			continue
+		}
+		writes++
+		if strings.Contains(line, "csvSafe(") {
+			guarded++
+		} else if !strings.Contains(line, `"field", "value"`) {
+			t.Errorf("ExportFormCSV writes an unguarded cell: %s", strings.TrimSpace(line))
+		}
+	}
+	// The floor: this function writes a row per field kind, and zero means the scan
+	// stopped matching and every assertion above ran over nothing.
+	if writes < 5 {
+		t.Fatalf("found %d cw.Write call(s) in ExportFormCSV; the matcher has gone blind", writes)
+	}
+	t.Logf("%d write sites, %d guarded", writes, guarded)
 }
