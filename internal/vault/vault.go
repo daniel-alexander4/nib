@@ -225,8 +225,31 @@ func Create(dir, pubLine, keyPath string) (*Vault, error) {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return nil, err
 	}
+	// **The Exists check above is the friendly answer; THIS is the guarantee.** Exists →
+	// Save is check-then-act, and Save writes through writeFileAtomic, whose rename
+	// CLOBBERS. Two processes reaching first-run setup together both see no vault, both
+	// seal a fresh content key, and the second rename silently replaces the first — so a
+	// user who has already been shown a signing identity loses the private half of it, with
+	// no error anywhere. `GET /api/status` can run AutoSetup, so the trigger is a page load.
+	//
+	// O_EXCL makes the file's creation the thing that races, and the kernel settles it. The
+	// placeholder is zero bytes; Save overwrites it a moment later through the atomic path,
+	// which is what gives the real contents their durability.
+	f, err := os.OpenFile(Path(dir), os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+	if err != nil {
+		if os.IsExist(err) {
+			return nil, errors.New("vault already exists")
+		}
+		return nil, err
+	}
+	if err := f.Close(); err != nil {
+		return nil, err
+	}
 	v, err := newSealed(Path(dir), pubLine, keyPath, Contents{})
 	if err != nil {
+		// The placeholder is an empty file that readEnvelope would call corrupt, and
+		// Exists would call a vault. Nothing here has succeeded, so it must not survive.
+		_ = os.Remove(Path(dir))
 		return nil, err
 	}
 	return v, v.Save()
@@ -263,9 +286,6 @@ func OpenSSHWithPassphrase(dir string, passphrase []byte) (*Vault, error) {
 func OpenSSHAt(dir, keyPath string, passphrase []byte) (*Vault, error) {
 	env, err := readEnvelope(dir)
 	if err != nil {
-		return nil, err
-	}
-	if err := checkEnvelopeVersion(env.Version); err != nil {
 		return nil, err
 	}
 	if env.Version < 2 || len(env.SSH) == 0 {
@@ -323,9 +343,6 @@ func OpenSSHAt(dir, keyPath string, passphrase []byte) (*Vault, error) {
 func openSSH(dir string, passphrase []byte) (*Vault, error) {
 	env, err := readEnvelope(dir)
 	if err != nil {
-		return nil, err
-	}
-	if err := checkEnvelopeVersion(env.Version); err != nil {
 		return nil, err
 	}
 	if env.Version < 2 || len(env.SSH) == 0 {
@@ -442,6 +459,10 @@ func newSealed(path, pubLine, keyPath string, c Contents) (*Vault, error) {
 	}
 	wrapped, err := sshkey.Wrap(key, pubLine)
 	if err != nil {
+		// A content key that will never seal anything, but the package zeroes secret
+		// material on every other path and an exception nobody wrote down is how the
+		// discipline erodes.
+		zero(key)
 		return nil, err
 	}
 	slots := sealBuiltins(key, []Slot{{PubKey: pubLine, KeyPath: keyPath, Wrapped: wrapped}})
@@ -567,9 +588,6 @@ func Validate(raw []byte) error {
 	}
 	if env.Version == 0 || len(env.Cipher) == 0 || len(env.Nonce) == 0 {
 		return errors.New("not a vault backup")
-	}
-	if err := checkEnvelopeVersion(env.Version); err != nil {
-		return err
 	}
 	if env.Version < 2 || len(env.SSH) == 0 {
 		// A v1 password vault parses perfectly and has no key slots at all, so
@@ -946,7 +964,7 @@ func (v *Vault) save() error {
 	if err != nil {
 		return err
 	}
-	out, err := json.Marshal(envelope{Version: 2, Nonce: nonce, Cipher: ct, SSH: v.ssh})
+	out, err := json.Marshal(envelope{Version: envelopeVersion, Nonce: nonce, Cipher: ct, SSH: v.ssh})
 	if err != nil {
 		return err
 	}
@@ -964,6 +982,20 @@ func readEnvelope(dir string) (*envelope, error) {
 	var env envelope
 	if err := json.Unmarshal(raw, &env); err != nil {
 		return nil, fmt.Errorf("corrupt vault: %w", err)
+	}
+	// **The refusal lives HERE, not at each caller.** It was written at three of the six
+	// readEnvelope callers, and the three it missed were the three where it matters most or
+	// where it is hardest to see: Migrate, which decrypts and then unconditionally rewrites
+	// the file through newSealed + Save — the exact silent-downgrade path the refusal was
+	// written to stop, reached by an ordinary user with a synced vault; NeedsMigration,
+	// which answers `env.Version < 2` about a file it may not understand; and Slots, which
+	// would list the key slots of a vault this build must not touch.
+	//
+	// A rule copied to some callers is not a rule. Nothing legitimately reads an envelope
+	// from a newer build — a v1 password vault is OLDER and still passes, which is what
+	// Migrate needs.
+	if err := checkEnvelopeVersion(env.Version); err != nil {
+		return nil, err
 	}
 	return &env, nil
 }
