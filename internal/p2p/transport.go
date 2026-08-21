@@ -17,7 +17,9 @@ import (
 	"sync/atomic"
 	"time"
 
+	"nib/internal/safe"
 	"nib/internal/sign"
+	"sync"
 )
 
 const (
@@ -287,22 +289,132 @@ func Listen(addr string, identityCertPEM, identityKeyPEM, pinnedSPKI []byte) (Li
 	if err != nil {
 		return nil, err
 	}
-	return &tlsListener{ln: ln}, nil
+	return &tlsListener{ln: ln, done: make(chan struct{})}, nil
 }
 
 // tlsListener adapts a TLS listener to Listener. The handshake, its timeout, and what
 // happens to a peer that fails it all live here now — they used to live in the server's
 // accept loop, where only TCP could ever have satisfied them.
-type tlsListener struct{ ln net.Listener }
+type tlsListener struct {
+	ln net.Listener
+
+	once  sync.Once
+	ready chan *Conn    // handshakes that completed
+	done  chan struct{} // closed by Close, so in-flight handshakes stop offering
+
+	mu     sync.Mutex
+	closed bool
+	cerr   error
+}
 
 func (l *tlsListener) Addr() net.Addr { return l.ln.Addr() }
-func (l *tlsListener) Close() error   { return l.ln.Close() }
 
-func (l *tlsListener) Accept() (*Conn, error) {
-	c, err := l.ln.Accept()
-	if err != nil {
-		return nil, err
+// Close stops the accept loop and releases anything blocked in Accept.
+//
+// `done` is closed BEFORE the underlying listener so a handshake finishing in the same
+// instant offers into a channel nobody is reading and closes the connection instead of
+// leaking it. Idempotent, because a session teardown and an explicit disarm can both reach
+// it — the same reason the announcer's Close is.
+func (l *tlsListener) Close() error {
+	l.mu.Lock()
+	if l.closed {
+		l.mu.Unlock()
+		return nil
 	}
+	l.closed = true
+	if l.cerr == nil {
+		l.cerr = net.ErrClosed
+	}
+	l.mu.Unlock()
+	close(l.done)
+	return l.ln.Close()
+}
+
+func (l *tlsListener) setCloseErr(err error) {
+	l.mu.Lock()
+	if l.cerr == nil {
+		l.cerr = err
+	}
+	l.mu.Unlock()
+}
+
+func (l *tlsListener) closeErr() error {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.cerr != nil {
+		return l.cerr
+	}
+	return net.ErrClosed
+}
+
+// Accept returns the next connection that COMPLETED a pinned handshake.
+//
+// # The handshake runs off the accept path, and that is the fix
+//
+// It used to run inline: `l.ln.Accept()` then `TLSChannel(tc)` in the same call, so one TCP
+// connection that opened and sent nothing held the caller for the whole `handshakeTimeout`
+// — 30 seconds. The server's arm loop is a single goroutine calling this, and the listener
+// binds `0.0.0.0:0` with its port broadcast to the multicast group every 500 ms, so ten
+// such connections consumed the entire five-minute arm window and the genuine peer was
+// never accepted. No scan required.
+//
+// `internal/server/l1_test.go` states the property verbatim — "measured at 30 s per stalled
+// connection, and filed as its own item" — and the guard that exists,
+// `TestAStrayConnectionDoesNotConsumeTheSession`, only proves the session SURVIVES one
+// stray connection. It never measured that the loop was blocked, so the fix for the
+// one-shot-consumption defect left the head-of-line block in place and untested.
+//
+// Now a single goroutine accepts and hands each raw connection to its own handshaker; only
+// completed ones reach the channel. A stalled peer costs one goroutine and one timeout,
+// concurrently with every other, and cannot delay the real one.
+func (l *tlsListener) Accept() (*Conn, error) {
+	l.start()
+	select {
+	case c, ok := <-l.ready:
+		if !ok {
+			return nil, l.closeErr()
+		}
+		return c, nil
+	case <-l.done:
+		return nil, l.closeErr()
+	}
+}
+
+// start launches the accept loop once.
+func (l *tlsListener) start() {
+	l.once.Do(func() {
+		l.ready = make(chan *Conn)
+		go l.loop()
+	})
+}
+
+func (l *tlsListener) loop() {
+	defer close(l.ready)
+	for {
+		c, err := l.ln.Accept()
+		if err != nil {
+			l.setCloseErr(err)
+			return
+		}
+		// One goroutine per connection: the handshake is what a stalled peer holds, and
+		// holding it here is what let one of them block every other.
+		go func() {
+			defer safe.Recover("tls handshake")
+			conn, herr := l.handshake(c)
+			if herr != nil {
+				return // not the pinned peer, or it never spoke — dropped, not surfaced
+			}
+			select {
+			case l.ready <- conn:
+			case <-l.done:
+				conn.Close()
+			}
+		}()
+	}
+}
+
+// handshake is what Accept used to do inline.
+func (l *tlsListener) handshake(c net.Conn) (*Conn, error) {
 	tc, ok := c.(*tls.Conn)
 	if !ok {
 		c.Close()

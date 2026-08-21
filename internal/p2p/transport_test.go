@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"net"
 	"nib/internal/sign"
 )
 
@@ -200,4 +201,84 @@ func TestSessionHandshakeRejectsUnpinnedPeer(t *testing.T) {
 	if err := <-srvErr; err == nil {
 		t.Fatal("listener accepted an unpinned peer")
 	}
+}
+
+// TestAStalledPeerDoesNotBlockTheAcceptPath.
+//
+// The handshake used to run INLINE in Accept: `ln.Accept()` then `TLSChannel(tc)` in one
+// call. The server's arm loop is a single goroutine calling this, so one TCP connection that
+// opened and sent nothing held it for the whole handshakeTimeout — 30 seconds. The listener
+// binds `0.0.0.0:0` with its port broadcast to the multicast group every 500 ms, so ten of
+// them consumed the entire five-minute arm window and the genuine peer was never accepted.
+//
+// **The measurement is the test.** `TestAStrayConnectionDoesNotConsumeTheSession` already
+// proved the session SURVIVES a stray connection; it never measured that the loop was
+// blocked, which is why the fix for the one-shot-consumption defect left this in place.
+func TestAStalledPeerDoesNotBlockTheAcceptPath(t *testing.T) {
+	certA, keyA, _ := sign.GenerateIdentity("Alice")
+	certB, keyB, _ := sign.GenerateIdentity("Bob")
+	fpA, err := sign.Fingerprint(certA)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fpB, err := sign.Fingerprint(certB)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ln, err := Listen("127.0.0.1:0", certB, keyB, fpA)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+
+	// Stalled connections: opened, never a byte sent. Each would have cost the accept path
+	// handshakeTimeout in turn.
+	const stalled = 5
+	for i := 0; i < stalled; i++ {
+		c, derr := net.Dial("tcp", ln.Addr().String())
+		if derr != nil {
+			t.Fatalf("setup: could not open stalled connection %d: %v", i, derr)
+		}
+		defer c.Close()
+	}
+	// STIMULUS: they really are connected and really are silent. Without this the timing
+	// below is measuring an accept path with nothing in front of it.
+	time.Sleep(200 * time.Millisecond)
+
+	accepted := make(chan error, 1)
+	go func() {
+		conn, aerr := ln.Accept()
+		if conn != nil {
+			conn.Close()
+		}
+		accepted <- aerr
+	}()
+
+	start := time.Now()
+	go func() {
+		conn, derr := Dial(ln.Addr().String(), certA, keyA, fpB, 10*time.Second)
+		if conn != nil {
+			conn.Close()
+		}
+		_ = derr
+	}()
+
+	select {
+	case aerr := <-accepted:
+		if aerr != nil {
+			t.Fatalf("the genuine peer was not accepted: %v", aerr)
+		}
+	case <-time.After(20 * time.Second):
+		t.Fatal("the genuine peer was never accepted")
+	}
+	elapsed := time.Since(start)
+	// Serially, five stalled connections cost 5 x handshakeTimeout before the real one is
+	// even looked at. The bound is deliberately loose — the assertion is "it did not queue
+	// behind them", not a latency budget.
+	if elapsed > handshakeTimeout {
+		t.Errorf("the genuine peer waited %v behind %d stalled connections; the handshake "+
+			"timeout alone is %v, so it was queued behind them", elapsed, stalled, handshakeTimeout)
+	}
+	t.Logf("accepted in %v with %d stalled connections in front", elapsed, stalled)
 }
