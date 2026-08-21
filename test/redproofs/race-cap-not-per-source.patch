@@ -1,0 +1,13 @@
+diff --git a/internal/server/lan.go b/internal/server/lan.go
+index 380d89a..7b943e3 100644
+--- a/internal/server/lan.go
++++ b/internal/server/lan.go
+@@ -413,7 +413,7 @@ func raceCandidates(parent context.Context, in <-chan candidate, cert, key, peer
+ 			// global one alone is first-come, which is won by whoever emits fastest — the
+ 			// capture attack `maxLANCandidates` closed at the browse level, re-opened one
+ 			// layer up the moment a second source exists.
+-			if startedBySource[c.Source] >= maxCandidatesPerSource || started >= maxRaceCandidates {
++			if started >= maxRaceCandidates {
+ 				// **Dropped AND reported** — D16's pin says "drops and reports; it never
+ 				// fails the ceremony", and a drop with no reader is half the clause. The
+ 				// count reaches the user in the failure sentence below, which is the only
