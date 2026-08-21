@@ -429,10 +429,11 @@ func (s *Server) runSession(ln p2p.Listener, cert, key []byte, label, mode strin
 	// rather than merely intended. It never fails the session: a host with no usable
 	// interface, or a firewall that swallows the group, must still be able to run a
 	// ceremony over a typed address.
-	if port := portOf(ln); port > 0 {
-		if ann, err := startAnnouncing(cert, port); err == nil {
-			defer ann.Close()
-		}
+	// The LISTENER, not its port: whether this session may be announced at all is a fact
+	// about the address it bound, and `startAnnouncing` is the door that decides it
+	// (ADR-009). A loopback bind announces nothing.
+	if ann, err := startAnnouncing(cert, ln); err == nil {
+		defer ann.Close()
 	}
 	// This user's own fingerprint, for the verification string — it binds both identities,
 	// and this goroutine holds the cert rather than the fingerprint.
