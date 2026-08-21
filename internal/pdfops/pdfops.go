@@ -120,7 +120,7 @@ func RemovePages(pdf []byte, pages []string) ([]byte, error) {
 	if err := api.RemovePages(bytes.NewReader(pdf), &out, pages, nil); err != nil {
 		return nil, err
 	}
-	return carryDocumentState(pdf, out.Bytes())
+	return carryLang(pdf, out.Bytes())
 }
 
 // Collect keeps only the given pages, in the exact order given (e.g.
@@ -132,7 +132,7 @@ func Collect(pdf []byte, order []string) ([]byte, error) {
 	if err := api.Collect(bytes.NewReader(pdf), &out, order, nil); err != nil {
 		return nil, err
 	}
-	return carryDocumentState(pdf, out.Bytes())
+	return carryLang(pdf, out.Bytes())
 }
 
 // carryDocumentState copies the page-INDEPENDENT catalog entries from src onto dst.
@@ -166,8 +166,28 @@ func Collect(pdf []byte, order []string) ([]byte, error) {
 //
 // So: /Lang, /Metadata (XMP) and the embedded-files name tree, all of which mean the same
 // thing whatever order the pages are in.
-func carryDocumentState(src, dst []byte) ([]byte, error) {
-	// /Lang is a plain string in the catalog, so it copies directly.
+// carryLang copies the catalog's /Lang across a page operation.
+//
+// # /Lang only, and the attachments deliberately NOT
+//
+// This function used to re-add the source's attachments too, so a page operation would not
+// destroy the ceremony record (which is an attachment). That was measured to leak: `Collect`
+// is the single page-selection primitive, and `RedactPages` builds its untouched runs with
+// it — so every redaction, split and page-export carried every embedded file into its
+// output. A three-page document with `original-unredacted.xlsx` came back out of a redaction
+// with the payload readable.
+//
+// `RedactPages`' contract is that the content is "genuinely gone — not merely covered", and
+// an embedded file is not covered by rasterising a page. So the decision "does this output
+// inherit the source's embedded files" belongs to the OPERATION's purpose — rearranging a
+// document the user owns, versus deriving an artifact they are about to hand over — and not
+// to the primitive both go through. `CarryAttachments` is the opt-in, and its callers are
+// the rearrangement ops only.
+//
+// /Lang stays here unconditionally because it is not content: it is the language tag every
+// derived artifact should also carry, and losing it silently drops the accessibility
+// property Nib ships.
+func carryLang(src, dst []byte) ([]byte, error) {
 	sctx, err := api.ReadValidateAndOptimize(bytes.NewReader(src), model.NewDefaultConfiguration())
 	if err != nil {
 		return dst, nil // the source is what the operation already read; do not fail on it
@@ -176,44 +196,63 @@ func carryDocumentState(src, dst []byte) ([]byte, error) {
 	if err != nil {
 		return dst, nil
 	}
-	if lang, ok := sroot.Find("Lang"); ok {
-		dst, err = writeMutated(dst, func(ctx *model.Context) error {
-			root, cerr := ctx.XRefTable.Catalog()
-			if cerr != nil {
-				return cerr
-			}
-			root["Lang"] = lang
-			return nil
-		})
-		if err != nil {
-			return nil, err
-		}
-	}
-
-	// Attachments go back through THIS PACKAGE'S OWN primitives, not by copying the name
-	// tree across.
+	// DEREFERENCED to a string, never copied as the object found.
 	//
-	// The obvious splice — lift `Names["EmbeddedFiles"]` from the source catalog and drop it
-	// into the destination — does not work and does not fail loudly: those are indirect refs
-	// into the SOURCE xref, so in the new context they dangle. Measured, the result did not
-	// even re-read: "dict=fileSpecDict required entry=F missing". Extract-and-re-add costs a
-	// rewrite per attachment and produces a document a reader accepts.
+	// /Lang is legally an indirect reference, and the first version of this assumed it was
+	// "a plain string in the catalog, so it copies directly" — writing a types.IndirectRef
+	// whose object number belongs to the SOURCE xref into the destination catalog. That is
+	// the dangling-reference bug this file's own attachment comment warns about, committed
+	// twelve lines above the warning. Outcome depended on what that object number happened
+	// to be in the new context: /Lang vanishing, a different string, or a dict — and a dict
+	// fails validateStringEntry, after which every pdfops entry point refuses the document,
+	// so the user could no longer open, save or sign it.
+	lang, err := sctx.XRefTable.DereferenceStringLiteral(sroot["Lang"], model.V10, nil)
+	if err != nil || lang == "" {
+		return dst, nil
+	}
+	return writeMutated(dst, func(ctx *model.Context) error {
+		root, cerr := ctx.XRefTable.Catalog()
+		if cerr != nil {
+			return cerr
+		}
+		root["Lang"] = lang
+		return nil
+	})
+}
+
+// CarryAttachments re-adds src's embedded files to dst, for an operation whose output IS the
+// same document rather than a derived artifact.
+//
+// **Not part of Collect or RemovePages, and that is the point.** Those are the page-selection
+// primitives, and `RedactPages`, the splitters and page-export all go through them — carrying
+// attachments there shipped an embedded un-redacted original inside a redacted document.
+// Rearranging pages is a different act from producing something to hand over, and only the
+// caller knows which one it is doing.
+//
+// It reports how many it could not carry rather than returning silently, because the record
+// this exists to preserve is exactly what a silent drop loses. `Attachments` sanitises names
+// (stripping any path component) while `ExtractAttachment` matches the raw id, so a name-tree
+// key of `docs/report.pdf` is listed as `report.pdf` and cannot be extracted — a real miss,
+// not a hypothetical one.
+func CarryAttachments(src, dst []byte) (out []byte, dropped int, err error) {
 	names, err := Attachments(src)
 	if err != nil || len(names) == 0 {
-		return dst, nil
+		return dst, 0, nil
 	}
 	for _, a := range names {
 		data, xerr := ExtractAttachment(src, a.Name)
 		if xerr != nil {
-			continue // an attachment we cannot read is one we cannot carry; skip, never fail
+			dropped++
+			continue
 		}
 		next, aerr := AddAttachment(dst, a.Name, data)
 		if aerr != nil {
+			dropped++
 			continue
 		}
 		dst = next
 	}
-	return dst, nil
+	return dst, dropped, nil
 }
 
 // InsertBlank inserts a blank page immediately after the given page (1-based).
