@@ -77,6 +77,9 @@ func ConvertWithFonts(md []byte, fallbacks []Font) ([]byte, error) {
 	if err := installFallbacks(fallbacks); err != nil {
 		return nil, err
 	}
+	if err := refuseAbsurdNesting(md); err != nil {
+		return nil, err
+	}
 	doc := goldmark.New().Parser().Parse(text.NewReader(md))
 	r := &renderer{src: md, l: newLayout(), fonts: fallbacks}
 	r.blocks(doc, 0, nil)
@@ -100,6 +103,62 @@ type renderer struct {
 
 // blocks lays out the children of n. A non-nil marker (list bullet/number)
 // attaches to the first child only.
+// maxNestDepth bounds container nesting BEFORE the document is parsed.
+//
+// **The cost is goldmark's parser, and it is super-linear in nesting depth.** Measured, on
+// a file of nothing but nested list markers: 500 levels parses in 0.2s, 1000 in 1.4s and
+// 2000 in 14s, while RENDERING all three takes 50–90ms and grows linearly. A flat list of
+// the same 2000 items parses in 54ms. So this is nesting, not size, and it is not something
+// this package can make faster — only something it can decline.
+//
+// It matters because mdpdf renders Markdown a stranger sent: the GUI's Markdown import and
+// `nib office`, and other projects import this package directly. A 30 KB file that hangs
+// for three minutes with no cancel is an outage from the user's side, and an error naming
+// the reason is strictly better than a wait they cannot interpret.
+//
+// The bound is far above any real document and far below the pathological range. The visual
+// indent is already clamped at maxBlockIndent/listIndent ≈ 17 levels, so anything past that
+// renders identically anyway; 256 leaves an order of magnitude of headroom over the
+// deepest plausible outline while refusing the shapes that cost minutes.
+const maxNestDepth = 256
+
+// refuseAbsurdNesting rejects input whose container nesting exceeds maxNestDepth, in one
+// linear pass over the bytes and before the parser sees them.
+//
+// It measures two things a line can carry: leading `>` markers, which are unambiguously
+// blockquote depth, and leading spaces, whose count over two is an UPPER BOUND on list
+// depth. The bound is deliberately loose in the safe direction — an eight-space-indented
+// code block reads as depth four and is nowhere near the cap.
+func refuseAbsurdNesting(md []byte) error {
+	depth, line := 0, 0
+	for _, raw := range bytes.Split(md, []byte("\n")) {
+		line++
+		d, spaces := 0, 0
+		for _, c := range raw {
+			switch c {
+			case ' ':
+				spaces++
+			case '\t':
+				spaces += 4
+			case '>':
+				d++
+			default:
+				goto done
+			}
+		}
+	done:
+		if d+spaces/2 > depth {
+			depth = d + spaces/2
+		}
+		if depth > maxNestDepth {
+			return fmt.Errorf("mdpdf: line %d nests containers %d deep, past the limit of %d "+
+				"— parsing this is super-linear in depth and would take minutes, and the "+
+				"visual indent stops changing after about 17 levels anyway", line, depth, maxNestDepth)
+		}
+	}
+	return nil
+}
+
 func (r *renderer) blocks(n ast.Node, indent float64, marker *word) {
 	for c := n.FirstChild(); c != nil; c = c.NextSibling() {
 		r.block(c, indent, marker)
