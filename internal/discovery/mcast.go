@@ -151,7 +151,7 @@ func open(all []net.Interface, nonce [nonceLen]byte) (*Socket, error) {
 	lc := net.ListenConfig{Control: func(_, _ string, c syscall.RawConn) error {
 		var serr error
 		if err := c.Control(func(fd uintptr) {
-			serr = syscall.SetsockoptInt(int(fd), syscall.SOL_SOCKET, syscall.SO_REUSEADDR, 1)
+			serr = setReuseAddr(fd)
 		}); err != nil {
 			return err
 		}

@@ -13,13 +13,21 @@ for things it never looked at.
 
 | # | Command | What it verifies |
 |---|---------|------------------|
-| 0 | `go build ./...` | it compiles |
+| 0 | `go build ./...` | it compiles **for this host** — see the note below |
 | 1 | `go test ./...` | the Go side: server, PDF operations, vault, signing, CLI |
 | 2 | `./build/jsdomtest.sh` | the front end's logic and DOM behaviour, in jsdom |
 | 3 | `./build/uirepro.sh` | the whole app: the real binary, in a real browser |
 | 4 | `./build/pairrepro.sh` | a ceremony between TWO real binaries, two vaults, two identities — over BOTH transports |
 | 4b | `./build/pairrepro.sh --lan` | the same ceremony with **no address typed anywhere**, in a namespace, asserting nothing left the link |
 | 5 | `./build/mcastrepro.sh` | link-local discovery between two processes, in a network namespace of its own |
+
+**Tier 0 builds for the host only, and that is a hole tier 1 now covers.**
+`internal/discovery` once called `syscall.SetsockoptInt` with an `int` file descriptor —
+which is a `syscall.Handle` on Windows — so `GOOS=windows go build ./cmd/nib` failed and
+**nib.exe could not be produced at all**, on the platform whose `nib register` command
+exists only for it. Every tier stayed green, because every tier builds for the host.
+`TestEveryPlatformCompiles` cross-compiles `./cmd/nib` for windows, darwin and linux and
+is part of tier 1; it skips under `-short`.
 
 Add `node --check web/app.js` after editing JavaScript, and `go test -race
 ./internal/server/` after touching anything concurrent.

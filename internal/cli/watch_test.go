@@ -4,7 +4,10 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"runtime"
+	"syscall"
 	"testing"
+	"time"
 
 	"nib/internal/testpdf"
 )
@@ -79,5 +82,56 @@ func TestWatchNeverFollowsASymlinkOutOfTheWatchedDirectory(t *testing.T) {
 	}
 	if processed[link] {
 		t.Error("the symlink was processed as a document")
+	}
+}
+
+// TestTheWatchRefusesToReadThroughASymlink covers the window scanOnce's Lstat cannot: between
+// that check and the action, whoever could plant the symlink can swap the file for one.
+//
+// The actor is the documented one — anyone who can drop a file into the watched directory,
+// which is the shared scan-drop and "process my inbox" use the command exists for. The
+// consequence is an unrequested in-place rewrite of a PDF elsewhere on disk, and
+// `--do sanitize` strips its metadata irreversibly.
+func TestTheWatchRefusesToReadThroughASymlink(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("O_NOFOLLOW does not exist on Windows; nofollow_windows.go declares the gap")
+	}
+	dir := t.TempDir()
+	real := filepath.Join(dir, "real.pdf")
+	if err := os.WriteFile(real, []byte("%PDF-1.7\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	// STIMULUS: the regular file reads fine. Without it, a readNoFollow that had simply
+	// started failing would satisfy the assertion below.
+	if _, err := readNoFollow(real); err != nil {
+		t.Fatalf("a regular file could not be read: %v", err)
+	}
+
+	link := filepath.Join(dir, "link.pdf")
+	if err := os.Symlink(real, link); err != nil {
+		t.Skipf("cannot create a symlink here: %v", err)
+	}
+	if _, err := readNoFollow(link); err == nil {
+		t.Error("readNoFollow followed a symlink — the action would then rewrite the TARGET, " +
+			"which is a file outside the directory the watch was pointed at")
+	}
+
+	// A fifo is the other non-regular case: O_NOFOLLOW does not refuse it, and a read on
+	// one blocks the whole watch loop with no timeout and no way out but Ctrl-C.
+	fifo := filepath.Join(dir, "pipe.pdf")
+	if err := syscall.Mkfifo(fifo, 0o600); err != nil {
+		t.Skipf("cannot create a fifo here: %v", err)
+	}
+	done := make(chan error, 1)
+	go func() { _, err := readNoFollow(fifo); done <- err }()
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Error("readNoFollow accepted a fifo")
+		}
+	case <-time.After(5 * time.Second):
+		t.Error("readNoFollow blocked on a fifo — the watch loop has no timeout, so this " +
+			"hangs the command until Ctrl-C")
 	}
 }
