@@ -771,3 +771,17 @@ release timer — hold the publish for 3 s and require `Close` to return in less
 red-provable: removing it does not reliably fail anything, because the publish returns within
 microseconds of being cancelled either way. That assertion is a regression guard on a structural
 invariant, and it says so in the test rather than implying a red it never produced.
+
+## v1.117.30 — P05.S04 T08 + T15, the server gains a ceremony identity
+
+| Defect reintroduced | What it said | Check that fired |
+| --- | --- | --- |
+| **The hop taken as a constant instead of derived from the roster** | `party 1 with peer 2 derived hop 0, want 1 — the two ends of one hop must agree without negotiating` | `TestAnArmedSessionDerivesItsHopFromTheRoster`, on a THREE-party fixture: a two-party ceremony has exactly one hop and cannot distinguish a derived number from a constant |
+| **A corrupt invitation treated as an absent one** | `a corrupt invitation reported "this session has no ceremony identity"; it must be refused, not treated as absent` | the same test. Silently dropping it arms a session the user believes is part of a ceremony and which is not |
+| **A pin derived from a range variable over a record's addresses** | `zz_l1fixture.go: redProofWireDerivedPin sets candidate.Fingerprint from wire-derived data ([]byte(e.Addr.String())). L1: nothing learned from the network may influence WHICH peer is accepted` | `TestNothingWireDerivedReachesAPin`, widened at this slice |
+
+**The vacuous fix, demonstrated rather than argued.** With the guard's vocabulary widened to
+`ceremony.`/`rendezvous.` but its propagation left matching only `*ast.AssignStmt`, the planted
+fixture above **passes**. A trickle-in racer consuming `rec.Addrs` is range-shaped by construction,
+so the substring widening alone would have policed nothing while reading as coverage. Both halves
+were changed together, and the two runs — caught, then not caught — are what says so.

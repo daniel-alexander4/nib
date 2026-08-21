@@ -876,3 +876,49 @@ func TestTheHopNumberComesFromTheSignedRoster(t *testing.T) {
 			"two ends of a hop would then derive different keys for it", got, err)
 	}
 }
+
+// TestBothRostersUseOneHopRule — ADR-009 applied to a rule that has two natural homes.
+//
+// Record and Invitation both carry a roster and both get asked for hop numbers. Two
+// implementations would be worse than the usual duplicate: they would agree on every roster
+// anyone tested and disagree exactly where order was subtle — a party appearing twice, a
+// case-differing fingerprint, an off-by-one at the ends.
+func TestBothRostersUseOneHopRule(t *testing.T) {
+	cert, key, c := identity(t, "convener")
+	_, _, a := identity(t, "alice")
+	_, _, b := identity(t, "bob")
+	r := draft(t, c, a, b)
+	// Signed, because NewInvitation resolves the convener from the record's own certificate
+	// — an unsigned draft has none and is refused.
+	if err := r.Sign(cert, key); err != nil {
+		t.Fatal(err)
+	}
+	inv, err := NewInvitation(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// SETUP: both rosters really are the same, or "they agree" is trivially true of two
+	// different questions.
+	if len(inv.Roster) != len(r.Roster) {
+		t.Fatalf("setup: the invitation's roster has %d parties and the record's %d",
+			len(inv.Roster), len(r.Roster))
+	}
+	if inv.Hops() != r.Hops() {
+		t.Errorf("hop counts differ: invitation %d, record %d", inv.Hops(), r.Hops())
+	}
+
+	for _, pair := range [][2]string{{c, a}, {a, b}, {b, a}, {c, b}, {a, a}} {
+		rh, rerr := r.Hop(pair[0], pair[1])
+		ih, ierr := inv.Hop(pair[0], pair[1])
+		if (rerr == nil) != (ierr == nil) {
+			t.Errorf("%s/%s: record says %v and invitation says %v — one rule, two answers",
+				short(pair[0]), short(pair[1]), rerr, ierr)
+			continue
+		}
+		if rerr == nil && rh != ih {
+			t.Errorf("%s/%s: record says hop %d and invitation says hop %d",
+				short(pair[0]), short(pair[1]), rh, ih)
+		}
+	}
+}

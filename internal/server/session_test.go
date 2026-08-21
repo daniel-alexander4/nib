@@ -915,7 +915,7 @@ func TestDisarmDoesNotCloseALaterSession(t *testing.T) {
 
 	lnA := &stubListener{}
 	defer lnA.Close()
-	if !se.arm(lnA) {
+	if !se.arm(lnA, nil) {
 		t.Fatal("setup: the first session did not arm")
 	}
 
@@ -924,7 +924,7 @@ func TestDisarmDoesNotCloseALaterSession(t *testing.T) {
 	se.disarm()
 	lnB := &stubListener{}
 	defer lnB.Close()
-	if !se.arm(lnB) {
+	if !se.arm(lnB, nil) {
 		t.Fatal("setup: the second session did not arm, so there is nothing for the old teardown to damage")
 	}
 
@@ -955,7 +955,7 @@ func TestClearPendingDoesNotDropALaterSessionsConsent(t *testing.T) {
 	var se session
 	ln := &stubListener{}
 	defer ln.Close()
-	if !se.arm(ln) {
+	if !se.arm(ln, nil) {
 		t.Fatal("setup: could not arm")
 	}
 
