@@ -1124,7 +1124,8 @@ func connectFailure(err error) string {
 	return "could not connect to peer: " + err.Error()
 }
 
-// dialPeerWithin is dialPeer with the timeout named by the caller.
+// dialPeerWithin dials one candidate with the timeout the caller names, on the transport the
+// candidate carries (ADR-010), under the caller's context (P05.S03).
 //
 // Every caller passes `lanDialTimeout`. **It used to say something else** — that this was the
 // short budget beside a 30 s `sessionDialTimeout` "sized for an address a user TYPED" — and that

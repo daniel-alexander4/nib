@@ -29,7 +29,26 @@ import (
 // This is what a lying rendezvous produces: a candidate list with a wrong address in it.
 // The existing TestDialAnyTriesEveryCandidate dials two DEAD addresses with nil
 // credentials, so it never reaches a handshake and cannot see identity at all.
-func TestDialAnyWalksPastAnImpostorAndLandsOnThePinnedPeer(t *testing.T) {
+// TestAnImpostorAmongTheCandidatesDoesNotDenyTheCeremony.
+//
+// **Renamed at P05.S03, because its old premise stopped existing.** It was
+// `TestDialAnyWalksPastAnImpostorAndLandsOnThePinnedPeer`, and its setup said "the impostor
+// FIRST, as an attacker who answers faster would arrange" — position in the slice was the
+// whole point when candidates were walked in order. They are raced now, so there is no
+// first, and a test that kept the old name would claim to guard a behaviour that no longer
+// exists.
+//
+// What survives is what actually mattered: an impostor among the candidates must neither
+// deny the ceremony nor substitute a signer, and an impostor ALONE must fail as a pin
+// failure rather than a timeout. All three still hold under a race, and the third is the one
+// with teeth — it is the sentence `connectFailure` reports to the user.
+//
+// **What this can no longer reach, stated rather than implied:** the impostor here fails at
+// the pin, quickly. The case a racer must survive that a walk need not is a candidate that
+// succeeds at the transport and fails at the pin while the genuine peer is SLOWER — so the
+// race must not take the fast wrong answer. Driving that needs a listener whose handshake is
+// deliberately delayed, which this rig cannot express.
+func TestAnImpostorAmongTheCandidatesDoesNotDenyTheCeremony(t *testing.T) {
 	certA, keyA, _ := sign.GenerateIdentity("Alice")
 	certB, keyB, _ := sign.GenerateIdentity("Bob")
 	certM, keyM, _ := sign.GenerateIdentity("Impostor")
@@ -87,7 +106,7 @@ func TestDialAnyWalksPastAnImpostorAndLandsOnThePinnedPeer(t *testing.T) {
 		c.Close()
 	}
 
-	// The impostor FIRST, as an attacker who answers faster would arrange.
+	// Both candidates, raced. Order is not a property any more; presence is.
 	conn, err := dialAny(tcpCands(serve(certM, keyM), pinned), certA, keyA, fpB)
 	if err != nil {
 		t.Fatalf("an impostor in the candidate list denied the ceremony entirely: %v", err)

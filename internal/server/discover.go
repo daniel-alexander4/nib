@@ -155,9 +155,12 @@ func resolve(pins []vault.PinnedPeer, s discovery.Seen) (candidate, bool) {
 // announcing. Eight is well past any real host's address count (a dual-stack machine with
 // several interfaces is two or three) and small enough that the walk is bounded.
 //
-// The cap alone is not the fix. `dialAny` also takes a total budget — see `lanDialBudget`
-// — because a cap bounds how many candidates there are and says nothing about how long each
-// one is allowed to take.
+// The cap alone is not the fix, and what completes it CHANGED at P05.S03. It used to be a
+// total walk budget (`lanDialBudget`, now deleted): with a serial walk, N candidates cost
+// N x `lanDialTimeout` and something had to cut the walk short. The racer dials them
+// concurrently, so N dead candidates cost ONE timeout and the concurrency is the bound. The
+// cap still matters — it bounds how many sockets one browse can aim — but it is no longer
+// the thing standing between an on-link flood and a wedged handler.
 // maxLANCandidates bounds what one browse may hand to the dialer. See browsePeers.
 const maxLANCandidates = 8
 

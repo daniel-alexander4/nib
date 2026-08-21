@@ -3035,7 +3035,7 @@ six-word identity**, which is verbatim the harm `lan.go:70-75` exists to prevent
 violation of this phase's own criterion 14 ("nothing in the race emits at full rate for the whole
 deadline"). The arm window cannot simply be extended; that constraint travels with the slice.
 
-#### P05.S03 — The race: concurrent attempts, trickle-in candidates, one connect deadline *(D8, D16, D14, caveat 7; criteria 10, 11, 14, 17 and the socket-sharing criterion)* *(in progress)*
+#### P05.S03 — The race: concurrent attempts, trickle-in candidates, one connect deadline *(D8, D16, D14, caveat 7; criteria 10, 11, 14, 17 and the socket-sharing criterion)* *(done 2026-08-21, v1.117.23)*
 Tasks (grilled 2026-08-21, after a deepdive and two adversarial passes):
 - T01 — `p2p.Dial`/`p2p.QUICDial` take a context. The `timeout` parameter STAYS as a per-dial floor, so no converted call site can lose its bound. Property: no goroutine outlives a successful dial; cancellation is expressed only as an error return.
 - T02 — D16's constant block, with `connectDeadline < sessionAcceptTimeout` asserted. Delete `dialPeer`/`sessionDialTimeout` and correct the four descriptions that call them live.
@@ -3043,6 +3043,36 @@ Tasks (grilled 2026-08-21, after a deepdive and two adversarial passes):
 - T04 — the error surface: `*p2p.ClockSkewError` survives aggregation; transports validated before the race.
 - T05 — re-point the three tests the deepdive named as going vacuous.
 - T06 — criterion 17's honest guard, whose red proof is wiring the race context into the established conn.
+
+**Ledger: 4 met / 1 not exercised / 1 not measurable at this granularity.**
+
+- *"All tiers are attempted concurrently; the first to complete is used and the rest are
+  cancelled."* — **met.** A dead candidate ahead of a live one no longer delays it (0.76 s
+  against a walk's 6 s), and nothing abandoned is left live at the peer.
+- *"A candidate arriving late joins the race in flight; no tier waits on another tier's
+  gathering."* — **met**, driven on a channel that is never closed, so a drain-then-race
+  implementation times out rather than passing.
+- *"Nothing in the race emits at full rate for the whole deadline"* — **the size half met**
+  (the cap drops the excess and reports it, red-proved by silencing the report); **the rate
+  half is S08's**, since retry cadences belong to the punch. The clause's second half — *"a
+  published record outlives the race that depends on it"* — is **S04's**, which is the slice
+  that publishes one.
+- *"The three clocks are independent"* — **met for the clause that can fail**, which is that
+  the race's context does not reach the established session; red-proved on both transports by
+  attaching a teardown to it. The literal reading — burn the deadline, read the exchange
+  budget — is **not measurable at this granularity**: every entry point calls `SetDeadline`
+  unconditionally, so it compares two literals and passes with the racer never written.
+- **The socket-sharing criterion (caveat 7) — NOT EXERCISED, and it is the honest gap.** The
+  racer does not yet own one mux and one `quic.Transport` for the whole race; `QUICDial` still
+  binds a socket per dial. The criterion binds this phase and nothing here discharges it. It
+  moves to **S04**, which is the first slice with a NAT mapping to be wrong about.
+
+**The review found the slice's worst defect, not the grill.** `raceCandidates` read results
+with `for r := range results`, which ends only when the INPUT channel closes — and a trickle
+source stays open for the whole race by design. Every candidate failing meant the race never
+returned, with the local user's document already signed. Five tests, all green, none asking;
+`dialAny` cannot reach it because it closes the channel it builds. Fixed by giving the caller
+the deadline and watching it. `code-reviews/P05.S03-2026-08-21.md`.
 
 **The criterion this slice's first draft DROPPED, recorded because the drop is the lesson.**
 The socket-sharing criterion was added to this phase at its own phase-open on 2026-08-21, and

@@ -282,22 +282,15 @@ func (s *Server) peerAddresses(w http.ResponseWriter, v *vault.Vault, address, t
 	return found, true
 }
 
-// lanDialBudget bounds the WHOLE walk, not each hop.
+// lanDialTimeout is per candidate. Link-local candidates answer in milliseconds, so six
+// seconds is already generous and anything longer is only ever spent on something that is
+// not there. The whole-race budget is `connectDeadline` (D16); this is the floor under one
+// dial inside it.
 //
-// One dial is bounded by `lanDialTimeout`; nothing bounded the loop. With N candidates that
-// is N×6 s inside an HTTP handler on a server with no WriteTimeout, and N was unbounded until
-// `maxLANCandidates` — see browsePeers, where an on-link host produces a fresh candidate per
-// datagram by varying the announced port. Capping N was the other half; this is the half
-// that holds even if the cap is later raised, because it bounds the thing the user
-// experiences (a wedged request) rather than the thing the attacker controls (a count).
-const (
-	lanDialBudget = 20 * time.Second
-	// lanDialTimeout is per candidate. Link-local candidates answer in milliseconds, so six
-	// seconds is already generous and anything longer is only ever spent on something that
-	// is not there — it is the count multiplier in the attack above. The whole-race budget
-	// is `connectDeadline` (D16); this is the floor under one dial inside it.
-	lanDialTimeout = 6 * time.Second
-)
+// Its sibling `lanDialBudget` — a total budget for the WHOLE walk — was deleted at P05.S03
+// along with the walk it bounded. The racer needs no such cut-short: N dead candidates cost
+// one timeout rather than N, so concurrency is the bound.
+const lanDialTimeout = 6 * time.Second
 
 // raceCandidates dials every candidate concurrently and returns the first that answers as
 // the pinned peer, closing the rest.
@@ -334,8 +327,17 @@ const (
 // `buildCoSigned` runs before the dial, so by the time a race starts the local user has
 // already signed, and a closed browser tab must not be able to cancel a ceremony carrying
 // that signature the day someone plumbs a context into `Initiate`.
-func raceCandidates(in <-chan candidate, cert, key, peerFP []byte) (*p2p.Conn, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), connectDeadline)
+// **The caller owns the deadline, and that is not a style choice.** The first version made
+// its own from `connectDeadline` and then read results with `for r := range results` — which
+// ends only when the INPUT channel closes. A trickle source stays open for the whole race by
+// design (D16: candidates join as they arrive), so if every candidate failed, this function
+// never returned: each dial was bounded and the race was not, and an HTTP handler hung
+// forever. Found by reviewing this slice's own diff. The deadline is now the caller's
+// context and the loop watches it.
+func raceCandidates(parent context.Context, in <-chan candidate, cert, key, peerFP []byte) (*p2p.Conn, error) {
+	// A cancellable child: cancelling on a win is what stops the losers, and it must not
+	// disturb the caller's context.
+	ctx, cancel := context.WithCancel(parent)
 	defer cancel()
 
 	type result struct {
@@ -392,7 +394,20 @@ func raceCandidates(in <-chan candidate, cert, key, peerFP []byte) (*p2p.Conn, e
 
 	var last error
 	var tried int
-	for r := range results {
+	for {
+		var r result
+		select {
+		case got, ok := <-results:
+			if !ok {
+				// Every dial finished and the input closed: the race is exhausted.
+				return nil, raceFailure(tried, dropped.Load(), last)
+			}
+			r = got
+		case <-parent.Done():
+			// **The connect deadline, or the caller giving up.** Without this arm the
+			// loop waits on a channel that a trickle source keeps open forever.
+			return nil, raceFailure(tried, dropped.Load(), context.Cause(parent))
+		}
 		tried++
 		if r.err != nil {
 			if errors.Is(r.err, errUnknownTransport) {
@@ -424,14 +439,19 @@ func raceCandidates(in <-chan candidate, cert, key, peerFP []byte) (*p2p.Conn, e
 		}()
 		return r.conn, nil
 	}
+}
+
+// raceFailure is the one sentence a lost race produces, so the two exits above cannot
+// describe the same outcome differently.
+func raceFailure(tried int, dropped int64, last error) error {
 	if last == nil {
 		last = errors.New("no candidate addresses")
 	}
-	if n := dropped.Load(); n > 0 {
-		return nil, fmt.Errorf("tried %d address(es) and dropped %d over the %d-candidate cap, "+
-			"none answered as the pinned peer: %w", tried, n, maxRaceCandidates, last)
+	if dropped > 0 {
+		return fmt.Errorf("tried %d address(es) and dropped %d over the %d-candidate cap, "+
+			"none answered as the pinned peer: %w", tried, dropped, maxRaceCandidates, last)
 	}
-	return nil, fmt.Errorf("tried %d address(es), none answered as the pinned peer: %w", tried, last)
+	return fmt.Errorf("tried %d address(es), none answered as the pinned peer: %w", tried, last)
 }
 
 // errorsAs is errors.As, named so the preference above reads as one condition rather than
@@ -441,10 +461,12 @@ func errorsAs(err error, target any) bool { return errors.As(err, target) }
 // dialAny races a fixed set of candidates. It is raceCandidates with the trickle removed,
 // for the callers that already hold every candidate they will ever have.
 func dialAny(cands []candidate, cert, key, peerFP []byte) (*p2p.Conn, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), connectDeadline)
+	defer cancel()
 	in := make(chan candidate, len(cands))
 	for _, c := range cands {
 		in <- c
 	}
 	close(in)
-	return raceCandidates(in, cert, key, peerFP)
+	return raceCandidates(ctx, in, cert, key, peerFP)
 }
