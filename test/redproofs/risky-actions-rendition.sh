@@ -6,3 +6,5 @@
 # are maintained separately on purpose.
 TIER="tier 1 — go test"
 PROVE="go test ./internal/pdfops/ -run TestRiskyActionsCoverTheTypesThatCanRunOrHide"
+# EXPECT is the token the real assertion prints — see empty-state-message.sh.
+EXPECT="Rendition"
