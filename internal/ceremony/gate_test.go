@@ -591,8 +591,15 @@ func TestAnOverSizeSealedRecordIsRefusedAtTheRead(t *testing.T) {
 	if !errors.Is(err, ErrCandidateTooBig) {
 		t.Fatalf("a %d-byte record was not refused at the read: %v", len(huge), err)
 	}
-	if g.Stats().RefusedSealed != 1 {
-		t.Errorf("RefusedSealed = %d, want 1 — an over-size record must be countable",
+	// RefusedTooBig, not RefusedSealed. It was the latter until 2026-08-20, and that
+	// counter means "wrong key/salt/hop, or altered" — a tampering signal for a record
+	// nothing has decrypted. The breakdown is read to tell in-roster preemption from noise.
+	if g.Stats().RefusedTooBig != 1 {
+		t.Errorf("RefusedTooBig = %d, want 1 — an over-size record must be countable",
+			g.Stats().RefusedTooBig)
+	}
+	if g.Stats().RefusedSealed != 0 {
+		t.Errorf("RefusedSealed = %d, want 0 — an over-size record was never opened",
 			g.Stats().RefusedSealed)
 	}
 
@@ -606,5 +613,51 @@ func TestAnOverSizeSealedRecordIsRefusedAtTheRead(t *testing.T) {
 	}
 	if err := g.Accept(atCap, time.Now()); errors.Is(err, ErrCandidateTooBig) {
 		t.Error("a record exactly at MaxSealedRecord was refused as over-cap")
+	}
+}
+
+// TestEveryRefusalCauseIsCountedUnderItsOwnName drives each cause to a distinct counter, and
+// asserts the sum. The one it was written for is the oversize case: it incremented
+// RefusedSealed, whose documented meaning is "wrong key/salt/hop, or altered" — a tampering
+// signal — for a record that had not been decrypted at all. The breakdown exists so an
+// operator can tell in-roster preemption from noise, and that is the reading it made wrong.
+func TestEveryRefusalCauseIsCountedUnderItsOwnName(t *testing.T) {
+	g, _, _, _, _ := gateFor(t)
+
+	before := g.Stats()
+	if err := g.Accept(make([]byte, MaxSealedRecord+1), time.Now()); err == nil {
+		t.Fatal("an oversize record was accepted, so this test never reaches its subject")
+	}
+	after := g.Stats()
+	if after.RefusedTooBig != before.RefusedTooBig+1 {
+		t.Errorf("an oversize record did not increment RefusedTooBig (%d → %d)",
+			before.RefusedTooBig, after.RefusedTooBig)
+	}
+	if after.RefusedSealed != before.RefusedSealed {
+		t.Errorf("an oversize record incremented RefusedSealed (%d → %d) — that counter means "+
+			"'wrong key/salt/hop, or altered', and nothing here has been decrypted",
+			before.RefusedSealed, after.RefusedSealed)
+	}
+
+	// And a genuinely unsealable record still lands on RefusedSealed, or the split above
+	// has simply moved the problem.
+	junk := make([]byte, 128)
+	for i := range junk {
+		junk[i] = byte(i)
+	}
+	mid := g.Stats()
+	if err := g.Accept(junk, time.Now()); err == nil {
+		t.Fatal("random bytes opened as a sealed record")
+	}
+	if g.Stats().RefusedSealed != mid.RefusedSealed+1 {
+		t.Errorf("an unsealable record did not increment RefusedSealed")
+	}
+
+	// The sum is the number the CLI prints beside an empty fetch, so it must include the
+	// new cause. A field added to the struct and forgotten in Refused() is invisible.
+	s := g.Stats()
+	if s.Refused() < s.RefusedTooBig+s.RefusedSealed {
+		t.Errorf("Refused() = %d does not include every cause it was incremented for "+
+			"(too-big %d + sealed %d)", s.Refused(), s.RefusedTooBig, s.RefusedSealed)
 	}
 }

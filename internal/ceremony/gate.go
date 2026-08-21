@@ -81,6 +81,7 @@ type CandidateStats struct {
 	// it, in-roster preemption is indistinguishable from an offline peer, because both
 	// look like an empty fetch.
 	RefusedSealed     uint64 // wrong key/salt/hop, or altered
+	RefusedTooBig     uint64 // over MaxSealedRecord, refused before any decryption
 	RefusedFormat     uint64 // decrypted and did not parse
 	RefusedTooMany    uint64 // more than MaxCandidates in one record
 	RefusedUnroutable uint64 // named an address Nib will not dial
@@ -93,8 +94,9 @@ type CandidateStats struct {
 // Refused is the total across every cause — the "something was there and it was wrong"
 // number, to be read beside rendezvous.Stats().FetchEmpty ("nothing was there").
 func (s CandidateStats) Refused() uint64 {
-	return s.RefusedSealed + s.RefusedFormat + s.RefusedTooMany + s.RefusedUnroutable +
-		s.RefusedSignature + s.RefusedAuthor + s.RefusedContext + s.RefusedExpired
+	return s.RefusedSealed + s.RefusedTooBig + s.RefusedFormat + s.RefusedTooMany +
+		s.RefusedUnroutable + s.RefusedSignature + s.RefusedAuthor + s.RefusedContext +
+		s.RefusedExpired
 }
 
 // Records is every record the gate has been offered — accepted, empty or refused. The
@@ -159,7 +161,12 @@ func (g *CandidateGate) Accept(sealed []byte, now time.Time) error {
 	// validateSeeds is "called at BOTH doors, and that is the whole point", and
 	// parseCandidate is "Refused HERE, at the parse, not at the dialer".
 	if len(sealed) > MaxSealedRecord {
-		g.stats.RefusedSealed++
+		// Its OWN cause. This incremented RefusedSealed, whose documented meaning is "wrong
+		// key/salt/hop, or altered" — a tampering signal. An oversize record has not been
+		// decrypted at all, so nothing yet says it was altered, and the counter exists
+		// precisely so an operator can tell in-roster preemption from noise. Folding a
+		// size refusal into the tampering count makes the one reading that matters wrong.
+		g.stats.RefusedTooBig++
 		return fmt.Errorf("%w: %d bytes, cap is %d", ErrCandidateTooBig, len(sealed), MaxSealedRecord)
 	}
 	rec, err := OpenCandidate(g.key, g.salt, g.hop, sealed)

@@ -499,3 +499,20 @@ that the survivor still opens.
 **Overturned:** the orphaned `.vault-*.tmp` finding. `writeFileAtomic` carries
 `defer os.Remove(tmpName)` covering every error path (`internal/vault/vault.go`); only a
 crash between create and rename leaves one, which no in-process cleanup can fix.
+
+## v1.117.9 — the ceremony: a token with two implementations, and a check you delete a field to skip
+
+| Row | The defect restored | The check that went red |
+| --- | --- | --- |
+| convener check | `if i.ConvenerFingerprint != ""` restored | `TestTheConvenerCheckIsNotOptIn` |
+| hex case | `!=` in place of `strings.EqualFold` | same |
+| refusal cause | oversize counted as `RefusedSealed` | `TestEveryRefusalCauseIsCountedUnderItsOwnName` |
+| the token's shape | `[NibRoster=` at the real producer | `TestTheRosterTokenIsWellFormedWhereItIsActuallyBuilt` |
+| the forgery guard | `safeText` returning its input | same |
+
+The last two are the point of the entry. Before this, the token's format was tested through
+`ceremony.Record.RosterToken` — a **second implementation with no production caller**. The
+mutation above is at `p2p.Attestation.reason`, the only producer on the real path, and the
+old ceremony test would have stayed green through it. The duplicate is deleted; p2p cannot
+import ceremony (ceremony's own tests import p2p, so the edge is a cycle), so the coverage
+moved to the producer rather than the definition moving to the consumer.

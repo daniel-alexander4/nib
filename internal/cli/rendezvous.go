@@ -567,8 +567,8 @@ func runSelfTest(ctx context.Context, out io.Writer, rz *rendezvous.Server, self
 		g.Records(), g.Refused(), g.Accepted)
 	fmt.Fprintf(out, "                  dropped: over-cap %d, duplicate %d, re-offered %d, empty records %d\n",
 		g.DroppedOverCap, g.DroppedDuplicate, g.Reoffered, g.EmptyRecords)
-	fmt.Fprintf(out, "                  refused: sealed %d, format %d, too-many %d, unroutable %d,\n",
-		g.RefusedSealed, g.RefusedFormat, g.RefusedTooMany, g.RefusedUnroutable)
+	fmt.Fprintf(out, "                  refused: sealed %d, too-big %d, format %d, too-many %d, unroutable %d,\n",
+		g.RefusedSealed, g.RefusedTooBig, g.RefusedFormat, g.RefusedTooMany, g.RefusedUnroutable)
 	fmt.Fprintf(out, "                           signature %d, author %d, context %d, expired %d\n",
 		g.RefusedSignature, g.RefusedAuthor, g.RefusedContext, g.RefusedExpired)
 	fmt.Fprintf(out, "  (a non-zero refusal here with an empty fetch elsewhere is how in-roster\n")

@@ -35,6 +35,19 @@ import (
 // one: it accuses a counterparty of tampering when the truth is that the two builds
 // disagree about the format. D32's rule is that a version mismatch produces a sentence,
 // and this makes it the right one.
+//
+// **Bumped to 3 (2026-08-20, v1.116.17).** RosterHash gained the convener's fingerprint.
+// Its exclusion list named the six-word name and the secret, so ConvenerCert's absence read
+// as a decision; it was not one, and any roster member could re-sign an unchanged roster
+// with their own key. Verify passed — it asks only that the signer appear somewhere in the
+// roster — the hash was byte-identical so RosterToken was too, and Convener() then named
+// the substitute. The bump follows for the same reason the first one did: the preimage
+// changed, so a v2 record read by this build must produce a version sentence rather than a
+// tampering accusation.
+//
+// Two bumps in one day is also why this comment now records BOTH. It said "Bumped to 2"
+// above a constant reading 3 — a doc describing a version the code had already left, which
+// is this repo's most-found defect shape wearing its most harmless-looking clothes.
 const FormatVersion = 3
 
 // rosterDomain separates this preimage from every other thing the identity key signs.
@@ -192,15 +205,14 @@ func rosterDigest(r Record) ([]byte, error) {
 	return sum[:], nil
 }
 
-// RosterToken is the [NibRoster:<hash>] token each signature's /Reason carries, so every
-// signature on a finished document attests to the same proceeding (D2's UX pin).
-func (r Record) RosterToken() (string, error) {
-	h, err := r.RosterHash()
-	if err != nil {
-		return "", err
-	}
-	return "[NibRoster:" + hex.EncodeToString(h) + "]", nil
-}
+// **RosterToken was deleted here (2026-08-20).** It formatted the [NibRoster:<hash>] token
+// and said "each signature's /Reason carries" it — which is true, and was true of code
+// somewhere else: p2p's Attestation.reason builds the token itself, and that is the only
+// producer on the real path. Two implementations of one wire format, of which the tested one
+// was the dead one; p2p's could have changed shape and the ceremony test would still have
+// passed. p2p cannot import ceremony (this package's own tests import p2p, so the edge would
+// be a cycle), so the duplicate goes and the producer gets the coverage — see
+// TestTheRosterTokenIsWellFormedWhereItIsActuallyBuilt.
 
 // NewID returns 128 random bits as hex.
 func NewID() (string, error) {
