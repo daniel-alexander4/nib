@@ -59,7 +59,15 @@ OUT="$(mktemp)"
 trap 'rm -f "$OUT"' EXIT
 
 echo "probing the public DHT (this leaves the machine)…"
-NIB_LIVE_DHT=1 go test ./internal/rendezvous/ -run 'TestLive' -v -count=1 \
+# EVERY package with an NIB_LIVE_DHT gate, not just internal/rendezvous.
+#
+# internal/cli's TestTheBannerPrecedesTheSocket has a live half behind the same variable and
+# this harness ran one package, so that half was executed by NOTHING — skipped by
+# `go test ./...` because the variable is unset, and never reached here because the package
+# was not named. The same vacuous-green-one-level-out the -run pattern guard above catches
+# WITHIN a package, one level further out again: a harness reports a pass for the packages it
+# happens to name. verify_test.go now checks this list against the tree.
+NIB_LIVE_DHT=1 go test ./internal/rendezvous/ ./internal/cli/ -run 'TestLive|TestTheBannerPrecedesTheSocket' -v -count=1 \
   >"$OUT" 2>&1 || { cat "$OUT"; fail "the live probe did not pass — read the message above; it names which of no-network, dead-seeds and a broken probe it was"; }
 
 # THREE outcomes, not two, and collapsing the third into either of the others is the

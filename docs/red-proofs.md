@@ -535,3 +535,25 @@ shape pointing opposite ways.
 The second row's test is one `docs/red-proofs.md:343` has cited all along and which had
 ceased to exist — a ledger row naming a check nothing runs. Rewritten rather than the
 citation edited: the claim was right, the test went missing.
+
+## v1.117.11 — the CLI: three sentences, two parsers, and a harness that named one package
+
+| Row | The defect restored | The check that went red |
+| --- | --- | --- |
+| the shipped sentences | README's "invalid or absent" enumeration restored | `TestTheShippedSentencesDescribeTheExitCodeThatShips` |
+| `-h` | `discover` hand-rolling `fs.Parse` and returning 2 | `TestEveryCommandTreatsDashHTheSameWay` |
+| the banner's ordering | a line appended after the Ctrl-C invitation | `TestTheBannerPrecedesTheSocket` |
+| the harness's reach | `dhtlive.sh` back to one package | `TestVerifyContractIsTrue` |
+
+Two lessons, both about the checks rather than the code.
+
+**A dead assertion in the branch that always runs.** `TestTheBannerPrecedesTheSocket`'s
+hermetic half compared indices of `"local socket"` — a string the *banner* never contains,
+since that line is printed later by `runRendezvous`. `strings.Index` returned -1, the
+`i >= 0` arm was never true, and the ordering check in the only branch a normal test run
+reaches had no reach at all.
+
+**The first mutation was in the wrong branch.** The banner row above came back green on the
+first attempt because the mutation appended to `banner(true)` while the hermetic test drives
+`banner(false)`. That was a statement about the mutation, not about the test — the second
+attempt, in the right branch, went red.
