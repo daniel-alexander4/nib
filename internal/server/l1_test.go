@@ -74,14 +74,14 @@ func TestDialAnyWalksPastAnImpostorAndLandsOnThePinnedPeer(t *testing.T) {
 
 	// STIMULUS: the real peer alone is reachable, so a failure below is about the
 	// impostor and not about the rig.
-	if c, err := dialAny("tcp", []string{pinned}, certA, keyA, fpB); err != nil {
+	if c, err := dialAny(tcpCands(pinned), certA, keyA, fpB); err != nil {
 		t.Fatalf("stimulus: the pinned peer alone was unreachable: %v", err)
 	} else {
 		c.Close()
 	}
 
 	// The impostor FIRST, as an attacker who answers faster would arrange.
-	conn, err := dialAny("tcp", []string{serve(certM, keyM), pinned}, certA, keyA, fpB)
+	conn, err := dialAny(tcpCands(serve(certM, keyM), pinned), certA, keyA, fpB)
 	if err != nil {
 		t.Fatalf("an impostor in the candidate list denied the ceremony entirely: %v", err)
 	}
@@ -92,7 +92,7 @@ func TestDialAnyWalksPastAnImpostorAndLandsOnThePinnedPeer(t *testing.T) {
 	}
 
 	// And an impostor ALONE must fail, not silently succeed.
-	if c, err := dialAny("tcp", []string{serve(certM, keyM)}, certA, keyA, fpB); err == nil {
+	if c, err := dialAny(tcpCands(serve(certM, keyM)), certA, keyA, fpB); err == nil {
 		c.Close()
 		t.Fatal("a candidate list containing only an impostor produced a channel")
 	} else if !strings.Contains(err.Error(), "none answered as the pinned peer") {

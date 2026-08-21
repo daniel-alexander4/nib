@@ -13,9 +13,27 @@
 //
 //   - the sender's six-word NAME (D3), which is a public encoding of 66 bits of
 //     their fingerprint and is already displayed on their own screen;
-//   - the port their armed session is listening on;
+//   - the port their armed session is listening on, AND the transport it speaks;
 //   - a per-instance nonce, which exists only so a sender can recognise its own
 //     announcement coming back (see below).
+//
+// # Why the transport is part of the address (ADR-010, format version 2)
+//
+// A port without its transport is not an address. The armed side listens on exactly
+// one transport, chosen at arm time, and under QUIC its port is a **UDP** port while
+// under TCP it is a TCP port — the same number means two different sockets. Version 1
+// carried the number alone, so the dialing side picked a transport from its own
+// request and a QUIC-armed peer discovered on the link was dialled over TCP: a
+// connection refused, reported to the user as "that peer is not reachable".
+//
+// It stayed latent because the web client never sends a transport at all (so the GUI
+// was TCP-only end to end) and because `build/pairrepro.sh` passes `-F transport=` to
+// BOTH sides out of band, so tier 4 could not see the disagreement it was configured
+// past. Two harnesses agreeing because they were told the same answer is not the same
+// as the protocol carrying it.
+//
+// This is reachability, never identity, so L1 is untouched: the transport says how to
+// open a socket and has no bearing on which peer is accepted at the handshake.
 //
 // It carries the name and not the fingerprint because that is what the receiving
 // side can actually use: pairing.Matches(fp, name) recomputes the name from a
@@ -73,7 +91,13 @@ const (
 	// not this one is refused rather than best-guessed: a version field that is
 	// read and then ignored is decoration, and this is a wire format other Nibs
 	// parse (ADR-007).
-	version = 1
+	//
+	// **2 since ADR-010**, which added the transport byte. Refused and not
+	// best-guessed for the reason above and one more: a version-1 announcement's
+	// port could be either transport, and guessing is exactly the defect the field
+	// was added to remove. Nib has no users and forbids compatibility shims, so
+	// there is no version-1 speaker to keep working.
+	version = 2
 
 	// nonceLen is the per-instance self-recognition nonce.
 	nonceLen = 8
@@ -84,8 +108,22 @@ const (
 	// the ability to make this package allocate.
 	MaxDatagram = 256
 
-	// headerLen is magic + version + port + nonce + name length.
-	headerLen = len(magic) + 1 + 2 + nonceLen + 1
+	// The field offsets, named ONCE.
+	//
+	// They were arithmetic written inline in `Parse` and again in the test that
+	// mutates a datagram field by field. Adding the transport byte moved the port and
+	// the test went on patching the old offset — so "zero port" set the transport to 0
+	// and the port's high byte to 0, left a port of 251, and the parser accepted it.
+	// A refusal test that silently stops testing its own refusal is the worst shape a
+	// guard can take, and the cause was one number in two places (ADR-009).
+	offVersion   = len(magic)
+	offTransport = offVersion + 1
+	offPort      = offTransport + 1
+	offNonce     = offPort + 2
+	offNameLen   = offNonce + nonceLen
+
+	// headerLen is magic + version + transport + port + nonce + name length.
+	headerLen = offNameLen + 1
 )
 
 var (
@@ -104,6 +142,40 @@ var (
 	ErrVersion = errors.New("unsupported announcement version")
 )
 
+// Transport names the socket an armed session is listening on, as one wire byte.
+//
+// It is an enumeration on the wire and not a string, so the parser's whole job is a
+// range check: a name would let an announcement choose how many bytes this package
+// allocates and how they are compared, for a field with two legal values.
+//
+// **These constants are NOT internal/p2p's**, and the duplication is deliberate rather
+// than an oversight. `TestNothingHereCanReachAnIdentity` forbids this package importing
+// p2p, vault or sign — that guard is what makes L1 structural instead of remembered —
+// so the wire encoding is owned here and `internal/server` maps between the two at the
+// layer that holds both. A shared constant would be a shared import.
+type Transport uint8
+
+const (
+	// TransportTCP is zero so the zero Announcement is a TCP one, matching the
+	// server's own rule that an absent transport means TCP.
+	TransportTCP  Transport = 0
+	TransportQUIC Transport = 1
+)
+
+func (t Transport) String() string {
+	switch t {
+	case TransportTCP:
+		return "tcp"
+	case TransportQUIC:
+		return "quic"
+	default:
+		return fmt.Sprintf("transport(%d)", uint8(t))
+	}
+}
+
+// valid reports whether t is a transport this version of the format defines.
+func (t Transport) valid() bool { return t == TransportTCP || t == TransportQUIC }
+
 // Announcement is what an armed Nib says on the link.
 //
 // There is no fingerprint field and there is no address field. The fingerprint is
@@ -115,6 +187,9 @@ type Announcement struct {
 	Name string
 	// Port is where the sender's armed session is listening.
 	Port uint16
+	// Transport is the socket that port belongs to. A UDP port and a TCP port with
+	// the same number are different endpoints, so this travels WITH the port.
+	Transport Transport
 	// Nonce identifies the sending PROCESS, so it can discard its own copies.
 	Nonce [nonceLen]byte
 }
@@ -128,6 +203,7 @@ func (a Announcement) Encode() ([]byte, error) {
 	out := make([]byte, 0, headerLen+len(a.Name))
 	out = append(out, magic...)
 	out = append(out, version)
+	out = append(out, byte(a.Transport))
 	out = binary.BigEndian.AppendUint16(out, a.Port)
 	out = append(out, a.Nonce[:]...)
 	out = append(out, byte(len(a.Name)))
@@ -140,6 +216,13 @@ func (a Announcement) Encode() ([]byte, error) {
 func (a Announcement) check() error {
 	if a.Port == 0 {
 		return fmt.Errorf("%w: no port", ErrMalformed)
+	}
+	// In `check` and therefore on BOTH sides, like every other rule here: this
+	// function exists so the encoder and the parser cannot drift into disagreeing
+	// about what is legal, and a transport validated only on parse would let this
+	// Nib emit an announcement it would itself refuse.
+	if !a.Transport.valid() {
+		return fmt.Errorf("%w: unknown transport %d", ErrMalformed, uint8(a.Transport))
 	}
 	if len(strings.Fields(a.Name)) != pairing.NameWords {
 		return fmt.Errorf("%w: name is not %d words", ErrMalformed, pairing.NameWords)
@@ -186,17 +269,14 @@ func Parse(b []byte) (Announcement, error) {
 	if string(b[:len(magic)]) != magic {
 		return Announcement{}, ErrNotOurs
 	}
-	i := len(magic)
-	if b[i] != version {
-		return Announcement{}, fmt.Errorf("%w: %d, want %d", ErrVersion, b[i], version)
+	if b[offVersion] != version {
+		return Announcement{}, fmt.Errorf("%w: %d, want %d", ErrVersion, b[offVersion], version)
 	}
-	i++
-	a.Port = binary.BigEndian.Uint16(b[i : i+2])
-	i += 2
-	copy(a.Nonce[:], b[i:i+nonceLen])
-	i += nonceLen
-	n := int(b[i])
-	i++
+	a.Transport = Transport(b[offTransport])
+	a.Port = binary.BigEndian.Uint16(b[offPort : offPort+2])
+	copy(a.Nonce[:], b[offNonce:offNonce+nonceLen])
+	n := int(b[offNameLen])
+	i := headerLen
 	if len(b)-i != n {
 		// Exact, not "at least": trailing bytes are as much a malformed
 		// announcement as missing ones, and accepting them would let a sender

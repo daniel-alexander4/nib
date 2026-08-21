@@ -14,6 +14,16 @@ import (
 	"nib/internal/sign"
 )
 
+// boundOn is a real listener plus the transport it stands for, which is what
+// `announceable` asks for. A bare net.Listener cannot answer the second question, and
+// that ambiguity is the whole of ADR-010.
+type boundOn struct {
+	net.Listener
+	transport string
+}
+
+func (b boundOn) Transport() string { return b.transport }
+
 // TestALoopbackBindIsNotAnnouncedOnTheLink.
 //
 // `runSession` announced `portOf(ln)` and nothing looked at the host that port belongs to.
@@ -66,7 +76,7 @@ func TestALoopbackBindIsNotAnnouncedOnTheLink(t *testing.T) {
 					ln.Addr(), ip.IsLoopback())
 			}
 
-			ann, err := startAnnouncing(cert, ln)
+			ann, err := startAnnouncing(cert, boundOn{ln, "tcp"})
 			if ann != nil {
 				ann.Close()
 			}

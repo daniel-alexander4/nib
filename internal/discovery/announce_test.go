@@ -1,6 +1,7 @@
 package discovery
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/binary"
 	"errors"
@@ -120,9 +121,20 @@ func TestParseRefusesEveryMalformedShape(t *testing.T) {
 		{"shorter than the header", ErrNotOurs, base[:headerLen-1]},
 		{"foreign traffic", ErrNotOurs, []byte("this is an mDNS packet, honestly, and quite long")},
 		{"wrong magic", ErrNotOurs, mutate(func(b []byte) []byte { b[0] = 'X'; return b })},
-		{"wrong version", ErrVersion, mutate(func(b []byte) []byte { b[len(magic)] = version + 1; return b })},
+		{"wrong version", ErrVersion, mutate(func(b []byte) []byte { b[offVersion] = version + 1; return b })},
+		// Through the NAMED offsets, never `len(magic)+1` arithmetic. The port row
+		// used to compute its own and went on "passing" after the transport byte
+		// pushed the port along by one: it zeroed the transport and the port's high
+		// byte, left a port of 251, and the parser accepted the datagram.
 		{"zero port", ErrMalformed, mutate(func(b []byte) []byte {
-			binary.BigEndian.PutUint16(b[len(magic)+1:], 0)
+			binary.BigEndian.PutUint16(b[offPort:], 0)
+			return b
+		})},
+		// An undefined transport is refused rather than defaulted. Defaulting it to
+		// TCP is precisely the guess ADR-010 removed — and it would be a guess made
+		// on a byte an unauthenticated datagram chose.
+		{"unknown transport", ErrMalformed, mutate(func(b []byte) []byte {
+			b[offTransport] = 7
 			return b
 		})},
 		{"truncated name", ErrMalformed, base[:len(base)-1]},
@@ -309,6 +321,65 @@ func TestEncodeRefusesWhatParseWouldReject(t *testing.T) {
 			"disagree about what is legal", len(b), perr)
 	}
 	if !errors.Is(err, ErrMalformed) {
+		t.Errorf("refused as %v, want ErrMalformed", err)
+	}
+}
+
+// TestTheTransportSurvivesTheWire is ADR-010's clause.
+//
+// A port without its transport is not an address: under QUIC the announced number is a
+// UDP port and under TCP it is a TCP port, so a peer that reads the number and picks its
+// own transport dials a socket that is not there. The format version was bumped rather
+// than the field appended silently, and the round trip is what says the byte means
+// anything at all — a field that encodes and parses back as the zero value is decoration.
+func TestTheTransportSurvivesTheWire(t *testing.T) {
+	for _, want := range []Transport{TransportTCP, TransportQUIC} {
+		a := good(t)
+		a.Transport = want
+		b, err := a.Encode()
+		if err != nil {
+			t.Fatalf("%v: %v", want, err)
+		}
+		got, err := Parse(b)
+		if err != nil {
+			t.Fatalf("%v: does not survive its own parser: %v", want, err)
+		}
+		if got.Transport != want {
+			t.Errorf("announced %v and parsed back %v — the dialing side would open the "+
+				"wrong kind of socket at the right port number", want, got.Transport)
+		}
+		// The rest of the announcement is unchanged by the new field. An insertion
+		// that shifted the port would still round-trip the transport correctly.
+		if got.Port != a.Port || got.Name != a.Name || got.Nonce != a.Nonce {
+			t.Errorf("%v: the other fields did not survive: got %+v, want %+v", want, got, a)
+		}
+	}
+	// STIMULUS: the two transports really are different bytes on the wire. If they
+	// encoded identically the loop above would pass while carrying nothing.
+	tcp := good(t)
+	tcp.Transport = TransportTCP
+	quic := good(t)
+	quic.Transport = TransportQUIC
+	bt, _ := tcp.Encode()
+	bq, _ := quic.Encode()
+	if bytes.Equal(bt, bq) {
+		t.Fatal("a TCP and a QUIC announcement encode to identical bytes, so the field is not on the wire")
+	}
+}
+
+// TestAnEncoderCannotEmitATransportItsOwnParserRefuses.
+//
+// `check` is called by BOTH Encode and Parse for exactly this reason — the encoder and
+// the parser must not drift into disagreeing about what is legal. The name-length cap had
+// this defect once already (six 40-character words encoded to 261 bytes and Parse refused
+// them at the 256-byte cap), so the rule is asserted rather than assumed.
+func TestAnEncoderCannotEmitATransportItsOwnParserRefuses(t *testing.T) {
+	a := good(t)
+	a.Transport = Transport(7)
+	if _, err := a.Encode(); err == nil {
+		t.Fatal("encoded an announcement carrying an undefined transport; Parse refuses it, " +
+			"so this Nib would emit datagrams it would itself reject")
+	} else if !errors.Is(err, ErrMalformed) {
 		t.Errorf("refused as %v, want ErrMalformed", err)
 	}
 }

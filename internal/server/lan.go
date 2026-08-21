@@ -42,6 +42,16 @@ type lanAnnouncer struct {
 	once sync.Once
 }
 
+// announceable is the part of an armed listener an announcement is built from: where it
+// is bound, and which kind of socket that is. Both are needed and neither is enough —
+// see the Transport note on p2p.Listener.
+//
+// An interface narrower than p2p.Listener so a test can drive this without a session.
+type announceable interface {
+	Addr() net.Addr
+	Transport() string
+}
+
 // errLoopbackBind reports a listener that is not reachable from the link, so there is
 // nothing truthful to announce about it.
 var errLoopbackBind = errors.New("the armed listener is bound to loopback, so it is not announced")
@@ -67,7 +77,7 @@ var errLoopbackBind = errors.New("the armed listener is bound to loopback, so it
 // The rule lives HERE rather than at the call site because this is the door (ADR-009).
 // A guard on `runSession` would say nothing about the second caller, and the ladder's
 // later tiers are exactly where a second caller comes from.
-func startAnnouncing(myCertPEM []byte, ln interface{ Addr() net.Addr }) (*lanAnnouncer, error) {
+func startAnnouncing(myCertPEM []byte, ln announceable) (*lanAnnouncer, error) {
 	name, err := ownName(myCertPEM)
 	if err != nil {
 		return nil, err
@@ -96,7 +106,15 @@ func startAnnouncing(myCertPEM []byte, ln interface{ Addr() net.Addr }) (*lanAnn
 		return nil, err
 	}
 	a := &lanAnnouncer{sock: sock, stop: make(chan struct{}), done: make(chan struct{})}
-	ann := discovery.Announcement{Name: name, Port: uint16(port), Nonce: nonce}
+	// The transport is ASKED OF THE LISTENER, never passed alongside it: a port and a
+	// transport carried separately are two facts that can disagree, and the listener
+	// is the only thing that knows which socket it actually opened (ADR-010).
+	ann := discovery.Announcement{
+		Name:      name,
+		Port:      uint16(port),
+		Transport: announcedTransport(ln.Transport()),
+		Nonce:     nonce,
+	}
 
 	go func() {
 		defer close(a.done)
@@ -121,6 +139,16 @@ func startAnnouncing(myCertPEM []byte, ln interface{ Addr() net.Addr }) (*lanAnn
 		}
 	}()
 	return a, nil
+}
+
+// announcedTransport maps p2p's transport name onto the announcement's wire byte. The
+// inverse of transportOf, and here for the same reason: internal/discovery may not import
+// internal/p2p, so this layer owns the join.
+func announcedTransport(t string) discovery.Transport {
+	if t == p2p.TransportQUIC {
+		return discovery.TransportQUIC
+	}
+	return discovery.TransportTCP
 }
 
 // Close stops announcing and releases the socket. Idempotent, because the accept
@@ -171,7 +199,7 @@ var errNoPeerOnTheLink = errors.New("that peer is not announcing on this network
 // fingerprint that will be pinned at the handshake is the one from the vault. An
 // announcer who lies reaches a TLS handshake that rejects it, which is L1's promise
 // spent exactly where it was meant to be.
-func findPeerOnLAN(v *vault.Vault, peerFP []byte) ([]string, error) {
+func findPeerOnLAN(v *vault.Vault, peerFP []byte) ([]candidate, error) {
 	var nonce [8]byte
 	if _, err := rand.Read(nonce[:]); err != nil {
 		return nil, err
@@ -200,14 +228,14 @@ func findPeerOnLAN(v *vault.Vault, peerFP []byte) ([]string, error) {
 	// the name is public. Returning only the first meant an attacker who announced
 	// faster than the real peer denied the tier outright, with the genuine address
 	// discarded where no caller could reach it.
-	var addrs []string
-	for _, c := range browsePeers(sock, pins, browseWindow) {
-		addrs = append(addrs, c.Addr)
-	}
-	if len(addrs) == 0 {
+	// The CANDIDATES, not their address strings. Flattening to []string here threw
+	// away the announced transport, so the dialer fell back to whatever the caller's
+	// own request said and a QUIC-armed peer was dialled over TCP (ADR-010).
+	found := browsePeers(sock, pins, browseWindow)
+	if len(found) == 0 {
 		return nil, fmt.Errorf("%w (listened for %s on %v)", errNoPeerOnTheLink, browseWindow, sock.Interfaces())
 	}
-	return addrs, nil
+	return found, nil
 }
 
 // portOf reads the bound port off a listener, for the announcement to carry.
@@ -232,9 +260,17 @@ func portOf(ln interface{ Addr() net.Addr }) int {
 // tell me where they are and they are not on this network" is a different message from
 // "I could not reach the address you gave me", and a user can act on each differently —
 // the first says try the manual path, the second says check the address.
-func (s *Server) peerAddresses(w http.ResponseWriter, v *vault.Vault, address string, peerFP []byte) ([]string, bool) {
+func (s *Server) peerAddresses(w http.ResponseWriter, v *vault.Vault, address, transport string, peerFP []byte) ([]candidate, bool) {
 	if address != "" {
-		return []string{address}, true
+		// A typed address carries no announcement, so the REQUEST names the
+		// transport — the only case where it still does. It is validated here rather
+		// than left to the dialer so a typo is refused before a browse or a dial,
+		// with the 400 it deserves instead of a 502 about an unreachable peer.
+		if err := checkTransport(transport); err != nil {
+			httpError(w, http.StatusBadRequest, err.Error())
+			return nil, false
+		}
+		return []candidate{{Addr: address, Transport: transport}}, true
 	}
 	found, err := findPeerOnLAN(v, peerFP)
 	if err != nil {
@@ -266,11 +302,12 @@ const (
 // dialAny tries each candidate in order and returns the first connection that
 // establishes. Trying only the first was the defect: on a link where anything else
 // announces the same name, the genuine peer may not be first.
-func dialAny(transport string, addrs []string, cert, key, peerFP []byte) (*p2p.Conn, error) {
+func dialAny(cands []candidate, cert, key, peerFP []byte) (*p2p.Conn, error) {
 	var last error
 	deadline := time.Now().Add(lanDialBudget)
 	var tried int
-	for _, a := range addrs {
+	for _, c := range cands {
+		a := c.Addr
 		if tried > 0 && time.Now().After(deadline) {
 			// `tried > 0` so a slow clock or a long TLS handshake can never make this
 			// return without having dialled anything at all.
@@ -278,7 +315,7 @@ func dialAny(transport string, addrs []string, cert, key, peerFP []byte) (*p2p.C
 			break
 		}
 		tried++
-		conn, err := dialPeerWithin(transport, a, cert, key, peerFP, lanDialTimeout)
+		conn, err := dialPeerWithin(c.Transport, a, cert, key, peerFP, lanDialTimeout)
 		if err == nil {
 			return conn, nil
 		}
@@ -290,5 +327,5 @@ func dialAny(transport string, addrs []string, cert, key, peerFP []byte) (*p2p.C
 	if last == nil {
 		last = errors.New("no candidate addresses")
 	}
-	return nil, fmt.Errorf("tried %d address(es), none answered as the pinned peer: %w", len(addrs), last)
+	return nil, fmt.Errorf("tried %d address(es), none answered as the pinned peer: %w", len(cands), last)
 }

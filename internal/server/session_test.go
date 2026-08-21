@@ -1103,6 +1103,7 @@ func peerChannel(t *testing.T, conn *tls.Conn) p2p.Channel {
 type stubListener struct{ closed bool }
 
 func (l *stubListener) Accept() (*p2p.Conn, error) { return nil, net.ErrClosed }
+func (l *stubListener) Transport() string          { return "tcp" }
 func (l *stubListener) Close() error               { l.closed = true; return nil }
 
 // Addr must be non-nil: session.arm records ln.Addr().String() as the address it

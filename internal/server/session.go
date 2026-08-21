@@ -863,11 +863,11 @@ func (s *Server) handleSessionInitiate(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	addrs, ok := s.peerAddresses(w, v, address, peerFP)
+	cands, ok := s.peerAddresses(w, v, address, r.FormValue("transport"), peerFP)
 	if !ok {
 		return
 	}
-	conn, err := dialAny(r.FormValue("transport"), addrs, cert, key, peerFP)
+	conn, err := dialAny(cands, cert, key, peerFP)
 	if errors.Is(err, errUnknownTransport) {
 		httpError(w, http.StatusBadRequest, err.Error())
 		return
@@ -938,11 +938,11 @@ func (s *Server) handleSessionSend(w http.ResponseWriter, r *http.Request) {
 		httpError(w, http.StatusInternalServerError, "could not load identity")
 		return
 	}
-	addrs, ok := s.peerAddresses(w, v, address, peerFP)
+	cands, ok := s.peerAddresses(w, v, address, r.FormValue("transport"), peerFP)
 	if !ok {
 		return
 	}
-	conn, err := dialAny(r.FormValue("transport"), addrs, cert, key, peerFP)
+	conn, err := dialAny(cands, cert, key, peerFP)
 	if errors.Is(err, errUnknownTransport) {
 		httpError(w, http.StatusBadRequest, err.Error())
 		return
@@ -980,8 +980,11 @@ func readJSON(r *http.Request, v any) error {
 // the ladder exists to remove. It is selectable over the API because that is what the
 // multi-instance harness drives.
 const (
-	transportTCP  = "tcp"
-	transportQUIC = "quic"
+	// Aliases of internal/p2p's, not copies. The string that selects a dialer, the
+	// string a listener reports and the string this package compares against a
+	// request must be one value or they drift (ADR-009).
+	transportTCP  = p2p.TransportTCP
+	transportQUIC = p2p.TransportQUIC
 )
 
 // errUnknownTransport names what was asked for and what exists.

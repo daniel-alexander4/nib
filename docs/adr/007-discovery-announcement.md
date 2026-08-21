@@ -3,6 +3,9 @@
 **Status:** accepted
 **Date:** 2026-08-19
 **Context:** `PLAN-signing-ceremony.md` P03.S01; law L1; D3; caveat 3.
+**Extended by:** [ADR-010](010-announcement-carries-the-transport.md) — the announcement
+also carries the **transport** its port belongs to, and the format version is **2**. The
+identity reasoning below is unchanged; only the "exactly three things" enumeration is.
 
 ## Decision
 

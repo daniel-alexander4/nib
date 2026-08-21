@@ -173,6 +173,8 @@ type quicListener struct {
 
 func (l *quicListener) Addr() net.Addr { return l.mux.LocalAddr() }
 
+func (l *quicListener) Transport() string { return TransportQUIC }
+
 func (l *quicListener) Close() error {
 	err := l.ln.Close()
 	l.tr.Close()
