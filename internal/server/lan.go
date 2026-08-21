@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -119,13 +120,23 @@ func startAnnouncing(myCertPEM []byte, ln announceable) (*lanAnnouncer, error) {
 	}
 
 	go func() {
-		defer close(a.done)
 		// safe.Recover, like every other detached goroutine in this package. runSession's
 		// recover does not cover the goroutine it spawns, and an unrecovered panic in ANY
 		// goroutine kills the whole desktop process with the user's unsaved documents —
-		// the outcome safe.Recover's own doc says it exists to prevent. This was the one
-		// `go func` in internal/server without it.
+		// the outcome safe.Recover's own doc says it exists to prevent.
+		//
+		// **This used to claim it was the one `go func` in the package without it.** That
+		// was true when written and false from P05.S03, which added four more and gave none
+		// of them a recover — a sentence that describes a census nobody re-ran. The census
+		// is now a guard: TestEveryDetachedGoroutineIsRecovered.
+		//
+		// **Deferred FIRST, so it runs LAST** — safe.Recover's own doc says "at the very
+		// top" and that the goroutine's other defers "still run as the stack unwinds".
+		// `defer close(a.done)` used to sit above it, which inverted that: behaviourally
+		// identical here, but it made the package's one stated ordering rule false at one
+		// of the two sites that had a recover at all.
 		defer safe.Recover("lan announcer")
+		defer close(a.done)
 		t := time.NewTicker(announceEvery)
 		defer t.Stop()
 		for {
@@ -272,7 +283,7 @@ func (s *Server) peerAddresses(w http.ResponseWriter, v *vault.Vault, address, t
 			httpError(w, http.StatusBadRequest, err.Error())
 			return nil, false
 		}
-		return []candidate{{Addr: address, Transport: transport}}, true
+		return []candidate{{Addr: address, Transport: transport, Source: sourceTyped}}, true
 	}
 	found, err := findPeerOnLAN(v, peerFP)
 	if err != nil {
@@ -355,11 +366,40 @@ func raceCandidates(parent context.Context, in <-chan candidate, cert, key, peer
 	// them — and which one depends on arrival order.
 	seen := map[string]bool{}
 	var started int
+	startedBySource := map[candidateSource]int{}
 	var dropped atomic.Int64
+	var droppedBySource sync.Map // candidateSource -> *atomic.Int64
 
 	go func() {
+		// **First, before anything else defers**, so it runs last and catches a panic
+		// after `close(results)` has already released the consumer. P05.S03 added four
+		// goroutines to this file with no recover, under a comment two hundred lines up
+		// asserting there were none left — and an unrecovered panic in ANY goroutine
+		// takes the desktop process with the user's unsaved documents.
+		defer safe.Recover("race feeder")
 		defer func() { wg.Wait(); close(results) }()
-		for c := range in {
+		for {
+			var c candidate
+			// **The ctx arm is what lets this goroutine end on a WIN.**
+			//
+			// This used to be `for c := range in`, which ends only when the INPUT channel
+			// closes. `raceCandidates` cancels on a win but cannot close `in` — it is the
+			// caller's channel — so against a trickle source (D16: candidates join as they
+			// arrive) the feeder blocked here forever, its `close(results)` never ran, and
+			// the drain goroutine below never returned: two goroutines and everything they
+			// reference, leaked per race. `dialAny` hid it by closing the channel it builds,
+			// and S03's trickle test drove only the LOSS path, where the deadline ends the
+			// race anyway. Found by grilling P05.S04, which is the slice that first feeds
+			// this from a source that stays open for the whole connect deadline.
+			select {
+			case got, ok := <-in:
+				if !ok {
+					return
+				}
+				c = got
+			case <-ctx.Done():
+				return
+			}
 			// `ck`, not `key` — the identity key is a parameter of this function and
 			// shadowing it here compiled into a type error rather than a silent bug,
 			// which is luck rather than design.
@@ -368,17 +408,30 @@ func raceCandidates(parent context.Context, in <-chan candidate, cert, key, peer
 				continue
 			}
 			seen[ck] = true
-			if started >= maxRaceCandidates {
+			// **Per source first, then the global law.** The global figure is D16's and is
+			// law; the per-source figure is what stops one source spending it. Checking the
+			// global one alone is first-come, which is won by whoever emits fastest — the
+			// capture attack `maxLANCandidates` closed at the browse level, re-opened one
+			// layer up the moment a second source exists.
+			if startedBySource[c.Source] >= maxCandidatesPerSource || started >= maxRaceCandidates {
 				// **Dropped AND reported** — D16's pin says "drops and reports; it never
 				// fails the ceremony", and a drop with no reader is half the clause. The
 				// count reaches the user in the failure sentence below, which is the only
 				// surface a dialing-side diagnostic has until S11 builds the tier report.
+				//
+				// Counted per source as well as in total: a lumped counter reads backwards
+				// exactly when it matters, because "16 dropped" cannot say which tier was
+				// starving the other.
 				dropped.Add(1)
+				n, _ := droppedBySource.LoadOrStore(c.Source, &atomic.Int64{})
+				n.(*atomic.Int64).Add(1)
 				continue
 			}
 			started++
+			startedBySource[c.Source]++
 			wg.Add(1)
 			go func(c candidate) {
+				defer safe.Recover("race dial")
 				defer wg.Done()
 				select {
 				case sem <- struct{}{}:
@@ -400,13 +453,13 @@ func raceCandidates(parent context.Context, in <-chan candidate, cert, key, peer
 		case got, ok := <-results:
 			if !ok {
 				// Every dial finished and the input closed: the race is exhausted.
-				return nil, raceFailure(tried, dropped.Load(), last)
+				return nil, raceFailure(tried, dropped.Load(), dropReport(&droppedBySource), last)
 			}
 			r = got
 		case <-parent.Done():
 			// **The connect deadline, or the caller giving up.** Without this arm the
 			// loop waits on a channel that a trickle source keeps open forever.
-			return nil, raceFailure(tried, dropped.Load(), context.Cause(parent))
+			return nil, raceFailure(tried, dropped.Load(), dropReport(&droppedBySource), context.Cause(parent))
 		}
 		tried++
 		if r.err != nil {
@@ -431,9 +484,18 @@ func raceCandidates(parent context.Context, in <-chan candidate, cert, key, peer
 		// its own goroutine — see the note above on why not serially.
 		cancel()
 		go func() {
+			defer safe.Recover("race drain")
 			for extra := range results {
 				if extra.conn != nil {
-					go extra.conn.Close()
+					// Wrapped in a literal rather than `go extra.conn.Close()`: a bare
+					// `go f()` has nowhere to hang a defer, so the recover has nowhere to
+					// go — and a Close reaching into crypto/tls or quic-go is exactly the
+					// call whose panic this is protecting the process from.
+					c := extra.conn
+					go func() {
+						defer safe.Recover("race loser close")
+						c.Close()
+					}()
 				}
 			}
 		}()
@@ -443,15 +505,37 @@ func raceCandidates(parent context.Context, in <-chan candidate, cert, key, peer
 
 // raceFailure is the one sentence a lost race produces, so the two exits above cannot
 // describe the same outcome differently.
-func raceFailure(tried int, dropped int64, last error) error {
+//
+// `bySource` names WHICH tier was capped, because "dropped 8" cannot say whether the
+// local network flooded the budget or the rendezvous did — and under D6 an attacker
+// supplies one of them. The per-source counters exist to be read here; a split nobody
+// reports is the same as no split.
+func raceFailure(tried int, dropped int64, bySource string, last error) error {
 	if last == nil {
 		last = errors.New("no candidate addresses")
 	}
 	if dropped > 0 {
-		return fmt.Errorf("tried %d address(es) and dropped %d over the %d-candidate cap, "+
-			"none answered as the pinned peer: %w", tried, dropped, maxRaceCandidates, last)
+		return fmt.Errorf("tried %d address(es) and dropped %d over the cap (%s), "+
+			"none answered as the pinned peer: %w", tried, dropped, bySource, last)
 	}
 	return fmt.Errorf("tried %d address(es), none answered as the pinned peer: %w", tried, last)
+}
+
+// dropReport renders the per-source drop counts in a stable order, so one race's sentence
+// can be compared with another's.
+func dropReport(m *sync.Map) string {
+	var parts []string
+	for _, src := range []candidateSource{sourceTyped, sourceLAN} {
+		if v, ok := m.Load(src); ok {
+			if n := v.(*atomic.Int64).Load(); n > 0 {
+				parts = append(parts, fmt.Sprintf("%d from %s", n, src))
+			}
+		}
+	}
+	if len(parts) == 0 {
+		return "source unknown"
+	}
+	return strings.Join(parts, ", ")
 }
 
 // errorsAs is errors.As, named so the preference above reads as one condition rather than

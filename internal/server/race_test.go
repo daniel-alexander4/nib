@@ -286,21 +286,45 @@ func TestTheTwoLawFiguresBindTheRace(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// More candidates than the cap, every one black-holed so each costs a full timeout.
-	over := 4
+
+	// **Which figure binds is now arithmetic, and this test states it rather than assuming
+	// it.** Before the per-source cap there was one bound and this test drove it with 20
+	// candidates from one source. That is no longer what happens: a single source is stopped
+	// at `maxCandidatesPerSource` long before the global figure is reached, so a fixture
+	// like the old one measures the per-source cap while claiming to measure the global one.
+	sources := []candidateSource{sourceTyped, sourceLAN}
+	if len(sources)*maxCandidatesPerSource < maxRaceCandidates {
+		t.Fatalf("setup: %d sources x %d cannot reach the global cap of %d, so this fixture "+
+			"cannot fill the race and the timing assertion below is vacuous",
+			len(sources), maxCandidatesPerSource, maxRaceCandidates)
+	}
+	// And the state of that arithmetic TODAY, recorded so the next slice cannot change it
+	// silently. With two sources the two figures coincide exactly, which means the global
+	// cap is a backstop that cannot fire — it becomes reachable again the moment P05.S04
+	// adds the rendezvous as a third source. When it does, this branch stops being taken
+	// and the size half below wants driving through the global figure as well.
+	if len(sources)*maxCandidatesPerSource > maxRaceCandidates {
+		t.Logf("the global cap (%d) now binds before the per-source caps (%d sources x %d) — "+
+			"a third source exists, so the size bound wants a case that reaches it",
+			maxRaceCandidates, len(sources), maxCandidatesPerSource)
+	}
+
+	// Fill every source to its cap: enough dials to need more than one wave at the
+	// concurrency bound, with nothing dropped, so the timing assertion is about batching
+	// and not about the cap.
 	var cands []candidate
-	for i := 0; i < maxRaceCandidates+over; i++ {
-		cands = append(cands, candidate{Addr: fmt.Sprintf("203.0.113.%d:9", i+1), Transport: "tcp"})
+	for i := 0; i < maxCandidatesPerSource; i++ {
+		for j, src := range sources {
+			cands = append(cands, candidate{
+				Addr:      fmt.Sprintf("203.0.113.%d:9", j*maxCandidatesPerSource+i+1),
+				Transport: "tcp",
+				Source:    src,
+			})
+		}
 	}
-	// STIMULUS: the fixture really does exceed the cap, and really does need more than one
-	// wave at the concurrency bound. Both assertions below are vacuous otherwise.
-	if len(cands) <= maxRaceCandidates {
-		t.Fatalf("setup: %d candidates does not exceed the cap of %d", len(cands), maxRaceCandidates)
-	}
-	if maxRaceCandidates <= maxConcurrentDials {
-		t.Fatalf("setup: the cap (%d) is not above the concurrency bound (%d), so a single "+
-			"wave would dial everything and the timing assertion cannot see batching",
-			maxRaceCandidates, maxConcurrentDials)
+	if len(cands) <= maxConcurrentDials {
+		t.Fatalf("setup: %d candidates fits in one wave of %d, so batching is unobservable",
+			len(cands), maxConcurrentDials)
 	}
 
 	start := time.Now()
@@ -310,21 +334,28 @@ func TestTheTwoLawFiguresBindTheRace(t *testing.T) {
 		t.Fatal("the race connected to TEST-NET-3")
 	}
 
-	// **The size bound**: the excess is dropped AND reported. D16's pin says "drops and
-	// reports; it never fails the ceremony" — a drop with no reader is half the clause.
-	want := fmt.Sprintf("dropped %d over the %d-candidate cap", over, maxRaceCandidates)
+	// **The size bound.** Every candidate here is within its source's share, so NOTHING may
+	// be dropped — the inverse assertion, and the one that catches a per-source cap set too
+	// low. The over-cap half moved to TestOneSourceCannotSpendTheWholeRaceBudget, which is
+	// where the drop can be attributed to a source.
+	if strings.Contains(derr.Error(), "dropped") {
+		t.Errorf("the failure says %q, but every candidate was inside its source's share of "+
+			"%d — a drop here means the per-source cap is refusing candidates a user cannot "+
+			"act on, which is ADR-005's own warning", derr, maxCandidatesPerSource)
+	}
+	want := fmt.Sprintf("tried %d address(es)", len(cands))
 	if !strings.Contains(derr.Error(), want) {
-		t.Errorf("the failure says %q; it must contain %q — the cap dropped candidates and "+
-			"said nothing, which is the half of D16's pin that has no reader", derr, want)
+		t.Errorf("the failure says %q; it must contain %q — every candidate was within its "+
+			"share and so every one must have been dialled", derr, want)
 	}
 
-	// **The concurrency bound**: with the cap above the bound, dialling everything takes
-	// more than one wave. One wave would mean the bound is not applied at all.
+	// **The concurrency bound**: more candidates than one wave means dialling everything
+	// takes more than one timeout. One wave would mean the bound is not applied at all.
 	if elapsed < lanDialTimeout+time.Second {
 		t.Errorf("%d candidates finished in %v, which is about one dial timeout (%v) — they "+
 			"were all dialled at once, so the concurrency bound of %d is not being applied "+
 			"and our own racer can occupy a peer's whole handshake pool",
-			maxRaceCandidates, elapsed, lanDialTimeout, maxConcurrentDials)
+			len(cands), elapsed, lanDialTimeout, maxConcurrentDials)
 	}
 }
 
