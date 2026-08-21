@@ -1,0 +1,34 @@
+diff --git a/internal/server/lan.go b/internal/server/lan.go
+index 380d89a..8ef2512 100644
+--- a/internal/server/lan.go
++++ b/internal/server/lan.go
+@@ -378,28 +378,7 @@ func raceCandidates(parent context.Context, in <-chan candidate, cert, key, peer
+ 		// takes the desktop process with the user's unsaved documents.
+ 		defer safe.Recover("race feeder")
+ 		defer func() { wg.Wait(); close(results) }()
+-		for {
+-			var c candidate
+-			// **The ctx arm is what lets this goroutine end on a WIN.**
+-			//
+-			// This used to be `for c := range in`, which ends only when the INPUT channel
+-			// closes. `raceCandidates` cancels on a win but cannot close `in` — it is the
+-			// caller's channel — so against a trickle source (D16: candidates join as they
+-			// arrive) the feeder blocked here forever, its `close(results)` never ran, and
+-			// the drain goroutine below never returned: two goroutines and everything they
+-			// reference, leaked per race. `dialAny` hid it by closing the channel it builds,
+-			// and S03's trickle test drove only the LOSS path, where the deadline ends the
+-			// race anyway. Found by grilling P05.S04, which is the slice that first feeds
+-			// this from a source that stays open for the whole connect deadline.
+-			select {
+-			case got, ok := <-in:
+-				if !ok {
+-					return
+-				}
+-				c = got
+-			case <-ctx.Done():
+-				return
+-			}
++		for c := range in {
+ 			// `ck`, not `key` — the identity key is a parameter of this function and
+ 			// shadowing it here compiled into a type error rather than a silent bug,
+ 			// which is luck rather than design.

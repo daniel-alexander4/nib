@@ -238,7 +238,7 @@ func TestVerifyContractIsTrue(t *testing.T) {
 		// tolerated losing four of six silently, which is the same shape as the
 		// prose count it replaced — a number that stops describing the thing it
 		// counts. Raising it is the tax a new row pays.
-		const recorded = 6
+		const recorded = 8
 		if len(rows) < recorded {
 			t.Errorf("test/redproofs holds %d replayable row(s), want at least %d; "+
 				"build/redproof.sh reports no error on an empty directory, so a row that "+
