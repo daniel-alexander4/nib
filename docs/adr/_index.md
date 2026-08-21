@@ -67,3 +67,6 @@ home today.
 - [ADR-008: The byte cap binds every growth door](008-the-byte-cap-binds-every-growth-door.md) —
   extends ADR-005: the byte half was enforced only at open, so five writers of `doc.data`
   went past it
+- [ADR-009: One door per rule](009-one-door-per-rule.md) — a rule that has to hold at more
+  than one call site is written once and its guard checks the door, not the text; with the
+  six from one review that reached some sites and not others
