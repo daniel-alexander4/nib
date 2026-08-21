@@ -608,3 +608,25 @@ correct code — a confound, not a finding.
 **Overturned:** mdpdf's "unbounded recursion". No stack overflow at 50,000 levels of quote,
 list, emphasis or bracket nesting; goldmark bounds it. What the probe found instead is on the
 next row.
+
+## v1.117.14 — the platform nobody compiled for
+
+| Row | The defect restored | The check that went red |
+| --- | --- | --- |
+| the Windows build | `syscall.SetsockoptInt(int(fd), …)` back inline | `TestEveryPlatformCompiles/windows` |
+| the symlink | `os.ReadFile` at both watch call sites | `TestTheWatchRefusesToReadThroughASymlink` |
+| `O_NOFOLLOW` | dropped from `oNoFollow` | same |
+| `O_NONBLOCK` | dropped from `oNoFollow` | same, by timing out on the fifo |
+
+`nib.exe` could not be built. `internal/discovery` passed an `int` file descriptor to
+`syscall.SetsockoptInt`, which takes a `syscall.Handle` on Windows — and every tier builds
+for the host, so nothing saw it. `mcast.go`'s own note had argued against "a `//go:build`
+file per platform" because "a no-op sibling is the shape that already shipped one silent
+defect here"; it was right about the hazard and the outcome was worse than the hazard.
+
+Two corrections while building the watch fix. The comment first claimed `O_NOFOLLOW` is
+"defined and ignored" on Windows — `GOOS=windows go build` said it is not defined at all.
+And `O_NOFOLLOW` refuses a symlink but not a **fifo**, and opening a fifo for reading blocks
+until a writer appears, so the regular-file check on the handle never ran: a `pipe.pdf`
+dropped into a watched directory hung the loop until Ctrl-C. The test's five-second timeout
+is what found it.

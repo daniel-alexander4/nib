@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -178,6 +179,43 @@ func scanOnce(dir string, seen map[string]fileState, processed map[string]bool, 
 	}
 }
 
+// readNoFollow reads path, refusing if it is a symlink — at the OPEN, not before it.
+//
+// scanOnce already skips a non-regular entry (see the note there, and the rewrite-through-a-
+// symlink defect it closed). This closes the window that check cannot: between the Lstat and
+// the action, the same actor who could plant the symlink in the first place can swap the
+// file for one. The check-then-act is unavoidable when the two steps are a directory listing
+// and a file operation; O_NOFOLLOW makes the OPEN itself carry the refusal, so timing stops
+// mattering.
+//
+// The actor is the documented one — anyone who can drop a file into the watched directory,
+// which is the shared scan-drop and "process my inbox" use the command exists for. The
+// consequence is the same: an unrequested in-place rewrite of a PDF elsewhere on disk, and
+// `--do sanitize` strips its metadata irreversibly.
+//
+// **O_NOFOLLOW is POSIX and is not defined on Windows at all** — the first draft of this
+// comment said it was "defined and ignored" there, and `GOOS=windows go build` said
+// otherwise. So the flag lives in a two-file shim (noFollow_*.go). Windows keeps the
+// Lstat-only protection scanOnce already gives it, plus the regular-file check below, which
+// is done on the OPEN HANDLE and so is not a second check-then-act.
+func readNoFollow(path string) ([]byte, error) {
+	f, err := os.OpenFile(path, os.O_RDONLY|oNoFollow, 0)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	// And a regular file: O_NOFOLLOW refuses a symlink, not a fifo or a device, either of
+	// which would make the read block or return something that is not the document.
+	info, err := f.Stat()
+	if err != nil {
+		return nil, err
+	}
+	if !info.Mode().IsRegular() {
+		return nil, fmt.Errorf("%s is not a regular file", path)
+	}
+	return io.ReadAll(f)
+}
+
 // watchTimestamp writes a .ots proof beside path, skipping a file that already
 // has one (so restarting the watch doesn't re-stamp).
 func watchTimestamp(path string) (string, error) {
@@ -185,7 +223,7 @@ func watchTimestamp(path string) (string, error) {
 	if _, err := os.Stat(proof); err == nil {
 		return "skipped (.ots exists)", nil
 	}
-	data, err := os.ReadFile(path)
+	data, err := readNoFollow(path)
 	if err != nil {
 		return "", err
 	}
@@ -203,7 +241,7 @@ func watchTimestamp(path string) (string, error) {
 }
 
 func watchTransform(path string, fn func([]byte) ([]byte, error), done string) (string, error) {
-	data, err := os.ReadFile(path)
+	data, err := readNoFollow(path)
 	if err != nil {
 		return "", err
 	}

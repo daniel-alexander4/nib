@@ -486,3 +486,61 @@ func TestDocsREADMEMatchesTheCaps(t *testing.T) {
 		}
 	}
 }
+
+// TestEveryPlatformCompiles is the guard that was missing when `nib.exe` stopped existing.
+//
+// internal/discovery called syscall.SetsockoptInt with an `int` fd, which is a
+// syscall.Handle on Windows, so `GOOS=windows go build ./cmd/nib` failed and the binary
+// could not be produced AT ALL — on the platform whose `nib register` command exists only
+// for it. Every tier stayed green, because every tier builds for the host.
+//
+// The cost is three cross-compiles of a small tree; the thing it catches is the whole
+// product missing on a platform the README documents.
+func TestEveryPlatformCompiles(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping cross-compile guard under -short")
+	}
+	if _, err := exec.LookPath("go"); err != nil {
+		t.Skip("go not on PATH")
+	}
+	for _, goos := range []string{"windows", "darwin", "linux"} {
+		t.Run(goos, func(t *testing.T) {
+			cmd := exec.Command("go", "build", "-o", filepath.Join(t.TempDir(), "out"), "./cmd/nib")
+			cmd.Env = append(os.Environ(), "GOOS="+goos, "GOARCH=amd64", "CGO_ENABLED=0")
+			if out, err := cmd.CombinedOutput(); err != nil {
+				t.Errorf("GOOS=%s does not build:\n%s", goos, out)
+			}
+		})
+	}
+}
+
+// TestNoBuildTaggedSiblingIsAStub. Two build-tagged shims exist in this tree, and mcast.go's
+// own note names the hazard they carry: "a no-op sibling is the shape that already shipped
+// one silent defect here (ReplaceOthers returning 0 off Linux)". That note argued against
+// having them at all, and the result was worse — no Windows binary. So: have them, and
+// assert that a deliberate gap is DECLARED rather than merely present.
+func TestNoBuildTaggedSiblingIsAStub(t *testing.T) {
+	// setReuseAddr must do the real thing on both platforms; oNoFollow is genuinely
+	// unavailable on Windows and its file must say so in as many words.
+	for path, must := range map[string]string{
+		"internal/discovery/reuseaddr_unix.go":    "SetsockoptInt",
+		"internal/discovery/reuseaddr_windows.go": "SetsockoptInt",
+		"internal/cli/nofollow_unix.go":           "O_NONBLOCK",
+		"internal/cli/nofollow_windows.go":        "real gap",
+	} {
+		b, err := os.ReadFile(path)
+		if err != nil {
+			t.Errorf("%s is gone — if the shim was collapsed, check that every GOOS still "+
+				"builds (TestEveryPlatformCompiles) and delete this row deliberately: %v",
+				path, err)
+			continue
+		}
+		if !bytes.Contains(b, []byte(must)) {
+			t.Errorf("%s no longer contains %q — a build-tagged sibling that quietly stopped "+
+				"doing its job is invisible to every tier that builds for the host", path, must)
+		}
+		if !bytes.Contains(b, []byte("//go:build")) {
+			t.Errorf("%s has no build tag, so both siblings compile into every build", path)
+		}
+	}
+}
