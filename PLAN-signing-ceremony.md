@@ -2897,7 +2897,7 @@ Exit criteria:
 - **Losing the channel before confirmation re-races and re-confirms; losing it after confirmation ~~fails the ceremony~~ **restarts the hop and re-delivers rather than re-signs (amended 2026-08-18, D18, D24)**. Both are driven. (added 2026-08-16, D18)**
 - **The armed listener's wait is bounded by the ceremony, not by a five-minute constant, and still accepts exactly one pinned peer and serves exactly one session. (added 2026-08-18, D16 amendment.)** `sessionAcceptTimeout` is 5 min today (`internal/server/session.go:34`), which disarms a party waiting their turn; this is the only bullet in the plan that moves the TRIPWIRE (`internal/server/session.go:24`), and the two clauses it must *not* move are named in it rather than left implied.
 - **The three clocks are independent: letting the connect deadline elapse in full leaves both the exchange budget and the ceremony deadline undiminished. (added 2026-08-18, D16 amendment — extends the 2026-08-17 two-clock guard to the third.)**
-- **The rendezvous key is derived per hop: two hops of one ceremony publish under different keys, and a party cannot read the candidates of a hop it is not in. (added 2026-08-18, D30.)** **(2026-08-20, P04.S03's grill: the second clause was UNSATISFIABLE against shipped code and is now buildable.** Per-hop *addressing* shipped at P01.S07; per-hop *encryption* did not — `RecordKey()` was `derive("nib-record-v1", 32)` with no hop, so one key decrypted every hop and every roster member holds it. S03 makes `RecordKey` per hop. Note what this still does **not** buy, so the clause is not over-read: it excludes a party from a hop's *ciphertext*, and every roster member can still derive any hop's key from the secret. D30's motivating harm — "every party can read every other party's IP addresses" — is bounded by the roster, not below it.)** Driven with a three-party record — a two-party ceremony has exactly one hop and cannot distinguish a per-hop key from a per-ceremony one, so the obvious test is the vacuous one.
+- **The rendezvous key is derived per hop: two hops of one ceremony publish under different keys, and ~~a party cannot read the candidates of a hop it is not in~~ **a hop's record cannot be opened, replayed or verified at another hop — three independent bindings (key, salt, AEAD associated data). Confidentiality of a hop's candidates is bounded by the roster and NOT below it: every invitation holder derives every hop's key. (amended 2026-08-21, P05.S04's grill.)** (added 2026-08-18, D30.)** **(2026-08-20, P04.S03's grill: the second clause was UNSATISFIABLE against shipped code and is now buildable.** Per-hop *addressing* shipped at P01.S07; per-hop *encryption* did not — `RecordKey()` was `derive("nib-record-v1", 32)` with no hop, so one key decrypted every hop and every roster member holds it. S03 makes `RecordKey` per hop. Note what this still does **not** buy: **nothing about confidentiality between roster members.** What it buys is a second, independent defence — a hop's ciphertext fails to open under another hop's key, so cross-hop replay is an AEAD failure as well as a signature failure. **The 2026-08-20 wording said it "excludes a party from a hop's ciphertext" AND that every roster member can derive any hop's key; those two cannot both hold, and the second is the true one** (`internal/ceremony/invitation.go:367`). D30's motivating harm — "every party can read every other party's IP addresses" — is therefore NOT fixed by per-hop derivation; it is bounded by the roster and nothing below it. Making it true needs a per-party secret, which is filed for `/discuss` rather than assumed here.)** Driven with a three-party record — a two-party ceremony has exactly one hop and cannot distinguish a per-hop key from a per-ceremony one, so the obvious test is the vacuous one.
 - **The race and the glare tie-break are scoped to the current hop: a convener holding candidates for a later party never dials them during this hop. (added 2026-08-18, D30.)**
 - ~~Both ends behind carrier-grade NAT fails with an explanation that names the fallback, not a generic timeout **— and the fallback it names is the one that actually applies: a shared VPN or a manual address one side can accept, not a port-forward the carrier's NAT forbids (amended 2026-08-16, D9 pin)**.~~ **Each of D19's four causes produces its own message, and the mapping-class test distinguishes the two NAT classes from two DHT observations. Cause 3's message names port mapping and a shared VPN — never a port-forward the carrier's NAT forbids. (superseded 2026-08-16, D19)**
 
@@ -3158,7 +3158,42 @@ argument to contain `remaining`, with a setup fatal at `:220` if the timer disap
 The ceremony-scoped arm window must re-express that guard deliberately — it fails loudly, which
 is the point, but it does not update itself.
 
-#### P05.S04 — The armed session gains a ceremony identity, and the DHT becomes a candidate source *(D6, D21, D30; criteria 18, 19)*
+#### P05.S04 — The armed session gains a ceremony identity, and the DHT becomes a candidate source *(D6, D21, D30; criteria 18, 19)* *(in progress)*
+Tasks (grilled 2026-08-21, after a deepdive and a six-adversary attack):
+- **R01–R04 land first as a separate remediation commit** — three of P05.S03's own acceptance bullets shipped unmet and unledgered, and S04 makes all three live.
+- R01 — `raceCandidates`' feeder gains a `ctx.Done()` arm. Today `for c := range in` (`lan.go:362`) exits only when the caller closes the channel, so a win on a trickle source leaks the feeder AND the drain goroutine forever.
+- R02 — `safe.Recover` on all four racer goroutines (`lan.go:360,381,433,436`), plus the first unit test of `safe.Recover` itself, which has none.
+- R03 — the candidate bound becomes **per source**; `dropped` splits per source so a lumped counter cannot read backwards.
+- R04 — `clocks.go:30-31` corrected: it names a test that has never existed and states a property that is not the right one, since the two clocks start at different instants. The real fix is criterion 16's and is due when a `Record` reaches the server.
+- T01 — `addrscope` refuses a zoned address that is not link-local. **Measured: an IPv6 zone bypasses the entire `reserved` prefix table**, because `netip.Prefix.Contains` is false for any zoned address — `[::c0a8:101%eth0]` (192.168.1.1), `[::7f00:1%eth0]` (127.0.0.1), 6to4 and NAT64 all pass `addrscope.Target` today.
+- T02 — `CandidateFormatVersion` 1 → 2: every address carries its transport, as a range-checked enumerant (ADR-010 refuses a string for a two-value field). One-way; free now because no v1 record has ever left a process.
+- T03 — the version is range-checked **at `parseCandidate`**, returning `ErrVersion`, not left to `Verify` — otherwise a zero-address v1 record parses cleanly under the v2 grammar and every other v1 record is refused with its version discarded.
+- T04 — `CandidateGate` keys on `(AddrPort, Transport)`. Today's `netip.AddrPort` key would count a legal dual-transport publisher as `DroppedDuplicate`, whose own doc says "nobody honest does this".
+- T05 — `MaxCeremonyLife` bounds `Record.Expires` in `Record.Verify`, symmetric with `MaxCandidateLife`. Today clock 3 is committed to and read against a clock nowhere.
+- T06 — the hop is the counterparty's roster index, read from the convener-signed `Record`, range-checked to `[0, len(roster))` at one door. Today `hop` is unbounded and the only assignment in the tree is `const hop = 0`.
+- T07 — `CandidateGate` gains `PublishSalt()`; publish at `RecordSalt(hop, me)`, read at `gate.Salt()`. The only in-tree example is a one-party self-loop and copying it cannot work.
+- T08 — `armRequest` gains the ceremony identity; the invitation travels **in the request**, not on disk.
+- T09 — the **arm** owns one socket + mux: DHT on `m.DHT()`, listener on `m.QUIC()`; teardown order pinned by a guard (3 of 6 plausible orderings panic the process); a `Server` shutdown path wired at `cmd/nib/main.go:211`.
+- T10 — `rendezvous.Server.Close()` cancels and joins, without re-entering its `sync.Once`.
+- T11 — `bootstrapBudget` in `clocks.go`; bootstrap runs at arm, not inside the race.
+- T12 — record expiry = `connectDeadline + 2*PublishBudget + skew`, clamped to `Record.Expires`.
+- T13 — the feed loop: caller-owned ctx, closes its channel on `Done`, feeds `raceCandidates`; replaces `dialAny` at `session.go:966` and `:1041`.
+- T14 — `candidate` carries its hop; the racer **refuses** a mismatched hop rather than dialling it (criterion 19).
+- T15 — L1's consumer guard widened to ceremony wire types **and its propagation re-shaped** (range statements, `var` specs, func literals) — widening the substring alone is vacuous.
+- T16 — `README.md:676,:708,:717` synced, with a guard tying the claim to the import graph.
+- T17 — criterion 18's second clause amended by tagged pin (below).
+- T18 — D34's disclosure line lands beside the arm control in this slice rather than P06.
+
+**The socket-sharing criterion is RE-TIMED, not discharged here.** S03's ledger moved it to S04 on the
+premise that "S04 is the first slice with a NAT mapping to be wrong about" — false against the plan's
+own text: S06 is the port-mapping client and its scope already reads "Caveat 7 decides where the request
+is sent FROM", S07 owns the lease lifecycle, S08 the punch. The **probe + established session** half has
+an owner here (the arm, T09); the **racing dialer** half belongs to S06/S08 and to S09, which is the
+first slice where the dialing side has a listener at all. An adversarial pass argued the criterion is
+over-specified because an outbound dial makes its own NAT state — true of a plain dial, false of a
+punch, where the source port must be the one the peer learned (D8 tier 4: "each learns its own mapped
+`IP:port`, publishes it, both punch").
+
 Scope: the import that does not exist. `armRequest` is fingerprint/bind/mode/transport
 (`session.go:600-605`), there is no `/api/ceremony/*` route, and `ceremony.NewInvitation` has no
 non-test caller — so the hop, roster and invitation secret every rendezvous derivation needs are

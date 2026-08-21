@@ -27,8 +27,23 @@ const (
 	// technical: two people are on a phone call when this runs, and a ceremony they
 	// scheduled is worth more than a fast failure.
 	//
-	// It is NOT the arm window and must stay strictly below it — see
-	// `TestTheConnectDeadlineFitsInsideThePeersArmWindow`.
+	// **It is not the arm window, and it does NOT fit inside one.** This used to say it
+	// "must stay strictly below" `sessionAcceptTimeout` and cite
+	// `TestTheConnectDeadlineFitsInsideThePeersArmWindow` — a test that has never existed
+	// anywhere in this tree, guarding a property that is false (both figures are 5 min)
+	// and, more to the point, is not the property that matters.
+	//
+	// The two clocks start at DIFFERENT INSTANTS: the peer arms, the two humans talk, and
+	// only then does this side dial. So no inequality between two constants can make a
+	// full-length race end inside the peer's window — by the length of the conversation,
+	// it cannot. The tail of a long race dials a listener whose timer has already fired,
+	// and the user is told "none answered as the pinned peer" about a peer who was there.
+	//
+	// The fix is criterion 16 — the armed listener's wait bounded by the CEREMONY rather
+	// than by a five-minute constant — and it is due in the slice where a signed Record
+	// first reaches the server (P05.S04), because until then there is no ceremony deadline
+	// to bound it with. Recorded here rather than left as a comparison of two literals,
+	// which is what the missing test would have been: green with neither constant read.
 	connectDeadline = 300 * time.Second
 
 	// maxRaceCandidates bounds the DISTINCT candidates one race may dial, across every
@@ -52,4 +67,23 @@ const (
 	// candidates are tried — `maxRaceCandidates` is that, and conflating the two produces
 	// refusals a user cannot act on (ADR-005's own warning).
 	maxConcurrentDials = 8
+
+	// maxCandidatesPerSource bounds what ONE tier may spend of the race's budget.
+	//
+	// `maxRaceCandidates` above is the law and stays; this is what stops one source
+	// spending all of it. A global first-come cap is won by whoever emits fastest, and
+	// under D6 an attacker supplies one of the sources — so with two tiers feeding one
+	// channel, the flooding one takes all sixteen slots and the genuine peer is never
+	// dialled. That is the capture attack `maxLANCandidates` closed at the browse level
+	// (`discover.go`), re-opened one layer up.
+	//
+	// Eight, because it is what each source is already bounded to upstream:
+	// `maxLANCandidates` is 8 per browse and `ceremony.MaxCandidates` is 8 per record. So
+	// this figure does not narrow any honest source — it only stops a source exceeding
+	// the bound it already has, at the one place that can see more than one of them.
+	//
+	// **P05.S03's acceptance asked for this and shipped without it**, with the ledger
+	// reporting only "the size half met"; the defect was invisible because there was one
+	// source, and one source makes a global cap and a per-source cap the same thing.
+	maxCandidatesPerSource = 8
 )

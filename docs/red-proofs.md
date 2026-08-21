@@ -705,3 +705,20 @@ test ended. It had never fired because no such test sorted before `office_test.g
 `armsurvival_test.go` does. Fixed by pinning one `XDG_CONFIG_HOME` for the package run in
 `TestMain` — the *product* is right (one process, one HOME, one font directory), the
 harness was not.
+
+## v1.117.24 — P05.S03's unmet acceptance, found by grilling P05.S04
+
+**Three of P05.S03's seven acceptance bullets shipped unmet and none appeared in its
+ledger**, because that ledger reconciled against the phase exit criteria and never against
+the slice's own `Acceptance:` line. All three become live the moment a second candidate
+source exists, which is exactly what S04 adds — so they were remediated first, in their own
+commit, before that slice opens. The fourth row is a defect the grill found while attacking
+them; the fifth is one I nearly shipped in the fix itself.
+
+| Defect reintroduced | What it said | Check that fired |
+| --- | --- | --- |
+| **The feeder's `ctx.Done()` arm removed — back to `for c := range in`** | `a candidate offered AFTER the race returned was consumed, so the feed goroutine is still running: it is blocked on the input channel with no ctx arm, its close(results) will never run, and the drain goroutine leaks with it` | `TestTheFeedStopsWhenTheRaceIsWon`. **No existing test could reach this**: `dialAny` closes the channel it builds, and the one test that drives an open channel drives the LOSS path, where the deadline ends the race anyway. The WIN path with an open channel had no test at all — and that is the shape S04's DHT feed introduces |
+| **The per-source cap removed, leaving only the global one** | `one source offered 12 candidates and the race reported "tried 12 address(es)"; it must dial at most 8 from a single source, or a flooding tier spends the whole budget and the honest tier is never reached` | `TestOneSourceCannotSpendTheWholeRaceBudget`, plus `TestTwoSourcesEachGetTheirShare` as the counter-arm — without it, a racer that simply lowered the global cap to 8 passes the first test and starves the second tier |
+| **`safe.Recover`'s body gutted to `_ = label`** | `the panic escaped safe.Recover and reached this frame … the AST guard below is satisfied by that NAME — so if the function itself does not swallow a panic, every one of those goroutines is unprotected while the guard stays green` | `TestSafeRecoverActuallyRecovers`. `internal/safe` had **no test of any kind**; the first draft of this row let the panic kill the test binary on a raw stack — red, but not for its own reason (`redproof.sh`'s third failure mode), so the test now catches it and names it |
+| **One racer goroutine's `defer safe.Recover` removed** | `lan.go:373 launches a goroutine whose first statement is not defer safe.Recover(...)` | `TestEveryDetachedGoroutineIsRecovered`. It replaces a **comment** at `lan.go` asserting the announcer was "the one `go func` in internal/server without it" — true when written, false from S03, which added four and recovered none. A sentence cannot notice a fifth goroutine. Its first draft also reported `go s.runSession(...)` as unrecovered, which is wrong — that function recovers itself one frame down — so the guard now resolves same-package callees, with a stimulus assertion that the resolution arm was actually exercised |
+| **`Source: sourceLAN` dropped from `resolve`** (the defect in the fix) | `discover.go:132 builds a dialable candidate without a Source. It will be accounted to the zero-value source, so one tier spends another tier's share of the race` | `TestEveryCandidateProducerNamesItsSource`. **I shipped this and the tests stayed green**, because every test set `Source` by hand — the fixture supplying what production omits. Caught by asking who the producers were, not by running anything. The guard's own first draft then found one producer of two and said so through its stimulus assertion: the typed-address producer is `[]candidate{{…}}`, an elided literal with a nil type |

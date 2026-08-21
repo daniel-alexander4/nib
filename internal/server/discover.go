@@ -39,6 +39,39 @@ type candidate struct {
 	// For a candidate the user TYPED there is no announcement, so this carries what
 	// the request asked for — see peerAddresses.
 	Transport string
+	// Source is the tier that produced this candidate, and it exists so the race's
+	// size cap can be PER SOURCE rather than global first-come.
+	//
+	// A global first-come cap is won by whoever emits fastest. With one source that is
+	// the same thing as a per-source cap and the distinction is invisible; the moment a
+	// second source exists it re-opens, at the race level, the capture attack
+	// `maxLANCandidates` closed at the browse level — a source that floods consumes the
+	// whole budget and the genuine tier is never dialled. See raceCandidates.
+	Source candidateSource
+}
+
+// candidateSource names the tier a candidate came from. Only sources that have a
+// producer are declared: a constant with no emitter is a counter nobody increments,
+// which this package has deleted three times.
+type candidateSource uint8
+
+const (
+	// sourceTyped is an address the user typed. It is the zero value because a
+	// candidate built by a caller that does not know about sources is exactly that:
+	// one address, supplied by hand, with no tier behind it.
+	sourceTyped candidateSource = iota
+	// sourceLAN is the link-local browse (tier 1).
+	sourceLAN
+)
+
+// String names the source in the failure sentence a lost race produces.
+func (s candidateSource) String() string {
+	switch s {
+	case sourceLAN:
+		return "the local network"
+	default:
+		return "the address you typed"
+	}
 }
 
 // transportOf maps the announcement's one-byte wire encoding onto the transport names
@@ -97,6 +130,10 @@ func resolve(pins []vault.PinnedPeer, s discovery.Seen) (candidate, bool) {
 			continue
 		}
 		return candidate{
+			// The tier this came from, so the race's size cap is per source. Without
+			// it every LAN candidate would carry the zero value and be accounted to
+			// the typed-address source — a split that is present, green, and wrong.
+			Source: sourceLAN,
 			// Copied, not aliased: the caller's slice outlives this loop and a
 			// shared backing array is how one peer's identity becomes another's.
 			Fingerprint: append([]byte(nil), p.Fingerprint...),
