@@ -218,15 +218,32 @@ func AddAttachment(pdf []byte, name string, data []byte) ([]byte, error) {
 // Decoded content is hashed where the filter decodes, and the raw stream where it does not,
 // with a marker distinguishing the two — otherwise a document whose filter this build cannot
 // decode would hash identically to one where the decode produced nothing.
+// ContentDigestVersion identifies WHAT this build hashes, and it is bound into the digest.
+//
+// **Without it, improving the coverage accuses a counterparty of tampering.** v1.116.18 changed
+// what ContentDigest covers without moving anything: a record written by the previous build
+// passed the version gate and then failed the hash comparison with *"the document does not
+// match the ceremony record… these are not the same document"*, when the cause was a Nib point
+// release. Every one of the coverage gaps found since needs another change, so this has to be
+// a version, not a constant that happens to be right today.
+//
+// Bump it whenever the set of hashed axes changes. `Record.FormatVersion` is a different
+// number answering a different question (what the roster preimage binds); a digest change does
+// not need to move that, but it does need to move this.
+const ContentDigestVersion = 2
+
 func ContentDigest(pdf []byte) (string, error) {
 	ctx, err := api.ReadValidateAndOptimize(bytes.NewReader(pdf), model.NewDefaultConfiguration())
 	if err != nil {
 		return "", err
 	}
 	h := sha256.New()
-	var n [8]byte
-	binary.BigEndian.PutUint64(n[:], uint64(ctx.PageCount))
-	h.Write(n[:])
+	// Every field is length-prefixed through these two helpers — see hashChunk. The first
+	// draft wrote the resource kind and name unprefixed, which is injective by luck rather
+	// than by construction (C3).
+	hashChunk(h, []byte("nib-content-digest"))
+	hashUint(h, ContentDigestVersion)
+	hashUint(h, uint64(ctx.PageCount))
 	for i := 1; i <= ctx.PageCount; i++ {
 		d, _, _, err := ctx.PageDict(i, false)
 		if err != nil || d == nil {
@@ -236,37 +253,158 @@ func ContentDigest(pdf []byte) (string, error) {
 		if err != nil && err != model.ErrNoContent {
 			return "", fmt.Errorf("page %d content: %w", i, err)
 		}
-		binary.BigEndian.PutUint64(n[:], uint64(len(c)))
-		h.Write(n[:]) // length-prefixed, so two pages cannot merge across the boundary
-		h.Write(c)
+		hashChunk(h, c)
+		// GEOMETRY, which the first draft did not cover at all. Shrinking /CropBox to
+		// excise a paragraph, or setting /Rotate 90, changes what every reader displays.
+		// It is per-page, and it is exactly what a general reviewer reads past.
+		for _, key := range []string{"MediaBox", "CropBox", "Rotate"} {
+			hashChunk(h, []byte(key))
+			hashObject(ctx.XRefTable, d[key], h, 0)
+		}
 		hashPageResources(ctx.XRefTable, d, h)
+		// ANNOTATIONS, because the exclusion's premise is false in the window this digest
+		// is checked in. The argument was "everything else is covered by the signatures" —
+		// but CheckDocument exists for the pre-FIRST-signature hop, where there are none,
+		// and in that window Nib's OWN operations defeat a content-only digest: AddNotes
+		// writes /Text annotations (visible sticky notes) and the form fill writes /V plus
+		// widget /AP streams. Neither touches a content stream. For a contract, the form
+		// values ARE the agreement.
+		hashChunk(h, []byte("Annots"))
+		hashObject(ctx.XRefTable, d["Annots"], h, 0)
 	}
 	return hex.EncodeToString(h.Sum(nil)), nil
+}
+
+// hashChunk writes a length-prefixed byte string, and hashUint a length-prefixed integer.
+//
+// Length prefixes everywhere, so the framing is injective by construction rather than by the
+// happy accident that two field values never slide across their boundary. Same discipline as
+// internal/ceremony's preimageBuilder, which exists for the same reason.
+func hashChunk(h hash.Hash, b []byte) {
+	var n [8]byte
+	binary.BigEndian.PutUint64(n[:], uint64(len(b)))
+	h.Write(n[:])
+	h.Write(b)
+}
+
+func hashUint(h hash.Hash, v uint64) {
+	var n [8]byte
+	binary.BigEndian.PutUint64(n[:], v)
+	hashChunk(h, n[:])
+}
+
+// hashObject writes a CANONICAL encoding of o into h.
+//
+// Dict keys are sorted, because types.Dict is a map and pdfcpu's own PDFString() would emit
+// them in Go's randomised iteration order — nondeterminism reaching a digest (C11), which is
+// the one defect no single-process test can see.
+//
+// Indirect references are followed, bounded by depth and by an on-path object set. Object
+// NUMBERS are never hashed: they change on every pdfcpu rewrite, which is the whole reason
+// this function exists instead of a byte hash.
+func hashObject(xt *model.XRefTable, o types.Object, h hash.Hash, depth int) {
+	if depth > 16 {
+		hashChunk(h, []byte("#depth"))
+		return
+	}
+	if ir, ok := o.(types.IndirectRef); ok {
+		d, err := xt.Dereference(ir)
+		if err != nil {
+			hashChunk(h, []byte("#unresolved"))
+			return
+		}
+		o = d
+	}
+	switch v := o.(type) {
+	case nil:
+		hashChunk(h, []byte("#nil"))
+	case types.Dict:
+		hashChunk(h, []byte("#dict"))
+		keys := make([]string, 0, len(v))
+		for k := range v {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		hashUint(h, uint64(len(keys)))
+		for _, k := range keys {
+			hashChunk(h, []byte(k))
+			hashObject(xt, v[k], h, depth+1)
+		}
+	case types.StreamDict:
+		hashChunk(h, []byte("#stream"))
+		hashObject(xt, v.Dict, h, depth+1)
+		hashStreamBody(&v, h)
+	case types.Array:
+		hashChunk(h, []byte("#array"))
+		hashUint(h, uint64(len(v)))
+		for _, e := range v {
+			hashObject(xt, e, h, depth+1)
+		}
+	default:
+		// Names, strings, numbers, booleans. PDFString is canonical for these — the
+		// ordering hazard is dicts, and those are handled above.
+		hashChunk(h, []byte(o.PDFString()))
+	}
+}
+
+// hashStreamBody writes a stream's bytes, decoded where the filter decodes.
+//
+// The marker distinguishes the two: without it a document whose filter this build cannot
+// decode hashes identically to one where the decode produced nothing.
+func hashStreamBody(sd *types.StreamDict, h hash.Hash) {
+	body := sd.Raw
+	marker := byte(0)
+	if derr := sd.Decode(); derr == nil {
+		body = sd.Content
+		marker = 1
+	}
+	hashChunk(h, []byte{marker})
+	hashChunk(h, body)
 }
 
 // resourceKinds are the page-visible resource categories folded into ContentDigest.
 //
 // XObject holds images and form XObjects — for a scan, the whole visible page. Font decides
 // what the glyphs the content stream names actually look like. The others (ColorSpace,
-// Pattern, Shading, ExtGState) are deliberately out: they are parameters rather than
-// content, and every one of them that changes what is drawn does so through a stream these
-// two already cover.
+// Pattern, Shading, ExtGState) are deliberately out: they are parameters rather than content,
+// and every one of them that changes what is drawn does so through a stream these two already
+// cover.
 var resourceKinds = []string{"Font", "XObject"}
 
-// hashPageResources folds a page's resource streams into h, in a canonical order.
+// hashPageResources folds a page's resources into h, in a canonical order.
+//
+// # The DICT, not only the stream body
+//
+// The first draft hashed `sd.Raw`/`sd.Content` and nothing from `sd.Dict`, which left the
+// reader's *interpretation* of those bytes unhashed: `/Decode [1 0 1 0 1 0]` inverts the whole
+// page image, `/ColorSpace` re-pointed at an all-white indexed palette blanks it, `/Matrix` on
+// a form scales a signature block to nothing — all with an identical digest. That is the same
+// attack the coverage was added to close, one dictionary key over.
+//
+// # And "Font" was inert
+//
+// `DereferenceStreamDict` type-asserts `types.StreamDict` and errors otherwise (verified in
+// pdfcpu v0.13.0 model/xreftable.go:989). A page `/Font` entry is a font DICTIONARY; the font
+// program is a stream several levels below, under `/FontDescriptor /FontFile2`. So the old
+// loop `continue`d on every font on every page while the doc claimed fonts were folded in —
+// leaving `/BaseFont`, `/Encoding`, `/Differences` and the embedded program all free to change
+// every glyph on the page. `hashObject` follows the dict and reaches the program, and it
+// recurses into a form XObject's own `/Resources` for the same reason.
 //
 // Order comes from the resource NAMES, not from object numbers — object numbers change on
-// every pdfcpu rewrite and names do not, which is the same reason ContentDigest hashes the
-// stream rather than the file.
+// every pdfcpu rewrite and names do not, which is the same reason this hashes the stream
+// rather than the file.
 func hashPageResources(xt *model.XRefTable, page types.Dict, h hash.Hash) {
 	res, _ := xt.DereferenceDict(page["Resources"])
 	if res == nil {
+		hashChunk(h, []byte("#nores"))
 		return
 	}
-	var n [8]byte
 	for _, kind := range resourceKinds {
+		hashChunk(h, []byte(kind))
 		sub, _ := xt.DereferenceDict(res[kind])
 		if sub == nil {
+			hashChunk(h, []byte("#none"))
 			continue
 		}
 		names := make([]string, 0, len(sub))
@@ -274,25 +412,10 @@ func hashPageResources(xt *model.XRefTable, page types.Dict, h hash.Hash) {
 			names = append(names, k)
 		}
 		sort.Strings(names)
+		hashUint(h, uint64(len(names)))
 		for _, name := range names {
-			sd, _, err := xt.DereferenceStreamDict(sub[name])
-			if err != nil || sd == nil {
-				continue
-			}
-			h.Write([]byte(kind))
-			h.Write([]byte(name))
-			body := sd.Raw
-			marker := byte(0) // raw: this build could not decode the filter
-			if derr := sd.Decode(); derr == nil {
-				body = sd.Content
-				marker = 1
-			}
-			// The marker matters: without it a document whose filter we cannot decode
-			// hashes the same as one whose decode returned nothing.
-			h.Write([]byte{marker})
-			binary.BigEndian.PutUint64(n[:], uint64(len(body)))
-			h.Write(n[:])
-			h.Write(body)
+			hashChunk(h, []byte(name))
+			hashObject(xt, sub[name], h, 0)
 		}
 	}
 }

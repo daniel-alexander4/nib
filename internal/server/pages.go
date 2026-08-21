@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"strings"
 
+	"log"
 	"nib/internal/pdfops"
 )
 
@@ -13,6 +14,30 @@ import (
 // append) to the posted document and makes the result the current document.
 // The client posts its saved bytes (edits already baked) since these ops
 // restructure the PDF in ways pdf.js cannot do client-side.
+// carryAttachments re-adds the source's embedded files after a REARRANGEMENT.
+//
+// Only delete and reorder: those produce the same document with its pages moved, and the
+// ceremony record is an attachment, so losing it there destroys the record and returns 200.
+// Every other op through the same primitives — redact, split, export — produces a derived
+// artifact somebody is about to be handed, and carrying an embedded un-redacted original into
+// one of those is a leak. See pdfops.CarryAttachments.
+//
+// A drop is logged rather than swallowed: the record this preserves is exactly what a silent
+// miss loses.
+func carryAttachments(src, dst []byte, err error) ([]byte, error) {
+	if err != nil {
+		return dst, err
+	}
+	out, dropped, cerr := pdfops.CarryAttachments(src, dst)
+	if cerr != nil {
+		return dst, cerr
+	}
+	if dropped > 0 {
+		log.Printf("page operation: %d attachment(s) could not be carried across", dropped)
+	}
+	return out, nil
+}
+
 func (s *Server) handlePages(w http.ResponseWriter, r *http.Request) {
 	cleanup, ok := parseMultipart(w, r, maxPDFBytes)
 	if !ok {
@@ -39,8 +64,10 @@ func (s *Server) handlePages(w http.ResponseWriter, r *http.Request) {
 		result, err = pdfops.Rotate(pdfBytes, pages, deg)
 	case "delete":
 		result, err = pdfops.RemovePages(pdfBytes, pages)
+		result, err = carryAttachments(pdfBytes, result, err)
 	case "reorder":
 		result, err = pdfops.Collect(pdfBytes, pages)
+		result, err = carryAttachments(pdfBytes, result, err)
 	case "insertblank":
 		afterPage, pErr := strconv.Atoi(r.FormValue("page"))
 		if pErr != nil {
