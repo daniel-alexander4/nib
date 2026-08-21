@@ -695,3 +695,75 @@ func TestTheMirrorHoldsNoSecret(t *testing.T) {
 		}
 	}
 }
+
+// TestTheRosterHashBindsWhoConvened.
+//
+// v2 left the convener outside the roster preimage, and the omission was **unargued** —
+// `RosterHash`'s exclusion list named only the six-word name and the secret, so this looked
+// exactly like a decision. It was not: any roster member could re-sign an unchanged roster
+// with their own key and `Verify` still passed, because it asks only that the signer appear
+// SOMEWHERE in the roster. The hash was byte-identical, so `RosterToken` was too, and a
+// verifier reading the finished document could not tell which of them convened.
+//
+// The FINGERPRINT is bound, not the certificate: a cert can be re-issued for the same key
+// and the same identity, and binding the bytes would change the token for a ceremony that
+// has not changed.
+func TestTheRosterHashBindsWhoConvened(t *testing.T) {
+	certA, keyA, fpA := identity(t, "Convener")
+	certB, keyB, fpB := identity(t, "Other")
+	rec := draft(t, fpA, fpB)
+	if err := rec.Sign(certA, keyA); err != nil {
+		t.Fatal(err)
+	}
+	first, err := rec.RosterHash()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// The other roster member re-signs the IDENTICAL roster.
+	forged := rec
+	if err := forged.Sign(certB, keyB); err != nil {
+		t.Fatal(err)
+	}
+	// STIMULUS: the roster itself did not change, so any difference below is the convener
+	// axis and nothing else.
+	if len(forged.Roster) != len(rec.Roster) {
+		t.Fatal("setup: the roster changed, so this measures more than the convener")
+	}
+	for i := range rec.Roster {
+		if forged.Roster[i] != rec.Roster[i] {
+			t.Fatal("setup: a roster entry changed")
+		}
+	}
+	// And it still VERIFIES — the forgery is not prevented, it is made visible. Saying so
+	// is the point: a test that asserted refusal here would be describing a property this
+	// change does not have.
+	if err := forged.Verify(); err != nil {
+		t.Fatalf("setup: the re-signed record does not verify (%v), so this is not the "+
+			"in-roster case the binding is about", err)
+	}
+
+	second, err := forged.RosterHash()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Equal(first, second) {
+		t.Error("the roster hash is unchanged when a different roster member convenes — " +
+			"the token in a finished document names a set of parties and not who called them")
+	}
+
+	// The control: re-signing with the SAME identity must reproduce the same hash, or the
+	// token stops being a stable commitment to the ceremony.
+	again := rec
+	if err := again.Sign(certA, keyA); err != nil {
+		t.Fatal(err)
+	}
+	third, err := again.RosterHash()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(first, third) {
+		t.Error("re-signing with the same identity changed the roster hash — the token is " +
+			"not a stable commitment to the ceremony")
+	}
+}

@@ -35,7 +35,7 @@ import (
 // one: it accuses a counterparty of tampering when the truth is that the two builds
 // disagree about the format. D32's rule is that a version mismatch produces a sentence,
 // and this makes it the right one.
-const FormatVersion = 2
+const FormatVersion = 3
 
 // rosterDomain separates this preimage from every other thing the identity key signs.
 // On-wire identifier: immutable once shipped (STANDARDS §9).
@@ -116,6 +116,19 @@ func (r Record) RosterHash() ([]byte, error) {
 // domain tag added there was covered by nothing — deleting it left the whole repo green —
 // because a function that returns only a digest gives a test nothing to look at. See
 // preimage.go.
+// convenerFingerprint is the hex SPKI fingerprint of the record's convener certificate,
+// or "" when there is none (an unsigned draft).
+func convenerFingerprint(certPEM string) string {
+	if certPEM == "" {
+		return ""
+	}
+	fp, err := sign.Fingerprint([]byte(certPEM))
+	if err != nil {
+		return ""
+	}
+	return hex.EncodeToString(fp)
+}
+
 func rosterPreimage(r Record) ([]byte, error) {
 	var p preimageBuilder
 	// The domain tag, FIRST (P04.S03).
@@ -134,6 +147,22 @@ func rosterPreimage(r Record) ([]byte, error) {
 	// the question unrepresentable rather than merely unlikely, and it costs one chunk.
 	p.addString(rosterDomain)
 	p.addUint(uint64(r.Version))
+	// WHO CONVENED, bound as a distinct axis (v3).
+	//
+	// The roster hash already commits to the SET of fingerprints, and the convener is one
+	// of them — so what was missing was never their identity, it was which of them holds
+	// the role. Any roster member could re-sign an unchanged roster with their own key:
+	// `Verify` asks only that the signer appear SOMEWHERE in the roster, the hash was
+	// byte-identical, `RosterToken` was byte-identical, and `Convener()` then named the
+	// new signer. A verifier reading a finished document could not tell them apart.
+	//
+	// The FINGERPRINT, not the certificate. A cert can be re-issued for the same key and
+	// the same identity, which would change the token for a ceremony that has not changed;
+	// the fingerprint is the stable identity and is already this roster's own currency.
+	// Empty when unsigned, which is a distinct value rather than an absent axis — an
+	// omission and a decision look identical in code, which is the whole reason this is
+	// here rather than being left out with no comment.
+	p.addString(convenerFingerprint(r.ConvenerCert))
 	p.addString(r.ID)
 	p.addString(r.DocHash)
 	p.addString(r.Intent)

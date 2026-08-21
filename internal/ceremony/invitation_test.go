@@ -419,12 +419,22 @@ func TestAnInvitationCatchesARecordConvenedBySomeoneElse(t *testing.T) {
 		t.Fatalf("setup: the re-signed record does not verify, so this is not the attack "+
 			"the check is for: %v", err)
 	}
+	// The roster token now DIFFERS, and that is the v3 improvement rather than a broken
+	// stimulus.
+	//
+	// This assertion was written inverted — "the token must be unchanged, or the record
+	// alone can already tell" — because at v2 the convener was outside the preimage, so a
+	// re-signed roster produced byte-identical bytes and only the invitation could catch
+	// it. v3 binds the convener's fingerprint as its own axis, so a verifier reading a
+	// FINISHED DOCUMENT can tell too, with no invitation in hand. Both checks now exist and
+	// they answer different questions: this one is "who does this record say convened",
+	// MatchesRecord's is "is that who the invitation told me to expect".
 	origTok, _ := rec.RosterToken()
 	forgedTok, _ := forged.RosterToken()
-	if origTok != forgedTok {
-		t.Fatalf("setup: the roster token changed (%s vs %s) — then the record alone can "+
-			"already tell, and MatchesRecord is not the only thing that could catch this",
-			origTok, forgedTok)
+	if origTok == forgedTok {
+		t.Errorf("the roster token is identical after another roster member re-signed the "+
+			"same roster (%s) — a verifier reading the finished document cannot tell which "+
+			"of them convened", origTok)
 	}
 	if conv, ok := forged.Convener(); !ok || conv.Fingerprint == cfp {
 		t.Fatalf("setup: Convener() still names the original convener")
