@@ -13,6 +13,44 @@ import (
 	"nib/internal/testpdf"
 )
 
+// TestMain pins ONE config directory for the whole package run.
+//
+// **Why this is a harness fix and not a product fix.** pdfcpu keeps its user-font
+// directory in a package-level global (`font.UserFontDir`, set by
+// `model.NewDefaultConfiguration()`), captured the first time any code in the process
+// installs a face. For a real Nib that is correct and invisible: one process, one HOME,
+// one font directory for its life.
+//
+// `startServer` gives every test a fresh `HOME` from `t.TempDir()` — which it must, to
+// isolate `~/.ssh` so the builtin-key auto-setup cannot open a vault from the host's real
+// keys. `t.TempDir()` is removed when that test ends. So the FIRST test to start a server
+// captured a font directory that stopped existing when it finished, and every later test
+// needing a face read a deleted path:
+//
+//	install fallback font NotoSansThai-Regular: open
+//	/tmp/TestACompletedHandshake…/001/.config/pdfcpu/fonts/NotoSansThai-Regular.gob:
+//	no such file or directory
+//
+// It was latent for as long as no server-starting test sorted before `office_test.go`;
+// P05.S01 added `armsurvival_test.go`, which sorts first, and the office test went red for
+// a reason that had nothing to do with it. **Ordering was the only thing holding it up**,
+// so any new test file named earlier would have done the same — that is a trap, not a
+// property, and it is worth removing rather than sorting around.
+//
+// `os.UserConfigDir` prefers `XDG_CONFIG_HOME` over `$HOME/.config`, so pinning that one
+// variable for the package makes the cached directory outlive every individual test while
+// leaving each test's `HOME` isolation exactly as it was.
+func TestMain(m *testing.M) {
+	dir, err := os.MkdirTemp("", "nib-server-config-")
+	if err != nil {
+		panic(err)
+	}
+	os.Setenv("XDG_CONFIG_HOME", dir)
+	code := m.Run()
+	os.RemoveAll(dir)
+	os.Exit(code)
+}
+
 // startServer returns a running test server backed by an empty (setup-needed)
 // vault directory, plus a path to a sample form PDF on disk.
 func startServer(t *testing.T) (*httptest.Server, string) {

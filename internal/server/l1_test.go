@@ -48,10 +48,18 @@ func TestDialAnyWalksPastAnImpostorAndLandsOnThePinnedPeer(t *testing.T) {
 			t.Fatal(err)
 		}
 		t.Cleanup(func() { ln.Close() })
-		// Handshake concurrently. A serial loop here costs this test 30 s per refused
-		// dial, because tlsListener.Accept runs the handshake inline under a
-		// handshakeTimeout — which is a real property of the product's arm loop too,
-		// measured and filed, and not something this test should pay for.
+		// Handshake concurrently, so a refused dial does not make the NEXT one wait.
+		//
+		// **The reason used to be a property of the product and no longer is.** This
+		// said `tlsListener.Accept` runs the handshake inline under a handshakeTimeout,
+		// "a real property of the product's arm loop too, measured and filed" — true
+		// until v1.117.1, which moved the handshake off the accept path under
+		// `maxConcurrentHandshakes` (`internal/p2p/transport.go`), and the item it
+		// referred to was closed on 2026-08-21 measured at 2.3 ms with five stalled
+		// connections in front. The rig stays concurrent because this test still owns
+		// its own listener and should not depend on the product's accept policy; the
+		// justification is corrected because a stale comment here produced a wrong
+		// finding from an adversarial reviewer during P05's phase-open grill.
 		go func() {
 			for {
 				c, err := ln.Accept()
@@ -63,13 +71,12 @@ func TestDialAnyWalksPastAnImpostorAndLandsOnThePinnedPeer(t *testing.T) {
 		}()
 		return ln.Addr().String()
 	}
-	// A FRESH impostor per case, deliberately.
+	// A FRESH impostor per case, deliberately: a listener that has just refused a dial is
+	// not the same subject as one that has not, and reusing it would make the second case
+	// depend on the first case's leftovers.
 	//
-	// tlsListener.Accept runs the handshake inline under a 30 s handshakeTimeout, so one
-	// refused dial leaves that listener unable to answer the next for the full timeout.
-	// Reusing one impostor across two cases costs this test 30 s and would be measuring
-	// the harness. That serial-accept property is real in the product's arm loop too —
-	// measured at 30 s per stalled connection, and filed as its own item.
+	// **Not, as this used to say, because the accept path serialises handshakes.** That
+	// was true until v1.117.1 and is not now — see the note in `serve` above.
 	pinned := serve(certB, keyB)
 
 	// STIMULUS: the real peer alone is reachable, so a failure below is about the

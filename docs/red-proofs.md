@@ -668,3 +668,40 @@ exists to find, and its LAN mode ran TCP only. Both are fixed in the same change
 runs tell the armed side only, and there are now two of them. A harness that tells both
 sides the answer is not testing the protocol — it is testing that two programs given the
 same constant agree.
+
+## v1.117.21 — P05.S01, the arm and what spends it
+
+The slice moves what consumes a one-shot armed session from *"a connection completed a
+handshake"* to *"a connection produced an outcome"*. That is one rule with **three** arms,
+and each needed its own proof — L1 alone is satisfied by a listener that never disarms.
+
+| Defect reintroduced | What it said | Check that fired |
+| --- | --- | --- |
+| **The old rule: any completed handshake spends the arm** | `a pinned peer that completed a handshake and then closed without producing a session consumed the arm — the user's receive is gone and the peer they are waiting for can no longer reach them, for a connection that exchanged nothing` | `TestACompletedHandshakeThatProducesNoSessionLeavesTheArmOpen`. Its sibling `TestAStrayConnectionDoesNotConsumeTheSession` cannot see this: its stray is plain TCP with junk bytes, so it never reaches the statement |
+| **`armedUntil` reassigned inside the accept loop** | `` `armedUntil` is assigned 2 times; the arm deadline must be fixed once, at arm time `` and `assigned inside the accept loop (1 time(s)), so every connection that produces no session pushes the arm window out` | `TestTheArmWindowIsNotExtendedByConnectionsThatProduceNoSession`, an AST check on the routing rather than on any line's text — the behavioural form costs 5 minutes of wall clock |
+| **A completed session reports "not served"** | `the listener is still armed after a completed co-signing session — one arm has served more than one session, which is the containment the session TRIPWIRE names` | `TestSessionArmReceiveSign`'s new tail. **This is the counter-arm**: without it, a `serveOneSession` that always returned false passes every "the arm survives" assertion and silently removes D22 |
+| **A decline reports "not served"** | `the listener is still armed after the user declined — the peer can re-dial and ask again, and the decline was treated as a failed connection` | `TestSessionDeclineLeavesOpenDoc` and `TestSessionReceiveTransferDecline`, one per sentinel. The co-signing decline had to *become* a sentinel (`p2p.ErrCoSignDeclined`) to be distinguishable — it was a bare `errors.New("co-signing declined")` one line from a protocol error |
+
+| **The outcome ENUMERATION restored** (the slice's own first implementation) | `the listener is STILL ARMED after the user said the verification words did not match — the man-in-the-middle signal was filed as a failed connection, so the listener retries automatically and the attacker gets another attempt with no user action and no warning` | `TestADeclinedSpokenCheckSpendsTheArm`. **The slice's review found this, not its author.** Measured at two full spoken-check rounds in 0.47 s against a listener still reporting `Armed: true` |
+| **The timer reset to a full `sessionAcceptTimeout`** | `the accept timer is reset to "sessionAcceptTimeout"; it must be reset to the REMAINDER of the window fixed at arm time` | the second half of `TestTheArmWindowIsNotExtended…`, added by the review — the first half polices `armedUntil` and stays **green** against this defect, so it could fail for a renamed variable and not for the behaviour |
+| **The old spend-on-handshake rule, against the racer case** | the Verify gate never appears on the connection after the abandoned one | `TestAnAbandonedConnectionIsFollowedByAWorkingSession` — the only check here that proves the server *accepted* the abandoned connection and carried on, since `p2p.Dial` returns on the CLIENT's handshake and every other assertion would pass with the accept path deleted |
+
+**The lesson, and it is about the shape of a rule rather than a missing case.** The first
+implementation *enumerated* the outcomes that spend the arm. Enumerations of this kind fail
+in both directions at once and did: it omitted `ErrVerificationDeclined`, the
+man-in-the-middle signal, so the listener performed on the user's behalf exactly the retry
+`internal/p2p/verify.go` says must never be invited; and it *claimed* an unanswered consent
+left the arm open when `Confirm` returns `accept=false, err=nil` on timeout, so that case
+had always arrived as a decline. Both were confident false statements in a comment about
+code three lines away. The replacement asks one question the enumeration was a proxy for —
+**did this connection put anything in front of the user?** — and its default for an error
+nobody anticipated is the pre-slice behaviour rather than the loosened one.
+
+**A latent test-isolation defect surfaced by adding a file, and it was ordering that hid
+it.** `startServer` gives every test a fresh `HOME` from `t.TempDir()`, and pdfcpu caches
+its user-font directory in a package-level global at first use. So the first
+server-starting test in the package captured a directory that stopped existing when that
+test ended. It had never fired because no such test sorted before `office_test.go`;
+`armsurvival_test.go` does. Fixed by pinning one `XDG_CONFIG_HOME` for the package run in
+`TestMain` — the *product* is right (one process, one HOME, one font directory), the
+harness was not.
