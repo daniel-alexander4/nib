@@ -6,6 +6,7 @@ import (
 	"go/token"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -119,5 +120,60 @@ func TestEveryEntryPointReArmsAfterItsHumanGate(t *testing.T) {
 	if checked != 4 {
 		t.Fatalf("found %d entry point(s) calling runVerification, want 4 (Initiate, "+
 			"Receive, SendDocument, ReceiveDocument) — the matcher has gone blind", checked)
+	}
+}
+
+// TestADialingSideOutwaitsBothOfThePeersGates.
+//
+// `TestEveryEntryPointReArmsAfterItsHumanGate` is structural — it AST-matches "is there a
+// SetDeadline after runVerification". That is not the property the invariant asserts. The
+// arithmetic one is: a read that waits on the peer's decisions must outlast **two** of their
+// gates plus the transfer, and for the two dialing entry points it did not.
+//
+// The failure needs no attacker: the initiator answers in five seconds, the responder takes
+// four minutes at the spoken check and three at consent — both inside the advertised windows —
+// and the initiator times out while the responder co-signs and saves. Both users have signed
+// and one holds the artifact.
+func TestADialingSideOutwaitsBothOfThePeersGates(t *testing.T) {
+	if remoteDecisionDeadline < 2*PeerGateWindow {
+		t.Errorf("remoteDecisionDeadline %v cannot cover two peer gates of %v — the read that "+
+			"waits on the peer's spoken check AND their consent times out while they are "+
+			"still deciding, after which they co-sign and save and the dialer holds nothing",
+			remoteDecisionDeadline, PeerGateWindow)
+	}
+	// And it must leave room for the co-signature and the write-back on top, or the timeout
+	// lands in the worst place: after the peer's key has been used.
+	if remoteDecisionDeadline <= 2*PeerGateWindow {
+		t.Errorf("remoteDecisionDeadline %v leaves nothing for the co-signature and a %d MiB "+
+			"write-back after the peer's last gate", remoteDecisionDeadline, maxFrame>>20)
+	}
+
+	// The dialing entry points must actually arm it. By shape, so a rename cannot disarm this.
+	src, err := os.ReadFile("session.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	fset := token.NewFileSet()
+	f, err := parser.ParseFile(fset, "session.go", src, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]bool{"Initiate": false, "SendDocument": false}
+	for _, d := range f.Decls {
+		fn, ok := d.(*ast.FuncDecl)
+		if !ok || fn.Body == nil {
+			continue
+		}
+		if _, ours := want[fn.Name.Name]; !ours {
+			continue
+		}
+		body := string(src[fset.Position(fn.Body.Pos()).Offset:fset.Position(fn.Body.End()).Offset])
+		want[fn.Name.Name] = strings.Contains(body, "remoteDecisionDeadline")
+	}
+	for name, armed := range want {
+		if !armed {
+			t.Errorf("%s never arms remoteDecisionDeadline — its read waits on two of the "+
+				"peer's human gates under a budget sized for one", name)
+		}
 	}
 }

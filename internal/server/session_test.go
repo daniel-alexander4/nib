@@ -1218,3 +1218,24 @@ func TestASecondSpokenCheckCannotDisplaceTheOneOnScreen(t *testing.T) {
 	}
 	s.sess.clearVerifyIf(second)
 }
+
+// TestTheSessionBudgetsCoverBothPeerGates — the coupling asserted from the side that can see both.
+//
+// `internal/p2p` sizes its remote-decision budget from `p2p.PeerGateWindow`, and this package
+// enforces the actual gate with `sessionConsentTimeout`. They are two statements of one number
+// in two packages, and p2p cannot import this one (the dependency runs the other way), so the
+// assertion has to live here — which is also why the drift went unnoticed.
+func TestTheSessionBudgetsCoverBothPeerGates(t *testing.T) {
+	if p2p.PeerGateWindow != sessionConsentTimeout {
+		t.Errorf("p2p.PeerGateWindow = %v and sessionConsentTimeout = %v — p2p sizes the "+
+			"dialing side's wait from its own copy, so a change here silently makes that "+
+			"budget too small and the dialer times out while the peer is still deciding",
+			p2p.PeerGateWindow, sessionConsentTimeout)
+	}
+	// And the dialing side must outwait two of them plus the transfer.
+	if got := p2p.MaxRemoteDecisionWait(); got <= 2*sessionConsentTimeout {
+		t.Errorf("the dialing side allows %v for the peer's decisions, and this server lets "+
+			"one user hold a gate for %v — twice that is already %v", got,
+			sessionConsentTimeout, 2*sessionConsentTimeout)
+	}
+}
