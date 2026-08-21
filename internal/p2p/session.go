@@ -33,9 +33,11 @@ const maxFrame = 128 << 20 // 128 MiB
 // blow a six-minute absolute budget: the initiator's read times out AFTER the responder
 // has co-signed and saved, so both users have signed and only one holds the artifact.
 //
-// So each of the four entry points re-arms after `runVerification` returns, and the two
-// receiving ones re-arm again after consent (postConsentDeadline). The invariant is that
-// no single budget ever spans more than one human wait.
+// So each of the four entry points re-arms after `runVerification` returns; the two receiving
+// ones re-arm again after consent (postConsentDeadline); and the two DIALING ones re-arm again
+// before the read that waits on the peer's decisions (remoteDecisionDeadline), because that
+// read spans two of the PEER's gates. The invariant is that no budget is ever smaller than the
+// human waits it has to cover.
 const exchangeDeadline = 6 * time.Minute
 
 // postConsentDeadline is a FRESH budget for the I/O that follows the user's decision.
@@ -51,6 +53,40 @@ const exchangeDeadline = 6 * time.Minute
 // longer absolute budget would let a stalling peer hold the single armed session for longer
 // too, which is the thing exchangeDeadline exists to bound.
 const postConsentDeadline = 2 * time.Minute
+
+// remoteDecisionDeadline covers a read that waits on the PEER's human gates.
+//
+// # The re-arm fixed the local gate and left the remote ones
+//
+// `exchangeDeadline`'s doc claimed "no single budget ever spans more than one human wait", and
+// for the two DIALING entry points that was still false. Trace `Initiate`: both sides run
+// `verificationExchange` and are then prompted CONCURRENTLY. The initiator re-arms when its
+// own user answers — and its `readFrame` then waits on the remainder of the peer's spoken
+// check, then the peer's consent gate, then the co-signature and a write-back of up to
+// maxFrame. Two remote human waits plus a transfer, against six minutes.
+//
+// No attacker needed: the initiator answers in five seconds, the responder takes four minutes
+// at the spoken check and three at consent — both inside the windows the product advertises —
+// and the initiator times out at 6m05s while the responder co-signs at about seven minutes.
+// That is verbatim the outcome the re-arm was written to prevent, one hop further out.
+//
+// PeerGateWindow is the same five minutes the server's sessionConsentTimeout enforces, and the
+// two are asserted equal from the server side (this package cannot import that one). Stating
+// the budget as arithmetic rather than a literal is what stops the two drifting again.
+const (
+	// PeerGateWindow is how long the peer's user may hold ONE gate. It mirrors
+	// internal/server's sessionConsentTimeout; TestTheSessionBudgetsCoverBothPeerGates
+	// asserts they agree, from the package that can see both.
+	PeerGateWindow = 5 * time.Minute
+
+	// remoteDecisionDeadline: two of the peer's gates, plus the co-signature and a 128 MiB
+	// write-back.
+	remoteDecisionDeadline = 2*PeerGateWindow + postConsentDeadline
+)
+
+// MaxRemoteDecisionWait reports the budget a dialing side allows for the peer's decisions, so
+// the server can assert its own consent window fits inside it.
+func MaxRemoteDecisionWait() time.Duration { return remoteDecisionDeadline }
 
 // Confirmer is the receiving side's consent gate. Shown the connected peer's
 // attestation (their identity, accepted-peer, and intent, read from the document
@@ -83,6 +119,8 @@ func Initiate(ch Channel, mySignedPDF, myFingerprint []byte, v Verifier) ([]byte
 	if err := writeFrame(conn, mySignedPDF); err != nil {
 		return nil, fmt.Errorf("send document: %w", err)
 	}
+	// This read waits on BOTH of the peer's gates — see remoteDecisionDeadline.
+	_ = conn.SetDeadline(time.Now().Add(remoteDecisionDeadline))
 	final, err := readFrame(conn)
 	if err != nil {
 		return nil, fmt.Errorf("receive co-signed document: %w", err)
@@ -185,6 +223,9 @@ func SendDocument(ch Channel, pdf []byte, myFingerprint []byte, v Verifier) erro
 	if err := writeFrame(conn, pdf); err != nil {
 		return fmt.Errorf("send document: %w", err)
 	}
+	// Same shape as Initiate's: the receipt comes after the peer's spoken gate remainder
+	// AND their Accept consent.
+	_ = conn.SetDeadline(time.Now().Add(remoteDecisionDeadline))
 	ack, err := readFrameMax(conn, 1)
 	if err != nil {
 		return fmt.Errorf("await receipt: %w", err)
