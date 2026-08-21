@@ -630,3 +630,29 @@ And `O_NOFOLLOW` refuses a symlink but not a **fifo**, and opening a fifo for re
 until a writer appears, so the regular-file check on the handle never ran: a `pipe.pdf`
 dropped into a watched directory hung the loop until Ctrl-C. The test's five-second timeout
 is what found it.
+
+## v1.117.16–.19 — the discovery sweep (pending items 6–9)
+
+Four items off the backlog, each red-proved before it closed. The tier-4 row is the one
+worth reading: it is the first time this repo has put a defect back and watched a **real
+ceremony between two real binaries** fail with the reported symptom.
+
+| Defect reintroduced | What it said | Check that fired |
+| --- | --- | --- |
+| **The loopback rule removed from `startAnnouncing`** (v1.117.16) | `bind 127.0.0.1:13897 is loopback and was announced on every joined interface (err=<nil>)` — the nil error is the point: the socket really opened and the announcer really ran. Also fired for `127.0.0.2` and `::1` | `TestALoopbackBindIsNotAnnouncedOnTheLink`. Its wildcard case is the other half and asserts the refusal does NOT fire: a `startAnnouncing` that refused everything passes the loopback assertion and breaks the LAN tier outright |
+| **A second `&lanAnnouncer{}` construction site** (v1.117.16) | `an announcer is built at [startAnnouncing redProofSecondDoor]` | `TestAnnouncingHasExactlyOneDoor`. ADR-009's half: a rule inside one function is worth nothing if a second site can skip it, and asserting the *text* of `startAnnouncing` would say nothing about a site written elsewhere |
+| **The browse's early exit removed** (v1.117.17) | `the browse spent 3.001765252s of its 3s window after hearing its answer at ~0s` | `TestABrowseStopsOnceTheLinkGoesQuiet`, which also asserts a LOWER bound — a browse returning at the first announcement would reintroduce the capture the multi-candidate fix removed |
+| **`browseQuiet` shortened to 100 ms** (v1.117.17) | `browseQuiet is 100ms and announceEvery is 500ms; a quiet period no longer than one announce period cannot outlast an announcer whose ticker is offset` | `TestBrowseQuietIsDerivedFromTheAnnouncer`, plus the offset test's own **setup** assertion refusing to run vacuously |
+| **The quiet period set once, never reset** (v1.117.17) | `browse returned 2 candidates, want 3` | `TestAnAnnouncerOffsetByOnePeriodIsStillHeard`. It needs THREE announcers: two inside one window are collected even by a fixed grace period, so a two-announcer test cannot tell a quiet period from a grace period. The first draft had two and proved nothing about the reset |
+| **`nib discover`'s verdict switch reordered** (v1.117.18) | `VERDICT: 0 announcements left this machine and NOT ONE came back to us. A local firewall is dropping multicast on port 8446` — about a machine where **nothing was ever sent**. A confident wrong diagnosis, pointing the user at their firewall instead of at the interface list three lines above | `TestNothingSentIsDiagnosedBeforeNothingReturned` |
+| **Two of the four verdicts collapsed to one message** (v1.117.18) | `states [0 2] all print the same verdict, so the command cannot tell them apart` | `TestTheFourVerdictsAreFourDifferentMessages`. The per-branch substring table cannot see this: each collapsed branch still contains its own substring |
+| **The `OffLink` line dropped from the summary** (v1.117.18) | `summary omits the counter whose value is 88` | `TestEverySummaryCounterIsPrinted`, which asserts the COUNT rather than eight labels — OffLink slipped past this summary for a whole phase, and a list of names would let the tenth counter do it again |
+| **The `--seconds` guard removed** (v1.117.18) | `nib discover --seconds 0` exited **1** (a verdict about the machine) instead of **2** (a usage error) | `TestANonPositiveWindowRefusesInsteadOfDiagnosing` |
+| **The announced transport ignored — `candidate.Transport` forced to `""`** (v1.117.19) | at tier 1: `the candidate's transport is ""`. **At tier 4 `--lan`, the real thing:** `FAIL: [quic] initiate returned HTTP 502 … {"error":"could not connect to peer: tried 2 address(es), none answered as the pinned peer: dial tcp [fe80::4c7e:82ff:fea6:a647%d0]:60382: connect: connection refused"}` — a TCP dial at a QUIC peer's UDP port, surfaced to the user as an unreachable peer | `TestAQUICArmedPeerIsDialledOverQUIC` (tier 1, carrying its own red proof inline: the same address with the transport the old code chose must NOT connect), and `./build/pairrepro.sh --lan`'s new QUIC run (tier 4) |
+
+**The tier-4 row could not have existed last week.** `pairrepro.sh` passed `-F transport=`
+to *both* sides in every mode, so the harness was configured past the disagreement it
+exists to find, and its LAN mode ran TCP only. Both are fixed in the same change: the LAN
+runs tell the armed side only, and there are now two of them. A harness that tells both
+sides the answer is not testing the protocol — it is testing that two programs given the
+same constant agree.

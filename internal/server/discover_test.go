@@ -39,6 +39,17 @@ func announcementFrom(t *testing.T, fp []byte, port uint16, from string) discove
 	return discovery.Seen{Announcement: parsed, From: &net.UDPAddr{IP: net.ParseIP(from), Port: discovery.Port}}
 }
 
+// tcpCands turns plain addresses into TCP candidates, for the tests whose subject is the
+// WALK rather than the transport. Written out so a reader can see that "tcp" is the
+// fixture's choice and not a default hiding inside dialAny.
+func tcpCands(addrs ...string) []candidate {
+	out := make([]candidate, 0, len(addrs))
+	for _, a := range addrs {
+		out = append(out, candidate{Addr: a, Transport: "tcp"})
+	}
+	return out
+}
+
 func fpOf(seed byte) []byte {
 	h := sha256.Sum256([]byte{seed})
 	return h[:]
@@ -324,7 +335,7 @@ func TestTwoHostsClaimingOneNameBothBecomeCandidates(t *testing.T) {
 func TestDialAnyTriesEveryCandidate(t *testing.T) {
 	// Two addresses that cannot connect; what matters is that BOTH were attempted, which
 	// the error reports. A single-candidate dialAny would say "1 address(es)".
-	_, err := dialAny("tcp", []string{"127.0.0.1:1", "127.0.0.1:2"}, nil, nil, nil)
+	_, err := dialAny(tcpCands("127.0.0.1:1", "127.0.0.1:2"), nil, nil, nil)
 	if err == nil {
 		t.Fatal("dialling two dead addresses succeeded")
 	}
@@ -332,7 +343,7 @@ func TestDialAnyTriesEveryCandidate(t *testing.T) {
 		t.Errorf("error says %q — it must name how many were tried, or a silent "+
 			"first-only dial is indistinguishable from a real exhaustion", err)
 	}
-	if _, err := dialAny("tcp", nil, nil, nil, nil); err == nil {
+	if _, err := dialAny(nil, nil, nil, nil); err == nil {
 		t.Error("dialling an empty candidate list succeeded")
 	}
 }
@@ -576,7 +587,7 @@ func TestDialAnyStopsEvenWithCandidatesLeft(t *testing.T) {
 		addrs = append(addrs, fmt.Sprintf("203.0.113.%d:9", i+1))
 	}
 	start := time.Now()
-	_, derr := dialAny("tcp", addrs, cert, key, make([]byte, 32))
+	_, derr := dialAny(tcpCands(addrs...), cert, key, make([]byte, 32))
 	elapsed := time.Since(start)
 
 	if derr == nil {

@@ -310,6 +310,8 @@ type tlsListener struct {
 
 func (l *tlsListener) Addr() net.Addr { return l.ln.Addr() }
 
+func (l *tlsListener) Transport() string { return TransportTCP }
+
 // Close stops the accept loop and releases anything blocked in Accept.
 //
 // `done` is closed BEFORE the underlying listener so a handshake finishing in the same

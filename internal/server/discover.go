@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"nib/internal/discovery"
+	"nib/internal/p2p"
 	"nib/internal/pairing"
 	"nib/internal/vault"
 )
@@ -30,6 +31,31 @@ type candidate struct {
 	Label       string
 	Name        string
 	Addr        string // host:port, ready to dial
+	// Transport is the socket that Addr's port belongs to, taken from the
+	// announcement (ADR-010). A port number alone is ambiguous: under QUIC it is a
+	// UDP port and under TCP a TCP port, and dialling the wrong one is a connection
+	// refused that reads to the user as "that peer is not reachable".
+	//
+	// For a candidate the user TYPED there is no announcement, so this carries what
+	// the request asked for — see peerAddresses.
+	Transport string
+}
+
+// transportOf maps the announcement's one-byte wire encoding onto the transport names
+// internal/p2p uses.
+//
+// **The mapping lives here because the two vocabularies cannot meet anywhere else.**
+// `internal/discovery` is forbidden to import `internal/p2p` — that guard is what makes
+// L1 structural rather than remembered — so the wire owns a byte, p2p owns a string, and
+// this is the one layer that holds both. `discovery.Parse` has already refused any value
+// outside the enumeration, so the default arm is unreachable from the wire; it is TCP
+// rather than a panic because a diagnostic that crashes the desktop process over an
+// unrecognised byte is worse than one that dials the wrong port.
+func transportOf(t discovery.Transport) string {
+	if t == discovery.TransportQUIC {
+		return p2p.TransportQUIC
+	}
+	return p2p.TransportTCP
 }
 
 // hostOf renders a source address as a dialable host, keeping the zone that a
@@ -89,6 +115,12 @@ func resolve(pins []vault.PinnedPeer, s discovery.Seen) (candidate, bool) {
 			// a candidate that looks fine and cannot be reached. The first version
 			// of this line did exactly that.
 			Addr: net.JoinHostPort(hostOf(s.From), strconv.Itoa(int(s.Port))),
+			// The ANNOUNCED transport, not the caller's request. The peer is the
+			// only authority on which kind of socket it opened, and this is
+			// reachability rather than identity, so L1 is untouched: a lying
+			// announcer sends us at a socket that does not answer as the pinned
+			// peer, which is what the handshake is for.
+			Transport: transportOf(s.Transport),
 		}, true
 	}
 	return candidate{}, false

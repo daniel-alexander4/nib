@@ -117,5 +117,27 @@ type Listener interface {
 	// Addr is the address actually bound, so a caller that asked for port 0 can
 	// tell the peer where to dial.
 	Addr() net.Addr
+	// Transport names the socket this listener opened — TransportTCP or
+	// TransportQUIC.
+	//
+	// **It is asked, not told.** `Addr()` alone is ambiguous by construction: under
+	// QUIC the bound port is a UDP port and under TCP it is a TCP port, and the
+	// number looks identical. Every caller that has to describe this listener to
+	// somebody else — the link-local announcement is the first, the ladder's later
+	// tiers will be the next — needs both halves, and carrying the transport
+	// alongside the listener as a separate string is how the two come to disagree.
+	Transport() string
 	Close() error
 }
+
+// The transports, named here because this package owns them.
+//
+// `internal/server` used to define its own copies and compare against the request
+// field; they are aliases of these now, so the string that selects a dialer and the
+// string a listener reports cannot drift apart. `internal/discovery` deliberately does
+// NOT use them — it is forbidden to import this package (L1's structural guard), so it
+// owns a one-byte wire encoding and the server maps between the two.
+const (
+	TransportTCP  = "tcp"
+	TransportQUIC = "quic"
+)

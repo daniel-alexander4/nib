@@ -311,7 +311,21 @@ ceremony() { # transport port outfile
   # off, so the tcp branch doubles as a check that a wrong dial does not consume
   # the armed session — the ceremony below still completes after it.
   if [ "$port" = "lan" ]; then
-    :  # no fixed port to probe — the whole point is that nobody chose one
+    # No port was TYPED — but one was BOUND, and B reports it in its status. Probing
+    # it is what stops the LAN runs being two TCP runs wearing different labels, the
+    # same hazard the fixed-port branch below exists for. It matters more here: the
+    # LAN QUIC run is the only place in the tree where a peer's transport is learned
+    # from an announcement rather than configured into both sides.
+    local lanaddr lanport
+    lanaddr="$(curl -fsS "$B/api/session/status" | sed -n 's/.*"address":"\([^"]*\)".*/\1/p')"
+    [ -n "$lanaddr" ] || fail "[$transport] B armed on the link and reports no address, so the transport cannot be probed"
+    lanport="${lanaddr##*:}"
+    if (exec 3<>"/dev/tcp/127.0.0.1/$lanport") 2>/dev/null; then
+      exec 3<&- 3>&-
+      [ "$transport" = "tcp" ] || fail "[$transport] the announced port $lanport answers TCP — the LAN QUIC run is listening on a TCP socket, so it is the TCP path wearing a different label"
+    else
+      [ "$transport" != "tcp" ] || fail "[$transport] the announced port $lanport does not answer TCP, so the LAN TCP run is not on the transport it asked for"
+    fi
   elif (exec 3<>"/dev/tcp/127.0.0.1/$port") 2>/dev/null; then
     exec 3<&- 3>&-
     [ "$transport" = "tcp" ] || fail "[$transport] port $port answers TCP — the QUIC run is listening on a TCP socket, so it is the TCP path wearing a different label"
@@ -349,7 +363,8 @@ ceremony() { # transport port outfile
   curl -sS -X POST "$A/api/session/initiate" -H "X-CSRF-Token: $CSRF_A" \
     -F "pdf=@$WORK/doc.pdf" -F "appearance=@$WORK/sig.png" \
     -F "params={\"fingerprint\":\"$FP_B\",\"intent\":\"I agree to co-sign\"}" \
-    $( [ "$port" = "lan" ] || printf %s "-F address=127.0.0.1:$port" ) -F "transport=$transport" \
+    $( [ "$port" = "lan" ] || printf %s "-F address=127.0.0.1:$port" ) \
+    $( [ "$port" = "lan" ] || printf %s "-F transport=$transport" ) \
     -o "$init_out" -w '%{http_code}' > "$WORK/initiate.code" 2>"$WORK/initiate.err"
   local code
   code="$(cat "$WORK/initiate.code")"
@@ -415,14 +430,25 @@ if [ "$LAN" = "1" ]; then
   nft reset counters table inet egress >/dev/null 2>&1 || true
   baseline="$(offlink_packets)"
 
+  # BOTH transports over the link, and A is told NEITHER the address nor the
+  # transport — the announcement is the only thing that can carry them.
+  #
+  # This is the harness half of ADR-010. `-F transport=` used to be passed to both
+  # sides in every mode, so tier 4 was configured past the very disagreement it
+  # exists to find: B armed QUIC, A dialled whatever A was told, and they agreed
+  # because somebody outside the protocol told them the same answer. The LAN runs
+  # now pass it to B only.
   ceremony tcp lan "$WORK/final.lan.pdf"
   WORDS_LAN="$WORDS"
+  ceremony quic lan "$WORK/final.lan.quic.pdf"
+  WORDS_LAN_QUIC="$WORDS"
 
   after="$(offlink_packets)"
   [ "$after" = "$baseline" ] \
     || fail "the ceremony emitted $((after - baseline)) packets destined off the link — P03's exit criterion says a LAN ceremony completes with NO outbound internet traffic"
-  echo "PASS: a ceremony completed with no address typed anywhere, and nothing left the link"
-  echo "      words: $WORDS_LAN"
+  echo "PASS: a ceremony completed over BOTH transports with no address and no transport"
+  echo "      typed anywhere, and nothing left the link"
+  echo "      words: tcp=$WORDS_LAN quic=$WORDS_LAN_QUIC"
   exit 0
 fi
 

@@ -70,3 +70,6 @@ home today.
 - [ADR-009: One door per rule](009-one-door-per-rule.md) — a rule that has to hold at more
   than one call site is written once and its guard checks the door, not the text; with the
   six from one review that reached some sites and not others
+- [ADR-010: An announcement carries the transport](010-announcement-carries-the-transport.md) —
+  extends ADR-007: a port without its transport is not an address, so a QUIC-armed peer was
+  dialled over TCP; format version 2, and the tier-4 harness that was configured past it
