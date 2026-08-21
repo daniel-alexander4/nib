@@ -321,7 +321,11 @@ func (s *Server) Handler() http.Handler {
 //
 // **The CSP is strict because the app was already built for one**, which is what makes
 // this a header rather than a refactor: no inline event handlers, no eval, no
-// new Function, no insertAdjacentHTML, and every innerHTML assignment a static literal.
+// new Function, no insertAdjacentHTML, and every innerHTML assignment either a static
+// literal or a template interpolating only numbers (one site, app.js's "Aligning pages…
+// N/M"). The claim was "a static literal" full stop, which was already false when written —
+// harmlessly, since the values are integers, but it is what the next person adding one will
+// rely on. Guarded by TestNoInnerHTMLTakesUserData.
 // The only obstacle was two inline `style=` attributes in index.html, now classes.
 //
 // The permissive-looking entries are each load-bearing, and removing one breaks a
