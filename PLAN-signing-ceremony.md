@@ -2901,8 +2901,10 @@ Exit criteria:
 - **The race and the glare tie-break are scoped to the current hop: a convener holding candidates for a later party never dials them during this hop. (added 2026-08-18, D30.)**
 - ~~Both ends behind carrier-grade NAT fails with an explanation that names the fallback, not a generic timeout **— and the fallback it names is the one that actually applies: a shared VPN or a manual address one side can accept, not a port-forward the carrier's NAT forbids (amended 2026-08-16, D9 pin)**.~~ **Each of D19's four causes produces its own message, and the mapping-class test distinguishes the two NAT classes from two DHT observations. Cause 3's message names port mapping and a shared VPN — never a port-forward the carrier's NAT forbids. (superseded 2026-08-16, D19)**
 
-**Slices firmed 2026-08-21 (phase-open).** The sketch's eleven items are re-cut into eleven slices
-below. Three sketch items are not slices and the reasons are recorded rather than left to be
+**Slices firmed 2026-08-21 (phase-open).** The sketch's eleven items are re-cut into the slices below —
+**twelve since 2026-08-21**, when S03's grill found two listener-side defects that racing
+creates and split them out as S02, because a racer landing before them puts the tree in a state
+strictly worse than the serial walk it replaces. Three sketch items are not slices and the reasons are recorded rather than left to be
 re-derived: the **mapping-class probe** shipped at P04.S02; the **TCP dialer on every dialable
 tier** is a property of the racer (S02) rather than separate work; and the **armed-only disclosure
 line** is a P06 exit criterion *verbatim* (twice — D15's router line and D34's DHT line), so P05
@@ -2953,7 +2955,102 @@ that case had always arrived as a decline. Replaced by one question the enumerat
 for: **did this connection put anything in front of the user?** Its default for an unanticipated
 error is the pre-slice behaviour, so only the never-reached-anyone case is loosened.
 
-#### P05.S02 — The race: concurrent attempts, trickle-in candidates, one connect deadline *(D8, D16, D14, D17's transport half; criteria 10, 11, 14, 16, 17)*
+#### P05.S02 — The listener under concurrent connections *(D22, caveat 7; prerequisite for S03)* *(done 2026-08-21, v1.117.22)*
+Tasks (grilled 2026-08-21):
+- T01 — a completed handshake parked on `ready` releases its semaphore slot when its connection dies.
+- T02 — the QUIC listener stops handshaking on the accept path, or bounds a connection that opens no stream far below 30 s.
+- T03 — drive N concurrent pinned connections against one armed listener, both transports.
+- T04 — assert the (N+1)th peer still gets in after N losers are closed.
+Scope: **the peer side of racing, built before the racer so no intermediate state is worse than
+today.** S01 made the arm survive a connection that produced no session; this slice makes the
+listener survive *several at once*. Both defects are live today and reachable by anything that
+opens more than one connection — they are simply unreachable from our own dialer while
+`dialAny` is serial, which is why no phase has met them.
+
+**The two defects, read at the line, and the reason racing creates them.** Today at most ONE
+connection ever completes a pinned handshake against an armed listener, because `dialAny`
+returns on the first success. Racing a dual-stack or multi-homed peer completes all of them.
+
+- **TCP: a completed-but-unaccepted handshake holds a semaphore slot until disarm.**
+  `tlsListener.ready` is **unbuffered** (`internal/p2p/transport.go:397`) and the handshake
+  goroutine's `defer func(){ <-l.sem }()` (`:451`) does not release until its `select` on
+  `ready` resolves (`:456-460`). Closing the connection from the far end does **not** unblock a
+  goroutine parked on a channel send, and `handshake` clears the deadline before returning
+  (`:484`), so nothing times it out. Seven losers therefore hold **7 of the 16
+  `maxConcurrentHandshakes` slots** for the whole ceremony — half the pool that constant's own
+  doc (`:403-416`) sizes against an fd-exhaustion attacker on the segment, spent on ourselves.
+  At sixteen the pool fills, the accept loop blocks at `:442`, and the genuine peer may never be
+  handshaked at all.
+- **QUIC: the accept path still handshakes inline.** `quicListener.Accept` is strictly serial
+  (`internal/p2p/quic.go:201`) and then blocks **on the accept path** in `qc.AcceptStream(ctx)`
+  under `handshakeTimeout` = 30 s (`quic.go:218-220`) — the exact head-of-line defect
+  `transport.go:366-383` records as fixed for TCP and which was never fixed here. A loser whose
+  QUIC handshake SUCCEEDED is queued and returned by `Accept`; it never writes, so it never opens
+  a stream. `quic.go:188-200` argues the outer wait is safely unbounded because a *failed*
+  handshake never surfaces — true, and it does not reach these, whose handshakes succeed.
+  Worse, `runSession` resets the arm timer to the REMAINING window (`internal/server/session.go:524-529`),
+  so stalled losers burn real arm window and can disarm the session with the winner still queued.
+
+Acceptance:
+- **N pinned connections opened at once against one armed listener leave exactly one session
+  served and N−1 released** — driven by opening them, on **both** transports, not asserted on a
+  counter.
+- ~~**A completed-but-unaccepted handshake releases its `maxConcurrentHandshakes` slot when its
+  connection dies**~~ **— amended 2026-08-21 at implementation: the slot is never held in the
+  first place.** The clause described a mechanism (release on death) and the build found a better
+  one: the hand-off is buffered, so the send completes at once and the deferred release runs
+  immediately, whether or not the connection ever dies. Bounding the park at `handshakeTimeout`
+  was the first attempt and only shortened the hold to 30 s. **The property is unchanged and is
+  what the test drives**: the (N+1)th connection is still handshaked after N are abandoned. The
+  vacuous version measures the slot count directly; the property is that a later peer still gets
+  in.
+- **A QUIC connection that completes its handshake and never opens a stream does not delay the
+  next connection's acceptance** — driven with a live QUIC listener, because the 30 s bound is
+  exactly what a test that only asserts "it eventually accepted" cannot see.
+- The arm is still spent by exactly one session and survives connections that produce none
+  (S01's rules, unchanged and re-run).
+
+**Ledger: 4 met.** The first clause's "exactly one session served" is driven by
+`TestManyAbandonedConnectionsAreFollowedByExactlyOneSession`, added when reconciling showed the
+`internal/p2p` test never runs a session at all; that test's own comment records that it does
+**not** red-prove the starvation, and why — `runSession` drains each abandonment as it arrives,
+so the starvation needs the server to be BUSY, which is the racer's case. The red proof lives in
+`internal/p2p`, at dial 17 of 20.
+
+**Found in this slice's own code by its own review**, and worth carrying: the termination guard
+was TCP-only while the protocol it guards had just been copied to QUIC (fixed — it runs under
+`eachTransport`, and hung on QUIC the first time it did); a comment describing `ready` as
+unbuffered in the present tense, in the change that buffered it; and a `default` branch dropping
+a **pinned peer's** connection with no argument stated. Two QUIC hazards were hit twice each —
+a stream is invisible until data crosses it, and a close abandons unacknowledged data, so
+write-then-close races the frame and the test **hangs rather than fails**. Both are in the seam
+inventory for S03.
+
+**Not in scope, and named so it is not absorbed silently:** the ceremony-scoped arm window
+(criterion 16's first half) moves to **S09** with the symmetric-racing work. The grill found it
+carries a defect no phase has stated — the announcer ticks every `announceEvery` = 500 ms for as
+long as a session is armed (`internal/server/lan.go:28`, `session.go:459`), so a window capped at
+D33's 30 days is **~5.2 million multicast datagrams broadcasting a stable, never-rotating
+six-word identity**, which is verbatim the harm `lan.go:70-75` exists to prevent and is a
+violation of this phase's own criterion 14 ("nothing in the race emits at full rate for the whole
+deadline"). The arm window cannot simply be extended; that constraint travels with the slice.
+
+#### P05.S03 — The race: concurrent attempts, trickle-in candidates, one connect deadline *(D8, D16, D14, caveat 7; criteria 10, 11, 14, 17 and the socket-sharing criterion)*
+
+**The criterion this slice's first draft DROPPED, recorded because the drop is the lesson.**
+The socket-sharing criterion was added to this phase at its own phase-open on 2026-08-21, and
+the draft written the next day omitted it from S03's acceptance list — a criterion added to a
+plan and then not carried into the slice that owes it, which is the exact failure this phase has
+been finding elsewhere. It is not bookkeeping: `p2p.QUICDial` binds a fresh `net.ListenPacket`
+and its own `udpmux` **per dial** (`internal/p2p/quic.go:82-86`), so racing eight QUIC candidates
+opens eight sockets and discards seven, and the winner's socket — the one any NAT mapping would
+have to be for — is chosen after the fact.
+
+**What it forces, and it is a better design than the draft had.** `quic.Transport` manages
+connections on **a single** `net.PacketConn` (its own doc). So the racer owns **one mux and one
+transport for the whole race** and dials every QUIC candidate through it: caveat 7 satisfied by
+construction, the intended use of the library, and peak cost cut from ~8 fds and ~32 goroutines
+to one socket and one read loop.
 Scope: replace the serial walk with a racer every later tier feeds. Includes the three things the
 sketch did not name and the grill found: **context-aware dialers** in `internal/p2p` (today's take a
 `time.Duration`, so "the rest are cancelled" cancels nothing and each loser holds an fd, a
@@ -2970,7 +3067,50 @@ Acceptance:
 - Every racer goroutine carries `safe.Recover` (`internal/server/lan.go:119-126`); N goroutines on the ceremony path, and an unrecovered panic takes the desktop process with the user's unsaved documents.
 - `dialPeer` and `sessionDialTimeout` are **deleted** and the four descriptions that call them live are corrected (`lan.go:285`, `lan.go:293`, `session.go:1037-1040`, and `discover_test.go:556`, which prints `"sessionDialTimeout each"` while formatting `lanDialTimeout`).
 
-#### P05.S03 — The armed session gains a ceremony identity, and the DHT becomes a candidate source *(D6, D21, D30; criteria 18, 19)*
+**Deepdive, 2026-08-21 (`deepdives/2026-08-21-outbound-dial-path.md`), before the grill. Two
+findings that constrain the design rather than inform it.**
+
+**A loser must be CLOSED, not abandoned, and the cost of getting it wrong is six minutes.**
+`Receive` arms `exchangeDeadline` = 6 min (`internal/p2p/session.go:154`) and then calls
+`runVerification` (`:161`) **before** it reads the document (`:167`); `runVerification` does the
+wire exchange first and shows the user the words only after (`internal/p2p/verify.go`). So a
+**closed** loser dies at the wire and never reaches the peer's screen — which is exactly why
+P05.S01's engagement rule is correct — but an **open-but-silent** loser is accepted by the
+peer's serial loop and wedges it for the full six minutes, four minutes past this side's own
+300 s connect deadline. The ceremony is lost with no error at either end. **Prompt, synchronous
+closing of every loser is therefore a correctness requirement of the racer**, and it is what
+makes context-aware dialers a *precondition* of this slice rather than a companion task: without
+a context an in-flight loser cannot be cancelled, only closed on arrival.
+
+**S01's green does not protect this slice.** S01 proved the arm survives an abandoned
+connection. Under a racer that leaves losers open the arm still survives — six minutes later.
+The property holds and the feature dies, which is why the acceptance below cannot be discharged
+by S01's tests.
+
+**A cheaper shape, named so the grill decides it deliberately rather than rediscovering it.**
+D8 requires the **tiers** to race, not every candidate within a tier. Racing tiers while walking
+candidates *inside* one tier bounds concurrency to ~5, preserves `lanDialBudget`'s meaning and
+its only test, keeps candidate order meaningful (`discover.go:234`, `lan.go:302-304`), and
+shrinks the loser population that the six-minute wedge is dangerous in. It is a genuine trade,
+not a free win: it does not satisfy criterion 11's *"a candidate arriving late joins the race in
+flight"* for candidates within a tier.
+
+**Tests that go silently vacuous and must be re-pointed by name, not left to the suite:**
+`TestDialAnyStopsEvenWithCandidatesLeft` (`discover_test.go:574`) asserts a 31 s ceiling that a
+racer satisfies in ~6 s, so **it passes with `lanDialBudget` deleted** and it is the only test of
+the wedged-handler bound; `TestDialAnyWalksPastAnImpostorAndLandsOnThePinnedPeer`
+(`l1_test.go:32`) is order-shaped ("the impostor FIRST") and position orders nothing in a race;
+`TestDialAnyTriesEveryCandidate` (`discover_test.go:335`) matches `len(cands)` rather than what
+was tried. Also: **no test asserts the `errUnknownTransport` → 400 passthrough**, and
+`TestAClockSkewIsNotReportedAsAPinFailure` (`l1_test.go:336`) types the wrapper string into
+itself, so it cannot see the racer losing `*ClockSkewError` to aggregation.
+
+**And the guard S01 left behind:** `armsurvival_test.go:214` requires the accept timer's `Reset`
+argument to contain `remaining`, with a setup fatal at `:220` if the timer disappears entirely.
+The ceremony-scoped arm window must re-express that guard deliberately — it fails loudly, which
+is the point, but it does not update itself.
+
+#### P05.S04 — The armed session gains a ceremony identity, and the DHT becomes a candidate source *(D6, D21, D30; criteria 18, 19)*
 Scope: the import that does not exist. `armRequest` is fingerprint/bind/mode/transport
 (`session.go:600-605`), there is no `/api/ceremony/*` route, and `ceremony.NewInvitation` has no
 non-test caller — so the hop, roster and invitation secret every rendezvous derivation needs are
@@ -2982,32 +3122,32 @@ Acceptance:
 - `rendezvous.Server.Close()` cancels and joins in-flight `Publish`/`Fetch` — with the trap its pending entry records: the in-flight work must never call `Close` itself, since `sync.Once` deadlocks if `f` re-enters `Do`.
 - **L1's consumer guard is widened to this slice's wire types before a record reaches a pin.** `wireType` matches the single substring `discovery.` (`internal/server/l1_test.go`), and `CandidateRecord.Fingerprint()` derives a pin from the record's own `SPKI` (`internal/ceremony/candidate.go:164`).
 
-#### P05.S04 — The IPv6 tier *(D8 tier 2; criterion 1)*
+#### P05.S05 — The IPv6 tier *(D8 tier 2; criterion 1)*
 Scope: the arm's default bind is `0.0.0.0:0` (`session.go:659`) — v4-only, so tier 2 cannot work today. Dual-stack bind; this host's global v6 addresses become candidates.
 Acceptance: criterion 1 (Dan-only run, harness reduced to one command); a driven hermetic analogue over v6 loopback/ULA; and no v4 regression.
 
-#### P05.S05 — The port-mapping client: PCP, then NAT-PMP, then UPnP-IGD *(D15; caveats 6, 7, 8)*
+#### P05.S06 — The port-mapping client: PCP, then NAT-PMP, then UPnP-IGD *(D15; caveats 6, 7, 8)*
 Scope: tier 3's mechanism. **Caveat 6 is discharged or refuted in this slice** — no Go port-mapping dependency exists in the tree and its licence-compatibility is explicitly an unverified assumption; the caveat's own fallback ("if only some protocols are covered, the tier still ships — with narrower router coverage, recorded rather than assumed") is the acceptable outcome. Caveat 7 decides where the request is sent FROM.
 Acceptance: the 3 s budget; all three protocols failing is an ordinary tier miss and never an error; whatever coverage is achieved is **recorded, not assumed**; and if a dependency lands, `THIRD-PARTY-NOTICES.md` regenerates and its licence claim is true of it.
 
-#### P05.S06 — The mapping lease lifecycle *(D15; criteria 4, 5)*
+#### P05.S07 — The mapping lease lifecycle *(D15; criteria 4, 5)*
 Scope: D15's lifecycle is law, not configuration — armed-only, short lease refreshed while armed, explicitly deleted on every exit path including cancel and error.
 Acceptance: criteria 4 and 5 verbatim, the second driven by killing the process and polling. The refresh's interaction with **both** bounds is settled here: D33's packet budget and `CandidateGate`'s slot cap are different resources and each has a pending entry.
 
-#### P05.S07 — The IPv4 punch *(D8 tier 4, D16, D17)*
+#### P05.S08 — The IPv4 punch *(D8 tier 4, D16, D17)*
 Acceptance: criterion 14's cadence step-down, driven; QUIC-only by D8's transport pin.
 
-#### P05.S08 — Symmetric racing and the glare tie-break *(D17; criterion 12)*
+#### P05.S09 — Symmetric racing and the glare tie-break *(D17; criterion 12)*
 Scope: both sides listen **and** dial; today the server arms one listener and the initiator only dials.
 Acceptance: criterion 12, driven by **forcing** the glare rather than waiting to observe it.
 
-#### P05.S09 — Channel loss either side of the confirmation gate *(D18; criterion 15)*
+#### P05.S10 — Channel loss either side of the confirmation gate *(D18; criterion 15)*
 
-#### P05.S10 — D19's causes 1-4, and the status surface P06 renders *(D19, D34; criteria 6, 7, 8, 9)*
+#### P05.S11 — D19's causes 1-4, and the status surface P06 renders *(D19, D34; criteria 6, 7, 8, 9)*
 Scope: `connectFailure` yields three sentences — two clock-skew directions and one generic (`session.go:1023-1029`). Causes 1-4 do not exist; P04.S02 built the classification they read.
 Acceptance: criteria 6 and 7 verbatim; criteria 8 and 9 are **already met** by `p2p.ClockSkewError` and are ledgered, not rebuilt. The mapped port and **"no mapping obtained"** become distinguishable states on `/api/session/status`, which is what P06's two disclosure criteria render.
 
-#### P05.S11 — The ladder becomes the default path *(D9)*
+#### P05.S12 — The ladder becomes the default path *(D9)*
 Scope: `web/app.js:1026` refuses to POST without a typed address, so the shipped LAN tier is unreachable from the product and the manual path is not merely undemoted — it is the only path. The address field moves behind the existing `details.advanced` pattern. P06 restructures the panel; this slice makes the ladder reachable.
 
 

@@ -4,11 +4,14 @@ import (
 	"context"
 	"crypto/rand"
 	"errors"
+	"fmt"
 	"net"
+	"sync"
 	"time"
 
 	"github.com/quic-go/quic-go"
 
+	"nib/internal/safe"
 	"nib/internal/udpmux"
 )
 
@@ -162,73 +165,195 @@ func QUICListen(addr string, identityCertPEM, identityKeyPEM, pinnedSPKI []byte)
 		mux.Close()
 		return nil, err
 	}
-	return &quicListener{mux: mux, tr: tr, ln: ln}, nil
+	return &quicListener{
+		mux: mux, tr: tr, ln: ln,
+		done:  make(chan struct{}),
+		ready: make(chan *Conn, maxConcurrentHandshakes),
+		sem:   make(chan struct{}, maxConcurrentHandshakes),
+	}, nil
 }
 
+// quicListener mirrors tlsListener's shape, and P05.S02 is why.
+//
+// It used to accept a connection and then wait for its first STREAM **on the accept path**,
+// under `handshakeTimeout` — the exact head-of-line block `tlsListener.Accept`'s own doc
+// records as fixed for TCP, and which was never fixed here. A connection that completes its
+// QUIC handshake and opens no stream is not hypothetical under a racing dialer (P05.S03): it
+// is every candidate the racer did not keep, and each one held this serial loop for up to 30
+// seconds while the winner waited unaccepted. `runSession` re-arms its timer to the REMAINING
+// window, so stalled losers burn real arm window and can disarm the session with the winner
+// still queued.
+//
+// The argument in Accept's old comment — that a bounded outer wait bounds the wrong thing,
+// because a FAILED handshake never surfaces from quic-go — is still true and is kept below.
+// It simply does not reach these connections, whose handshakes succeed.
 type quicListener struct {
 	mux *udpmux.Mux
 	tr  *quic.Transport
 	ln  *quic.Listener
+
+	once  sync.Once
+	ready chan *Conn    // stream-accepted connections; NEVER closed, as on the TCP side
+	done  chan struct{} // closed by Close, the single termination signal
+	sem   chan struct{} // bounds concurrent stream-accepts
+
+	mu     sync.Mutex
+	closed bool
+	cerr   error
 }
 
 func (l *quicListener) Addr() net.Addr { return l.mux.LocalAddr() }
 
 func (l *quicListener) Transport() string { return TransportQUIC }
 
+// Close stops the accept loop and releases anything blocked in Accept.
+//
+// `done` closes BEFORE the quic listener, for tlsListener's reason: a stream-accept
+// finishing in the same instant offers into a channel nobody is reading and closes its
+// connection instead of leaking it.
 func (l *quicListener) Close() error {
+	l.mu.Lock()
+	if l.closed {
+		l.mu.Unlock()
+		return nil
+	}
+	l.closed = true
+	if l.cerr == nil {
+		l.cerr = net.ErrClosed
+	}
+	l.mu.Unlock()
+	close(l.done)
 	err := l.ln.Close()
 	l.tr.Close()
 	if e := l.mux.Close(); err == nil {
 		err = e
 	}
-	return err
+	// Drain what the handshake goroutines queued. `ready` is buffered since P05.S02, so
+	// a completed connection can be sitting in it when the session ends; nothing else
+	// will ever take it.
+	//
+	// **The residual is declared rather than closed**: a goroutine that wins the race
+	// between `<-l.done` and the buffered send in the same instant as this drain leaves
+	// one connection queued. It is bounded by the buffer, it costs one fd until the
+	// process reclaims it, and closing it deterministically would mean blocking Close
+	// until every handshake goroutine has returned — on a path the user reaches by
+	// pressing Cancel.
+	for {
+		select {
+		case c := <-l.ready:
+			c.Close()
+		default:
+			return err
+		}
+	}
+}
+
+func (l *quicListener) setCloseErr(err error) {
+	l.mu.Lock()
+	if l.cerr == nil {
+		l.cerr = err
+	}
+	l.mu.Unlock()
+}
+
+// closeErr always wraps net.ErrClosed — `runSession` ends its loop only on that, and a bare
+// accept error made it spin. Same contract as tlsListener.closeErr.
+func (l *quicListener) closeErr() error {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.cerr != nil && !errors.Is(l.cerr, net.ErrClosed) {
+		return fmt.Errorf("%w: %v", net.ErrClosed, l.cerr)
+	}
+	return net.ErrClosed
 }
 
 func (l *quicListener) Accept() (*Conn, error) {
-	// Deliberately unbounded, and it is the opposite of what it looks like.
-	//
-	// quic-go's Listener.Accept yields only connections whose handshake COMPLETED;
-	// one that fails — a peer that is not the pinned identity — is dropped inside the
-	// library and never surfaces here. So a bounded context does not bound a bad
-	// peer's handshake: it bounds how long we wait for a GOOD one, and a wrong peer
-	// then costs the full timeout out of the arm window before we even loop. Measured
-	// at 30 seconds, against TCP's immediate "peer identity does not match".
-	//
-	// The arm window is already bounded by the caller, which closes the listener; that
-	// is what ends this wait, and it arrives as ErrServerClosed below. handshakeTimeout
-	// still bounds the peer that completes a handshake and then says nothing — see the
-	// stream accept.
-	qc, err := l.ln.Accept(context.Background())
-	if err != nil {
-		// A closed listener must report net.ErrClosed so the caller's accept loop
-		// ends rather than spinning: quic-go reports its own error for that, and a
-		// loop that could not tell "closed" from "this peer failed" would busy-loop
-		// on a disarmed session.
-		if errors.Is(err, quic.ErrServerClosed) {
-			return nil, net.ErrClosed
-		}
-		return nil, err
+	l.start()
+	select {
+	case c := <-l.ready:
+		return c, nil
+	case <-l.done:
+		return nil, l.closeErr()
 	}
-	closeConn := gracefulClose(qc, nil, false)
+}
 
-	// Accepting the STREAM as well as the connection, here rather than in the caller.
-	// It unblocks when the dialer's first frame arrives, which is the commitment — so
-	// a peer that completes the handshake and then says nothing is bounded, which is
-	// where handshakeTimeout actually earns its keep on this transport.
-	ctx, cancel := context.WithTimeout(context.Background(), handshakeTimeout)
-	defer cancel()
-	st, err := qc.AcceptStream(ctx)
-	if err != nil {
-		closeConn()
-		return nil, err
+func (l *quicListener) start() {
+	l.once.Do(func() { go l.loop() })
+}
+
+// loop accepts connections and hands each to its own stream-accepter.
+func (l *quicListener) loop() {
+	for {
+		// Deliberately unbounded, and it is the opposite of what it looks like.
+		//
+		// quic-go's Listener.Accept yields only connections whose handshake COMPLETED;
+		// one that fails — a peer that is not the pinned identity — is dropped inside the
+		// library and never surfaces here. So a bounded context does not bound a bad
+		// peer's handshake: it bounds how long we wait for a GOOD one, and a wrong peer
+		// then costs the full timeout out of the arm window before we even loop. Measured
+		// at 30 seconds, against TCP's immediate "peer identity does not match".
+		//
+		// The arm window is bounded by the caller, which closes the listener; that is what
+		// ends this wait, and it arrives as ErrServerClosed.
+		qc, err := l.ln.Accept(context.Background())
+		if err != nil {
+			if !errors.Is(err, quic.ErrServerClosed) {
+				l.setCloseErr(err)
+			}
+			_ = l.Close()
+			return
+		}
+		select {
+		case l.sem <- struct{}{}:
+		case <-l.done:
+			gracefulClose(qc, nil, false)()
+			return
+		}
+		go func() {
+			defer safe.Recover("quic stream accept")
+			defer func() { <-l.sem }()
+			closeConn := gracefulClose(qc, nil, false)
+
+			// The STREAM, off the accept path. It unblocks when the dialer's first frame
+			// arrives — the commitment — so a peer that completes a handshake and then
+			// says nothing is bounded here and costs no other peer anything.
+			ctx, cancel := context.WithTimeout(context.Background(), handshakeTimeout)
+			defer cancel()
+			st, err := qc.AcceptStream(ctx)
+			if err != nil {
+				closeConn()
+				return
+			}
+			ch, err := quicChannel(qc, st)
+			if err != nil {
+				closeConn()
+				return
+			}
+			// The listening side waits: it is the one that writes last.
+			conn := &Conn{Channel: ch, closer: gracefulClose(qc, st, true)}
+			// Buffered hand-off, like the TCP side — see tlsListener.loop.
+			select {
+			case l.ready <- conn:
+				// Buffered, so this does not block and the slot is released at once.
+			case <-l.done:
+				conn.Close()
+			default:
+				// The queue is full: `maxConcurrentHandshakes` connections are already
+				// waiting for a serial accept loop that serves one session. This one is
+				// not going to be served, and holding it would cost the slot that lets
+				// the NEXT peer handshake at all.
+				//
+				// **What is dropped here is a PINNED peer's connection**, not a stranger's
+				// — nothing else can reach this line, because a failed handshake returned
+				// above. That sounds worse than it is and the argument is worth stating:
+				// the only thing that can fill this queue is a peer connecting far faster
+				// than one session can be served, which is our own racer (P05.S03) and is
+				// bounded well below the buffer. A genuine peer that is dropped sees a
+				// closed connection and redials, against a listener that is still armed.
+				conn.Close()
+			}
+		}()
 	}
-	ch, err := quicChannel(qc, st)
-	if err != nil {
-		closeConn()
-		return nil, err
-	}
-	// The listening side waits: it is the one that writes last.
-	return &Conn{Channel: ch, closer: gracefulClose(qc, st, true)}, nil
 }
 
 // gracefulClose is the QUIC teardown, and it exists because closing a QUIC connection

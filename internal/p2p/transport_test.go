@@ -298,122 +298,146 @@ func TestAStalledPeerDoesNotBlockTheAcceptPath(t *testing.T) {
 // **None of these six questions had an answer in the suite.** `TestAStalledPeerDoesNotBlock…`
 // uses connections that never speak, so not one of them ever reaches the statement that panics.
 func TestTheListenerTerminatesThroughExactlyOneDoor(t *testing.T) {
-	certA, keyA, _ := sign.GenerateIdentity("Alice")
-	certB, keyB, _ := sign.GenerateIdentity("Bob")
-	fpA, err := sign.Fingerprint(certA)
-	if err != nil {
-		t.Fatal(err)
-	}
-	fpB, err := sign.Fingerprint(certB)
-	if err != nil {
-		t.Fatal(err)
-	}
+	// **Both transports, since P05.S02.** This guard was written for `tlsListener` and
+	// called `Listen` directly. That slice gave `quicListener` the same termination
+	// protocol — one `done`, a `ready` that is never closed, a `cerr` that always wraps
+	// net.ErrClosed — and copying a protocol without its guard is how the second copy
+	// drifts. Every question below is about the CONTRACT, not about TCP, so it runs
+	// against whichever listener the table names.
+	eachTransport(t, func(t *testing.T, tr transport) {
+		certA, keyA, _ := sign.GenerateIdentity("Alice")
+		certB, keyB, _ := sign.GenerateIdentity("Bob")
+		fpA, err := sign.Fingerprint(certA)
+		if err != nil {
+			t.Fatal(err)
+		}
+		fpB, err := sign.Fingerprint(certB)
+		if err != nil {
+			t.Fatal(err)
+		}
 
-	t.Run("Accept after Close reports net.ErrClosed", func(t *testing.T) {
-		ln, lerr := Listen("127.0.0.1:0", certB, keyB, fpA)
-		if lerr != nil {
-			t.Fatal(lerr)
-		}
-		if cerr := ln.Close(); cerr != nil {
-			t.Fatalf("Close: %v", cerr)
-		}
-		_, aerr := ln.Accept()
-		if !errors.Is(aerr, net.ErrClosed) {
-			t.Errorf("Accept after Close = %v; runSession exits only on net.ErrClosed, so "+
-				"anything else spins that loop at 100%% of a core with no syscall", aerr)
-		}
-	})
-
-	t.Run("a second Close is harmless", func(t *testing.T) {
-		ln, lerr := Listen("127.0.0.1:0", certB, keyB, fpA)
-		if lerr != nil {
-			t.Fatal(lerr)
-		}
-		if cerr := ln.Close(); cerr != nil {
-			t.Fatalf("first Close: %v", cerr)
-		}
-		if cerr := ln.Close(); cerr != nil {
-			t.Errorf("second Close: %v", cerr)
-		}
-	})
-
-	t.Run("Close before Accept was ever called", func(t *testing.T) {
-		ln, lerr := Listen("127.0.0.1:0", certB, keyB, fpA)
-		if lerr != nil {
-			t.Fatal(lerr)
-		}
-		// Close without ever calling Accept: `start()` has not run, so the loop goroutine
-		// does not exist. A later Accept must still return rather than blocking forever on
-		// a listener that is already gone.
-		if cerr := ln.Close(); cerr != nil {
-			t.Fatal(cerr)
-		}
-		done := make(chan struct{})
-		go func() {
-			defer close(done)
-			_, _ = ln.Accept()
-		}()
-		select {
-		case <-done:
-		case <-time.After(5 * time.Second):
-			t.Error("Accept blocked forever on a listener closed before it was ever called")
-		}
-	})
-
-	t.Run("Close while a handshake is in flight does not panic", func(t *testing.T) {
-		ln, lerr := Listen("127.0.0.1:0", certB, keyB, fpA)
-		if lerr != nil {
-			t.Fatal(lerr)
-		}
-		// Nobody calls Accept, so a completed handshake has nowhere to go — which is the
-		// exact state that used to panic on a closed `ready`.
-		accepted := make(chan struct{})
-		go func() {
-			defer close(accepted)
-			c, aerr := ln.Accept()
-			if c != nil {
-				c.Close()
+		t.Run("Accept after Close reports net.ErrClosed", func(t *testing.T) {
+			ln, lerr := tr.listen("127.0.0.1:0", certB, keyB, fpA)
+			if lerr != nil {
+				t.Fatal(lerr)
 			}
-			_ = aerr
-		}()
-		dialed := make(chan struct{})
-		go func() {
-			defer close(dialed)
-			c, derr := Dial(ln.Addr().String(), certA, keyA, fpB, 5*time.Second)
-			if c != nil {
-				c.Close()
+			if cerr := ln.Close(); cerr != nil {
+				t.Fatalf("Close: %v", cerr)
 			}
-			_ = derr
-		}()
-		<-accepted // STIMULUS: a handshake really completed and was delivered.
-		<-dialed
-		if cerr := ln.Close(); cerr != nil {
-			t.Errorf("Close after a delivered handshake: %v", cerr)
-		}
-		// A second dial into the closed listener, then give any in-flight goroutine time to
-		// reach its send. safe.Recover would swallow a panic, so the observable is that the
-		// listener stays usable and Close stays clean.
-		go func() {
-			c, _ := Dial(ln.Addr().String(), certA, keyA, fpB, time.Second)
-			if c != nil {
-				c.Close()
+			_, aerr := ln.Accept()
+			if !errors.Is(aerr, net.ErrClosed) {
+				t.Errorf("Accept after Close = %v; runSession exits only on net.ErrClosed, so "+
+					"anything else spins that loop at 100%% of a core with no syscall", aerr)
 			}
-		}()
-		time.Sleep(300 * time.Millisecond)
-		if _, aerr := ln.Accept(); !errors.Is(aerr, net.ErrClosed) {
-			t.Errorf("Accept on the closed listener = %v, want net.ErrClosed", aerr)
-		}
-	})
+		})
 
-	t.Run("the handshake pool is bounded", func(t *testing.T) {
-		if maxConcurrentHandshakes <= 0 {
-			t.Fatal("the pool is unbounded — one goroutine and one fd per inbound connection " +
-				"for the whole handshakeTimeout, driven by any host on the segment")
-		}
-		if maxConcurrentHandshakes > 64 {
-			t.Errorf("maxConcurrentHandshakes = %d is not a bound a 256-descriptor GUI "+
-				"process survives", maxConcurrentHandshakes)
-		}
+		t.Run("a second Close is harmless", func(t *testing.T) {
+			ln, lerr := tr.listen("127.0.0.1:0", certB, keyB, fpA)
+			if lerr != nil {
+				t.Fatal(lerr)
+			}
+			if cerr := ln.Close(); cerr != nil {
+				t.Fatalf("first Close: %v", cerr)
+			}
+			if cerr := ln.Close(); cerr != nil {
+				t.Errorf("second Close: %v", cerr)
+			}
+		})
+
+		t.Run("Close before Accept was ever called", func(t *testing.T) {
+			ln, lerr := tr.listen("127.0.0.1:0", certB, keyB, fpA)
+			if lerr != nil {
+				t.Fatal(lerr)
+			}
+			// Close without ever calling Accept: `start()` has not run, so the loop goroutine
+			// does not exist. A later Accept must still return rather than blocking forever on
+			// a listener that is already gone.
+			if cerr := ln.Close(); cerr != nil {
+				t.Fatal(cerr)
+			}
+			done := make(chan struct{})
+			go func() {
+				defer close(done)
+				_, _ = ln.Accept()
+			}()
+			select {
+			case <-done:
+			case <-time.After(5 * time.Second):
+				t.Error("Accept blocked forever on a listener closed before it was ever called")
+			}
+		})
+
+		t.Run("Close while a handshake is in flight does not panic", func(t *testing.T) {
+			ln, lerr := tr.listen("127.0.0.1:0", certB, keyB, fpA)
+			if lerr != nil {
+				t.Fatal(lerr)
+			}
+			// Nobody calls Accept, so a completed handshake has nowhere to go — which is the
+			// exact state that used to panic on a closed `ready`.
+			//
+			// **Delivering a handshake is not the same act on both transports.** On TCP a
+			// completed handshake is itself acceptable. On QUIC a stream is invisible to
+			// the peer until data crosses it, so the listener's stream-accept is still
+			// waiting and nothing reaches `Accept` — the dialer has to SPEAK. The property
+			// below is transport-neutral; only the stimulus differs, and writing one frame
+			// is what makes it real on both.
+			accepted := make(chan struct{})
+			go func() {
+				defer close(accepted)
+				c, aerr := ln.Accept()
+				if c != nil {
+					c.Close()
+				}
+				_ = aerr
+			}()
+			dialed := make(chan struct{})
+			go func() {
+				defer close(dialed)
+				c, derr := tr.dial(ln.Addr().String(), certA, keyA, fpB, 5*time.Second)
+				if c != nil {
+					_ = writeFrame(c.Stream, []byte("hello"))
+					// **Held open until the peer has it**, and that is not tidiness.
+					// `gracefulClose`'s own doc: closing a QUIC connection "sends
+					// CONNECTION_CLOSE immediately and abandons anything still
+					// unacknowledged". Writing and closing in the next statement races
+					// the frame against the close — lose it and the listener's
+					// stream-accept never fires, nothing reaches Accept, and this test
+					// hangs rather than fails. Which is what it did.
+					<-accepted
+					c.Close()
+				}
+				_ = derr
+			}()
+			<-accepted // STIMULUS: a handshake really completed and was delivered.
+			<-dialed
+			if cerr := ln.Close(); cerr != nil {
+				t.Errorf("Close after a delivered handshake: %v", cerr)
+			}
+			// A second dial into the closed listener, then give any in-flight goroutine time to
+			// reach its send. safe.Recover would swallow a panic, so the observable is that the
+			// listener stays usable and Close stays clean.
+			go func() {
+				c, _ := tr.dial(ln.Addr().String(), certA, keyA, fpB, time.Second)
+				if c != nil {
+					c.Close()
+				}
+			}()
+			time.Sleep(300 * time.Millisecond)
+			if _, aerr := ln.Accept(); !errors.Is(aerr, net.ErrClosed) {
+				t.Errorf("Accept on the closed listener = %v, want net.ErrClosed", aerr)
+			}
+		})
+
+		t.Run("the handshake pool is bounded", func(t *testing.T) {
+			if maxConcurrentHandshakes <= 0 {
+				t.Fatal("the pool is unbounded — one goroutine and one fd per inbound connection " +
+					"for the whole handshakeTimeout, driven by any host on the segment")
+			}
+			if maxConcurrentHandshakes > 64 {
+				t.Errorf("maxConcurrentHandshakes = %d is not a bound a 256-descriptor GUI "+
+					"process survives", maxConcurrentHandshakes)
+			}
+		})
 	})
 }
 

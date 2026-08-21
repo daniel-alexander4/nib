@@ -353,6 +353,35 @@ func TestADeclinedSpokenCheckSpendsTheArm(t *testing.T) {
 // all" — and would pass with the accept path deleted. A completed session afterwards can
 // only happen if the server really did process the abandoned one and carry on.
 func TestAnAbandonedConnectionIsFollowedByAWorkingSession(t *testing.T) {
+	testAbandonedThenSession(t, 1)
+}
+
+// TestManyAbandonedConnectionsAreFollowedByExactlyOneSession — P05.S02's first clause.
+//
+// The sibling above drives ONE abandoned connection. This drives more than the listener's
+// whole handshake pool, which is the case P05.S03's racer creates against a dual-stack peer:
+// every candidate completes a pinned handshake, the racer keeps one, and the rest are closed.
+// The property is that the ceremony still happens — and happens **once**.
+//
+// **This test does NOT red-prove S02's starvation fix, and that is worth knowing rather than
+// discovering.** Probed: with the unbuffered hand-off restored it still passes. The reason is
+// the whole shape of the defect — `runSession` is looping on Accept here, so it drains each
+// abandoned connection as it completes and no handshake goroutine ever parks. **The starvation
+// needs the server to be BUSY**, which is exactly the racer's case: the peer is inside
+// `serveOneSession` for the length of a ceremony while the losers pile up behind it. That is
+// what `internal/p2p`'s TestManyCompletedHandshakesDoNotStarveTheNextPeer drives, and it fails
+// at dial 17 of 20 against the defect — one past the pool.
+//
+// What this one is for is the other half of the clause: that a real ceremony completes, once,
+// behind a full pool of abandonment.
+func TestManyAbandonedConnectionsAreFollowedByExactlyOneSession(t *testing.T) {
+	if testing.Short() {
+		t.Skip("opens more than a full handshake pool of connections")
+	}
+	testAbandonedThenSession(t, 20)
+}
+
+func testAbandonedThenSession(t *testing.T, abandoned int) {
 	ts, _ := startServer(t)
 	c, csrf := authedClient(t, ts)
 
@@ -376,12 +405,16 @@ func TestAnAbandonedConnectionIsFollowedByAWorkingSession(t *testing.T) {
 		t.Fatalf("setup: arm failed: %+v", armed)
 	}
 
-	// THE ABANDONED CONNECTION — what a racer leaves behind.
-	abandoned, err := p2p.Dial(armed.Address, aCert, aKey, bFPBytes, 10*time.Second)
-	if err != nil {
-		t.Fatalf("setup: the abandoned dial did not complete a handshake: %v", err)
+	// THE ABANDONED CONNECTIONS — what a racer leaves behind.
+	for i := 0; i < abandoned; i++ {
+		c, derr := p2p.Dial(armed.Address, aCert, aKey, bFPBytes, 10*time.Second)
+		if derr != nil {
+			t.Fatalf("setup: abandoned dial %d of %d did not complete a handshake: %v — "+
+				"the ceremony below would then be following fewer abandoned connections "+
+				"than this case is about", i+1, abandoned, derr)
+		}
+		c.Close()
 	}
-	abandoned.Close()
 
 	// Now a real ceremony on a second connection.
 	result := make(chan []byte, 1)
