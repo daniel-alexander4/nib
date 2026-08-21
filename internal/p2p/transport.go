@@ -299,8 +299,9 @@ type tlsListener struct {
 	ln net.Listener
 
 	once  sync.Once
-	ready chan *Conn    // handshakes that completed
-	done  chan struct{} // closed by Close, so in-flight handshakes stop offering
+	ready chan *Conn    // handshakes that completed; NEVER closed — see loop
+	done  chan struct{} // closed by Close, the single termination signal
+	sem   chan struct{} // bounds concurrent handshakes
 
 	mu     sync.Mutex
 	closed bool
@@ -338,11 +339,22 @@ func (l *tlsListener) setCloseErr(err error) {
 	l.mu.Unlock()
 }
 
+// closeErr is the error Accept returns once the listener is finished.
+//
+// **It always wraps net.ErrClosed, and the wrap is the contract.** `Listener.Accept`'s doc
+// says *"A closed listener reports net.ErrClosed, which is how the loop ends"*, and
+// `runSession` exits only on `errors.Is(err, net.ErrClosed)`. Returning a bare accept error —
+// an EMFILE from fd exhaustion, say — made that loop spin at 100 % of a core with no syscall,
+// and `Close` could not rescue it because `cerr` was already set, so the session never
+// disarmed and its announcer broadcast for the life of the process. `quicListener.Accept`
+// already maps `quic.ErrServerClosed` this way, with a comment naming the same hazard.
+//
+// The cause is kept alongside so a diagnostic can still say *why* it stopped.
 func (l *tlsListener) closeErr() error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	if l.cerr != nil {
-		return l.cerr
+	if l.cerr != nil && !errors.Is(l.cerr, net.ErrClosed) {
+		return fmt.Errorf("%w: %v", net.ErrClosed, l.cerr)
 	}
 	return net.ErrClosed
 }
@@ -370,10 +382,7 @@ func (l *tlsListener) closeErr() error {
 func (l *tlsListener) Accept() (*Conn, error) {
 	l.start()
 	select {
-	case c, ok := <-l.ready:
-		if !ok {
-			return nil, l.closeErr()
-		}
+	case c := <-l.ready:
 		return c, nil
 	case <-l.done:
 		return nil, l.closeErr()
@@ -384,22 +393,60 @@ func (l *tlsListener) Accept() (*Conn, error) {
 func (l *tlsListener) start() {
 	l.once.Do(func() {
 		l.ready = make(chan *Conn)
+		l.sem = make(chan struct{}, maxConcurrentHandshakes)
 		go l.loop()
 	})
 }
 
+// maxConcurrentHandshakes bounds the in-flight handshakes.
+//
+// **The kernel backlog used to be this bound and moving the handshake off the accept path
+// removed it.** Unbounded, one goroutine and one fd per inbound connection for the whole
+// 30 s handshakeTimeout is an fd exhaustion any host on the segment can drive: the listener
+// binds 0.0.0.0:0 and broadcasts its port every 500 ms, and each connection costs the
+// attacker one SYN. A GUI process on macOS has 256 descriptors by default.
+//
+// Sixteen, and the acquire BLOCKS rather than dropping: a full pool stalls the accept loop,
+// which pushes the excess back into the kernel backlog — where it was before, and where it
+// costs Nib nothing. The residual is that sixteen simultaneous stalls delay the genuine peer
+// by up to one handshakeTimeout, which is strictly better than the one-stall-blocks-everything
+// this replaced and than the fd exhaustion the unbounded version allowed.
+const maxConcurrentHandshakes = 16
+
+// loop accepts until Close, or until an accept error it cannot continue past.
+//
+// **`ready` is never closed, and that is the fix.** It used to be `defer close(l.ready)`,
+// while handshake goroutines were still selecting on a send into it — up to handshakeTimeout
+// later, so a 30-second window, not an instant. After Close both select cases were ready (a
+// send on a closed channel IS a ready case, and it panics), so Go chose pseudo-randomly:
+// about half of every in-flight successful handshake panicked. After a non-close accept error
+// `done` was not closed at all, so the send was the only case and it panicked every time.
+// `safe.Recover` kept the process alive and leaked the connection unclosed.
+//
+// So `Close` is now the one termination signal: a terminal accept error records its cause and
+// then calls Close, which closes `done` exactly once. Nothing closes `ready`, `Accept` needs
+// no `!ok` branch, and the hazard is structurally impossible rather than argued.
 func (l *tlsListener) loop() {
-	defer close(l.ready)
 	for {
 		c, err := l.ln.Accept()
 		if err != nil {
+			// Record the cause FIRST, so closeErr keeps the real reason, then terminate
+			// through the one door.
 			l.setCloseErr(err)
+			_ = l.Close()
+			return
+		}
+		select {
+		case l.sem <- struct{}{}:
+		case <-l.done:
+			c.Close()
 			return
 		}
 		// One goroutine per connection: the handshake is what a stalled peer holds, and
 		// holding it here is what let one of them block every other.
 		go func() {
 			defer safe.Recover("tls handshake")
+			defer func() { <-l.sem }()
 			conn, herr := l.handshake(c)
 			if herr != nil {
 				return // not the pinned peer, or it never spoke — dropped, not surfaced
