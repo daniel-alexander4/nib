@@ -123,6 +123,21 @@ func TestEveryVendoredThingIsInTheNotices(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// The Noto section: its heading to the next top-level heading. Isolated BEFORE the loop
+	// so a document that has lost the section entirely fails once and loudly, rather than
+	// once per face with a sentence about that face.
+	notoSection := body
+	if i := strings.Index(body, "## Noto Sans"); i >= 0 {
+		notoSection = body[i:]
+		if j := strings.Index(notoSection[3:], "\n## "); j >= 0 {
+			notoSection = notoSection[:j+3]
+		}
+	} else {
+		t.Fatal("THIRD-PARTY-NOTICES.md has no `## Noto Sans` heading — every Noto face " +
+			"below would be checked against an empty section, or against the whole file, " +
+			"where the Tesseract language list already names each script")
+	}
+
 	var faces int
 	for _, e := range fonts {
 		if e.IsDir() || !strings.HasSuffix(e.Name(), ".ttf") {
@@ -141,9 +156,36 @@ func TestEveryVendoredThingIsInTheNotices(t *testing.T) {
 		// Bengali" fails against a file that does credit it, which is this guard crying
 		// wolf rather than a gap. What must not be missable is a face whose SCRIPT nobody
 		// mentioned, since that is the one likely to arrive under a different licence.
-		token := strings.TrimPrefix(family, "NotoSans")
+		//
+		// **Scoped to the Noto section, and non-empty.** Two holes, both of which made this
+		// check pass over a face nobody credited:
+		//
+		//   - `strings.Contains(body, "")` is ALWAYS true, so a file named exactly
+		//     `NotoSans-Regular.ttf` produced an empty token and was waved through.
+		//   - the Tesseract entry lists its trained languages by name — "the Arabic,
+		//     Belarusian, Bengali, Bulgarian, …" — so every script token this loop looks
+		//     for already appears in the file for an unrelated reason. Dropping a script
+		//     from the Noto heading would leave the search satisfied by an OCR model's
+		//     language list, which is a different grant from a different project.
+		//
+		// The Noto faces are credited under one combined heading sharing one OFL grant,
+		// which is the right granularity for the attribution — so the section is the unit
+		// to search, not the whole document and not a per-face phrase.
+		haystack, what := body, "THIRD-PARTY-NOTICES.md"
+		token := family
+		if rest, isNoto := strings.CutPrefix(family, "NotoSans"); isNoto {
+			token = rest
+			haystack, what = notoSection, "the Noto section of THIRD-PARTY-NOTICES.md"
+		}
+		if token == "" {
+			t.Errorf("internal/pdfops/fonts/%s yields an empty script token, and "+
+				"strings.Contains(body, \"\") is always true — this face would be credited "+
+				"by nothing and pass", e.Name())
+			continue
+		}
 		spaced := regexp.MustCompile(`([a-z])([A-Z])`).ReplaceAllString(token, "$1 $2")
-		if !strings.Contains(body, token) && !strings.Contains(body, spaced) {
+		if !strings.Contains(haystack, token) && !strings.Contains(haystack, spaced) {
+			_ = what
 			t.Errorf("internal/pdfops/fonts/%s is embedded in the binary and the notices "+
 				"mention neither %q nor %q — the vendored half of gen-notices.sh is "+
 				"hand-authored and reconciled against nothing, so the generator and the "+

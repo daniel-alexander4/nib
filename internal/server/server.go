@@ -341,7 +341,10 @@ func (s *Server) Handler() http.Handler {
 // literal or a template interpolating only numbers (one site, app.js's "Aligning pages…
 // N/M"). The claim was "a static literal" full stop, which was already false when written —
 // harmlessly, since the values are integers, but it is what the next person adding one will
-// rely on. Guarded by TestNoInnerHTMLTakesUserData.
+// rely on. Guarded by test/jsdom/escape.test.mjs's "no innerHTML assignment takes anything
+// but a literal or a number" — a TIER-2 check, and this comment named it as a Go test
+// (`TestNoInnerHTMLTakesUserData`) that has never existed in this tree. A citation to a
+// guard nobody can find reads as coverage and is the absence of it.
 // The only obstacle was two inline `style=` attributes in index.html, now classes.
 //
 // The permissive-looking entries are each load-bearing, and removing one breaks a
