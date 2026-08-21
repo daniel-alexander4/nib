@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"golang.org/x/crypto/ssh"
@@ -658,5 +659,174 @@ func TestAVaultFromANewerNibIsRefusedRatherThanDowngraded(t *testing.T) {
 	err := checkEnvelopeVersion(envelopeVersion + 1)
 	if err == nil || !strings.Contains(err.Error(), "newer version of Nib") {
 		t.Errorf("the refusal does not name the cause: %v", err)
+	}
+}
+
+// TestAVaultFromANewerNibIsRefusedAtEveryDoor drives the refusal through every exported
+// route that reads the envelope, not just the three that used to check.
+//
+// The route that matters is Migrate. It decrypted, built a fresh sealed vault from the
+// contents, and called Save — which rewrites the file with THIS build's envelope and drops
+// every field encoding/json did not recognise. The vault holds the only copy of the signing
+// identity, so that is a silent lossy rewrite of the one file the user cannot reconstruct,
+// reached by an ordinary downgrade or a vault synced between two machines.
+func TestAVaultFromANewerNibIsRefusedAtEveryDoor(t *testing.T) {
+	dir := t.TempDir()
+	// A v1 password vault, then its Version bumped past what this build understands. It has
+	// to be otherwise well-formed, or a route could refuse it for being corrupt and the
+	// test would pass without the version ever being consulted.
+	future := envelope{
+		Version: envelopeVersion + 1,
+		Nonce:   make([]byte, 12),
+		Cipher:  []byte("ciphertext this build cannot read"),
+		KDF:     &kdf{Salt: make([]byte, 16), Time: 1, Memory: 64 << 10, Threads: 1},
+	}
+	raw, err := json.Marshal(future)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(Path(dir), raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	// STIMULUS: the identical envelope at a version this build DOES understand is not
+	// refused for a version reason. Without this the assertions below would pass against a
+	// readEnvelope that had simply started failing.
+	ok := future
+	ok.Version = envelopeVersion
+	okRaw, err := json.Marshal(ok)
+	if err != nil {
+		t.Fatal(err)
+	}
+	okDir := t.TempDir()
+	if err := os.WriteFile(Path(okDir), okRaw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := readEnvelope(okDir); err != nil {
+		t.Fatalf("an envelope at the current version was refused (%v) — the refusals below "+
+			"are then not about the version at all", err)
+	}
+
+	const want = "written by a newer version"
+	t.Run("Migrate", func(t *testing.T) {
+		if _, err := Migrate(dir, "hunter2", "ssh-ed25519 AAAA test", ""); err == nil ||
+			!strings.Contains(err.Error(), want) {
+			t.Fatalf("Migrate returned %v — it decrypts and then REWRITES the file through "+
+				"newSealed+Save, so a version it does not understand is lost here", err)
+		}
+	})
+	t.Run("Slots", func(t *testing.T) {
+		if _, err := Slots(dir); err == nil || !strings.Contains(err.Error(), want) {
+			t.Fatalf("Slots returned %v — listing the key slots of a vault this build must "+
+				"not touch invites the user to act on it", err)
+		}
+	})
+	t.Run("NeedsMigration", func(t *testing.T) {
+		// It answers a question ABOUT the format, so the honest answer for a format it
+		// cannot read is "no": saying yes routes the user straight into Migrate.
+		if NeedsMigration(dir) {
+			t.Fatal("NeedsMigration said yes about a format it cannot read — which sends the " +
+				"user to the one route that rewrites the file")
+		}
+	})
+	t.Run("OpenSSH", func(t *testing.T) {
+		if _, err := OpenSSH(dir); err == nil || !strings.Contains(err.Error(), want) {
+			t.Fatalf("OpenSSH returned %v", err)
+		}
+	})
+}
+
+// TestSaveWritesTheVersionItDeclares catches the shape where envelopeVersion is bumped and
+// the writer keeps emitting the old literal — every new vault stamped with a version that
+// contradicts the constant, and checkEnvelopeVersion policing a number nothing writes.
+func TestSaveWritesTheVersionItDeclares(t *testing.T) {
+	dir := t.TempDir()
+	pub, keyPath := newKey(t)
+	v, err := Create(dir, pub, keyPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := v.Save(); err != nil {
+		t.Fatal(err)
+	}
+	env, err := readEnvelope(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if env.Version != envelopeVersion {
+		t.Fatalf("save() wrote version %d while envelopeVersion is %d", env.Version, envelopeVersion)
+	}
+}
+
+// TestConcurrentCreateProducesExactlyOneVault drives the check-then-act that guarded the one
+// file the user cannot reconstruct.
+//
+// Exists → Save is not a guard: Save writes through writeFileAtomic, whose rename clobbers.
+// Two processes reaching first-run setup together both see no vault, both seal a FRESH
+// content key, and the second rename silently replaces the first — so a user already shown
+// a signing identity loses the private half of it with no error anywhere. GET /api/status
+// can run AutoSetup, so the trigger is a page load, not an exotic sequence.
+//
+// It asserts SURVIVAL, not just that one call errored: the winner's vault must still open
+// with the winner's key after every loser has finished. A test that only counted errors
+// would pass against the shipped code, because the losers did not error — they succeeded,
+// on top of each other.
+func TestConcurrentCreateProducesExactlyOneVault(t *testing.T) {
+	dir := t.TempDir()
+	pub, keyPath := newKey(t)
+
+	const racers = 8
+	var wg sync.WaitGroup
+	results := make([]error, racers)
+	start := make(chan struct{})
+	for i := 0; i < racers; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			<-start
+			_, err := Create(dir, pub, keyPath)
+			results[i] = err
+		}(i)
+	}
+	close(start)
+	wg.Wait()
+
+	won := 0
+	for _, err := range results {
+		if err == nil {
+			won++
+		}
+	}
+	if won != 1 {
+		t.Fatalf("%d of %d Create calls succeeded, want exactly 1 — every extra winner sealed "+
+			"a fresh content key and renamed it over the previous one", won, racers)
+	}
+
+	// And the survivor is usable. A file that exists but cannot be unlocked is the same
+	// loss wearing a different face.
+	v, err := OpenSSH(dir)
+	if err != nil {
+		t.Fatalf("the vault that survived the race cannot be opened: %v", err)
+	}
+	if _, err := readEnvelope(dir); err != nil {
+		t.Fatalf("the surviving envelope is unreadable: %v", err)
+	}
+	_ = v
+}
+
+// TestAFailedCreateLeavesNoVaultBehind: the O_EXCL placeholder is an empty file, which
+// Exists calls a vault and readEnvelope calls corrupt. A Create that fails after claiming
+// the name must not leave the user in a state where the app believes it has a vault and
+// nothing can open it.
+func TestAFailedCreateLeavesNoVaultBehind(t *testing.T) {
+	dir := t.TempDir()
+	// A malformed recipient makes sshkey.Wrap fail inside newSealed — after the name is
+	// claimed and before anything is written.
+	if _, err := Create(dir, "ssh-ed25519 not-base64 nobody@nowhere", ""); err == nil {
+		t.Fatal("Create accepted a malformed public key, so this test never reaches its subject")
+	}
+	if Exists(dir) {
+		t.Fatal("a failed Create left a file behind that Exists() calls a vault — the app " +
+			"will now refuse to set one up and refuse to open the one it thinks it has")
 	}
 }

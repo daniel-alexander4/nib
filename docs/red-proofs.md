@@ -481,3 +481,21 @@ against a table row reading `localhost.evil.example` — which is a *prefix* cas
 stayed green and the mutation looked survivable. The table was missing `evil.localhost`
 entirely. A mutation that does not go red is a statement about the test, and the first reading
 of it was wrong.
+
+## v1.117.8 — the vault: one refusal, and a check-then-act over the only copy
+
+| Row | The defect restored | The check that went red |
+| --- | --- | --- |
+| version refusal | the check moved back out of `readEnvelope` to the three callers that had it | `TestAVaultFromANewerNibIsRefusedAtEveryDoor` — Migrate, Slots, NeedsMigration |
+| declared version | `save()` writing a drifted literal | `TestSaveWritesTheVersionItDeclares` |
+| Create race | `O_EXCL` removed, leaving Exists → Save | `TestConcurrentCreateProducesExactlyOneVault` |
+| failed Create | the placeholder's cleanup removed | `TestAFailedCreateLeavesNoVaultBehind` |
+
+The race row is the one whose *assertion* had to be chosen carefully. Counting errors would
+have passed against the shipped code, because the losers did not error — they succeeded, each
+renaming a fresh content key over the last. The assertion is that exactly one call wins and
+that the survivor still opens.
+
+**Overturned:** the orphaned `.vault-*.tmp` finding. `writeFileAtomic` carries
+`defer os.Remove(tmpName)` covering every error path (`internal/vault/vault.go`); only a
+crash between create and rename leaves one, which no in-process cleanup can fix.
