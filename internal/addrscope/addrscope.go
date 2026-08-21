@@ -16,6 +16,29 @@ import (
 // else — so the unmapping belongs inside, where it protects every caller.
 func Routable(a netip.Addr) bool {
 	a = a.Unmap()
+	// **And it strips the zone, for exactly the same reason one line up.**
+	//
+	// `netip.Prefix.Contains` returns false for ANY address carrying a zone — so a zone
+	// cleared every prefix in `reserved` below while leaving the byte tests above intact.
+	// Measured: `[::c0a8:101]` is refused by `::/96` and `[::c0a8:101%eth0]` was ACCEPTED,
+	// and that address is 192.168.1.1. So were `[::7f00:1%eth0]` (127.0.0.1),
+	// `[2002:c0a8:101::1%9]` (6to4, which encodes an arbitrary IPv4), `[64:ff9b::7f00:1%eth0]`
+	// (NAT64, which on an IPv6-only carrier translates to any IPv4 address at the
+	// translator) and `[2001:db8::1%eth0]`. The bypassed list is precisely the one that
+	// exists because Go's own predicates do not cover those classes — `IsLoopback` and
+	// `IsLinkLocalUnicast` are byte tests and survive a zone, which is why the hole was
+	// only ever in the table.
+	//
+	// Stripping rather than refusing: a zone is meaningful only on a link-local address,
+	// and a link-local address is refused below whatever its zone says. So the zone can
+	// never change the answer this function should give, and the only thing it was doing
+	// was changing the answer it did give.
+	//
+	// Latent until P05.S04: `Target`'s only callers are the candidate record's two doors,
+	// reachable today only through a one-party self-test. The slice that feeds a
+	// counterparty's record to the dialer is the slice that makes it an in-roster peer's
+	// port scan of the victim's own network.
+	a = a.WithZone("")
 	if !a.IsValid() || a.IsUnspecified() || a.IsLoopback() || a.IsMulticast() ||
 		a.IsLinkLocalUnicast() || a.IsLinkLocalMulticast() || a.IsInterfaceLocalMulticast() ||
 		a.IsPrivate() || !a.IsGlobalUnicast() {
