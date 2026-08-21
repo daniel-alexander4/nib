@@ -148,3 +148,22 @@ func TestUnwrapPassphrase(t *testing.T) {
 		t.Errorf("unwrapped secret mismatch: got %x", got)
 	}
 }
+
+// Generate's overwrite refusal moved from `os.Stat` to `O_CREATE|O_EXCL` at v1.116.12,
+// and NO test is added for it, deliberately.
+//
+// The doc says "It refuses to overwrite an existing file" and `os.Stat` + `os.WriteFile`
+// did not enforce that — WriteFile is O_TRUNC, so any Stat error other than ErrNotExist
+// fell through to a truncating write of what is typically ~/.ssh/id_ed25519: the user's SSH
+// identity AND the key the vault's content key is sealed to. The change is right on merit
+// and makes the contract the kernel's job.
+//
+// But the two versions could not be told apart by any case that can be built here. The
+// obvious probe — a key inside a directory with no execute permission — has `os.Stat` fail
+// with EACCES and then `os.WriteFile` fail with EACCES too, so the old code refused for its
+// own reason and the test passed against it. The genuine difference is the TOCTOU window
+// between the check and the write, which a test cannot open. Recorded rather than papered
+// over with a green that implies coverage it does not have.
+//
+// TestGenerateRefusesOverwrite above still covers the ordinary case, and now tests the real
+// mechanism rather than a check beside it.

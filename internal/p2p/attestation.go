@@ -91,6 +91,27 @@ func (a Attestation) intent() string {
 // this a crafted label (or intent) could inject a second [SPKI:...] that wins the
 // parse and misrepresents which peer was accepted. Removing brackets makes the
 // real token the only one that can appear.
+// safeHex is safeText's counterpart for the two fields that must be bare hex.
+//
+// reason() applied safeText to the label and the intent and interpolated AcceptedPeer and
+// RosterHash RAW, while safeText's own doc claims "Removing brackets makes the real token
+// the only one that can appear". Both parsers use FindStringSubmatch (first match), so a
+// crafted AcceptedPeer of the form "<64hex>] [NibRoster:<evil64hex>" places an earlier
+// roster token and wins the parse at readRoster. Not reachable on the real path — the only
+// non-test producer is hex.EncodeToString — but these are plain strings on an exported
+// struct with no charset check at the encoding site, so the claim was wider than what
+// enforced it. Empty rather than escaped: a non-hex fingerprint is not a fingerprint.
+func safeHex(s string) string {
+	for _, c := range s {
+		switch {
+		case c >= '0' && c <= '9', c >= 'a' && c <= 'f', c >= 'A' && c <= 'F':
+		default:
+			return ""
+		}
+	}
+	return s
+}
+
 func safeText(s string) string {
 	return strings.NewReplacer("[", "", "]", "").Replace(s)
 }
@@ -105,9 +126,10 @@ func (a Attestation) reason() string {
 		// Placed BEFORE the user-controlled text, like the SPKI token, and matched by a
 		// regexp requiring exactly 64 hex — safeText strips brackets from the label and
 		// intent, so neither can forge one.
-		roster = " [NibRoster:" + a.RosterHash + "]"
+		roster = " [NibRoster:" + safeHex(a.RosterHash) + "]"
 	}
-	return fmt.Sprintf("%s Accepts %s [SPKI:%s]%s. %s", attestationTag, safeText(a.AcceptedPeerLabel), a.AcceptedPeer, roster, safeText(a.intent()))
+	return fmt.Sprintf("%s Accepts %s [SPKI:%s]%s. %s", attestationTag,
+		safeText(a.AcceptedPeerLabel), safeHex(a.AcceptedPeer), roster, safeText(a.intent()))
 }
 
 // AppearanceLines is the visible attestation block text, one entry per line — the
