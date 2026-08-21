@@ -28,6 +28,8 @@ import (
 	"nib/internal/safe"
 	"nib/internal/server"
 	"nib/internal/vault"
+
+	"nib/internal/addrscope"
 )
 
 // version is set at build time via -ldflags "-X main.version=…".
@@ -215,15 +217,12 @@ func run() int {
 // It mirrors the loopback set the server's Host guard enforces, so the address
 // nib binds and the requests it accepts share one notion of "loopback".
 func loopbackBind(addr string) bool {
-	host, _, err := net.SplitHostPort(addr)
-	if err != nil {
+	// A bind address must carry a port; a bare host is not a bind address. That is the one
+	// thing this adds to addrscope.Loopback, which accepts either.
+	if _, _, err := net.SplitHostPort(addr); err != nil {
 		return false
 	}
-	switch host {
-	case "127.0.0.1", "localhost", "::1":
-		return true
-	}
-	return false
+	return addrscope.Loopback(addr)
 }
 
 // initialFile returns an absolute path for the optional PDF argument, or "".

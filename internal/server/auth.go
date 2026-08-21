@@ -18,6 +18,8 @@ import (
 	"nib/internal/pdfops"
 	"nib/internal/sshkey"
 	"nib/internal/vault"
+
+	"nib/internal/addrscope"
 )
 
 // Nib unlocks its vault from the user's SSH key at startup — there is no
@@ -147,7 +149,7 @@ func originIsLoopback(r *http.Request) bool {
 	// Checked FIRST, because it is the only one of the two that can see the sub-resource
 	// case. `none` is a user-initiated navigation (typing the URL, a bookmark).
 	switch r.Header.Get("Sec-Fetch-Site") {
-	case "same-origin", "same-site", "none":
+	case "same-origin", "none":
 		return true
 	case "": // no metadata (curl, an older client) — fall through to Origin
 	default: // "cross-site" and anything unrecognised
@@ -161,11 +163,7 @@ func originIsLoopback(r *http.Request) bool {
 	if err != nil {
 		return false
 	}
-	switch u.Hostname() {
-	case "127.0.0.1", "localhost", "::1":
-		return true
-	}
-	return false
+	return addrscope.Loopback(u.Host)
 }
 
 // requirePublicLoopback guards a public (pre-unlock) mutating route. No CSRF

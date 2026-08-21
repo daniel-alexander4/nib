@@ -314,6 +314,15 @@ func TestASubResourceGetCannotReachTheVault(t *testing.T) {
 			wantPass: false,
 			why:      "the positive control: this must stay refused",
 		},
+		{
+			name:     "another app on another loopback port",
+			headers:  map[string]string{"Origin": "http://127.0.0.1:9999", "Sec-Fetch-Site": "same-site"},
+			wantPass: false,
+			why: "a SITE ignores the port, so every other page served from loopback is same-site " +
+				"with Nib. The guard accepted same-site and no row covered it; any local web app " +
+				"the user had open could reach these pre-unlock mutating routes. Nib's own UI is " +
+				"always same-origin, so nothing legitimate is refused by dropping it",
+		},
 		// The controls. A guard that refuses everything is an outage, not a fix.
 		{
 			name:     "Nib's own UI",

@@ -214,3 +214,39 @@ func TestBothDialHooksCallTheSharedPredicate(t *testing.T) {
 	}
 	t.Logf("%d dial-control hook(s), %d delegating", dialers, delegating)
 }
+
+// TestLoopbackIsOneRule pins the predicate that replaced five of them. The rows that matter
+// are the disagreements: 127.0.0.2 was loopback to two of the old five and not to the other
+// three, and `loopbackOnly` requires two of those that disagreed.
+func TestLoopbackIsOneRule(t *testing.T) {
+	for _, tc := range []struct {
+		in   string
+		want bool
+		why  string
+	}{
+		{"127.0.0.1:8080", true, "the ordinary case"},
+		{"127.0.0.1", true, "no port — a Host header may omit it"},
+		{"localhost:8080", true, "what a browser sends when the user typed it"},
+		{"localhost", true, ""},
+		{"::1", true, "v6 loopback, unbracketed"},
+		{"[::1]:8080", true, "v6 loopback as a Host header carries brackets"},
+		{"[::1]", true, "bracketed with no port"},
+		{"127.0.0.2:8080", true, "the whole 127/8 block is loopback; three of the five old rules said no"},
+		{"127.255.255.254", true, "still 127/8"},
+		{"0.0.0.0:8080", false, "the wildcard is not loopback — binding it exposes nib to the network"},
+		{"192.168.1.5:8080", false, "a LAN address"},
+		{"10.0.0.1", false, ""},
+		{"::", false, "the v6 wildcard"},
+		{"evil.example:8080", false, "a name that is not localhost"},
+		{"localhost.evil.example", false, "a prefix attack on the name arm"},
+		{"evil.localhost", false, "a SUFFIX attack — a HasSuffix here would admit any name an attacker controls"},
+		{"notlocalhost", false, "and a bare substring"},
+		{"", false, ""},
+		{"::ffff:127.0.0.1", true, "v4-mapped loopback: net.IP.IsLoopback unmaps, and a Host header can carry this"},
+		{"::ffff:192.168.1.5", false, "v4-mapped LAN must not become loopback by changing family"},
+	} {
+		if got := Loopback(tc.in); got != tc.want {
+			t.Errorf("Loopback(%q) = %v, want %v — %s", tc.in, got, tc.want, tc.why)
+		}
+	}
+}

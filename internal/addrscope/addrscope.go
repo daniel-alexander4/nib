@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net"
 	"net/netip"
+	"strings"
 )
 
 // Routable reports whether an address may be treated as a real, dialable public host.
@@ -191,4 +192,43 @@ func RefuseNonPublicDialAddress(address string) error {
 		return fmt.Errorf("refusing to connect to non-public address %s", a)
 	}
 	return nil
+}
+
+// Loopback reports whether host names the local machine's loopback interface. host may
+// carry a port, may be an IP in either family, may be a bracketed v6 literal, and may be
+// the name "localhost".
+//
+// **It exists because there were five of these and three different rules.** They disagreed
+// in ways that were arbitrary rather than deliberate:
+//
+//   - the server's peer check accepted any loopback IP, so 127.0.0.2 passed;
+//   - its Host check accepted a hard-coded set of three strings, so 127.0.0.2 did not —
+//     and `loopbackOnly` requires BOTH, so a request that was loopback by one rule was
+//     refused by the other;
+//   - `loopbackBind` used the same three strings and was therefore stricter than the
+//     assertion on the resolved listener it exists to anticipate (`tcp.IP.IsLoopback()`),
+//     which has always accepted the whole 127/8 block;
+//   - the instance probe accepted a loopback IP or the literal "localhost";
+//   - the Origin fallback used the three strings again.
+//
+// One rule, and it is the widest of the three because the widest is the correct one: the
+// whole 127/8 block and ::1 are loopback by definition and cannot leave the machine, and
+// "localhost" has to be accepted because it is what a browser puts in a Host header when
+// the user typed it. Nothing was relying on 127.0.0.2 being refused; it was relying on
+// nobody using it.
+//
+// **"localhost" is a name and names can lie.** A hostile /etc/hosts can point it anywhere,
+// so this is not a substitute for asserting the resolved address of a socket you actually
+// bound or connected. It answers "does this string name loopback", which is the question
+// a Host header, an Origin, and a requested bind address each pose.
+func Loopback(host string) bool {
+	if h, _, err := net.SplitHostPort(host); err == nil {
+		host = h
+	}
+	host = strings.TrimSuffix(strings.TrimPrefix(host, "["), "]")
+	if host == "localhost" {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }
