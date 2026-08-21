@@ -6,8 +6,12 @@ import (
 	"testing"
 	"time"
 
+	"errors"
 	"net"
 	"nib/internal/sign"
+	"strings"
+	"sync"
+	"syscall"
 )
 
 func newIdentity(t *testing.T) (certPEM, keyPEM []byte) {
@@ -281,4 +285,215 @@ func TestAStalledPeerDoesNotBlockTheAcceptPath(t *testing.T) {
 			"timeout alone is %v, so it was queued behind them", elapsed, stalled, handshakeTimeout)
 	}
 	t.Logf("accepted in %v with %d stalled connections in front", elapsed, stalled)
+}
+
+// TestTheListenerTerminatesThroughExactlyOneDoor.
+//
+// The rewrite that moved the handshake off the accept path introduced two termination signals
+// — `close(l.ready)` in the accept loop and `close(l.done)` in `Close` — and a handshake
+// goroutine selecting on a send into `ready` up to 30 seconds later. A send on a closed
+// channel is a *ready* select case that panics, so after `Close` roughly half of every
+// in-flight successful handshake panicked, and after a non-close accept error every one did.
+//
+// **None of these six questions had an answer in the suite.** `TestAStalledPeerDoesNotBlock…`
+// uses connections that never speak, so not one of them ever reaches the statement that panics.
+func TestTheListenerTerminatesThroughExactlyOneDoor(t *testing.T) {
+	certA, keyA, _ := sign.GenerateIdentity("Alice")
+	certB, keyB, _ := sign.GenerateIdentity("Bob")
+	fpA, err := sign.Fingerprint(certA)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fpB, err := sign.Fingerprint(certB)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	t.Run("Accept after Close reports net.ErrClosed", func(t *testing.T) {
+		ln, lerr := Listen("127.0.0.1:0", certB, keyB, fpA)
+		if lerr != nil {
+			t.Fatal(lerr)
+		}
+		if cerr := ln.Close(); cerr != nil {
+			t.Fatalf("Close: %v", cerr)
+		}
+		_, aerr := ln.Accept()
+		if !errors.Is(aerr, net.ErrClosed) {
+			t.Errorf("Accept after Close = %v; runSession exits only on net.ErrClosed, so "+
+				"anything else spins that loop at 100%% of a core with no syscall", aerr)
+		}
+	})
+
+	t.Run("a second Close is harmless", func(t *testing.T) {
+		ln, lerr := Listen("127.0.0.1:0", certB, keyB, fpA)
+		if lerr != nil {
+			t.Fatal(lerr)
+		}
+		if cerr := ln.Close(); cerr != nil {
+			t.Fatalf("first Close: %v", cerr)
+		}
+		if cerr := ln.Close(); cerr != nil {
+			t.Errorf("second Close: %v", cerr)
+		}
+	})
+
+	t.Run("Close before Accept was ever called", func(t *testing.T) {
+		ln, lerr := Listen("127.0.0.1:0", certB, keyB, fpA)
+		if lerr != nil {
+			t.Fatal(lerr)
+		}
+		// Close without ever calling Accept: `start()` has not run, so the loop goroutine
+		// does not exist. A later Accept must still return rather than blocking forever on
+		// a listener that is already gone.
+		if cerr := ln.Close(); cerr != nil {
+			t.Fatal(cerr)
+		}
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			_, _ = ln.Accept()
+		}()
+		select {
+		case <-done:
+		case <-time.After(5 * time.Second):
+			t.Error("Accept blocked forever on a listener closed before it was ever called")
+		}
+	})
+
+	t.Run("Close while a handshake is in flight does not panic", func(t *testing.T) {
+		ln, lerr := Listen("127.0.0.1:0", certB, keyB, fpA)
+		if lerr != nil {
+			t.Fatal(lerr)
+		}
+		// Nobody calls Accept, so a completed handshake has nowhere to go — which is the
+		// exact state that used to panic on a closed `ready`.
+		accepted := make(chan struct{})
+		go func() {
+			defer close(accepted)
+			c, aerr := ln.Accept()
+			if c != nil {
+				c.Close()
+			}
+			_ = aerr
+		}()
+		dialed := make(chan struct{})
+		go func() {
+			defer close(dialed)
+			c, derr := Dial(ln.Addr().String(), certA, keyA, fpB, 5*time.Second)
+			if c != nil {
+				c.Close()
+			}
+			_ = derr
+		}()
+		<-accepted // STIMULUS: a handshake really completed and was delivered.
+		<-dialed
+		if cerr := ln.Close(); cerr != nil {
+			t.Errorf("Close after a delivered handshake: %v", cerr)
+		}
+		// A second dial into the closed listener, then give any in-flight goroutine time to
+		// reach its send. safe.Recover would swallow a panic, so the observable is that the
+		// listener stays usable and Close stays clean.
+		go func() {
+			c, _ := Dial(ln.Addr().String(), certA, keyA, fpB, time.Second)
+			if c != nil {
+				c.Close()
+			}
+		}()
+		time.Sleep(300 * time.Millisecond)
+		if _, aerr := ln.Accept(); !errors.Is(aerr, net.ErrClosed) {
+			t.Errorf("Accept on the closed listener = %v, want net.ErrClosed", aerr)
+		}
+	})
+
+	t.Run("the handshake pool is bounded", func(t *testing.T) {
+		if maxConcurrentHandshakes <= 0 {
+			t.Fatal("the pool is unbounded — one goroutine and one fd per inbound connection " +
+				"for the whole handshakeTimeout, driven by any host on the segment")
+		}
+		if maxConcurrentHandshakes > 64 {
+			t.Errorf("maxConcurrentHandshakes = %d is not a bound a 256-descriptor GUI "+
+				"process survives", maxConcurrentHandshakes)
+		}
+	})
+}
+
+// failingListener returns err from every Accept, standing in for EMFILE.
+//
+// A fake, because the real trigger is descriptor exhaustion and a test cannot arrange that
+// without wrecking the machine running it — but the terminal-accept-error path is the one
+// that produced the permanent hot spin, so it needs a driver.
+type failingListener struct {
+	err    error
+	addr   net.Addr
+	closed chan struct{}
+	once   sync.Once
+}
+
+func (f *failingListener) Accept() (net.Conn, error) { return nil, f.err }
+func (f *failingListener) Addr() net.Addr            { return f.addr }
+func (f *failingListener) Close() error              { f.once.Do(func() { close(f.closed) }); return nil }
+
+// TestATerminalAcceptErrorStillReportsNetErrClosed.
+//
+// `runSession`'s accept loop exits only on `errors.Is(err, net.ErrClosed)` — everything else
+// is "this peer failed, stay armed". So when `loop` hit an accept error it could not continue
+// past (EMFILE from descriptor exhaustion), `Accept` returned the bare `EMFILE` with no
+// syscall and that loop spun at 100 % of a core. `Close` could not rescue it either, because
+// it only sets `cerr` when `cerr` is nil — so the disarm timer fired, `Close` ran, and
+// `closeErr` went on returning EMFILE forever. `runSession` never returned, its defers never
+// ran, and the LAN announcer broadcast for the life of the process.
+//
+// **The other listener already maps this**: `quicListener.Accept` turns `quic.ErrServerClosed`
+// into `net.ErrClosed` with a comment naming the same hazard. The TCP one did not.
+func TestATerminalAcceptErrorStillReportsNetErrClosed(t *testing.T) {
+	emfile := &net.OpError{Op: "accept", Net: "tcp", Err: syscall.EMFILE}
+	fake := &failingListener{
+		err:    emfile,
+		addr:   &net.TCPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 1},
+		closed: make(chan struct{}),
+	}
+	l := &tlsListener{ln: fake, done: make(chan struct{})}
+
+	got := make(chan error, 1)
+	go func() {
+		_, aerr := l.Accept()
+		got <- aerr
+	}()
+
+	var err error
+	select {
+	case err = <-got:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Accept never returned after a terminal accept error")
+	}
+
+	// STIMULUS: the loop really did terminate through Close, or the assertion below is
+	// about a listener that simply had nothing to accept.
+	select {
+	case <-fake.closed:
+	default:
+		t.Error("the accept loop did not close the underlying listener — the terminal error " +
+			"leaves it open and the loop goroutine unaccounted for")
+	}
+
+	if !errors.Is(err, net.ErrClosed) {
+		t.Errorf("Accept after a terminal accept error = %v; runSession exits only on "+
+			"net.ErrClosed, so this spins that loop at 100%% of a core with no syscall", err)
+	}
+	// And the cause survives, or a diagnostic cannot say why it stopped.
+	if !errors.Is(err, syscall.EMFILE) && !strings.Contains(err.Error(), "too many open files") {
+		t.Errorf("the cause was discarded: %v", err)
+	}
+
+	// A subsequent Accept must behave the same rather than blocking.
+	second := make(chan error, 1)
+	go func() { _, e := l.Accept(); second <- e }()
+	select {
+	case e := <-second:
+		if !errors.Is(e, net.ErrClosed) {
+			t.Errorf("the second Accept = %v, want net.ErrClosed", e)
+		}
+	case <-time.After(5 * time.Second):
+		t.Error("a second Accept blocked forever")
+	}
 }
