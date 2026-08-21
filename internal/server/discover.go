@@ -129,18 +129,65 @@ func resolve(pins []vault.PinnedPeer, s discovery.Seen) (candidate, bool) {
 // maxLANCandidates bounds what one browse may hand to the dialer. See browsePeers.
 const maxLANCandidates = 8
 
+// browseQuiet is how long a browse keeps listening after the last NEW candidate.
+//
+// # Why a browse may stop before its window closes
+//
+// `findPeerOnLAN` asks about exactly ONE pin and still waited D16's full 2 s after the
+// answer arrived in milliseconds. Every LAN ceremony paid it, and once P05 races the
+// tiers concurrently the cost stops being politeness and becomes wrong: a tier that has
+// its answer at 10 ms but reports at 2 s loses the race to a slower tier that reported
+// sooner, and the ceremony runs over the internet with the peer one hop away.
+//
+// # Why it is derived from the announcer and not chosen
+//
+// The armed side re-announces every `announceEvery`, on every joined interface, and one
+// `Announce` writes v4 and v6 across all of them in a single burst — so every address a
+// given announcer will offer arrives together. What a browse can still be waiting for is
+// a DIFFERENT announcer whose ticker is offset from the first one's, and the most it can
+// be offset by is one period. One period plus slack for jitter and scheduling is
+// therefore the smallest wait that cannot miss an announcer that was already announcing
+// when the browse opened. A count of "N reads with nothing new" would have been a guess
+// about traffic; this is a bound on the thing actually being waited for.
+//
+// # What it gives up, stated rather than left to be discovered
+//
+// A peer that ARMS mid-browse, after some other host has already claimed its name on the
+// link, can now be missed: the quiet period elapses against the impostor's announcement
+// and the genuine peer's first datagram arrives after the browse has closed. That needs
+// an on-link impostor AND the peer arming inside our window, the ceremony fails with
+// "none answered as the pinned peer" rather than silently reaching the wrong host (L1
+// holds throughout — the pin is checked at the handshake), and a retry finds it. The
+// full-window behaviour is not free of this either: it returns both, and `dialAny` still
+// spends up to `lanDialTimeout` on the impostor first.
+const browseQuiet = announceEvery + 250*time.Millisecond
+
 func browsePeers(b browser, pins []vault.PinnedPeer, window time.Duration) []candidate {
 	deadline := time.Now().Add(window)
 	seen := map[string]candidate{}
 	var order []string
+	// Zero until the first candidate: a browse that has heard NOTHING must spend its
+	// whole window, because there is no evidence yet about who is on the link.
+	var quietUntil time.Time
 	for {
-		s, err := b.Read(deadline)
+		readBy := deadline
+		if !quietUntil.IsZero() && quietUntil.Before(readBy) {
+			readBy = quietUntil
+		}
+		s, err := b.Read(readBy)
 		if err != nil {
 			// Every error here is ordinary: a timeout ends the window, and our own
 			// announcements, foreign traffic and malformed datagrams are all
 			// expected on a shared link. The socket counts them; this loop's job is
 			// only to stop when the window closes.
 			if time.Now().After(deadline) {
+				break
+			}
+			// **Before the continue, not after it.** `readBy` may be the quiet
+			// deadline, and a Read that returns at a deadline already past would be
+			// re-entered immediately — a tight spin for the rest of the window
+			// rather than an early return.
+			if !quietUntil.IsZero() && time.Now().After(quietUntil) {
 				break
 			}
 			continue
@@ -159,6 +206,10 @@ func browsePeers(b browser, pins []vault.PinnedPeer, window time.Duration) []can
 		}
 		order = append(order, key)
 		seen[key] = c
+		// A NEW candidate only. Repeats are deduped above and never reach here, which
+		// is what makes this a quiet period rather than a keep-alive: an announcer
+		// repeating every 500 ms cannot hold the browse open indefinitely.
+		quietUntil = time.Now().Add(browseQuiet)
 		if len(order) >= maxLANCandidates {
 			// Stop reading rather than keep accumulating: the window's remaining time
 			// buys nothing once the list is full, and draining it is the flood's goal.
