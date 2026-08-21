@@ -154,37 +154,99 @@ func VerifyProof(ctx context.Context, client *http.Client, sources []BlockSource
 	// a genuine proof makes the user read "proof does not verify" for a validly timestamped
 	// document — and a legitimate multi-branch proof whose first branch uses an op `compute`
 	// declines was a hard error even though a later branch would have confirmed.
-	var lastErr error
+	// maxAttestationsExamined bounds the network work an attacker-supplied proof can force.
+	//
+	// `parseSequences` admits up to maxProofInstructions (100,000) and one attestation is one
+	// instruction, so before this the loop could drive that many `fetchAgreedHeader` calls —
+	// each fanning out to three explorers at two GETs apiece. Roughly 130 KB of `.ots` for
+	// 60,000 outbound requests, from the user's IP, with `handleTimestampVerify` passing a
+	// context that has **no deadline**: the only bound was the 20 s per GET, not the loop.
+	// Nib becomes a request amplifier pointed at third parties and the user gets rate-limited
+	// by blockstream.info and mempool.space.
+	//
+	// Real proofs carry a handful of branches. The memo below means the cap counts DISTINCT
+	// heights, so a proof with many attestations at one height costs one fetch.
+	const maxAttestationsExamined = 8
+
+	type header struct {
+		merkle []byte
+		t      time.Time
+		n      int
+	}
+	seen := map[uint64]header{}
+	// ATTEMPTS, not cache entries.
+	//
+	// The first version bounded len(seen), which only grows on a SUCCESSFUL lookup — so a
+	// proof carrying two hundred unresolvable heights drove two hundred fetches and never
+	// tripped the cap. Caught by the test rather than by reading it back. What has to be
+	// bounded is the outbound work an attacker can force, and that is attempts.
+	attempts := 0
+	var fetchErr error // a network refusal, remembered rather than acted on immediately
+	var lastComputeErr error
 	var sawBranch bool
+
 	for _, s := range attested {
 		root, err := s.compute(p.digest)
 		if err != nil {
 			// A branch this build cannot walk (an op `compute` declines) is not a verdict
 			// about the document — a later branch may still confirm it.
-			lastErr = err
+			lastComputeErr = err
 			continue
 		}
-		merkle, t, n, err := fetchAgreedHeader(ctx, sources, minAgree, s.height)
-		if err != nil {
-			// A network refusal IS terminal: it is the same for every branch, and
-			// retrying it per attestation would multiply the requests without changing
-			// the answer.
-			return nil, err
+		hdr, cached := seen[s.height]
+		if !cached {
+			if attempts >= maxAttestationsExamined {
+				// Refuse rather than truncate silently: a proof past the cap is not one
+				// this build can judge, and saying "invalid" about it would be a verdict
+				// we did not reach.
+				return nil, fmt.Errorf("this proof carries more than %d distinct Bitcoin "+
+					"attestations, which is not a shape a genuine timestamp takes",
+					maxAttestationsExamined)
+			}
+			attempts++
+			merkle, t, n, ferr := fetchAgreedHeader(ctx, sources, minAgree, s.height)
+			if ferr != nil {
+				// NOT terminal, and that correction is the point.
+				//
+				// The loop was added to stop an attacker who PREPENDS a bogus attestation
+				// from making the user read "proof does not verify" for a validly
+				// timestamped document — and it handled two prepend shapes while leaving
+				// the cheapest one open: an attestation at a height NOTHING resolves. Every
+				// explorer 404s, this returns an error, and returning it here refused the
+				// document before the genuine branch was ever computed. ~13 bytes of edit.
+				//
+				// "The network refusal is the same for every branch" is true of a transport
+				// failure and false of a refusal that is ABOUT THIS HEIGHT — that is a
+				// property of the branch. So it is remembered: if no branch confirms and a
+				// fetch failed, the error is reported (we have no opinion) rather than
+				// StateInvalid (a negative verdict we did not earn).
+				fetchErr = ferr
+				continue
+			}
+			hdr = header{merkle, t, n}
+			seen[s.height] = hdr
 		}
 		sawBranch = true
-		if !bytes.Equal(root, merkle) {
+		if !bytes.Equal(root, hdr.merkle) {
 			// This branch does not attest to this document; another may.
 			continue
 		}
-		res := &VerifyResult{State: StateConfirmed, Height: s.height, Time: t, Sources: n}
+		res := &VerifyResult{State: StateConfirmed, Height: s.height, Time: hdr.t, Sources: hdr.n}
 		if upgradedAny {
 			res.Upgraded = serialize(p.digest, updated) // a now self-contained proof to persist
 		}
 		return res, nil
 	}
-	if !sawBranch && lastErr != nil {
-		// Every branch was unwalkable, so we have no opinion rather than a negative one.
-		return nil, lastErr
+	if !sawBranch {
+		// No branch was both walkable and fetchable, so we have no opinion rather than a
+		// negative one. A negative verdict here would be StateInvalid — "this proof does not
+		// verify" — about a document we never finished checking.
+		if fetchErr != nil {
+			return nil, fetchErr
+		}
+		if lastComputeErr != nil {
+			return nil, lastComputeErr
+		}
 	}
 	return &VerifyResult{State: StateInvalid}, nil
 }

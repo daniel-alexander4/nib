@@ -10,7 +10,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 )
 
 // bitcoinSeqBytes encodes a calendar /timestamp response: ops then a Bitcoin
@@ -305,4 +307,133 @@ func TestParseRefusesCheckpointAmplification(t *testing.T) {
 	if _, err := parseProof(mustB64(t, merkle1OTS)); err != nil {
 		t.Fatalf("the bound refuses a legitimate checkpoint-using proof: %v", err)
 	}
+}
+
+// countingSource is a BlockSource that records every height it is asked for.
+//
+// The existing tests drive real httptest explorers, which cannot answer "how many outbound
+// requests did this proof cost" — and that is the whole question for the amplification below.
+type countingSource struct {
+	mu     sync.Mutex
+	asked  []uint64
+	roots  map[uint64][]byte
+	blockT time.Time
+}
+
+func (c *countingSource) BlockHeader(_ context.Context, h uint64) ([]byte, time.Time, error) {
+	c.mu.Lock()
+	c.asked = append(c.asked, h)
+	root, ok := c.roots[h]
+	c.mu.Unlock()
+	if !ok {
+		return nil, time.Time{}, errors.New("block not found")
+	}
+	return root, c.blockT, nil
+}
+
+func (c *countingSource) count() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return len(c.asked)
+}
+
+// TestAPrependedUnresolvableAttestationDoesNotDenyAGenuineProof.
+//
+// The per-attestation loop was added to stop an attacker who PREPENDS a bogus attestation from
+// making the user read "proof does not verify" for a validly timestamped document. It handled
+// a declined `compute` and a merkle mismatch — and left the cheapest prepend open: an
+// attestation at a height **nothing resolves**. Every explorer 404s, `fetchAgreedHeader`
+// returns an error, and returning it refused the document before the genuine branch was ever
+// computed. About thirteen bytes of edit.
+//
+// "The network refusal is the same for every branch" is true of a transport failure and false
+// of a refusal that is about THIS HEIGHT — that is a property of the branch.
+func TestAPrependedUnresolvableAttestationDoesNotDenyAGenuineProof(t *testing.T) {
+	digest := sha256.Sum256([]byte("verify me"))
+	const good = uint64(800000)
+	const bogus = uint64(99999999)
+	tail := []byte{0x01, 0x02, 0x03}
+	root, _ := sequence{ops: []op{{opAppend, tail}, {opSHA256, nil}}}.compute(digest[:])
+
+	src := &countingSource{roots: map[uint64][]byte{good: root}, blockT: time.Unix(1_700_000_000, 0)}
+
+	// The bogus branch FIRST, which is what a prepend produces.
+	proof := buildOTS(digest, [][]byte{
+		bitcoinSeqBytes(tail, bogus),
+		bitcoinSeqBytes(tail, good),
+	})
+
+	// STIMULUS: the bogus height really is unresolvable and the genuine one really resolves,
+	// or this test is not driving the case it is named for.
+	if _, _, err := src.BlockHeader(context.Background(), bogus); err == nil {
+		t.Fatal("setup: the bogus height resolves")
+	}
+	if _, _, err := src.BlockHeader(context.Background(), good); err != nil {
+		t.Fatalf("setup: the genuine height does not resolve: %v", err)
+	}
+
+	res, err := VerifyProof(context.Background(), nil, []BlockSource{src}, 1, proof, digest)
+	if err != nil {
+		t.Fatalf("a genuine proof was refused because a bogus attestation was prepended: %v", err)
+	}
+	if res.State != StateConfirmed || res.Height != good {
+		t.Errorf("got %+v; the genuine branch attests to this document and should confirm it", res)
+	}
+}
+
+// TestAProofCannotDriveAnUnboundedNumberOfLookups.
+//
+// `parseSequences` admits up to maxProofInstructions (100,000) and one attestation is one
+// instruction, so the loop could drive that many `fetchAgreedHeader` calls — each fanning out
+// to every explorer at two GETs apiece, from the user's IP, with `handleTimestampVerify`
+// passing a context that has no deadline. Nib becomes a request amplifier pointed at third
+// parties.
+func TestAProofCannotDriveAnUnboundedNumberOfLookups(t *testing.T) {
+	digest := sha256.Sum256([]byte("verify me"))
+	const height = uint64(800000)
+	tail := []byte{0x01, 0x02, 0x03}
+	root, _ := sequence{ops: []op{{opAppend, tail}, {opSHA256, nil}}}.compute(digest[:])
+
+	t.Run("many attestations at one height cost one lookup", func(t *testing.T) {
+		// NON-matching tails, all at one height.
+		//
+		// The first draft used forty matching attestations and was vacuous: the loop
+		// returns on the branch that confirms, so it never reached a second lookup and
+		// deleting the memo left it green. The memo only earns its keep when the loop
+		// actually iterates, which means every branch has to fail the merkle comparison.
+		src := &countingSource{roots: map[uint64][]byte{height: root}, blockT: time.Unix(1, 0)}
+		var seqs [][]byte
+		for i := 0; i < 40; i++ {
+			seqs = append(seqs, bitcoinSeqBytes([]byte{byte(i), 0x77}, height))
+		}
+		res, err := VerifyProof(context.Background(), nil, []BlockSource{src}, 1, buildOTS(digest, seqs), digest)
+		if err != nil {
+			t.Fatal(err)
+		}
+		// STIMULUS: the loop really walked every branch and reached a verdict, rather than
+		// bailing on the first — otherwise the count below is about one iteration.
+		if res.State != StateInvalid {
+			t.Fatalf("state = %v, want invalid — none of these branches attests to the "+
+				"document, so the loop should have walked them all", res.State)
+		}
+		if n := src.count(); n != 1 {
+			t.Errorf("40 attestations at one height cost %d lookups; the memo should make it 1", n)
+		}
+	})
+
+	t.Run("many distinct heights are refused, not fanned out", func(t *testing.T) {
+		src := &countingSource{roots: map[uint64][]byte{}, blockT: time.Unix(1, 0)}
+		var seqs [][]byte
+		for i := 0; i < 200; i++ {
+			seqs = append(seqs, bitcoinSeqBytes(tail, uint64(900000+i)))
+		}
+		_, err := VerifyProof(context.Background(), nil, []BlockSource{src}, 1, buildOTS(digest, seqs), digest)
+		if err == nil {
+			t.Error("200 distinct attestation heights were accepted")
+		}
+		if n := src.count(); n > 16 {
+			t.Errorf("200 attestations drove %d lookups — each fans out to every explorer at "+
+				"two GETs apiece, from the user's IP", n)
+		}
+	})
 }
