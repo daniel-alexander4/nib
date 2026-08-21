@@ -105,3 +105,45 @@ func TestCrossBindRequiresValidity(t *testing.T) {
 		t.Errorf("a tampered co-signature must not cross-bind: %+v", bBad)
 	}
 }
+
+// TestTheRosterTokenIsWellFormedWhereItIsActuallyBuilt covers the ONLY producer of the
+// [NibRoster:<hash>] token on the real path.
+//
+// It was previously tested through ceremony.Record.RosterToken — a second implementation of
+// the same format string with no production caller. The dead one was the tested one, so
+// this one could have changed shape and the ceremony test would still have passed. That
+// duplicate is gone (see the note where it used to live in internal/ceremony/record.go);
+// p2p cannot import ceremony, because ceremony's own tests import p2p.
+func TestTheRosterTokenIsWellFormedWhereItIsActuallyBuilt(t *testing.T) {
+	const h = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+	a := Attestation{AcceptedPeer: strings.Repeat("a", 64), AcceptedPeerLabel: "Marta", RosterHash: h}
+	got := a.reason()
+	if !strings.Contains(got, "[NibRoster:"+h+"]") {
+		t.Fatalf("reason() = %q\ndoes not carry the token in its documented shape", got)
+	}
+
+	// It must survive the parser that reads it back, which is the whole point of a token.
+	m := rosterToken.FindStringSubmatch(got)
+	if m == nil || m[1] != h {
+		t.Fatalf("the token this code produced does not match the regexp this code parses "+
+			"it with: %q", got)
+	}
+
+	// The control: no hash, no token. An empty RosterHash is an ordinary two-party
+	// co-signature and must not acquire a commitment it never made.
+	plain := Attestation{AcceptedPeer: strings.Repeat("a", 64), AcceptedPeerLabel: "Marta"}
+	if strings.Contains(plain.reason(), "NibRoster") {
+		t.Fatalf("an attestation with no roster carries a roster token: %q", plain.reason())
+	}
+
+	// The forgery safeHex's doc describes: user-controlled text cannot place an earlier
+	// token that wins FindStringSubmatch.
+	evil := Attestation{
+		AcceptedPeer:      strings.Repeat("a", 64),
+		AcceptedPeerLabel: "x] [NibRoster:" + strings.Repeat("b", 64) + "] y",
+		RosterHash:        h,
+	}
+	if m := rosterToken.FindStringSubmatch(evil.reason()); m == nil || m[1] != h {
+		t.Fatalf("a crafted label displaced the real roster token: %q", evil.reason())
+	}
+}

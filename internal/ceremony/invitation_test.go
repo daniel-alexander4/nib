@@ -429,8 +429,9 @@ func TestAnInvitationCatchesARecordConvenedBySomeoneElse(t *testing.T) {
 	// FINISHED DOCUMENT can tell too, with no invitation in hand. Both checks now exist and
 	// they answer different questions: this one is "who does this record say convened",
 	// MatchesRecord's is "is that who the invitation told me to expect".
-	origTok, _ := rec.RosterToken()
-	forgedTok, _ := forged.RosterToken()
+	origH, _ := rec.RosterHash()
+	forgedH, _ := forged.RosterHash()
+	origTok, forgedTok := hex.EncodeToString(origH), hex.EncodeToString(forgedH)
 	if origTok == forgedTok {
 		t.Errorf("the roster token is identical after another roster member re-signed the "+
 			"same roster (%s) — a verifier reading the finished document cannot tell which "+
@@ -489,5 +490,41 @@ func TestTheBindingMACCannotBeSlidAcrossItsFieldBoundary(t *testing.T) {
 	resp, _ := inv.BindingMAC([]byte("x"), "responder")
 	if bytes.Equal(init, resp) {
 		t.Error("the two roles produce one MAC — a reflection passes as a peer holding the secret")
+	}
+}
+
+// TestTheConvenerCheckIsNotOptIn drives the two ways the convener comparison could be walked
+// past without any check failing.
+func TestTheConvenerCheckIsNotOptIn(t *testing.T) {
+	rec, inv := invited(t)
+	// The stimulus, restated here rather than inherited: an honest invitation matches. A
+	// comparison that always failed would satisfy both assertions below.
+	if err := inv.MatchesRecord(rec); err != nil {
+		t.Fatalf("setup: an honest invitation does not match its own record: %v", err)
+	}
+	if inv.ConvenerFingerprint == "" {
+		t.Fatal("setup: the invitation names no convener, so neither case below is reached")
+	}
+
+	// 1. Blanking the field skipped the check entirely — and the field is plain JSON on a
+	// document a party receives, so this is a one-byte edit, not an old build's oversight.
+	blank := inv
+	blank.ConvenerFingerprint = ""
+	if err := blank.MatchesRecord(rec); err == nil {
+		t.Error("an invitation that names no convener matched — the one comparison the field " +
+			"exists for is skipped by deleting the field")
+	}
+
+	// 2. Upper-case hex is the same fingerprint. Both sides are hex and nothing normalises
+	// them, and the sentence a mismatch produces accuses a counterparty of substituting the
+	// convener — the loudest wrong answer this function can give.
+	upper := inv
+	upper.ConvenerFingerprint = strings.ToUpper(inv.ConvenerFingerprint)
+	if upper.ConvenerFingerprint == inv.ConvenerFingerprint {
+		t.Skip("the fixture fingerprint has no letters to upper-case")
+	}
+	if err := upper.MatchesRecord(rec); err != nil {
+		t.Errorf("the same fingerprint in upper-case hex was reported as a different "+
+			"convener: %v", err)
 	}
 }

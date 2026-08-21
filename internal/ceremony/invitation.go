@@ -502,13 +502,27 @@ func (i Invitation) MatchesRecord(r Record) error {
 	// re-sign an unchanged roster and `Record.Verify` still passes, since it only asks that
 	// the signer appear SOMEWHERE in the roster. The invitation is the second, independent
 	// statement of who it should have been.
-	if i.ConvenerFingerprint != "" {
+	// **Not opt-in.** The check was `if i.ConvenerFingerprint != ""`, so an invitation with
+	// the field blank skipped the one comparison it exists for — and the field is plain JSON
+	// on a document a party receives, so blanking it is a one-byte edit an attacker makes
+	// rather than an old build's oversight. NewInvitation has always set it, and this
+	// project has no compatibility population to carry, so an absent convener is a malformed
+	// invitation and says so.
+	if i.ConvenerFingerprint == "" {
+		return fmt.Errorf("%w: the invitation does not say who convened, so there is nothing "+
+			"to check the document's record against", ErrRosterMismatch)
+	}
+	{
 		conv, ok := r.Convener()
 		if !ok {
 			return fmt.Errorf("%w: the document's record is signed by nobody in its own roster",
 				ErrRosterMismatch)
 		}
-		if conv.Fingerprint != i.ConvenerFingerprint {
+		// Case-insensitively: both sides are hex and nothing normalises them. The invitation
+		// is parsed from JSON a party received, so its case is not this build's to assume,
+		// and a mismatch here reads as "someone else convened" — the loudest wrong sentence
+		// this function can produce.
+		if !strings.EqualFold(conv.Fingerprint, i.ConvenerFingerprint) {
 			return fmt.Errorf("%w: the invitation says %s convened and the document's record "+
 				"is signed by %s", ErrRosterMismatch,
 				short(i.ConvenerFingerprint), short(conv.Fingerprint))

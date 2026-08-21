@@ -298,28 +298,6 @@ func TestTheVersionIsWrittenAtCreation(t *testing.T) {
 	}
 }
 
-// TestTheRosterTokenIsStableAndSpecific: the token every signature carries.
-func TestTheRosterToken(t *testing.T) {
-	_, _, cfp := identity(t, "Convener")
-	_, _, afp := identity(t, "A")
-	r := draft(t, cfp, afp)
-	tok, err := r.RosterToken()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.HasPrefix(tok, "[NibRoster:") || !strings.HasSuffix(tok, "]") || len(tok) != len("[NibRoster:]")+64 {
-		t.Errorf("token = %q, want [NibRoster:<64 hex>]", tok)
-	}
-	other := draft(t, cfp, afp)
-	otherTok, err := other.RosterToken()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if tok == otherTok {
-		t.Error("two ceremonies produced the same roster token — the id is not reaching it")
-	}
-}
-
 // --- the document ------------------------------------------------------------
 
 // TestARecordSurvivesIncrementalSignatures is caveat 10, driven rather than read out of
