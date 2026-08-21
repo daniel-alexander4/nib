@@ -100,9 +100,18 @@ test('no innerHTML assignment takes anything but a literal or a number', () => {
       // `x.innerHTML = \`…\`; };` — so match the literal itself rather than requiring it
       // to end the line. The first draft required that and went red against a site it
       // should have accepted.
-      const plain = /^(['"])(?:(?!\1).)*\1/.test(rhs);
+      //
+      // **And the tail after it must be nothing but punctuation.** Both patterns were
+      // anchored at the START only, so `x.innerHTML = '<b>' + userInput;` matched the
+      // leading `'<b>'`, set plain, and passed — the guard proved the first token was a
+      // literal and said nothing about the concatenation that followed it. Same hole on
+      // the template arm: the allowlist policed `${…}` INSIDE the backticks while
+      // `` `…` + userInput `` sailed past outside them.
+      const rest = (after) => /^[\s;,)\]}]*$/.test(after);
+      const pm = /^(['"])(?:(?!\1).)*\1/.exec(rhs);
+      const plain = pm !== null && rest(rhs.slice(pm[0].length));
       const tm = /^`([^`]*)`/.exec(rhs);
-      const tmpl = tm !== null;
+      const tmpl = tm !== null && rest(rhs.slice(tm[0].length));
       const interps = tmpl ? [...tm[1].matchAll(/\$\{([^}]*)\}/g)].map((x) => x[1].trim()) : [];
       // An ALLOWLIST of interpolated expressions, not a regex trying to prove a bare
       // identifier is numeric — it cannot, and a predicate that admits any identifier

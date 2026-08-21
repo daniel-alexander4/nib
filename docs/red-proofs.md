@@ -557,3 +557,28 @@ reaches had no reach at all.
 first attempt because the mutation appended to `banner(true)` while the hermetic test drives
 `banner(false)`. That was a statement about the mutation, not about the test — the second
 attempt, in the right branch, went red.
+
+## v1.117.12 — the guards: four checks that could not fail
+
+| Row | The defect restored | The check that went red |
+| --- | --- | --- |
+| innerHTML | `x.innerHTML = "<b>" + location.hash` | escape.test.mjs's innerHTML scan |
+| — same | `` `x${location.hash}` `` | same |
+| — same | `` `static` + location.hash `` | same |
+| the notices' scope | `Bengali` dropped from the Noto heading ONLY | `TestEveryVendoredThingIsInTheNotices` |
+| the notices' section | the `## Noto Sans` heading renamed | same |
+| the empty token | a face named `NotoSans.ttf` | same |
+| the fixture's vocabulary | `state: 'untampered'` restored | arrival.test.mjs's fixture scan |
+
+**Three false reds, caught by running the control.** The first attempt at the notices rows
+ran `TestNoticesUpToDate` — which is the *freshness* comparison, not the font loop (that is
+in `TestEveryVendoredThingIsInTheNotices`). Both mutations edit the notices file, so both
+went red for the byte-for-byte comparison and neither exercised the scoping at all. The
+control run on the unmutated tree is what said so; without it, three rows would have been
+recorded as proven against a test that never read a font.
+
+**And one vacuous green of my own.** The first draft of the arrival assertion called
+`h.window.nibTestRefreshAfterArrival?.()` — a hook that does not exist, so the optional call
+no-opped and the badge kept the state a previous test had left. Rewritten as a scan over
+every jsdom fixture, with the vocabulary read out of `internal/sign/verify.go` rather than
+listed in the test, because a list written in a test agrees with itself.

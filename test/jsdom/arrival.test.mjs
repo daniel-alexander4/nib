@@ -52,7 +52,12 @@ const h = await boot({
     '/api/doc': () => (docConflict
       ? { error: 'that document is no longer open' }
       : { id: 'test-epoch:9', name: 'arrived.pdf', path: '', canSave: false,
-          signature: { state: 'untampered' }, canUndo: false, canRedo: false }),
+          // 'valid', which is what internal/sign actually emits (verify.go: unsigned |
+          // valid | invalid). This fixture said 'untampered' — the badge's LABEL, not its
+          // state — so it drove updateBadge's fallback arm and rendered "no document" for
+          // a document that had just arrived. Nothing failed, because nothing here looked
+          // at the badge; the fixture simply asserted a fact the server never sends.
+          signature: { state: 'valid' }, canUndo: false, canRedo: false }),
   },
 });
 const { document, calls, settle } = h;
@@ -149,4 +154,36 @@ test('a refusal body is refused rather than becoming the document', async () => 
   const after = [...calls].reverse().find((c) => c.url.includes('/api/scan'));
   assert.equal(after?.headers['X-Nib-Doc'], DOC_ID,
     'the session lost its pin — this is the silent unpinning the guard exists to prevent');
+});
+
+test('every jsdom fixture names a signature state the server can actually send', () => {
+  // This fixture said `state: 'untampered'` — the badge's LABEL, not its state. The app's
+  // map is unsigned | valid | invalid, so it drove updateBadge's fallback arm and rendered
+  // "no document" for a document that had just arrived. Nothing failed, because nothing
+  // here looks at the badge; the fixture simply asserted a fact the server never sends,
+  // and a test built on one is describing an app that does not exist.
+  //
+  // Written over EVERY fixture in the directory rather than this one line, because the
+  // mistake is a typo away in each of them, and read out of internal/sign rather than
+  // listed here — a list written in this file agrees with itself.
+  const verify = fs.readFileSync(path.join(REPO, 'internal', 'sign', 'verify.go'), 'utf8');
+  const known = [...verify.matchAll(/^\s*\w+ State = "(\w+)"/gm)].map((m) => m[1]);
+  assert.ok(known.length >= 3,
+    `read ${known.length} signature state(s) out of internal/sign/verify.go — the scan has `
+    + 'gone blind, and a blind scan accepts everything');
+
+  const dir = path.join(REPO, 'test', 'jsdom');
+  let checked = 0;
+  for (const f of fs.readdirSync(dir).filter((n) => n.endsWith('.mjs'))) {
+    const src = fs.readFileSync(path.join(dir, f), 'utf8');
+    for (const m of src.matchAll(/signature:\s*\{\s*state:\s*'(\w+)'/g)) {
+      checked++;
+      assert.ok(known.includes(m[1]),
+        `${f} builds a fixture with signature state '${m[1]}', which internal/sign never `
+        + `emits (it emits ${known.join(' | ')}). The app falls through to its `
+        + '"no document" arm, so the test is driving a state the server cannot produce');
+    }
+  }
+  assert.ok(checked >= 3,
+    `found ${checked} signature fixture(s) across the jsdom suite — the scan has gone blind`);
 });
