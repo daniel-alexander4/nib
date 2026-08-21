@@ -62,6 +62,12 @@ func (s *Server) handleOCR(w http.ResponseWriter, r *http.Request) {
 	// between, so the undo entry records the NEW bytes as the state to return to and a
 	// later undo restores a document that never existed.
 	before := s.docBytes(doc)
+	// No wroteStampTextError here, deliberately: StampTextLayer cannot produce that error.
+	// It SKIPS an unrepresentable word rather than failing the layer (pdfops/ocr.go), because
+	// OCR text is the scan's own words and there is nothing for the user to retype. A door
+	// here would be a door no traffic reaches. The review finding that named this route as
+	// "swallowing" the error was wrong on that point; what it does swallow is the count of
+	// skipped words, which is a separate question and not this one.
 	result, err := pdfops.StampTextLayer(before, body.Words, body.Lang)
 	if err != nil {
 		log.Printf("ocr: stamp failed (%d words, lang %q): %v", len(body.Words), body.Lang, err)

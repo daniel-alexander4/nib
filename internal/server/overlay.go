@@ -70,8 +70,7 @@ func (s *Server) handleBake(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	out, err := pdfops.StampFields(pdfBytes, fields)
-	if errors.Is(err, pdfops.ErrStampTextUnrepresentable) {
-		httpError(w, http.StatusBadRequest, err.Error())
+	if wroteStampTextError(w, err) {
 		return
 	}
 	if err != nil {
@@ -167,4 +166,25 @@ func (s *Server) handleFlags(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/pdf")
 	_, _ = w.Write(out)
+}
+
+// wroteStampTextError answers the one question every caller of a pdfops stamping primitive
+// has to ask: is this failure the USER's to fix?
+//
+// ErrStampTextUnrepresentable is the only error in the set that is — pdfcpu's watermark
+// engine has no working escape for `%`, so the text as typed cannot be baked, and no retry
+// of the same text will ever succeed. It is a 400 carrying the whole sentence, because a
+// generic "could not stamp" sends the user looking for a broken document instead of at the
+// one character they can change.
+//
+// It exists as a function because the mapping was hand-mirrored and reached two of the three
+// producers that can raise it: StampPageNumbers ran into the general 500 ("page operation
+// failed"). A copy of a rule is not the rule, and three copies of it are three chances to
+// have two. (StampTextLayer is deliberately NOT a producer — see the note at its call site.)
+func wroteStampTextError(w http.ResponseWriter, err error) bool {
+	if !errors.Is(err, pdfops.ErrStampTextUnrepresentable) {
+		return false
+	}
+	httpError(w, http.StatusBadRequest, err.Error())
+	return true
 }

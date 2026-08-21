@@ -243,13 +243,56 @@ func (s *Server) trimHistoryLocked(grown *document) {
 		return
 	}
 
-	// Tier 3: the bytes are the grown document's own. Trim its undo from the oldest
-	// end, keeping the last entry: a document whose single most recent state exceeds
-	// the whole budget stays undoable rather than being silently stripped of the one
-	// thing undo is for. This is the named exception in the budget's contract.
-	for len(grown.undo) > 1 && s.historyBytesLocked() > s.historyBudget() {
-		grown.undo[0] = nil
-		grown.undo = grown.undo[1:]
+	// Tier 3: the bytes are the grown document's own. Trim from the oldest end of BOTH
+	// rings, keeping the last entry of each.
+	//
+	// # Both rings, because undo alone cannot converge
+	//
+	// This walked `grown.undo` only, and `handleUndo` pushes onto `grown.redo`. With one
+	// document open — Nib's default — tier 1 skips `active` (which IS `grown`), tier 2's
+	// `evict` returns false on `d == grown`, and tier 3 then trimmed a ring the bytes were
+	// not in. ADR-003 states the impossibility as a premise: *"a budget covering undo+redo
+	// cannot be met by dropping undo entries alone: a document whose bytes all sit in redo
+	// has nothing to give."* That is exactly the post-undo state of a lone document.
+	//
+	// The newest entry of each ring survives, which is the ADR's named exception generalised:
+	// after an undo the newest REDO entry is the state the user would get back by pressing
+	// redo, and it is as much "the one thing the button is for" as the newest undo entry is.
+	//
+	// # And it is recorded
+	//
+	// This function's own contract says a partially-trimmed history is "precisely the silent
+	// eviction the plan-review pin refuses — the user keeps an undo button that reaches less
+	// far than it did, with nothing anywhere saying so", and tier 3 did exactly that half-drop
+	// while setting neither flag. It sets them now, so the document can report it.
+	trimmed := false
+	for {
+		over := s.historyBytesLocked() > s.historyBudget()
+		if !over {
+			break
+		}
+		switch {
+		case len(grown.undo) > 1:
+			grown.undo[0] = nil
+			grown.undo = grown.undo[1:]
+		case len(grown.redo) > 1:
+			grown.redo[0] = nil
+			grown.redo = grown.redo[1:]
+		default:
+			// One entry left in each: the named exception. Stop rather than spin against a
+			// ceiling this document cannot reach — which is the other half of the ADR's
+			// premise, and why this loop needs an exit that is not "under budget".
+			if trimmed {
+				grown.historyEvicted = true
+				s.historyEvictions++
+			}
+			return
+		}
+		trimmed = true
+	}
+	if trimmed {
+		grown.historyEvicted = true
+		s.historyEvictions++
 	}
 }
 

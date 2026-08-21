@@ -527,3 +527,79 @@ func TestUndoingPastTheBudgetEvicts(t *testing.T) {
 			total, budget, otherEntries)
 	}
 }
+
+// TestASingleDocumentsUndoConverges — ADR-003's own stated impossibility, driven.
+//
+// `TestUndoingPastTheBudgetEvicts` installs a SECOND document with history "so there is
+// something for the pressure to act on", and that is precisely what hides this: with one
+// document open — Nib's default state — tier 1 skips `active` (which *is* `grown`), tier 2's
+// `evict` returns false on `d == grown`, and tier 3 trimmed `grown.undo` while `handleUndo`
+// had pushed the bytes onto `grown.redo`.
+//
+// ADR-003 states it as a premise: *"a budget covering undo+redo cannot be met by dropping undo
+// entries alone: a document whose bytes all sit in redo has nothing to give."*
+func TestASingleDocumentsUndoConverges(t *testing.T) {
+	const budget = 64 << 10
+	s := evictionServer(t, budget)
+	active := s.activeDoc()
+
+	// STIMULUS: exactly ONE document. The other test's second document is the thing that
+	// made tier 1 able to reclaim, so its absence is the case under test.
+	s.mu.Lock()
+	n := len(s.docs)
+	s.mu.Unlock()
+	if n != 1 {
+		t.Fatalf("setup: %d documents open; this test is about the single-document case", n)
+	}
+
+	// THREE entries, so there is something the trimmer can actually drop.
+	//
+	// A two-entry fixture converges to the named exception (one entry per ring) with nothing
+	// evicted, and the eviction flag is then correctly false — which the first draft of this
+	// test asserted as a failure. The case worth driving is the one where entries remain that
+	// COULD be dropped, because that is what tier 3 was failing to reach.
+	s.mu.Lock()
+	active.undo = append(active.undo, []byte("x"), make([]byte, budget), make([]byte, budget))
+	active.data = make([]byte, budget)
+	s.mu.Unlock()
+
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/undo", nil)
+	req.Header.Set("X-Nib-Doc", active.id.String())
+	s.handleUndo(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("setup: undo returned %d", rr.Code)
+	}
+
+	s.mu.Lock()
+	total := s.historyBytesLocked()
+	evicted := active.historyEvicted
+	undoN, redoN := len(active.undo), len(active.redo)
+	s.mu.Unlock()
+
+	// STIMULUS: the undo really moved bytes onto redo, or there was no pressure to converge.
+	if redoN == 0 {
+		t.Fatal("setup: the undo pushed nothing onto redo")
+	}
+	// The assertion is CONVERGENCE, not "under budget", and the difference is ADR-003's
+	// named exception: a document whose single most recent state is larger than the whole
+	// budget keeps it anyway, "rather than being silently stripped of the one thing undo is
+	// for". So the contract is: either the total fits, or both rings are down to that last
+	// entry — and it must never be the case that entries remain which could have been
+	// dropped. The first draft of this asserted `total <= budget` and failed by one byte
+	// against code that was doing exactly the right thing.
+	converged := total <= budget || (undoN <= 1 && redoN <= 1)
+	if !converged {
+		t.Errorf("history is %d bytes against a %d budget with ONE document open (undo %d, "+
+			"redo %d) and neither ring is at its last entry — tier 1 skips the active "+
+			"document, tier 2 refuses because it is the grown one, and tier 3 was trimming "+
+			"the ring the bytes are not in", total, budget, undoN, redoN)
+	}
+	// And a drop must be recorded. A half-trimmed history with no flag is the silent
+	// eviction trimHistoryLocked's own contract refuses by name.
+	if total > budget && !evicted {
+		t.Error("the history was trimmed to its last entries and historyEvicted is false — " +
+			"the user keeps an undo button that reaches less far than it did, with nothing " +
+			"anywhere saying so")
+	}
+}
