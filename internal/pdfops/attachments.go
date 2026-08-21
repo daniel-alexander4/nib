@@ -12,6 +12,8 @@ import (
 	"github.com/pdfcpu/pdfcpu/pkg/api"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/types"
+	"hash"
+	"sort"
 )
 
 // AttachmentInfo names one embedded file. Two carriers are listed: the document's
@@ -191,6 +193,31 @@ func AddAttachment(pdf []byte, name string, data []byte) ([]byte, error) {
 // visible content, which is what a ceremony is convened over. Tamper-evidence for
 // everything else is what the signatures are for — they cover the actual bytes, and any
 // edit to them flips the verification verdict.
+//
+// # It covers the page RESOURCES too, and until v1.116.18 it did not
+//
+// The content stream is only half of what is on a page. For a scanned document — Nib's
+// central case, with 41 OCR languages behind it — the stream is invariant boilerplate
+// (`q W 0 0 H 0 0 cm /Im0 Do Q`) and the entire visible page is the image XObject, which
+// lives in `/Resources`. So the digest was blind to exactly the documents it matters most
+// for: a party receiving a prepared contract before the first signature could swap the
+// image bytes — clause text, amounts, the signature block — and `CheckDocument` returned
+// clean, because the record was untouched and the stream was unchanged.
+//
+// Fonts are folded in for the same reason one step removed: the stream says which glyphs to
+// draw and the font decides what they look like.
+//
+// **Measured, because the whole reason this function exists is that a byte hash is not
+// stable here.** On a rewritten document (`Optimize` applied twice, whose raw bytes are NOT
+// identical — the non-idempotence that rules out a byte hash):
+//
+//	resource digest, rewrite 1 == rewrite 2    stable
+//	content digest,  image bytes swapped       UNCHANGED  ← the defect
+//	resource digest, image bytes swapped       changes    ← the fix
+//
+// Decoded content is hashed where the filter decodes, and the raw stream where it does not,
+// with a marker distinguishing the two — otherwise a document whose filter this build cannot
+// decode would hash identically to one where the decode produced nothing.
 func ContentDigest(pdf []byte) (string, error) {
 	ctx, err := api.ReadValidateAndOptimize(bytes.NewReader(pdf), model.NewDefaultConfiguration())
 	if err != nil {
@@ -212,8 +239,62 @@ func ContentDigest(pdf []byte) (string, error) {
 		binary.BigEndian.PutUint64(n[:], uint64(len(c)))
 		h.Write(n[:]) // length-prefixed, so two pages cannot merge across the boundary
 		h.Write(c)
+		hashPageResources(ctx.XRefTable, d, h)
 	}
 	return hex.EncodeToString(h.Sum(nil)), nil
+}
+
+// resourceKinds are the page-visible resource categories folded into ContentDigest.
+//
+// XObject holds images and form XObjects — for a scan, the whole visible page. Font decides
+// what the glyphs the content stream names actually look like. The others (ColorSpace,
+// Pattern, Shading, ExtGState) are deliberately out: they are parameters rather than
+// content, and every one of them that changes what is drawn does so through a stream these
+// two already cover.
+var resourceKinds = []string{"Font", "XObject"}
+
+// hashPageResources folds a page's resource streams into h, in a canonical order.
+//
+// Order comes from the resource NAMES, not from object numbers — object numbers change on
+// every pdfcpu rewrite and names do not, which is the same reason ContentDigest hashes the
+// stream rather than the file.
+func hashPageResources(xt *model.XRefTable, page types.Dict, h hash.Hash) {
+	res, _ := xt.DereferenceDict(page["Resources"])
+	if res == nil {
+		return
+	}
+	var n [8]byte
+	for _, kind := range resourceKinds {
+		sub, _ := xt.DereferenceDict(res[kind])
+		if sub == nil {
+			continue
+		}
+		names := make([]string, 0, len(sub))
+		for k := range sub {
+			names = append(names, k)
+		}
+		sort.Strings(names)
+		for _, name := range names {
+			sd, _, err := xt.DereferenceStreamDict(sub[name])
+			if err != nil || sd == nil {
+				continue
+			}
+			h.Write([]byte(kind))
+			h.Write([]byte(name))
+			body := sd.Raw
+			marker := byte(0) // raw: this build could not decode the filter
+			if derr := sd.Decode(); derr == nil {
+				body = sd.Content
+				marker = 1
+			}
+			// The marker matters: without it a document whose filter we cannot decode
+			// hashes the same as one whose decode returned nothing.
+			h.Write([]byte{marker})
+			binary.BigEndian.PutUint64(n[:], uint64(len(body)))
+			h.Write(n[:])
+			h.Write(body)
+		}
+	}
 }
 
 // RemoveAttachment returns the document without the named attachment, leaving it
