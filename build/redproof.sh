@@ -76,6 +76,14 @@ if ! patch -p1 --silent <"$REPO/$patchfile"; then
   exit 1
 fi
 
+# EXPECT is mandatory, and a missing one is a hard error rather than a permissive default.
+if [ -z "${EXPECT:-}" ]; then
+  echo "FAIL: '$name' records no EXPECT token." >&2
+  echo "      A row that only requires a non-zero exit is satisfied by the check having been" >&2
+  echo "      DELETED — see the block below. Add EXPECT=<a string only the real assertion prints>." >&2
+  exit 1
+fi
+
 echo "re-proving '$name' (${TIER:-unknown tier}) — the check below MUST fail…"
 if eval "$PROVE" >"$WORK/out.log" 2>&1; then
   echo "FAIL: with the defect applied, the check still PASSED." >&2
@@ -83,4 +91,24 @@ if eval "$PROVE" >"$WORK/out.log" 2>&1; then
   tail -20 "$WORK/out.log" >&2
   exit 1
 fi
-echo "ok: '$name' still goes red against its own defect"
+
+# THE THIRD FAILURE MODE: red for the wrong reason.
+#
+# This block used to be absent, and its absence is the V1 defect in the file that teaches V1.
+# The harness asserted only that $PROVE exited non-zero — so a check that no longer EXISTS
+# reports "still goes red against its own defect". Measured: `node --test <deleted file>` exits
+# 1, and `empty-state-message`'s patch touches web/style.css rather than the test file, so
+# deleting test/jsdom/theme.test.mjs made this row print ok. Any compile break, syntax error or
+# missing node_modules in the exported tree does the same. (The tier-1 row was safer only by
+# accident: `go test -run <nonexistent>` exits 0.)
+#
+# So the assertion is the TOKEN the real check prints, not the exit status. A guard verified by
+# its own absence is exactly what docs/red-proofs.md exists to stop being possible.
+if ! grep -qF -- "$EXPECT" "$WORK/out.log"; then
+  echo "FAIL: '$name' went red, but not for its own reason." >&2
+  echo "      Expected the check's own assertion to print: $EXPECT" >&2
+  echo "      A non-zero exit alone is also what a DELETED or uncompilable check produces." >&2
+  tail -30 "$WORK/out.log" >&2
+  exit 1
+fi
+echo "ok: '$name' still goes red against its own defect, and said so"

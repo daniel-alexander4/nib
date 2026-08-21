@@ -3,6 +3,7 @@ package nib
 import (
 	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"sort"
 	"strconv"
@@ -35,7 +36,7 @@ func TestVerifyContractIsTrue(t *testing.T) {
 	// hands its document to the running instance on the platform where double-click
 	// is the ordinary way in. A harness that quietly stopped existing would take
 	// that claim with it and no tier would notice.
-	for _, cmd := range []string{"build/jsdomtest.sh", "build/uirepro.sh", "build/pairrepro.sh", "build/mcastrepro.sh", "build/winrepro.sh", "build/dhtlive.sh"} {
+	for _, cmd := range []string{"build/jsdomtest.sh", "build/uirepro.sh", "build/pairrepro.sh", "build/mcastrepro.sh", "build/winrepro.sh", "build/dhtlive.sh", "build/redproof.sh"} {
 		info, err := os.Stat(cmd)
 		if err != nil {
 			t.Errorf("%s is named in the contract but does not exist: %v", cmd, err)
@@ -162,6 +163,44 @@ func TestVerifyContractIsTrue(t *testing.T) {
 		row := "| " + strconv.Itoa(i) + " | " + cmd
 		if !strings.Contains(contract, row) {
 			t.Errorf("the tier table has lost its row %d (%q) — the commands may still be named in prose, which is what made this check pass over a deleted table", i, row)
+		}
+	}
+
+	// The REPLAY SET is counted here, outside the harness that reads it.
+	//
+	// docs/red-proofs.md says in prose that two rows are recorded. Nothing counted the
+	// directory, and `redproof.sh` prints "(none)" and exits 0 on an empty one — so deleting
+	// both pairs left the doc asserting two and the harness reporting no error. That is V2:
+	// a rule inventory whose count lives only inside the thing it describes.
+	//
+	// A floor rather than an equality, because adding a row is the direction this should
+	// move in and should not need a test edit; losing one is the direction that must fail.
+	{
+		rows, err := filepath.Glob("test/redproofs/*.sh")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(rows) < 2 {
+			t.Errorf("test/redproofs holds %d replayable row(s); docs/red-proofs.md says two "+
+				"are recorded, and build/redproof.sh reports no error on an empty directory",
+				len(rows))
+		}
+		for _, r := range rows {
+			body, rerr := os.ReadFile(r)
+			if rerr != nil {
+				t.Fatal(rerr)
+			}
+			// Every row must name the token its check prints. A row without one is
+			// satisfied by the check having been deleted — the defect this file's own
+			// ledger exists to make impossible.
+			if !strings.Contains(string(body), "EXPECT=") {
+				t.Errorf("%s records no EXPECT token, so its replay is satisfied by any "+
+					"non-zero exit — including a check that no longer exists", r)
+			}
+			patch := strings.TrimSuffix(r, ".sh") + ".patch"
+			if _, perr := os.Stat(patch); perr != nil {
+				t.Errorf("%s has no matching .patch: %v", r, perr)
+			}
 		}
 	}
 

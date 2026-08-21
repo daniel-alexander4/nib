@@ -47,6 +47,14 @@ invitation carried. The addresses are an **input** rather than a lookup because 
 never resolve a name on the bootstrap path, and a live seed test is the one place tempted
 to. Without the variable that one test skips and the rest of the harness is unchanged.
 
+And `./build/redproof.sh <name>` replays a recorded red proof: it exports HEAD to a throwaway
+tree, applies the row's defect as a patch, runs the named check and asserts it FAILS **with its
+own assertion's token** — not merely that something exited non-zero, which is also what a
+deleted or uncompilable check produces. `./build/redproof.sh` with no argument lists what is
+recorded. The ledger it backs is `docs/red-proofs.md`, and it is what makes the "proven red at
+least once" sentence below auditable rather than asserted. Not every row is mechanised; the
+ledger says which are.
+
 There is also `./build/winrepro.sh`, which runs the Windows binary under wine to
 check the places `path/filepath` answers differently, and to run a **second
 launch** against a live first one — the single-instance hand-off, on the platform
