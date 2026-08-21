@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"nib/internal/addrscope"
 	"nib/internal/discovery"
 	"nib/internal/p2p"
 	"nib/internal/pairing"
@@ -41,17 +42,48 @@ type lanAnnouncer struct {
 	once sync.Once
 }
 
-// startAnnouncing begins announcing this user's name and the given port.
+// errLoopbackBind reports a listener that is not reachable from the link, so there is
+// nothing truthful to announce about it.
+var errLoopbackBind = errors.New("the armed listener is bound to loopback, so it is not announced")
+
+// startAnnouncing begins announcing this user's name and the port ln is bound to.
 //
 // **It never fails the session.** A host with no usable interface, or a firewall that
 // swallows the group, must still be able to run a ceremony over a typed address — the
 // LAN tier is the first rung of D8's ladder, not a prerequisite for the others. So the
 // error is returned for a diagnostic to report and the caller carries on.
-func startAnnouncing(myCertPEM []byte, port int) (*lanAnnouncer, error) {
+//
+// # It takes the LISTENER, not a port, and that is the fix
+//
+// It used to take an int, so the only fact it could check was that the number was in
+// range. `runSession` passed `portOf(ln)` and nothing anywhere looked at the HOST that
+// port belongs to — so arming with `{"bind":"127.0.0.1:8443"}` broadcast *armed on 8443*
+// on every joined interface every 500 ms while the listener answered only on loopback.
+// Two harms, and the second is the one that does not announce itself: a peer on the link
+// resolves that to `<our LAN address>:8443` and cannot connect, and a user who
+// deliberately bound loopback has their presence — a stable six-word name derived from a
+// never-rotating fingerprint — put on every attached segment anyway.
+//
+// The rule lives HERE rather than at the call site because this is the door (ADR-009).
+// A guard on `runSession` would say nothing about the second caller, and the ladder's
+// later tiers are exactly where a second caller comes from.
+func startAnnouncing(myCertPEM []byte, ln interface{ Addr() net.Addr }) (*lanAnnouncer, error) {
 	name, err := ownName(myCertPEM)
 	if err != nil {
 		return nil, err
 	}
+	if ln == nil {
+		return nil, errors.New("cannot announce a nil listener")
+	}
+	// Before the port, because a loopback bind is a deliberate choice and not an error:
+	// the caller carries on either way, and the two want different words in a diagnostic.
+	//
+	// The listener's RESOLVED address, never the requested bind string — `0.0.0.0:0` is
+	// what the LAN path asks for and the kernel is what says which port it got.
+	if addrscope.Loopback(ln.Addr().String()) {
+		return nil, fmt.Errorf("%w (%s)", errLoopbackBind, ln.Addr())
+	}
+	port := portOf(ln)
 	if port <= 0 || port > 0xffff {
 		return nil, fmt.Errorf("cannot announce port %d", port)
 	}
