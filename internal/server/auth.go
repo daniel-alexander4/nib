@@ -494,7 +494,10 @@ func (s *Server) handleVaultImport(w http.ResponseWriter, r *http.Request) {
 		httpError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	if err := writeFileAtomic(vault.Path(s.configDir), raw); err != nil {
+	// The vault's OWN writer, not this package's same-named one — see
+	// vault.WriteFileAtomicDurable. This write replaces the only copy of the signing
+	// identity, so it gets fsync on the file and on the parent directory.
+	if err := vault.WriteFileAtomicDurable(vault.Path(s.configDir), raw); err != nil {
 		httpError(w, http.StatusInternalServerError, "could not write vault")
 		return
 	}

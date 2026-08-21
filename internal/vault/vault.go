@@ -265,6 +265,9 @@ func OpenSSHAt(dir, keyPath string, passphrase []byte) (*Vault, error) {
 	if err != nil {
 		return nil, err
 	}
+	if err := checkEnvelopeVersion(env.Version); err != nil {
+		return nil, err
+	}
 	if env.Version < 2 || len(env.SSH) == 0 {
 		return nil, ErrNeedsMigration
 	}
@@ -320,6 +323,9 @@ func OpenSSHAt(dir, keyPath string, passphrase []byte) (*Vault, error) {
 func openSSH(dir string, passphrase []byte) (*Vault, error) {
 	env, err := readEnvelope(dir)
 	if err != nil {
+		return nil, err
+	}
+	if err := checkEnvelopeVersion(env.Version); err != nil {
 		return nil, err
 	}
 	if env.Version < 2 || len(env.SSH) == 0 {
@@ -561,6 +567,9 @@ func Validate(raw []byte) error {
 	}
 	if env.Version == 0 || len(env.Cipher) == 0 || len(env.Nonce) == 0 {
 		return errors.New("not a vault backup")
+	}
+	if err := checkEnvelopeVersion(env.Version); err != nil {
+		return err
 	}
 	if env.Version < 2 || len(env.SSH) == 0 {
 		// A v1 password vault parses perfectly and has no key slots at all, so
@@ -897,11 +906,42 @@ func (v *Vault) Save() error {
 }
 
 // save is Save without locking, for callers that already hold v.mu.
+// envelopeVersion is what this build writes, and the highest it will open.
+const envelopeVersion = 2
+
+// checkEnvelopeVersion refuses a vault written by a NEWER Nib.
+//
+// Every gate here was `env.Version < 2` — a floor with no ceiling. A vault carrying
+// Version 3 sailed through, was decrypted as v2, and `save()` then unconditionally rewrote
+// `envelope{Version: 2, …}` — silently downgrading the file and dropping every envelope
+// field this build does not know, because encoding/json discards unknown keys. That is
+// reached by an ordinary user: a downgrade, a second machine, or a vault synced through a
+// shared folder between two versions. The vault holds the only copy of the signing
+// identity, so a silent lossy rewrite of it is the worst shape this package has.
+func checkEnvelopeVersion(v int) error {
+	if v > envelopeVersion {
+		return fmt.Errorf("this vault was written by a newer version of Nib (format %d, "+
+			"this build understands %d) — update Nib rather than opening it here, or it "+
+			"will be rewritten and anything the newer version stored will be lost",
+			v, envelopeVersion)
+	}
+	return nil
+}
+
 func (v *Vault) save() error {
 	plain, err := json.Marshal(v.contents)
 	if err != nil {
 		return err
 	}
+	// Zeroed like every read path does.
+	//
+	// openSSH, OpenSSHAt, Migrate and loadBuiltinSignatures all call zero(plain) with
+	// comments explaining that this buffer carries Identity.KeyPEM — the PDF-signing
+	// private key — and ExternalSigner.P12. save() dropped it on the floor, and save()
+	// runs on every AddRecent, SetSettings, AddImage and AddPinnedPeer, so the heap
+	// accumulated plaintext copies of the signing key in proportion to ordinary UI
+	// activity. The read path's discipline was undone by the write path.
+	defer zero(plain)
 	nonce, ct, err := encrypt(v.key, plain)
 	if err != nil {
 		return err
@@ -970,6 +1010,17 @@ func newGCM(key []byte) (cipher.AEAD, error) {
 // durable, not merely atomic: without them a crash right after the rename can
 // leave a stale or truncated file on disk. The vault holds keys; it gets the
 // full-durability treatment.
+// WriteFileAtomicDurable is writeFileAtomic, exported for the one caller outside this
+// package that writes a VAULT.
+//
+// `internal/server` has a function of the same name with a different contract: it renames
+// atomically and never fsyncs. `handleVaultImport` used it to replace `vault.nib`, so the
+// rename was atomic and the data blocks were not durable — a power loss inside the
+// writeback window leaves the vault present and garbage while the original, the only copy
+// of the identity, is already gone. Two same-named functions with different durability
+// contracts is also how nobody noticed.
+func WriteFileAtomicDurable(path string, data []byte) error { return writeFileAtomic(path, data) }
+
 func writeFileAtomic(path string, data []byte) error {
 	tmp, err := os.CreateTemp(filepath.Dir(path), ".vault-*.tmp")
 	if err != nil {

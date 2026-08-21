@@ -631,3 +631,32 @@ func TestVaultWithRemovedToolbarStyleKeyStillOpens(t *testing.T) {
 		t.Errorf("settings after reopen = %+v, want appearance light and the update check off", s)
 	}
 }
+
+// TestAVaultFromANewerNibIsRefusedRatherThanDowngraded.
+//
+// Every version gate here was `env.Version < 2` — a floor with no ceiling. A vault carrying
+// Version 3 opened, was decrypted as v2, and `save()` then unconditionally rewrote
+// `envelope{Version: 2, …}`, silently downgrading the file and dropping every envelope
+// field this build does not know, because encoding/json discards unknown keys.
+//
+// Reached by an ordinary user: a downgrade, a second machine, or a vault synced through a
+// shared folder between two versions. The vault holds the only copy of the signing
+// identity, so a silent lossy rewrite of it is the worst shape this package has.
+func TestAVaultFromANewerNibIsRefusedRatherThanDowngraded(t *testing.T) {
+	if err := checkEnvelopeVersion(envelopeVersion + 1); err == nil {
+		t.Error("a vault one format version ahead was accepted — it will be decrypted as " +
+			"the current format and rewritten, losing whatever the newer build stored")
+	}
+	// The controls: the current format and every older one must still open, or this is a
+	// refusal to read the user's own vault.
+	for v := 1; v <= envelopeVersion; v++ {
+		if err := checkEnvelopeVersion(v); err != nil {
+			t.Errorf("checkEnvelopeVersion(%d) refused a format this build understands: %v", v, err)
+		}
+	}
+	// And the message has to tell the user what to do, since the fix is theirs.
+	err := checkEnvelopeVersion(envelopeVersion + 1)
+	if err == nil || !strings.Contains(err.Error(), "newer version of Nib") {
+		t.Errorf("the refusal does not name the cause: %v", err)
+	}
+}
