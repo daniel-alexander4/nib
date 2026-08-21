@@ -193,6 +193,16 @@ const (
 // ErrDeclined reports that the receiving user declined a one-way document transfer.
 var ErrDeclined = errors.New("document transfer declined")
 
+// ErrCoSignDeclined reports that the receiving user declined a CO-SIGNATURE.
+//
+// **A sentinel because a decline is an OUTCOME, not a failure**, and the receiving
+// server now has to tell those apart: a connection that produced no outcome leaves the
+// listener armed (P05.S01), and a decline must not, or a peer could re-dial and ask the
+// same user again. Its sibling above has been a sentinel since the transfer path was
+// written; this one was a bare `errors.New("co-signing declined")` at the point of
+// decline, indistinguishable by `errors.Is` from a protocol error one line away.
+var ErrCoSignDeclined = errors.New("co-signing declined")
+
 // Accepter is the receiving side's consent gate for a plain document transfer. Shown
 // the verified peer's SPKI fingerprint and the document, it returns whether to accept
 // (and save) it. Unlike Confirmer this carries no signing — the document may be an
@@ -314,7 +324,7 @@ func coSignExchange(myCertPEM, myKeyPEM, peerFP []byte, peerLabel string, inboun
 		return nil, err
 	}
 	if !accept {
-		return nil, errors.New("co-signing declined")
+		return nil, ErrCoSignDeclined
 	}
 
 	idCert, _, err := sign.ParseIdentity(myCertPEM, myKeyPEM)

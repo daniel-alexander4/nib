@@ -216,6 +216,32 @@ func TestSessionArmReceiveSign(t *testing.T) {
 		t.Errorf("open document has %d signers, want 2", n)
 	}
 
+	// **A completed session SPENDS the arm** — D22's one-session-per-arm, and the
+	// counter-assertion to P05.S01.
+	//
+	// S01 made the accept loop keep accepting when a connection produces no session, so
+	// what now ends the arm is the *outcome*, not the connection. Nothing asserted that
+	// end. A `serveOneSession` that always reported "not served" would leave this
+	// listener armed forever after a finished ceremony and the whole suite would stay
+	// green — the rule needs both arms or it is half a rule.
+	//
+	// Polled, because the accept goroutine disarms after `serveOneSession` returns and
+	// the initiator's result can arrive first.
+	spent := time.Now().Add(5 * time.Second)
+	for {
+		var st sessionStatus
+		sessGet(t, c, ts.URL+"/api/session/status", &st)
+		if !st.Armed {
+			break
+		}
+		if time.Now().After(spent) {
+			t.Fatal("the listener is still armed after a completed co-signing session — " +
+				"one arm has served more than one session, which is the containment the " +
+				"session TRIPWIRE names")
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+
 	// Disarm leaves nothing listening.
 	var off sessionStatus
 	sessDecode(t, write(t, c, csrf, http.MethodPost, ts.URL+"/api/session/disarm", "application/json", nil), &off)
@@ -333,6 +359,26 @@ func TestSessionDeclineLeavesOpenDoc(t *testing.T) {
 	pr.Body.Close()
 	if pr.StatusCode != http.StatusNotFound {
 		t.Errorf("pending-pdf after decline = %d, want 404", pr.StatusCode)
+	}
+
+	// **A DECLINE spends the arm too** — the third arm of P05.S01's rule, and the one
+	// that would otherwise be an asymmetric pair. S01 keeps the listener armed when a
+	// connection produces no session; a decline is not "no session", it is the user's
+	// decision, and leaving the arm open after one lets the peer re-dial and ask the
+	// same person again. `serveOneSession` distinguishes them with `errors.Is` against
+	// `p2p.ErrCoSignDeclined`, and nothing asserted the distinction in either direction.
+	spent := time.Now().Add(5 * time.Second)
+	for {
+		var ds sessionStatus
+		sessGet(t, c, ts.URL+"/api/session/status", &ds)
+		if !ds.Armed {
+			break
+		}
+		if time.Now().After(spent) {
+			t.Fatal("the listener is still armed after the user declined — the peer can " +
+				"re-dial and ask again, and the decline was treated as a failed connection")
+		}
+		time.Sleep(50 * time.Millisecond)
 	}
 }
 
@@ -584,6 +630,26 @@ func TestSessionReceiveTransferDecline(t *testing.T) {
 	sessGet(t, c, ts.URL+"/api/session/status", &st)
 	if st.Received != nil {
 		t.Errorf("a declined transfer reported a saved file: %+v", st.Received)
+	}
+
+	// **A DECLINE spends the arm too** — the third arm of P05.S01's rule, and the one
+	// that would otherwise be an asymmetric pair. S01 keeps the listener armed when a
+	// connection produces no session; a decline is not "no session", it is the user's
+	// decision, and leaving the arm open after one lets the peer re-dial and ask the
+	// same person again. `serveOneSession` distinguishes them with `errors.Is` against
+	// `p2p.ErrDeclined`, and nothing asserted the distinction in either direction.
+	spent := time.Now().Add(5 * time.Second)
+	for {
+		var ds sessionStatus
+		sessGet(t, c, ts.URL+"/api/session/status", &ds)
+		if !ds.Armed {
+			break
+		}
+		if time.Now().After(spent) {
+			t.Fatal("the listener is still armed after the user declined — the peer can " +
+				"re-dial and ask again, and the decline was treated as a failed connection")
+		}
+		time.Sleep(50 * time.Millisecond)
 	}
 }
 

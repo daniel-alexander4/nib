@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"nib/internal/p2p"
@@ -272,9 +273,26 @@ func (se *session) status() sessionStatus {
 // sessionConfirmer is the consent bridge: p2p.Receive calls it after a peer sends a
 // signed document; it surfaces the document for review, parks the request for the
 // UI to accept/decline, and blocks until the user responds (or the timeout declines).
-type sessionConfirmer struct{ s *Server }
+// reached records that a connection put something in front of the local user. It is what
+// decides whether that connection SPENT the arm — see serveOneSession.
+type reached struct{ v atomic.Bool }
+
+// mark is nil-safe on purpose: the DIALING side (`/api/session/initiate`,
+// `/api/session/send`) passes nil because it holds no arm to spend — it is the party that
+// went looking, and nothing on this machine is listening for it.
+func (r *reached) mark() {
+	if r != nil {
+		r.v.Store(true)
+	}
+}
+
+type sessionConfirmer struct {
+	s   *Server
+	saw *reached
+}
 
 func (sc sessionConfirmer) Confirm(peer p2p.SignerAttestation, doc []byte) (bool, string, []byte, error) {
+	sc.saw.mark() // the consent request is about to go on screen
 	// Park the received document for review (served via /api/session/pending-pdf)
 	// rather than replacing the open document — that only changes on accept, in
 	// runSession. A declined or timed-out request leaves the open doc untouched.
@@ -301,12 +319,16 @@ func (sc sessionConfirmer) Confirm(peer p2p.SignerAttestation, doc []byte) (bool
 // Timing out returns p2p.ErrVerificationTimedOut rather than a bare false, so "nobody was
 // at the machine" stays distinguishable from "the words did not match" — which are the
 // same outcome for the session and completely different facts about what happened.
-type sessionVerifier struct{ s *Server }
+type sessionVerifier struct {
+	s   *Server
+	saw *reached
+}
 
 // errVerifyBusy is returned when another session's spoken check is already on screen.
 var errVerifyBusy = errors.New("another co-signing session is already waiting for the spoken check — finish or cancel that one first")
 
 func (sv sessionVerifier) ConfirmVerification(words string) (bool, error) {
+	sv.saw.mark() // the spoken check is about to go on screen
 	ch := make(chan bool, 1)
 	pv := &pendingVerify{words: words, resp: ch}
 	if !sv.s.sess.setVerify(pv) {
@@ -382,9 +404,11 @@ func (se *session) clearVerifyIf(pv *pendingVerify) {
 type sessionAccepter struct {
 	s     *Server
 	label string
+	saw   *reached
 }
 
 func (sa sessionAccepter) Accept(peerFP, doc []byte) (bool, error) {
+	sa.saw.mark() // the transfer consent is about to go on screen
 	ch := make(chan sessionDecision, 1)
 	view := pendingView{Signer: sa.label, Fingerprint: hex.EncodeToString(peerFP), Reason: transferReason(doc), Valid: true}
 	req := &pendingReq{view: view, doc: doc, resp: ch}
@@ -444,52 +468,123 @@ func (s *Server) runSession(ln p2p.Listener, cert, key []byte, label, mode strin
 	// Every teardown in this goroutine names THIS listener. The timer matters as much as
 	// the defer: Stop() runs just after Accept returns, and a timer that fires in that
 	// window would otherwise disarm whatever is armed by then.
+	//
+	// `armedUntil` is the same bound as an ABSOLUTE time, and it exists because the timer
+	// is now stopped and restarted rather than stopped once. A duration cannot be
+	// restarted correctly — resetting to `sessionAcceptTimeout` after a peer connected
+	// and produced nothing would extend the arm window every time somebody dialled, which
+	// is a window an attacker holds open for free.
+	armedUntil := time.Now().Add(sessionAcceptTimeout)
 	timer := time.AfterFunc(sessionAcceptTimeout, func() { s.sess.disarmIf(ln) })
 	defer timer.Stop()
+	defer s.sess.disarmIf(ln)
 
-	// **Accept until a peer completes the TLS handshake, not until someone connects.**
+	// **Accept until a peer completes a SESSION, not until one completes a handshake.**
+	//
 	// tls.Listener.Accept returns on the TCP accept and does no handshake, so ANY
 	// connection consumed the one-shot session: a port scan, a stray dial, a wrong
 	// address — refusal is free for whoever connects and expensive for the user, who has
 	// to notice their session died and arm it again. Handshaking here and looping on
 	// failure means only a peer holding the pinned identity can take the session.
 	//
-	// The loop is bounded by the accept timer above, which closes the listener and makes
-	// Accept return an error — so a peer that fails repeatedly cannot hold this open past
-	// the arm window, and cannot spin it hot for longer than that either.
-	var conn *p2p.Conn
+	// **That argument did not go far enough, and P05.S01 is where it is finished.** The
+	// loop tolerated a failed handshake and then spent the arm on the first COMPLETED
+	// one, whatever came of it: a pinned peer whose connection dropped mid-exchange, or
+	// whose protocol failed, took the session with it and left the user re-arming. The
+	// distinction that matters is not "did somebody connect" but "did a session happen",
+	// and every reason above applies unchanged one step later.
+	//
+	// It stops being a rare annoyance in P05.S02. The ladder races several candidate
+	// addresses that all reach this one listener — a dual-stack peer, or one with wifi
+	// and ethernet, publishes two or three — so several pinned handshakes complete here
+	// and the racer keeps one. Under the old rule, whichever connection this loop
+	// happened to accept first *was* the ceremony, and if the dialer kept a different one
+	// the arm was consumed by a connection nobody was using.
+	//
+	// The arm window still bounds the whole of it: the timer is stopped while a session
+	// is in flight — `disarmIf` declines a pending consent, so firing mid-session would
+	// refuse on the user's behalf — and re-armed for the REMAINDER, never a fresh period.
 	for {
-		c, err := ln.Accept()
-		if err == nil {
-			conn = c
-			break
+		conn, err := ln.Accept()
+		if err != nil {
+			// net.ErrClosed is the listener being gone — the accept timeout fired, or
+			// the session was disarmed. Anything else is THIS peer failing (not the
+			// pinned identity, no handshake, a stray dial) and the session stays armed,
+			// because refusal is free for whoever connects and expensive for the user.
+			if errors.Is(err, net.ErrClosed) {
+				return
+			}
+			continue
 		}
-		// net.ErrClosed is the listener being gone — the accept timeout fired, or the
-		// session was disarmed. Anything else is THIS peer failing (not the pinned
-		// identity, no handshake, a stray dial) and the session stays armed, because
-		// refusal is free for whoever connects and expensive for the user.
-		if errors.Is(err, net.ErrClosed) {
-			s.sess.disarmIf(ln)
+		timer.Stop()
+		served := s.serveOneSession(conn, cert, key, label, mode, myFP)
+		if served {
+			return // the arm is spent on a session, which is what it is for
+		}
+		remaining := time.Until(armedUntil)
+		if remaining <= 0 {
 			return
 		}
+		timer.Reset(remaining)
 	}
-	timer.Stop()
-	defer s.sess.disarmIf(ln)
+}
+
+// serveOneSession runs one accepted connection to its outcome and reports whether that
+// outcome SPENT the arm.
+//
+// True for a completed exchange and true for a DECLINE — a decline is a decision the user
+// made, not a connection that failed, and leaving the listener armed after one would let a
+// peer re-dial and ask the same person again. False for everything else: a dropped
+// channel, a protocol error, a consent that timed out. That is the whole judgment in this
+// function, and it is why the co-signing decline needed a sentinel of its own
+// (`p2p.ErrCoSignDeclined`) rather than the bare error it used to return — `errors.Is`
+// could not otherwise tell it from the protocol error declared one line away.
+func (s *Server) serveOneSession(conn *p2p.Conn, cert, key []byte, label, mode string, myFP []byte) bool {
+	// **Deferred here rather than closed by the caller**, so the connection is released
+	// even if this function panics. `runSession`'s `safe.Recover` catches such a panic and
+	// keeps the desktop process alive, which is exactly the case where a caller-side
+	// `conn.Close()` after the call would be skipped — the shape the pre-P05.S01 loop got
+	// right with a `defer` and the first draft of this split lost.
 	defer conn.Close()
-	// The Channel arrived established: Accept does not return until the peer's
-	// identity is verified, whichever transport it came in on.
+	// **What spends the arm is whether this connection REACHED THE USER**, not which
+	// error it ended with.
+	//
+	// The first draft enumerated outcomes — a decline spends it, anything else does not —
+	// and the enumeration was both wrong and the wrong shape. It missed
+	// `p2p.ErrVerificationDeclined`, which is the MAN-IN-THE-MIDDLE signal: the user
+	// looked at the four words and said they did not match. `internal/p2p/verify.go` says
+	// what that must never become — *"it must never be reported as a network error —
+	// 'could not connect' invites a retry, which is the worst possible advice when someone
+	// is sitting between you"* — and an enumeration that let it fall through to "no
+	// session" made the listener **perform that retry itself**, silently, as many times as
+	// the attacker liked, while the status still read `Armed: true`. Measured at two full
+	// rounds in 0.47 s.
+	//
+	// It also mis-stated the timeouts in the opposite direction: a consent nobody answers
+	// returns `accept=false` with a nil error (`sessionConfirmer.Confirm`), so it arrives
+	// here as a decline — the enumeration's comment claimed it did not.
+	//
+	// Engagement is the honest predicate and it needs no enumeration to stay correct. A
+	// connection abandoned by P05.S02's racer dies at the first frame, having shown the
+	// user nothing, and leaves the arm. A connection that put the spoken check or a
+	// consent request on screen has spent it, however it ended — declined, refused,
+	// unanswered, or dropped after the user had already said yes. The default for an
+	// error nobody anticipated is therefore "spent", which is HEAD's behaviour and the
+	// safe direction; only the narrow, positively-identified never-reached-anyone case
+	// is loosened, which is the whole of what this slice needs.
+	var saw reached
 	ch := conn.Channel
 	if mode == sessionModeReceive {
-		doc, err := p2p.ReceiveDocument(ch, sessionAccepter{s: s, label: label}, myFP, sessionVerifier{s})
+		doc, err := p2p.ReceiveDocument(ch, sessionAccepter{s: s, label: label, saw: &saw}, myFP, sessionVerifier{s, &saw})
 		if err != nil {
-			return // declined, timed out, or a protocol error — nothing saved
+			return saw.v.Load()
 		}
 		s.saveReceived(doc, ch.PeerFP, label)
-		return
+		return true
 	}
-	final, err := p2p.Receive(ch, cert, key, label, sessionConfirmer{s}, sessionVerifier{s})
+	final, err := p2p.Receive(ch, cert, key, label, sessionConfirmer{s, &saw}, sessionVerifier{s, &saw})
 	if err != nil {
-		return // declined, timed out, or a protocol error — nothing to apply
+		return saw.v.Load()
 	}
 	// D10: the co-signed document ARRIVES, so it opens alongside whatever the user
 	// already had open rather than replacing it. Before this, completing a co-signature
@@ -498,6 +593,7 @@ func (s *Server) runSession(ln p2p.Listener, cert, key []byte, label, mode strin
 	// Named, so an arrival is not "Untitled" after a reload — the fifth path-less producer.
 	// handleDocs' own comment names "an arrival" in the population that needed this.
 	s.addDoc(&document{name: arrivalDocName(label), data: final, sig: sign.Verify(final)})
+	return true
 }
 
 // saveReceived writes an accepted one-way transfer under ~/nib, routed by what the
@@ -877,7 +973,7 @@ func (s *Server) handleSessionInitiate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer conn.Close()
-	final, err := p2p.Initiate(conn.Channel, signed, myFP, sessionVerifier{s})
+	final, err := p2p.Initiate(conn.Channel, signed, myFP, sessionVerifier{s, nil})
 	if err != nil {
 		httpError(w, http.StatusBadGateway, "co-signing did not complete: "+err.Error())
 		return
@@ -952,7 +1048,7 @@ func (s *Server) handleSessionSend(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer conn.Close()
-	if err := p2p.SendDocument(conn.Channel, pdfBytes, myFP, sessionVerifier{s}); err != nil {
+	if err := p2p.SendDocument(conn.Channel, pdfBytes, myFP, sessionVerifier{s, nil}); err != nil {
 		if errors.Is(err, p2p.ErrDeclined) {
 			writeJSON(w, sendResult{Sent: false, Declined: true})
 			return
