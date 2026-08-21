@@ -5,6 +5,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 	"unicode"
 
 	"github.com/pdfcpu/pdfcpu/pkg/api"
@@ -367,30 +368,142 @@ func TestNoBlockIndentEverExceedsTheClamp(t *testing.T) {
 		t.Fatalf("maxBlockIndent %.0f is not below contentW %.0f — the clamp cannot bound "+
 			"the wrap budget it exists for", maxBlockIndent, contentW)
 	}
-	// Both containers must clamp, and the arithmetic must actually bite: an indent that
-	// never reaches the clamp would make this pass over a bound nothing enforces.
+
+	// **This test used to reimplement the clamp and never call the renderer.**
+	//
+	// It walked `indent += step` in its own loop, applied `if indent > maxBlockIndent`
+	// itself, and asserted the result — so it proved that the arithmetic written in the test
+	// clamps. Deleting either clamp in mdpdf.go left it green, which is the whole of what it
+	// existed to catch. It now renders.
 	for _, c := range []struct {
-		name string
-		step float64
-	}{{"list", listIndent}, {"quote", quoteIndent}} {
-		levels := int(contentW/c.step) + 2
-		if float64(levels)*c.step <= maxBlockIndent {
-			t.Fatalf("%s: %d levels reaches only %.0f, which is under the clamp — the "+
-				"stimulus does not exercise it", c.name, levels, float64(levels)*c.step)
-		}
-		indent := 0.0
-		for i := 0; i < levels; i++ {
-			indent += c.step
-			if indent > maxBlockIndent {
-				indent = maxBlockIndent
+		name   string
+		step   float64
+		source func(int) string
+	}{
+		{"quote", quoteIndent, func(n int) string {
+			// A PARAGRAPH, not a sentence. One rune per line at 44 runes is 44 lines, which
+			// still fits on one page — so a one-sentence fixture leaves the page count flat
+			// and the check green with the clamp deleted. Measured: with 20 sentences the
+			// same input renders 1 page clamped and 17 unclamped.
+			return strings.Repeat("> ", n) +
+				strings.Repeat("the quick brown fox jumps over the lazy dog. ", 20) + "\n"
+		}},
+		{"list", listIndent, func(n int) string {
+			var b strings.Builder
+			// Only the DEEPEST item carries the paragraph. A first draft gave every level
+			// one, so the deep case had 28 paragraphs against the control's 2 and was
+			// several times longer for a reason that has nothing to do with the clamp — it
+			// failed against correct code, which is the confound this note exists to stop
+			// being reintroduced.
+			for i := 0; i < n-1; i++ {
+				b.WriteString(strings.Repeat("  ", i) + "- x\n")
 			}
+			b.WriteString(strings.Repeat("  ", n-1) + "- " +
+				strings.Repeat("the quick brown fox jumps over the lazy dog. ", 20) + "\n")
+			return b.String()
+		}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			// Deep enough that an UNCLAMPED indent would exceed the content width — the
+			// stimulus, asserted rather than assumed.
+			levels := int(contentW/c.step) + 2
+			if float64(levels)*c.step <= maxBlockIndent {
+				t.Fatalf("%d levels reaches only %.0f, which is under the clamp — the "+
+					"stimulus does not exercise it", levels, float64(levels)*c.step)
+			}
+
+			out, err := Convert([]byte(c.source(levels)))
+			if err != nil {
+				t.Fatalf("the renderer refused %d levels of nesting: %v", levels, err)
+			}
+			if len(out) == 0 {
+				t.Fatal("no output")
+			}
+
+			// The observable harm, not the arithmetic. Past the clamp wrapWords has a
+			// non-positive budget and splitWord emits ONE RUNE PER LINE for the rest of the
+			// document. The shallow render is the control: whatever a page costs, the deep
+			// one must not cost several times more.
+			//
+			// **The old comment here said the page-count harm was not reproducible for
+			// lists.** It was reproducible for both; the fixture was a single sentence, and
+			// 44 runes on 44 lines still fit one page. With a paragraph, deleting the quote
+			// clamp takes the same input from 1 page to 17 — measured.
+			shallow, err := Convert([]byte(c.source(2)))
+			if err != nil {
+				t.Fatal(err)
+			}
+			deepPages, shallowPages := pageCount(t, out), pageCount(t, shallow)
+			if deepPages > shallowPages*4 {
+				t.Errorf("%d levels of nesting produced %d page(s) against %d for two levels "+
+					"— the wrap budget went non-positive and the text is being emitted one "+
+					"rune per line", levels, deepPages, shallowPages)
+			}
+		})
+	}
+}
+
+// TestAbsurdNestingIsRefusedRatherThanParsedForMinutes.
+//
+// goldmark's parser is super-linear in container nesting depth. Measured on a file of
+// nothing but nested list markers: 500 levels parse in 0.2s, 1000 in 1.4s, 2000 in 14s —
+// while RENDERING all three takes 50–90ms and grows linearly, and a FLAT list of the same
+// 2000 items parses in 54ms. So the cost is nesting, not size, and it is not in this
+// package. mdpdf renders Markdown a stranger sent (the GUI import, `nib office`, and other
+// projects importing this package), so a 30 KB file that hangs for three minutes with no
+// cancel is an outage; an error naming the reason is strictly better than a wait.
+func TestAbsurdNestingIsRefusedRatherThanParsedForMinutes(t *testing.T) {
+	deep := func(n int) []byte {
+		var b strings.Builder
+		for i := 0; i < n; i++ {
+			b.WriteString(strings.Repeat("  ", i) + "- x\n")
 		}
-		if indent > maxBlockIndent {
-			t.Errorf("%s indent reached %.0f past a clamp of %.0f", c.name, indent, maxBlockIndent)
-		}
-		if contentW-indent <= 0 {
-			t.Errorf("%s: the wrap budget is %.0f — splitWord emits one rune per line",
-				c.name, contentW-indent)
+		return []byte(b.String())
+	}
+
+	// STIMULUS: a document just under the cap still renders, and quickly. Without this a
+	// refusal that fired on everything would satisfy the assertion below.
+	start := time.Now()
+	if _, err := Convert(deep(maxNestDepth / 2)); err != nil {
+		t.Fatalf("a document nested %d deep was refused: %v", maxNestDepth/2, err)
+	}
+	if el := time.Since(start); el > 20*time.Second {
+		t.Errorf("a document under the cap took %s — the cap is not below the range where "+
+			"the parser's cost explodes", el.Round(time.Millisecond))
+	}
+
+	// The refusal, and it must arrive FAST: the whole point is not paying the parse.
+	start = time.Now()
+	_, err := Convert(deep(maxNestDepth * 8))
+	if err == nil {
+		t.Fatalf("a document nested %d deep was accepted", maxNestDepth*8)
+	}
+	if el := time.Since(start); el > 5*time.Second {
+		t.Errorf("the refusal took %s — it is happening after the parse, which is the cost "+
+			"it exists to avoid", el.Round(time.Millisecond))
+	}
+	if !strings.Contains(err.Error(), "nests containers") {
+		t.Errorf("the error does not say why: %v", err)
+	}
+
+	// Blockquotes are the other container, and they are counted differently (markers, not
+	// spaces), so they need their own row.
+	if _, err := Convert([]byte(strings.Repeat("> ", maxNestDepth*2) + "x\n")); err == nil {
+		t.Error("a blockquote nested past the cap was accepted — the marker arm of the " +
+			"depth count is not reached")
+	}
+
+	// And the controls, because a refusal that fires on ordinary documents is worse than
+	// the hang. An indented code block is spaces without nesting; a normal outline is a
+	// handful of levels.
+	for name, src := range map[string]string{
+		"an indented code block": "        func main() {}\n",
+		"a three-level outline":  "- a\n  - b\n    - c\n",
+		"a quoted quote":         "> > quoted\n",
+		"a deep but sane list":   strings.Repeat("  ", 20) + "- x\n",
+	} {
+		if _, err := Convert([]byte(src)); err != nil {
+			t.Errorf("%s was refused: %v", name, err)
 		}
 	}
 }

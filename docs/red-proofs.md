@@ -582,3 +582,29 @@ recorded as proven against a test that never read a font.
 no-opped and the badge kept the state a previous test had left. Rewritten as a scan over
 every jsdom fixture, with the vocabulary read out of `internal/sign/verify.go` rather than
 listed in the test, because a list written in a test agrees with itself.
+
+## v1.117.13 — mdpdf: a clamp test that never called the renderer
+
+| Row | The defect restored | The check that went red |
+| --- | --- | --- |
+| the list clamp | `mdpdf.go`'s list clamp deleted | `…/list` only |
+| the quote clamp | `mdpdf.go`'s quote clamp deleted | `…/quote` only |
+| the nesting refusal | `refuseAbsurdNesting` call removed | `TestAbsurdNestingIsRefusedRatherThanParsedForMinutes` |
+| — its quote arm | the `'>'` case removed from the depth count | same |
+| — its bound | `maxNestDepth` set to 2 | same, via the controls |
+
+`TestNoBlockIndentEverExceedsTheClamp` walked `indent += step`, applied
+`if indent > maxBlockIndent` **in its own loop**, and asserted the result — proving that the
+arithmetic written in the test clamps. Both real clamps could be deleted with it green. It
+now renders, and each deletion fails exactly its own subtest.
+
+Two measurement corrections while building it. The test's own comment said the page-count
+harm was *"NOT reproducible for lists"*; it is reproducible for both — the fixture was a
+single sentence, and 44 runes on 44 lines still fit one page. With a paragraph, deleting the
+quote clamp takes the same input from **1 page to 17**. And the first list fixture gave every
+level its own paragraph, so the deep case had 28 against the control's 2 and failed against
+correct code — a confound, not a finding.
+
+**Overturned:** mdpdf's "unbounded recursion". No stack overflow at 50,000 levels of quote,
+list, emphasis or bracket nesting; goldmark bounds it. What the probe found instead is on the
+next row.
