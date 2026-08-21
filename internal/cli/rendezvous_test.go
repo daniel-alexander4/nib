@@ -46,8 +46,13 @@ func TestTheVerdictNeverContradictsTheReportAboveIt(t *testing.T) {
 			wantCode: 1, want: "not blocking UDP", notWant: "outbound UDP is blocked",
 		},
 		{
+			// Exit 1, changed at v1.116.12. The diagnostic could not establish the fact it
+			// was run to establish, and 0 reported that to a script as a pass. The
+			// self-test arm already treats the same shape as non-zero, in terms: "the mode
+			// whose entire purpose is to prove the publish path works must be able to say
+			// that it didn't". This row had pinned the old code.
 			name: "reachable, nothing observed", st: rendezvous.Stats{Nodes: 20, Observed: 0},
-			wantCode: 0, want: "nothing reported our address back",
+			wantCode: 1, want: "nothing reported our address back",
 		},
 		{
 			// The defect: Observed counts USABLE REPLIES, not agreement. Under a symmetric
