@@ -729,3 +729,16 @@ them; the fifth is one I nearly shipped in the fix itself.
 | Defect reintroduced | What it said | Check that fired |
 | --- | --- | --- |
 | **`a.WithZone("")` removed from `addrscope.Routable`** *(replayable: `zone-bypasses-reserved`)* | `::c0a8:101%eth0 is Routable but ::c0a8:101 is not — the same address, and the only difference is a zone. 192.168.1.1 inside ::/96` and `Target accepts ::c0a8:101%eth0:5000 — a candidate record naming it would be sealed, published, opened and dialled` | `TestAZoneCannotSmuggleAnAddressPastTheReservedTable`. Each case carries its bare form as a **control**, because a table that refused everything would pass the zoned assertion and break every tier that ends in a dialable address; and the test asserts the other direction too — a zone on a genuinely global address must still be dialable, or stripping is indistinguishable from disqualifying |
+
+## v1.117.27 — P05.S04 T02-T04, the candidate record carries its transport
+
+| Defect reintroduced | What it said | Check that fired |
+| --- | --- | --- |
+| **The transport chunk dropped from `preimage()`** | four round-trip tests fail together — `TestACandidateRecordSurvivesThePublishRoundTrip`, `TestAnInvitedPartyCannotPublishAsAnother`, `TestASealOpensRegardlessOfSeq`, `TestACandidateFromAnotherCeremonyIsRefused` | the canonical re-encode at the end of `parseCandidate` does the work: a plaintext whose grammar differs from what `preimage()` writes cannot equal the bytes consumed, which is the same property that makes the encoding bijective |
+| **The transport range check removed** | `transport 2 refused with "this is not a candidate record this version of Nib understands", which does not name the field` — and the same for 7, 255 and 256 | `TestAnUnknownTransportByteIsRefusedNotDefaulted`. **Written because removing the check left the package GREEN**: the canonical re-encode does eventually refuse such a record, but as a non-canonical plaintext, so the refusal pointed at the wrong thing. 256 is in the table because it narrows to 0 and would read as TCP — a byte an attacker picked, silently becoming the conservative default, which is exactly what ADR-010 says an enumeration exists to prevent |
+| **The version check moved back to `Verify` from `parseCandidate`** | `a version-skewed record was refused as "this is not a candidate record this version of Nib understands: version 3"; want ErrVersion, naming the version the record carries and the one this build writes` | `TestAVersionSkewedRecordSaysSoInsteadOfAccusingThePeer`, **tightened in the same change**: it accepted `ErrVersion` OR `ErrCandidateFormat`, and the second is precisely the outcome T03 removed, so it could not tell the fix from its absence. Its body was also v1-shaped against a v2 parser, which would have kept it passing on a grammar mismatch wearing a version number |
+
+**Measured at the bump**, because the margin is now the thing to watch: 8 IPv4 candidates seal to
+**701 bytes** (was 574) and the IPv6 worst case to **932 of 996** (was 806). Headroom fell 190 → 64
+and the IPv6 endpoint ceiling fell 11 → 8, so the count cap and the byte cap are now coincident for
+IPv6. The next axis added to this record wants a cheaper encoding, not another chunk.

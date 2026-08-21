@@ -14,7 +14,6 @@ import (
 
 	"crypto/rand"
 	"encoding/hex"
-	"net/netip"
 	"nib/internal/ceremony"
 	"nib/internal/rendezvous"
 	"nib/internal/sign"
@@ -530,8 +529,19 @@ func runSelfTest(ctx context.Context, out io.Writer, rz *rendezvous.Server, self
 	}
 	rec := ceremony.CandidateRecord{
 		CeremonyID: inv.ID, Hop: hop,
+		// **Five minutes is right for a self-test and WRONG for a ceremony**, and the
+		// distinction is worth a line because this is the only CandidateRecord anyone can
+		// copy. Here the publish and the fetch are the next two statements, so any margin
+		// does. A real ceremony's record must outlive the PEER's whole race — the connect
+		// deadline plus the publish and fetch budgets at each end — and 300 s flat is
+		// exactly the deadline with zero margin, so the record expires while the peer is
+		// still reading it.
 		Expires: time.Now().Add(5 * time.Minute),
-		Addrs:   []netip.AddrPort{target},
+		// The transport is part of the endpoint now (ADR-010). This self-test never dials
+		// what it publishes, so there is no true answer to give — QUIC because that is what
+		// the rendezvous socket is, and the round trip below cares only that the value
+		// survives sealing and opening unchanged.
+		Addrs: []ceremony.Endpoint{{Addr: target, Transport: ceremony.TransportQUIC}},
 	}
 	if err := rec.Sign(certPEM, keyPEM); err != nil {
 		fmt.Fprintf(out, "  sign: %v\n", err)
