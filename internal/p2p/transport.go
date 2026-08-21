@@ -289,7 +289,14 @@ func Listen(addr string, identityCertPEM, identityKeyPEM, pinnedSPKI []byte) (Li
 	if err != nil {
 		return nil, err
 	}
-	return &tlsListener{ln: ln, done: make(chan struct{})}, nil
+	return &tlsListener{
+		ln:   ln,
+		done: make(chan struct{}),
+		// Built HERE and not in start(), so Close can read them without racing the
+		// first Accept. They are the listener's, not the accept loop's.
+		ready: make(chan *Conn, maxConcurrentHandshakes),
+		sem:   make(chan struct{}, maxConcurrentHandshakes),
+	}, nil
 }
 
 // tlsListener adapts a TLS listener to Listener. The handshake, its timeout, and what
@@ -330,7 +337,25 @@ func (l *tlsListener) Close() error {
 	}
 	l.mu.Unlock()
 	close(l.done)
-	return l.ln.Close()
+	err := l.ln.Close()
+	// Drain what the handshake goroutines queued. `ready` is buffered since P05.S02, so
+	// a completed connection can be sitting in it when the session ends; nothing else
+	// will ever take it.
+	//
+	// **The residual is declared rather than closed**: a goroutine that wins the race
+	// between `<-l.done` and the buffered send in the same instant as this drain leaves
+	// one connection queued. It is bounded by the buffer, it costs one fd until the
+	// process reclaims it, and closing it deterministically would mean blocking Close
+	// until every handshake goroutine has returned — on a path the user reaches by
+	// pressing Cancel.
+	for {
+		select {
+		case c := <-l.ready:
+			c.Close()
+		default:
+			return err
+		}
+	}
 }
 
 func (l *tlsListener) setCloseErr(err error) {
@@ -393,11 +418,7 @@ func (l *tlsListener) Accept() (*Conn, error) {
 
 // start launches the accept loop once.
 func (l *tlsListener) start() {
-	l.once.Do(func() {
-		l.ready = make(chan *Conn)
-		l.sem = make(chan struct{}, maxConcurrentHandshakes)
-		go l.loop()
-	})
+	l.once.Do(func() { go l.loop() })
 }
 
 // maxConcurrentHandshakes bounds the in-flight handshakes.
@@ -453,9 +474,50 @@ func (l *tlsListener) loop() {
 			if herr != nil {
 				return // not the pinned peer, or it never spoke — dropped, not surfaced
 			}
+			// **The wait to be ACCEPTED is bounded, and that is P05.S02.**
+			//
+			// `ready` USED TO BE unbuffered, and only the server's single arm loop reads
+			// it, so a completed handshake parked here until somebody took it. The
+			// semaphore slot is released by the defer above — which does not run until
+			// this select resolves — so a parked connection held one of
+			// `maxConcurrentHandshakes` for as long as it waited.
+			//
+			// **Closing the connection from the far end does not end that wait**: a
+			// goroutine blocked on a channel send does not observe its socket dying, and
+			// `handshake` cleared the read deadline before returning. Until P05.S03 that
+			// was unreachable from our own dialer — `dialAny` is serial, so exactly one
+			// connection ever completed a handshake. A racing dialer completes all of
+			// them against a dual-stack peer, keeps one, and the rest would sit here
+			// holding slots for the whole ceremony: seven of sixteen, half the pool this
+			// semaphore's own doc sizes against an attacker, spent on ourselves.
+			//
+			// **The hand-off is BUFFERED, which is the fix rather than a timeout.**
+			// Bounding the park at `handshakeTimeout` was the first attempt and it only
+			// shortened the hold to 30 s; the slot is what matters, and a queued
+			// connection needs neither a goroutine nor a slot. `ready` is buffered to
+			// `maxConcurrentHandshakes`, so the send always completes, the deferred
+			// release runs immediately, and a queued connection costs one fd — bounded
+			// by the buffer. A queued connection whose peer has closed it is harmless:
+			// the accept loop takes it, its first read fails at once, and the arm is not
+			// spent (P05.S01).
 			select {
 			case l.ready <- conn:
+				// Buffered, so this does not block and the slot is released at once.
 			case <-l.done:
+				conn.Close()
+			default:
+				// The queue is full: `maxConcurrentHandshakes` connections are already
+				// waiting for a serial accept loop that serves one session. This one is
+				// not going to be served, and holding it would cost the slot that lets
+				// the NEXT peer handshake at all.
+				//
+				// **What is dropped here is a PINNED peer's connection**, not a stranger's
+				// — nothing else can reach this line, because a failed handshake returned
+				// above. That sounds worse than it is and the argument is worth stating:
+				// the only thing that can fill this queue is a peer connecting far faster
+				// than one session can be served, which is our own racer (P05.S03) and is
+				// bounded well below the buffer. A genuine peer that is dropped sees a
+				// closed connection and redials, against a listener that is still armed.
 				conn.Close()
 			}
 		}()
