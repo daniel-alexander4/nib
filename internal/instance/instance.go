@@ -28,6 +28,8 @@ import (
 	"os"
 	"path/filepath"
 	"time"
+
+	"nib/internal/addrscope"
 )
 
 // Name is the record's filename inside the config directory — the same directory the
@@ -201,14 +203,11 @@ func Probe(rec Record) bool {
 	// tampered or hand-edited record must not turn a probe into an outbound request to
 	// somewhere else entirely — nib is never network-exposed, and that includes as a
 	// client.
-	host, _, err := net.SplitHostPort(rec.Addr)
-	if err != nil {
+	if _, _, err := net.SplitHostPort(rec.Addr); err != nil {
 		return false
 	}
-	if ip := net.ParseIP(host); ip == nil || !ip.IsLoopback() {
-		if host != "localhost" {
-			return false
-		}
+	if !addrscope.Loopback(rec.Addr) {
+		return false
 	}
 	req, err := http.NewRequest(http.MethodGet, "http://"+rec.Addr+"/api/instance", nil)
 	if err != nil {

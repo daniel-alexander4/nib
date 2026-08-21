@@ -14,7 +14,6 @@ import (
 	"io"
 	"io/fs"
 	"log"
-	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -26,6 +25,8 @@ import (
 	"nib/internal/pdfops"
 	"nib/internal/sign"
 	"nib/internal/vault"
+
+	"nib/internal/addrscope"
 )
 
 // maxPDFBytes caps how large a PDF the server will read or accept on save.
@@ -1230,26 +1231,21 @@ func loopbackOnly(next http.Handler) http.Handler {
 }
 
 // peerIsLoopback reports whether the connection's remote address is a loopback IP.
+//
+// A remote address always carries a port and is always a literal, so the name arm of
+// addrscope.Loopback is unreachable here — a peer cannot present itself as "localhost".
 func peerIsLoopback(remoteAddr string) bool {
-	host, _, err := net.SplitHostPort(remoteAddr)
-	if err != nil {
-		host = remoteAddr
-	}
-	ip := net.ParseIP(host)
-	return ip != nil && ip.IsLoopback()
+	return addrscope.Loopback(remoteAddr)
 }
 
-// hostIsLoopback reports whether the request's Host header names the loopback
-// interface — the set nib binds and accepts, kept in sync with loopbackBind.
+// hostIsLoopback reports whether the request's Host header names the loopback interface.
+//
+// Same rule as the peer check and as loopbackBind, which is the point: they used to be
+// three rules and disagreed about 127.0.0.2, so loopbackOnly — which requires both of the
+// first two — refused a request that each half separately called loopback. See
+// addrscope.Loopback.
 func hostIsLoopback(host string) bool {
-	if h, _, err := net.SplitHostPort(host); err == nil {
-		host = h
-	}
-	switch host {
-	case "127.0.0.1", "localhost", "::1":
-		return true
-	}
-	return false
+	return addrscope.Loopback(host)
 }
 
 func writeJSON(w http.ResponseWriter, v any) {

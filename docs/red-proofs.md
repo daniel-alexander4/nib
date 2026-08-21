@@ -467,3 +467,17 @@ The middle row is the one the old guard could not have caught. It asserted the *
 each of eight branches printed; it now asserts each call routes through the single door,
 which is the property. The floor of eight is unchanged and is what caught the refactor
 in the first place — it went red the moment the branches became calls.
+
+## v1.117.7 — one loopback rule, and the site that ignores the port
+
+| Row | The defect restored | The check that went red |
+| --- | --- | --- |
+| `same-site` | `case "same-origin", "same-site", "none"` | `TestASubResourceGetCannotReachTheVault` — a new row: another app on another loopback port |
+| bracketed v6 | the bracket strip removed | `TestLoopbackIsOneRule` |
+| the name arm | `==` replaced by `HasSuffix` / `HasPrefix` / `Contains`, three separate runs | same |
+
+The name-arm row is the one that needed a second attempt. The first mutation was `HasSuffix`
+against a table row reading `localhost.evil.example` — which is a *prefix* case, so the check
+stayed green and the mutation looked survivable. The table was missing `evil.localhost`
+entirely. A mutation that does not go red is a statement about the test, and the first reading
+of it was wrong.
