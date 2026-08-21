@@ -2,6 +2,7 @@ package p2p
 
 import (
 	"bytes"
+	"context"
 	"encoding/hex"
 	"testing"
 	"time"
@@ -123,7 +124,7 @@ func TestInitiateRejectsReplayedCoSignature(t *testing.T) {
 			recvErr <- writeFrame(conn.Stream, replay)
 		}()
 
-		conn, err := tr.dial(ln.Addr().String(), aCert, aKey, bFP, 10*time.Second)
+		conn, err := tr.dial(context.Background(), ln.Addr().String(), aCert, aKey, bFP, 10*time.Second)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -164,7 +165,7 @@ func TestSessionRoundTrip(t *testing.T) {
 			recvErr <- e
 		}()
 
-		conn, err := tr.dial(ln.Addr().String(), aCert, aKey, bFP, 10*time.Second) // A accepts B
+		conn, err := tr.dial(context.Background(), ln.Addr().String(), aCert, aKey, bFP, 10*time.Second) // A accepts B
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -220,7 +221,7 @@ func TestSessionReceiverDeclines(t *testing.T) {
 			recvErr <- e
 		}()
 
-		conn, err := tr.dial(ln.Addr().String(), aCert, aKey, bFP, 10*time.Second)
+		conn, err := tr.dial(context.Background(), ln.Addr().String(), aCert, aKey, bFP, 10*time.Second)
 		if err != nil {
 			t.Fatal(err)
 		}

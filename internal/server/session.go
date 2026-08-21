@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
@@ -56,8 +57,7 @@ const (
 	// (The handshake bound moved to internal/p2p's handshakeTimeout in P02.S05, value
 	// unchanged: what must be bounded differs per transport, and the server no longer
 	// sees a handshake at all.)
-	sessionConsentTimeout = 5 * time.Minute  // decline if the user never responds
-	sessionDialTimeout    = 30 * time.Second // give up establishing the outbound connection
+	sessionConsentTimeout = 5 * time.Minute // decline if the user never responds
 )
 
 // session is the receive side of a live session: an armed, routable, pinned-peer-only
@@ -1124,24 +1124,21 @@ func connectFailure(err error) string {
 	return "could not connect to peer: " + err.Error()
 }
 
-func dialPeer(transport, address string, cert, key, peerFP []byte) (*p2p.Conn, error) {
-	return dialPeerWithin(transport, address, cert, key, peerFP, sessionDialTimeout)
-}
-
 // dialPeerWithin is dialPeer with the timeout named by the caller.
 //
-// The LAN walk passes a much shorter one — see lanDialTimeout. sessionDialTimeout is sized
-// for an address a user TYPED, where patience across a slow internet path is the point; a
-// candidate heard on the local segment either answers in milliseconds or is not there, and
-// the difference is what an on-link flood multiplies.
-func dialPeerWithin(transport, address string, cert, key, peerFP []byte, timeout time.Duration) (*p2p.Conn, error) {
+// Every caller passes `lanDialTimeout`. **It used to say something else** — that this was the
+// short budget beside a 30 s `sessionDialTimeout` "sized for an address a user TYPED" — and that
+// was false for as long as it stood: `sessionDialTimeout` was reachable only through `dialPeer`,
+// which had no callers at all. Both are deleted (P05.S03); the per-dial floor is
+// `lanDialTimeout` and the whole-race budget is `connectDeadline`.
+func dialPeerWithin(ctx context.Context, transport, address string, cert, key, peerFP []byte, timeout time.Duration) (*p2p.Conn, error) {
 	if err := checkTransport(transport); err != nil {
 		return nil, err
 	}
 	if transport == transportQUIC {
-		return p2p.QUICDial(address, cert, key, peerFP, timeout)
+		return p2p.QUICDial(ctx, address, cert, key, peerFP, timeout)
 	}
-	return p2p.Dial(address, cert, key, peerFP, timeout)
+	return p2p.Dial(ctx, address, cert, key, peerFP, timeout)
 }
 
 func listenPeer(transport, bind string, cert, key, peerFP []byte) (p2p.Listener, error) {

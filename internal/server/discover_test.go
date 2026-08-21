@@ -553,7 +553,7 @@ func TestOneHostCannotFloodTheCandidateList(t *testing.T) {
 	}
 	if len(got) > maxLANCandidates {
 		t.Errorf("browsePeers returned %d candidates from ONE host; the cap is %d. At "+
-			"sessionDialTimeout each that is %v of a wedged /api/session/initiate",
+			"lanDialTimeout each that is %v of a wedged /api/session/initiate",
 			len(got), maxLANCandidates, time.Duration(len(got))*lanDialTimeout)
 	}
 	// The control, and it is the whole reason the cap is not 1: two hosts claiming one

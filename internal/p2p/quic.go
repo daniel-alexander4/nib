@@ -71,7 +71,16 @@ func quicConfig() *quic.Config {
 // must all be the same socket. Nothing is attached to the mux's DHT view yet — P04 does
 // that — and wiring it now costs one expression and means P04 attaches a DHT to a
 // socket the session is already sharing, instead of changing this code to make room.
-func QUICDial(addr string, identityCertPEM, identityKeyPEM, pinnedSPKI []byte, timeout time.Duration) (*Conn, error) {
+// **ctx cancels the DIAL and nothing after it (P05.S03).** quic-go builds the connection
+// with `context.WithoutCancel(ctx)` (`quic-go/transport.go`, in `doDial`), so the dial
+// context governs establishment only and an established connection is not tied to it. A
+// racer may therefore cancel every loser without touching the winner.
+//
+// **No goroutine outlives a successful dial**, and that is a property rather than an
+// observation: `tr.Dial` and `OpenStreamSync` both RETURN on cancellation, so the three
+// error paths below are the whole of the cancellation handling. A watcher goroutine
+// attached to ctx.Done() would reach into the winner and tear down its mux and socket.
+func QUICDial(ctx context.Context, addr string, identityCertPEM, identityKeyPEM, pinnedSPKI []byte, timeout time.Duration) (*Conn, error) {
 	cfg, err := SessionTLS(identityCertPEM, identityKeyPEM, pinnedSPKI, false)
 	if err != nil {
 		return nil, err
@@ -101,7 +110,9 @@ func QUICDial(addr string, identityCertPEM, identityKeyPEM, pinnedSPKI []byte, t
 		}
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	// The caller's ctx, bounded by the per-dial floor. Derived rather than replaced: the
+	// floor is what stops a deadline-less context from becoming an unbounded dial.
+	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	qc, err := tr.Dial(ctx, remote, cfg, quicConfig())
 	if err != nil {

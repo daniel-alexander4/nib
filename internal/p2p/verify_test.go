@@ -2,6 +2,7 @@ package p2p
 
 import (
 	"bytes"
+	"context"
 	"crypto/rand"
 	"crypto/sha256"
 	"crypto/tls"
@@ -67,7 +68,7 @@ func livePair(t *testing.T, tr transport, run func(initiator bool, ch Channel, m
 		rc <- res{s, e}
 	}()
 
-	conn, err := tr.dial(ln.Addr().String(), aCert, aKey, bFP, 10*time.Second)
+	conn, err := tr.dial(context.Background(), ln.Addr().String(), aCert, aKey, bFP, 10*time.Second)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -156,7 +157,7 @@ func TestAManInTheMiddleSeesTwoDifferentStrings(t *testing.T) {
 		s, _ := verificationExchange(conn.Channel, false, mFP)
 		legA <- s
 	}()
-	connA, err := Dial(lnM.Addr().String(), aCert, aKey, mFP, 5*time.Second)
+	connA, err := Dial(context.Background(), lnM.Addr().String(), aCert, aKey, mFP, 5*time.Second)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -184,7 +185,7 @@ func TestAManInTheMiddleSeesTwoDifferentStrings(t *testing.T) {
 		s, _ := verificationExchange(conn.Channel, false, bFP)
 		legB <- s
 	}()
-	connB, err := Dial(lnB.Addr().String(), mCert, mKey, bFP, 5*time.Second)
+	connB, err := Dial(context.Background(), lnB.Addr().String(), mCert, mKey, bFP, 5*time.Second)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -255,7 +256,7 @@ func TestARevealAfterSeeingIsRejectedBeforeAnyStringExists(t *testing.T) {
 		_ = writeFrame(conn.Stream, chosen) // …and reveal something else.
 	}()
 
-	conn, err := Dial(ln.Addr().String(), aCert, aKey, bFP, 5*time.Second)
+	conn, err := Dial(context.Background(), ln.Addr().String(), aCert, aKey, bFP, 5*time.Second)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -415,7 +416,7 @@ func TestAnOversizedVerificationFrameIsRefusedBeforeAllocating(t *testing.T) {
 		declared <- werr == nil
 	}()
 
-	conn, err := Dial(ln.Addr().String(), aCert, aKey, bFP, 5*time.Second)
+	conn, err := Dial(context.Background(), ln.Addr().String(), aCert, aKey, bFP, 5*time.Second)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -545,7 +546,7 @@ func TestL2NoDocumentBytesCrossBeforeBothConfirmations(t *testing.T) {
 					_, _ = readFrame(conn.Stream)
 				}()
 
-				conn, err := tr.dial(ln.Addr().String(), aCert, aKey, bFP, 10*time.Second)
+				conn, err := tr.dial(context.Background(), ln.Addr().String(), aCert, aKey, bFP, 10*time.Second)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -730,7 +731,7 @@ func TestAReconnectNeedsItsOwnConfirmation(t *testing.T) {
 			defer conn.Close()
 			_ = runVerification(conn.Channel, false, bFP, okVerifier{})
 		}()
-		conn, err := Dial(ln.Addr().String(), aCert, aKey, bFP, 5*time.Second)
+		conn, err := Dial(context.Background(), ln.Addr().String(), aCert, aKey, bFP, 5*time.Second)
 		if err != nil {
 			t.Fatal(err)
 		}

@@ -3035,7 +3035,14 @@ six-word identity**, which is verbatim the harm `lan.go:70-75` exists to prevent
 violation of this phase's own criterion 14 ("nothing in the race emits at full rate for the whole
 deadline"). The arm window cannot simply be extended; that constraint travels with the slice.
 
-#### P05.S03 — The race: concurrent attempts, trickle-in candidates, one connect deadline *(D8, D16, D14, caveat 7; criteria 10, 11, 14, 17 and the socket-sharing criterion)*
+#### P05.S03 — The race: concurrent attempts, trickle-in candidates, one connect deadline *(D8, D16, D14, caveat 7; criteria 10, 11, 14, 17 and the socket-sharing criterion)* *(in progress)*
+Tasks (grilled 2026-08-21, after a deepdive and two adversarial passes):
+- T01 — `p2p.Dial`/`p2p.QUICDial` take a context. The `timeout` parameter STAYS as a per-dial floor, so no converted call site can lose its bound. Property: no goroutine outlives a successful dial; cancellation is expressed only as an error return.
+- T02 — D16's constant block, with `connectDeadline < sessionAcceptTimeout` asserted. Delete `dialPeer`/`sessionDialTimeout` and correct the four descriptions that call them live.
+- T03 — the racer: ONE mux and ONE `quic.Transport` for the whole race (caveat 7), trickle-in, bounded concurrency, keyed on `(AddrPort, Transport)`, every loser closed at the decision.
+- T04 — the error surface: `*p2p.ClockSkewError` survives aggregation; transports validated before the race.
+- T05 — re-point the three tests the deepdive named as going vacuous.
+- T06 — criterion 17's honest guard, whose red proof is wiring the race context into the established conn.
 
 **The criterion this slice's first draft DROPPED, recorded because the drop is the lesson.**
 The socket-sharing criterion was added to this phase at its own phase-open on 2026-08-21, and
@@ -3081,6 +3088,17 @@ peer's serial loop and wedges it for the full six minutes, four minutes past thi
 closing of every loser is therefore a correctness requirement of the racer**, and it is what
 makes context-aware dialers a *precondition* of this slice rather than a companion task: without
 a context an in-flight loser cannot be cancelled, only closed on arrival.
+
+**And S02's green does not protect it either — verified at the line, 2026-08-21.** S02 fixed the
+handshake POOL: `ready` is buffered, so an abandoned connection no longer holds one of sixteen
+slots, and the winner is queued rather than never handshaked. **It did not touch the session
+path.** `runSession` still calls `serveOneSession` **inline** in a serial loop
+(`internal/server/session.go:507-529`), so a connection the racer abandoned but left OPEN, if the
+loop accepts it first, still blocks inside `Receive`'s `runVerification` for the full
+`exchangeDeadline` — six minutes — while the winner sits in the queue. What S02 changed is which
+resource is exhausted, not the wedge. **Synchronous closing of every loser remains the property
+this slice rests on**, and a *closed* loser still fails its first read at once, which is why
+closing is sufficient.
 
 **S01's green does not protect this slice.** S01 proved the arm survives an abandoned
 connection. Under a racer that leaves losers open the arm still survives — six minutes later.

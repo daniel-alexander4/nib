@@ -2,6 +2,7 @@ package p2p
 
 import (
 	"bytes"
+	"context"
 	"crypto/tls"
 	"testing"
 	"time"
@@ -261,7 +262,7 @@ func TestAStalledPeerDoesNotBlockTheAcceptPath(t *testing.T) {
 
 	start := time.Now()
 	go func() {
-		conn, derr := Dial(ln.Addr().String(), certA, keyA, fpB, 10*time.Second)
+		conn, derr := Dial(context.Background(), ln.Addr().String(), certA, keyA, fpB, 10*time.Second)
 		if conn != nil {
 			conn.Close()
 		}
@@ -393,7 +394,7 @@ func TestTheListenerTerminatesThroughExactlyOneDoor(t *testing.T) {
 			dialed := make(chan struct{})
 			go func() {
 				defer close(dialed)
-				c, derr := tr.dial(ln.Addr().String(), certA, keyA, fpB, 5*time.Second)
+				c, derr := tr.dial(context.Background(), ln.Addr().String(), certA, keyA, fpB, 5*time.Second)
 				if c != nil {
 					_ = writeFrame(c.Stream, []byte("hello"))
 					// **Held open until the peer has it**, and that is not tidiness.
@@ -417,7 +418,7 @@ func TestTheListenerTerminatesThroughExactlyOneDoor(t *testing.T) {
 			// reach its send. safe.Recover would swallow a panic, so the observable is that the
 			// listener stays usable and Close stays clean.
 			go func() {
-				c, _ := tr.dial(ln.Addr().String(), certA, keyA, fpB, time.Second)
+				c, _ := tr.dial(context.Background(), ln.Addr().String(), certA, keyA, fpB, time.Second)
 				if c != nil {
 					c.Close()
 				}
