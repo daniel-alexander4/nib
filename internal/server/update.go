@@ -42,7 +42,13 @@ func (s *Server) handleUpdateCheck(w http.ResponseWriter, r *http.Request) {
 	resp := updateResponse{Current: s.version, Managed: managedInstall()}
 	if rel != nil {
 		resp.Latest = strings.TrimPrefix(rel.Tag, "v")
-		resp.URL = rel.URL
+		// Through httpOnly too. Its own doc names BOTH fields the client navigates to —
+		// `location.assign(d.downloadUrl)` AND `window.open(d.url)` — and only one of them
+		// went through it. Worse, they interact: httpOnly returning "" for a hostile asset
+		// URL omits downloadUrl, and the client's else-branch then navigates to THIS field,
+		// unchecked, from the same untrusted response. The guard routed the hostile case
+		// into the field it did not guard.
+		resp.URL = httpOnly(rel.URL)
 		resp.Available = versionLess(resp.Current, resp.Latest)
 		if resp.Available {
 			resp.DownloadURL = assetURL(runtime.GOOS, runtime.GOARCH, resp.Managed, rel.Assets)

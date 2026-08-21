@@ -404,6 +404,15 @@ func (sa sessionAccepter) Accept(peerFP, doc []byte) (bool, error) {
 // co-signs with the user's consent (making the result the open document) or accepts a
 // one-way document transfer and saves it under ~/nib. It always disarms on exit — one
 // session per arm.
+// arrivalDocName names a co-signed document by who it came from, which is the one fact about
+// it the user cannot see on the page.
+func arrivalDocName(peerLabel string) string {
+	if peerLabel == "" {
+		return "co-signed.pdf"
+	}
+	return "co-signed with " + peerLabel + ".pdf"
+}
+
 func (s *Server) runSession(ln p2p.Listener, cert, key []byte, label, mode string) {
 	// This goroutine handles a pinned peer's inbound document; a panic in the p2p or
 	// sign code must not crash the desktop process. The defers below (disarm, Close)
@@ -485,7 +494,9 @@ func (s *Server) runSession(ln p2p.Listener, cert, key []byte, label, mode strin
 	// already had open rather than replacing it. Before this, completing a co-signature
 	// on the receiving side silently discarded the recipient's open document and its
 	// undo history — work they never asked to close.
-	s.addDoc(&document{data: final, sig: sign.Verify(final)})
+	// Named, so an arrival is not "Untitled" after a reload — the fifth path-less producer.
+	// handleDocs' own comment names "an arrival" in the population that needed this.
+	s.addDoc(&document{name: arrivalDocName(label), data: final, sig: sign.Verify(final)})
 }
 
 // saveReceived writes an accepted one-way transfer under ~/nib, routed by what the
@@ -873,7 +884,8 @@ func (s *Server) handleSessionInitiate(w http.ResponseWriter, r *http.Request) {
 	// D10: an arrival adds. Same reasoning as runSession's — the difference here is
 	// only that a user is waiting on this response, so the document they get back is
 	// the arrival, which addDoc has made active.
-	installed := s.addDoc(&document{data: final, sig: sign.Verify(final)})
+	peerLabel, _ := pinnedLabel(v, peerFP)
+	installed := s.addDoc(&document{name: arrivalDocName(peerLabel), data: final, sig: sign.Verify(final)})
 	writeJSON(w, s.docResponse(installed))
 }
 

@@ -161,6 +161,9 @@ func (s *Server) handlePages(w http.ResponseWriter, r *http.Request) {
 		httpError(w, http.StatusBadRequest, "unknown page operation")
 		return
 	}
+	if wroteStampTextError(w, err) {
+		return
+	}
 	if err != nil {
 		httpError(w, http.StatusInternalServerError, "page operation failed: "+err.Error())
 		return
