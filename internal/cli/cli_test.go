@@ -14,6 +14,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -1423,4 +1424,110 @@ func TestVerifyExitsNonZeroForContentAddedAfterSigning(t *testing.T) {
 			`README ships "nib verify contract.pdf && echo \"signature intact\"", and that ` +
 			"prints for a document that is not wholly signed")
 	}
+}
+
+// TestTheShippedSentencesDescribeTheExitCodeThatShips.
+//
+// v1.116.8 widened `nib verify`'s exit 2 to cover content added after the last signature.
+// Three sentences the user actually reads did not move with it — the README's command table,
+// the README's prose ("returns 2 when a signature is invalid or absent", which the added-
+// after case is neither of), and `nib --help`'s one-liner. The behaviour is right and the
+// documentation described the version before it.
+//
+// This asserts against the shipped text, not against a paraphrase, so a later widening that
+// forgets the prose fails here rather than in a user's script.
+func TestTheShippedSentencesDescribeTheExitCodeThatShips(t *testing.T) {
+	readme, err := os.ReadFile(filepath.Join("..", "..", "README.md"))
+	if err != nil {
+		t.Skipf("README not readable from here: %v", err)
+	}
+	// The retired sentence, verbatim. It is the one that was actively wrong rather than
+	// merely terse: "invalid or absent" enumerates, and the added-after case is neither.
+	if bytes.Contains(readme, []byte("returns `2` when a signature is invalid or absent")) {
+		t.Error("README still enumerates the exit-2 cases as 'invalid or absent' — a document " +
+			"whose signature is VALID and covers only part of it exits 2 as well, and that is " +
+			"the case a counterparty creates by appending pages to a contract you signed")
+	}
+
+	// And every place the rule is stated must mention the third case. The third is the
+	// command's own --help, captured from the REAL command rather than reconstructed here —
+	// passing the string in and then asserting it appears would be asserting this test's own
+	// literal, which is green whatever commands.go says.
+	help := captureStderr(t, func() { cmdVerify([]string{"-h"}) })
+	if !strings.Contains(help, "usage: nib verify") {
+		t.Fatalf("nothing that looks like verify's help was captured (%q) — the assertion "+
+			"below would then be about an empty string", help)
+	}
+	for name, text := range map[string]string{
+		"README table":  string(readme),
+		"verify --help": help,
+	} {
+		if !strings.Contains(text, "added after") {
+			t.Errorf("%s does not mention content added after the last signature, which is a "+
+				"case that exits 2", name)
+		}
+	}
+}
+
+// captureStderr runs fn with os.Stderr replaced by a pipe and returns what it wrote.
+func captureStderr(t *testing.T, fn func()) string {
+	t.Helper()
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	old := os.Stderr
+	os.Stderr = w
+	done := make(chan string, 1)
+	go func() {
+		var b bytes.Buffer
+		_, _ = b.ReadFrom(r)
+		done <- b.String()
+	}()
+	fn()
+	os.Stderr = old
+	_ = w.Close()
+	out := <-done
+	_ = r.Close()
+	return out
+}
+
+// TestEveryCommandTreatsDashHTheSameWay. `-h` is a request for help, not a usage error, and
+// two commands hand-rolled fs.Parse and returned 2 for it while every other command returned
+// 0. A script checking `nib discover -h` got a different answer than for `nib verify -h`.
+//
+// Driven over the real dispatch table, not a list written here, so a command added later
+// with its own hand-rolled parse is caught rather than omitted.
+func TestEveryCommandTreatsDashHTheSameWay(t *testing.T) {
+	// The exemptions, named rather than silently skipped. On a non-Windows build `register`
+	// and `unregister` are stubs that refuse before parsing anything, and that refusal is
+	// the honest answer to `-h` too: there is no help to give for a command this build does
+	// not have. They print an explanation and exit 1, which is what `nib register` alone
+	// does — the flag changes nothing because the platform already decided.
+	platformStub := map[string]bool{"register": true, "unregister": true}
+	if runtime.GOOS == "windows" {
+		platformStub = nil
+	}
+
+	checked := 0
+	for name, run := range commands {
+		if platformStub[name] {
+			continue
+		}
+		// Commands that touch the network or the vault are still safe with -h: parse
+		// returns before any of them does anything.
+		out := captureStderr(t, func() {
+			if code := run([]string{"-h"}); code != 0 {
+				t.Errorf("nib %s -h exited %d, want 0 — -h is a request for help", name, code)
+			}
+		})
+		if !strings.Contains(out, "usage:") {
+			t.Errorf("nib %s -h printed no usage line:\n%s", name, out)
+		}
+		checked++
+	}
+	if checked < 10 {
+		t.Fatalf("only %d commands were checked — the dispatch table is not being walked", checked)
+	}
+	t.Logf("%d commands, all exit 0 on -h", checked)
 }

@@ -59,8 +59,13 @@ func cmdRendezvous(args []string) int {
 		"Report whether this machine can reach the BitTorrent DHT that remote co-signing\n"+
 			"uses to find a peer: bootstrap, routing table, observed public address, and\n"+
 			"the counters behind each. Contacts the public internet — see the notice it prints.")
-	if err := fs.Parse(args); err != nil {
-		return 2
+	// Through the shared parse, like every other command. Hand-rolling it made `-h` exit 2
+	// here and 0 everywhere else — `-h` is a request for help, not a usage error, and a
+	// script that checks the exit status of `nib rendezvous -h` gets a different answer than
+	// for `nib verify -h`. It also skipped reorder, so flags had to precede positionals in
+	// exactly these two commands.
+	if code, ok := parse(fs, args); !ok {
+		return code
 	}
 	if *secs <= 0 {
 		fmt.Fprintln(os.Stderr, "nib rendezvous: --seconds must be at least 1")

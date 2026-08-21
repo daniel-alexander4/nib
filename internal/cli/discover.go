@@ -53,8 +53,13 @@ func cmdDiscover(args []string) int {
 	fs.Usage = usageFunc(fs, "nib discover [--seconds N]",
 		"Report what link-local discovery can see: which interfaces were joined and why,\n"+
 			"whether announcements left this machine, and what came back.")
-	if err := fs.Parse(args); err != nil {
-		return 2
+	// Through the shared parse, like every other command. Hand-rolling it made `-h` exit 2
+	// here and 0 everywhere else — `-h` is a request for help, not a usage error, and a
+	// script that checks the exit status of `nib discover -h` gets a different answer than
+	// for `nib verify -h`. It also skipped reorder, so flags had to precede positionals in
+	// exactly these two commands.
+	if code, ok := parse(fs, args); !ok {
+		return code
 	}
 	// A non-positive window would skip both loops and then print "VERDICT: nothing was
 	// sent. Discovery cannot work from this machine" — a confident, wrong diagnosis

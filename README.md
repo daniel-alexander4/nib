@@ -840,7 +840,7 @@ isn't a known command (a PDF path, or nothing) still opens the app as usual.
 | `nib timestamp FILE…` | Write an OpenTimestamps proof (`FILE.ots`) for each file, skipping any file that already has one. |
 | `nib timestamp --force FILE…` | Re-stamp even where a proof exists, discarding it. |
 | `nib timestamp --verify FILE…` | Check each file against its `FILE.ots` proof. |
-| `nib verify [--json] FILE…` | Report each file's signature integrity. |
+| `nib verify [--json] FILE…` | Report each file's signature integrity. Exit `2` if any file is unsigned, modified, **or has content added after its last signature**. |
 | `nib optimize IN -o OUT` | Losslessly shrink a PDF (or `-w FILE…` to rewrite in place). |
 | `nib merge IN… -o OUT` | Concatenate PDFs, in order, into one. |
 | `nib sanitize IN -o OUT` | Strip identifying metadata and active content — JavaScript, auto-actions, embedded files (or `-w FILE…`). |
@@ -868,8 +868,9 @@ isn't a known command (a PDF path, or nothing) still opens the app as usual.
 Commands that produce a PDF write it to `-o`/`--out`; `timestamp` writes a
 sidecar `.ots` beside each input and `verify` prints a report. Flags may go
 before or after the file arguments. The exit status is non-zero on failure —
-`verify` returns `2` when a signature is invalid or absent — so a check drops
-straight into a script:
+`verify` returns `2` when a signature is invalid, absent, **or valid over only
+part of the document**, the last being a counterparty who returned your signed
+contract with pages appended — so a check drops straight into a script:
 
 ```sh
 nib verify contract.pdf && echo "signature intact"

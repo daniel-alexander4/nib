@@ -134,7 +134,7 @@ These subcommands run headlessly, without a browser:
   nib unregister                  (Windows) undo register
   nib timestamp FILE...           write an OpenTimestamps proof (FILE.ots) per file
   nib timestamp --verify FILE...  check each FILE against its FILE.ots proof
-  nib verify [--json] FILE...     report each file's signature integrity
+  nib verify [--json] FILE...     report signature integrity (exit 2 if not wholly signed)
   nib optimize IN -o OUT          losslessly shrink a PDF
   nib merge IN... -o OUT          concatenate PDFs into one
   nib sanitize IN -o OUT          strip metadata and active content (JS, actions)
@@ -279,7 +279,12 @@ func writeAtomic(path string, data []byte) error {
 // then the command's own flag defaults.
 func usageFunc(fs *flag.FlagSet, synopsis, help string) func() {
 	return func() {
-		fmt.Fprintf(os.Stderr, "usage: %s\n\n%s\n", synopsis, help)
+		// fs.Output(), not os.Stderr. A FlagSet's output is settable and PrintDefaults on
+		// the next line already honours it, so writing the synopsis to os.Stderr split one
+		// message across two destinations the moment anything set one — which is what a
+		// test capturing this text has to do. It defaults to os.Stderr, so the shipped
+		// behaviour is unchanged.
+		fmt.Fprintf(fs.Output(), "usage: %s\n\n%s\n", synopsis, help)
 		fs.PrintDefaults()
 	}
 }

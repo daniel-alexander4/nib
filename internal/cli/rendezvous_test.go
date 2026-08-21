@@ -169,8 +169,19 @@ func TestTheBannerPrecedesTheSocket(t *testing.T) {
 		if !strings.HasPrefix(got, "nib rendezvous diagnostic") {
 			t.Fatalf("the first thing printed was not the disclosure:\n%.200s", got)
 		}
-		if i := strings.Index(got, "local socket"); i >= 0 && i < strings.Index(got, "Ctrl-C") {
-			t.Error("the socket line precedes the Ctrl-C invitation")
+		// **This used to compare against "local socket", which the BANNER never contains** —
+		// that line is printed later, by runRendezvous. So strings.Index returned -1, the
+		// `i >= 0` arm was never true, and the ordering assertion in the branch that always
+		// runs was dead. The live branch below is the one that can see ordering; the
+		// hermetic half can only assert that the disclosure is COMPLETE — that the invitation
+		// to abort is the last thing in it, so nothing follows the banner that the user
+		// should have read before deciding.
+		if !strings.Contains(got, "Ctrl-C") {
+			t.Fatal("the banner does not invite Ctrl-C at all")
+		}
+		if tail := strings.TrimSpace(got[strings.Index(got, "Ctrl-C"):]); !strings.HasSuffix(tail, "not wanted.") {
+			t.Errorf("something follows the Ctrl-C invitation inside the banner, so the user "+
+				"is asked to decide before being told everything:\n%s", tail)
 		}
 		return
 	}

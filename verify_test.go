@@ -1,6 +1,7 @@
 package nib
 
 import (
+	"bytes"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -58,17 +59,59 @@ func TestVerifyContractIsTrue(t *testing.T) {
 	// executed by anything at all, and every tier would stay green. That is the vacuous
 	// green one level out: the harness reports a pass for the tests it happens to name.
 	{
-		live, err := os.ReadFile("internal/rendezvous/live_test.go")
+		// **Every FUNCTION with an NIB_LIVE_DHT gate, discovered, not a path written here.**
+		//
+		// This read one file and matched `TestLive*`. internal/cli's
+		// TestTheBannerPrecedesTheSocket has a live half behind the same variable and is
+		// named nothing like that, so it was skipped by `go test ./...` (variable unset) AND
+		// never reached by dhtlive.sh (package not named): its live half was executed by
+		// nothing, with every tier green. The guard could not see it because the guard, too,
+		// named one file and one prefix.
+		//
+		// Per FUNCTION, not per file: rendezvous_test.go holds one gated test among a dozen
+		// hermetic ones, and treating the whole file as gated demands the harness run tests
+		// that `go test ./...` already runs — a guard that fails on correct code.
+		var names [][]string
+		var gated []string
+		funcStart := regexp.MustCompile(`(?m)^func (Test\w+)\(`)
+		err := filepath.Walk(".", func(path string, info os.FileInfo, werr error) error {
+			if werr != nil || info.IsDir() || !strings.HasSuffix(path, "_test.go") || path == "verify_test.go" {
+				return nil
+			}
+			b, rerr := os.ReadFile(path)
+			if rerr != nil || !bytes.Contains(b, []byte("NIB_LIVE_DHT")) {
+				return nil
+			}
+			src := string(b)
+			locs := funcStart.FindAllStringSubmatchIndex(src, -1)
+			hit := false
+			for n, loc := range locs {
+				end := len(src)
+				if n+1 < len(locs) {
+					end = locs[n+1][0]
+				}
+				if !strings.Contains(src[loc[0]:end], "NIB_LIVE_DHT") {
+					continue
+				}
+				names = append(names, []string{"", src[loc[2]:loc[3]]})
+				hit = true
+			}
+			if hit {
+				gated = append(gated, path)
+			}
+			return nil
+		})
 		if err != nil {
-			t.Fatalf("cannot read the live tests: %v", err)
+			t.Fatalf("cannot walk for live tests: %v", err)
 		}
+		if len(gated) < 2 || len(names) == 0 {
+			t.Fatalf("found %d gated function(s) across %d file(s) (%v) — the walk has gone "+
+				"blind, and a blind walk reports full coverage", len(names), len(gated), gated)
+		}
+
 		harness, err := os.ReadFile("build/dhtlive.sh")
 		if err != nil {
 			t.Fatalf("cannot read build/dhtlive.sh: %v", err)
-		}
-		names := regexp.MustCompile(`(?m)^func (TestLive\w*)\(`).FindAllStringSubmatch(string(live), -1)
-		if len(names) == 0 {
-			t.Fatal("no TestLive* functions found — this guard would pass on nothing")
 		}
 		// Match the INVOCATION LINE, not the file.
 		//
@@ -77,6 +120,16 @@ func TestVerifyContractIsTrue(t *testing.T) {
 		// and in a `.deb` guard satisfied by a word inside a comment. It also false-reds on
 		// the functionally identical unquoted form. So: find the actual `go test` line, read
 		// its -run pattern, and check that pattern really selects every discovered name.
+		// The packages the harness names must cover the packages the gated files live in.
+		for _, g := range gated {
+			pkg := "./" + filepath.ToSlash(filepath.Dir(g)) + "/"
+			if !strings.Contains(string(harness), pkg) {
+				t.Errorf("%s is gated on NIB_LIVE_DHT but build/dhtlive.sh does not run %s — "+
+					"`go test ./...` skips it (variable unset) and the harness never reaches "+
+					"it, so it is executed by NOTHING and every tier stays green", g, pkg)
+			}
+		}
+
 		var pattern string
 		for _, line := range strings.Split(string(harness), "\n") {
 			t := strings.TrimSpace(line)
