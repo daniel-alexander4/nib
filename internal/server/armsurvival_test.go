@@ -504,9 +504,24 @@ func testAbandonedThenSession(t *testing.T, abandoned int) {
 	}
 
 	// And THAT session spent the arm.
-	var st sessionStatus
-	sessGet(t, c, ts.URL+"/api/session/status", &st)
-	if st.Armed {
-		t.Error("still armed after a completed session that followed an abandoned connection")
+	//
+	// **Polled, and the single read this replaces was FLAKY** — caught 1 run in 3 during
+	// P05.S03's sweep, having survived several full-suite runs at its own slice close.
+	// The initiator's result arrives when `p2p.Initiate` returns; the arm is released by
+	// `runSession`'s goroutine after `serveOneSession` returns, which is strictly later.
+	// Reading once races that gap. The sibling assertion in TestSessionArmReceiveSign
+	// polls for exactly this reason and this one did not — the same rule written twice,
+	// once correctly.
+	spent := time.Now().Add(5 * time.Second)
+	for {
+		var st sessionStatus
+		sessGet(t, c, ts.URL+"/api/session/status", &st)
+		if !st.Armed {
+			break
+		}
+		if time.Now().After(spent) {
+			t.Fatal("still armed after a completed session that followed an abandoned connection")
+		}
+		time.Sleep(50 * time.Millisecond)
 	}
 }

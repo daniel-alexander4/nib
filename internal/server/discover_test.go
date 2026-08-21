@@ -335,6 +335,12 @@ func TestTwoHostsClaimingOneNameBothBecomeCandidates(t *testing.T) {
 func TestDialAnyTriesEveryCandidate(t *testing.T) {
 	// Two addresses that cannot connect; what matters is that BOTH were attempted, which
 	// the error reports. A single-candidate dialAny would say "1 address(es)".
+	//
+	// The count is `tried` — results received from the race — not `len(cands)`, so it
+	// cannot be satisfied by a dialler that started nothing. **The limit it still has**:
+	// with nil credentials `SessionTLS` refuses before a socket is opened, so this proves
+	// two ATTEMPTS and not two contacts. `TestManyDeadCandidatesCostOneTimeoutNotN` is the
+	// one that reaches real sockets.
 	_, err := dialAny(tcpCands("127.0.0.1:1", "127.0.0.1:2"), nil, nil, nil)
 	if err == nil {
 		t.Fatal("dialling two dead addresses succeeded")
@@ -568,10 +574,14 @@ func TestOneHostCannotFloodTheCandidateList(t *testing.T) {
 // TestDialAnyStopsEvenWithCandidatesLeft — the half the cap does not cover.
 //
 // A cap bounds how many candidates there are and says nothing about how long each takes.
-// Real credentials, because with nil ones `SessionTLS` refuses before any dial — which is
-// what `TestDialAnyTriesEveryCandidate` does, so it never contacts a candidate at all and
-// its "2 address(es)" assertion reads `len(addrs)` rather than attempts made.
-func TestDialAnyStopsEvenWithCandidatesLeft(t *testing.T) {
+// Real credentials, because with nil ones `SessionTLS` refuses before any dial.
+//
+// **That used to make `TestDialAnyTriesEveryCandidate` vacuous and no longer does.** Under
+// the walk the failure sentence formatted `len(cands)`, so its "2 address(es)" was true of a
+// dialler that contacted nothing. The racer counts RESULTS RECEIVED instead, so the same
+// assertion now measures attempts made — the count cannot be right unless both goroutines
+// ran. It still does not reach a socket, and that limit is stated on the test itself.
+func TestManyDeadCandidatesCostOneTimeoutNotN(t *testing.T) {
 	if testing.Short() {
 		t.Skip("this test spends real wall-clock on dial timeouts")
 	}
@@ -599,9 +609,19 @@ func TestDialAnyStopsEvenWithCandidatesLeft(t *testing.T) {
 		t.Fatalf("dialAny returned in %v with error %v — it cannot have attempted a dial, "+
 			"so the budget is not what stopped it", elapsed, derr)
 	}
-	if elapsed > lanDialBudget+lanDialTimeout+5*time.Second {
-		t.Errorf("dialAny took %v over %d candidates; the budget is %v. Unbounded, this is "+
-			"the wedged handler an on-link host holds open by announcing ports",
-			elapsed, len(addrs), lanDialBudget)
+	// **The property changed with P05.S03 and the old assertion stopped measuring it.**
+	// It read `elapsed <= lanDialBudget + lanDialTimeout + 5s` — 31 s — which a racer
+	// satisfies in one hop's 6 s while `lanDialBudget` could be deleted entirely. It was
+	// passing and measuring nothing.
+	//
+	// What the racer actually guarantees is stronger and is what is asserted now: N dead
+	// candidates cost **one** timeout, not N. That is the whole of why racing bounds the
+	// wedged handler an on-link host holds open by announcing ports — under the walk it
+	// was N x 6 s and the budget had to cut it short; under the race the concurrency is
+	// the bound and nothing needs cutting short.
+	if elapsed > 2*lanDialTimeout {
+		t.Errorf("%d dead candidates took %v; one dial's timeout is %v, so they were not "+
+			"raced — this is the wedged handler, and the whole point of racing is that its "+
+			"cost stops scaling with the candidate count", len(addrs), elapsed, lanDialTimeout)
 	}
 }

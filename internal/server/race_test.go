@@ -1,7 +1,11 @@
 package server
 
 import (
+	"context"
 	"errors"
+	"fmt"
+	"io"
+	"strings"
 	"testing"
 	"time"
 
@@ -126,7 +130,7 @@ func TestALateCandidateJoinsTheRaceInFlight(t *testing.T) {
 	done := make(chan *p2p.Conn, 1)
 	errc := make(chan error, 1)
 	go func() {
-		c, rerr := raceCandidates(in, aCert, aKey, bFP)
+		c, rerr := raceCandidates(context.Background(), in, aCert, aKey, bFP)
 		if rerr != nil {
 			errc <- rerr
 			return
@@ -262,4 +266,210 @@ func isTimeout(err error) bool {
 	type timeout interface{ Timeout() bool }
 	var t timeout
 	return errors.As(err, &t) && t.Timeout()
+}
+
+// TestTheTwoLawFiguresBindTheRace — D16's size bound and concurrency bound, driven.
+//
+// D16's plan-review pin makes these **law, not tuning**: "the backoff bounds how fast the
+// race emits and nothing bounds how much, and under the D6 pin an attacker supplies the
+// candidates". Until this test they were two constants nothing read at runtime and nothing
+// asserted — which is how a law figure becomes a number somebody later "tunes".
+//
+// Both are observed through the clock and the failure sentence rather than by inspecting the
+// racer, because a test that reads the racer's own bookkeeping would pass against a racer
+// that ignored it.
+func TestTheTwoLawFiguresBindTheRace(t *testing.T) {
+	if testing.Short() {
+		t.Skip("spends two dial timeouts against black-holed addresses")
+	}
+	cert, key, err := sign.GenerateIdentity("Ada")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// More candidates than the cap, every one black-holed so each costs a full timeout.
+	over := 4
+	var cands []candidate
+	for i := 0; i < maxRaceCandidates+over; i++ {
+		cands = append(cands, candidate{Addr: fmt.Sprintf("203.0.113.%d:9", i+1), Transport: "tcp"})
+	}
+	// STIMULUS: the fixture really does exceed the cap, and really does need more than one
+	// wave at the concurrency bound. Both assertions below are vacuous otherwise.
+	if len(cands) <= maxRaceCandidates {
+		t.Fatalf("setup: %d candidates does not exceed the cap of %d", len(cands), maxRaceCandidates)
+	}
+	if maxRaceCandidates <= maxConcurrentDials {
+		t.Fatalf("setup: the cap (%d) is not above the concurrency bound (%d), so a single "+
+			"wave would dial everything and the timing assertion cannot see batching",
+			maxRaceCandidates, maxConcurrentDials)
+	}
+
+	start := time.Now()
+	_, derr := dialAny(cands, cert, key, make([]byte, 32))
+	elapsed := time.Since(start)
+	if derr == nil {
+		t.Fatal("the race connected to TEST-NET-3")
+	}
+
+	// **The size bound**: the excess is dropped AND reported. D16's pin says "drops and
+	// reports; it never fails the ceremony" — a drop with no reader is half the clause.
+	want := fmt.Sprintf("dropped %d over the %d-candidate cap", over, maxRaceCandidates)
+	if !strings.Contains(derr.Error(), want) {
+		t.Errorf("the failure says %q; it must contain %q — the cap dropped candidates and "+
+			"said nothing, which is the half of D16's pin that has no reader", derr, want)
+	}
+
+	// **The concurrency bound**: with the cap above the bound, dialling everything takes
+	// more than one wave. One wave would mean the bound is not applied at all.
+	if elapsed < lanDialTimeout+time.Second {
+		t.Errorf("%d candidates finished in %v, which is about one dial timeout (%v) — they "+
+			"were all dialled at once, so the concurrency bound of %d is not being applied "+
+			"and our own racer can occupy a peer's whole handshake pool",
+			maxRaceCandidates, elapsed, lanDialTimeout, maxConcurrentDials)
+	}
+}
+
+// TestTheWinnerOutlivesTheRaceContext — criterion 17, in the only form that can fail.
+//
+// The clause is *"letting the connect deadline elapse in full leaves both the exchange budget
+// and the ceremony deadline undiminished"*. **The obvious test of it is vacuous**: every
+// entry point calls `SetDeadline(time.Now().Add(exchangeDeadline))` unconditionally
+// (`internal/p2p/session.go`), so "burn the connect deadline, then read the exchange budget"
+// compares two literals and passes with the racer deleted, or never written.
+//
+// The hazard the clause actually guards is the race's context bleeding into the session that
+// follows it. `raceCandidates` bounds itself with `connectDeadline` and **cancels on return**
+// — so if a dialer ever attached a teardown to that context, the winner would be destroyed
+// microseconds after being chosen, or at t=300 s mid-ceremony with the local user's signature
+// already spent. Both libraries detach deliberately (`crypto/tls` documents it; quic-go
+// passes `context.WithoutCancel`), and this is the guard that keeps it true here.
+//
+// So the assertion is: **the connection still carries bytes after the race that produced it
+// has been cancelled.** Its red proof is wiring the race context into the established conn.
+func TestTheWinnerOutlivesTheRaceContext(t *testing.T) {
+	for _, tc := range []struct{ name, transport string }{
+		{"tcp", "tcp"},
+		{"quic", "quic"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			aCert, aKey, err := sign.GenerateIdentity("Alice")
+			if err != nil {
+				t.Fatal(err)
+			}
+			bCert, bKey, err := sign.GenerateIdentity("Bob")
+			if err != nil {
+				t.Fatal(err)
+			}
+			aFP, _ := sign.Fingerprint(aCert)
+			bFP, _ := sign.Fingerprint(bCert)
+
+			var ln p2p.Listener
+			if tc.transport == "quic" {
+				ln, err = p2p.QUICListen("127.0.0.1:0", bCert, bKey, aFP)
+			} else {
+				ln, err = p2p.Listen("127.0.0.1:0", bCert, bKey, aFP)
+			}
+			if err != nil {
+				t.Skipf("no %s listener available here: %v", tc.transport, err)
+			}
+			defer ln.Close()
+			echoed := make(chan []byte, 1)
+			go func() {
+				c, aerr := ln.Accept()
+				if aerr != nil {
+					return
+				}
+				buf := make([]byte, 5)
+				if _, rerr := io.ReadFull(c.Stream, buf); rerr == nil {
+					echoed <- buf
+				}
+			}()
+
+			conn, err := dialAny([]candidate{{Addr: ln.Addr().String(), Transport: tc.transport}},
+				aCert, aKey, bFP)
+			if err != nil {
+				t.Fatalf("the race found no listener: %v", err)
+			}
+			defer conn.Close()
+
+			// STIMULUS: the race really has ended, so its context really is cancelled.
+			// `raceCandidates` cancels on return, so holding the winner here means we are
+			// past that point — which is the whole condition under test. If the race were
+			// still running, a live connection would prove nothing.
+			//
+			// **A beat before asserting, and it is not padding.** A teardown attached to
+			// the race context runs on its own goroutine, so writing immediately races it
+			// — and on TCP the write won, which made this assertion pass against the very
+			// defect it exists to catch. Found by running the red proof: QUIC failed and
+			// TCP did not. Waiting lets any such teardown happen first, so liveness here
+			// means the connection is genuinely detached rather than merely not-yet-killed.
+			time.Sleep(250 * time.Millisecond)
+
+			// THE ASSERTION: bytes cross AFTER that cancellation.
+			if _, werr := conn.Stream.Write([]byte("hello")); werr != nil {
+				t.Fatalf("writing to the winner failed after the race context was cancelled: "+
+					"%v — the race's context reached the established connection, so a ceremony "+
+					"would die the moment the race ended, or at the connect deadline with the "+
+					"local user's signature already spent", werr)
+			}
+			select {
+			case got := <-echoed:
+				if string(got) != "hello" {
+					t.Errorf("the peer read %q, want %q", got, "hello")
+				}
+			case <-time.After(10 * time.Second):
+				t.Fatal("the peer never received the bytes written after the race ended — " +
+					"the winner did not survive its own race's cancellation")
+			}
+		})
+	}
+}
+
+// TestATrickleSourceThatNeverClosesStillHitsTheDeadline — the defect this slice's own review
+// found, and the one a trickle source makes reachable.
+//
+// The first racer read results with `for r := range results`, which ends only when the INPUT
+// channel closes. **A trickle source stays open for the whole race by design** — D16 has
+// candidates joining as they arrive, and S04's DHT feed will hold that channel open for the
+// full connect deadline. So with every candidate failing, the race never returned: each dial
+// was bounded and the race was not, and `/api/session/initiate` hung forever with the local
+// user's document already signed.
+//
+// `dialAny` could never see it — it closes the channel it builds. Only a trickle source can,
+// which is why no existing test caught it.
+func TestATrickleSourceThatNeverClosesStillHitsTheDeadline(t *testing.T) {
+	cert, key, err := sign.GenerateIdentity("Ada")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Short, because the point is the deadline being observed at all — `connectDeadline`
+	// is five minutes and the caller owns it precisely so this is testable.
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	in := make(chan candidate) // never closed, like a live gather
+	go func() {
+		in <- candidate{Addr: "127.0.0.1:1", Transport: "tcp"} // refused at once
+		// and then nothing, forever — the shape of a gather that found one dead address
+	}()
+
+	done := make(chan error, 1)
+	go func() {
+		_, rerr := raceCandidates(ctx, in, cert, key, make([]byte, 32))
+		done <- rerr
+	}()
+	select {
+	case rerr := <-done:
+		if rerr == nil {
+			t.Fatal("the race succeeded against a refused address")
+		}
+		// STIMULUS: it really did attempt the candidate, so the return is the deadline
+		// arriving rather than an empty race short-circuiting.
+		if !strings.Contains(rerr.Error(), "address(es)") {
+			t.Errorf("the failure does not name what was tried: %v", rerr)
+		}
+	case <-time.After(15 * time.Second):
+		t.Fatal("the race never returned — it is waiting on a channel a trickle source " +
+			"holds open for the whole ceremony, so the connect deadline bounds each dial " +
+			"and not the race, and the HTTP handler hangs with the document already signed")
+	}
 }
