@@ -516,3 +516,22 @@ mutation above is at `p2p.Attestation.reason`, the only producer on the real pat
 old ceremony test would have stayed green through it. The duplicate is deleted; p2p cannot
 import ceremony (ceremony's own tests import p2p, so the edge is a cycle), so the coverage
 moved to the producer rather than the definition moving to the consumer.
+
+## v1.117.10 — the rendezvous: a fix that was the mirror of its own defect
+
+| Row | The defect restored | The check that went red |
+| --- | --- | --- |
+| seeds-only retry | the shipped list emitted during the retry again | `TestTheRetryWithholdsTheShippedList` |
+| aborted lookup | the abort branch made unreachable | `TestAnAbortedLookupIsNotAnEmptyFetch` |
+| the counter's reader | the figure dropped from the disclosure | `TestTheDisclosureSaysHowMuchOfTheTableCameFromTheStranger` |
+
+The first row is the entry. `TestTheShippedListsRotAlarmSurvivesAnInvitationRescue` fixed
+"both attempts add to `bootstrapped`, so the rot alarm reads *the shipped list worked* on a
+run where it did not" — by subtracting the retry's gains and crediting the invitation. But
+the retry kept OFFERING the shipped list, so the same alarm read backwards: *the invitation
+rescued this machine* on a run the shipped list rescued. The fix and the defect are the same
+shape pointing opposite ways.
+
+The second row's test is one `docs/red-proofs.md:343` has cited all along and which had
+ceased to exist — a ledger row naming a check nothing runs. Rewritten rather than the
+citation edited: the claim was right, the test went missing.
