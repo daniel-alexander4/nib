@@ -8,12 +8,12 @@ import (
 	"net"
 	"net/http"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"nib/internal/discovery"
 	"nib/internal/p2p"
 	"nib/internal/pairing"
+	"nib/internal/safe"
 	"nib/internal/sign"
 	"nib/internal/vault"
 )
@@ -38,9 +38,7 @@ type lanAnnouncer struct {
 	// callers can reach it, and a select/default pair is exactly the shape where two
 	// concurrent callers both take default and the second close() panics. Socket.Close
 	// in the same phase already used sync.Once, so the right shape was to hand.
-	once  sync.Once
-	sent  atomic.Uint64
-	fails atomic.Uint64
+	once sync.Once
 }
 
 // startAnnouncing begins announcing this user's name and the given port.
@@ -70,14 +68,19 @@ func startAnnouncing(myCertPEM []byte, port int) (*lanAnnouncer, error) {
 
 	go func() {
 		defer close(a.done)
+		// safe.Recover, like every other detached goroutine in this package. runSession's
+		// recover does not cover the goroutine it spawns, and an unrecovered panic in ANY
+		// goroutine kills the whole desktop process with the user's unsaved documents —
+		// the outcome safe.Recover's own doc says it exists to prevent. This was the one
+		// `go func` in internal/server without it.
+		defer safe.Recover("lan announcer")
 		t := time.NewTicker(announceEvery)
 		defer t.Stop()
 		for {
-			if n, err := sock.Announce(ann); err != nil || n == 0 {
-				a.fails.Add(1)
-			} else {
-				a.sent.Add(uint64(n))
-			}
+			// The outcome is counted by discovery.Socket.Stats() — Sent and SendErrors,
+			// at the same moments — and printed by `nib discover`. A second pair here
+			// counted the same fact and nothing read it; see below.
+			_, _ = sock.Announce(ann)
 			select {
 			case <-a.stop:
 				return
@@ -99,11 +102,19 @@ func (a *lanAnnouncer) Close() {
 	a.sock.Close()
 }
 
-// Sent and Failed report what the announcer did, for a diagnostic that has to explain
-// silence. Sent counts per-interface writes, so one announcement on a two-interface
-// host adds two.
-func (a *lanAnnouncer) Sent() uint64   { return a.sent.Load() }
-func (a *lanAnnouncer) Failed() uint64 { return a.fails.Load() }
+// Sent and Failed are GONE, and the deletion is the fix rather than a reader being added.
+//
+// They had zero callers anywhere, production or test, and their doc said they existed "for
+// a diagnostic that has to explain silence" — a diagnostic that did not exist. That made
+// them the asymmetric-pair defect at its worst: "announced fine" and "could not announce"
+// both unread, so a default-deny host whose firewall swallows every multicast write is
+// indistinguishable from one that announced successfully, which is exactly the failure
+// CONTRIBUTING's tier-5 section says happens "with no error at either end".
+//
+// They are deleted rather than wired up because `discovery.Socket.Stats()` already counts
+// the same two events at the same moments (Sent / SendErrors, mcast.go), and `nib discover`
+// already prints them. Adding a reader here would have made two counters for one fact —
+// the duplicate-derivation defect — where one already has a reader.
 
 // ownName is this user's six-word pairing name, derived from their identity — the
 // only thing about themselves an announcement ever carries.
