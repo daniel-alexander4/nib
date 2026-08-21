@@ -170,7 +170,18 @@ func runDiscover(out, errw io.Writer, listen time.Duration, quiet bool) int {
 		}
 	}
 
+	// ONE read of the counters, not one per consumer. The announce goroutine is still
+	// running at this point — it is stopped by the deferred close above — so two calls
+	// can return two different sets, and a summary that disagreed with the verdict
+	// printed under it would be unfalsifiable by the person reading the output.
 	st := sock.Stats()
+	printSummary(out, st, listen)
+	return printVerdict(out, st)
+}
+
+// printSummary renders the counters. Split out of runDiscover with printVerdict below,
+// so both can be driven without a socket — see the note on printVerdict.
+func printSummary(out io.Writer, st discovery.Stats, listen time.Duration) {
 	fmt.Fprintf(out, "\nsummary after %s:\n", listen)
 	fmt.Fprintf(out, "  interfaces joined   %d\n", st.Interfaces)
 	fmt.Fprintf(out, "  announcements sent  %d (failed %d)\n", st.Sent, st.SendErrors)
@@ -195,7 +206,33 @@ func runDiscover(out, errw io.Writer, listen time.Duration, quiet bool) int {
 		fmt.Fprintf(out, "  off-link            0\n")
 	}
 	fmt.Fprintln(out)
+}
 
+// printVerdict is the diagnostic's conclusion, and it is a pure function of the counters.
+//
+// # Why it is a function and not four cases inside runDiscover
+//
+// The verdict IS the result of this command — `nib discover` exists so a user on a
+// machine Nib cannot reach can say which of four things went wrong, and it is the only
+// instrument the parked Windows verification has. Inside runDiscover the branches were
+// decided by a `*discovery.Socket` opened three lines earlier, so nothing could reach
+// them without a real network and a real multicast join: 175 lines including all four
+// verdicts, and no test file in this package mentioned it. Both verdict paths were driven
+// BY HAND at P03.S05 — which is evidence, not coverage, and evidence that expires.
+//
+// Taking `discovery.Stats` by value makes every branch reachable from a table. That
+// matters more than usual here: if this logic is wrong, the Windows run reports the wrong
+// thing and nobody would know, because the run's whole purpose is that nothing else can
+// see what it sees.
+//
+// # The order of the cases is load-bearing
+//
+// `Sent == 0` must be tested before `Own == 0`, and it is not a style question. When
+// nothing was sent, nothing can have come back — so the firewall verdict is *also* true
+// of that state, and reaching it first would tell a user "a local firewall is dropping
+// multicast" about a machine where no announcement was ever attempted. That is the same
+// confident-wrong-diagnosis failure the `--seconds` guard above exists to prevent.
+func printVerdict(out io.Writer, st discovery.Stats) int {
 	// The verdict, and it is the whole reason the counters are separated. "Found
 	// nothing" has three causes and a user can act differently on each.
 	switch {
