@@ -347,9 +347,16 @@ func invitationSeedNote(st rendezvous.Stats) string {
 	case st.InvitationSeeds == 0:
 		return ""
 	case st.InvitationSeedsUsed:
+		// InvitationBootstrapped is printed HERE and nowhere else, and until it was it had
+		// no reader at all — a counter maintained, subtracted from another counter, and
+		// carried in an exported struct that only a test ever looked at. Its whole
+		// justification is telling the operator how much of this table came from the
+		// stranger's list rather than Nib's, and a number nobody reads answers nothing.
 		return fmt.Sprintf("  %d invitation-supplied address(es), AND THEY WERE USED — "+
 			"everything Nib ships failed first,\n                        so this routing "+
-			"table came from a list the invitation's sender chose\n", st.InvitationSeeds)
+			"table came from a list the invitation's sender chose\n"+
+			"                        (%d of the nodes in this table came from that list)\n",
+			st.InvitationSeeds, st.InvitationBootstrapped)
 	case st.InvitationSeedsTried:
 		// The third state, and it existed before this branch did. TRIED with USED false is
 		// a machine whose shipped list failed AND whose invitation seeds then failed too —

@@ -271,3 +271,22 @@ func TestTheProbeVerdictCannotReportSuccessWithoutObservingAnything(t *testing.T
 		t.Errorf("a probe that observed NOTHING exited 0:\n%s", msg)
 	}
 }
+
+// TestTheDisclosureSaysHowMuchOfTheTableCameFromTheStranger pins InvitationBootstrapped's
+// only reader. The counter was maintained, subtracted from `bootstrapped`, and carried in an
+// exported struct that nothing but a test ever read — so the fact it exists to state was
+// computed and then dropped.
+func TestTheDisclosureSaysHowMuchOfTheTableCameFromTheStranger(t *testing.T) {
+	note := invitationSeedNote(rendezvous.Stats{
+		InvitationSeeds: 3, InvitationSeedsUsed: true, InvitationBootstrapped: 17,
+	})
+	if !strings.Contains(note, "17") {
+		t.Errorf("the disclosure does not say how many nodes came from the invitation:\n%s", note)
+	}
+	// And the figure belongs ONLY to the branch that earned it. The untried branch says
+	// "unused (the shipped list worked)" — printing a contributed-node count there would
+	// state a contribution that by definition did not happen.
+	if n := invitationSeedNote(rendezvous.Stats{InvitationSeeds: 3, InvitationBootstrapped: 17}); strings.Contains(n, "17") {
+		t.Errorf("the untried branch printed a contribution count:\n%s", n)
+	}
+}

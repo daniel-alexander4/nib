@@ -2,6 +2,9 @@ package rendezvous
 
 import (
 	"context"
+	"crypto/ed25519"
+	"errors"
+	"github.com/anacrolix/dht/v2"
 	"net"
 	"net/netip"
 	"testing"
@@ -307,5 +310,118 @@ func TestTheShippedListsRotAlarmSurvivesAnInvitationRescue(t *testing.T) {
 	if st.InvitationBootstrapped == 0 {
 		t.Error("InvitationBootstrapped = 0 — the nodes the seeds gained are attributed to " +
 			"nobody, which is the opposite mistake")
+	}
+}
+
+// TestTheRetryWithholdsTheShippedList is the other half of the rot alarm, and the mirror of
+// the defect TestTheShippedListsRotAlarmSurvivesAnInvitationRescue closed.
+//
+// That fix subtracts the retry's gains from `bootstrapped` and adds them to
+// `invBootstrapped`, which is only true if the retry has nothing but the invitation to gain
+// from. It had: the address list kept emitting the shipped bootstrap addresses, which the
+// retry's own precondition says failed once but which can still answer on a second attempt.
+// `Seeds: 5, InvitationBootstrapped: 25, Bootstrapped: 0` then reads "the invitation's seeds
+// rescued this machine" about a run the shipped list rescued.
+//
+// Driven against the pure function because it is unobservable through a Server: the shipped
+// list is only loaded when the node cache is EMPTY, so a test that could see this would have
+// to reach the real public bootstrap routers.
+func TestTheRetryWithholdsTheShippedList(t *testing.T) {
+	cached := deadCache(t)
+	shipped := []*net.UDPAddr{
+		{IP: net.ParseIP("203.0.113.1"), Port: 6881},
+		{IP: net.ParseIP("203.0.113.2"), Port: 6881},
+	}
+	inv := []netip.AddrPort{netip.MustParseAddrPort("198.51.100.7:6881")}
+
+	// STIMULUS: the ordinary pass carries all three sources. Without it, a function that
+	// returned the cache and nothing else would satisfy every assertion below.
+	ordinary := startingNodes(cached, shipped, inv, false)
+	if len(ordinary) != len(cached)+len(shipped)+len(inv) {
+		t.Fatalf("the ordinary list has %d entries, want %d — the assertions below are then "+
+			"about a list that was never assembled", len(ordinary), len(cached)+len(shipped)+len(inv))
+	}
+	if !containsAddr(ordinary, "203.0.113.1:6881") {
+		t.Fatal("the ordinary list does not carry the shipped addresses at all")
+	}
+
+	// The retry: the shipped list is gone and the invitation's seed is not.
+	retry := startingNodes(cached, shipped, inv, true)
+	for _, a := range []string{"203.0.113.1:6881", "203.0.113.2:6881"} {
+		if containsAddr(retry, a) {
+			t.Errorf("the retry still offers the shipped address %s — anything it gains from "+
+				"there is then credited to the invitation, which is the rot alarm reading "+
+				"backwards", a)
+		}
+	}
+	if !containsAddr(retry, "198.51.100.7:6881") {
+		t.Error("the retry does not offer the invitation's seed, which is the one thing it " +
+			"exists to try")
+	}
+	if len(retry) != len(cached)+len(inv) {
+		t.Errorf("the retry list has %d entries, want %d (cache + invitation)", len(retry),
+			len(cached)+len(inv))
+	}
+
+	// And the invitation contributes nothing before Bootstrap decides to try it: the caller
+	// passes an empty slice then, and no branch here may invent one.
+	none := startingNodes(cached, shipped, nil, false)
+	if containsAddr(none, "198.51.100.7:6881") {
+		t.Error("an invitation seed appeared in a list assembled without one")
+	}
+}
+
+func containsAddr(addrs []dht.Addr, want string) bool {
+	for _, a := range addrs {
+		if a.String() == want {
+			return true
+		}
+	}
+	return false
+}
+
+// TestAnAbortedLookupIsNotAnEmptyFetch is cited by docs/red-proofs.md and had ceased to
+// exist — a ledger row naming a check nothing runs, which is the ledger's own defect shape.
+//
+// The property: getput.Get sets err = ctx.Err() and leaves ret alone, so a caller's
+// cancellation and our own expiring budget both arrive at the same place as "no value". The
+// first version of Fetch returned ErrNoRecord for them, which the ladder reports as "your
+// peer has not published yet" — telling a user their counterparty is offline when the truth
+// is that we stopped asking. It also counted them in fetchEmpty, whose own doc says it must
+// never be summed with a transport failure.
+func TestAnAbortedLookupIsNotAnEmptyFetch(t *testing.T) {
+	n := nodeWithCache(t, deadCache(t))
+	seed := make([]byte, ed25519.SeedSize)
+	seed[0] = 1
+	salt := []byte("abort-probe")
+
+	before := n.rz.Stats()
+
+	// Cancelled before the traversal can do anything. The cancellation is the stimulus,
+	// and the test asserts it below rather than assuming it.
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, _, err := n.rz.Fetch(ctx, seed, salt)
+	if err == nil {
+		t.Fatal("a fetch on a cancelled context succeeded, so this test never reaches its subject")
+	}
+	if errors.Is(err, ErrNoRecord) {
+		t.Errorf("a cancelled lookup was reported as ErrNoRecord: %v\n"+
+			"the ladder renders that as 'your peer has not published yet' — a statement about "+
+			"the peer, made when the truth is that we stopped asking", err)
+	}
+	if !errors.Is(err, context.Canceled) {
+		t.Errorf("the error does not carry the cancellation: %v", err)
+	}
+
+	after := n.rz.Stats()
+	if after.FetchAborted != before.FetchAborted+1 {
+		t.Errorf("FetchAborted %d → %d — the counter the CLI prints for 'we stopped asking' "+
+			"did not move", before.FetchAborted, after.FetchAborted)
+	}
+	if after.FetchEmpty != before.FetchEmpty {
+		t.Errorf("FetchEmpty %d → %d — a cancelled traversal was summed into the counter whose "+
+			"own doc says it must never carry a transport failure",
+			before.FetchEmpty, after.FetchEmpty)
 	}
 }

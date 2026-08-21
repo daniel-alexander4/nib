@@ -241,6 +241,13 @@ type Server struct {
 	invSeedsTried bool
 	invSeedsUsed  bool
 
+	// invSeedsOnly withholds the shipped bootstrap list from StartingNodes for the duration
+	// of Bootstrap's retry, so what that attempt gains came from the invitation and the
+	// attribution below it is exact rather than approximate. Set and cleared around one
+	// call, under s.mu; nothing else traverses during bootstrap, which is the first thing
+	// the service does.
+	invSeedsOnly bool
+
 	observed       atomic.Uint64
 	rejectedLength atomic.Uint64
 	rejectedPort   atomic.Uint64
@@ -357,20 +364,9 @@ func Open(conn net.PacketConn, dir string) (*Server, error) {
 			if s.invSeedsTried {
 				extra = append(extra, s.invSeeds...)
 			}
+			onlyInv := s.invSeedsOnly
 			s.mu.Unlock()
-			out := make([]dht.Addr, 0, len(nodes)+len(seeds))
-			for _, n := range nodes {
-				out = append(out, dht.NewAddr(n.Addr.UDP()))
-			}
-			for _, a := range seeds {
-				out = append(out, dht.NewAddr(a))
-			}
-			for _, ap := range extra {
-				// net.UDPAddrFromAddrPort, never ResolveUDPAddr — the guard forbids the
-				// resolver by name, and the type forbids a hostname by construction.
-				out = append(out, dht.NewAddr(net.UDPAddrFromAddrPort(ap)))
-			}
-			return out, nil
+			return startingNodes(nodes, seeds, extra, onlyInv), nil
 		},
 	}
 	d, err := dht.NewServer(cfg)
@@ -490,8 +486,14 @@ func (s *Server) Bootstrap(ctx context.Context) error {
 	// read "the shipped list worked" on a run where every shipped address was dead. The
 	// plan defends the Seeds term of that comparison by name; the confounding landed on
 	// the other term.
+	s.mu.Lock()
+	s.invSeedsOnly = true
+	s.mu.Unlock()
 	before := s.bootstrapped.Load()
 	err2 := s.bootstrapOnce(ctx)
+	s.mu.Lock()
+	s.invSeedsOnly = false
+	s.mu.Unlock()
 	if gained := s.bootstrapped.Load() - before; gained > 0 {
 		s.bootstrapped.Add(^(gained - 1)) // subtract: these nodes came from the seeds
 		s.invBootstrapped.Add(gained)
@@ -529,6 +531,47 @@ func (s *Server) bootstrapOnce(ctx context.Context) error {
 		s.bootstrapped.Add(uint64(after - before))
 	}
 	return err
+}
+
+// startingNodes assembles the address list every traversal starts from: the node cache,
+// the shipped bootstrap list, and — once Bootstrap has decided to try them — the
+// invitation's seeds.
+//
+// It is a pure function for the reason sampleSeeds is: driving it through a live Server
+// cannot reach the case that went wrong. The shipped list is only loaded when the node cache
+// is EMPTY, and a hermetic test with an empty cache would have to reach the real public
+// bootstrap routers to observe anything. So the one behaviour worth pinning — that the retry
+// withholds the shipped list — is unobservable from any test that goes through the Server.
+//
+// **onlyInv is the seeds-only window, and it is an attribution property, not an optimisation.**
+// Bootstrap's retry credits everything the second attempt gains to the invitation, by
+// subtracting it from `bootstrapped` and adding it to `invBootstrapped`. That is only true if
+// the second attempt has nothing else to gain from — and it did: this list kept emitting the
+// shipped addresses, which the retry's own precondition says already failed once but which
+// can still answer on a second try after a transient DNS or network failure. The report then
+// read `Seeds: 5, InvitationBootstrapped: 25, Bootstrapped: 0` — "the invitation's seeds
+// rescued this machine" about a run the shipped list rescued. Precisely the confounding the
+// retry's own comment says it fixed, in the mirror direction.
+//
+// Withholding it is also the more honest shape: the retry exists because that list
+// demonstrably produced nothing, so a last resort that keeps asking the thing that failed is
+// not a last resort.
+func startingNodes(cached []krpc.NodeInfo, shipped []*net.UDPAddr, inv []netip.AddrPort, onlyInv bool) []dht.Addr {
+	out := make([]dht.Addr, 0, len(cached)+len(shipped)+len(inv))
+	for _, n := range cached {
+		out = append(out, dht.NewAddr(n.Addr.UDP()))
+	}
+	if !onlyInv {
+		for _, a := range shipped {
+			out = append(out, dht.NewAddr(a))
+		}
+	}
+	for _, ap := range inv {
+		// net.UDPAddrFromAddrPort, never ResolveUDPAddr — the guard forbids the resolver by
+		// name, and the type forbids a hostname by construction.
+		out = append(out, dht.NewAddr(net.UDPAddrFromAddrPort(ap)))
+	}
+	return out
 }
 
 // SeedSample picks up to n live nodes to put in an invitation — the producing half of
