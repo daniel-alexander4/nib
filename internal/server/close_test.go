@@ -303,8 +303,15 @@ func TestCloseRacesMutation(t *testing.T) {
 		if !ok {
 			t.Fatalf("iteration %d: /api/pages returned no status", i)
 		}
-		if code != http.StatusOK && code != http.StatusNotFound {
-			t.Fatalf("iteration %d: /api/pages = %d, want 200 or 404", i, code)
+		// 409 is the close landing mid-flight, and it is the outcome this test races for.
+		//
+		// The list read "200 or 404" until v1.116.3, when the eight commit-failure branches
+		// moved to 409 per ADR-004 — "an id naming a document the server no longer holds is
+		// 409, never 404". This test drives exactly that race, so it was pinning the code
+		// the ADR forbids. 404 stays in the set: `resolveDoc` still answers it for the
+		// genuinely-nothing-open case, which this race can also produce.
+		if code != http.StatusOK && code != http.StatusNotFound && code != http.StatusConflict {
+			t.Fatalf("iteration %d: /api/pages = %d, want 200, 404 or 409", i, code)
 		}
 	}
 }

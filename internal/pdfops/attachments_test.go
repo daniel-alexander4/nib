@@ -5,9 +5,13 @@ import (
 	"testing"
 	"time"
 
+	"errors"
 	"github.com/pdfcpu/pdfcpu/pkg/api"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/types"
+	"image"
+	"image/color"
+	"image/png"
 )
 
 // TestAttachmentName pins the basename reduction: paths are stripped and the
@@ -277,5 +281,130 @@ func TestPageOperationsKeepWhatIsNotPageIndexed(t *testing.T) {
 		t.Error("an outline survived a reorder — its destinations name page objects that " +
 			"no longer mean what they did, so it now points at the wrong pages. If this " +
 			"is intentional, the destinations must be remapped and this test updated")
+	}
+}
+
+// TestContentDigestIsStableAcrossARewriteAndSeesTheImage.
+//
+// `ContentDigest` had **no test of any kind** before this one, despite its doc making four
+// specific measured claims — which is part of why it was blind to `/Resources` for as long
+// as it was.
+//
+// The two properties are in tension and that is the whole design. It cannot be a byte hash,
+// because pdfcpu's rewrite is not idempotent and the convener would get one number and every
+// later party a different one. And it must still notice a changed page, or it answers
+// nothing. Both are asserted here against the same document.
+// differentPNG is pngBytes with a different picture at the same dimensions.
+func differentPNG(t *testing.T, w, h int) []byte {
+	t.Helper()
+	img := image.NewRGBA(image.Rect(0, 0, w, h))
+	for x := 0; x < w; x++ {
+		for y := 0; y < h; y++ {
+			img.Set(x, y, color.RGBA{uint8(x % 251), uint8(y % 253), 7, 255})
+		}
+	}
+	var buf bytes.Buffer
+	if err := png.Encode(&buf, img); err != nil {
+		t.Fatal(err)
+	}
+	return buf.Bytes()
+}
+
+func TestContentDigestIsStableAcrossARewriteAndSeesTheImage(t *testing.T) {
+	base, err := ImagesToPDF([]RasterPage{rasterPage(t, 200, 200)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, err := ContentDigest(base)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// STIMULUS: the rewrite really is non-idempotent, or "stable across a rewrite" is a
+	// claim about an operation that changed nothing and the test proves nothing.
+	once, err := Optimize(base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	twice, err := Optimize(once)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Equal(once, twice) {
+		t.Fatal("setup: two rewrites produced identical bytes — a byte hash would do, and " +
+			"this function's whole premise has changed")
+	}
+
+	for name, b := range map[string][]byte{"rewritten once": once, "rewritten twice": twice} {
+		got, derr := ContentDigest(b)
+		if derr != nil {
+			t.Fatal(derr)
+		}
+		if got != first {
+			t.Errorf("%s changed the digest (%s vs %s) — the convener and every later "+
+				"party would compute different numbers for one document",
+				name, got[:16], first[:16])
+		}
+	}
+
+	// The half it was blind to, driven the way an attacker would: two documents whose
+	// pages are the SAME SIZE and carry DIFFERENT pictures.
+	//
+	// This is the strong form, and it is the one that matters. Both produce byte-identical
+	// content streams — same page box, same `/Im0 Do` boilerplate — so any difference in
+	// the digest can only come from the resources. Corrupting a stream instead would be
+	// caught by the decode marker alone, which is a weaker property: it would not see a
+	// substitution that stays decodable, and a substituted contract does stay decodable.
+	// (Proven: emptying the hashed resource BODIES while keeping the marker left the
+	// XOR-based assertion below still green.)
+	other, err := ImagesToPDF([]RasterPage{{Image: differentPNG(t, 400, 400), W: 200, H: 200}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	otherDigest, err := ContentDigest(other)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if otherDigest == first {
+		t.Error("two documents with the same page geometry and DIFFERENT page images hash " +
+			"identically — for a scanned contract that is the clauses, the amounts and the " +
+			"signature block, all invisible to the digest a ceremony is convened over")
+	}
+
+	// And the corruption case, which the decode marker also covers.
+	swapped, err := writeMutated(base, func(ctx *model.Context) error {
+		xt := ctx.XRefTable
+		d, _, _, perr := xt.PageDict(1, false)
+		if perr != nil {
+			return perr
+		}
+		res, _ := xt.DereferenceDict(d["Resources"])
+		xo, _ := xt.DereferenceDict(res["XObject"])
+		if xo == nil {
+			return errors.New("no XObject to swap")
+		}
+		for n := range xo {
+			sd, _, serr := xt.DereferenceStreamDict(xo[n])
+			if serr != nil || sd == nil {
+				continue
+			}
+			for i := range sd.Raw {
+				sd.Raw[i] ^= 0xff
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	after, err := ContentDigest(swapped)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after == first {
+		t.Error("swapping the page image left the digest unchanged — for a scanned " +
+			"document the content stream is invariant boilerplate and the image IS the " +
+			"page, so a party could rewrite the clauses before the first signature and " +
+			"CheckDocument would return clean")
 	}
 }
