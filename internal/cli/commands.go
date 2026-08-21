@@ -981,7 +981,21 @@ func cmdVerify(args []string) int {
 		} else {
 			fmt.Printf("%s: %s\n", p, describeStatus(st))
 		}
-		if st.State != sign.Valid {
+		if st.State != sign.Valid || st.AddedAfter {
+			// AddedAfter too, and it is the case that mattered.
+			//
+			// `sign.Verify` reports State=Valid with AddedAfter=true for a document
+			// carrying content in a revision LATER than its last signature — each
+			// signature still proves its own content intact, and the final document is not
+			// wholly signed. Exit was driven by State alone, so `nib verify` returned 0 for
+			// it while its own help says "Exit 2 if any file is unsigned or modified" and
+			// README ships `nib verify contract.pdf && echo "signature intact"`.
+			//
+			// The counterparty who returns your signed contract having appended pages —
+			// an ordinary, tool-supported PDF operation — is the actor. The text line does
+			// say "content added after the last signature" and --json carries addedAfter,
+			// so a human reading each line catches it; the CLI was the one surface where
+			// the machine-readable channel disagreed with the human one.
 			worst = max(worst, 2)
 		}
 	}

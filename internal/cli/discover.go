@@ -172,6 +172,23 @@ func runDiscover(out, errw io.Writer, listen time.Duration, quiet bool) int {
 	fmt.Fprintf(out, "  own copies heard    %d\n", st.Own)
 	fmt.Fprintf(out, "  peers heard         %d\n", st.Peers)
 	fmt.Fprintf(out, "  other traffic       %d foreign, %d malformed\n", st.Foreign, st.Malformed)
+	// OffLink, which this summary omitted while printing all eight of its siblings.
+	//
+	// Its own doc: "Non-zero means somebody is sending link-local discovery traffic from
+	// off the link, which is not a thing that happens by accident." It is the one
+	// security-relevant counter in the set, and its only reader was a test — in a command
+	// whose doc comment cites P03's lesson that "a counter nobody can read is worth
+	// nothing" as the reason it prints its counters exhaustively.
+	//
+	// Called out on its own line rather than folded in with foreign/malformed, because
+	// those two are ordinary on a shared link and this one is not: a zero here is quiet
+	// and a non-zero is a finding.
+	if st.OffLink > 0 {
+		fmt.Fprintf(out, "  OFF-LINK            %d datagram(s) from outside this link — "+
+			"not something that happens by accident\n", st.OffLink)
+	} else {
+		fmt.Fprintf(out, "  off-link            0\n")
+	}
 	fmt.Fprintln(out)
 
 	// The verdict, and it is the whole reason the counters are separated. "Found

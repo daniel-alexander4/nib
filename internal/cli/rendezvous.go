@@ -291,9 +291,16 @@ func verdict(st rendezvous.Stats, self rendezvous.SelfAddress, bootErr, probeErr
 		if probeErr != nil {
 			why = " (" + probeErr.Error() + ")"
 		}
+		// Exit 1, not 0.
+		//
+		// This is the diagnostic failing to establish the fact it was run to establish —
+		// the same shape the self-test arm one screen up already treats as non-zero, with
+		// the comment "the mode whose entire purpose is to prove the publish path works
+		// must be able to say that it didn't". A script or a pasted `echo $?` read 0 here
+		// and concluded the probe had succeeded.
 		return fmt.Sprintf("VERDICT: the DHT is reachable (%d nodes) but nothing reported our "+
 			"address back%s.\n  Finding a peer may still work; diagnosing a failed connection "+
-			"will be harder.", st.Nodes, why), 0
+			"will be harder.", st.Nodes, why), 1
 	}
 	// Agreement is a property of the CLASSIFICATION, not of how many replies were usable.
 	// Reporting Observed as agreement printed "16 nodes agreed" directly under a line

@@ -71,13 +71,23 @@ func Run(args []string, version string) (handled bool, code int) {
 // hasTransformFlag reports whether args carry an output flag that only the
 // headless transform commands accept, so a non-verb first argument alongside one
 // is a mistyped command rather than a file to open in the desktop app.
+//
+// **`--out-dir` and `--data` are in the list, and their absence was the defect.** The list
+// knew only `-o/--out/-w/--in-place`, while `split`, `fill` (CSV mail-merge) and
+// `pagenum --continuous` write through `--out-dir` and `fill` requires `--data`. So
+// `nib splt big.pdf --out-dir out --every 2` was not recognised as a mistyped verb: it fell
+// through to the desktop boot, `flag.Parse` stopped at the first non-flag, and
+// `initialFile` returned a path to a file named "splt". The batch was silently discarded —
+// exactly the outcome this guard's own comment says it exists to prevent, for the three
+// subcommands that produce the MOST files.
 func hasTransformFlag(args []string) bool {
 	for _, a := range args {
 		switch a {
-		case "-o", "--out", "-w", "--in-place":
+		case "-o", "--out", "-w", "--in-place", "--out-dir", "--data":
 			return true
 		}
-		if strings.HasPrefix(a, "-o=") || strings.HasPrefix(a, "--out=") {
+		if strings.HasPrefix(a, "-o=") || strings.HasPrefix(a, "--out=") ||
+			strings.HasPrefix(a, "--out-dir=") || strings.HasPrefix(a, "--data=") {
 			return true
 		}
 	}

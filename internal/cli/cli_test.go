@@ -1328,3 +1328,99 @@ func TestInPlaceRewriteRefusesSignedPDF(t *testing.T) {
 		rewritten(t, q, unsigned)
 	})
 }
+
+// TestAMistypedBatchVerbIsNotOpenedAsAFile.
+//
+// `hasTransformFlag` knew only `-o/--out/-w/--in-place`. `split`, `fill` and
+// `pagenum --continuous` write through `--out-dir`, and `fill` requires `--data` — so a
+// typo in any of those three verbs fell past the guard into the desktop boot, and
+// `initialFile` returned a path to a file named after the typo. The batch was silently
+// discarded, which is the outcome the guard's own comment says it exists to prevent, for
+// the three subcommands that produce the most files.
+func TestAMistypedBatchVerbIsNotOpenedAsAFile(t *testing.T) {
+	for _, args := range [][]string{
+		{"splt", "big.pdf", "--out-dir", "out", "--every", "2"},
+		{"split", "big.pdf", "--out-dir=out"},
+		{"fil", "form.pdf", "--data", "rows.csv", "--out-dir", "out"},
+		{"pagenm", "in.pdf", "--out-dir", "out", "--continuous"},
+	} {
+		if !hasTransformFlag(args) {
+			t.Errorf("hasTransformFlag(%v) = false — a mistyped verb with this flag boots "+
+				"the desktop app and opens a file named after the typo, discarding the batch",
+				args)
+		}
+	}
+	// The controls. A guard that says "transform" for everything would send an ordinary
+	// double-click — `nib file.pdf` — down the headless path and never open a window.
+	for _, args := range [][]string{
+		{"file.pdf"},
+		{},
+		{"--version"},
+		{"/home/dan/Documents/contract.pdf"},
+	} {
+		if hasTransformFlag(args) {
+			t.Errorf("hasTransformFlag(%v) = true — this is an ordinary launch", args)
+		}
+	}
+}
+
+// TestVerifyExitsNonZeroForContentAddedAfterSigning.
+//
+// `sign.Verify` reports State=Valid with AddedAfter=true for a document carrying content in
+// a revision LATER than its last signature. `nib verify`'s exit code was driven by State
+// alone, so it returned **0** — while its own help says *"Exit 2 if any file is unsigned or
+// modified"* and README ships:
+//
+//	nib verify contract.pdf && echo "signature intact"
+//
+// The actor is the counterparty who returns your signed contract having appended pages,
+// which is an ordinary tool-supported PDF operation. The text line does say "content added
+// after the last signature" and --json carries addedAfter, so a human reading each line
+// catches it; the CLI was the one surface where the machine-readable channel disagreed with
+// the human one.
+//
+// **No test in this package ever built an added-after document** — `TestVerifyUnsigned` and
+// `TestSignThenVerify` were the whole verify population, so the subject was never exercised.
+func TestVerifyExitsNonZeroForContentAddedAfterSigning(t *testing.T) {
+	dir := t.TempDir()
+	base, err := testpdf.Form()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cert, key, _ := sign.GenerateIdentity("Signer")
+	signed, err := sign.SignApproval(base, cert, key, sign.Options{Name: "Signer", When: time.Now()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	intact := filepath.Join(dir, "intact.pdf")
+	if err := os.WriteFile(intact, signed, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	appended := filepath.Join(dir, "appended.pdf")
+	if err := os.WriteFile(appended, append(append([]byte{}, signed...),
+		[]byte("\n% content added after signing\n")...), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	// STIMULUS: the fixture must actually be the case under test — signatures still valid,
+	// content added after. Without this the exit code below could be grading a corrupt file.
+	raw, err := os.ReadFile(appended)
+	if err != nil {
+		t.Fatal(err)
+	}
+	st := sign.Verify(raw)
+	if st.State != sign.Valid || !st.AddedAfter {
+		t.Fatalf("setup: fixture is state=%v addedAfter=%v, want valid+addedAfter — this "+
+			"test is not exercising the case it is named for", st.State, st.AddedAfter)
+	}
+
+	// The control FIRST, so a verify that failed everything cannot pass this test.
+	if code := cmdVerify([]string{intact}); code != 0 {
+		t.Fatalf("an intact signed document exited %d, want 0", code)
+	}
+	if code := cmdVerify([]string{appended}); code == 0 {
+		t.Error("a document with content added after the last signature exited 0 — " +
+			`README ships "nib verify contract.pdf && echo \"signature intact\"", and that ` +
+			"prints for a document that is not wholly signed")
+	}
+}

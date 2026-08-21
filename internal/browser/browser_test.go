@@ -2,9 +2,11 @@ package browser
 
 import (
 	"os"
+	"os/exec"
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 )
 
 // Nib opens its UI by launching an installed Chromium-family browser, and the
@@ -113,5 +115,38 @@ func TestEveryPlatformOffersTheBrowsersWeAdvertise(t *testing.T) {
 				t.Errorf("%s offers no %s, but README advertises it — that user silently gets the plain-tab fallback", platform, fam)
 			}
 		}
+	}
+}
+
+// TestABrowserThatStartsAndDiesIsNotReportedAsSuccess.
+//
+// `cmd.Start()` reports only exec-level failure, and `reap` explicitly discarded `Wait`'s
+// status ("the error is deliberately dropped"). So a browser that launches and exits
+// immediately — a locked user-data-dir, snap or flatpak confinement, an Edge policy, a
+// broken profile — was a successful launch as far as Nib was concerned, with no fallback
+// and no diagnostic a double-clicked process could show anyone. The user's whole report is
+// "I double-clicked Nib and nothing happened", which is the local-first SRE seat's named
+// failure shape.
+func TestABrowserThatStartsAndDiesIsNotReportedAsSuccess(t *testing.T) {
+	// STIMULUS first: a process that STAYS UP must be reported alive, or the assertion
+	// below is satisfied by an `alive` that always says false.
+	long := exec.Command("sleep", "5")
+	if err := long.Start(); err != nil {
+		t.Skipf("no sleep binary here: %v", err)
+	}
+	defer func() { _ = long.Process.Kill() }()
+	if !alive(long, 100*time.Millisecond) {
+		t.Fatal("setup: a running process was reported as dead, so this test cannot " +
+			"distinguish the case it is for")
+	}
+
+	// The case: a command that exits at once, which is what a refusing browser does.
+	quick := exec.Command("false")
+	if err := quick.Start(); err != nil {
+		t.Skipf("no false binary here: %v", err)
+	}
+	if alive(quick, appModeSettle) {
+		t.Error("a process that exited immediately was reported as a live browser — Nib " +
+			"then serves a window nobody can see and never reaches the tab fallback")
 	}
 }

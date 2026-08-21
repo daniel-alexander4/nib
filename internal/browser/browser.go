@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"runtime"
+	"time"
 )
 
 // fileExists reports whether an absolute path is a regular, runnable file.
@@ -42,8 +43,23 @@ func Open(url string) (*exec.Cmd, error) {
 		}
 		cmd := exec.Command(path, appArgs...)
 		if err := cmd.Start(); err == nil {
-			reap(cmd)
-			return cmd, nil
+			// Started is not the same as running.
+			//
+			// `Start` reports only exec-level failure, so a browser that launches and
+			// exits immediately — a locked user-data-dir, snap or flatpak confinement, an
+			// Edge policy, a broken profile — was reported as success. There was no
+			// fallback once Start had succeeded, and the only diagnostic was a line on
+			// stderr that a double-clicked launch has nowhere to print. The user's entire
+			// report is "I double-clicked Nib and nothing happened".
+			//
+			// A short wait is the whole fix: a browser that is going to fail this way
+			// fails at once, and one that is working is still running. It costs a
+			// quarter-second on the failing path and nothing on the working one.
+			if alive(cmd, appModeSettle) {
+				return cmd, nil
+			}
+			// It died. Fall through to the tab fallback rather than serving a window
+			// nobody can see.
 		}
 		// fall through to the tab fallback if the app-mode launch failed
 	}
@@ -55,6 +71,32 @@ func Open(url string) (*exec.Cmd, error) {
 		reap(cmd)
 	}
 	return cmd, err
+}
+
+// appModeSettle is how long Open waits to see whether an app-mode launch survives.
+//
+// Long enough that a browser refusing its profile has exited, short enough that a user
+// never notices. Measured against nothing — it is a settle window, not a threshold — but
+// the failure it catches is immediate by nature: the process is gone before it draws.
+const appModeSettle = 250 * time.Millisecond
+
+// alive reports whether cmd is still running after d, reaping it either way.
+//
+// It replaces the bare reap on the app-mode path: the goroutine still waits, so nothing
+// lingers as a zombie, but the result is now observed instead of discarded.
+func alive(cmd *exec.Cmd, d time.Duration) bool {
+	done := make(chan struct{})
+	go func() {
+		defer safe.Recover("browser reap")
+		_ = cmd.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+		return false // exited within the settle window
+	case <-time.After(d):
+		return true
+	}
 }
 
 // reap waits on a launched browser so it does not linger as a zombie once the user
