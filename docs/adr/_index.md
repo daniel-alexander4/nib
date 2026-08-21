@@ -64,3 +64,6 @@ home today.
   secret authorising one route, and why kernel-vouched peer credentials were refused
 - [ADR-007: Discovery announcement](007-discovery-announcement.md) — the name, a
   port and a nonce; never the pin, and the socket treated as hostile everywhere
+- [ADR-008: The byte cap binds every growth door](008-the-byte-cap-binds-every-growth-door.md) —
+  extends ADR-005: the byte half was enforced only at open, so five writers of `doc.data`
+  went past it

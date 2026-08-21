@@ -3,6 +3,7 @@ package server
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"image"
 	"image/png"
 	"io"
@@ -156,23 +157,27 @@ func TestCommitAfterCloseIsRefused(t *testing.T) {
 
 	for _, tc := range []struct {
 		name   string
-		commit func(*Server) bool
+		commit func(*Server) error
 	}{
-		{"commitMutation", func(s *Server) bool { return s.commitMutation(s.activeDoc(), pdf, pdf) }},
-		{"commitBarrier", func(s *Server) bool { return s.commitBarrier(s.activeDoc(), pdf) }},
+		{"commitMutation", func(s *Server) error { return s.commitMutation(s.activeDoc(), pdf, pdf) }},
+		{"commitBarrier", func(s *Server) error { return s.commitBarrier(s.activeDoc(), pdf) }},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			s := openTestServer(t, pdf)
 			// The non-zero probe: the identical call must succeed with a
 			// document open, or a helper that always returned false would pass.
-			if !tc.commit(s) {
-				t.Fatal("commit with a document open returned false")
+			if err := tc.commit(s); err != nil {
+				t.Fatalf("commit with a document open was refused: %v", err)
 			}
 			// Drive the real close, not setDoc(nil) — the clause is about a
 			// close landing, so the handler is the subject.
 			s.handleClose(httptest.NewRecorder(), httptest.NewRequest(http.MethodPost, "/api/close", nil))
-			if tc.commit(s) {
-				t.Error("commit after a close returned true — a success for discarded work")
+			// errDocClosed SPECIFICALLY: the doors now have two reasons to refuse, and
+			// "refused" alone would be satisfied by a byte-cap refusal, which is a
+			// different fact and a different reply.
+			if err := tc.commit(s); !errors.Is(err, errDocClosed) {
+				t.Errorf("commit after a close returned %v, want errDocClosed — anything else is a "+
+					"success for discarded work, or the right refusal for the wrong reason", err)
 			}
 		})
 	}
