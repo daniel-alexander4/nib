@@ -118,6 +118,34 @@ func Scan(pdf []byte) (ScanReport, error) {
 		if _, ok := af.Find("XFA"); ok {
 			add("xfa", "medium", "XFA form (can contain its own scripts)", 0)
 		}
+		// The FIELD TREE, which neither this scan nor StripActive walked.
+		//
+		// The page walk above catches /AA and /A on widget ANNOTATIONS, which covers the
+		// merged field+widget dict — the shape a single-widget field takes. It does not
+		// cover a field dict that is the PARENT of its widget kids, which is what Acrobat
+		// produces for a multi-widget field and is the standard home (§12.7.5.3) for the
+		// /AA /K keystroke, /F format, /V validate and /C calculate scripts. So a PDF whose
+		// only active content is field-level JavaScript scanned CLEAN, and — because
+		// server/scan.go's residual re-scan is this same detector — StripActive then
+		// reported "all active content neutralized" with the scripts still in place.
+		eachFormField(xt, af, func(f types.Dict) {
+			if _, ok := f.Find("AA"); ok {
+				add("additionalActions", "medium",
+					"Form field additional actions (keystroke, format, validate or calculate script)", 0)
+			}
+			eachAction(xt, derefDict(xt, f["A"]), 0, func(act types.Dict) {
+				if sev, ok := riskyActions[nameVal(act, "S")]; ok {
+					add("action", sev, actionDetail(nameVal(act, "S")), 0)
+				}
+			})
+		})
+		// /CO is the calculation ORDER — an array of the fields whose /AA /C scripts run
+		// and in what sequence. Its presence is the tell that calculate scripts exist even
+		// if a field dict is malformed enough that the walk above missed one.
+		if co := derefArray(xt, af["CO"]); len(co) > 0 {
+			add("additionalActions", "medium",
+				"Form calculation order (fields with calculate scripts)", 0)
+		}
 	}
 
 	// Optional content (layers); flag any hidden by default.
@@ -187,6 +215,45 @@ func Scan(pdf []byte) (ScanReport, error) {
 	return rep, nil
 }
 
+// eachFormField calls fn for every dict in the AcroForm field tree, parents included.
+//
+// The tree is /AcroForm /Fields with /Kids beneath, and a node is both a field and a widget
+// annotation when a field has exactly one widget — which is why the page-level annotation
+// walk covers that case and only that case. Parents of multi-widget fields are reachable
+// only from here.
+//
+// Cycles are bounded by object number, not by depth: a /Kids array that points back at an
+// ancestor is a document the reader still opens, and this package has already paid once for
+// a walk that recursed on one (see eachPage's own cycle guard). Direct dicts have no object
+// number, so they are bounded by depth as well.
+func eachFormField(xt *model.XRefTable, af types.Dict, fn func(types.Dict)) {
+	seen := map[int]bool{}
+	var walk func(o types.Object, depth int)
+	walk = func(o types.Object, depth int) {
+		if depth > 32 {
+			return
+		}
+		if ir, ok := o.(types.IndirectRef); ok {
+			n := ir.ObjectNumber.Value()
+			if seen[n] {
+				return
+			}
+			seen[n] = true
+		}
+		f := derefDict(xt, o)
+		if f == nil {
+			return
+		}
+		fn(f)
+		for _, k := range derefArray(xt, f["Kids"]) {
+			walk(k, depth+1)
+		}
+	}
+	for _, f := range derefArray(xt, af["Fields"]) {
+		walk(f, 0)
+	}
+}
+
 // StripActive neutralizes all active content while preserving the document's
 // visible pages, vector text, and benign internal navigation: it deletes
 // document/page/annotation auto-run hooks, JavaScript, optional-content layer
@@ -215,6 +282,15 @@ func StripActive(pdf []byte) ([]byte, error) {
 		}
 		if af := derefDict(xt, root["AcroForm"]); af != nil {
 			_ = xt.DeleteDictEntry(af, "XFA")
+			// The field tree and the calculation order, for the reason Scan now walks
+			// them: /AA on a PARENT field dict is not on any annotation, so the page walk
+			// never saw it. Deleting /CO alone would leave the scripts and only remove the
+			// order they run in.
+			eachFormField(xt, af, func(f types.Dict) {
+				_ = xt.DeleteDictEntry(f, "AA")
+				_ = xt.DeleteDictEntry(f, "A")
+			})
+			_ = xt.DeleteDictEntry(af, "CO")
 		}
 		// The media annotations RemoveFilesAndMedia takes out. StripActive is the STRONGER
 		// tier and used to leave them: a Screen or Movie annotation survived the strip

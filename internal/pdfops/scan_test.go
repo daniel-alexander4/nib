@@ -581,3 +581,191 @@ func TestEachPageCountsDuplicatesAndStopsCycles(t *testing.T) {
 		t.Fatal("eachPage did not terminate on a cyclic page tree")
 	}
 }
+
+// craftFieldScriptPDF builds a PDF whose ONLY active content is a field-level script on a
+// PARENT field dict — the shape Acrobat produces for a multi-widget field, and the standard
+// home (§12.7.5.3) for /AA /K keystroke, /F format, /V validate and /C calculate scripts.
+//
+// The parent is deliberately NOT an annotation and is NOT in any page's /Annots. That is the
+// whole point: the page walk sees only the widget kid, which carries no action, so the
+// document scanned clean.
+func craftFieldScriptPDF(t *testing.T) []byte {
+	t.Helper()
+	base, err := ImagesToPDF([]RasterPage{rasterPage(t, 200, 200)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, err := api.ReadValidateAndOptimize(bytes.NewReader(base), model.NewDefaultConfiguration())
+	if err != nil {
+		t.Fatal(err)
+	}
+	xt := ctx.XRefTable
+	pd, _, _, err := xt.PageDict(1, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The widget kid: an ordinary annotation with no action of its own.
+	kid := types.Dict{
+		"Type": types.Name("Annot"), "Subtype": types.Name("Widget"),
+		"Rect": types.NewNumberArray(10, 10, 110, 40), "FT": types.Name("Tx"),
+	}
+	kidRef, err := xt.IndRefForNewObject(kid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The parent field: holds the scripts, is not an annotation, is on no page.
+	parent := types.Dict{
+		"FT": types.Name("Tx"), "T": types.StringLiteral("total"),
+		"DA":   types.StringLiteral("/Helv 0 Tf 0 g"),
+		"Kids": types.Array{*kidRef},
+		"AA": types.Dict{
+			"C": types.Dict{"S": types.Name("JavaScript"), "JS": types.StringLiteral("app.alert('calculate')")},
+			"K": types.Dict{"S": types.Name("JavaScript"), "JS": types.StringLiteral("app.alert('keystroke')")},
+		},
+	}
+	parentRef, err := xt.IndRefForNewObject(parent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	kid["Parent"] = *parentRef
+	pd["Annots"] = types.Array{*kidRef}
+
+	root, err := xt.Catalog()
+	if err != nil {
+		t.Fatal(err)
+	}
+	// DA and a font resource, because pdfcpu's validator requires them on a form field
+	// and refuses the whole document otherwise — the fixture has to be a PDF a reader
+	// actually accepts, or the walk under test is never reached.
+	root["AcroForm"] = types.Dict{
+		"Fields": types.Array{*parentRef},
+		"CO":     types.Array{*parentRef},
+		"DA":     types.StringLiteral("/Helv 0 Tf 0 g"),
+	}
+	var buf bytes.Buffer
+	if err := api.WriteContext(ctx, &buf); err != nil {
+		t.Fatal(err)
+	}
+	return buf.Bytes()
+}
+
+// TestFieldLevelScriptsAreSeenAndStripped.
+//
+// `Scan` read `/AcroForm` only for `/XFA` and `StripActive` deleted only `/XFA`. Neither
+// walked `/Fields` or `/CO`. The page walk catches `/AA` and `/A` on widget ANNOTATIONS,
+// which covers a merged field+widget dict and nothing else — so a PDF whose only active
+// content is a parent field's script scanned CLEAN, and because `server/scan.go`'s residual
+// re-scan is this same detector, StripActive then reported "all active content neutralized"
+// with the scripts intact.
+func TestFieldLevelScriptsAreSeenAndStripped(t *testing.T) {
+	pdf := craftFieldScriptPDF(t)
+
+	// STIMULUS, independent of Scan: the scripts really are in the field tree, and really
+	// are NOT on any page annotation. Without both halves this test could pass against a
+	// fixture the page walk already covered.
+	parentAA, annotAA := fieldTreeFacts(t, pdf)
+	if !parentAA {
+		t.Fatal("setup: the parent field carries no /AA, so there is nothing for the new walk to find")
+	}
+	if annotAA {
+		t.Fatal("setup: a page annotation carries /AA — the page walk already covers that " +
+			"shape, so this fixture is not the case the finding is about")
+	}
+
+	rep, err := Scan(pdf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var sawAction bool
+	for _, f := range rep.Findings {
+		if f.Kind == "additionalActions" {
+			sawAction = true
+		}
+	}
+	if !sawAction {
+		t.Errorf("Scan reports no active content for a document whose form fields carry "+
+			"keystroke and calculate JavaScript: %+v", rep.Findings)
+	}
+
+	stripped, err := StripActive(pdf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if aa, _ := fieldTreeFacts(t, stripped); aa {
+		t.Error("StripActive left the field's /AA in place while reporting that all active " +
+			"content was neutralized")
+	}
+	// And the residual re-scan the server performs must agree.
+	rep2, err := Scan(stripped)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range rep2.Findings {
+		if f.Kind == "additionalActions" {
+			t.Errorf("residual scan still reports %s: %s", f.Kind, f.Detail)
+		}
+	}
+}
+
+// fieldTreeFacts walks the AcroForm field tree DIRECTLY, independent of eachFormField, and
+// reports whether any field dict carries /AA and whether any PAGE annotation does.
+//
+// Independent for the reason annotFacts is: a check built on the walker under test cannot
+// see the walker failing to reach a node.
+func fieldTreeFacts(t *testing.T, pdf []byte) (fieldAA, annotAA bool) {
+	t.Helper()
+	// ReadValidateAndOptimize, not ReadContext: the latter does not populate the page
+	// tree, so xt.PageDict returns "page not found" — the same class of pdfcpu
+	// population trap this package records for ctx.PageAnnots and for font dicts.
+	ctx, err := api.ReadValidateAndOptimize(bytes.NewReader(pdf), model.NewDefaultConfiguration())
+	if err != nil {
+		t.Fatalf("re-reading the PDF: %v", err)
+	}
+	xt := ctx.XRefTable
+	root, err := xt.Catalog()
+	if err != nil {
+		t.Fatal(err)
+	}
+	af, _ := xt.DereferenceDict(root["AcroForm"])
+	var walk func(types.Object, int)
+	walk = func(o types.Object, depth int) {
+		if depth > 32 {
+			return
+		}
+		d, _ := xt.DereferenceDict(o)
+		if d == nil {
+			return
+		}
+		if _, ok := d.Find("AA"); ok {
+			// A merged field+widget is BOTH; only a node absent from /Annots counts here.
+			if nameVal(d, "Subtype") != "Widget" {
+				fieldAA = true
+			}
+		}
+		kids, _ := xt.DereferenceArray(d["Kids"])
+		for _, k := range kids {
+			walk(k, depth+1)
+		}
+	}
+	if af != nil {
+		fields, _ := xt.DereferenceArray(af["Fields"])
+		for _, f := range fields {
+			walk(f, 0)
+		}
+	}
+	pd, _, _, err := xt.PageDict(1, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	annots, _ := xt.DereferenceArray(pd["Annots"])
+	for _, a := range annots {
+		d, _ := xt.DereferenceDict(a)
+		if d == nil {
+			continue
+		}
+		if _, ok := d.Find("AA"); ok {
+			annotAA = true
+		}
+	}
+	return fieldAA, annotAA
+}
