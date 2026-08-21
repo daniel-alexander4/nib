@@ -279,16 +279,7 @@ func TestACommitFailureIsAlwaysA409(t *testing.T) {
 			continue
 		}
 		ast.Inspect(file, func(n ast.Node) bool {
-			ifs, ok := n.(*ast.IfStmt)
-			if !ok {
-				return true
-			}
-			// `if !s.commitMutation(...)` / `if !s.commitBarrier(...)`
-			un, ok := ifs.Cond.(*ast.UnaryExpr)
-			if !ok || un.Op != token.NOT {
-				return true
-			}
-			call, ok := un.X.(*ast.CallExpr)
+			call, ok := n.(*ast.CallExpr)
 			if !ok {
 				return true
 			}
@@ -297,16 +288,14 @@ func TestACommitFailureIsAlwaysA409(t *testing.T) {
 				return true
 			}
 			branches++
-			body := string(src[fset.Position(ifs.Body.Pos()).Offset:fset.Position(ifs.Body.End()).Offset])
-			if strings.Contains(body, "StatusNotFound") {
-				t.Errorf("%s:%d: a %s failure answers 404. ADR-004: a document the server no "+
-					"longer holds is 409, never 404 — and the client only reconciles on 409, "+
-					"so this leaves a tab where everything fails",
-					f, fset.Position(ifs.Pos()).Line, sel.Sel.Name)
-			}
-			if !strings.Contains(body, "StatusConflict") {
-				t.Errorf("%s:%d: a %s failure answers neither 409 nor anything this guard "+
-					"recognises — it must be 409", f, fset.Position(ifs.Pos()).Line, sel.Sel.Name)
+			// The whole enclosing line, so the guard sees how the result is consumed.
+			pos := fset.Position(call.Pos())
+			line := lineAt(src, pos.Offset)
+			if !strings.Contains(line, "wroteCommitFailure") {
+				t.Errorf("%s:%d: a %s result is consumed without wroteCommitFailure — the "+
+					"409-never-404 rule of ADR-004 lives in that one function now, and a call "+
+					"site that maps the error itself is a second copy of it:\n\t%s",
+					f, pos.Line, sel.Sel.Name, strings.TrimSpace(line))
 			}
 			return true
 		})
@@ -314,7 +303,17 @@ func TestACommitFailureIsAlwaysA409(t *testing.T) {
 	// The floor. Eight handlers had this branch when the guard was written; zero means the
 	// matcher stopped matching and every assertion above ran over nothing.
 	if branches < 8 {
-		t.Fatalf("found %d commit-failure branch(es); expected at least 8 — the matcher has gone blind", branches)
+		t.Fatalf("found %d commit call(s); expected at least 8 — the matcher has gone blind", branches)
 	}
-	t.Logf("%d commit-failure branches, all 409", branches)
+	t.Logf("%d commit calls, all routed through wroteCommitFailure", branches)
+}
+
+// lineAt returns the whole source line containing offset.
+func lineAt(src []byte, offset int) string {
+	start := bytes.LastIndexByte(src[:offset], '\n') + 1
+	end := bytes.IndexByte(src[offset:], '\n')
+	if end < 0 {
+		return string(src[start:])
+	}
+	return string(src[start : offset+end])
 }

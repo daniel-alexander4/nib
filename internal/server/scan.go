@@ -75,8 +75,7 @@ func (s *Server) handleSanitize(w http.ResponseWriter, r *http.Request) {
 	}
 
 	residual, _ := pdfops.Scan(result)
-	if !s.commitMutation(doc, before, result) {
-		httpError(w, http.StatusConflict, "that document is no longer open")
+	if err := s.commitMutation(doc, before, result); wroteCommitFailure(w, err) {
 		return
 	}
 	writeJSON(w, sanitizeResponse{docResponse: s.docResponse(doc), Ok: true, Residual: residual})
@@ -153,8 +152,7 @@ func (s *Server) handleDecrypt(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
-	if !s.commitMutation(doc, before, result) {
-		httpError(w, http.StatusConflict, "that document is no longer open")
+	if err := s.commitMutation(doc, before, result); wroteCommitFailure(w, err) {
 		return
 	}
 	writeJSON(w, decryptResponse{docResponse: s.docResponse(doc), Ok: true})

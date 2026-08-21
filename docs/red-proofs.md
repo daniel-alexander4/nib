@@ -454,3 +454,16 @@ The OCR row is the one worth reading. The review filed `StampTextLayer` as a fou
 whose error was swallowed by a 422; it is not a producer at all — it skips the word and says
 why (`internal/pdfops/ocr.go`). The door added for it was dead the moment it was written, and
 the test's own stimulus assertion is what said so. The row now pins the *skip* instead.
+
+## v1.117.6 — ADR-005's byte half, at every door
+
+| Row | The defect restored | The check that went red |
+| --- | --- | --- |
+| growth cap | `byteCapLocked` removed from both commit doors | `TestGrowingAnOpenDocumentIsBoundedByTheSameCeiling` |
+| one mapping | a call site mapping the error itself, at 404 | `TestACommitFailureIsAlwaysA409` |
+| the guard's reach | matcher pointed at a name no call has | same test's floor of eight |
+
+The middle row is the one the old guard could not have caught. It asserted the *string*
+each of eight branches printed; it now asserts each call routes through the single door,
+which is the property. The floor of eight is unchanged and is what caught the refactor
+in the first place — it went red the moment the branches became calls.

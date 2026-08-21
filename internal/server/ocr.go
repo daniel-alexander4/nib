@@ -89,8 +89,7 @@ func (s *Server) handleOCR(w http.ResponseWriter, r *http.Request) {
 			log.Printf("ocr: could not set document language %q: %v", tag, lerr)
 		}
 	}
-	if !s.commitMutation(doc, before, result) {
-		httpError(w, http.StatusConflict, "that document is no longer open")
+	if err := s.commitMutation(doc, before, result); wroteCommitFailure(w, err) {
 		return
 	}
 	writeJSON(w, s.docResponse(doc))

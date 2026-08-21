@@ -162,6 +162,12 @@ type Server struct {
 	// can exercise the budget with kilobytes rather than a quarter of a gigabyte.
 	maxHistoryBytes int
 
+	// maxDocBytes overrides the aggregate open-document ceiling, on exactly the same terms
+	// and for exactly the same reason: the cap is 512 MiB, and a test that drove it for real
+	// spent ten minutes allocating and copying three quarters of a gigabyte before it made
+	// its first assertion. Zero means maxOpenBytes, which is what production always uses.
+	maxDocBytes int
+
 	// historyEvictions counts documents whose history has been dropped to keep the
 	// global byte budget. Class-1: read by the eviction tests, and the only place a
 	// silent eviction would show up as a number rather than as a missing effect.
@@ -905,6 +911,14 @@ var ErrTooManyBytes = errors.New("the open documents would exceed " + strconv.It
 // count first would leave a window for a concurrent open to land in between, and two
 // requests passing the check at seven both reach nine. One user with two browser
 // panes is enough, which is exactly how the /api/doc race was reproduced.
+// docBudget is the aggregate open-document ceiling in force. See maxDocBytes.
+func (s *Server) docBudget() int {
+	if s.maxDocBytes > 0 {
+		return s.maxDocBytes
+	}
+	return maxOpenBytes
+}
+
 func (s *Server) addDocCapped(doc *document) (*document, error) {
 	if doc == nil {
 		return nil, nil
@@ -921,7 +935,7 @@ func (s *Server) addDocCapped(doc *document) (*document, error) {
 	for _, d := range s.docs {
 		total += len(d.data)
 	}
-	if total > maxOpenBytes {
+	if total > s.docBudget() {
 		return nil, ErrTooManyBytes
 	}
 	s.registerLocked(doc)

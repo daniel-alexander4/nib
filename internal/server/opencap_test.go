@@ -2,6 +2,7 @@ package server
 
 import (
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -288,5 +289,67 @@ func TestTheCountCapStillBindsBelowTheByteCeiling(t *testing.T) {
 	_, err := s.addDocCapped(&document{data: []byte("small")})
 	if err != ErrTooManyOpen {
 		t.Errorf("nine tiny documents returned %v, want ErrTooManyOpen — the count cap stopped binding when the byte one landed", err)
+	}
+}
+
+// TestGrowingAnOpenDocumentIsBoundedByTheSameCeiling drives ADR-005's byte half through the
+// door it did not reach: an operation that grows a document ALREADY open.
+//
+// The count half has always bound both doors (a ninth document is refused wherever it comes
+// from), but the byte half lived only in addDocCapped — at OPEN. Every in-place growth path
+// went past it: an OCR text layer, an N-up, a scan import, an attachment. The ADR's sentence
+// was true of one door and read as true of the cap.
+func TestGrowingAnOpenDocumentIsBoundedByTheSameCeiling(t *testing.T) {
+	pdf, err := testpdf.Form()
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := openTestServer(t, pdf)
+	doc := s.activeDoc()
+	// Kilobytes rather than half a gigabyte. The first draft of this test used the real
+	// 512 MiB ceiling and spent over ten minutes allocating and copying before its first
+	// assertion — see maxDocBytes.
+	s.mu.Lock()
+	s.maxDocBytes = 64 << 10
+	s.mu.Unlock()
+
+	// A second document holding just over half the budget, so ONE more half-budget document
+	// crosses it. Opened through the capped door, which must accept it — otherwise the
+	// refusal below is the count cap or the open cap and not the growth cap.
+	half := make([]byte, 33<<10)
+	copy(half, pdf)
+	if _, err := s.addDocCapped(&document{name: "half.pdf", data: half}); err != nil {
+		t.Fatalf("the setup document was itself refused (%v) — the growth refusal below "+
+			"would then be measuring the wrong ceiling", err)
+	}
+
+	// STIMULUS: a commit that does NOT grow past the ceiling still lands. Without this, a
+	// commitMutation that had simply started refusing everything would pass the assertion.
+	if err := s.commitMutation(doc, pdf, pdf); err != nil {
+		t.Fatalf("an ordinary commit was refused: %v", err)
+	}
+
+	// The growth: the active document swells to half the budget, which with half.pdf
+	// already open crosses it.
+	grown := make([]byte, 33<<10)
+	copy(grown, pdf)
+	if err := s.commitMutation(doc, pdf, grown); !errors.Is(err, ErrTooManyBytes) {
+		t.Fatalf("growing an open document past the aggregate ceiling returned %v, want "+
+			"ErrTooManyBytes — ADR-005 bounds the open documents' bytes, not the bytes that "+
+			"arrived through one particular door", err)
+	}
+	// And the barrier door, which redaction and export use, is the same fact.
+	if err := s.commitBarrier(doc, grown); !errors.Is(err, ErrTooManyBytes) {
+		t.Fatalf("commitBarrier accepted the same growth: %v", err)
+	}
+	// The refusal must not have half-applied: the document still holds its old bytes.
+	if len(s.docBytes(doc)) != len(pdf) {
+		t.Fatalf("the refused commit changed the document anyway (%d bytes, was %d)",
+			len(s.docBytes(doc)), len(pdf))
+	}
+	// Shrinking is never refused — the check is on the total after the write, not the delta.
+	small := append([]byte(nil), pdf...)
+	if err := s.commitMutation(doc, grown, small); err != nil {
+		t.Fatalf("a commit that makes the document SMALLER was refused: %v", err)
 	}
 }

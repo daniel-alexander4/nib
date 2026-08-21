@@ -1,6 +1,7 @@
 package server
 
 import (
+	"errors"
 	"net/http"
 
 	"nib/internal/sign"
@@ -58,7 +59,7 @@ const (
 // belongs here and not in the caller because only this function holds the lock
 // across the test and the write; a caller that tested the document first would leave a
 // window for a close to land in between, which is the very defect.
-func (s *Server) commitMutation(doc *document, input, result []byte) bool {
+func (s *Server) commitMutation(doc *document, input, result []byte) error {
 	sig := sign.Verify(result)
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -72,7 +73,10 @@ func (s *Server) commitMutation(doc *document, input, result []byte) bool {
 	// a success for discarded work. The test is now "is this document still
 	// registered" rather than "is anything open".
 	if doc == nil || !s.isRegisteredLocked(doc) {
-		return false
+		return errDocClosed
+	}
+	if err := s.byteCapLocked(doc, result); err != nil {
+		return err
 	}
 	doc.undo = append(doc.undo, input)
 	clearRedo(doc)
@@ -83,7 +87,38 @@ func (s *Server) commitMutation(doc *document, input, result []byte) bool {
 	s.trimHistoryLocked(doc)
 	doc.data = result
 	doc.sig = sig
-	return true
+	return nil
+}
+
+// errDocClosed is the commit doors' other refusal: the target document was closed while the
+// operation was running. Named rather than a bare false, because the doors now have two
+// reasons to refuse and a caller mapping one boolean onto two sentences cannot tell the user
+// which happened.
+var errDocClosed = errors.New("that document is no longer open")
+
+// byteCapLocked refuses a commit that would push the open documents past ADR-005's aggregate
+// ceiling. Caller holds s.mu.
+//
+// ADR-005 says the cap bounds count AND aggregate bytes, and until now only addDocCapped
+// enforced the byte half — that is, only at OPEN. Every operation that GROWS a document in
+// place went straight past it: an OCR text layer, an N-up, a scan import, an attachment. Two
+// 200 MiB documents plus a third that an attachment grows to 300 MiB is 700 MiB, refused by
+// nothing, and the ADR's sentence was true only of the door it was written at.
+//
+// It sums the OTHER documents and adds the incoming result, so replacing a document's bytes
+// with smaller ones can never be refused — the check is on the total after the write, not on
+// the delta.
+func (s *Server) byteCapLocked(doc *document, result []byte) error {
+	total := len(result)
+	for _, d := range s.docs {
+		if d != doc {
+			total += len(d.data)
+		}
+	}
+	if total > s.docBudget() {
+		return ErrTooManyBytes
+	}
+	return nil
 }
 
 // commitBarrier makes result the current document and CLEARS the undo/redo
@@ -95,7 +130,7 @@ func (s *Server) commitMutation(doc *document, input, result []byte) bool {
 // and it matters more here, because the operations that come through this door
 // are the irreversible ones. Telling a user their redaction succeeded when it
 // was discarded is the worst reply this server can give.
-func (s *Server) commitBarrier(doc *document, result []byte) bool {
+func (s *Server) commitBarrier(doc *document, result []byte) error {
 	sig := sign.Verify(result)
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -103,7 +138,10 @@ func (s *Server) commitBarrier(doc *document, result []byte) bool {
 	// operations, so committing one into the wrong document destroys content that
 	// undo is deliberately unable to bring back.
 	if doc == nil || !s.isRegisteredLocked(doc) {
-		return false
+		return errDocClosed
+	}
+	if err := s.byteCapLocked(doc, result); err != nil {
+		return err
 	}
 	clearUndo(doc)
 	clearRedo(doc)
@@ -113,6 +151,25 @@ func (s *Server) commitBarrier(doc *document, result []byte) bool {
 	doc.historyEvicted = false
 	doc.data = result
 	doc.sig = sig
+	return nil
+}
+
+// wroteCommitFailure maps a commit door's refusal onto the reply, and exists so the mapping
+// is written once. Eight call sites hand-mirroring it is eight chances to have seven — which
+// is exactly how ErrStampTextUnrepresentable reached two producers of three.
+//
+// **409 for both reasons, and the byte cap is why that is not sloppiness.** The five
+// user-initiated install routes have always answered 409 for ErrTooManyBytes, so a second
+// status for the same fact would mean the same refusal reads differently depending on which
+// door the user reached it through. ADR-004's rule is that a document the server no longer
+// holds is 409 and never 404; it does not reserve 409 for that one fact, and the client's
+// 409 hook reconciles and then shows this message either way. The cost of the shared code is
+// one extra GET /api/docs on a cap refusal, which finds nothing changed.
+func wroteCommitFailure(w http.ResponseWriter, err error) bool {
+	if err == nil {
+		return false
+	}
+	httpError(w, http.StatusConflict, err.Error())
 	return true
 }
 
