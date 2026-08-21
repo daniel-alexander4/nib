@@ -3,6 +3,7 @@ package ceremony
 import (
 	"errors"
 	"fmt"
+	"time"
 
 	"nib/internal/pdfops"
 	"nib/internal/sign"
@@ -75,17 +76,20 @@ func Extract(pdf []byte) (Record, error) {
 
 // CheckDocument is what a party runs on a document it was handed, before any pairing.
 //
+// `now` is threaded rather than read here for the same reason Record.Verify takes one: a
+// clock read inside a validation verdict is nondeterminism reaching a decision.
+//
 // It answers three questions in the order they matter: is there a record, does its
 // convener signature verify, and does the document it arrived in still hash to what the
 // record says. The third is the one a later party in the chain can only answer for
 // itself — the convener's own bytes satisfy a round-trip test without anyone recomputing
 // anything.
-func CheckDocument(pdf []byte) (Record, error) {
+func CheckDocument(pdf []byte, now time.Time) (Record, error) {
 	r, err := Extract(pdf)
 	if err != nil {
 		return Record{}, err
 	}
-	if err := r.Verify(); err != nil {
+	if err := r.Verify(now); err != nil {
 		return r, err
 	}
 	got, err := DocumentHash(pdf)

@@ -742,3 +742,12 @@ them; the fifth is one I nearly shipped in the fix itself.
 **701 bytes** (was 574) and the IPv6 worst case to **932 of 996** (was 806). Headroom fell 190 → 64
 and the IPv6 endpoint ceiling fell 11 → 8, so the count cap and the byte cap are now coincident for
 IPv6. The next axis added to this record wants a cheaper encoding, not another chunk.
+
+## v1.117.28 — P05.S04 T05-T07, what a ceremony record means
+
+| Defect reintroduced | What it said | Check that fired |
+| --- | --- | --- |
+| **`MaxCeremonyLife` removed from `Record.Verify`** | `a deadline 721h0m0s ahead verified as <nil>; want ErrCeremonyTooLong. This is an externally-supplied security parameter and the plan's own rule for all four of them is that they are enforced rather than documented` | `TestACeremonyDeadlineHasACeiling`. It carries three companions the ceiling alone would get wrong: a deadline INSIDE the ceiling must verify (or the bound is indistinguishable from a blanket refusal); an EXPIRED ceremony must still verify (a signed record has to stay checkable after the proceeding ends, or the document's own evidence expires with it); and a record both forged and over-long must be reported as forged |
+| **`PublishSalt()` returns the READ salt — the shape the API had before it existed** | `setup: this gate's read and publish salts are identical, so it is a one-party ceremony and cannot distinguish the two` | `TestAHopHasTwoSaltsAndTheyAreNotInterchangeable`. **The failure is caught by the test's own setup assertion**, which is the point: the one example in the tree was a one-party self-test where the two salts coincide, so every assertion about them was vacuous there |
+| **The same-party guard removed from `NewCandidateGate`** | `a gate was built with one fingerprint as both ends of the hop. Every salt, key and target it derives would be self-consistent, so nothing would fail — the symptom is a counterparty who never publishes, which reads as an offline peer` | `TestAHopNeedsTwoDistinctParties` |
+| **Non-adjacent parties allowed to name a hop** | `convener and bob are two apart and got hop <nil>; a hop joins adjacent parties, and letting a non-adjacent pair name one is how a convener ends up dialling a party three positions away` | `TestTheHopNumberComesFromTheSignedRoster` — criterion 19 made structural rather than remembered |

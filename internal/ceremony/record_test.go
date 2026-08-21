@@ -181,7 +181,7 @@ func TestRecordSignsAndVerifies(t *testing.T) {
 		t.Errorf("Sign left the version at %d, want %d — the version is the first axis of the "+
 			"preimage, so an unset one commits to the wrong thing", r.Version, FormatVersion)
 	}
-	if err := r.Verify(); err != nil {
+	if err := r.Verify(time.Now()); err != nil {
 		t.Fatalf("a freshly signed record does not verify: %v", err)
 	}
 	if c, ok := r.Convener(); !ok || c.Signs {
@@ -202,7 +202,7 @@ func TestATamperedRecordIsRefusedByName(t *testing.T) {
 	if err := r.Sign(cert, key); err != nil {
 		t.Fatal(err)
 	}
-	if err := r.Verify(); err != nil {
+	if err := r.Verify(time.Now()); err != nil {
 		t.Fatalf("setup: the record does not verify before tampering: %v", err)
 	}
 
@@ -218,7 +218,7 @@ func TestATamperedRecordIsRefusedByName(t *testing.T) {
 		bad := r
 		bad.Roster = append([]Party(nil), r.Roster...)
 		c.mut(&bad)
-		err := bad.Verify()
+		err := bad.Verify(time.Now())
 		if !errors.Is(err, ErrBadConvenerSignature) {
 			t.Errorf("altering %s gave %v, want ErrBadConvenerSignature", c.name, err)
 		}
@@ -236,7 +236,7 @@ func TestARecordSignedByAnOutsiderIsRefusedDifferently(t *testing.T) {
 	if err := r.Sign(outCert, outKey); err != nil {
 		t.Fatal(err)
 	}
-	err := r.Verify()
+	err := r.Verify(time.Now())
 	if !errors.Is(err, ErrConvenerNotInRoster) {
 		t.Errorf("a record signed by someone outside its roster gave %v, want "+
 			"ErrConvenerNotInRoster — it is internally consistent and describes a proceeding "+
@@ -258,7 +258,7 @@ func TestAnUnknownVersionIsRefused(t *testing.T) {
 		t.Fatal(err)
 	}
 	r.Version = FormatVersion + 1
-	if err := r.Verify(); !errors.Is(err, ErrVersion) {
+	if err := r.Verify(time.Now()); !errors.Is(err, ErrVersion) {
 		t.Errorf("a record claiming version %d gave %v, want the version error",
 			r.Version, err)
 	}
@@ -293,7 +293,7 @@ func TestTheVersionIsWrittenAtCreation(t *testing.T) {
 		t.Errorf("the encoded record carries version %d, want %d — read back off the bytes, "+
 			"not off the struct that was signed", back.Version, FormatVersion)
 	}
-	if err := back.Verify(); err != nil {
+	if err := back.Verify(time.Now()); err != nil {
 		t.Errorf("the record does not survive an encode/decode round trip: %v", err)
 	}
 }
@@ -333,7 +333,7 @@ func TestARecordSurvivesIncrementalSignatures(t *testing.T) {
 
 	// The stimulus, asserted before anything is graded: the record really is in there and
 	// really checks out before a single signature is added.
-	if _, err := CheckDocument(doc); err != nil {
+	if _, err := CheckDocument(doc, time.Now()); err != nil {
 		t.Fatalf("setup: the freshly embedded record does not check out: %v", err)
 	}
 
@@ -360,7 +360,7 @@ func TestARecordSurvivesIncrementalSignatures(t *testing.T) {
 
 	// Caveat 10, and the hop-4 clause with it: a party holding the document after three
 	// incremental signatures reads the record, verifies it, and recomputes the hash itself.
-	got, err := CheckDocument(doc)
+	got, err := CheckDocument(doc, time.Now())
 	if err != nil {
 		t.Fatalf("after three incremental signatures the record no longer checks out: %v", err)
 	}
@@ -407,7 +407,7 @@ func TestADocumentWithoutARecordSaysSo(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := CheckDocument(base); !errors.Is(err, ErrNoRecord) {
+	if _, err := CheckDocument(base, time.Now()); !errors.Is(err, ErrNoRecord) {
 		t.Errorf("an ordinary PDF gave %v, want ErrNoRecord", err)
 	}
 }
@@ -441,7 +441,7 @@ func TestASwappedDocumentIsCaught(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = CheckDocument(swapped)
+	_, err = CheckDocument(swapped, time.Now())
 	if err == nil {
 		t.Fatal("a correctly-signed record was accepted on a document it was not written for")
 	}
@@ -577,7 +577,7 @@ func TestTheMirrorRoundTrips(t *testing.T) {
 	if back.ID != r.ID || string(pdf) != "%PDF-1.7\nfake" {
 		t.Errorf("mirror round-trip lost data: id=%s pdf=%d bytes", back.ID, len(pdf))
 	}
-	if err := back.Verify(); err != nil {
+	if err := back.Verify(time.Now()); err != nil {
 		t.Errorf("the record does not verify after a trip through the mirror: %v", err)
 	}
 	if err := RemoveMirror(root, r.ID); err != nil {
@@ -716,7 +716,7 @@ func TestTheRosterHashBindsWhoConvened(t *testing.T) {
 	// And it still VERIFIES — the forgery is not prevented, it is made visible. Saying so
 	// is the point: a test that asserted refusal here would be describing a property this
 	// change does not have.
-	if err := forged.Verify(); err != nil {
+	if err := forged.Verify(time.Now()); err != nil {
 		t.Fatalf("setup: the re-signed record does not verify (%v), so this is not the "+
 			"in-roster case the binding is about", err)
 	}
@@ -743,5 +743,136 @@ func TestTheRosterHashBindsWhoConvened(t *testing.T) {
 	if !bytes.Equal(first, third) {
 		t.Error("re-signing with the same identity changed the roster hash — the token is " +
 			"not a stable commitment to the ceremony")
+	}
+}
+
+// TestACeremonyDeadlineHasACeiling — the plan's fourth externally-supplied security
+// parameter, and its own words are "enforced, not documented".
+//
+// D16 calls clock 3 "days, convener's choice", which is a parameter with no bound. It
+// governs how long a listener may arm, how long invitation-scoped pins persist (D29) and how
+// long a mirror lives — so a convener setting ten years was a config away, and nothing in
+// the tree said otherwise. Before this, `Record.Expires` was read at exactly ONE line in the
+// whole repo (the roster preimage) and never compared to a clock at all.
+func TestACeremonyDeadlineHasACeiling(t *testing.T) {
+	cert, key, cfp := identity(t, "convener")
+	_, _, afp := identity(t, "alice")
+	now := time.Now()
+
+	sign := func(d time.Duration) Record {
+		t.Helper()
+		r := draft(t, cfp, afp)
+		r.Expires = now.Add(d)
+		if err := r.Sign(cert, key); err != nil {
+			t.Fatal(err)
+		}
+		return r
+	}
+
+	// SETUP: a deadline inside the ceiling verifies. Without this the refusal below is
+	// equally true of a Verify that refuses everything, which would make every ceremony
+	// unopenable and every other test in this file fail for a reason nobody would read.
+	ok := sign(MaxCeremonyLife - time.Hour)
+	if err := ok.Verify(now); err != nil {
+		t.Fatalf("setup: a deadline inside the ceiling was refused (%v), so the ceiling "+
+			"assertion below cannot distinguish a bound from a blanket refusal", err)
+	}
+
+	over := sign(MaxCeremonyLife + time.Hour)
+	err := over.Verify(now)
+	if !errors.Is(err, ErrCeremonyTooLong) {
+		t.Errorf("a deadline %s ahead verified as %v; want ErrCeremonyTooLong. This is an "+
+			"externally-supplied security parameter and the plan's own rule for all four of "+
+			"them is that they are enforced rather than documented.",
+			MaxCeremonyLife+time.Hour, err)
+	}
+
+	// **An EXPIRED ceremony still verifies, and that is the half a ceiling gets wrong.**
+	// An expired record is a liveness fact about the proceeding, not a validity fact about
+	// the document: a verifier reading a finished PDF next year must still be able to check
+	// who was on the roster and that the convener signed. A Verify that refused a past
+	// deadline would make every completed ceremony unverifiable the day after it ended.
+	past := sign(-90 * 24 * time.Hour)
+	if err := past.Verify(now); err != nil {
+		t.Errorf("a ceremony that ended three months ago no longer verifies (%v) — a signed "+
+			"record must stay checkable after the proceeding it describes is over, or the "+
+			"document's own evidence expires with it", err)
+	}
+
+	// And the ordering: a record that is BOTH forged and over-long is reported as forged.
+	// A convener who signed a ten-year deadline is a misconfiguration and the fix is theirs;
+	// one who did not sign at all is an attacker, and that is the sentence a user needs.
+	forged := sign(MaxCeremonyLife + time.Hour)
+	forged.Roster[1].Fingerprint = afp[:len(afp)-2] + "ff"
+	if err := forged.Verify(now); errors.Is(err, ErrCeremonyTooLong) {
+		t.Errorf("a record with a broken roster AND an over-long deadline was reported as "+
+			"too long; the signature failure is the one that matters and must be reported "+
+			"first (got %v)", err)
+	}
+}
+
+// TestTheHopNumberComesFromTheSignedRoster — the definition that did not exist.
+//
+// Eight functions take a `hop`, including every key, salt and seed derivation, and until now
+// nothing in the tree derived one or checked one: the only assignment anywhere was a literal
+// `0` in a self-test. A caller's off-by-one produced a valid key and salt at a hop that does
+// not exist, published into the void, and the result read as `FetchEmpty` — which is
+// indistinguishable from a counterparty who has not arrived yet.
+func TestTheHopNumberComesFromTheSignedRoster(t *testing.T) {
+	_, _, c := identity(t, "convener")
+	_, _, a := identity(t, "alice")
+	_, _, b := identity(t, "bob")
+	r := draft(t, c, a, b) // roster: convener, alice, bob
+
+	if got := r.Hops(); got != 2 {
+		t.Fatalf("setup: a three-party roster must have 2 hops, got %d — every assertion "+
+			"below is about the mapping and needs the count to be right first", got)
+	}
+
+	// Adjacency IS the hop, and both directions give the same number: the two ends of one
+	// hop must agree without negotiating, which is the whole reason this is read off a
+	// convener-signed artifact rather than counted.
+	for _, tc := range []struct {
+		x, y string
+		want int
+		what string
+	}{
+		{c, a, 0, "convener→alice"},
+		{a, c, 0, "alice→convener, the same hop from the other end"},
+		{a, b, 1, "alice→bob"},
+		{b, a, 1, "bob→alice"},
+	} {
+		got, err := r.Hop(tc.x, tc.y)
+		if err != nil {
+			t.Errorf("%s: %v", tc.what, err)
+			continue
+		}
+		if got != tc.want {
+			t.Errorf("%s is hop %d, want %d", tc.what, got, tc.want)
+		}
+	}
+
+	// **Non-adjacent parties share no hop — this is criterion 19 made structural.** The
+	// convener holds candidates for every party, and the rule is that it never dials a
+	// later one during this hop. Enforced here, it cannot even derive that hop's key by
+	// asking for it, so the rule is a property rather than a discipline.
+	if _, err := r.Hop(c, b); !errors.Is(err, ErrNotAHop) {
+		t.Errorf("convener and bob are two apart and got hop %v; a hop joins adjacent "+
+			"parties, and letting a non-adjacent pair name one is how a convener ends up "+
+			"dialling a party three positions away", err)
+	}
+	if _, err := r.Hop(a, a); !errors.Is(err, ErrNotAHop) {
+		t.Error("one party was accepted as both ends of a hop")
+	}
+	stranger := strings.Repeat("cd", 32)
+	if _, err := r.Hop(a, stranger); !errors.Is(err, ErrNotAHop) {
+		t.Error("a fingerprint outside the roster was given a hop number")
+	}
+
+	// Case, because a fingerprint differing only in case is the same party — the same fact
+	// ParseInvitation normalises for, and that Convener() gets wrong one function away.
+	if got, err := r.Hop(strings.ToUpper(c), a); err != nil || got != 0 {
+		t.Errorf("an upper-case fingerprint did not resolve to its own party (%d, %v) — the "+
+			"two ends of a hop would then derive different keys for it", got, err)
 	}
 }
