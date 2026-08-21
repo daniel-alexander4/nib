@@ -1,0 +1,25 @@
+diff --git a/internal/cli/discover.go b/internal/cli/discover.go
+index 5719d59..9fe22b8 100644
+--- a/internal/cli/discover.go
++++ b/internal/cli/discover.go
+@@ -236,16 +236,16 @@ func printVerdict(out io.Writer, st discovery.Stats) int {
+ 	// The verdict, and it is the whole reason the counters are separated. "Found
+ 	// nothing" has three causes and a user can act differently on each.
+ 	switch {
+-	case st.Sent == 0:
+-		fmt.Fprintln(out, "VERDICT: nothing was sent. Discovery cannot work from this machine —\n"+
+-			"         no interface accepted an announcement.")
+-		return 1
+ 	case st.Own == 0:
+ 		fmt.Fprintf(out, "VERDICT: %d announcements left this machine and NOT ONE came back to us.\n"+
+ 			"         A local firewall is dropping multicast on port %d — that is the one\n"+
+ 			"         cause this test can distinguish, because our own copy never leaves\n"+
+ 			"         the host. Peers will not hear us either.\n", st.Sent, discovery.Port)
+ 		return 1
++	case st.Sent == 0:
++		fmt.Fprintln(out, "VERDICT: nothing was sent. Discovery cannot work from this machine —\n"+
++			"         no interface accepted an announcement.")
++		return 1
+ 	case st.Peers == 0:
+ 		fmt.Fprintln(out, "VERDICT: sending and receiving both work — we heard ourselves — but no\n"+
+ 			"         other Nib announced. Either nobody has armed a session on this\n"+

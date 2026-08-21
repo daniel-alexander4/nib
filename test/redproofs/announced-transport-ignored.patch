@@ -1,0 +1,13 @@
+diff --git a/internal/server/discover.go b/internal/server/discover.go
+index 04b5d00..4db63fd 100644
+--- a/internal/server/discover.go
++++ b/internal/server/discover.go
+@@ -120,7 +120,7 @@ func resolve(pins []vault.PinnedPeer, s discovery.Seen) (candidate, bool) {
+ 			// reachability rather than identity, so L1 is untouched: a lying
+ 			// announcer sends us at a socket that does not answer as the pinned
+ 			// peer, which is what the handshake is for.
+-			Transport: transportOf(s.Transport),
++			Transport: "",
+ 		}, true
+ 	}
+ 	return candidate{}, false

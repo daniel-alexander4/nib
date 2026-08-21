@@ -27,6 +27,18 @@ is the point. A row is only added after the red was observed — never from inte
 applies the row's defect as a patch, runs the named check, and **asserts the check FAILS**.
 `./build/redproof.sh` with no argument lists what is recorded.
 
+**Six rows are replayable** (v1.117.20, up from two): `empty-state-message`,
+`risky-actions-rendition`, `loopback-bind-announced`, `browse-burns-its-window`,
+`announced-transport-ignored`, `discover-verdict-order`. The count is guarded in
+`verify_test.go` with a floor that **moves with the set** — left at two while the set grew,
+it would have tolerated losing four of six silently, which is the same defect as the prose
+count it replaced. Raising the floor is the tax a new row pays.
+
+The rest of this file is still prose. That is the honest state and the gap is the same one
+named below: a row recorded as prose has been proven red **once**, and nothing re-checks it.
+The four added in v1.117.20 were recorded the day their defects were caught, so unlike the
+older rows their patches are known to apply to the tree they describe.
+
 **It is not a `--fixture` switch in the product, deliberately.** The obvious shape is a flag
 the app reads that turns a defect back on, and this repo has paid for that shape once already:
 `toolbarStyle` shipped half-built and its default would have hidden the toolbar for every
