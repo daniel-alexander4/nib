@@ -751,3 +751,23 @@ IPv6. The next axis added to this record wants a cheaper encoding, not another c
 | **`PublishSalt()` returns the READ salt — the shape the API had before it existed** | `setup: this gate's read and publish salts are identical, so it is a one-party ceremony and cannot distinguish the two` | `TestAHopHasTwoSaltsAndTheyAreNotInterchangeable`. **The failure is caught by the test's own setup assertion**, which is the point: the one example in the tree was a one-party self-test where the two salts coincide, so every assertion about them was vacuous there |
 | **The same-party guard removed from `NewCandidateGate`** | `a gate was built with one fingerprint as both ends of the hop. Every salt, key and target it derives would be self-consistent, so nothing would fail — the symptom is a counterparty who never publishes, which reads as an offline peer` | `TestAHopNeedsTwoDistinctParties` |
 | **Non-adjacent parties allowed to name a hop** | `convener and bob are two apart and got hop <nil>; a hop joins adjacent parties, and letting a non-adjacent pair name one is how a convener ends up dialling a party three positions away` | `TestTheHopNumberComesFromTheSignedRoster` — criterion 19 made structural rather than remembered |
+
+## v1.117.29 — P05.S04 T10, Close cancels and joins
+
+| Defect reintroduced | What it said | Check that fired |
+| --- | --- | --- |
+| **`stopLive()` removed from `Close`** | Close took 2s+, at least as long as the fake held the publish for — so it waited the operation out instead of cancelling it | `TestCloseCancelsAndJoinsAnInFlightPublish` |
+| **The cancellation re-check removed from `Publish`** | `the in-flight Publish returned <nil>; want context.Canceled` | the same test. **This found a real false success**: `getput.Put` logs each node's put error and discards it, and sets its own `err` only when the GET traversal is cancelled — so a publish cancelled during the PUT phase returned nil, and a user who quit the app was told their record had been published |
+| **The closed check removed from `enter`** | `a Publish started after Close was accepted. It would run against a torn-down DHT server and write into counters nobody will read again` | `TestWorkStartedAfterCloseIsRefusedRatherThanQueued` |
+
+**Two defects in the test itself, both caught by its own red proofs coming back green.**
+The first version released the held publish immediately after starting `Close`, so the publish
+finished on its own within microseconds and the assertion was true whether or not `Close` waited —
+**both** red proofs passed. The second asserted the join by timing, which measures the opposite of
+the property: a *correct* `Close` cancels, so it returns fast. The discriminating instrument is the
+release timer — hold the publish for 3 s and require `Close` to return in less.
+
+**And a declared limit.** With cancellation prompt, `inFlight.Wait()` is not independently
+red-provable: removing it does not reliably fail anything, because the publish returns within
+microseconds of being cancelled either way. That assertion is a regression guard on a structural
+invariant, and it says so in the test rather than implying a red it never produced.

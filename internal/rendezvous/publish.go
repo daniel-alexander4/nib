@@ -100,6 +100,11 @@ func (s *Server) Publish(ctx context.Context, seed, salt, value []byte) error {
 		return fmt.Errorf("rendezvous: record bencodes to %d bytes, BEP-44 caps it at 1000", len(bv))
 	}
 
+	ctx, leave, err := s.enter(ctx)
+	if err != nil {
+		return err
+	}
+	defer leave()
 	ctx, cancel := context.WithTimeout(ctx, publishBudget)
 	defer cancel()
 
@@ -153,6 +158,16 @@ func (s *Server) Publish(ctx context.Context, seed, salt, value []byte) error {
 	if err != nil {
 		return err
 	}
+	// **Cancellation has to be re-checked here, because getput.Put SHADOWS it.**
+	//
+	// Its put fan-out logs each node's error and discards it, and its own `err` is set only
+	// when the GET traversal is cancelled — so a publish cancelled during the put phase
+	// returns nil, and the doc above ("nil says nothing about whether any node accepted the
+	// write") becomes a false success rather than merely a weak one. That matters now that
+	// Close cancels: a caller that quit the app would be told its record was published.
+	if cerr := ctx.Err(); cerr != nil {
+		return fmt.Errorf("rendezvous: the publish did not finish: %w", cerr)
+	}
 	s.published.Add(1)
 	return nil
 }
@@ -172,6 +187,11 @@ func (s *Server) Fetch(ctx context.Context, seed, salt []byte) ([]byte, int64, e
 	if err != nil {
 		return nil, 0, err
 	}
+	ctx, leave, err := s.enter(ctx)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer leave()
 	ctx, cancel := context.WithTimeout(ctx, publishBudget)
 	defer cancel()
 
