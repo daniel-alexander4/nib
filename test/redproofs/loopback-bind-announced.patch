@@ -1,0 +1,15 @@
+diff --git a/internal/server/lan.go b/internal/server/lan.go
+index 4220304..7a57410 100644
+--- a/internal/server/lan.go
++++ b/internal/server/lan.go
+@@ -90,9 +90,7 @@ func startAnnouncing(myCertPEM []byte, ln announceable) (*lanAnnouncer, error) {
+ 	//
+ 	// The listener's RESOLVED address, never the requested bind string — `0.0.0.0:0` is
+ 	// what the LAN path asks for and the kernel is what says which port it got.
+-	if addrscope.Loopback(ln.Addr().String()) {
+-		return nil, fmt.Errorf("%w (%s)", errLoopbackBind, ln.Addr())
+-	}
++	_ = addrscope.Loopback
+ 	port := portOf(ln)
+ 	if port <= 0 || port > 0xffff {
+ 		return nil, fmt.Errorf("cannot announce port %d", port)

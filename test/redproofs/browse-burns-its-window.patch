@@ -1,0 +1,13 @@
+diff --git a/internal/server/discover.go b/internal/server/discover.go
+index 04b5d00..ea2fcff 100644
+--- a/internal/server/discover.go
++++ b/internal/server/discover.go
+@@ -241,7 +241,7 @@ func browsePeers(b browser, pins []vault.PinnedPeer, window time.Duration) []can
+ 		// A NEW candidate only. Repeats are deduped above and never reach here, which
+ 		// is what makes this a quiet period rather than a keep-alive: an announcer
+ 		// repeating every 500 ms cannot hold the browse open indefinitely.
+-		quietUntil = time.Now().Add(browseQuiet)
++		_ = browseQuiet
+ 		if len(order) >= maxLANCandidates {
+ 			// Stop reading rather than keep accumulating: the window's remaining time
+ 			// buys nothing once the list is full, and draining it is the flood's goal.

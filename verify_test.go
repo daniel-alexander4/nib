@@ -233,10 +233,17 @@ func TestVerifyContractIsTrue(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if len(rows) < 2 {
-			t.Errorf("test/redproofs holds %d replayable row(s); docs/red-proofs.md says two "+
-				"are recorded, and build/redproof.sh reports no error on an empty directory",
-				len(rows))
+		// The floor moves with the set, and that is the point of a floor. It was 2
+		// when two rows existed; leaving it there while the set grew would have
+		// tolerated losing four of six silently, which is the same shape as the
+		// prose count it replaced — a number that stops describing the thing it
+		// counts. Raising it is the tax a new row pays.
+		const recorded = 6
+		if len(rows) < recorded {
+			t.Errorf("test/redproofs holds %d replayable row(s), want at least %d; "+
+				"build/redproof.sh reports no error on an empty directory, so a row that "+
+				"disappears is invisible to everything except this count",
+				len(rows), recorded)
 		}
 		for _, r := range rows {
 			body, rerr := os.ReadFile(r)
