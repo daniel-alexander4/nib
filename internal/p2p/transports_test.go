@@ -1,6 +1,7 @@
 package p2p
 
 import (
+	"context"
 	"os"
 	"reflect"
 	"regexp"
@@ -15,7 +16,7 @@ import (
 type transport struct {
 	name   string
 	listen func(addr string, cert, key, pin []byte) (Listener, error)
-	dial   func(addr string, cert, key, pin []byte, timeout time.Duration) (*Conn, error)
+	dial   func(ctx context.Context, addr string, cert, key, pin []byte, timeout time.Duration) (*Conn, error)
 }
 
 // transports is THE table. Every session-logic test runs over each entry, so a

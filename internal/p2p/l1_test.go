@@ -1,6 +1,7 @@
 package p2p
 
 import (
+	"context"
 	"errors"
 	"strings"
 	"testing"
@@ -75,7 +76,7 @@ func TestAnAddressFromALyingRendezvousCannotSubstituteASigner(t *testing.T) {
 				c.Close()
 			}
 		}()
-		good, err := tr.dial(lnB.Addr().String(), certA, keyA, fpB, 5*time.Second)
+		good, err := tr.dial(context.Background(), lnB.Addr().String(), certA, keyA, fpB, 5*time.Second)
 		if err != nil {
 			t.Fatalf("stimulus: A could not reach the REAL B, so a refusal below would "+
 				"prove nothing about the pin: %v", err)
@@ -83,7 +84,7 @@ func TestAnAddressFromALyingRendezvousCannotSubstituteASigner(t *testing.T) {
 		good.Close()
 
 		// The attack: A pins B, and is handed M's address.
-		conn, err := tr.dial(lnM.Addr().String(), certA, keyA, fpB, 5*time.Second)
+		conn, err := tr.dial(context.Background(), lnM.Addr().String(), certA, keyA, fpB, 5*time.Second)
 		if err == nil && conn != nil && len(conn.PeerFP) > 0 {
 			// The strongest assertion available, and the one that fails BY NAME: say
 			// which peer we landed on. Without it a real L1 breach is reported by the
@@ -222,7 +223,7 @@ func TestTheClockSkewCauseSurvivesTheTLSBoundary(t *testing.T) {
 
 	// STIMULUS: at the true time the dial succeeds, so the failure below is the clock and
 	// nothing about the rig.
-	warm, werr := Dial(ln.Addr().String(), aCert, aKey, bFP, 10*time.Second)
+	warm, werr := Dial(context.Background(), ln.Addr().String(), aCert, aKey, bFP, 10*time.Second)
 	if werr != nil {
 		t.Fatalf("stimulus: the dial fails even at the correct time: %v", werr)
 	}
@@ -252,7 +253,7 @@ func TestTheClockSkewCauseSurvivesTheTLSBoundary(t *testing.T) {
 
 	// Now this machine believes it is two hours in the past.
 	defer setClock(func() time.Time { return realNow().Add(-2 * time.Hour) })()
-	_, err = Dial(ln2.Addr().String(), aCert, aKey, bFP, 6*time.Second)
+	_, err = Dial(context.Background(), ln2.Addr().String(), aCert, aKey, bFP, 6*time.Second)
 	if err == nil {
 		t.Fatal("a two-hour clock skew was accepted")
 	}

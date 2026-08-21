@@ -2,6 +2,7 @@ package server
 
 import (
 	"bytes"
+	"context"
 	"crypto/tls"
 	"encoding/hex"
 	"encoding/json"
@@ -108,7 +109,7 @@ func TestSessionArmReceiveSign(t *testing.T) {
 			errc <- e
 			return
 		}
-		conn, e := p2p.Dial(armed.Address, aCert, aKey, bFPBytes, 10*time.Second)
+		conn, e := p2p.Dial(context.Background(), armed.Address, aCert, aKey, bFPBytes, 10*time.Second)
 		if e != nil {
 			errc <- e
 			return
@@ -312,7 +313,7 @@ func TestSessionDeclineLeavesOpenDoc(t *testing.T) {
 			errc <- e
 			return
 		}
-		conn, e := p2p.Dial(armed.Address, aCert, aKey, bFPBytes, 10*time.Second)
+		conn, e := p2p.Dial(context.Background(), armed.Address, aCert, aKey, bFPBytes, 10*time.Second)
 		if e != nil {
 			errc <- e
 			return
@@ -443,7 +444,7 @@ func TestSessionQuoteForPendingPeer(t *testing.T) {
 			errc <- e
 			return
 		}
-		conn, e := p2p.Dial(armed.Address, aCert, aKey, bFPBytes, 10*time.Second)
+		conn, e := p2p.Dial(context.Background(), armed.Address, aCert, aKey, bFPBytes, 10*time.Second)
 		if e != nil {
 			errc <- e
 			return
@@ -536,7 +537,7 @@ func TestSessionReceiveTransfer(t *testing.T) {
 
 	errc := make(chan error, 1)
 	go func() {
-		conn, e := p2p.Dial(armed.Address, aCert, aKey, bFPBytes, 10*time.Second)
+		conn, e := p2p.Dial(context.Background(), armed.Address, aCert, aKey, bFPBytes, 10*time.Second)
 		if e != nil {
 			errc <- e
 			return
@@ -610,7 +611,7 @@ func TestSessionReceiveTransferDecline(t *testing.T) {
 	}
 	errc := make(chan error, 1)
 	go func() {
-		conn, e := p2p.Dial(armed.Address, aCert, aKey, bFPBytes, 10*time.Second)
+		conn, e := p2p.Dial(context.Background(), armed.Address, aCert, aKey, bFPBytes, 10*time.Second)
 		if e != nil {
 			errc <- e
 			return

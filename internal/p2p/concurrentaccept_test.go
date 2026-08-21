@@ -1,6 +1,7 @@
 package p2p
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -66,7 +67,7 @@ func TestManyCompletedHandshakesDoNotStarveTheNextPeer(t *testing.T) {
 			}
 			served <- c
 		}()
-		first, err := tr.dial(ln.Addr().String(), certA, keyA, fpB, 10*time.Second)
+		first, err := tr.dial(context.Background(), ln.Addr().String(), certA, keyA, fpB, 10*time.Second)
 		if err != nil {
 			t.Fatalf("setup: the first pinned dial failed: %v", err)
 		}
@@ -98,7 +99,7 @@ func TestManyCompletedHandshakesDoNotStarveTheNextPeer(t *testing.T) {
 		const extra = 4
 		n := maxConcurrentHandshakes + extra
 		for i := 0; i < n; i++ {
-			c, derr := tr.dial(ln.Addr().String(), certA, keyA, fpB, 10*time.Second)
+			c, derr := tr.dial(context.Background(), ln.Addr().String(), certA, keyA, fpB, 10*time.Second)
 			if derr != nil {
 				// Two readings, and which one applies is decided by WHERE it stopped.
 				// Failing at exactly maxConcurrentHandshakes+1 is not a setup problem —
@@ -124,7 +125,7 @@ func TestManyCompletedHandshakesDoNotStarveTheNextPeer(t *testing.T) {
 		// connections nobody will ever accept.
 		done := make(chan error, 1)
 		go func() {
-			c, derr := tr.dial(ln.Addr().String(), certA, keyA, fpB, 20*time.Second)
+			c, derr := tr.dial(context.Background(), ln.Addr().String(), certA, keyA, fpB, 20*time.Second)
 			if c != nil {
 				c.Close()
 			}

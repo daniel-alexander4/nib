@@ -2,12 +2,14 @@ package server
 
 import (
 	"bytes"
+	"context"
 	"crypto/rand"
 	"errors"
 	"fmt"
 	"net"
 	"net/http"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"nib/internal/addrscope"
@@ -282,50 +284,167 @@ func (s *Server) peerAddresses(w http.ResponseWriter, v *vault.Vault, address, t
 
 // lanDialBudget bounds the WHOLE walk, not each hop.
 //
-// `sessionDialTimeout` bounds one dial; nothing bounded the loop. With N candidates that is
-// N×30 s inside an HTTP handler on a server with no WriteTimeout, and N was unbounded until
+// One dial is bounded by `lanDialTimeout`; nothing bounded the loop. With N candidates that
+// is N×6 s inside an HTTP handler on a server with no WriteTimeout, and N was unbounded until
 // `maxLANCandidates` — see browsePeers, where an on-link host produces a fresh candidate per
 // datagram by varying the announced port. Capping N was the other half; this is the half
 // that holds even if the cap is later raised, because it bounds the thing the user
 // experiences (a wedged request) rather than the thing the attacker controls (a count).
 const (
 	lanDialBudget = 20 * time.Second
-	// lanDialTimeout is per candidate, and it is much shorter than sessionDialTimeout on
-	// purpose. That constant (30 s) is sized for an address a user TYPED — a peer across
-	// the internet behind a slow path, where patience is the whole point. These candidates
-	// are link-local: the peer is on the same segment and answers in milliseconds, so six
-	// seconds is already generous and thirty is only ever spent on something that is not
-	// there. It is the count multiplier in the attack above.
+	// lanDialTimeout is per candidate. Link-local candidates answer in milliseconds, so six
+	// seconds is already generous and anything longer is only ever spent on something that
+	// is not there — it is the count multiplier in the attack above. The whole-race budget
+	// is `connectDeadline` (D16); this is the floor under one dial inside it.
 	lanDialTimeout = 6 * time.Second
 )
 
-// dialAny tries each candidate in order and returns the first connection that
-// establishes. Trying only the first was the defect: on a link where anything else
-// announces the same name, the genuine peer may not be first.
-func dialAny(cands []candidate, cert, key, peerFP []byte) (*p2p.Conn, error) {
+// raceCandidates dials every candidate concurrently and returns the first that answers as
+// the pinned peer, closing the rest.
+//
+// # Why a race and not a walk (D8, D16)
+//
+// The walk this replaces tried candidates in slice order, blocking, one at a time. D8's
+// ladder attempts every tier at once and takes the first to complete; D16 adds that
+// candidates **join as they arrive** and that gathering never blocks the race. A walk cannot
+// express either: a dead candidate delays a live one behind it by a full `lanDialTimeout`,
+// and a candidate that arrives after the walk began is simply not in the slice.
+//
+// # Losers are CLOSED, and that is correctness rather than hygiene
+//
+// A connection the racer abandons but leaves OPEN is accepted by the peer's serial loop and
+// blocks it inside `p2p.Receive`'s verification read for the full `exchangeDeadline` — six
+// minutes, four past this side's own connect deadline — while the winner sits queued. P05.S02
+// did not change this: it fixed the handshake pool, and `runSession` still runs
+// `serveOneSession` inline. A **closed** loser fails that read at once, so closing is both
+// necessary and sufficient, and it is what makes the abandoned connection invisible to the
+// peer's user (`runVerification` does the wire exchange before it shows anybody anything).
+//
+// Closing is therefore initiated at the moment of decision — but not serially in front of the
+// winner. A QUIC close is a goroutine round-trip (`tr.Close()` joins quic-go's read loop), so
+// N−1 closes on the return path would be a new head-of-line block on the request racing was
+// meant to speed up. Each loser closes in its own goroutine.
+//
+// # The context governs the DIAL and nothing after it
+//
+// Both libraries detach an established connection from its dial context — `crypto/tls`
+// documents it, and quic-go passes `context.WithoutCancel(ctx)` into the connection. So the
+// winner is safe from the cancel that stops the losers, and `raceCandidates` may cancel
+// everything as it returns. The parent is `context.Background()` and NOT the request's:
+// `buildCoSigned` runs before the dial, so by the time a race starts the local user has
+// already signed, and a closed browser tab must not be able to cancel a ceremony carrying
+// that signature the day someone plumbs a context into `Initiate`.
+func raceCandidates(in <-chan candidate, cert, key, peerFP []byte) (*p2p.Conn, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), connectDeadline)
+	defer cancel()
+
+	type result struct {
+		conn *p2p.Conn
+		err  error
+	}
+	// Buffered to the candidate cap so a late winner never blocks on a send nobody is
+	// reading — the shape `tlsListener` needed for the same reason.
+	results := make(chan result, maxRaceCandidates)
+	sem := make(chan struct{}, maxConcurrentDials)
+
+	var wg sync.WaitGroup
+	// Keyed on ADDRESS AND TRANSPORT. ADR-010 exists because a port without its transport
+	// names two different sockets, so deduping on the address alone silently drops one of
+	// them — and which one depends on arrival order.
+	seen := map[string]bool{}
+	var started int
+	var dropped atomic.Int64
+
+	go func() {
+		defer func() { wg.Wait(); close(results) }()
+		for c := range in {
+			// `ck`, not `key` — the identity key is a parameter of this function and
+			// shadowing it here compiled into a type error rather than a silent bug,
+			// which is luck rather than design.
+			ck := c.Addr + "\x00" + c.Transport
+			if seen[ck] {
+				continue
+			}
+			seen[ck] = true
+			if started >= maxRaceCandidates {
+				// **Dropped AND reported** — D16's pin says "drops and reports; it never
+				// fails the ceremony", and a drop with no reader is half the clause. The
+				// count reaches the user in the failure sentence below, which is the only
+				// surface a dialing-side diagnostic has until S11 builds the tier report.
+				dropped.Add(1)
+				continue
+			}
+			started++
+			wg.Add(1)
+			go func(c candidate) {
+				defer wg.Done()
+				select {
+				case sem <- struct{}{}:
+				case <-ctx.Done():
+					return
+				}
+				defer func() { <-sem }()
+				conn, err := dialPeerWithin(ctx, c.Transport, c.Addr, cert, key, peerFP, lanDialTimeout)
+				results <- result{conn, err}
+			}(c)
+		}
+	}()
+
 	var last error
-	deadline := time.Now().Add(lanDialBudget)
 	var tried int
-	for _, c := range cands {
-		a := c.Addr
-		if tried > 0 && time.Now().After(deadline) {
-			// `tried > 0` so a slow clock or a long TLS handshake can never make this
-			// return without having dialled anything at all.
-			last = fmt.Errorf("gave up after %v and %d address(es): %w", lanDialBudget, tried, last)
-			break
-		}
+	for r := range results {
 		tried++
-		conn, err := dialPeerWithin(c.Transport, a, cert, key, peerFP, lanDialTimeout)
-		if err == nil {
-			return conn, nil
+		if r.err != nil {
+			if errors.Is(r.err, errUnknownTransport) {
+				return nil, r.err // a caller error, not a peer's
+			}
+			// **A clock-skew refusal outranks whatever else lost.** `connectFailure` lifts
+			// `*p2p.ClockSkewError` out with `errors.As` and reports D19's fifth cause,
+			// naming the direction and size of the disagreement. Under a walk the last
+			// error was the only error; under a race "last" is whichever goroutine
+			// happened to finish last, so a skewed peer reachable at one address and
+			// skewed at another would report a generic failure roughly half the time.
+			// Cause 5 is actionable — check the clock — and cause 4 is not, so the
+			// specific one wins.
+			var skew *p2p.ClockSkewError
+			if last == nil || errorsAs(r.err, &skew) {
+				last = r.err
+			}
+			continue
 		}
-		if errors.Is(err, errUnknownTransport) {
-			return nil, err // a caller error, not a peer's; do not try the rest
-		}
-		last = err
+		// A winner. Cancel the rest and drain what is already in flight, closing each in
+		// its own goroutine — see the note above on why not serially.
+		cancel()
+		go func() {
+			for extra := range results {
+				if extra.conn != nil {
+					go extra.conn.Close()
+				}
+			}
+		}()
+		return r.conn, nil
 	}
 	if last == nil {
 		last = errors.New("no candidate addresses")
 	}
-	return nil, fmt.Errorf("tried %d address(es), none answered as the pinned peer: %w", len(cands), last)
+	if n := dropped.Load(); n > 0 {
+		return nil, fmt.Errorf("tried %d address(es) and dropped %d over the %d-candidate cap, "+
+			"none answered as the pinned peer: %w", tried, n, maxRaceCandidates, last)
+	}
+	return nil, fmt.Errorf("tried %d address(es), none answered as the pinned peer: %w", tried, last)
+}
+
+// errorsAs is errors.As, named so the preference above reads as one condition rather than
+// two statements. It exists only to keep that `if` honest.
+func errorsAs(err error, target any) bool { return errors.As(err, target) }
+
+// dialAny races a fixed set of candidates. It is raceCandidates with the trickle removed,
+// for the callers that already hold every candidate they will ever have.
+func dialAny(cands []candidate, cert, key, peerFP []byte) (*p2p.Conn, error) {
+	in := make(chan candidate, len(cands))
+	for _, c := range cands {
+		in <- c
+	}
+	close(in)
+	return raceCandidates(in, cert, key, peerFP)
 }

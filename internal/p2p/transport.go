@@ -1,6 +1,7 @@
 package p2p
 
 import (
+	"context"
 	"crypto"
 	"crypto/ecdsa"
 	"crypto/elliptic"
@@ -255,14 +256,32 @@ func mintTransportCert(idCert *x509.Certificate, idKey crypto.Signer) (tls.Certi
 // Dial opens a co-signing session to a peer's armed listener at addr, presenting
 // this user's identity and accepting only the pinned peer at the TLS handshake. The
 // returned conn is a verified mTLS channel; close it when the session ends.
-func Dial(addr string, identityCertPEM, identityKeyPEM, pinnedSPKI []byte, timeout time.Duration) (*Conn, error) {
+// **ctx cancels the DIAL and nothing after it (P05.S03).** `crypto/tls` documents the
+// contract this relies on: "Once successfully connected, any expiration of the context
+// will not affect the connection" — the interrupter goroutine exits when the handshake
+// returns (`crypto/tls/conn.go`), so a racer may cancel every loser without touching the
+// winner it just took.
+//
+// **`timeout` stays, and is not redundant.** It is the per-dial floor. `tls.Dialer` with a
+// zero `NetDialer.Timeout` and a deadline-less context has NO bound at all, and across the
+// converted call sites one `context.Background()` would be a permanent hang. Today
+// `DialWithDialer` already bounds the handshake this way (`crypto/tls/tls.go` wraps the ctx
+// in `WithTimeout(netDialer.Timeout)` and passes it to both the dial and the handshake), so
+// this preserves the existing bound rather than adding one.
+func Dial(ctx context.Context, addr string, identityCertPEM, identityKeyPEM, pinnedSPKI []byte, timeout time.Duration) (*Conn, error) {
 	cfg, err := SessionTLS(identityCertPEM, identityKeyPEM, pinnedSPKI, false)
 	if err != nil {
 		return nil, err
 	}
-	conn, err := tls.DialWithDialer(&net.Dialer{Timeout: timeout}, "tcp", addr, cfg)
+	d := &tls.Dialer{NetDialer: &net.Dialer{Timeout: timeout}, Config: cfg}
+	nc, err := d.DialContext(ctx, "tcp", addr)
 	if err != nil {
 		return nil, err
+	}
+	conn, ok := nc.(*tls.Conn)
+	if !ok {
+		nc.Close()
+		return nil, errors.New("tls.Dialer did not return a *tls.Conn")
 	}
 	// The handshake is forced here rather than at the first write, because until it
 	// completes there is no verified peer and no exporter — and a dial that reaches

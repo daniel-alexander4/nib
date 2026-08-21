@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"encoding/hex"
 	"go/ast"
 	"go/parser"
@@ -59,7 +60,7 @@ func TestACompletedHandshakeThatProducesNoSessionLeavesTheArmOpen(t *testing.T) 
 	}
 
 	// The connection this test exists for: a real pinned handshake, then nothing.
-	conn, err := p2p.Dial(armed.Address, aCert, aKey, bFPBytes, 10*time.Second)
+	conn, err := p2p.Dial(context.Background(), armed.Address, aCert, aKey, bFPBytes, 10*time.Second)
 	if err != nil {
 		t.Fatalf("setup: the pinned peer could not complete a handshake against the armed "+
 			"listener (%s): %v — with no completed handshake there is nothing here to "+
@@ -100,7 +101,7 @@ func TestACompletedHandshakeThatProducesNoSessionLeavesTheArmOpen(t *testing.T) 
 	// handshake against the same listener after the first one abandoned it. Without this,
 	// a fix that left the flag set while the listener was closed would pass everything
 	// above.
-	second, err := p2p.Dial(armed.Address, aCert, aKey, bFPBytes, 10*time.Second)
+	second, err := p2p.Dial(context.Background(), armed.Address, aCert, aKey, bFPBytes, 10*time.Second)
 	if err != nil {
 		t.Fatalf("the listener reports armed but no longer accepts the pinned peer: %v — "+
 			"the arm survived as a flag and not as a session", err)
@@ -285,7 +286,7 @@ func TestADeclinedSpokenCheckSpendsTheArm(t *testing.T) {
 			errc <- e
 			return
 		}
-		conn, e := p2p.Dial(armed.Address, aCert, aKey, bFPBytes, 10*time.Second)
+		conn, e := p2p.Dial(context.Background(), armed.Address, aCert, aKey, bFPBytes, 10*time.Second)
 		if e != nil {
 			errc <- e
 			return
@@ -407,7 +408,7 @@ func testAbandonedThenSession(t *testing.T, abandoned int) {
 
 	// THE ABANDONED CONNECTIONS — what a racer leaves behind.
 	for i := 0; i < abandoned; i++ {
-		c, derr := p2p.Dial(armed.Address, aCert, aKey, bFPBytes, 10*time.Second)
+		c, derr := p2p.Dial(context.Background(), armed.Address, aCert, aKey, bFPBytes, 10*time.Second)
 		if derr != nil {
 			t.Fatalf("setup: abandoned dial %d of %d did not complete a handshake: %v — "+
 				"the ceremony below would then be following fewer abandoned connections "+
@@ -442,7 +443,7 @@ func testAbandonedThenSession(t *testing.T, abandoned int) {
 			errc <- e
 			return
 		}
-		conn, e := p2p.Dial(armed.Address, aCert, aKey, bFPBytes, 10*time.Second)
+		conn, e := p2p.Dial(context.Background(), armed.Address, aCert, aKey, bFPBytes, 10*time.Second)
 		if e != nil {
 			errc <- e
 			return

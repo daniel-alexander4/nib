@@ -1,6 +1,7 @@
 package p2p
 
 import (
+	"context"
 	"encoding/hex"
 	"errors"
 	"os"
@@ -25,7 +26,7 @@ func quicPair(t *testing.T, listenPin, dialPin []byte, lCert, lKey, dCert, dKey 
 		res <- acceptResult{c, err}
 	}()
 
-	conn, err := QUICDial(ln.Addr().String(), dCert, dKey, dialPin, 10*time.Second)
+	conn, err := QUICDial(context.Background(), ln.Addr().String(), dCert, dKey, dialPin, 10*time.Second)
 	if err != nil {
 		return nil, res
 	}
@@ -141,7 +142,7 @@ func TestQUICRejectsAPeerThatIsNotPinned(t *testing.T) {
 
 	// C pins B correctly, so the ONLY thing wrong is who C is. A test where both pins
 	// were wrong could not say which side did the refusing.
-	bad, err := QUICDial(ln.Addr().String(), cCert, cKey, bFP, 10*time.Second)
+	bad, err := QUICDial(context.Background(), ln.Addr().String(), cCert, cKey, bFP, 10*time.Second)
 	if err != nil {
 		// Acceptable, but not what is observed today; the assertions below are the
 		// ones that carry the clause either way.
