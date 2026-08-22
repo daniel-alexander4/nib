@@ -180,23 +180,66 @@ func validateSeeds(in []netip.AddrPort) (kept []netip.AddrPort, dropped int, err
 	return kept, dropped, nil
 }
 
-// NewInvitation builds an invitation for a record, generating the secret.
-func NewInvitation(r Record) (Invitation, error) {
-	sec := make([]byte, SecretLen)
-	if _, err := rand.Read(sec); err != nil {
-		return Invitation{}, err
-	}
+// NewInvitations builds ONE INVITATION PER PARTY, each with its own secret, keyed by the
+// party's fingerprint. The convener holds the whole map; each party receives only its own.
+//
+// # Why per party and not one per ceremony
+//
+// D30's stated harm is that "every party can read every other party's IP addresses", and it
+// chose per-hop key derivation to fix it. Per-hop derivation does not fix it: `derive` takes
+// the secret, the ceremony id and an info string, with no per-party input anywhere, so every
+// holder of a shared secret computes every hop's key, salt and BEP-44 seed. The remedy did
+// not reach its own stated harm, and `RecordKey`'s own doc concedes it — "any roster member
+// can derive ANY hop's key from the secret".
+//
+// A secret per party fixes it, and under D22 it costs almost nothing. The topology is a
+// convener hub: every hop is convener-to-party, and two counterparties never connect. So a
+// secret shared between the convener and one party is shared by exactly the two ends of the
+// hop it is for. The confidentiality boundary becomes the trust boundary the topology
+// already establishes, instead of the whole roster.
+//
+// **What it buys, precisely:** a party cannot derive another party's hop key, cannot locate
+// their BEP-44 target, cannot read their candidate addresses, cannot overwrite their record,
+// and cannot take their key to the sequence-number ceiling. A forwarded or intercepted
+// invitation exposes one hop rather than the ceremony.
+//
+// **What it does not buy, and this belongs on screen rather than in a comment:** the
+// convener still holds every secret and can read every party's addresses. That is D22 — the
+// convener carries the document and dials everyone — not a gap in this scheme.
+//
+// # The wire format does not change
+//
+// A recipient's invitation has the same shape it always had; only the bytes in `Secret`
+// differ between them. So `InvitationVersion` stays at 1, `ParseInvitation` is untouched, and
+// nothing a party does with an invitation changes.
+func NewInvitations(r Record) (map[string]Invitation, error) {
 	conv, ok := r.Convener()
 	if !ok {
-		return Invitation{}, errors.New("the record's convener is not in its own roster")
+		return nil, errors.New("the record's convener is not in its own roster")
 	}
-	return Invitation{
-		Version:             InvitationVersion,
-		ID:                  r.ID,
-		Roster:              append([]Party(nil), r.Roster...),
-		Secret:              sec,
-		ConvenerFingerprint: conv.Fingerprint,
-	}, nil
+	out := map[string]Invitation{}
+	for _, p := range r.Roster {
+		if strings.EqualFold(p.Fingerprint, conv.Fingerprint) {
+			// The convener receives no invitation: it holds every party's.
+			continue
+		}
+		sec := make([]byte, SecretLen)
+		if _, err := rand.Read(sec); err != nil {
+			return nil, err
+		}
+		out[p.Fingerprint] = Invitation{
+			Version:             InvitationVersion,
+			ID:                  r.ID,
+			Roster:              append([]Party(nil), r.Roster...),
+			Secret:              sec,
+			ConvenerFingerprint: conv.Fingerprint,
+		}
+	}
+	if len(out) == 0 {
+		return nil, errors.New("this record has no party besides its convener, so there is " +
+			"no hop and nothing to invite")
+	}
+	return out, nil
 }
 
 // Encode renders the invitation as one pasteable line.

@@ -625,7 +625,7 @@ func TestTheMirrorHoldsNoSecret(t *testing.T) {
 	if err := r.Sign(cert, key); err != nil {
 		t.Fatal(err)
 	}
-	inv, err := NewInvitation(r)
+	inv, err := oneInvitation(t, r)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -906,7 +906,7 @@ func TestBothRostersUseOneHopRule(t *testing.T) {
 	if err := r.Sign(cert, key); err != nil {
 		t.Fatal(err)
 	}
-	inv, err := NewInvitation(r)
+	inv, err := oneInvitation(t, r)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -934,4 +934,23 @@ func TestBothRostersUseOneHopRule(t *testing.T) {
 				short(pair[0]), short(pair[1]), rh, ih)
 		}
 	}
+}
+
+// oneInvitation returns any one party's invitation, for the many tests whose subject is not
+// which party holds which secret. Since P05.S04 the convener mints one per party, so a test
+// that wants "an invitation for this record" has to say whose.
+func oneInvitation(t *testing.T, r Record) (Invitation, error) {
+	t.Helper()
+	all, err := NewInvitations(r)
+	if err != nil {
+		return Invitation{}, err
+	}
+	// Deterministic: roster order, not map order, so a failure is reproducible.
+	for _, p := range r.Roster {
+		if inv, ok := all[p.Fingerprint]; ok {
+			return inv, nil
+		}
+	}
+	t.Fatal("no invitation was minted for any roster party")
+	return Invitation{}, nil
 }

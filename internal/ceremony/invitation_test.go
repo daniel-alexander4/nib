@@ -18,7 +18,7 @@ func invited(t *testing.T) (Record, Invitation) {
 	if err := r.Sign(cert, key); err != nil {
 		t.Fatal(err)
 	}
-	inv, err := NewInvitation(r)
+	inv, err := oneInvitation(t, r)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -398,7 +398,7 @@ func TestAnInvitationCatchesARecordConvenedBySomeoneElse(t *testing.T) {
 	if err := rec.Sign(cert, key); err != nil {
 		t.Fatal(err)
 	}
-	inv, err := NewInvitation(rec)
+	inv, err := oneInvitation(t, rec)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -527,5 +527,107 @@ func TestTheConvenerCheckIsNotOptIn(t *testing.T) {
 	if err := upper.MatchesRecord(rec); err != nil {
 		t.Errorf("the same fingerprint in upper-case hex was reported as a different "+
 			"convener: %v", err)
+	}
+}
+
+// TestOnePartyCannotDeriveAnothersHop — D30's stated harm, actually fixed.
+//
+// D30 says the problem in its own words: under one key "every party can read every other
+// party's IP addresses". It chose per-hop derivation as the remedy, and per-hop derivation
+// does not reach it — `derive` consults the secret, the ceremony id and an info string, with
+// **no per-party input anywhere**, so every holder of a shared secret computes every hop's
+// key, salt and seed. `RecordKey`'s own doc conceded it: "any roster member can derive ANY
+// hop's key from the secret."
+//
+// With one secret per party, the boundary becomes the one D22's topology already draws: a
+// hub, where every hop is convener-to-party and two counterparties never connect. So a
+// secret is shared by exactly the two ends of the hop it is for.
+func TestOnePartyCannotDeriveAnothersHop(t *testing.T) {
+	cert, key, c := identity(t, "convener")
+	_, _, a := identity(t, "alice")
+	_, _, b := identity(t, "bob")
+	r := draft(t, c, a, b)
+	if err := r.Sign(cert, key); err != nil {
+		t.Fatal(err)
+	}
+	invs, err := NewInvitations(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// SETUP: one invitation per non-convener party, and the convener gets none of its own.
+	if len(invs) != 2 {
+		t.Fatalf("setup: want 2 invitations for a three-party roster, got %d", len(invs))
+	}
+	if _, ok := invs[c]; ok {
+		t.Error("the convener was minted an invitation of its own; it holds every party's")
+	}
+	alice, bob := invs[a], invs[b]
+
+	// **The property.** Alice's secret and Bob's differ, so everything derived from them
+	// differs — and Alice cannot compute Bob's hop material at all, because she does not
+	// hold the input.
+	if string(alice.Secret) == string(bob.Secret) {
+		t.Fatal("setup: the two parties were given the SAME secret, which is the whole " +
+			"defect this test exists for — every assertion below would be trivially false")
+	}
+
+	hopA, err := alice.Hop(c, a)
+	if err != nil {
+		t.Fatal(err)
+	}
+	hopB, err := bob.Hop(c, b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if hopA == hopB {
+		t.Fatalf("setup: both parties resolved to hop %d, so the comparison below is "+
+			"between one hop and itself", hopA)
+	}
+
+	// Alice derives Bob's hop material from HER invitation — which is the attack: she knows
+	// the hop number, she knows Bob's fingerprint, she has a secret. What she does not have
+	// is Bob's secret, and every derivation is rooted in it.
+	for _, d := range []struct {
+		name         string
+		mine, theirs func(Invitation) ([]byte, error)
+	}{
+		{"the record key", func(i Invitation) ([]byte, error) { return i.RecordKey(hopB) },
+			func(i Invitation) ([]byte, error) { return i.RecordKey(hopB) }},
+		{"the BEP-44 seed", func(i Invitation) ([]byte, error) { return i.HopSeed(hopB) },
+			func(i Invitation) ([]byte, error) { return i.HopSeed(hopB) }},
+		{"the rendezvous salt", func(i Invitation) ([]byte, error) { return i.RecordSalt(hopB, b) },
+			func(i Invitation) ([]byte, error) { return i.RecordSalt(hopB, b) }},
+	} {
+		guess, err := d.mine(alice)
+		if err != nil {
+			t.Fatal(err)
+		}
+		real, err := d.theirs(bob)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(guess) == string(real) {
+			t.Errorf("Alice derived %s for Bob's hop and got the RIGHT value. She can then "+
+				"locate his BEP-44 target, read his candidate addresses, overwrite his "+
+				"record, and take his key to the sequence-number ceiling — which is D30's "+
+				"stated harm, unfixed.", d.name)
+		}
+	}
+
+	// **And the convener CAN, with the right invitation — which is not a gap, it is D22.**
+	// The convener carries the document and dials everyone; it holds every party's secret by
+	// construction. Asserted so the limit is on record rather than assumed away.
+	convGuess, err := invs[b].RecordKey(hopB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	realB, err := bob.RecordKey(hopB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(convGuess) != string(realB) {
+		t.Error("the convener could not derive a party's hop key from that party's own " +
+			"invitation — both ends of a hop must agree, and the convener is one of them")
 	}
 }
