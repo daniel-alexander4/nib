@@ -322,6 +322,18 @@ func (s *Socket) Read(deadline time.Time) (Seen, error) {
 		return Seen{}, err
 	}
 	buf := make([]byte, MaxDatagram+1) // +1 so an over-cap datagram is SEEN to be over
+	// **`p4` reads BOTH families, and that is measured rather than assumed.**
+	//
+	// `p4` and `p6` are two views of one dual-stack fd — `lc.ListenPacket(nil, "udp", ":Port")`
+	// binds AF_INET6 with V6ONLY off — so the wrapper decides only which control messages are
+	// parsed, never which datagrams arrive. A v6 datagram comes back through this call with a
+	// v6 `*net.UDPAddr` source, which is what `hostOf` then needs.
+	//
+	// The name made this look v4-limited and nothing in the tree said otherwise: the socket
+	// joins both groups and announces to both, so `Joined6 > 0` was read as evidence we could
+	// hear, when a join is a setsockopt that says nothing about the reader. It is now asserted
+	// by TestTheReadPathHearsBothFamilies, which drives a v6 unicast at this port over ::1 and
+	// goes red the moment the bind or the reader narrows to v4.
 	n, _, src, err := s.p4.ReadFrom(buf)
 	if err != nil {
 		return Seen{}, err

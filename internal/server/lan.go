@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"net/netip"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -403,7 +404,7 @@ func raceCandidates(parent context.Context, in <-chan candidate, cert, key, peer
 			// `ck`, not `key` — the identity key is a parameter of this function and
 			// shadowing it here compiled into a type error rather than a silent bug,
 			// which is luck rather than design.
-			ck := c.Addr + "\x00" + c.Transport
+			ck := raceKey(c)
 			if seen[ck] {
 				continue
 			}
@@ -553,4 +554,33 @@ func dialAny(cands []candidate, cert, key, peerFP []byte) (*p2p.Conn, error) {
 	}
 	close(in)
 	return raceCandidates(ctx, in, cert, key, peerFP)
+}
+
+// raceKey is the identity of a race candidate: one endpoint, one key.
+//
+// **The address is normalised through netip and the raw string is not the key.** An IPv6
+// address has many spellings for one endpoint — `[2001:db8::1]:443`, `[2001:DB8::1]:443` and
+// `[2001:db8:0:0:0:0:0:1]:443` are the same host — and string equality makes them three
+// candidates. This is the only place candidates are compared, so a peer publishing one
+// address in three spellings burnt three of `maxRaceCandidates` and three of its per-source
+// allowance, on a budget whose whole purpose is to bound what one source can spend.
+//
+// **The zone is kept, deliberately.** It is not noise here the way it is in a candidate
+// record: LAN discovery's `resolve` builds `fe80::…%wlp1s0` from the arrival interface
+// because a link-local address is not dialable without it, and `%wlp1s0` and `%eth0` on the
+// same link-local bytes are genuinely different endpoints. Normalising it away would merge
+// two peers into one. (A zone on a GLOBAL address cannot get this far — `addrscope.Target`
+// refuses it at both candidate-record doors — so nothing arrives here wearing a meaningless
+// one.)
+//
+// An unparseable address keeps its raw string, because the typed-address source takes what
+// the user wrote and that may be a hostname. Two spellings of one hostname stay two keys,
+// which is the pre-existing behaviour and costs at most a duplicate dial the handshake
+// settles; inventing a resolution here would put DNS on the dedupe path.
+func raceKey(c candidate) string {
+	addr := c.Addr
+	if ap, err := netip.ParseAddrPort(addr); err == nil {
+		addr = ap.String()
+	}
+	return addr + "\x00" + c.Transport
 }

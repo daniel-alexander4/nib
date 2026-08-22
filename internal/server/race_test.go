@@ -582,3 +582,72 @@ func TestATrickleSourceThatNeverClosesStillHitsTheDeadline(t *testing.T) {
 			"and not the race, and the HTTP handler hangs with the document already signed")
 	}
 }
+
+// TestOneIPv6EndpointIsOneRaceCandidateHoweverItIsSpelled — the dedupe key is an ENDPOINT,
+// not a string.
+//
+// `seen` was keyed on the raw `Addr` string, and IPv6 has many spellings for one endpoint:
+// `[2001:db8::1]:443`, `[2001:DB8::1]:443` and `[2001:db8:0:0:0:0:0:1]:443` are the same
+// host and were three keys. This is the only place candidates are compared, so a peer
+// publishing one address in three spellings spent three of `maxRaceCandidates` and three of
+// its per-source allowance — on a budget whose entire purpose is to bound what one source
+// can spend. Latent until an IPv6 tier existed; P05.S05 is that tier.
+//
+// The assertion is the race's own failure sentence, which names how many addresses were
+// TRIED. That is the number the cap is spent from, so it is the property rather than a proxy
+// for it — and it is read from the racer end to end rather than from `raceKey` alone, because
+// a key that collapses correctly and a `seen` map that is consulted are two different facts.
+//
+// Addresses are in the documentation prefix and dialled at a port nothing listens on, so
+// every dial fails fast and the race returns its sentence.
+func TestOneIPv6EndpointIsOneRaceCandidateHoweverItIsSpelled(t *testing.T) {
+	cert, key, err := sign.GenerateIdentity("Ada")
+	if err != nil {
+		t.Fatal(err)
+	}
+	tried := func(t *testing.T, addrs ...string) int {
+		t.Helper()
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		defer cancel()
+		in := make(chan candidate, len(addrs))
+		for _, a := range addrs {
+			in <- candidate{Addr: a, Transport: "tcp", Source: sourceLAN}
+		}
+		close(in)
+		_, rerr := raceCandidates(ctx, in, cert, key, make([]byte, 32))
+		if rerr == nil {
+			t.Fatal("the race succeeded against addresses nothing listens on")
+		}
+		var n int
+		if _, serr := fmt.Sscanf(rerr.Error(), "tried %d address(es)", &n); serr != nil {
+			t.Fatalf("cannot read the tried count out of %q: %v", rerr, serr)
+		}
+		return n
+	}
+
+	// SETUP, and it is the discriminator: two GENUINELY different endpoints must still be
+	// two. Without this the test passes against a dedupe that collapses everything to one,
+	// which is the failure mode a normalising key invites.
+	if n := tried(t, "[2001:db8::1]:9", "[2001:db8::2]:9"); n != 2 {
+		t.Fatalf("setup: two distinct v6 endpoints were tried %d time(s), want 2 — the "+
+			"assertion below cannot distinguish normalising from collapsing", n)
+	}
+	// And a zone is part of the identity, not noise: link-local discovery builds
+	// `fe80::…%iface` from the arrival interface, and two interfaces are two peers.
+	if n := tried(t, "[fe80::1%lo]:9", "[fe80::1%eth0]:9"); n != 2 {
+		t.Fatalf("setup: two link-locals differing only by zone were tried %d time(s), "+
+			"want 2 — normalising the zone away merges two peers into one", n)
+	}
+
+	// THE QUESTION: three spellings of one endpoint.
+	if n := tried(t,
+		"[2001:db8::1]:9",
+		"[2001:DB8::1]:9",
+		"[2001:db8:0:0:0:0:0:1]:9",
+	); n != 1 {
+		t.Errorf("one IPv6 endpoint spelled three ways was tried %d time(s), want 1 — the "+
+			"race key is a raw string, so a peer publishing one address in three spellings "+
+			"burns three of maxRaceCandidates (%d) and three of its per-source allowance (%d)",
+			n, maxRaceCandidates, maxCandidatesPerSource)
+	}
+}

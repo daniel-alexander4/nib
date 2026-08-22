@@ -615,3 +615,109 @@ func TestTheJoinCountsAreCountedBySocketOpen(t *testing.T) {
 	t.Logf("this host: %d interface(s), %d IPv4 join(s), %d IPv6 join(s)",
 		st.Interfaces, st.Joined4, st.Joined6)
 }
+
+// TestTheReadPathHearsBothFamilies — the discriminator for a question three counters
+// could not answer.
+//
+// `open` joins both groups (v4 and v6), `Announce` writes to both, and `SetControlMessage`
+// is configured on both — but `Read` calls `s.p4.ReadFrom` and nothing else. `Joined6 > 0`
+// is therefore evidence that we JOINED, not that we can HEAR: the join is a setsockopt and
+// says nothing about which reader the payload comes back through. The whole IPv6 tier rests
+// on the difference and no test in the tree distinguished them.
+//
+// **Why unicast to loopback and not the v6 group.** A multicast test cannot separate "the
+// read path is v4-shaped" from "this host swallows v6 multicast" — a default-deny firewall
+// and a v6-blind reader produce the identical silence, which is how a v4-shaped path stayed
+// unnoticed under a green suite. Loopback unicast has no such ambiguity: it never leaves the
+// kernel, `onLink` accepts loopback by name, and the only thing left that can swallow it is
+// the reader. The receive path is what this test is about; the group join is asserted by
+// TestTheJoinCountsAreCountedBySocketOpen and the wire by the two-process run.
+//
+// The v4 leg is the CONTROL and it is not decoration: without it, a bind that failed, a
+// wrong port, or a parse that refused every datagram would produce the same v6 silence and
+// read as the defect this test hunts.
+func TestTheReadPathHearsBothFamilies(t *testing.T) {
+	var nonce [nonceLen]byte
+	if _, err := rand.Read(nonce[:]); err != nil {
+		t.Fatal(err)
+	}
+	s, err := Open(nonce)
+	if err != nil {
+		t.Skipf("no usable interface for discovery: %v", err)
+	}
+	defer s.Close()
+
+	// A foreign nonce, so the datagram is a PEER and not our own loopback copy — the
+	// nonce filter would otherwise return ErrOwn and the family question never be asked.
+	var peerNonce [nonceLen]byte
+	if _, err := rand.Read(peerNonce[:]); err != nil {
+		t.Fatal(err)
+	}
+	wire, err := Announcement{Name: aName(t, 7), Port: 9443, Nonce: peerNonce}.Encode()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	send := func(t *testing.T, network, host string) (*net.UDPAddr, bool) {
+		t.Helper()
+		c, err := net.Dial(network, net.JoinHostPort(host, fmt.Sprint(Port)))
+		if err != nil {
+			return nil, false // this host has no such family available at all
+		}
+		defer c.Close()
+		if _, err := c.Write(wire); err != nil {
+			return nil, false
+		}
+		return c.LocalAddr().(*net.UDPAddr), true
+	}
+
+	read := func(t *testing.T) (Seen, error) {
+		t.Helper()
+		deadline := time.Now().Add(2 * time.Second)
+		for time.Now().Before(deadline) {
+			got, err := s.Read(deadline)
+			if err == nil {
+				return got, nil
+			}
+			// Our own multicast copies and any unrelated on-link chatter are noise
+			// here; only a timeout is an answer.
+			if errors.Is(err, os.ErrDeadlineExceeded) || strings.Contains(err.Error(), "timeout") {
+				return Seen{}, err
+			}
+		}
+		return Seen{}, os.ErrDeadlineExceeded
+	}
+
+	// CONTROL — the v4 leg, which the read path is known to serve.
+	if _, ok := send(t, "udp4", "127.0.0.1"); !ok {
+		t.Skip("cannot send a v4 loopback datagram on this host")
+	}
+	got4, err := read(t)
+	if err != nil {
+		t.Fatalf("setup: the socket did not hear a v4 loopback unicast (%v) — the harness "+
+			"itself is broken, so the v6 leg below would prove nothing. %s", err, s.Describe())
+	}
+	if got4.From == nil || got4.From.IP.To4() == nil {
+		t.Fatalf("setup: the v4 leg arrived with From=%v, which is not a v4 address", got4.From)
+	}
+
+	// THE QUESTION.
+	if _, ok := send(t, "udp6", "::1"); !ok {
+		t.Skip("no IPv6 loopback on this host, so the read path's v6 half cannot be driven")
+	}
+	got6, err := read(t)
+	if err != nil {
+		t.Fatalf("the socket joined the IPv6 group (Joined6=%d) and never heard a v6 "+
+			"datagram sent to its own port on ::1: %v. Read() calls s.p4.ReadFrom and "+
+			"nothing else, so a v6 arrival has no reader — every IPv6 tier is announced, "+
+			"joined, and deaf. %s", s.Stats().Joined6, err, s.Describe())
+	}
+	if got6.From == nil || got6.From.IP.To4() != nil {
+		t.Fatalf("a v6 datagram was heard but reported From=%v, which is not a v6 address "+
+			"— the candidate built from it names the wrong host", got6.From)
+	}
+	if got6.Port != 9443 {
+		t.Fatalf("the v6 datagram's payload did not survive the read: port %d, want 9443", got6.Port)
+	}
+	t.Logf("v4 from %v, v6 from %v — both reach Read", got4.From, got6.From)
+}
