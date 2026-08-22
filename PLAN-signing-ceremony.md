@@ -3422,63 +3422,90 @@ goes to the gateway ~1 pkt/60 s, not punch packets to the peer); item 20 (Candid
 — refresh reuses the port and does not re-publish, so no slot is spent, *provided* the port stays
 stable, which P2 handles); and the dialer side, which opens its own endpoint and never maps, so
 its `close()` has nothing to delete.
-#### P05.S08 — The IPv4 punch *(D8 tier 4, D16, D17, D33)* *(firmed 2026-08-22, two-agent deepdive)*
-Acceptance: criterion 14's cadence step-down, driven; QUIC-only by D8's transport pin.
+#### P05.S08 — The one-transport racer: dial through the shared endpoint *(caveat 7's racing-dialer half; S03's deferred T03)* *(in progress 2026-08-22; split from the punch by its own grill, which is the racer's grill too — CONFIRMED-1)*
+Scope: the racer dials its QUIC candidates through the ceremony's **one** shared endpoint
+(`cer.end.tr`) instead of a fresh `net.ListenPacket` per dial. This is the racing-dialer half of
+caveat 7 — the half `endpoint.go:33-37` defers "to S08/S09 by name" — and it is **S03's T03 as
+written** ("ONE mux and ONE `quic.Transport` for the whole race", plan §3053) which S03's own
+ledger then deferred to S04 (§3076-3080), and which S04 did not build either. The punch rests on
+it entirely: a punch sends from a socket, and unless that socket is the one whose mapping the
+peer learned, the hole is opened for a source the QUIC Initial never egresses.
 
-**Firmed 2026-08-22 after a two-agent deepdive of the punch seam — the one-line sketch hid the
-whole slice.** What the deepdive established, all cited to code:
+**Why its own slice, split from the punch (the punch's grill, 2026-08-22).** It is testable with
+NO punch — it either dials from the shared socket or it does not — and it carries a second hard
+problem the punch does not: **close semantics invert on a shared transport.** Today each loser's
+`Conn.Close` does `tr.Close(); mux.Close()` on its OWN per-dial socket (`quic.go:106-107`). On
+one shared `cer.end`, `tr.Close()` abruptly terminates ALL connections on the socket — the winner
+included — and `mux.Close()` makes the DHT read `net.ErrClosed`, which anacrolix/dht turns into a
+panic on a goroutine nothing of ours is on. So both loser-close and winner-close must become
+**`CloseWithError`-only** — the non-owning path that exists for listeners (`quic.go:186-199`,
+`ownsEndpoint=false`) but has no dial counterpart today.
 
-- **The punch is symmetric-SEND, not symmetric-DIAL.** Both sides emit NAT-opening datagrams
-  from their shared socket; the initiator's QUIC Initial then lands on the arm's already-open
-  listener. So **S08 can precede S09** (symmetric listen+dial + glare, D17/criterion 12), and
-  the announcer/arm-window criterion-16 defect stays S09, not absorbed here.
-- **Publish+fetch are asymmetric today** (`ceremonynet.go`): the arm publishes+listens and never
-  fetches; the dialer fetches+dials and never publishes; `ProbeSelf` runs only on the arm. For a
-  punch both sides need the other's tier-4 address, so both must publish AND fetch.
-- **Caveat 7's racing-dialer half is the hard piece, and it is deferred here by name**
-  (`endpoint.go:33-37`, plan §3257-3262). `QUICDial` binds a FRESH `net.ListenPacket` per dial
-  (`quic.go:82-86`), so a punch built on it sends from a socket the peer never learned — useless
-  under NAT. The dial must go out the SHARED endpoint. "The first thing whose correctness depends
-  on the dial's source port."
-- **The parameters** (D16/D33): 250 ms for 30 s then 1 s, to the 300 s deadline = **390 packets
-  per candidate per side**, hard-capped at **3,000 packets per HOP per SIDE across all
-  candidates** (8×390 = 3,120 is ~4% over; the cap trims the tail by design, not a conflict).
-  Drop-and-report on exhaustion, never fail the ceremony. Both figures are **law**, not tunable.
-- **No fake clock exists** — the existing cadences run on `time.After` against the wall clock and
-  the tests skip the wall-clock paths. "Driven" is satisfied by driving the **packet counter and
-  a pure interval function** `next(elapsed) → 250ms|1s`, NOT 300 s of real time — the same
-  vacuous-at-this-granularity trap S03 hit and ruled unmeasurable against the clock.
-- **No punch guarantee on symmetric NAT.** `ProbeSelf.Mapping` cannot separate the two
-  endpoint-dependent classes and does not measure filtering; a punch that never traverses is
-  D19 cause 3/4 and the ladder falls back to tiers 3/5. S08 must surface "punch attempted, no
-  traversal" as a distinguishable state (S11 renders the message), not a generic timeout.
+Acceptance:
+- The racer's winning channel's local `AddrPort` equals the shared endpoint's — asserted on the
+  socket, not on intent (caveat 7's discharge).
+- N QUIC candidates race concurrently on the one transport and the losers are torn down without
+  killing the winner or the DHT view (driven by racing several, cancelling all but one, and
+  asserting the winner survives and the DHT still reads). *Not a concern, recorded so it is not
+  re-litigated: CID collision is 2⁻⁶⁴ — `newCIDGen` at construction, inbound demux by destination
+  CID (`mux.go:212-222`).*
+- TCP candidates and the no-ceremony `dialAny` path (`lan.go:546-557`) keep their own fresh
+  sockets — only the ceremony QUIC dial moves to the shared endpoint.
+Tasks (firmed 2026-08-22):
+- **T01 — `QUICDialOn(end, …)`**: a dial on the shared endpoint's `tr`, returning a **non-owning**
+  `Conn` whose closer is `qc.CloseWithError` only (never `tr.Close`/`mux.Close`).
+- **T02 — thread `cer.end`** through `raceWithRendezvous` → `raceCandidates` → the per-candidate
+  goroutine; the ceremony QUIC dial uses it, TCP and `dialAny` do not.
+- **T03 — loser teardown is non-owning**: `raceCandidates` cancels in-flight dials AND closes
+  established losers with `CloseWithError`, leaving the shared transport/mux alone.
+- **T04 — the dial side's two sockets collapse to one**: `dialerCeremony`'s `cer.end` (the one
+  `ProbeSelf` measures and S08b publishes) is the one the race dials from.
+- **T05 — seam rows**: the source-port assertion; the winner-survives-loser-teardown observable.
 
-Tasks (firmed 2026-08-22 — dependency order; the grill may reshape):
-- **T01 — dial on the SHARED endpoint (caveat 7's racing-dialer half).** `QUICDialOn(end, …)`
-  analogous to `QUICListenOn`, dialing on the shared endpoint's transport so the source port is
-  the one the peer learned. `dialerCeremony` uses its own `end` to dial rather than a fresh
-  socket. Discharge: the winning channel's local `AddrPort` equals the probed/published one —
-  asserted on the socket. **The foundational, correctness-critical task; everything else rests on
-  it.** Preserves quic-go's `WithoutCancel` dial semantics so a racer can cancel losers.
-- **T02 — symmetric publish+fetch.** The dial side runs `ProbeSelf`+publish; the arm side runs a
-  `feedCandidates`-style fetch. Both learn the other's tier-4 target. Guarded so neither side is
-  left one-way.
-- **T03 — `SharedEndpoint.Punch(addr)` + the punch sender.** A raw datagram write on the shared
-  socket (the raw path is `side.WriteTo` via `DHT()`, `mux.go:469-484`, `learns=false` so it does
-  not disturb the QUIC peer table). A sender that emits to each tier-4 candidate at the cadence,
-  on BOTH sides.
-- **T04 — the cadence step-down as a pure function** `punchInterval(elapsed) → 250ms|1s`, the
-  constant block owed to S08 (`clocks.go:23`). Driven on the function, not the wall clock.
-- **T05 — the D33 packet budget.** A per-`(hop, side)` counter across all candidates, cap 3,000,
-  hard (trims the ~4% tail), drop-and-report, never fail — the packet analogue of `CandidateGate`,
-  new construction (no existing counter counts datagrams). Both law figures unreachable from the
-  tunable block (D33's discharge).
-- **T06 — QUIC over the punched hole + the failure state.** The single-direction QUIC establishes
-  over the opened socket (ties to T01); a punch that never traverses becomes a distinguishable
-  "attempted, no traversal" state for D19/S11, not a generic timeout.
-- **T07 — seam inventory rows**: the source-port assertion (caveat 7), the cadence step-down, the
-  per-side budget drop-and-report, the failure state, and the Dan-only real-two-NAT run
-  (criterion: IPv4-to-IPv4 through an endpoint-independent NAT).
+#### P05.S08b — The IPv4 punch *(D8 tier 4, D16, D17, D33; rests on S08)* *(firmed 2026-08-22, deepdive + grill)*
+Acceptance: criterion 14's cadence step-down, driven; QUIC-only by D8's transport pin; a punch
+completes a ceremony over the opened hole with the arm listening and the initiator dialing.
+
+**Firmed after a two-agent deepdive and the slice grill.** The punch is **symmetric-SEND** (both
+sides emit NAT-opening datagrams from their shared socket), not symmetric-dial — so it precedes
+S09 (symmetric listen+dial + glare), verified: both punch, then the initiator's QUIC Initial from
+`cer.end` traverses the arm's now-open NAT onto the arm's `QUICListenOn` listener on the SAME
+`cer.end`; the arm never dials. The parameters (D16/D33): 250 ms for 30 s then 1 s to the 300 s
+deadline = **390 packets/candidate/side**, hard-capped at **3,000 packets/hop/side across all
+candidates** (8×390 = 3,120 is ~4% over; the cap trims the tail by design). Both figures are law.
+
+Tasks (firmed 2026-08-22):
+- **T01 — symmetric publish+fetch, with the dialer's publish SUPPRESSED like the arm's** (grill
+  CONFIRMED-3). The dial side runs `ProbeSelf`+publish and the arm runs a `feedCandidates` fetch —
+  but the dialer's publish carries the SAME "already-answered ⇒ don't publish" suppression the arm
+  has (`ceremonynet.go:340-354`), or every LAN-local ceremony leaks a second DHT correlation
+  handle the arm was built to suppress. The arm's fetch **goes through `c.gate`** (author/hop/
+  roster/routability screened, capped at `MaxCandidates`), never a raw `Fetch`.
+- **T02 — `SharedEndpoint.Punch(addr)`**: a raw datagram on the shared socket via the DHT view's
+  `WriteTo` (`mux.go:469-484`, `learns=false`, so it does not disturb the QUIC peer table). The
+  payload is a deterministically non-QUIC-long-header, non-bencode (or empty) datagram so the
+  peer's mux discards it cleanly rather than quic-go treating a stray `0x80` byte as a connection
+  (grill 7b).
+- **T03 — the punch sender, on an INJECTED clock** (grill CONFIRMED-5): both sides emit to each
+  tier-4 candidate at `punchInterval(elapsed)`, driven by a fake ticker in the test so the real
+  loop is exercised — a sender on bare `time.After` makes "driven" vacuous, the S03 trap. Runs on
+  the arm too, despite it only listening.
+- **T04 — the cadence step-down** as a pure function `punchInterval(elapsed) → 250ms|1s`, the
+  constant block owed to S08 (`clocks.go:27`). Asserted at the t=30 s boundary.
+- **T05 — the D33 packet budget**: a per-`(hop, side)` counter across all candidates, cap 3,000,
+  hard; **checked BEFORE each send** so the 8th candidate cannot overshoot; **not reset on
+  candidate churn** (a refreshed S07 mapping is a new candidate spending the same 3,000 faster,
+  which is correct); drop-and-report, never fail. New construction — no existing counter counts
+  datagrams. Both law figures unreachable from the tunable block (D33's discharge).
+- **T06 — QUIC over the hole + the dial-vs-punch-lifetime reconciliation** (grill 7a, the
+  high-value gap). `raceCandidates` dials a candidate ONCE with a 6 s budget, but the hole may not
+  open inside 6 s (the peer's fetch is on a 5 s cadence, so it may punch late). A tier-4 candidate
+  must therefore be **re-dialled while its hole is being opened**, or given a dial budget that
+  spans the aggressive punch window — the task list before the grill named neither. A punch that
+  never traverses becomes a distinguishable "attempted, no traversal" state (D19 cause 3/4; S11
+  renders it), not a generic timeout.
+- **T07 — seam rows**: the cadence step-down, the per-side budget drop-and-report, the failure
+  state, and the Dan-only real-two-NAT run (IPv4-to-IPv4 through an endpoint-independent NAT).
 
 #### P05.S09 — Symmetric racing and the glare tie-break *(D17; criterion 12)*
 Scope: both sides listen **and** dial; today the server arms one listener and the initiator only dials.
