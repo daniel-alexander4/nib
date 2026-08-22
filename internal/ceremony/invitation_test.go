@@ -7,6 +7,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 )
 
 func invited(t *testing.T) (Record, Invitation) {
@@ -415,7 +416,7 @@ func TestAnInvitationCatchesARecordConvenedBySomeoneElse(t *testing.T) {
 
 	// STIMULUS, and it is the finding: the forgery VERIFIES. Nothing about the record
 	// itself can see it — the roster hash is byte-identical, so RosterToken is too.
-	if err := forged.Verify(); err != nil {
+	if err := forged.Verify(time.Now()); err != nil {
 		t.Fatalf("setup: the re-signed record does not verify, so this is not the attack "+
 			"the check is for: %v", err)
 	}

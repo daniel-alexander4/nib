@@ -15,6 +15,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"nib/internal/sign"
@@ -49,6 +50,20 @@ import (
 // above a constant reading 3 — a doc describing a version the code had already left, which
 // is this repo's most-found defect shape wearing its most harmless-looking clothes.
 const FormatVersion = 3
+
+// MaxCeremonyLife caps how far ahead a record's deadline may be set.
+//
+// **Thirty days, and it is enforced rather than documented** — the plan's own words about
+// the four externally-supplied security parameters, of which this is one. D16 calls clock 3
+// "days, convener's choice", which is a parameter with no bound: it governs how long a
+// listener may arm, how long invitation-scoped pins persist (D29) and how long a mirror
+// lives, so a convener setting ten years was a config away.
+//
+// Checked against `now` rather than against a creation time, because a record carries no
+// creation time — the same shape MaxCandidateLife uses, and it behaves correctly in both
+// directions: a record written last year has an expiry in the past and passes, while one
+// claiming ten years ahead fails whenever it is read.
+const MaxCeremonyLife = 30 * 24 * time.Hour
 
 // rosterDomain separates this preimage from every other thing the identity key signs.
 // On-wire identifier: immutable once shipped (STANDARDS §9).
@@ -102,7 +117,14 @@ var (
 	// somebody changed.
 	ErrBadConvenerSignature = errors.New("the ceremony record's convener signature does not verify")
 	ErrConvenerNotInRoster  = errors.New("the ceremony record was signed by someone not in its roster")
-	ErrVersion              = errors.New("unsupported ceremony record version")
+	// ErrCeremonyTooLong is its own sentinel rather than a shape of ErrVersion or a bare
+	// error, because it is the one refusal here that names a MISCONFIGURATION rather than an
+	// attack — the convener set a deadline this build will not honour, and the fix is theirs.
+	ErrCeremonyTooLong = errors.New("the ceremony record's deadline is too far ahead")
+	// ErrNotAHop reports two parties that do not share a hop — not in the roster, the same
+	// party twice, or not adjacent in it.
+	ErrNotAHop = errors.New("those two parties do not share a hop")
+	ErrVersion = errors.New("unsupported ceremony record version")
 )
 
 // RosterHash is the commitment every signature carries.
@@ -250,7 +272,21 @@ func (r *Record) Sign(certPEM, keyPEM []byte) error {
 // record was altered after it was written. A signature that verifies but belongs to nobody
 // in the roster means the record is internally consistent and describes a proceeding its
 // own signer is not part of — which is a well-formed lie rather than a corruption.
-func (r Record) Verify() error {
+// Verify checks the convener's signature over the roster and the record's own shape.
+//
+// **It takes `now` rather than reading the clock**, for C11's reason: a wall-clock read
+// inside a validation verdict is nondeterminism reaching a decision, and it makes the
+// ceiling below untestable without faking time. The sibling `CandidateRecord.Verify` already
+// takes one.
+//
+// **It does NOT refuse an expired ceremony, and that is deliberate.** An expired record is a
+// liveness fact about the ceremony, not a validity fact about the document — a verifier
+// reading a finished PDF next year must still be able to check who was on the roster and
+// that the convener signed it. Refusing here would make a completed ceremony unverifiable
+// the day after it ended, which is the opposite of what a signed record is for. Whether a
+// hop may still START is the caller's question and is bounded by the deadline plus one full
+// exchange budget (D16's Stage 6 pin), which lives where exchangeDeadline does.
+func (r Record) Verify(now time.Time) error {
 	if r.Version != FormatVersion {
 		return fmt.Errorf("%w: %d (this build writes %d)", ErrVersion, r.Version, FormatVersion)
 	}
@@ -282,12 +318,25 @@ func (r Record) Verify() error {
 		return ErrBadConvenerSignature
 	}
 	want := hex.EncodeToString(fp)
+	inRoster := false
 	for _, p := range r.Roster {
 		if p.Fingerprint == want {
-			return nil
+			inRoster = true
+			break
 		}
 	}
-	return ErrConvenerNotInRoster
+	if !inRoster {
+		return ErrConvenerNotInRoster
+	}
+	// The ceiling, LAST — after the signature, so a record that fails both is reported as
+	// forged rather than as over-long. A convener who signed a ten-year deadline is a
+	// misconfiguration; one who did not sign at all is an attacker, and the second sentence
+	// is the one a user needs.
+	if r.Expires.After(now.Add(MaxCeremonyLife)) {
+		return fmt.Errorf("%w: it claims to run until %s, more than %s from now",
+			ErrCeremonyTooLong, r.Expires.UTC().Format(time.RFC3339), MaxCeremonyLife)
+	}
+	return nil
 }
 
 // Convener returns the roster entry that signed this record.
@@ -307,6 +356,64 @@ func (r Record) Convener() (Party, bool) {
 
 // MarshalJSON / UnmarshalJSON are the plain encoding; the signature covers the roster hash
 // rather than these bytes, so a re-encode is safe.
+// Hop returns the hop index joining two parties, and it is the ONLY definition of a hop
+// number in this project.
+//
+// **The roster's order is the definition.** `Party`'s own doc says "the order of the roster
+// IS the signing order", and D22 makes connectivity a sequence of pairs — so hop *i* joins
+// `Roster[i]` to `Roster[i+1]`, and a ceremony with N parties has N-1 hops. Both ends of a
+// hop compute the same number from the same convener-signed artifact, which is what makes it
+// agreed rather than negotiated: there is no counter to get out of step across a
+// quit-and-reopen (D24), because nothing is counted.
+//
+// **Before this, a hop was an unbounded `int` that nothing derived and nothing checked.**
+// Eight functions took one — every key, salt and seed derivation among them — with no range
+// check at any of them, and the only assignment in the whole tree was a literal `0` in a
+// self-test. A caller's off-by-one derived a perfectly valid key and salt at a hop that does
+// not exist, published into the void, and the outcome was reported as `FetchEmpty`:
+// indistinguishable from a counterparty who has not arrived yet.
+func (r Record) Hop(a, b string) (int, error) {
+	ia, ib := -1, -1
+	for i, p := range r.Roster {
+		// Case-insensitive, because a fingerprint that differs only in case is the same
+		// party — the same fact ParseInvitation normalises for the invitation's roster and
+		// that Convener() compares case-sensitively one function away.
+		if strings.EqualFold(p.Fingerprint, a) {
+			ia = i
+		}
+		if strings.EqualFold(p.Fingerprint, b) {
+			ib = i
+		}
+	}
+	if ia < 0 || ib < 0 {
+		return 0, fmt.Errorf("%w: one of %s and %s is not in this ceremony's roster",
+			ErrNotAHop, short(a), short(b))
+	}
+	if ia == ib {
+		return 0, fmt.Errorf("%w: %s was given as both ends", ErrNotAHop, short(a))
+	}
+	lo, hi := ia, ib
+	if lo > hi {
+		lo, hi = hi, lo
+	}
+	if hi-lo != 1 {
+		// Non-adjacent parties share no hop. This is criterion 19's rule expressed where it
+		// can be enforced rather than remembered: a convener holding candidates for a party
+		// three positions away cannot even derive that hop's key by asking for it.
+		return 0, fmt.Errorf("%w: %s and %s are %d apart in the roster, and a hop joins "+
+			"adjacent parties", ErrNotAHop, short(a), short(b), hi-lo)
+	}
+	return lo, nil
+}
+
+// Hops is how many hops this ceremony has: one fewer than its roster.
+func (r Record) Hops() int {
+	if len(r.Roster) < 2 {
+		return 0
+	}
+	return len(r.Roster) - 1
+}
+
 func (r Record) Encode() ([]byte, error) { return json.Marshal(r) }
 
 func Decode(b []byte) (Record, error) {

@@ -468,10 +468,38 @@ func runSelfTest(ctx context.Context, out io.Writer, rz *rendezvous.Server, self
 		fmt.Fprintf(out, "  %v\n", err)
 		return false
 	}
+	// **A SECOND throwaway identity, so this is a two-party rehearsal and not a self-loop.**
+	//
+	// It used to be a one-party roster publishing and fetching at `gate.Salt()` — the same
+	// target for both — which is coherent only because the counterparty was itself. That
+	// made it a misleading template rather than a wrong one: a hop has two parties, both
+	// publish, and `RecordSalt` is per party precisely so the higher-seq write cannot
+	// clobber the other. Copied to a real ceremony, publishing at the READ salt means each
+	// side writes where nobody is looking and reads where nobody wrote, and the symptom is
+	// ErrCandidateSealed — an accusation of tampering for a local wiring mistake.
+	//
+	// Both identities live in this process, so the round trip below still proves what it
+	// always proved (a live DHT route, and counters with a live path) while now exercising
+	// the salt asymmetry that a real ceremony depends on.
+	peerCert, _, err := sign.GenerateIdentity("nib self-test peer")
+	if err != nil {
+		fmt.Fprintf(out, "  %v\n", err)
+		return false
+	}
+	peerFP, err := sign.Fingerprint(peerCert)
+	if err != nil {
+		fmt.Fprintf(out, "  %v\n", err)
+		return false
+	}
+	peerHex := hex.EncodeToString(peerFP)
+
 	inv := ceremony.Invitation{
-		Version:             ceremony.InvitationVersion,
-		ID:                  hex.EncodeToString(id),
-		Roster:              []ceremony.Party{{Fingerprint: fpHex, Signs: true}},
+		Version: ceremony.InvitationVersion,
+		ID:      hex.EncodeToString(id),
+		Roster: []ceremony.Party{
+			{Fingerprint: fpHex, Signs: true},
+			{Fingerprint: peerHex, Signs: true},
+		},
 		Secret:              secret,
 		ConvenerFingerprint: fpHex,
 	}
@@ -504,7 +532,16 @@ func runSelfTest(ctx context.Context, out io.Writer, rz *rendezvous.Server, self
 	}
 
 	const hop = 0
-	gate, err := ceremony.NewCandidateGate(inv, hop, fpHex)
+	// TWO gates, one per party, because that is what a hop is. The peer's gate is the one
+	// that READS what we publish: its counterparty is us, so its read salt is our publish
+	// salt. Deriving both here is what makes the round trip below a real exchange rather
+	// than a value fetched back from the address it was written to.
+	gate, err := ceremony.NewCandidateGate(inv, hop, fpHex, peerHex)
+	if err != nil {
+		fmt.Fprintf(out, "  %v\n", err)
+		return false
+	}
+	peerGate, err := ceremony.NewCandidateGate(inv, hop, peerHex, fpHex)
 	if err != nil {
 		fmt.Fprintf(out, "  %v\n", err)
 		return false
@@ -552,7 +589,10 @@ func runSelfTest(ctx context.Context, out io.Writer, rz *rendezvous.Server, self
 		fmt.Fprintf(out, "  %v\n", err)
 		return false
 	}
-	sealed, err := rec.Seal(key, gate.Salt(), hop)
+	// **Sealed at OUR publish salt, read at the PEER's gate.** These are two different
+	// 32-byte values and getting them the wrong way round is the mistake this self-test now
+	// exists to make impossible to copy.
+	sealed, err := rec.Seal(key, gate.PublishSalt(), hop)
 	if err != nil {
 		fmt.Fprintf(out, "  seal: %v\n", err)
 		return false
@@ -565,25 +605,31 @@ func runSelfTest(ctx context.Context, out io.Writer, rz *rendezvous.Server, self
 
 	started := time.Now()
 	fmt.Fprintf(out, "  publishing %d bytes…\n", len(sealed))
-	if err := rz.Publish(ctx, seed, gate.Salt(), sealed); err != nil {
+	if err := rz.Publish(ctx, seed, gate.PublishSalt(), sealed); err != nil {
 		fmt.Fprintf(out, "  publish failed after %s: %v\n", time.Since(started).Round(time.Millisecond), err)
 		return false
 	}
 	fmt.Fprintf(out, "  published in %s; fetching it back…\n", time.Since(started).Round(time.Millisecond))
 	started = time.Now()
-	got, seq, err := rz.Fetch(ctx, seed, gate.Salt())
+	// The PEER's read salt, which is our publish salt — the same bytes, reached from the
+	// other end of the hop. A test that fetched at our own read salt would find nothing and
+	// report it as a peer who never published.
+	got, seq, err := rz.Fetch(ctx, seed, peerGate.Salt())
 	if err != nil {
 		fmt.Fprintf(out, "  fetch failed after %s: %v\n", time.Since(started).Round(time.Millisecond), err)
 		fmt.Fprintf(out, "  (for THIS command that means the put reached no node we could read\n")
 		fmt.Fprintf(out, "   back from — getput.Put cannot report a per-node refusal)\n")
 		return false
 	}
-	if err := gate.Accept(got, time.Now()); err != nil {
+	// Accepted by the PEER's gate: its `want` is our fingerprint, so the author check is the
+	// real one. Our own gate would refuse this record with ErrCandidateAuthor, which is the
+	// correct behaviour and is why a self-loop could never have exercised it.
+	if err := peerGate.Accept(got, time.Now()); err != nil {
 		fmt.Fprintf(out, "  the record came back in %s and the gate REFUSED it: %v\n",
 			time.Since(started).Round(time.Millisecond), err)
 		return false
 	}
-	g := gate.Stats()
+	g := peerGate.Stats()
 	fmt.Fprintf(out, "  round trip OK in %s at seq %d\n", time.Since(started).Round(time.Millisecond), seq)
 	fmt.Fprintf(out, "  gate            %d record(s) offered, %d refused; %d candidate address(es) accepted\n",
 		g.Records(), g.Refused(), g.Accepted)

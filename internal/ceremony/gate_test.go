@@ -17,7 +17,10 @@ func gateFor(t *testing.T) (*CandidateGate, Invitation, []byte, []byte, string) 
 	_, inv := invited(t)
 	certA, keyA, fpA := identity(t, "A")
 	inv.Roster = append(inv.Roster, Party{Fingerprint: fpA, Signs: true})
-	g, err := NewCandidateGate(inv, testHop, fpA)
+	// The gate READS A's records, so A is the counterparty and the reader is somebody else.
+	// The convener is the other end of the hop here — a hop needs two distinct parties and
+	// the constructor now refuses a gate whose two ends are the same fingerprint.
+	g, err := NewCandidateGate(inv, testHop, inv.ConvenerFingerprint, fpA)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -531,7 +534,7 @@ func TestACrossCeremonyReplayIsCountedAsAContextFailure(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	g, err := NewCandidateGate(two, testHop, fpA)
+	g, err := NewCandidateGate(two, testHop, two.ConvenerFingerprint, fpA)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -566,7 +569,7 @@ func TestAHostileDocumentCannotCarryAnUnboundedRoster(t *testing.T) {
 	if len(r.Roster) <= MaxRoster {
 		t.Fatal("setup: the roster is not oversize")
 	}
-	err := r.Verify()
+	err := r.Verify(time.Now())
 	if err == nil {
 		t.Fatalf("a self-signed record naming %d parties verified — that is %d hops of "+
 			"punch budget and %d signature pages", len(r.Roster), len(r.Roster)-1, len(r.Roster))
@@ -663,5 +666,101 @@ func TestEveryRefusalCauseIsCountedUnderItsOwnName(t *testing.T) {
 	if s.Refused() < s.RefusedTooBig+s.RefusedSealed {
 		t.Errorf("Refused() = %d does not include every cause it was incremented for "+
 			"(too-big %d + sealed %d)", s.Refused(), s.RefusedTooBig, s.RefusedSealed)
+	}
+}
+
+// TestAHopHasTwoSaltsAndTheyAreNotInterchangeable — the defect the only in-tree example
+// could not have caught, because that example was a one-party ceremony.
+//
+// A hop has two parties and BOTH publish. `RecordSalt` is per party precisely so the two do
+// not share a BEP-44 target, where the higher-seq write would silently clobber the other. So
+// each side must SEAL at its own salt and READ at its counterparty's — and until PublishSalt
+// existed, the only salt the gate exposed was the read salt, so the only value a caller
+// could reach for was the wrong one.
+//
+// **Why nothing caught it.** `nib rendezvous --self-test` publishes at `gate.Salt()` and
+// fetches at `gate.Salt()`, which is coherent only because its counterparty was itself. Its
+// two salts were the same 32 bytes. Copied to a real ceremony each side writes where nobody
+// is looking and reads where nobody wrote — and the symptom is `ErrCandidateSealed`, "this
+// record was not written for this ceremony, or has been altered", which accuses a
+// counterparty of tampering over a local wiring mistake.
+func TestAHopHasTwoSaltsAndTheyAreNotInterchangeable(t *testing.T) {
+	g, inv, certA, keyA, fpA := gateFor(t)
+
+	// SETUP: the two salts really are different values. If they were equal — which is
+	// exactly the one-party case — every assertion below would hold with the salts swapped
+	// and the test would prove nothing.
+	if string(g.Salt()) == string(g.PublishSalt()) {
+		t.Fatal("setup: this gate's read and publish salts are identical, so it is a " +
+			"one-party ceremony and cannot distinguish the two")
+	}
+
+	rk, err := inv.RecordKey(testHop)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := CandidateRecord{
+		CeremonyID: inv.ID, Hop: testHop,
+		Expires: time.Now().Add(time.Minute),
+		Addrs:   []Endpoint{ep("93.184.216.34:34154")},
+	}
+	if err := rec.Sign(certA, keyA); err != nil {
+		t.Fatal(err)
+	}
+
+	// A publishes at A's OWN salt. This gate reads A's records, so A's own salt is exactly
+	// what this gate's `Salt()` returns — the gate belongs to the other end of the hop.
+	right, err := rec.Seal(rk, g.Salt(), testHop)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := g.Accept(right, time.Now()); err != nil {
+		t.Fatalf("a record sealed at the salt this gate reads was refused: %v", err)
+	}
+
+	// And sealed at the WRONG salt — the mistake the API used to make the easy one — it is
+	// refused as sealed, which is the misleading sentence. This asserts the failure mode so
+	// that the diagnosis is on record: if somebody later reports "the peer's records are all
+	// refused as tampered", this is what it means.
+	g2, err := NewCandidateGate(inv, testHop, inv.ConvenerFingerprint, fpA)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wrong, err := rec.Seal(rk, g2.PublishSalt(), testHop)
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = g2.Accept(wrong, time.Now())
+	if !errors.Is(err, ErrCandidateSealed) {
+		t.Errorf("a record sealed at the publisher's own salt and read at the same gate was "+
+			"refused as %v; the AEAD binds the salt, so this must fail — and it failing as "+
+			"SEALED is the whole reason PublishSalt exists, because that sentence accuses a "+
+			"counterparty of tampering over a local mistake", err)
+	}
+}
+
+// TestAHopNeedsTwoDistinctParties — the constructor refuses a gate whose two ends are the
+// same fingerprint.
+//
+// Without it, a caller that computed the hop wrong builds a gate where every salt, key and
+// target is self-consistent — so nothing fails, and the symptom is a counterparty who
+// appears never to publish. That is indistinguishable from an offline peer, which is the
+// most expensive thing a connectivity bug can look like.
+func TestAHopNeedsTwoDistinctParties(t *testing.T) {
+	_, inv := invited(t)
+	_, _, fpA := identity(t, "A")
+	inv.Roster = append(inv.Roster, Party{Fingerprint: fpA, Signs: true})
+
+	// SETUP: the same call with two DIFFERENT parties succeeds, so the refusal below is a
+	// bound and not a broken constructor.
+	if _, err := NewCandidateGate(inv, testHop, inv.ConvenerFingerprint, fpA); err != nil {
+		t.Fatalf("setup: a two-party gate was refused (%v), so the refusal below proves "+
+			"nothing about the same-party case", err)
+	}
+
+	if _, err := NewCandidateGate(inv, testHop, fpA, fpA); err == nil {
+		t.Error("a gate was built with one fingerprint as both ends of the hop. Every salt, " +
+			"key and target it derives would be self-consistent, so nothing would fail — the " +
+			"symptom is a counterparty who never publishes, which reads as an offline peer.")
 	}
 }

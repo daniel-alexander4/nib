@@ -113,7 +113,11 @@ type CandidateGate struct {
 	hop  int
 	want string
 	key  []byte
-	salt []byte
+	// salt is the counterparty's — where this gate READS. mySalt is this party's — where
+	// it WRITES. Two fields rather than one derived on demand, because a hop's two targets
+	// are the thing most easily got backwards and a name is cheaper than a comment.
+	salt   []byte
+	mySalt []byte
 
 	// Keyed on the ENDPOINT, which is address AND transport. Keying on the address alone
 	// would count a party legitimately offering the same host:port over both transports as
@@ -125,13 +129,35 @@ type CandidateGate struct {
 	stats CandidateStats
 }
 
-// NewCandidateGate derives the hop's record key and the counterparty's salt once.
-func NewCandidateGate(inv Invitation, hop int, counterparty string) (*CandidateGate, error) {
+// NewCandidateGate derives the hop's record key and BOTH of its salts once.
+//
+// **`me` is the second salt and it is not optional.** A hop has two parties and both
+// publish, at two different BEP-44 targets — `RecordSalt` is per party precisely so the
+// higher-seq write does not clobber the other. So a party must SEAL at its own salt and READ
+// at its counterparty's, and until this parameter existed the gate could only hand out the
+// one it reads at. The only example in the tree does exactly that (`nib rendezvous
+// --self-test` publishes at `gate.Salt()`), and it is correct there ONLY because its
+// counterparty is itself, in a one-party ceremony where the two salts coincide. Copied to a
+// real path it produces a total failure reported as `ErrCandidateSealed` — "this record was
+// not written for this ceremony, or has been altered" — an accusation of tampering for a
+// local wiring mistake, which is exactly the diagnosis `Seal` spends sixteen lines
+// eliminating for a different cause.
+func NewCandidateGate(inv Invitation, hop int, me, counterparty string) (*CandidateGate, error) {
+	if me == counterparty {
+		// A hop is between two parties. One fingerprint on both sides means the caller
+		// computed the hop wrong, and every salt, key and target below would be
+		// self-consistent — the failure would surface as a peer who never publishes.
+		return nil, fmt.Errorf("a hop needs two parties: %s was given as both ends", short(me))
+	}
 	key, err := inv.RecordKey(hop)
 	if err != nil {
 		return nil, err
 	}
 	salt, err := inv.RecordSalt(hop, counterparty)
+	if err != nil {
+		return nil, err
+	}
+	mySalt, err := inv.RecordSalt(hop, me)
 	if err != nil {
 		return nil, err
 	}
@@ -141,14 +167,24 @@ func NewCandidateGate(inv Invitation, hop int, counterparty string) (*CandidateG
 	inv.Roster = append([]Party(nil), inv.Roster...)
 	return &CandidateGate{
 		inv: inv, hop: hop, want: counterparty,
-		key: key, salt: salt,
+		key: key, salt: salt, mySalt: mySalt,
 		seen: make(map[Endpoint]bool),
 	}, nil
 }
 
-// Salt is the BEP-44 salt this gate reads at — handed to the transport as opaque bytes,
-// since the transport may not know what a ceremony is (L1).
+// Salt is the BEP-44 salt this gate READS at — the counterparty's. Handed to the transport
+// as opaque bytes, since the transport may not know what a ceremony is (L1).
+//
+// Named the short way because reading is what a gate is for; the writing salt is
+// PublishSalt, and the two are separate methods rather than one with a flag so that a caller
+// cannot pass the wrong one by getting a boolean backwards.
 func (g *CandidateGate) Salt() []byte { return g.salt }
+
+// PublishSalt is the BEP-44 salt this party WRITES at — its own.
+//
+// It exists so that the correct salt is reachable at all. Before it, the only salt the API
+// offered was the read salt, so the only thing a caller could reach for was the wrong one.
+func (g *CandidateGate) PublishSalt() []byte { return g.mySalt }
 
 // Accept opens, verifies and admits one fetched record.
 //
