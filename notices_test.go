@@ -199,3 +199,58 @@ func TestEveryVendoredThingIsInTheNotices(t *testing.T) {
 	}
 	t.Logf("%d vendored dir(s), %d font face(s), all credited", dirs, faces)
 }
+
+// TestTheNoticesPreambleNamesNoLicenseClass — the preamble may not summarise the set by
+// naming license classes, because that summary cannot stay true.
+//
+// It said "Each is under a permissive license (BSD, MIT, or Apache-2.0)" and that was
+// false of the set it introduced: `github.com/anacrolix/dht/v2` is MPL-2.0 (compatible
+// through MPL 2.0 §3.3, not through being permissive), and the vendored web assets add
+// SIL OFL and ISC. The file's own note said as much — **3,100 lines below the preamble**,
+// in a section a reader taking the preamble as the summary has no reason to reach. This is
+// a distribution-facing legal document, so a wrong summary at the top is the part that
+// gets relied on.
+//
+// The guard is on the CONSTRUCTION, not on the specific stale names. Replacing three
+// license names with five would go stale the same way on the next dependency — P05's
+// caveat 6 leaves the port-mapping library's license open, so the next one may well not be
+// permissive either. Nib's own license is exempt: naming AGPLv3 in the first line is the
+// document saying what Nib is, which is a fact about this repo and not a claim about the
+// components.
+//
+// It reads the COMMITTED file rather than the generator, so a hand-edit is caught too —
+// even though the generator's header forbids one and TestNoticesUpToDate would fail it,
+// because a guard that checks the door and not the artifact is a guard that assumes the
+// other guard ran.
+func TestTheNoticesPreambleNamesNoLicenseClass(t *testing.T) {
+	b, err := os.ReadFile("THIRD-PARTY-NOTICES.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := string(b)
+	i := strings.Index(body, "\n---\n")
+	if i < 0 {
+		t.Fatal("setup: THIRD-PARTY-NOTICES.md has no `---` rule, so the preamble cannot " +
+			"be delimited and this guard would scan the whole file — including 3,400 lines " +
+			"of license text, which names every class there is")
+	}
+	preamble := body[:i]
+	// SETUP: the delimiter found the preamble and not, say, byte 0 — otherwise an empty
+	// string trivially contains no license name and this test passes on nothing.
+	if !strings.Contains(preamble, "incorporates the third-party software listed below") {
+		t.Fatalf("setup: the text before the first `---` does not look like the preamble:\n%s", preamble)
+	}
+	for _, name := range []string{
+		"BSD", "MIT", "Apache", "MPL", "Mozilla Public License",
+		"ISC", "OFL", "SIL", "Unlicense", "zlib",
+	} {
+		if strings.Contains(preamble, name) {
+			t.Errorf("the preamble names the license class %q. An enumeration here is a claim "+
+				"about the WHOLE set that goes stale silently as dependencies change — it "+
+				"already did, and the correction sat 3,100 lines below it. Say that each "+
+				"component's license is AGPLv3-compatible and that its text follows; let the "+
+				"per-component sections and the end-of-file note carry the specifics.\n\n%s",
+				name, preamble)
+		}
+	}
+}
