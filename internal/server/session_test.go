@@ -366,8 +366,10 @@ func TestSessionDeclineLeavesOpenDoc(t *testing.T) {
 	// that would otherwise be an asymmetric pair. S01 keeps the listener armed when a
 	// connection produces no session; a decline is not "no session", it is the user's
 	// decision, and leaving the arm open after one lets the peer re-dial and ask the
-	// same person again. `serveOneSession` distinguishes them with `errors.Is` against
-	// `p2p.ErrCoSignDeclined`, and nothing asserted the distinction in either direction.
+	// same person again. `serveOneSession` distinguishes them by whether the connection
+	// REACHED the user (the `reached` flag), not by matching an error — an enumeration of
+	// error values is what shipped a security regression when it omitted
+	// `ErrVerificationDeclined`. Nothing asserted the distinction in either direction.
 	spent := time.Now().Add(5 * time.Second)
 	for {
 		var ds sessionStatus
@@ -637,8 +639,9 @@ func TestSessionReceiveTransferDecline(t *testing.T) {
 	// that would otherwise be an asymmetric pair. S01 keeps the listener armed when a
 	// connection produces no session; a decline is not "no session", it is the user's
 	// decision, and leaving the arm open after one lets the peer re-dial and ask the
-	// same person again. `serveOneSession` distinguishes them with `errors.Is` against
-	// `p2p.ErrDeclined`, and nothing asserted the distinction in either direction.
+	// same person again. `serveOneSession` distinguishes them by whether the connection
+	// REACHED the user (the `reached` flag), not by matching an error — see the twin of this
+	// comment above. Nothing asserted the distinction in either direction.
 	spent := time.Now().Add(5 * time.Second)
 	for {
 		var ds sessionStatus

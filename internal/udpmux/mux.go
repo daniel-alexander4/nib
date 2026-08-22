@@ -483,10 +483,19 @@ func (s *side) WriteTo(p []byte, addr net.Addr) (int, error) {
 	return s.m.pc.WriteTo(p, addr)
 }
 
-// Close closes this view ONLY. The shared socket stays open for the other view —
-// which is the whole reason a shim is needed: quic.Transport.Close and
-// dht.Server.Close each close the conn they were given, and neither may take the
-// other's transport down with it.
+// Close closes this view ONLY. The shared socket stays open for the other view, which is
+// the whole reason a shim is needed: a library handed this conn must not be able to take the
+// other library's transport down with it.
+//
+// **The reason used to be stated for both libraries and is true of only one.**
+// `dht.Server.Close` does close the conn it was given
+// (`anacrolix/dht/v2@v2.24.0/server.go:1185`). `quic.Transport.Close` does NOT: it gates that
+// on the unexported `createdConn` (`quic-go@v0.61.0/transport.go:465`), which is false for
+// both of Nib's `&quic.Transport{Conn: …}` literals — it instead calls
+// `SetReadDeadline(time.Now())` on the conn. Measured, and it is why the shim is still right:
+// `side.SetReadDeadline` sets a deadline on THIS view only, so the QUIC transport closing
+// leaves the DHT's reads untouched. One true half is enough to need the shim; stating it of
+// both made the tree contradict itself, since `interop_test.go` had it correct.
 func (s *side) Close() error {
 	s.shut(net.ErrClosed)
 	return nil

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/hex"
+	"errors"
 	"testing"
 	"time"
 
@@ -37,10 +38,14 @@ func signAsInitiator(t *testing.T, certPEM, keyPEM, peerFP []byte) []byte {
 type confirmer struct {
 	accept bool
 	intent string
+	// err is what a real Confirmer returns when nobody answered. The server's bridge
+	// returns ErrConsentTimedOut here; the fake takes it so the wire behaviour of a
+	// timeout can be driven without waiting sessionConsentTimeout.
+	err error
 }
 
 func (c confirmer) Confirm(SignerAttestation, []byte) (bool, string, []byte, error) {
-	return c.accept, c.intent, nil, nil
+	return c.accept, c.intent, nil, c.err
 }
 
 // TestConfirmCoSignedRequiresBothSignatures proves the initiator-side check accepts
@@ -226,15 +231,111 @@ func TestSessionReceiverDeclines(t *testing.T) {
 			t.Fatal(err)
 		}
 		defer conn.Close()
-		if _, err := Initiate(conn.Channel, aSigned, aFP, okVerifier{}); err == nil {
-			t.Error("initiator got a result though the receiver declined")
+		// **Which error, not merely an error.** This used to assert only `err != nil`, and
+		// that is why the defect it was written to catch survived it: the receiver wrote
+		// nothing and closed, so `Initiate` returned `receive co-signed document: EOF` and
+		// the assertion passed. The user was shown a 502 that reads as a network fault and
+		// invites a retry — for a refusal.
+		_, ierr := Initiate(conn.Channel, aSigned, aFP, okVerifier{})
+		if !errors.Is(ierr, ErrCoSignDeclined) {
+			t.Errorf("initiator got %v; want ErrCoSignDeclined. A decline that reaches the "+
+				"peer as EOF is reported as a transport failure and invites the retry a "+
+				"refusal must not invite.", ierr)
 		}
-		if err := <-recvErr; err == nil {
-			t.Error("receiver returned nil though it declined")
+		if err := <-recvErr; !errors.Is(err, ErrCoSignDeclined) {
+			t.Errorf("receiver returned %v; want ErrCoSignDeclined", err)
 		}
 
 	})
 }
+
+// TestARefusalTellsThePeerWHICHRefusalItWas drives both gates and both refusals.
+//
+// Two defects, one shape. The consent bridges collapsed "the user said no" and "nobody was
+// at the machine" into one `(false, nil)` **before any sentinel existed**, so a peer who
+// walked away was reported to the far side as having declined — a false statement about a
+// person's decision, sent over the wire. And the co-signature half wrote no receipt at all,
+// so its refusal arrived as EOF.
+//
+// The table is the point: four cases across two flows, and each asserts the sentinel the
+// far side must see. A single-case test would pass while the other three collapsed.
+func TestARefusalTellsThePeerWHICHRefusalItWas(t *testing.T) {
+	cases := []struct {
+		name    string
+		coSign  bool
+		confirm confirmer
+		accept  accepterFake
+		want    error
+	}{
+		{"co-sign declined", true, confirmer{accept: false}, accepterFake{}, ErrCoSignDeclined},
+		{"co-sign unanswered", true, confirmer{err: ErrConsentTimedOut}, accepterFake{}, ErrConsentTimedOut},
+		{"transfer declined", false, confirmer{}, accepterFake{accept: false}, ErrDeclined},
+		{"transfer unanswered", false, confirmer{}, accepterFake{err: ErrConsentTimedOut}, ErrConsentTimedOut},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			eachTransport(t, func(t *testing.T, tr transport) {
+				aCert, aKey := newIdentity(t)
+				bCert, bKey := newIdentity(t)
+				aFP, bFP := fingerprint(t, aCert), fingerprint(t, bCert)
+
+				ln, err := tr.listen("127.0.0.1:0", bCert, bKey, aFP)
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer ln.Close()
+
+				recvErr := make(chan error, 1)
+				go func() {
+					conn, aerr := ln.Accept()
+					if aerr != nil {
+						recvErr <- aerr
+						return
+					}
+					defer conn.Close()
+					if tc.coSign {
+						_, e := Receive(conn.Channel, bCert, bKey, "Alice", tc.confirm, okVerifier{})
+						recvErr <- e
+						return
+					}
+					_, e := ReceiveDocument(conn.Channel, tc.accept, bFP, okVerifier{})
+					recvErr <- e
+				}()
+
+				conn, err := tr.dial(context.Background(), ln.Addr().String(), aCert, aKey, bFP, 10*time.Second)
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer conn.Close()
+
+				var got error
+				if tc.coSign {
+					_, got = Initiate(conn.Channel, signAsInitiator(t, aCert, aKey, bFP), aFP, okVerifier{})
+				} else {
+					got = SendDocument(conn.Channel, []byte("%PDF-1.4\nhello"), aFP, okVerifier{})
+				}
+				if !errors.Is(got, tc.want) {
+					t.Errorf("the SENDING side saw %v; want %v. This is what the user is told "+
+						"happened on the other machine, so a wrong sentinel here is a false "+
+						"statement about a person shown in the UI.", got, tc.want)
+				}
+				// The receiving side must reach the same conclusion, or the two ends of one
+				// refusal disagree about what it was.
+				if rerr := <-recvErr; !errors.Is(rerr, tc.want) {
+					t.Errorf("the RECEIVING side saw %v; want %v", rerr, tc.want)
+				}
+			})
+		})
+	}
+}
+
+// accepterFake is the transfer gate's Accepter, with the same err seat as confirmer.
+type accepterFake struct {
+	accept bool
+	err    error
+}
+
+func (a accepterFake) Accept([]byte, []byte) (bool, error) { return a.accept, a.err }
 
 func TestReadFrameRejectsOversizedDeclaredLength(t *testing.T) {
 	// 0xFFFFFFFF declared length, no body — must be rejected before allocating.

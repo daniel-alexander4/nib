@@ -127,7 +127,14 @@ type Invitation struct {
 	//
 	// Never serialized — it is an observation about the invitation just parsed, not a field
 	// of it. The acceptance says a bad entry is "dropped and counted", and a count nobody
-	// can read is not counted; this is where a caller reads it.
+	// can read is not counted.
+	//
+	// **Its only reader today is `seeds_test.go`.** This used to say "this is where a caller
+	// reads it", which describes a production reader that does not exist — the same shape as
+	// the dead counters this repo has already deleted once. It is kept rather than deleted
+	// because the acceptance clause requires the count to be observable and the test is what
+	// observes it; the sentence now says which reader that is, so nobody re-reads this as
+	// evidence the product surfaces it.
 	SeedsDropped int `json:"-"`
 }
 

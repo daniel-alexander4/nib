@@ -339,7 +339,10 @@ func (sc sessionConfirmer) Confirm(peer p2p.SignerAttestation, doc []byte) (bool
 	case d := <-ch:
 		return d.accept, d.intent, d.appearance, nil
 	case <-time.After(sessionConsentTimeout):
-		return false, "", nil, nil
+		// **Not `(false, nil)`.** That is what a user who read the document and refused it
+		// returns, and collapsing the two here means the peer is told a person declined
+		// when nobody was at the machine. See p2p.ErrConsentTimedOut.
+		return false, "", nil, p2p.ErrConsentTimedOut
 	}
 }
 
@@ -451,14 +454,10 @@ func (sa sessionAccepter) Accept(peerFP, doc []byte) (bool, error) {
 	case d := <-ch:
 		return d.accept, nil
 	case <-time.After(sessionConsentTimeout):
-		return false, nil
+		return false, p2p.ErrConsentTimedOut // see sessionConfirmer.Confirm
 	}
 }
 
-// runSession accepts one pinned peer and, depending on the armed mode, either
-// co-signs with the user's consent (making the result the open document) or accepts a
-// one-way document transfer and saves it under ~/nib. It always disarms on exit — one
-// session per arm.
 // arrivalDocName names a co-signed document by who it came from, which is the one fact about
 // it the user cannot see on the page.
 func arrivalDocName(peerLabel string) string {
@@ -472,6 +471,10 @@ func arrivalDocName(peerLabel string) string {
 // arm's own answer to "did the local network reach me", which is what the DHT publish waits on
 // — see startArmedRendezvous. Per-arm, unlike `reached`, which is per connection and asks a
 // different question (did anything get in front of the user).
+// runSession accepts one pinned peer and, depending on the armed mode, either
+// co-signs with the user's consent (making the result the open document) or accepts a
+// one-way document transfer and saves it under ~/nib. It always disarms on exit — one
+// session per arm.
 func (s *Server) runSession(ln p2p.Listener, cert, key []byte, label, mode string, inbound *atomic.Bool) {
 	// This goroutine handles a pinned peer's inbound document; a panic in the p2p or
 	// sign code must not crash the desktop process. The defers below (disarm, Close)
@@ -1067,6 +1070,18 @@ func (s *Server) handleSessionInitiate(w http.ResponseWriter, r *http.Request) {
 	defer conn.Close()
 	final, err := p2p.Initiate(conn.Channel, signed, myFP, sessionVerifier{s, nil})
 	if err != nil {
+		// **A refusal is not a fault, and 502 says it is.** These two arrive as sentinels
+		// now rather than as the EOF a silent close used to produce, so they are reported
+		// as what happened rather than as a failed request the user should retry.
+		if errors.Is(err, p2p.ErrCoSignDeclined) {
+			httpError(w, http.StatusConflict, "the other party declined to co-sign this document")
+			return
+		}
+		if errors.Is(err, p2p.ErrConsentTimedOut) {
+			httpError(w, http.StatusConflict, "nobody answered on the other machine — "+
+				"the request was shown and went unanswered, so nothing was signed")
+			return
+		}
 		httpError(w, http.StatusBadGateway, "co-signing did not complete: "+err.Error())
 		return
 	}
@@ -1082,6 +1097,10 @@ func (s *Server) handleSessionInitiate(w http.ResponseWriter, r *http.Request) {
 type sendResult struct {
 	Sent     bool `json:"sent"`
 	Declined bool `json:"declined,omitempty"`
+	// TimedOut is "nobody answered", reported separately from Declined because it is a
+	// different fact about a person and the user watching this send can act on it —
+	// ring them, wait, try later — where a decline is final.
+	TimedOut bool `json:"timedOut,omitempty"`
 }
 
 // handleSessionSend runs the dialing side of a one-way transfer: it dials the chosen
@@ -1142,6 +1161,10 @@ func (s *Server) handleSessionSend(w http.ResponseWriter, r *http.Request) {
 	if err := p2p.SendDocument(conn.Channel, pdfBytes, myFP, sessionVerifier{s, nil}); err != nil {
 		if errors.Is(err, p2p.ErrDeclined) {
 			writeJSON(w, sendResult{Sent: false, Declined: true})
+			return
+		}
+		if errors.Is(err, p2p.ErrConsentTimedOut) {
+			writeJSON(w, sendResult{Sent: false, TimedOut: true})
 			return
 		}
 		httpError(w, http.StatusBadGateway, "send did not complete: "+err.Error())

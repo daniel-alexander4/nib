@@ -851,3 +851,32 @@ observable in-process. `Mux.Close` is `sync.Once`-guarded (`internal/udpmux/mux.
 double-close was harmless *today*; it is fixed because a test that closes a socket it does not own
 is asserting an ownership rule the opposite way round. The leak is real on a live-network run and
 cannot be reproduced hermetically, because the bootstrap it hangs off returns early with no nodes.
+
+## v1.117.38 — the P05 sweep, batch 2: one protocol, one refusal vocabulary, one refusal that published
+
+| Defect reintroduced | What it said | Check that fired |
+| --- | --- | --- |
+| **A listener carrying its own copy of the termination protocol** | `wsListener presents as a Listener but does not embed listenerCore — it is carrying its own copy of the termination protocol, which is the duplication ADR-009 forbids and which every behavioural test in this suite would pass on the day it was written` | `TestBothListenersRunOneTerminationProtocol`, driven by adding a **third** listener the way a third listener actually gets added: by copying. This is the case a two-entry behavioural table cannot see |
+| **A listener shadowing one of the core's methods** | `quicListener declares Close itself, shadowing listenerCore's. A shadowed method is a second copy of the rule: it can drift from the core's without one test changing, because the tests call it through the interface either way.` | the same guard, second direction |
+| **A co-signature decline writing nothing to the wire** | `initiator got receive co-signed document: EOF; want ErrCoSignDeclined` — the pending entry's own reported text, reproduced | `TestSessionReceiverDeclines`, **strengthened**: it asserted only `err != nil`, which is exactly why it passed against the defect it was written for. And `TestARefusalTellsThePeerWHICHRefusalItWas`, over both transports |
+| **A timeout collapsed back into a decline** | `the SENDING side saw co-signing declined; want nobody answered the consent request in time` (and the transfer twin) | `TestARefusalTellsThePeerWHICHRefusalItWas`, 4 refusals × 2 transports. The wire byte and the sentinel go through one door, so the two ends cannot disagree |
+| **A consent gate returning a bare `(false, nil)` on timeout** | `session.go:456 — a consent gate's timeout branch returns no TimedOut sentinel` | `TestEveryConsentGateNamesATimeoutAsATimeout`. A **source** guard, because the branch takes five minutes to reach — which is why none of the three gates was ever driven and two shipped wrong. It discovers the gates rather than listing them, and fails if it finds fewer than three |
+| **The sequence-ceiling refusal returning `bep44.Put{}`** | `the refusal returned the EMPTY item (target da39a3ee5e6b4b0d3255bfef95601890afd80709 = sha1 of the empty string)` … `the refusal targets da39a3ee… ; want our own mutable target 2a102f27…` | `TestARefusedPublishEmitsNothingThatAnybodyStores`, asking the question with bep44's own `Check` and `CheckIncoming` rather than restating their rules |
+
+**Three measurements, because reading was not enough.**
+`getput.Put` uses the callback's return **unconditionally** (`exts/getput/getput.go:154`) and fans it
+out (`:155-168`); `Server.Put` writes to the LOCAL store on its first line (`server.go:1081`) *before*
+the context is consulted, so cancelling cannot stop that half; and a throwaway probe confirmed
+`bep44.Put{}.Target()` is `da39a3ee…` — sha1 of the empty string — and that `bep44.Check` **accepts**
+it. The finding was true in every particular including the one I had doubted.
+
+**A test caught a gap in my own reasoning, on its first run.** `CheckIncoming` returns nil for equal
+seq when the VALUES are equal ("the node SHOULD reset its timeout counter"), so a fixture that reused
+our own value as the stored record reported the fix as broken. Reaching the ceiling requires an
+in-roster holder to have taken the key, which means *their* record is stored — the fixture now uses
+one, and the equal-value branch is written down as a stated limit rather than left to be rediscovered.
+
+**And a cut that swallowed a declaration.** Extracting the protocol removed
+`const maxConcurrentHandshakes` along with the methods around it; the compiler caught it, but the
+check that belongs in the record is the one run afterwards — a diff of every top-level declaration
+before against after, with each removal accounted for in the new file.

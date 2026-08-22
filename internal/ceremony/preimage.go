@@ -15,8 +15,10 @@ import "encoding/binary"
 // The drift was not hypothetical. The roster tag added at P04.S03 was covered by NOTHING —
 // deleting it left the entire repo green — precisely because `RosterHash` computes its
 // preimage inline and returns only a digest, so no test could see the bytes. Factoring the
-// builder out is what makes both sides inspectable, and preimageOf below is what the tests
-// assert against.
+// builder out is what makes both sides inspectable: the tests assert against the BYTES this
+// builder produces, not against a digest. (This used to cite a `preimageOf` helper "below",
+// which has never existed anywhere in the tree — a citation nobody could follow, describing a
+// mechanism that was never built.)
 //
 // Every chunk is prefixed with a fixed 8-byte big-endian count so no byte can migrate
 // across a boundary. That matters most where the axes are variable-length and

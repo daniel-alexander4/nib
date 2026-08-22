@@ -477,7 +477,9 @@ func TestATerminalAcceptErrorStillReportsNetErrClosed(t *testing.T) {
 		addr:   &net.TCPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 1},
 		closed: make(chan struct{}),
 	}
-	l := &tlsListener{ln: fake, done: make(chan struct{})}
+	// Through the constructor, not a hand-built literal: a struct literal here was blind to
+	// every field the termination protocol gained after it was written.
+	l := newTLSListener(fake)
 
 	got := make(chan error, 1)
 	go func() {
