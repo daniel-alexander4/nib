@@ -963,11 +963,11 @@ func TestClearPendingDoesNotDropALaterSessionsConsent(t *testing.T) {
 	}
 
 	old := &pendingReq{resp: make(chan sessionDecision, 1)}
-	if !se.setPending(ln, old) {
+	if !se.setPending(consentAnchor{ln: ln}, old) {
 		t.Fatal("setup: could not set the first pending request")
 	}
 	current := &pendingReq{resp: make(chan sessionDecision, 1)}
-	if !se.setPending(ln, current) {
+	if !se.setPending(consentAnchor{ln: ln}, current) {
 		t.Fatal("setup: could not set the second pending request")
 	}
 
@@ -1333,7 +1333,7 @@ func TestAStaleGoroutineCannotParkConsentOnTheSessionThatReplacedIt(t *testing.T
 	// SETUP: the old listener's goroutine CAN park while it is the armed one. Without this
 	// the refusal below is equally true of a setPending that refuses everything, which would
 	// break every consent in the product.
-	if !se.setPending(oldLn, &pendingReq{resp: make(chan sessionDecision, 1)}) {
+	if !se.setPending(consentAnchor{ln: oldLn}, &pendingReq{resp: make(chan sessionDecision, 1)}) {
 		t.Fatal("setup: the armed listener could not park a consent request, so the refusal " +
 			"below cannot distinguish an identity guard from a blanket refusal")
 	}
@@ -1347,7 +1347,7 @@ func TestAStaleGoroutineCannotParkConsentOnTheSessionThatReplacedIt(t *testing.T
 	}
 
 	stale := &pendingReq{resp: make(chan sessionDecision, 1)}
-	if se.setPending(oldLn, stale) {
+	if se.setPending(consentAnchor{ln: oldLn}, stale) {
 		t.Error("a goroutine belonging to the CANCELLED session parked its consent request " +
 			"on the session that replaced it. The user is shown a document from the " +
 			"connection they just cancelled, attributed to the peer they have just armed for.")
@@ -1360,7 +1360,61 @@ func TestAStaleGoroutineCannotParkConsentOnTheSessionThatReplacedIt(t *testing.T
 	}
 
 	// And the new listener can still park, or the guard has simply broken consent.
-	if !se.setPending(newLn, &pendingReq{resp: make(chan sessionDecision, 1)}) {
+	if !se.setPending(consentAnchor{ln: newLn}, &pendingReq{resp: make(chan sessionDecision, 1)}) {
 		t.Error("the currently-armed listener could not park a consent request")
+	}
+}
+
+// TestACeremonyHopConsentAnchorsOnTheCeremonyNotAListener — P05.S09 C4, the consent re-anchor.
+// A symmetric-racing hop's RECEIVE role can win by DIALING, so it holds no listener to name; the
+// old `setPending(ln)` guard was then unreachable and consent hung. Anchored on the CEREMONY it
+// parks — and the same stale-goroutine protection the listener anchor gives must still hold, or
+// the fix has traded a hang for the bug that guard exists to stop.
+func TestACeremonyHopConsentAnchorsOnTheCeremonyNotAListener(t *testing.T) {
+	var se session
+	ln := &stubListener{}
+	defer ln.Close()
+	cerX := &ceremonyID{}
+	if !se.arm(ln, cerX) {
+		t.Fatal("setup: could not arm the ceremony session")
+	}
+
+	// THE FIX: a consent naming the CEREMONY parks, though it names no listener at all — the
+	// dial-won receive role's only door. Before S09 this required se.ln == ln, which a dialer
+	// cannot satisfy.
+	if !se.setPending(consentAnchor{cer: cerX}, &pendingReq{resp: make(chan sessionDecision, 1)}) {
+		t.Fatal("a ceremony-anchored consent could not park while its ceremony is armed — the " +
+			"dial-won receive role would hang here")
+	}
+
+	// NOT a blanket accept: an anchor naming a DIFFERENT ceremony is refused even while armed, so
+	// the pass above is the identity matching, not the guard being absent.
+	cerOther := &ceremonyID{}
+	if se.setPending(consentAnchor{cer: cerOther}, &pendingReq{resp: make(chan sessionDecision, 1)}) {
+		t.Error("a consent naming an unrelated ceremony parked on this armed session")
+	}
+
+	// The user cancels and re-arms a DIFFERENT ceremony; the old hop's goroutine has not noticed.
+	se.disarm()
+	ln2 := &stubListener{}
+	defer ln2.Close()
+	cerY := &ceremonyID{}
+	if !se.arm(ln2, cerY) {
+		t.Fatal("setup: could not re-arm")
+	}
+	stale := &pendingReq{resp: make(chan sessionDecision, 1)}
+	if se.setPending(consentAnchor{cer: cerX}, stale) {
+		t.Error("a goroutine belonging to the CANCELLED ceremony parked its consent on the " +
+			"ceremony that replaced it — the exact cross-session leak the listener anchor prevents")
+	}
+	se.mu.Lock()
+	got := se.pending
+	se.mu.Unlock()
+	if got == stale {
+		t.Error("the new ceremony's pending consent IS the stale one")
+	}
+	// The current ceremony can still park, or the guard has simply broken consent.
+	if !se.setPending(consentAnchor{cer: cerY}, &pendingReq{resp: make(chan sessionDecision, 1)}) {
+		t.Error("the currently-armed ceremony could not park a consent request")
 	}
 }

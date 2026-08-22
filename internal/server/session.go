@@ -192,7 +192,28 @@ func (se *session) disarmIf(ln p2p.Listener) {
 	}
 }
 
-// setPending parks a consent request, and refuses if `ln` is no longer the armed listener.
+// A consentAnchor names the armed operation a consent request belongs to, so setPending can
+// refuse a request from a goroutine whose session was cancelled and re-armed. It is the armed
+// LISTENER for the manual/LAN path — where the receiving side always has one — and the CEREMONY
+// for a symmetric-racing hop, whose receive role may have WON BY DIALING and so holds no listener
+// of its own (P05.S09 C4). Exactly one field is set; the ceremony wins if both somehow are.
+type consentAnchor struct {
+	ln  p2p.Listener
+	cer *ceremonyID
+}
+
+// current reports whether this anchor still names the armed session. Called under se.mu. It is the
+// same stale-goroutine guard `se.ln == ln` gave, generalised: after a cancel-and-rearm se.cer (or
+// se.ln) is the NEW operation, so an anchor naming the old one is refused — which is the whole
+// point of the check (see setPending).
+func (a consentAnchor) current(se *session) bool {
+	if a.cer != nil {
+		return se.cer != nil && se.cer == a.cer
+	}
+	return se.ln != nil && se.ln == a.ln
+}
+
+// setPending parks a consent request, and refuses if its anchor no longer names the armed session.
 //
 // **The identity check, which this was the one mutator without.** `disarmIf`, `clearPendingIf`,
 // `clearVerifyIf` and `setVerify` all carry one, and their comments give the reason: a session
@@ -202,12 +223,18 @@ func (se *session) disarmIf(ln p2p.Listener) {
 // request as the NEW session's pending: the user is shown a document from the connection they
 // cancelled, attributed to the peer they have just armed for.
 //
-// Identity rather than a generation counter, for `disarmIf`'s reason: the listener IS the thing
-// being armed, and the goroutine already holds it.
-func (se *session) setPending(ln p2p.Listener, p *pendingReq) bool {
+// **The anchor, not the listener directly (P05.S09).** The guard used to be `se.ln == ln`, but a
+// symmetric-racing hop's receive role can win by DIALING and then has no listener to name — the
+// gate would be unreachable and consent would hang, the mirror of the bug setVerify's doc records
+// for the dialing side. The anchor keys on the CEREMONY there, which survives the same
+// cancel-and-rearm test: after a rearm se.cer is the new ceremony, so a stale hop's anchor fails.
+//
+// Identity rather than a generation counter, for `disarmIf`'s reason: the listener (or ceremony)
+// IS the thing being armed, and the goroutine already holds it.
+func (se *session) setPending(a consentAnchor, p *pendingReq) bool {
 	se.mu.Lock()
 	defer se.mu.Unlock()
-	if se.ln == nil || se.ln != ln {
+	if !a.current(se) {
 		return false
 	}
 	se.pending = p
@@ -316,9 +343,9 @@ func (r *reached) mark() {
 type sessionConfirmer struct {
 	s   *Server
 	saw *reached
-	// ln is the listener this consent belongs to, so setPending can refuse a request from a
-	// goroutine whose session has already been replaced.
-	ln p2p.Listener
+	// anchor names the operation this consent belongs to, so setPending can refuse a request from a
+	// goroutine whose session has already been replaced — a listener (manual) or a ceremony (S09).
+	anchor consentAnchor
 }
 
 func (sc sessionConfirmer) Confirm(peer p2p.SignerAttestation, doc []byte) (bool, string, []byte, error) {
@@ -331,7 +358,7 @@ func (sc sessionConfirmer) Confirm(peer p2p.SignerAttestation, doc []byte) (bool
 	// The request is held so the defer can name it: an unconditional clear drops whatever
 	// is pending when it fires, which after a disarm-and-rearm is a LATER session's consent.
 	req := &pendingReq{view: view, doc: doc, resp: ch}
-	if !sc.s.sess.setPending(sc.ln, req) {
+	if !sc.s.sess.setPending(sc.anchor, req) {
 		return false, "", nil, errors.New("session not armed")
 	}
 	defer sc.s.sess.clearPendingIf(req)
@@ -435,10 +462,10 @@ func (se *session) clearVerifyIf(pv *pendingVerify) {
 // request for the UI to accept/decline, and blocks until the user responds (or the
 // timeout declines). label is this user's pinned label for the sending peer.
 type sessionAccepter struct {
-	s     *Server
-	label string
-	saw   *reached
-	ln    p2p.Listener
+	s      *Server
+	label  string
+	saw    *reached
+	anchor consentAnchor
 }
 
 func (sa sessionAccepter) Accept(peerFP, doc []byte) (bool, error) {
@@ -446,7 +473,7 @@ func (sa sessionAccepter) Accept(peerFP, doc []byte) (bool, error) {
 	ch := make(chan sessionDecision, 1)
 	view := pendingView{Signer: sa.label, Fingerprint: hex.EncodeToString(peerFP), Reason: transferReason(doc), Valid: true}
 	req := &pendingReq{view: view, doc: doc, resp: ch}
-	if !sa.s.sess.setPending(sa.ln, req) {
+	if !sa.s.sess.setPending(sa.anchor, req) {
 		return false, errors.New("session not armed")
 	}
 	defer sa.s.sess.clearPendingIf(req)
@@ -616,14 +643,14 @@ func (s *Server) serveOneSession(ln p2p.Listener, conn *p2p.Conn, cert, key []by
 	var saw reached
 	ch := conn.Channel
 	if mode == sessionModeReceive {
-		doc, err := p2p.ReceiveDocument(ch, sessionAccepter{s: s, label: label, saw: &saw, ln: ln}, myFP, sessionVerifier{s, &saw})
+		doc, err := p2p.ReceiveDocument(ch, sessionAccepter{s: s, label: label, saw: &saw, anchor: consentAnchor{ln: ln}}, myFP, sessionVerifier{s, &saw})
 		if err != nil {
 			return saw.v.Load()
 		}
 		s.saveReceived(doc, ch.PeerFP, label)
 		return true
 	}
-	final, err := p2p.Receive(ch, cert, key, label, sessionConfirmer{s, &saw, ln}, sessionVerifier{s, &saw})
+	final, err := p2p.Receive(ch, cert, key, label, sessionConfirmer{s: s, saw: &saw, anchor: consentAnchor{ln: ln}}, sessionVerifier{s, &saw})
 	if err != nil {
 		return saw.v.Load()
 	}
