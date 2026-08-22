@@ -18,6 +18,7 @@ import (
 	"testing"
 	"time"
 
+	"nib/internal/ceremony"
 	"nib/internal/p2p"
 	"nib/internal/pdfops"
 	"nib/internal/sign"
@@ -1417,4 +1418,215 @@ func TestACeremonyHopConsentAnchorsOnTheCeremonyNotAListener(t *testing.T) {
 	if !se.setPending(consentAnchor{cer: cerY}, &pendingReq{resp: make(chan sessionDecision, 1)}) {
 		t.Error("the currently-armed ceremony could not park a consent request")
 	}
+}
+
+// TestCeremonyReceiverDialsAndCoSigns — P05.S09 T09, criterion 12's crux end to end: the
+// role-opposite-dialer case, where the party that DIALS the surviving connection is the RECEIVER,
+// driven through the real server's connect coordinator. Bob arms a QUIC CEREMONY naming Alice's
+// address, so Bob dials Alice; Alice ONLY listens (she never dials), so if the co-sign completes
+// the connection was necessarily Bob→Alice — the receiver dialing. Bob must still RECEIVE on it
+// (open no stream) while Alice, who accepted, INITIATES (opens the stream): the exact welded
+// deadlock S09a fixed, now exercised through the arm's connect + Promote(receiver) + serveOneSession.
+func TestCeremonyReceiverDialsAndCoSigns(t *testing.T) {
+	ts, _ := startServer(t)
+	c, csrf := authedClient(t, ts)
+
+	var me struct {
+		Fingerprint string `json:"fingerprint"`
+	}
+	sessGet(t, c, ts.URL+"/api/peers", &me)
+	bFP := me.Fingerprint
+	bFPBytes, err := hex.DecodeString(bFP)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Alice — the peer Bob pins and, here, DIALS.
+	aCert, aKey, err := sign.GenerateIdentity("Alice")
+	if err != nil {
+		t.Fatal(err)
+	}
+	aFPBytes, _ := sign.Fingerprint(aCert)
+	aFP := hex.EncodeToString(aFPBytes)
+	pinPeer(t, c, csrf, ts.URL, aFP)
+
+	// A two-party ceremony putting Alice and Bob on one hop; Bob's invitation lets his arm take the
+	// connect path. Alice (first party) signs the record.
+	cid, err := ceremony.NewID()
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := ceremony.Record{
+		ID:      cid,
+		DocHash: strings.Repeat("cd", 32),
+		Intent:  "We agree to co-sign",
+		Expires: time.Now().Add(48 * time.Hour),
+		Roster: []ceremony.Party{
+			{Fingerprint: aFP, Label: "Alice", Signs: true},
+			{Fingerprint: bFP, Label: "Bob", Signs: true},
+		},
+	}
+	if err := rec.Sign(aCert, aKey); err != nil {
+		t.Fatal(err)
+	}
+	invites, err := ceremony.NewInvitations(rec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bobInv, err := invites[bFP].Encode()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Alice: a raw HANDSHAKED QUIC listener. She accepts Bob's dial and INITIATES on it — the
+	// role-opposite arrangement. She never dials, so the accepting side here is proof Bob dialed.
+	aEnd, err := p2p.NewSharedEndpoint("127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer aEnd.Close()
+	aliceAddr := aEnd.LocalAddr().String()
+	aln, err := p2p.QUICListenHandshakeOn(aEnd, aCert, aKey, bFPBytes) // Alice pins Bob
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer aln.Close()
+
+	result := make(chan []byte, 1)
+	errc := make(chan error, 1)
+	accepted := make(chan struct{}, 1)
+	initiatorVerifier := &recordingVerifier{}
+	go func() {
+		hc, e := aln.Accept(context.Background()) // Bob's handshaked dial lands here — proof Bob dialed
+		if e != nil {
+			errc <- e
+			return
+		}
+		accepted <- struct{}{}
+		conn, e := hc.Promote(context.Background(), true) // Alice INITIATES: she opens the stream
+		if e != nil {
+			errc <- e
+			return
+		}
+		defer conn.Close()
+		base, e := testpdf.Form()
+		if e != nil {
+			errc <- e
+			return
+		}
+		prepared, e := p2p.PrepareDocument(base)
+		if e != nil {
+			errc <- e
+			return
+		}
+		place, e := p2p.NextPlacement(prepared)
+		if e != nil {
+			errc <- e
+			return
+		}
+		att := p2p.Attestation{Signer: "Alice", AcceptedPeer: bFP, AcceptedPeerLabel: "Bob", Intent: "I agree", When: time.Now()}
+		aSigned, e := p2p.Contribute(prepared, aCert, aKey, att, nil, place)
+		if e != nil {
+			errc <- e
+			return
+		}
+		final, e := p2p.Initiate(conn.Channel, aSigned, aFPBytes, initiatorVerifier)
+		if e != nil {
+			errc <- e
+			return
+		}
+		result <- final
+	}()
+
+	// Bob arms the ceremony NAMING Alice's address, so his connect coordinator DIALS her.
+	var armed sessionStatus
+	sessDecode(t, write(t, c, csrf, http.MethodPost, ts.URL+"/api/session/arm", "application/json",
+		jsonBody(armRequest{Fingerprint: aFP, Bind: "127.0.0.1:0", Transport: "quic", Invitation: bobInv, Address: aliceAddr})), &armed)
+	if !armed.Armed {
+		t.Fatalf("arm failed: %+v", armed)
+	}
+
+	// The spoken check appears on Bob's side (he is receiving), then he confirms and accepts.
+	serverWords := waitForVerify(t, c, ts.URL, errc)
+	if n := len(strings.Fields(serverWords)); n != 4 {
+		t.Fatalf("verification words are %q, not four", serverWords)
+	}
+	postJSON(t, c, csrf, ts.URL+"/api/session/verify", map[string]any{"confirmed": true})
+	waitForPending(t, c, ts.URL, aFP, errc)
+	postJSON(t, c, csrf, ts.URL+"/api/session/respond", map[string]any{"accept": true, "intent": "I accept"})
+
+	select {
+	case <-accepted:
+	default:
+		t.Fatal("Alice's listener never accepted — Bob did not DIAL her, so this is not the " +
+			"role-opposite-dialer case it claims to test")
+	}
+	if got := initiatorVerifier.seen(); got != serverWords {
+		t.Errorf("initiator saw %q, receiver %q — the two ends derived different words", got, serverWords)
+	}
+	select {
+	case e := <-errc:
+		t.Fatalf("initiator: %v", e)
+	case final := <-result:
+		if n := len(p2p.ReadAttestations(final)); n != 2 {
+			t.Fatalf("result has %d signers, want 2 — the receiver-dialed ceremony did not doubly sign", n)
+		}
+	case <-time.After(15 * time.Second):
+		t.Fatal("the receiver-dialed ceremony did not complete")
+	}
+}
+
+// waitForVerify polls Bob's status until the spoken check appears, failing fast on an initiator error.
+func waitForVerify(t *testing.T, c *http.Client, url string, errc <-chan error) string {
+	t.Helper()
+	deadline := time.Now().Add(15 * time.Second)
+	for {
+		if time.Now().After(deadline) {
+			t.Fatal("no verification appeared — the session reached the exchange without the spoken check (L2)")
+		}
+		select {
+		case e := <-errc:
+			t.Fatalf("initiator: %v", e)
+		default:
+		}
+		var st sessionStatus
+		sessGet(t, c, url+"/api/session/status", &st)
+		if st.Verify != nil {
+			return st.Verify.Words
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+}
+
+func waitForPending(t *testing.T, c *http.Client, url, wantFP string, errc <-chan error) {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		if time.Now().After(deadline) {
+			t.Fatal("no pending request appeared")
+		}
+		select {
+		case e := <-errc:
+			t.Fatalf("initiator: %v", e)
+		default:
+		}
+		var st sessionStatus
+		sessGet(t, c, url+"/api/session/status", &st)
+		if st.Pending != nil {
+			if st.Pending.Fingerprint != wantFP {
+				t.Errorf("pending peer = %s, want %s", st.Pending.Fingerprint, wantFP)
+			}
+			return
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+}
+
+func postJSON(t *testing.T, c *http.Client, csrf, url string, body map[string]any) {
+	t.Helper()
+	r := write(t, c, csrf, http.MethodPost, url, "application/json", jsonBody(body))
+	if r.StatusCode != http.StatusOK {
+		t.Fatalf("POST %s = %d", url, r.StatusCode)
+	}
+	r.Body.Close()
 }
