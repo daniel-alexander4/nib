@@ -1083,3 +1083,36 @@ So no steering was demonstrated, and nothing is claimed for Windows or macOS. Th
 on the ground that does not need the measurement: a zone means something only on a link-local
 address, link-local is refused whatever its zone says, so a zone reaching that predicate is
 attacker-chosen bytes the program can never act on.
+
+## v1.117.48–.49 — sweep 11: two standing doubts, and a guard that could not see
+
+Item 13 was a list of standing doubts; item 15's one open finding was gated on an artifact.
+Neither closed. What follows is what the grills produced anyway — three tier-1 rows, one of
+them for a vacuous green in a guard written the same hour.
+
+| Defect reintroduced | What it said | Check that fired |
+| --- | --- | --- |
+| **The whole-file residue scanner resumes at `endstream`'s `stream`** *(replayable: `redaction-residue-whole-file`)* | `the whole-file scan did NOT find a flate stream carrying the secret that was appended to the file` | `TestTheTwoResidueChecksDifferAndTheDifferenceIsThePoint` — the discriminating test, which appends a stream no page references so the page-content and whole-file checks must diverge |
+| **`describeSignFailure` bypassed, runSign returns the raw library error** *(replayable: `tsa-failure-unactionable`)* | `the failure is not identifiable as a timestamp problem: sign: failed to replace signature: … get timestamp: non success response (0)` | `TestAnUnreachableTimestampAuthoritySaysSoAndSignsNothing`, whose setup asserts the same call signs fine with no TSA so the failure is attributable to the timestamp |
+| **`addedAfterVerdict` drops the error** *(replayable: `added-after-fails-closed`)* | `unreadable is a warning, not clean: addedAfterVerdict(false, malformed PDF) = false, want true` | `TestAddedAfterFailsClosed`, binding the combine directly because the error path is unreachable through Verify (both calls share dpdf on the same bytes) |
+
+**The residue-scanner row is the one to carry.** Its defect and its guard were written in the
+same hour, and the guard's first form was itself vacuous — the whole-file check passed because
+the fixture's secret lives in the first stream (the control found it) and the desync made
+everything after invisible (the redacted file scanned clean for the wrong reason). Two agreeing
+green results, `TestRedactLeavesNoResidualContent` and its new whole-file sibling; the test that
+separated them is the one that asserts they *differ*, by planting a stream no page references.
+The lesson is the same one this file keeps recording: a green shared by two checks is not two
+confirmations if one of them cannot see.
+
+**Two measurements that produced no row, deliberately.** Item 15's headline finding — the
+added-after-signing warning removable without touching the Valid verdict — is still gated on an
+artifact, and the gate was re-measured this sweep rather than taken on faith: a classic-table
+increment on nib's xref-stream output makes dpdf report `unsigned` (loud), and the
+trailing-content check is a length comparison against the signature's frozen ByteRange, so it
+catches content appended by any increment format. Building the artifact needs a non-signature
+xref-stream revision, and nothing in the repo emits one onto a signed document. And item 13's
+doubt 5 fallback — "sign with a local date when the TSA is offline" — was refused rather than
+built, because `TimeBacking` makes a verifier report the difference and a silent downgrade is a
+false statement about the document; the row above is for the *warning*, which is the half worth
+keeping.
