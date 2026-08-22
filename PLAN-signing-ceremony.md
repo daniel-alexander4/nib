@@ -3547,7 +3547,7 @@ stream-required invariant — `Channel` stays always-complete, which is strictly
 Diff-grill: two agents (correctness; Go-SME + test-teeth), zero findings — pin wiring cross-pinned
 (not vacuous), non-owning/close-discipline held, red-proof faithful.
 
-#### P05.S09 — Symmetric racing, the glare join, and the consent re-anchor *(D17; criterion 12; rests on S09a)* *(in progress 2026-08-22 — the isolable cores landed; coordinator integration remains)*
+#### P05.S09 — Symmetric racing, the glare join, and the consent re-anchor *(D17; criterion 12; rests on S09a)* *(done 2026-08-22, v1.117.77)*
 
 **Progress 2026-08-22 (the de-riskable pieces first, each committed + tested):**
 - **T08 done (v1.117.66)** — `TestOneSharedTransportBothListensAndDials`: the coordinator's one
@@ -3582,6 +3582,27 @@ holds the document and POSTs initiate — handler-role and `Record.Hop/Convener`
 record-role reading would give the identical answer; recorded as satisfied-by-handler, the record
 check available as future hardening if a flow ever decouples handler from role. **Remaining: T09**
 (tier-4 force-the-glare harness — the acceptance instrument for criterion 12) **and T10** (seams).
+
+**CLOSED 2026-08-22 (v1.117.77). Acceptance ledger — criterion 12, split on `and`:**
+- *"both sides converge on the SAME channel (identical verification string)"* — **MET.**
+  `TestCeremonyReceiverDialsAndCoSigns` shows both ends derive identical words end to end; the full
+  formation-table convergence (both ends keep the same physical connection) is unit-proven in
+  `TestGlareBothEndsConvergeOnOneConnection`.
+- *"with the loser closed"* — **MET (unit).** `closeHandshaked`+`drainHandshaked` on every exit, the
+  two no-survivor exits fixed by the diff-grill (CONFIRMED-1). A FULL glare (two connections forming
+  so there IS a loser) with two real binaries is the two-machine case below.
+- *"INCLUDING the role-opposite-dialer case"* — **MET (end to end).** `TestCeremonyReceiverDialsAndCoSigns`:
+  the RECEIVER dials the survivor and still receives while the accepter initiates — the welded deadlock
+  S09a red-proved, here through the server's connect + Promote(receiver) + serveOneSession.
+- **not exercised (Dan-only):** two real binaries BOTH dialing simultaneously on two networks (the full
+  glare across a real NAT). The phase's standing two-machine carve-out; the arm `Address` field (T09)
+  is what will drive it when a second machine exists.
+
+**T09 built as a Go-level integration instrument** (real server HTTP flow — arm/verify/respond — against
+a real p2p peer), more precise than a bash pairrepro extension and needing no invitation-minting CLI; the
+two-binary pairrepro is folded into the two-machine VERIFY item above. **T10** seam rows in
+`instruments/P05.md`. Diff-grill (2 agents) found and fixed a leaked-loser (moderate) and a dead LAN
+announce (HIGH); all other lifecycle/concurrency concerns verified sound.
 Scope: both sides listen AND dial over the ONE shared endpoint; a coordinator joins the dialer's
 won conn and the listener's accepted conn; a glare tie-break keeps one; the consent/verify gate is
 re-anchored off the armed listener; the no-record path stays asymmetric.
