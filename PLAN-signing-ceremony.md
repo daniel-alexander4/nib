@@ -1862,8 +1862,19 @@ D6 and D21 derive **one** rendezvous key from the ceremony secret; D22 makes con
 has to work out whose is whose — and **every party can read every other party's IP addresses**, a
 property the two-party design never had to state because there was only ever one other person.
 
-**The rendezvous key is derived per hop:** HKDF over the ceremony secret and the two participating
-fingerprints. It costs nothing — both ends of a hop hold all three inputs by construction — it
+**The rendezvous key is derived per hop:** ~~HKDF over the ceremony secret and the two participating
+fingerprints.~~ **HKDF over THAT PARTY'S secret and the hop index (amended 2026-08-21, P05.S04 — Dan).**
+
+**(pin, 2026-08-21: this decision's mechanism never matched the code, and its remedy did not reach
+its own harm.)** Two corrections, recorded together because the second is why the first went
+unnoticed. (a) The shipped `RecordKey(hop)` is `derive("nib-record-v1/hop-%d")` — the secret and the
+hop NUMBER, with no fingerprint anywhere; a fingerprint appears only in `RecordSalt`, which is the
+public BEP-44 addressing salt and not the key. (b) More importantly, the derivation as written here
+would not have fixed the harm this decision opens with — *"every party can read every other party's
+IP addresses"* — because every roster member holds the secret AND every fingerprint, so "both ends of
+a hop hold all three inputs" is true of every other party too. **The fix is one secret per party**,
+which under D22's hub means a secret shared by exactly the two ends of the hop it is for. What
+remains, and it is D22 rather than a gap, is that the convener holds every party's secret. It costs nothing — both ends of a hop hold all three inputs by construction — it
 scopes a candidate record to the pair that needs it, and it leaves D6's amendment exactly intact,
 since the key remains uncomputable without the invitation.
 
