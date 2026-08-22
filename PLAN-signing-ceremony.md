@@ -3377,31 +3377,51 @@ nothing (`appendMappedCandidate`, a one-shot at publish time); S07 turns that in
 lease. The blast radius is a concurrency seam — a refresh goroutine sharing mapping state with
 the publish path and with `close()` — so this slice is grilled before a line is written.
 
-Tasks (firmed 2026-08-22):
-- **T01 — `Client.Unmap`, the delete.** Send the codec's delete form (lease 0) for the internal
-  port. The winning mapping-protocol is not recorded by `Map` today, so either record it or send
-  both PCP and NAT-PMP deletes (idempotent). UPnP delete is `soapDeletePortMapping`, already
-  written. Best-effort — a failed delete falls back to lease expiry.
-- **T02 — the managed mapper.** A component that obtains the FIRST mapping synchronously (the
-  publish needs the address in the record), then refreshes on a timer at ~half the granted lease,
-  **requesting the same external port** so the published address stays stable (the item-20
-  concern: a refresh that changes the external port makes the published candidate stale). Owns
-  one goroutine, bound to the arm's context.
-- **T03 — delete on EVERY exit path.** `close()` (teardown), context cancel, and an error path
-  all delete the mapping. The teardown-ordering rule in `close()` is preserved; the delete is a
-  best-effort call before the socket closes. Criterion 4 driven: arm → obtain → disarm → the
-  delete is sent (asserted against a mock gateway that records the delete, not against a flag).
-- **T04 — never held while unarmed, and the short lease is the crash floor.** The mapper exists
-  only between arm and disarm (criterion 4's first half). Criterion 5 (SIGKILL → gone within one
-  lease) is inherent — a killed process deletes nothing and the ~120 s lease expires — and its
-  buildable half is asserting the requested lease is strictly shorter than the connect deadline;
-  the driven kill-and-poll is Dan-only against a real router.
-- **T05 — the concurrency guard.** The mapper's state (current mapping, gateway, protocol) is
-  written by the refresh goroutine and read by `close()`; the race is real and gets a mutex or a
-  single-owner channel, with `-race` proving it.
-- **T06 — seam rows**: obtain / refresh-fired / delete-sent observables, the lease-vs-deadline
-  invariant, and the Dan-only real-router criterion-5 row.
+Tasks (RE-firmed 2026-08-22 after the slice grill — the grill found the first firming was not
+codeable: eight concrete holes, two of which meant the mapping could not be deleted, plus a
+LIVE data race in shipped code that S07 now owns):
 
+- **T01 — `Map` returns a delete handle, and `Client.Unmap` uses it.** *(grill C1.)* Today `Map`
+  discards which mechanism won and, for UPnP, the `controlURL`+`serviceType` the SOAP delete
+  needs — so a UPnP mapping is undeletable and "send both PCP/NAT-PMP deletes" cannot reach it.
+  `Map` returns a `Mapping` carrying the mechanism (PCP / NAT-PMP / UPnP) and the UPnP control
+  handle; `Unmap(ctx, m)` deletes via that mechanism (lease-0 for the socket protocols,
+  `soapDeletePortMapping` for UPnP). Best-effort — a failed delete falls back to lease expiry.
+- **T02 — the managed mapper.** Obtains the FIRST mapping synchronously (the publish needs the
+  address). A refresh goroutine bound to the **ARM ctx, not the 45 s publish child** *(grill
+  C4)* — the publish budget expiring must not kill the refresh mid-race. Refresh at ~half the
+  **granted** lease, **requesting the same external port** for stability, which needs a
+  suggested-external-port entry point `Map`/`Refresh` does not have today *(grill C7)*. It
+  records the mapping the moment the request is SENT, not only on screened success, so an
+  obtain that races a cancel is still deletable *(grill P1)*. If the router assigns a DIFFERENT
+  external port on refresh, that is detected and left to item 20, not silently continued
+  *(grill P2)*.
+- **T03 — delete on EVERY exit path, on a FRESH context.** *(grill C2.)* `close()` cancels
+  `stopNet` first, so a delete on anything derived from the arm ctx is an instant no-op (`Map`'s
+  first line is `ctx.Err()`). The delete uses a fresh, short, bounded context, and is bounded /
+  async so a slow or absent IGD does not stall the user's Cancel/quit teardown *(grill P3)*.
+  Criterion 4 driven against a mock gateway that RECORDS the delete, not a flag.
+- **T04 — never held while unarmed; the crash floor is the GRANTED lease.** *(grill C8.)* The
+  requested lease is short (120 s < the 300 s deadline, trivially true and not the point); the
+  crash floor is whatever the router GRANTS, which a test shows can be 7200 s. Recorded honestly
+  in the caveat, with the mapper re-requesting or capping when granted ≫ requested. Criterion 5's
+  kill-and-poll is Dan-only against a real router.
+- **T05 — the concurrency guard, and it fixes a PRE-EXISTING race.** *(grill C3, C5, C6.)*
+  `ceremonyID` has no lock today, yet `stopNet` is written by the armed goroutine
+  (`ceremonynet.go:311`) and read by `close()` (`ceremonyid.go:104`) — a live data race that
+  `-race` has not tripped only because the write is the goroutine's third statement. S07 adds the
+  mutex that covers `stopNet` AND the mapper state AND a `closed` flag: `close()` cancels, marks
+  closed under the lock, and NO refresh `Map` fires after — cancel is not join *(C3)*. The mapper
+  is stored on `ceremonyID` beside `end`/`rz` so `close()` can reach it *(C6)*.
+- **T06 — seam rows**: obtain / refresh-fired / delete-sent (recorded by the mock), the
+  requested-lease-vs-deadline invariant, the granted-lease crash-floor note, and the Dan-only
+  real-router criterion-5 row.
+
+**Correctly OUT of scope, confirmed by the grill:** item 21 (D33 punch budget — refresh traffic
+goes to the gateway ~1 pkt/60 s, not punch packets to the peer); item 20 (CandidateGate slot cap
+— refresh reuses the port and does not re-publish, so no slot is spent, *provided* the port stays
+stable, which P2 handles); and the dialer side, which opens its own endpoint and never maps, so
+its `close()` has nothing to delete.
 #### P05.S08 — The IPv4 punch *(D8 tier 4, D16, D17)*
 Acceptance: criterion 14's cadence step-down, driven; QUIC-only by D8's transport pin.
 
