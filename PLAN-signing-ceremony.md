@@ -3547,7 +3547,27 @@ stream-required invariant — `Channel` stays always-complete, which is strictly
 Diff-grill: two agents (correctness; Go-SME + test-teeth), zero findings — pin wiring cross-pinned
 (not vacuous), non-owning/close-discipline held, red-proof faithful.
 
-#### P05.S09 — Symmetric racing, the glare join, and the consent re-anchor *(D17; criterion 12; rests on S09a)* *(in progress 2026-08-22 — T08 spike proven first)*
+#### P05.S09 — Symmetric racing, the glare join, and the consent re-anchor *(D17; criterion 12; rests on S09a)* *(in progress 2026-08-22 — the isolable cores landed; coordinator integration remains)*
+
+**Progress 2026-08-22 (the de-riskable pieces first, each committed + tested):**
+- **T08 done (v1.117.66)** — `TestOneSharedTransportBothListensAndDials`: the coordinator's one
+  unproven library premise, that ONE `quic.Transport` both accepts and dials at once, holds (~10ms,
+  right fingerprints; sandbox-EPERM-guarded).
+- **T05 done (v1.117.67, red-proved .68)** — the consent re-anchor (grill C4, the biggest hole).
+  `consentAnchor{ln | cer}`: `setPending` keys on the ceremony for a hop, so a dial-won receive can
+  consent; behaviour-preserving for the manual/LAN path (`ln`, C6); the stale-goroutine guard is
+  preserved (red-proof `consent-anchors-on-the-listener-only`).
+- **T03 core done (v1.117.69)** — `glareKeepsDial`: the pure tie-break, keep the connection dialed
+  by the lower-fingerprint party; both ends converge on one connection. The join/loser-close wiring
+  that USES it is T01/T04.
+
+**Remaining (the coordinator integration, one coupled unit):** T01 `connect(cer, cands, role)` — a
+private `QUICListenOn` accept loop on `cer.end` AND the dial race, joined via `glareKeepsDial`; T02
+merge `/arm` and `/initiate` onto it (both listen AND race); T04 synchronous loser-close for BOTH
+the dialled and accepted loser (grill P9); T06 role from `Record.Hop`/`Convener` for ceremony hops
+ONLY (grill C6 — manual/LAN keeps role-from-endpoint); T07 split `runSession` into
+get-channel/run-exchange/lifecycle so the channel may arrive from a dial; T09 the force-the-glare
+tier-4 harness (grill P7 — inject two channels visible to BOTH sides); T10 seam rows.
 Scope: both sides listen AND dial over the ONE shared endpoint; a coordinator joins the dialer's
 won conn and the listener's accepted conn; a glare tie-break keeps one; the consent/verify gate is
 re-anchored off the armed listener; the no-record path stays asymmetric.
