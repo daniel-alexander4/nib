@@ -19,7 +19,24 @@ if (!BASE || !EXECUTABLE) {
 
 // launch opens a page on the running nib. Headless by default; NIB_UI_HEADED=1
 // shows the window, which is how you watch a failing test happen.
-export async function launch() {
+//
+// # Options
+//
+// `routes` installs Playwright route handlers BEFORE the first navigation, and `waitFor`
+// replaces the readiness marker. Both exist for one flow: the auth overlay.
+//
+// uirepro.sh enrols a vault key with curl before any browser opens — it has to, since
+// every document route is behind `requireUnlocked` — so the app this tier drives is
+// always in `state: 'ready'` and the overlay's other states are unreachable by
+// navigating. They are also unreachable by re-opening: the vault unlocks once per process
+// and there is no Lock control in the UI. Interception is how they are reached, and it is
+// faithful because the overlay is a pure function of `/api/status` — app.js's
+// `applyStatus` branches on `st.state` and nothing else.
+//
+// A test that wants the overlay must also pass `waitFor`, because `#empty` is the
+// READY-state marker and waiting for it against a locked app would time out at 30 s
+// inside the harness rather than failing in the test.
+export async function launch({ routes = null, waitFor = '#empty' } = {}) {
   const browser = await chromium.launch({
     executablePath: EXECUTABLE,
     headless: process.env.NIB_UI_HEADED !== '1',
@@ -42,10 +59,16 @@ export async function launch() {
     if (state.accept) await d.accept(); else await d.dismiss();
   });
 
+  if (routes) {
+    for (const [pattern, handler] of Object.entries(routes)) {
+      await page.route(pattern, handler);
+    }
+  }
+
   await page.goto(BASE);
   // The app boots asynchronously (status -> applyStatus -> the UI), so wait for a
   // marker of readiness rather than a fixed sleep.
-  await page.waitForSelector('#empty', { state: 'attached' });
+  await page.waitForSelector(waitFor, { state: 'attached' });
   return {
     browser,
     page,

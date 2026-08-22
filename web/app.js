@@ -539,6 +539,21 @@ els.authForm.addEventListener('submit', async (e) => {
     applyStatus(st);
     return;
   }
+  // Recovery, and it is checked BEFORE the key-mode block below rather than after.
+  //
+  // The vault is still sealed to the enrolled key's PUBLIC half; only the path was lost.
+  // So retrying is a status re-check (ensureUnlocked runs server-side) and needs no key
+  // choice at all — which is why `#keyChoice` is hidden in this state and `keySelect` is
+  // never populated.
+  //
+  // **It used to sit after the key-mode block and was therefore unreachable.** With no
+  // key choice offered, `selectedKeyMode()` returned its default `use`, `keySelect.value`
+  // was "", and the block returned early with "No key selected." — so the Retry button on
+  // the key-missing screen showed an error about a control the user could not see, and
+  // never re-read the status. The documented way out of a misplaced key was dead; the
+  // repoint button beside it was the only one that worked.
+  if (authState === 'key-missing') { await refreshStatus(); return; }
+
   const mode = selectedKeyMode();
   const body = { password: els.authPw.value };
   if (mode === 'create') {
@@ -553,10 +568,6 @@ els.authForm.addEventListener('submit', async (e) => {
     body.keyPath = els.keySelect.value;
     if (!body.keyPath) return (els.authError.textContent = 'No key selected.');
   }
-  // Recovery: once the key is back at its path, retrying unlock is just a status
-  // re-check (ensureUnlocked runs server-side).
-  if (authState === 'key-missing') { await refreshStatus(); return; }
-
   const url = authState === 'migrate' ? '/api/ssh/migrate' : '/api/ssh/enroll';
   const res = await fetch(url, {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
