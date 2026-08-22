@@ -1,9 +1,11 @@
 package pdfops
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -24,6 +26,13 @@ import (
 // font install therefore produced a green package and a log line addressed to
 // nobody. Exiting non-zero makes the failure visible independently of poppler.
 func TestMain(m *testing.M) {
+	// The unwritable-config child does its own install inside the test body, with pdfcpu's
+	// config global still cold. Installing here would either warm that global — making the
+	// child's subject unreachable, which is how the first version of that test went vacuous
+	// — or exit 1 on the error, which the parent would then be unable to tell from a panic.
+	if os.Getenv("NIB_OCRFONT_CHILD") != "" {
+		os.Exit(m.Run())
+	}
 	if err := InstallOCRFonts(); err != nil {
 		fmt.Fprintf(os.Stderr, "InstallOCRFonts: %v\n", err)
 		os.Exit(1)
@@ -329,5 +338,83 @@ func TestOCRFontFor(t *testing.T) {
 		if got := ocrFontFor(lang); got != want {
 			t.Errorf("ocrFontFor(%q) = %q, want %q", lang, got, want)
 		}
+	}
+}
+
+// TestAnUnwritableConfigDirDoesNotCrashStartup — the panic that walked past a caller which
+// only handles errors.
+//
+// `model.NewDefaultConfiguration()` calls `fault.Fail` when the config directory cannot be
+// created, and `fault.Fail` PANICS. `server.New` calls InstallOCRFonts inside
+// `if err := …; err != nil { log; carry on }`, and a panic goes straight through that — so a
+// read-only or unwritable $HOME crashed Nib at startup instead of costing only Thai and
+// Devanagari OCR. The project's self-healing rule (STANDARDS §9, adopted by D34) says the
+// opposite: unusable state degrades, it never blocks startup.
+//
+// **It runs in a SUBPROCESS, and the first version did not — which made it vacuous.** pdfcpu
+// caches its configuration in a package global, and this package's own TestMain calls
+// InstallOCRFonts before any test runs, so in-process `NewDefaultConfiguration` returns the
+// cached value and never touches the filesystem. Removing the `fault.Catch` left that version
+// green. A child process starts with the global cold, and its own TestMain is then the thing
+// under test: without the catch the child dies on a panic, with it the child reports an error
+// and runs.
+func TestAnUnwritableConfigDirDoesNotCrashStartup(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root ignores directory permissions, so an unwritable parent is not unwritable")
+	}
+	if os.Getenv("NIB_OCRFONT_CHILD") != "" {
+		// The child, with pdfcpu's config global cold. It does the call itself and reports
+		// which of the two outcomes it got; the parent only cares that it is not a panic.
+		func() {
+			defer func() {
+				if r := recover(); r != nil {
+					fmt.Printf("CHILD-PANIC %v\n", r)
+				}
+			}()
+			if err := InstallOCRFonts(); err != nil {
+				fmt.Printf("CHILD-ERROR %v\n", err)
+				return
+			}
+			fmt.Println("CHILD-OK")
+		}()
+		return
+	}
+
+	parent := t.TempDir()
+	locked := filepath.Join(parent, "locked")
+	if err := os.Mkdir(locked, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	// SETUP: the write bit is really honoured here. On a filesystem that ignores it the
+	// failure cannot be provoked, and this must say so rather than pass.
+	if err := os.Mkdir(filepath.Join(locked, "probe"), 0o755); err == nil {
+		t.Skip("this filesystem ignores the write bit, so the failure cannot be provoked")
+	}
+
+	cmd := exec.Command(os.Args[0], "-test.run", "TestAnUnwritableConfigDirDoesNotCrashStartup")
+	cmd.Env = append(os.Environ(),
+		"NIB_OCRFONT_CHILD=1",
+		"XDG_CONFIG_HOME="+filepath.Join(locked, "cannot-create"),
+		"HOME="+filepath.Join(locked, "cannot-create"),
+	)
+	out, _ := cmd.CombinedOutput()
+
+	// SETUP: the child really reached the call. Without this, a child that failed to build,
+	// failed to start, or skipped would report no panic and read as a pass.
+	if !bytes.Contains(out, []byte("CHILD-")) {
+		t.Fatalf("the child never reached InstallOCRFonts, so nothing was exercised:\n%s", out)
+	}
+	if bytes.Contains(out, []byte("CHILD-PANIC")) || bytes.Contains(out, []byte("\npanic:")) {
+		t.Fatalf("InstallOCRFonts PANICKED on an unwritable config directory rather than "+
+			"returning an error. server.New handles an error and logs it; a panic walks "+
+			"straight past that, so this is Nib crashing at startup on any machine whose "+
+			"config directory cannot be written — against the self-healing rule that says "+
+			"unusable state degrades and never blocks startup.\n%s", out)
+	}
+	// CHILD-ERROR is the correct outcome. CHILD-OK would mean the platform allowed the
+	// write after all, which the setup probe above tries to rule out.
+	if !bytes.Contains(out, []byte("CHILD-ERROR")) {
+		t.Logf("child did not hit the unwritable path (%s) — the failure could not be "+
+			"provoked here", bytes.TrimSpace(out))
 	}
 }

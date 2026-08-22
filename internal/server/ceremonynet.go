@@ -346,3 +346,40 @@ func (s *Server) dialerCeremony(text string, cert, key, peerFP []byte) (*ceremon
 	}
 	return cer, nil
 }
+
+// checkCeremonyDeadline refuses to START a hop that the ceremony cannot outlive.
+//
+// **D16's Stage 6 pin, and it is a nesting rule rather than a comparison.** A hop admitted one
+// second before the ceremony deadline still gets `exchangeDeadline`'s six minutes, so the
+// ceremony outlives its own expiry by up to that much — and the party at that hop is asked to
+// consent to a signature on a proceeding that has already ended. The plan states the rule in as
+// many words: *"no hop starts unless the ceremony deadline exceeds now plus one full exchange
+// budget."* The outer clock must reserve the inner one's worst case, not merely be larger.
+//
+// **This is where clock 3 stops being a field nobody reads.** `Record.Expires` was labelled
+// "the ceremony deadline (D16's clock 3)" and read at exactly one line in the repo — the roster
+// preimage — and never compared to a clock anywhere. `MaxCeremonyLife` (P05.S04 T05) caps how far
+// ahead it may be SET, which is a different question; this is the one the field is for.
+//
+// A document with no record is the ordinary two-party co-sign and has no deadline to honour, so
+// the absence is not an error. A record that is present must verify: an unverified `Expires` is
+// a number a stranger chose.
+func checkCeremonyDeadline(pdf []byte, now time.Time) error {
+	rec, err := ceremony.Extract(pdf)
+	if errors.Is(err, ceremony.ErrNoRecord) {
+		return nil // no ceremony attached; nothing to bound
+	}
+	if err != nil {
+		return fmt.Errorf("this document carries a ceremony record that cannot be read: %w", err)
+	}
+	if err := rec.Verify(now); err != nil {
+		return fmt.Errorf("this document's ceremony record does not verify: %w", err)
+	}
+	if !rec.Expires.After(now.Add(p2p.ExchangeBudget())) {
+		return fmt.Errorf("this ceremony ends at %s, which is less than one exchange budget "+
+			"(%s) away — starting a hop now would ask somebody to consent to a signature on a "+
+			"proceeding that has already ended by the time it completes",
+			rec.Expires.UTC().Format(time.RFC3339), p2p.ExchangeBudget())
+	}
+	return nil
+}

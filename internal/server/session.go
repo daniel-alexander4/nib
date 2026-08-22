@@ -192,10 +192,22 @@ func (se *session) disarmIf(ln p2p.Listener) {
 	}
 }
 
-func (se *session) setPending(p *pendingReq) bool {
+// setPending parks a consent request, and refuses if `ln` is no longer the armed listener.
+//
+// **The identity check, which this was the one mutator without.** `disarmIf`, `clearPendingIf`,
+// `clearVerifyIf` and `setVerify` all carry one, and their comments give the reason: a session
+// goroutine can live for minutes — `p2p.Receive` spans the user's consent, the signing and a
+// 128 MiB write — so it can still be running when the user cancels and re-arms. Checking only
+// `se.ln == nil` passes in exactly that window, and the stale goroutine parks ITS consent
+// request as the NEW session's pending: the user is shown a document from the connection they
+// cancelled, attributed to the peer they have just armed for.
+//
+// Identity rather than a generation counter, for `disarmIf`'s reason: the listener IS the thing
+// being armed, and the goroutine already holds it.
+func (se *session) setPending(ln p2p.Listener, p *pendingReq) bool {
 	se.mu.Lock()
 	defer se.mu.Unlock()
-	if se.ln == nil {
+	if se.ln == nil || se.ln != ln {
 		return false
 	}
 	se.pending = p
@@ -304,6 +316,9 @@ func (r *reached) mark() {
 type sessionConfirmer struct {
 	s   *Server
 	saw *reached
+	// ln is the listener this consent belongs to, so setPending can refuse a request from a
+	// goroutine whose session has already been replaced.
+	ln p2p.Listener
 }
 
 func (sc sessionConfirmer) Confirm(peer p2p.SignerAttestation, doc []byte) (bool, string, []byte, error) {
@@ -316,7 +331,7 @@ func (sc sessionConfirmer) Confirm(peer p2p.SignerAttestation, doc []byte) (bool
 	// The request is held so the defer can name it: an unconditional clear drops whatever
 	// is pending when it fires, which after a disarm-and-rearm is a LATER session's consent.
 	req := &pendingReq{view: view, doc: doc, resp: ch}
-	if !sc.s.sess.setPending(req) {
+	if !sc.s.sess.setPending(sc.ln, req) {
 		return false, "", nil, errors.New("session not armed")
 	}
 	defer sc.s.sess.clearPendingIf(req)
@@ -420,6 +435,7 @@ type sessionAccepter struct {
 	s     *Server
 	label string
 	saw   *reached
+	ln    p2p.Listener
 }
 
 func (sa sessionAccepter) Accept(peerFP, doc []byte) (bool, error) {
@@ -427,7 +443,7 @@ func (sa sessionAccepter) Accept(peerFP, doc []byte) (bool, error) {
 	ch := make(chan sessionDecision, 1)
 	view := pendingView{Signer: sa.label, Fingerprint: hex.EncodeToString(peerFP), Reason: transferReason(doc), Valid: true}
 	req := &pendingReq{view: view, doc: doc, resp: ch}
-	if !sa.s.sess.setPending(req) {
+	if !sa.s.sess.setPending(sa.ln, req) {
 		return false, errors.New("session not armed")
 	}
 	defer sa.s.sess.clearPendingIf(req)
@@ -539,7 +555,7 @@ func (s *Server) runSession(ln p2p.Listener, cert, key []byte, label, mode strin
 		if inbound != nil {
 			inbound.Store(true)
 		}
-		served := s.serveOneSession(conn, cert, key, label, mode, myFP)
+		served := s.serveOneSession(ln, conn, cert, key, label, mode, myFP)
 		if served {
 			return // the arm is spent on a session, which is what it is for
 		}
@@ -561,7 +577,7 @@ func (s *Server) runSession(ln p2p.Listener, cert, key []byte, label, mode strin
 // function, and it is why the co-signing decline needed a sentinel of its own
 // (`p2p.ErrCoSignDeclined`) rather than the bare error it used to return — `errors.Is`
 // could not otherwise tell it from the protocol error declared one line away.
-func (s *Server) serveOneSession(conn *p2p.Conn, cert, key []byte, label, mode string, myFP []byte) bool {
+func (s *Server) serveOneSession(ln p2p.Listener, conn *p2p.Conn, cert, key []byte, label, mode string, myFP []byte) bool {
 	// **Deferred here rather than closed by the caller**, so the connection is released
 	// even if this function panics. `runSession`'s `safe.Recover` catches such a panic and
 	// keeps the desktop process alive, which is exactly the case where a caller-side
@@ -597,14 +613,14 @@ func (s *Server) serveOneSession(conn *p2p.Conn, cert, key []byte, label, mode s
 	var saw reached
 	ch := conn.Channel
 	if mode == sessionModeReceive {
-		doc, err := p2p.ReceiveDocument(ch, sessionAccepter{s: s, label: label, saw: &saw}, myFP, sessionVerifier{s, &saw})
+		doc, err := p2p.ReceiveDocument(ch, sessionAccepter{s: s, label: label, saw: &saw, ln: ln}, myFP, sessionVerifier{s, &saw})
 		if err != nil {
 			return saw.v.Load()
 		}
 		s.saveReceived(doc, ch.PeerFP, label)
 		return true
 	}
-	final, err := p2p.Receive(ch, cert, key, label, sessionConfirmer{s, &saw}, sessionVerifier{s, &saw})
+	final, err := p2p.Receive(ch, cert, key, label, sessionConfirmer{s, &saw, ln}, sessionVerifier{s, &saw})
 	if err != nil {
 		return saw.v.Load()
 	}
@@ -1010,6 +1026,16 @@ func (s *Server) handleSessionInitiate(w http.ResponseWriter, r *http.Request) {
 	myFP, err := sign.Fingerprint(cert)
 	if err != nil {
 		httpError(w, http.StatusInternalServerError, "could not read own fingerprint")
+		return
+	}
+	// **Before signing anything.** D16's Stage 6 pin: a hop must not start unless the ceremony
+	// outlives one full exchange budget, because a hop admitted just before the deadline still
+	// gets six minutes and would ask the far party to consent to a signature on a proceeding
+	// that has already ended. Checked here rather than after `buildCoSigned`, which applies the
+	// LOCAL user's signature — refusing after that leaves them signed into a ceremony this
+	// build has just declared over.
+	if err := checkCeremonyDeadline(pdfBytes, time.Now()); err != nil {
+		httpError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	signed, ok := s.buildCoSigned(w, pdfBytes, cert, key, att, appearance)

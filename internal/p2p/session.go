@@ -40,6 +40,16 @@ const maxFrame = 128 << 20 // 128 MiB
 // human waits it has to cover.
 const exchangeDeadline = 6 * time.Minute
 
+// ExchangeBudget is exchangeDeadline, for the one caller outside this package that needs to
+// reason about it rather than merely obey it.
+//
+// D16's Stage 6 pin makes the ceremony deadline nest around this figure — "no hop starts unless
+// the ceremony deadline exceeds now plus one full exchange budget" — so the server has to be
+// able to ASK how long a hop can take. Exported as a function rather than a constant so it stays
+// this package's number: a second copy of it in internal/server would be the duplicate
+// derivation this repo grades as critical, and the two would drift the day one moved.
+func ExchangeBudget() time.Duration { return exchangeDeadline }
+
 // postConsentDeadline is a FRESH budget for the I/O that follows the user's decision.
 //
 // The single absolute deadline above has to cover the remote user's whole consent window

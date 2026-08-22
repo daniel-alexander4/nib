@@ -836,3 +836,18 @@ literal shapes.
 bootstrap finds no nodes and returns early, so the publish never happens *for the wrong reason* and
 no test can tell the deferral from the failure. The discriminating observation needs a routing
 table: `PublishAttempts == 0` after a LAN-answered arm and `== 1` after an unanswered one.
+
+## v1.117.37 — the P05 sweep, batch 1: three clocks, one identity, one panic
+
+| Defect reintroduced | What it said | Check that fired |
+| --- | --- | --- |
+| **`setPending` checks only that a listener exists, not that it is THIS one** | `a goroutine belonging to the CANCELLED session parked its consent request on the session that replaced it. The user is shown a document from the connection they just cancelled, attributed to the peer they have just armed for.` | `TestAStaleGoroutineCannotParkConsentOnTheSessionThatReplacedIt`. `setPending` was the one `session` mutator without the identity check its four siblings carry — and it is the one that decides what the user is shown and consents to |
+| **The ceremony deadline compared against `now` alone** | `a hop was allowed to start with 3m0s left on a ceremony that gives every hop 6m0s. It is not expired — which is why comparing against \`now\` alone passes it — but it cannot finish` | `TestAHopDoesNotStartAfterTheCeremonyCanOutliveIt`. D16's clock 3 nests inside clock 2: the record must outlive one whole exchange budget, not merely be unexpired at the instant the hop starts |
+| **`InstallOCRFonts` without `fault.Catch`** | `InstallOCRFonts PANICKED on an unwritable config directory rather than returning an error … CHILD-PANIC pdfcpu: config problem: mkdir …: permission denied` | `TestAnUnwritableConfigDirDoesNotCrashStartup`, driven in a **subprocess** because a panic on the parent's goroutine ends the test binary. pdfcpu panics where its API documents an error; `server.New` logs an error and continues, and a panic walks straight past that |
+
+**Not red-proved, and why.** The `udpmux` ownership fixes in `internal/rendezvous` — three
+double-closes and one leaked mux — sit behind `NIB_LIVE_DHT` or are resource hygiene with no
+observable in-process. `Mux.Close` is `sync.Once`-guarded (`internal/udpmux/mux.go`), so the
+double-close was harmless *today*; it is fixed because a test that closes a socket it does not own
+is asserting an ownership rule the opposite way round. The leak is real on a live-network run and
+cannot be reproduced hermetically, because the bootstrap it hangs off returns early with no nodes.
