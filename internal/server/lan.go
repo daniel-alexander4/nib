@@ -31,6 +31,17 @@ import (
 // four chances inside its budget while putting almost nothing on the link.
 const announceEvery = 500 * time.Millisecond
 
+// lanAnnounceWindow caps how long the armed side ANNOUNCES on the link, independently of how long it
+// LISTENS (P05.S09b). S09b extends a ceremony arm's listen window to ceremony scope — up to D33's
+// 30-day MaxCeremonyLife — so a multi-party signer is not disarmed before the baton arrives. Left
+// coupled, this 500ms ticker would then broadcast a never-rotating six-word name for 30 days:
+// 2/s × 86400 × 30 ≈ 5.2M multicast datagrams per ceremony, the D6 privacy harm errLoopbackBind
+// exists against and a criterion-14 violation ("nothing emits at full rate for the whole deadline").
+// So the LAN fast-path stays what it effectively is today — five minutes, ~600 datagrams — and a
+// baton that arrives later is discovered over the DHT, which the connect arm feeds for the whole
+// window. The socket is released when this closes, not held idle until disarm.
+const lanAnnounceWindow = 5 * time.Minute
+
 // lanAnnouncer is the armed side's presence on the link. It exists only while a session
 // is armed — that is the whole of what the plan's egress enumeration authorises, and it
 // is also what keeps the exposure small: a Nib that is not expecting anybody says
@@ -81,7 +92,7 @@ var errLoopbackBind = errors.New("the armed listener is bound to loopback, so it
 // The rule lives HERE rather than at the call site because this is the door (ADR-009).
 // A guard on `runSession` would say nothing about the second caller, and the ladder's
 // later tiers are exactly where a second caller comes from.
-func startAnnouncing(myCertPEM []byte, ln announceable) (*lanAnnouncer, error) {
+func startAnnouncing(myCertPEM []byte, ln announceable, window time.Duration) (*lanAnnouncer, error) {
 	name, err := ownName(myCertPEM)
 	if err != nil {
 		return nil, err
@@ -140,6 +151,10 @@ func startAnnouncing(myCertPEM []byte, ln announceable) (*lanAnnouncer, error) {
 		defer close(a.done)
 		t := time.NewTicker(announceEvery)
 		defer t.Stop()
+		// The LAN fast-path window (P05.S09b T02). It bounds ANNOUNCING, never listening: when it
+		// fires the socket is released and this returns, while the arm keeps accepting and dialing
+		// over the DHT for the rest of the (now ceremony-scoped) window.
+		windowC := time.After(window)
 		for {
 			// The outcome is counted by discovery.Socket.Stats() — Sent and SendErrors,
 			// at the same moments — and printed by `nib discover`. A second pair here
@@ -147,6 +162,9 @@ func startAnnouncing(myCertPEM []byte, ln announceable) (*lanAnnouncer, error) {
 			_, _ = sock.Announce(ann)
 			select {
 			case <-a.stop:
+				return
+			case <-windowC:
+				a.sock.Close() // release the LAN presence; Close's own sock.Close is idempotent
 				return
 			case <-t.C:
 			}
