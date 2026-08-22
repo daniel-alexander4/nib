@@ -230,3 +230,89 @@ func TestBothTransportsWireTheConnectionIDGenerator(t *testing.T) {
 			"silently swallowed.", got, n)
 	}
 }
+
+// listenOnShared arms a QUIC listener on a fresh shared endpoint pinning `pin`, and returns the
+// endpoint, its address, and a channel that yields the accepted connection.
+func listenOnShared(t *testing.T, pin, cert, key []byte) (*SharedEndpoint, string, <-chan acceptResult) {
+	t.Helper()
+	e, err := NewSharedEndpoint("127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ln, err := QUICListenOn(e, cert, key, pin)
+	if err != nil {
+		e.Close()
+		t.Fatal(err)
+	}
+	res := make(chan acceptResult, 1)
+	go func() { c, err := ln.Accept(); res <- acceptResult{c, err} }()
+	return e, e.LocalAddr().String(), res
+}
+
+// P05.S08: QUICDialOn dials on the shared endpoint, and closing a connection it produced is
+// NON-OWNING — it must not tear down the shared transport/mux (which the DHT and the other
+// racing dials sit on). This drives the exact hazard CONFIRMED-1 named: a loser's close on a
+// shared transport would abruptly terminate the winner and panic the DHT read.
+func TestQUICDialOnRacesOneTransportAndClosesNonOwning(t *testing.T) {
+	aCert, aKey := newIdentity(t)
+	bCert, bKey := newIdentity(t)
+	aFP := fingerprint(t, aCert)
+
+	// Two listeners (two candidate addresses), both pinning A, each on its own endpoint.
+	e1, addr1, res1 := listenOnShared(t, aFP, bCert, bKey)
+	defer e1.Close()
+	e2, addr2, res2 := listenOnShared(t, aFP, bCert, bKey)
+	defer e2.Close()
+
+	// A dials BOTH from its ONE shared endpoint, concurrently — the one-transport race.
+	dialer, err := NewSharedEndpoint("127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer dialer.Close()
+
+	dial := func(addr string) (*Conn, error) {
+		return QUICDialOn(context.Background(), dialer, addr, aCert, aKey, fingerprint(t, bCert), 10*time.Second)
+	}
+	c1, err1 := dial(addr1)
+	c2, err2 := dial(addr2)
+	if err1 != nil || err2 != nil {
+		t.Fatalf("racing two candidates on one shared transport failed: %v / %v", err1, err2)
+	}
+	// Unblock both listeners' AcceptStream.
+	writeFrame(c1.Stream, []byte("one"))
+	writeFrame(c2.Stream, []byte("two"))
+	if r := <-res1; r.err != nil {
+		t.Fatalf("listener 1 accept: %v", r.err)
+	}
+	r2 := <-res2
+	if r2.err != nil {
+		t.Fatalf("listener 2 accept: %v", r2.err)
+	}
+	defer r2.conn.Close()
+
+	// Close c1 as the LOSER. Non-owning: it must close only c1's connection, leaving the shared
+	// transport/mux — and therefore c2 (the winner) and the dialer's socket — intact.
+	if err := c1.Close(); err != nil {
+		t.Fatalf("closing the loser errored: %v", err)
+	}
+
+	// The winner still works: a round-trip over c2 after the loser closed.
+	if err := writeFrame(c2.Stream, []byte("still here")); err != nil {
+		t.Fatalf("the winner's stream died when the loser closed — the close was OWNING, it tore down the shared transport: %v", err)
+	}
+
+	// And the shared endpoint itself still works: a fresh dial on it succeeds after the loser
+	// close. If c1.Close had done tr.Close()/mux.Close(), this dial would fail on a dead socket.
+	e3, addr3, res3 := listenOnShared(t, aFP, bCert, bKey)
+	defer e3.Close()
+	c3, err := dial(addr3)
+	if err != nil {
+		t.Fatalf("the shared endpoint could not dial after a loser was closed — the close tore down the shared socket: %v", err)
+	}
+	defer c3.Close()
+	writeFrame(c3.Stream, []byte("three"))
+	if r := <-res3; r.err != nil {
+		t.Fatalf("third dial on the reused shared endpoint failed to accept: %v", r.err)
+	}
+}

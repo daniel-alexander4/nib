@@ -142,6 +142,56 @@ func QUICDial(ctx context.Context, addr string, identityCertPEM, identityKeyPEM,
 	}}, nil
 }
 
+// QUICDialOn dials `addr` on the SHARED endpoint's transport — caveat 7's racing-dialer half
+// (P05.S08), and S03's T03 "ONE mux and ONE quic.Transport for the whole race" as it was
+// written. Unlike QUICDial it binds no socket and creates no transport; it dials on `e.tr`, the
+// one the arm's mapping/probe measured and the punch (S08b) opens the hole for. So the dial's
+// source port is the port the peer learned, which is the whole point.
+//
+// **The returned Conn's Close is CloseWithError-ONLY — non-owning.** `e.tr` and `e.mux` outlive
+// this connection and the DHT is on them, so closing a loser must not touch them: `tr.Close()`
+// abruptly terminates every connection on the socket (the winner included) and `mux.Close()`
+// makes the DHT read `net.ErrClosed`, which anacrolix/dht turns into a panic. The owning
+// teardown lives on `SharedEndpoint.Close()`, called once at ceremony teardown. This is the dial
+// counterpart of `QUICListenOn`'s `ownsEndpoint=false`.
+//
+// Several of these may run concurrently on one `e.tr` (the racer dials N candidates at once):
+// quic-go registers a distinct random CID per dial and the mux routes inbound by destination CID
+// (2⁻⁶⁴ collision), so concurrent dials on one transport do not cross.
+func QUICDialOn(ctx context.Context, e *SharedEndpoint, addr string, identityCertPEM, identityKeyPEM, pinnedSPKI []byte, timeout time.Duration) (*Conn, error) {
+	if e == nil {
+		return nil, errors.New("p2p: no shared endpoint")
+	}
+	cfg, err := SessionTLS(identityCertPEM, identityKeyPEM, pinnedSPKI, false)
+	if err != nil {
+		return nil, err
+	}
+	cfg.NextProtos = []string{alpn}
+	remote, err := net.ResolveUDPAddr("udp", addr)
+	if err != nil {
+		return nil, err
+	}
+
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	qc, err := e.tr.Dial(ctx, remote, cfg, quicConfig())
+	if err != nil {
+		return nil, err // non-owning: nothing of ours to tear down on failure
+	}
+	st, err := qc.OpenStreamSync(ctx)
+	if err != nil {
+		qc.CloseWithError(0, "") // the connection only; leave the shared transport/mux
+		return nil, err
+	}
+	ch, err := quicChannel(qc, st)
+	if err != nil {
+		qc.CloseWithError(0, "")
+		return nil, err
+	}
+	// gracefulClose does st.Close() + qc.CloseWithError and NOTHING to the shared transport/mux.
+	return &Conn{Channel: ch, closer: gracefulClose(qc, st, false)}, nil
+}
+
 // localWildcardFor picks the wildcard bind matching the remote's address family, so a
 // v6 peer is not dialled from a v4 socket.
 func localWildcardFor(remote *net.UDPAddr) string {
