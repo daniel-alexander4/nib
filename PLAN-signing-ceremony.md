@@ -3422,8 +3422,63 @@ goes to the gateway ~1 pkt/60 s, not punch packets to the peer); item 20 (Candid
 — refresh reuses the port and does not re-publish, so no slot is spent, *provided* the port stays
 stable, which P2 handles); and the dialer side, which opens its own endpoint and never maps, so
 its `close()` has nothing to delete.
-#### P05.S08 — The IPv4 punch *(D8 tier 4, D16, D17)*
+#### P05.S08 — The IPv4 punch *(D8 tier 4, D16, D17, D33)* *(firmed 2026-08-22, two-agent deepdive)*
 Acceptance: criterion 14's cadence step-down, driven; QUIC-only by D8's transport pin.
+
+**Firmed 2026-08-22 after a two-agent deepdive of the punch seam — the one-line sketch hid the
+whole slice.** What the deepdive established, all cited to code:
+
+- **The punch is symmetric-SEND, not symmetric-DIAL.** Both sides emit NAT-opening datagrams
+  from their shared socket; the initiator's QUIC Initial then lands on the arm's already-open
+  listener. So **S08 can precede S09** (symmetric listen+dial + glare, D17/criterion 12), and
+  the announcer/arm-window criterion-16 defect stays S09, not absorbed here.
+- **Publish+fetch are asymmetric today** (`ceremonynet.go`): the arm publishes+listens and never
+  fetches; the dialer fetches+dials and never publishes; `ProbeSelf` runs only on the arm. For a
+  punch both sides need the other's tier-4 address, so both must publish AND fetch.
+- **Caveat 7's racing-dialer half is the hard piece, and it is deferred here by name**
+  (`endpoint.go:33-37`, plan §3257-3262). `QUICDial` binds a FRESH `net.ListenPacket` per dial
+  (`quic.go:82-86`), so a punch built on it sends from a socket the peer never learned — useless
+  under NAT. The dial must go out the SHARED endpoint. "The first thing whose correctness depends
+  on the dial's source port."
+- **The parameters** (D16/D33): 250 ms for 30 s then 1 s, to the 300 s deadline = **390 packets
+  per candidate per side**, hard-capped at **3,000 packets per HOP per SIDE across all
+  candidates** (8×390 = 3,120 is ~4% over; the cap trims the tail by design, not a conflict).
+  Drop-and-report on exhaustion, never fail the ceremony. Both figures are **law**, not tunable.
+- **No fake clock exists** — the existing cadences run on `time.After` against the wall clock and
+  the tests skip the wall-clock paths. "Driven" is satisfied by driving the **packet counter and
+  a pure interval function** `next(elapsed) → 250ms|1s`, NOT 300 s of real time — the same
+  vacuous-at-this-granularity trap S03 hit and ruled unmeasurable against the clock.
+- **No punch guarantee on symmetric NAT.** `ProbeSelf.Mapping` cannot separate the two
+  endpoint-dependent classes and does not measure filtering; a punch that never traverses is
+  D19 cause 3/4 and the ladder falls back to tiers 3/5. S08 must surface "punch attempted, no
+  traversal" as a distinguishable state (S11 renders the message), not a generic timeout.
+
+Tasks (firmed 2026-08-22 — dependency order; the grill may reshape):
+- **T01 — dial on the SHARED endpoint (caveat 7's racing-dialer half).** `QUICDialOn(end, …)`
+  analogous to `QUICListenOn`, dialing on the shared endpoint's transport so the source port is
+  the one the peer learned. `dialerCeremony` uses its own `end` to dial rather than a fresh
+  socket. Discharge: the winning channel's local `AddrPort` equals the probed/published one —
+  asserted on the socket. **The foundational, correctness-critical task; everything else rests on
+  it.** Preserves quic-go's `WithoutCancel` dial semantics so a racer can cancel losers.
+- **T02 — symmetric publish+fetch.** The dial side runs `ProbeSelf`+publish; the arm side runs a
+  `feedCandidates`-style fetch. Both learn the other's tier-4 target. Guarded so neither side is
+  left one-way.
+- **T03 — `SharedEndpoint.Punch(addr)` + the punch sender.** A raw datagram write on the shared
+  socket (the raw path is `side.WriteTo` via `DHT()`, `mux.go:469-484`, `learns=false` so it does
+  not disturb the QUIC peer table). A sender that emits to each tier-4 candidate at the cadence,
+  on BOTH sides.
+- **T04 — the cadence step-down as a pure function** `punchInterval(elapsed) → 250ms|1s`, the
+  constant block owed to S08 (`clocks.go:23`). Driven on the function, not the wall clock.
+- **T05 — the D33 packet budget.** A per-`(hop, side)` counter across all candidates, cap 3,000,
+  hard (trims the ~4% tail), drop-and-report, never fail — the packet analogue of `CandidateGate`,
+  new construction (no existing counter counts datagrams). Both law figures unreachable from the
+  tunable block (D33's discharge).
+- **T06 — QUIC over the punched hole + the failure state.** The single-direction QUIC establishes
+  over the opened socket (ties to T01); a punch that never traverses becomes a distinguishable
+  "attempted, no traversal" state for D19/S11, not a generic timeout.
+- **T07 — seam inventory rows**: the source-port assertion (caveat 7), the cadence step-down, the
+  per-side budget drop-and-report, the failure state, and the Dan-only real-two-NAT run
+  (criterion: IPv4-to-IPv4 through an endpoint-independent NAT).
 
 #### P05.S09 — Symmetric racing and the glare tie-break *(D17; criterion 12)*
 Scope: both sides listen **and** dial; today the server arms one listener and the initiator only dials.
