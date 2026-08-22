@@ -205,6 +205,23 @@ type Server struct {
 	dir  string
 	once sync.Once
 
+	// live is cancelled by Close, and inFlight counts the Publish/Fetch calls that must
+	// finish before Close returns.
+	//
+	// **Close used to do neither.** It saved the node cache and called dht.Server.Close,
+	// which sets a flag and does `go s.socket.Close()` — so an in-flight traversal kept
+	// running against a server being torn down, kept writing into the atomics above, and
+	// ended only on its own 45-second budget. On a desktop process that is a shutdown that
+	// looks finished while a stranger's reply is still being processed.
+	//
+	// The trap this shape has to avoid is named in the item that asked for it: in-flight
+	// work must never call Close itself, because `once.Do` deadlocks if `f` re-enters `Do`.
+	// Nothing here does — Close is reached only from the owner — and `enter` below refuses
+	// to start new work after cancellation rather than queueing it behind the wait.
+	live     context.Context
+	stopLive context.CancelFunc
+	inFlight sync.WaitGroup
+
 	loaded        int
 	cacheRejected bool
 	seeds         int
@@ -271,6 +288,7 @@ func Open(conn net.PacketConn, dir string) (*Server, error) {
 			"session's socket (caveat 7), never open one of its own")
 	}
 	s := &Server{dir: dir}
+	s.live, s.stopLive = context.WithCancel(context.Background())
 
 	// Nothing reaches the library's decoder unscreened. See screen.go: 21 bytes of
 	// UDP from any host kill the process otherwise, on a goroutine nothing here owns.
@@ -665,10 +683,37 @@ func (s *Server) Seed(addrs []netip.AddrPort) {
 func (s *Server) Close() error {
 	var err error
 	s.once.Do(func() {
+		// Cancel FIRST, then wait, then tear down. Cancelling before the wait is what makes
+		// the wait finite: an in-flight traversal watches this context, so without the
+		// cancel `Close` would block for the caller's full remaining budget — up to 45
+		// seconds per call — on a path a user reaches by quitting the app.
+		s.stopLive()
+		s.inFlight.Wait()
 		err = s.saveNodes()
 		s.dht.Close()
 	})
 	return err
+}
+
+// enter registers one in-flight operation and returns a context that Close cancels.
+//
+// It refuses to start after Close rather than queueing behind the wait, which is the only
+// shape that terminates: work admitted after the WaitGroup has been waited on would either
+// be abandoned or deadlock the Close it was admitted behind.
+func (s *Server) enter(ctx context.Context) (context.Context, func(), error) {
+	if err := s.live.Err(); err != nil {
+		return nil, nil, fmt.Errorf("rendezvous: the server is closed")
+	}
+	s.inFlight.Add(1)
+	// Derived from BOTH: the caller's cancellation and the server's shutdown must each be
+	// able to end this operation, and neither is a superset of the other.
+	merged, cancel := context.WithCancel(ctx)
+	stop := context.AfterFunc(s.live, cancel)
+	return merged, func() {
+		stop()
+		cancel()
+		s.inFlight.Done()
+	}, nil
 }
 
 // nodeRecord is the on-disk size of one cached node: a 20-byte id, a 16-byte address,
