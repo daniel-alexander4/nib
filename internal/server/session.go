@@ -965,6 +965,14 @@ func (s *Server) runCeremonyReceive(ctx context.Context, cer *ceremonyID, hl *p2
 	if err != nil {
 		return
 	}
+	// Announce this arm's shared endpoint on the LAN, as runSession did (diff-grill, HIGH): the
+	// dialing side BROWSES for a ceremony peer, so without this a LAN-local ceremony finds nothing
+	// and is forced onto the DHT — the privacy leak the LAN-window suppression exists to avoid — or
+	// cannot connect at all where the DHT is unreachable. It never fails the arm; a host with no
+	// usable interface still races over the DHT and the accept.
+	if ann, aerr := startAnnouncing(cert, quicEndpointAnnounce{hl.Addr()}); aerr == nil {
+		defer ann.Close()
+	}
 	// Warm the DHT so connect's feed can fetch the peer's candidates and publish ours. Not fatal:
 	// the accept side and any fixed candidates still race, and D19 cause 2 names a dead DHT.
 	bctx, bcancel := context.WithTimeout(ctx, bootstrapBudget)
