@@ -9,6 +9,7 @@ import (
 	"unicode"
 
 	"github.com/pdfcpu/pdfcpu/pkg/font"
+	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/fault"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
 )
 
@@ -137,17 +138,36 @@ func installedOCRFont(name string) bool {
 // face at once, not just the one being written.
 //
 // Rewriting all thirteen fonts on every startup held that window open on every run.
-// Reproduced by `go test ./...`, where internal/pdfops and internal/server run in
-// parallel and both call this: TestStampTextLayerCJK failed on chi_tra and jpn while
+// It WAS reproduced by `go test ./...`, where internal/pdfops and internal/server ran in
+// parallel and both called this: TestStampTextLayerCJK failed on chi_tra and jpn while
 // passing whenever the package was run alone. That intermittency is what made the
 // symptom look environmental — it was filed as a suspected truncated write from a
 // full disk, and it is really two writers and a non-atomic library.
+//
+// **That reproduction no longer reproduces, and the sentence is corrected rather than
+// left standing.** P05.S01 gave internal/server its own pinned XDG_CONFIG_HOME, so the two
+// packages no longer share a font directory and the suite cannot collide with itself. The
+// production race below is what this code is still for.
 //
 // Two nib processes starting together hit the same race in production, which is why
 // this is not a test-only fix. A cold start where both find the directory empty can
 // still collide, so an install that fails is retried once before it is reported: the
 // second attempt finds the other process's completed file and skips it.
-func InstallOCRFonts() error {
+func InstallOCRFonts() (err error) {
+	// **pdfcpu PANICS here, and the caller only handles an error.**
+	//
+	// `NewDefaultConfiguration` calls `fault.Fail` when the config directory cannot be
+	// created (model/configuration.go:558), and `fault.Fail` panics. `server.New` calls this
+	// inside `if err := …; err != nil { log; carry on }` — which a panic walks straight past,
+	// so a read-only or unwritable $HOME crashed Nib at STARTUP instead of costing only
+	// Thai/Devanagari OCR. That is the opposite of the self-healing rule the project takes
+	// from STANDARDS §9 and D34 adopts: corrupt or unusable state degrades, it never blocks
+	// startup.
+	//
+	// `fault.Catch` is pdfcpu's own mechanism for this and re-panics on anything that is not
+	// its own Panic type — so a genuine bug still crashes loudly rather than being swallowed
+	// by a hand-rolled recover.
+	defer fault.Catch(&err)
 	model.NewDefaultConfiguration() // sets font.UserFontDir (+ installs Roboto if absent)
 	for name, path := range ocrFontFiles {
 		if installedOCRFont(name) {

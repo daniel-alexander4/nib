@@ -264,7 +264,10 @@ func TestAnUnreadableCacheIsAColdStartNotARefusalToRun(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer pc.Close()
+	// NO `defer pc.Close()` here: `udpmux.New` states "New takes ownership of pc… Closing the
+	// Mux closes pc" (mux.go), so closing both closes the socket twice. Harmless in fact — the
+	// second returns an error nobody reads — and wrong in the way that teaches the next reader
+	// the ownership contract does not mean what it says.
 	m := udpmux.New(pc)
 	defer m.Close()
 	s, err := Open(m.DHT(), dir)

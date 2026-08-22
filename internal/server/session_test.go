@@ -960,11 +960,11 @@ func TestClearPendingDoesNotDropALaterSessionsConsent(t *testing.T) {
 	}
 
 	old := &pendingReq{resp: make(chan sessionDecision, 1)}
-	if !se.setPending(old) {
+	if !se.setPending(ln, old) {
 		t.Fatal("setup: could not set the first pending request")
 	}
 	current := &pendingReq{resp: make(chan sessionDecision, 1)}
-	if !se.setPending(current) {
+	if !se.setPending(ln, current) {
 		t.Fatal("setup: could not set the second pending request")
 	}
 
@@ -1305,5 +1305,59 @@ func TestTheSessionBudgetsCoverBothPeerGates(t *testing.T) {
 		t.Errorf("the dialing side allows %v for the peer's decisions, and this server lets "+
 			"one user hold a gate for %v — twice that is already %v", got,
 			sessionConsentTimeout, 2*sessionConsentTimeout)
+	}
+}
+
+// TestAStaleGoroutineCannotParkConsentOnTheSessionThatReplacedIt — the identity guard
+// `setPending` was the one session mutator without.
+//
+// A session goroutine can live for minutes: `p2p.Receive` spans the user's consent, the
+// signing and a 128 MiB write. So it can still be running when the user cancels and re-arms —
+// and with only an `se.ln == nil` check it passes in exactly that window, parking ITS consent
+// request as the NEW session's pending. The user is then shown a document from the connection
+// they cancelled, attributed to the peer they have just armed for.
+//
+// Four sibling mutators already carry this check and their comments give the reason; this is
+// the file making identity-guarding a stated law and one mutator not following it.
+func TestAStaleGoroutineCannotParkConsentOnTheSessionThatReplacedIt(t *testing.T) {
+	var se session
+	oldLn := &stubListener{}
+	defer oldLn.Close()
+	if !se.arm(oldLn, nil) {
+		t.Fatal("setup: could not arm the first session")
+	}
+
+	// SETUP: the old listener's goroutine CAN park while it is the armed one. Without this
+	// the refusal below is equally true of a setPending that refuses everything, which would
+	// break every consent in the product.
+	if !se.setPending(oldLn, &pendingReq{resp: make(chan sessionDecision, 1)}) {
+		t.Fatal("setup: the armed listener could not park a consent request, so the refusal " +
+			"below cannot distinguish an identity guard from a blanket refusal")
+	}
+
+	// The user cancels and re-arms. The old goroutine has not noticed yet.
+	se.disarm()
+	newLn := &stubListener{}
+	defer newLn.Close()
+	if !se.arm(newLn, nil) {
+		t.Fatal("setup: could not re-arm")
+	}
+
+	stale := &pendingReq{resp: make(chan sessionDecision, 1)}
+	if se.setPending(oldLn, stale) {
+		t.Error("a goroutine belonging to the CANCELLED session parked its consent request " +
+			"on the session that replaced it. The user is shown a document from the " +
+			"connection they just cancelled, attributed to the peer they have just armed for.")
+	}
+	se.mu.Lock()
+	got := se.pending
+	se.mu.Unlock()
+	if got == stale {
+		t.Error("the new session's pending consent IS the stale one")
+	}
+
+	// And the new listener can still park, or the guard has simply broken consent.
+	if !se.setPending(newLn, &pendingReq{resp: make(chan sessionDecision, 1)}) {
+		t.Error("the currently-armed listener could not park a consent request")
 	}
 }

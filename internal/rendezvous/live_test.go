@@ -44,7 +44,10 @@ func TestLiveSelfAddressProbe(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer pc.Close()
+	// NO `defer pc.Close()` here: `udpmux.New` states "New takes ownership of pc… Closing the
+	// Mux closes pc" (mux.go), so closing both closes the socket twice. Harmless in fact — the
+	// second returns an error nobody reads — and wrong in the way that teaches the next reader
+	// the ownership contract does not mean what it says.
 	m := udpmux.New(pc)
 	defer m.Close()
 
@@ -236,6 +239,14 @@ func TestLivePublishAndFetch(t *testing.T) {
 			m.Close()
 			t.Fatalf("%s open: %v", what, err)
 		}
+		// **Registered here rather than left to each exit.** Every `t.Fatalf` below used to
+		// have to remember to close this by hand, and one of them did not — the publisher's
+		// bootstrap failure returned with the mux, its readLoop goroutine and the UDP socket
+		// still live. Five exits closed it and one did not, which is what makes that a slip
+		// rather than a policy; a cleanup registered at the point of ownership cannot be
+		// forgotten by an exit added later. Closing twice is harmless: Mux.Close is
+		// sync.Once-guarded.
+		t.Cleanup(func() { m.Close(); s.Close() })
 		return s, m, m.LocalAddr().(*net.UDPAddr)
 	}
 
@@ -360,7 +371,10 @@ func TestLiveInvitationSeedsRescueAMachineTheShippedListCannot(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer pc.Close()
+	// NO `defer pc.Close()` here: `udpmux.New` states "New takes ownership of pc… Closing the
+	// Mux closes pc" (mux.go), so closing both closes the socket twice. Harmless in fact — the
+	// second returns an error nobody reads — and wrong in the way that teaches the next reader
+	// the ownership contract does not mean what it says.
 	m := udpmux.New(pc)
 	defer m.Close()
 
