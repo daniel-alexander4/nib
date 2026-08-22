@@ -31,7 +31,7 @@ func TestTheDHTAndTheArmedListenerShareOneSocket(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	cer, err := ceremonyFor(mustEncode(t, invs[fps[1]]), certs[0], peerFP)
+	cer, err := ceremonyFor(mustEncode(t, invs[fps[1]]), certs[0], nil, peerFP)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -101,7 +101,7 @@ func TestTheCeremonyTeardownOrderDoesNotPanicTheProcess(t *testing.T) {
 	}
 
 	for i := 0; i < 8; i++ {
-		cer, err := ceremonyFor(mustEncode(t, invs[fps[1]]), certs[0], peerFP)
+		cer, err := ceremonyFor(mustEncode(t, invs[fps[1]]), certs[0], nil, peerFP)
 		if err != nil {
 			t.Fatal(err)
 		}

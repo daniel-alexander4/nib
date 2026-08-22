@@ -673,6 +673,7 @@ background, and Nib has no telemetry, analytics or crash reporting of any kind.
 | **You Finalize with an RFC-3161 timestamp authority** | A **digest of the signature** | the TSA URL *you* typed |
 | **You open a document by URL** | The request for that document | the host you named |
 | **You run a co-signing session** | The document itself, to your counterpart, over a channel pinned to their key | the peer you pinned — and anyone who scans the port can see it is open |
+| **You arm a ceremony with an invitation** | Queries that reveal this machine's public IP, and — **only if the local network does not answer first** — one small encrypted record naming the address you can be reached at | strangers on the BitTorrent DHT |
 | **You run `nib rendezvous`** | Queries that reveal this machine's public IP — and with `--self-test`, one small encrypted record too | strangers on the BitTorrent DHT |
 | Never, under any circumstances | Telemetry, analytics, crash reports, usage data, your document contents to *us* | — |
 
@@ -705,16 +706,31 @@ Stated plainly, because you cannot consent to what you have not been told:
   carries a signed expiry that other Nibs refuse to act on once it passes — but the copies
   already handed to strangers age out on their own schedule. There is no recall, and nobody
   could honestly offer you one.
-- **Today, the only thing in Nib that joins the DHT is the `nib rendezvous` diagnostic.**
-  By default it only asks questions and publishes nothing. With `--self-test` it also
-  publishes one throwaway record and fetches it back, so that the counters it reports have
-  a live path — it prints a notice saying so before it opens a socket, and that record is
-  encrypted under a one-off key tied to no ceremony and to no identity of yours. Remote
-  co-signing currently needs a `host:port` you type. As the peer-finding work lands, an
-  armed ceremony will use the DHT too, and only while the ceremony is running.
+- **Two things in Nib join the DHT: an armed ceremony that was given an invitation, and the
+  `nib rendezvous` diagnostic.** Neither does so at any other time.
+  - **An armed ceremony** joins only while it is armed, and only if you pasted an invitation
+    — arming for a peer you typed an address for, or one on your own network, touches the
+    internet not at all. It **waits for the local network first**: if your counterparty
+    reaches you within a couple of seconds, nothing is published, which is the ordinary case
+    for two people in one office. Otherwise it publishes one small record saying where you
+    can be reached, encrypted under a key derived from that invitation, at a location nobody
+    without the invitation can compute.
+  - **`nib rendezvous`** only asks questions by default and publishes nothing. With
+    `--self-test` it also publishes one throwaway record and fetches it back, so the counters
+    it reports have a live path — it prints a notice before it opens a socket, and that
+    record is tied to no ceremony and to no identity of yours.
 
-If none of that is acceptable for a particular document, sign it locally or on the same
-network, and don't run `nib rendezvous` — those paths use no internet at all.
+  **The honest part about the record, which the encryption does not cover.** Its *location* is
+  a value only your ceremony can compute, but the nodes holding it can see that one other
+  specific address came looking for it. So a handful of strangers can tell that two particular
+  IP addresses are in a ceremony together, and roughly when — not who you are, not what the
+  document is, and not what the record says. For most documents that is nothing. If who you
+  are signing with is itself the sensitive fact, sign on the same network or over an address
+  you exchange yourselves.
+
+If none of that is acceptable for a particular document: sign it locally, or on the same
+network, or over an address you type yourselves — and don't run `nib rendezvous`. Those paths
+use no internet at all. What pulls in the DHT is pasting an **invitation**, and nothing else.
 
 ---
 

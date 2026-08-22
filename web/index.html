@@ -1288,6 +1288,19 @@
           <input id="srvBind" type="text" value="0.0.0.0:8443" spellcheck="false" /></label>
         <p class="libhint">The peer reaches this address by port-forward or over a VPN you both use
           (e.g. Tailscale). Nib runs no relay of its own.</p>
+        <label>Ceremony invitation (optional)
+          <input id="srvInvite" type="text" spellcheck="false" autocomplete="off"
+                 placeholder="nib-invite-v1:…  — paste if you were sent one" /></label>
+        <!-- D34's disclosure. It lands with the code that creates the exposure rather than
+             with P06's panel restructure: publishing a user's IP to a public global network
+             several phases before the sentence that tells them is the wrong order however
+             the phases are numbered, which is the plan's own ruling for the smaller event. -->
+        <p id="srvInviteNote" class="libhint">With an invitation, Nib finds the other person over
+          the <strong>public BitTorrent DHT</strong> while this session is armed. It tries your
+          local network first and publishes nothing if that works. Otherwise strangers on that
+          network learn this machine's public address, and the ones holding your record can tell
+          that one other address came looking for it. Without an invitation, nothing here touches
+          the internet.</p>
         <label>Your name (read this out)
           <div class="fpcompare">
             <div id="srvSelfName" class="peername"></div>

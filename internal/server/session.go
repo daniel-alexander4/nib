@@ -452,7 +452,11 @@ func arrivalDocName(peerLabel string) string {
 	return "co-signed with " + peerLabel + ".pdf"
 }
 
-func (s *Server) runSession(ln p2p.Listener, cert, key []byte, label, mode string) {
+// inbound, when non-nil, is set the first time this listener ACCEPTS a connection. It is the
+// arm's own answer to "did the local network reach me", which is what the DHT publish waits on
+// — see startArmedRendezvous. Per-arm, unlike `reached`, which is per connection and asks a
+// different question (did anything get in front of the user).
+func (s *Server) runSession(ln p2p.Listener, cert, key []byte, label, mode string, inbound *atomic.Bool) {
 	// This goroutine handles a pinned peer's inbound document; a panic in the p2p or
 	// sign code must not crash the desktop process. The defers below (disarm, Close)
 	// still run as the stack unwinds.
@@ -532,6 +536,9 @@ func (s *Server) runSession(ln p2p.Listener, cert, key []byte, label, mode strin
 			continue
 		}
 		timer.Stop()
+		if inbound != nil {
+			inbound.Store(true)
+		}
 		served := s.serveOneSession(conn, cert, key, label, mode, myFP)
 		if served {
 			return // the arm is spent on a session, which is what it is for
@@ -789,7 +796,7 @@ func (s *Server) handleSessionArm(w http.ResponseWriter, r *http.Request) {
 	// the caller's mistake and deserves a 400, and resolving it first means a refusal costs
 	// no socket — the same ordering `peerAddresses` uses for a typo'd transport, and the
 	// reason it gives: a 400 the user can act on rather than a 502 about a peer.
-	cer, cerr := ceremonyFor(req.Invitation, cert, peerFP)
+	cer, cerr := ceremonyFor(req.Invitation, cert, key, peerFP)
 	if cerr != nil && !errors.Is(cerr, errNoCeremony) {
 		httpError(w, http.StatusBadRequest, cerr.Error())
 		return
@@ -819,7 +826,11 @@ func (s *Server) handleSessionArm(w http.ResponseWriter, r *http.Request) {
 		httpError(w, http.StatusConflict, "a session is already armed")
 		return
 	}
-	go s.runSession(ln, cert, key, label, req.Mode)
+	var inbound atomic.Bool
+	go s.runSession(ln, cert, key, label, req.Mode, &inbound)
+	// Warm the DHT and, unless the local network answers first, publish where we can be
+	// reached. Started after the arm so a refused arm leaves no background work behind.
+	s.startArmedRendezvous(cer, req.Transport, &inbound)
 	writeJSON(w, s.sess.status())
 }
 
@@ -1009,7 +1020,16 @@ func (s *Server) handleSessionInitiate(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	conn, err := dialAny(cands, cert, key, peerFP)
+	// The dialing side's ceremony identity, from the same pasteable invitation the arm takes.
+	// Absent, this is the manual and LAN path exactly as before.
+	peerLabel, _ := pinnedLabel(v, peerFP)
+	cer, cerr := s.dialerCeremony(r.FormValue("invitation"), cert, key, peerFP)
+	if cerr != nil && !errors.Is(cerr, errNoCeremony) {
+		httpError(w, http.StatusBadRequest, cerr.Error())
+		return
+	}
+	defer cer.close()
+	conn, err := s.raceWithRendezvous(cer, cands, cert, key, peerFP, peerLabel, peerLabel)
 	if errors.Is(err, errUnknownTransport) {
 		httpError(w, http.StatusBadRequest, err.Error())
 		return
@@ -1027,7 +1047,6 @@ func (s *Server) handleSessionInitiate(w http.ResponseWriter, r *http.Request) {
 	// D10: an arrival adds. Same reasoning as runSession's — the difference here is
 	// only that a user is waiting on this response, so the document they get back is
 	// the arrival, which addDoc has made active.
-	peerLabel, _ := pinnedLabel(v, peerFP)
 	installed := s.addDoc(&document{name: arrivalDocName(peerLabel), data: final, sig: sign.Verify(final)})
 	writeJSON(w, s.docResponse(installed))
 }

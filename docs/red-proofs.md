@@ -813,3 +813,26 @@ both read `Party`'s doc comment and neither opened D22.
 | **The shared listener closes the endpoint it does not own** | the shared socket stopped accepting datagrams after its listener closed | `TestASharedEndpointSurvivesItsListener` |
 | **Teardown reversed — the socket before the DHT** | **`panic: use of closed network connection`** | `TestTheCeremonyTeardownOrderDoesNotPanicTheProcess`. This is the hazard the deepdive predicted and it is now driven: the mux closes, the DHT's read returns `net.ErrClosed`, `serveUntilClosed` sees an error with its `closed` flag unset and calls `panic(err)` on a goroutine nothing of ours is on. Process death, at shutdown, on the path a user reaches by pressing Cancel |
 | **A listener constructor added in a file the population floor does not read** | `read 2 non-test files in internal/p2p — the glob is not seeing the package` | `TestEveryTransportIsInTheTable`, which used to read `transport.go` and `quic.go` BY NAME. `QUICListenOn` is in a third file, so the guard could not see the very thing it exists to count — its own defect class, happening to it. It now discovers the package, and carries an exemption list whose entries must name a reason and must still exist |
+
+## v1.117.35 — P05.S04 T11-T14, T16, T18: the DHT becomes a candidate source
+
+| Defect reintroduced | What it said | Check that fired |
+| --- | --- | --- |
+| **The self-test's zero-margin expiry (`now + 5 minutes`)** | `a published record claims 5m0s of life against a floor of 6m30s (45s publish + 5m0s race + 45s fetch). It expires while the peer is still reading it, and the peer sees a counterparty who never published` | `TestAPublishedRecordOutlivesThePeersRace`. The plan names that value as the anti-pattern; this asserts the arithmetic rather than the number, and also asserts the reader-side ceiling, because a record every peer refuses is worse than none |
+| **Hop scoping removed** | `a candidate belonging to a LATER hop was admitted to this race. It would fail the pin — and it would be dialled first, which is the thing criterion 19 forbids` | `TestARaceNeverDialsAnotherHopsCandidate`, with both controls: a candidate for THIS hop must pass, and LAN/typed candidates — which belong to no hop — must not be dropped, since they are the two tiers D8 says survive when the DHT does not |
+| **`Source` dropped from either candidate producer** | `discover.go:149 builds a dialable candidate without a Source` / `lan.go:286 …` | `TestEveryCandidateProducerNamesItsSource`, after its own false positive was fixed — see below |
+
+**A guard of mine fired on correct code, and the fix is the interesting part.**
+`TestEveryCandidateProducerNamesItsSource` treated every *elided* composite literal as a candidate,
+copying `l1_test.go`'s `candidateLit`. That shortcut is right there and wrong here:
+`candidateLit` keys on `Fingerprint`, which a non-candidate struct does not have, so its false
+positives cost nothing — this one keys on `Addr`, which `ceremony.Endpoint` also has. So
+`[]ceremony.Endpoint{{Addr: …}}` in `publishCandidates` was reported as a candidate missing its
+source. It now resolves an elided literal from its parent (`[]candidate` / `map[K]candidate`)
+instead of assuming, and both red proofs above confirm it still catches the real omission in both
+literal shapes.
+
+**Declared limit — T13b is NOT verified end to end**, and a pending item says so. Hermetically the
+bootstrap finds no nodes and returns early, so the publish never happens *for the wrong reason* and
+no test can tell the deferral from the failure. The discriminating observation needs a routing
+table: `PublishAttempts == 0` after a LAN-answered arm and `== 1` after an unanswered one.
