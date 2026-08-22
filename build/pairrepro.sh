@@ -2,7 +2,7 @@
 # Tier 4 of Nib's test harness: run TWO real nib binaries against each other and
 # complete a ceremony between them — once per transport, TCP and QUIC (D14).
 #
-# Usage: ./build/pairrepro.sh [--keep|--lan]
+# Usage: ./build/pairrepro.sh [--keep|--lan|--v6]
 #
 # ── Why a fourth tier ────────────────────────────────────────────────────────
 # Tiers 1-3 all run ONE Nib. A ceremony is two people on two machines, and every
@@ -35,6 +35,17 @@
 # standing VERIFY item. That distinction is the point: the single-host case is
 # driven here and is no longer Dan-only; the two-machine case never was this
 # harness's to make.
+#
+# **`--v6` is P05.S05's contribution to that line (criterion 1).** IPv6-to-IPv6
+# with neither side forwarding a port is a Dan-only TWO-machine run by the phase's
+# own carve-out, and this harness spawns both instances on one host, so it does NOT
+# make that run — the two-machine case stays the standing VERIFY item exactly like
+# the v4 one above. What is buildable is the harness, reduced to this one command:
+# it runs the whole ceremony — arm, pinned handshake, spoken check both sides, two
+# signatures — over `[::1]` instead of `127.0.0.1`, asserting the bind is genuinely
+# v6 so a v4 fallback cannot pass for it. `NIB_PAIR_V6_ADDR=<this host's global v6,
+# no port>` runs it over a global v6 address rather than loopback — still one host,
+# a stronger analogue than `[::1]` and still not two machines.
 #
 # It also drives the HTTP API rather than the browser, so it sees nothing about
 # rendering, layout or what a user can click — tier 3 owns that.
@@ -126,6 +137,47 @@ print(t)'
 
 KEEP=0
 [ "${1:-}" = "--keep" ] && KEEP=1
+
+# ── v6 mode: the ceremony transport runs over IPv6 loopback ──────────────────
+# `--v6` is P05.S05's hermetic analogue of criterion 1 ("IPv6-to-IPv6 completes
+# with neither side forwarding a port"). The two instances' HTTP control planes
+# stay on 127.0.0.1 — they are not what is under test — but the p2p ceremony
+# socket binds and dials `[::1]` instead of `127.0.0.1`, so a ceremony completing
+# here is a ceremony completing across a v6 socket end to end. That is the half
+# T01 could not reach: T01 proved the socket answers a datagram, this proves a
+# whole ceremony (arm, pinned handshake, spoken check on both sides, a document
+# with two signatures) crosses it.
+#
+# **The bind, the dial address and the transport probe change family together, or
+# the run is a v4 run wearing a v6 label.** The arm binds `[::1]:port`, initiate
+# is handed `-F address=[::1]:port`, and the /dev/tcp transport probe uses the
+# bare `::1` (bash's /dev/tcp wants no brackets; the HTTP/arm paths want them).
+# If any one of the three stayed `127.0.0.1` the ceremony would still complete —
+# over v4 — and report a v6 pass it did not earn, the same "configured past the
+# thing it exists to find" hazard the LAN transport probe and ADR-010 are about.
+#
+# **T07's "one command" is this flag**, and the hermetic loopback run is its whole
+# buildable content — criterion 1 proper is two machines and no single-host script
+# reaches it. `NIB_PAIR_V6_ADDR` takes a HOST with no port (e.g. `[2001:db8::5]`,
+# or `fd00:9::1` in a ULA namespace); the harness appends `:$port` itself, so a
+# value carrying a port would bind `…:port:port` and fail. It moves the ceremony
+# off loopback onto a real global/ULA address on the same host — closer to the
+# real path, still one host.
+V6=0
+[ "${1:-}" = "--v6" ] && V6=1
+
+# The ceremony transport host, in the two spellings the tools want: bracketed for
+# the arm bind and the dialled address (host:port URLs), bare for bash /dev/tcp.
+# NIB_PAIR_V6_ADDR overrides the loopback default for the two-machine run.
+CEREMONY_HOST="127.0.0.1"   # host:port form for arm bind and -F address=
+PROBE_HOST="127.0.0.1"      # bare form for /dev/tcp
+if [ "$V6" = "1" ]; then
+  # Accept the override bracketed or bare; normalise to bracketed for the host:port
+  # URLs (arm bind, -F address) and bare for bash /dev/tcp.
+  local_v6="${NIB_PAIR_V6_ADDR:-::1}"
+  PROBE_HOST="${local_v6#[}"; PROBE_HOST="${PROBE_HOST%]}"   # bare, for /dev/tcp
+  CEREMONY_HOST="[$PROBE_HOST]"                              # bracketed, for URLs
+fi
 
 PORT_A="${NIB_PAIR_PORT_A:-18541}"
 PORT_B="${NIB_PAIR_PORT_B:-18542}"
@@ -293,11 +345,27 @@ ceremony() { # transport port outfile
   if [ "$port" = "lan" ]; then
     armbody="{\"fingerprint\":\"$FP_A\",\"mode\":\"cosign\",\"transport\":\"$transport\"}"
   else
-    armbody="{\"fingerprint\":\"$FP_A\",\"bind\":\"127.0.0.1:$port\",\"mode\":\"cosign\",\"transport\":\"$transport\"}"
+    armbody="{\"fingerprint\":\"$FP_A\",\"bind\":\"$CEREMONY_HOST:$port\",\"mode\":\"cosign\",\"transport\":\"$transport\"}"
   fi
   curl -fsS -X POST "$B/api/session/arm" -H 'Content-Type: application/json' -H "X-CSRF-Token: $CSRF_B" \
     -d "$armbody" >/dev/null \
     || fail "[$transport] B could not arm a session"
+
+  # In v6 mode, the STIMULUS assertion: B actually bound a v6 socket. The ceremony
+  # completing already proves the dial crossed `[::1]` (initiate is handed that address
+  # and a 200 means it connected), but that is one direction. This catches the case a
+  # completion alone would not: a future v4 fallback in the bind path would let the run
+  # pass over v4 while claiming v6. `ln.Addr().String()` reads back the bound socket, so
+  # a bracketed literal is a v6 bind and `127.0.0.1:` is not. Skipped when
+  # NIB_PAIR_V6_ADDR points at a real machine, whose reported address is its own.
+  if [ "$V6" = "1" ] && [ "$port" != "lan" ] && [ -z "${NIB_PAIR_V6_ADDR:-}" ]; then
+    local bound
+    bound="$(curl -fsS "$B/api/session/status" | sed -n 's/.*"address":"\([^"]*\)".*/\1/p')"
+    case "$bound" in
+      \[*\]:*) : ;;  # bracketed v6 literal, e.g. [::1]:18543
+      *) fail "[$transport] --v6 armed but B reports it bound '$bound', which is not a v6 literal — the ceremony would complete over v4 and claim a v6 pass it did not earn" ;;
+    esac
+  fi
 
   # THE assertion that makes this two transports rather than one run twice.
   #
@@ -326,7 +394,7 @@ ceremony() { # transport port outfile
     else
       [ "$transport" != "tcp" ] || fail "[$transport] the announced port $lanport does not answer TCP, so the LAN TCP run is not on the transport it asked for"
     fi
-  elif (exec 3<>"/dev/tcp/127.0.0.1/$port") 2>/dev/null; then
+  elif (exec 3<>"/dev/tcp/$PROBE_HOST/$port") 2>/dev/null; then
     exec 3<&- 3>&-
     [ "$transport" = "tcp" ] || fail "[$transport] port $port answers TCP — the QUIC run is listening on a TCP socket, so it is the TCP path wearing a different label"
   else
@@ -363,7 +431,7 @@ ceremony() { # transport port outfile
   curl -sS -X POST "$A/api/session/initiate" -H "X-CSRF-Token: $CSRF_A" \
     -F "pdf=@$WORK/doc.pdf" -F "appearance=@$WORK/sig.png" \
     -F "params={\"fingerprint\":\"$FP_B\",\"intent\":\"I agree to co-sign\"}" \
-    $( [ "$port" = "lan" ] || printf %s "-F address=127.0.0.1:$port" ) \
+    $( [ "$port" = "lan" ] || printf %s "-F address=$CEREMONY_HOST:$port" ) \
     $( [ "$port" = "lan" ] || printf %s "-F transport=$transport" ) \
     -o "$init_out" -w '%{http_code}' > "$WORK/initiate.code" 2>"$WORK/initiate.err"
   local code
