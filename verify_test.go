@@ -238,7 +238,15 @@ func TestVerifyContractIsTrue(t *testing.T) {
 		// tolerated losing four of six silently, which is the same shape as the
 		// prose count it replaced — a number that stops describing the thing it
 		// counts. Raising it is the tax a new row pays.
-		const recorded = 9
+		//
+		// **What this count cannot see, stated so nobody reads it as more than it is:**
+		// a row that EXISTS but no longer re-proves. `zone-bypasses-reserved` was
+		// recorded with its patch reversed — it applied the fix rather than the defect —
+		// so it had never been a valid row, and this count was satisfied by it for as
+		// long as it sat there. Only `./build/redproof.sh <name>` can tell a row from a
+		// file, and running the whole set is a minutes-long job that belongs in a sweep
+		// rather than in `go test`. Recorded as a known gap, not closed.
+		const recorded = 15
 		if len(rows) < recorded {
 			t.Errorf("test/redproofs holds %d replayable row(s), want at least %d; "+
 				"build/redproof.sh reports no error on an empty directory, so a row that "+
