@@ -3272,7 +3272,7 @@ Acceptance:
 - `rendezvous.Server.Close()` cancels and joins in-flight `Publish`/`Fetch` — with the trap its pending entry records: the in-flight work must never call `Close` itself, since `sync.Once` deadlocks if `f` re-enters `Do`.
 - **L1's consumer guard is widened to this slice's wire types before a record reaches a pin.** `wireType` matches the single substring `discovery.` (`internal/server/l1_test.go`), and `CandidateRecord.Fingerprint()` derives a pin from the record's own `SPKI` (`internal/ceremony/candidate.go:164`).
 
-#### P05.S05 — The IPv6 tier *(D8 tier 2; criterion 1)* *(in progress — T01–T05 done 2026-08-22, v1.117.43; T06–T07 outstanding)*
+#### P05.S05 — The IPv6 tier *(D8 tier 2; criterion 1)* *(done 2026-08-22, v1.117.51)*
 ~~Scope: the arm's default bind is `0.0.0.0:0` (`session.go:659`) — v4-only, so tier 2 cannot work today. Dual-stack bind; this host's global v6 addresses become candidates.~~
 **Scope re-stated 2026-08-22 (tagged pin, at the slice's open — the premise was MEASURED false, not re-argued).** Two errors, and the second is the one that matters:
 
@@ -3297,9 +3297,11 @@ Tasks (grilled 2026-08-22, after a three-agent deepdive and two rounds of live m
 - T04 — `publishableEndpoints` publishes **both** families; extracted from `publishCandidates` so the rule is drivable without a live DHT. *(done, v1.117.43)*
 - T05 — `localWildcardFor` gets its first test of any kind, including the `nil` remote that falls silently to the v4 wildcard. *(done, v1.117.43)*
 - T06 — a hermetic ceremony driven **end to end over v6 loopback/ULA**, which is the acceptance clause's own analogue and is NOT discharged by T01: T01 proves the socket answers, not that a ceremony completes across it. **Outstanding.**
-- T07 — criterion 1's harness reduced to one command, for the Dan-only run. **Outstanding.**
+- T07 — criterion 1's harness reduced to one command, for the Dan-only run. *(done, v1.117.51 — `--v6` is the one command; `NIB_PAIR_V6_ADDR` moves it off loopback onto a global/ULA address on the same host. The two-machine execution stays Dan-only, named in the harness header beside the v4 one.)*
 
-**Ledger so far: 1 met / 1 met / 2 outstanding.** *No v4 regression* — met, full suite plus the race detector green on `internal/server`, `internal/p2p` and `internal/rendezvous`. *The dual-stack bind asserted as a socket property* — met, red-proved by binding `udp4` (both the bare socket and the shared endpoint). *A driven hermetic analogue over v6 loopback/ULA* — **not met**, T06. *Criterion 1* — **not exercised**, and it is Dan's run by the phase's own carve-out; T07 is the buildable half.
+**Ledger (closed 2026-08-22, v1.117.51): criterion 1 not exercised (Dan-only two-machine run, phase carve-out — T07 built the buildable half); harness-one-command met; hermetic v6 analogue (T06) met and driven; no v4 regression met; dual-stack bind property met (T01).**
+
+**Superseded ledger, kept for the trail — "1 met / 1 met / 2 outstanding":** *No v4 regression* — met, full suite plus the race detector green on `internal/server`, `internal/p2p` and `internal/rendezvous`. *The dual-stack bind asserted as a socket property* — met, red-proved by binding `udp4` (both the bare socket and the shared endpoint). *A driven hermetic analogue over v6 loopback/ULA* — **not met**, T06. *Criterion 1* — **not exercised**, and it is Dan's run by the phase's own carve-out; T07 is the buildable half.
 
 #### P05.S06 — The port-mapping client: PCP, then NAT-PMP, then UPnP-IGD *(D15; caveats 6, 7, 8)*
 Scope: tier 3's mechanism. **Caveat 6 is discharged or refuted in this slice** — no Go port-mapping dependency exists in the tree and its licence-compatibility is explicitly an unverified assumption; the caveat's own fallback ("if only some protocols are covered, the tier still ships — with narrower router coverage, recorded rather than assumed") is the acceptable outcome. Caveat 7 decides where the request is sent FROM.

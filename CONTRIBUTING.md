@@ -19,6 +19,7 @@ for things it never looked at.
 | 3 | `./build/uirepro.sh` | the whole app: the real binary, in a real browser |
 | 4 | `./build/pairrepro.sh` | a ceremony between TWO real binaries, two vaults, two identities — over BOTH transports |
 | 4b | `./build/pairrepro.sh --lan` | the same ceremony with **no address typed anywhere**, in a namespace, asserting nothing left the link |
+| 4c | `./build/pairrepro.sh --v6` | the same ceremony over **IPv6 loopback** (`[::1]`) on both transports, with the v6 bind asserted so a v4 fallback cannot pass for it — P05.S05's hermetic half of criterion 1 |
 | 5 | `./build/mcastrepro.sh` | link-local discovery between two processes, in a network namespace of its own |
 
 **Tier 0 builds for the host only, and that is a hole tier 1 now covers.**
@@ -138,6 +139,16 @@ after a real connect attempt**, because the kernel refuses at routing before the
 hook. With the route, attempts become packets the counter sees. The run provokes a
 deliberate connection first and **fails if the counter does not move**, so a counter that
 could never fire cannot pass for silence.
+
+**`--v6` is the same harness over IPv6 loopback** — the two HTTP control planes stay on
+`127.0.0.1` (they are not what is under test), but the ceremony socket binds and dials
+`[::1]`. The bind, the dialled address and the `/dev/tcp` transport probe change family
+together, or the run is a v4 run wearing a v6 label; and the run asserts the address the
+armed side reports back is a bracketed v6 literal, red-proved by forcing a v4 bind. It is
+the buildable half of criterion 1 (IPv6-to-IPv6, neither side forwarding a port); the
+two-machine run stays Dan-only, exactly like tier 4's v4 two-machine case.
+`NIB_PAIR_V6_ADDR=<this host's global v6, no port>` moves it off loopback onto a real
+address on the same host.
 
 **Cannot see: two networks.** Both instances are on loopback, so NAT, routing,
 MTU and firewalls are invisible — and those are exactly what the connection
