@@ -4,9 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"errors"
-	"fmt"
 	"net"
-	"sync"
 	"time"
 
 	"github.com/quic-go/quic-go"
@@ -176,13 +174,30 @@ func QUICListen(addr string, identityCertPEM, identityKeyPEM, pinnedSPKI []byte)
 		mux.Close()
 		return nil, err
 	}
-	return &quicListener{
-		mux: mux, tr: tr, ln: ln,
-		ownsEndpoint: true,
-		done:         make(chan struct{}),
-		ready:        make(chan *Conn, maxConcurrentHandshakes),
-		sem:          make(chan struct{}, maxConcurrentHandshakes),
-	}, nil
+	return newQUICListener(mux, tr, ln, true), nil
+}
+
+// newQUICListener wires a quic listener onto the shared termination protocol.
+//
+// `shut` is the one piece QUIC does not share: it closes the quic listener always, and the
+// transport and socket beneath it only when this listener bound them. Closing them when it
+// did not is what `ownsEndpoint` exists to prevent, and putting that decision here keeps it
+// in one place across both constructors.
+func newQUICListener(mux *udpmux.Mux, tr *quic.Transport, ln *quic.Listener, owns bool) *quicListener {
+	l := &quicListener{mux: mux, tr: tr, ln: ln, ownsEndpoint: owns}
+	l.listenerCore = newListenerCore()
+	l.loop = l.acceptLoop
+	l.shut = func() error {
+		err := l.ln.Close()
+		if l.ownsEndpoint {
+			l.tr.Close()
+			if e := l.mux.Close(); err == nil {
+				err = e
+			}
+		}
+		return err
+	}
+	return l
 }
 
 // quicListener mirrors tlsListener's shape, and P05.S02 is why.
@@ -200,6 +215,11 @@ func QUICListen(addr string, identityCertPEM, identityKeyPEM, pinnedSPKI []byte)
 // because a FAILED handshake never surfaces from quic-go — is still true and is kept below.
 // It simply does not reach these connections, whose handshakes succeed.
 type quicListener struct {
+	// listenerCore is the termination protocol, shared verbatim with tlsListener and
+	// written once — see listenercore.go. What is left here is what is actually QUIC's:
+	// the socket it sits on, the transport, the listener, and who owns them.
+	listenerCore
+
 	mux *udpmux.Mux
 	tr  *quic.Transport
 	ln  *quic.Listener
@@ -212,100 +232,14 @@ type quicListener struct {
 	// net.ErrClosed, which its library turns into a panic on a goroutine nothing of ours
 	// is on.
 	ownsEndpoint bool
-
-	once  sync.Once
-	ready chan *Conn    // stream-accepted connections; NEVER closed, as on the TCP side
-	done  chan struct{} // closed by Close, the single termination signal
-	sem   chan struct{} // bounds concurrent stream-accepts
-
-	mu     sync.Mutex
-	closed bool
-	cerr   error
 }
 
 func (l *quicListener) Addr() net.Addr { return l.mux.LocalAddr() }
 
 func (l *quicListener) Transport() string { return TransportQUIC }
 
-// Close stops the accept loop and releases anything blocked in Accept.
-//
-// `done` closes BEFORE the quic listener, for tlsListener's reason: a stream-accept
-// finishing in the same instant offers into a channel nobody is reading and closes its
-// connection instead of leaking it.
-func (l *quicListener) Close() error {
-	l.mu.Lock()
-	if l.closed {
-		l.mu.Unlock()
-		return nil
-	}
-	l.closed = true
-	if l.cerr == nil {
-		l.cerr = net.ErrClosed
-	}
-	l.mu.Unlock()
-	close(l.done)
-	err := l.ln.Close()
-	if l.ownsEndpoint {
-		l.tr.Close()
-		if e := l.mux.Close(); err == nil {
-			err = e
-		}
-	}
-	// Drain what the handshake goroutines queued. `ready` is buffered since P05.S02, so
-	// a completed connection can be sitting in it when the session ends; nothing else
-	// will ever take it.
-	//
-	// **The residual is declared rather than closed**: a goroutine that wins the race
-	// between `<-l.done` and the buffered send in the same instant as this drain leaves
-	// one connection queued. It is bounded by the buffer, it costs one fd until the
-	// process reclaims it, and closing it deterministically would mean blocking Close
-	// until every handshake goroutine has returned — on a path the user reaches by
-	// pressing Cancel.
-	for {
-		select {
-		case c := <-l.ready:
-			c.Close()
-		default:
-			return err
-		}
-	}
-}
-
-func (l *quicListener) setCloseErr(err error) {
-	l.mu.Lock()
-	if l.cerr == nil {
-		l.cerr = err
-	}
-	l.mu.Unlock()
-}
-
-// closeErr always wraps net.ErrClosed — `runSession` ends its loop only on that, and a bare
-// accept error made it spin. Same contract as tlsListener.closeErr.
-func (l *quicListener) closeErr() error {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	if l.cerr != nil && !errors.Is(l.cerr, net.ErrClosed) {
-		return fmt.Errorf("%w: %v", net.ErrClosed, l.cerr)
-	}
-	return net.ErrClosed
-}
-
-func (l *quicListener) Accept() (*Conn, error) {
-	l.start()
-	select {
-	case c := <-l.ready:
-		return c, nil
-	case <-l.done:
-		return nil, l.closeErr()
-	}
-}
-
-func (l *quicListener) start() {
-	l.once.Do(func() { go l.loop() })
-}
-
 // loop accepts connections and hands each to its own stream-accepter.
-func (l *quicListener) loop() {
+func (l *quicListener) acceptLoop() {
 	for {
 		// Deliberately unbounded, and it is the opposite of what it looks like.
 		//

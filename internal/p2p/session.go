@@ -141,6 +141,14 @@ func Initiate(ch Channel, mySignedPDF, myFingerprint []byte, v Verifier) ([]byte
 	// checks would still pass. The prefix check is sound because the signer is
 	// strictly append-only: a legitimate co-signature is always mySignedPDF plus
 	// a trailing incremental update (see sign/trailing_test.go).
+	// A refusal, not a document. Checked before the prefix test because that test would
+	// report a one-byte refusal as "not the one sent this session" — true, unhelpful, and
+	// indistinguishable from a replay attempt.
+	if len(final) == 1 {
+		if rerr, ok := refusalFor(final[0], true); ok {
+			return nil, rerr
+		}
+	}
 	if !bytes.HasPrefix(final, mySignedPDF) {
 		return nil, errors.New("returned document is not the one sent this session")
 	}
@@ -180,6 +188,20 @@ func Receive(ch Channel, myCertPEM, myKeyPEM []byte, peerLabel string, c Confirm
 	}
 	final, err := coSignExchange(myCertPEM, myKeyPEM, peerFP, peerLabel, inbound, c)
 	if err != nil {
+		// **A refusal reaches the peer as a refusal.** This used to write nothing at all
+		// and close, so the initiator's `readFrame` got EOF and its user was shown
+		// `502 co-signing did not complete: receive co-signed document: EOF` — which reads
+		// as a network fault and invites the retry a refusal must not invite. The transfer
+		// path has had an explicit byte since it was written; this half did not, so the two
+		// halves of one feature disagreed about what a refusal is.
+		//
+		// One byte, and a co-signed document is never one byte — it is the sent document
+		// plus a trailing incremental update, which `Initiate` re-checks by prefix — so the
+		// frame is unambiguous.
+		if b, ok := refusalAck(err); ok {
+			_ = conn.SetDeadline(time.Now().Add(postConsentDeadline))
+			_ = writeFrame(conn, []byte{b}) // best-effort
+		}
 		return nil, err
 	}
 	// The signature exists now. Give the write its own budget rather than whatever the
@@ -198,6 +220,19 @@ func Receive(ch Channel, myCertPEM, myKeyPEM []byte, peerLabel string, c Confirm
 const (
 	ackOK       = 1
 	ackDeclined = 2
+	// ackTimedOut is "nobody answered", and it is NOT ackDeclined.
+	//
+	// The consent gate used to collapse the two: a `Confirm`/`Accept` that ran out its
+	// `sessionConsentTimeout` returned the same `(false, nil)` as a user who looked at the
+	// document and refused it, so the peer was sent `ackDeclined` and shown
+	// `{"declined": true}` — a false statement about a person's decision, on the wire,
+	// when the receiver had merely walked away from the machine.
+	//
+	// `verify.go` draws this exact distinction one gate earlier and gives it two sentinels,
+	// with the reason written out: *"ErrVerificationTimedOut: nobody answered. Distinct from
+	// declining, because it means something different to the user and to whoever reads the
+	// log."* The consent gate now has the pair too.
+	ackTimedOut = 3
 )
 
 // ErrDeclined reports that the receiving user declined a one-way document transfer.
@@ -212,6 +247,48 @@ var ErrDeclined = errors.New("document transfer declined")
 // written; this one was a bare `errors.New("co-signing declined")` at the point of
 // decline, indistinguishable by `errors.Is` from a protocol error one line away.
 var ErrCoSignDeclined = errors.New("co-signing declined")
+
+// ErrConsentTimedOut reports that nobody answered the consent request.
+//
+// It covers BOTH gates — the co-signature and the one-way transfer — because the
+// distinction it draws is about the person, not about which document flow they were in.
+// A Confirmer or Accepter returns it; `Receive` and `ReceiveDocument` turn it into
+// ackTimedOut on the wire; `Initiate` and `SendDocument` turn that byte back into this.
+var ErrConsentTimedOut = errors.New("nobody answered the consent request in time")
+
+// refusalAck and refusalFor are the ONE door between a refusal and its wire byte.
+//
+// ADR-009: a rule holding at more than one call site is written once and every site calls
+// it. There are four sites — two senders decoding and two receivers encoding — and a table
+// each side keeps for itself is a protocol that can disagree with itself. It did: the
+// transfer path had an explicit declined byte and the co-signature path had none at all, so
+// one half of one feature reported a refusal as an outcome and the other reported it as EOF.
+func refusalAck(err error) (byte, bool) {
+	switch {
+	case errors.Is(err, ErrConsentTimedOut):
+		return ackTimedOut, true
+	case errors.Is(err, ErrDeclined), errors.Is(err, ErrCoSignDeclined):
+		return ackDeclined, true
+	default:
+		return 0, false
+	}
+}
+
+// refusalFor maps a receipt byte back to its sentinel. `coSign` says which of the two
+// decline sentinels to use, since they name different flows to the user.
+func refusalFor(b byte, coSign bool) (error, bool) {
+	switch b {
+	case ackTimedOut:
+		return ErrConsentTimedOut, true
+	case ackDeclined:
+		if coSign {
+			return ErrCoSignDeclined, true
+		}
+		return ErrDeclined, true
+	default:
+		return nil, false
+	}
+}
 
 // Accepter is the receiving side's consent gate for a plain document transfer. Shown
 // the verified peer's SPKI fingerprint and the document, it returns whether to accept
@@ -250,14 +327,15 @@ func SendDocument(ch Channel, pdf []byte, myFingerprint []byte, v Verifier) erro
 	if err != nil {
 		return fmt.Errorf("await receipt: %w", err)
 	}
-	switch {
-	case len(ack) == 1 && ack[0] == ackOK:
+	if len(ack) == 1 && ack[0] == ackOK {
 		return nil
-	case len(ack) == 1 && ack[0] == ackDeclined:
-		return ErrDeclined
-	default:
-		return errors.New("unexpected receipt from peer")
 	}
+	if len(ack) == 1 {
+		if rerr, ok := refusalFor(ack[0], false); ok {
+			return rerr
+		}
+	}
+	return errors.New("unexpected receipt from peer")
 }
 
 // ReceiveDocument runs the listening side of a one-way transfer: it reads the document
@@ -284,13 +362,18 @@ func ReceiveDocument(ch Channel, a Accepter, myFingerprint []byte, v Verifier) (
 		return nil, fmt.Errorf("receive document: %w", err)
 	}
 	accept, err := a.Accept(ch.PeerFP, inbound)
-	if err != nil {
-		return nil, err
-	}
 	// Same reset as Receive's, for the same reason: the acknowledgement is one byte, but
 	// it is sent after a wait that can have consumed the whole budget, and a sender that
 	// never gets it reports the transfer as failed when the receiver has kept the file.
 	_ = conn.SetDeadline(time.Now().Add(postConsentDeadline))
+	if err != nil {
+		// A refusal is an OUTCOME and gets a receipt; anything else is a fault and the
+		// sender learns of it as a dropped connection, which is what it is.
+		if b, ok := refusalAck(err); ok {
+			_ = writeFrame(conn, []byte{b}) // best-effort
+		}
+		return nil, err
+	}
 	if !accept {
 		_ = writeFrame(conn, []byte{ackDeclined}) // best-effort: tell the sender it was refused
 		return nil, ErrDeclined

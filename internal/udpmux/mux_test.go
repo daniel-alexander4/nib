@@ -230,9 +230,13 @@ func TestAPeerExpires(t *testing.T) {
 	}
 }
 
-// TestClosingOneViewLeavesTheOtherRunning is the reason a shim exists at all:
-// quic.Transport.Close and dht.Server.Close each close the conn they were given,
-// and neither may take the other's transport down with it.
+// TestClosingOneViewLeavesTheOtherRunning is the reason a shim exists at all: a library
+// handed this conn must not be able to take the other library's transport down with it.
+//
+// **True of dht.Server.Close, NOT of quic.Transport.Close** — see `side.Close` in mux.go for
+// the measurement. This comment used to state it of both, contradicting `interop_test.go`,
+// which had it right. The property under test is unchanged: closing one view leaves the other
+// running, whichever mechanism the library reaches for.
 func TestClosingOneViewLeavesTheOtherRunning(t *testing.T) {
 	m, peer := newTestMux(t)
 

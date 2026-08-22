@@ -20,7 +20,6 @@ import (
 
 	"nib/internal/safe"
 	"nib/internal/sign"
-	"sync"
 )
 
 const (
@@ -308,152 +307,41 @@ func Listen(addr string, identityCertPEM, identityKeyPEM, pinnedSPKI []byte) (Li
 	if err != nil {
 		return nil, err
 	}
-	return &tlsListener{
-		ln:   ln,
-		done: make(chan struct{}),
-		// Built HERE and not in start(), so Close can read them without racing the
-		// first Accept. They are the listener's, not the accept loop's.
-		ready: make(chan *Conn, maxConcurrentHandshakes),
-		sem:   make(chan struct{}, maxConcurrentHandshakes),
-	}, nil
+	return newTLSListener(ln), nil
+}
+
+// newTLSListener wires a net.Listener onto the shared termination protocol.
+//
+// **The one door**, for ADR-009's reason and because there was already a second: a test
+// hand-built `&tlsListener{ln: fake, done: make(chan struct{})}` to drive a terminal accept
+// error, which worked only for as long as `done` was the sole field the protocol needed. It
+// is a fake listener that makes that test worth having, so the door takes one rather than
+// binding its own — and the test now goes through it, so a field added here reaches it.
+func newTLSListener(ln net.Listener) *tlsListener {
+	l := &tlsListener{ln: ln}
+	l.listenerCore = newListenerCore()
+	// The two halves the core does not have: how this transport accepts, and what sits
+	// beneath the protocol and goes down with it. Assigned after the listener exists
+	// because both close over it.
+	l.loop, l.shut = l.acceptLoop, ln.Close
+	return l
 }
 
 // tlsListener adapts a TLS listener to Listener. The handshake, its timeout, and what
 // happens to a peer that fails it all live here now — they used to live in the server's
 // accept loop, where only TCP could ever have satisfied them.
 type tlsListener struct {
+	// listenerCore is the termination protocol, shared verbatim with quicListener and
+	// written once — see listenercore.go. What is left here is what is actually TCP's:
+	// the net.Listener, the accept loop, and the handshake.
+	listenerCore
+
 	ln net.Listener
-
-	once  sync.Once
-	ready chan *Conn    // handshakes that completed; NEVER closed — see loop
-	done  chan struct{} // closed by Close, the single termination signal
-	sem   chan struct{} // bounds concurrent handshakes
-
-	mu     sync.Mutex
-	closed bool
-	cerr   error
 }
 
 func (l *tlsListener) Addr() net.Addr { return l.ln.Addr() }
 
 func (l *tlsListener) Transport() string { return TransportTCP }
-
-// Close stops the accept loop and releases anything blocked in Accept.
-//
-// `done` is closed BEFORE the underlying listener so a handshake finishing in the same
-// instant offers into a channel nobody is reading and closes the connection instead of
-// leaking it. Idempotent, because a session teardown and an explicit disarm can both reach
-// it — the same reason the announcer's Close is.
-func (l *tlsListener) Close() error {
-	l.mu.Lock()
-	if l.closed {
-		l.mu.Unlock()
-		return nil
-	}
-	l.closed = true
-	if l.cerr == nil {
-		l.cerr = net.ErrClosed
-	}
-	l.mu.Unlock()
-	close(l.done)
-	err := l.ln.Close()
-	// Drain what the handshake goroutines queued. `ready` is buffered since P05.S02, so
-	// a completed connection can be sitting in it when the session ends; nothing else
-	// will ever take it.
-	//
-	// **The residual is declared rather than closed**: a goroutine that wins the race
-	// between `<-l.done` and the buffered send in the same instant as this drain leaves
-	// one connection queued. It is bounded by the buffer, it costs one fd until the
-	// process reclaims it, and closing it deterministically would mean blocking Close
-	// until every handshake goroutine has returned — on a path the user reaches by
-	// pressing Cancel.
-	for {
-		select {
-		case c := <-l.ready:
-			c.Close()
-		default:
-			return err
-		}
-	}
-}
-
-func (l *tlsListener) setCloseErr(err error) {
-	l.mu.Lock()
-	if l.cerr == nil {
-		l.cerr = err
-	}
-	l.mu.Unlock()
-}
-
-// closeErr is the error Accept returns once the listener is finished.
-//
-// **It always wraps net.ErrClosed, and the wrap is the contract.** `Listener.Accept`'s doc
-// says *"A closed listener reports net.ErrClosed, which is how the loop ends"*, and
-// `runSession` exits only on `errors.Is(err, net.ErrClosed)`. Returning a bare accept error —
-// an EMFILE from fd exhaustion, say — made that loop spin at 100 % of a core with no syscall,
-// and `Close` could not rescue it because `cerr` was already set, so the session never
-// disarmed and its announcer broadcast for the life of the process. `quicListener.Accept`
-// already maps `quic.ErrServerClosed` this way, with a comment naming the same hazard.
-//
-// The cause is kept alongside so a diagnostic can still say *why* it stopped.
-func (l *tlsListener) closeErr() error {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	if l.cerr != nil && !errors.Is(l.cerr, net.ErrClosed) {
-		return fmt.Errorf("%w: %v", net.ErrClosed, l.cerr)
-	}
-	return net.ErrClosed
-}
-
-// Accept returns the next connection that COMPLETED a pinned handshake.
-//
-// # The handshake runs off the accept path, and that is the fix
-//
-// It used to run inline: `l.ln.Accept()` then `TLSChannel(tc)` in the same call, so one TCP
-// connection that opened and sent nothing held the caller for the whole `handshakeTimeout`
-// — 30 seconds. The server's arm loop is a single goroutine calling this, and the listener
-// binds `0.0.0.0:0` with its port broadcast to the multicast group every 500 ms, so ten
-// such connections consumed the entire five-minute arm window and the genuine peer was
-// never accepted. No scan required.
-//
-// `internal/server/l1_test.go` states the property verbatim — "measured at 30 s per stalled
-// connection, and filed as its own item" — and the guard that exists,
-// `TestAStrayConnectionDoesNotConsumeTheSession`, only proves the session SURVIVES one
-// stray connection. It never measured that the loop was blocked, so the fix for the
-// one-shot-consumption defect left the head-of-line block in place and untested.
-//
-// Now a single goroutine accepts and hands each raw connection to its own handshaker; only
-// completed ones reach the channel. A stalled peer costs one goroutine and one timeout,
-// concurrently with every other, and cannot delay the real one.
-func (l *tlsListener) Accept() (*Conn, error) {
-	l.start()
-	select {
-	case c := <-l.ready:
-		return c, nil
-	case <-l.done:
-		return nil, l.closeErr()
-	}
-}
-
-// start launches the accept loop once.
-func (l *tlsListener) start() {
-	l.once.Do(func() { go l.loop() })
-}
-
-// maxConcurrentHandshakes bounds the in-flight handshakes.
-//
-// **The kernel backlog used to be this bound and moving the handshake off the accept path
-// removed it.** Unbounded, one goroutine and one fd per inbound connection for the whole
-// 30 s handshakeTimeout is an fd exhaustion any host on the segment can drive: the listener
-// binds 0.0.0.0:0 and broadcasts its port every 500 ms, and each connection costs the
-// attacker one SYN. A GUI process on macOS has 256 descriptors by default.
-//
-// Sixteen, and the acquire BLOCKS rather than dropping: a full pool stalls the accept loop,
-// which pushes the excess back into the kernel backlog — where it was before, and where it
-// costs Nib nothing. The residual is that sixteen simultaneous stalls delay the genuine peer
-// by up to one handshakeTimeout, which is strictly better than the one-stall-blocks-everything
-// this replaced and than the fd exhaustion the unbounded version allowed.
-const maxConcurrentHandshakes = 16
 
 // loop accepts until Close, or until an accept error it cannot continue past.
 //
@@ -468,7 +356,7 @@ const maxConcurrentHandshakes = 16
 // So `Close` is now the one termination signal: a terminal accept error records its cause and
 // then calls Close, which closes `done` exactly once. Nothing closes `ready`, `Accept` needs
 // no `!ok` branch, and the hazard is structurally impossible rather than argued.
-func (l *tlsListener) loop() {
+func (l *tlsListener) acceptLoop() {
 	for {
 		c, err := l.ln.Accept()
 		if err != nil {

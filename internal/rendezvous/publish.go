@@ -118,30 +118,43 @@ func (s *Server) Publish(ctx context.Context, seed, salt, value []byte) error {
 	// arises when the candidate set changes. (P04.S03 ships no republish loop — one publish
 	// covers a 300 s race against a 2 h item lifetime — so this is a guard against a future
 	// caller, not against a loop that exists.)
+	// **A refusal must not still emit what it refused.**
+	//
+	// `getput.SeqToPut` has no error return, so the callback below cannot say "do not put".
+	// Measured against v2.24.0: whatever it returns is used UNCONDITIONALLY —
+	// `put := seqToPut(autoSeq)` (`exts/getput/getput.go:154`) — and fanned out to every node
+	// in `op.Closest()` (`:155-168`), and each of those calls `Server.Put`, which writes to
+	// the LOCAL store on its first line (`server.go:1081`) before the context is ever
+	// consulted. So returning `bep44.Put{}` to refuse published an item rather than
+	// publishing nothing: K is nil, so the item is IMMUTABLE and its target is
+	// `sha1(bencode(nil))` — measured as `da39a3ee5e6b4b0d3255bfef95601890afd80709`, sha1 of
+	// the empty string — and `bep44.Check` ACCEPTS it. An empty item, at a target belonging
+	// to nobody, written to strangers, by the branch whose whole job is to refuse.
+	//
+	// Two things stop it, and each would be enough on its own:
+	//
+	//  1. **Cancel**, so the fan-out's queries are never sent. It cannot stop the local
+	//     store, which runs before `Server.Put` looks at the context — hence (2).
+	//  2. **Return a put the protocol itself refuses everywhere.** Same key, same salt, same
+	//     value, and `Seq` NOT incremented. `CheckIncoming` returns
+	//     `ErrSequenceNumberLessThanCurrent` whenever `stored.Seq >= incoming.Seq`
+	//     (`bep44/check.go`), and at the ceiling a stored item is exactly what there is. So
+	//     it is well-formed, correctly signed, addressed to our own mutable target, and
+	//     stored by nobody — instead of malformed, unsigned, and addressed to a target we do
+	//     not own.
+	//
+	// It is deliberately not fixed by learning the seq first: that is a second full GET
+	// traversal on every publish, on the ceremony's critical path, to close a case that
+	// needs an in-roster holder to have published at MaxInt64.
+	putCtx, stopPut := context.WithCancel(ctx)
+	defer stopPut()
 	var seqCeiling bool
-	stats, err := getput.Put(ctx, target, s.dht, salt, func(seq int64) bep44.Put {
-		// seq+1 must not wrap, and the attack that makes it wrap is cheap.
-		//
-		// The hop's ed25519 key comes from the invitation secret, so EVERY roster member
-		// can write at our target. One publishing at math.MaxInt64 makes this `seq + 1`
-		// overflow to math.MinInt64 — Go wraps signed overflow silently, no panic, no
-		// error. Our own store accepts it (there is no prior item locally, so
-		// CheckIncoming never runs), every remote refuses it with
-		// ErrSequenceNumberLessThanCurrent, getput.Put shadows all of those and returns
-		// nil, and Publish reports success having stored nothing anywhere.
-		//
-		// Preemption by an invitation holder is a known and accepted in-roster power, but
-		// as a RACE the honest party re-wins by publishing higher. Overflow makes it
-		// permanent. Refusing here turns a silent permanent block into an error the caller
-		// can act on and a counter someone can read.
-		if seq >= math.MaxInt64-1 {
+	stats, err := getput.Put(putCtx, target, s.dht, salt, func(seq int64) bep44.Put {
+		p, ceiling := putForSeq(seq, value, salt, pub, priv)
+		if ceiling {
 			seqCeiling = true
-			return bep44.Put{}
+			stopPut()
 		}
-		p := bep44.Put{V: value, Salt: salt, Seq: seq + 1}
-		k := pub
-		p.K = &k
-		p.Sign(priv)
 		return p
 	})
 	if stats != nil {
@@ -262,4 +275,37 @@ func (s *Server) Fetch(ctx context.Context, seed, salt []byte) ([]byte, int64, e
 		return nil, 0, errors.New("rendezvous: no DHT node answered")
 	}
 	return nil, 0, ErrNoRecord
+}
+
+// putForSeq decides what to publish at the sequence number the traversal found, and whether
+// that number is at its ceiling. **One door**, so the rule and the test that guards it cannot
+// be about different code — the decision used to live inside a closure `Publish` builds, where
+// nothing but a live DHT at math.MaxInt64 could reach it, which is why the ceiling branch
+// shipped emitting the thing it refused.
+//
+// # The ceiling, and why refusing is not enough
+//
+// seq+1 must not wrap, and the attack that makes it wrap is cheap. The hop's ed25519 key comes
+// from the invitation secret, so EVERY roster member can write at our target. One publishing at
+// math.MaxInt64 makes `seq + 1` overflow to math.MinInt64 — Go wraps signed overflow silently,
+// no panic, no error. Our own store accepts it (there is no prior item locally, so CheckIncoming
+// never runs), every remote refuses it with ErrSequenceNumberLessThanCurrent, getput.Put shadows
+// all of those and returns nil, and Publish reports success having stored nothing anywhere.
+//
+// Preemption by an invitation holder is a known and accepted in-roster power, but as a RACE the
+// honest party re-wins by publishing higher. Overflow makes it permanent. Refusing here turns a
+// silent permanent block into an error the caller can act on and a counter someone can read.
+//
+// The refusal returns a well-formed put at the SAME seq rather than a zero one, because the
+// caller has no way to decline: see the block above the traversal in Publish for the measurement.
+func putForSeq(seq int64, value any, salt []byte, pub [32]byte, priv ed25519.PrivateKey) (bep44.Put, bool) {
+	p := bep44.Put{V: value, Salt: salt, Seq: seq + 1}
+	ceiling := seq >= math.MaxInt64-1
+	if ceiling {
+		p.Seq = seq
+	}
+	k := pub
+	p.K = &k
+	p.Sign(priv)
+	return p, ceiling
 }

@@ -1553,11 +1553,15 @@ async function sendToPeer() {
     }
     if (!res.ok) { toast(await errText(res, 'could not send')); return; }
     const r = await res.json();
-    // Three outcomes, because the server publishes two booleans and reading only one
-    // reported "Sent" for a transfer that neither completed nor was declined.
+    // Four outcomes, because the server publishes three booleans and reading fewer than
+    // all of them reports one of the others. It reported "Sent" for a transfer that
+    // neither completed nor was declined; then `timedOut` was added because the server
+    // had been calling an unanswered request a decline, and reading only `declined`
+    // would have gone on telling the user a person refused when nobody was there.
     toast(r.declined ? 'The peer declined the document'
-      : r.sent ? 'Sent — the peer has the document'
-        : 'The peer did not take the document');
+      : r.timedOut ? 'Nobody answered on the other machine — the document was not kept'
+        : r.sent ? 'Sent — the peer has the document'
+          : 'The peer did not take the document');
     els.sessionSendModal.hidden = true;
   } catch (e) {
     toast('could not send: ' + e.message);

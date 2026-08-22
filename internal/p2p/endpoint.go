@@ -104,11 +104,5 @@ func QUICListenOn(e *SharedEndpoint, identityCertPEM, identityKeyPEM, pinnedSPKI
 	if err != nil {
 		return nil, err
 	}
-	return &quicListener{
-		mux: e.mux, tr: e.tr, ln: ln,
-		ownsEndpoint: false,
-		done:         make(chan struct{}),
-		ready:        make(chan *Conn, maxConcurrentHandshakes),
-		sem:          make(chan struct{}, maxConcurrentHandshakes),
-	}, nil
+	return newQUICListener(e.mux, e.tr, ln, false), nil
 }
