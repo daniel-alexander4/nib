@@ -3462,7 +3462,7 @@ Tasks (firmed 2026-08-22):
   `ProbeSelf` measures and S08b publishes) is the one the race dials from.
 - **T05 — seam rows**: the source-port assertion; the winner-survives-loser-teardown observable.
 
-#### P05.S08b — The IPv4 punch *(D8 tier 4, D16, D17, D33; rests on S08)* *(firmed 2026-08-22, deepdive + grill)*
+#### P05.S08b — The IPv4 punch *(D8 tier 4, D16, D17, D33; rests on S08)* *(in progress — T04+T05 done 2026-08-22, v1.117.60; T01-T03,T06,T07 outstanding)*
 Acceptance: criterion 14's cadence step-down, driven; QUIC-only by D8's transport pin; a punch
 completes a ceremony over the opened hole with the arm listening and the initiator dialing.
 
