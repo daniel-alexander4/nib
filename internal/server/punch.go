@@ -1,6 +1,9 @@
 package server
 
 import (
+	"context"
+	"net"
+	"net/netip"
 	"sync"
 	"time"
 )
@@ -69,4 +72,67 @@ func (b *punchBudget) report() (spent, dropped int) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	return b.spent, b.dropped
+}
+
+// ipv4Target returns the candidate's address as a *net.UDPAddr if it is a punch target — an
+// IPv4 address (tier 3 mapped or tier 4 reflexive). IPv6 (tier 2) is dialled directly and needs
+// no hole; a LAN candidate never reaches here (it is not DHT-signalled). Returns nil otherwise,
+// so the punch spends no budget on an address that does not need it.
+func ipv4Target(c candidate) *net.UDPAddr {
+	ap, err := netip.ParseAddrPort(c.Addr)
+	if err != nil || !ap.Addr().Unmap().Is4() {
+		return nil
+	}
+	return net.UDPAddrFromAddrPort(ap)
+}
+
+// punchLoop emits NAT-opening datagrams to each IPv4 candidate at the stepping-down cadence,
+// sharing one per-side budget, until the context ends or the budget is exhausted. Both the
+// armed side and the dialing side run one (the punch is symmetric-send, D17).
+//
+// **`interval` is a parameter, not a call to `punchInterval` directly** (grill CONFIRMED-5): a
+// test drives the REAL loop with a fast interval, so "the sender emits on a step-down cadence,
+// bounded by the budget" is exercised rather than only the pure function. Production passes
+// `punchInterval`.
+func punchLoop(ctx context.Context, punch func(net.Addr) error, budget *punchBudget, cands <-chan candidate, interval func(time.Duration) time.Duration) {
+	start := time.Now()
+	var wg sync.WaitGroup
+	feed := func() {
+		defer wg.Done()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case c, ok := <-cands:
+				if !ok {
+					return
+				}
+				addr := ipv4Target(c)
+				if addr == nil {
+					continue // not an IPv4 punch target — no budget spent
+				}
+				wg.Add(1)
+				go punchOne(ctx, punch, budget, addr, start, interval, &wg)
+			}
+		}
+	}
+	wg.Add(1)
+	feed()
+	wg.Wait()
+}
+
+// punchOne retransmits to one address until the context ends or the shared budget is spent.
+func punchOne(ctx context.Context, punch func(net.Addr) error, budget *punchBudget, addr net.Addr, start time.Time, interval func(time.Duration) time.Duration, wg *sync.WaitGroup) {
+	defer wg.Done()
+	for {
+		if !budget.spend() {
+			return // per-side budget exhausted: drop-and-report (report() carries the count)
+		}
+		_ = punch(addr)
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(interval(time.Since(start))):
+		}
+	}
 }
