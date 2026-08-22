@@ -292,31 +292,38 @@ func TestTheTwoLawFiguresBindTheRace(t *testing.T) {
 	// candidates from one source. That is no longer what happens: a single source is stopped
 	// at `maxCandidatesPerSource` long before the global figure is reached, so a fixture
 	// like the old one measures the per-source cap while claiming to measure the global one.
-	sources := []candidateSource{sourceTyped, sourceLAN}
-	if len(sources)*maxCandidatesPerSource < maxRaceCandidates {
-		t.Fatalf("setup: %d sources x %d cannot reach the global cap of %d, so this fixture "+
-			"cannot fill the race and the timing assertion below is vacuous",
-			len(sources), maxCandidatesPerSource, maxRaceCandidates)
+	// **The prediction this test wrote down came true, and nobody came back.** It used to
+	// hold its own two-entry source list and said, in as many words, that with two sources
+	// the caps "coincide exactly, which means the global cap is a backstop that cannot fire
+	// — it becomes reachable again the moment P05.S04 adds the rendezvous as a third
+	// source. When it does … the size half below wants driving through the global figure as
+	// well." S04 added it (v1.117.35). The list here was not updated, so the branch that was
+	// supposed to notice never ran, and the global figure has never been driven at all.
+	// The list is now read from the one door (ADR-009) and the global case is a test of its
+	// own, below.
+	sources := allCandidateSources()
+
+	// Stay inside BOTH caps, so a drop here means the per-source cap is wrong rather than
+	// the global one binding. With three sources these no longer coincide, so the share is
+	// derived rather than assumed to be the per-source cap.
+	perSource := maxRaceCandidates / len(sources)
+	if perSource > maxCandidatesPerSource {
+		perSource = maxCandidatesPerSource
 	}
-	// And the state of that arithmetic TODAY, recorded so the next slice cannot change it
-	// silently. With two sources the two figures coincide exactly, which means the global
-	// cap is a backstop that cannot fire — it becomes reachable again the moment P05.S04
-	// adds the rendezvous as a third source. When it does, this branch stops being taken
-	// and the size half below wants driving through the global figure as well.
-	if len(sources)*maxCandidatesPerSource > maxRaceCandidates {
-		t.Logf("the global cap (%d) now binds before the per-source caps (%d sources x %d) — "+
-			"a third source exists, so the size bound wants a case that reaches it",
-			maxRaceCandidates, len(sources), maxCandidatesPerSource)
+	if len(sources)*perSource > maxRaceCandidates {
+		t.Fatalf("setup: %d sources x %d exceeds the global cap of %d, so the "+
+			"nothing-is-dropped assertion below would be asserting the wrong law",
+			len(sources), perSource, maxRaceCandidates)
 	}
 
-	// Fill every source to its cap: enough dials to need more than one wave at the
+	// Fill every source to its share: enough dials to need more than one wave at the
 	// concurrency bound, with nothing dropped, so the timing assertion is about batching
 	// and not about the cap.
 	var cands []candidate
-	for i := 0; i < maxCandidatesPerSource; i++ {
+	for i := 0; i < perSource; i++ {
 		for j, src := range sources {
 			cands = append(cands, candidate{
-				Addr:      fmt.Sprintf("203.0.113.%d:9", j*maxCandidatesPerSource+i+1),
+				Addr:      fmt.Sprintf("203.0.113.%d:9", j*perSource+i+1),
 				Transport: "tcp",
 				Source:    src,
 			})
@@ -356,6 +363,77 @@ func TestTheTwoLawFiguresBindTheRace(t *testing.T) {
 			"were all dialled at once, so the concurrency bound of %d is not being applied "+
 			"and our own racer can occupy a peer's whole handshake pool",
 			len(cands), elapsed, lanDialTimeout, maxConcurrentDials)
+	}
+}
+
+// TestTheGlobalCapBindsWhenEverySourceIsFull is the half the test above could not reach, and
+// it had never been driven.
+//
+// `maxRaceCandidates` is D16's law figure. Until P05.S04 there were two sources and
+// 2 x `maxCandidatesPerSource` came to exactly `maxRaceCandidates`, so the global cap was a
+// backstop that could not fire: every fixture in the tree was stopped by a per-source cap
+// first, and a global figure changed to any value at or above the per-source total would have
+// passed the whole suite. S04 added the third source and made it reachable; this is the first
+// test that reaches it.
+//
+// It also drives the **attribution** half on the path that matters. All three sources flood,
+// so all three drop — and until the one-door fix, `dropReport` walked a two-entry list, which
+// meant a race flooded from the meeting point alone reported "source unknown" while the
+// counter knew exactly which source it was. That is D6's case: the meeting point is the one
+// source an attacker supplies.
+func TestTheGlobalCapBindsWhenEverySourceIsFull(t *testing.T) {
+	if testing.Short() {
+		t.Skip("spends two dial timeouts against black-holed addresses")
+	}
+	cert, key, err := sign.GenerateIdentity("Ada")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sources := allCandidateSources()
+
+	// SETUP: every source full must EXCEED the global cap, or this test measures the
+	// per-source caps again under a different name.
+	if len(sources)*maxCandidatesPerSource <= maxRaceCandidates {
+		t.Fatalf("setup: %d sources x %d does not exceed the global cap of %d, so the global "+
+			"figure cannot bind and this test cannot tell it from the per-source ones",
+			len(sources), maxCandidatesPerSource, maxRaceCandidates)
+	}
+
+	var cands []candidate
+	for i := 0; i < maxCandidatesPerSource; i++ {
+		for j, src := range sources {
+			cands = append(cands, candidate{
+				Addr:      fmt.Sprintf("203.0.113.%d:9", j*maxCandidatesPerSource+i+1),
+				Transport: "tcp",
+				Source:    src,
+			})
+		}
+	}
+
+	_, derr := dialAny(cands, cert, key, make([]byte, 32))
+	if derr == nil {
+		t.Fatal("the race connected to TEST-NET-3")
+	}
+	// The global figure, not the sum of the per-source ones.
+	want := fmt.Sprintf("tried %d address(es)", maxRaceCandidates)
+	if !strings.Contains(derr.Error(), want) {
+		t.Errorf("%d candidates across %d sources, each within its own share of %d, produced "+
+			"%q; the global cap of %d must bind, or D16's law figure is one no fixture can "+
+			"reach", len(cands), len(sources), maxCandidatesPerSource, derr, maxRaceCandidates)
+	}
+	dropped := len(cands) - maxRaceCandidates
+	if !strings.Contains(derr.Error(), fmt.Sprintf("dropped %d", dropped)) {
+		t.Errorf("the failure says %q; %d candidates over a cap of %d must report %d dropped",
+			derr, len(cands), maxRaceCandidates, dropped)
+	}
+	// **Attribution, per source.** Not "some source is named" — every source that actually
+	// dropped must be named, which is what a two-entry reporter over three sources fails.
+	for _, src := range sources {
+		if !strings.Contains(derr.Error(), src.String()) {
+			t.Errorf("the failure sentence is %q and never names %q, which dropped candidates "+
+				"in this race. A per-source split that the report cannot render is the same as "+
+				"no split — and the unnamed source is the one an attacker supplies", derr, src)
+		}
 	}
 }
 

@@ -525,7 +525,7 @@ func raceFailure(tried int, dropped int64, bySource string, last error) error {
 // can be compared with another's.
 func dropReport(m *sync.Map) string {
 	var parts []string
-	for _, src := range []candidateSource{sourceTyped, sourceLAN} {
+	for _, src := range allCandidateSources() {
 		if v, ok := m.Load(src); ok {
 			if n := v.(*atomic.Int64).Load(); n > 0 {
 				parts = append(parts, fmt.Sprintf("%d from %s", n, src))

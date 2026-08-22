@@ -3223,7 +3223,20 @@ Tasks (grilled 2026-08-21, after a deepdive and a six-adversary attack):
   assignments, a planted range-shaped pin passes.
 - **The socket-sharing criterion — the probe-and-session half is MET** (the DHT and the armed
   listener on one socket, asserted on the socket and with a real datagram; the teardown order
-  driven, its reversal producing a live process-killing panic). **The racing-dialer half is
+  driven, its reversal producing a live process-killing panic). **(CORRECTED 2026-08-22, at
+  P05.S05's open: "asserted on the socket" was an assertion that could not fail.** The clause was
+  discharged by `ln.Addr().String() != cer.end.LocalAddr().String()`, and both sides are
+  `e.mux.LocalAddr()` on the same `*udpmux.Mux` — `quicListener.Addr()` is `l.mux.LocalAddr()`
+  (`internal/p2p/quic.go:237`), `SharedEndpoint.LocalAddr()` is `e.mux.LocalAddr()`
+  (`internal/p2p/endpoint.go:68`), and both bottom out in `m.pc.LocalAddr()`
+  (`internal/udpmux/mux.go:202`). It compared a value with itself, for any bind string in any
+  address family. The UDP probe beside it proved the socket was *reachable*, never that it was
+  *shared*. **What one socket serving two consumers actually means is a demultiplex**, so the
+  clause is now driven by sending a QUIC-shaped and a KRPC-shaped datagram to the one address and
+  asserting they reach different views (`RoutedLongHeader` and `RoutedToDHT` both move) — which
+  also gives two of the mux routing counters their first reader. Red-proved in isolation, with
+  the addresses still equal, as `shared-socket-not-demultiplexed`. **The criterion is met on the
+  new evidence; it was not met on the old.** v1.117.42.) **The racing-dialer half is
   NOT EXERCISED and moves to S06/S08/S09** — see below.
 - **T13b's deferral is NOT EXERCISED end to end.** Hermetically the bootstrap finds no nodes
   and returns early, so the publish never happens *for the wrong reason* and no test can tell
@@ -3260,8 +3273,22 @@ Acceptance:
 - **L1's consumer guard is widened to this slice's wire types before a record reaches a pin.** `wireType` matches the single substring `discovery.` (`internal/server/l1_test.go`), and `CandidateRecord.Fingerprint()` derives a pin from the record's own `SPKI` (`internal/ceremony/candidate.go:164`).
 
 #### P05.S05 — The IPv6 tier *(D8 tier 2; criterion 1)*
-Scope: the arm's default bind is `0.0.0.0:0` (`session.go:659`) — v4-only, so tier 2 cannot work today. Dual-stack bind; this host's global v6 addresses become candidates.
-Acceptance: criterion 1 (Dan-only run, harness reduced to one command); a driven hermetic analogue over v6 loopback/ULA; and no v4 regression.
+~~Scope: the arm's default bind is `0.0.0.0:0` (`session.go:659`) — v4-only, so tier 2 cannot work today. Dual-stack bind; this host's global v6 addresses become candidates.~~
+**Scope re-stated 2026-08-22 (tagged pin, at the slice's open — the premise was MEASURED false, not re-argued).** Two errors, and the second is the one that matters:
+
+- **The line cite was stale.** The default bind is `session.go:807`, not `:659`.
+- **The bind is not v4-only. It is already dual-stack, and it always was.** Measured on this host rather than read from the stdlib: `net.ListenPacket("udp", "0.0.0.0:0")` returns a socket with `SO_DOMAIN=AF_INET6` and `IPV6_V6ONLY=0`, whose `LocalAddr()` reads back `[::]:port` — and a datagram sent to `[::1]:port` **arrives on it**. `net.Listen("tcp", "0.0.0.0:0")` is the same. Go rewrites a wildcard listen to `AF_INET6` dual-stack wherever `supportsIPv4map()` holds (`net/ipsock_posix.go`), which is every platform Nib targets; the exceptions are OpenBSD and DragonFly, which it does not. **So "change the bind" is not this slice's work — the bind is already right, and there is no test in the tree that says so, which is why three sessions could read the line and believe it.**
+
+**Where tier 2 actually fails, read at the line.** A dual-stack socket gets a v6 tier no closer, because nothing ever produces a v6 candidate to dial:
+
+- **The DHT never learns a v6 node.** Every shipped bootstrap seed is an IPv4 literal (`internal/rendezvous/seeds.go:69-75`), and `dht.ServerConfig` is built without `DefaultWant` (`internal/rendezvous/dht.go:320-388`), so `find_node` goes out with `Want: nil` and a responder answers with the family of the query source — v4 in, v4 out. `Get` (BEP-44) is the one query that asks for both, so the table is *starved* rather than structurally v4-only.
+- **So the probe's v6 half is dead in practice.** `classify(obs, true)` (`internal/rendezvous/selfaddr.go:159`) is correct code with no input, so `SelfAddress.V6.Addr` is the zero value on a real host.
+- **And a dual-stack host could not advertise both families anyway.** `publishCandidates` takes `self.V4.Addr`, falls back to `self.V6.Addr` only when v4 is invalid, and publishes **exactly one** endpoint (`internal/server/ceremonynet.go:81-96`). The v6 fallback is unreachable whenever v4 works — which is the case tier 2 is for.
+- **Nothing gathers host candidates at all.** There is no ICE-style local-interface enumeration anywhere in the tree; the only two self-address sources are the DHT reflexive probe and the LAN tier's observed peer source address. So "this host's global v6 addresses become candidates" describes a mechanism that does not exist, rather than one that is v4-limited.
+
+**Scope, restated:** a guard that pins the dual-stack bind as a *property* rather than a comment; the DHT asking for and keeping v6 nodes (`DefaultWant`, a v6-reachable seed); a published record carrying **both** families rather than one; and the v6 dial branch (`localWildcardFor`, `internal/p2p/quic.go:147-152`) getting its first test of any kind — it is the only family-selecting function in the tree and it has none.
+
+Acceptance: criterion 1 (Dan-only run, harness reduced to one command); a driven hermetic analogue over v6 loopback/ULA; no v4 regression; **and the dual-stack bind asserted as a socket property, so a platform where it is not true fails rather than degrades silently**.
 
 #### P05.S06 — The port-mapping client: PCP, then NAT-PMP, then UPnP-IGD *(D15; caveats 6, 7, 8)*
 Scope: tier 3's mechanism. **Caveat 6 is discharged or refuted in this slice** — no Go port-mapping dependency exists in the tree and its licence-compatibility is explicitly an unverified assumption; the caveat's own fallback ("if only some protocols are covered, the tier still ships — with narrower router coverage, recorded rather than assumed") is the acceptable outcome. Caveat 7 decides where the request is sent FROM.

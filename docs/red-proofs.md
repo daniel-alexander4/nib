@@ -27,7 +27,7 @@ is the point. A row is only added after the red was observed — never from inte
 applies the row's defect as a patch, runs the named check, and **asserts the check FAILS**.
 `./build/redproof.sh` with no argument lists what is recorded.
 
-**Sixteen rows are replayable** (v1.117.41; nine at v1.117.26, six added at v1.117.39). Ask
+**Seventeen rows are replayable** (v1.117.42; nine at v1.117.26, six added at v1.117.39). Ask
 `./build/redproof.sh` with no argument rather than reading a list here — **this sentence said
 "nine" while the directory held fifteen**, because a count written into prose beside a set that
 grows is a second statement of one fact, and it is the one nobody updates. The count is guarded in
@@ -970,3 +970,41 @@ D21's evidence path was "construct a disagreeing invitation and observe the refu
 name on a roster entry there is nothing to disagree, so the clause is now discharged
 structurally and P07 inherits the obligation to derive a display name at the point of display.
 The amendment is written at the criterion in `PLAN-signing-ceremony.md`, not left implicit.
+
+## v1.117.42 — the assertion that could not fail, and the list that had three copies
+
+Pre-S05 remediation. Both defects were found while reconstructing P05.S04's missing seam-inventory
+section, which is the argument for reconstructing it.
+
+| Defect reintroduced | What it said | Check that fired |
+| --- | --- | --- |
+| **`udpmux.route`'s final arm sends everything to the QUIC view** *(replayable: `shared-socket-not-demultiplexed`)* | `a KRPC-shaped datagram sent to 127.0.0.1:40987 did not reach the DHT view (RoutedToDHT 0 -> 0); the DHT is not being served by this socket` | `TestTheDHTAndTheArmedListenerShareOneSocket`, **rewritten** — the defect leaves every address in the test equal, so the assertion it replaced could not see it |
+| **`dropReport` reverted to its two-entry source list** | `the failure sentence is "… dropped 8 over the cap (2 from the address you typed, 3 from the local network) …" and never names "the meeting point", which dropped candidates in this race` | `TestTheGlobalCapBindsWhenEverySourceIsFull` — a new test, because the global cap had never been driven at all |
+| **A fourth `candidateSource` declared but not listed** | `candidateSource(3) names itself "a relay", so a source exists that allCandidateSources() does not list` | `TestEveryCandidateSourceIsNamedAndRouted`, first half |
+| **A second `[]candidateSource` literal, in `dropReport`** | `a []candidateSource list is built at [discover.go:allCandidateSources lan.go:dropReport]; it must be built only in allCandidateSources (ADR-009)` | the same test's second half — the routing check, not an agreement check |
+
+**The first row is the one worth carrying, and it is a vacuous green that shipped as ledgered
+evidence.** P05.S04 discharged caveat 7's probe-and-session half with
+`ln.Addr().String() != cer.end.LocalAddr().String()` and recorded it in the plan as *"asserted on
+the socket"*. Both sides are `e.mux.LocalAddr()` on the same `*udpmux.Mux` — `quicListener.Addr()`
+is `l.mux.LocalAddr()` (`internal/p2p/quic.go:237`), `SharedEndpoint.LocalAddr()` is
+`e.mux.LocalAddr()` (`internal/p2p/endpoint.go:68`), and both reach `m.pc.LocalAddr()`
+(`internal/udpmux/mux.go:202`). **It compared a value with itself**, for any bind string, in any
+address family. The UDP probe beside it proved the socket was *reachable*, never that it was
+*shared* — and the test's own comment said the probe was there to stop exactly this, so the
+awareness was present and aimed one step short.
+
+**No red proof is recorded for the vacuity itself, deliberately.** A vacuous assertion cannot be
+proved vacuous by making it fail; it is proved by reading the three lines above, and that is the
+honest form of the claim. What IS red-proved is the replacement: the defect that breaks sharing
+while leaving every address equal.
+
+**The second and third rows are one defect at two altitudes.** `sourceDHT` was added by S04 to the
+enum and to nothing else, so the drop counter written for it (`lan.go`) was rendered by a reporter
+whose list did not include it. `raceFailure`'s own doc says *"a split nobody reports is the same as
+no split"* and names D6 — the meeting point is the one source an attacker supplies, so the
+unreportable source was the one that matters. The stale test list had additionally written down,
+in a comment, that S04 would make the global cap reachable and that someone should come back for
+it; the prediction was correct, the branch that would have logged it never ran, and the global
+figure had never been driven by anything.
+

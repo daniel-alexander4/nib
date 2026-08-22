@@ -1,6 +1,7 @@
 package server
 
 import (
+	"fmt"
 	"net"
 	"strconv"
 	"time"
@@ -79,16 +80,36 @@ const (
 	sourceDHT
 )
 
+// allCandidateSources is the ONE list of candidate sources, and every site that must walk
+// them reads it here (ADR-009).
+//
+// **It exists because there were three lists and they disagreed.** The constants above,
+// `dropReport`'s walk (`lan.go`) and `TestTheTwoLawFiguresBindTheRace`'s fixture each carried
+// their own, and P05.S04 added `sourceDHT` to the first only. The consequence was not
+// cosmetic: a race flooded from the meeting point counted its drops per source and then
+// reported **"source unknown"**, because the reporter's list had two entries — on the one
+// path where the flooding source is attacker-supplied (D6), which is the case
+// `raceFailure`'s own doc says the split exists for.
+func allCandidateSources() []candidateSource {
+	return []candidateSource{sourceTyped, sourceLAN, sourceDHT}
+}
+
 // String names the source in the failure sentence a lost race produces.
+//
+// **No silent default.** It used to end `default: return "the address you typed"`, so a source
+// added without a case here did not read as missing — it read as the user's own typing, in the
+// sentence a user is shown when a ceremony fails. A confident false statement is this project's
+// recorded worst defect class, and a default arm is how one gets written by omission.
 func (s candidateSource) String() string {
 	switch s {
+	case sourceTyped:
+		return "the address you typed"
 	case sourceLAN:
 		return "the local network"
 	case sourceDHT:
 		return "the meeting point"
-	default:
-		return "the address you typed"
 	}
+	return fmt.Sprintf("an unnamed source (%d)", uint8(s))
 }
 
 // transportOf maps the announcement's one-byte wire encoding onto the transport names

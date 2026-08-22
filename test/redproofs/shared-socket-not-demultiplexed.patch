@@ -1,0 +1,13 @@
+--- a/internal/udpmux/mux.go
++++ b/internal/udpmux/mux.go
+@@ -224,8 +224,8 @@
+ 		m.byPeer.Add(1)
+ 		return m.quic
+ 	}
+-	m.toDHT.Add(1)
+-	return m.dht
++	m.longHeader.Add(1)
++	return m.quic
+ }
+ 
+ // UseConnectionIDs tells the mux how long this endpoint's connection IDs are, and

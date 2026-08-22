@@ -4,10 +4,12 @@ import (
 	"encoding/hex"
 	"net"
 	"testing"
+	"time"
 
 	"nib/internal/p2p"
 	"nib/internal/rendezvous"
 	"nib/internal/sign"
+	"nib/internal/udpmux"
 )
 
 // TestTheDHTAndTheArmedListenerShareOneSocket — caveat 7's probe-and-session half.
@@ -54,17 +56,29 @@ func TestTheDHTAndTheArmedListenerShareOneSocket(t *testing.T) {
 			"so there is nothing here to be shared")
 	}
 
-	// **THE ASSERTION.** The armed listener's address and the endpoint the DHT is running on
-	// are one socket. Compared as resolved addresses, because `0.0.0.0:0` is what the LAN
-	// path asks for and the kernel is what says which port it got.
+	// **The address comparison this test used to lead with CANNOT FAIL, and it was the
+	// clause S04 ledgered as "asserted on the socket" (2026-08-22).**
+	//
+	// `ln` is built by `p2p.QUICListenOn(end, …)`, which passes `e.mux` straight into
+	// `newQUICListener` (`internal/p2p/endpoint.go:107`). `quicListener.Addr()` is
+	// `l.mux.LocalAddr()` (`internal/p2p/quic.go:237`) and `SharedEndpoint.LocalAddr()` is
+	// `e.mux.LocalAddr()` (`internal/p2p/endpoint.go:68`) — the same method on the same
+	// `*udpmux.Mux`, both bottoming out in `m.pc.LocalAddr()` (`internal/udpmux/mux.go:202`).
+	// It compared a value with itself, in every address family, for any bind string.
+	//
+	// It is kept because it is still a real wiring check — it goes red if a future listener
+	// stops being built from the endpoint's mux — but it is no longer what discharges the
+	// criterion, and the comment no longer claims it is.
 	if ln.Addr().String() != cer.end.LocalAddr().String() {
-		t.Fatalf("the listener answers on %s and the DHT is on %s — two sockets, so any "+
-			"mapping the probe measures belongs to one the session does not use, which is "+
-			"the whole of caveat 7", ln.Addr(), cer.end.LocalAddr())
+		t.Fatalf("the listener answers on %s and the DHT is on %s — the listener was not "+
+			"built from this endpoint's mux at all", ln.Addr(), cer.end.LocalAddr())
 	}
 
-	// And it is a REAL socket that a UDP peer can reach, not a bookkeeping coincidence: a
-	// test comparing two strings would pass against an endpoint that never bound anything.
+	// **THE ASSERTION.** One socket serving two consumers is not an address, it is a
+	// DEMULTIPLEX: a QUIC-shaped datagram and a KRPC-shaped datagram, sent to the SAME
+	// address by the same stranger, must reach DIFFERENT views. Two sockets cannot produce
+	// that reading, and neither can an endpoint that bound nothing.
+	before := cer.end.Stats()
 	ua, err := net.ResolveUDPAddr("udp", cer.end.LocalAddr().String())
 	if err != nil {
 		t.Fatal(err)
@@ -74,8 +88,41 @@ func TestTheDHTAndTheArmedListenerShareOneSocket(t *testing.T) {
 		t.Fatalf("the shared address is not reachable over UDP: %v", err)
 	}
 	defer probe.Close()
+
+	// Long header — `route`'s rule 1 is `p[0]&0x80` (`internal/udpmux/mux.go:208`).
+	if _, err := probe.Write([]byte{0xc0, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00}); err != nil {
+		t.Fatalf("writing a QUIC-shaped datagram to the shared socket failed: %v", err)
+	}
+	// KRPC — a short header from an address the mux has never seen, so it matches no rule
+	// and falls through to the DHT.
 	if _, err := probe.Write([]byte("d1:q4:ping1:y1:qe")); err != nil {
-		t.Errorf("writing a KRPC-shaped datagram to the shared socket failed: %v", err)
+		t.Fatalf("writing a KRPC-shaped datagram to the shared socket failed: %v", err)
+	}
+
+	// The read loop is asynchronous, so poll rather than assuming delivery has happened.
+	var after udpmux.Stats
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		after = cer.end.Stats()
+		if after.RoutedLongHeader > before.RoutedLongHeader && after.RoutedToDHT > before.RoutedToDHT {
+			break
+		}
+		if time.Now().After(deadline) {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if after.RoutedLongHeader <= before.RoutedLongHeader {
+		t.Errorf("a QUIC-shaped datagram sent to %s did not reach the QUIC view "+
+			"(RoutedLongHeader %d -> %d); the listener is not being served by this socket, so "+
+			"any mapping the probe measures belongs to a socket the session does not use — "+
+			"which is the whole of caveat 7",
+			cer.end.LocalAddr(), before.RoutedLongHeader, after.RoutedLongHeader)
+	}
+	if after.RoutedToDHT <= before.RoutedToDHT {
+		t.Errorf("a KRPC-shaped datagram sent to %s did not reach the DHT view "+
+			"(RoutedToDHT %d -> %d); the DHT is not being served by this socket",
+			cer.end.LocalAddr(), before.RoutedToDHT, after.RoutedToDHT)
 	}
 }
 
