@@ -4,7 +4,6 @@ import (
 	"crypto/rand"
 	"encoding/binary"
 	"errors"
-	"net/netip"
 	"strings"
 	"testing"
 	"time"
@@ -28,9 +27,9 @@ func gateFor(t *testing.T) (*CandidateGate, Invitation, []byte, []byte, string) 
 // sealN makes a valid record from A carrying n candidates starting at `from`.
 func sealN(t *testing.T, inv Invitation, certA, keyA []byte, fpA string, from, n int) []byte {
 	t.Helper()
-	var addrs []netip.AddrPort
+	var addrs []Endpoint
 	for i := 0; i < n; i++ {
-		addrs = append(addrs, netip.MustParseAddrPort("93.184.216."+itoa(from+i)+":34154"))
+		addrs = append(addrs, ep("93.184.216."+itoa(from+i)+":34154"))
 	}
 	c := CandidateRecord{CeremonyID: inv.ID, Hop: testHop,
 		Expires: time.Now().Add(10 * time.Minute), Addrs: addrs}
@@ -162,7 +161,7 @@ func TestAnOverCapRecordIsRefusedWhole(t *testing.T) {
 func signCandidateSPKIForTest(t *testing.T, certPEM, keyPEM []byte) ([]byte, error) {
 	t.Helper()
 	c := CandidateRecord{CeremonyID: "x", Hop: 0, Expires: time.Now().Add(time.Minute),
-		Addrs: []netip.AddrPort{netip.MustParseAddrPort("93.184.216.34:34154")}}
+		Addrs: []Endpoint{ep("93.184.216.34:34154")}}
 	if err := c.Sign(certPEM, keyPEM); err != nil {
 		return nil, err
 	}
@@ -200,9 +199,9 @@ func TestARepeatWithinARecordIsNotTheSameFactAsARefetch(t *testing.T) {
 
 	// (b) the attack shape: one record naming the same address repeatedly.
 	g2, inv2, certB, keyB, fpB := gateFor(t)
-	victim := netip.MustParseAddrPort("93.184.216.55:34154")
+	victim := ep("93.184.216.55:34154")
 	c := CandidateRecord{CeremonyID: inv2.ID, Hop: testHop, Expires: time.Now().Add(time.Minute),
-		Addrs: []netip.AddrPort{victim, victim, victim, victim}}
+		Addrs: []Endpoint{victim, victim, victim, victim}}
 	if err := c.Sign(certB, keyB); err != nil {
 		t.Fatal(err)
 	}
@@ -315,7 +314,7 @@ func TestEveryRefusalCauseIsCountedSeparately(t *testing.T) {
 	rk, _ := inv.RecordKey(testHop)
 	saltA, _ := inv.RecordSalt(testHop, fpA)
 	cb := CandidateRecord{CeremonyID: inv.ID, Hop: testHop, Expires: time.Now().Add(time.Minute),
-		Addrs: []netip.AddrPort{netip.MustParseAddrPort("93.184.216.7:34154")}}
+		Addrs: []Endpoint{ep("93.184.216.7:34154")}}
 	if err := cb.Sign(certB, keyB); err != nil {
 		t.Fatal(err)
 	}
@@ -328,7 +327,7 @@ func TestEveryRefusalCauseIsCountedSeparately(t *testing.T) {
 	}
 	// expired -> Expired
 	ce := CandidateRecord{CeremonyID: inv.ID, Hop: testHop, Expires: time.Now().Add(-time.Minute),
-		Addrs: []netip.AddrPort{netip.MustParseAddrPort("93.184.216.8:34154")}}
+		Addrs: []Endpoint{ep("93.184.216.8:34154")}}
 	if err := ce.Sign(certA, keyA); err != nil {
 		t.Fatal(err)
 	}
@@ -365,7 +364,7 @@ func TestABogonCandidateIsRefused(t *testing.T) {
 	} {
 		c := CandidateRecord{CeremonyID: inv.ID, Hop: testHop,
 			Expires: time.Now().Add(time.Minute),
-			Addrs:   []netip.AddrPort{netip.MustParseAddrPort(bad)}}
+			Addrs:   []Endpoint{ep(bad)}}
 		if err := c.Sign(certA, keyA); !errors.Is(err, ErrCandidateUnroutable) {
 			t.Errorf("%s: Sign returned %v, want ErrCandidateUnroutable — Nib would publish "+
 				"an address it will not dial", bad, err)
@@ -445,6 +444,11 @@ func rawPlaintext(t *testing.T, inv Invitation, spki []byte, addrs []string, sig
 	p.addUint(uint64(len(addrs)))
 	for _, a := range addrs {
 		p.addString(a)
+		// The transport chunk, interleaved, exactly as preimage() writes it. Restated by
+		// hand ON PURPOSE: this helper exists so a test can build a plaintext WITHOUT the
+		// function under test. Sealing with preimage() would move both sides together,
+		// which is how the original defect hid (see the note on TestSealRefusesAModified…).
+		p.addUint(uint64(TransportTCP))
 	}
 	var l [8]byte
 	binary.BigEndian.PutUint64(l[:], uint64(len(sig)))

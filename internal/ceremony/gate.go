@@ -3,7 +3,6 @@ package ceremony
 import (
 	"errors"
 	"fmt"
-	"net/netip"
 	"time"
 )
 
@@ -116,8 +115,13 @@ type CandidateGate struct {
 	key  []byte
 	salt []byte
 
-	seen  map[netip.AddrPort]bool
-	addrs []netip.AddrPort
+	// Keyed on the ENDPOINT, which is address AND transport. Keying on the address alone
+	// would count a party legitimately offering the same host:port over both transports as
+	// a DroppedDuplicate — a counter whose own doc says "nobody honest does this… non-zero
+	// here is a modified peer". D15 has both UDP and TCP mapped when both are offered, so
+	// that is an ordinary publisher, not a forgery signal.
+	seen  map[Endpoint]bool
+	addrs []Endpoint
 	stats CandidateStats
 }
 
@@ -138,7 +142,7 @@ func NewCandidateGate(inv Invitation, hop int, counterparty string) (*CandidateG
 	return &CandidateGate{
 		inv: inv, hop: hop, want: counterparty,
 		key: key, salt: salt,
-		seen: make(map[netip.AddrPort]bool),
+		seen: make(map[Endpoint]bool),
 	}, nil
 }
 
@@ -211,7 +215,7 @@ func (g *CandidateGate) Accept(sealed []byte, now time.Time) error {
 		g.stats.acceptedRecords--
 		return nil
 	}
-	inThisRecord := make(map[netip.AddrPort]bool, len(rec.Addrs))
+	inThisRecord := make(map[Endpoint]bool, len(rec.Addrs))
 	for _, a := range rec.Addrs {
 		switch {
 		case inThisRecord[a]:
@@ -249,8 +253,8 @@ func (g *CandidateGate) Accept(sealed []byte, now time.Time) error {
 }
 
 // Candidates is the race set, in arrival order.
-func (g *CandidateGate) Candidates() []netip.AddrPort {
-	return append([]netip.AddrPort(nil), g.addrs...)
+func (g *CandidateGate) Candidates() []Endpoint {
+	return append([]Endpoint(nil), g.addrs...)
 }
 
 // Stats is the report.

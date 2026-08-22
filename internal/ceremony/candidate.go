@@ -74,7 +74,15 @@ import (
 const candidateDomain = "nib-candidate-record-v1"
 
 // CandidateFormatVersion is inside the preimage, first after the domain tag (D32).
-const CandidateFormatVersion = 1
+//
+// **2 as of P05.S04: each endpoint now carries its transport.** Version 1 is REFUSED, not
+// best-guessed, for ADR-010's own reason applied to a second format — a version-1 record's
+// port could be either transport, so reading one means guessing, which is the defect the
+// field exists to remove. Nib has no users and forbids compatibility shims (CLAUDE.md), and
+// the only writer version 1 ever had is a self-test that round-trips inside one process, so
+// there is no version-1 speaker to keep working. The bump is free now and would not be
+// later: the first ceremony run between two real machines is the moment it stops being.
+const CandidateFormatVersion = 2
 
 // MaxCandidateLife caps how far ahead a record may claim to be valid.
 //
@@ -137,6 +145,60 @@ var (
 )
 
 // CandidateRecord is one party's endpoints at one hop.
+// Transport names the socket an endpoint's port belongs to.
+//
+// **A byte, and this package's own, not internal/discovery's.** ADR-010 established the
+// shape — a wire format owns a byte, internal/p2p owns a string, and internal/server is the
+// one layer that holds both — and this is a second wire format, so it owns a second byte.
+// Reusing `discovery.Transport` was refused for a specific reason rather than on layering
+// taste: that constant is the LAN multicast format's encoding, and this one goes inside a
+// SIGNED preimage. Sharing it would mean a change to an unrelated protocol's byte
+// assignment silently changing what a signature commits to.
+//
+// An enumeration rather than a string, verbatim ADR-010's argument: the parser's whole job
+// becomes a range check, where a string would let an unauthenticated record choose how many
+// bytes this package allocates and how they are compared, for a field with two legal values.
+type Transport uint8
+
+const (
+	// TransportTCP is zero, so a record that predates the field cannot be silently read as
+	// a QUIC one. It cannot be read at all — the version refuses it — but the zero value
+	// being the conservative case is worth having anyway.
+	TransportTCP  Transport = 0
+	TransportQUIC Transport = 1
+)
+
+func (t Transport) String() string {
+	switch t {
+	case TransportQUIC:
+		return "quic"
+	default:
+		return "tcp"
+	}
+}
+
+// valid is the range check. An unknown value is refused rather than defaulted, because
+// defaulting it to TCP is the same guess ADR-010 removed, made on a byte an attacker picked.
+func (t Transport) valid() bool { return t == TransportTCP || t == TransportQUIC }
+
+// Endpoint is one place to reach a party: an address AND the socket its port belongs to.
+//
+// **The transport is here because a port without it is not an address.** That is ADR-010,
+// and it was decided four days after this file last changed — so the record shipped carrying
+// bare `netip.AddrPort` values while `internal/server`'s own candidate type had already
+// grown a Transport field for exactly this reason, and the racer had begun keying its dedupe
+// on the pair. A DHT candidate arriving without one leaves the dialer to guess, which is
+// precisely the defect ADR-010 exists to remove, one layer up.
+//
+// Comparable, so it can be a map key: that is what makes the gate's dedupe
+// `(address, transport)` rather than address alone, without the gate having to say so.
+type Endpoint struct {
+	Addr      netip.AddrPort
+	Transport Transport
+}
+
+func (e Endpoint) String() string { return e.Addr.String() + "/" + e.Transport.String() }
+
 type CandidateRecord struct {
 	Version int
 	// CeremonyID binds the record to this ceremony. Without it a roster member who is in
@@ -154,8 +216,8 @@ type CandidateRecord struct {
 	// go in the preimage (getput chooses it at publish time), and a recorded ciphertext
 	// is replayable by anyone who saw it at a higher seq.
 	Expires time.Time
-	// Addrs are the endpoints to dial.
-	Addrs []netip.AddrPort
+	// Addrs are the endpoints to dial, each with the transport its port belongs to.
+	Addrs []Endpoint
 	// Sig is ECDSA-P256-ASN.1 over the preimage digest.
 	Sig []byte
 }
@@ -194,12 +256,17 @@ func (c CandidateRecord) preimage() ([]byte, error) {
 	if len(c.SPKI) == 0 {
 		return nil, errors.New("candidate record has no public key")
 	}
-	for _, a := range c.Addrs {
+	for _, e := range c.Addrs {
 		// Symmetric with the parse: we will not publish an address we would refuse to
 		// receive. Without this, a bug upstream turns Nib into the thing this rule exists
 		// to protect other people from.
-		if !addrscope.Target(a) {
-			return nil, fmt.Errorf("%w: %s", ErrCandidateUnroutable, a)
+		if !addrscope.Target(e.Addr) {
+			return nil, fmt.Errorf("%w: %s", ErrCandidateUnroutable, e.Addr)
+		}
+		// And the transport, on the same principle: a value this build does not know is
+		// refused rather than written, so no honest publisher can emit one.
+		if !e.Transport.valid() {
+			return nil, fmt.Errorf("%w: transport %d", ErrCandidateFormat, e.Transport)
 		}
 	}
 	var p preimageBuilder
@@ -210,8 +277,13 @@ func (c CandidateRecord) preimage() ([]byte, error) {
 	p.add(c.SPKI)
 	p.addString(c.Expires.UTC().Format(time.RFC3339))
 	p.addUint(uint64(len(c.Addrs)))
-	for _, a := range c.Addrs {
-		p.addString(a.String())
+	for _, e := range c.Addrs {
+		// Interleaved, one chunk each, rather than a parallel list of transports. A second
+		// count is a second thing that can disagree with the first — the shape
+		// `startAnnouncing` refuses in as many words: "a port and a transport carried
+		// separately are two facts that can disagree".
+		p.addString(e.Addr.String())
+		p.addUint(uint64(e.Transport))
 	}
 	return p.bytes(), nil
 }
@@ -462,6 +534,25 @@ func parseCandidate(b []byte) (CandidateRecord, error) {
 	if c.Version, ok = num(); !ok {
 		return CandidateRecord{}, ErrCandidateFormat
 	}
+	// **Checked HERE, before a single body byte is interpreted, and with its own sentinel.**
+	//
+	// It used to be read here and checked only in Verify, which runs after OpenCandidate has
+	// already returned — so the parser had to survive a foreign grammar unaided. Measured
+	// against a v2 parser: a v1 record with ZERO addresses parses cleanly, canonical
+	// re-encode check and all, because with no addresses the two grammars are byte-identical;
+	// and every v1 record with addresses is refused as a bare ErrCandidateFormat with the
+	// version it just read thrown away.
+	//
+	// That second half matters more than it looks. Version is deliberately OUTSIDE the AEAD
+	// associated data (see candidateAAD) precisely so a format skew surfaces as "two builds
+	// disagree" rather than as an accusation of tampering — thirteen lines are spent on it
+	// there. Refusing at the parser with the version discarded throws that away one step
+	// earlier, so the sentence is restored here: ErrVersion, naming both sides, exactly as
+	// the sibling format does in record.go.
+	if c.Version != CandidateFormatVersion {
+		return CandidateRecord{}, fmt.Errorf("%w: candidate record version %d (this build writes %d)",
+			ErrVersion, c.Version, CandidateFormatVersion)
+	}
 	id, ok := next()
 	if !ok {
 		return CandidateRecord{}, ErrCandidateFormat
@@ -490,9 +581,21 @@ func parseCandidate(b []byte) (CandidateRecord, error) {
 	// attacker and not merely an honest publisher. Its own sentinel, so the refusal can be
 	// counted as what it is (P04.S04).
 	//
-	// The byte cap is not a substitute for this and the numbers say why: measured, 8
-	// candidates seal to 573 bytes and **24 still fit** under the 996-byte ceiling, three
-	// times D33's N. Deleting this line left the whole repo green until P04.S04 drove it.
+	// The byte cap is not a substitute for this and the numbers say why: measured at
+	// format version 2, 8 IPv4 candidates seal to **701 bytes** under the 996-byte ceiling,
+	// so the count is still the binding bound. Deleting this line left the whole repo green
+	// until P04.S04 drove it.
+	//
+	// **The margin narrowed sharply at the version-2 bump and that is worth recording**,
+	// because it is the kind of thing rediscovered by a failure rather than by reading. The
+	// transport chunk costs 16 bytes per endpoint (an 8-byte length prefix and an 8-byte
+	// value), so: 8 IPv4 went 574 -> 701, and the IPv6 worst case — eight 47-character
+	// addresses with a maximum-length ECDSA signature — went **806 -> 932 of 996**. Headroom
+	// fell from 190 bytes to 64, and the number of IPv6 endpoints that fit fell from 11 to
+	// 8. So the count cap and the byte cap are now COINCIDENT for IPv6: any further axis
+	// added to this record makes a legitimate 8-candidate IPv6 record fail Seal with
+	// ErrCandidateTooBig, which is MaxCandidates becoming unreachable in the case the ladder
+	// exists to serve. The next axis wants a cheaper encoding, not another chunk.
 	if n > MaxCandidates {
 		return CandidateRecord{}, fmt.Errorf("%w: %d, cap is %d", ErrCandidateTooMany, n, MaxCandidates)
 	}
@@ -520,7 +623,20 @@ func parseCandidate(b []byte) (CandidateRecord, error) {
 		if !addrscope.Target(ap) {
 			return CandidateRecord{}, fmt.Errorf("%w: %s", ErrCandidateUnroutable, ap)
 		}
-		c.Addrs = append(c.Addrs, ap)
+		// The transport, interleaved with its address, range-checked here so the rest of
+		// the program never sees a value it has to interpret.
+		tv, ok := num()
+		if !ok || tv < 0 {
+			return CandidateRecord{}, ErrCandidateFormat
+		}
+		tr := Transport(tv)
+		if !tr.valid() || int(tr) != tv {
+			// `int(tr) != tv` catches a value that survived the narrowing to uint8 — 256
+			// would otherwise become 0 and read as TCP, which is a byte an attacker picked
+			// being silently defaulted, the exact thing the enumeration exists to stop.
+			return CandidateRecord{}, fmt.Errorf("%w: transport %d", ErrCandidateFormat, tv)
+		}
+		c.Addrs = append(c.Addrs, Endpoint{Addr: ap, Transport: tr})
 	}
 	consumed := all[:len(all)-len(b)] // the preimage: everything before the signature chunk
 	if c.Sig, ok = next(); !ok || len(c.Sig) == 0 {

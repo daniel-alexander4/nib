@@ -17,11 +17,17 @@ import (
 // means a test that silently dropped the hop would still have to explain itself.
 const testHop = 2
 
-func addrs(t *testing.T, n int) []netip.AddrPort {
+// ep is one endpoint at the default transport, for the many tests whose subject is not the
+// transport. Written out rather than defaulted so a reader can see that a choice was made.
+func ep(s string) Endpoint {
+	return Endpoint{Addr: netip.MustParseAddrPort(s), Transport: TransportTCP}
+}
+
+func addrs(t *testing.T, n int) []Endpoint {
 	t.Helper()
-	var out []netip.AddrPort
+	var out []Endpoint
 	for i := 0; i < n; i++ {
-		out = append(out, netip.MustParseAddrPort("93.184.216."+itoa(i+1)+":34154"))
+		out = append(out, ep("93.184.216."+itoa(i+1)+":34154"))
 	}
 	return out
 }
@@ -359,9 +365,9 @@ func TestAFullRecordFitsInABep44Value(t *testing.T) {
 	t.Logf("sealed record with %d candidates: %d bytes (cap %d)", MaxCandidates, len(sealed), MaxSealedRecord)
 	// IPv6 is the bigger case and is the one that will actually be published on the tiers
 	// this phase exists to build.
-	var six []netip.AddrPort
+	var six []Endpoint
 	for i := 0; i < MaxCandidates; i++ {
-		six = append(six, netip.MustParseAddrPort("[2606:4700:4700:1234:9abc:def0:1234:"+itoa(4096+i)+"]:65535"))
+		six = append(six, ep("[2606:4700:4700:1234:9abc:def0:1234:"+itoa(4096+i)+"]:65535"))
 	}
 	c6 := CandidateRecord{CeremonyID: inv.ID, Hop: testHop, Expires: time.Now().Add(time.Hour), Addrs: six}
 	if err := c6.Sign(certA, keyA); err != nil {
@@ -630,7 +636,7 @@ func TestSealRefusesARecordModifiedAfterSigning(t *testing.T) {
 		t.Fatalf("setup: the unmodified record did not seal: %v", err)
 	}
 
-	c.Addrs = append(c.Addrs, netip.MustParseAddrPort("93.184.216.99:34155"))
+	c.Addrs = append(c.Addrs, ep("93.184.216.99:34155"))
 	if _, err := c.Seal(rk, salt, testHop); err == nil {
 		t.Fatal("a record modified after signing sealed cleanly — the peer would refuse it " +
 			"as tampering in transit, which points at the wrong machine entirely")
@@ -748,6 +754,13 @@ func TestAVersionSkewedRecordSaysSoInsteadOfAccusingThePeer(t *testing.T) {
 	p.addString(time.Now().Add(time.Minute).UTC().Format(time.RFC3339))
 	p.addUint(1)
 	p.addString("93.184.216.34:34154")
+	// **A body this build CAN parse.** The version is the subject, so everything else must
+	// be well formed — otherwise the refusal could be a grammar mismatch wearing a version
+	// number, and the assertion below could not tell the two apart. Before P05.S04 bumped
+	// the format this line did not exist, and the moment it did the body became v1-shaped
+	// against a v2 parser: the test would have kept passing on ErrCandidateFormat, which is
+	// precisely the outcome this test exists to forbid.
+	p.addUint(uint64(TransportTCP))
 	var l [8]byte
 	binary.BigEndian.PutUint64(l[:], 8)
 	plain := append(p.bytes(), l[:]...)
@@ -789,12 +802,135 @@ func TestAVersionSkewedRecordSaysSoInsteadOfAccusingThePeer(t *testing.T) {
 			"counterparty of tampering when the truth is that two builds disagree about "+
 			"the format, which is the exact failure D32 exists to prevent", err)
 	}
-	if !errors.Is(err, ErrVersion) && !errors.Is(err, ErrCandidateFormat) {
-		t.Errorf("a version-skewed record was refused as %v; want the version to be named", err)
+	// **ErrVersion specifically, not "either sentinel will do".** The looser form accepted
+	// ErrCandidateFormat, which is the bare "this is not a candidate record this version of
+	// Nib understands" — the version read and then discarded. That is the outcome P05.S04's
+	// T03 removed by checking the version at the parser and naming both sides, so a test
+	// that still accepts it cannot distinguish the fix from its absence.
+	if !errors.Is(err, ErrVersion) {
+		t.Errorf("a version-skewed record was refused as %v; want ErrVersion, naming the "+
+			"version the record carries and the one this build writes", err)
+	}
+	if !strings.Contains(err.Error(), itoa(CandidateFormatVersion)) {
+		t.Errorf("the refusal is %q and does not say which version this build writes — a "+
+			"user told only that their record is unreadable cannot act on it", err)
 	}
 	if g.Stats().RefusedSealed != 0 {
 		t.Errorf("RefusedSealed = %d — a version skew must not read as tampering in the "+
 			"counters either, since their sum is the preemption signal",
 			g.Stats().RefusedSealed)
 	}
+}
+
+// TestAnUnknownTransportByteIsRefusedNotDefaulted — ADR-010's rule, applied to the second
+// wire format that now carries a transport.
+//
+// The ADR says it in as many words: "An undefined value is ErrMalformed; defaulting it to
+// TCP would be the same guess this decision removes, made on a byte an attacker picked."
+// The enumeration is the whole reason the field is a byte rather than a string — the
+// parser's job is a range check — so a parser that does not range-check has spent the cost
+// of an enumeration and bought none of it.
+//
+// **This test exists because removing the range check left the whole package green.** The
+// canonical re-encode does eventually refuse such a record, but for the wrong reason and
+// with the wrong sentinel: preimage() returns an error, parseCandidate discards it, and the
+// record is reported as non-canonical rather than as a value this build does not know.
+func TestAnUnknownTransportByteIsRefusedNotDefaulted(t *testing.T) {
+	g, inv, certA, keyA, fpA := gateFor(t)
+	spki, err := signCandidateSPKIForTest(t, certA, keyA)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rk, err := inv.RecordKey(testHop)
+	if err != nil {
+		t.Fatal(err)
+	}
+	salt, err := inv.RecordSalt(testHop, fpA)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// 2 is the first value past the enumeration; 255 is the top of the byte; 256 is the one
+	// that matters most, because it narrows to 0 and would read as TCP — a value an
+	// attacker chose, silently becoming the conservative default.
+	for _, bad := range []int{2, 7, 255, 256} {
+		var p preimageBuilder
+		p.addString(candidateDomain)
+		p.addUint(uint64(CandidateFormatVersion))
+		p.addString(inv.ID)
+		p.addUint(uint64(testHop))
+		p.add(spki)
+		p.addString(time.Now().Add(time.Minute).UTC().Format(time.RFC3339))
+		p.addUint(1)
+		p.addString("93.184.216.34:34154")
+		p.addUint(uint64(bad))
+		var l [8]byte
+		binary.BigEndian.PutUint64(l[:], 8)
+		plain := append(p.bytes(), l[:]...)
+		plain = append(plain, make([]byte, 8)...)
+
+		aead, aerr := chacha20poly1305.NewX(rk)
+		if aerr != nil {
+			t.Fatal(aerr)
+		}
+		nonce := make([]byte, chacha20poly1305.NonceSizeX)
+		if _, rerr := rand.Read(nonce); rerr != nil {
+			t.Fatal(rerr)
+		}
+		var a preimageBuilder
+		a.addString(candidateDomain)
+		a.add(salt)
+		a.addUint(uint64(testHop))
+		sealed := aead.Seal(nonce, nonce, plain, a.bytes())
+
+		// SETUP: the record must open. If the AEAD refuses it the transport byte was never
+		// reached and this proves nothing about the range check.
+		if _, oerr := OpenCandidate(rk, salt, testHop, sealed); oerr != nil && errors.Is(oerr, ErrCandidateSealed) {
+			t.Fatalf("setup: transport %d — the record did not open (%v), so the parser "+
+				"never saw the transport byte", bad, oerr)
+		}
+		_, perr := OpenCandidate(rk, salt, testHop, sealed)
+		if perr == nil {
+			t.Errorf("transport %d was ACCEPTED. A value this build does not know must be "+
+				"refused, never defaulted — ADR-010's whole argument for an enumeration is "+
+				"that the parser's job is a range check.", bad)
+			continue
+		}
+		if !errors.Is(perr, ErrCandidateFormat) {
+			t.Errorf("transport %d was refused as %v; want ErrCandidateFormat naming the "+
+				"value, so the refusal says what was wrong rather than 'this did not "+
+				"re-encode'", bad, perr)
+		}
+		if !strings.Contains(perr.Error(), "transport") {
+			t.Errorf("transport %d refused with %q, which does not name the field — the "+
+				"canonical re-encode refuses this record too, but as a non-canonical "+
+				"plaintext, which points a reader at the wrong thing", bad, perr)
+		}
+	}
+
+	// And the control: both LEGAL values must survive, or the check above is satisfied by a
+	// parser that refuses every transport.
+	for _, good := range []Transport{TransportTCP, TransportQUIC} {
+		rec := CandidateRecord{
+			CeremonyID: inv.ID, Hop: testHop,
+			Expires: time.Now().Add(time.Minute),
+			Addrs:   []Endpoint{{Addr: netip.MustParseAddrPort("93.184.216.34:34154"), Transport: good}},
+		}
+		if serr := rec.Sign(certA, keyA); serr != nil {
+			t.Fatal(serr)
+		}
+		sealed, serr := rec.Seal(rk, salt, testHop)
+		if serr != nil {
+			t.Fatalf("%s: %v", good, serr)
+		}
+		got, oerr := OpenCandidate(rk, salt, testHop, sealed)
+		if oerr != nil {
+			t.Fatalf("%s was refused: %v", good, oerr)
+		}
+		if got.Addrs[0].Transport != good {
+			t.Errorf("sealed %s and opened %s — the transport must survive the round trip, "+
+				"or the dialer is guessing again one layer up", good, got.Addrs[0].Transport)
+		}
+	}
+	_ = g
 }
