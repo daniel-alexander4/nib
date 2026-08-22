@@ -656,6 +656,10 @@ func (s *Server) connect(ctx context.Context, cer *ceremonyID, hl *p2p.Handshake
 			cancel()
 			closeHandshaked(dialed)
 			closeHandshaked(accepted)
+			// A side still in flight when the caller gave up will send its result after the
+			// cancel; drain it so a connection that races in past the cancel is closed, not leaked.
+			s.drainHandshaked(&dialDone, nil, dialCh)
+			s.drainHandshaked(&acceptDone, acceptCh, nil)
 			return nil, ctx.Err()
 		}
 
@@ -674,6 +678,13 @@ func (s *Server) connect(ctx context.Context, cer *ceremonyID, hl *p2p.Handshake
 			return accepted.Promote(ctx, initiator)
 		default: // glareFail
 			cancel()
+			// settle arms on the FIRST arrival, so it can fire while the OTHER side is still
+			// racing — and that side may select a winner after this cancel and send it into a
+			// buffered channel nobody would otherwise read. Drain both so a late connection is
+			// closed rather than leaked open to the peer (diff-grill: the drain contract holds on
+			// every exit, not only the two that keep a survivor).
+			s.drainHandshaked(&dialDone, nil, dialCh)
+			s.drainHandshaked(&acceptDone, acceptCh, nil)
 			if dialErr != nil {
 				return nil, dialErr // the racer's rich failure sentence
 			}
@@ -728,3 +739,13 @@ func filterQUIC(ctx context.Context, in <-chan candidate) <-chan candidate {
 	}()
 	return out
 }
+
+// quicEndpointAnnounce adapts a shared QUIC endpoint's address to announceable, so a
+// symmetric-racing ceremony arm can announce on the LAN (runCeremonyReceive) without the
+// coordinator's HandshakeListener presenting as a full p2p.Listener — which ADR-009's
+// termination-protocol guard would then require to embed listenerCore, and it deliberately does
+// not (it is a minimal handshaked accept, not the shared accept-and-teardown protocol).
+type quicEndpointAnnounce struct{ addr net.Addr }
+
+func (q quicEndpointAnnounce) Addr() net.Addr    { return q.addr }
+func (q quicEndpointAnnounce) Transport() string { return transportQUIC }
