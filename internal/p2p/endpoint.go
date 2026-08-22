@@ -77,6 +77,26 @@ func (e *SharedEndpoint) Stats() udpmux.Stats { return e.mux.Stats() }
 // requested for, the address the probe observes, and the address the listener answers on.
 func (e *SharedEndpoint) LocalAddr() net.Addr { return e.mux.LocalAddr() }
 
+// Punch sends one NAT-opening datagram to addr on the SHARED socket (P05.S08b, tier 4). Its only
+// job is to open THIS host's NAT binding toward addr — the peer receiving it is incidental — so
+// the payload is minimal and chosen to be DISCARDED cleanly by the peer's mux (grill 7b): the
+// high bit is clear, so quic-go does not treat it as a long-header connection attempt, and it is
+// not valid bencode, so the DHT view drops it rather than a parser choking. It goes out the same
+// socket the QUIC session dials and listens on (caveat 7), which is the whole point: the hole is
+// opened for the port the peer learned.
+//
+// The DHT view's write does not register addr as a QUIC peer (learns=false), so punching a
+// candidate does not perturb the mux's routing of a real session with that host.
+func (e *SharedEndpoint) Punch(addr net.Addr) error {
+	_, err := e.mux.DHT().WriteTo(punchPayload, addr)
+	return err
+}
+
+// punchPayload is one byte: high bit clear (not a QUIC long header) and not a bencode start
+// (bencode begins with a digit, 'd', 'l' or 'i'), so the peer's mux routes it to the DHT view
+// and the DHT drops it.
+var punchPayload = []byte{0x00}
+
 // Close tears the endpoint down. **The caller must close whatever is using it FIRST**, and the
 // ordering is not a style preference: if the mux closes while a `dht.Server` is still reading
 // its view, that read returns `net.ErrClosed`, the library's own `serveUntilClosed` sees an
