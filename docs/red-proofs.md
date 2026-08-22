@@ -880,3 +880,26 @@ one, and the equal-value branch is written down as a stated limit rather than le
 `const maxConcurrentHandshakes` along with the methods around it; the compiler caught it, but the
 check that belongs in the record is the one run afterwards — a diff of every top-level declaration
 before against after, with each removal accounted for in the new file.
+
+## v1.117.39 — six of this sweep's rows made replayable, and one existing row found broken
+
+`test/redproofs/` goes from 9 rows to 15. The six added are this sweep's own defects, recorded
+the day they were caught — which is the property the older prose rows do not have, since a
+patch for a defect fixed at v1.105 does not apply to a tree at v1.117.
+
+- `stale-consent-on-new-session` · `hop-starts-inside-its-own-budget` (v1.117.37)
+- `cosign-decline-arrives-as-eof` · `timeout-reported-as-decline` · `consent-gate-returns-bare-nil`
+  · `refusal-publishes-the-empty-item` (v1.117.38)
+
+**And replaying the whole set found `zone-bypasses-reserved` broken.** Recorded during P05.S04,
+it had its patch **reversed** — it applied the *fix* rather than the defect — so it had never
+been a valid row and could never have re-proved anything. It failed as `STALE`, which is the
+right kind of loud, but the diagnosis in that message ("the code moved under it") was wrong:
+the code had not moved, the row was born backwards. Re-recorded and replaying green.
+
+**The lesson is about the floor, and it is written into `verify_test.go` now.** The count in
+that guard was satisfied by this row for as long as the file existed, because a count over
+`*.sh` cannot tell a row from a file. Only `./build/redproof.sh <name>` can, and running all
+fifteen is a minutes-long job that belongs in a sweep rather than in `go test` — so the gap is
+recorded there rather than papered over. **A sweep that adds rows should replay the whole set,
+not just its own**: this one was found by the run that had no reason to expect anything.

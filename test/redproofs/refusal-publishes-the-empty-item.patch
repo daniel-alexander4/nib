@@ -1,0 +1,13 @@
+diff --git a/internal/rendezvous/publish.go b/internal/rendezvous/publish.go
+index c1ad836..6c14425 100644
+--- a/internal/rendezvous/publish.go
++++ b/internal/rendezvous/publish.go
+@@ -302,7 +302,7 @@ func putForSeq(seq int64, value any, salt []byte, pub [32]byte, priv ed25519.Pri
+ 	p := bep44.Put{V: value, Salt: salt, Seq: seq + 1}
+ 	ceiling := seq >= math.MaxInt64-1
+ 	if ceiling {
+-		p.Seq = seq
++		return bep44.Put{}, true
+ 	}
+ 	k := pub
+ 	p.K = &k

@@ -1,0 +1,15 @@
+diff --git a/internal/p2p/session.go b/internal/p2p/session.go
+index c606702..3182a50 100644
+--- a/internal/p2p/session.go
++++ b/internal/p2p/session.go
+@@ -198,10 +198,6 @@ func Receive(ch Channel, myCertPEM, myKeyPEM []byte, peerLabel string, c Confirm
+ 		// One byte, and a co-signed document is never one byte — it is the sent document
+ 		// plus a trailing incremental update, which `Initiate` re-checks by prefix — so the
+ 		// frame is unambiguous.
+-		if b, ok := refusalAck(err); ok {
+-			_ = conn.SetDeadline(time.Now().Add(postConsentDeadline))
+-			_ = writeFrame(conn, []byte{b}) // best-effort
+-		}
+ 		return nil, err
+ 	}
+ 	// The signature exists now. Give the write its own budget rather than whatever the

@@ -1,0 +1,15 @@
+diff --git a/internal/p2p/session.go b/internal/p2p/session.go
+index c606702..6377ce4 100644
+--- a/internal/p2p/session.go
++++ b/internal/p2p/session.go
+@@ -265,9 +265,7 @@ var ErrConsentTimedOut = errors.New("nobody answered the consent request in time
+ // one half of one feature reported a refusal as an outcome and the other reported it as EOF.
+ func refusalAck(err error) (byte, bool) {
+ 	switch {
+-	case errors.Is(err, ErrConsentTimedOut):
+-		return ackTimedOut, true
+-	case errors.Is(err, ErrDeclined), errors.Is(err, ErrCoSignDeclined):
++	case errors.Is(err, ErrConsentTimedOut), errors.Is(err, ErrDeclined), errors.Is(err, ErrCoSignDeclined):
+ 		return ackDeclined, true
+ 	default:
+ 		return 0, false
