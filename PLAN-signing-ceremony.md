@@ -3507,7 +3507,7 @@ Tasks (firmed 2026-08-22):
 - **T07 — seam rows**: the cadence step-down, the per-side budget drop-and-report, the failure
   state, and the Dan-only real-two-NAT run (IPv4-to-IPv4 through an endpoint-independent NAT).
 
-#### P05.S09a — The stream-direction fix: who opens the QUIC stream follows the role, not the dial *(D17; the glare deadlock)* *(in progress 2026-08-22; split out by S09's grill — build first and alone)*
+#### P05.S09a — The stream-direction fix: who opens the QUIC stream follows the role, not the dial *(D17; the glare deadlock)* *(done 2026-08-22, v1.117.65; code v1.117.64)*
 Scope: on a QUIC channel, WHICH end opens the bidi stream must follow the document role
 (`initiator`), not who dialled — so a baton-holder that wins on the ACCEPT side does not deadlock.
 Testable in `internal/p2p` alone (dial a QUIC conn, have the DIALER run Receive and the LISTENER
@@ -3536,6 +3536,16 @@ Tasks (firmed 2026-08-22):
   listener that runs Initiate complete the verification exchange (they would deadlock today). This
   is the test that would go red against the current welded code — the whole point of the slice.
 - **T04 — seam rows**: the stream-opener-follows-role observable; the deadlock harness.
+
+**Built 2026-08-22 (v1.117.64 code, v1.117.65 close).** `HandshakedConn` (bare `qc` + `PeerFP`
+from the handshake) + `Promote(ctx, initiator)` opening/accepting the stream by role;
+`QUICDialHandshakeOn` for S09's coordinator; `QUICDialOn`/accept-loop refactored to thin
+`Promote(true)`/`Promote(false)`, behaviour-preserving under `-race`. Red-proved
+(`stream-follows-the-dialer`: inverting the role key hangs the harness). **Deviation from T01,
+recorded:** built as a separate `HandshakedConn` type rather than relaxing `channel.go`'s
+stream-required invariant — `Channel` stays always-complete, which is strictly stronger.
+Diff-grill: two agents (correctness; Go-SME + test-teeth), zero findings — pin wiring cross-pinned
+(not vacuous), non-owning/close-discipline held, red-proof faithful.
 
 #### P05.S09 — Symmetric racing, the glare join, and the consent re-anchor *(D17; criterion 12; rests on S09a)* *(firmed 2026-08-22, deepdive + grill)*
 Scope: both sides listen AND dial over the ONE shared endpoint; a coordinator joins the dialer's

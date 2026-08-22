@@ -1,0 +1,13 @@
+diff --git a/internal/p2p/quic.go b/internal/p2p/quic.go
+index 0c07a14..7a69be5 100644
+--- a/internal/p2p/quic.go
++++ b/internal/p2p/quic.go
+@@ -202,7 +202,7 @@ func (h *HandshakedConn) Promote(ctx context.Context, initiator bool) (*Conn, er
+ 		st  *quic.Stream
+ 		err error
+ 	)
+-	if initiator {
++	if !initiator {
+ 		st, err = h.qc.OpenStreamSync(ctx)
+ 	} else {
+ 		st, err = h.qc.AcceptStream(ctx)
