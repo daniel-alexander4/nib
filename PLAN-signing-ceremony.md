@@ -3272,7 +3272,7 @@ Acceptance:
 - `rendezvous.Server.Close()` cancels and joins in-flight `Publish`/`Fetch` — with the trap its pending entry records: the in-flight work must never call `Close` itself, since `sync.Once` deadlocks if `f` re-enters `Do`.
 - **L1's consumer guard is widened to this slice's wire types before a record reaches a pin.** `wireType` matches the single substring `discovery.` (`internal/server/l1_test.go`), and `CandidateRecord.Fingerprint()` derives a pin from the record's own `SPKI` (`internal/ceremony/candidate.go:164`).
 
-#### P05.S05 — The IPv6 tier *(D8 tier 2; criterion 1)*
+#### P05.S05 — The IPv6 tier *(D8 tier 2; criterion 1)* *(in progress — T01–T05 done 2026-08-22, v1.117.43; T06–T07 outstanding)*
 ~~Scope: the arm's default bind is `0.0.0.0:0` (`session.go:659`) — v4-only, so tier 2 cannot work today. Dual-stack bind; this host's global v6 addresses become candidates.~~
 **Scope re-stated 2026-08-22 (tagged pin, at the slice's open — the premise was MEASURED false, not re-argued).** Two errors, and the second is the one that matters:
 
@@ -3289,6 +3289,17 @@ Acceptance:
 **Scope, restated:** a guard that pins the dual-stack bind as a *property* rather than a comment; the DHT asking for and keeping v6 nodes (`DefaultWant`, a v6-reachable seed); a published record carrying **both** families rather than one; and the v6 dial branch (`localWildcardFor`, `internal/p2p/quic.go:147-152`) getting its first test of any kind — it is the only family-selecting function in the tree and it has none.
 
 Acceptance: criterion 1 (Dan-only run, harness reduced to one command); a driven hermetic analogue over v6 loopback/ULA; no v4 regression; **and the dual-stack bind asserted as a socket property, so a platform where it is not true fails rather than degrades silently**.
+
+Tasks (grilled 2026-08-22, after a three-agent deepdive and two rounds of live measurement):
+- T01 — the dual-stack bind pinned as a **socket property**, not a comment: a socket bound `0.0.0.0:0` must receive a datagram sent to `[::1]`, asserted through a bare `ListenPacket` AND through `NewSharedEndpoint`, which is the door the ceremony uses. *(done, v1.117.43)*
+- T02 — `DefaultWant: {n4, n6}` on the DHT server config, with the measurement that justifies it recorded at the line. *(done, v1.117.43)*
+- T03 — one **measured** IPv6 seed literal (`dht.libtorrent.org`, same operator and port as the v4 entry). `dht.transmissionbt.com`'s AAAA is measured SILENT 3 of 3 and deliberately not shipped, recorded so the next reader does not add it from the DNS record. *(done, v1.117.43)*
+- T04 — `publishableEndpoints` publishes **both** families; extracted from `publishCandidates` so the rule is drivable without a live DHT. *(done, v1.117.43)*
+- T05 — `localWildcardFor` gets its first test of any kind, including the `nil` remote that falls silently to the v4 wildcard. *(done, v1.117.43)*
+- T06 — a hermetic ceremony driven **end to end over v6 loopback/ULA**, which is the acceptance clause's own analogue and is NOT discharged by T01: T01 proves the socket answers, not that a ceremony completes across it. **Outstanding.**
+- T07 — criterion 1's harness reduced to one command, for the Dan-only run. **Outstanding.**
+
+**Ledger so far: 1 met / 1 met / 2 outstanding.** *No v4 regression* — met, full suite plus the race detector green on `internal/server`, `internal/p2p` and `internal/rendezvous`. *The dual-stack bind asserted as a socket property* — met, red-proved by binding `udp4` (both the bare socket and the shared endpoint). *A driven hermetic analogue over v6 loopback/ULA* — **not met**, T06. *Criterion 1* — **not exercised**, and it is Dan's run by the phase's own carve-out; T07 is the buildable half.
 
 #### P05.S06 — The port-mapping client: PCP, then NAT-PMP, then UPnP-IGD *(D15; caveats 6, 7, 8)*
 Scope: tier 3's mechanism. **Caveat 6 is discharged or refuted in this slice** — no Go port-mapping dependency exists in the tree and its licence-compatibility is explicitly an unverified assumption; the caveat's own fallback ("if only some protocols are covered, the tier still ships — with narrower router coverage, recorded rather than assumed") is the acceptable outcome. Caveat 7 decides where the request is sent FROM.

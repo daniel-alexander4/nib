@@ -64,6 +64,37 @@ import "net"
 // The durable mechanism is the cache, not this list. One successful contact replaces it
 // forever, and D6's second half — seed nodes carried in the invitation, filed against
 // P04.S06 — is what keeps the common case from ever consulting it.
+// # The IPv6 seed (P05.S05, 2026-08-22)
+//
+// A v6-only host could not bootstrap at all: every literal above is IPv4, so `Bootstrap` had
+// nothing to send a datagram to. That made D8's tier 2 unreachable from the one kind of host
+// it exists for.
+//
+// **Only the operators already listed above were considered**, so nothing new is contacted —
+// Dan's call, and it keeps D6's reason for literals intact: a v6 seed is still an address, not
+// a name, so no lookup tells a third party who is starting a ceremony.
+//
+// **Measured 2026-08-22, three pings each plus a find_node, from one dual-stack host.** The
+// measurement is the point, because a DNS lookup would have shipped two addresses and one of
+// them is dead:
+//
+//	[2001:41d0:203:4cca:5::]:6881    dht.transmissionbt.com  SILENT, 3 of 3   -> NOT SHIPPED
+//	[2a02:752:0:18::128]:25401       dht.libtorrent.org      ANSWERS, 3 of 3, and find_node
+//	                                                         returned 114 bytes of nodes6
+//
+// router.bittorrent.com and router.utorrent.com publish no AAAA at all, so there is nothing to
+// add for them — which costs nothing, since both have been measured silent over IPv4 since the
+// list was written.
+//
+// **This is the same trap the port transcription above was.** `dht.transmissionbt.com` has an
+// AAAA record and answers on IPv4, and both facts are irrelevant to whether anything is
+// listening on that v6 address — "silent" is a verdict about an address, and an address is a
+// host AND a port AND a family. It is recorded here rather than omitted silently so the next
+// person does not re-derive it from the same lookup and reach the opposite conclusion.
+//
+// One live v6 seed is thin, and it is not the whole of the fix: `DefaultWant` (see `dht.go`)
+// is what lets a v6 node be learned through an IPv4 contact, and one of the three v4 seeds was
+// measured returning eight v6 nodes when asked. Neither alone reaches tier 2.
 func seedNodes() []*net.UDPAddr {
 	return []*net.UDPAddr{
 		{IP: net.IPv4(212, 129, 33, 59), Port: 6881},
@@ -73,5 +104,7 @@ func seedNodes() []*net.UDPAddr {
 		// 25401, not 6881 — see the re-measurement above. Shipping this on the port
 		// every guide prints made a live node look like a fourth dead one.
 		{IP: net.IPv4(185, 157, 221, 247), Port: 25401},
+		// dht.libtorrent.org over IPv6, same operator and same port as the line above.
+		{IP: net.ParseIP("2a02:752:0:18::128"), Port: 25401},
 	}
 }

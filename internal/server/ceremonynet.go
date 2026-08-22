@@ -70,6 +70,33 @@ func candidateLife() time.Duration {
 // a peer on the far side of a NAT can use is the one strangers saw us from — which is the
 // whole reason the probe and the session must share a socket (caveat 7), and why this is the
 // slice where that started to matter.
+// publishableEndpoints turns the probe's observations into the endpoints a record carries.
+//
+// **BOTH families, not the better of the two (P05.S05, D8 tier 2).**
+//
+// This used to be inline and read `addr := self.V4.Addr; if !addr.IsValid() { addr = self.V6.Addr }`,
+// then built a ONE-element slice. That fallback reads like dual-stack support and is the exact
+// opposite of it: a host with a working IPv4 address never reached the v6 line, so the only
+// case that ever published a v6 address was the case where v4 had already failed. A dual-stack
+// peer could therefore never be dialled over IPv6 — which is precisely what tier 2 is.
+//
+// Order is v4 first, and it is not a preference the racer honours (D8 races every candidate
+// concurrently); it is so that two readings of one record list them the same way.
+//
+// It is a free function taking the observation rather than a method reaching for the network,
+// because the rule worth testing is "how many endpoints, from which observations" and reaching
+// it through `ProbeSelf` would need a live DHT to ask a question that has nothing to do with
+// one. `MaxCandidates` is 8; this returns at most 2.
+func publishableEndpoints(self rendezvous.SelfAddress, transport string) []ceremony.Endpoint {
+	var out []ceremony.Endpoint
+	for _, a := range []netip.AddrPort{self.V4.Addr, self.V6.Addr} {
+		if a.IsValid() {
+			out = append(out, ceremony.Endpoint{Addr: a, Transport: ceremonyTransport(transport)})
+		}
+	}
+	return out
+}
+
 func (c *ceremonyID) publishCandidates(ctx context.Context, transport string) error {
 	if c == nil || c.rz == nil {
 		return errNoCeremony
@@ -78,11 +105,8 @@ func (c *ceremonyID) publishCandidates(ctx context.Context, transport string) er
 	if err != nil {
 		return fmt.Errorf("could not learn this machine's public address: %w", err)
 	}
-	addr := self.V4.Addr
-	if !addr.IsValid() {
-		addr = self.V6.Addr
-	}
-	if !addr.IsValid() {
+	addrs := publishableEndpoints(self, transport)
+	if len(addrs) == 0 {
 		// Not a failure of this path: it is D19's cause 3 or 4, and the ladder's other
 		// tiers are unaffected. Publishing nothing is the honest outcome — a record naming
 		// an address we do not have would send the peer somewhere that is not us.
@@ -93,7 +117,7 @@ func (c *ceremonyID) publishCandidates(ctx context.Context, transport string) er
 		CeremonyID: c.inv.ID,
 		Hop:        c.hop,
 		Expires:    time.Now().Add(candidateLife()),
-		Addrs:      []ceremony.Endpoint{{Addr: addr, Transport: ceremonyTransport(transport)}},
+		Addrs:      addrs,
 	}
 	if err := rec.Sign(c.certPEM, c.keyPEM); err != nil {
 		return err

@@ -1,0 +1,19 @@
+--- a/internal/server/ceremonynet.go
++++ b/internal/server/ceremonynet.go
+@@ -89,10 +89,12 @@
+ // one. `MaxCandidates` is 8; this returns at most 2.
+ func publishableEndpoints(self rendezvous.SelfAddress, transport string) []ceremony.Endpoint {
+ 	var out []ceremony.Endpoint
+-	for _, a := range []netip.AddrPort{self.V4.Addr, self.V6.Addr} {
+-		if a.IsValid() {
+-			out = append(out, ceremony.Endpoint{Addr: a, Transport: ceremonyTransport(transport)})
+-		}
++	a := self.V4.Addr
++	if !a.IsValid() {
++		a = self.V6.Addr
++	}
++	if a.IsValid() {
++		out = append(out, ceremony.Endpoint{Addr: a, Transport: ceremonyTransport(transport)})
+ 	}
+ 	return out
+ }

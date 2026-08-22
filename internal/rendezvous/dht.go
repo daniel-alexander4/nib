@@ -362,6 +362,39 @@ func Open(conn net.PacketConn, dir string) (*Server, error) {
 		// default. It bounds nothing else, because gateQuery refuses inbound writes —
 		// the only things in this store are records we put there ourselves.
 		Exp: 2 * time.Hour,
+		// **DefaultWant is what makes an IPv6 node reachable at all (P05.S05, D8 tier 2).**
+		//
+		// `NewServer` fills in `Conn`, `Logger`, `Store` and `SendLimiter` for a
+		// caller-supplied config but NOT `DefaultWant`; the `n`+`n6` default lives only in
+		// `NewDefaultServerConfig`, which caveat 7 forbids us — the same shape as `Exp`
+		// above, and the second thing that omission has silently cost.
+		//
+		// With it unset, `find_node` and `get_peers` go out with `Want: nil`, and BEP-32
+		// says a responder then answers with the family of the query source. Every seed we
+		// ship is an IPv4 literal, so v4 in, v4 out, forever: the routing table could not
+		// learn an IPv6 node through the traversal that fills it, which made the whole of
+		// tier 2 unreachable and `SelfAddress.V6` structurally the zero value.
+		//
+		// **Measured 2026-08-22, one host, one sample per seed** — the point being that the
+		// fix is not a reading of the BEP, it is an observation:
+		//
+		//	find_node WITHOUT want, over IPv4:
+		//	  212.129.33.59:6881    nodes4=208B  nodes6=none
+		//	  87.98.162.88:6881     nodes4=208B  nodes6=none
+		//	  185.157.221.247:25401 nodes4=416B  nodes6=none
+		//	find_node WITH want=[n4,n6], over IPv4:
+		//	  212.129.33.59:6881    nodes4=208B  nodes6=none
+		//	  87.98.162.88:6881     nodes4=208B  nodes6=304B   <- eight v6 nodes
+		//	  185.157.221.247:25401 nodes4=78B   nodes6=none
+		//
+		// So asking is necessary and, on its own, thin: one of three seeds answered with v6
+		// nodes, which is why `seedNodes` also gains the one v6 literal that was measured
+		// live. Neither alone is the fix.
+		//
+		// It asks for BOTH families rather than switching: a v4-only host must keep getting
+		// v4 nodes, and `Want` is a request, not a filter — a responder is free to ignore
+		// the half it cannot serve.
+		DefaultWant: []krpc.Want{krpc.WantNodes, krpc.WantNodes6},
 		// The cached list, and nothing else.
 		//
 		// **Read before it was written down, because the obvious belief is wrong.**

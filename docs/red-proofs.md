@@ -27,7 +27,7 @@ is the point. A row is only added after the red was observed — never from inte
 applies the row's defect as a patch, runs the named check, and **asserts the check FAILS**.
 `./build/redproof.sh` with no argument lists what is recorded.
 
-**Seventeen rows are replayable** (v1.117.42; nine at v1.117.26, six added at v1.117.39). Ask
+**Nineteen rows are replayable** (v1.117.43; nine at v1.117.26, six added at v1.117.39). Ask
 `./build/redproof.sh` with no argument rather than reading a list here — **this sentence said
 "nine" while the directory held fifteen**, because a count written into prose beside a set that
 grows is a second statement of one fact, and it is the one nobody updates. The count is guarded in
@@ -1007,4 +1007,40 @@ unreportable source was the one that matters. The stale test list had additional
 in a comment, that S04 would make the global cap reachable and that someone should come back for
 it; the prediction was correct, the branch that would have logged it never ran, and the global
 figure had never been driven by anything.
+
+## v1.117.43 — P05.S05 T01–T05: two things asked for nothing, and one published half of itself
+
+| Defect reintroduced | What it said | Check that fired |
+| --- | --- | --- |
+| **`DefaultWant` dropped from our `dht.ServerConfig`** *(replayable: `dht-asks-for-no-node-family`)* | `NewDefaultServerConfig sets DefaultWant and our ServerConfig does not, with no reason recorded. It is therefore at its ZERO value, which is a decision and not an absence` | `TestOurServerConfigAnswersEveryFieldTheLibraryDefaults` — written against the CLASS, not this instance: it reflects over what the library defaults and demands our literal set each field or name it with a reason |
+| **`publishableEndpoints` reverted to v4-first-else-v6, one endpoint** *(replayable: `publish-drops-the-second-family`)* | `got 1 endpoint(s) [203.0.113.5:34154], want 2 … a dual-stack host that publishes one address cannot be dialled on the other` | `TestAPublishedRecordCarriesBothFamilies`, whose single-family rows are the controls that stop a function returning both entries unconditionally from passing |
+| **`net.ListenPacket("udp4", …)` in place of `"udp"`** | `a socket bound "0.0.0.0:0" did not receive a datagram sent to [::1]:16576. It is not dual-stack on this platform, so D8's tier 2 cannot work here — and every other tier would keep passing` | `TestTheWildcardBindIsDualStack` |
+| **The same, inside `NewSharedEndpoint`** | `a datagram sent over IPv6 to the shared endpoint at [::1]:42971 never reached the DHT view (RoutedToDHT 0)` | `TestASharedEndpointBoundWildcardAnswersOverIPv6` — a separate row because `net.ListenPacket` being dual-stack says nothing about what the ceremony's own door does with the string |
+| **`localWildcardFor`'s v6 branch returning the v4 wildcard** | `localWildcardFor("2606:4700:4700::1111") = "0.0.0.0:0", want "[::]:0" — a v6 peer dialled from a v4 socket cannot be reached at all` | `TestLocalWildcardForPicksTheRemotesFamily`, this function's first test of any kind |
+
+**The first row is the one to carry, because it is the second instance of its class and the
+guard is now written against the class.** `dht.NewServer` fills in a few fields for a
+caller-supplied config; everything else lives in `NewDefaultServerConfig`, which caveat 7 forbids
+because it opens its own socket. Whatever that function sets and ours does not is left at its
+**zero value** — and a zero value is a decision, not an absence:
+
+- `Exp` unset meant "expire everything immediately", so our own published record was deleted the
+  first time anyone read it, including us.
+- `DefaultWant` unset meant `find_node` asked for nothing, a responder answered with the query
+  source's family, and every seed we ship is IPv4 — so the routing table could never learn an
+  IPv6 node and D8's tier 2 was unreachable.
+
+Both were found by chasing a symptom, and neither was findable by reading our config, because
+what is wrong with it is what is **absent**. The guard discovers the population by reflection
+rather than listing it, so a field added by a dependency upgrade is in scope the day it appears.
+
+**No red proof is recorded for the `Exp` case** even though it is the same guard: removing `Exp`
+leaves `time` unused and the build fails first. The compiler catching it is a real answer, and
+recording a contrived variant to claim two rows would be worse than saying this.
+
+**Measurement is what separated a live seed from a dead one, again.** `dht.transmissionbt.com`
+publishes an AAAA record and answers on IPv4; nothing answers on that v6 address — silent 3 of 3.
+`dht.libtorrent.org`'s v6 answers 3 of 3 and returns `nodes6`. Shipping both on the strength of
+the DNS lookup would have repeated this file's own recorded mistake one family over: *"silent" is
+a verdict about an address, and an address is a host AND a port AND a family.*
 
