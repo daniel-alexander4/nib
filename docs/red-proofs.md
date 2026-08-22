@@ -903,3 +903,45 @@ that guard was satisfied by this row for as long as the file existed, because a 
 fifteen is a minutes-long job that belongs in a sweep rather than in `go test` — so the gap is
 recorded there rather than papered over. **A sweep that adds rows should replay the whole set,
 not just its own**: this one was found by the run that had no reason to expect anything.
+
+## v1.117.40 — a Go-side reader scan, and the three things it found
+
+`test/jsdom/published.test.mjs` scans server→client fields for one with no reader. There was no
+Go-side equivalent, so `udpmux.Stats`, `p2p.Channel` and `rendezvous.Stats` were invisible to
+every scan in the tree. `observables_test.go` is that equivalent, and it paid on its first run.
+
+| Defect reintroduced | What it said | Check that fired |
+| --- | --- | --- |
+| **A published observable with no reader** | `udpmux.Stats.RoutedLongHeader … is published and no named reader mentions it` | `TestEveryPublishedObservableHasANamedReader`, by deleting the `nib rendezvous` block that now prints them — the item's own headline example |
+| **A NEW published shape nobody enters in the table** | `udpmux.Health (internal/udpmux/zzred.go, 2 field(s)) is published by an exported function and is in neither the table nor the exclusions` | the same guard's **completeness** half, driven by adding a third shape the way one actually gets added. This is what makes it close a CLASS: a walk over an inventory cannot see a shape nobody entered |
+| **A read replaced by PROSE naming the same field** | `p2p.SignerAttestation.OneProceeding … no named reader mentions it` | the same guard, with the real read swapped for a comment mentioning it. The hole that bit `published.test.mjs` twice; this one is born without it |
+| **The verifier summarising away a disagreement** | `two signatures naming DIFFERENT ceremonies were summarised as a co-signed document with no qualification — the verifier describing a proceeding that did not happen` | `test/jsdom/oneproceeding.test.mjs` |
+| **`!oneProceeding` read naively** | `an ordinary two-party co-sign was accused of not being one proceeding` | the same file's FIRST case, which exists for exactly this — an ordinary co-sign carries no record, so its `oneProceeding` is false too, and a two-state reading slanders every plain co-signed document |
+| **The one-family join note removed** | `the summary does not say "IPv6-ONLY"` | `TestTheSummarySaysWhenOnlyONEFamilyJoined` |
+| **Its `Joined6 > 0` guard dropped** | `the summary says "ONLY", which is not true of this host` | the same test's nothing-joined case |
+| **The per-family counting removed at the source** | `Open joined 2 interface(s) and counted 0 joins in either family (v4=0 v6=0)` | `TestTheJoinCountsAreCountedBySocketOpen` — see the vacuous green below, which is why this test exists at all |
+
+**The find that mattered most.** `p2p.SignerAttestation.OneProceeding` was computed in Go,
+serialized to the client as `oneProceeding`, and rendered **nowhere**. Its own doc states the
+harm verbatim: *"A verifier that said only 'co-signed' about such a document would be describing
+a proceeding that did not happen."* That is what the panel did — `✓ Mutually co-signed` fires on
+`matched`, which is per-pair and says nothing about whether both signers agreed to the same
+proceeding. Now rendered, in three states rather than two.
+
+**A vacuous green, caught by my own probe, in the work of this same commit.** The first
+per-family test drove `printSummary` with a hand-built `discovery.Stats` — so deleting BOTH
+`s.joined4++`/`s.joined6++` lines at the source left the whole suite green. It tested the printer
+and not the counter: this repo's own P03 lesson, *"a guard tested a predicate and not that
+anything called it"*, happening to the guard written for it. Closed by
+`TestTheJoinCountsAreCountedBySocketOpen`, which opens a real socket.
+
+**And a limit declared rather than discovered.** That test cannot catch ONE family's counter
+being dropped alone — probed, and green. This is correct: on a host where the IPv4 join genuinely
+fails, `v4=0, v6=n` is the true reading, and a test that failed on it would be asserting the
+machine's network rather than the package's code. Telling those apart needs a host known to
+differ — which is exactly why `nib discover` on real Windows is what settles the original
+question, and why the counter had to exist first.
+
+**The table was re-derived, not remembered.** A first draft of the reader table was written from
+memory and named four wrong files. A scan that reports a false orphan is worse than no scan —
+people learn to ignore it — so the table is evidence like everything else here.

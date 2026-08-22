@@ -183,7 +183,24 @@ func runDiscover(out, errw io.Writer, listen time.Duration, quiet bool) int {
 // so both can be driven without a socket — see the note on printVerdict.
 func printSummary(out io.Writer, st discovery.Stats, listen time.Duration) {
 	fmt.Fprintf(out, "\nsummary after %s:\n", listen)
-	fmt.Fprintf(out, "  interfaces joined   %d\n", st.Interfaces)
+	fmt.Fprintf(out, "  interfaces joined   %d  (%d IPv4, %d IPv6)\n",
+		st.Interfaces, st.Joined4, st.Joined6)
+	// The one-family failure, said outright rather than left to be inferred from the two
+	// numbers above.
+	//
+	// `Interfaces` counts distinct interfaces and either family succeeding lists one, so a
+	// host where every IPv4 join failed is indistinguishable from a healthy dual-stack host
+	// by that number alone. This is the suspected behaviour of IP_ADD_MEMBERSHIP on the
+	// AF_INET6 socket Go hands us, off Linux — and this command on a real Windows box is
+	// what settles it, so the line it needs to print is this one.
+	if st.Joined4 == 0 && st.Joined6 > 0 {
+		fmt.Fprintf(out, "  NOTE: no IPv4 group was joined — discovery here is IPv6-ONLY. A peer\n"+
+			"        that announces only on IPv4 will not be heard, and nothing else in this\n"+
+			"        output would say so.\n")
+	}
+	if st.Joined6 == 0 && st.Joined4 > 0 {
+		fmt.Fprintf(out, "  NOTE: no IPv6 group was joined — discovery here is IPv4-ONLY.\n")
+	}
 	fmt.Fprintf(out, "  announcements sent  %d (failed %d)\n", st.Sent, st.SendErrors)
 	fmt.Fprintf(out, "  own copies heard    %d\n", st.Own)
 	fmt.Fprintf(out, "  peers heard         %d\n", st.Peers)

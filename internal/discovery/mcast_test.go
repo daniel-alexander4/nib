@@ -546,3 +546,72 @@ func firstV4(t *testing.T, ifi net.Interface) net.IP {
 	t.Fatalf("%s has no IPv4 address", ifi.Name)
 	return nil
 }
+
+// TestTheJoinCountsAreCountedBySocketOpen closes a hole this test file did not have and the
+// CLI test could not close.
+//
+// `TestTheSummarySaysWhenOnlyONEFamilyJoined` (internal/cli) hands `printSummary` a
+// hand-built `discovery.Stats`, so it proves the SUMMARY renders the one-family case. It
+// passes unchanged if `Socket.open` never counts anything — which was measured: deleting both
+// `s.joined4++`/`s.joined6++` lines left the whole suite green. That is this repo's own
+// recorded lesson from P03, "a guard tested a predicate and not that anything called it",
+// happening to the guard written for it.
+//
+// # Why the assertions are relations and not numbers
+//
+// How many interfaces a host has, and which families they carry, is the KERNEL's answer and
+// not this test's — P03 also recorded an interface-table test that was decided by the host it
+// ran on. So nothing here asserts a count. It asserts the relations that must hold on any
+// host, and each of them fails when the counting is removed:
+//
+//   - at least one join succeeded, since Open errors when none does;
+//   - Interfaces never exceeds the two families' joins summed (an interface is listed when
+//     EITHER family joins, so the sum double-counts dual-stack links and can only be larger);
+//   - Interfaces is at least the larger family's count (each of that family's joins listed a
+//     distinct interface).
+//
+// # The limit, declared rather than discovered
+//
+// This test CANNOT catch one family's counter being dropped on its own — probed: deleting
+// only `s.joined4++` leaves it green. That is correct and not a hole. On a host where the
+// IPv4 join genuinely fails, `v4=0, v6=n, interfaces=n` is the TRUE reading, and a test that
+// failed on it would be asserting this machine's network rather than this package's code.
+// Distinguishing "IPv4 really failed" from "IPv4 was not counted" needs a host known to
+// differ from the one under test — which is precisely why `nib discover` on real Windows is
+// the thing that settles the original question, and why this counter had to exist first.
+func TestTheJoinCountsAreCountedBySocketOpen(t *testing.T) {
+	var nonce [8]byte
+	s, err := Open(nonce)
+	if err != nil {
+		t.Skipf("no multicast-capable interface on this host: %v", err)
+	}
+	defer s.Close()
+	st := s.Stats()
+
+	// STIMULUS: Open reports having joined something at all. Without this the relations
+	// below all hold trivially at zero, which is the shape of the defect being guarded.
+	if st.Interfaces == 0 {
+		t.Fatalf("Open succeeded but reports 0 interfaces joined — the relations below are " +
+			"all vacuously true at zero")
+	}
+	if st.Joined4+st.Joined6 == 0 {
+		t.Errorf("Open joined %d interface(s) and counted 0 joins in either family "+
+			"(v4=%d v6=%d). The per-family counters are not being incremented, so "+
+			"`nib discover` cannot tell an IPv6-only host from a healthy one — which is the "+
+			"single question a Windows run of that command exists to answer.",
+			st.Interfaces, st.Joined4, st.Joined6)
+	}
+	if st.Interfaces > st.Joined4+st.Joined6 {
+		t.Errorf("interfaces=%d exceeds v4=%d + v6=%d; an interface is listed only when one "+
+			"of the two families joined it, so the sum cannot be smaller",
+			st.Interfaces, st.Joined4, st.Joined6)
+	}
+	if max := st.Joined4; max > st.Interfaces {
+		t.Errorf("v4 joins=%d exceeds interfaces=%d", max, st.Interfaces)
+	}
+	if max := st.Joined6; max > st.Interfaces {
+		t.Errorf("v6 joins=%d exceeds interfaces=%d", max, st.Interfaces)
+	}
+	t.Logf("this host: %d interface(s), %d IPv4 join(s), %d IPv6 join(s)",
+		st.Interfaces, st.Joined4, st.Joined6)
+}
