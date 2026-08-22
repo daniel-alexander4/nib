@@ -3169,7 +3169,7 @@ argument to contain `remaining`, with a setup fatal at `:220` if the timer disap
 The ceremony-scoped arm window must re-express that guard deliberately — it fails loudly, which
 is the point, but it does not update itself.
 
-#### P05.S04 — The armed session gains a ceremony identity, and the DHT becomes a candidate source *(D6, D21, D30; criteria 18, 19)* *(in progress)*
+#### P05.S04 — The armed session gains a ceremony identity, and the DHT becomes a candidate source *(D6, D21, D30; criteria 18, 19)* *(done 2026-08-21, v1.117.35)*
 Tasks (grilled 2026-08-21, after a deepdive and a six-adversary attack):
 - **R01–R04 land first as a separate remediation commit** — three of P05.S03's own acceptance bullets shipped unmet and unledgered, and S04 makes all three live.
 - R01 — `raceCandidates`' feeder gains a `ctx.Done()` arm. Today `for c := range in` (`lan.go:362`) exits only when the caller closes the channel, so a win on a trickle source leaks the feeder AND the drain goroutine forever.
@@ -3195,6 +3195,48 @@ Tasks (grilled 2026-08-21, after a deepdive and a six-adversary attack):
 - T16 — `README.md:676,:708,:717` synced, with a guard tying the claim to the import graph.
 - T17 — criterion 18's second clause amended by tagged pin (below).
 - T18 — D34's disclosure line lands beside the arm control in this slice rather than P06.
+
+**Ledger: 3 met / 1 met with a declared limit / 1 not exercised.**
+
+- *Criterion 18 — "two hops publish under different keys, and a party cannot read the
+  candidates of a hop it is not in"* — **met, and the clause is true as written again.**
+  Its second half was false by construction under one shared secret; Dan's 2026-08-21 call
+  moved to one secret PER PARTY, so a party can no longer derive another's hop key, locate
+  their target, read their addresses, overwrite their record, or take their key to the
+  sequence ceiling. Driven three-party, because two parties have one hop and cannot
+  distinguish a per-hop key from a per-ceremony one. **The limit is D22, not a gap: the
+  convener holds every party's secret.**
+- *Criterion 19 — "the race is scoped to the current hop"* — **met**, and structurally
+  rather than by discipline: the hop travels on the candidate and the racer refuses a
+  mismatch. Both controls driven — this hop's candidate passes, and LAN/typed candidates,
+  which belong to no hop, are not dropped.
+- *A published record's expiry is the connect deadline plus margin* — **met**, derived
+  rather than chosen (publish + race + fetch + skew), red-proved against the self-test's
+  zero-margin value, and bounded above by the reader-side ceiling.
+- *`rendezvous.Server.Close()` cancels and joins* — **met.** Found while testing it that
+  `getput.Put` shadows cancellation, so a publish cancelled mid-put returned nil — a false
+  success the moment Close began cancelling. **Declared limit: `inFlight.Wait()` is not
+  independently red-provable**, because cancellation is prompt enough that removing it does
+  not reliably fail; it is a regression guard on a structural invariant and the test says so.
+- *L1's consumer guard widened to this slice's wire types* — **met, and the widening alone
+  was proved vacuous**: with the vocabulary extended but the taint loop still matching only
+  assignments, a planted range-shaped pin passes.
+- **The socket-sharing criterion — the probe-and-session half is MET** (the DHT and the armed
+  listener on one socket, asserted on the socket and with a real datagram; the teardown order
+  driven, its reversal producing a live process-killing panic). **The racing-dialer half is
+  NOT EXERCISED and moves to S06/S08/S09** — see below.
+- **T13b's deferral is NOT EXERCISED end to end.** Hermetically the bootstrap finds no nodes
+  and returns early, so the publish never happens *for the wrong reason* and no test can tell
+  the deferral from the failure. Filed as a live-DHT verification item rather than collapsed
+  into met.
+
+**What this slice found that was not in its plan.** Three live defects — an IPv6 zone
+bypassing the whole of `addrscope`'s reserved table (192.168.1.1 and 127.0.0.1 both passed
+`Target` when zoned), a two-goroutine-per-race leak in S03's racer, and `getput.Put` shadowing
+cancellation. Plus **three of S03's seven acceptance bullets shipped unmet and unledgered**,
+because that ledger reconciled against the phase exit criteria and never against the slice's
+own `Acceptance:` line. And **my own hop rule was a chain when D22 is a hub** — corrected at
+v1.117.31; the doc comment I read was true and simply did not answer the question I put to it.
 
 **The socket-sharing criterion is RE-TIMED, not discharged here.** S03's ledger moved it to S04 on the
 premise that "S04 is the first slice with a NAT mapping to be wrong about" — false against the plan's
