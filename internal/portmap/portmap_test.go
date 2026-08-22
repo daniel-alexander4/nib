@@ -19,11 +19,12 @@ import (
 // value it sent would pass a self-round-trip and fail here.
 type mockGateway struct {
 	pc           net.PacketConn
-	extPort      uint16     // the port the router assigns, deliberately != suggested
-	extIP        netip.Addr // the public IP the router reports
-	natpmpResult uint16     // non-zero to simulate a refusal
-	pcpResult    byte       // non-zero to simulate a refusal
-	silentPCP    bool       // drop PCP requests, to force NAT-PMP fallback
+	extPort      uint16      // the port the router assigns, deliberately != suggested
+	extIP        netip.Addr  // the public IP the router reports
+	natpmpResult uint16      // non-zero to simulate a refusal
+	pcpResult    byte        // non-zero to simulate a refusal
+	silentPCP    bool        // drop PCP requests, to force NAT-PMP fallback
+	leases       chan uint32 // records the lease of each MAP request seen (0 = a delete)
 }
 
 func newMockGateway(t *testing.T) *mockGateway { return newMockGatewayRefusing(t, 0, 0) }
@@ -36,7 +37,7 @@ func newMockGatewaySilentPCP(t *testing.T) *mockGateway {
 	if err != nil {
 		t.Fatal(err)
 	}
-	g := &mockGateway{pc: pc, extPort: 51234, extIP: netip.MustParseAddr("203.0.113.7"), silentPCP: true}
+	g := &mockGateway{pc: pc, extPort: 51234, extIP: netip.MustParseAddr("203.0.113.7"), silentPCP: true, leases: make(chan uint32, 8)}
 	t.Cleanup(func() { pc.Close() })
 	go g.serve()
 	return g
@@ -50,7 +51,7 @@ func newMockGatewayRefusing(t *testing.T, natpmp uint16, pcp byte) *mockGateway 
 	if err != nil {
 		t.Fatal(err)
 	}
-	g := &mockGateway{pc: pc, extPort: 51234, extIP: netip.MustParseAddr("203.0.113.7"), natpmpResult: natpmp, pcpResult: pcp}
+	g := &mockGateway{pc: pc, extPort: 51234, extIP: netip.MustParseAddr("203.0.113.7"), natpmpResult: natpmp, pcpResult: pcp, leases: make(chan uint32, 8)}
 	t.Cleanup(func() { pc.Close() })
 	go g.serve()
 	return g
@@ -85,6 +86,7 @@ func (g *mockGateway) serve() {
 }
 
 func (g *mockGateway) replyNATPMPMap(req []byte) []byte {
+	g.recordLease(binary.BigEndian.Uint32(req[8:12]))
 	resp := make([]byte, 16)
 	resp[0] = natpmpVersion
 	resp[1] = req[1] + 128
@@ -107,6 +109,7 @@ func (g *mockGateway) replyNATPMPExternal() []byte {
 }
 
 func (g *mockGateway) replyPCP(req []byte) []byte {
+	g.recordLease(binary.BigEndian.Uint32(req[4:8]))
 	resp := make([]byte, 24+36)
 	resp[0] = pcpVersion
 	resp[1] = pcpResponseBit | pcpOpcodeMap
@@ -121,6 +124,15 @@ func (g *mockGateway) replyPCP(req []byte) []byte {
 	ext := g.extIP.As16()
 	copy(body[20:36], ext[:])
 	return resp
+}
+
+func (g *mockGateway) recordLease(l uint32) {
+	if g.leases != nil {
+		select {
+		case g.leases <- l:
+		default:
+		}
+	}
 }
 
 func roundtrip(t *testing.T, gw string, req []byte) []byte {

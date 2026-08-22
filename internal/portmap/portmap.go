@@ -61,7 +61,25 @@ type Mapping struct {
 	InternalPort uint16
 	ExternalPort uint16
 	LifetimeSec  uint32
+
+	// The delete handle (S07): which mechanism granted the mapping, and — for UPnP — the SOAP
+	// control URL and service type the delete needs. Without these a UPnP mapping cannot be
+	// deleted at all (grill C1); the socket protocols need only the internal port and the
+	// gateway, which the Client already holds.
+	via             mechanism
+	upnpControlURL  string
+	upnpServiceType string
 }
+
+// mechanism is which of the three protocols produced a mapping, so its delete goes out the same
+// way it came in.
+type mechanism uint8
+
+const (
+	mechPCP mechanism = iota
+	mechNATPMP
+	mechUPnP
+)
 
 // ── NAT-PMP (RFC 6886) ───────────────────────────────────────────────────────
 //

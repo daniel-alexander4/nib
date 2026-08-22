@@ -365,31 +365,38 @@ func extractTag(body []byte, local string) string {
 // absent but UPnP is not. The internal client IP for `AddPortMapping` is determined per IGD by
 // dialing its (private, screened) host and reading the local address on that path, so the caller
 // supplies nothing about the local network.
-func mapViaUPnP(ctx context.Context, proto Protocol, internalPort uint16, leaseSec uint32, hostOK func(string) bool) (netip.Addr, uint16, error) {
+func mapViaUPnP(ctx context.Context, proto Protocol, internalPort uint16, leaseSec uint32, hostOK func(string) bool) (ext netip.Addr, port uint16, controlURL, serviceType string, err error) {
 	client := igdHTTPClient()
 	locations, err := discoverIGD(ctx)
 	if err != nil {
-		return netip.Addr{}, 0, err
+		return netip.Addr{}, 0, "", "", err
 	}
 	for _, loc := range locations {
-		controlURL, st, err := controlURLFor(ctx, client, loc, hostOK)
+		ctl, st, err := controlURLFor(ctx, client, loc, hostOK)
 		if err != nil {
 			continue
 		}
-		internalIP, err := internalIPToward(controlURL)
+		internalIP, err := internalIPToward(ctl)
 		if err != nil {
 			continue
 		}
-		if err := soapAddPortMapping(ctx, client, controlURL, st, proto, internalIP, internalPort, internalPort, leaseSec); err != nil {
+		if err := soapAddPortMapping(ctx, client, ctl, st, proto, internalIP, internalPort, internalPort, leaseSec); err != nil {
 			continue
 		}
-		ext, err := soapGetExternalIP(ctx, client, controlURL, st)
+		ip, err := soapGetExternalIP(ctx, client, ctl, st)
 		if err != nil {
 			continue
 		}
-		return ext, internalPort, nil
+		return ip, internalPort, ctl, st, nil
 	}
-	return netip.Addr{}, 0, ErrNoMapping
+	return netip.Addr{}, 0, "", "", ErrNoMapping
+}
+
+// unmapViaUPnP deletes a UPnP mapping via its stored control URL — S07's delete for the IGD
+// path. Best-effort, bounded by the http client's own timeout; a slow or absent IGD must not
+// stall the caller's teardown, so the caller runs this under a short fresh context.
+func unmapViaUPnP(ctx context.Context, controlURL, serviceType string, proto Protocol, externalPort uint16) error {
+	return soapDeletePortMapping(ctx, igdHTTPClient(), controlURL, serviceType, proto, externalPort)
 }
 
 // internalIPToward returns this host's source address on the path to the IGD, by opening (but
