@@ -494,6 +494,11 @@ body > div[id$="Modal"] {
 .sigatt { margin-top: 4px; font-size: 11px; color: var(--subtext0); line-height: 1.4; }
 .sigatt .sigatt-ok { color: var(--green); }
 .sigmutual { margin-top: 10px; font-size: 12px; color: var(--green); }
+/* The one-proceeding verdict. --peach and not --red: the document's signatures are
+   individually valid and this is a statement about DISAGREEMENT between them, not about
+   tampering — a verifier must not colour an observation as an accusation. Both themes
+   define --peach (Mocha #fab387, Latte #fe640b). */
+.sigatt-warn { margin-top: 10px; font-size: 12px; color: var(--peach); line-height: 1.4; }
 
 /* Hidden-content scan: each finding is a sigrow with a severity-coloured label
    and a where/what line; the three removal methods stack as full-width buttons,

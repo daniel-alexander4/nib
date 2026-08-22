@@ -49,6 +49,14 @@ const (
 type Stats struct {
 	// Interfaces is how many interfaces were joined.
 	Interfaces int
+	// Joined4 and Joined6 are the joins that SUCCEEDED, per address family.
+	//
+	// Interfaces above cannot express a one-family failure: it counts distinct interfaces
+	// and either family succeeding is enough to list one, so an all-IPv4-failed join looks
+	// exactly like a healthy dual-stack one. That is the specific failure suspected off
+	// Linux (IP_ADD_MEMBERSHIP on an AF_INET6 socket), where it would make discovery
+	// silently IPv6-only. `Joined4 == 0 && Joined6 > 0` is that failure, stated.
+	Joined4, Joined6 int
 	// Sent is announcements written, counted per interface — so one Announce on a
 	// two-interface host adds two.
 	Sent uint64
@@ -103,6 +111,8 @@ type Socket struct {
 	closeOnce sync.Once
 
 	interfaces int
+	joined4    int
+	joined6    int
 	sent       atomic.Uint64
 	sendErrors atomic.Uint64
 	own        atomic.Uint64
@@ -186,15 +196,30 @@ func open(all []net.Interface, nonce [nonceLen]byte) (*Socket, error) {
 
 	// Joins. IPv4 is asked for interfaces that have an IPv4 address, for the Windows
 	// reason chooseInterfaces documents; IPv6 has no such constraint.
+	//
+	// **Counted PER FAMILY, and that is not bookkeeping.** `joined` is keyed by interface
+	// index and either family succeeding puts an entry in it, so `len(joined)` is identical
+	// whether both families joined or only one did. On macOS/BSD and Windows,
+	// `IP_ADD_MEMBERSHIP` on an AF_INET6 socket is the classic EINVAL/WSAEINVAL — and
+	// `ListenConfig.ListenPacket(… "udp" …)` produces exactly such a socket (measured on
+	// Linux, where it works only via a Linux-specific `ipv6_setsockopt` passthrough). If
+	// that holds off Linux, every IPv4 join fails, discovery silently becomes IPv6-only,
+	// `len(joined)` is unchanged, no error is raised, and NOTHING in this tree says so.
+	//
+	// A per-family count is what lets `nib discover` on a real Windows box answer that in
+	// one line instead of by inference. Recorded here rather than waiting for the run,
+	// because the current counter cannot express the failure it would be used to find.
 	joined := map[int]net.Interface{}
 	for _, ifi := range chooseInterfaces(all, true) {
 		if err := s.p4.JoinGroup(&ifi, s.group4Addr); err == nil {
 			joined[ifi.Index] = ifi
+			s.joined4++
 		}
 	}
 	for _, ifi := range chooseInterfaces(all, false) {
 		if err := s.p6.JoinGroup(&ifi, s.group6Addr); err == nil {
 			joined[ifi.Index] = ifi
+			s.joined6++
 		}
 	}
 	if len(joined) == 0 {
@@ -365,6 +390,8 @@ func (s *Socket) onLink(ua *net.UDPAddr) bool {
 func (s *Socket) Stats() Stats {
 	return Stats{
 		Interfaces:       s.interfaces,
+		Joined4:          s.joined4,
+		Joined6:          s.joined6,
 		Sent:             s.sent.Load(),
 		SendErrors:       s.sendErrors.Load(),
 		Own:              s.own.Load(),

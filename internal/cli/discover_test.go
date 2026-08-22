@@ -191,3 +191,66 @@ func TestANonPositiveWindowRefusesInsteadOfDiagnosing(t *testing.T) {
 		}
 	}
 }
+
+// TestTheSummarySaysWhenOnlyONEFamilyJoined.
+//
+// # The failure this exists for
+//
+// `Stats.Interfaces` is a count of distinct INTERFACES, and `Socket.open` lists an interface
+// when EITHER the IPv4 or the IPv6 join succeeds. So a host on which every IPv4 join failed
+// reports exactly the same number as a healthy dual-stack host, no error is raised, and
+// discovery is silently IPv6-only.
+//
+// That is not hypothetical: `ListenConfig.ListenPacket(… "udp" …)` yields an AF_INET6 socket,
+// and the IPv4 joins on it succeed on Linux only through a Linux-specific `ipv6_setsockopt`
+// passthrough. On macOS/BSD and Windows, `IP_ADD_MEMBERSHIP` on an AF_INET6 socket is the
+// classic EINVAL/WSAEINVAL. `nib discover` on a real Windows box is what settles it — and
+// before this, the command it would be settled with could not express the answer.
+//
+// # Why all four cases
+//
+// A test that drove only the IPv4-missing case would pass against `if st.Joined4 == 0` with
+// no `Joined6 > 0` guard — which fires on a socket that joined NOTHING (already a hard error
+// one layer down) and, worse, would say "IPv6-only" about a host that has no groups at all.
+// Dual-stack is here for the opposite reason: it is the case that must stay SILENT, and an
+// alarm that fires on a healthy host is one people learn to ignore.
+func TestTheSummarySaysWhenOnlyONEFamilyJoined(t *testing.T) {
+	for _, c := range []struct {
+		name       string
+		st         discovery.Stats
+		want, deny string
+	}{
+		{"dual stack is silent",
+			discovery.Stats{Interfaces: 2, Joined4: 2, Joined6: 2, Sent: 4, Own: 4},
+			"(2 IPv4, 2 IPv6)", "NOTE: no IP"},
+		{"no IPv4 join is named",
+			discovery.Stats{Interfaces: 2, Joined4: 0, Joined6: 2, Sent: 4, Own: 4},
+			"IPv6-ONLY", "IPv4-ONLY"},
+		{"no IPv6 join is named",
+			discovery.Stats{Interfaces: 2, Joined4: 2, Joined6: 0, Sent: 4, Own: 4},
+			"IPv4-ONLY", "IPv6-ONLY"},
+		{"nothing joined says neither, because that is a different failure",
+			discovery.Stats{Interfaces: 0, Joined4: 0, Joined6: 0},
+			"(0 IPv4, 0 IPv6)", "ONLY"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			var out bytes.Buffer
+			printSummary(&out, c.st, 3*time.Second)
+			got := out.String()
+			// STIMULUS: the summary really rendered. Without it the "deny" assertions below
+			// pass against an empty buffer, which is the same green a broken printer gives.
+			if !strings.Contains(got, "interfaces joined") {
+				t.Fatalf("printSummary produced no interface line, so nothing below is "+
+					"measuring the summary:\n%s", got)
+			}
+			if !strings.Contains(got, c.want) {
+				t.Errorf("the summary does not say %q — a one-family join failure that no "+
+					"output names is discovery silently working on half the addresses it "+
+					"should:\n%s", c.want, got)
+			}
+			if strings.Contains(got, c.deny) {
+				t.Errorf("the summary says %q, which is not true of this host:\n%s", c.deny, got)
+			}
+		})
+	}
+}

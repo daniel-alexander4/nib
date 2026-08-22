@@ -210,6 +210,29 @@ func runRendezvous(out, errw io.Writer, budget time.Duration, selfTest bool) int
 	fmt.Fprintf(out, "  replies shaped to crash the fetch      %d\n", st.RefusedResponses)
 	fmt.Fprintf(out, "  requests to store other people's data  %d  (always refused)\n", st.RefusedStores)
 
+	// The shared socket's own routing, which nothing printed and nothing read.
+	//
+	// Caveat 7 puts the DHT and the QUIC session on ONE UDP socket, and `udpmux` decides
+	// per datagram which of the two views gets it. Those decisions were counted and the
+	// counters had no reader anywhere in the product — the `historyEvicted` shape, on the
+	// one mechanism whose whole correctness is "the right library got the right packet".
+	//
+	// This is the command a person runs when a ceremony will not connect, so it is where
+	// the numbers belong. `RoutedToDHT` non-zero with `RoutedByCID` zero is a socket doing
+	// only rendezvous; a rising `DroppedQUIC`/`DroppedDHT` is a view that stopped reading,
+	// which no other output in this tree can distinguish from a quiet network.
+	mx := m.Stats()
+	fmt.Fprintf(out, "shared socket (the DHT and the session share one port — caveat 7)\n")
+	fmt.Fprintf(out, "  routed to the DHT                      %d\n", mx.RoutedToDHT)
+	fmt.Fprintf(out, "  routed to QUIC                         %d long header / %d by connection id / %d by peer\n",
+		mx.RoutedLongHeader, mx.RoutedByCID, mx.RoutedByPeer)
+	fmt.Fprintf(out, "  QUIC peers learned / expired           %d / %d  (%d held now)\n",
+		mx.Learned, mx.Expired, mx.Peers)
+	if mx.DroppedQUIC > 0 || mx.DroppedDHT > 0 {
+		fmt.Fprintf(out, "  DROPPED                                %d quic / %d dht  "+
+			"(a view stopped reading; this is not a quiet network)\n", mx.DroppedQUIC, mx.DroppedDHT)
+	}
+
 	// The node cache this command used is a scratch directory, so `Loaded` is always 0 and
 	// `CacheRejected` always false — printing them as if they were findings reads as a
 	// broken cache where there is none, and `Saved` is written by the deferred Close AFTER

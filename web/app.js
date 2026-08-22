@@ -3684,6 +3684,39 @@ async function augmentSigDetails(rows) {
     m.textContent = '✓ Mutually co-signed — each party’s signature attests to the other’s key.';
     els.sigDetailsBody.appendChild(m);
   }
+  // Whether they all signed the SAME proceeding, which "mutually co-signed" above does
+  // not answer and used to be left unsaid.
+  //
+  // `oneProceeding` is true when every VALID signature carries the same non-empty roster
+  // commitment. Nothing read it: it was computed in Go, serialized, and rendered nowhere —
+  // so the summary above announced "Mutually co-signed" over a document whose signers had
+  // agreed to DIFFERENT ceremonies, which is the field's own doc describing the failure it
+  // exists to prevent: "a verifier that said only co-signed about such a document would be
+  // describing a proceeding that did not happen".
+  //
+  // **Three states, not two, and the third is why `!oneProceeding` alone is not the test.**
+  // An ordinary two-party co-sign carries no record at all, so its rosterHash is "" and
+  // `oneProceeding` is false — identical to the disagreement case if read naively. So the
+  // discriminator is whether ANY signature claims a ceremony; only then is agreement a
+  // question that has been asked.
+  const claimed = attested.filter((a) => a.rosterHash);
+  if (claimed.length) {
+    const p = document.createElement('div');
+    if (attested.every((a) => a.oneProceeding)) {
+      p.className = 'sigmutual';
+      p.textContent = '✓ One proceeding — every signature on this document commits to the same ceremony.';
+    } else {
+      // Deliberately not phrased as tampering. The honest statement is about disagreement:
+      // it covers a mixed document (one ceremony signature and one ordinary co-sign) as
+      // well as two different ceremonies, and a verifier must not accuse where it can only
+      // observe.
+      p.className = 'sigatt-warn';
+      p.textContent = '⚠ Not one proceeding — ' + claimed.length + ' of ' + attested.length +
+        ' signature(s) name a ceremony, and they do not all commit to the same one. '
+        + 'This document was not produced by a single agreed proceeding.';
+    }
+    els.sigDetailsBody.appendChild(p);
+  }
   if (attested.length) {
     const note = document.createElement('div');
     note.className = 'sigatt';
