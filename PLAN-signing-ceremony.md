@@ -3303,9 +3303,49 @@ Tasks (grilled 2026-08-22, after a three-agent deepdive and two rounds of live m
 
 **Superseded ledger, kept for the trail — "1 met / 1 met / 2 outstanding":** *No v4 regression* — met, full suite plus the race detector green on `internal/server`, `internal/p2p` and `internal/rendezvous`. *The dual-stack bind asserted as a socket property* — met, red-proved by binding `udp4` (both the bare socket and the shared endpoint). *A driven hermetic analogue over v6 loopback/ULA* — **not met**, T06. *Criterion 1* — **not exercised**, and it is Dan's run by the phase's own carve-out; T07 is the buildable half.
 
-#### P05.S06 — The port-mapping client: PCP, then NAT-PMP, then UPnP-IGD *(D15; caveats 6, 7, 8)*
+#### P05.S06 — The port-mapping client: PCP, then NAT-PMP, then UPnP-IGD *(D15; caveats 6, 7, 8)* *(in progress — T01 done 2026-08-22, v1.117.52; T02–T06 outstanding)*
 Scope: tier 3's mechanism. **Caveat 6 is discharged or refuted in this slice** — no Go port-mapping dependency exists in the tree and its licence-compatibility is explicitly an unverified assumption; the caveat's own fallback ("if only some protocols are covered, the tier still ships — with narrower router coverage, recorded rather than assumed") is the acceptable outcome. Caveat 7 decides where the request is sent FROM.
 Acceptance: the 3 s budget; all three protocols failing is an ordinary tier miss and never an error; whatever coverage is achieved is **recorded, not assumed**; and if a dependency lands, `THIRD-PARTY-NOTICES.md` regenerates and its licence claim is true of it.
+
+**Firmed 2026-08-22 (slice-open, read against the tree).** The mapping produces a **self-address**
+(the mapped external `IP:port`) that joins the published record beside the DHT reflexive probe —
+`publishableEndpoints` (`ceremonynet.go`) is where it lands, exactly as S05's v6 endpoint did.
+**Caveat 6 is discharged by NOT taking a dependency:** NAT-PMP (RFC 6886) and PCP (RFC 6887) are
+small binary UDP request/response protocols to the gateway on port 5351, implemented natively —
+which removes the licence question the caveat is about rather than answering it. **UPnP-IGD is
+SSDP discovery + SOAP over HTTP, an order more code and the one most consumer routers actually
+have**; per caveat 6's own fallback it is the tier's *narrower-coverage* arm and is built last,
+and if it is deferred that is recorded, not assumed. **Caveat 7's clause is the internal port:**
+the mapping requests the shared endpoint's `LocalAddr().Port` as its internal port, so the
+mapped external port belongs to the socket the session actually answers on. The lease *lifecycle*
+(armed-only, refresh, delete-on-every-exit) is **S07**, not here; this slice is the client that
+obtains and releases one mapping on demand.
+
+Tasks (firmed 2026-08-22):
+- **T01 — the NAT-PMP + PCP wire codec, pure functions with a driven mock-gateway test.** *(done, v1.117.52)*
+  Request/response encode+decode for both protocols (map a UDP or TCP port for a lease, and the
+  delete form — lease 0), with the result-code and epoch fields parsed rather than skipped. Pure
+  `[]byte`↔struct so it tests without a socket; driven end to end against an in-process UDP mock
+  gateway that speaks both. **This is the caveat-6 discharge**: it is the whole dependency,
+  written rather than imported.
+- **T02 — gateway discovery.** The default gateway address, read from the OS without a
+  dependency (the routing table / `/proc/net/route` on Linux, the platform equivalents behind a
+  `//go:build` split where they differ — a real gap declared, never a stub). No gateway is an
+  ordinary tier miss.
+- **T03 — the client: PCP then NAT-PMP, within the 3 s budget.** PCP first (it supersedes
+  NAT-PMP), falling back to NAT-PMP; the first to return a mapping wins; all failing is a tier
+  miss and never an error. The internal port is the shared endpoint's, per caveat 7. Both UDP
+  and TCP mapped when both transports are offered (D15).
+- **T04 — the mapped address becomes a published candidate.** Wire the obtained external
+  `IP:port` into `publishableEndpoints`/the self-address set, behind the armed-only posture
+  (the request is made only while a ceremony is armed — the lifecycle guard is S07, but the
+  *call site* is here). `addrscope` screens it exactly as every other candidate.
+- **T05 — UPnP-IGD, or its recorded absence.** SSDP+SOAP for the routers NAT-PMP/PCP miss; if
+  the coverage is narrower than all three, that is recorded in the tier's own doc and in the
+  caveat, not assumed. `THIRD-PARTY-NOTICES.md` regenerates only if a dependency lands (none
+  is planned).
+- **T06 — seam inventory rows**, per `instrument.md`: the tier's attempt/won/miss observables
+  and the caveat-7 internal-port assertion.
 
 #### P05.S07 — The mapping lease lifecycle *(D15; criteria 4, 5)*
 Scope: D15's lifecycle is law, not configuration — armed-only, short lease refreshed while armed, explicitly deleted on every exit path including cancel and error.
