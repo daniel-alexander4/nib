@@ -1085,7 +1085,26 @@ func (s *Server) handleSessionInitiate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer cer.close()
-	conn, err := s.raceWithRendezvous(cer, cands, cert, key, peerFP, peerLabel, peerLabel)
+	// P05.S09: for a CEREMONY the dialing side also LISTENS, over the one shared endpoint, and the
+	// glare join keeps whichever connection both ends agree on — so a peer that wins by dialing US
+	// is joined here instead of being refused. The dialing side of a co-sign is the INITIATOR
+	// (role-from-endpoint, the C6 default; the record-role refinement for multi-hop is T06), so it
+	// promotes the surviving channel as the initiator and runs Initiate below. Outside a ceremony
+	// this is raceWithRendezvous + Initiate exactly as before.
+	var conn *p2p.Conn
+	if cer != nil && cer.rz != nil {
+		hl, herr := p2p.QUICListenHandshakeOn(cer.end, cert, key, peerFP)
+		if herr != nil {
+			httpError(w, http.StatusInternalServerError, "could not arm the racing accept: "+herr.Error())
+			return
+		}
+		defer hl.Close()
+		cctx, ccancel := context.WithTimeout(context.Background(), connectDeadline)
+		defer ccancel()
+		conn, err = s.connect(cctx, cer, hl, cands, cert, key, peerFP, myFP, true, peerLabel, peerLabel)
+	} else {
+		conn, err = s.raceWithRendezvous(cer, cands, cert, key, peerFP, peerLabel, peerLabel)
+	}
 	if errors.Is(err, errUnknownTransport) {
 		httpError(w, http.StatusBadRequest, err.Error())
 		return
