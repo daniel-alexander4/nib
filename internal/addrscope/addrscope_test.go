@@ -250,3 +250,69 @@ func TestLoopbackIsOneRule(t *testing.T) {
 		}
 	}
 }
+
+// TestAZoneCannotSmuggleAnAddressPastTheReservedTable — a live bypass, measured.
+//
+// `netip.Prefix.Contains` is false for any address carrying a zone, and `Routable` walks
+// every entry in `reserved` through it. So a zone cleared the whole table while leaving the
+// byte-test predicates above it working — which is why the hole was invisible: `::1%eth0`
+// and `fe80::1%eth0` stayed refused, and those are the cases anyone would think to try.
+//
+// The classes below are the table's own reason for existing. `::/96` carries an IPv4
+// address in the low 32 bits, so `::c0a8:101` IS 192.168.1.1 — the entry's own comment
+// records that measurement and calls it "the one on this list that reaches a real machine
+// somebody else owns". 6to4 encodes an arbitrary IPv4 in bits 16..48. NAT64 is the one that
+// bites hardest: on an IPv6-only carrier — standard on mobile networks — `64:ff9b::/96` is
+// translated to any IPv4 address, including RFC1918 and loopback, at the translator.
+//
+// The attacker is an in-roster counterparty, which is inside this design's declared threat
+// model, and what it buys them is aiming Nib's dials — and later the punch — at hosts on
+// the victim's own network.
+func TestAZoneCannotSmuggleAnAddressPastTheReservedTable(t *testing.T) {
+	// Each pair is the same address twice: bare, and wearing a zone. The bare form is the
+	// CONTROL — without it a table that refused everything would pass, and refusing
+	// everything breaks every tier that ends in a dialable address.
+	for _, tc := range []struct{ bare, zoned, what string }{
+		{"::c0a8:101", "::c0a8:101%eth0", "192.168.1.1 inside ::/96"},
+		{"::7f00:1", "::7f00:1%eth0", "127.0.0.1 inside ::/96"},
+		{"2001:db8::1", "2001:db8::1%eth0", "documentation space"},
+		{"2002:c0a8:101::1", "2002:c0a8:101::1%9", "6to4, which encodes an arbitrary IPv4"},
+		{"64:ff9b::7f00:1", "64:ff9b::7f00:1%eth0", "NAT64, translated to any IPv4 at the translator"},
+		{"2001:20::1", "2001:20::1%eth0", "ORCHIDv2"},
+		{"100::1", "100::1%eth0", "the discard prefix"},
+	} {
+		bare := netip.MustParseAddr(tc.bare)
+		// SETUP: the bare form really is refused. If it is not, the table has lost the
+		// entry and the zoned assertion below would pass for the wrong reason.
+		if Routable(bare) {
+			t.Fatalf("setup: %s (%s) is Routable even without a zone — the reserved table "+
+				"has lost this entry, so the zone assertion proves nothing", tc.bare, tc.what)
+		}
+		zoned := netip.MustParseAddr(tc.zoned)
+		if Routable(zoned) {
+			t.Errorf("%s is Routable but %s is not — the same address, and the only "+
+				"difference is a zone. %s. netip.Prefix.Contains is false for any zoned "+
+				"address, so a zone clears every entry in `reserved` while the byte tests "+
+				"above keep working.", tc.zoned, tc.bare, tc.what)
+		}
+		// And through the door the candidate record actually uses.
+		if Target(netip.AddrPortFrom(zoned, 5000)) {
+			t.Errorf("Target accepts %s:5000 — a candidate record naming it would be sealed, "+
+				"published, opened and dialled", tc.zoned)
+		}
+	}
+
+	// The other direction, so this cannot be satisfied by refusing every zoned address in a
+	// way that breaks something real: a zone on a genuinely global address is meaningless
+	// but harmless, and stripping it must leave the address's own verdict intact.
+	global := netip.MustParseAddr("2606:4700:4700::1111")
+	if !Routable(global) {
+		t.Fatal("setup: a global unicast v6 address is not Routable, so the check below " +
+			"cannot distinguish stripping a zone from refusing everything")
+	}
+	if !Routable(netip.MustParseAddr("2606:4700:4700::1111%eth0")) {
+		t.Error("a zone made a genuinely global address unroutable; the zone must be " +
+			"stripped for the comparison, not treated as disqualifying — otherwise a " +
+			"legitimate candidate learned on an interface stops being dialable")
+	}
+}

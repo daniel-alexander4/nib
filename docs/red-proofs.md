@@ -27,10 +27,10 @@ is the point. A row is only added after the red was observed — never from inte
 applies the row's defect as a patch, runs the named check, and **asserts the check FAILS**.
 `./build/redproof.sh` with no argument lists what is recorded.
 
-**Eight rows are replayable** (v1.117.24, up from six): `empty-state-message`,
+**Nine rows are replayable** (v1.117.26, up from six): `empty-state-message`,
 `risky-actions-rendition`, `loopback-bind-announced`, `browse-burns-its-window`,
 `announced-transport-ignored`, `discover-verdict-order`, `race-feed-leaks-on-win`,
-`race-cap-not-per-source`. The count is guarded in
+`race-cap-not-per-source`, `zone-bypasses-reserved`. The count is guarded in
 `verify_test.go` with a floor that **moves with the set** — left at two while the set grew,
 it would have tolerated losing four of six silently, which is the same defect as the prose
 count it replaced. Raising the floor is the tax a new row pays.
@@ -723,3 +723,9 @@ them; the fifth is one I nearly shipped in the fix itself.
 | **`safe.Recover`'s body gutted to `_ = label`** | `the panic escaped safe.Recover and reached this frame … the AST guard below is satisfied by that NAME — so if the function itself does not swallow a panic, every one of those goroutines is unprotected while the guard stays green` | `TestSafeRecoverActuallyRecovers`. `internal/safe` had **no test of any kind**; the first draft of this row let the panic kill the test binary on a raw stack — red, but not for its own reason (`redproof.sh`'s third failure mode), so the test now catches it and names it |
 | **One racer goroutine's `defer safe.Recover` removed** | `lan.go:373 launches a goroutine whose first statement is not defer safe.Recover(...)` | `TestEveryDetachedGoroutineIsRecovered`. It replaces a **comment** at `lan.go` asserting the announcer was "the one `go func` in internal/server without it" — true when written, false from S03, which added four and recovered none. A sentence cannot notice a fifth goroutine. Its first draft also reported `go s.runSession(...)` as unrecovered, which is wrong — that function recovers itself one frame down — so the guard now resolves same-package callees, with a stimulus assertion that the resolution arm was actually exercised |
 | **`Source: sourceLAN` dropped from `resolve`** (the defect in the fix) | `discover.go:132 builds a dialable candidate without a Source. It will be accounted to the zero-value source, so one tier spends another tier's share of the race` | `TestEveryCandidateProducerNamesItsSource`. **I shipped this and the tests stayed green**, because every test set `Source` by hand — the fixture supplying what production omits. Caught by asking who the producers were, not by running anything. The guard's own first draft then found one producer of two and said so through its stimulus assertion: the typed-address producer is `[]candidate{{…}}`, an elided literal with a nil type |
+
+## v1.117.26 — P05.S04 T01, a live bypass in the address table
+
+| Defect reintroduced | What it said | Check that fired |
+| --- | --- | --- |
+| **`a.WithZone("")` removed from `addrscope.Routable`** *(replayable: `zone-bypasses-reserved`)* | `::c0a8:101%eth0 is Routable but ::c0a8:101 is not — the same address, and the only difference is a zone. 192.168.1.1 inside ::/96` and `Target accepts ::c0a8:101%eth0:5000 — a candidate record naming it would be sealed, published, opened and dialled` | `TestAZoneCannotSmuggleAnAddressPastTheReservedTable`. Each case carries its bare form as a **control**, because a table that refused everything would pass the zoned assertion and break every tier that ends in a dialable address; and the test asserts the other direction too — a zone on a genuinely global address must still be dialable, or stripping is indistinguishable from disqualifying |
