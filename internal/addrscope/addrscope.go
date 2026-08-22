@@ -94,15 +94,56 @@ const MinPort = 1024
 
 var portExceptions = map[uint16]bool{80: true, 443: true}
 
-// Target is Routable plus the port rule, for an address somebody else supplied.
+// dialable is Routable plus the rule that an address SOMEBODY ELSE supplied, which this
+// host is going to aim traffic at, may not carry a zone.
+//
+// # Why refusing here and stripping in Routable are not in tension
+//
+// `Routable` strips the zone because it is a *comparison*: `netip.Prefix.Contains` is false
+// for any zoned address, so without the strip a zone clears the whole `reserved` table.
+// That makes the verdict correct. It does not make the ADDRESS safe to keep, and the
+// address is what survives: `parseCandidate` stores what `netip.ParseAddrPort` returned,
+// the canonical re-encode check re-emits the zone rather than filtering it, and
+// `ceremonynet.go` hands `Endpoint.Addr.String()` to the racer, which dials it verbatim.
+// So a peer-chosen `%zone` on a GLOBAL v6 address passed every door and reached the kernel.
+//
+// # What was measured, and what it does NOT say
+//
+// On Linux/Go, `[2606:4700:4700::1111%lo]:443`, `%docker0`, `%99` and `%nosuchif` all
+// DIALLED, each from the ordinary global source address, in the same ~20ms as the bare
+// form — the zone reaches the syscall (`Dialer.Control` sees `[2606:4700:4700::1111%lo]:443`)
+// and the kernel ignores `sin6_scope_id` for a global-scope destination. So the specific
+// fear — an in-roster counterparty steering our source interface — is NOT demonstrated
+// here, and no claim is made about Windows or macOS, which were not measured.
+//
+// The refusal does not rest on that fear. It rests on this: a zone is meaningful only on a
+// link-local address, and a link-local address is refused whatever its zone says. So a zone
+// on an address that reaches this predicate is bytes an attacker chose that this program
+// can never act on — and which it hands to the kernel anyway. It also multiplies spellings:
+// `[2001:db8::1]` and `[2001:db8::1%eth0]` are two race candidates for one endpoint, so a
+// free axis for burning `maxRaceCandidates`.
+//
+// Nothing legitimate loses a candidate. Our own published endpoints come from a DHT
+// reflection (`rendezvous.SelfAddress`), which is a remote observation and carries no zone;
+// LAN discovery's zoned link-locals are real and stay real, because they never enter a
+// `CandidateRecord` — `resolve` puts them straight into the racer, and they are link-local,
+// which this predicate refuses on its own terms.
+func dialable(a netip.Addr) bool {
+	if a.Zone() != "" {
+		return false
+	}
+	return Routable(a)
+}
+
+// Target is dialable plus the port rule, for an address somebody else supplied.
 func Target(ap netip.AddrPort) bool {
-	if !Routable(ap.Addr()) {
+	if !dialable(ap.Addr()) {
 		return false
 	}
 	return ap.Port() >= MinPort || portExceptions[ap.Port()]
 }
 
-// Seed is Routable plus the port floor, for a DHT bootstrap address.
+// Seed is dialable plus the port floor, for a DHT bootstrap address.
 //
 // **Deliberately not Target**, and the difference is the transport. Target's 80 and 443
 // exceptions exist for D14's TCP fallback — the networks where outbound TCP is permitted
@@ -115,7 +156,7 @@ func Target(ap netip.AddrPort) bool {
 //
 // One table, three predicates, each stating which question it answers.
 func Seed(ap netip.AddrPort) bool {
-	return ap.Port() >= MinPort && Routable(ap.Addr())
+	return ap.Port() >= MinPort && dialable(ap.Addr())
 }
 
 // SharedSpace reports CGNAT space (100.64/10), which is a distinct fact from unroutable —

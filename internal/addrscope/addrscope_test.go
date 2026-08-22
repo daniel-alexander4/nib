@@ -316,3 +316,87 @@ func TestAZoneCannotSmuggleAnAddressPastTheReservedTable(t *testing.T) {
 			"legitimate candidate learned on an interface stops being dialable")
 	}
 }
+
+// A zone on a GLOBAL v6 address is refused by the two predicates that judge an address
+// somebody else supplied — the counterpart to the test above, and a different claim.
+//
+// That test is about the reserved TABLE: a zone cleared every prefix, so a private address
+// wearing one read as public. `Routable` fixed it by stripping, which makes the verdict
+// right and leaves the address alone. This test is about what happens to the address AFTER
+// the verdict. `[2606:4700:4700::1111%eth0]:5000` is genuinely global, so the table has
+// nothing to say about it; it passed `Target`, was stored by `parseCandidate` with its zone
+// intact, survived the canonical re-encode (which re-emits the zone rather than filtering
+// it), and reached `net.Dialer` verbatim through `Endpoint.Addr.String()`.
+//
+// **Measured before this existed**, so the fix is not aimed at a guess: on Linux/Go that
+// address dials — from the ordinary global source, in ~20ms — and so do `%docker0`, `%99`
+// and `%nosuchif`. The kernel ignores `sin6_scope_id` for a global-scope destination, and
+// `Dialer.Control` confirms the zone reaches the syscall regardless. So no source-interface
+// steering was demonstrated on this platform, and none is claimed for Windows or macOS.
+//
+// The rule stands on the simpler ground: a zone means something only on a link-local
+// address, link-local is refused whatever its zone says, so a zone reaching here is bytes
+// an attacker chose that Nib can never act on and hands to the kernel anyway.
+func TestAZoneOnAGlobalAddressNeverReachesTheDialer(t *testing.T) {
+	const bare = "2606:4700:4700::1111"
+	// SETUP, and it is the whole discriminator: the bare form must PASS both predicates.
+	// Without this the test is satisfied by a predicate that refuses everything, which is
+	// exactly how the reserved-table version of this bug could have been "fixed" wrongly.
+	if !Target(netip.AddrPortFrom(netip.MustParseAddr(bare), 5000)) {
+		t.Fatal("setup: the bare global address is not a Target, so refusing its zoned " +
+			"form proves nothing about zones")
+	}
+	if !Seed(netip.AddrPortFrom(netip.MustParseAddr(bare), 5000)) {
+		t.Fatal("setup: the bare global address is not a Seed, so refusing its zoned " +
+			"form proves nothing about zones")
+	}
+	for _, zone := range []string{"eth0", "lo", "docker0", "1", "99", "nosuchif"} {
+		zoned := netip.MustParseAddr(bare).WithZone(zone)
+		if Target(netip.AddrPortFrom(zoned, 5000)) {
+			t.Errorf("Target accepts %s:5000 — a candidate record naming it is sealed, "+
+				"published, opened, and its zone is handed to the kernel by the racer", zoned)
+		}
+		if Seed(netip.AddrPortFrom(zoned, 5000)) {
+			t.Errorf("Seed accepts %s:5000 — an invitation's bootstrap list naming it "+
+				"reaches the DHT's dialer with a zone the peer chose", zoned)
+		}
+	}
+}
+
+// Both zone-judging predicates route through the one door, so a third predicate added
+// later cannot quietly grow its own copy of the rule (ADR-009).
+//
+// It reads the source rather than comparing behaviour, because eight cases agreeing says
+// nothing about a ninth call site written without the check — which is the failure ADR-009
+// exists for, and which this repo has shipped.
+func TestTargetAndSeedShareTheZoneDoor(t *testing.T) {
+	src, err := os.ReadFile("addrscope.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := string(src)
+	// SETUP: the door exists and is the only place the zone is read for a verdict.
+	if strings.Count(body, "a.Zone() != \"\"") != 1 {
+		t.Fatalf("setup: expected exactly one zone verdict in addrscope.go, found %d — "+
+			"a second one is a copy of the rule, which is what this guard forbids",
+			strings.Count(body, "a.Zone() != \"\""))
+	}
+	for _, fn := range []struct{ name, decl string }{
+		{"Target", "func Target(ap netip.AddrPort) bool {"},
+		{"Seed", "func Seed(ap netip.AddrPort) bool {"},
+	} {
+		i := strings.Index(body, fn.decl)
+		if i < 0 {
+			t.Fatalf("setup: %s's declaration has changed shape; this guard cannot see it", fn.name)
+		}
+		rest := body[i:]
+		end := strings.Index(rest, "\n}\n")
+		if end < 0 {
+			t.Fatalf("setup: cannot find the end of %s", fn.name)
+		}
+		if !strings.Contains(rest[:end], "dialable(") {
+			t.Errorf("%s does not call dialable — it judges an address somebody else "+
+				"supplied and must go through the one door that refuses a zone", fn.name)
+		}
+	}
+}
