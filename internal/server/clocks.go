@@ -104,6 +104,15 @@ const (
 	// It runs AT ARM rather than inside the race, so the table is warm before anybody dials.
 	bootstrapBudget = 20 * time.Second
 
+	// portMapBudget is D16's clock-1 for the port-mapping request (PCP then NAT-PMP), 3 s and
+	// STRICTLY ITS OWN. The plan-review clock-independence pin forbids implementing one clock
+	// in terms of another, and the natural call site (`publishCandidates`) already runs under
+	// the 45 s `rendezvousPublishBudget`; using that context for the mapping would both nest
+	// the mapping budget inside the publish budget and let a silent gateway eat up to 45 s of
+	// publish time. So the mapping call derives cancellation from the arm's context but bounds
+	// itself here. (S06.T04.)
+	portMapBudget = 3 * time.Second
+
 	// rendezvousPublishBudget mirrors rendezvous.PublishBudget, which bounds a publish AND a
 	// fetch. Named here because candidateLife is arithmetic over it and a figure used in a
 	// sum should be visible beside the other clocks rather than reached for through another

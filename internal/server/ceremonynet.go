@@ -4,12 +4,15 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
 	"net/netip"
 	"sync/atomic"
 	"time"
 
+	"nib/internal/addrscope"
 	"nib/internal/ceremony"
 	"nib/internal/p2p"
+	"nib/internal/portmap"
 	"nib/internal/rendezvous"
 	"nib/internal/safe"
 )
@@ -106,6 +109,13 @@ func (c *ceremonyID) publishCandidates(ctx context.Context, transport string) er
 		return fmt.Errorf("could not learn this machine's public address: %w", err)
 	}
 	addrs := publishableEndpoints(self, transport)
+	// The router port-mapping tier (D15, tier 3), appended to the reflexive candidates. It is
+	// obtained HERE and not inside `publishableEndpoints`, which is a pure function of a DHT
+	// observation with no network reach — a live mapping call has no place in it (grill F5).
+	// A miss or an unroutable answer leaves `addrs` untouched: an ordinary tier miss, never an
+	// error (D15/D16, grill F8), and never routed through `Sign`'s all-or-nothing screen, which
+	// would drop the good reflexive candidates alongside a bad mapped one (grill F1/#1).
+	addrs = c.appendMappedCandidate(ctx, addrs)
 	if len(addrs) == 0 {
 		// Not a failure of this path: it is D19's cause 3 or 4, and the ladder's other
 		// tiers are unaffected. Publishing nothing is the honest outcome — a record naming
@@ -139,6 +149,65 @@ func (c *ceremonyID) publishCandidates(ctx context.Context, transport string) er
 		return err
 	}
 	return c.rz.Publish(ctx, seed, c.gate.PublishSalt(), sealed)
+}
+
+// appendMappedCandidate obtains a router port mapping for the shared endpoint's own port and,
+// if the answer screens as a dialable public address, appends it to addrs. It returns addrs
+// unchanged on any miss.
+//
+// **Caveat 7:** the internal port is the shared endpoint's, `c.end.LocalAddr()` — the single
+// UDP socket the QUIC session actually answers on (`p2p.SharedEndpoint`), not a fresh one. The
+// tier is therefore UDP/QUIC-only, and that is correct rather than a gap: this whole publish
+// path runs only for a QUIC arm (`c.rz` is nil on TCP), and PCP/NAT-PMP speak UDP to the
+// gateway anyway, so D15's "both UDP and TCP" has no call site here until a TCP publish path
+// exists. Recorded the way S05 recorded its scoping (grill F4).
+//
+// **Lifecycle is S07.** This obtains and publishes one mapping; the refresh that keeps it alive
+// across the 300 s race (the lease is ~120 s) and the explicit delete on every teardown path
+// are S07, which builds them as one scheduler. The residue until then is a ≤120 s inbound hole
+// that self-expires — D15's own crash-safety lease, bounded and not a leak (grill F3).
+func (c *ceremonyID) appendMappedCandidate(ctx context.Context, addrs []ceremony.Endpoint) []ceremony.Endpoint {
+	if c.end == nil {
+		return addrs // no shared endpoint (the TCP path never sets one) — no mapping tier
+	}
+	ua, ok := c.end.LocalAddr().(*net.UDPAddr)
+	if !ok {
+		return addrs // no shared UDP socket — not the QUIC path, so no mapping tier
+	}
+	gw, err := portmap.DefaultGateway()
+	if err != nil {
+		return addrs // no gateway: an ordinary tier miss
+	}
+	client := &portmap.Client{Gateway: netip.AddrPortFrom(gw, portmap.GatewayPort)}
+	mapCtx, cancel := context.WithTimeout(ctx, portMapBudget)
+	defer cancel()
+	m, ext, err := client.Map(mapCtx, portmap.UDP, uint16(ua.Port))
+	if err != nil {
+		return addrs // ErrNoMapping, or the arm was cancelled — swallowed (F8)
+	}
+	ep, ok := screenedMappedEndpoint(ext, m.ExternalPort)
+	if !ok {
+		return addrs // a private/CGNAT/low-port answer — dropped here, not fed to Sign (F1)
+	}
+	return append(addrs, ep)
+}
+
+// screenedMappedEndpoint applies `addrscope.Target` to a gateway-supplied external address and
+// returns the endpoint only if it passes. It is the grill's F1 fix as a pure function, so the
+// screen is testable without a live router: a CGNAT (100.64/10), double-NAT (RFC-1918) or
+// sub-1024 external — all of which a real gateway legitimately returns — is dropped, rather
+// than reaching `preimage`'s all-or-nothing check and taking the whole record down with it.
+func screenedMappedEndpoint(ext netip.Addr, port uint16) (ceremony.Endpoint, bool) {
+	ap := netip.AddrPortFrom(ext, port)
+	if !addrscope.Target(ap) {
+		return ceremony.Endpoint{}, false
+	}
+	// **Always QUIC, hard-coded, not the caller's transport (ADR-010, grill F2/#2).** A PCP/
+	// NAT-PMP mapping is a UDP pinhole by construction, so it is a QUIC endpoint whatever the
+	// arm's transport string says. Threading `transport` here would let a non-QUIC value — which
+	// cannot occur today, but a guard is not for today — publish a UDP mapping labelled TCP,
+	// the signed-lie-about-the-endpoint that format version 2 exists to prevent.
+	return ceremony.Endpoint{Addr: ap, Transport: ceremony.TransportQUIC}, true
 }
 
 // feedCandidates fetches the peer's records and sends what the gate admits to the racer.
