@@ -139,12 +139,22 @@ const UNREAD_KNOWN = {
 
 // ── The scan ─────────────────────────────────────────────────────────────────
 // Struct name -> [json field names], for every json-tagged struct in the packages.
-function scanStructs() {
-  const out = new Map();
-  for (const pkg of PACKAGES) {
-    for (const f of fs.readdirSync(path.join(REPO, pkg))) {
+// declaredStructs collects every struct declaration under `internal/`, keyed by
+// `pkg.Type` AND by bare `Type`, so an embed can be resolved from either spelling.
+//
+// It reaches wider than PACKAGES on purpose: an embedded type does not have to live in a
+// scanned package to contribute published fields, and `attestationView` embeds
+// `p2p.SignerAttestation` from a package this file has no other reason to read.
+function declaredStructs() {
+  const byQualified = new Map(); // "p2p.SignerAttestation" -> {body, file}
+  const byBare = new Map(); // "SignerAttestation" -> [{qualified, body, file}, …]
+  const root = path.join(REPO, 'internal');
+  for (const pkg of fs.readdirSync(root)) {
+    const dir = path.join(root, pkg);
+    if (!fs.statSync(dir).isDirectory()) continue;
+    for (const f of fs.readdirSync(dir)) {
       if (!f.endsWith('.go') || f.endsWith('_test.go')) continue;
-      const src = read(pkg, f);
+      const src = fs.readFileSync(path.join(dir, f), 'utf8');
       for (const m of src.matchAll(/type\s+([A-Za-z_][A-Za-z0-9_]*)\s+struct\s*\{/g)) {
         // The struct's body: from the opening brace to the first line that is exactly
         // "}". Anchored to a line start so a nested literal cannot end it early — the
@@ -153,14 +163,97 @@ function scanStructs() {
         const from = m.index + m[0].length;
         const end = src.indexOf('\n}', from);
         if (end === -1) continue;
-        const fields = [...src.slice(from, end).matchAll(/`json:"([^",]+)/g)]
-          .map((x) => x[1]).filter((x) => x !== '-');
-        if (fields.length) out.set(m[1], { fields, file: `${pkg}/${f}` });
+        const rec = { body: src.slice(from, end), file: `internal/${pkg}/${f}`, name: m[1] };
+        byQualified.set(`${pkg}.${m[1]}`, rec);
+        if (!byBare.has(m[1])) byBare.set(m[1], []);
+        byBare.get(m[1]).push(rec);
+      }
+    }
+  }
+  return { byQualified, byBare };
+}
+
+const DECLARED = declaredStructs();
+
+// resolveEmbed finds the struct an embed line names, or null.
+//
+// **An ambiguous bare name is a hard failure, not a guess.** Two packages under
+// `internal/` may both declare `Record`, and picking one silently would merge the wrong
+// fields — a scan that reports the wrong shape is worse than one that reports none,
+// because it reads as coverage. A qualified embed (`p2p.SignerAttestation`) is exact and
+// never ambiguous; only an unqualified one can be, and that means same-package, so the
+// declaring file's own package is preferred before anything is called ambiguous.
+function resolveEmbed(name, fromFile) {
+  if (name.includes('.')) return DECLARED.byQualified.get(name) ?? null;
+  const all = DECLARED.byBare.get(name) ?? [];
+  const samePkg = all.filter((r) => path.dirname(r.file) === path.dirname(fromFile));
+  if (samePkg.length === 1) return samePkg[0];
+  if (all.length === 1) return all[0];
+  if (all.length > 1) {
+    throw new Error(
+      `the embedded type ${name} (in ${fromFile}) is declared in ${all.length} packages ` +
+        `(${all.map((r) => r.file).join(', ')}) — this scan cannot tell which is embedded, ` +
+        `and guessing would merge another shape's fields into this one. Qualify the embed ` +
+        `or teach resolveEmbed the package.`,
+    );
+  }
+  return null;
+}
+
+// EMBED matches a line that is a struct EMBED and nothing else: no field name, an
+// optional `*`, an optional package qualifier, an optional json tag.
+//
+// Deliberately narrow. `Foo Bar` is a named field, `[]Foo` is a named field's type, and
+// an anonymous `struct{…}` is neither — none of them may be read as an embed, because a
+// false embed pulls in a shape this struct does not publish.
+const EMBED = /^\s*\*?([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)?)\s*(?:`[^`]*`)?\s*$/;
+
+// fieldsOf returns every json tag a struct publishes, INCLUDING those it reaches through
+// an embedded type.
+//
+// **This is the gap that let `oneProceeding` survive the scan built to find exactly it.**
+// An embedded type contributes its fields with no tag on the embed line, so a scan that
+// reads `json:"…"` out of a struct's own body sees them not at all: `attestationView`
+// embeds `p2p.SignerAttestation`, publishes nine fields, and this file checked ONE
+// (`pinned`). `SignerAttestation.OneProceeding` — computed, serialized as
+// `oneProceeding`, rendered nowhere — was invisible here and had to be found by
+// `observables_test.go` on the Go side. The two scans were complementary by accident;
+// this closes the seam from the JS side.
+//
+// Recursive, because an embedded type may itself embed one. `seen` is per-call and
+// guards a cycle: Go forbids a struct embedding itself by value, but a scan does not get
+// to rely on the compiler having run.
+function fieldsOf(rec, seen = new Set()) {
+  if (seen.has(rec.file + '#' + rec.name)) return [];
+  seen.add(rec.file + '#' + rec.name);
+  const own = [...rec.body.matchAll(/`json:"([^",]+)/g)].map((x) => x[1]).filter((x) => x !== '-');
+  const inherited = [];
+  for (const line of rec.body.split('\n')) {
+    const bare = line.replace(/\/\/.*$/, '');
+    const m = bare.match(EMBED);
+    if (!m) continue;
+    const target = resolveEmbed(m[1], rec.file);
+    if (target) inherited.push(...fieldsOf(target, seen));
+  }
+  return [...new Set([...own, ...inherited])];
+}
+
+function scanStructs() {
+  const out = new Map();
+  for (const pkg of PACKAGES) {
+    for (const f of fs.readdirSync(path.join(REPO, pkg))) {
+      if (!f.endsWith('.go') || f.endsWith('_test.go')) continue;
+      const rel = `${pkg}/${f}`;
+      for (const [, rec] of DECLARED.byQualified) {
+        if (rec.file !== rel) continue;
+        const fields = fieldsOf(rec);
+        if (fields.length) out.set(rec.name, { fields, file: rel });
       }
     }
   }
   return out;
 }
+
 
 // codeOnly strips comments before anything looks for a read.
 //
@@ -193,6 +286,22 @@ test('the scan actually reads the packages it claims to', () => {
   const doc = STRUCTS.get('docResponse');
   assert.ok(doc.fields.includes('historyEvicted'),
     'historyEvicted is not among docResponse\'s parsed fields — the field the whole defect class was named for is invisible to the scan');
+
+  // And the EMBED half, which is a second way for the scan to go quietly blind.
+  // `attestationView` declares one field of its own (`pinned`) and reaches nine more
+  // through `p2p.SignerAttestation`. Before fieldsOf resolved embeds this scan checked
+  // exactly one of the ten — which is how `oneProceeding` survived the very scan built
+  // to catch a published-and-never-read field, and had to be found on the Go side by
+  // observables_test.go instead.
+  //
+  // Asserted on a field that is ONLY reachable through the embed. Asserting on `pinned`
+  // would pass with embed resolution deleted.
+  const view = STRUCTS.get('attestationView');
+  assert.ok(view, 'attestationView was not found, so the embed case is not being scanned at all');
+  assert.ok(view.fields.includes('oneProceeding'),
+    `attestationView publishes ${view.fields.length} field(s) (${view.fields.join(', ')}) — oneProceeding is missing, so embedded types are contributing nothing and every field this shape reaches through p2p.SignerAttestation is unchecked`);
+  assert.ok(view.fields.length >= 10,
+    `attestationView resolved to only ${view.fields.length} fields; it declares 1 and embeds 9`);
 });
 
 test('the table covers every shape the packages publish', () => {
