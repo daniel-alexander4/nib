@@ -3507,7 +3507,42 @@ Tasks (firmed 2026-08-22):
 - **T07 — seam rows**: the cadence step-down, the per-side budget drop-and-report, the failure
   state, and the Dan-only real-two-NAT run (IPv4-to-IPv4 through an endpoint-independent NAT).
 
-#### P05.S09 — Symmetric racing, the glare tie-break, and the stream-direction fix *(D17; criterion 12)* *(in progress 2026-08-22; two-agent deepdive done; grill next)*
+#### P05.S09a — The stream-direction fix: who opens the QUIC stream follows the role, not the dial *(D17; the glare deadlock)* *(in progress 2026-08-22; split out by S09's grill — build first and alone)*
+Scope: on a QUIC channel, WHICH end opens the bidi stream must follow the document role
+(`initiator`), not who dialled — so a baton-holder that wins on the ACCEPT side does not deadlock.
+Testable in `internal/p2p` alone (dial a QUIC conn, have the DIALER run Receive and the LISTENER
+run Initiate with the stream opened by the Initiate side), no server/DHT/glare needed.
+
+**Firmed 2026-08-22 (S09's grill, C1-C3).** `verificationExchange` has the `initiator` write first
+(`verify.go:92`, commit-before-reveal) and the non-initiator read first — a **security property that
+must not change**. On QUIC the stream is opened by the DIALER (`quic.go:181` `OpenStreamSync`) and
+the listener's `AcceptStream` unblocks only on the dialer's first frame (`quic.go:324-329`). Welded
+to who dialled, safe only while dialer==initiator. **The fix is NOT in the session core** (C3:
+`Initiate`/`Receive` never call OpenStream/AcceptStream, they only touch `ch.Stream`) — it is in
+`quic.go`: the QUIC stream is opened by the party whose role is `initiator`, mapping the existing
+`initiator bool` (already passed to `runVerification`, `session.go:123`) onto OpenStream-vs-Accept.
+Either QUIC end may open a bidi stream (connection client/server role is fixed at handshake, stream
+initiation is independent) — confirmed sound, no chicken-and-egg: the glare fp comes from
+`qc.ConnectionState().TLS` (`transport.go:484`), not the stream, so it is in hand before any stream.
+Tasks (firmed 2026-08-22):
+- **T01 — a "handshaked, no-stream-yet" intermediate** (grill C2): the `Channel` bundles the stream
+  and `Channel.check()` refuses a stream-less one (`channel.go:69`), but the coordinator (S09) must
+  race+glare over connections whose fp is known before a stream exists. Return the bare `*quic.Conn`
+  + fp from dial/accept, and build the `Channel` (open/accept the stream) only after the role is
+  known. Touches `channel.go`'s invariant.
+- **T02 — the QUIC stream is opened by the `initiator` role**, not the dialer: a `Channel` factory
+  that takes the conn + the role boolean and does OpenStreamSync (initiator) or AcceptStream (not).
+- **T03 — the role-opposite-dialer deadlock harness**, QUIC-only: a dialer that runs Receive and a
+  listener that runs Initiate complete the verification exchange (they would deadlock today). This
+  is the test that would go red against the current welded code — the whole point of the slice.
+- **T04 — seam rows**: the stream-opener-follows-role observable; the deadlock harness.
+
+#### P05.S09 — Symmetric racing, the glare join, and the consent re-anchor *(D17; criterion 12; rests on S09a)* *(firmed 2026-08-22, deepdive + grill)*
+Scope: both sides listen AND dial over the ONE shared endpoint; a coordinator joins the dialer's
+won conn and the listener's accepted conn; a glare tie-break keeps one; the consent/verify gate is
+re-anchored off the armed listener; the no-record path stays asymmetric.
+Acceptance: criterion 12, driven by forcing the glare — both sides converge on the SAME channel
+(identical verification string) with the loser closed, INCLUDING the role-opposite-dialer case.
 Scope: both sides listen **and** dial over the ONE shared endpoint; a glare tie-break keeps one
 channel; and the document exchange runs on the surviving channel regardless of who dialled it.
 Acceptance: criterion 12, driven by **forcing** the glare — including the **role-opposite-dialer**
@@ -3545,25 +3580,45 @@ QUIC deadlock at its core.** What the deepdive established, all cited to code:
   clause "for S09, the first slice where the dialing side has a listener at all"): the winning
   channel's local `AddrPort` equals the mapped/probed socket.
 
-Tasks (firmed 2026-08-22; dependency order; the grill may reshape or split further):
-- **T01 — the stream-direction fix.** Decouple `Initiate`/`Receive`'s speak-first/read-first from
-  `OpenStreamSync`/`AcceptStream`: after a channel exists, the baton-holder opens the stream, the
-  other accepts, driven by the roster role. The correctness-critical core; everything rests on it.
-- **T02 — the symmetric `connect(cer, cands, role)` coordinator**: listen on `cer.end` (a private
-  accept loop, NOT `s.sess.arm` — no consent/pending UI, no announce, no disarm) AND race on
-  `cer.end`, concurrently, into one join point.
-- **T03 — the glare tie-break + settle window + synchronous loser-close** (D17, D18): min(myFP,
-  peerFP) at the join, a new settle window before the verification string, both ends of the loser
-  closed synchronously.
-- **T04 — route Initiate/Receive off `Record.Hop`/`Convener`**, decoupled from who dialled.
-- **T05 — split `runSession`** into get-channel / run-exchange / lifecycle so the channel can arrive
+**Firmed 2026-08-22 (deepdive + grill).** The shape is a unified `connect(cer, cands, role)` —
+`QUICListenOn` a private accept loop on `cer.end`, race on `cer.end`, JOIN the two winners through
+the tie-break, return one `Channel` (built by S09a's factory from the surviving conn + the role).
+The grill found the biggest hole is the **consent gate** (C4): `setPending` refuses unless
+`se.ln == ln` (`session.go:210`), so a Receive-role party that wins by DIALING (no `se.ln`) cannot
+consent → hang. `setVerify` was already freed of this (`session.go:382`); `setPending`/`respond`
+were not. And symmetric racing/role-from-record applies **only to ceremony hops** — the plain
+two-party co-sign (no invitation) keeps role-from-endpoint (C6).
+
+Tasks (firmed 2026-08-22):
+- **T01 — the `connect(cer, cands, role)` coordinator**: on `cer.end`, a private accept loop
+  (`QUICListenOn`, NOT `s.sess.arm` — no consent/announce/disarm) AND the dialer race, concurrently,
+  into one join point that yields both a dial-won and an accept-won conn.
+- **T02 — merge the two HTTP handlers onto it**: `/arm` also races and `/initiate` also listens, both
+  through `connect`; `dialerCeremony` gains the listener `endpoint.go:36-38` parks for S09.
+- **T03 — the glare tie-break + settle window**: `min(myFP, ch.PeerFP)` at the join; a new short
+  settle window BEFORE the verification string (D4-per-channel); the constant is pinned, not guessed.
+- **T04 — the loser-close, synchronous, for BOTH the dialled AND the accepted loser** (grill P9): the
+  accept loop hands a `*Conn` off and moves on, so the coordinator must OWN and synchronously close
+  the losing accepted conn in its own goroutine — an abandoned-open loser wedges the peer's serial
+  Receive for 6 min (S03, `lan.go:320`).
+- **T05 — re-anchor the consent/verify gate off the armed listener** (grill C4): `setPending`/`respond`
+  key on the ceremony hop / connect operation, not `se.ln == ln`, so a dial-won Receive role can
+  consent.
+- **T06 — route Initiate/Receive off `Record.Hop`/`Convener`** (`record.go:399`) **for ceremony hops
+  ONLY** (grill C6): the no-record two-party co-sign and the manual/LAN path KEEP role-from-endpoint
+  (armed=Receive, dialer=Initiate). Not qualifying this regresses the primary flow.
+- **T07 — split `runSession`** into get-channel / run-exchange / lifecycle so the channel can arrive
   from a dial or an accept and the exchange role comes from the roster.
-- **T06 — force-the-glare harness**: `pairrepro.sh` arms BOTH instances to listen+dial, forces two
-  channels deterministically (a test seam, not wall-clock luck — the S03 vacuous-clock trap), and
-  asserts both end on the SAME channel (identical verification string) with the loser closed —
-  **including the role-opposite-dialer case**, without which the deadlock ships green.
-- **T07 — seam inventory rows**: the source-port assertion (caveat 7), the same-survivor
-  convergence, the loser-closed observable, the role-opposite-dialer no-deadlock row.
+- **T08 — the `tr.Listen`-after-`Dial` spike** (grill P8): confirm quic-go permits opening a Listener
+  on a transport that has already dialled (S08), the one unproven library assumption; and add a seam
+  row for the minor DoS surface (stranger Initials on the shared punched port, bounded by the accept
+  semaphore).
+- **T09 — force-the-glare harness**: `pairrepro.sh` arms BOTH instances to listen+dial, injects two
+  channels VISIBLE TO BOTH SIDES before either decides (grill P7 — else the same-survivor assertion
+  flakes), and asserts both end on the same channel with the loser closed, including the
+  role-opposite-dialer case.
+- **T10 — seam rows**: the source-port assertion (caveat 7), same-survivor convergence, loser-closed
+  (both dialled and accepted), consent-on-dial-won-channel, and the no-record-stays-asymmetric row.
 
 #### P05.S09b — Criterion 16: the ceremony-scoped arm window and the bounded announcer *(D16 amendment, D33; criterion 16 first half)* *(firmed 2026-08-22; split from S09)*
 Scope: extend the armed listener's wait from the 5-min `sessionAcceptTimeout` to ceremony scope, so
