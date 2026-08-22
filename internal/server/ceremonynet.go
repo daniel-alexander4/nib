@@ -413,9 +413,9 @@ func (s *Server) raceWithRendezvous(cer *ceremonyID, cands []candidate, cert, ke
 	ctx, cancel := context.WithTimeout(context.Background(), connectDeadline)
 	defer cancel()
 
-	in := make(chan candidate, maxRaceCandidates)
 	if cer == nil || cer.rz == nil {
 		// No ceremony: the fixed set, exactly as before, through the same racer.
+		in := make(chan candidate, maxRaceCandidates)
 		go func() {
 			defer safe.Recover("candidate feed")
 			defer close(in)
@@ -432,13 +432,29 @@ func (s *Server) raceWithRendezvous(cer *ceremonyID, cands []candidate, cert, ke
 		}) // no ceremony: fresh sockets
 	}
 
+	in := s.feedCeremonyRace(ctx, cer, cands, peerFP, label, name)
+	// The ceremony QUIC dial goes out the shared endpoint (S08, caveat 7).
+	return raceCandidates(ctx, in, func(ctx context.Context, c candidate) (*p2p.Conn, error) {
+		return dialPeerWithin(ctx, c.Transport, c.Addr, cert, key, peerFP, lanDialTimeout, cer.end)
+	})
+}
+
+// feedCeremonyRace builds the ceremony's candidate stream on the caller's ctx: the fixed
+// candidates first, then the hop-scoped DHT candidates as they arrive, teed to the punch loop;
+// alongside, it publishes this side's own address when the LAN window is slow and punches toward
+// the peer. Cancelling ctx (a race winner, or the connect deadline) stops every goroutine and
+// suppresses the late publish and further punches. Extracted from raceWithRendezvous so the
+// symmetric-racing coordinator (P05.S09) drives the SAME feed under a ctx it shares with its
+// accept loop — the dial and the accept must cancel together on a glare win.
+func (s *Server) feedCeremonyRace(ctx context.Context, cer *ceremonyID, cands []candidate, peerFP []byte, label, name string) <-chan candidate {
+	in := make(chan candidate, maxRaceCandidates)
 	dht := make(chan candidate, maxRaceCandidates)
 	go cer.feedCandidates(ctx, dht, peerFP, label, name)
 
 	// S08b: the dial side is symmetric — it PUBLISHES its own address (so the arm can punch
 	// toward it) and PUNCHES toward the peer's candidates. Both are suppressed by the same
-	// LAN-window logic: `ctx` is cancelled when raceCandidates returns a winner, so if a faster
-	// tier wins inside the browse window neither the late publish (D6 privacy) nor further punch
+	// LAN-window logic: `ctx` is cancelled when the race returns a winner, so if a faster tier
+	// wins inside the browse window neither the late publish (D6 privacy) nor further punch
 	// packets fire. The QUIC transport is fixed — the punch is QUIC-only (D8).
 	go publishWhenSlow(ctx, cer, transportQUIC)
 	punchCh := make(chan candidate, maxRaceCandidates)
@@ -473,10 +489,7 @@ func (s *Server) raceWithRendezvous(cer *ceremonyID, cands []candidate, cert, ke
 			}
 		}
 	}()
-	// The ceremony QUIC dial goes out the shared endpoint (S08, caveat 7).
-	return raceCandidates(ctx, in, func(ctx context.Context, c candidate) (*p2p.Conn, error) {
-		return dialPeerWithin(ctx, c.Transport, c.Addr, cert, key, peerFP, lanDialTimeout, cer.end)
-	})
+	return in
 }
 
 // dialerCeremony gives the DIALING side a ceremony identity and a DHT to fetch from.
@@ -547,4 +560,177 @@ func checkCeremonyDeadline(pdf []byte, now time.Time) error {
 			rec.Expires.UTC().Format(time.RFC3339), p2p.ExchangeBudget())
 	}
 	return nil
+}
+
+// hsResult is a handshaked dial's outcome, carried on connect's dial channel so a total failure
+// can report the racer's rich reason rather than a bare nil.
+type hsResult struct {
+	conn *p2p.HandshakedConn
+	err  error
+}
+
+// glareSettleWindow bounds how long connect holds a formed connection while waiting for the glare
+// PARTNER — the OTHER of the two connections symmetric racing forms. The survivor is deterministic
+// (the lower-fingerprint party's dial, glareKeepsDial), and the two ends of each connection are
+// one handshake, so when the survivor forms both ends see it within an RTT and converge on it.
+// When the survivor never forms — an asymmetric NAT that blocks that one direction — both ends
+// fall back, after this window, to the connection that did form, which is again the same one. So
+// convergence holds for any value both sides share; the window only trades latency in the
+// asymmetric case. Pinned at one second: generous for a WAN RTT, and the fallback makes an
+// over-long value cost latency, never correctness.
+const glareSettleWindow = 1 * time.Second
+
+// connect is the symmetric-racing coordinator (P05.S09). Over the ONE shared endpoint it both
+// DIALS the peer's candidates and ACCEPTS a dial from the peer, resolves the glare so both ends
+// keep the SAME connection, and opens that connection's stream by the ROSTER role (`initiator`) —
+// not by who dialled, which is the deadlock S09a fixed. It returns the ready channel; the caller
+// runs Initiate or Receive on it by the same role.
+//
+// QUIC-only, and that is not a limitation being papered over: the shared socket (caveat 7), the
+// punch (S08b) and the glare's deferred stream are all QUIC, and a ceremony publishes QUIC
+// endpoints because its endpoint IS the QUIC one. A non-QUIC candidate has no place in this race
+// and is filtered out; a ceremony that offered only TCP would fail to connect here, loudly, rather
+// than silently dialling the wrong way round.
+//
+// The accept loop is PRIVATE — QUICListenHandshakeOn on cer.end, not s.sess.arm — so it carries no
+// consent, announce or disarm of its own; the consent gate lives on s.sess and is reached through
+// the ceremony anchor (T05). The listener and the losing connection are closed before return.
+func (s *Server) connect(ctx context.Context, cer *ceremonyID, cands []candidate, cert, key, peerFP, myFP []byte, initiator bool, label, name string) (*p2p.Conn, error) {
+	keepDial := glareKeepsDial(myFP, peerFP)
+
+	hl, err := p2p.QUICListenHandshakeOn(cer.end, cert, key, peerFP)
+	if err != nil {
+		return nil, fmt.Errorf("arm the racing accept: %w", err)
+	}
+	defer hl.Close()
+
+	// One child context for BOTH the dial race and the accept, so the glare winner cancels the
+	// loser's side — the dial's feed goroutines and the accept — in a single stroke (S03's leak was
+	// a feed that outlived its race).
+	cctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	dialCh := make(chan hsResult, 1)
+	go func() {
+		defer safe.Recover("glare dial")
+		in := s.feedCeremonyRace(cctx, cer, cands, peerFP, label, name)
+		conn, derr := raceCandidates(cctx, filterQUIC(cctx, in), func(ctx context.Context, c candidate) (*p2p.HandshakedConn, error) {
+			// Handshake only — the stream is deferred until the role is known after glare (S09a).
+			return p2p.QUICDialHandshakeOn(ctx, cer.end, c.Addr, cert, key, peerFP, lanDialTimeout)
+		})
+		dialCh <- hsResult{conn, derr}
+	}()
+
+	acceptCh := make(chan *p2p.HandshakedConn, 1)
+	go func() {
+		defer safe.Recover("glare accept")
+		conn, aerr := hl.Accept(cctx)
+		if aerr != nil {
+			acceptCh <- nil
+			return
+		}
+		acceptCh <- conn
+	}()
+
+	var dialed, accepted *p2p.HandshakedConn
+	var dialErr error
+	var haveDial, haveAccept, dialDone, acceptDone bool
+	var settle <-chan time.Time
+
+	decide := func(settleExpired bool) glareChoice {
+		return glareDecide(keepDial, haveDial, haveAccept, settleExpired, dialDone && acceptDone)
+	}
+
+	for {
+		settleExpired := false
+		select {
+		case r := <-dialCh:
+			dialDone, dialed, dialErr = true, r.conn, r.err
+			haveDial = r.conn != nil
+			if settle == nil {
+				settle = time.After(glareSettleWindow)
+			}
+		case a := <-acceptCh:
+			acceptDone, accepted = true, a
+			haveAccept = a != nil
+			if settle == nil {
+				settle = time.After(glareSettleWindow)
+			}
+		case <-settle:
+			settleExpired = true
+		case <-ctx.Done():
+			cancel()
+			closeHandshaked(dialed)
+			closeHandshaked(accepted)
+			return nil, ctx.Err()
+		}
+
+		switch decide(settleExpired) {
+		case glareWait:
+			continue
+		case glareDial:
+			cancel()
+			closeHandshaked(accepted) // synchronous loser close (T04, both kinds)
+			s.drainHandshaked(&acceptDone, acceptCh, nil)
+			return dialed.Promote(ctx, initiator)
+		case glareAccept:
+			cancel()
+			closeHandshaked(dialed)
+			s.drainHandshaked(&dialDone, nil, dialCh)
+			return accepted.Promote(ctx, initiator)
+		default: // glareFail
+			cancel()
+			if dialErr != nil {
+				return nil, dialErr // the racer's rich failure sentence
+			}
+			return nil, errors.New("could not reach the ceremony peer on any address, and the peer did not reach us")
+		}
+	}
+}
+
+// closeHandshaked closes a handshaked connection if one formed. Nil-safe: a race that lost or an
+// accept that never came is nil here.
+func closeHandshaked(hc *p2p.HandshakedConn) {
+	if hc != nil {
+		hc.Close()
+	}
+}
+
+// drainHandshaked closes the LATE arrival on whichever side connect did not use, so a connection
+// that lands just after the glare is resolved is not leaked. Exactly one of the two channels is
+// passed; the other is nil. The done flag says the value was already consumed by the main loop.
+func (s *Server) drainHandshaked(done *bool, accept <-chan *p2p.HandshakedConn, dial <-chan hsResult) {
+	if *done {
+		return
+	}
+	go func() {
+		defer safe.Recover("glare drain")
+		if accept != nil {
+			closeHandshaked(<-accept)
+		}
+		if dial != nil {
+			closeHandshaked((<-dial).conn)
+		}
+	}()
+}
+
+// filterQUIC passes only QUIC candidates through to the coordinator's dial race — the shared
+// endpoint speaks QUIC, and a non-QUIC candidate cannot be handshake-dialled on it (see connect).
+func filterQUIC(ctx context.Context, in <-chan candidate) <-chan candidate {
+	out := make(chan candidate, maxRaceCandidates)
+	go func() {
+		defer safe.Recover("quic candidate filter")
+		defer close(out)
+		for c := range in {
+			if c.Transport != transportQUIC {
+				continue
+			}
+			select {
+			case out <- c:
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+	return out
 }
