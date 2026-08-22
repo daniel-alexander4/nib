@@ -78,14 +78,16 @@ func TestAnArmedSessionDerivesItsHopFromTheRoster(t *testing.T) {
 	inv, certs, fps := threeParty(t)
 	text := mustEncode(t, inv)
 
-	// Convener↔Alice is hop 0; Alice↔Bob is hop 1. Both ends of each hop must get the same
-	// number, which is what makes it agreed rather than negotiated.
+	// D22 is a convener HUB: the convener dials each party in roster order, and every hop is
+	// a two-party session with the convener at one end. So convener↔Alice is hop 0 and
+	// convener↔Bob is hop 1 — Alice and Bob never connect. Both ends of a hop must get the
+	// same number, which is what makes it agreed rather than negotiated.
 	for _, tc := range []struct {
 		who, peer int
 		want      int
 	}{
 		{0, 1, 0}, {1, 0, 0},
-		{1, 2, 1}, {2, 1, 1},
+		{0, 2, 1}, {2, 0, 1},
 	} {
 		peerFP, err := hex.DecodeString(fps[tc.peer])
 		if err != nil {
@@ -125,13 +127,12 @@ func TestAnArmedSessionDerivesItsHopFromTheRoster(t *testing.T) {
 	if _, err := ceremonyFor(text, stranger, convFP); err == nil {
 		t.Error("a party outside the roster was armed into this ceremony")
 	}
-	// Convener and Bob are two apart. This is criterion 19 refusing at the door rather than
-	// being remembered later: a convener holding a later party's candidates cannot even
-	// derive that hop.
-	if _, err := ceremonyFor(text, certs[0], bobFP); err == nil {
-		t.Error("the convener and a party two positions away were given a hop; a hop joins " +
-			"adjacent parties, and this is where a convener would start dialling somebody " +
-			"three hops down")
+	// Two counterparties share no hop — D22's hub, and criterion 19 refusing at the door
+	// rather than being remembered later.
+	aliceFP, _ := hex.DecodeString(fps[1])
+	if _, err := ceremonyFor(text, certs[2], aliceFP); err == nil {
+		t.Error("Bob was armed for a hop with Alice; under a convener hub they never " +
+			"connect, so this is a session that does not exist")
 	}
 
 	// No invitation is the ORDINARY case, not an error — D9 demotes the manual path rather

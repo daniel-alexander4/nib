@@ -819,10 +819,17 @@ func TestACeremonyDeadlineHasACeiling(t *testing.T) {
 // not exist, published into the void, and the result read as `FetchEmpty` — which is
 // indistinguishable from a counterparty who has not arrived yet.
 func TestTheHopNumberComesFromTheSignedRoster(t *testing.T) {
-	_, _, c := identity(t, "convener")
+	cert, key, c := identity(t, "convener")
 	_, _, a := identity(t, "alice")
 	_, _, b := identity(t, "bob")
 	r := draft(t, c, a, b) // roster: convener, alice, bob
+	// SIGNED, because a hop is resolved through the convener and the convener is resolved
+	// from the record's own certificate. That is a property worth having rather than a
+	// nuisance: a hop number cannot be derived from an unsigned draft, so the topology is
+	// read off an authenticated artifact or not at all.
+	if err := r.Sign(cert, key); err != nil {
+		t.Fatal(err)
+	}
 
 	if got := r.Hops(); got != 2 {
 		t.Fatalf("setup: a three-party roster must have 2 hops, got %d — every assertion "+
@@ -839,8 +846,8 @@ func TestTheHopNumberComesFromTheSignedRoster(t *testing.T) {
 	}{
 		{c, a, 0, "convener→alice"},
 		{a, c, 0, "alice→convener, the same hop from the other end"},
-		{a, b, 1, "alice→bob"},
-		{b, a, 1, "bob→alice"},
+		{c, b, 1, "convener→bob"},
+		{b, c, 1, "bob→convener"},
 	} {
 		got, err := r.Hop(tc.x, tc.y)
 		if err != nil {
@@ -852,14 +859,20 @@ func TestTheHopNumberComesFromTheSignedRoster(t *testing.T) {
 		}
 	}
 
-	// **Non-adjacent parties share no hop — this is criterion 19 made structural.** The
-	// convener holds candidates for every party, and the rule is that it never dials a
-	// later one during this hop. Enforced here, it cannot even derive that hop's key by
-	// asking for it, so the rule is a property rather than a discipline.
-	if _, err := r.Hop(c, b); !errors.Is(err, ErrNotAHop) {
-		t.Errorf("convener and bob are two apart and got hop %v; a hop joins adjacent "+
-			"parties, and letting a non-adjacent pair name one is how a convener ends up "+
-			"dialling a party three positions away", err)
+	// **Two COUNTERPARTIES share no hop — this is D22's topology, and criterion 19 made
+	// structural.** The ceremony is a convener hub: "the convener writes the record,
+	// prepares the document, dials each party in roster order… Every hop is exactly today's
+	// two-party session." Alice and Bob never speak, so a rule that gave them a shared hop
+	// key would be describing a different ceremony — and would have each of them arming for
+	// a peer D22's own TRIPWIRE argument says they never accept.
+	//
+	// **The first version of this test asserted alice→bob was hop 1.** It read Party's "the
+	// order of the roster IS the signing order" and inferred a chain. Signing order is not
+	// connection topology, and D22 is explicit about which this is.
+	if _, err := r.Hop(a, b); !errors.Is(err, ErrNotAHop) {
+		t.Errorf("alice and bob were given hop %v; under a convener hub they never connect "+
+			"to each other, so a shared hop key between them is a key for a session that "+
+			"does not exist", err)
 	}
 	if _, err := r.Hop(a, a); !errors.Is(err, ErrNotAHop) {
 		t.Error("one party was accepted as both ends of a hop")
