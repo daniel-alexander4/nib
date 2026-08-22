@@ -346,14 +346,22 @@ const lanDialTimeout = 6 * time.Second
 // never returned: each dial was bounded and the race was not, and an HTTP handler hung
 // forever. Found by reviewing this slice's own diff. The deadline is now the caller's
 // context and the loop watches it.
-func raceCandidates(parent context.Context, in <-chan candidate, cert, key, peerFP []byte, end *p2p.SharedEndpoint) (*p2p.Conn, error) {
+// racedConn is what the racer needs of a won connection: to be closed if it loses the drain. The
+// racer is generic over it so ONE implementation serves both the stream-opened dial (*p2p.Conn,
+// the manual/co-sign/send paths) and the handshaked dial the symmetric-racing coordinator needs
+// (*p2p.HandshakedConn, P05.S09), rather than a second copy of its cap/dedup/trickle/drain logic
+// (ADR-009).
+type racedConn interface{ Close() error }
+
+func raceCandidates[T racedConn](parent context.Context, in <-chan candidate, dial func(context.Context, candidate) (T, error)) (T, error) {
+	var zero T
 	// A cancellable child: cancelling on a win is what stops the losers, and it must not
 	// disturb the caller's context.
 	ctx, cancel := context.WithCancel(parent)
 	defer cancel()
 
 	type result struct {
-		conn *p2p.Conn
+		conn T
 		err  error
 	}
 	// Buffered to the candidate cap so a late winner never blocks on a send nobody is
@@ -440,7 +448,7 @@ func raceCandidates(parent context.Context, in <-chan candidate, cert, key, peer
 					return
 				}
 				defer func() { <-sem }()
-				conn, err := dialPeerWithin(ctx, c.Transport, c.Addr, cert, key, peerFP, lanDialTimeout, end)
+				conn, err := dial(ctx, c)
 				results <- result{conn, err}
 			}(c)
 		}
@@ -454,18 +462,18 @@ func raceCandidates(parent context.Context, in <-chan candidate, cert, key, peer
 		case got, ok := <-results:
 			if !ok {
 				// Every dial finished and the input closed: the race is exhausted.
-				return nil, raceFailure(tried, dropped.Load(), dropReport(&droppedBySource), last)
+				return zero, raceFailure(tried, dropped.Load(), dropReport(&droppedBySource), last)
 			}
 			r = got
 		case <-parent.Done():
 			// **The connect deadline, or the caller giving up.** Without this arm the
 			// loop waits on a channel that a trickle source keeps open forever.
-			return nil, raceFailure(tried, dropped.Load(), dropReport(&droppedBySource), context.Cause(parent))
+			return zero, raceFailure(tried, dropped.Load(), dropReport(&droppedBySource), context.Cause(parent))
 		}
 		tried++
 		if r.err != nil {
 			if errors.Is(r.err, errUnknownTransport) {
-				return nil, r.err // a caller error, not a peer's
+				return zero, r.err // a caller error, not a peer's
 			}
 			// **A clock-skew refusal outranks whatever else lost.** `connectFailure` lifts
 			// `*p2p.ClockSkewError` out with `errors.As` and reports D19's fifth cause,
@@ -487,7 +495,7 @@ func raceCandidates(parent context.Context, in <-chan candidate, cert, key, peer
 		go func() {
 			defer safe.Recover("race drain")
 			for extra := range results {
-				if extra.conn != nil {
+				if extra.err == nil {
 					// Wrapped in a literal rather than `go extra.conn.Close()`: a bare
 					// `go f()` has nowhere to hang a defer, so the recover has nowhere to
 					// go — and a Close reaching into crypto/tls or quic-go is exactly the
@@ -553,7 +561,9 @@ func dialAny(cands []candidate, cert, key, peerFP []byte) (*p2p.Conn, error) {
 		in <- c
 	}
 	close(in)
-	return raceCandidates(ctx, in, cert, key, peerFP, nil) // no ceremony: fresh sockets
+	return raceCandidates(ctx, in, func(ctx context.Context, c candidate) (*p2p.Conn, error) {
+		return dialPeerWithin(ctx, c.Transport, c.Addr, cert, key, peerFP, lanDialTimeout, nil)
+	}) // no ceremony: fresh sockets
 }
 
 // raceKey is the identity of a race candidate: one endpoint, one key.
