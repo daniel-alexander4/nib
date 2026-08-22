@@ -1,0 +1,10 @@
+--- a/internal/rendezvous/dht.go
++++ b/internal/rendezvous/dht.go
+@@ -394,7 +394,6 @@
+ 		// It asks for BOTH families rather than switching: a v4-only host must keep getting
+ 		// v4 nodes, and `Want` is a request, not a filter — a responder is free to ignore
+ 		// the half it cannot serve.
+-		DefaultWant: []krpc.Want{krpc.WantNodes, krpc.WantNodes6},
+ 		// The cached list, and nothing else.
+ 		//
+ 		// **Read before it was written down, because the obvious belief is wrong.**
