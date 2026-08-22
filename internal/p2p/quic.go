@@ -178,9 +178,10 @@ func QUICListen(addr string, identityCertPEM, identityKeyPEM, pinnedSPKI []byte)
 	}
 	return &quicListener{
 		mux: mux, tr: tr, ln: ln,
-		done:  make(chan struct{}),
-		ready: make(chan *Conn, maxConcurrentHandshakes),
-		sem:   make(chan struct{}, maxConcurrentHandshakes),
+		ownsEndpoint: true,
+		done:         make(chan struct{}),
+		ready:        make(chan *Conn, maxConcurrentHandshakes),
+		sem:          make(chan struct{}, maxConcurrentHandshakes),
 	}, nil
 }
 
@@ -202,6 +203,15 @@ type quicListener struct {
 	mux *udpmux.Mux
 	tr  *quic.Transport
 	ln  *quic.Listener
+	// ownsEndpoint says whether Close may take the transport and socket down with it.
+	//
+	// True for QUICListen, which bound them. FALSE for QUICListenOn, where the endpoint is
+	// shared with a DHT and outlives this listener — and where closing them would do two
+	// distinct kinds of damage: `Transport.Close` "abruptly terminates all existing
+	// connections" on that socket, and closing the mux makes the DHT's own read return
+	// net.ErrClosed, which its library turns into a panic on a goroutine nothing of ours
+	// is on.
+	ownsEndpoint bool
 
 	once  sync.Once
 	ready chan *Conn    // stream-accepted connections; NEVER closed, as on the TCP side
@@ -235,9 +245,11 @@ func (l *quicListener) Close() error {
 	l.mu.Unlock()
 	close(l.done)
 	err := l.ln.Close()
-	l.tr.Close()
-	if e := l.mux.Close(); err == nil {
-		err = e
+	if l.ownsEndpoint {
+		l.tr.Close()
+		if e := l.mux.Close(); err == nil {
+			err = e
+		}
 	}
 	// Drain what the handshake goroutines queued. `ready` is buffered since P05.S02, so
 	// a completed connection can be sitting in it when the session ends; nothing else

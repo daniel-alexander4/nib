@@ -804,3 +804,12 @@ and each of them arming for a peer D22's own TRIPWIRE argument says they never a
 its own tests because those tests asserted the rule I had written rather than the one the plan
 states — the shape a grill is supposed to catch and did not, because the deepdive and the grill
 both read `Party`'s doc comment and neither opened D22.
+
+## v1.117.34 — P05.S04 T09, the DHT and the armed listener on one socket
+
+| Defect reintroduced | What it said | Check that fired |
+| --- | --- | --- |
+| **The listener binds its own socket again** | `the listener answers on 127.0.0.1:15193 and the DHT is on 127.0.0.1:12804 — two sockets, so any mapping the probe measures belongs to one the session does not use, which is the whole of caveat 7` | `TestTheDHTAndTheArmedListenerShareOneSocket`, asserted on the SOCKET — one address reached two ways, plus a real UDP datagram to it, because comparing two strings would pass against an endpoint that never bound anything |
+| **The shared listener closes the endpoint it does not own** | the shared socket stopped accepting datagrams after its listener closed | `TestASharedEndpointSurvivesItsListener` |
+| **Teardown reversed — the socket before the DHT** | **`panic: use of closed network connection`** | `TestTheCeremonyTeardownOrderDoesNotPanicTheProcess`. This is the hazard the deepdive predicted and it is now driven: the mux closes, the DHT's read returns `net.ErrClosed`, `serveUntilClosed` sees an error with its `closed` flag unset and calls `panic(err)` on a goroutine nothing of ours is on. Process death, at shutdown, on the path a user reaches by pressing Cancel |
+| **A listener constructor added in a file the population floor does not read** | `read 2 non-test files in internal/p2p — the glob is not seeing the package` | `TestEveryTransportIsInTheTable`, which used to read `transport.go` and `quic.go` BY NAME. `QUICListenOn` is in a third file, so the guard could not see the very thing it exists to count — its own defect class, happening to it. It now discovers the package, and carries an exemption list whose entries must name a reason and must still exist |
