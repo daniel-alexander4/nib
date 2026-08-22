@@ -1135,3 +1135,22 @@ both goroutines simply never report. The harness bounds the wait and fails by na
 tier-2 lesson applied to tier 1: a hang is worse than a fail, because a hang tells you nothing
 and blocks every test behind it. The EXPECT token is the deadlock message, so a row that went
 red merely by failing to compile would not satisfy it.
+
+## v1.117.67 — P05.S09 T05: the consent gate a dialer could not reach
+
+The C4 hole the grill called the biggest. The consent gate's stale-goroutine guard keyed on the
+armed listener (`se.ln == ln`) — which the manual/LAN receiver always has. A symmetric-racing hop
+whose RECEIVE role wins by DIALING holds no listener, so its consent could never park and the
+exchange hung at the gate. The re-anchor keys on the ceremony there; the row reintroduces the
+listener-only guard and shows the dial-won consent hang.
+
+| Defect reintroduced | What it said | Check that fired |
+| --- | --- | --- |
+| **`consentAnchor.current` drops its ceremony branch** *(replayable: `consent-anchors-on-the-listener-only`)* | `a ceremony-anchored consent could not park while its ceremony is armed — the dial-won receive role would hang here` | `TestACeremonyHopConsentAnchorsOnTheCeremonyNotAListener`, whose SETUP also asserts an anchor naming a DIFFERENT ceremony is refused while armed, so the pass is the identity matching and not the guard being absent |
+
+**Why the guard could not simply be dropped.** `setVerify` was freed of its listener check for the
+same dial-has-no-listener reason, but `setPending` could not follow it to nothing: the check stops
+a cancelled session's goroutine from parking ITS consent as the session that replaced it. The
+anchor keeps that — after a cancel-and-rearm `se.cer` is the new ceremony, so a stale hop's anchor
+is refused — while making the gate reachable without a listener. The test proves both halves: the
+dial-won park succeeds, and the stale park is still refused.

@@ -1,0 +1,14 @@
+diff --git a/internal/server/session.go b/internal/server/session.go
+index be2b983..74b099f 100644
+--- a/internal/server/session.go
++++ b/internal/server/session.go
+@@ -207,9 +207,6 @@ type consentAnchor struct {
+ // se.ln) is the NEW operation, so an anchor naming the old one is refused — which is the whole
+ // point of the check (see setPending).
+ func (a consentAnchor) current(se *session) bool {
+-	if a.cer != nil {
+-		return se.cer != nil && se.cer == a.cer
+-	}
+ 	return se.ln != nil && se.ln == a.ln
+ }
+ 
