@@ -799,10 +799,15 @@ var errUnknownSessionMode = errors.New("unknown session mode")
 const sessionModeReceive = "receive"
 
 type armRequest struct {
-	Fingerprint string `json:"fingerprint"`         // the single peer to accept (hex SPKI)
-	Bind        string `json:"bind"`                // host:port to bind, e.g. "0.0.0.0:8443"
-	Mode        string `json:"mode,omitempty"`      // "receive" for a transfer; co-sign otherwise
-	Transport   string `json:"transport,omitempty"` // "quic"; anything else is TCP
+	Fingerprint string `json:"fingerprint"` // the single peer to accept (hex SPKI)
+	Bind        string `json:"bind"`        // host:port to bind, e.g. "0.0.0.0:8443"
+	// Address is an OPTIONAL typed address of the peer to DIAL as well as accept (P05.S09). An
+	// arm normally waits and dials only what the DHT publishes, but a symmetric-racing ceremony
+	// where the receive role must also reach out — the manual tier for the arm, and what lets a
+	// forced glare be driven on one host — names the peer's address here.
+	Address   string `json:"address,omitempty"`
+	Mode      string `json:"mode,omitempty"`      // "receive" for a transfer; co-sign otherwise
+	Transport string `json:"transport,omitempty"` // "quic"; anything else is TCP
 	// Invitation is the pasteable ceremony invitation (D21), and it is what gives this arm
 	// a ceremony identity: a roster, a hop, and the secret every rendezvous derivation
 	// needs. Optional — an arm without one is the manual/LAN path this route has always
@@ -892,6 +897,16 @@ func (s *Server) handleSessionArm(w http.ResponseWriter, r *http.Request) {
 	// the same bootstrap-fed publish, punch and port-mapping. TCP ceremonies and the non-ceremony
 	// arm keep the runSession path below.
 	if cer != nil && req.Transport == transportQUIC {
+		// An optional typed peer address makes this arm DIAL as well as accept (the receive role
+		// reaching out) — nil otherwise, and connect races only the DHT and its accept.
+		var armCands []candidate
+		if req.Address != "" {
+			var ok2 bool
+			armCands, ok2 = s.peerAddresses(w, v, req.Address, req.Transport, peerFP)
+			if !ok2 {
+				return // peerAddresses wrote the error
+			}
+		}
 		if serr := cer.setupSharedEndpoint(bind, s.configDir); serr != nil {
 			cer.close()
 			httpError(w, http.StatusBadRequest, "could not open the ceremony endpoint: "+serr.Error())
@@ -911,7 +926,7 @@ func (s *Server) handleSessionArm(w http.ResponseWriter, r *http.Request) {
 			httpError(w, http.StatusConflict, "a session is already armed")
 			return
 		}
-		go s.runCeremonyReceive(armCtx, cer, hl, cert, key, label, req.Mode, peerFP)
+		go s.runCeremonyReceive(armCtx, cer, hl, armCands, cert, key, label, req.Mode, peerFP)
 		writeJSON(w, s.sess.status())
 		return
 	}
@@ -954,7 +969,7 @@ func (s *Server) handleSessionArm(w http.ResponseWriter, r *http.Request) {
 // for a QUIC ceremony arm — connect's feed does the same bootstrap-fed publish, punch and
 // port-mapping — and reaches the consent gate through the ceremony anchor (T05), because a receive
 // role that won by DIALING has no listener to key on.
-func (s *Server) runCeremonyReceive(ctx context.Context, cer *ceremonyID, hl *p2p.HandshakeListener, cert, key []byte, label, mode string, peerFP []byte) {
+func (s *Server) runCeremonyReceive(ctx context.Context, cer *ceremonyID, hl *p2p.HandshakeListener, cands []candidate, cert, key []byte, label, mode string, peerFP []byte) {
 	defer safe.Recover("ceremony receive")
 	defer hl.Close()
 	// Identity-guarded: a stale goroutine finishing after a cancel-and-rearm must not disarm the
@@ -985,7 +1000,7 @@ func (s *Server) runCeremonyReceive(ctx context.Context, cer *ceremonyID, hl *p2
 	// so the old accept loop's re-arm-on-loss is folded into it. A peer that reaches the user and
 	// then fails still SPENT the arm (serveOneSession's engagement rule); one that never reaches
 	// anyone leaves nothing to re-arm for, and the connect deadline is the whole arm window.
-	conn, cerr := s.connect(cctx, cer, hl, nil, cert, key, peerFP, myFP, false, label, label)
+	conn, cerr := s.connect(cctx, cer, hl, cands, cert, key, peerFP, myFP, false, label, label)
 	if cerr != nil {
 		return // the arm window expired with no peer, or the connect failed
 	}
