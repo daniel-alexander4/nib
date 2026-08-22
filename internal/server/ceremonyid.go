@@ -101,6 +101,24 @@ func nodeCacheDir(configDir string) string { return filepath.Join(configDir, "dh
 // offered. So on TCP the listener binds its own socket and this returns no endpoint: the
 // ceremony still runs, and caveat 7's clause is simply not satisfied for that transport.
 // Stated here rather than discovered at S06, the slice that first asks a router for a mapping.
+// setupSharedEndpoint opens the ceremony's shared QUIC socket and its rendezvous WITHOUT a
+// listener (P05.S09): the symmetric-racing coordinator owns the single handshaked listener, and a
+// transport permits only one. It is openRendezvous's QUIC branch minus the QUICListenOn — the arm
+// and the dialer now set the endpoint up the same way, and connect arms the listener on top.
+func (c *ceremonyID) setupSharedEndpoint(bind, configDir string) error {
+	end, err := p2p.NewSharedEndpoint(bind)
+	if err != nil {
+		return err
+	}
+	rz, err := rendezvous.Open(end.DHT(), nodeCacheDir(configDir))
+	if err != nil {
+		end.Close()
+		return err
+	}
+	c.end, c.rz = end, rz
+	return nil
+}
+
 func (c *ceremonyID) openRendezvous(transport, bind, configDir string, cert, key, peerFP []byte) (p2p.Listener, error) {
 	if transport != transportQUIC {
 		ln, err := listenPeer(transport, bind, cert, key, peerFP)

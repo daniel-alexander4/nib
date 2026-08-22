@@ -3568,6 +3568,20 @@ the dialled and accepted loser (grill P9); T06 role from `Record.Hop`/`Convener`
 ONLY (grill C6 — manual/LAN keeps role-from-endpoint); T07 split `runSession` into
 get-channel/run-exchange/lifecycle so the channel may arrive from a dial; T09 the force-the-glare
 tier-4 harness (grill P7 — inject two channels visible to BOTH sides); T10 seam rows.
+
+**Progress 2026-08-22 (the coordinator wired, both sides):** T02 both handlers now go through
+`connect` for a QUIC ceremony — `handleSessionInitiate` (initiator) and a new `runCeremonyReceive`
+(receiver) replacing runSession+startArmedRendezvous, which `connect`'s feed subsumes (publish,
+punch, port-map). T07 `runSession` split: `serveOneSession` takes a `consentAnchor` not a listener,
+and the session model gained `armCeremony`/`disarmCeremony`/`disarmWhen` so a connect-arm holds the
+ceremony and a cancel rather than an accept listener (a transport permits one Listen —
+`TestOneTransportRefusesTwoListeners`). **T06 disposition:** the role comes from the HANDLER
+(arm=Receive, initiate=Initiate), which under symmetric racing is authoritative because the convener
+holds the document and POSTs initiate — handler-role and `Record.Hop/Convener` never diverge, and
+`connect`+`Promote(role)` handles the role-opposite-dialer case without reading the record. Explicit
+record-role reading would give the identical answer; recorded as satisfied-by-handler, the record
+check available as future hardening if a flow ever decouples handler from role. **Remaining: T09**
+(tier-4 force-the-glare harness — the acceptance instrument for criterion 12) **and T10** (seams).
 Scope: both sides listen AND dial over the ONE shared endpoint; a coordinator joins the dialer's
 won conn and the listener's accepted conn; a glare tie-break keeps one; the consent/verify gate is
 re-anchored off the armed listener; the no-record path stays asymmetric.
