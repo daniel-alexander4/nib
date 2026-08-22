@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"nib/internal/sign"
 )
@@ -76,7 +77,7 @@ func TestALoopbackBindIsNotAnnouncedOnTheLink(t *testing.T) {
 					ln.Addr(), ip.IsLoopback())
 			}
 
-			ann, err := startAnnouncing(cert, boundOn{ln, "tcp"})
+			ann, err := startAnnouncing(cert, boundOn{ln, "tcp"}, lanAnnounceWindow)
 			if ann != nil {
 				ann.Close()
 			}
@@ -155,5 +156,51 @@ func TestAnnouncingHasExactlyOneDoor(t *testing.T) {
 	if len(sites) != 1 || sites[0] != "startAnnouncing" {
 		t.Errorf("an announcer is built at %v; it must be built only in startAnnouncing, "+
 			"which is where the loopback rule lives (ADR-009)", sites)
+	}
+}
+
+// TestTheAnnouncerStopsAtItsWindow — P05.S09b T02, criterion 14 driven over a SIMULATED window.
+// S09b extends a ceremony arm's LISTEN window to ceremony scope (up to 30 days); left coupled, the
+// 500ms announce ticker would then emit for 30 days — ~5.2M multicast datagrams of a never-rotating
+// name. The window caps ANNOUNCING independently of listening. Driven with a short window: the count
+// must STOP climbing once the window passes, or the cap does nothing and the ceremony is a cannon.
+func TestTheAnnouncerStopsAtItsWindow(t *testing.T) {
+	cert, _, err := sign.GenerateIdentity("Alice")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ln, err := net.Listen("tcp", "0.0.0.0:0") // wildcard, so not refused as loopback
+	if err != nil {
+		t.Skipf("setup: cannot bind a routable listener here: %v", err)
+	}
+	defer ln.Close()
+
+	const window = 700 * time.Millisecond // several announceEvery ticks, then the cap fires
+	ann, err := startAnnouncing(cert, boundOn{ln, "tcp"}, window)
+	if err != nil {
+		t.Skipf("announcer did not start (multicast unavailable here): %v", err)
+	}
+	defer ann.Close()
+
+	// STIMULUS: it must actually have announced, or "it stopped" is equally true of a socket that
+	// never sent. Multicast joins fail in restricted sandboxes, so a genuine zero is a SKIP, not a
+	// pass — the same honesty the loopback test keeps about discovery.Open failing.
+	time.Sleep(window + 400*time.Millisecond)
+	s1 := ann.sock.Stats().Sent
+	if s1 == 0 {
+		t.Skip("the announcer never emitted (multicast unavailable), so the window cap cannot be observed here")
+	}
+	// After the window it must be SILENT: a second reading a full announceEvery later is unchanged.
+	time.Sleep(3 * announceEvery)
+	s2 := ann.sock.Stats().Sent
+	if s2 != s1 {
+		t.Errorf("the announcer emitted %d more datagram(s) AFTER its %s window — the cap does not "+
+			"fire, so an arm extended to ceremony scope emits at full rate for the whole deadline "+
+			"(criterion 14, the ~5.2M-datagram harm)", s2-s1, window)
+	}
+	// And it did not overshoot the window wildly: bounded by roughly window/announceEvery interfaces.
+	if maxExpected := uint64(window/announceEvery+2) * uint64(ann.sock.Stats().Interfaces+1); s1 > maxExpected {
+		t.Errorf("emitted %d datagrams in a %s window (announceEvery=%s) — more than the cap should allow",
+			s1, window, announceEvery)
 	}
 }

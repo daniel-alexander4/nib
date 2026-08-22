@@ -17,6 +17,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"nib/internal/ceremony"
 	"nib/internal/p2p"
 	"nib/internal/pdfops"
 	"nib/internal/safe"
@@ -558,7 +559,7 @@ func (s *Server) runSession(ln p2p.Listener, cert, key []byte, label, mode strin
 	// The LISTENER, not its port: whether this session may be announced at all is a fact
 	// about the address it bound, and `startAnnouncing` is the door that decides it
 	// (ADR-009). A loopback bind announces nothing.
-	if ann, err := startAnnouncing(cert, ln); err == nil {
+	if ann, err := startAnnouncing(cert, ln, lanAnnounceWindow); err == nil {
 		defer ann.Close()
 	}
 	// This user's own fingerprint, for the verification string — it binds both identities,
@@ -985,7 +986,7 @@ func (s *Server) runCeremonyReceive(ctx context.Context, cer *ceremonyID, hl *p2
 	// and is forced onto the DHT — the privacy leak the LAN-window suppression exists to avoid — or
 	// cannot connect at all where the DHT is unreachable. It never fails the arm; a host with no
 	// usable interface still races over the DHT and the accept.
-	if ann, aerr := startAnnouncing(cert, quicEndpointAnnounce{hl.Addr()}); aerr == nil {
+	if ann, aerr := startAnnouncing(cert, quicEndpointAnnounce{hl.Addr()}, lanAnnounceWindow); aerr == nil {
 		defer ann.Close()
 	}
 	// Warm the DHT so connect's feed can fetch the peer's candidates and publish ours. Not fatal:
@@ -994,7 +995,13 @@ func (s *Server) runCeremonyReceive(ctx context.Context, cer *ceremonyID, hl *p2
 	_ = cer.rz.Bootstrap(bctx)
 	bcancel()
 
-	cctx, cancel := context.WithTimeout(ctx, connectDeadline)
+	// P05.S09b T01: the arm waits for the ceremony's WHOLE life, not the 5-min connect deadline, so a
+	// multi-party signer who arms and waits their turn is not disarmed before the baton arrives.
+	// Bounded by D33's MaxCeremonyLife: the invitation carries no per-ceremony deadline (only the
+	// convener-signed record does, and the arm does not have it yet), so the 30-day maximum is the
+	// only bound the arm can apply — it never disarms before a valid ceremony could reach this hop.
+	// connect still returns the instant a peer connects; this is only the ceiling on the wait.
+	cctx, cancel := context.WithTimeout(ctx, ceremony.MaxCeremonyLife)
 	defer cancel()
 	// One connect, one exchange: connect's internal race already keeps one of several candidates,
 	// so the old accept loop's re-arm-on-loss is folded into it. A peer that reaches the user and
