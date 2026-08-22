@@ -1,0 +1,13 @@
+diff --git a/internal/sign/identity.go b/internal/sign/identity.go
+index 66301a5..518e2f2 100644
+--- a/internal/sign/identity.go
++++ b/internal/sign/identity.go
+@@ -190,7 +190,7 @@ func runSign(pdfBytes []byte, data sign.SignData) ([]byte, error) {
+ 	}
+ 	var out bytes.Buffer
+ 	if err := sign.Sign(bytes.NewReader(pdfBytes), &out, rdr, int64(len(pdfBytes)), data); err != nil {
+-		return nil, describeSignFailure(err, data.TSA.URL)
++		return nil, fmt.Errorf("sign: %w", err)
+ 	}
+ 	return out.Bytes(), nil
+ }

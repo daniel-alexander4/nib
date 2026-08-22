@@ -1,0 +1,13 @@
+diff --git a/internal/pdfops/redact_breakability_test.go b/internal/pdfops/redact_breakability_test.go
+index e2bee8b..707941e 100644
+--- a/internal/pdfops/redact_breakability_test.go
++++ b/internal/pdfops/redact_breakability_test.go
+@@ -164,7 +164,7 @@ func fileCarries(pdf []byte, needle string) (raw bool, streams int) {
+ 		// control found it) and everything after was invisible (so the redacted file scanned
+ 		// clean for the wrong reason). Caught by TestTheTwoResidueChecksDiffer…, which is the
+ 		// argument for writing that test rather than trusting two agreeing green results.
+-		i = start + k + len("endstream")
++		i = start + k
+ 	}
+ }
+ 
