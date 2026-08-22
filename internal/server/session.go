@@ -76,6 +76,9 @@ type session struct {
 	// Set by arm and cleared by disarmIf with everything else: it holds the invitation
 	// secret, and a secret that outlives the session it belongs to is residue.
 	cer *ceremonyID
+	// cerCancel cancels a connect-based ceremony arm's background goroutine (P05.S09), the
+	// analogue of closing the accept listener for a runSession arm. nil for accept arms.
+	cerCancel context.CancelFunc
 }
 
 // pendingVerify is the spoken verification string waiting on the user (D4, L2).
@@ -124,6 +127,23 @@ func (se *session) arm(ln p2p.Listener, cer *ceremonyID) bool {
 	return true
 }
 
+// armCeremony arms a connect-based ceremony session (P05.S09): it holds the ceremony and a cancel
+// for its background goroutine rather than an accept listener, because the symmetric-racing
+// coordinator owns the single (handshaked) listener and a transport permits only one. addr is the
+// shared endpoint's address, reported in status; cancel stops the connect goroutine at disarm.
+func (se *session) armCeremony(cer *ceremonyID, addr string, cancel context.CancelFunc) bool {
+	se.mu.Lock()
+	defer se.mu.Unlock()
+	if se.ln != nil || se.cer != nil {
+		return false
+	}
+	se.cer = cer
+	se.addr = addr
+	se.cerCancel = cancel
+	se.received = nil
+	return true
+}
+
 func (se *session) setReceived(r *receivedInfo) {
 	se.mu.Lock()
 	se.received = r
@@ -153,18 +173,35 @@ func (se *session) disarm() { se.disarmIf(nil) }
 // counter is a second truth that has to be incremented in exactly the right place to stay
 // equal to the first.
 func (se *session) disarmIf(ln p2p.Listener) {
+	se.disarmWhen(func() bool { return ln == nil || se.ln == ln })
+}
+
+// disarmCeremony tears a connect-based arm down only if `cer` is still the armed ceremony — the
+// cer analogue of disarmIf(ln), for an arm that has no listener to key on (P05.S09). It is what
+// stops a stale connect goroutine, finishing after a cancel-and-rearm, from disarming the session
+// that replaced it.
+func (se *session) disarmCeremony(cer *ceremonyID) {
+	se.disarmWhen(func() bool { return cer != nil && se.cer == cer })
+}
+
+// disarmWhen is the shared teardown: it captures and clears the armed state under the lock only if
+// the guard holds, then closes the listener and ceremony and releases any parked gate outside it.
+func (se *session) disarmWhen(ok func() bool) {
 	se.mu.Lock()
-	if ln != nil && se.ln != ln {
+	if !ok() {
 		se.mu.Unlock()
 		return // a later session is armed; this one is already over
 	}
 	cur, p, pv := se.ln, se.pending, se.verify
 	cer := se.cer
-	se.ln, se.addr, se.pending, se.verify, se.cer = nil, "", nil, nil, nil
+	cancel := se.cerCancel
+	se.ln, se.addr, se.pending, se.verify, se.cer, se.cerCancel = nil, "", nil, nil, nil, nil
 	se.mu.Unlock()
-	ln = cur
-	if ln != nil {
-		ln.Close()
+	if cancel != nil {
+		cancel() // stop the connect goroutine (S09), the analogue of ln.Close below
+	}
+	if cur != nil {
+		cur.Close()
 	}
 	// **The ceremony's network comes down AFTER the listener and in its own order**, and
 	// the ordering is not a style preference. `cer.close()` shuts the rendezvous server
@@ -313,7 +350,7 @@ func (se *session) respond(d sessionDecision) bool {
 func (se *session) status() sessionStatus {
 	se.mu.Lock()
 	defer se.mu.Unlock()
-	st := sessionStatus{Armed: se.ln != nil, Address: se.addr, Received: se.received}
+	st := sessionStatus{Armed: se.ln != nil || se.cer != nil, Address: se.addr, Received: se.received}
 	if se.pending != nil {
 		pv := se.pending.view
 		st.Pending = &pv
@@ -585,7 +622,7 @@ func (s *Server) runSession(ln p2p.Listener, cert, key []byte, label, mode strin
 		if inbound != nil {
 			inbound.Store(true)
 		}
-		served := s.serveOneSession(ln, conn, cert, key, label, mode, myFP)
+		served := s.serveOneSession(consentAnchor{ln: ln}, conn, cert, key, label, mode, myFP)
 		if served {
 			return // the arm is spent on a session, which is what it is for
 		}
@@ -607,7 +644,7 @@ func (s *Server) runSession(ln p2p.Listener, cert, key []byte, label, mode strin
 // function, and it is why the co-signing decline needed a sentinel of its own
 // (`p2p.ErrCoSignDeclined`) rather than the bare error it used to return — `errors.Is`
 // could not otherwise tell it from the protocol error declared one line away.
-func (s *Server) serveOneSession(ln p2p.Listener, conn *p2p.Conn, cert, key []byte, label, mode string, myFP []byte) bool {
+func (s *Server) serveOneSession(anchor consentAnchor, conn *p2p.Conn, cert, key []byte, label, mode string, myFP []byte) bool {
 	// **Deferred here rather than closed by the caller**, so the connection is released
 	// even if this function panics. `runSession`'s `safe.Recover` catches such a panic and
 	// keeps the desktop process alive, which is exactly the case where a caller-side
@@ -643,14 +680,14 @@ func (s *Server) serveOneSession(ln p2p.Listener, conn *p2p.Conn, cert, key []by
 	var saw reached
 	ch := conn.Channel
 	if mode == sessionModeReceive {
-		doc, err := p2p.ReceiveDocument(ch, sessionAccepter{s: s, label: label, saw: &saw, anchor: consentAnchor{ln: ln}}, myFP, sessionVerifier{s, &saw})
+		doc, err := p2p.ReceiveDocument(ch, sessionAccepter{s: s, label: label, saw: &saw, anchor: anchor}, myFP, sessionVerifier{s, &saw})
 		if err != nil {
 			return saw.v.Load()
 		}
 		s.saveReceived(doc, ch.PeerFP, label)
 		return true
 	}
-	final, err := p2p.Receive(ch, cert, key, label, sessionConfirmer{s: s, saw: &saw, anchor: consentAnchor{ln: ln}}, sessionVerifier{s, &saw})
+	final, err := p2p.Receive(ch, cert, key, label, sessionConfirmer{s: s, saw: &saw, anchor: anchor}, sessionVerifier{s, &saw})
 	if err != nil {
 		return saw.v.Load()
 	}
@@ -848,6 +885,37 @@ func (s *Server) handleSessionArm(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// P05.S09: a QUIC ceremony arm both LISTENS and DIALS over the one shared endpoint, joined by
+	// the glare — so a peer we reach by dialing is co-signed here, not only one that dials us. The
+	// coordinator owns the single handshaked listener (a transport permits one), so this path does
+	// not open its own accept listener and does not start startArmedRendezvous: connect's feed does
+	// the same bootstrap-fed publish, punch and port-mapping. TCP ceremonies and the non-ceremony
+	// arm keep the runSession path below.
+	if cer != nil && req.Transport == transportQUIC {
+		if serr := cer.setupSharedEndpoint(bind, s.configDir); serr != nil {
+			cer.close()
+			httpError(w, http.StatusBadRequest, "could not open the ceremony endpoint: "+serr.Error())
+			return
+		}
+		hl, herr := p2p.QUICListenHandshakeOn(cer.end, cert, key, peerFP)
+		if herr != nil {
+			cer.close()
+			httpError(w, http.StatusInternalServerError, "could not arm the racing accept: "+herr.Error())
+			return
+		}
+		armCtx, cancel := context.WithCancel(context.Background())
+		if !s.sess.armCeremony(cer, cer.end.LocalAddr().String(), cancel) {
+			cancel()
+			hl.Close()
+			cer.close()
+			httpError(w, http.StatusConflict, "a session is already armed")
+			return
+		}
+		go s.runCeremonyReceive(armCtx, cer, hl, cert, key, label, req.Mode, peerFP)
+		writeJSON(w, s.sess.status())
+		return
+	}
+
 	// With a ceremony, the listener is opened on a socket the DHT SHARES (caveat 7): a NAT
 	// mapping is a function of the internal IP:port, so the socket the probe measures and the
 	// socket the session answers on must be the same one. Without a ceremony this is
@@ -878,6 +946,42 @@ func (s *Server) handleSessionArm(w http.ResponseWriter, r *http.Request) {
 	// reached. Started after the arm so a refused arm leaves no background work behind.
 	s.startArmedRendezvous(cer, req.Transport, &inbound)
 	writeJSON(w, s.sess.status())
+}
+
+// runCeremonyReceive is the arm side of a symmetric-racing ceremony (P05.S09): it LISTENS and
+// DIALS over the one shared endpoint through the connect coordinator, promotes the surviving
+// channel as the RECEIVER, and runs the exchange on it. It replaces runSession + startArmedRendezvous
+// for a QUIC ceremony arm — connect's feed does the same bootstrap-fed publish, punch and
+// port-mapping — and reaches the consent gate through the ceremony anchor (T05), because a receive
+// role that won by DIALING has no listener to key on.
+func (s *Server) runCeremonyReceive(ctx context.Context, cer *ceremonyID, hl *p2p.HandshakeListener, cert, key []byte, label, mode string, peerFP []byte) {
+	defer safe.Recover("ceremony receive")
+	defer hl.Close()
+	// Identity-guarded: a stale goroutine finishing after a cancel-and-rearm must not disarm the
+	// ceremony that replaced it (the cer analogue of runSession's disarmIf(ln)).
+	defer s.sess.disarmCeremony(cer)
+
+	myFP, err := sign.Fingerprint(cert)
+	if err != nil {
+		return
+	}
+	// Warm the DHT so connect's feed can fetch the peer's candidates and publish ours. Not fatal:
+	// the accept side and any fixed candidates still race, and D19 cause 2 names a dead DHT.
+	bctx, bcancel := context.WithTimeout(ctx, bootstrapBudget)
+	_ = cer.rz.Bootstrap(bctx)
+	bcancel()
+
+	cctx, cancel := context.WithTimeout(ctx, connectDeadline)
+	defer cancel()
+	// One connect, one exchange: connect's internal race already keeps one of several candidates,
+	// so the old accept loop's re-arm-on-loss is folded into it. A peer that reaches the user and
+	// then fails still SPENT the arm (serveOneSession's engagement rule); one that never reaches
+	// anyone leaves nothing to re-arm for, and the connect deadline is the whole arm window.
+	conn, cerr := s.connect(cctx, cer, hl, nil, cert, key, peerFP, myFP, false, label, label)
+	if cerr != nil {
+		return // the arm window expired with no peer, or the connect failed
+	}
+	s.serveOneSession(consentAnchor{cer: cer}, conn, cert, key, label, mode, myFP)
 }
 
 func (s *Server) handleSessionDisarm(w http.ResponseWriter, r *http.Request) {
