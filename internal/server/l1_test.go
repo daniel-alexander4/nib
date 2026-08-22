@@ -182,27 +182,62 @@ func TestNothingWireDerivedReachesAPin(t *testing.T) {
 				return true // this function sees no wire data
 			}
 
-			// Taint to fixpoint: x := <expr mentioning anything tainted> taints x.
+			// Taint to fixpoint. **Three statement forms, not one** — and the two added at
+			// P05.S04 are not exotic, they are how Go is written:
+			//
+			//   x := <expr mentioning tainted>     *ast.AssignStmt   (was the only one)
+			//   for _, x := range <tainted>        *ast.RangeStmt    — a record's Addrs
+			//   var x = <expr mentioning tainted>  *ast.ValueSpec    — same thing, declared
+			//
+			// A trickle-in racer consuming `rec.Addrs` is range-shaped BY CONSTRUCTION, so
+			// with only the assignment form this guard would have widened its vocabulary to
+			// ceremony types and still walked past the one loop that matters. Driven: a
+			// planted `for _, e := range rec.Addrs { candidate{Fingerprint: []byte(e...)} }`
+			// is reported by this guard and is invisible to the assignment form alone.
+			bind := func(lhs ast.Expr, grew *bool) {
+				if id, ok := lhs.(*ast.Ident); ok && id.Name != "_" && !tainted[id.Name] {
+					tainted[id.Name] = true
+					*grew = true
+				}
+			}
 			for round := 0; round < 8; round++ {
 				grew := false
 				ast.Inspect(fd.Body, func(n ast.Node) bool {
-					as, ok := n.(*ast.AssignStmt)
-					if !ok {
-						return true
-					}
-					dirty := false
-					for _, rhs := range as.Rhs {
-						if mentionsAny(types.ExprString(rhs), tainted) {
-							dirty = true
+					switch st := n.(type) {
+					case *ast.AssignStmt:
+						dirty := false
+						for _, rhs := range st.Rhs {
+							if mentionsAny(types.ExprString(rhs), tainted) {
+								dirty = true
+							}
 						}
-					}
-					if !dirty {
-						return true
-					}
-					for _, lhs := range as.Lhs {
-						if id, ok := lhs.(*ast.Ident); ok && !tainted[id.Name] {
-							tainted[id.Name] = true
-							grew = true
+						if !dirty {
+							return true
+						}
+						for _, lhs := range st.Lhs {
+							bind(lhs, &grew)
+						}
+					case *ast.RangeStmt:
+						// Ranging over tainted data taints BOTH the key and the value: a
+						// map keyed on something a stranger sent is as much wire data as
+						// the thing it maps to.
+						if st.X == nil || !mentionsAny(types.ExprString(st.X), tainted) {
+							return true
+						}
+						bind(st.Key, &grew)
+						bind(st.Value, &grew)
+					case *ast.ValueSpec:
+						dirty := false
+						for _, v := range st.Values {
+							if mentionsAny(types.ExprString(v), tainted) {
+								dirty = true
+							}
+						}
+						if !dirty {
+							return true
+						}
+						for _, nm := range st.Names {
+							bind(nm, &grew)
 						}
 					}
 					return true
@@ -280,10 +315,24 @@ func TestNothingWireDerivedReachesAPin(t *testing.T) {
 	}
 }
 
+// wirePackages are the packages whose types carry data a STRANGER supplied.
+//
+// **`ceremony.` and `rendezvous.` were added at P05.S04, and widening this list alone would
+// have been a vacuous fix** — measured, by running this guard's own functions over a
+// synthetic file. Before that slice `internal/server` imported neither package, so seeding
+// taint from them would have policed an input that was always empty; after it, a
+// `ceremony.CandidateRecord` reaches a dial. But the propagation below matched only
+// `*ast.AssignStmt`, so `for _, e := range rec.Addrs` — which is how a trickle-in racer
+// consumes a record, by construction — stayed untainted whatever this list said. Both halves
+// changed together or neither was worth changing.
+var wirePackages = []string{"discovery.", "ceremony.", "rendezvous."}
+
 // wireType reports whether a rendered parameter type is wire data, resolving local aliases.
 func wireType(f *ast.File, rendered string) bool {
-	if strings.Contains(rendered, "discovery.") {
-		return true
+	for _, pkg := range wirePackages {
+		if strings.Contains(rendered, pkg) {
+			return true
+		}
 	}
 	// `type wireSeen = discovery.Seen` — an alias evaded the first version.
 	alias := false
@@ -292,8 +341,10 @@ func wireType(f *ast.File, rendered string) bool {
 		if !ok || ts.Name.Name != strings.TrimLeft(rendered, "*[]") {
 			return true
 		}
-		if strings.Contains(types.ExprString(ts.Type), "discovery.") {
-			alias = true
+		for _, pkg := range wirePackages {
+			if strings.Contains(types.ExprString(ts.Type), pkg) {
+				alias = true
+			}
 		}
 		return true
 	})

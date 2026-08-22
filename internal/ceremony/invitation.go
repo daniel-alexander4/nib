@@ -463,6 +463,21 @@ func (i Invitation) CheckBindingMAC(exporter []byte, role string, got []byte) er
 
 // --- the record comparison ----------------------------------------------------
 
+// Hop returns the hop index joining two parties, read off the invitation's roster.
+//
+// The same rule as Record.Hop and the same code — an invitation's roster is checked against
+// the record's by MatchesRecord, so the two cannot disagree about order without that check
+// already having failed.
+func (i Invitation) Hop(a, b string) (int, error) { return hopBetween(i.Roster, a, b) }
+
+// Hops is how many hops this ceremony has: one fewer than its roster.
+func (i Invitation) Hops() int {
+	if len(i.Roster) < 2 {
+		return 0
+	}
+	return len(i.Roster) - 1
+}
+
 // MatchesRecord checks the invitation's roster against the record's.
 //
 // This is the only check that can catch a tampered invitation, and it can only happen once

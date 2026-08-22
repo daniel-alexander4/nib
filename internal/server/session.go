@@ -72,6 +72,10 @@ type session struct {
 	pending  *pendingReq    // set while a received request awaits the user's consent
 	verify   *pendingVerify // set while the spoken check awaits the user's confirmation
 	received *receivedInfo  // last accepted transfer, read by the poller after disarm
+	// cer is the ceremony identity this arm carries, or nil for the manual/LAN path.
+	// Set by arm and cleared by disarmIf with everything else: it holds the invitation
+	// secret, and a secret that outlives the session it belongs to is residue.
+	cer *ceremonyID
 }
 
 // pendingVerify is the spoken verification string waiting on the user (D4, L2).
@@ -107,13 +111,14 @@ type sessionDecision struct {
 	appearance []byte
 }
 
-func (se *session) arm(ln p2p.Listener) bool {
+func (se *session) arm(ln p2p.Listener, cer *ceremonyID) bool {
 	se.mu.Lock()
 	defer se.mu.Unlock()
 	if se.ln != nil {
 		return false
 	}
 	se.ln = ln
+	se.cer = cer
 	se.addr = ln.Addr().String()
 	se.received = nil // a fresh session clears any prior transfer result
 	return true
@@ -154,7 +159,7 @@ func (se *session) disarmIf(ln p2p.Listener) {
 		return // a later session is armed; this one is already over
 	}
 	cur, p, pv := se.ln, se.pending, se.verify
-	se.ln, se.addr, se.pending, se.verify = nil, "", nil, nil
+	se.ln, se.addr, se.pending, se.verify, se.cer = nil, "", nil, nil, nil
 	se.mu.Unlock()
 	ln = cur
 	if ln != nil {
@@ -698,6 +703,17 @@ type armRequest struct {
 	Bind        string `json:"bind"`                // host:port to bind, e.g. "0.0.0.0:8443"
 	Mode        string `json:"mode,omitempty"`      // "receive" for a transfer; co-sign otherwise
 	Transport   string `json:"transport,omitempty"` // "quic"; anything else is TCP
+	// Invitation is the pasteable ceremony invitation (D21), and it is what gives this arm
+	// a ceremony identity: a roster, a hop, and the secret every rendezvous derivation
+	// needs. Optional — an arm without one is the manual/LAN path this route has always
+	// served, and D9 keeps that path rather than deleting it.
+	//
+	// **The invitation travels in the request rather than living on disk.** It is a channel
+	// secret and the BEP-44 write authority for every hop of the ceremony, and ADR-006 has
+	// already reasoned once about which secrets Nib persists. P06's resumption criterion
+	// says the panel renders "from the local record" — the PDF attachment — not from a
+	// stored invitation, so nothing here needs one at rest.
+	Invitation string `json:"invitation,omitempty"`
 }
 
 type sessionStatus struct {
@@ -759,6 +775,16 @@ func (s *Server) handleSessionArm(w http.ResponseWriter, r *http.Request) {
 		httpError(w, http.StatusInternalServerError, "could not load identity")
 		return
 	}
+	// **The ceremony identity is resolved BEFORE the listener opens.** A bad invitation is
+	// the caller's mistake and deserves a 400, and resolving it first means a refusal costs
+	// no socket — the same ordering `peerAddresses` uses for a typo'd transport, and the
+	// reason it gives: a 400 the user can act on rather than a 502 about a peer.
+	cer, cerr := ceremonyFor(req.Invitation, cert, peerFP)
+	if cerr != nil && !errors.Is(cerr, errNoCeremony) {
+		httpError(w, http.StatusBadRequest, cerr.Error())
+		return
+	}
+
 	ln, err := listenPeer(req.Transport, bind, cert, key, peerFP)
 	if errors.Is(err, errUnknownTransport) {
 		httpError(w, http.StatusBadRequest, err.Error())
@@ -768,7 +794,7 @@ func (s *Server) handleSessionArm(w http.ResponseWriter, r *http.Request) {
 		httpError(w, http.StatusBadRequest, "could not open listener: "+err.Error())
 		return
 	}
-	if !s.sess.arm(ln) {
+	if !s.sess.arm(ln, cer) {
 		ln.Close()
 		httpError(w, http.StatusConflict, "a session is already armed")
 		return

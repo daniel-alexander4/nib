@@ -372,9 +372,15 @@ func (r Record) Convener() (Party, bool) {
 // self-test. A caller's off-by-one derived a perfectly valid key and salt at a hop that does
 // not exist, published into the void, and the outcome was reported as `FetchEmpty`:
 // indistinguishable from a counterparty who has not arrived yet.
-func (r Record) Hop(a, b string) (int, error) {
+func (r Record) Hop(a, b string) (int, error) { return hopBetween(r.Roster, a, b) }
+
+// hopBetween is the one door. Record and Invitation both carry a roster and both are asked
+// for hop numbers, and two implementations of one rule is the shape ADR-009 exists to refuse
+// — here it would be worse than usual, because the two would disagree only for the rosters
+// where it mattered.
+func hopBetween(roster []Party, a, b string) (int, error) {
 	ia, ib := -1, -1
-	for i, p := range r.Roster {
+	for i, p := range roster {
 		// Case-insensitive, because a fingerprint that differs only in case is the same
 		// party — the same fact ParseInvitation normalises for the invitation's roster and
 		// that Convener() compares case-sensitively one function away.
