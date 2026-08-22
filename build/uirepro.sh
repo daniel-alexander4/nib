@@ -182,7 +182,7 @@ files="$(find test/ui -maxdepth 1 -name '*.test.mjs' | wc -l | tr -d ' ')"
 # both halves are about layout and a device pixel ratio, neither of which exists at
 # tier 2), gestures.test.mjs, save.test.mjs, pageops.test.mjs and finalize.test.mjs. The count said "three" while the literal below said
 # five, which is the sort of drift this guard exists to catch one level down.
-expect_files=11
+expect_files=12
 if [ "$files" -ne "$expect_files" ]; then
   echo "FAIL: expected $expect_files browser UI test files, found $files — a test file was added or dropped." >&2
   echo "      If deliberate, update expect_files in this script." >&2
