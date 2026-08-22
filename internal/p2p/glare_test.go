@@ -8,8 +8,6 @@ import (
 	"syscall"
 	"testing"
 	"time"
-
-	"github.com/quic-go/quic-go"
 )
 
 // handshakedPair brings up a real pinned QUIC connection over two shared endpoints and returns
@@ -27,25 +25,20 @@ func handshakedPair(t *testing.T, acceptCert, acceptKey, acceptPinsDialer, dialC
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { se.Close() })
-	sCfg, err := SessionTLS(acceptCert, acceptKey, acceptPinsDialer, true)
-	if err != nil {
-		t.Fatal(err)
-	}
-	sCfg.NextProtos = []string{alpn}
-	sln, err := se.tr.Listen(sCfg, quicConfig())
+	sln, err := QUICListenHandshakeOn(se, acceptCert, acceptKey, acceptPinsDialer)
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { sln.Close() })
 
-	accCh := make(chan *quic.Conn, 1)
+	accCh := make(chan *HandshakedConn, 1)
 	go func() {
-		qc, err := sln.Accept(context.Background())
+		hc, err := sln.Accept(context.Background())
 		if err != nil {
 			accCh <- nil
 			return
 		}
-		accCh <- qc
+		accCh <- hc
 	}()
 
 	ce, err := NewSharedEndpoint("127.0.0.1:0")
@@ -58,15 +51,11 @@ func handshakedPair(t *testing.T, acceptCert, acceptKey, acceptPinsDialer, dialC
 		t.Fatalf("dial handshake: %v", err)
 	}
 
-	qc := <-accCh
-	if qc == nil {
+	accept = <-accCh
+	if accept == nil {
 		t.Fatal("the accepter never completed a handshake against a correctly pinned dialer")
 	}
-	afp, err := verifiedPeerFingerprint(qc.ConnectionState().TLS)
-	if err != nil {
-		t.Fatalf("accepter fingerprint: %v", err)
-	}
-	return dial, &HandshakedConn{qc: qc, PeerFP: afp}
+	return dial, accept
 }
 
 // TestQUICStreamOpensByRoleNotByDialer — P05.S09a, the glare deadlock fix. Under symmetric racing

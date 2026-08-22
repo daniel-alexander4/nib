@@ -528,3 +528,61 @@ func (g *cidGen) GenerateConnectionID() (quic.ConnectionID, error) {
 	g.mux.RegisterConnectionID(b)
 	return quic.ConnectionIDFromBytes(b), nil
 }
+
+// HandshakeListener is a QUIC listener whose Accept returns a HANDSHAKED connection — the peer's
+// pinned identity verified, its fingerprint known, but NO session stream opened. It is the
+// racing-accept half of the symmetric-racing coordinator (P05.S09): the coordinator glares the
+// accepted connection against the one it dialled and Promotes only the survivor, by the ROSTER
+// role, so the stream direction is decided after the join rather than welded to who accepted.
+//
+// Its sibling QUICListenOn opens the stream as the receiver on its own accept path — the arm
+// path, where the accepting side IS the receiver. Only the coordinator needs the stream deferred,
+// and only over QUIC, so this is a separate, QUIC-only listener rather than a change to the shared
+// listenerCore (which the TCP path also runs). It is NON-OWNING: Close stops the listener but
+// leaves the shared endpoint's transport and mux, which the DHT and the racing dials ride.
+type HandshakeListener struct {
+	ln *quic.Listener
+}
+
+// QUICListenHandshakeOn arms a HandshakeListener on the shared endpoint (P05.S09). A wrong peer
+// fails the handshake inside quic-go and never surfaces from Accept, exactly as QUICListenOn's
+// accept loop relies on.
+func QUICListenHandshakeOn(e *SharedEndpoint, identityCertPEM, identityKeyPEM, pinnedSPKI []byte) (*HandshakeListener, error) {
+	if e == nil {
+		return nil, errors.New("p2p: no shared endpoint")
+	}
+	cfg, err := SessionTLS(identityCertPEM, identityKeyPEM, pinnedSPKI, true)
+	if err != nil {
+		return nil, err
+	}
+	cfg.NextProtos = []string{alpn}
+	ln, err := e.tr.Listen(cfg, quicConfig())
+	if err != nil {
+		return nil, err
+	}
+	return &HandshakeListener{ln: ln}, nil
+}
+
+// Accept blocks for the next handshaked connection, or until ctx is cancelled (the coordinator
+// cancels it when the dial wins the glare, or the connect deadline fires). The fingerprint is read
+// from the completed handshake — the connection is verified before this returns, so PeerFP is
+// trustworthy, the same guarantee QUICDialHandshakeOn gives on the dial side.
+func (l *HandshakeListener) Accept(ctx context.Context) (*HandshakedConn, error) {
+	qc, err := l.ln.Accept(ctx)
+	if err != nil {
+		return nil, err
+	}
+	fp, err := verifiedPeerFingerprint(qc.ConnectionState().TLS)
+	if err != nil {
+		qc.CloseWithError(0, "")
+		return nil, err
+	}
+	return &HandshakedConn{qc: qc, PeerFP: fp}, nil
+}
+
+// Addr is the shared endpoint's address — the one socket the DHT, the dial race and this accept
+// all share (caveat 7).
+func (l *HandshakeListener) Addr() net.Addr { return l.ln.Addr() }
+
+// Close stops the listener. NON-OWNING: the shared transport and mux are the endpoint's.
+func (l *HandshakeListener) Close() error { return l.ln.Close() }
