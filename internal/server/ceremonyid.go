@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"sync"
 
 	"nib/internal/ceremony"
 	"nib/internal/p2p"
@@ -38,10 +39,46 @@ type ceremonyID struct {
 	// server on its DHT view. Both nil on the TCP transport — see openRendezvous.
 	end *p2p.SharedEndpoint
 	rz  *rendezvous.Server
+	// mu guards stopNet and portMap, both written by the armed background goroutine and read by
+	// close() on the teardown goroutine. **stopNet was a live data race before S07** (grill C5):
+	// written at `startArmedRendezvous`'s third statement, read by close(), with no lock and
+	// nothing but a tight window keeping -race quiet.
+	mu sync.Mutex
 	// stopNet cancels the arm's background rendezvous work — bootstrap, the LAN wait, the
 	// publish. Set by startArmedRendezvous and called by close, so the goroutine ends with
-	// the session rather than outliving it.
+	// the session rather than outliving it. Guarded by mu.
 	stopNet context.CancelFunc
+	// portMap is the router port-mapping lease for this arm (S07): obtained at publish,
+	// refreshed while armed, deleted by close(). nil when the tier obtained nothing. Guarded
+	// by mu.
+	portMap *portMapper
+	// closed guards the narrow window where close() runs BEFORE the arm goroutine has stored
+	// stopNet/portMap (diff-grill #4): a setter arriving after close acts immediately rather
+	// than storing state nothing will ever tear down.
+	closed bool
+}
+
+// setStopNet and setPortMap store the two shared fields under the lock.
+func (c *ceremonyID) setStopNet(cancel context.CancelFunc) {
+	c.mu.Lock()
+	if c.closed {
+		c.mu.Unlock()
+		cancel() // close() already ran; do not store a canceller nothing will call
+		return
+	}
+	c.stopNet = cancel
+	c.mu.Unlock()
+}
+
+func (c *ceremonyID) setPortMap(pm *portMapper) {
+	c.mu.Lock()
+	if c.closed {
+		c.mu.Unlock()
+		pm.close() // close() already ran; delete this mapping rather than leak it
+		return
+	}
+	c.portMap = pm
+	c.mu.Unlock()
 }
 
 // nodeCacheDir is where the DHT's node list lives.
@@ -101,10 +138,22 @@ func (c *ceremonyID) close() {
 	if c == nil {
 		return
 	}
-	if c.stopNet != nil {
+	c.mu.Lock()
+	c.closed = true
+	stop := c.stopNet
+	mapper := c.portMap
+	c.mu.Unlock()
+	if stop != nil {
 		// Cancel the background work FIRST, so Close's own join has something finite to
 		// wait for rather than a publish still holding its 45 s budget.
-		c.stopNet()
+		stop()
+	}
+	// The mapping is released before the sockets close. Its delete opens its OWN socket to the
+	// gateway (portmap.Client.Unmap dials fresh) on a FRESH context (grill C2), so it neither
+	// needs c.end nor is cancelled by the stop() above; it joins the refresh goroutine first so
+	// nothing re-creates the mapping after the delete (grill C3).
+	if mapper != nil {
+		mapper.close()
 	}
 	if c.rz != nil {
 		c.rz.Close()

@@ -100,11 +100,11 @@ func publishableEndpoints(self rendezvous.SelfAddress, transport string) []cerem
 	return out
 }
 
-func (c *ceremonyID) publishCandidates(ctx context.Context, transport string) error {
+func (c *ceremonyID) publishCandidates(armCtx context.Context, transport string) error {
 	if c == nil || c.rz == nil {
 		return errNoCeremony
 	}
-	self, err := c.rz.ProbeSelf(ctx)
+	self, err := c.rz.ProbeSelf(armCtx)
 	if err != nil {
 		return fmt.Errorf("could not learn this machine's public address: %w", err)
 	}
@@ -115,7 +115,7 @@ func (c *ceremonyID) publishCandidates(ctx context.Context, transport string) er
 	// A miss or an unroutable answer leaves `addrs` untouched: an ordinary tier miss, never an
 	// error (D15/D16, grill F8), and never routed through `Sign`'s all-or-nothing screen, which
 	// would drop the good reflexive candidates alongside a bad mapped one (grill F1/#1).
-	addrs = c.appendMappedCandidate(ctx, addrs)
+	addrs = c.appendMappedCandidate(armCtx, addrs)
 	if len(addrs) == 0 {
 		// Not a failure of this path: it is D19's cause 3 or 4, and the ladder's other
 		// tiers are unaffected. Publishing nothing is the honest outcome — a record naming
@@ -148,7 +148,11 @@ func (c *ceremonyID) publishCandidates(ctx context.Context, transport string) er
 	if err != nil {
 		return err
 	}
-	return c.rz.Publish(ctx, seed, c.gate.PublishSalt(), sealed)
+	// The publish gets its OWN budget off the arm ctx; Publish self-caps at PublishBudget
+	// regardless, and this keeps the arm ctx (which the refresh rides) uncancelled.
+	pctx, pcancel := context.WithTimeout(armCtx, rendezvousPublishBudget)
+	defer pcancel()
+	return c.rz.Publish(pctx, seed, c.gate.PublishSalt(), sealed)
 }
 
 // appendMappedCandidate obtains a router port mapping for the shared endpoint's own port and,
@@ -162,11 +166,14 @@ func (c *ceremonyID) publishCandidates(ctx context.Context, transport string) er
 // gateway anyway, so D15's "both UDP and TCP" has no call site here until a TCP publish path
 // exists. Recorded the way S05 recorded its scoping (grill F4).
 //
-// **Lifecycle is S07.** This obtains and publishes one mapping; the refresh that keeps it alive
-// across the 300 s race (the lease is ~120 s) and the explicit delete on every teardown path
-// are S07, which builds them as one scheduler. The residue until then is a ≤120 s inbound hole
-// that self-expires — D15's own crash-safety lease, bounded and not a leak (grill F3).
-func (c *ceremonyID) appendMappedCandidate(ctx context.Context, addrs []ceremony.Endpoint) []ceremony.Endpoint {
+// **Lifecycle (S07).** The mapping is a managed lease: obtained here, refreshed on the arm
+// context by `portMapper`, and DELETED by `close()` on teardown. So the normal case leaves
+// nothing on the router. The residue is the CRASH case, and the grill's C8 corrected what it
+// costs: a killed process deletes nothing and the mapping lives until the router-GRANTED lease
+// expires — which is `defaultLeaseSec` (120 s) only if the router honours the request; a router
+// granting more (a tested value is 7200 s) leaves the hole open that long. Bounded by the grant,
+// not by the 120 s we ask for — recorded rather than claimed as 120 s.
+func (c *ceremonyID) appendMappedCandidate(armCtx context.Context, addrs []ceremony.Endpoint) []ceremony.Endpoint {
 	if c.end == nil {
 		return addrs // no shared endpoint (the TCP path never sets one) — no mapping tier
 	}
@@ -180,16 +187,27 @@ func (c *ceremonyID) appendMappedCandidate(ctx context.Context, addrs []ceremony
 	if gw, err := portmap.DefaultGateway(); err == nil {
 		client.Gateway = netip.AddrPortFrom(gw, portmap.GatewayPort)
 	}
-	mapCtx, cancel := context.WithTimeout(ctx, portMapBudget)
+
+	// The mapping is now a MANAGED lease (S07): obtained synchronously here (the record needs the
+	// address), refreshed on the ARM context, and deleted by close(). The obtain is bounded by
+	// its own 3 s budget; the refresh rides armCtx.
+	mapper := newPortMapper(client, portmap.UDP, uint16(ua.Port))
+	mapCtx, cancel := context.WithTimeout(armCtx, portMapBudget)
 	defer cancel()
-	m, ext, err := client.Map(mapCtx, portmap.UDP, uint16(ua.Port))
-	if err != nil {
-		return addrs // ErrNoMapping, or the arm was cancelled — swallowed (F8)
-	}
-	ep, ok := screenedMappedEndpoint(ext, m.ExternalPort)
+	ap, ok := mapper.obtain(mapCtx)
 	if !ok {
-		return addrs // a private/CGNAT/low-port answer — dropped here, not fed to Sign (F1)
+		return addrs // ErrNoMapping, or the arm was cancelled — swallowed (grill F8)
 	}
+	ep, ok := screenedMappedEndpoint(ap.Addr(), ap.Port())
+	if !ok {
+		// A private/CGNAT/low-port answer: we will not publish it, and a mapping we do not
+		// publish must not be left on the router — delete it now rather than leak it to lease
+		// expiry (grill F1 for the screen, D15 for the delete).
+		mapper.close()
+		return addrs
+	}
+	c.setPortMap(mapper)  // stored under the lock, so close() can reach it (grill C6)
+	mapper.startRefresh() // self-contained; stopped by close() (diff-grill #1)
 	return append(addrs, ep)
 }
 
@@ -308,7 +326,7 @@ func (s *Server) startArmedRendezvous(cer *ceremonyID, transport string, inbound
 		defer safe.Recover("armed rendezvous")
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
-		cer.stopNet = cancel
+		cer.setStopNet(cancel) // under the lock (grill C5)
 
 		bctx, bcancel := context.WithTimeout(ctx, bootstrapBudget)
 		defer bcancel()
@@ -329,9 +347,11 @@ func (s *Server) startArmedRendezvous(cer *ceremonyID, transport string, inbound
 		if inbound != nil && inbound.Load() {
 			return // the local network answered; nothing leaves this machine
 		}
-		pctx, pcancel := context.WithTimeout(ctx, rendezvousPublishBudget)
-		defer pcancel()
-		_ = cer.publishCandidates(pctx, transport)
+		// The ARM ctx, not a publish-budget child: the port-mapping REFRESH lives as long as the
+		// arm, and binding it to the 45 s publish budget would kill it mid-race (grill C4).
+		// publishCandidates bounds its own DHT publish internally; ProbeSelf and Publish each
+		// self-cap.
+		_ = cer.publishCandidates(ctx, transport)
 	}()
 }
 
