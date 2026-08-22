@@ -1044,3 +1044,42 @@ publishes an AAAA record and answers on IPv4; nothing answers on that v6 address
 the DNS lookup would have repeated this file's own recorded mistake one family over: *"silent" is
 a verdict about an address, and an address is a host AND a port AND a family.*
 
+
+## v1.117.44–.46 — sweep 10: five defects, and two blockers that were not there
+
+| Defect reintroduced | What it said | Check that fired |
+| --- | --- | --- |
+| **`dialable` stops refusing a zone** *(replayable: `zone-reaches-the-dialer`)* | `Target accepts 2606:4700:4700::1111%eth0:5000 — a candidate record naming it is sealed, published, opened, and its zone is handed to the kernel by the racer` | `TestAZoneOnAGlobalAddressNeverReachesTheDialer`, whose SETUP asserts the BARE address passes both predicates — without it a predicate refusing everything would pass |
+| **`raceKey` returns the raw address string** *(replayable: `race-key-is-a-raw-string`)* | `one IPv6 endpoint spelled three ways was tried 3 time(s), want 1 — the race key is a raw string, so a peer publishing one address in three spellings burns three of maxRaceCandidates (16)` | `TestOneIPv6EndpointIsOneRaceCandidateHoweverItIsSpelled`, read from the race's own tried-count end to end rather than from the key function |
+| **The notices preamble names a licence class** *(replayable: `notices-preamble-names-a-class`)* | `the preamble names the license class "BSD". An enumeration here is a claim about the WHOLE set that goes stale silently as dependencies change — it already did, and the correction sat 3,100 lines below it` | `TestTheNoticesPreambleNamesNoLicenseClass`, reading the committed artifact rather than the generator |
+| **`fieldsOf` stops resolving embeds** *(replayable: `embed-fields-invisible-to-the-scan`)* | `attestationView publishes 1 field(s) (pinned) — oneProceeding is missing, so embedded types are contributing nothing and every field this shape reaches through p2p.SignerAttestation is unchecked` | `published.test.mjs`'s SETUP assertion, which names a field reachable ONLY through the embed |
+| **The `key-missing` recovery check moves back below the key-mode block** *(replayable: `retry-never-retries`)* | `Retry reported an error instead of re-checking the status — the key-missing screen offers no key choice, so any validation of one is validating a control the user cannot see` (actual: `No key selected.`) | `unlock.test.mjs` at tier 3, asserting the error line BEFORE the overlay so the defect is named in 0.6 s rather than arriving as a 30 s Playwright timeout |
+
+**Two carried blockers were checked and neither existed.** M2's unlock click-through had been
+filed as needing "a SECOND nib with an enrolled vault" because `uirepro.sh` starts one server and
+enrols it before the browser opens. True of reaching the overlay by *navigating*; false of
+reaching it at all — `applyStatus` branches on `st.state` and nothing else, so `/api/status` is
+the overlay's whole input and tier 3 has intercepted routes since v1.109.19. And
+`localWildcardFor`'s "no test of any kind" had been true when written and was fixed by v1.117.43
+three commits earlier. **This is the third time a stated blocker turned out to be a hypothesis
+nobody had run** (M3's stamp placement, the cmap vendoring, and now these), and each time the
+item had been carried for weeks on it.
+
+**One premise was overturned by the test written to settle it, and that is a success.** The
+discovery read path was filed as "IPv4-shaped": it joins both groups, announces to both, and
+reads through `s.p4.ReadFrom` alone. It hears both — `p4` and `p6` are views of one dual-stack
+fd. **No row is recorded for a defect that was not there**; what is recorded is
+`TestTheReadPathHearsBothFamilies`, which drives a v6 unicast at the port over `::1` and goes red
+against a v4-only bind. Loopback unicast rather than the v6 group, deliberately: a multicast
+probe cannot separate "the reader is v4-shaped" from "this host swallows v6 multicast", and that
+ambiguity is exactly how a v4-shaped path would have stayed invisible under a green suite.
+
+**The zone fix rests on a weaker claim than the item asked for, and says so.** The open question
+was whether an attacker-chosen zone steers our source interface. Measured on Linux/Go:
+`[2606:4700:4700::1111%lo]:443`, `%docker0`, `%99` and `%nosuchif` all dial, from the ordinary
+global source, in the same ~20 ms as the bare form — the kernel ignores `sin6_scope_id` for a
+global-scope destination, and `Dialer.Control` confirms the zone reaches the syscall regardless.
+So no steering was demonstrated, and nothing is claimed for Windows or macOS. The refusal stands
+on the ground that does not need the measurement: a zone means something only on a link-local
+address, link-local is refused whatever its zone says, so a zone reaching that predicate is
+attacker-chosen bytes the program can never act on.
