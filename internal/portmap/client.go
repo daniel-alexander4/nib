@@ -29,6 +29,10 @@ type Client struct {
 	// test to point at a mock; set by S07's caller to the discovered gateway once, so discovery
 	// is not repeated per refresh.
 	Gateway netip.AddrPort
+	// TryUPnP enables the UPnP-IGD fallback (SSDP multicast discovery + SOAP). It is OFF by
+	// default ON PURPOSE: SSDP is real multicast on the LAN and could reach a real router, so a
+	// zero-value Client used in a test never fires it. The production caller sets it true.
+	TryUPnP bool
 }
 
 // Map asks the gateway for an inbound mapping of internalPort for proto, trying PCP then
@@ -45,13 +49,41 @@ func (c *Client) Map(ctx context.Context, proto Protocol, internalPort uint16) (
 	}
 	gw := c.Gateway
 	if !gw.IsValid() {
-		addr, err := DefaultGateway()
-		if err != nil {
-			return Mapping{}, netip.Addr{}, ErrNoMapping
+		// A missing gateway is not fatal — UPnP below self-discovers. Leave gw invalid and skip
+		// only the socket protocols (diff-grill #3).
+		if addr, err := DefaultGateway(); err == nil {
+			gw = netip.AddrPortFrom(addr, GatewayPort)
 		}
-		gw = netip.AddrPortFrom(addr, GatewayPort)
 	}
 
+	// PCP and NAT-PMP need the gateway; UPnP does not (it self-discovers over SSDP), so a
+	// missing gateway skips the first two rather than ending the whole tier (diff-grill #3).
+	if gw.IsValid() {
+		if m, ext, err := c.tryGatewayProtocols(ctx, gw, proto, internalPort); err == nil {
+			return m, ext, nil
+		} else if ctx.Err() != nil {
+			return Mapping{}, netip.Addr{}, ctx.Err()
+		}
+	}
+
+	// UPnP-IGD last (D15's order) — the majority of consumer routers, and the most code. Gated
+	// so it never fires from a zero-value Client: SSDP is real LAN multicast and would reach a
+	// real IGD.
+	if c.TryUPnP {
+		if ext, port, err := mapViaUPnP(ctx, proto, internalPort, defaultLeaseSec, isPrivateHost); err == nil {
+			return Mapping{Protocol: proto, InternalPort: internalPort, ExternalPort: port, LifetimeSec: defaultLeaseSec}, ext, nil
+		} else if ctx.Err() != nil {
+			return Mapping{}, netip.Addr{}, ctx.Err()
+		}
+	}
+
+	return Mapping{}, netip.Addr{}, ErrNoMapping
+}
+
+// tryGatewayProtocols runs the two socket protocols (PCP then NAT-PMP) against the gateway on
+// one dial. Split out so `Map` reads as "gateway protocols, then UPnP" and the no-gateway path
+// simply skips this.
+func (c *Client) tryGatewayProtocols(ctx context.Context, gw netip.AddrPort, proto Protocol, internalPort uint16) (Mapping, netip.Addr, error) {
 	conn, err := net.Dial("udp", gw.String())
 	if err != nil {
 		return Mapping{}, netip.Addr{}, ErrNoMapping
@@ -61,20 +93,16 @@ func (c *Client) Map(ctx context.Context, proto Protocol, internalPort uint16) (
 	// it — exactly what PCP's header wants, and it needs no interface enumeration.
 	clientIP := conn.LocalAddr().(*net.UDPAddr).AddrPort().Addr()
 
-	// PCP first — it supersedes NAT-PMP and returns the external IP inline.
 	if m, ext, err := c.tryPCP(ctx, conn, proto, clientIP, internalPort); err == nil {
 		return m, ext, nil
 	} else if ctx.Err() != nil {
 		return Mapping{}, netip.Addr{}, ctx.Err()
 	}
-
-	// NAT-PMP fallback — the MAP exchange plus a separate external-address request.
 	if m, ext, err := c.tryNATPMP(ctx, conn, proto, internalPort); err == nil {
 		return m, ext, nil
 	} else if ctx.Err() != nil {
 		return Mapping{}, netip.Addr{}, ctx.Err()
 	}
-
 	return Mapping{}, netip.Addr{}, ErrNoMapping
 }
 
@@ -99,6 +127,9 @@ func exchange(ctx context.Context, conn net.Conn, req []byte) ([]byte, error) {
 		if err == nil {
 			return buf[:n], nil
 		}
+		// A ctx cancel mid-Read is observed only when this read deadline (perAttempt/2) fires,
+		// so cancellation on the UDP path is bounded-but-not-prompt (diff-grill #5, accepted:
+		// the whole call is budget-bounded and the mapping is best-effort).
 		if time.Now().After(deadline) || ctx.Err() != nil {
 			break
 		}
