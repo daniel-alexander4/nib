@@ -247,8 +247,10 @@ func (c CandidateRecord) Fingerprint() string {
 //   - The salt: a pure function of the hop and the party fingerprint, both of which ARE
 //     in the preimage, so signing it would bind the same fact twice. It is in the AAD.
 //   - The party's six-word name and label: pure functions of the fingerprint, and
-//     including them would let a wordlist change alter a commitment — the same reasoning
-//     that keeps Party.Name out of RosterHash.
+//     including them would let a wordlist change alter a commitment. The roster went one
+//     step further on 2026-08-22 and does not STORE the name at all (see Party) — a
+//     wordlist-derived value that is never written cannot enter a commitment or disagree
+//     with the fingerprint it came from.
 func (c CandidateRecord) preimage() ([]byte, error) {
 	if len(c.Addrs) > MaxCandidates {
 		return nil, fmt.Errorf("%w: %d candidates, cap is %d", ErrCandidateTooBig, len(c.Addrs), MaxCandidates)

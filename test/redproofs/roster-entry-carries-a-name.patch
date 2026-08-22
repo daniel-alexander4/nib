@@ -1,0 +1,11 @@
+--- a/internal/ceremony/record.go
++++ b/internal/ceremony/record.go
+@@ -98,6 +98,8 @@
+ // about: the commitment cannot depend on the wordlist, because there is no wordlist-derived
+ // value in a roster entry at all. `TestEveryPartyFieldIsInTheCommitment` is the guard.
+ type Party struct {
++	// Name is the six-word display name (D3).
++	Name string `json:"name"`
+ 	// Fingerprint is the SHA-256 SPKI, hex. This is what identifies the party.
+ 	Fingerprint string `json:"fingerprint"`
+ 	// Label is what the convener calls them, for display.

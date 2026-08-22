@@ -7,6 +7,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -142,29 +143,53 @@ func TestRosterHashIsNotAmbiguousAcrossFieldBoundaries(t *testing.T) {
 	}
 }
 
-// TestTheNameIsNotInTheCommitment is an exclusion, and an exclusion has to be tested or it
-// is just a sentence in a doc comment.
+// TestEveryPartyFieldIsInTheCommitment replaced an exclusion test (2026-08-22, D21).
 //
-// The six-word name is a pure function of the fingerprint (D3). Including it would tie this
-// commitment to the wordlist, so a wordlist change — which the freeze permits with a
-// version bump — would alter commitments already written into signed documents.
-func TestTheNameIsNotInTheCommitment(t *testing.T) {
-	_, _, cfp := identity(t, "Convener")
-	_, _, afp := identity(t, "A")
-	base := draft(t, cfp, afp)
-	want, err := base.RosterHash()
-	if err != nil {
-		t.Fatal(err)
+// What it was: TestTheNameIsNotInTheCommitment, which set `Party.Name` to different words and
+// asserted RosterHash did not move. That test cannot exist any more — `Name` is gone (see
+// Party's own doc for why), and the property it guarded is now structural rather than
+// arithmetic: there is no wordlist-derived value in a roster entry to keep out.
+//
+// What it is now is the stronger question, and the one the deletion opened. EVERY field of a
+// roster entry is inside `rosterPreimage`, or it is named here with its reason. A field added
+// to Party and NOT added to the preimage sits silently outside the commitment: the copy the
+// signers read and the copy a verifier reads can differ in it and both hash the same. That is
+// precisely what `Name` was for three phases, and no test in this package could see it,
+// because a test that asserts one named field's exclusion says nothing about the next field
+// somebody adds. This one goes red in the same commit that adds it.
+//
+// The stimulus is the struct's own field set, so the inverse loop is not a nicety: without
+// it, a Party with no fields at all would satisfy the first loop vacuously.
+func TestEveryPartyFieldIsInTheCommitment(t *testing.T) {
+	// The fields rosterPreimage actually digests, read at the line (record.go).
+	inPreimage := map[string]bool{
+		"Fingerprint": true,
+		"Signs":       true,
+		"Label":       true,
 	}
-	base.Roster[1].Name = "totally different six words here"
-	got, err := base.RosterHash()
-	if err != nil {
-		t.Fatal(err)
+	// Deliberately outside, each with its reason. EMPTY is the correct state and is not an
+	// oversight: `Name` is the only entry this map would ever have carried, and it is not a
+	// field any more. An unexplained entry here is how the next one gets parked and forgotten.
+	excluded := map[string]string{}
+
+	ty := reflect.TypeOf(Party{})
+	for i := 0; i < ty.NumField(); i++ {
+		f := ty.Field(i).Name
+		if inPreimage[f] || excluded[f] != "" {
+			continue
+		}
+		t.Errorf("Party.%s is published but is not in rosterPreimage and carries no reason. "+
+			"A field outside the commitment can differ between the copy the signers read and "+
+			"the copy a verifier reads while both hash the same — which is what Party.Name was. "+
+			"Add it to rosterPreimage, or name it in `excluded` with why.", f)
 	}
-	if string(got) != string(want) {
-		t.Error("the six-word name changed the commitment. It is a function of the fingerprint, " +
-			"so this ties every signed commitment to the wordlist — and a wordlist change would " +
-			"invalidate records already signed")
+	// A name here for a field that no longer exists makes the guard quietly weaker — the same
+	// hole `unreadKnown` polices one level out — and it is also the stimulus assertion.
+	for f := range inPreimage {
+		if _, ok := ty.FieldByName(f); !ok {
+			t.Errorf("inPreimage names %q and Party has no such field. Either the field was "+
+				"renamed and this guard is now covering nothing, or it left the preimage.", f)
+		}
 	}
 }
 

@@ -27,10 +27,10 @@ is the point. A row is only added after the red was observed — never from inte
 applies the row's defect as a patch, runs the named check, and **asserts the check FAILS**.
 `./build/redproof.sh` with no argument lists what is recorded.
 
-**Nine rows are replayable** (v1.117.26, up from six): `empty-state-message`,
-`risky-actions-rendition`, `loopback-bind-announced`, `browse-burns-its-window`,
-`announced-transport-ignored`, `discover-verdict-order`, `race-feed-leaks-on-win`,
-`race-cap-not-per-source`, `zone-bypasses-reserved`. The count is guarded in
+**Sixteen rows are replayable** (v1.117.41; nine at v1.117.26, six added at v1.117.39). Ask
+`./build/redproof.sh` with no argument rather than reading a list here — **this sentence said
+"nine" while the directory held fifteen**, because a count written into prose beside a set that
+grows is a second statement of one fact, and it is the one nobody updates. The count is guarded in
 `verify_test.go` with a floor that **moves with the set** — left at two while the set grew,
 it would have tolerated losing four of six silently, which is the same defect as the prose
 count it replaced. Raising the floor is the tax a new row pays.
@@ -945,3 +945,28 @@ question, and why the counter had to exist first.
 **The table was re-derived, not remembered.** A first draft of the reader table was written from
 memory and named four wrong files. A scan that reports a false orphan is worse than no scan —
 people learn to ignore it — so the table is evidence like everything else here.
+
+## v1.117.41 — an exclusion test became a structural guard, and gained a row
+
+`Party.Name` was deleted (D21, Dan's call: **A**). The field was JSON-serialized, written by
+nobody and read by nobody, and D21's *"an invitation whose name and fingerprint disagree must be
+refused"* could not happen because `MatchesRecord` compares Fingerprint and Signs and never Name.
+
+| Defect reintroduced | What it said | Check that fired |
+| --- | --- | --- |
+| **`Name string` added back to `ceremony.Party`** *(replayable: `roster-entry-carries-a-name`)* | `Party.Name is published but is not in rosterPreimage and carries no reason. A field outside the commitment can differ between the copy the signers read and the copy a verifier reads while both hash the same` | `TestEveryPartyFieldIsInTheCommitment` (tier 1), and independently `TestEveryPublishedObservableHasANamedReader`, which is what found the field in the first place |
+| **`"Fingerprint"` misspelled in the guard's own `inPreimage` set** | `inPreimage names "Fingerprnt" and Party has no such field. Either the field was renamed and this guard is now covering nothing, or it left the preimage` | the same test's inverse loop — recorded because it is the **stimulus assertion**: the first loop walks the struct's fields, so a Party with no fields would satisfy it vacuously, and only the inverse loop can tell "nothing to complain about" from "nothing to look at" |
+
+**The interesting part is what the old test could not see.** `TestTheNameIsNotInTheCommitment`
+asserted that *one named field* stayed out of the commitment, and it was green for three phases
+while that field's real defect — that nothing read it, so D21's refusal was unimplementable —
+sat directly under it. An exclusion test proves an exclusion; it says nothing about the next
+field somebody adds, and nothing at all about whether the field should exist. The replacement
+walks every field of `Party` and demands each be in `rosterPreimage` or carry a written reason,
+so the general case goes red in the same commit that adds it.
+
+**Unrepresentable beat checked, and that is why the plan clause moved rather than being met.**
+D21's evidence path was "construct a disagreeing invitation and observe the refusal"; with no
+name on a roster entry there is nothing to disagree, so the clause is now discharged
+structurally and P07 inherits the obligation to derive a display name at the point of display.
+The amendment is written at the criterion in `PLAN-signing-ceremony.md`, not left implicit.
