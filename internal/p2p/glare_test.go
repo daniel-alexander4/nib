@@ -2,7 +2,10 @@ package p2p
 
 import (
 	"context"
+	"encoding/hex"
+	"errors"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -136,5 +139,119 @@ func TestQUICStreamOpensByRoleNotByDialer(t *testing.T) {
 	}
 	if n := len(strings.Fields(dr.s)); n != 4 {
 		t.Errorf("the verification string is %d words, want 4: %q", n, dr.s)
+	}
+}
+
+// TestOneSharedTransportBothListensAndDials — P05.S09 T08, the spike. The coordinator arms a QUIC
+// accept loop on cer.end AND races dialers on that SAME transport, concurrently. quic-go's
+// Transport is documented to support both roles, but S08 only ever dialled on the shared transport
+// and S09a only ever accepted on it — never both at once on ONE transport. This proves the library
+// assumption directly, before the coordinator is built on top of it: endpoint A both DIALS out
+// (its dial hits B's listener) and ACCEPTS an incoming session (B's dial hits A's listener), on the
+// one A.tr. If tr.Listen refused to coexist with a prior tr.Dial, A's own listener would never
+// accept while A had dialed.
+func TestOneSharedTransportBothListensAndDials(t *testing.T) {
+	aCert, aKey := newIdentity(t)
+	bCert, bKey := newIdentity(t)
+	aFP, bFP := fingerprint(t, aCert), fingerprint(t, bCert)
+
+	ea, err := NewSharedEndpoint("127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { ea.Close() })
+	eb, err := NewSharedEndpoint("127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { eb.Close() })
+
+	// Both endpoints arm a listener on their own shared transport, pinning the other.
+	alnA, err := QUICListenOn(ea, aCert, aKey, bFP)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { alnA.Close() })
+	alnB, err := QUICListenOn(eb, bCert, bKey, aFP)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { alnB.Close() })
+
+	accA := make(chan acceptResult, 1)
+	accB := make(chan acceptResult, 1)
+	go func() { c, err := alnA.Accept(); accA <- acceptResult{c, err} }()
+	go func() { c, err := alnB.Accept(); accB <- acceptResult{c, err} }()
+
+	// Each endpoint dials the OTHER on the same transport its listener is armed on — the glare.
+	type dialRes struct {
+		c   *Conn
+		err error
+	}
+	dab := make(chan dialRes, 1)
+	dba := make(chan dialRes, 1)
+	go func() {
+		c, err := QUICDialOn(context.Background(), ea, eb.LocalAddr().String(), aCert, aKey, bFP, 10*time.Second)
+		dab <- dialRes{c, err}
+	}()
+	go func() {
+		c, err := QUICDialOn(context.Background(), eb, ea.LocalAddr().String(), bCert, bKey, aFP, 10*time.Second)
+		dba <- dialRes{c, err}
+	}()
+
+	rab := <-dab
+	if rab.err != nil {
+		skipIfSandboxBlocksUDP(t, rab.err)
+		t.Fatalf("A dialing B while A is listening: %v", rab.err)
+	}
+	rba := <-dba
+	if rba.err != nil {
+		skipIfSandboxBlocksUDP(t, rba.err)
+		t.Fatalf("B dialing A while B is listening: %v", rba.err)
+	}
+	// The dialer speaks first so the peer's AcceptStream unblocks — the commitment, as in every
+	// real entry point.
+	if err := writeFrame(rab.c.Stream, []byte("ab")); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeFrame(rba.c.Stream, []byte("ba")); err != nil {
+		t.Fatal(err)
+	}
+
+	// The crux: A's listener accepts an incoming session WHILE A has dialed out on the same tr, and
+	// symmetrically for B. Both accepts succeeding is the proof.
+	ra := <-accA
+	if ra.err != nil {
+		skipIfSandboxBlocksUDP(t, ra.err)
+		t.Fatalf("A's listener failed to accept while A's transport had also dialed: %v", ra.err)
+	}
+	if got := hex.EncodeToString(ra.conn.PeerFP); got != hex.EncodeToString(bFP) {
+		t.Errorf("A accepted a peer whose fingerprint is %s, want B's %s", got, hex.EncodeToString(bFP))
+	}
+	rb := <-accB
+	if rb.err != nil {
+		skipIfSandboxBlocksUDP(t, rb.err)
+		t.Fatalf("B's listener failed to accept while B's transport had also dialed: %v", rb.err)
+	}
+	if got := hex.EncodeToString(rb.conn.PeerFP); got != hex.EncodeToString(aFP) {
+		t.Errorf("B accepted a peer whose fingerprint is %s, want A's %s", got, hex.EncodeToString(aFP))
+	}
+	// Close in protocol order — the dialers (which read last, close prompt) first, so the accepted
+	// sides' awaitPeer sees the peer gone at once instead of paying the full closeGrace (see
+	// TestAQUICSession). Explicit, not t.Cleanup, so the order is guaranteed.
+	rab.c.Close()
+	rba.c.Close()
+	ra.conn.Close()
+	rb.conn.Close()
+}
+
+// skipIfSandboxBlocksUDP turns a loopback sendto EPERM into a skip. Some CI/agent sandboxes forbid
+// UDP sends on 127.0.0.1 with EPERM; that is the environment refusing the syscall, not anything
+// this test is measuring. A genuine handshake bug never surfaces as EPERM on loopback — it is a
+// timeout or a wrong-peer verify error — so this masks nothing real.
+func skipIfSandboxBlocksUDP(t *testing.T, err error) {
+	t.Helper()
+	if errors.Is(err, syscall.EPERM) {
+		t.Skipf("sandbox forbids loopback UDP sendto (EPERM): %v", err)
 	}
 }

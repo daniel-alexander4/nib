@@ -3547,7 +3547,7 @@ stream-required invariant — `Channel` stays always-complete, which is strictly
 Diff-grill: two agents (correctness; Go-SME + test-teeth), zero findings — pin wiring cross-pinned
 (not vacuous), non-owning/close-discipline held, red-proof faithful.
 
-#### P05.S09 — Symmetric racing, the glare join, and the consent re-anchor *(D17; criterion 12; rests on S09a)* *(firmed 2026-08-22, deepdive + grill)*
+#### P05.S09 — Symmetric racing, the glare join, and the consent re-anchor *(D17; criterion 12; rests on S09a)* *(in progress 2026-08-22 — T08 spike proven first)*
 Scope: both sides listen AND dial over the ONE shared endpoint; a coordinator joins the dialer's
 won conn and the listener's accepted conn; a glare tie-break keeps one; the consent/verify gate is
 re-anchored off the armed listener; the no-record path stays asymmetric.
