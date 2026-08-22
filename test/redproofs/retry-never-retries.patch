@@ -1,0 +1,13 @@
+diff --git a/web/app.js b/web/app.js
+index 73bc3be..5244215 100644
+--- a/web/app.js
++++ b/web/app.js
+@@ -552,8 +552,6 @@ els.authForm.addEventListener('submit', async (e) => {
+   // the key-missing screen showed an error about a control the user could not see, and
+   // never re-read the status. The documented way out of a misplaced key was dead; the
+   // repoint button beside it was the only one that worked.
+-  if (authState === 'key-missing') { await refreshStatus(); return; }
+-
+   const mode = selectedKeyMode();
+   const body = { password: els.authPw.value };
+   if (mode === 'create') {

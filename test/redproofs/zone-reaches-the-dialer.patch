@@ -1,0 +1,14 @@
+diff --git a/internal/addrscope/addrscope.go b/internal/addrscope/addrscope.go
+index 2dd167f..b2520f4 100644
+--- a/internal/addrscope/addrscope.go
++++ b/internal/addrscope/addrscope.go
+@@ -129,9 +129,6 @@ var portExceptions = map[uint16]bool{80: true, 443: true}
+ // `CandidateRecord` — `resolve` puts them straight into the racer, and they are link-local,
+ // which this predicate refuses on its own terms.
+ func dialable(a netip.Addr) bool {
+-	if a.Zone() != "" {
+-		return false
+-	}
+ 	return Routable(a)
+ }
+ 

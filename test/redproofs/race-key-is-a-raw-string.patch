@@ -1,0 +1,16 @@
+diff --git a/internal/server/lan.go b/internal/server/lan.go
+index d2840d3..4024e7e 100644
+--- a/internal/server/lan.go
++++ b/internal/server/lan.go
+@@ -578,9 +578,6 @@ func dialAny(cands []candidate, cert, key, peerFP []byte) (*p2p.Conn, error) {
+ // which is the pre-existing behaviour and costs at most a duplicate dial the handshake
+ // settles; inventing a resolution here would put DNS on the dedupe path.
+ func raceKey(c candidate) string {
+-	addr := c.Addr
+-	if ap, err := netip.ParseAddrPort(addr); err == nil {
+-		addr = ap.String()
+-	}
+-	return addr + "\x00" + c.Transport
++	_ = netip.Addr{}
++	return c.Addr + "\x00" + c.Transport
+ }
