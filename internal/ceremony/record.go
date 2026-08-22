@@ -70,11 +70,34 @@ const MaxCeremonyLife = 30 * 24 * time.Hour
 const rosterDomain = "nib-ceremony-record-v1"
 
 // Party is one entry in the roster. The order of the roster IS the signing order.
+//
+// # The six-word name is NOT a field here, and its absence IS the property (D21, 2026-08-22)
+//
+// It used to be one: a `Name string`, JSON-serialized, documented at length, deliberately
+// outside the commitment preimage — and written by nobody and read by nobody. D21 requires
+// *"an invitation whose name and fingerprint disagree"* to be **refused rather than resolved
+// either way**, and MatchesRecord compared Fingerprint and Signs and never Name, so nothing
+// could refuse it. That was latent only because no name was ever set; it would have opened
+// the moment a display surface populated one, and the harm is a roster showing one party's
+// six words beside another party's fingerprint — two people read the same words aloud, the
+// verification "succeeds", and the pin is the attacker's.
+//
+// The name is a pure function of the fingerprint (`pairing.Name`), so storing it beside the
+// fingerprint states one fact twice in a shape where the two can disagree — the class ADR-009
+// exists for, and the class ConvenerFingerprint records this package being burned by. Deleting
+// it makes the disagreement UNREPRESENTABLE rather than merely checked: a check can be
+// forgotten at a new call site, and a type that cannot express the disagreement cannot be.
+//
+// Anything wanting the words derives them from the fingerprint this entry already carries.
+// `internal/server/peers.go:nameOrEmpty` is that call, already doing exactly this for pinned
+// peers. Nothing signed moved when the field went — it sat outside every preimage, so no
+// commitment, token or signature changed, and a decoder reading an older JSON simply ignores
+// the now-unknown key.
+//
+// The wordlist-freeze reasoning the old field's comment carried survives with the fact it was
+// about: the commitment cannot depend on the wordlist, because there is no wordlist-derived
+// value in a roster entry at all. `TestEveryPartyFieldIsInTheCommitment` is the guard.
 type Party struct {
-	// Name is the six-word display name (D3). Deliberately OUTSIDE the commitment
-	// preimage: it is a pure function of the fingerprint, so including it would let a
-	// wordlist change alter a commitment the list's freeze exists to keep stable.
-	Name string `json:"name"`
 	// Fingerprint is the SHA-256 SPKI, hex. This is what identifies the party.
 	Fingerprint string `json:"fingerprint"`
 	// Label is what the convener calls them, for display.

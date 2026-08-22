@@ -112,21 +112,6 @@ var excluded = map[string]string{}
 // Deleting an entry is how one gets fixed; a NEW unread field cannot be parked without
 // somebody writing a line, which is the intended cost.
 var unreadKnown = map[string]string{
-	"ceremony.Party.Name": "PUBLISHED AND READ BY NOBODY — and written by nobody either. " +
-		"This scan's first find, on its first run. `Party.Name` is the six-word display name " +
-		"(D3), declared, JSON-serialized and documented at length; the only occurrence of the " +
-		"identifier in internal/ceremony is inside a comment, which codeOnly strips, and the " +
-		"one production roster builder (internal/cli/rendezvous.go) does not set it. " +
-		"It matters because P01's D21 criterion requires \"an invitation whose name and " +
-		"fingerprint disagree\" to be REFUSED, and MatchesRecord compares Fingerprint and " +
-		"Signs and never Name — so nothing can refuse it. The hazard is latent only because " +
-		"no name is ever set; it opens the moment P07 populates one for display. " +
-		"Two fixes, and they differ in what D21's criterion can be driven against, so the " +
-		"choice is Dan's and is parked rather than guessed: DELETE the field (it is a pure " +
-		"function of Fingerprint, so storing it is a second statement of one fact that can " +
-		"disagree — and it sits outside every preimage, so nothing signed moves), or POPULATE " +
-		"it at the door and check it with pairing.Matches. Filed as its own pending item.",
-
 	// The node-cache trio. DELIBERATELY unprinted, and `internal/cli/rendezvous.go` says so
 	// at the line: this command uses a SCRATCH directory, so Loaded is always 0 and
 	// CacheRejected always false, and "printing them as if they were findings reads as a
