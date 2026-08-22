@@ -159,12 +159,22 @@ func (se *session) disarmIf(ln p2p.Listener) {
 		return // a later session is armed; this one is already over
 	}
 	cur, p, pv := se.ln, se.pending, se.verify
+	cer := se.cer
 	se.ln, se.addr, se.pending, se.verify, se.cer = nil, "", nil, nil, nil
 	se.mu.Unlock()
 	ln = cur
 	if ln != nil {
 		ln.Close()
 	}
+	// **The ceremony's network comes down AFTER the listener and in its own order**, and
+	// the ordering is not a style preference. `cer.close()` shuts the rendezvous server
+	// before the socket; the reverse makes the DHT's read return net.ErrClosed, which
+	// anacrolix/dht turns into `panic(err)` on a goroutine nothing of ours is on — process
+	// death, at shutdown, on the path a user reaches by pressing Cancel or quitting.
+	//
+	// It also releases the invitation secret with the session it belonged to. A secret that
+	// outlives its ceremony is residue.
+	cer.close()
 	if p != nil {
 		select {
 		case p.resp <- sessionDecision{accept: false}:
@@ -785,7 +795,16 @@ func (s *Server) handleSessionArm(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ln, err := listenPeer(req.Transport, bind, cert, key, peerFP)
+	// With a ceremony, the listener is opened on a socket the DHT SHARES (caveat 7): a NAT
+	// mapping is a function of the internal IP:port, so the socket the probe measures and the
+	// socket the session answers on must be the same one. Without a ceremony this is
+	// `listenPeer` exactly as before.
+	var ln p2p.Listener
+	if cer != nil {
+		ln, err = cer.openRendezvous(req.Transport, bind, s.configDir, cert, key, peerFP)
+	} else {
+		ln, err = listenPeer(req.Transport, bind, cert, key, peerFP)
+	}
 	if errors.Is(err, errUnknownTransport) {
 		httpError(w, http.StatusBadRequest, err.Error())
 		return
@@ -796,6 +815,7 @@ func (s *Server) handleSessionArm(w http.ResponseWriter, r *http.Request) {
 	}
 	if !s.sess.arm(ln, cer) {
 		ln.Close()
+		cer.close()
 		httpError(w, http.StatusConflict, "a session is already armed")
 		return
 	}

@@ -3,8 +3,10 @@ package p2p
 import (
 	"context"
 	"os"
+	"path/filepath"
 	"reflect"
 	"regexp"
+	"strings"
 	"testing"
 	"time"
 )
@@ -47,13 +49,32 @@ func eachTransport(t *testing.T, body func(t *testing.T, tr transport)) {
 // here for the same reason that one exists: the behavioural tests enumerate what
 // they know about, and what nobody entered is invisible to them.
 func TestEveryTransportIsInTheTable(t *testing.T) {
+	// **DISCOVERED, not listed.** This used to read `transport.go` and `quic.go` by name,
+	// and P05.S04 added a listener constructor in a THIRD file — so the population floor
+	// could not see the very thing it exists to count. That is this guard's own defect
+	// class, happening to this guard: what nobody entered is invisible to it.
+	files, gerr := filepath.Glob("*.go")
+	if gerr != nil {
+		t.Fatal(gerr)
+	}
 	var srcs []byte
-	for _, f := range []string{"transport.go", "quic.go"} {
-		b, err := os.ReadFile(f)
-		if err != nil {
-			t.Fatal(err)
+	read := 0
+	for _, f := range files {
+		if strings.HasSuffix(f, "_test.go") {
+			continue
+		}
+		b, rerr := os.ReadFile(f)
+		if rerr != nil {
+			t.Fatal(rerr)
 		}
 		srcs = append(srcs, b...)
+		read++
+	}
+	// Stimulus: the glob really read this package. Without it the count below is equally
+	// true of no files at all.
+	if read < 3 {
+		t.Fatalf("read %d non-test files in internal/p2p — the glob is not seeing the "+
+			"package, so the count below would pass on almost nothing", read)
 	}
 	// Stimulus: the files really are the ones that declare listeners. Without this
 	// the count below is equally true of two empty files.
@@ -67,15 +88,40 @@ func TestEveryTransportIsInTheTable(t *testing.T) {
 	// before it ever guarded anything.
 	found := regexp.MustCompile(`(?m)^func ([A-Z]\w+)\([^)]*\) \(Listener, error\)`).
 		FindAllStringSubmatch(string(srcs), -1)
-	if len(found) != len(transports) {
-		names := []string{}
-		for _, m := range found {
-			names = append(names, m[1])
+
+	// **Exemptions, each with a reason, and each checked to be what it claims.**
+	//
+	// The rule the table enforces is "every way of getting a Listener is exercised by the
+	// session-logic suite". A constructor that is a VARIANT of a table entry — the same
+	// listener, differing only in who owns the socket underneath — is covered by that
+	// entry's runs, and adding it to the table would run the whole suite twice over one
+	// transport while labelling half of it something else. That is precisely what the
+	// pointer-distinctness check below exists to refuse.
+	exempt := map[string]string{
+		"QUICListenOn": "the same QUIC listener as QUICListen, on an endpoint the caller " +
+			"owns (caveat 7's shared socket). QUICListen is the table entry and covers the " +
+			"listener's behaviour; what differs is only who closes the transport.",
+	}
+	counted := []string{}
+	for _, m := range found {
+		if _, ok := exempt[m[1]]; ok {
+			continue
 		}
-		t.Fatalf("this package exports %d listener constructors (%v) but the transport table "+
-			"has %d entries. A transport missing from the table is one the session-logic tests "+
-			"never run over, and the suite stays green while covering the others.",
-			len(found), names, len(transports))
+		counted = append(counted, m[1])
+	}
+	// An exemption must not outlive the function it excuses: a reason left behind for a
+	// deleted constructor silently covers the next one given that name.
+	for name := range exempt {
+		if !strings.Contains(string(srcs), "func "+name+"(") {
+			t.Errorf("%s is exempted from the transport table but does not exist. An "+
+				"exemption for a deleted function is a hole waiting for the next one.", name)
+		}
+	}
+	if len(counted) != len(transports) {
+		t.Fatalf("this package exports %d unexempted listener constructors (%v) but the "+
+			"transport table has %d entries. A transport missing from the table is one the "+
+			"session-logic tests never run over, and the suite stays green while covering "+
+			"the others.", len(counted), counted, len(transports))
 	}
 
 	// And each entry reaches a DISTINCT constructor. The count above cannot see this:
