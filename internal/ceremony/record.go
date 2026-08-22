@@ -372,44 +372,55 @@ func (r Record) Convener() (Party, bool) {
 // self-test. A caller's off-by-one derived a perfectly valid key and salt at a hop that does
 // not exist, published into the void, and the outcome was reported as `FetchEmpty`:
 // indistinguishable from a counterparty who has not arrived yet.
-func (r Record) Hop(a, b string) (int, error) { return hopBetween(r.Roster, a, b) }
+func (r Record) Hop(a, b string) (int, error) {
+	c, ok := r.Convener()
+	if !ok {
+		return 0, fmt.Errorf("%w: this record's convener is not in its own roster", ErrNotAHop)
+	}
+	return hopBetween(r.Roster, c.Fingerprint, a, b)
+}
 
 // hopBetween is the one door. Record and Invitation both carry a roster and both are asked
 // for hop numbers, and two implementations of one rule is the shape ADR-009 exists to refuse
 // — here it would be worse than usual, because the two would disagree only for the rosters
 // where it mattered.
-func hopBetween(roster []Party, a, b string) (int, error) {
-	ia, ib := -1, -1
-	for i, p := range roster {
-		// Case-insensitive, because a fingerprint that differs only in case is the same
-		// party — the same fact ParseInvitation normalises for the invitation's roster and
-		// that Convener() compares case-sensitively one function away.
-		if strings.EqualFold(p.Fingerprint, a) {
-			ia = i
-		}
-		if strings.EqualFold(p.Fingerprint, b) {
-			ib = i
-		}
+//
+// **The topology is a HUB and this is the fact the first version of this function got
+// wrong.** D22: "the convener writes the record, prepares the document, dials each party in
+// roster order… Every hop is exactly today's two-party session: one dialer, one listener,
+// one pinned peer." So the convener is one end of EVERY hop, and two non-convener parties
+// never share one — Alice and Bob in a three-party ceremony never speak. The first version
+// read "the order of the roster IS the signing order" (Party's own doc) and inferred a
+// CHAIN, roster[i] to roster[i+1], which is a different ceremony: it had Alice handing to
+// Bob directly, gave them a shared hop key, and would have had each party arming for a peer
+// D22's own TRIPWIRE argument says they never accept.
+//
+// Hops are numbered by the roster position of the NON-convener party, so hop 0 is the
+// convener's first counterparty. The convener need not be roster[0]; it is whoever the
+// record's certificate resolves to.
+func hopBetween(roster []Party, convener, a, b string) (int, error) {
+	if !strings.EqualFold(a, convener) && !strings.EqualFold(b, convener) {
+		return 0, fmt.Errorf("%w: %s and %s are both counterparties, and under a convener "+
+			"hub every hop has the convener at one end", ErrNotAHop, short(a), short(b))
 	}
-	if ia < 0 || ib < 0 {
-		return 0, fmt.Errorf("%w: one of %s and %s is not in this ceremony's roster",
-			ErrNotAHop, short(a), short(b))
-	}
-	if ia == ib {
+	if strings.EqualFold(a, b) {
 		return 0, fmt.Errorf("%w: %s was given as both ends", ErrNotAHop, short(a))
 	}
-	lo, hi := ia, ib
-	if lo > hi {
-		lo, hi = hi, lo
+	other := a
+	if strings.EqualFold(a, convener) {
+		other = b
 	}
-	if hi-lo != 1 {
-		// Non-adjacent parties share no hop. This is criterion 19's rule expressed where it
-		// can be enforced rather than remembered: a convener holding candidates for a party
-		// three positions away cannot even derive that hop's key by asking for it.
-		return 0, fmt.Errorf("%w: %s and %s are %d apart in the roster, and a hop joins "+
-			"adjacent parties", ErrNotAHop, short(a), short(b), hi-lo)
+	n := 0
+	for _, p := range roster {
+		if strings.EqualFold(p.Fingerprint, convener) {
+			continue
+		}
+		if strings.EqualFold(p.Fingerprint, other) {
+			return n, nil
+		}
+		n++
 	}
-	return lo, nil
+	return 0, fmt.Errorf("%w: %s is not in this ceremony's roster", ErrNotAHop, short(other))
 }
 
 // Hops is how many hops this ceremony has: one fewer than its roster.

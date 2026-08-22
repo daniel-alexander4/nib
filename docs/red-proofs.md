@@ -785,3 +785,22 @@ invariant, and it says so in the test rather than implying a red it never produc
 fixture above **passes**. A trickle-in racer consuming `rec.Addrs` is range-shaped by construction,
 so the substring widening alone would have policed nothing while reading as coverage. Both halves
 were changed together, and the two runs — caught, then not caught — are what says so.
+
+## v1.117.31 — the hop rule was a chain and D22 is a hub
+
+| Defect reintroduced | What it said | Check that fired |
+| --- | --- | --- |
+| **The chain rule restored — any two roster-adjacent parties share a hop** | `alice and bob were given hop <nil>; under a convener hub they never connect to each other, so a shared hop key between them is a key for a session that does not exist` | `TestTheHopNumberComesFromTheSignedRoster`, and `TestAnArmedSessionDerivesItsHopFromTheRoster` on the server side |
+
+**This one was mine, shipped at v1.117.28 and corrected here.** `Party`'s doc says "the order of
+the roster IS the signing order", and I inferred a chain from it: `roster[i]` to `roster[i+1]`,
+with Alice handing to Bob. D22 says otherwise in its first sentence — *"the convener writes the
+record, prepares the document, **dials each party in roster order**, and delivers the finished
+document at the end. Every hop is exactly today's two-party session."* Signing order is not
+connection topology.
+
+What the wrong rule would have produced: a shared hop key between two parties who never connect,
+and each of them arming for a peer D22's own TRIPWIRE argument says they never accept. It passed
+its own tests because those tests asserted the rule I had written rather than the one the plan
+states — the shape a grill is supposed to catch and did not, because the deepdive and the grill
+both read `Party`'s doc comment and neither opened D22.
