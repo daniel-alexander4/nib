@@ -346,7 +346,7 @@ const lanDialTimeout = 6 * time.Second
 // never returned: each dial was bounded and the race was not, and an HTTP handler hung
 // forever. Found by reviewing this slice's own diff. The deadline is now the caller's
 // context and the loop watches it.
-func raceCandidates(parent context.Context, in <-chan candidate, cert, key, peerFP []byte) (*p2p.Conn, error) {
+func raceCandidates(parent context.Context, in <-chan candidate, cert, key, peerFP []byte, end *p2p.SharedEndpoint) (*p2p.Conn, error) {
 	// A cancellable child: cancelling on a win is what stops the losers, and it must not
 	// disturb the caller's context.
 	ctx, cancel := context.WithCancel(parent)
@@ -440,7 +440,7 @@ func raceCandidates(parent context.Context, in <-chan candidate, cert, key, peer
 					return
 				}
 				defer func() { <-sem }()
-				conn, err := dialPeerWithin(ctx, c.Transport, c.Addr, cert, key, peerFP, lanDialTimeout)
+				conn, err := dialPeerWithin(ctx, c.Transport, c.Addr, cert, key, peerFP, lanDialTimeout, end)
 				results <- result{conn, err}
 			}(c)
 		}
@@ -553,7 +553,7 @@ func dialAny(cands []candidate, cert, key, peerFP []byte) (*p2p.Conn, error) {
 		in <- c
 	}
 	close(in)
-	return raceCandidates(ctx, in, cert, key, peerFP)
+	return raceCandidates(ctx, in, cert, key, peerFP, nil) // no ceremony: fresh sockets
 }
 
 // raceKey is the identity of a race candidate: one endpoint, one key.

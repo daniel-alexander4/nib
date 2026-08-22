@@ -130,7 +130,7 @@ func TestALateCandidateJoinsTheRaceInFlight(t *testing.T) {
 	done := make(chan *p2p.Conn, 1)
 	errc := make(chan error, 1)
 	go func() {
-		c, rerr := raceCandidates(context.Background(), in, aCert, aKey, bFP)
+		c, rerr := raceCandidates(context.Background(), in, aCert, aKey, bFP, nil)
 		if rerr != nil {
 			errc <- rerr
 			return
@@ -563,7 +563,7 @@ func TestATrickleSourceThatNeverClosesStillHitsTheDeadline(t *testing.T) {
 
 	done := make(chan error, 1)
 	go func() {
-		_, rerr := raceCandidates(ctx, in, cert, key, make([]byte, 32))
+		_, rerr := raceCandidates(ctx, in, cert, key, make([]byte, 32), nil)
 		done <- rerr
 	}()
 	select {
@@ -614,7 +614,7 @@ func TestOneIPv6EndpointIsOneRaceCandidateHoweverItIsSpelled(t *testing.T) {
 			in <- candidate{Addr: a, Transport: "tcp", Source: sourceLAN}
 		}
 		close(in)
-		_, rerr := raceCandidates(ctx, in, cert, key, make([]byte, 32))
+		_, rerr := raceCandidates(ctx, in, cert, key, make([]byte, 32), nil)
 		if rerr == nil {
 			t.Fatal("the race succeeded against addresses nothing listens on")
 		}

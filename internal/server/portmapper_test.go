@@ -30,7 +30,9 @@ type fakeMapClient struct {
 
 func (f *fakeMapClient) Map(ctx context.Context, proto portmap.Protocol, internalPort uint16) (portmap.Mapping, netip.Addr, error) {
 	atomic.AddInt32(&f.maps, 1)
-	return portmap.Mapping{Protocol: proto, InternalPort: internalPort, ExternalPort: f.extPort, LifetimeSec: 2}, f.extIP, nil
+	// LifetimeSec 1 so wait = 1/2 = 0 is floored to refreshFloor — the test governs the
+	// cadence via refreshFloor, not a 1-second real interval that races a 2s deadline.
+	return portmap.Mapping{Protocol: proto, InternalPort: internalPort, ExternalPort: f.extPort, LifetimeSec: 1}, f.extIP, nil
 }
 
 func (f *fakeMapClient) Refresh(ctx context.Context, m portmap.Mapping) (portmap.Mapping, netip.Addr, error) {

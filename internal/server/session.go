@@ -1246,13 +1246,21 @@ func connectFailure(err error) string {
 // was false for as long as it stood: `sessionDialTimeout` was reachable only through `dialPeer`,
 // which had no callers at all. Both are deleted (P05.S03); the per-dial floor is
 // `lanDialTimeout` and the whole-race budget is `connectDeadline`.
-func dialPeerWithin(ctx context.Context, transport, address string, cert, key, peerFP []byte, timeout time.Duration) (*p2p.Conn, error) {
+func dialPeerWithin(ctx context.Context, transport, address string, cert, key, peerFP []byte, timeout time.Duration, end *p2p.SharedEndpoint) (*p2p.Conn, error) {
 	if err := checkTransport(transport); err != nil {
 		return nil, err
 	}
 	if transport == transportQUIC {
+		// In a ceremony (end != nil) every QUIC dial goes out the ONE shared endpoint (caveat
+		// 7, S08): the source port must be the one the peer learned from our published mapping,
+		// and one transport is what lets the punch (S08b) open a hole the dial actually uses.
+		// Outside a ceremony — a typed address, dialAny — a fresh socket is correct and cheaper.
+		if end != nil {
+			return p2p.QUICDialOn(ctx, end, address, cert, key, peerFP, timeout)
+		}
 		return p2p.QUICDial(ctx, address, cert, key, peerFP, timeout)
 	}
+	// TCP always dials fresh: there is no shared TCP endpoint (SharedEndpoint is UDP/QUIC only).
 	return p2p.Dial(ctx, address, cert, key, peerFP, timeout)
 }
 

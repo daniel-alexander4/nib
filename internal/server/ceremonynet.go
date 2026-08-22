@@ -399,7 +399,7 @@ func (s *Server) raceWithRendezvous(cer *ceremonyID, cands []candidate, cert, ke
 				}
 			}
 		}()
-		return raceCandidates(ctx, in, cert, key, peerFP)
+		return raceCandidates(ctx, in, cert, key, peerFP, nil) // no ceremony: fresh sockets
 	}
 
 	dht := make(chan candidate, maxRaceCandidates)
@@ -425,7 +425,8 @@ func (s *Server) raceWithRendezvous(cer *ceremonyID, cands []candidate, cert, ke
 			}
 		}
 	}()
-	return raceCandidates(ctx, in, cert, key, peerFP)
+	// The ceremony QUIC dial goes out the shared endpoint (S08, caveat 7).
+	return raceCandidates(ctx, in, cert, key, peerFP, cer.end)
 }
 
 // dialerCeremony gives the DIALING side a ceremony identity and a DHT to fetch from.

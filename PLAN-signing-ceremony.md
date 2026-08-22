@@ -3422,7 +3422,7 @@ goes to the gateway ~1 pkt/60 s, not punch packets to the peer); item 20 (Candid
 — refresh reuses the port and does not re-publish, so no slot is spent, *provided* the port stays
 stable, which P2 handles); and the dialer side, which opens its own endpoint and never maps, so
 its `close()` has nothing to delete.
-#### P05.S08 — The one-transport racer: dial through the shared endpoint *(caveat 7's racing-dialer half; S03's deferred T03)* *(in progress 2026-08-22; split from the punch by its own grill, which is the racer's grill too — CONFIRMED-1)*
+#### P05.S08 — The one-transport racer: dial through the shared endpoint *(caveat 7's racing-dialer half; S03's deferred T03)* *(done 2026-08-22, v1.117.59)*
 Scope: the racer dials its QUIC candidates through the ceremony's **one** shared endpoint
 (`cer.end.tr`) instead of a fresh `net.ListenPacket` per dial. This is the racing-dialer half of
 caveat 7 — the half `endpoint.go:33-37` defers "to S08/S09 by name" — and it is **S03's T03 as
