@@ -347,11 +347,25 @@ func (s *Server) startArmedRendezvous(cer *ceremonyID, transport string, inbound
 		if inbound != nil && inbound.Load() {
 			return // the local network answered; nothing leaves this machine
 		}
+		// S08b: the arm PUNCHES too — symmetric-send (D17). It fetches the peer's published
+		// tier-4 address (through the gate) and opens THIS listener's NAT toward it, so the
+		// peer's QUIC Initial can land. Concurrent with the publish below and bound to the arm
+		// ctx, so it runs for the whole ceremony and stops at teardown.
+		punchCh := make(chan candidate, maxRaceCandidates)
+		go cer.feedCandidates(ctx, punchCh, nil, "", "")
+		go punchLoop(ctx, cer.end.Punch, &punchBudget{}, punchCh, punchInterval)
+
 		// The ARM ctx, not a publish-budget child: the port-mapping REFRESH lives as long as the
 		// arm, and binding it to the 45 s publish budget would kill it mid-race (grill C4).
 		// publishCandidates bounds its own DHT publish internally; ProbeSelf and Publish each
 		// self-cap.
 		_ = cer.publishCandidates(ctx, transport)
+
+		// **Keep the goroutine alive until teardown.** Its `defer cancel()` fires on return, and
+		// the fetch+punch above are bound to `ctx` — returning after the publish would cancel
+		// them the instant they started, the S07-C4 shape. stopNet (called by close()) is what
+		// ends the ceremony; wait for it.
+		<-ctx.Done()
 	}()
 }
 
@@ -368,6 +382,20 @@ func (s *Server) startArmedRendezvous(cer *ceremonyID, transport string, inbound
 // the race is for only when they came from a hop in the first place.
 func hopScoped(c candidate, hop int) bool {
 	return c.Source != sourceDHT || c.Hop == hop
+}
+
+// publishWhenSlow publishes this ceremony's address after the LAN window, unless a faster tier
+// has already won (ctx cancelled) — the dial-side mirror of the arm's LAN-window suppression
+// (grill CONFIRMED-3). Without the wait, every LAN-local ceremony would leak the dialer's
+// publish-write to the DHT, the correlation handle the arm was built to suppress.
+func publishWhenSlow(ctx context.Context, cer *ceremonyID, transport string) {
+	defer safe.Recover("dial publish")
+	select {
+	case <-time.After(browseWindow):
+	case <-ctx.Done():
+		return // a faster tier won inside the LAN window — do not publish
+	}
+	_ = cer.publishCandidates(ctx, transport)
 }
 
 // raceWithRendezvous runs a race fed by the LAN candidates already in hand AND, when the
@@ -404,9 +432,20 @@ func (s *Server) raceWithRendezvous(cer *ceremonyID, cands []candidate, cert, ke
 
 	dht := make(chan candidate, maxRaceCandidates)
 	go cer.feedCandidates(ctx, dht, peerFP, label, name)
+
+	// S08b: the dial side is symmetric — it PUBLISHES its own address (so the arm can punch
+	// toward it) and PUNCHES toward the peer's candidates. Both are suppressed by the same
+	// LAN-window logic: `ctx` is cancelled when raceCandidates returns a winner, so if a faster
+	// tier wins inside the browse window neither the late publish (D6 privacy) nor further punch
+	// packets fire. The QUIC transport is fixed — the punch is QUIC-only (D8).
+	go publishWhenSlow(ctx, cer, transportQUIC)
+	punchCh := make(chan candidate, maxRaceCandidates)
+	go punchLoop(ctx, cer.end.Punch, &punchBudget{}, punchCh, punchInterval)
+
 	go func() {
 		defer safe.Recover("candidate merge")
 		defer close(in)
+		defer close(punchCh)
 		for _, c := range cands {
 			select {
 			case in <- c:
@@ -420,6 +459,13 @@ func (s *Server) raceWithRendezvous(cer *ceremonyID, cands []candidate, cert, ke
 			}
 			select {
 			case in <- c:
+			case <-ctx.Done():
+				return
+			}
+			// Tee the DHT candidate to the punch loop too (one gate accessor — the gate is not
+			// concurrent-safe, so we fan out this stream rather than fetch twice).
+			select {
+			case punchCh <- c:
 			case <-ctx.Done():
 				return
 			}

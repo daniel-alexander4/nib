@@ -6,6 +6,8 @@ import (
 	"net/netip"
 	"sync"
 	"time"
+
+	"nib/internal/safe"
 )
 
 // The IPv4 hole-punch (P05.S08b, D8 tier 4). Both peers send NAT-opening datagrams to each
@@ -95,6 +97,7 @@ func ipv4Target(c candidate) *net.UDPAddr {
 // bounded by the budget" is exercised rather than only the pure function. Production passes
 // `punchInterval`.
 func punchLoop(ctx context.Context, punch func(net.Addr) error, budget *punchBudget, cands <-chan candidate, interval func(time.Duration) time.Duration) {
+	defer safe.Recover("punch loop")
 	start := time.Now()
 	var wg sync.WaitGroup
 	feed := func() {
@@ -123,11 +126,15 @@ func punchLoop(ctx context.Context, punch func(net.Addr) error, budget *punchBud
 
 // punchOne retransmits to one address until the context ends or the shared budget is spent.
 func punchOne(ctx context.Context, punch func(net.Addr) error, budget *punchBudget, addr net.Addr, start time.Time, interval func(time.Duration) time.Duration, wg *sync.WaitGroup) {
+	defer safe.Recover("punch one")
 	defer wg.Done()
 	for {
 		if !budget.spend() {
 			return // per-side budget exhausted: drop-and-report (report() carries the count)
 		}
+		// A failed punch is discarded — including the net.ErrClosed a write can get when it
+		// races the shared socket closing at teardown (diff-grill F1, benign: close() shuts the
+		// DHT reader before the socket, so this writer never hits the mux-closed panic).
 		_ = punch(addr)
 		select {
 		case <-ctx.Done():
