@@ -174,11 +174,12 @@ func (c *ceremonyID) appendMappedCandidate(ctx context.Context, addrs []ceremony
 	if !ok {
 		return addrs // no shared UDP socket — not the QUIC path, so no mapping tier
 	}
-	gw, err := portmap.DefaultGateway()
-	if err != nil {
-		return addrs // no gateway: an ordinary tier miss
+	// A missing gateway is not the end of the tier: UPnP self-discovers over SSDP, so the
+	// client is built either way and only the socket protocols are skipped (grill #3).
+	client := &portmap.Client{TryUPnP: true}
+	if gw, err := portmap.DefaultGateway(); err == nil {
+		client.Gateway = netip.AddrPortFrom(gw, portmap.GatewayPort)
 	}
-	client := &portmap.Client{Gateway: netip.AddrPortFrom(gw, portmap.GatewayPort)}
 	mapCtx, cancel := context.WithTimeout(ctx, portMapBudget)
 	defer cancel()
 	m, ext, err := client.Map(mapCtx, portmap.UDP, uint16(ua.Port))

@@ -3303,7 +3303,7 @@ Tasks (grilled 2026-08-22, after a three-agent deepdive and two rounds of live m
 
 **Superseded ledger, kept for the trail — "1 met / 1 met / 2 outstanding":** *No v4 regression* — met, full suite plus the race detector green on `internal/server`, `internal/p2p` and `internal/rendezvous`. *The dual-stack bind asserted as a socket property* — met, red-proved by binding `udp4` (both the bare socket and the shared endpoint). *A driven hermetic analogue over v6 loopback/ULA* — **not met**, T06. *Criterion 1* — **not exercised**, and it is Dan's run by the phase's own carve-out; T07 is the buildable half.
 
-#### P05.S06 — The port-mapping client: PCP, then NAT-PMP, then UPnP-IGD *(D15; caveats 6, 7, 8)* *(in progress — T01–T04 done 2026-08-22, v1.117.55; T05–T06 outstanding)*
+#### P05.S06 — The port-mapping client: PCP, then NAT-PMP, then UPnP-IGD *(D15; caveats 6, 7, 8)* *(done 2026-08-22, v1.117.56)*
 Scope: tier 3's mechanism. **Caveat 6 is discharged or refuted in this slice** — no Go port-mapping dependency exists in the tree and its licence-compatibility is explicitly an unverified assumption; the caveat's own fallback ("if only some protocols are covered, the tier still ships — with narrower router coverage, recorded rather than assumed") is the acceptable outcome. Caveat 7 decides where the request is sent FROM.
 Acceptance: the 3 s budget; all three protocols failing is an ordinary tier miss and never an error; whatever coverage is achieved is **recorded, not assumed**; and if a dependency lands, `THIRD-PARTY-NOTICES.md` regenerates and its licence claim is true of it.
 
