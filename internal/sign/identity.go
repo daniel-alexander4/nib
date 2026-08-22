@@ -13,6 +13,7 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
+	"strings"
 	"time"
 
 	dpdf "github.com/digitorus/pdf"
@@ -189,9 +190,54 @@ func runSign(pdfBytes []byte, data sign.SignData) ([]byte, error) {
 	}
 	var out bytes.Buffer
 	if err := sign.Sign(bytes.NewReader(pdfBytes), &out, rdr, int64(len(pdfBytes)), data); err != nil {
-		return nil, fmt.Errorf("sign: %w", err)
+		return nil, describeSignFailure(err, data.TSA.URL)
 	}
 	return out.Bytes(), nil
+}
+
+// ErrTimestampAuthority reports that signing failed because the timestamp authority the
+// user named could not be used. Callers reprompt or offer to sign without one.
+var ErrTimestampAuthority = errors.New("timestamp authority unreachable")
+
+// describeSignFailure turns the signing library's message into one a user can act on.
+//
+// # Why this is here and not at each caller
+//
+// `Sign`, `SignApproval` and `SignExternal` all set `data.TSA` and all return through
+// `runSign`, so this is the one door every timestamped signature passes (ADR-009). It also
+// means the CLI gets it without its own copy — `nib sign --tsa` reached the same library
+// error and printed it raw.
+//
+// # What it does NOT do, and that is the decision
+//
+// **It does not fall back to signing without a timestamp.** The residual-doubt list proposed
+// exactly that — "fall back to a local date + warning when offline" — and it is wrong on the
+// merits. `SignerInfo.TimeBacking` distinguishes `TSA` (a token from an independent
+// authority) from the signer's own clock, and a verifier reports the difference. A silent
+// downgrade produces a document whose verifier says "signer clock" for a user who asked for,
+// paid attention to, and believes they have an independent timestamp — a false statement
+// about the document, which is worse than a refusal. Measured before deciding: an unreachable
+// TSA fails the whole signature, and the raw message was
+// `sign: failed to replace signature: failed to create signature: get timestamp: non success
+// response (0)`, which names neither the authority nor the fact that nothing was signed.
+//
+// So the salvageable half of that doubt is the WARNING, and this is it.
+func describeSignFailure(err error, tsaURL string) error {
+	if tsaURL == "" || !mentionsTimestamp(err) {
+		return fmt.Errorf("sign: %w", err)
+	}
+	return fmt.Errorf("%w: could not get a timestamp from %s, so the document was NOT signed "+
+		"— check the address, or turn the timestamp option off to sign with this computer's "+
+		"clock instead (underlying error: %v)", ErrTimestampAuthority, tsaURL, err)
+}
+
+// mentionsTimestamp matches on the library's message because it exposes no sentinel for
+// this. Named and narrow rather than inlined, so the fragility is visible: if digitorus ever
+// reworks the wording this stops firing and the raw error comes back — a worse message, not a
+// wrong one, which is the safe direction for a string match to fail in.
+func mentionsTimestamp(err error) bool {
+	m := strings.ToLower(err.Error())
+	return strings.Contains(m, "timestamp") || strings.Contains(m, "tsa")
 }
 
 // hasCertificationSignature reports whether pdf carries a certification (DocMDP)
