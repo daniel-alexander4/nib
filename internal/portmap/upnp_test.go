@@ -26,12 +26,13 @@ type mockIGD struct {
 	extIP   string
 	addOK   bool
 	added   chan string // records the AddPortMapping SOAP body seen
+	deleted chan string // records the DeletePortMapping SOAP body seen
 	control string      // an override control URL to test the SSRF guard
 }
 
 func newMockIGD(t *testing.T) *mockIGD {
 	t.Helper()
-	m := &mockIGD{extIP: "9.9.9.9", addOK: true, added: make(chan string, 4)}
+	m := &mockIGD{extIP: "9.9.9.9", addOK: true, added: make(chan string, 4), deleted: make(chan string, 4)}
 	mux := http.NewServeMux()
 	m.srv = httptest.NewServer(mux)
 	t.Cleanup(m.srv.Close)
@@ -61,6 +62,9 @@ func newMockIGD(t *testing.T) *mockIGD {
 				return
 			}
 			fmt.Fprint(w, `<s:Envelope><s:Body><u:AddPortMappingResponse></u:AddPortMappingResponse></s:Body></s:Envelope>`)
+		case strings.Contains(action, "DeletePortMapping"):
+			m.deleted <- string(body)
+			fmt.Fprint(w, `<s:Envelope><s:Body><u:DeletePortMappingResponse></u:DeletePortMappingResponse></s:Body></s:Envelope>`)
 		case strings.Contains(action, "GetExternalIPAddress"):
 			fmt.Fprintf(w, `<s:Envelope><s:Body><u:GetExternalIPAddressResponse>`+
 				`<NewExternalIPAddress>%s</NewExternalIPAddress>`+
