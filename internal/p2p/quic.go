@@ -159,6 +159,86 @@ func QUICDial(ctx context.Context, addr string, identityCertPEM, identityKeyPEM,
 // quic-go registers a distinct random CID per dial and the mux routes inbound by destination CID
 // (2⁻⁶⁴ collision), so concurrent dials on one transport do not cross.
 func QUICDialOn(ctx context.Context, e *SharedEndpoint, addr string, identityCertPEM, identityKeyPEM, pinnedSPKI []byte, timeout time.Duration) (*Conn, error) {
+	// Pre-S09, the dialer IS the initiator, so this dials, then promotes as the initiator — the
+	// stream opened here, the peer accepting it on first data, exactly as before. The one timeout
+	// bounds both the handshake and the stream open, as it did when they were one function.
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	hc, err := QUICDialHandshakeOn(ctx, e, addr, identityCertPEM, identityKeyPEM, pinnedSPKI, timeout)
+	if err != nil {
+		return nil, err
+	}
+	return hc.Promote(ctx, true)
+}
+
+// HandshakedConn is a QUIC connection whose TLS handshake has COMPLETED — so the peer's pinned
+// identity is verified and its fingerprint is known — but on which the single session stream has
+// NOT yet been opened. It is the "handshaked, no-stream-yet" intermediate that symmetric racing
+// needs (P05.S09a): under glare both ends may dial AND accept, two connections may both handshake,
+// and which one survives — and, on the survivor, which end opens the stream — is decided by the
+// ROSTER ROLE afterwards, not by who dialled. Promote opens or accepts the stream per that role.
+//
+// It is NON-OWNING, like QUICDialOn: it rides a shared endpoint whose transport and mux belong to
+// the endpoint, so Close and Promote tear down the connection only. Until S09's coordinator
+// consumes it, the sole producer is QUICDialOn (via QUICDialHandshakeOn), which always promotes as
+// the initiator — the pre-S09 behaviour, where the dialer IS the initiator, unchanged.
+type HandshakedConn struct {
+	qc *quic.Conn
+	// PeerFP is the verified peer SPKI fingerprint, known from the handshake alone. It is the
+	// glare tie-break key: the coordinator compares it against its own to decide who dials whom.
+	PeerFP []byte
+}
+
+// Promote opens (initiator) or accepts (receiver) the single session stream and builds the Conn.
+// The stream direction AND the close discipline follow the DOCUMENT ROLE, not who dialled: the
+// initiator opens the stream, writes first, reads last and closes promptly; the receiver's
+// AcceptStream unblocks on the initiator's first frame, and it writes last so it waits for the
+// peer to go (awaitPeer). Passing the wrong end here is the glare deadlock — an initiator parked on
+// AcceptStream while the receiver parks on OpenStreamSync, each waiting for a frame the other's
+// role will never send first. Invisible on TCP (full-duplex, both may write at once); fatal on
+// QUIC, where a stream is one-sided until its opener sends.
+func (h *HandshakedConn) Promote(ctx context.Context, initiator bool) (*Conn, error) {
+	var (
+		st  *quic.Stream
+		err error
+	)
+	if initiator {
+		st, err = h.qc.OpenStreamSync(ctx)
+	} else {
+		st, err = h.qc.AcceptStream(ctx)
+	}
+	if err != nil {
+		h.qc.CloseWithError(0, "") // non-owning: the connection only
+		return nil, err
+	}
+	ch, err := quicChannel(h.qc, st)
+	if err != nil {
+		h.qc.CloseWithError(0, "")
+		return nil, err
+	}
+	// awaitPeer = !initiator: the receiver writes last and waits; the initiator's prompt close is
+	// what releases that wait. gracefulClose touches the stream and connection only, not the shared
+	// transport/mux — see its doc.
+	return &Conn{Channel: ch, closer: gracefulClose(h.qc, st, !initiator)}, nil
+}
+
+// Close abandons a handshaked connection that will never be promoted — a glare loser, or a dial
+// kept only long enough to lose the tie-break. Non-owning: the connection only.
+func (h *HandshakedConn) Close() error {
+	h.qc.CloseWithError(0, "")
+	return nil
+}
+
+// QUICDialHandshakeOn dials a pinned peer over the shared endpoint and returns the instant the TLS
+// handshake completes — BEFORE any stream is opened. It is the dial half of QUICDialOn, stopped at
+// the handshake so the caller can resolve glare on the verified fingerprint and only then Promote
+// to the role the roster assigns (P05.S09a; the coordinator that does so is S09). A successful
+// return means the peer proved the pinned identity — quic-go's Dial blocks through the handshake
+// and a wrong peer fails it — so PeerFP is trustworthy here.
+//
+// Non-owning, like QUICDialOn: a failure, or a HandshakedConn later Closed instead of Promoted,
+// tears down the connection only, never the shared transport or mux the DHT and other racers ride.
+func QUICDialHandshakeOn(ctx context.Context, e *SharedEndpoint, addr string, identityCertPEM, identityKeyPEM, pinnedSPKI []byte, timeout time.Duration) (*HandshakedConn, error) {
 	if e == nil {
 		return nil, errors.New("p2p: no shared endpoint")
 	}
@@ -178,18 +258,12 @@ func QUICDialOn(ctx context.Context, e *SharedEndpoint, addr string, identityCer
 	if err != nil {
 		return nil, err // non-owning: nothing of ours to tear down on failure
 	}
-	st, err := qc.OpenStreamSync(ctx)
-	if err != nil {
-		qc.CloseWithError(0, "") // the connection only; leave the shared transport/mux
-		return nil, err
-	}
-	ch, err := quicChannel(qc, st)
+	fp, err := verifiedPeerFingerprint(qc.ConnectionState().TLS)
 	if err != nil {
 		qc.CloseWithError(0, "")
 		return nil, err
 	}
-	// gracefulClose does st.Close() + qc.CloseWithError and NOTHING to the shared transport/mux.
-	return &Conn{Channel: ch, closer: gracefulClose(qc, st, false)}, nil
+	return &HandshakedConn{qc: qc, PeerFP: fp}, nil
 }
 
 // localWildcardFor picks the wildcard bind matching the remote's address family, so a
@@ -319,25 +393,20 @@ func (l *quicListener) acceptLoop() {
 		go func() {
 			defer safe.Recover("quic stream accept")
 			defer func() { <-l.sem }()
-			closeConn := gracefulClose(qc, nil, false)
 
-			// The STREAM, off the accept path. It unblocks when the dialer's first frame
-			// arrives — the commitment — so a peer that completes a handshake and then
-			// says nothing is bounded here and costs no other peer anything.
+			// The STREAM, off the accept path, via Promote as the RECEIVER (P05.S09a): today the
+			// dialer is always the initiator, so the listening side accepts the stream and it
+			// unblocks when the dialer's first frame — the commitment — arrives. A peer that
+			// completes a handshake and then says nothing is bounded here and costs no other peer
+			// anything. Under S09 the coordinator will promote by the roster role instead, so a
+			// dial-won initiator opens the stream and this same accept still unblocks on it.
 			ctx, cancel := context.WithTimeout(context.Background(), handshakeTimeout)
 			defer cancel()
-			st, err := qc.AcceptStream(ctx)
+			hc := &HandshakedConn{qc: qc}
+			conn, err := hc.Promote(ctx, false)
 			if err != nil {
-				closeConn()
-				return
+				return // Promote closed the connection on its error path
 			}
-			ch, err := quicChannel(qc, st)
-			if err != nil {
-				closeConn()
-				return
-			}
-			// The listening side waits: it is the one that writes last.
-			conn := &Conn{Channel: ch, closer: gracefulClose(qc, st, true)}
 			// Buffered hand-off, like the TCP side — see tlsListener.loop.
 			select {
 			case l.ready <- conn:
