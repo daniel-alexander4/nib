@@ -15,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"nib/internal/p2p"
 	"nib/internal/safe"
 	"nib/internal/sign"
 )
@@ -69,7 +70,9 @@ func TestTheFeedStopsWhenTheRaceIsWon(t *testing.T) {
 
 	go func() { in <- candidate{Addr: live, Transport: "tcp", Source: sourceLAN} }()
 
-	conn, rerr := raceCandidates(ctx, in, aCert, aKey, bFP, nil)
+	conn, rerr := raceCandidates(ctx, in, func(ctx context.Context, c candidate) (*p2p.Conn, error) {
+		return dialPeerWithin(ctx, c.Transport, c.Addr, aCert, aKey, bFP, lanDialTimeout, nil)
+	})
 	// STIMULUS: the race really won. Without this the probe below passes against a race
 	// that failed instantly and whose feeder exited for an entirely different reason.
 	if rerr != nil || conn == nil {
@@ -128,7 +131,9 @@ func TestOneSourceCannotSpendTheWholeRaceBudget(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
 	defer cancel()
-	_, rerr := raceCandidates(ctx, in, cert, key, make([]byte, 32), nil)
+	_, rerr := raceCandidates(ctx, in, func(ctx context.Context, c candidate) (*p2p.Conn, error) {
+		return dialPeerWithin(ctx, c.Transport, c.Addr, cert, key, make([]byte, 32), lanDialTimeout, nil)
+	})
 	if rerr == nil {
 		t.Fatal("setup: every candidate is a black hole, so the race must lose")
 	}
@@ -163,7 +168,9 @@ func TestTwoSourcesEachGetTheirShare(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
 	defer cancel()
-	_, rerr := raceCandidates(ctx, in, cert, key, make([]byte, 32), nil)
+	_, rerr := raceCandidates(ctx, in, func(ctx context.Context, c candidate) (*p2p.Conn, error) {
+		return dialPeerWithin(ctx, c.Transport, c.Addr, cert, key, make([]byte, 32), lanDialTimeout, nil)
+	})
 	if rerr == nil {
 		t.Fatal("setup: every candidate is a black hole, so the race must lose")
 	}
