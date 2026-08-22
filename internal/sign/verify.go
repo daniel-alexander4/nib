@@ -95,10 +95,38 @@ func Verify(data []byte) Status {
 		}
 		st.Signers = append(st.Signers, si)
 	}
-	// Best-effort: flag content appended after the most-recent signature. A
-	// parse failure here must not change the integrity verdict.
-	st.AddedAfter, _ = trailingContentAfterLastSignature(data)
+	// Flag content appended after the most-recent signature. Two rules, and the
+	// second is the one the "two enumerations" review asked for.
+	//
+	// **A parse failure here must not change the integrity VERDICT** — a signature that
+	// hashed correctly is still valid over its own byte range whatever the trailing check
+	// does, so `State` is untouched. That was always the intent.
+	//
+	// **But a parse failure must not be reported as "no trailing content" either.** This
+	// check and `verify.Verify` are two different enumerations of the same document — one
+	// walks the xref for signature blobs, this one walks AcroForm/Fields for byte ranges —
+	// and the whole worry the review raised is that the warning could go quiet
+	// independently of the verdict. Discarding the error did exactly that: on a document
+	// this call cannot read, `AddedAfter` silently became false and a Valid-looking result
+	// claimed the document was wholly signed. It is unreachable on a Valid document *today*
+	// (both calls use dpdf on the same bytes, so one cannot parse when the other cannot),
+	// which is precisely why a silent discard is a trap rather than a bug: the day this
+	// check grows an error path the other does not share, "clean" becomes a lie with no
+	// test failing. Fail-closed — an unreadable trailing check on a signed document reports
+	// AddedAfter=true, "I could not confirm the document ends at its signature", which for
+	// an integrity tool is the safe direction and which both the CLI (exit non-zero) and
+	// the web badge (warn) already render correctly.
+	st.AddedAfter = addedAfterVerdict(trailingContentAfterLastSignature(data))
 	return st
+}
+
+// addedAfterVerdict combines the trailing-content check's result with its error under one
+// rule: content found OR the check could not run means "warn". It is a named function and
+// not an inline `a || err != nil` because the fail-closed direction is the whole point of
+// it — an inline expression is one careless refactor away from `a` alone, which is the
+// silent-clean behaviour this replaced, and nothing would fail. This is what the test binds.
+func addedAfterVerdict(trailing bool, err error) bool {
+	return trailing || err != nil
 }
 
 // signatureBlobPresent reports whether the document has an AcroForm signature
