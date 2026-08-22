@@ -592,17 +592,11 @@ const glareSettleWindow = 1 * time.Second
 // and is filtered out; a ceremony that offered only TCP would fail to connect here, loudly, rather
 // than silently dialling the wrong way round.
 //
-// The accept loop is PRIVATE — QUICListenHandshakeOn on cer.end, not s.sess.arm — so it carries no
+// The accept loop is PRIVATE — a QUICListenHandshakeOn the caller armed on cer.end, not s.sess.arm — so it carries no
 // consent, announce or disarm of its own; the consent gate lives on s.sess and is reached through
 // the ceremony anchor (T05). The listener and the losing connection are closed before return.
-func (s *Server) connect(ctx context.Context, cer *ceremonyID, cands []candidate, cert, key, peerFP, myFP []byte, initiator bool, label, name string) (*p2p.Conn, error) {
+func (s *Server) connect(ctx context.Context, cer *ceremonyID, hl *p2p.HandshakeListener, cands []candidate, cert, key, peerFP, myFP []byte, initiator bool, label, name string) (*p2p.Conn, error) {
 	keepDial := glareKeepsDial(myFP, peerFP)
-
-	hl, err := p2p.QUICListenHandshakeOn(cer.end, cert, key, peerFP)
-	if err != nil {
-		return nil, fmt.Errorf("arm the racing accept: %w", err)
-	}
-	defer hl.Close()
 
 	// One child context for BOTH the dial race and the accept, so the glare winner cancels the
 	// loser's side — the dial's feed goroutines and the accept — in a single stroke (S03's leak was
