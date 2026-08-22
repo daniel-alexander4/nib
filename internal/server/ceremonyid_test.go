@@ -15,7 +15,7 @@ import (
 // party's certificate alongside. Three because a two-party ceremony has exactly ONE hop and
 // cannot distinguish a derived hop number from a constant — the plan says so of criterion
 // 18 and it is just as true of the derivation itself.
-func threeParty(t *testing.T) (inv ceremony.Invitation, certs [3][]byte, fps [3]string) {
+func threeParty(t *testing.T) (invs map[string]ceremony.Invitation, certs [3][]byte, fps [3]string) {
 	t.Helper()
 	names := [3]string{"convener", "alice", "bob"}
 	var keys [3][]byte
@@ -48,11 +48,13 @@ func threeParty(t *testing.T) (inv ceremony.Invitation, certs [3][]byte, fps [3]
 	if err := rec.Sign(certs[0], keys[0]); err != nil {
 		t.Fatal(err)
 	}
-	inv, err = ceremony.NewInvitation(rec)
+	// One invitation PER PARTY since P05.S04, each with its own secret. This fixture returns
+	// the map so a test can ask what one party can and cannot derive about another.
+	all, err := ceremony.NewInvitations(rec)
 	if err != nil {
 		t.Fatal(err)
 	}
-	return inv, certs, fps
+	return all, certs, fps
 }
 
 func mustEncode(t *testing.T, inv ceremony.Invitation) string {
@@ -75,8 +77,11 @@ func mustEncode(t *testing.T, inv ceremony.Invitation) string {
 // two sides must agree on with nothing to make them agree; read off a convener-signed roster,
 // both ends compute it from the same artifact.
 func TestAnArmedSessionDerivesItsHopFromTheRoster(t *testing.T) {
-	inv, certs, fps := threeParty(t)
-	text := mustEncode(t, inv)
+	invs, certs, fps := threeParty(t)
+	// The convener holds every party's invitation; a party holds only its own. For a hop
+	// between the convener and party k, BOTH ends use party k's invitation — that is what
+	// makes it a shared secret for exactly the two ends of that hop.
+	textFor := func(party int) string { return mustEncode(t, invs[fps[party]]) }
 
 	// D22 is a convener HUB: the convener dials each party in roster order, and every hop is
 	// a two-party session with the convener at one end. So convener↔Alice is hop 0 and
@@ -93,7 +98,12 @@ func TestAnArmedSessionDerivesItsHopFromTheRoster(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		cer, err := ceremonyFor(text, certs[tc.who], peerFP)
+		// The invitation used is the one belonging to the hop's non-convener end.
+		holder := tc.who
+		if holder == 0 {
+			holder = tc.peer
+		}
+		cer, err := ceremonyFor(textFor(holder), certs[tc.who], peerFP)
 		if err != nil {
 			t.Fatalf("party %d with peer %d: %v", tc.who, tc.peer, err)
 		}
@@ -121,16 +131,16 @@ func TestAnArmedSessionDerivesItsHopFromTheRoster(t *testing.T) {
 	convFP, _ := hex.DecodeString(fps[0])
 	bobFP, _ := hex.DecodeString(fps[2])
 
-	if _, err := ceremonyFor(text, certs[0], strangerFP); err == nil {
+	if _, err := ceremonyFor(textFor(1), certs[0], strangerFP); err == nil {
 		t.Error("a peer outside the roster was given a hop")
 	}
-	if _, err := ceremonyFor(text, stranger, convFP); err == nil {
+	if _, err := ceremonyFor(textFor(1), stranger, convFP); err == nil {
 		t.Error("a party outside the roster was armed into this ceremony")
 	}
 	// Two counterparties share no hop — D22's hub, and criterion 19 refusing at the door
 	// rather than being remembered later.
 	aliceFP, _ := hex.DecodeString(fps[1])
-	if _, err := ceremonyFor(text, certs[2], aliceFP); err == nil {
+	if _, err := ceremonyFor(textFor(2), certs[2], aliceFP); err == nil {
 		t.Error("Bob was armed for a hop with Alice; under a convener hub they never " +
 			"connect, so this is a session that does not exist")
 	}
