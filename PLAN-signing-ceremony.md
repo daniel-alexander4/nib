@@ -3368,7 +3368,7 @@ Tasks (firmed 2026-08-22):
 - **T06 — seam inventory rows**, per `instrument.md`: the tier's attempt/won/miss observables
   and the caveat-7 internal-port assertion.
 
-#### P05.S07 — The mapping lease lifecycle *(D15; criteria 4, 5)* *(firmed 2026-08-22, slice-open)*
+#### P05.S07 — The mapping lease lifecycle *(D15; criteria 4, 5)* *(done 2026-08-22, v1.117.58)*
 Scope: D15's lifecycle is law, not configuration — armed-only, short lease refreshed while armed, explicitly deleted on every exit path including cancel and error.
 Acceptance: criteria 4 and 5 verbatim, the second driven by killing the process and polling. The refresh's interaction with **both** bounds is settled here: D33's packet budget and `CandidateGate`'s slot cap are different resources and each has a pending entry (items 20, 21).
 

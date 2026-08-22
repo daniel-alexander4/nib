@@ -50,6 +50,23 @@ func (c *Client) Map(ctx context.Context, proto Protocol, internalPort uint16) (
 	return c.mapWithSuggestion(ctx, proto, internalPort, internalPort)
 }
 
+// Refresh renews an existing mapping, asking the router to keep the same external port so the
+// address already published stays valid (grill C7/P2). Returns the new Mapping — whose external
+// port the caller must compare to the old one, because the router MAY assign a different port
+// and that is item 20's stale-record case, not something Refresh can prevent.
+func (c *Client) Refresh(ctx context.Context, m Mapping) (Mapping, netip.Addr, error) {
+	nm, ext, err := c.mapWithSuggestion(ctx, m.Protocol, m.InternalPort, m.ExternalPort)
+	if err != nil {
+		return Mapping{}, netip.Addr{}, err
+	}
+	// Carry the UPnP delete handle forward — a socket-protocol refresh re-stamps via, but UPnP's
+	// control URL comes from discovery which Refresh does not re-run for the socket path.
+	if m.via == mechUPnP {
+		nm.via, nm.upnpControlURL, nm.upnpServiceType = m.via, m.upnpControlURL, m.upnpServiceType
+	}
+	return nm, ext, nil
+}
+
 // mapWithSuggestion is Map with an explicit suggested external port — the entry point the S07
 // refresh uses to ask the router to keep the same external port.
 func (c *Client) mapWithSuggestion(ctx context.Context, proto Protocol, internalPort, suggestedExternal uint16) (Mapping, netip.Addr, error) {
