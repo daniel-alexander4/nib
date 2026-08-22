@@ -246,7 +246,7 @@ func TestVerifyContractIsTrue(t *testing.T) {
 		// long as it sat there. Only `./build/redproof.sh <name>` can tell a row from a
 		// file, and running the whole set is a minutes-long job that belongs in a sweep
 		// rather than in `go test`. Recorded as a known gap, not closed.
-		const recorded = 16
+		const recorded = 17
 		if len(rows) < recorded {
 			t.Errorf("test/redproofs holds %d replayable row(s), want at least %d; "+
 				"build/redproof.sh reports no error on an empty directory, so a row that "+

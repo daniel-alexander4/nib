@@ -63,6 +63,16 @@ func NewSharedEndpoint(bind string) (*SharedEndpoint, error) {
 // know what a QUIC packet is and must not have to.
 func (e *SharedEndpoint) DHT() net.PacketConn { return e.mux.DHT() }
 
+// Stats is the mux's routing tally, exposed here because the endpoint is the only handle a
+// caller outside this package holds.
+//
+// **Its reader is the proof that this endpoint is ONE socket serving two consumers.** Address
+// equality cannot show that: every accessor here and on the QUIC listener bottoms out in the
+// same `m.pc.LocalAddr()`, so comparing them compares a value with itself. What distinguishes
+// one shared socket from two is that a QUIC-shaped datagram and a KRPC-shaped one, sent to the
+// same address, are demultiplexed to different views — and that is a counter, not an address.
+func (e *SharedEndpoint) Stats() udpmux.Stats { return e.mux.Stats() }
+
 // LocalAddr is the one address this endpoint is reachable on — the address a mapping would be
 // requested for, the address the probe observes, and the address the listener answers on.
 func (e *SharedEndpoint) LocalAddr() net.Addr { return e.mux.LocalAddr() }
