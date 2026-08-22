@@ -23,9 +23,24 @@ type mockGateway struct {
 	extIP        netip.Addr // the public IP the router reports
 	natpmpResult uint16     // non-zero to simulate a refusal
 	pcpResult    byte       // non-zero to simulate a refusal
+	silentPCP    bool       // drop PCP requests, to force NAT-PMP fallback
 }
 
 func newMockGateway(t *testing.T) *mockGateway { return newMockGatewayRefusing(t, 0, 0) }
+
+// newMockGatewaySilentPCP answers NAT-PMP but drops PCP, to drive the fallback path. The flag
+// is fixed before the serve goroutine starts, so nothing writes it after a reader exists.
+func newMockGatewaySilentPCP(t *testing.T) *mockGateway {
+	t.Helper()
+	pc, err := net.ListenPacket("udp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	g := &mockGateway{pc: pc, extPort: 51234, extIP: netip.MustParseAddr("203.0.113.7"), silentPCP: true}
+	t.Cleanup(func() { pc.Close() })
+	go g.serve()
+	return g
+}
 
 // newMockGatewayRefusing fixes the result codes BEFORE the serve goroutine starts, so the
 // mock's fields are never written after a reader exists — the codes are config, not state.
@@ -54,6 +69,9 @@ func (g *mockGateway) serve() {
 		var resp []byte
 		switch {
 		case req[0] == pcpVersion:
+			if g.silentPCP {
+				continue // drop it, forcing the client to fall back to NAT-PMP
+			}
 			resp = g.replyPCP(req)
 		case req[0] == natpmpVersion && n == 2: // external-address request
 			resp = g.replyNATPMPExternal()

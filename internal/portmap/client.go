@@ -1,0 +1,154 @@
+package portmap
+
+import (
+	"context"
+	"crypto/rand"
+	"errors"
+	"fmt"
+	"net"
+	"net/netip"
+	"time"
+)
+
+// ErrNoMapping reports that the port-mapping tier obtained nothing — no gateway, or a gateway
+// that answered no protocol within the budget. It is an ordinary tier MISS, never a ceremony
+// failure (D15): the caller contributes no candidate and races the other tiers unchanged.
+var ErrNoMapping = errors.New("portmap: no mapping obtained")
+
+// perAttempt bounds one send-and-wait so PCP's failure does not spend the whole budget before
+// NAT-PMP is tried. Two sends per protocol inside it absorb a single lost UDP datagram, which
+// is the common transient on a real link; the overall budget (the caller's context, D16's 3 s
+// clock-1) is the hard bound over everything.
+const perAttempt = 700 * time.Millisecond
+
+// Client obtains a router port mapping. It holds no socket: each Map opens and closes its own,
+// because a mapping request is a brief exchange and a long-lived socket would be one more thing
+// the armed-only lifecycle (S07) has to tear down on every exit path.
+type Client struct {
+	// Gateway is where requests are sent. Zero means "discover it" (DefaultGateway). Set by a
+	// test to point at a mock; set by S07's caller to the discovered gateway once, so discovery
+	// is not repeated per refresh.
+	Gateway netip.AddrPort
+}
+
+// Map asks the gateway for an inbound mapping of internalPort for proto, trying PCP then
+// NAT-PMP, and returns the external IP:port a peer would dial. ctx bounds the whole attempt —
+// the caller sets D16's 3 s budget on it. A miss (no gateway, nothing answered) is ErrNoMapping,
+// distinct from a ctx cancellation, so D19 can tell "the router offered nothing" from "the user
+// abandoned".
+//
+// internalPort MUST be the shared endpoint's bound port (caveat 7): the mapping is only useful
+// for the socket the session actually answers on.
+func (c *Client) Map(ctx context.Context, proto Protocol, internalPort uint16) (Mapping, netip.Addr, error) {
+	if err := ctx.Err(); err != nil {
+		return Mapping{}, netip.Addr{}, err // already abandoned; no socket, no wait
+	}
+	gw := c.Gateway
+	if !gw.IsValid() {
+		addr, err := DefaultGateway()
+		if err != nil {
+			return Mapping{}, netip.Addr{}, ErrNoMapping
+		}
+		gw = netip.AddrPortFrom(addr, GatewayPort)
+	}
+
+	conn, err := net.Dial("udp", gw.String())
+	if err != nil {
+		return Mapping{}, netip.Addr{}, ErrNoMapping
+	}
+	defer conn.Close()
+	// The local address of a dial to the gateway is this host's internal address on the path to
+	// it — exactly what PCP's header wants, and it needs no interface enumeration.
+	clientIP := conn.LocalAddr().(*net.UDPAddr).AddrPort().Addr()
+
+	// PCP first — it supersedes NAT-PMP and returns the external IP inline.
+	if m, ext, err := c.tryPCP(ctx, conn, proto, clientIP, internalPort); err == nil {
+		return m, ext, nil
+	} else if ctx.Err() != nil {
+		return Mapping{}, netip.Addr{}, ctx.Err()
+	}
+
+	// NAT-PMP fallback — the MAP exchange plus a separate external-address request.
+	if m, ext, err := c.tryNATPMP(ctx, conn, proto, internalPort); err == nil {
+		return m, ext, nil
+	} else if ctx.Err() != nil {
+		return Mapping{}, netip.Addr{}, ctx.Err()
+	}
+
+	return Mapping{}, netip.Addr{}, ErrNoMapping
+}
+
+// exchange sends req and returns the first response, retransmitting once inside perAttempt (or
+// the ctx deadline, whichever is sooner) to ride out a single lost datagram.
+func exchange(ctx context.Context, conn net.Conn, req []byte) ([]byte, error) {
+	deadline := time.Now().Add(perAttempt)
+	if d, ok := ctx.Deadline(); ok && d.Before(deadline) {
+		deadline = d
+	}
+	buf := make([]byte, 1500)
+	for attempt := 0; attempt < 2; attempt++ {
+		if _, err := conn.Write(req); err != nil {
+			return nil, err
+		}
+		half := time.Now().Add(perAttempt / 2)
+		if half.After(deadline) {
+			half = deadline
+		}
+		conn.SetReadDeadline(half)
+		n, err := conn.Read(buf)
+		if err == nil {
+			return buf[:n], nil
+		}
+		if time.Now().After(deadline) || ctx.Err() != nil {
+			break
+		}
+	}
+	return nil, fmt.Errorf("portmap: no response")
+}
+
+func (c *Client) tryPCP(ctx context.Context, conn net.Conn, proto Protocol, clientIP netip.Addr, internalPort uint16) (Mapping, netip.Addr, error) {
+	var nonce [12]byte
+	if _, err := rand.Read(nonce[:]); err != nil {
+		return Mapping{}, netip.Addr{}, err
+	}
+	req := EncodePCPMap(proto, nonce, clientIP, internalPort, internalPort, defaultLeaseSec)
+	resp, err := exchange(ctx, conn, req)
+	if err != nil {
+		return Mapping{}, netip.Addr{}, err
+	}
+	return DecodePCPMap(resp, proto, nonce, internalPort)
+}
+
+func (c *Client) tryNATPMP(ctx context.Context, conn net.Conn, proto Protocol, internalPort uint16) (Mapping, netip.Addr, error) {
+	req, err := EncodeNATPMPMap(proto, internalPort, internalPort, defaultLeaseSec)
+	if err != nil {
+		return Mapping{}, netip.Addr{}, err
+	}
+	resp, err := exchange(ctx, conn, req)
+	if err != nil {
+		return Mapping{}, netip.Addr{}, err
+	}
+	m, err := DecodeNATPMPMap(resp, proto, internalPort)
+	if err != nil {
+		return Mapping{}, netip.Addr{}, err
+	}
+	// NAT-PMP does not carry the external IP in the MAP reply; a second request gets it. A
+	// failure here is not fatal to the mapping — the port is mapped — but without the IP there
+	// is no candidate to publish, so it is treated as a miss.
+	extReq := EncodeNATPMPExternalAddress()
+	extResp, err := exchange(ctx, conn, extReq)
+	if err != nil {
+		return Mapping{}, netip.Addr{}, err
+	}
+	ext, err := DecodeNATPMPExternalAddress(extResp)
+	if err != nil {
+		return Mapping{}, netip.Addr{}, err
+	}
+	return m, ext, nil
+}
+
+// defaultLeaseSec is the requested lease. Short by D15's law (the lease is refreshed while
+// armed and must expire on its own after a crash), and the router may grant less. The refresh
+// cadence and the delete-on-teardown are S07; this client requests one lease and reads what was
+// granted (Mapping.LifetimeSec), which is what S07 schedules the refresh against.
+const defaultLeaseSec = 120
