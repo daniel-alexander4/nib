@@ -103,7 +103,7 @@ func TestAnArmedSessionDerivesItsHopFromTheRoster(t *testing.T) {
 		if holder == 0 {
 			holder = tc.peer
 		}
-		cer, err := ceremonyFor(textFor(holder), certs[tc.who], peerFP)
+		cer, err := ceremonyFor(textFor(holder), certs[tc.who], nil, peerFP)
 		if err != nil {
 			t.Fatalf("party %d with peer %d: %v", tc.who, tc.peer, err)
 		}
@@ -131,28 +131,28 @@ func TestAnArmedSessionDerivesItsHopFromTheRoster(t *testing.T) {
 	convFP, _ := hex.DecodeString(fps[0])
 	bobFP, _ := hex.DecodeString(fps[2])
 
-	if _, err := ceremonyFor(textFor(1), certs[0], strangerFP); err == nil {
+	if _, err := ceremonyFor(textFor(1), certs[0], nil, strangerFP); err == nil {
 		t.Error("a peer outside the roster was given a hop")
 	}
-	if _, err := ceremonyFor(textFor(1), stranger, convFP); err == nil {
+	if _, err := ceremonyFor(textFor(1), stranger, nil, convFP); err == nil {
 		t.Error("a party outside the roster was armed into this ceremony")
 	}
 	// Two counterparties share no hop — D22's hub, and criterion 19 refusing at the door
 	// rather than being remembered later.
 	aliceFP, _ := hex.DecodeString(fps[1])
-	if _, err := ceremonyFor(textFor(2), certs[2], aliceFP); err == nil {
+	if _, err := ceremonyFor(textFor(2), certs[2], nil, aliceFP); err == nil {
 		t.Error("Bob was armed for a hop with Alice; under a convener hub they never " +
 			"connect, so this is a session that does not exist")
 	}
 
 	// No invitation is the ORDINARY case, not an error — D9 demotes the manual path rather
 	// than deleting it, and every existing arm has none.
-	if _, err := ceremonyFor("", certs[0], bobFP); !errors.Is(err, errNoCeremony) {
+	if _, err := ceremonyFor("", certs[0], nil, bobFP); !errors.Is(err, errNoCeremony) {
 		t.Errorf("an arm with no invitation reported %v; it must be the ordinary case", err)
 	}
 	// And a mangled one is refused rather than ignored — silently dropping it would arm a
 	// session the user believes is part of a ceremony and which is not.
-	if _, err := ceremonyFor("nib-invite-v1:not-real.deadbeef", certs[0], bobFP); err == nil ||
+	if _, err := ceremonyFor("nib-invite-v1:not-real.deadbeef", certs[0], nil, bobFP); err == nil ||
 		errors.Is(err, errNoCeremony) {
 		t.Errorf("a corrupt invitation reported %v; it must be refused, not treated as absent", err)
 	}

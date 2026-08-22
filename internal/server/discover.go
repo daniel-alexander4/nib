@@ -48,6 +48,18 @@ type candidate struct {
 	// `maxLANCandidates` closed at the browse level — a source that floods consumes the
 	// whole budget and the genuine tier is never dialled. See raceCandidates.
 	Source candidateSource
+	// Hop is which hop of the ceremony this candidate belongs to, and it is what makes
+	// criterion 19 checkable rather than hoped for.
+	//
+	// The rule — "a convener holding candidates for a later party never dials them during
+	// this hop" — held only as a property of which slice the caller happened to pass. Nothing
+	// downstream could see a mix-up: `CandidateGate.Candidates()` returns bare endpoints, so
+	// the hop is dropped at the gate's own boundary, and the racer takes one `peerFP` for the
+	// whole race. A stray candidate from another hop would fail the PIN, but it would still
+	// be DIALLED, which is precisely what the criterion forbids.
+	//
+	// Zero for the LAN and typed sources, which belong to no hop — see hopScoped.
+	Hop int
 }
 
 // candidateSource names the tier a candidate came from. Only sources that have a
@@ -62,6 +74,9 @@ const (
 	sourceTyped candidateSource = iota
 	// sourceLAN is the link-local browse (tier 1).
 	sourceLAN
+	// sourceDHT is a candidate from a peer's rendezvous record (tiers 2, 3 and 4, which all
+	// signal through the DHT).
+	sourceDHT
 )
 
 // String names the source in the failure sentence a lost race produces.
@@ -69,6 +84,8 @@ func (s candidateSource) String() string {
 	switch s {
 	case sourceLAN:
 		return "the local network"
+	case sourceDHT:
+		return "the meeting point"
 	default:
 		return "the address you typed"
 	}

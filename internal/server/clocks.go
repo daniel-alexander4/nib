@@ -1,6 +1,10 @@
 package server
 
-import "time"
+import (
+	"time"
+
+	"nib/internal/rendezvous"
+)
 
 // D16's clocks, and the two figures that are law rather than tuning.
 //
@@ -86,4 +90,33 @@ const (
 	// reporting only "the size half met"; the defect was invisible because there was one
 	// source, and one source makes a global cap and a per-source cap the same thing.
 	maxCandidatesPerSource = 8
+
+	// bootstrapBudget bounds the DHT's first contact with the network.
+	//
+	// `rendezvous.Bootstrap` takes only a context and has **no internal budget of its own**,
+	// unlike Publish, Fetch and ProbeSelf which each cap themselves. The only caller before
+	// this was the CLI, which splits a user-supplied figure and says why: "one shared
+	// deadline lets the first starve the second". A server has no such caller, so an
+	// unbudgeted bootstrap on the connect deadline could consume the whole race before a
+	// single candidate was fetched — and the failure would read as "none answered as the
+	// pinned peer" about a machine that never finished bootstrapping.
+	//
+	// It runs AT ARM rather than inside the race, so the table is warm before anybody dials.
+	bootstrapBudget = 20 * time.Second
+
+	// rendezvousPublishBudget mirrors rendezvous.PublishBudget, which bounds a publish AND a
+	// fetch. Named here because candidateLife is arithmetic over it and a figure used in a
+	// sum should be visible beside the other clocks rather than reached for through another
+	// package.
+	rendezvousPublishBudget = rendezvous.PublishBudget
+
+	// candidateFetchEvery is how often the dialing side re-fetches its peer's record while a
+	// race is running.
+	//
+	// The peer may not have published yet — that is the ordinary case, not a failure — so
+	// this is a poll. Five seconds gives roughly a dozen attempts inside `connectDeadline`
+	// while leaving the 45 s fetch budget room to be the thing that bounds each one, and it
+	// is the cadence D16's "nothing emits at full rate for the whole deadline" is about at
+	// this tier. The punch's step-down is S08's and is a different cadence.
+	candidateFetchEvery = 5 * time.Second
 )

@@ -379,60 +379,80 @@ func TestEveryCandidateProducerNamesItsSource(t *testing.T) {
 		t.Fatal("setup: internal/server did not parse — this guard walked nothing")
 	}
 
+	// **Elided literals are resolved from their PARENT, not assumed.** `[]candidate{{…}}`
+	// and `[]ceremony.Endpoint{{Addr: …}}` are indistinguishable by shape — both are an
+	// elided literal with an `Addr` key — and treating every elided one as a candidate made
+	// this guard fire on `publishCandidates` building a perfectly correct Endpoint. l1_test's
+	// own `candidateLit` takes the opposite shortcut and is right to: it keys on
+	// `Fingerprint`, which a non-candidate struct does not have, so its false positive costs
+	// nothing. This one keys on `Addr`, which they share.
+	//
+	// So: only literals whose type is spelled reach the check, and a composite whose type is
+	// `[]candidate` or `map[K]candidate` lends its type to the elements inside it.
 	var keyed int
+	check := func(file string, cl *ast.CompositeLit) {
+		if len(cl.Elts) == 0 {
+			return
+		}
+		var hasSource, hasAddr bool
+		for _, e := range cl.Elts {
+			kv, ok := e.(*ast.KeyValueExpr)
+			if !ok {
+				t.Errorf("%s:%d builds a candidate with unkeyed fields; keep it keyed so "+
+					"a new field cannot be absorbed by position",
+					filepath.Base(file), fset.Position(cl.Pos()).Line)
+				return
+			}
+			switch k, _ := kv.Key.(*ast.Ident); k.Name {
+			case "Source":
+				hasSource = true
+			case "Addr":
+				hasAddr = true
+			}
+		}
+		if !hasAddr {
+			return
+		}
+		keyed++
+		if !hasSource {
+			t.Errorf("%s:%d builds a dialable candidate without a Source. It will be "+
+				"accounted to the zero-value source, so one tier spends another tier's "+
+				"share of the race and the per-source cap reports the wrong tier as the "+
+				"one flooding.", filepath.Base(file), fset.Position(cl.Pos()).Line)
+		}
+	}
+	isCandidateType := func(e ast.Expr) bool {
+		switch t := e.(type) {
+		case *ast.Ident:
+			return t.Name == "candidate"
+		case *ast.ArrayType:
+			id, ok := t.Elt.(*ast.Ident)
+			return ok && id.Name == "candidate"
+		case *ast.MapType:
+			id, ok := t.Value.(*ast.Ident)
+			return ok && id.Name == "candidate"
+		}
+		return false
+	}
 	for name, f := range pkg.Files {
 		ast.Inspect(f, func(n ast.Node) bool {
 			cl, ok := n.(*ast.CompositeLit)
-			if !ok {
+			if !ok || cl.Type == nil || !isCandidateType(cl.Type) {
 				return true
 			}
-			// **An ELIDED literal counts.** `[]candidate{{Addr: ...}}` has a nil Type,
-			// because the element type comes from the slice — and the typed-address
-			// producer is written exactly that way. The first draft of this guard matched
-			// only `candidate{...}`, found one producer of two, and its own stimulus
-			// assertion said so before it ever guarded anything. Same case `candidateLit`
-			// handles in l1_test.go, for the same reason.
-			switch typ := cl.Type.(type) {
-			case nil: // elided inside a []candidate literal
-			case *ast.Ident:
-				if typ.Name != "candidate" {
-					return true
-				}
-			default:
+			if id, ok := cl.Type.(*ast.Ident); ok && id.Name == "candidate" {
+				check(name, cl)
 				return true
 			}
-			if len(cl.Elts) == 0 {
-				return true
-			}
-			// An EMPTY `candidate{}` is a not-found sentinel, not a producer — skipped by
-			// the len check above. A populated one is a producer.
-			var hasSource, hasAddr bool
+			// A slice or map OF candidates: each element is one, elided or not.
 			for _, e := range cl.Elts {
-				kv, ok := e.(*ast.KeyValueExpr)
-				if !ok {
-					// Unkeyed: refused outright rather than parsed positionally. A
-					// positional literal reorders silently when a field is inserted.
-					t.Errorf("%s:%d builds a candidate with unkeyed fields; keep it keyed so "+
-						"a new field cannot be absorbed by position",
-						filepath.Base(name), fset.Position(cl.Pos()).Line)
-					return true
+				inner := e
+				if kv, ok := e.(*ast.KeyValueExpr); ok {
+					inner = kv.Value
 				}
-				switch k, _ := kv.Key.(*ast.Ident); k.Name {
-				case "Source":
-					hasSource = true
-				case "Addr":
-					hasAddr = true
+				if el, ok := inner.(*ast.CompositeLit); ok {
+					check(name, el)
 				}
-			}
-			if !hasAddr {
-				return true // not a dialable candidate
-			}
-			keyed++
-			if !hasSource {
-				t.Errorf("%s:%d builds a dialable candidate without a Source. It will be "+
-					"accounted to the zero-value source, so one tier spends another tier's "+
-					"share of the race and the per-source cap reports the wrong tier as the "+
-					"one flooding.", filepath.Base(name), fset.Position(cl.Pos()).Line)
 			}
 			return true
 		})

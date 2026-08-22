@@ -135,6 +135,7 @@ const els = {
   srvTitle: $('srvTitle'), srvArmHint: $('srvArmHint'), srvConsentHint: $('srvConsentHint'),
   srvArm: $('srvArm'), srvWait: $('srvWait'), srvConsent: $('srvConsent'),
   srvPeer: $('srvPeer'), srvNoPeers: $('srvNoPeers'), srvBind: $('srvBind'),
+  srvInvite: $('srvInvite'), srvInviteNote: $('srvInviteNote'),
   srvSelfFp: $('srvSelfFp'), srvSelfName: $('srvSelfName'), srvSelfCopy: $('srvSelfCopy'),
   srvCancel: $('srvCancel'), srvArmGo: $('srvArmGo'),
   srvWaitAddr: $('srvWaitAddr'), srvWaitPeer: $('srvWaitPeer'), srvDisarm: $('srvDisarm'),
@@ -1155,7 +1156,13 @@ async function armRecv() {
   els.srvArmGo.disabled = true;
   const res = await apiFetch('/api/session/arm', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ fingerprint: opt.value, bind, mode: recvMode }),
+    // The invitation is what gives this arm a ceremony identity — a roster, a hop, and the
+    // secret every rendezvous derivation needs. Optional: without one this is the manual and
+    // LAN path, and nothing reaches the internet.
+    body: JSON.stringify({
+      fingerprint: opt.value, bind, mode: recvMode,
+      invitation: (els.srvInvite && els.srvInvite.value.trim()) || undefined,
+    }),
   });
   els.srvArmGo.disabled = false;
   if (!res.ok) { toast(await errText(res, 'could not arm')); return; }

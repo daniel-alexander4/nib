@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -29,11 +30,18 @@ type ceremonyID struct {
 	// me and peer are the two ends of this hop, hex. Kept because the gate holds them
 	// privately and the publish side needs its own.
 	me, peer string
+	// certPEM/keyPEM sign this party's candidate records. Held here because a record is
+	// signed by the identity, not by the ceremony, and the publish path needs both.
+	certPEM, keyPEM []byte
 
 	// end is the ONE socket the DHT and the armed listener share, and rz is the rendezvous
 	// server on its DHT view. Both nil on the TCP transport — see openRendezvous.
 	end *p2p.SharedEndpoint
 	rz  *rendezvous.Server
+	// stopNet cancels the arm's background rendezvous work — bootstrap, the LAN wait, the
+	// publish. Set by startArmedRendezvous and called by close, so the goroutine ends with
+	// the session rather than outliving it.
+	stopNet context.CancelFunc
 }
 
 // nodeCacheDir is where the DHT's node list lives.
@@ -93,6 +101,11 @@ func (c *ceremonyID) close() {
 	if c == nil {
 		return
 	}
+	if c.stopNet != nil {
+		// Cancel the background work FIRST, so Close's own join has something finite to
+		// wait for rather than a publish still holding its 45 s budget.
+		c.stopNet()
+	}
 	if c.rz != nil {
 		c.rz.Close()
 	}
@@ -110,7 +123,7 @@ var errNoCeremony = errors.New("this session has no ceremony identity")
 // sequence of pairs, and Party's doc says the roster order is the signing order), read off an
 // artifact both ends already hold. A hop passed in a request would be a number the two sides
 // have to agree on, and there is nothing to make them.
-func ceremonyFor(text string, myCertPEM []byte, peerFP []byte) (*ceremonyID, error) {
+func ceremonyFor(text string, myCertPEM, myKeyPEM []byte, peerFP []byte) (*ceremonyID, error) {
 	if text == "" {
 		return nil, errNoCeremony
 	}
@@ -136,5 +149,5 @@ func ceremonyFor(text string, myCertPEM []byte, peerFP []byte) (*ceremonyID, err
 	if err != nil {
 		return nil, err
 	}
-	return &ceremonyID{inv: inv, hop: hop, gate: gate, me: me, peer: peer}, nil
+	return &ceremonyID{inv: inv, hop: hop, gate: gate, me: me, peer: peer, certPEM: myCertPEM, keyPEM: myKeyPEM}, nil
 }
