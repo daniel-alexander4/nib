@@ -3507,9 +3507,86 @@ Tasks (firmed 2026-08-22):
 - **T07 — seam rows**: the cadence step-down, the per-side budget drop-and-report, the failure
   state, and the Dan-only real-two-NAT run (IPv4-to-IPv4 through an endpoint-independent NAT).
 
-#### P05.S09 — Symmetric racing and the glare tie-break *(D17; criterion 12)*
-Scope: both sides listen **and** dial; today the server arms one listener and the initiator only dials.
-Acceptance: criterion 12, driven by **forcing** the glare rather than waiting to observe it.
+#### P05.S09 — Symmetric racing, the glare tie-break, and the stream-direction fix *(D17; criterion 12)* *(in progress 2026-08-22; two-agent deepdive done; grill next)*
+Scope: both sides listen **and** dial over the ONE shared endpoint; a glare tie-break keeps one
+channel; and the document exchange runs on the surviving channel regardless of who dialled it.
+Acceptance: criterion 12, driven by **forcing** the glare — including the **role-opposite-dialer**
+case, or the deadlock below ships green (TCP is immune, so a tier-1 test passes while QUIC hangs).
+
+**Firmed 2026-08-22 after a two-agent deepdive — the two-line sketch hid a re-architecture with a
+QUIC deadlock at its core.** What the deepdive established, all cited to code:
+
+- **THE DEADLOCK (the crux).** `p2p.Initiate` is write-first (`OpenStreamSync` then `writeFrame`,
+  `session.go:123-129`) and `p2p.Receive` is read-first (`AcceptStream`, which on QUIC returns only
+  after the dialer's first frame, `quic.go:325-333`). This is welded to **who dialled** — safe only
+  while dialer==initiator. Under symmetric racing the surviving channel may be dialled by EITHER
+  party while the document role comes from the roster, so the **baton-holder can hold the QUIC
+  ACCEPT side** and both sides wait to read → deadlock. **TCP is immune** (full-duplex, no
+  first-frame gate), so a tier-1 test passes green while QUIC hangs — the tier-4-vs-tier-1 blindness
+  this repo keeps hitting. **Fix:** decouple stream-direction from dial-direction — after glare, the
+  **baton-holder** `OpenStreamSync`s on the surviving `qc` (either QUIC end may open a stream), the
+  other `AcceptStream`s; stream creation is DEFERRED past glare and driven by the roster role.
+- **The shape:** a unified `connect(cer, cands, role)` — `QUICListenOn` a private accept loop on
+  `cer.end`, run the dialer race on `cer.end`, JOIN the two winners through the tie-break, return
+  one `Channel`. Both HTTP paths call it, then run Initiate/Receive by roster role. `runSession`
+  welds three concerns S09 must split: get-a-channel / run-the-exchange / lifecycle.
+- **The glare rule (confirmed):** compare `myFP` (`sign.Fingerprint(cert)`) vs the peer's
+  (`ch.PeerFP`, `channel.go:50`) — a single comparison, not per-channel. Both sides converge on the
+  channel dialled by the lower-fp party. A **new settle window** (none exists in the tree) waits on
+  first success for the other channel, BEFORE the verification string is derived (D4-per-channel).
+  The loser is closed **synchronously** on both ends — an abandoned-but-open loser wedges the peer's
+  serial `Receive` for the 6-min `exchangeDeadline` (the S03 lesson, `lan.go:318`).
+- **The document role is read from the record**, not who dialled: `Record.Hop`/`Convener`
+  (`record.go:399-421`) already computes it; today it only *happens* to line up because the convener
+  always dials and the party always listens. S09 routes Initiate/Receive off the record.
+- **One shared endpoint CAN listen+dial at once** (QUIC): `e.tr.Listen` + concurrent `e.tr.Dial`,
+  inbound routed by destination CID (`quic.go:158-160`) — the mechanism is feasible.
+- **The socket-sharing criterion is discharged here** (`endpoint.go:36-38` parks the racing-dialer
+  clause "for S09, the first slice where the dialing side has a listener at all"): the winning
+  channel's local `AddrPort` equals the mapped/probed socket.
+
+Tasks (firmed 2026-08-22; dependency order; the grill may reshape or split further):
+- **T01 — the stream-direction fix.** Decouple `Initiate`/`Receive`'s speak-first/read-first from
+  `OpenStreamSync`/`AcceptStream`: after a channel exists, the baton-holder opens the stream, the
+  other accepts, driven by the roster role. The correctness-critical core; everything rests on it.
+- **T02 — the symmetric `connect(cer, cands, role)` coordinator**: listen on `cer.end` (a private
+  accept loop, NOT `s.sess.arm` — no consent/pending UI, no announce, no disarm) AND race on
+  `cer.end`, concurrently, into one join point.
+- **T03 — the glare tie-break + settle window + synchronous loser-close** (D17, D18): min(myFP,
+  peerFP) at the join, a new settle window before the verification string, both ends of the loser
+  closed synchronously.
+- **T04 — route Initiate/Receive off `Record.Hop`/`Convener`**, decoupled from who dialled.
+- **T05 — split `runSession`** into get-channel / run-exchange / lifecycle so the channel can arrive
+  from a dial or an accept and the exchange role comes from the roster.
+- **T06 — force-the-glare harness**: `pairrepro.sh` arms BOTH instances to listen+dial, forces two
+  channels deterministically (a test seam, not wall-clock luck — the S03 vacuous-clock trap), and
+  asserts both end on the SAME channel (identical verification string) with the loser closed —
+  **including the role-opposite-dialer case**, without which the deadlock ships green.
+- **T07 — seam inventory rows**: the source-port assertion (caveat 7), the same-survivor
+  convergence, the loser-closed observable, the role-opposite-dialer no-deadlock row.
+
+#### P05.S09b — Criterion 16: the ceremony-scoped arm window and the bounded announcer *(D16 amendment, D33; criterion 16 first half)* *(firmed 2026-08-22; split from S09)*
+Scope: extend the armed listener's wait from the 5-min `sessionAcceptTimeout` to ceremony scope, so
+a multi-party signer who arms and waits their turn is not disarmed before the baton arrives — AND
+bound the LAN announcer so the extension does not turn it into a packet cannon.
+Acceptance: the arm window is the ceremony's, bounded by D33's 30-day maximum; the announcer does
+not emit at full rate for the whole window (criterion 14); driven.
+
+**Firmed 2026-08-22 (deepdive).** Criterion 16's first half is moved here from S01 (@3040-3047). The
+trap the deepdive quantified: `startAnnouncing` (`lan.go:84`) tickers at `announceEvery=500ms`
+(`lan.go:32`) broadcasting the stable six-word identity for the whole arm window. Extending the
+window naively to D33's 30-day max is 2 datagrams/s × 86400 × 30 = **~5.2M multicast datagrams**
+per ceremony, each a never-rotating name on every segment — the D6 privacy harm `errLoopbackBind`
+exists against, and a criterion-14 violation ("nothing emits at full rate for the whole deadline").
+Tasks (firmed 2026-08-22):
+- **T01 — extend the arm window** to ceremony scope, bounded by D33's 30-day ceremony-deadline max
+  (`session.go:56` `sessionAcceptTimeout` is 5 min today). Re-express the S01 arm-timer guard
+  (`armsurvival_test.go:214`) deliberately when the window moves.
+- **T02 — bound the announcer**: cap it to the browse/LAN window (as S08b already stops the
+  publish/punch after `browseWindow` via the `inbound` check) and/or step its cadence down over the
+  arm, consistent with criterion 14 and D6. Driven — a count over a simulated window, not 30 days.
+- **T03 — seam rows**: the arm-window-is-ceremony-scoped observable, the announcer-emission-bounded
+  count.
 
 #### P05.S10 — Channel loss either side of the confirmation gate *(D18; criterion 15)*
 
