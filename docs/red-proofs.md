@@ -1116,3 +1116,22 @@ doubt 5 fallback — "sign with a local date when the TSA is offline" — was re
 built, because `TimeBacking` makes a verifier report the difference and a silent downgrade is a
 false statement about the document; the row above is for the *warning*, which is the half worth
 keeping.
+
+## v1.117.64 — P05.S09a: the QUIC stream that opened by the wrong end
+
+The glare deadlock, caught before S09's coordinator could reach it. Pre-S09a the dialer was
+always the ceremony initiator, so "the dialer opens the QUIC stream" was welded into both dial
+and accept paths and never tested with the roles apart. Symmetric racing (S09) breaks that
+coincidence: the party that dialled may be the receiver, the party that accepted the initiator.
+`HandshakedConn.Promote` opens the stream by the ROLE, so this row reintroduces the weld — the
+receiver opening, the initiator accepting — and shows it hangs.
+
+| Defect reintroduced | What it said | Check that fired |
+| --- | --- | --- |
+| **`Promote` opens the stream by dial direction, not role** *(replayable: `stream-follows-the-dialer`)* | `deadlocked: the role-opposite-dialer session never completed — stream direction is following the dialer, not the role` | `TestQUICStreamOpensByRoleNotByDialer`, which promotes the dial side as receiver and the accept side as initiator and bounds the wait, so the weld manifests as a named failure in seconds rather than a hung suite |
+
+**Why a timeout is the assertion here, not a value.** A deadlock has no wrong value to print —
+both goroutines simply never report. The harness bounds the wait and fails by name, which is the
+tier-2 lesson applied to tier 1: a hang is worse than a fail, because a hang tells you nothing
+and blocks every test behind it. The EXPECT token is the deadlock message, so a row that went
+red merely by failing to compile would not satisfy it.
