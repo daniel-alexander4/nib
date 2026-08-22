@@ -2,6 +2,8 @@ package pdfops
 
 import (
 	"bytes"
+	"compress/zlib"
+	"fmt"
 	"io"
 	"testing"
 
@@ -68,4 +70,156 @@ func TestRedactLeavesNoResidualContent(t *testing.T) {
 	if !contentContains(t, redacted, "2", keep) {
 		t.Error("a non-redacted page lost its content during redaction")
 	}
+}
+
+// TestRedactLeavesNoResidualContentAnywhereInTheFile — the whole-file half of the doubt
+// above, which the test above claims and does not check.
+//
+// `TestRedactLeavesNoResidualContent`'s second assertion reads "the secret must not survive
+// anywhere else in the document either" and is implemented as `contentContains(redacted, "",
+// secret)`. That walks **page content streams** — every page's, which is more than page 1's,
+// but still only content streams. An object that is present in the file and referenced by no
+// page is invisible to it, and "not reachable from a page" is exactly the state a
+// half-removed object is in. The claim was wider than the check.
+//
+// This scans the file itself: every `stream`…`endstream` segment, inflated where it inflates,
+// plus the raw bytes. That is a superset of the page walk and needs no page tree at all, so a
+// leftover object in a dead branch of the xref is still in scope.
+//
+// **The ORIGINAL is the control, and it is the whole test.** Measured while writing this:
+// `bytes.Contains(redacted, secret)` is false — and it is false of the ORIGINAL too, because
+// testpdf's content stream is flate-compressed. So a raw-byte scan on its own is **vacuous
+// here by construction**: it reports "clean" for a document that visibly contains the secret.
+// The inflating scan finds it in exactly 1 stream of the original and 0 of the redacted,
+// which is the discrimination this test is for. Anyone tempted to simplify this to a
+// `bytes.Contains` should read that sentence again.
+func TestRedactLeavesNoResidualContentAnywhereInTheFile(t *testing.T) {
+	const secret = "CANARYSECRET98765"
+	original, err := testpdf.Text(secret, "KEEPVISIBLE12345")
+	if err != nil {
+		t.Fatal(err)
+	}
+	redacted, err := RedactPages(original, map[int]RasterPage{1: rasterPage(t, 612, 792)})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// SETUP / positive control: the scan can see the secret in a document that has it.
+	// Without this the "0 in the redacted file" result below is equally consistent with a
+	// scan that cannot see anything at all — which is what a raw-byte version of this test
+	// would have been.
+	if raw, n := fileCarries(original, secret); n == 0 {
+		t.Fatalf("setup: the whole-file scan found the secret in 0 stream(s) of the "+
+			"UNREDACTED document (raw-bytes=%v) — it cannot see what it is looking for, so "+
+			"finding nothing after redaction would prove nothing", raw)
+	}
+	if raw, _ := fileCarries(original, secret); raw {
+		t.Log("note: the secret is in the original's raw bytes, so this fixture is no longer " +
+			"compressed; the inflating half of the scan is still what carries the assertion")
+	}
+
+	if raw, n := fileCarries(redacted, secret); n > 0 || raw {
+		t.Errorf("after redaction the secret survives in the file: raw-bytes=%v, "+
+			"stream(s)=%d. A rasterized page that leaves the original text recoverable "+
+			"anywhere in the bytes is the classic fake-redaction leak — the thing this "+
+			"path exists to prevent.", raw, n)
+	}
+}
+
+// fileCarries scans a PDF's bytes for a needle: raw, and inside every stream segment that
+// inflates. It deliberately does not use the page tree — an object nothing references is
+// precisely what it is looking for.
+func fileCarries(pdf []byte, needle string) (raw bool, streams int) {
+	raw = bytes.Contains(pdf, []byte(needle))
+	for i := 0; ; {
+		j := bytes.Index(pdf[i:], []byte("stream"))
+		if j < 0 {
+			return raw, streams
+		}
+		start := i + j + len("stream")
+		for start < len(pdf) && (pdf[start] == '\r' || pdf[start] == '\n') {
+			start++
+		}
+		k := bytes.Index(pdf[start:], []byte("endstream"))
+		if k < 0 {
+			return raw, streams
+		}
+		seg := pdf[start : start+k]
+		if zr, err := zlib.NewReader(bytes.NewReader(seg)); err == nil {
+			if out, rerr := io.ReadAll(zr); rerr == nil && bytes.Contains(out, []byte(needle)) {
+				streams++
+			}
+			zr.Close()
+		} else if bytes.Contains(seg, []byte(needle)) {
+			streams++
+		}
+		// **Past the whole `endstream` token, not to its start.** `endstream` CONTAINS
+		// `stream`, so resuming at `start+k` finds that inner occurrence three bytes later
+		// and treats everything up to the NEXT `endstream` as a segment — which desynchronises
+		// the walk permanently: after the first object, every real payload is inside a
+		// misaligned span that fails to inflate and is silently skipped.
+		//
+		// This shipped for the length of one test run and produced a **passing** whole-file
+		// check, because the fixture's secret happens to live in the first stream (so the
+		// control found it) and everything after was invisible (so the redacted file scanned
+		// clean for the wrong reason). Caught by TestTheTwoResidueChecksDiffer…, which is the
+		// argument for writing that test rather than trusting two agreeing green results.
+		i = start + k + len("endstream")
+	}
+}
+
+// TestTheTwoResidueChecksDifferAndTheDifferenceIsThePoint — why there are two.
+//
+// Without this, the whole-file check reads as a redundant restatement of the page-content
+// one, and the obvious tidy-up is to delete it. This pins the case that separates them: a
+// stream that is PRESENT in the file and referenced by no page.
+//
+// `contentContains(pdf, "", secret)` walks the page tree and extracts each page's content.
+// An object outside that tree is not reachable, so it reports clean — correctly, for the
+// question it asks. `fileCarries` scans the bytes and finds it. "Not reachable from a page"
+// is the state a half-removed object is in, and it is the state a reader recovering redacted
+// text is looking for, so the second question is the one the doubt actually poses.
+//
+// The dangling object is appended after %%EOF, which leaves the original xref authoritative —
+// so the document still parses and the page-tree walk still runs. That is what makes the two
+// results comparable rather than one of them being an error.
+func TestTheTwoResidueChecksDifferAndTheDifferenceIsThePoint(t *testing.T) {
+	const secret = "ORPHANEDSECRET4242"
+	base, err := testpdf.Text("visible-one", "visible-two")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// SETUP: the clean document is clean by BOTH checks, so anything below is caused by the
+	// object we append and not by the fixture.
+	if contentContains(t, base, "", secret) {
+		t.Fatal("setup: the base fixture already contains the secret in its page content")
+	}
+	if raw, n := fileCarries(base, secret); raw || n > 0 {
+		t.Fatalf("setup: the base fixture already carries the secret in its bytes (raw=%v, streams=%d)", raw, n)
+	}
+
+	var z bytes.Buffer
+	zw := zlib.NewWriter(&z)
+	if _, err := zw.Write([]byte("BT (" + secret + ") Tj ET")); err != nil {
+		t.Fatal(err)
+	}
+	zw.Close()
+	orphan := append([]byte("\n99 0 obj\n<< /Length "), []byte(fmt.Sprintf("%d /Filter /FlateDecode >>\nstream\n", z.Len()))...)
+	orphan = append(orphan, z.Bytes()...)
+	orphan = append(orphan, []byte("\nendstream\nendobj\n")...)
+	polluted := append(append([]byte{}, base...), orphan...)
+
+	// The page walk cannot see it — nothing references object 99.
+	if contentContains(t, polluted, "", secret) {
+		t.Error("the page-content check found an object no page references; if that is now " +
+			"true, the two checks have converged and the second one may be redundant")
+	}
+	// The whole-file scan can. This is the entire reason it exists.
+	raw, n := fileCarries(polluted, secret)
+	if n == 0 && !raw {
+		t.Error("the whole-file scan did NOT find a flate stream carrying the secret that " +
+			"was appended to the file — it cannot see an unreferenced object, which is the " +
+			"only thing it adds over the page-content check")
+	}
+	t.Logf("page-content check: clean; whole-file scan: raw=%v streams=%d", raw, n)
 }
