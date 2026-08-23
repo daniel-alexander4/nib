@@ -631,3 +631,32 @@ func TestOnePartyCannotDeriveAnothersHop(t *testing.T) {
 			"invitation — both ends of a hop must agree, and the convener is one of them")
 	}
 }
+
+// TestAVersionSkewNamesTheDirection — /pending 247's prerequisite, and D32.
+//
+// The version check used to be a PREFIX TEST, so every `nib-invite-v…` that was not this
+// build's exact prefix answered "made by a newer version of Nib". That is unreachable while
+// v1 is the only format — and the change that reaches it is the bump, which is what an
+// `Expires` field on the invitation would have required. A new build would have told a user
+// holding an ordinary older invitation that it came from the future.
+func TestAVersionSkewNamesTheDirection(t *testing.T) {
+	for _, tc := range []struct {
+		name, text string
+		want       error
+	}{
+		{"a newer format", "nib-invite-v9:abc.dead", ErrInvitationVersion},
+		{"an older format", "nib-invite-v0:abc.dead", ErrInvitationOldVersion},
+		{"not an invitation at all", "hello.world", ErrInvitationFormat},
+		{"the stem with no version", "nib-invite-v:abc.dead", ErrInvitationFormat},
+	} {
+		_, err := ParseInvitation(tc.text)
+		if !errors.Is(err, tc.want) {
+			t.Errorf("%s: ParseInvitation(%q) = %v, want %v", tc.name, tc.text, err, tc.want)
+		}
+	}
+	// The two sentences must actually DIFFER — one sentinel wrapped twice would satisfy
+	// errors.Is above and still tell the user the same wrong thing.
+	if ErrInvitationVersion.Error() == ErrInvitationOldVersion.Error() {
+		t.Error("the two version errors read identically, so naming the direction buys nothing")
+	}
+}
