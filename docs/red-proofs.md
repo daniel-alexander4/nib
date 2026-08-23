@@ -1188,3 +1188,20 @@ carrying a different document the previous document's signature (the grill's sta
 Keyed on `sha256(inbound)`, a distinct document is a clean miss (proved by the control test), and the
 lookup sits AFTER the peer-binding validation so only the pinned peer with the original document can
 pull the cached bytes.
+
+## v1.117.98 — P05.S11: the CGNAT user told to port-forward
+
+D19's cause-3 advice, and D9's pin on it. A machine behind an endpoint-dependent NAT with no routable
+port-map gets "a direct connection isn't possible" — but the FIX it names must not be a port-forward
+when the user cannot perform one: a carrier-grade-NAT subscriber has no router to open a port on, and a
+double-NAT's router answers with its own private address. Both need a VPN; telling them to port-forward
+is the futile advice D9 exists to forbid.
+
+| Defect reintroduced | What it said | Check that fired |
+| --- | --- | --- |
+| **cause 3 offers a port-forward unconditionally** *(replayable: `cgnat-told-to-port-forward`)* | `detail mentions port-forward = true, want false — D9 forbids offering a port-forward to a carrier/double-NAT user` | `TestD19ClassifierTable`, whose cause-3 rows split on the CGNAT (`sharedSpace`) and double-NAT (`mapUnroutable`) signals and assert the advice diverges; the controllable-NAT row is the control that keeps the pass from being "never offer a port-forward" |
+
+**Why the tri-state matters.** `SharedAddressSpace` (100.64/10) catches carrier NAT, but a double-NAT's
+reflexive DHT address can be a normal public one while the router's own external is RFC-1918 — caught only
+by `mapUnroutable`, the port-map tier's "answered but I could not publish it" signal that S11 retained
+(the connect path used to close and drop that mapper without recording it).
