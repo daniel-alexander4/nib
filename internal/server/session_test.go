@@ -1630,3 +1630,137 @@ func postJSON(t *testing.T, c *http.Client, csrf, url string, body map[string]an
 	}
 	r.Body.Close()
 }
+
+// TestCeremonyReDeliversAfterReconnect — P05.S10 T05, the acceptance driven END TO END through the
+// server loop: after Bob co-signs, a RECONNECT (a second Initiate of the same document) re-delivers
+// the cached signature instead of signing again. Bob cannot tell a reconnect-after-lost-writeback
+// from a reconnect-after-received, so the second Initiate exercises exactly the re-delivery path.
+// Asserts idempotency (both ends get the same bytes) and that consent was asked ONCE.
+func TestCeremonyReDeliversAfterReconnect(t *testing.T) {
+	ts, _ := startServer(t)
+	c, csrf := authedClient(t, ts)
+
+	var me struct {
+		Fingerprint string `json:"fingerprint"`
+	}
+	sessGet(t, c, ts.URL+"/api/peers", &me)
+	bFP := me.Fingerprint
+	bFPBytes, _ := hex.DecodeString(bFP)
+
+	aCert, aKey, err := sign.GenerateIdentity("Alice")
+	if err != nil {
+		t.Fatal(err)
+	}
+	aFPBytes, _ := sign.Fingerprint(aCert)
+	aFP := hex.EncodeToString(aFPBytes)
+	pinPeer(t, c, csrf, ts.URL, aFP)
+
+	cid, _ := ceremony.NewID()
+	rec := ceremony.Record{
+		ID: cid, DocHash: strings.Repeat("ef", 32), Intent: "We agree", Expires: time.Now().Add(48 * time.Hour),
+		Roster: []ceremony.Party{{Fingerprint: aFP, Label: "Alice", Signs: true}, {Fingerprint: bFP, Label: "Bob", Signs: true}},
+	}
+	if err := rec.Sign(aCert, aKey); err != nil {
+		t.Fatal(err)
+	}
+	invites, _ := ceremony.NewInvitations(rec)
+	bobInv, _ := invites[bFP].Encode()
+
+	// Alice signs ONCE — the same document for both Initiates, so Bob's cache (keyed on the inbound)
+	// hits on the reconnect.
+	base, _ := testpdf.Form()
+	prepared, _ := p2p.PrepareDocument(base)
+	place, _ := p2p.NextPlacement(prepared)
+	att := p2p.Attestation{Signer: "Alice", AcceptedPeer: bFP, AcceptedPeerLabel: "Bob", Intent: "I agree", When: time.Now()}
+	aSigned, err := p2p.Contribute(prepared, aCert, aKey, att, nil, place)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Bob arms the ceremony (accept-only: no peer Address).
+	var armed sessionStatus
+	sessDecode(t, write(t, c, csrf, http.MethodPost, ts.URL+"/api/session/arm", "application/json",
+		jsonBody(armRequest{Fingerprint: aFP, Bind: "127.0.0.1:0", Transport: "quic", Invitation: bobInv})), &armed)
+	if !armed.Armed || armed.Address == "" {
+		t.Fatalf("arm failed: %+v", armed)
+	}
+
+	// One Alice Initiate against Bob's shared endpoint. Returns the co-signed result.
+	initiate := func() ([]byte, error) {
+		aEnd, e := p2p.NewSharedEndpoint("127.0.0.1:0")
+		if e != nil {
+			return nil, e
+		}
+		defer aEnd.Close()
+		hc, e := p2p.QUICDialHandshakeOn(context.Background(), aEnd, armed.Address, aCert, aKey, bFPBytes, 10*time.Second)
+		if e != nil {
+			return nil, e
+		}
+		conn, e := hc.Promote(context.Background(), true) // Alice initiates
+		if e != nil {
+			return nil, e
+		}
+		defer conn.Close()
+		return p2p.Initiate(conn.Channel, aSigned, aFPBytes, &recordingVerifier{})
+	}
+
+	// --- Initiate #1: a full co-sign (verify + consent). ---
+	r1 := make(chan []byte, 1)
+	e1 := make(chan error, 1)
+	go func() {
+		f, e := initiate()
+		if e != nil {
+			e1 <- e
+		} else {
+			r1 <- f
+		}
+	}()
+	_ = waitForVerify(t, c, ts.URL, e1)
+	postJSON(t, c, csrf, ts.URL+"/api/session/verify", map[string]any{"confirmed": true})
+	waitForPending(t, c, ts.URL, aFP, e1)
+	postJSON(t, c, csrf, ts.URL+"/api/session/respond", map[string]any{"accept": true, "intent": "I accept"})
+	var final1 []byte
+	select {
+	case final1 = <-r1:
+	case e := <-e1:
+		t.Fatalf("initiate #1: %v", e)
+	case <-time.After(15 * time.Second):
+		t.Fatal("initiate #1 did not complete")
+	}
+	if n := len(p2p.ReadAttestations(final1)); n != 2 {
+		t.Fatalf("#1 has %d signers, want 2", n)
+	}
+
+	// --- Initiate #2: the RECONNECT. Bob's post-signing window re-delivers; a fresh spoken check
+	// still runs (D18, new channel) but consent is NOT re-asked (the cache short-circuits it). ---
+	r2 := make(chan []byte, 1)
+	e2 := make(chan error, 1)
+	go func() {
+		f, e := initiate()
+		if e != nil {
+			e2 <- e
+		} else {
+			r2 <- f
+		}
+	}()
+	_ = waitForVerify(t, c, ts.URL, e2)
+	postJSON(t, c, csrf, ts.URL+"/api/session/verify", map[string]any{"confirmed": true})
+	// No respond: a re-delivery must not park a consent request. If it did, this would hang and the
+	// deadline below would fire.
+	var final2 []byte
+	select {
+	case final2 = <-r2:
+	case e := <-e2:
+		t.Fatalf("initiate #2 (reconnect): %v", e)
+	case <-time.After(15 * time.Second):
+		t.Fatal("the reconnect did not complete — re-delivery either re-prompted consent (nobody " +
+			"answered) or failed to serve the second connection")
+	}
+	if !bytes.Equal(final1, final2) {
+		t.Errorf("the reconnect returned DIFFERENT bytes than the first co-sign — Bob RE-SIGNED "+
+			"instead of re-delivering (%d vs %d bytes)", len(final1), len(final2))
+	}
+	if n := len(p2p.ReadAttestations(final2)); n != 2 {
+		t.Errorf("the re-delivered result has %d signers, want 2", n)
+	}
+}
