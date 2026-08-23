@@ -1288,3 +1288,31 @@ losing nine rows silently, the same erosion the floor exists to prevent. The cou
 both sides now: it still fails when a row disappears, and it fails when the set outgrows it, naming
 the number to write. The original reasoning — "adding a row should not need a test edit" — is
 refuted by measurement: an edit that does not have to happen is an edit that does not happen.
+
+## v1.117.120–.124 — sweep 13: the port-map seam, the arm that went dark, and a law driven at eleven doors
+
+Six rows. The through-line repeats sweep 12's: **the entry was a hypothesis, and the grill's job was
+to check it.** One item's stated blocker was false (257's "unimplementable at the current seam"),
+one item's stated expectation was measured wrong (259 surfaces zero automatic reds), one item's
+central premise was overturned and the item deferred (258), and one deepdive's own recommendation
+did not survive contact (256's "one governor" would have republished every five seconds).
+
+| Defect reintroduced | What it said | Check that fired |
+| --- | --- | --- |
+| **a request the router received leaves nothing to delete** *(replayable: `send-time-handle-not-recorded`)* | `Map recorded no handle for a request the router RECEIVED — the mapping it may have created is undeletable and lives to lease expiry` | `TestARequestThatReachedTheRouterLeavesADeletableHandle`, whose fixture asserts the gateway RECEIVED the request before claiming anything, so the row cannot pass over an absence |
+| **the PCP delete names a mapping that never existed** *(replayable: `pcp-delete-mints-a-fresh-nonce`)* | `the delete carries nonce X but the mapping was created with Y — PCP names a mapping by its nonce, so this delete names one that never existed and is a no-op` | `TestThePCPDeleteCarriesTheMappingsOwnNonce`. It was a no-op on the SUCCESS path too, and nothing could see it: the mock echoes the nonce without validating, and the one delete test drives NAT-PMP |
+| **a UPnP delete removes whatever holds that port** *(replayable: `upnp-delete-not-identity-checked`)* | `delete of a mapping that is not ours returned <nil>` — and the test prints the DeletePortMapping envelope it should never have sent | `TestAUPnPDeleteRefusesAMappingThatIsNotOurs`, three rows including an IGD that answers nothing, plus a POSITIVE arm: a check that refuses everything passes every refusal row while breaking the teardown D15 requires |
+| **a thirty-day arm polls the DHT at race rates** *(replayable: `rendezvous-cadence-is-flat`)* | `rendezvousInterval just past the race = 5s, want more than 5s — nothing steps down` | `TestTheRendezvousCadenceStepsDownButNeverStops`, which also asserts the cadence never becomes a CAP — lan.go's announce cap is only safe while it delegates late discovery to this loop |
+| **the arm publishes once and is un-findable for 29 days** *(replayable: `arm-publishes-once-and-goes-dark`)* | `the arm published 1 times over ~12 periods — it publishes ONCE and the record then expires` | `TestAnArmRepublishesForAsLongAsItIsArmed`, driven with small periods because there is no fake clock in this package, plus a row asserting the D6 LAN-window suppression still holds |
+| **a misaddressed mutation reaches whatever is active** *(replayable: `misaddressed-mutation-gets-the-active-doc`)* | `/api/pages addressed to an unknown document = 200, want 409` | `TestEveryMutatingRouteRefusesAMisaddressedDocument` — ADR-001's whole failure mode, driven at all **eleven** mutating routes where the Go side previously drove two |
+
+**One row was refused twice before it counted, and both refusals were the harness working.** The
+first attempt replayed against a HEAD that did not yet contain the test file, so `redproof.sh`
+reported "with the defect applied, the check still PASSED" over `[no tests to run]` — a row for an
+uncommitted check is a claim about a tree nobody has. The sweep-12 jsdom row hit the sibling case,
+going red on a stimulus assertion rather than the one its `EXPECT` named.
+
+**No row for the three body-first routes.** `/api/pages`, `/api/redact` and `/api/outline` parse
+their whole multipart body and run the PDF operation before resolving the document — but the law
+still holds, the commit is still refused, and there is no defect to reintroduce. It is a cost, filed
+as its own item, not a failure.

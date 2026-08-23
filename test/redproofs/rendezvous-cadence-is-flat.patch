@@ -1,0 +1,20 @@
+diff --git a/internal/server/ceremonynet.go b/internal/server/ceremonynet.go
+index 14f83db..109d51e 100644
+--- a/internal/server/ceremonynet.go
++++ b/internal/server/ceremonynet.go
+@@ -83,14 +83,7 @@ const candidateSkewAllowance = 90 * time.Second
+ // the same figure the republish uses: a side that re-fetches no slower than its peer republishes
+ // cannot miss a generation of the peer's record.
+ func rendezvousInterval(elapsed time.Duration) time.Duration {
+-	switch {
+-	case elapsed < connectDeadline:
+-		return candidateFetchEvery
+-	case elapsed < 30*time.Minute:
+-		return 30 * time.Second
+-	default:
+-		return candidateLife() / 2
+-	}
++	return candidateFetchEvery
+ }
+ 
+ // republishEvery is how often an armed side refreshes the record that says where to reach it.
