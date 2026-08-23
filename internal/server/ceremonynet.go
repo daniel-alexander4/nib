@@ -457,9 +457,9 @@ func (s *Server) feedCeremonyRace(ctx context.Context, cer *ceremonyID, cands []
 	in := make(chan candidate, maxRaceCandidates)
 	dht := make(chan candidate, maxRaceCandidates)
 	// The gate writer is `feedCandidates` (`cer.gate.Accept`), and the gate is not concurrent-safe.
-	// The caller JOINS this WaitGroup after cancelling, so the D19 diagnosis reads `cer.gate` when no
-	// goroutine is still writing it — an in-flight Fetch can otherwise run one more Accept after the
-	// cancel (P05.S11 grill: the data race). All four feed goroutines join it.
+	// The caller (connect) cancels and JOINS this WaitGroup before returning, so the re-race loop's
+	// next connect does not spawn a second feed while this one's writer is still running — two
+	// overlapping feeds would race on the gate (P05.S11). All four feed goroutines join it.
 	var wg sync.WaitGroup
 	wg.Add(1)
 	go func() {
@@ -642,8 +642,9 @@ func (s *Server) connect(ctx context.Context, cer *ceremonyID, hl *p2p.Handshake
 			// Handshake only — the stream is deferred until the role is known after glare (S09a).
 			return p2p.QUICDialHandshakeOn(ctx, cer.end, c.Addr, cert, key, peerFP, lanDialTimeout)
 		})
-		// Stop the feed and JOIN it before reporting: the gate writer must be quiesced before the
-		// caller's D19 diagnosis reads cer.gate (P05.S11 grill — the data race).
+		// Stop the feed and JOIN it before reporting: this iteration's gate WRITER (feedCandidates,
+		// which calls the non-concurrent-safe cer.gate.Accept) must be quiesced before the re-race
+		// loop's NEXT connect spawns a second feed, or the two would race on the gate (P05.S11).
 		feedCancel()
 		feedWG.Wait()
 		dialCh <- hsResult{conn, derr}

@@ -365,7 +365,7 @@ func (se *session) status() sessionStatus {
 	// A waiting ceremony arm (not yet in a session) shows why nothing has connected — computed from
 	// signals safe to read while the feed runs (rz.Stats mutex-guarded, peerSeen atomic). Outside the
 	// lock: diagnose() takes rz.mu/cer.mu, and holding se.mu across them would nest three locks.
-	if cer != nil && !inSession {
+	if cer != nil && !inSession && cer.bootstrapDone.Load() {
 		if d := cer.diagnose(); d.cause != causeUndiagnosed {
 			st.Diagnosis = &diagnosisView{Cause: causeName(d.cause), Summary: d.summary, Detail: d.detail}
 		}
@@ -1027,6 +1027,7 @@ func (s *Server) runCeremonyReceive(ctx context.Context, cer *ceremonyID, hl *p2
 	bctx, bcancel := context.WithTimeout(ctx, bootstrapBudget)
 	_ = cer.rz.Bootstrap(bctx)
 	bcancel()
+	cer.bootstrapDone.Store(true) // the arm-side diagnosis is meaningful only after this (diff-grill)
 
 	// The re-race / re-delivery loop (P05.S10). Two phases keyed on whether this hop has signed:
 	//
