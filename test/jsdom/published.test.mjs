@@ -76,6 +76,11 @@ const PUBLISHED = [
   { type: 'pendingView', readers: ['web/app.js'] },
   { type: 'verifyView', readers: ['web/app.js'] },
   { type: 'sendResult', readers: ['web/app.js'] },
+  // P05.S11's D19 diagnosis surface. Published now; RENDERED by P06's ceremony panel, which is built
+  // last — so the fields carry a reader only once that lands. Named here (shape) and in UNREAD_KNOWN
+  // (fields) so the gap is a recorded decision, not the historyEvicted-shaped oversight this scan exists for.
+  { type: 'diagnosisResponse', readers: ['web/app.js'] },
+  { type: 'diagnosisView', readers: ['web/app.js'] },
   { type: 'externalSignerInfo', readers: ['web/app.js'] },
 
   // Read in Go, not in the client — the whole reason this scan names its readers per
@@ -135,6 +140,13 @@ const EXCLUDED = {
 const UNREAD_KNOWN = {
   'updateResponse.managed': 'read in Go by assetURL (internal/server/update.go) BEFORE serialization, to pick a .deb over a raw binary. It is on the wire for no client that wants it. Not counted as read: a field consumed by the code that sets it has no consumer at the far end, which is the whole property here.',
   'imageMeta.mime': 'the image library lists id/name/builtin and the client shows an <img src="/api/images/{id}">, which needs no mime. Informational in a listing API; harmless, and named so it is a decision rather than an oversight.',
+  // P05.S11's D19 diagnosis: the plain summary + technical detail + cause tag. P06's ceremony panel
+  // renders them (plain first, detail behind a disclosure); no client reads them until it is built.
+  'sessionStatus.diagnosis': 'P05.S11 arm-side D19 diagnosis; rendered by P06 (the ceremony panel), unbuilt.',
+  'diagnosisResponse.cause': 'P05.S11 D19 machine tag; rendered by P06, unbuilt.',
+  'diagnosisResponse.summary': 'P05.S11 D19 plain summary; rendered by P06, unbuilt.',
+  'diagnosisView.cause': 'P05.S11 D19 machine tag; rendered by P06, unbuilt.',
+  'diagnosisView.summary': 'P05.S11 D19 plain summary; rendered by P06, unbuilt.',
 };
 
 // ── The scan ─────────────────────────────────────────────────────────────────
