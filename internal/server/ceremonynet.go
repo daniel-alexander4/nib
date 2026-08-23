@@ -63,6 +63,51 @@ func serverTransport(t ceremony.Transport) string {
 // the only thing that caps a publisher's generosity.
 const candidateSkewAllowance = 90 * time.Second
 
+// rendezvousInterval steps the DHT fetch cadence down over the life of an arm.
+//
+// **The constant was sized for a 300 s race and P05.S09b gave it a thirty-day one.** The receive
+// arm's window is `MaxCeremonyLife`, and `feedCandidates` polled at a flat 5 s for the whole of
+// it — and a "poll" here is not one datagram but a full iterative DHT traversal fanned out to
+// the routing table, so the ceiling is on the order of millions of `get` queries aimed at
+// strangers, at a BEP-44 target only two parties ever touch. `lan.go` computed exactly this harm
+// for the LAN announcer (5.2M multicast datagrams) and capped the announcer at five minutes; the
+// DHT half of the same arm never got the same treatment.
+//
+// It steps rather than caps, and that distinction is load-bearing: `lan.go`'s cap is only safe
+// BECAUSE it delegates late discovery to this loop ("a baton that arrives later is discovered
+// over the DHT, which the connect arm feeds for the whole window"). Stopping this loop would
+// leave a long arm with no discovery at all.
+//
+// The first tier is unchanged at `candidateFetchEvery`, so the dialing side — bounded by
+// `connectDeadline` — behaves exactly as it did. The ceiling is `candidateLife()/2`, which is
+// the same figure the republish uses: a side that re-fetches no slower than its peer republishes
+// cannot miss a generation of the peer's record.
+func rendezvousInterval(elapsed time.Duration) time.Duration {
+	switch {
+	case elapsed < connectDeadline:
+		return candidateFetchEvery
+	case elapsed < 30*time.Minute:
+		return 30 * time.Second
+	default:
+		return candidateLife() / 2
+	}
+}
+
+// republishEvery is how often an armed side refreshes the record that says where to reach it.
+//
+// **A published record lives eight minutes and the arm lives thirty days.** `candidateLife()` is
+// bounded above by `ceremony.MaxCandidateLife`, a READER-side ceiling of one hour that every
+// peer enforces — so no value of the record's own expiry can cover an arm, and republishing is
+// the only mechanism that can. Without it the arm is un-findable for 29 days 23 hours 52 minutes
+// of a 30-day window: a peer dialling at hour three finds nothing, and D19 tells them the other
+// side "hasn't started their ceremony yet" about a machine that has been listening for hours.
+//
+// Half the record's life, so a generation is always in place before the last one expires. It is
+// deliberately NOT the fetch cadence: a republish is only ever needed before the record expires,
+// while a fetch is a poll for something that may not exist yet, and tying them would republish
+// every five seconds during a race.
+func republishEvery() time.Duration { return candidateLife() / 2 }
+
 func candidateLife() time.Duration {
 	return connectDeadline + 2*rendezvousPublishBudget + candidateSkewAllowance
 }
@@ -240,7 +285,7 @@ func screenedMappedEndpoint(ext netip.Addr, port uint16) (ceremony.Endpoint, boo
 // **It closes `out`, and that is the contract that lets the race end.** `raceCandidates`
 // watches its parent context, but its feeder also has to stop consuming — and P05.S03's leak
 // was exactly this shape one layer down. The caller owns the context; this owns the channel.
-func (c *ceremonyID) feedCandidates(ctx context.Context, out chan<- candidate, peerFP []byte, label, name string) {
+func (c *ceremonyID) feedCandidates(ctx context.Context, out chan<- candidate, peerFP []byte, label, name string, interval func(time.Duration) time.Duration) {
 	defer safe.Recover("candidate feed")
 	defer close(out)
 	if c == nil || c.rz == nil {
@@ -251,6 +296,7 @@ func (c *ceremonyID) feedCandidates(ctx context.Context, out chan<- candidate, p
 		return
 	}
 	sent := 0
+	started := time.Now()
 	for {
 		sealed, _, ferr := c.rz.Fetch(ctx, seed, c.gate.Salt())
 		if ferr == nil {
@@ -294,7 +340,7 @@ func (c *ceremonyID) feedCandidates(ctx context.Context, out chan<- candidate, p
 			}
 		}
 		select {
-		case <-time.After(candidateFetchEvery):
+		case <-time.After(interval(time.Since(started))):
 		case <-ctx.Done():
 			return
 		}
@@ -355,7 +401,7 @@ func (s *Server) startArmedRendezvous(cer *ceremonyID, transport string, inbound
 		// peer's QUIC Initial can land. Concurrent with the publish below and bound to the arm
 		// ctx, so it runs for the whole ceremony and stops at teardown.
 		punchCh := make(chan candidate, maxRaceCandidates)
-		go cer.feedCandidates(ctx, punchCh, nil, "", "")
+		go cer.feedCandidates(ctx, punchCh, nil, "", "", rendezvousInterval)
 		go punchLoop(ctx, cer.end.Punch, &punchBudget{}, punchCh, punchInterval)
 
 		// The ARM ctx, not a publish-budget child: the port-mapping REFRESH lives as long as the
@@ -393,12 +439,45 @@ func hopScoped(c candidate, hop int) bool {
 // publish-write to the DHT, the correlation handle the arm was built to suppress.
 func publishWhenSlow(ctx context.Context, cer *ceremonyID, transport string) {
 	defer safe.Recover("dial publish")
+	// Each republish re-reads the mapper's CURRENT endpoints, so a refreshed lease that kept
+	// its external port is carried automatically. A lease that MOVED port is not this loop's
+	// to fix: the peer's gate has already admitted the old address and its cap has no room for
+	// the new one, which is item 20 and needs a decision this loop cannot make. `portMoved`
+	// still has no reader; the republish does not silently become one.
+	publishLoop(ctx, browseWindow, republishEvery(), func(ctx context.Context) {
+		_ = cer.publishCandidates(ctx, transport)
+	})
+}
+
+// publishLoop is the publish, then the REPUBLISH that keeps it alive (/pending 256).
+//
+// Split out with its periods as parameters, and for the reason `startAnnouncing` takes its
+// window: there is no fake clock anywhere in this package, so "driven" means driving this
+// function with small durations and counting, not waiting on wall time.
+//
+// The first wait is the D6 suppression and it is not optional: a ceremony that completes over
+// the LAN inside `browseWindow` must never write to the DHT at all, because the write is itself
+// the correlation handle the arm exists to suppress. A republish loop that fired before that
+// window would re-open exactly what criterion 10's amendment closed — so the loop cannot start
+// until the first publish has earned its way past it.
+func publishLoop(ctx context.Context, first, every time.Duration, publish func(context.Context)) {
 	select {
-	case <-time.After(browseWindow):
+	case <-time.After(first):
 	case <-ctx.Done():
 		return // a faster tier won inside the LAN window — do not publish
 	}
-	_ = cer.publishCandidates(ctx, transport)
+	publish(ctx)
+	for {
+		select {
+		case <-time.After(every):
+			if ctx.Err() != nil {
+				return
+			}
+			publish(ctx)
+		case <-ctx.Done():
+			return
+		}
+	}
 }
 
 // raceWithRendezvous runs a race fed by the LAN candidates already in hand AND, when the
@@ -461,7 +540,7 @@ func (s *Server) feedCeremonyRace(ctx context.Context, cer *ceremonyID, cands []
 	go func() {
 		defer safe.Recover("candidate feed")
 		defer wg.Done()
-		cer.feedCandidates(ctx, dht, peerFP, label, name)
+		cer.feedCandidates(ctx, dht, peerFP, label, name, rendezvousInterval)
 	}()
 
 	// S08b: the dial side is symmetric — it PUBLISHES its own address (so the arm can punch

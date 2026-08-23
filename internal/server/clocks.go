@@ -119,13 +119,18 @@ const (
 	// package.
 	rendezvousPublishBudget = rendezvous.PublishBudget
 
-	// candidateFetchEvery is how often the dialing side re-fetches its peer's record while a
-	// race is running.
+	// candidateFetchEvery is the STARTING cadence at which a side re-fetches its peer's
+	// record. `rendezvousInterval` steps it down from here; see that function for why.
 	//
 	// The peer may not have published yet — that is the ordinary case, not a failure — so
 	// this is a poll. Five seconds gives roughly a dozen attempts inside `connectDeadline`
 	// while leaving the 45 s fetch budget room to be the thing that bounds each one, and it
 	// is the cadence D16's "nothing emits at full rate for the whole deadline" is about at
 	// this tier. The punch's step-down is S08's and is a different cadence.
+	//
+	// **It used to say "the dialing side", and that stopped being the whole truth at
+	// P05.S09b** (/pending 256): the receive arm runs the same loop bounded by
+	// `MaxCeremonyLife` instead of `connectDeadline`, so the same constant that gives a dozen
+	// polls in a 300 s race gives hundreds of thousands over thirty days.
 	candidateFetchEvery = 5 * time.Second
 )

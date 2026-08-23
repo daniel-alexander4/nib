@@ -70,7 +70,13 @@ type CandidateStats struct {
 	// Split from DroppedDuplicate because they mean opposite things and the ordinary path
 	// produces this one constantly: BEP-44 serves the same value to every fetch, and D16's
 	// amended cadence runs roughly ten fetches across a 300 s race, so an honest peer with
-	// eight candidates and one publish yields Accepted=8 and Reoffered=72. Counting those
+	// eight candidates and one publish yields Accepted=8 and Reoffered=72.
+	//
+	// **Those figures describe the 300 s RACE, and an armed side runs the same loop for up to
+	// thirty days.** Its fetch cadence steps down (`rendezvousInterval`) and its peer republishes
+	// the same addresses (`republishEvery`), so `seen` stays bounded by the address set rather
+	// than by time — but this counter is not: over a long arm it reaches six figures and means
+	// nothing more alarming than "the arm stayed up". Read it against the window, not against 72. Counting those
 	// as duplicates would make the attack indicator read high on every healthy ceremony —
 	// an alarm that is always on is not an alarm.
 	Reoffered       uint64
