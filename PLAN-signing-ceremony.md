@@ -3731,7 +3731,7 @@ Tasks (firmed 2026-08-22):
   the extended-window arm. Diff-grill (1 agent): clean bill, double-close / lifetime / no-runSession-
   regression all verified sound.
 
-#### P05.S10 — Channel loss either side of the confirmation gate *(D18, D24; criterion 15)*
+#### P05.S10 — Channel loss either side of the confirmation gate *(D18, D24; criterion 15)* *(done 2026-08-22, v1.117.92)*
 Scope: implement D18's split at the confirmation gate (`runVerification`, `verify.go:73`, the L2
 spoken check that precedes any document byte in both `Initiate` and `Receive`):
 - **Channel lost BEFORE both confirmations** — re-race within the remaining connect deadline; the
@@ -3861,6 +3861,23 @@ Tasks (firmed 2026-08-22, deepdive + Dan's choice A):
   under D18, and why the post-signing window is bounded.
 
 Grill verdict: the design is sound; the six are joint defects, all dispositioned. **Ready to build.**
+
+**CLOSED 2026-08-22 (v1.117.92). Acceptance ledger — criterion 15, split on `and`:**
+- *"Losing the channel before confirmation re-races and re-confirms"* — **MET, driven E2E.**
+  `TestCeremonyReRacesAfterEarlyChannelLoss`: Alice drops before the spoken check, Bob re-races and
+  completes on a fresh channel — whose EKM exporter gives fresh words (`verify.go:162`), the re-confirm.
+- *"losing it after confirmation restarts the hop and re-delivers rather than re-signs"* — **MET,
+  driven E2E + red-proved.** `TestCeremonyReDeliversAfterReconnect` (reconnect re-delivers the cached
+  signature, consent not re-asked, receiver opens it once), `TestReDeliveryIsIdempotent` + red-proof
+  `re-delivery-re-signs` (a re-sign would differ, Contribute being non-deterministic).
+- *"Both driven"* — **MET** (both E2E, plus the unit/red-proof crux and the classifier whitelist test).
+- D18's channel-binding half (a confirmation on one channel rejected on any other) is held by the EKM
+  exporter, structural and pre-existing (S10-5).
+
+**Diff-grill (1 agent) fixed one defect** — the receiver opened a duplicate document per re-delivery —
+and verified seven points sound. **Scope stated, not built:** the cache is in-memory (channel loss);
+D24's persist-before-deliver / P08's process-kill is P08's; re-delivery re-runs the human spoken check
+(D18-correct — D4's machine verification for the invited path is a P01/D4 improvement, not S10's).
 
 
 #### P05.S11 — D19's causes 1-4, and the status surface P06 renders *(D19, D34; criteria 6, 7, 8, 9)*
