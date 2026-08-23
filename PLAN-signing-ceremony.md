@@ -3880,7 +3880,7 @@ D24's persist-before-deliver / P08's process-kill is P08's; re-delivery re-runs 
 (D18-correct — D4's machine verification for the invited path is a P01/D4 improvement, not S10's).
 
 
-#### P05.S11 — D19's causes 1-4, and the status surface P06 renders *(D19, D34; criteria 6, 7, 8, 9)*
+#### P05.S11 — D19's causes 1-4, and the status surface P06 renders *(D19, D34; criteria 6, 7, 8, 9)* *(done 2026-08-22, v1.117.100)*
 Scope: turn a FAILED connect into D19's plain-language diagnosis. Cause 5 (clock skew) already
 ships (D35, `lan.go:497`), and the mapping-class probe already ships (P04: `rendezvous.ProbeSelf`
 → `Class{Mapping: EndpointIndependent|Dependent}` and `SharedAddressSpace` for 100.64/10). What is
@@ -3986,6 +3986,26 @@ Tasks (firmed 2026-08-22, deepdive):
 - **T05 adds** the `-race` case and the double-NAT (answered-unroutable) case, not only CGNAT.
 
 Grill verdict: the diagnosis design is sound; these are joint defects at the code seams, all dispositioned.
+
+**CLOSED 2026-08-22 (v1.117.100). Acceptance ledger — criteria @2907/@2922, split on `and`:**
+- *"each of D19's four causes produces its own message"* — **MET.** `classifyD19` + `TestD19ClassifierTable`
+  drive all four with the grill-corrected ordering (cause 2 before cause 1, keyed on the atomic peerSeen).
+- *"the mapping-class test distinguishes the two NAT classes from two DHT observations"* — **MET** (the
+  P04 `ProbeSelf`/`Class` probe S11 now RETAINS on the ceremony rather than discarding — the deepdive's
+  primary defect).
+- *"cause 3's message names port mapping and a shared VPN, never a port-forward a carrier's NAT forbids"*
+  — **MET, red-proved** (`cgnat-told-to-port-forward`): the advice is conditional on CGNAT/double-NAT (D9),
+  and the double-NAT `mapUnroutable` signal — which `SharedAddressSpace` alone misses — is retained.
+- *"cause 3 degrades to cause 4 when the observations don't arrive"* — **MET** (the degrade row; `MappingUnknown`
+  is the zero value).
+- **L1 pin (diagnostic only)** — **MET** (`TestD19DiagnosisIsIdentityFree`; `classifyD19` takes no identity).
+- Surfaced two ways: the dial-side structured HTTP error body (routing the co-sign path through the classifier,
+  which it bypassed before, and lifting cause 5) and the arm-side `sessionStatus` (gated on `bootstrapDone`).
+
+**Diff-grill (1 agent): seven attack points clean, two LOW fixed** (the join-comment misattribution, the
+warmup false cause-2). **Deferred to P06** (D34): the DHT disclosure surface — `ParseInvitation` still has no
+non-test caller, so a disclosure clause has nowhere to land until the ceremony panel is built (@2884). Full
+suite green under `-race`.
 
 
 Scope: `connectFailure` yields three sentences — two clock-skew directions and one generic (`session.go:1023-1029`). Causes 1-4 do not exist; P04.S02 built the classification they read.
