@@ -64,6 +64,16 @@ type ceremonyID struct {
 	// already per-hop, so the hop is implicit. Guarded by mu; cleared by close, so no signed bytes
 	// outlive the ceremony. In-memory only — the process-kill persistence D24 names is P08's.
 	reDelivery map[string][]byte
+	// self is this side's most recent DHT self-address probe — its mapping CLASS and whether the
+	// mapped address is in shared (CGNAT) space. `ProbeSelf` computes the full result but the
+	// publish path used only the addresses and DISCARDED the class (P05.S11 deepdive); retained here
+	// (under mu, last-write-wins) so the failure diagnosis (D19 cause 3) can read it. Zero value is
+	// MappingUnknown, which degrades cause 3 to cause 4 cleanly.
+	self rendezvous.SelfAddress
+	// mapUnroutable is true once the router answered the port-map tier with an address that could
+	// not be published (double-NAT / RFC-1918 / low port) — distinct from "the tier got no answer",
+	// because D9's cause-3 advice diverges: an unroutable answer means a VPN, never a port-forward.
+	mapUnroutable bool
 }
 
 // setStopNet and setPortMap store the two shared fields under the lock.
@@ -126,6 +136,29 @@ func (c *ceremonyID) hasSigned() bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return len(c.reDelivery) > 0
+}
+
+// setSelf records this side's DHT self-address probe (mapping class + shared-space) for the D19
+// diagnosis (P05.S11). Under mu; last-write-wins across re-race iterations — the NAT class is a
+// property of this host, stable across them.
+func (c *ceremonyID) setSelf(self rendezvous.SelfAddress) {
+	if c == nil {
+		return
+	}
+	c.mu.Lock()
+	c.self = self
+	c.mu.Unlock()
+}
+
+// markMapUnroutable records that the port-map tier got an UNROUTABLE answer (double-NAT). Monotonic:
+// once true it stays, so a later iteration's no-answer does not erase the double-NAT signal.
+func (c *ceremonyID) markMapUnroutable() {
+	if c == nil {
+		return
+	}
+	c.mu.Lock()
+	c.mapUnroutable = true
+	c.mu.Unlock()
 }
 
 func (c *ceremonyID) setPortMap(pm *portMapper) {

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net"
 	"net/netip"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -108,6 +109,10 @@ func (c *ceremonyID) publishCandidates(armCtx context.Context, transport string)
 	if err != nil {
 		return fmt.Errorf("could not learn this machine's public address: %w", err)
 	}
+	// Retain the probe for the D19 diagnosis BEFORE the len(addrs)==0 early return below — cause 3 is
+	// exactly that early-return case, so a store at end-of-function would never run when it is needed
+	// (P05.S11 grill). The class and shared-space are what publishableEndpoints throws away.
+	c.setSelf(self)
 	addrs := publishableEndpoints(self, transport)
 	// The router port-mapping tier (D15, tier 3), appended to the reflexive candidates. It is
 	// obtained HERE and not inside `publishableEndpoints`, which is a pure function of a DHT
@@ -203,6 +208,7 @@ func (c *ceremonyID) appendMappedCandidate(armCtx context.Context, addrs []cerem
 		// A private/CGNAT/low-port answer: we will not publish it, and a mapping we do not
 		// publish must not be left on the router — delete it now rather than leak it to lease
 		// expiry (grill F1 for the screen, D15 for the delete).
+		c.markMapUnroutable() // the router answered but is behind another NAT — D19 cause 3 → VPN, not port-forward
 		mapper.close()
 		return addrs
 	}
@@ -432,7 +438,7 @@ func (s *Server) raceWithRendezvous(cer *ceremonyID, cands []candidate, cert, ke
 		}) // no ceremony: fresh sockets
 	}
 
-	in := s.feedCeremonyRace(ctx, cer, cands, peerFP, label, name)
+	in, _ := s.feedCeremonyRace(ctx, cer, cands, peerFP, label, name)
 	// The ceremony QUIC dial goes out the shared endpoint (S08, caveat 7).
 	return raceCandidates(ctx, in, func(ctx context.Context, c candidate) (*p2p.Conn, error) {
 		return dialPeerWithin(ctx, c.Transport, c.Addr, cert, key, peerFP, lanDialTimeout, cer.end)
@@ -446,21 +452,31 @@ func (s *Server) raceWithRendezvous(cer *ceremonyID, cands []candidate, cert, ke
 // suppresses the late publish and further punches. Extracted from raceWithRendezvous so the
 // symmetric-racing coordinator (P05.S09) drives the SAME feed under a ctx it shares with its
 // accept loop — the dial and the accept must cancel together on a glare win.
-func (s *Server) feedCeremonyRace(ctx context.Context, cer *ceremonyID, cands []candidate, peerFP []byte, label, name string) <-chan candidate {
+func (s *Server) feedCeremonyRace(ctx context.Context, cer *ceremonyID, cands []candidate, peerFP []byte, label, name string) (<-chan candidate, *sync.WaitGroup) {
 	in := make(chan candidate, maxRaceCandidates)
 	dht := make(chan candidate, maxRaceCandidates)
-	go cer.feedCandidates(ctx, dht, peerFP, label, name)
+	// The gate writer is `feedCandidates` (`cer.gate.Accept`), and the gate is not concurrent-safe.
+	// The caller JOINS this WaitGroup after cancelling, so the D19 diagnosis reads `cer.gate` when no
+	// goroutine is still writing it — an in-flight Fetch can otherwise run one more Accept after the
+	// cancel (P05.S11 grill: the data race). All four feed goroutines join it.
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() { defer wg.Done(); cer.feedCandidates(ctx, dht, peerFP, label, name) }()
 
 	// S08b: the dial side is symmetric — it PUBLISHES its own address (so the arm can punch
 	// toward it) and PUNCHES toward the peer's candidates. Both are suppressed by the same
 	// LAN-window logic: `ctx` is cancelled when the race returns a winner, so if a faster tier
 	// wins inside the browse window neither the late publish (D6 privacy) nor further punch
 	// packets fire. The QUIC transport is fixed — the punch is QUIC-only (D8).
-	go publishWhenSlow(ctx, cer, transportQUIC)
+	wg.Add(1)
+	go func() { defer wg.Done(); publishWhenSlow(ctx, cer, transportQUIC) }()
 	punchCh := make(chan candidate, maxRaceCandidates)
-	go punchLoop(ctx, cer.end.Punch, &punchBudget{}, punchCh, punchInterval)
+	wg.Add(1)
+	go func() { defer wg.Done(); punchLoop(ctx, cer.end.Punch, &punchBudget{}, punchCh, punchInterval) }()
 
+	wg.Add(1)
 	go func() {
+		defer wg.Done()
 		defer safe.Recover("candidate merge")
 		defer close(in)
 		defer close(punchCh)
@@ -489,7 +505,7 @@ func (s *Server) feedCeremonyRace(ctx context.Context, cer *ceremonyID, cands []
 			}
 		}
 	}()
-	return in
+	return in, &wg
 }
 
 // dialerCeremony gives the DIALING side a ceremony identity and a DHT to fetch from.
@@ -607,11 +623,16 @@ func (s *Server) connect(ctx context.Context, cer *ceremonyID, hl *p2p.Handshake
 	dialCh := make(chan hsResult, 1)
 	go func() {
 		defer safe.Recover("glare dial")
-		in := s.feedCeremonyRace(cctx, cer, cands, peerFP, label, name)
-		conn, derr := raceCandidates(cctx, filterQUIC(cctx, in), func(ctx context.Context, c candidate) (*p2p.HandshakedConn, error) {
+		feedCtx, feedCancel := context.WithCancel(cctx)
+		in, feedWG := s.feedCeremonyRace(feedCtx, cer, cands, peerFP, label, name)
+		conn, derr := raceCandidates(cctx, filterQUIC(feedCtx, in), func(ctx context.Context, c candidate) (*p2p.HandshakedConn, error) {
 			// Handshake only — the stream is deferred until the role is known after glare (S09a).
 			return p2p.QUICDialHandshakeOn(ctx, cer.end, c.Addr, cert, key, peerFP, lanDialTimeout)
 		})
+		// Stop the feed and JOIN it before reporting: the gate writer must be quiesced before the
+		// caller's D19 diagnosis reads cer.gate (P05.S11 grill — the data race).
+		feedCancel()
+		feedWG.Wait()
 		dialCh <- hsResult{conn, derr}
 	}()
 
