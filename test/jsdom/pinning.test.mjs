@@ -478,8 +478,11 @@ test('every bare function call resolves to something app.js declares', () => {
 
   const declared = new Set();
   const add = (n) => { const t = String(n).trim().split(/[\s=[\]{}:.]/)[0]; if (t) declared.add(t); };
-  for (const m of src.matchAll(/(?:^|\n)\s*(?:async\s+)?function\s+([A-Za-z_$][\w$]*)/g)) add(m[1]);
-  for (const m of src.matchAll(/(?:^|\n)\s*(?:const|let|var)\s+([^=\n;]+)/g)) m[1].split(',').forEach(add);
+  // `export` is part of both prefixes. app.js had no exports at all until `dhashFromGrid` and
+  // `hamming` were exported for the tier-3 hash instrument, and the omission read as two
+  // undeclared calls — the guard accusing the product of a defect that was its own blind spot.
+  for (const m of src.matchAll(/(?:^|\n)\s*(?:export\s+(?:default\s+)?)?(?:async\s+)?function\s+([A-Za-z_$][\w$]*)/g)) add(m[1]);
+  for (const m of src.matchAll(/(?:^|\n)\s*(?:export\s+)?(?:const|let|var)\s+([^=\n;]+)/g)) m[1].split(',').forEach(add);
   for (const m of src.matchAll(/import\s*\{([^}]*)\}/g)) m[1].split(',').forEach((n) => add(n.split(' as ').pop()));
   for (const m of src.matchAll(/import\s+([A-Za-z_$][\w$]*)\s+from/g)) add(m[1]);   // default imports
   for (const m of src.matchAll(/import\s*\*\s*as\s+([A-Za-z_$][\w$]*)/g)) add(m[1]);

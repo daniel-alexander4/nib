@@ -3027,30 +3027,120 @@ function detectMoves(steps, ka, kb, eq = (x, y) => x === y) {
 }
 
 // --- Perceptual page hashing: align two scans (or a scan vs a digital PDF) when
-// neither side has text to fingerprint. dHash renders each page tiny, reduces it
-// to a 9×8 grayscale grid, and records whether each pixel is brighter than its
-// right neighbour — 64 bits robust to scan noise, slight skew, and resampling.
-const DHASH_T = 12; // max Hamming distance (of 64) for two pages to count as "the same page"
+// neither side has text to fingerprint. Each page is rendered small, reduced to a 9×8
+// greyscale grid, and every cell compared with its right neighbour — 128 bits.
+//
+// ── Why a RATIO, and why three states per comparison ─────────────────────────
+// This was a plain dHash — `here > right`, one bit, 64 of them — until it was measured
+// (/pending 8, v1.117.137). Three things came out of that, and each shapes a line below:
+//
+//   * **22 of the 64 comparisons are TIES**, adjacent cells of equal brightness, because a
+//     page is mostly paper. A strict `>` files every tie under "darker", so a gradient that
+//     brightens left-to-right left all 22 alone (distance 0) while one that darkened flipped
+//     all 22 (distance 21). The SIGN of an illumination gradient decided everything.
+//   * **The margin was INVERTED**: a genuinely different page measured 10 bits away while
+//     the same page under a reverse gradient measured 21, so no threshold could separate
+//     them. Retuning was not available.
+//   * **A blank page paired with every content page** — 6 to 11 bits — because a blank hashes
+//     to all-zeros and so does every tie. A dropped or double-fed page aligned silently.
+//
+// So: compare in LOG space, which makes a multiplicative illumination change shift every pair
+// by the same amount whatever its brightness (an absolute difference does not — measured, the
+// same 10% ramp moves a dark pair by under 1 level and a bright pair by 10). Emit a TRIT —
+// lighter, darker, or neither — so "tie" is its own symbol instead of being merged into
+// "darker"; that is what restores discrimination. And make the band ADAPTIVE — a quantile of the
+// page's own distribution rather than a constant. That last part is reasoning, not a measurement:
+// a pale scan compresses every log-ratio toward zero in proportion to its contrast, so any band
+// wide enough to reject noise on a normal page swallows the real edges on a faint one, and the
+// page stops matching itself. What IS measured is that the adaptive band survives it — a
+// 20%-contrast render of a page is 0 bits from its full-contrast render.
+// The threshold is 12 of 128, MEASURED in a real browser against real renders rather than reasoned
+// about (`test/ui/compare-hash.test.mjs`, which is where these fixtures live):
+//
+//   same page, degraded   heavy sensor noise 0 · a 20%-contrast scan 0 · a ±25% illumination
+//                         gradient 0 · 1° of skew 0 · 2° 2 · 4° 12 · 6° 18 · a 2 px translation 0 ·
+//                         4 px 4 · 6 px 10 · 10 px 30 · noise+skew+gradient+shift together 8
+//   a different page      21 at the nearest, then 26, 26, 28, 49, 55, 72, 84
+//
+// Twelve is above every same-page figure up to 4° of skew and a 6 px shift, and below the nearest
+// different page. Beyond that the two populations overlap and no threshold exists: 10 px of
+// translation moves 30 bits, more than a different page does. That is the honest ceiling of a 9x8
+// reduction, not something a constant can fix.
+//
+// **It is NOT tuned for pages that are mostly paper.** Two scanned text pages differing only in
+// where their lines end measure 9-12 apart — astride this threshold. That limit is asserted rather
+// than described, in the same file, so improving it has to come back here.
+export const DHASH_T = 12; // max Hamming distance (of 128) for two pages to count as "the same page"
 
-// pageDHash rasterises one page small and returns its 64-bit dHash as 8 bytes.
-async function pageDHash(doc, n) {
-  const { canvas } = await renderPageCanvas(doc, n, 0.25); // small render; downscaled again below
-  const g = document.createElement('canvas');
-  g.width = 9; g.height = 8;
-  const ctx = g.getContext('2d');
-  ctx.drawImage(canvas, 0, 0, 9, 8); // box-filter down to the dHash grid
-  const px = ctx.getImageData(0, 0, 9, 8).data;
-  const lum = (i) => 0.299 * px[i] + 0.587 * px[i + 1] + 0.114 * px[i + 2];
-  const bytes = new Uint8Array(8);
-  let bit = 0;
+// DHASH_BAND_Q is where the band sits in the page's own distribution of |log ratio|. Below it
+// a comparison is called a tie. It is a quantile rather than a constant so the band scales
+// with the page's contrast.
+const DHASH_BAND_Q = 0.30;
+const DHASH_BAND_MIN = 0.02; // a floor, so a blank page does not get a band of zero
+
+// dhashFromGrid turns 72 cell luminances (9 wide, 8 tall, row-major) into the 128-bit hash.
+//
+// **It is a separate, EXPORTED function so the tier-3 instrument can call the product's own
+// encoder** (`test/ui/compare-hash.test.mjs`). That file used to reimplement this loop and said so:
+// "the render is the app's and the reduction is this file's — the seam where a future change to
+// `pageDHash` could drift from what is asserted here". The seam was real, and it was load-bearing:
+// every assertion about gradients, blank pages and inverted margins would have kept passing against
+// a product that no longer encoded this way. Exporting a pure function of 72 numbers is not the
+// `toolbarStyle` shape this repo deleted a feature over — there is no default that can be wrong and
+// no code path it adds; nothing in the product imports it.
+export function dhashFromGrid(lums) {
+  // The 64 log-ratios, left cell against its right neighbour. +1 keeps log finite on black.
+  const ratios = [];
   for (let y = 0; y < 8; y++) {
     for (let x = 0; x < 8; x++) {
-      const here = lum((y * 9 + x) * 4), right = lum((y * 9 + x + 1) * 4);
-      if (here > right) bytes[bit >> 3] |= 1 << (bit & 7);
-      bit++;
+      ratios.push(Math.log(lums[y * 9 + x] + 1) - Math.log(lums[y * 9 + x + 1] + 1));
     }
   }
+  const mags = ratios.map(Math.abs).sort((a, b) => a - b);
+  const band = Math.max(DHASH_BAND_MIN, mags[Math.floor(mags.length * DHASH_BAND_Q)]);
+
+  const bytes = new Uint8Array(16);
+  let bit = 0;
+  for (const d of ratios) {
+    if (d > band) bytes[bit >> 3] |= 1 << (bit & 7);
+    bit++;
+    if (d < -band) bytes[bit >> 3] |= 1 << (bit & 7);
+    bit++;
+  }
   return bytes;
+}
+
+// gridMeans reduces a rendered page canvas to 9x8 CELL MEANS — every source pixel counted once.
+//
+// **The mean is computed here rather than by `drawImage(canvas, 0, 0, 9, 8)`, and that is not a
+// micro-optimisation.** The old code did exactly that and its comment called it a box filter; a
+// tier-3 probe printing the resulting grid showed it was nothing of the kind. Chromium's default
+// `imageSmoothingQuality` on a ~150px-to-9px reduction effectively POINT-SAMPLES: a page of nine
+// flat columns came back as the exact column greys with no blending at all, and a page of text
+// came back as 63 cells of untouched paper and 9 cells of untouched ink. The hash was reading 72
+// individual pixels. Everything a perceptual hash is for — noise, texture, halftoning, a page of
+// text averaging to grey — depends on the average actually being taken.
+export function gridMeans(canvas) {
+  const w = canvas.width, h = canvas.height;
+  const px = canvas.getContext('2d').getImageData(0, 0, w, h).data;
+  const sums = new Float64Array(72), counts = new Float64Array(72);
+  for (let y = 0; y < h; y++) {
+    const gy = Math.min(7, (y * 8 / h) | 0);
+    for (let x = 0; x < w; x++) {
+      const gx = Math.min(8, (x * 9 / w) | 0), o = (y * w + x) * 4, c = gy * 9 + gx;
+      sums[c] += 0.299 * px[o] + 0.587 * px[o + 1] + 0.114 * px[o + 2];
+      counts[c]++;
+    }
+  }
+  const lums = [];
+  for (let i = 0; i < 72; i++) lums.push(counts[i] ? sums[i] / counts[i] : 0);
+  return lums;
+}
+
+// pageDHash rasterises one page small and returns its 128-bit hash as 16 bytes.
+async function pageDHash(doc, n) {
+  const { canvas } = await renderPageCanvas(doc, n, 0.25); // small render; averaged down below
+  return dhashFromGrid(gridMeans(canvas));
 }
 
 // pagePixelHashes hashes every page of a doc, reporting progress as it goes.
@@ -3063,8 +3153,9 @@ async function pagePixelHashes(doc, onProgress) {
   return hashes;
 }
 
-// hamming counts differing bits between two equal-length byte arrays.
-function hamming(a, b) {
+// hamming counts differing bits between two equal-length byte arrays. Exported for the same
+// reason as dhashFromGrid: the instrument compares with the product's comparison, not a copy.
+export function hamming(a, b) {
   let d = 0;
   for (let i = 0; i < a.length; i++) {
     let v = a[i] ^ b[i];
