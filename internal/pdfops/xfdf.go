@@ -5,7 +5,10 @@ import (
 	"encoding/json"
 	"encoding/xml"
 	"fmt"
+	"io"
 	"strings"
+
+	"golang.org/x/text/encoding/ianaindex"
 
 	"github.com/pdfcpu/pdfcpu/pkg/api"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/form"
@@ -122,12 +125,33 @@ func FillFormXFDF(pdf, data []byte) ([]byte, error) {
 // parseXFDF reads an XFDF document into a flat map of fully-qualified field name →
 // value(s). encoding/xml resolves no external entities and does no recursive
 // entity expansion, so XFDF is safe to parse; we additionally cap the input size.
+// xfdfCharset decodes an XFDF that declares an encoding other than UTF-8.
+//
+// **Without one, `encoding/xml` refuses the document outright** — "xml: encoding declared but
+// Decoder.CharsetReader is nil" — which Nib then wrapped as "invalid XFDF": the same sentence a
+// corrupted or non-XFDF file gets. The user was told their file is not an XFDF when the truth was
+// that Nib did not read that encoding (/pending 266). XFDF is an interchange format whose whole
+// job is arriving from another vendor's product, so the encoding it arrives in is not Nib's to
+// dictate.
+//
+// An encoding nothing can decode still fails, but by NAME. "this XFDF declares an encoding Nib
+// cannot read (x-mac-farsi)" tells the user what to do; "invalid XFDF" tells them to give up.
+func xfdfCharset(label string, input io.Reader) (io.Reader, error) {
+	enc, err := ianaindex.IANA.Encoding(label)
+	if err != nil || enc == nil {
+		return nil, fmt.Errorf("this XFDF declares an encoding Nib cannot read (%s)", label)
+	}
+	return enc.NewDecoder().Reader(input), nil
+}
+
 func parseXFDF(data []byte) (map[string][]string, error) {
 	if len(data) > maxXFDFBytes {
 		return nil, fmt.Errorf("XFDF too large")
 	}
 	var doc xfdfDoc
-	if err := xml.NewDecoder(bytes.NewReader(data)).Decode(&doc); err != nil {
+	dec := xml.NewDecoder(bytes.NewReader(data))
+	dec.CharsetReader = xfdfCharset
+	if err := dec.Decode(&doc); err != nil {
 		return nil, fmt.Errorf("invalid XFDF: %w", err)
 	}
 	values := map[string][]string{}
