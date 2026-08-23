@@ -47,15 +47,25 @@ import (
 type CandidateStats struct {
 	// Accepted is candidates added to the race set.
 	Accepted uint64
-	// DroppedOverCap is candidates from VALID records discarded because the set was full.
+	// DroppedOverCap is DISTINCT addresses from VALID records refused because the set was
+	// full — counted once each, however many times the record carrying them is re-served.
 	// This is the acceptance's "the N+1th is dropped and reported".
+	//
+	// The "once each" is the whole of it. An over-cap address is recorded in `seen` below,
+	// so a re-serve lands on Reoffered like any other repeat. Without that it re-dropped on
+	// every fetch: BEP-44 hands the same value to all ~10 fetches of a 300 s race, so one
+	// honest peer offering a ninth address inflated this ~10x and the counter read as
+	// attack traffic when it was one peer with one extra endpoint.
 	DroppedOverCap uint64
 	// DroppedDuplicate is a candidate repeated WITHIN one record. **Not cosmetic**: eight
 	// copies of one address concentrate the entire per-candidate punch budget on a single
 	// victim, which is the worst case the cap does not otherwise bound. No honest
 	// publisher emits one, so non-zero here is a modified peer.
 	DroppedDuplicate uint64
-	// Reoffered is a candidate we already hold, arriving again in a LATER record.
+	// Reoffered is a candidate we have already SEEN in an earlier record — held, or refused
+	// for fullness. The map is `seen`, not `held`, and this is the bucket that difference
+	// buys: a re-served over-cap address is the same phenomenon as a re-served held one, and
+	// this is the bucket that absorbs the noise so DroppedDuplicate stays an attack signal.
 	//
 	// Split from DroppedDuplicate because they mean opposite things and the ordinary path
 	// produces this one constantly: BEP-44 serves the same value to every fetch, and D16's
@@ -278,6 +288,15 @@ func (g *CandidateGate) Accept(sealed []byte, now time.Time) error {
 			// the race spends the rest of its budget dialling an endpoint that has expired.
 			// That trade is only measurable once the ladder and the mapping refresh both
 			// exist, so it is filed for P05 rather than guessed at here.
+			// Recorded as seen even though it is NOT held: `seen` is the set of addresses
+			// this gate has already made a decision about, and without this line the same
+			// address is re-decided — and re-counted — on every fetch that re-serves it.
+			// No admission changes: `addrs` is append-only and there is deliberately no
+			// eviction, so `len(g.addrs) >= MaxCandidates` is monotone and this address can
+			// never be admitted later anyway. The cost is that `seen` stops being bounded by
+			// MaxCandidates and becomes bounded by traffic instead (8 per record over ~10
+			// fetches, so ~80 entries), from an author already verified as the counterparty.
+			g.seen[a] = true
 			g.stats.DroppedOverCap++
 			continue
 		}

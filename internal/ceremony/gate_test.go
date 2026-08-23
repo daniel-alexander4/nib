@@ -764,3 +764,69 @@ func TestAHopNeedsTwoDistinctParties(t *testing.T) {
 			"symptom is a counterparty who never publishes, which reads as an offline peer.")
 	}
 }
+
+// TestAnOverCapAddressIsCountedOncePerAddressNotOncePerFetch — /pending 250.
+//
+// The counter used to report the FETCH CADENCE rather than the peer. An over-cap address was
+// dropped without being recorded in `seen`, and BEP-44 serves the same value to every fetch —
+// roughly ten across a 300 s race — so one honest peer offering a ninth endpoint re-dropped it
+// ten times and `DroppedOverCap` read like attack traffic. `DroppedOverCap` is also the only
+// counter that would ever witness item 20 (D15's refreshed mapping publishing a NEW external
+// port), so a counter that reports the cadence hides the one thing it is good for.
+func TestAnOverCapAddressIsCountedOncePerAddressNotOncePerFetch(t *testing.T) {
+	g, inv, certA, keyA, fpA := gateFor(t)
+
+	recs := make([][]byte, 3)
+	for i := range recs {
+		recs[i] = sealN(t, inv, certA, keyA, fpA, 1+i*6, 6)
+	}
+	for i, r := range recs {
+		if err := g.Accept(r, time.Now()); err != nil {
+			t.Fatalf("setup: record %d refused: %v", i, err)
+		}
+	}
+	first := g.Stats()
+	// SETUP 1: the cap actually bound. True of fixed and unfixed code alike, so a red below
+	// cannot be this assertion failing in disguise.
+	if first.DroppedOverCap != 18-MaxCandidates {
+		t.Fatalf("setup: DroppedOverCap = %d after the first pass, want %d — the cap never bound",
+			first.DroppedOverCap, 18-MaxCandidates)
+	}
+
+	// The same three records re-served twice, which is what a DHT does for free.
+	for pass := 0; pass < 2; pass++ {
+		for i, r := range recs {
+			if err := g.Accept(r, time.Now()); err != nil {
+				t.Fatalf("setup: replay %d of record %d refused: %v", pass, i, err)
+			}
+		}
+	}
+	st := g.Stats()
+
+	// SETUP 2: every one of the 54 offered addresses reached the per-address loop and moved
+	// exactly one counter. This holds on fixed code (8+10+36+0) AND on unfixed (8+30+16+0),
+	// so it is a live stimulus rather than a second way to fail the same way.
+	if sum := st.Accepted + st.DroppedOverCap + st.DroppedDuplicate + st.Reoffered; sum != 54 {
+		t.Fatalf("setup: counters sum to %d over 54 offered addresses — the loop did not see them all", sum)
+	}
+
+	if st.DroppedOverCap != 18-MaxCandidates {
+		t.Errorf("DroppedOverCap = %d after the same 18 addresses were served three times, want %d — "+
+			"the counter is reporting the fetch cadence, not the peer",
+			st.DroppedOverCap, 18-MaxCandidates)
+	}
+	// The deliberate relocation, asserted rather than left implied: the re-serves land on the
+	// noise bucket. 36 = two passes over all 18 addresses.
+	if st.Reoffered != first.Reoffered+36 {
+		t.Errorf("Reoffered = %d, want %d — a re-served over-cap address is the same phenomenon "+
+			"as a re-served held one and belongs in the same bucket", st.Reoffered, first.Reoffered+36)
+	}
+	// And nothing about the RACE moved: this is a counting fix, not an admission fix.
+	if got := len(g.Candidates()); got != MaxCandidates {
+		t.Errorf("the race set holds %d candidates, want %d — admission changed, and it must not", got, MaxCandidates)
+	}
+	// The attack indicator stayed silent: a repeat across records is not a repeat within one.
+	if st.DroppedDuplicate != 0 {
+		t.Errorf("DroppedDuplicate = %d on honest re-serves — the attack signal fired on the ordinary path", st.DroppedDuplicate)
+	}
+}
