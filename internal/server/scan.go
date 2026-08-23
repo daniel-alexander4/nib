@@ -86,7 +86,13 @@ func (s *Server) handleSanitize(w http.ResponseWriter, r *http.Request) {
 // password, so the UI reprompts; "plain" = the document wasn't protected).
 type decryptResponse struct {
 	docResponse
-	Ok     bool   `json:"ok"`
+	// **There is no `ok` field, and its absence is the point.** One was published, set on
+	// exactly one of three branches, and read by neither call site — both branch on
+	// `reason`, whose absence IS success. It survived the published-field reader scan for
+	// as long as it existed because `.ok` collides with `Response.ok`, the fetch API's own
+	// property, 84 times in app.js: the scan found a "reader" on every line that checked an
+	// HTTP status. Deleted rather than parked (/pending 254) — the precedent is
+	// `toolbarStyle` and `Party.Name`, and removing the hiding place beats annotating it.
 	Reason string `json:"reason,omitempty"`
 }
 
@@ -155,5 +161,5 @@ func (s *Server) handleDecrypt(w http.ResponseWriter, r *http.Request) {
 	if err := s.commitMutation(doc, before, result); wroteCommitFailure(w, err) {
 		return
 	}
-	writeJSON(w, decryptResponse{docResponse: s.docResponse(doc), Ok: true})
+	writeJSON(w, decryptResponse{docResponse: s.docResponse(doc)})
 }

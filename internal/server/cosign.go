@@ -34,8 +34,11 @@ type cosignParams struct {
 type cosignQuote struct {
 	Lines []string   `json:"lines"`
 	Rect  [4]float64 `json:"rect"` // llx, lly, urx, ury in PDF points (the client sizes the PNG to its aspect)
-	Page  int        `json:"page"`
-	When  string     `json:"when"`
+	// No `page`: one was published and never read. Both callers rasterize from `lines` and
+	// `rect` and post the PNG back, and the server re-derives the placement when it signs —
+	// so the page number was an echo the client had no use for. Deleted with
+	// decryptResponse.ok (/pending 254).
+	When string `json:"when"`
 }
 
 // cosignAttestation builds the attestation both calls sign over, from the same
@@ -171,7 +174,6 @@ func (s *Server) handleCosignQuote(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, cosignQuote{
 		Lines: att.AppearanceLines(),
 		Rect:  place.Rect,
-		Page:  place.Page,
 		When:  att.When.UTC().Format(time.RFC3339),
 	})
 }
