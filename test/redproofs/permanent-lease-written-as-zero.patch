@@ -1,0 +1,15 @@
+diff --git a/internal/portmap/client.go b/internal/portmap/client.go
+index 27c14d8..b7cda0d 100644
+--- a/internal/portmap/client.go
++++ b/internal/portmap/client.go
+@@ -301,10 +301,6 @@ func (c *Client) ObserveLease(ctx context.Context, m Mapping) (Mapping, error) {
+ 		return m, nil
+ 	}
+ 	m.LifetimeObserved = true
+-	if lease == 0 {
+-		m.LeasePermanent = true // and LifetimeSec stays put — see Mapping.LeasePermanent
+-		return m, nil
+-	}
+ 	m.LifetimeSec = lease
+ 	return m, nil
+ }

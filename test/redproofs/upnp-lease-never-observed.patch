@@ -1,0 +1,13 @@
+diff --git a/internal/server/portmapper.go b/internal/server/portmapper.go
+index da170ff..90b574a 100644
+--- a/internal/server/portmapper.go
++++ b/internal/server/portmapper.go
+@@ -192,7 +192,7 @@ func (p *portMapper) startRefresh() {
+ 			// unobserved one each time, so a one-shot observation would be erased by the very
+ 			// next cycle. Its own context, off the refresh's budget, which SSDP already
+ 			// nearly exhausts.
+-			if !cur.LifetimeObserved {
++			if false {
+ 				octx, ocancel := context.WithTimeout(context.Background(), portMapBudget)
+ 				observed, oerr := p.client.ObserveLease(octx, cur)
+ 				ocancel()

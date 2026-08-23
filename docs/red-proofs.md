@@ -1316,3 +1316,32 @@ going red on a stimulus assertion rather than the one its `EXPECT` named.
 their whole multipart body and run the PDF operation before resolving the document — but the law
 still holds, the commit is still refused, and there is no defect to reintroduce. It is a cost, filed
 as its own item, not a failure.
+
+## v1.117.126–.128 — sweep 14: three sections, and every premise in them was wrong
+
+Four rows. The sweep took the `Low Hanging Fruit`, `Finding` and `Instrument Missing` sections of
+the newly-partitioned backlog, and **not one item was what its entry said it was**: one was a route
+short, one would have shipped a defect as its fix, and one had been parked for months behind an
+artifact it never needed.
+
+| Defect reintroduced | What it said | Check that fired |
+| --- | --- | --- |
+| **a handler parses 128 MiB before checking the pin** *(replayable: `mutating-route-parses-before-it-pins`)* | `handlePages (pages.go:41) reads the body at line 42 and does not resolve the addressed document until line 177` | `TestAHandlerThatCommitsResolvesBeforeItReadsTheBody`, which checks the ORDERING because no status code can: the resolve at the commit still refuses, so the law holds and only the cost is visible |
+| **the refresh loop never resolves the lease it could not read** *(replayable: `upnp-lease-never-observed`)* | `ObserveLease was called 0 times — the refresh loop never resolves a lease the obtain could not report, so LifetimeObserved is decoration` | `TestAnUnobservedLeaseIsResolvedAndReported`, which asserts the LOG as well as the value: /pending 258's gate reads "actually OBSERVED", and an observation nobody can read is not evidence |
+| **an observed-permanent lease written as a zero lifetime** *(replayable: `permanent-lease-written-as-zero`)* | `a NewLeaseDuration of 0 is a mapping that never expires — D15's crash floor is unbounded there` | `TestObserveLease`, whose fourth row exists to fail if anyone "simplifies" by writing the 0 into `LifetimeSec`, which `refreshAfter` reads as its opposite |
+| **an XFDF checkbox read with the CSV cell reader** *(replayable: `xfdf-checkbox-read-as-csv-cell`)* | `a checkbox given its export-value name came back unchecked — the XFDF path is reading a form-data name with the CSV cell reader` | `TestAnXFDFCheckboxValueIsAnExportNameNotABoolean`. The row carries a second field on purpose — see below |
+
+**One row had to be rebuilt to show the right failure.** The XFDF row's first draft put only the
+checkbox in the document, and an unchecked result changes nothing, so pdfcpu refused the whole fill
+with "no form fields affected" — the defect surfaced as an **error**. Its real shape is silent: any
+real export carries other fields, they apply, the fill reports success, and the box is quietly
+wrong. The row now carries a text field and a setup assertion that it landed, so what it
+demonstrates is a wrong ANSWER rather than a refused operation. A red proof that fires for the
+wrong reason is the same failure as a green one that never met the case.
+
+**One defect has no row, and the absence is the finding.** `/api/assemble` was missing from the
+pinning inventory — it commits via `commitBarrier` and was excluded on the ground that it "never
+reaches commitMutation". Removing it again breaks nothing: the jsdom guard checks that every listed
+route is real, and nothing checks that every real one is listed. A hand-kept inventory's
+completeness is exactly what a hand-kept inventory cannot guard, which is why the ordering guard
+above walks the package instead.

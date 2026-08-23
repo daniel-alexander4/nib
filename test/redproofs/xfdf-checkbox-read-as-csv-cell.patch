@@ -1,0 +1,13 @@
+diff --git a/internal/pdfops/xfdf.go b/internal/pdfops/xfdf.go
+index 3303186..d657ab7 100644
+--- a/internal/pdfops/xfdf.go
++++ b/internal/pdfops/xfdf.go
+@@ -116,7 +116,7 @@ func FillFormXFDF(pdf, data []byte) ([]byte, error) {
+ 	if err != nil {
+ 		return nil, err
+ 	}
+-	return fillFromValues(pdf, skelJSON, values, xfdfChecked)
++	return fillFromValues(pdf, skelJSON, values, truthy)
+ }
+ 
+ // parseXFDF reads an XFDF document into a flat map of fully-qualified field name →
