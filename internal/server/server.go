@@ -1261,3 +1261,11 @@ func httpError(w http.ResponseWriter, code int, msg string) {
 	w.WriteHeader(code)
 	_ = json.NewEncoder(w).Encode(map[string]string{"error": msg})
 }
+
+// writeJSONStatus writes a structured body with a status code — httpError's richer sibling, for a
+// response that is more than a flat error string (the D19 diagnosis, P05.S11).
+func writeJSONStatus(w http.ResponseWriter, code int, v any) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(code)
+	_ = json.NewEncoder(w).Encode(v)
+}
