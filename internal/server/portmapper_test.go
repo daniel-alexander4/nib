@@ -95,6 +95,12 @@ func (f *fakeMapClient) Refresh(ctx context.Context, m portmap.Mapping) (portmap
 	}
 	nm := m
 	nm.ExternalPort = ext
+	// **A refresh comes back UNOBSERVED, because that is what the real one does.** UPnP's
+	// Refresh re-runs the obtain, and IGD's AddPortMapping has no lease out-argument, so the
+	// mapping it returns carries the lease we ASKED for with LifetimeObserved false. Echoing
+	// the input mapping instead made the fake preserve an observation production discards —
+	// the fixture supplying what production omits, which made the carry-forward row vacuous.
+	nm.LifetimeObserved, nm.LeasePermanent = false, false
 	return nm, f.extIP, nil
 }
 
@@ -428,8 +434,18 @@ func TestAnUnobservedLeaseIsResolvedAndReported(t *testing.T) {
 	}
 
 	pm.startRefresh()
+	// Wait for the STORE, not for the call. Waiting on the call count is a state check on the
+	// wrong variable: ObserveLease increments it on entry, and close() racing in before the
+	// result is stored leaves `current` unobserved with the counter already at 1 — which is
+	// exactly how this row flaked two runs in three.
 	deadline := time.Now().Add(2 * time.Second)
-	for atomic.LoadInt32(&f.observes) < 1 && time.Now().Before(deadline) {
+	for time.Now().Before(deadline) {
+		pm.mu.Lock()
+		got := pm.current.LifetimeObserved
+		pm.mu.Unlock()
+		if got {
+			break
+		}
 		time.Sleep(10 * time.Millisecond)
 	}
 	pm.close()
@@ -537,5 +553,58 @@ func TestAFailedObtainStillClosesItsMapper(t *testing.T) {
 	if returns < 2 {
 		t.Errorf("found %d early return(s) between the mapper's creation and its storage; there are 2, "+
 			"so this guard is not reading what it thinks it is", returns)
+	}
+}
+
+// TestAnObservationSurvivesARefresh — the defect the flaky row above was really reporting.
+//
+// UPnP's Refresh re-runs the obtain, which reports the lease we ASKED for and marks it
+// unobserved. Storing that as-is threw away what ObserveLease had just learned: the mapping
+// flipped back to unobserved on every cycle, the loop re-read the lease every tick forever, and
+// a permanent lease would have been logged once per tick rather than once. The one-shot
+// observation this was supposed to be driven-by-predicate to avoid, arrived by another route.
+func TestAnObservationSurvivesARefresh(t *testing.T) {
+	f := newFake()
+	// A SHORT observed lease on purpose: it keeps the refresh cadence fast, so an observation
+	// that gets erased shows up as the loop re-reading it every tick. A long one would stretch
+	// the next tick to an hour — correct behaviour, and the first draft's mistake, because with
+	// only one refresh there was nothing for the erasure to show up in.
+	f.observed = &portmap.Mapping{
+		Protocol: portmap.UDP, InternalPort: 40404, ExternalPort: f.extPort,
+		LifetimeSec: 1, LifetimeObserved: true,
+	}
+	pm := newPortMapper(f, portmap.UDP, 40404)
+	pm.refreshFloor = 20 * time.Millisecond
+	if _, ok := pm.obtain(context.Background()); !ok {
+		t.Fatal("setup: obtain failed")
+	}
+	pm.startRefresh()
+	deadline := time.Now().Add(2 * time.Second)
+	for atomic.LoadInt32(&f.refreshes) < 3 && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	pm.close()
+
+	// SETUP: a refresh has to have landed, or "it survived" is trivially true — the erasure
+	// happened at the store that follows a refresh. One is enough and one is all there is:
+	// carrying a 7200 s lease forward correctly stretches the next tick to an hour, which is
+	// the feature working and was itself the first draft's wrong premise.
+	if got := atomic.LoadInt32(&f.refreshes); got < 3 {
+		t.Fatalf("setup: only %d refresh(es) ran, so an erasure would have had little to show up in", got)
+	}
+	pm.mu.Lock()
+	cur := pm.current
+	pm.mu.Unlock()
+	if !cur.LifetimeObserved || cur.LifetimeSec != 1 {
+		t.Errorf("after %d refresh(es) the mapper holds observed=%v lifetime=%d, want the observed lease "+
+			"carried forward — a refresh reports the lease we ASKED for, so storing it as-is erases "+
+			"what the read-back learned and the loop re-reads it every tick forever",
+			atomic.LoadInt32(&f.refreshes), cur.LifetimeObserved, cur.LifetimeSec)
+	}
+	// And the observation is not re-fetched once it is held.
+	if got := atomic.LoadInt32(&f.observes); got != 1 {
+		t.Errorf("ObserveLease ran %d times across %d refresh(es), want exactly 1 — an erased "+
+			"observation is re-read every tick, and a permanent lease would be logged every tick with it",
+			got, atomic.LoadInt32(&f.refreshes))
 	}
 }
