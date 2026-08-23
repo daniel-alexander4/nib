@@ -1223,3 +1223,26 @@ pre-existing `peerAddresses("")` -> `findPeerOnLAN` LAN browse (P03, covered by
 to `sessionInit`. The only new code is the client no longer refusing, so the client is where the
 proof lives. The visual half — the address field collapsed behind the Advanced disclosure — is
 `test/ui/ladderdefault.test.mjs` at tier 3, a layout fact jsdom cannot see.
+
+## v1.117.105 — P05 close: the MITM signal reported as a network error
+
+`handleSessionInitiate` routed `p2p.ErrVerificationDeclined` (the "four words don't match"
+man-in-the-middle verdict) and `ErrVerificationTimedOut` to `writeConnectDiagnosis`, which renders
+a 502 "could not connect" and may pick an unrelated D19 cause. verify.go's own doc forbids exactly
+this: the verdict "must never be reported as a network error … 'could not connect' invites a retry,
+which is the worst possible advice when someone is sitting between you."
+
+| Defect reintroduced | What it said | Check that fired |
+| --- | --- | --- |
+| **the initiate side does not lift the verification sentinels** *(replayable: `mitm-reported-as-network-error`)* | `handleSessionInitiate does not lift p2p.ErrVerificationDeclined — a words-don't-match MITM verdict would fall through to the network-error diagnosis` | `TestInitiateLiftsTheMITMSignalBeforeTheNetworkDiagnosis`, a source-scan (consenttimeout_test.go's shape) asserting both sentinels are lifted before `writeConnectDiagnosis`; its stimulus assertions refuse to pass if the handler or either branch vanished |
+
+## v1.117.106 — P05 close: a refused peer record reads as "hasn't started"
+
+`classifyD19` cause 1 was keyed solely on `!peerSeen`, and `peerSeen` is set only when the gate
+*admits* a candidate. A peer who published but whose record was refused (stale / wrong-ceremony /
+forged) or carried no address collapsed into "hasn't started their ceremony yet" — a confident-false
+statement about someone who has started.
+
+| Defect reintroduced | What it said | Check that fired |
+| --- | --- | --- |
+| **remove the causePeerRecordUnusable branch** *(replayable: `d19-refused-record-reads-as-not-started`)* | `record refused -> unusable, not 'not started': cause = 2, want 5` | `TestD19ClassifierTable`, whose refused/empty rows assert the new cause, with a discriminator (a refused record does not hijack the diagnosis once any candidate was admitted), an ordering row (no DHT still beats a refused record), and a distinctness check that the refused and empty sub-messages differ |
