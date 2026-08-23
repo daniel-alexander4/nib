@@ -9,6 +9,7 @@
 // Go package, importable only from Go, and shelling out to a generator would put
 // a build step between the test and its input.
 import fs from 'node:fs';
+import zlib from 'node:zlib';
 import path from 'node:path';
 import { WORK } from './harness.mjs';
 
@@ -135,4 +136,105 @@ export function writeRawFixture(name, bytes) {
   const file = path.join(dir, name);
   fs.writeFileSync(file, bytes);
   return file;
+}
+
+// ── Scanned-document fixtures ────────────────────────────────────────────────
+//
+// makeScanPDF builds a TEXT-LESS document whose pages are greyscale images, and lets a test apply
+// the degradations a scanner introduces. /pending 8's premise — that verifying the perceptual
+// compare needs real scans Dan supplies — is false, and the code says why: `pageDHash` reduces a
+// page to a 9x8 grid of cell means before it compares anything, so sensor noise, paper texture and
+// halftoning are destroyed before the algorithm reads a byte. What survives to reach `hamming` is
+// gross tonal structure and the illumination envelope, and both are exactly reproducible here.
+//
+// The PRNG is deterministic: a fixture that differs run to run turns a threshold measurement into
+// a flake, and this repo has spent four sessions on one of those already.
+function mulberry32(a) {
+  return function () {
+    a |= 0; a = (a + 0x6D2B79F5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+function paintBar(px, w, h, y0, y1, x0, x1, ink) {
+  for (let y = Math.floor(y0 * h); y < Math.floor(y1 * h); y++) {
+    for (let x = Math.floor(x0 * w); x < Math.floor(x1 * w); x++) px[y * w + x] = ink;
+  }
+}
+
+// pageField paints nine columns of genuinely differing greys, keyed to the page index.
+//
+// **Vertical structure is forced by what the hash measures.** A dHash emits
+// `lum(cell) > lum(cell to its right)` with a STRICT comparison, so two adjacent cells of equal
+// brightness give 0 — and a page of horizontal text bars on flat paper is mostly such pairs. A
+// first draft built that way could not discriminate its own pages, and its own setup assertion is
+// what caught it.
+function pageField(idx, w, h) {
+  const px = new Uint8Array(w * h).fill(238); // paper
+  paintBar(px, w, h, 0.05, 0.12, 0.10, 0.45 + 0.12 * (idx % 4), 40); // heading
+  for (let c = 0; c < 9; c++) {
+    // **The multiplier must be coprime with the modulus.** A first draft used `idx * 7 % 7`,
+    // which is zero for every page — so every page got identical columns, and three separate
+    // "different pages align" results were this one slip rather than anything about the hash.
+    const g = 60 + ((idx * 3 + c * 5 + (c % 2) * 3) % 7) * 26; // 60..216, page-specific
+    paintBar(px, w, h, 0.20, 0.86, c / 9 + 0.005, (c + 1) / 9 - 0.005, g);
+  }
+  return px;
+}
+
+// degrade applies what a scanner does. `ramp` is the one that matters: an illumination gradient
+// biases EVERY left-to-right comparison in the same direction, and a dHash is nothing but 64
+// left-to-right comparisons. Its SIGN decides everything, because the comparison is strict.
+function degrade(src, w, h, { ramp = 0, shiftX = 0, shiftY = 0, noise = 0, invert = false, seed = 7 } = {}) {
+  const rnd = mulberry32(seed);
+  const out = new Uint8Array(w * h);
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const sx = Math.min(w - 1, Math.max(0, x - shiftX));
+      const sy = Math.min(h - 1, Math.max(0, y - shiftY));
+      let v = src[sy * w + sx];
+      if (invert) v = 255 - v;
+      if (ramp) v *= 1 - ramp / 2 + ramp * (x / (w - 1));
+      if (noise) v += (rnd() * 2 - 1) * noise;
+      out[y * w + x] = Math.max(0, Math.min(255, Math.round(v)));
+    }
+  }
+  return out;
+}
+
+// makeScanPDF renders `pages` (an array of page INDEXES, so a test can delete, insert or reorder)
+// as full-page greyscale images with no text of any kind.
+export function makeScanPDF(pages = [0, 1, 2, 3], deg = {}, { w = 170, h = 220 } = {}) {
+  const objs = [];
+  const kids = [];
+  pages.forEach((idx, i) => {
+    const pageObj = 3 + i * 3;
+    kids.push(`${pageObj} 0 R`);
+    const img = zlib.deflateSync(Buffer.from(degrade(pageField(idx, w, h), w, h, deg)));
+    const content = 'q 612 0 0 792 0 0 cm /Im0 Do Q';
+    objs[pageObj - 1] =
+      `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents ${pageObj + 1} 0 R ` +
+      `/Resources << /XObject << /Im0 ${pageObj + 2} 0 R >> >> >>`;
+    objs[pageObj] = `<< /Length ${content.length} >>\nstream\n${content}\nendstream`;
+    objs[pageObj + 1] =
+      `<< /Type /XObject /Subtype /Image /Width ${w} /Height ${h} /ColorSpace /DeviceGray ` +
+      `/BitsPerComponent 8 /Filter /FlateDecode /Length ${img.length} >>\nstream\n` +
+      img.toString('latin1') + '\nendstream';
+  });
+  objs[0] = '<< /Type /Catalog /Pages 2 0 R >>';
+  objs[1] = `<< /Type /Pages /Kids [${kids.join(' ')}] /Count ${pages.length} >>`;
+
+  let out = '%PDF-1.7\n';
+  const offsets = [];
+  objs.forEach((o, i) => {
+    offsets.push(out.length);
+    out += `${i + 1} 0 obj\n${o}\nendobj\n`;
+  });
+  const xref = out.length;
+  out += `xref\n0 ${objs.length + 1}\n0000000000 65535 f \n`;
+  for (const o of offsets) out += `${String(o).padStart(10, '0')} 00000 n \n`;
+  out += `trailer\n<< /Size ${objs.length + 1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`;
+  return Buffer.from(out, 'latin1');
 }
