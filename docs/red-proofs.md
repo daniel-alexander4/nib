@@ -1205,3 +1205,21 @@ is the futile advice D9 exists to forbid.
 reflexive DHT address can be a normal public one while the router's own external is RFC-1918 — caught only
 by `mapUnroutable`, the port-map tier's "answered but I could not publish it" signal that S11 retained
 (the connect path used to close and drop that mapper without recording it).
+
+## v1.117.103 — P05.S12: the ladder was unreachable behind a client-side refusal
+
+D9 makes the traversal ladder the default path, but `sessionInit()` refused to POST a live
+co-sign without a typed address, so the shipped LAN tier — and, with an invitation, the DHT —
+could never be reached from the UI. The manual address was not undemoted; it was the only path
+a user had, for a peer Nib could have found by browsing the local link.
+
+| Defect reintroduced | What it said | Check that fired |
+| --- | --- | --- |
+| **sessionInit refuses an empty address** *(replayable: `empty-address-refused`)* | `the co-sign never reached the quote — the empty-address refusal is back` | `test/jsdom/ladderdefault.test.mjs` test 1, which drives the real dialog with a blank address and asserts `/api/cosign/quote` is reached (the refusal sat before it) and `/api/session/initiate` is POSTed with a blank `address` field. The typed-address test beside it is the control — it must keep reaching the initiate — so the fix cannot be "always refuse" or "never send the address" |
+
+**Why tier 2 and not the server.** S12 adds no server code: an empty address resolves through the
+pre-existing `peerAddresses("")` -> `findPeerOnLAN` LAN browse (P03, covered by
+`discover_test.go`'s fakeBrowser suite), and the DHT tier is wired only to the arm/serve flow, not
+to `sessionInit`. The only new code is the client no longer refusing, so the client is where the
+proof lives. The visual half — the address field collapsed behind the Advanced disclosure — is
+`test/ui/ladderdefault.test.mjs` at tier 3, a layout fact jsdom cannot see.
