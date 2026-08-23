@@ -1291,10 +1291,15 @@
           <select id="srvPeer"></select></label>
         <p id="srvNoPeers" class="libhint" hidden>Pin the other person's fingerprint first, under
           <strong>Identity &amp; peers</strong>.</p>
-        <label>Listen on (a host:port the peer can reach)
-          <input id="srvBind" type="text" value="0.0.0.0:8443" spellcheck="false" /></label>
-        <p class="libhint">The peer reaches this address by port-forward or over a VPN you both use
-          (e.g. Tailscale). Nib runs no relay of its own.</p>
+        <details class="advanced">
+          <summary>Listen address (advanced)</summary>
+          <p class="libhint">Leave this blank to let Nib pick a port and announce where you can be
+            reached over your local network and the rendezvous directory. Fill in a specific
+            host:port only when the peer must reach you by port-forward or over a VPN you both use
+            (e.g. Tailscale). Nib runs no relay of its own.</p>
+          <label>Listen on (a host:port the peer can reach)
+            <input id="srvBind" type="text" placeholder="blank = Nib picks and announces" spellcheck="false" /></label>
+        </details>
         <label>Ceremony invitation (optional)
           <input id="srvInvite" type="text" spellcheck="false" autocomplete="off"
                  placeholder="nib-invite-v1:…  — paste if you were sent one" /></label>

@@ -33,6 +33,7 @@ const PEER = { fingerprint: 'a'.repeat(64), label: 'Ada' };
 
 let initiateAddress;   // the `address` field of the most recent /api/session/initiate POST
 let quoteCalls = 0;    // /api/cosign/quote hits — reached only if the refusal is gone
+let armBind;           // the `bind` field of the most recent /api/session/arm POST (S12 twin)
 
 const h = await boot({
   routes: {
@@ -40,7 +41,14 @@ const h = await boot({
       id: 'test-epoch:1', name: 'deed.pdf', path: DOC, canSave: true,
       signature: { state: 'unsigned' }, canUndo: false, canRedo: false,
     }),
-    '/api/peers': () => ({ self: 'b'.repeat(64), peers: [PEER] }),
+    '/api/peers': () => ({ self: 'b'.repeat(64), fingerprint: 'b'.repeat(64), name: 'Me', peers: [PEER] }),
+    '/api/session/status': () => ({ armed: false }),
+    '/api/session/arm': (opts) => {
+      // The arm side's twin of the empty-address default: an empty bind is the LAN receive
+      // path (server binds 0.0.0.0:0 and announces it), not an error.
+      armBind = JSON.parse(opts.body).bind;
+      return { armed: true, address: '0.0.0.0:54321' };
+    },
     '/api/cosign/quote': () => {
       quoteCalls++;
       return { lines: ['I agree to sign this document.'], rect: [0, 0, 120, 40], when: '2026-08-22T00:00:00Z' };
@@ -109,4 +117,27 @@ test('the address input is inside the advanced disclosure, not on the default su
   assert.ok(addr, 'no #sinAddr in index.html');
   const details = addr.closest('details.advanced');
   assert.ok(details, 'the address field is not behind <details class="advanced"> — it is on the default path');
+});
+
+test('an empty bind arms the LAN receive path — /api/session/arm POSTs with a blank bind', async () => {
+  // The receive side's twin of S12: armRecv used to refuse an empty bind and #srvBind hardcoded
+  // 0.0.0.0:8443, so P03's LAN receive path was unreachable from the UI and two Nibs on one
+  // machine collided on the port. Restoring the refusal makes this red (arm never POSTs).
+  doc.getElementById('sessionRecvBtn').click();
+  await settle();
+  const peerSel = doc.getElementById('srvPeer');
+  assert.ok(peerSel.options.length >= 1, 'the receive peer select was never populated');
+  peerSel.value = PEER.fingerprint;
+  doc.getElementById('srvBind').value = '';
+  armBind = undefined;
+  doc.getElementById('srvArmGo').click();
+  await settle();
+  assert.equal(armBind, '', 'arm was not POSTed with an empty bind (the LAN receive path is unreachable)');
+});
+
+test('the listen address input is inside the advanced disclosure, not on the default surface', async () => {
+  const bind = doc.getElementById('srvBind');
+  assert.ok(bind, 'no #srvBind in index.html');
+  assert.ok(bind.closest('details.advanced'), 'the listen address is not behind <details class="advanced">');
+  assert.equal(bind.value, '', 'the listen address must default to blank (the old 0.0.0.0:8443 broke two Nibs on one machine)');
 });
