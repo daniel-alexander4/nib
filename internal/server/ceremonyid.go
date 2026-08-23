@@ -80,6 +80,10 @@ type ceremonyID struct {
 	// not concurrent-safe and the ARM polls its diagnosis WHILE the feed is running, so cause 1 must
 	// key on a signal safe to read live. Set by feedCandidates as it sends each candidate.
 	peerSeen atomic.Bool
+	// bootstrapDone gates the ARM-side live diagnosis: until the DHT bootstrap has had its chance,
+	// zero DHT responses means "still warming up", not "unreachable", and showing cause 2 then is a
+	// scary false alarm on a healthy machine (P05.S11 diff-grill). Set once, after the arm's Bootstrap.
+	bootstrapDone atomic.Bool
 }
 
 // setStopNet and setPortMap store the two shared fields under the lock.
