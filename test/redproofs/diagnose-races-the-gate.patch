@@ -1,0 +1,25 @@
+diff --git a/internal/server/diagnosis.go b/internal/server/diagnosis.go
+index 8374590..4c4f757 100644
+--- a/internal/server/diagnosis.go
++++ b/internal/server/diagnosis.go
+@@ -53,17 +53,14 @@ func (c *ceremonyID) diagnose() diagnosis {
+ 	if c == nil || c.rz == nil || c.gate == nil {
+ 		return diagnosis{cause: causeUndiagnosed} // manual/LAN or TCP ceremony — out of D19's scope
+ 	}
+-	// The gate itself is NOT read here: diagnose() also runs on the live-status path, concurrently
+-	// with the feed that writes the gate, so the record-refused/empty signals are snapshotted into
+-	// atomics in feedCandidates (the gate's only writer) and read here. This is the same discipline
+-	// peerSeen follows, and it is why diagnose() reads only atomic/mutex-guarded signals.
++	gs := c.gate.Stats()
+ 	c.mu.Lock()
+ 	self := c.self
+ 	in := d19Inputs{
+ 		dhtResponded:     c.rz.Stats().Responses > 0, // rz.Stats is mutex-guarded; safe under c.mu
+ 		peerSeen:         c.peerSeen.Load(),
+-		recordRefused:    c.recordRefused.Load(),
+-		recordEmpty:      c.recordEmpty.Load(),
++		recordRefused:    gs.Refused() > 0,
++		recordEmpty:      gs.EmptyRecords > 0,
+ 		mappingDependent: self.V4.Mapping == rendezvous.MappingEndpointDependent || self.V6.Mapping == rendezvous.MappingEndpointDependent,
+ 		havePortMap:      c.portMap != nil,
+ 		mapUnroutable:    c.mapUnroutable,
