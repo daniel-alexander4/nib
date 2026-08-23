@@ -119,13 +119,12 @@ func mutatingInventory(t *testing.T) []string {
 // requestBodyFor builds a body the route will actually accept, so the refusal under test is the
 // PIN and never a malformed request.
 //
-// **Three of the eleven routes need one, and that is itself the finding.** `/api/pages`,
-// `/api/redact` and `/api/outline` parse their multipart body — up to maxPDFBytes — and run the
-// whole PDF operation BEFORE resolving the document the result is installed into. The law still
-// holds: the commit is refused and nothing lands in the wrong document. What they spend to
-// discover it is a full parse and a page operation on a document that is already gone. The other
-// eight resolve first and answer a bodyless request straight away, which is why this suite found
-// the split at all — every one of them passed while these three answered 400.
+// **Four of the twelve routes need one**, because they work from posted bytes rather than from the
+// open document: `/api/pages`, `/api/redact`, `/api/outline` and `/api/assemble`. They used to
+// parse the whole body and run the PDF operation before resolving the document the result is
+// installed into — which is how this suite found them, since every other route answered a
+// bodyless request straight away and these returned 400. They refuse early now (/pending 261);
+// the bodies stay, because a row that cannot reach the check proves nothing about it.
 func requestBodyFor(t *testing.T, route string) (io.Reader, string) {
 	t.Helper()
 	var buf bytes.Buffer
@@ -144,6 +143,15 @@ func requestBodyFor(t *testing.T, route string) (io.Reader, string) {
 		fw, _ := mw.CreateFormFile("pdf", "doc.pdf")
 		fw.Write(pdf)
 		mw.WriteField("outline", `[{"title":"Intro","page":1,"level":0}]`)
+	case "/api/assemble":
+		// reload=1 is the branch that COMMITS (commitBarrier); without it the route is a
+		// download and the pin is not its business. The row would prove nothing on the other
+		// branch, so it drives the one that installs into a document.
+		iw, _ := mw.CreateFormFile("page", "page-1.png")
+		png.Encode(iw, image.NewRGBA(image.Rect(0, 0, 612, 792)))
+		mw.WriteField("pageW", "612")
+		mw.WriteField("pageH", "792")
+		mw.WriteField("reload", "1")
 	case "/api/redact":
 		pdf, err := testpdf.Form()
 		if err != nil {
