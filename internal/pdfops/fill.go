@@ -71,7 +71,7 @@ func FillFormCSV(pdf, data []byte, nameCol string) ([]SplitPart, error) {
 	seen := map[string]int{}
 	parts := make([]SplitPart, 0, len(rows)-1)
 	for r, row := range rows[1:] {
-		out, err := fillFromValues(pdf, skelJSON, rowValues(header, row, multi))
+		out, err := fillFromValues(pdf, skelJSON, rowValues(header, row, multi), truthy)
 		if err != nil {
 			return nil, fmt.Errorf("row %d: %w", r+1, err)
 		}
@@ -91,7 +91,15 @@ func FillFormCSV(pdf, data []byte, nameCol string) ([]SplitPart, error) {
 // FillFormCSV (per row) and FillFormXFDF feed this one applier, so the
 // name→typed-field mapping lives in a single place. List boxes take every value;
 // every other field takes the first.
-func fillFromValues(pdf, skelJSON []byte, values map[string][]string) ([]byte, error) {
+//
+// **`checked` is the one rule that is genuinely per-format, and it is a parameter rather than
+// a widened shared predicate.** A CSV cell is a human's "yes"/"no"; an XFDF `<value>` is the
+// checkbox's EXPORT-VALUE NAME, which is any name the form chose and is "on" unless it is
+// `Off`. Reading XFDF with the CSV rule silently left a box unchecked whenever the form's
+// on-state was not one of eight English words, and reported the fill a success (/pending 9).
+// Widening `truthy` instead would have made a CSV "no" mean checked, so the two callers pass
+// their own rule and the mapping above still lives in one place.
+func fillFromValues(pdf, skelJSON []byte, values map[string][]string, checked func(string) bool) ([]byte, error) {
 	var fg form.FormGroup
 	if err := json.Unmarshal(skelJSON, &fg); err != nil {
 		return nil, err
@@ -109,7 +117,7 @@ func fillFromValues(pdf, skelJSON []byte, values map[string][]string) ([]byte, e
 	}
 	for _, x := range f.CheckBoxes {
 		if v, ok := pick(values, x.Name, x.ID); ok {
-			x.Value = truthy(first(v))
+			x.Value = checked(first(v))
 		}
 	}
 	for _, x := range f.ComboBoxes {
@@ -189,6 +197,15 @@ func first(v []string) string {
 		return v[0]
 	}
 	return ""
+}
+
+// xfdfChecked reads an XFDF checkbox value, which is an export-value NAME rather than a
+// boolean word: `Off` is the one name PDF reserves for the unchecked state, so anything else
+// — `Yes`, `Ja`, `1`, `On`, a form's own label — means checked. Empty is unchecked, because an
+// empty `<value/>` is how a clearing export writes "not set".
+func xfdfChecked(s string) bool {
+	t := strings.TrimSpace(s)
+	return t != "" && !strings.EqualFold(t, "off")
 }
 
 // truthy reads a CSV checkbox cell — true for t/true/1/yes/y/x/checked/on (any case).

@@ -116,7 +116,7 @@ func FillFormXFDF(pdf, data []byte) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	return fillFromValues(pdf, skelJSON, values)
+	return fillFromValues(pdf, skelJSON, values, xfdfChecked)
 }
 
 // parseXFDF reads an XFDF document into a flat map of fully-qualified field name →
