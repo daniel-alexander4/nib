@@ -623,7 +623,10 @@ func (s *Server) runSession(ln p2p.Listener, cert, key []byte, label, mode strin
 		if inbound != nil {
 			inbound.Store(true)
 		}
-		served, _ := s.serveOneSession(consentAnchor{ln: ln}, conn, cert, key, label, mode, myFP)
+		served, final, _ := s.serveOneSession(consentAnchor{ln: ln}, conn, cert, key, label, mode, myFP)
+		if final != nil {
+			s.openArrival(label, final)
+		}
 		if served {
 			return // the arm is spent on a session, which is what it is for
 		}
@@ -645,7 +648,7 @@ func (s *Server) runSession(ln p2p.Listener, cert, key []byte, label, mode strin
 // function, and it is why the co-signing decline needed a sentinel of its own
 // (`p2p.ErrCoSignDeclined`) rather than the bare error it used to return — `errors.Is`
 // could not otherwise tell it from the protocol error declared one line away.
-func (s *Server) serveOneSession(anchor consentAnchor, conn *p2p.Conn, cert, key []byte, label, mode string, myFP []byte) (bool, error) {
+func (s *Server) serveOneSession(anchor consentAnchor, conn *p2p.Conn, cert, key []byte, label, mode string, myFP []byte) (served bool, coSigned []byte, err error) {
 	// **Deferred here rather than closed by the caller**, so the connection is released
 	// even if this function panics. `runSession`'s `safe.Recover` catches such a panic and
 	// keeps the desktop process alive, which is exactly the case where a caller-side
@@ -681,29 +684,31 @@ func (s *Server) serveOneSession(anchor consentAnchor, conn *p2p.Conn, cert, key
 	var saw reached
 	ch := conn.Channel
 	if mode == sessionModeReceive {
-		doc, err := p2p.ReceiveDocument(ch, sessionAccepter{s: s, label: label, saw: &saw, anchor: anchor}, myFP, sessionVerifier{s, &saw})
-		if err != nil {
-			return saw.v.Load(), err
+		doc, derr := p2p.ReceiveDocument(ch, sessionAccepter{s: s, label: label, saw: &saw, anchor: anchor}, myFP, sessionVerifier{s, &saw})
+		if derr != nil {
+			return saw.v.Load(), nil, derr
 		}
 		s.saveReceived(doc, ch.PeerFP, label)
-		return true, nil
+		return true, nil, nil // a transfer saves itself; no co-signed document to open
 	}
 	var rd p2p.ReDeliverer
 	if anchor.cer != nil {
 		rd = anchor.cer // idempotent re-delivery for a ceremony hop (P05.S10); the manual path has none
 	}
-	final, err := p2p.Receive(ch, cert, key, label, sessionConfirmer{s: s, saw: &saw, anchor: anchor}, sessionVerifier{s, &saw}, rd)
-	if err != nil {
-		return saw.v.Load(), err
+	final, rerr := p2p.Receive(ch, cert, key, label, sessionConfirmer{s: s, saw: &saw, anchor: anchor}, sessionVerifier{s, &saw}, rd)
+	if rerr != nil {
+		return saw.v.Load(), nil, rerr
 	}
-	// D10: the co-signed document ARRIVES, so it opens alongside whatever the user
-	// already had open rather than replacing it. Before this, completing a co-signature
-	// on the receiving side silently discarded the recipient's open document and its
-	// undo history — work they never asked to close.
-	// Named, so an arrival is not "Untitled" after a reload — the fifth path-less producer.
-	// handleDocs' own comment names "an arrival" in the population that needed this.
+	// The co-signed document is RETURNED, not opened here: under P05.S10's re-delivery loop this
+	// function runs again on every reconnect, and opening on each would stack duplicate tabs of one
+	// idempotent result (diff-grill). The caller opens it exactly once.
+	return true, final, nil
+}
+
+// openArrival opens a co-signed document alongside whatever the user already had (D10) — an arrival
+// opens, never replaces. Named so a reload does not show it as "Untitled".
+func (s *Server) openArrival(label string, final []byte) {
 	s.addDoc(&document{name: arrivalDocName(label), data: final, sig: sign.Verify(final)})
-	return true, nil
 }
 
 // saveReceived writes an accepted one-way transfer under ~/nib, routed by what the
@@ -1015,6 +1020,7 @@ func (s *Server) runCeremonyReceive(ctx context.Context, cer *ceremonyID, hl *p2
 	// a re-delivery hands back the same bytes, never a second signature.
 	overallDeadline := time.Now().Add(ceremony.MaxCeremonyLife)
 	var postSignDeadline time.Time
+	opened := false // the co-signed document opens once, not per re-delivery
 	for {
 		var conn *p2p.Conn
 		var cerr error
@@ -1047,7 +1053,11 @@ func (s *Server) runCeremonyReceive(ctx context.Context, cer *ceremonyID, hl *p2
 				return // the baton never arrived, or the ceremony deadline passed
 			}
 		}
-		_, xerr := s.serveOneSession(consentAnchor{cer: cer}, conn, cert, key, label, mode, myFP)
+		_, final, xerr := s.serveOneSession(consentAnchor{cer: cer}, conn, cert, key, label, mode, myFP)
+		if final != nil && !opened {
+			s.openArrival(label, final) // once: a re-delivery re-sends the SAME idempotent result
+			opened = true
+		}
 		if postSignDeadline.IsZero() && cer.hasSigned() {
 			postSignDeadline = time.Now().Add(connectDeadline) // first signature arms the re-delivery window
 		}
