@@ -1,10 +1,14 @@
 package server
 
 import (
+	"bytes"
 	"context"
 	"encoding/binary"
 	"errors"
+	"log"
 	"net/netip"
+	"os"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -27,7 +31,11 @@ type fakeMapClient struct {
 
 	// onSent is the send-time recorder, installed through the SAME interface method production
 	// uses (newPortMapper wires it), so a green here cannot come from a test-only hookup.
-	onSent func(portmap.Mapping)
+	onSent   func(portmap.Mapping)
+	observes int32
+	// observed, when set, is what ObserveLease resolves the lease to — the fixture for a router
+	// whose real lease is not the one we asked for.
+	observed *portmap.Mapping
 	// failAfterSending makes Map behave like a request that LEFT the host and then failed —
 	// the /pending 257 case: the router may have created a mapping, and Map returns an error.
 	failAfterSending bool
@@ -38,6 +46,17 @@ type fakeMapClient struct {
 }
 
 func (f *fakeMapClient) SetOnRequestSent(fn func(portmap.Mapping)) { f.onSent = fn }
+
+// ObserveLease stands in for the UPnP read-back. `observed` is what the router turns out to have
+// granted; leaving it zero-valued means "the mechanism reports its own lease", which is every
+// mechanism but UPnP and is the default the existing rows want.
+func (f *fakeMapClient) ObserveLease(ctx context.Context, m portmap.Mapping) (portmap.Mapping, error) {
+	atomic.AddInt32(&f.observes, 1)
+	if f.observed == nil {
+		return m, nil
+	}
+	return *f.observed, nil
+}
 
 func (f *fakeMapClient) Map(ctx context.Context, proto portmap.Protocol, internalPort uint16) (portmap.Mapping, netip.Addr, error) {
 	atomic.AddInt32(&f.maps, 1)
@@ -294,7 +313,7 @@ func TestTheRefreshCadenceNeverOutlivesTheLease(t *testing.T) {
 
 // TestAGrantedLeaseIsDistinguishedFromARequestedOne — /pending 253's other half.
 //
-// The UPnP branch recorded `LifetimeSec: defaultLeaseSec` — our REQUEST — as though the router
+// The UPnP branch recorded `LifetimeSec: DefaultLeaseSec` — our REQUEST — as though the router
 // had answered with it, and IGD's AddPortMapping has no lease out-argument to answer with. On
 // the mechanism D15 says most consumer routers actually run, Nib was recording a fact about
 // itself as a fact about the router.
@@ -374,5 +393,61 @@ func TestAConfirmedMappingIsNotDeletedTwice(t *testing.T) {
 
 	if got := atomic.LoadInt32(&f.unmaps); got != 1 {
 		t.Errorf("close() sent %d deletes for ONE mapping, want 1", got)
+	}
+}
+
+// TestAnUnobservedLeaseIsResolvedAndReported — /pending 260, at the seam.
+//
+// The read-back only means something if the refresh loop actually runs it and something READS
+// the result. `LifetimeObserved` had three writers and zero production readers before this — the
+// same "published and never consumed" shape this repo deletes fields for — and a value resolved
+// into a struct nobody prints does not discharge /pending 258's gate either, which reads "a
+// permanent or over-hour lease actually OBSERVED".
+func TestAnUnobservedLeaseIsResolvedAndReported(t *testing.T) {
+	f := newFake()
+	// What the router turns out to hold: a mapping that never expires, against the 120 s asked for.
+	f.observed = &portmap.Mapping{
+		Protocol: portmap.UDP, InternalPort: 40404, ExternalPort: f.extPort,
+		LifetimeSec: portmap.DefaultLeaseSec, LifetimeObserved: true, LeasePermanent: true,
+	}
+	var logged bytes.Buffer
+	log.SetOutput(&logged)
+	t.Cleanup(func() { log.SetOutput(os.Stderr) })
+
+	pm := newPortMapper(f, portmap.UDP, 40404)
+	pm.refreshFloor = 20 * time.Millisecond
+	if _, ok := pm.obtain(context.Background()); !ok {
+		t.Fatal("setup: obtain failed")
+	}
+	// SETUP: the mapping must START unobserved, or "it got observed" is true for the wrong reason.
+	pm.mu.Lock()
+	pre := pm.current.LifetimeObserved
+	pm.mu.Unlock()
+	if pre {
+		t.Fatal("setup: the fake's obtain already reports an observed lease")
+	}
+
+	pm.startRefresh()
+	deadline := time.Now().Add(2 * time.Second)
+	for atomic.LoadInt32(&f.observes) < 1 && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	pm.close()
+
+	if got := atomic.LoadInt32(&f.observes); got < 1 {
+		t.Fatalf("ObserveLease was called %d times — the refresh loop never resolves a lease the "+
+			"obtain could not report, so LifetimeObserved is decoration", got)
+	}
+	pm.mu.Lock()
+	cur := pm.current
+	pm.mu.Unlock()
+	if !cur.LifetimeObserved || !cur.LeasePermanent {
+		t.Errorf("after observation the mapper holds observed=%v permanent=%v — the resolved lease "+
+			"was thrown away", cur.LifetimeObserved, cur.LeasePermanent)
+	}
+	if !strings.Contains(logged.String(), "PERMANENT") {
+		t.Errorf("a permanent lease was observed and nothing said so. /pending 258's gate is "+
+			"\"actually OBSERVED\", and an observation nobody can read is not evidence. log=%q",
+			logged.String())
 	}
 }

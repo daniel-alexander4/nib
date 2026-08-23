@@ -128,13 +128,13 @@ func (c *Client) mapWithSuggestion(ctx context.Context, proto Protocol, internal
 	// so it never fires from a zero-value Client: SSDP is real LAN multicast and would reach a
 	// real IGD.
 	if c.TryUPnP {
-		if ext, port, ctl, st, err := mapViaUPnP(ctx, proto, internalPort, defaultLeaseSec, isPrivateHost, c.sent); err == nil {
+		if ext, port, ctl, st, err := mapViaUPnP(ctx, proto, internalPort, DefaultLeaseSec, isPrivateHost, c.sent); err == nil {
 			// LifetimeSec here is what we ASKED for and LifetimeObserved says so: IGD's
 			// AddPortMapping response has no lease out-argument, so there is nothing to read
 			// back. Reading it with a second GetSpecificPortMappingEntry round trip would not
 			// fit the 3 s budget on the slowest mechanism; carrying the request as though it
 			// were the answer is what the flag exists to stop.
-			return Mapping{Protocol: proto, InternalPort: internalPort, ExternalPort: port, LifetimeSec: defaultLeaseSec,
+			return Mapping{Protocol: proto, InternalPort: internalPort, ExternalPort: port, LifetimeSec: DefaultLeaseSec,
 				LifetimeObserved: false,
 				via:              mechUPnP, upnpControlURL: ctl, upnpServiceType: st}, ext, nil
 		} else if ctx.Err() != nil {
@@ -217,7 +217,7 @@ func (c *Client) tryPCP(ctx context.Context, conn net.Conn, proto Protocol, clie
 	if _, err := rand.Read(nonce[:]); err != nil {
 		return Mapping{}, netip.Addr{}, err
 	}
-	req := EncodePCPMap(proto, nonce, clientIP, internalPort, suggestedExternal, defaultLeaseSec)
+	req := EncodePCPMap(proto, nonce, clientIP, internalPort, suggestedExternal, DefaultLeaseSec)
 	resp, err := exchange(ctx, conn, req, func() {
 		c.sent(Mapping{Protocol: proto, InternalPort: internalPort, via: mechPCP, nonce: nonce})
 	})
@@ -233,7 +233,7 @@ func (c *Client) tryPCP(ctx context.Context, conn net.Conn, proto Protocol, clie
 }
 
 func (c *Client) tryNATPMP(ctx context.Context, conn net.Conn, proto Protocol, internalPort, suggestedExternal uint16) (Mapping, netip.Addr, error) {
-	req, err := EncodeNATPMPMap(proto, internalPort, suggestedExternal, defaultLeaseSec)
+	req, err := EncodeNATPMPMap(proto, internalPort, suggestedExternal, DefaultLeaseSec)
 	if err != nil {
 		return Mapping{}, netip.Addr{}, err
 	}
@@ -262,11 +262,52 @@ func (c *Client) tryNATPMP(ctx context.Context, conn net.Conn, proto Protocol, i
 	return m, ext, nil
 }
 
-// defaultLeaseSec is the requested lease. Short by D15's law (the lease is refreshed while
+// DefaultLeaseSec is the requested lease.
+//
+// **Exported so a caller can name the number it asked for.** The server's diagnostics compare a
+// granted lease against it (/pending 260), and a second copy of 120 in another package is the
+// kind of duplicate that stops matching the day this one moves. Short by D15's law (the lease is refreshed while
 // armed and must expire on its own after a crash), and the router may grant less. The refresh
 // cadence and the delete-on-teardown are S07; this client requests one lease and reads what was
 // granted (Mapping.LifetimeSec), which is what S07 schedules the refresh against.
-const defaultLeaseSec = 120
+const DefaultLeaseSec = 120
+
+// ObserveLease asks the router what lease it actually granted, for the one mechanism that
+// cannot say so in its reply.
+//
+// **UPnP-IGD's AddPortMapping has no lease out-argument**, so the mapping a UPnP obtain returns
+// carries our REQUEST wearing the granted lease's name — on the mechanism D15 says most consumer
+// routers run. `LifetimeObserved` recorded that honestly and nothing ever resolved it: an IGDv1
+// that silently ignores NewLeaseDuration installs a PERMANENT mapping and answers 200, and
+// nothing in the tree could tell that from a 120-second lease (/pending 260).
+//
+// It is a separate call rather than part of Map or Refresh, and that is measured rather than
+// preferred: `discoverIGD` never returns early on a LOCATION, so it burns its full deadline out
+// of a 3 s budget that then has to cover three SOAP round trips. A fourth does not fit. The
+// caller runs this off that path, on its own context.
+//
+// Non-UPnP mechanisms report their lease in the MAP reply and are returned unchanged.
+func (c *Client) ObserveLease(ctx context.Context, m Mapping) (Mapping, error) {
+	if m.via != mechUPnP || m.LifetimeObserved {
+		return m, nil
+	}
+	lease, leaseOK, err := verifiedUPnPEntry(ctx, igdHTTPClient(), m.upnpControlURL, m.upnpServiceType, m.Protocol, m.ExternalPort)
+	if err != nil {
+		return m, err // unreachable, unimplemented, or not ours — it stays unobserved
+	}
+	if !leaseOK {
+		// The entry is ours and carries no readable lease. "Unobserved" is the honest state;
+		// treating an absent tag as 0 would report a parse failure as a permanent mapping.
+		return m, nil
+	}
+	m.LifetimeObserved = true
+	if lease == 0 {
+		m.LeasePermanent = true // and LifetimeSec stays put — see Mapping.LeasePermanent
+		return m, nil
+	}
+	m.LifetimeSec = lease
+	return m, nil
+}
 
 // Unmap deletes a mapping obtained by Map, via the same mechanism that granted it (grill C1).
 // Best-effort: a failed delete is not fatal because the short lease expires on its own — the

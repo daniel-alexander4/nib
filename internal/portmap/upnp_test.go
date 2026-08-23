@@ -32,12 +32,16 @@ type mockIGD struct {
 	// owns; a test sets them to somebody else's to drive the refusal arm.
 	entryDesc   string
 	entryClient string
+	// entryLease is what GetSpecificPortMappingEntry reports for NewLeaseDuration; "" omits the
+	// tag entirely, which is a different fact from a zero lease and must stay tellable apart.
+	entryLease string
+	entries    chan string
 }
 
 func newMockIGD(t *testing.T) *mockIGD {
 	t.Helper()
 	m := &mockIGD{extIP: "9.9.9.9", addOK: true, added: make(chan string, 4), deleted: make(chan string, 4),
-		entryDesc: "Nib", entryClient: "127.0.0.1"}
+		entryDesc: "Nib", entryClient: "127.0.0.1", entryLease: "120", entries: make(chan string, 4)}
 	mux := http.NewServeMux()
 	m.srv = httptest.NewServer(mux)
 	t.Cleanup(m.srv.Close)
@@ -71,13 +75,21 @@ func newMockIGD(t *testing.T) *mockIGD {
 			m.deleted <- string(body)
 			fmt.Fprint(w, `<s:Envelope><s:Body><u:DeletePortMappingResponse></u:DeletePortMappingResponse></s:Body></s:Envelope>`)
 		case strings.Contains(action, "GetSpecificPortMappingEntry"):
+			select {
+			case m.entries <- string(body):
+			default:
+			}
+			lease := ""
+			if m.entryLease != "" {
+				lease = `<NewLeaseDuration>` + m.entryLease + `</NewLeaseDuration>`
+			}
 			fmt.Fprintf(w, `<s:Envelope><s:Body><u:GetSpecificPortMappingEntryResponse>`+
 				`<NewInternalPort>40404</NewInternalPort>`+
 				`<NewInternalClient>%s</NewInternalClient>`+
 				`<NewEnabled>1</NewEnabled>`+
 				`<NewPortMappingDescription>%s</NewPortMappingDescription>`+
-				`<NewLeaseDuration>120</NewLeaseDuration>`+
-				`</u:GetSpecificPortMappingEntryResponse></s:Body></s:Envelope>`, m.entryClient, m.entryDesc)
+				`%s`+
+				`</u:GetSpecificPortMappingEntryResponse></s:Body></s:Envelope>`, m.entryClient, m.entryDesc, lease)
 		case strings.Contains(action, "GetExternalIPAddress"):
 			fmt.Fprintf(w, `<s:Envelope><s:Body><u:GetExternalIPAddressResponse>`+
 				`<NewExternalIPAddress>%s</NewExternalIPAddress>`+

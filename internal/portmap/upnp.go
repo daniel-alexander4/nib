@@ -12,6 +12,7 @@ import (
 	"net/http/httptrace"
 	"net/netip"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -449,26 +450,54 @@ func unmapViaUPnP(ctx context.Context, controlURL, serviceType string, proto Pro
 	// writes AND name this host as its internal client. Both, because a description alone is
 	// a string any LAN device could also use, and an internal client alone would let us delete
 	// a different mapping of our own that something else installed on our behalf.
-	desc, internalClient, err := soapGetPortMappingEntry(ctx, client, controlURL, serviceType, proto, externalPort)
+	_, _, err := verifiedUPnPEntry(ctx, client, controlURL, serviceType, proto, externalPort)
 	if err != nil {
+		if errors.Is(err, errEntryNotOurs) {
+			return err
+		}
 		// The IGD says there is no such entry (714), or it will not answer. Either way there is
 		// nothing this call may safely remove. Not an error the caller acts on: a mapping that
 		// is already gone is the outcome a delete wanted.
 		return nil
 	}
+	return soapDeletePortMapping(ctx, client, controlURL, serviceType, proto, externalPort)
+}
+
+// errEntryNotOurs is the refusal: the IGD answered, and what it holds on that external port is
+// not this host's Nib mapping.
+var errEntryNotOurs = errors.New("portmap: that IGD mapping is not ours")
+
+// verifiedUPnPEntry asks the IGD what it holds on an external port and answers only for an entry
+// this host owns — returning that entry's lease.
+//
+// **One door for two callers (ADR-009).** `DeletePortMapping` carries (remote host, external
+// port, protocol) and no internal client, so IGD acts on whichever host holds that port; a lease
+// read-back is keyed identically and has the same exposure with a different consequence —
+// recording a stranger's lease as ours would poison both the refresh cadence and the evidence
+// /pending 258's gate turns on. The two checks were inline in the delete until a second caller
+// needed them; they are here now and both routes come through.
+//
+// `leaseOK` distinguishes a lease that was PRESENT and parsed from one that was not. It has to:
+// `extractTag` returns "" for a missing tag and for a body it could not parse alike, so a bare
+// uint32 would report 0 — which the caller reads as "permanent" — for a parse failure.
+func verifiedUPnPEntry(ctx context.Context, client *http.Client, controlURL, serviceType string, proto Protocol, externalPort uint16) (leaseSec uint32, leaseOK bool, err error) {
+	desc, internalClient, lease, leaseOK, err := soapGetPortMappingEntry(ctx, client, controlURL, serviceType, proto, externalPort)
+	if err != nil {
+		return 0, false, err
+	}
 	if desc != upnpMappingDescription {
-		return fmt.Errorf("portmap: refusing to delete IGD mapping on external port %d: it is described %q, not %q",
-			externalPort, desc, upnpMappingDescription)
+		return 0, false, fmt.Errorf("%w: external port %d is described %q, not %q",
+			errEntryNotOurs, externalPort, desc, upnpMappingDescription)
 	}
 	mine, err := internalIPToward(controlURL)
 	if err != nil {
-		return err
+		return 0, false, err
 	}
 	if internalClient != mine.String() {
-		return fmt.Errorf("portmap: refusing to delete IGD mapping on external port %d: it belongs to %s, not to this host (%s)",
-			externalPort, internalClient, mine)
+		return 0, false, fmt.Errorf("%w: external port %d belongs to %s, not to this host (%s)",
+			errEntryNotOurs, externalPort, internalClient, mine)
 	}
-	return soapDeletePortMapping(ctx, client, controlURL, serviceType, proto, externalPort)
+	return lease, leaseOK, nil
 }
 
 // soapGetPortMappingEntry asks the IGD who owns an external port. It is what makes a UPnP delete
@@ -476,7 +505,7 @@ func unmapViaUPnP(ctx context.Context, controlURL, serviceType string, proto Pro
 //
 // An empty answer is NOT "ours by default" — extractTag returns "" for a missing tag and for a
 // body it could not parse alike, so the caller compares for equality and refuses on anything else.
-func soapGetPortMappingEntry(ctx context.Context, client *http.Client, controlURL, serviceType string, proto Protocol, externalPort uint16) (description, internalClient string, err error) {
+func soapGetPortMappingEntry(ctx context.Context, client *http.Client, controlURL, serviceType string, proto Protocol, externalPort uint16) (description, internalClient string, leaseSec uint32, leaseOK bool, err error) {
 	resp, err := soapCall(ctx, client, controlURL, serviceType, "GetSpecificPortMappingEntry",
 		fmt.Sprintf(`<u:GetSpecificPortMappingEntry xmlns:u="%s">`+
 			`<NewRemoteHost></NewRemoteHost>`+
@@ -484,10 +513,16 @@ func soapGetPortMappingEntry(ctx context.Context, client *http.Client, controlUR
 			`<NewProtocol>%s</NewProtocol>`+
 			`</u:GetSpecificPortMappingEntry>`, serviceType, externalPort, soapProto(proto)))
 	if err != nil {
-		return "", "", err
+		return "", "", 0, false, err
+	}
+	lease, leaseOK := uint32(0), false
+	if raw := strings.TrimSpace(extractTag(resp, "NewLeaseDuration")); raw != "" {
+		if v, perr := strconv.ParseUint(raw, 10, 32); perr == nil {
+			lease, leaseOK = uint32(v), true
+		}
 	}
 	return strings.TrimSpace(extractTag(resp, "NewPortMappingDescription")),
-		strings.TrimSpace(extractTag(resp, "NewInternalClient")), nil
+		strings.TrimSpace(extractTag(resp, "NewInternalClient")), lease, leaseOK, nil
 }
 
 // internalIPToward returns this host's source address on the path to the IGD, by opening (but
