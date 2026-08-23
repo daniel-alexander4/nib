@@ -1,0 +1,33 @@
+diff --git a/web/app.js b/web/app.js
+index 67bd582..1caecb5 100644
+--- a/web/app.js
++++ b/web/app.js
+@@ -3121,19 +3121,16 @@ export function dhashFromGrid(lums) {
+ // individual pixels. Everything a perceptual hash is for — noise, texture, halftoning, a page of
+ // text averaging to grey — depends on the average actually being taken.
+ export function gridMeans(canvas) {
+-  const w = canvas.width, h = canvas.height;
+-  const px = canvas.getContext('2d').getImageData(0, 0, w, h).data;
+-  const sums = new Float64Array(72), counts = new Float64Array(72);
+-  for (let y = 0; y < h; y++) {
+-    const gy = Math.min(7, (y * 8 / h) | 0);
+-    for (let x = 0; x < w; x++) {
+-      const gx = Math.min(8, (x * 9 / w) | 0), o = (y * w + x) * 4, c = gy * 9 + gx;
+-      sums[c] += 0.299 * px[o] + 0.587 * px[o + 1] + 0.114 * px[o + 2];
+-      counts[c]++;
+-    }
+-  }
++  const g = document.createElement('canvas');
++  g.width = 9; g.height = 8;
++  const ctx = g.getContext('2d');
++  ctx.drawImage(canvas, 0, 0, 9, 8);
++  const px = ctx.getImageData(0, 0, 9, 8).data;
+   const lums = [];
+-  for (let i = 0; i < 72; i++) lums.push(counts[i] ? sums[i] / counts[i] : 0);
++  for (let i = 0; i < 72; i++) {
++    const o = i * 4;
++    lums.push(0.299 * px[o] + 0.587 * px[o + 1] + 0.114 * px[o + 2]);
++  }
+   return lums;
+ }
+ 

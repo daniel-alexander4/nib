@@ -1388,3 +1388,36 @@ have asserted that the record's life covers the arm's window. That is unsatisfia
 and the assertion could only ever fail. A test that can only fail is the mirror image of one that
 can only pass, and neither tells you anything — so the clause is about COVERAGE instead, which is
 the property that is actually true and actually checkable.
+
+## v1.117.139 — /pending 276: the page-compare hash, and the reduction under it
+
+Two rows, both tier 3, both about `pageDHash`. The first is the defect the instrument was built to
+find. The second is the one the instrument was *complicit in*, and it is the more interesting entry.
+
+| Defect reintroduced | What it said | Check that fired |
+| --- | --- | --- |
+| **the gradient's sign decides the result** *(replayable: `compare-hash-gradient-sign-decides`)* | `the same page under a +10% illumination gradient is 0 bits away and under a -10% gradient 25, against a threshold of 12 — a scan of one page under an uneven lamp does not match itself` | `two sparse text pages…`, `an illumination gradient does not decide the result…` and the width guard, in `test/ui/compare-hash.test.mjs`. A strict `>` files all ~22 tied pairs of a mostly-paper page under "darker", so a brightening ramp moves nothing and a darkening one flips every one of them |
+| **the reduction point-samples** *(replayable: `compare-hash-reduction-point-samples`)* | `a full page of text is 4 bits from blank paper against a threshold of 12 — a dropped or blank-fed sheet would align against a page of content` | `a blank sheet does not pair with a page that has content on it`, driven by `sparseField` — paper, a heading, eight lines |
+
+**The second row is a lesson about instruments, not about hashes.** `pageDHash` reduced its render
+with `ctx.drawImage(canvas, 0, 0, 9, 8)` and the comment on that line called it a box filter. It is
+not one: Chromium's default smoothing on a ~150px-to-9px reduction effectively point-samples, so
+the hash was reading 72 individual pixels and every property a perceptual hash exists for — noise,
+texture, halftoning, a page of text averaging to grey — never reached it.
+
+Four green tiers could not see it **because the test reduced the same way, with the same line.** The
+copy agreed with the defect and confirmed it back to the product. Nothing in the assertion set could
+have caught that, because agreement between two implementations of the same mistake looks exactly
+like agreement between two implementations of the same rule. What found it was a probe that printed
+the raw grid — nine flat columns coming back as the exact column greys with no blending at all.
+
+The fix was structural as well as arithmetic: `gridMeans`, `dhashFromGrid` and `hamming` are now
+exported and the instrument calls **the product's** versions, so the only thing left on the test's
+side of the seam is the fixture and the page canvas.
+
+**Two claims that measurement corrected, recorded because both were confident and wrong.** The grill
+predicted "every content page pairs with a blank page"; against the nine-column fixture a blank was
+never close, and the finding only reproduced against a realistic sparse page — where it was worse
+than predicted. And the numbers that sized the fix came from a replica of the reduction rather than
+the product; the replica box-filtered, the product did not, and every distance it predicted was
+wrong. The replica said a text page was 23 bits from blank. The browser said 4.

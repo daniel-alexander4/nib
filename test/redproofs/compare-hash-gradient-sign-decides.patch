@@ -1,0 +1,33 @@
+diff --git a/web/app.js b/web/app.js
+index 67bd582..22d5f4a 100644
+--- a/web/app.js
++++ b/web/app.js
+@@ -3089,24 +3089,14 @@ const DHASH_BAND_MIN = 0.02; // a floor, so a blank page does not get a band of
+ // `toolbarStyle` shape this repo deleted a feature over — there is no default that can be wrong and
+ // no code path it adds; nothing in the product imports it.
+ export function dhashFromGrid(lums) {
+-  // The 64 log-ratios, left cell against its right neighbour. +1 keeps log finite on black.
+-  const ratios = [];
++  const bytes = new Uint8Array(8);
++  let bit = 0;
+   for (let y = 0; y < 8; y++) {
+     for (let x = 0; x < 8; x++) {
+-      ratios.push(Math.log(lums[y * 9 + x] + 1) - Math.log(lums[y * 9 + x + 1] + 1));
++      if (lums[y * 9 + x] > lums[y * 9 + x + 1]) bytes[bit >> 3] |= 1 << (bit & 7);
++      bit++;
+     }
+   }
+-  const mags = ratios.map(Math.abs).sort((a, b) => a - b);
+-  const band = Math.max(DHASH_BAND_MIN, mags[Math.floor(mags.length * DHASH_BAND_Q)]);
+-
+-  const bytes = new Uint8Array(16);
+-  let bit = 0;
+-  for (const d of ratios) {
+-    if (d > band) bytes[bit >> 3] |= 1 << (bit & 7);
+-    bit++;
+-    if (d < -band) bytes[bit >> 3] |= 1 << (bit & 7);
+-    bit++;
+-  }
+   return bytes;
+ }
+ 
