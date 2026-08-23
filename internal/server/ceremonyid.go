@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -56,6 +57,13 @@ type ceremonyID struct {
 	// stopNet/portMap (diff-grill #4): a setter arriving after close acts immediately rather
 	// than storing state nothing will ever tear down.
 	closed bool
+	// reDelivery caches THIS hop's co-signed output so a reconnect after the signature but before
+	// the initiator read it re-delivers the SAME bytes instead of signing again (P05.S10, D18/D24).
+	// Keyed on sha256 of the INBOUND (the peer's already-signed document): keying on the hop alone
+	// would hand a reconnect with a different document the wrong signature. The ceremonyID is
+	// already per-hop, so the hop is implicit. Guarded by mu; cleared by close, so no signed bytes
+	// outlive the ceremony. In-memory only — the process-kill persistence D24 names is P08's.
+	reDelivery map[string][]byte
 }
 
 // setStopNet and setPortMap store the two shared fields under the lock.
@@ -68,6 +76,56 @@ func (c *ceremonyID) setStopNet(cancel context.CancelFunc) {
 	}
 	c.stopNet = cancel
 	c.mu.Unlock()
+}
+
+// reDeliverKey hashes the inbound document — the idempotency key for re-delivery (P05.S10).
+func reDeliverKey(inbound []byte) string {
+	sum := sha256.Sum256(inbound)
+	return string(sum[:])
+}
+
+// Cached returns THIS hop's previously co-signed output for `inbound`, or nil if this hop has not
+// signed that document (a cache miss runs the fresh exchange). Nil after close, so a re-delivery
+// races a teardown to a clean miss rather than a signature off a dead ceremony.
+func (c *ceremonyID) Cached(inbound []byte) []byte {
+	if c == nil {
+		return nil
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.closed {
+		return nil
+	}
+	return c.reDelivery[reDeliverKey(inbound)]
+}
+
+// Store records THIS hop's co-signed output for `inbound`, so a later reconnect re-delivers it. A
+// Store arriving after close is dropped (the closed-flag pattern setStopNet/setPortMap use), so no
+// signed bytes are stored on a ceremony nothing will tear down.
+func (c *ceremonyID) Store(inbound, final []byte) {
+	if c == nil {
+		return
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.closed {
+		return
+	}
+	if c.reDelivery == nil {
+		c.reDelivery = map[string][]byte{}
+	}
+	c.reDelivery[reDeliverKey(inbound)] = final
+}
+
+// hasSigned reports whether this hop has produced any signature — the receiver's "am I past the
+// gate" signal, since a lost writeback is otherwise indistinguishable from a clean completion.
+func (c *ceremonyID) hasSigned() bool {
+	if c == nil {
+		return false
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return len(c.reDelivery) > 0
 }
 
 func (c *ceremonyID) setPortMap(pm *portMapper) {
@@ -160,6 +218,7 @@ func (c *ceremonyID) close() {
 	c.closed = true
 	stop := c.stopNet
 	mapper := c.portMap
+	c.reDelivery = nil // drop the signed outputs with the ceremony (D6: no signed bytes at rest)
 	c.mu.Unlock()
 	if stop != nil {
 		// Cancel the background work FIRST, so Close's own join has something finite to

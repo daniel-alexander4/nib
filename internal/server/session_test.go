@@ -853,7 +853,7 @@ func TestSessionInitiate(t *testing.T) {
 			return
 		}
 		defer conn.Close()
-		_, e = p2p.Receive(conn.Channel, bCert, bKey, "Alice", autoConfirm{intent: "I accept"}, okVerifier{})
+		_, e = p2p.Receive(conn.Channel, bCert, bKey, "Alice", autoConfirm{intent: "I accept"}, okVerifier{}, nil)
 		recvErr <- e
 	}()
 
