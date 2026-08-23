@@ -84,20 +84,60 @@ func TestUnsignedHasNoTrailingFlag(t *testing.T) {
 // is decidable: the combine itself, which is why it is a named function.
 func TestAddedAfterFailsClosed(t *testing.T) {
 	for _, tc := range []struct {
-		name     string
-		trailing bool
-		err      error
-		want     bool
+		name       string
+		trailing   bool
+		sawSig     bool
+		err        error
+		libSigners bool
+		want       bool
 	}{
-		{"clean and readable", false, nil, false},
-		{"content found", true, nil, true},
-		{"unreadable is a warning, not clean", false, errParseFail, true},
-		{"unreadable stays a warning even if it also found content", true, errParseFail, true},
+		{"clean and readable", false, true, nil, true, false},
+		{"content found", true, true, nil, true, true},
+		{"unreadable is a warning, not clean", false, false, errParseFail, true, true},
+		{"unreadable stays a warning even if it also found content", true, true, errParseFail, true, true},
+		// An unsigned document: neither enumeration sees a signature, and there is nothing to
+		// warn about. This is the row that stops the disagreement rule below from firing on
+		// every unsigned file.
+		{"unsigned document is not a disagreement", false, false, nil, false, false},
 	} {
-		if got := addedAfterVerdict(tc.trailing, tc.err); got != tc.want {
-			t.Errorf("%s: addedAfterVerdict(%v, %v) = %v, want %v — a trailing check that "+
-				"errored must not report the document clean", tc.name, tc.trailing, tc.err, got, tc.want)
+		if got := addedAfterVerdict(tc.trailing, tc.sawSig, tc.err, tc.libSigners); got != tc.want {
+			t.Errorf("%s: addedAfterVerdict(%v, %v, %v, %v) = %v, want %v — a trailing check that "+
+				"errored must not report the document clean", tc.name, tc.trailing, tc.sawSig,
+				tc.err, tc.libSigners, got, tc.want)
 		}
+	}
+}
+
+// TestTheTwoEnumerationsDisagreeingIsAWarning — /pending 270, and it is the case the "two
+// enumerations" review was actually about.
+//
+// The library gates on `Root/AcroForm/SigFlags` and then walks `rdr.Xref()` for objects whose
+// `/Filter` is `Adobe.PPKLite`. This check walks `AcroForm/Fields` for `FT /Sig` byte ranges.
+// Those are genuinely different walks over the same PARSED document — no malformed file
+// required — so a document carrying `/SigFlags` whose `/Fields` does not list the signature
+// satisfies one and not the other.
+//
+// The old shape could not even express that: `trailingContentAfterLastSignature` returned
+// `(false, nil)` for "no signature fields here" AND for "the signatures cover everything", so
+// the caller could not tell an agreement from an absence — and a Valid document whose bytes
+// after the signature are covered by nothing reported clean.
+//
+// **What this does not cover, stated rather than implied:** the end-to-end case still wants a
+// crafted document, and building one means hand-rolling an xref-STREAM incremental update,
+// because that is what the signing library writes. The composition rule is where the defect
+// lives and where it is decidable, which is why it is a named function.
+func TestTheTwoEnumerationsDisagreeingIsAWarning(t *testing.T) {
+	// The library found a signature; this walk found no signature field to measure against.
+	if !addedAfterVerdict(false, false, nil, true) {
+		t.Error("the signature walk found a signer and the byte-range walk found no signature " +
+			"field at all, and the document was reported as wholly signed — the two enumerations " +
+			"disagree, which is exactly the case that cannot be confirmed either way")
+	}
+	// The control, and it is what keeps the rule from being "always warn": when both walks
+	// agree that a signature exists and nothing follows it, that is a clean document.
+	if addedAfterVerdict(false, true, nil, true) {
+		t.Error("both enumerations agree the document ends at its signature, and it was still " +
+			"reported as added-after — the rule has become unconditional")
 	}
 }
 

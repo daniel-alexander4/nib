@@ -116,7 +116,8 @@ func Verify(data []byte) Status {
 	// AddedAfter=true, "I could not confirm the document ends at its signature", which for
 	// an integrity tool is the safe direction and which both the CLI (exit non-zero) and
 	// the web badge (warn) already render correctly.
-	st.AddedAfter = addedAfterVerdict(trailingContentAfterLastSignature(data))
+	trailing, sawSig, terr := trailingContentAfterLastSignature(data)
+	st.AddedAfter = addedAfterVerdict(trailing, sawSig, terr, len(st.Signers) > 0)
 	return st
 }
 
@@ -125,7 +126,22 @@ func Verify(data []byte) Status {
 // not an inline `a || err != nil` because the fail-closed direction is the whole point of
 // it — an inline expression is one careless refactor away from `a` alone, which is the
 // silent-clean behaviour this replaced, and nothing would fail. This is what the test binds.
-func addedAfterVerdict(trailing bool, err error) bool {
+func addedAfterVerdict(trailing, sawSignature bool, err error, librarySawSigners bool) bool {
+	// **The two enumerations disagreeing is itself a "could not confirm".** The library walks
+	// `rdr.Xref()` for `Adobe.PPKLite` objects; this check walks AcroForm/Fields for `FT /Sig`
+	// byte ranges. They are genuinely different walks over the same parsed document, so a
+	// document whose AcroForm carries `/SigFlags` (which the library requires) but whose
+	// `/Fields` does not list the signature satisfies one and not the other — no parse failure
+	// anywhere. This check then returns "nothing trailing" because it found nothing to measure
+	// against, and a Valid document is reported as wholly signed while the bytes after its
+	// signature are covered by nothing.
+	//
+	// The old signature could not express this: it returned `(false, nil)` for "no signature
+	// fields here" and for "the signatures cover everything" alike, so the caller could not tell
+	// an agreement from an absence (/pending 270).
+	if librarySawSigners && !sawSignature {
+		return true
+	}
 	return trailing || err != nil
 }
 
@@ -164,14 +180,18 @@ func signatureBlobPresent(pdf []byte) bool {
 // later (incremental) signature covers more, so the most-recent signature has
 // the largest coverage end. If the file is larger than every signature's
 // coverage, content was added after the last one. Unsigned docs report false.
-func trailingContentAfterLastSignature(pdf []byte) (bool, error) {
+//
+// `sawSignature` reports whether THIS walk found a signature field at all, and it exists
+// because "no signature here" and "the signatures cover everything" were the same return
+// value — which is what let a disagreement between the two enumerations read as clean.
+func trailingContentAfterLastSignature(pdf []byte) (trailing, sawSignature bool, err error) {
 	r, err := dpdf.NewReader(bytes.NewReader(pdf), int64(len(pdf)))
 	if err != nil {
-		return false, err
+		return false, false, err
 	}
 	acro := r.Trailer().Key("Root").Key("AcroForm")
 	if acro.IsNull() {
-		return false, nil
+		return false, false, nil
 	}
 	fields := acro.Key("Fields")
 	var maxEnd int64
@@ -191,9 +211,12 @@ func trailingContentAfterLastSignature(pdf []byte) (bool, error) {
 		}
 	}
 	if !signed {
-		return false, nil
+		// **Not the same fact as "nothing was appended", and the caller needs both.** This
+		// walk found no signature to measure against; whether one exists is the other
+		// enumeration's answer.
+		return false, false, nil
 	}
-	return int64(len(pdf)) > maxEnd, nil
+	return int64(len(pdf)) > maxEnd, true, nil
 }
 
 // signerInfo projects a pdfsign verify.Signer onto the integrity-focused subset
