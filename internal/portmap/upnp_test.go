@@ -442,3 +442,44 @@ func TestMapViaUPnPLoop(t *testing.T) {
 		}
 	})
 }
+
+// TestTheUPnPBudgetLeavesRoomForTheCallsItHasToMake — /pending 264.
+//
+// `discoverIGD` used to run its read loop to the deadline unconditionally, so every UPnP obtain
+// spent the whole `upnpHTTPBudget` before its first HTTP byte — out of a budget the caller then
+// needed for three SOAP round trips: the description GET, AddPortMapping, and GetExternalIPAddress.
+//
+// **That squeeze is load-bearing elsewhere and this is the guard for it.** It is the recorded
+// reason a lease read-back "does not fit" at obtain time (/pending 260 built around it), and it is
+// why the written-but-unanswered POST window /pending 257 closed is the likely field case rather
+// than a theoretical one — the SOAP calls were being run in the last second by construction.
+//
+// The wire timing is not driven here and this file says so plainly: SSDP is real multicast and the
+// tier-1 ceiling in this package forbids reaching for it. What IS decidable is the arithmetic, and
+// the arithmetic is the defect.
+func TestTheUPnPBudgetLeavesRoomForTheCallsItHasToMake(t *testing.T) {
+	// SETUP: discovery has to be capable of consuming the budget at all, or there is no squeeze
+	// to bound and this row asserts nothing.
+	if upnpHTTPBudget <= 0 {
+		t.Fatal("setup: there is no discovery budget, so nothing here is about competing for it")
+	}
+	if ssdpGrace >= upnpHTTPBudget {
+		t.Errorf("the post-answer grace (%s) is not shorter than the discovery budget (%s), so an "+
+			"IGD that answers immediately still costs the full budget — which is the defect",
+			ssdpGrace, upnpHTTPBudget)
+	}
+	// The property that matters: once a gateway has answered, most of the budget is still
+	// available to the calls that follow. Half is the floor; today it is far better than that.
+	if remaining := upnpHTTPBudget - ssdpGrace; remaining <= upnpHTTPBudget/2 {
+		t.Errorf("after the first answer only %s of the %s budget is left for three SOAP round "+
+			"trips — the description GET, AddPortMapping and GetExternalIPAddress all run in it",
+			remaining, upnpHTTPBudget)
+	}
+	// And the grace must be long enough to be a grace: a second IGD on the same link answers
+	// within tens of milliseconds, so anything under that is first-answer-wins wearing another name.
+	if ssdpGrace < 100*time.Millisecond {
+		t.Errorf("a grace of %s is short enough that a second gateway on the same link would be "+
+			"missed — that is first-answer-wins, which is a different decision and should be made "+
+			"deliberately rather than arrived at by tuning", ssdpGrace)
+	}
+}
