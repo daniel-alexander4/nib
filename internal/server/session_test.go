@@ -1764,3 +1764,111 @@ func TestCeremonyReDeliversAfterReconnect(t *testing.T) {
 		t.Errorf("the re-delivered result has %d signers, want 2", n)
 	}
 }
+
+// TestCeremonyReRacesAfterEarlyChannelLoss — P05.S10 T05, the OTHER half of criterion 15: a channel
+// lost BEFORE confirmation re-races and completes on a fresh channel (with fresh words, D18). Alice's
+// first connection drops before the spoken check even exchanges (she closes right after the
+// handshake), so Bob's Receive fails on a transport error with NOTHING signed; the loop re-races and
+// the second, real Initiate completes a normal co-sign. Nothing is signed twice — the drop was pre-gate.
+func TestCeremonyReRacesAfterEarlyChannelLoss(t *testing.T) {
+	ts, _ := startServer(t)
+	c, csrf := authedClient(t, ts)
+
+	var me struct {
+		Fingerprint string `json:"fingerprint"`
+	}
+	sessGet(t, c, ts.URL+"/api/peers", &me)
+	bFP := me.Fingerprint
+	bFPBytes, _ := hex.DecodeString(bFP)
+
+	aCert, aKey, err := sign.GenerateIdentity("Alice")
+	if err != nil {
+		t.Fatal(err)
+	}
+	aFPBytes, _ := sign.Fingerprint(aCert)
+	aFP := hex.EncodeToString(aFPBytes)
+	pinPeer(t, c, csrf, ts.URL, aFP)
+
+	cid, _ := ceremony.NewID()
+	rec := ceremony.Record{
+		ID: cid, DocHash: strings.Repeat("ba", 32), Intent: "We agree", Expires: time.Now().Add(48 * time.Hour),
+		Roster: []ceremony.Party{{Fingerprint: aFP, Label: "Alice", Signs: true}, {Fingerprint: bFP, Label: "Bob", Signs: true}},
+	}
+	if err := rec.Sign(aCert, aKey); err != nil {
+		t.Fatal(err)
+	}
+	invites, _ := ceremony.NewInvitations(rec)
+	bobInv, _ := invites[bFP].Encode()
+
+	base, _ := testpdf.Form()
+	prepared, _ := p2p.PrepareDocument(base)
+	place, _ := p2p.NextPlacement(prepared)
+	att := p2p.Attestation{Signer: "Alice", AcceptedPeer: bFP, AcceptedPeerLabel: "Bob", Intent: "I agree", When: time.Now()}
+	aSigned, _ := p2p.Contribute(prepared, aCert, aKey, att, nil, place)
+
+	var armed sessionStatus
+	sessDecode(t, write(t, c, csrf, http.MethodPost, ts.URL+"/api/session/arm", "application/json",
+		jsonBody(armRequest{Fingerprint: aFP, Bind: "127.0.0.1:0", Transport: "quic", Invitation: bobInv})), &armed)
+	if !armed.Armed {
+		t.Fatalf("arm failed: %+v", armed)
+	}
+
+	// #1: dial, handshake, and DROP before the spoken check — a pre-gate transport loss.
+	aEnd, _ := p2p.NewSharedEndpoint("127.0.0.1:0")
+	hc, e := p2p.QUICDialHandshakeOn(context.Background(), aEnd, armed.Address, aCert, aKey, bFPBytes, 10*time.Second)
+	if e != nil {
+		aEnd.Close()
+		t.Fatalf("dial #1: %v", e)
+	}
+	conn1, e := hc.Promote(context.Background(), true)
+	if e != nil {
+		aEnd.Close()
+		t.Fatalf("promote #1: %v", e)
+	}
+	conn1.Close() // drop before any verification frame — Bob's read fails, nothing signed
+	aEnd.Close()
+
+	// #2: a real Initiate. Bob has re-raced (hasSigned was false), so it accepts this fresh channel.
+	r2 := make(chan []byte, 1)
+	e2 := make(chan error, 1)
+	go func() {
+		bEnd, err := p2p.NewSharedEndpoint("127.0.0.1:0")
+		if err != nil {
+			e2 <- err
+			return
+		}
+		defer bEnd.Close()
+		h2, err := p2p.QUICDialHandshakeOn(context.Background(), bEnd, armed.Address, aCert, aKey, bFPBytes, 15*time.Second)
+		if err != nil {
+			e2 <- err
+			return
+		}
+		conn2, err := h2.Promote(context.Background(), true)
+		if err != nil {
+			e2 <- err
+			return
+		}
+		defer conn2.Close()
+		f, err := p2p.Initiate(conn2.Channel, aSigned, aFPBytes, &recordingVerifier{})
+		if err != nil {
+			e2 <- err
+			return
+		}
+		r2 <- f
+	}()
+
+	_ = waitForVerify(t, c, ts.URL, e2)
+	postJSON(t, c, csrf, ts.URL+"/api/session/verify", map[string]any{"confirmed": true})
+	waitForPending(t, c, ts.URL, aFP, e2)
+	postJSON(t, c, csrf, ts.URL+"/api/session/respond", map[string]any{"accept": true, "intent": "I accept"})
+	select {
+	case final := <-r2:
+		if n := len(p2p.ReadAttestations(final)); n != 2 {
+			t.Fatalf("after a pre-gate drop and re-race, the result has %d signers, want 2", n)
+		}
+	case e := <-e2:
+		t.Fatalf("initiate #2 after re-race: %v", e)
+	case <-time.After(20 * time.Second):
+		t.Fatal("the ceremony did not complete after an early channel loss — the loop did not re-race")
+	}
+}
