@@ -2,6 +2,7 @@ package pdfops
 
 import (
 	"encoding/xml"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -140,5 +141,76 @@ func TestFlattenFieldKeepsAParentsOwnValue(t *testing.T) {
 	}
 	if v := got["address"]; len(v) == 0 || v[0] != "1 High Street" {
 		t.Errorf("the parent field's own value was dropped because it also has children; got %#v", got)
+	}
+}
+
+// TestAnXFDFCheckboxValueIsAnExportNameNotABoolean — /pending 9.
+//
+// XFDF is how Acrobat and Foxit hand form data to another program, and a checkbox's `<value>`
+// there is its EXPORT-VALUE NAME — whatever name the form chose for its on-state. `Off` is the
+// one name PDF reserves for unchecked. Nib read that value with `truthy`, a CSV cell reader that
+// accepts eight English words, so a form whose on-state was anything else (a German `Ja`, a
+// numbered choice, a form's own label) came back UNCHECKED and the fill reported success.
+//
+// The value string only decides checked-ness: pdfcpu resolves the actual on-state name from the
+// widget's appearance dictionary when it writes, so this test does not need a form with an exotic
+// on-state to exercise the defect — it needs a value the CSV rule rejects, which is the class.
+func TestAnXFDFCheckboxValueIsAnExportNameNotABoolean(t *testing.T) {
+	form := authorTestForm(t)
+
+	// SETUP: the CSV rule really does reject this value, or the row proves nothing about which
+	// rule the XFDF path uses.
+	if truthy("Ja") {
+		t.Fatal("setup: the CSV reader already accepts \"Ja\", so this value cannot show the split")
+	}
+
+	filled, err := FillFormXFDF(form, []byte(
+		`<?xml version="1.0" encoding="UTF-8"?>`+
+			`<xfdf xmlns="http://ns.adobe.com/xfdf/"><fields>`+
+			// The text field is not decoration. With only the checkbox in the document, an
+			// unchecked result changes nothing and pdfcpu refuses the whole fill with "no form
+			// fields affected" — so the defect would surface as an ERROR. Its real shape is
+			// SILENT: any real export carries other fields, they apply, the fill reports
+			// success, and the box is quietly wrong. This makes the row demonstrate that.
+			`<field name="fullName"><value>Ada Lovelace</value></field>`+
+			`<field name="agree"><value>Ja</value></field>`+
+			`</fields></xfdf>`))
+	if err != nil {
+		t.Fatalf("FillFormXFDF: %v", err)
+	}
+	out, err := ExportFormXFDF(filled)
+	if err != nil {
+		t.Fatalf("ExportFormXFDF: %v", err)
+	}
+	// SETUP: the rest of the fill landed, so a wrong checkbox below is a wrong ANSWER rather
+	// than a refused operation — which is the defect's real shape.
+	if !regexp.MustCompile(`(?s)<field name="fullName">\s*<value>Ada Lovelace</value>`).Match(out) {
+		t.Fatalf("setup: the text field did not fill, so this row is not exercising a silent "+
+			"checkbox failure. export=%s", out)
+	}
+	agreeOn := regexp.MustCompile(`(?s)<field name="agree">\s*<value>Yes</value>`)
+	if !agreeOn.Match(out) {
+		t.Errorf("a checkbox given its export-value name came back unchecked — the XFDF path is "+
+			"reading a form-data name with the CSV cell reader. export=%s", out)
+	}
+}
+
+// TestACSVCheckboxCellIsStillABoolean — the control, and it is why the rule is a parameter
+// rather than a widened shared predicate.
+//
+// Under the XFDF rule anything but empty and `Off` means checked. Applied to CSV that would make
+// a human's "no" mean YES — a silent, confident wrong answer on a mail merge. The two callers
+// pass their own rule; this row fails the day someone collapses them.
+func TestACSVCheckboxCellIsStillABoolean(t *testing.T) {
+	for _, no := range []string{"no", "No", "false", "0", ""} {
+		if truthy(no) {
+			t.Errorf("the CSV reader treats %q as checked", no)
+		}
+		if no != "" && !xfdfChecked(no) {
+			t.Errorf("the XFDF reader treats the export name %q as unchecked — only Off and empty are", no)
+		}
+	}
+	if xfdfChecked("Off") || xfdfChecked("off") || xfdfChecked("  ") {
+		t.Error("Off is the one name PDF reserves for the unchecked state")
 	}
 }
