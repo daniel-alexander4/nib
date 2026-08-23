@@ -34,7 +34,14 @@ func TestD19ClassifierTable(t *testing.T) {
 		// Ordering: no DHT still beats a refused record (cause 2 first).
 		{"no DHT beats a refused record", d19Inputs{dhtResponded: false, recordRefused: true}, causeDHTUnreachable, false},
 		// Cause 3 — peer published, endpoint-dependent, no mapping. The advice splits on D9:
-		{"cause3 controllable NAT: port-forward offered", d19Inputs{dhtResponded: true, peerSeen: true, mappingDependent: true}, causeMappingDependent, true},
+		// RENAMED, and the rename is the fix's other half: these inputs are not "controllable NAT",
+		// they are "the port-map tier learned NOTHING" — mapUnroutable is set only where a gateway
+		// ANSWERED. A row asserting a promise over that state re-asserts the premise the fix removes,
+		// and a guard that pins the bug is worse than no guard. What it may now say is CONDITIONED
+		// advice, which TestCause3NeverPromisesWhatItCannotKnow checks in full.
+		{"cause3 learned nothing about the router: advice mentions it, conditioned", d19Inputs{dhtResponded: true, peerSeen: true, mappingDependent: true}, causeMappingDependent, true},
+		// A directly reachable IPv6 endpoint is not a case for port-forward advice at all.
+		{"cause3 with v6 reachable: no port-forward, and no denial of reachability", d19Inputs{dhtResponded: true, peerSeen: true, mappingDependent: true, v6Independent: true}, causeMappingDependent, false},
 		{"cause3 CGNAT: VPN only, no port-forward", d19Inputs{dhtResponded: true, peerSeen: true, mappingDependent: true, sharedSpace: true}, causeMappingDependent, false},
 		{"cause3 double-NAT: VPN only, no port-forward", d19Inputs{dhtResponded: true, peerSeen: true, mappingDependent: true, mapUnroutable: true}, causeMappingDependent, false},
 		// Cause 3 DEGRADES to cause 4 when the mapping class is unknown/independent.
@@ -142,5 +149,55 @@ func TestDiagnoseReadsGuardedSignalsNotTheGate(t *testing.T) {
 		t.Error("diagnose() calls a method on c.gate — it runs concurrently with the feed that writes " +
 			"the gate (the live-status path), so a direct gate read is a data race. Snapshot the signal " +
 			"into an atomic in feedCandidates and read that instead.")
+	}
+}
+
+// TestCause3NeverPromisesWhatItCannotKnow — /pending 251.
+//
+// Cause 3's `else` branch is reached by learning NOTHING (see classifyD19), and it used to end
+// "…would let it connect" — a promise, to a user Nib has no evidence controls a router. The
+// concrete cause named in the item is that `sharedSpace` is IPv4-only, so an IPv6-transition
+// CGNAT subscriber (DS-Lite, NAT64, 464XLAT) has both signals false and lands here; the wider
+// truth is that a gateway which never answers leaves them false too, whatever the family.
+func TestCause3NeverPromisesWhatItCannotKnow(t *testing.T) {
+	learnedNothing := classifyD19(d19Inputs{dhtResponded: true, peerSeen: true, mappingDependent: true})
+	if strings.Contains(learnedNothing.detail, "would let it connect") {
+		t.Errorf("cause 3 promises a port-forward will work to a user it has no evidence controls a "+
+			"router — D9 forbids exactly this. detail=%q", learnedNothing.detail)
+	}
+	if !strings.Contains(learnedNothing.detail, "couldn't get an answer from your router") {
+		t.Errorf("cause 3's advice does not say WHY it is conditional, so the condition reads as "+
+			"hedging rather than as the fact it is. detail=%q", learnedNothing.detail)
+	}
+
+	// THE NEGATIVE CONTROL, and it is what stops a vacuous green: a fix that conditioned every
+	// branch identically would pass the assertions above while destroying the distinction cause 3
+	// exists to draw. Where the router DID answer with a carrier/double-NAT address, there must be
+	// no port-forward advice at all — conditioned or otherwise.
+	for _, tc := range []struct {
+		name string
+		in   d19Inputs
+	}{
+		{"double-NAT (router answered, unroutable)", d19Inputs{dhtResponded: true, peerSeen: true, mappingDependent: true, mapUnroutable: true}},
+		{"carrier space (100.64/10 observed)", d19Inputs{dhtResponded: true, peerSeen: true, mappingDependent: true, sharedSpace: true}},
+	} {
+		d := classifyD19(tc.in)
+		if strings.Contains(d.detail, "port-forward") || strings.Contains(d.detail, "UPnP") {
+			t.Errorf("%s: the detail offers a port-forward to a user who provably has no router to "+
+				"open one on. detail=%q", tc.name, d.detail)
+		}
+	}
+
+	// And the half that is a false statement rather than bad advice: `mappingDependent` is either
+	// family, so a host whose V4 is carrier-dependent and whose V6 is directly reachable was told a
+	// direct connection "isn't possible" while holding the endpoint P05.S05 built the tier for.
+	v6 := classifyD19(d19Inputs{dhtResponded: true, peerSeen: true, mappingDependent: true, v6Independent: true})
+	if strings.Contains(v6.summary, "isn't possible") {
+		t.Errorf("cause 3 denies a direct connection to a host with a directly reachable IPv6 "+
+			"endpoint. summary=%q", v6.summary)
+	}
+	if !strings.Contains(v6.detail, "IPv6") {
+		t.Errorf("the v6-reachable case does not tell the user the one thing that would let them "+
+			"act on it. detail=%q", v6.detail)
 	}
 }

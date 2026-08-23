@@ -68,6 +68,7 @@ func (c *ceremonyID) diagnose() diagnosis {
 		havePortMap:      c.portMap != nil,
 		mapUnroutable:    c.mapUnroutable,
 		sharedSpace:      self.SharedAddressSpace,
+		v6Independent:    self.V6.Mapping == rendezvous.MappingEndpointIndependent && self.V6.Addr.IsValid(),
 	}
 	c.mu.Unlock()
 	return classifyD19(in)
@@ -84,7 +85,8 @@ type d19Inputs struct {
 	mappingDependent bool // this side is endpoint-dependent on either family
 	havePortMap      bool // a routable port-map was obtained and published
 	mapUnroutable    bool // the router answered but the address was unpublishable (double-NAT)
-	sharedSpace      bool // the mapped address is carrier space (100.64/10)
+	sharedSpace      bool // the mapped address is carrier space (100.64/10), and V4-ONLY — see below
+	v6Independent    bool // this side has a directly reachable IPv6 endpoint, whatever V4 is doing
 }
 
 // classifyD19 turns the signals into D19's cause + message. Predicates are ORDERED: cause 2 (no DHT)
@@ -135,17 +137,41 @@ func classifyD19(in d19Inputs) diagnosis {
 	// (D17): only THIS side's class is known. Either family being dependent is enough.
 	if in.mappingDependent && !in.havePortMap {
 		d := diagnosis{cause: causeMappingDependent, summary: "A direct connection between these two networks isn't possible."}
-		// D9: offer port-forward ONLY when the user controls a NAT — the router gave NO answer AND the
-		// address is not carrier space. Within cause 3 an "answer" is always the unroutable double-NAT
-		// one (a routable answer would be havePortMap), which cannot be port-forwarded either.
+		// FIRST: do not deny reachability this side HAS. `mappingDependent` is either family, so a
+		// DS-Lite / 464XLAT host — V4 endpoint-dependent through the carrier, V6 endpoint-independent
+		// and global — reached this branch and was told a direct connection "isn't possible" while
+		// holding a directly reachable IPv6 endpoint that P05.S05 built the tier for. That is a false
+		// statement about reachability, which is worse than bad advice.
+		if in.v6Independent {
+			d.summary = "The IPv4 path between these two networks is blocked."
+			d.detail = "This machine's IPv4 address changes depending on where it connects, so an " +
+				"IPv4 connection can't be made — but it does have a directly reachable IPv6 " +
+				"address. If the other side has IPv6 too, try again. If they don't, a VPN you both " +
+				"run is the way through."
+			return d
+		}
+		// D9: offer a port-forward ONLY when the user controls a NAT. The two branches below are
+		// "the router told us something" and "we learned nothing", and only the first is evidence.
 		if in.mapUnroutable || in.sharedSpace {
 			d.detail = "This machine is behind a network that hands out a different address per " +
 				"destination — a carrier-grade or double NAT you can't open a port on. A VPN you " +
 				"both already run is the way through."
 		} else {
+			// **This branch is reached by learning NOTHING, and it used to read that as evidence
+			// the user controls a NAT.** `mapUnroutable` is set only where a gateway ANSWERED with
+			// a screened-out address (ceremonynet.go); a gateway that never answers at all —
+			// PCP absent, UPnP switched off, carrier NAT, an IPv6-transition network — leaves both
+			// it and `sharedSpace` false and fell to here. `sharedSpace` cannot rescue it either:
+			// it is `addrscope.SharedSpace`, 100.64/10, IPv4-only by construction, and DS-Lite,
+			// NAT64 and 464XLAT are all invisible to a reflexive probe (a NAT64 prefix is a
+			// DESTINATION, never a source — addrscope says so at the line). So the honest move is
+			// not a better detector, which would only make the false statement more specific: it is
+			// to stop promising. The advice is conditioned on a fact only the user has.
 			d.detail = "This machine is behind a network that hands out a different address per " +
-				"destination. Enabling UPnP or a port-forward on your router, or using a VPN you " +
-				"both run, would let it connect."
+				"destination, and Nib couldn't get an answer from your router — so it can't tell " +
+				"whether there is one you control. If there is, enabling UPnP or a port-forward on " +
+				"it may help. If your connection goes through your provider's network instead, a " +
+				"VPN you both run is the way through."
 		}
 		return d
 	}
