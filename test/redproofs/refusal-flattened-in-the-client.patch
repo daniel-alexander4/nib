@@ -1,0 +1,18 @@
+diff --git a/internal/portmap/client.go b/internal/portmap/client.go
+index 19c86d1..d7b9ece 100644
+--- a/internal/portmap/client.go
++++ b/internal/portmap/client.go
+@@ -190,12 +190,8 @@ func (c *Client) tryGatewayProtocols(ctx context.Context, gw netip.AddrPort, pro
+ 		return m, ext, nil
+ 	} else if ctx.Err() != nil {
+ 		return Mapping{}, netip.Addr{}, ctx.Err()
+-	} else if errors.Is(err, ErrResultCode) {
+-		refused = err
+-	}
+-	if refused != nil {
+-		return Mapping{}, netip.Addr{}, refused
+ 	}
++	_ = refused
+ 	return Mapping{}, netip.Addr{}, ErrNoMapping
+ }
+ 

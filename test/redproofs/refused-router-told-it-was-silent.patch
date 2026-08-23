@@ -1,0 +1,20 @@
+diff --git a/internal/server/diagnosis.go b/internal/server/diagnosis.go
+index 7e14d40..9a87128 100644
+--- a/internal/server/diagnosis.go
++++ b/internal/server/diagnosis.go
+@@ -159,14 +159,7 @@ func classifyD19(in d19Inputs) diagnosis {
+ 		// merely on but talking — which is why they got a refusal instead of silence. Before the
+ 		// two branches below, because both of those are about a router that told us nothing
+ 		// useful, and this one told us something (/pending 263).
+-		if in.mapRefused {
+-			d.detail = "This machine is behind a network that hands out a different address per " +
+-				"destination, and your router refused Nib's request to open a port automatically. " +
+-				"It is reachable and it is yours — so adding the port-forward by hand in the " +
+-				"router's own settings is the thing that will work here. A VPN you both run also " +
+-				"does it."
+-			return d
+-		}
++
+ 		if in.mapUnroutable || in.sharedSpace {
+ 			d.detail = "This machine is behind a network that hands out a different address per " +
+ 				"destination — a carrier-grade or double NAT you can't open a port on. A VPN you " +

@@ -1366,3 +1366,25 @@ v1.117.123 turned a one-shot publish into a republish loop and made an existing 
 orphan. Neither was visible from the change that caused it: both needed a reader coming at the same
 seam from a different question. **A fix that closes a leak at one door is the moment to walk the
 other doors**, and the grill that found these was pointed at a third thing entirely.
+
+## v1.117.133–.135 — sweep 16: the disposition pass's own backlog, worked
+
+Six rows. This sweep's items were the ones filed by the disposition pass that followed sweep 15 —
+findings earlier grills had produced and earlier sweeps had left in prose. **Every one of them was
+a real defect, which is the argument for the pass**: nothing here was invented to justify a filing.
+
+| Defect reintroduced | What it said | Check that fired |
+| --- | --- | --- |
+| **a refused router is told it stayed silent** *(replayable: `refused-router-told-it-was-silent`)* | `a router that ANSWERED and refused is told Nib got no answer from it — the one thing that is demonstrably untrue in this case` | `TestARefusedGatewayIsNotToldItStayedSilent`, with a carrier-NAT control so the fix cannot become a blanket "always offer a port-forward" |
+| **the refusal flattened one level lower** *(replayable: `refusal-flattened-in-the-client`)* | `a gateway that ANSWERED and refused produced portmap: no mapping obtained — indistinguishable from no gateway at all` | `TestARefusalIsCarriedOutNotFlattened`. **This row exists because the test caught the first draft of its own fix**: carrying the refusal out of `mapWithSuggestion` leaves it flattened in `tryGatewayProtocols`, and the outer check then sees `ErrNoMapping` forever |
+| **a definitive refusal records a delete handle** *(replayable: `refusal-records-a-delete-handle`)* | `a DEFINITIVE refusal recorded 1 delete handle(s) — a UPnP delete is keyed on the external port with no ownership check` | `TestMapViaUPnPLoop`, the first test of any kind over that orchestration — the rule had a comment and no coverage because the loop was untestable |
+| **an XFDF in another encoding refused as invalid** *(replayable: `xfdf-encoding-refused-as-invalid`)* | `an XFDF declaring ISO-8859-1 was refused: invalid XFDF: xml: encoding "ISO-8859-1" declared but Decoder.CharsetReader is nil` | `TestAnXFDFInAnotherEncodingIsRead`, whose fixture is asserted NOT to be valid UTF-8 — or it would pass with the fix removed |
+| **discovery spends the whole budget first** *(replayable: `ssdp-burns-the-whole-budget`)* | `the post-answer grace (2s) is not shorter than the discovery budget (2s), so an IGD that answers immediately still costs the full budget` | `TestTheUPnPBudgetLeavesRoomForTheCallsItHasToMake`. The wire timing is not driven and the test says so; the arithmetic is where the defect lives |
+| **the arm republishes slower than its record lives** *(replayable: `arm-republishes-slower-than-its-record-lives`)* | `the arm republishes every 16m0s against a record that lives 8m0s — the record expires before it is replaced` | `TestAnArmedSideStaysFindableForItsWholeWindow` |
+
+**One clause was deliberately NOT written, and the reason generalises.** The arm-side guard could
+have asserted that the record's life covers the arm's window. That is unsatisfiable:
+`MaxCandidateLife` is a reader-side ceiling every peer enforces, so no expiry can cover thirty days
+and the assertion could only ever fail. A test that can only fail is the mirror image of one that
+can only pass, and neither tells you anything — so the clause is about COVERAGE instead, which is
+the property that is actually true and actually checkable.

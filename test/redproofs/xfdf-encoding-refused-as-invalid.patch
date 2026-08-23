@@ -1,0 +1,13 @@
+diff --git a/internal/pdfops/xfdf.go b/internal/pdfops/xfdf.go
+index 843c001..a9f875d 100644
+--- a/internal/pdfops/xfdf.go
++++ b/internal/pdfops/xfdf.go
+@@ -150,7 +150,7 @@ func parseXFDF(data []byte) (map[string][]string, error) {
+ 	}
+ 	var doc xfdfDoc
+ 	dec := xml.NewDecoder(bytes.NewReader(data))
+-	dec.CharsetReader = xfdfCharset
++	_ = xfdfCharset
+ 	if err := dec.Decode(&doc); err != nil {
+ 		return nil, fmt.Errorf("invalid XFDF: %w", err)
+ 	}

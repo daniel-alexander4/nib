@@ -1,0 +1,13 @@
+diff --git a/internal/server/ceremonynet.go b/internal/server/ceremonynet.go
+index d0d7f15..a49f858 100644
+--- a/internal/server/ceremonynet.go
++++ b/internal/server/ceremonynet.go
+@@ -106,7 +106,7 @@ func rendezvousInterval(elapsed time.Duration) time.Duration {
+ // deliberately NOT the fetch cadence: a republish is only ever needed before the record expires,
+ // while a fetch is a poll for something that may not exist yet, and tying them would republish
+ // every five seconds during a race.
+-func republishEvery() time.Duration { return candidateLife() / 2 }
++func republishEvery() time.Duration { return candidateLife() * 2 }
+ 
+ func candidateLife() time.Duration {
+ 	return connectDeadline + 2*rendezvousPublishBudget + candidateSkewAllowance
