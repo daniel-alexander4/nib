@@ -1036,7 +1036,8 @@ async function sessionInit() {
   if (!fingerprint) return;
   // P05.S12: an empty address is the LADDER default, not an error — the server's LAN browse (and, for
   // an invited ceremony, the DHT) finds the armed peer. The typed address is the manual fallback (D8
-  // tier 5), reachable from the Advanced disclosure; a failure now carries S11's D19 diagnosis.
+  // tier 5), reachable from the Advanced disclosure. A failure now carries S11's D19 diagnosis in the
+  // response body; the client surfaces its plain summary via errText — P06 renders the cause and detail.
   const address = els.sinAddr.value.trim();
   const intent = els.sinIntent.value;
   // Quote against the open document — correct here, since the open document is what
@@ -1163,8 +1164,12 @@ async function openSessionRecv(mode) {
 async function armRecv() {
   const opt = els.srvPeer.selectedOptions[0];
   if (!opt) return;
+  // P05.S12 twin: an empty bind is the LAN receive default, not an error — the server binds an
+  // ephemeral port (0.0.0.0:0) and announces it over the local network and the DHT, which is the
+  // whole of P03's first exit criterion. A hardcoded default (the old 0.0.0.0:8443) also broke
+  // two Nibs on one machine, since the second cannot take the same port. The typed address is the
+  // manual fallback, behind the Advanced disclosure.
   const bind = els.srvBind.value.trim();
-  if (!bind) { toast('Enter a listen address'); return; }
   recvArmedLabel = opt.dataset.label;
   els.srvArmGo.disabled = true;
   const res = await apiFetch('/api/session/arm', {
