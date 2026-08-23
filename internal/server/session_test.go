@@ -1739,7 +1739,18 @@ func TestCeremonyReDeliversAfterReconnect(t *testing.T) {
 		sessGet(t, c, ts.URL+"/api/docs", &out)
 		return len(out.Docs)
 	}
-	afterFirst := docCount()
+	// Bob opens the arrival ASYNCHRONOUSLY after serveOneSession returns, so poll until it lands
+	// rather than racing it (the count is otherwise measured before openArrival runs).
+	afterFirst := 0
+	for deadline := time.Now().Add(5 * time.Second); ; {
+		if afterFirst = docCount(); afterFirst >= 1 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("Bob never opened the co-signed arrival after the first co-sign")
+		}
+		time.Sleep(30 * time.Millisecond)
+	}
 
 	// --- Initiate #2: the RECONNECT. Bob's post-signing window re-delivers; a fresh spoken check
 	// still runs (D18, new channel) but consent is NOT re-asked (the cache short-circuits it). ---
@@ -1772,6 +1783,8 @@ func TestCeremonyReDeliversAfterReconnect(t *testing.T) {
 	}
 	// The receiver must open the co-signed document ONCE, not once per re-delivery (diff-grill): a
 	// reconnect re-sends the same idempotent bytes, so a second open would stack a duplicate tab.
+	// A beat first, so an erroneous second open would have landed before we read.
+	time.Sleep(300 * time.Millisecond)
 	if after := docCount(); after != afterFirst {
 		t.Errorf("Bob's open-document count went from %d to %d across a re-delivery — the receiver "+
 			"opened a DUPLICATE of one idempotent co-signed result", afterFirst, after)
