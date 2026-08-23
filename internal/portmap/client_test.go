@@ -179,3 +179,100 @@ func TestMapWithSuggestionRequestsThePort(t *testing.T) {
 	// is the REQUEST carries it. That the API path exists at all is what C7 was about — a
 	// dedicated assertion on the encoded suggested-external byte is in portmap_test.go.)
 }
+
+// TestARequestThatReachedTheRouterLeavesADeletableHandle — /pending 257.
+//
+// Every error path in Map returns a zero Mapping, so a request the router ACTED ON whose reply
+// was then lost left a mapping nothing could ever delete: it lived to lease expiry, and once the
+// ceremony frees the internal port another process on this machine can bind it and be publicly
+// reachable through the orphaned pinhole. P05.S07 T02's grill required the handle be recorded
+// "the moment the request is SENT" and nothing implemented it.
+func TestARequestThatReachedTheRouterLeavesADeletableHandle(t *testing.T) {
+	g := newMockGatewayDroppingReplies(t)
+	c := &Client{Gateway: mockAddrPort(t, g)} // TryUPnP stays false: no SSDP, hermetic
+
+	var sent []Mapping
+	c.SetOnRequestSent(func(m Mapping) { sent = append(sent, m) })
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	if _, _, err := c.Map(ctx, UDP, 40404); err == nil {
+		t.Fatal("setup: the gateway answered nothing, so Map must fail — this row is about the error path")
+	}
+
+	// SETUP ASSERTION, and it is the one that stops this being a green over an absence: the
+	// router must actually have RECEIVED a mapping request. Without it, a client that never sent
+	// anything would satisfy every assertion below by having nothing to record.
+	select {
+	case l := <-g.leases:
+		if l == 0 {
+			t.Fatal("setup: the gateway saw a DELETE, not an obtain")
+		}
+	default:
+		t.Fatal("setup: the gateway never received a request, so this row proves nothing")
+	}
+
+	if len(sent) == 0 {
+		t.Fatal("Map recorded no handle for a request the router RECEIVED — the mapping it may " +
+			"have created is undeletable and lives to lease expiry")
+	}
+
+	// And the handle must actually drive a delete. Drain first, so what we read next is ours.
+	for len(g.leases) > 0 {
+		<-g.leases
+	}
+	if err := c.Unmap(ctx, sent[len(sent)-1]); err != nil {
+		t.Fatalf("the recorded handle did not produce a delete: %v", err)
+	}
+	select {
+	case l := <-g.leases:
+		if l != 0 {
+			t.Errorf("the delete carried lease %d, want 0 — a lease-0 MAP is what deletes", l)
+		}
+	case <-time.After(2 * time.Second):
+		t.Error("the recorded handle produced no delete request at all")
+	}
+}
+
+// TestThePCPDeleteCarriesTheMappingsOwnNonce — found while grilling /pending 257.
+//
+// PCP names a mapping by (nonce, protocol, internal port). Unmap used to mint a FRESH nonce, so
+// the delete asked the router to remove a mapping that never existed — a silent no-op, and not
+// only on the error path: on the ordinary success path too. Nothing could see it, because the
+// mock echoes the nonce back and validates nothing, and the one existing delete test drives
+// NAT-PMP, which has no nonce at all.
+func TestThePCPDeleteCarriesTheMappingsOwnNonce(t *testing.T) {
+	g := newMockGateway(t)
+	c := &Client{Gateway: mockAddrPort(t, g)}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	m, _, err := c.Map(ctx, UDP, 40404)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// SETUP: this must be the PCP path, or the nonce is not the subject of the row.
+	if !m.SameTarget(Mapping{Protocol: UDP, InternalPort: 40404, via: mechPCP}) {
+		t.Fatal("setup: the mapping did not come from PCP, so this row is about the wrong mechanism")
+	}
+	var obtained [12]byte
+	select {
+	case obtained = <-g.nonces:
+	default:
+		t.Fatal("setup: the gateway recorded no PCP nonce for the obtain")
+	}
+
+	if err := c.Unmap(ctx, m); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case deleted := <-g.nonces:
+		if deleted != obtained {
+			t.Errorf("the delete carries nonce %x but the mapping was created with %x — PCP names a "+
+				"mapping by its nonce, so this delete names one that never existed and is a no-op",
+				deleted, obtained)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("the delete never reached the gateway")
+	}
+}

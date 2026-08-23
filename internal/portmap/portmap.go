@@ -75,12 +75,31 @@ type Mapping struct {
 	LifetimeObserved bool
 
 	// The delete handle (S07): which mechanism granted the mapping, and — for UPnP — the SOAP
-	// control URL and service type the delete needs. Without these a UPnP mapping cannot be
+	// control URL and service type the delete needs.
+	//
+	// `nonce` is PCP's, and carrying it is not bookkeeping. PCP identifies a mapping by
+	// (nonce, protocol, internal port), so a lifetime-0 delete that mints a FRESH nonce does
+	// not name the mapping it means to remove — it names a mapping that never existed. The
+	// nonce is what stops an off-path attacker deleting someone's mapping, and a delete of
+	// our own has to satisfy the same rule. Without these a UPnP mapping cannot be
 	// deleted at all (grill C1); the socket protocols need only the internal port and the
 	// gateway, which the Client already holds.
 	via             mechanism
+	nonce           [12]byte
 	upnpControlURL  string
 	upnpServiceType string
+}
+
+// SameTarget reports whether two mappings name the same thing to delete: same mechanism, same
+// protocol, same internal port. It exists so a caller holding both a CONFIRMED mapping and the
+// send-time handle recorded for the request that produced it can tell they are one mapping — the
+// confirmed one carries the granted external port and lease, which a delete does not use, so
+// comparing whole structs would send two deletes for one mapping.
+//
+// It is deliberately not equality: `via` is unexported and must stay that way, and a caller
+// outside this package has no other way to ask.
+func (m Mapping) SameTarget(o Mapping) bool {
+	return m.via == o.via && m.Protocol == o.Protocol && m.InternalPort == o.InternalPort
 }
 
 // mechanism is which of the three protocols produced a mapping, so its delete goes out the same

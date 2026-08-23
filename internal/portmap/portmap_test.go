@@ -19,12 +19,14 @@ import (
 // value it sent would pass a self-round-trip and fail here.
 type mockGateway struct {
 	pc           net.PacketConn
-	extPort      uint16      // the port the router assigns, deliberately != suggested
-	extIP        netip.Addr  // the public IP the router reports
-	natpmpResult uint16      // non-zero to simulate a refusal
-	pcpResult    byte        // non-zero to simulate a refusal
-	silentPCP    bool        // drop PCP requests, to force NAT-PMP fallback
-	leases       chan uint32 // records the lease of each MAP request seen (0 = a delete)
+	extPort      uint16        // the port the router assigns, deliberately != suggested
+	extIP        netip.Addr    // the public IP the router reports
+	natpmpResult uint16        // non-zero to simulate a refusal
+	pcpResult    byte          // non-zero to simulate a refusal
+	silentPCP    bool          // drop PCP requests, to force NAT-PMP fallback
+	leases       chan uint32   // records the lease of each MAP request seen (0 = a delete)
+	dropReplies  bool          // record the request, answer nothing: the request REACHED the router and the reply was lost
+	nonces       chan [12]byte // every PCP request's nonce, so a delete can be checked against the mapping's
 }
 
 func newMockGateway(t *testing.T) *mockGateway { return newMockGatewayRefusing(t, 0, 0) }
@@ -43,6 +45,23 @@ func newMockGatewaySilentPCP(t *testing.T) *mockGateway {
 	return g
 }
 
+// newMockGatewayDroppingReplies records every request and answers NOTHING. It is the fixture for
+// /pending 257: the router HAS acted on the request and the client will see only a timeout, so a
+// handle recorded at send time is the only thing that can ever delete the mapping. The flag is
+// fixed before the serve goroutine starts, like every other flag here.
+func newMockGatewayDroppingReplies(t *testing.T) *mockGateway {
+	t.Helper()
+	pc, err := net.ListenPacket("udp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	g := &mockGateway{pc: pc, extPort: 51234, extIP: netip.MustParseAddr("203.0.113.7"),
+		dropReplies: true, leases: make(chan uint32, 8)}
+	t.Cleanup(func() { pc.Close() })
+	go g.serve()
+	return g
+}
+
 // newMockGatewayRefusing fixes the result codes BEFORE the serve goroutine starts, so the
 // mock's fields are never written after a reader exists — the codes are config, not state.
 func newMockGatewayRefusing(t *testing.T, natpmp uint16, pcp byte) *mockGateway {
@@ -51,7 +70,7 @@ func newMockGatewayRefusing(t *testing.T, natpmp uint16, pcp byte) *mockGateway 
 	if err != nil {
 		t.Fatal(err)
 	}
-	g := &mockGateway{pc: pc, extPort: 51234, extIP: netip.MustParseAddr("203.0.113.7"), natpmpResult: natpmp, pcpResult: pcp, leases: make(chan uint32, 8)}
+	g := &mockGateway{pc: pc, extPort: 51234, extIP: netip.MustParseAddr("203.0.113.7"), natpmpResult: natpmp, pcpResult: pcp, leases: make(chan uint32, 8), nonces: make(chan [12]byte, 8)}
 	t.Cleanup(func() { pc.Close() })
 	go g.serve()
 	return g
@@ -79,7 +98,7 @@ func (g *mockGateway) serve() {
 		case req[0] == natpmpVersion:
 			resp = g.replyNATPMPMap(req)
 		}
-		if resp != nil {
+		if resp != nil && !g.dropReplies {
 			g.pc.WriteTo(resp, from)
 		}
 	}
@@ -110,6 +129,12 @@ func (g *mockGateway) replyNATPMPExternal() []byte {
 
 func (g *mockGateway) replyPCP(req []byte) []byte {
 	g.recordLease(binary.BigEndian.Uint32(req[4:8]))
+	if g.nonces != nil {
+		select {
+		case g.nonces <- [12]byte(req[24:36]):
+		default:
+		}
+	}
 	resp := make([]byte, 24+36)
 	resp[0] = pcpVersion
 	resp[1] = pcpResponseBit | pcpOpcodeMap

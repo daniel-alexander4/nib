@@ -4,10 +4,12 @@ import (
 	"bytes"
 	"context"
 	"encoding/xml"
+	"errors"
 	"fmt"
 	"io"
 	"net"
 	"net/http"
+	"net/http/httptrace"
 	"net/netip"
 	"net/url"
 	"strings"
@@ -222,7 +224,15 @@ func findService(d *igdDevice, serviceType string) *igdService {
 // follow-up GetExternalIPAddress). External port equals internal port for IGD (it does not
 // choose one the way PCP/NAT-PMP do); a router that refuses the requested external port is a
 // miss, not a negotiation.
-func soapAddPortMapping(ctx context.Context, client *http.Client, controlURL, serviceType string, proto Protocol, internalIP netip.Addr, internalPort, externalPort uint16, leaseSec uint32) error {
+// soapAddPortMapping POSTs AddPortMapping and reports whether the request was actually WRITTEN
+// to the connection, which is a different fact from whether it succeeded.
+//
+// The distinction is the whole of /pending 257 on this path: a POST that was written and whose
+// response was then lost may well have installed a mapping, and a delete handle must be kept for
+// it — while a call that never left the host (an already-dead context, a dial failure) must NOT
+// be recorded, because a UPnP delete is keyed on (external port, protocol) with no ownership
+// check and would remove whatever else happens to hold that port.
+func soapAddPortMapping(ctx context.Context, client *http.Client, controlURL, serviceType string, proto Protocol, internalIP netip.Addr, internalPort, externalPort uint16, leaseSec uint32) (wrote bool, err error) {
 	body := fmt.Sprintf(`<u:AddPortMapping xmlns:u="%s">`+
 		`<NewRemoteHost></NewRemoteHost>`+
 		`<NewExternalPort>%d</NewExternalPort>`+
@@ -233,8 +243,15 @@ func soapAddPortMapping(ctx context.Context, client *http.Client, controlURL, se
 		`<NewPortMappingDescription>Nib</NewPortMappingDescription>`+
 		`<NewLeaseDuration>%d</NewLeaseDuration>`+
 		`</u:AddPortMapping>`, serviceType, externalPort, soapProto(proto), internalPort, internalIP.String(), leaseSec)
-	_, err := soapCall(ctx, client, controlURL, serviceType, "AddPortMapping", body)
-	return err
+	ctx = httptrace.WithClientTrace(ctx, &httptrace.ClientTrace{
+		WroteRequest: func(info httptrace.WroteRequestInfo) {
+			if info.Err == nil {
+				wrote = true
+			}
+		},
+	})
+	_, err = soapCall(ctx, client, controlURL, serviceType, "AddPortMapping", body)
+	return wrote, err
 }
 
 // soapGetExternalIP asks the IGD for its public IPv4.
@@ -365,7 +382,7 @@ func extractTag(body []byte, local string) string {
 // absent but UPnP is not. The internal client IP for `AddPortMapping` is determined per IGD by
 // dialing its (private, screened) host and reading the local address on that path, so the caller
 // supplies nothing about the local network.
-func mapViaUPnP(ctx context.Context, proto Protocol, internalPort uint16, leaseSec uint32, hostOK func(string) bool) (ext netip.Addr, port uint16, controlURL, serviceType string, err error) {
+func mapViaUPnP(ctx context.Context, proto Protocol, internalPort uint16, leaseSec uint32, hostOK func(string) bool, record func(Mapping)) (ext netip.Addr, port uint16, controlURL, serviceType string, err error) {
 	client := igdHTTPClient()
 	locations, err := discoverIGD(ctx)
 	if err != nil {
@@ -380,7 +397,22 @@ func mapViaUPnP(ctx context.Context, proto Protocol, internalPort uint16, leaseS
 		if err != nil {
 			continue
 		}
-		if err := soapAddPortMapping(ctx, client, ctl, st, proto, internalIP, internalPort, internalPort, leaseSec); err != nil {
+		wrote, addErr := soapAddPortMapping(ctx, client, ctl, st, proto, internalIP, internalPort, internalPort, leaseSec)
+		// Record BEFORE reading the external IP, and record a written-but-unanswered POST too.
+		// Two leaks close here: a 200 followed by a failed GetExternalIP (the mapping exists and
+		// this loop used to `continue` past it, dropping ctl/st), and a POST whose response was
+		// lost. A DEFINITIVE refusal is the one case not recorded — ErrResultCode means the IGD
+		// said no, so nothing was installed, and 718 ConflictInMappingEntry specifically means
+		// that external port belongs to somebody else.
+		if addErr == nil || (wrote && !errors.Is(addErr, ErrResultCode)) {
+			if record != nil {
+				record(Mapping{
+					Protocol: proto, InternalPort: internalPort, ExternalPort: internalPort,
+					via: mechUPnP, upnpControlURL: ctl, upnpServiceType: st,
+				})
+			}
+		}
+		if addErr != nil {
 			continue
 		}
 		ip, err := soapGetExternalIP(ctx, client, ctl, st)
