@@ -295,16 +295,6 @@ func (c *ceremonyID) feedCandidates(ctx context.Context, out chan<- candidate, p
 	}
 }
 
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
-}
-
-var _ = netip.AddrPort{}
-var _ = errors.New
-
 // startArmedRendezvous warms the DHT and, if the LAN does not answer first, publishes.
 //
 // # Why the publish WAITS (criterion 10's 2026-08-21 amendment)
@@ -605,8 +595,12 @@ type hsResult struct {
 // When the survivor never forms — an asymmetric NAT that blocks that one direction — both ends
 // fall back, after this window, to the connection that did form, which is again the same one. So
 // convergence holds for any value both sides share; the window only trades latency in the
-// asymmetric case. Pinned at one second: generous for a WAN RTT, and the fallback makes an
-// over-long value cost latency, never correctness.
+// asymmetric case. Pinned at one second: generous for a WAN RTT. The fallback is fail-SAFE, not
+// cost-free: if one side's own survivor dial completes at the peer but takes longer than this
+// window to confirm back locally (a lossy link), the two ends can briefly promote different
+// connections — each of which then has one end closed by the other, so both Promote calls fail
+// and the hop re-races (S10) rather than running a split channel. Correctness holds; an
+// over-long window costs a wasted re-race round in that case, not just latency.
 const glareSettleWindow = 1 * time.Second
 
 // connect is the symmetric-racing coordinator (P05.S09). Over the ONE shared endpoint it both

@@ -184,8 +184,12 @@ func QUICDialOn(ctx context.Context, e *SharedEndpoint, addr string, identityCer
 // the initiator — the pre-S09 behaviour, where the dialer IS the initiator, unchanged.
 type HandshakedConn struct {
 	qc *quic.Conn
-	// PeerFP is the verified peer SPKI fingerprint, known from the handshake alone. It is the
-	// glare tie-break key: the coordinator compares it against its own to decide who dials whom.
+	// PeerFP is the verified peer SPKI fingerprint, extracted from the completed handshake (the
+	// same call that gates verification — a wrong peer never reaches here). The glare tie-break
+	// (glareKeepsDial) runs on the ROSTER fingerprint the coordinator already holds, which TLS
+	// has pinned to this exact value; this field is the handshake-side witness of that identity,
+	// not the tie-break input. Kept as the natural home for the verified fingerprint on a
+	// handshaked connection.
 	PeerFP []byte
 }
 

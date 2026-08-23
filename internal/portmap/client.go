@@ -59,11 +59,12 @@ func (c *Client) Refresh(ctx context.Context, m Mapping) (Mapping, netip.Addr, e
 	if err != nil {
 		return Mapping{}, netip.Addr{}, err
 	}
-	// Carry the UPnP delete handle forward — a socket-protocol refresh re-stamps via, but UPnP's
-	// control URL comes from discovery which Refresh does not re-run for the socket path.
-	if m.via == mechUPnP {
-		nm.via, nm.upnpControlURL, nm.upnpServiceType = m.via, m.upnpControlURL, m.upnpServiceType
-	}
+	// The new mapping carries its OWN mechanism and delete handle — mapWithSuggestion labels a
+	// UPnP result with a freshly re-discovered control URL, and a socket-protocol result with
+	// mechPCP/mechNATPMP (deleted by InternalPort, no URL needed). Copying the OLD mapping's via
+	// forward would mislabel a refresh that now succeeds over PCP as UPnP, so a later Unmap would
+	// aim the SOAP endpoint at a mapping the socket protocol holds — deleting the stale one and
+	// leaking the live one. Trust nm's own labels.
 	return nm, ext, nil
 }
 
