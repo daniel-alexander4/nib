@@ -1,0 +1,13 @@
+diff --git a/internal/portmap/upnp.go b/internal/portmap/upnp.go
+index b2ffe0d..fb1d10c 100644
+--- a/internal/portmap/upnp.go
++++ b/internal/portmap/upnp.go
+@@ -452,7 +452,7 @@ func mapViaUPnP(ctx context.Context, proto Protocol, internalPort uint16, leaseS
+ 		// lost. A DEFINITIVE refusal is the one case not recorded — ErrResultCode means the IGD
+ 		// said no, so nothing was installed, and 718 ConflictInMappingEntry specifically means
+ 		// that external port belongs to somebody else.
+-		if addErr == nil || (wrote && !errors.Is(addErr, ErrResultCode)) {
++		if addErr == nil || wrote {
+ 			if record != nil {
+ 				record(Mapping{
+ 					Protocol: proto, InternalPort: internalPort, ExternalPort: internalPort,

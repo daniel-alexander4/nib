@@ -1,0 +1,13 @@
+diff --git a/internal/portmap/upnp.go b/internal/portmap/upnp.go
+index b2ffe0d..9ef3125 100644
+--- a/internal/portmap/upnp.go
++++ b/internal/portmap/upnp.go
+@@ -313,7 +313,7 @@ func soapProto(p Protocol) string {
+ // Generous against the physics and cheap against the budget: SSDP replies from one link arrive
+ // within tens of milliseconds of each other, so 250 ms holds the multi-gateway case open while
+ // returning ~87% of `upnpHTTPBudget` to the SOAP calls that follow.
+-const ssdpGrace = 250 * time.Millisecond
++const ssdpGrace = 2 * time.Second
+ 
+ const upnpMappingDescription = "Nib"
+ 
