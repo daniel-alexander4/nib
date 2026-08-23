@@ -254,6 +254,12 @@ func (c *ceremonyID) appendMappedCandidate(armCtx context.Context, addrs []cerem
 		// a miss. That is the exact leak /pending 257 was built to close, re-opened at a
 		// different door by 257's own change. The screened-out path below already knew to do
 		// this; this one did not.
+		if mapper.refusal() != nil {
+			// The router answered and said no. D19 must not then tell this user that Nib
+			// "couldn't get an answer from your router" and suggest enabling UPnP — it is on,
+			// and answering, which is why they got a code instead of silence (/pending 263).
+			c.markMapRefused()
+		}
 		mapper.close()
 		return addrs // ErrNoMapping, or the arm was cancelled — swallowed (grill F8)
 	}

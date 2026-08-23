@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"errors"
 	"log"
 	"net/netip"
 	"sync"
@@ -53,8 +54,9 @@ type portMapper struct {
 	pending   []portmap.Mapping
 	closed    bool
 	started   bool
-	portMoved bool // a refresh got a DIFFERENT external port — item 20's stale-record case
-	reported  bool // reportLease has already spoken for this mapper
+	portMoved bool  // a refresh got a DIFFERENT external port — item 20's stale-record case
+	reported  bool  // reportLease has already spoken for this mapper
+	refusedBy error // the gateway answered and refused (ErrResultCode), if it did
 
 	stop chan struct{}
 	done chan struct{}
@@ -97,6 +99,16 @@ func (p *portMapper) recordPending(m portmap.Mapping) {
 func (p *portMapper) obtain(ctx context.Context) (netip.AddrPort, bool) {
 	m, ext, err := p.client.Map(ctx, p.proto, p.internalPort)
 	if err != nil {
+		if errors.Is(err, portmap.ErrResultCode) {
+			// The router ANSWERED and said no. Kept because it is the opposite fact from
+			// "nothing answered", and D19 has to tell those two users different things
+			// (/pending 263). Not returned: `ok` is what every caller branches on, and a
+			// second failure value would have to be threaded through call sites that do not
+			// care. The one that does asks.
+			p.mu.Lock()
+			p.refusedBy = err
+			p.mu.Unlock()
+		}
 		return netip.AddrPort{}, false
 	}
 	p.mu.Lock()
@@ -238,6 +250,14 @@ func (p *portMapper) startRefresh() {
 			p.mu.Unlock()
 		}
 	}()
+}
+
+// refusal reports the gateway's own refusal, if the obtain got one. Nil means the tier simply
+// found nothing — which is a different fact and a different sentence to the user.
+func (p *portMapper) refusal() error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.refusedBy
 }
 
 // reportLease is the READER, and without one this whole path is a third writer to a field
