@@ -1,0 +1,23 @@
+diff --git a/internal/server/diagnosis.go b/internal/server/diagnosis.go
+index a5fb2b8..7f287f2 100644
+--- a/internal/server/diagnosis.go
++++ b/internal/server/diagnosis.go
+@@ -102,15 +102,9 @@ func classifyD19(in d19Inputs) diagnosis {
+ 		// D9: offer port-forward ONLY when the user controls a NAT — the router gave NO answer AND the
+ 		// address is not carrier space. Within cause 3 an "answer" is always the unroutable double-NAT
+ 		// one (a routable answer would be havePortMap), which cannot be port-forwarded either.
+-		if in.mapUnroutable || in.sharedSpace {
+-			d.detail = "This machine is behind a network that hands out a different address per " +
+-				"destination — a carrier-grade or double NAT you can't open a port on. A VPN you " +
+-				"both already run is the way through."
+-		} else {
+-			d.detail = "This machine is behind a network that hands out a different address per " +
+-				"destination. Enabling UPnP or a port-forward on your router, or using a VPN you " +
+-				"both run, would let it connect."
+-		}
++		d.detail = "This machine is behind a network that hands out a different address per " +
++			"destination. Enabling UPnP or a port-forward on your router, or using a VPN you " +
++			"both run, would let it connect."
+ 		return d
+ 	}
+ 	// Cause 4 — the peer published, the classes do not explain it: filtering, a firewall, asymmetry.
