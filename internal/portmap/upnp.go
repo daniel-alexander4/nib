@@ -126,6 +126,22 @@ func discoverIGD(ctx context.Context) ([]string, error) {
 		if loc := ssdpLocation(buf[:n]); loc != "" && !seen[loc] {
 			seen[loc] = true
 			locations = append(locations, loc)
+			// **Stop waiting the FULL budget once something has answered.** This loop used to
+			// run to the deadline unconditionally, so every UPnP obtain spent the whole
+			// `upnpHTTPBudget` before its first HTTP byte — out of a `portMapBudget` that then
+			// had to cover three SOAP round trips (/pending 264). That squeeze is the recorded
+			// reason a lease read-back "does not fit" at obtain time, and it is why the
+			// written-but-unanswered POST window is the likely field case rather than a
+			// theoretical one: the SOAP calls were being run in the last second by construction.
+			//
+			// A grace rather than first-answer-wins: SSDP is a multicast query and a second IGD
+			// on the same link answers within tens of milliseconds of the first, so returning on
+			// the first reply would quietly drop the multi-gateway case the loop below exists to
+			// handle.
+			if g := time.Now().Add(ssdpGrace); g.Before(deadline) {
+				deadline = g
+				conn.SetReadDeadline(deadline)
+			}
 		}
 	}
 	if len(locations) == 0 {
@@ -292,6 +308,13 @@ func soapProto(p Protocol) string {
 // upnpMappingDescription is what Nib writes into every IGD mapping it creates, and what a
 // delete requires to find there before it will remove one. One constant, two call sites — the
 // string was a literal at the write site and nothing read it back (ADR-009).
+// ssdpGrace is how long discovery keeps listening AFTER the first IGD answers.
+//
+// Generous against the physics and cheap against the budget: SSDP replies from one link arrive
+// within tens of milliseconds of each other, so 250 ms holds the multi-gateway case open while
+// returning ~87% of `upnpHTTPBudget` to the SOAP calls that follow.
+const ssdpGrace = 250 * time.Millisecond
+
 const upnpMappingDescription = "Nib"
 
 // soapCall POSTs one SOAP action and returns the response body, or an error carrying the IGD's

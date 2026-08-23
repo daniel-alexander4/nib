@@ -55,3 +55,43 @@ func TestAPublishedRecordOutlivesThePeersRace(t *testing.T) {
 			"disagreement D19 cause 5 is about", life-floor)
 	}
 }
+
+// TestAnArmedSideStaysFindableForItsWholeWindow — /pending 269.
+//
+// The test above is right and is entirely about the DIALLING side, whose race is
+// `connectDeadline`. P05.S09b then gave the receive arm a window of `ceremony.MaxCeremonyLife`
+// instead, and nothing here could see it: the arm's record died 8 minutes into a 30-day window
+// and every assertion above stayed green, because none of them mentions the arm.
+//
+// **The clause cannot be about `life`, and getting that backwards produces a test that can only
+// ever fail.** `MaxCandidateLife` is a READER-side ceiling every peer enforces, so no expiry can
+// cover a 30-day arm — asserting that it should is unsatisfiable, which is the mirror image of a
+// vacuous green and just as useless. The property is COVERAGE: a generation of the record is
+// always in place before the last one expires.
+func TestAnArmedSideStaysFindableForItsWholeWindow(t *testing.T) {
+	// SETUP: the arm must actually outlive one record, or there is nothing for a republish to
+	// cover and this row is asserting something that cannot fail.
+	if ceremony.MaxCeremonyLife <= candidateLife() {
+		t.Fatalf("setup: the arm window (%s) no longer outlives one record (%s), so coverage is "+
+			"not a property this can test", ceremony.MaxCeremonyLife, candidateLife())
+	}
+	// SETUP: and the record's life must be capped by the reader, or the "just publish for longer"
+	// answer would be available and this test would be arguing against nothing.
+	if candidateLife() >= ceremony.MaxCandidateLife {
+		t.Fatalf("setup: candidateLife (%s) is at the reader-side ceiling (%s), so peers would "+
+			"refuse it outright", candidateLife(), ceremony.MaxCandidateLife)
+	}
+
+	if republishEvery() >= candidateLife() {
+		t.Errorf("the arm republishes every %s against a record that lives %s — the record expires "+
+			"before it is replaced, and the arm goes un-findable in the gap. A peer dialling then "+
+			"finds nothing and D19 tells them the other side has not started, about a machine that "+
+			"has been listening for hours.", republishEvery(), candidateLife())
+	}
+	// And the fetch cadence must not outrun the republish, or a side can miss a whole generation
+	// of its peer's record while both are behaving correctly.
+	if slowest := rendezvousInterval(ceremony.MaxCeremonyLife); slowest > republishEvery() {
+		t.Errorf("the slowest fetch cadence is %s against a republish every %s — a side fetching "+
+			"slower than its peer republishes can step over an entire generation", slowest, republishEvery())
+	}
+}
