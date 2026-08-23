@@ -1227,13 +1227,20 @@
     <div class="sigcard">
       <h3>Co-sign live with a peer</h3>
       <p class="libhint">Send the open document to a pinned peer over a live, encrypted channel and
-        co-sign it in real time. They must be waiting (armed to receive) at the address below.</p>
+        co-sign it in real time. They must be waiting (armed to receive). Nib finds them over your local
+        network or the rendezvous directory — you only type an address under <strong>Advanced</strong> if
+        that can't reach them (P05.S12, D9: the ladder is the default, the manual address the fallback).</p>
       <label>Peer you're co-signing with
         <select id="sinPeer"></select></label>
       <p id="sinNoPeers" class="libhint" hidden>Pin the other person's fingerprint first, under
         <strong>Identity &amp; peers</strong>.</p>
-      <label>Their address (host:port they're listening on)
-        <input id="sinAddr" type="text" placeholder="e.g. 203.0.113.4:8443" spellcheck="false" /></label>
+      <details class="advanced">
+        <summary>Their address (advanced)</summary>
+        <p class="libhint">Leave this blank to let Nib find the peer over the local network or the
+          directory. Fill it in only when you already know the host:port they're listening on.</p>
+        <label>Their address (host:port they're listening on)
+          <input id="sinAddr" type="text" placeholder="e.g. 203.0.113.4:8443" spellcheck="false" /></label>
+      </details>
       <label>What you're agreeing to
         <textarea id="sinIntent" rows="2">I agree to sign this document.</textarea></label>
       <div id="sinProgress" class="libhint" hidden>Connecting and co-signing…</div>

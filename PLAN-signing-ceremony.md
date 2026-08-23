@@ -4011,8 +4011,21 @@ suite green under `-race`.
 Scope: `connectFailure` yields three sentences — two clock-skew directions and one generic (`session.go:1023-1029`). Causes 1-4 do not exist; P04.S02 built the classification they read.
 Acceptance: criteria 6 and 7 verbatim; criteria 8 and 9 are **already met** by `p2p.ClockSkewError` and are ledgered, not rebuilt. The mapped port and **"no mapping obtained"** become distinguishable states on `/api/session/status`, which is what P06's two disclosure criteria render.
 
-#### P05.S12 — The ladder becomes the default path *(D9)*
-Scope: `web/app.js:1026` refuses to POST without a typed address, so the shipped LAN tier is unreachable from the product and the manual path is not merely undemoted — it is the only path. The address field moves behind the existing `details.advanced` pattern. P06 restructures the panel; this slice makes the ladder reachable.
+#### P05.S12 — The ladder becomes the default path *(D9)* *(done 2026-08-22, v1.117.103)*
+Scope: `web/app.js` refuses to POST without a typed address (`if (!address) { toast('Enter the peer's address'); return; }`), so the shipped LAN tier is unreachable from the product and the manual path is not merely undemoted — it is the only path. The address field moves behind the existing `details.advanced` pattern. P06 restructures the panel; this slice makes the ladder reachable.
+
+**GRILL 2026-08-22 (light — a UI toggle, low blast radius; no deepdive: a localized web change, no seam).**
+The server already handles an empty address: `peerAddresses("")` does the LAN browse, and a ceremony
+(invitation) uses the DHT — so POSTing with no address reaches the ladder, and a failure now carries
+S11's D19 diagnosis. The one thing to preserve: the typed-address path stays reachable (behind the
+disclosure) so the manual tier (D8 tier 5) is undemoted, not deleted.
+Tasks (firmed 2026-08-22):
+- **T01 — remove the empty-address refusal** in `sessionInit` (`web/app.js`): an empty address POSTs and
+  the server's ladder (LAN browse / DHT) finds the peer.
+- **T02 — move the address field behind `<details class="advanced">`** in `web/index.html`, and reword the
+  hint so it says the peer must be ARMED (the address is the manual fallback, not a requirement).
+- **T03 — verify** (tiers 2/3): the co-sign initiates with NO typed address, and the typed-address path
+  still works from the disclosure.
 
 
 ### P06 — The Signing Ceremony surface **(built LAST, after P07 — Stage 2 grill, 2026-08-18)**
