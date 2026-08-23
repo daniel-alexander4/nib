@@ -3748,6 +3748,47 @@ S09 loop-drop note. **DEEPDIVE TRIGGER: fires** — it modifies the existing exc
 adds a re-delivery seam (new stateful flow, a payload the peer must recognise as a re-delivery). Run
 `/deepdive` before the grill. Tasks to be firmed by the deepdive + grill.
 
+**DEEPDIVE 2026-08-22 (two agents, verified). It surfaced a scope defect in D18/criterion 15 and a
+DECISION now PARKED for Dan.** Findings, all cited to code:
+
+- **`Contribute` is NON-DETERMINISTIC** — random ECDSA nonce (`sign/identity.go:329`,
+  `ecdsa.SignASN1(rand.Reader,…)`) AND a wall-clock timestamp (`p2p/session.go:436`, `When: time.Now()`).
+  Re-signing the same input yields DIFFERENT bytes and stacks a second block (D25 wrong). So re-delivery
+  MUST CACHE the co-signed `final`; it cannot re-sign-identically. The `final` is a local var dropped at
+  `session.go:691` today; nothing caches it, on disk or in the `session`/`ceremonyID` structs.
+- **The sign point + loss window:** receiver signs in `coSignExchange` (`p2p/session.go:189` → `:438`
+  `Contribute`), writes back at `:210`; the initiator reads at `:134`. A loss in that window = receiver
+  signed, initiator never got it — D18's "after confirmation" case.
+- **THE SCOPE DEFECT (the crux): "before BOTH confirmations" is NOT locally decidable.** Confirmation is
+  ONE-SIDED — each side knows only its own bit (`verify.go:246`); the peer's confirmation NEVER crosses
+  the wire. A receiver can confirm, co-sign, write back and disarm (`session.go:978`, considering it done)
+  while the lost write-back leaves the dialer (`session.go:134` errors) unable to tell a pre- from a
+  post-confirmation loss. If it re-races, the receiver is gone; if the receiver also re-raced it could be
+  asked to co-sign the SAME document twice. **D18/criterion 15 as written assumes a knowledge no side has.**
+- **The channel-binding half already holds:** the verification string hashes the RFC-5705 exporter
+  (`verify.go:162`+`:194`), so a fresh channel necessarily derives fresh words — D18's re-confirm-on-new-
+  channel and reject-on-other-channel are already satisfied by the crypto. S10's work is the loop + the
+  re-entry rule + re-delivery, not the string.
+- **Re-race is mechanically feasible:** `connect` is re-invokable with the same persistent `hl`
+  (`ceremonynet.go:598`); the arm would loop `connect`+`serveOneSession` over its `MaxCeremonyLife` cctx,
+  the dial over its `connectDeadline` cctx — an ASYMMETRIC bound (30 days vs 300s) that is itself a seam.
+
+**RECOMMENDED RESOLUTION (idempotency) — mine, but it REWRITES D18 and reinterprets D22, so PARKED:**
+The undecidable "both confirmations" boundary is the two-generals problem; ACKs cannot solve it. The
+correct pattern is IDEMPOTENCY: the losing side re-races UNCONDITIONALLY, and the receiver, on a
+reconnect, either RE-DELIVERS its cached signature (cache hit, keyed on `(ceremony hop, hash(inbound))`,
+no re-sign, no consent re-prompt) or exchanges FRESH (cache miss, re-confirm on the fresh channel). This
+makes the pre/post-confirmation distinction moot — the receiver's cache, not a wire signal, decides. It
+requires the receiver to STAY REACHABLE after co-signing (serving re-delivery reconnects), which
+reinterprets D22's one-session-per-arm TRIPWIRE: a re-delivery is idempotent COMPLETION of the same
+co-signature, not a second one. Cache bounded to the ceremony life, cleared with `cer.close()`.
+
+**PARKED for Dan (decision-level, reshapes D18 + D22):** does S10 adopt the idempotent cache
+(recommended), or a narrower rule (re-race ONLY on failures inside `verificationExchange`, before local
+confirm; anything at/after the document phase fails rather than re-races)? The idempotent path is
+strictly more capable and is the textbook fix, but it rewrites D18's re-race clause and bends the D22
+TRIPWIRE, which is Dan's call. **S10 build is blocked on this; tasks firm once it is answered.**
+
 
 #### P05.S11 — D19's causes 1-4, and the status surface P06 renders *(D19, D34; criteria 6, 7, 8, 9)*
 Scope: `connectFailure` yields three sentences — two clock-skew directions and one generic (`session.go:1023-1029`). Causes 1-4 do not exist; P04.S02 built the classification they read.
