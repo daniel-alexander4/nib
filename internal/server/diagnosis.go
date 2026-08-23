@@ -28,6 +28,13 @@ const (
 	causeMappingDependent
 	// causeOther (cause 4) — the peer published, the mapping classes do not explain the failure.
 	causeOther
+	// causePeerRecordUnusable — the DHT answered and held a record for this peer, but the gate could
+	// not turn it into a candidate: refused as stale/wrong-ceremony/forged, or a valid record with no
+	// address yet. Distinct from causePeerNotStarted, which is "nothing for this peer at all" — telling
+	// a user whose peer HAS published to "open the ceremony" is the confident-false statement this
+	// separates out (the gate's own Refused() counters exist because that conflation is otherwise
+	// invisible). Appended after causeOther so the existing cause values do not shift.
+	causePeerRecordUnusable
 )
 
 // diagnosis is the diagnostic message for a failed connect: a plain SUMMARY and a technical DETAIL.
@@ -46,11 +53,16 @@ func (c *ceremonyID) diagnose() diagnosis {
 	if c == nil || c.rz == nil || c.gate == nil {
 		return diagnosis{cause: causeUndiagnosed} // manual/LAN or TCP ceremony — out of D19's scope
 	}
+	// The gate is safe to read here without its writer: connect joins the feed goroutines (the only
+	// callers of cer.gate.Accept) before diagnose runs, so nothing mutates the stats under us.
+	gs := c.gate.Stats()
 	c.mu.Lock()
 	self := c.self
 	in := d19Inputs{
 		dhtResponded:     c.rz.Stats().Responses > 0, // rz.Stats is mutex-guarded; safe under c.mu
 		peerSeen:         c.peerSeen.Load(),
+		recordRefused:    gs.Refused() > 0,
+		recordEmpty:      gs.EmptyRecords > 0,
 		mappingDependent: self.V4.Mapping == rendezvous.MappingEndpointDependent || self.V6.Mapping == rendezvous.MappingEndpointDependent,
 		havePortMap:      c.portMap != nil,
 		mapUnroutable:    c.mapUnroutable,
@@ -66,6 +78,8 @@ func (c *ceremonyID) diagnose() diagnosis {
 type d19Inputs struct {
 	dhtResponded     bool // any DHT reply reached us (cumulative Responses>0)
 	peerSeen         bool // a candidate for the peer was admitted
+	recordRefused    bool // the gate saw a record for this peer and rejected it (stale/wrong/forged)
+	recordEmpty      bool // a valid, verified record for this peer that carried no address
 	mappingDependent bool // this side is endpoint-dependent on either family
 	havePortMap      bool // a routable port-map was obtained and published
 	mapUnroutable    bool // the router answered but the address was unpublishable (double-NAT)
@@ -84,6 +98,27 @@ func classifyD19(in d19Inputs) diagnosis {
 				"side — most often a network that blocks outbound UDP. You can still connect over " +
 				"your local network, or by typing the other machine's address, or over a VPN you " +
 				"both already run.",
+		}
+	}
+	// The directory answered AND held a record for this peer, but the gate could not use it — BEFORE
+	// cause 1, because both leave peerSeen false and "we saw their record" is the more specific (and
+	// more truthful) thing to say. Refused (stale/wrong-ceremony/forged) and empty (up but no address
+	// yet) get different advice; neither is "they haven't started".
+	if !in.peerSeen && (in.recordRefused || in.recordEmpty) {
+		if in.recordRefused {
+			return diagnosis{
+				cause:   causePeerRecordUnusable,
+				summary: "Found the other side, but couldn't use what they published.",
+				detail: "Nib reached the directory and found a record for this peer but rejected it — " +
+					"it may be stale, from a different ceremony, or its clock may be off. Check that " +
+					"you are both in the same ceremony and your clocks are set, then try again.",
+			}
+		}
+		return diagnosis{
+			cause:   causePeerRecordUnusable,
+			summary: "The other side is connecting but hasn't published an address yet.",
+			detail: "Nib found this peer in the directory, but they have not learned a reachable " +
+				"address yet. Give it a moment and try again.",
 		}
 	}
 	// Cause 1 — the directory answered but held nothing for this peer.
@@ -134,6 +169,8 @@ func causeName(c d19Cause) string {
 		return "mapping-dependent"
 	case causeOther:
 		return "connection-failed"
+	case causePeerRecordUnusable:
+		return "peer-record-unusable"
 	default:
 		return "unknown"
 	}
