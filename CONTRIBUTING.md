@@ -219,6 +219,31 @@ a local `CLAUDE.md`.
 Each guard has been proven red against the defect it names. If you are changing one
 of these and the guard is in your way, the guard is the thing that is right.
 
+## The goroutine law
+
+**Every detached goroutine defers `safe.Recover(...)` as its first statement.** A
+panic in any goroutine takes the whole desktop process down with the user's unsaved
+documents; `safe.Recover` degrades it to a logged line. "First statement" is not
+style — registered first means it runs last, so the goroutine's other defers
+(`wg.Done`, a `Close`, a disarm) still run as the stack unwinds.
+
+A goroutine is detached through **two** doors and the law binds both: a `go`
+statement, and `time.AfterFunc`, whose callback runs on its own goroutine with no
+caller to unwind into. A bare `go f()` has nowhere to hang a defer, so either `f`
+recovers itself as *its* first statement or the launch is wrapped in a literal that
+does.
+
+*Guarded by* `goroutines_test.go` — "every detached goroutine is recovered". It walks
+the repo, not a package list, and it walks both doors. It lived in
+`internal/server/racelifetime_test.go` and was scoped to that one package until
+v1.117.113, which is why `internal/udpmux`'s `readLoop` — the shared socket's sole
+reader of untrusted inbound datagrams — shipped with no recover at all: the guard
+could not see it. Promoting it found seven more sites, two of them behind the
+`AfterFunc` door.
+
+Test goroutines are excluded on purpose: a recover there swallows the panic that *is*
+the failure signal.
+
 ## Repo conventions
 
 - **Bump `VERSION` in the same commit as the change.** It is a single semver line

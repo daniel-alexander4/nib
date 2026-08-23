@@ -76,8 +76,8 @@ func Stamp(ctx context.Context, client *http.Client, digest [32]byte, calendars 
 	for i, cal := range calendars {
 		wg.Add(1)
 		go func(i int, cal string) {
-			defer wg.Done()
 			defer safe.Recover("ots calendar submit")
+			defer wg.Done()
 			seq, err := submit(ctx, client, cal, digest)
 			if err != nil {
 				return
