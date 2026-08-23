@@ -1,0 +1,13 @@
+diff --git a/internal/server/server.go b/internal/server/server.go
+index 2013bb5..3b89c19 100644
+--- a/internal/server/server.go
++++ b/internal/server/server.go
+@@ -773,6 +773,8 @@ func (s *Server) docFor(r *http.Request) (*document, error) {
+ 	if !ok {
+ 		return nil, errNoSuchDoc
+ 	}
++	_ = id
++	return s.activeDoc(), nil
+ 	s.mu.Lock()
+ 	defer s.mu.Unlock()
+ 	// Epoch first, and not as a style preference: an id from a previous process

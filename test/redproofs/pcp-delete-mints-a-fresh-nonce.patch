@@ -1,0 +1,15 @@
+diff --git a/internal/portmap/client.go b/internal/portmap/client.go
+index 175ef17..f213bdb 100644
+--- a/internal/portmap/client.go
++++ b/internal/portmap/client.go
+@@ -298,7 +298,9 @@ func (c *Client) Unmap(ctx context.Context, m Mapping) error {
+ 			// router to remove a mapping that never existed — a silent no-op, on the success
+ 			// path as much as anywhere else.
+ 			clientIP := conn.LocalAddr().(*net.UDPAddr).AddrPort().Addr()
+-			req = EncodePCPMap(m.Protocol, m.nonce, clientIP, m.InternalPort, 0, 0) // lease 0 = delete
++			var fresh [12]byte
++			rand.Read(fresh[:])
++			req = EncodePCPMap(m.Protocol, fresh, clientIP, m.InternalPort, 0, 0) // lease 0 = delete
+ 		} else {
+ 			req, err = EncodeNATPMPMap(m.Protocol, m.InternalPort, 0, 0) // lease 0, suggested 0 (§3.4)
+ 			if err != nil {

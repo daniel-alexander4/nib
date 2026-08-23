@@ -1,0 +1,22 @@
+diff --git a/internal/server/ceremonynet.go b/internal/server/ceremonynet.go
+index 14f83db..e455ba0 100644
+--- a/internal/server/ceremonynet.go
++++ b/internal/server/ceremonynet.go
+@@ -467,17 +467,6 @@ func publishLoop(ctx context.Context, first, every time.Duration, publish func(c
+ 		return // a faster tier won inside the LAN window — do not publish
+ 	}
+ 	publish(ctx)
+-	for {
+-		select {
+-		case <-time.After(every):
+-			if ctx.Err() != nil {
+-				return
+-			}
+-			publish(ctx)
+-		case <-ctx.Done():
+-			return
+-		}
+-	}
+ }
+ 
+ // raceWithRendezvous runs a race fed by the LAN candidates already in hand AND, when the

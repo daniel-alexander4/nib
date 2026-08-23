@@ -1,0 +1,17 @@
+diff --git a/internal/portmap/client.go b/internal/portmap/client.go
+index 175ef17..35477fa 100644
+--- a/internal/portmap/client.go
++++ b/internal/portmap/client.go
+@@ -60,11 +60,7 @@ type Client struct {
+ func (c *Client) SetOnRequestSent(fn func(Mapping)) { c.OnRequestSent = fn }
+ 
+ // sent fires the recorder if one is installed.
+-func (c *Client) sent(m Mapping) {
+-	if c.OnRequestSent != nil {
+-		c.OnRequestSent(m)
+-	}
+-}
++func (c *Client) sent(m Mapping) {}
+ 
+ // Map asks the gateway for an inbound mapping of internalPort for proto, trying PCP then
+ // NAT-PMP, and returns the external IP:port a peer would dial. ctx bounds the whole attempt —
