@@ -623,7 +623,7 @@ func (s *Server) runSession(ln p2p.Listener, cert, key []byte, label, mode strin
 		if inbound != nil {
 			inbound.Store(true)
 		}
-		served := s.serveOneSession(consentAnchor{ln: ln}, conn, cert, key, label, mode, myFP)
+		served, _ := s.serveOneSession(consentAnchor{ln: ln}, conn, cert, key, label, mode, myFP)
 		if served {
 			return // the arm is spent on a session, which is what it is for
 		}
@@ -645,7 +645,7 @@ func (s *Server) runSession(ln p2p.Listener, cert, key []byte, label, mode strin
 // function, and it is why the co-signing decline needed a sentinel of its own
 // (`p2p.ErrCoSignDeclined`) rather than the bare error it used to return — `errors.Is`
 // could not otherwise tell it from the protocol error declared one line away.
-func (s *Server) serveOneSession(anchor consentAnchor, conn *p2p.Conn, cert, key []byte, label, mode string, myFP []byte) bool {
+func (s *Server) serveOneSession(anchor consentAnchor, conn *p2p.Conn, cert, key []byte, label, mode string, myFP []byte) (bool, error) {
 	// **Deferred here rather than closed by the caller**, so the connection is released
 	// even if this function panics. `runSession`'s `safe.Recover` catches such a panic and
 	// keeps the desktop process alive, which is exactly the case where a caller-side
@@ -683,10 +683,10 @@ func (s *Server) serveOneSession(anchor consentAnchor, conn *p2p.Conn, cert, key
 	if mode == sessionModeReceive {
 		doc, err := p2p.ReceiveDocument(ch, sessionAccepter{s: s, label: label, saw: &saw, anchor: anchor}, myFP, sessionVerifier{s, &saw})
 		if err != nil {
-			return saw.v.Load()
+			return saw.v.Load(), err
 		}
 		s.saveReceived(doc, ch.PeerFP, label)
-		return true
+		return true, nil
 	}
 	var rd p2p.ReDeliverer
 	if anchor.cer != nil {
@@ -694,7 +694,7 @@ func (s *Server) serveOneSession(anchor consentAnchor, conn *p2p.Conn, cert, key
 	}
 	final, err := p2p.Receive(ch, cert, key, label, sessionConfirmer{s: s, saw: &saw, anchor: anchor}, sessionVerifier{s, &saw}, rd)
 	if err != nil {
-		return saw.v.Load()
+		return saw.v.Load(), err
 	}
 	// D10: the co-signed document ARRIVES, so it opens alongside whatever the user
 	// already had open rather than replacing it. Before this, completing a co-signature
@@ -703,7 +703,7 @@ func (s *Server) serveOneSession(anchor consentAnchor, conn *p2p.Conn, cert, key
 	// Named, so an arrival is not "Untitled" after a reload — the fifth path-less producer.
 	// handleDocs' own comment names "an arrival" in the population that needed this.
 	s.addDoc(&document{name: arrivalDocName(label), data: final, sig: sign.Verify(final)})
-	return true
+	return true, nil
 }
 
 // saveReceived writes an accepted one-way transfer under ~/nib, routed by what the
@@ -999,23 +999,64 @@ func (s *Server) runCeremonyReceive(ctx context.Context, cer *ceremonyID, hl *p2
 	_ = cer.rz.Bootstrap(bctx)
 	bcancel()
 
-	// P05.S09b T01: the arm waits for the ceremony's WHOLE life, not the 5-min connect deadline, so a
-	// multi-party signer who arms and waits their turn is not disarmed before the baton arrives.
-	// Bounded by D33's MaxCeremonyLife: the invitation carries no per-ceremony deadline (only the
-	// convener-signed record does, and the arm does not have it yet), so the 30-day maximum is the
-	// only bound the arm can apply — it never disarms before a valid ceremony could reach this hop.
-	// connect still returns the instant a peer connects; this is only the ceiling on the wait.
-	cctx, cancel := context.WithTimeout(ctx, ceremony.MaxCeremonyLife)
-	defer cancel()
-	// One connect, one exchange: connect's internal race already keeps one of several candidates,
-	// so the old accept loop's re-arm-on-loss is folded into it. A peer that reaches the user and
-	// then fails still SPENT the arm (serveOneSession's engagement rule); one that never reaches
-	// anyone leaves nothing to re-arm for, and the connect deadline is the whole arm window.
-	conn, cerr := s.connect(cctx, cer, hl, cands, cert, key, peerFP, myFP, false, label, label)
-	if cerr != nil {
-		return // the arm window expired with no peer, or the connect failed
+	// The re-race / re-delivery loop (P05.S10). Two phases keyed on whether this hop has signed:
+	//
+	//  - BEFORE signing: the arm waits for the ceremony's WHOLE life (S09b T01, D33's MaxCeremonyLife
+	//    — the invitation carries no per-ceremony deadline, so the 30-day max is the only bound) for
+	//    the baton, racing dial+accept through connect. A channel lost here re-races and re-confirms
+	//    on a fresh channel (D18); a DECIDED outcome (decline, MITM, consent timeout) ends the arm.
+	//  - AFTER signing: a lost writeback is indistinguishable from a clean success (writeFrame does
+	//    not confirm the initiator READ it — grill P0), so the receiver stays reachable for a BOUNDED
+	//    window (~connectDeadline, the initiator's own re-race bound) to RE-DELIVER the cached
+	//    signature idempotently, then disarms. Post-signing it only ACCEPTS — the initiator dials us —
+	//    so it reuses hl.Accept rather than re-running connect's whole publish/punch/DHT feed (grill P2).
+	//
+	// The TRIPWIRE (see its comment) is honoured as "SIGNS at most once", which the cache enforces:
+	// a re-delivery hands back the same bytes, never a second signature.
+	overallDeadline := time.Now().Add(ceremony.MaxCeremonyLife)
+	var postSignDeadline time.Time
+	for {
+		var conn *p2p.Conn
+		var cerr error
+		if cer.hasSigned() {
+			// Post-signing: accept a reconnect for re-delivery, bounded by the post-sign window.
+			actx, acancel := context.WithDeadline(ctx, postSignDeadline)
+			hc, aerr := hl.Accept(actx)
+			if aerr != nil {
+				acancel()
+				return // the re-delivery window closed with no reconnect — the initiator got it or gave up
+			}
+			conn, cerr = hc.Promote(actx, false) // receiver: the initiator opens the stream
+			acancel()
+			if cerr != nil {
+				continue // a failed accept; try again within the window
+			}
+		} else {
+			// Pre-signing: the full race for the baton, bounded once by the ceremony life.
+			cctx, ccancel := context.WithDeadline(ctx, overallDeadline)
+			conn, cerr = s.connect(cctx, cer, hl, cands, cert, key, peerFP, myFP, false, label, label)
+			ccancel()
+			if cerr != nil {
+				return // the baton never arrived, or the ceremony deadline passed
+			}
+		}
+		_, xerr := s.serveOneSession(consentAnchor{cer: cer}, conn, cert, key, label, mode, myFP)
+		if postSignDeadline.IsZero() && cer.hasSigned() {
+			postSignDeadline = time.Now().Add(connectDeadline) // first signature arms the re-delivery window
+		}
+		switch {
+		case xerr == nil:
+			if !cer.hasSigned() {
+				return // a clean completion that produced no signature (not the co-sign path) — done
+			}
+			// Signed and delivered cleanly, but a clean writeFrame does not prove the initiator read
+			// it; keep the window open for a possible re-delivery until postSignDeadline.
+		case isTransportLoss(xerr):
+			// The channel dropped: re-race (pre-signing) or re-accept (post-signing).
+		default:
+			return // a decided outcome — decline, MITM, consent timeout — ends the ceremony
+		}
 	}
-	s.serveOneSession(consentAnchor{cer: cer}, conn, cert, key, label, mode, myFP)
 }
 
 func (s *Server) handleSessionDisarm(w http.ResponseWriter, r *http.Request) {
@@ -1229,7 +1270,7 @@ func (s *Server) handleSessionInitiate(w http.ResponseWriter, r *http.Request) {
 	// (role-from-endpoint, the C6 default; the record-role refinement for multi-hop is T06), so it
 	// promotes the surviving channel as the initiator and runs Initiate below. Outside a ceremony
 	// this is raceWithRendezvous + Initiate exactly as before.
-	var conn *p2p.Conn
+	var final []byte
 	if cer != nil && cer.rz != nil {
 		hl, herr := p2p.QUICListenHandshakeOn(cer.end, cert, key, peerFP)
 		if herr != nil {
@@ -1237,22 +1278,40 @@ func (s *Server) handleSessionInitiate(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		defer hl.Close()
-		cctx, ccancel := context.WithTimeout(context.Background(), connectDeadline)
-		defer ccancel()
-		conn, err = s.connect(cctx, cer, hl, cands, cert, key, peerFP, myFP, true, peerLabel, peerLabel)
+		// P05.S10: re-race a LOST channel, re-sending the UNCHANGED signed document (Initiate never
+		// re-signs its own contribution), so the peer re-delivers its cached signature idempotently
+		// instead of co-signing twice. Bounded by connectDeadline; a decided outcome (decline, MITM,
+		// consent timeout) breaks out and is reported below, never retried.
+		deadline := time.Now().Add(connectDeadline)
+		for {
+			cctx, ccancel := context.WithDeadline(context.Background(), deadline)
+			conn, cerr := s.connect(cctx, cer, hl, cands, cert, key, peerFP, myFP, true, peerLabel, peerLabel)
+			if cerr != nil {
+				ccancel()
+				err = cerr
+				break
+			}
+			final, err = p2p.Initiate(conn.Channel, signed, myFP, sessionVerifier{s, nil})
+			conn.Close()
+			ccancel()
+			if err == nil || !isTransportLoss(err) || !time.Now().Before(deadline) {
+				break
+			}
+			// the channel dropped with time left — reconnect and let the peer re-deliver
+		}
 	} else {
-		conn, err = s.raceWithRendezvous(cer, cands, cert, key, peerFP, peerLabel, peerLabel)
+		conn, cerr := s.raceWithRendezvous(cer, cands, cert, key, peerFP, peerLabel, peerLabel)
+		if cerr != nil {
+			err = cerr
+		} else {
+			final, err = p2p.Initiate(conn.Channel, signed, myFP, sessionVerifier{s, nil})
+			conn.Close()
+		}
 	}
 	if errors.Is(err, errUnknownTransport) {
 		httpError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	if err != nil {
-		httpError(w, http.StatusBadGateway, connectFailure(err))
-		return
-	}
-	defer conn.Close()
-	final, err := p2p.Initiate(conn.Channel, signed, myFP, sessionVerifier{s, nil})
 	if err != nil {
 		// **A refusal is not a fault, and 502 says it is.** These two arrive as sentinels
 		// now rather than as the EOF a silent close used to produce, so they are reported
