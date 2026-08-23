@@ -166,35 +166,91 @@ function paintBar(px, w, h, y0, y1, x0, x1, ink) {
 
 // pageField paints nine columns of genuinely differing greys, keyed to the page index.
 //
-// **Vertical structure is forced by what the hash measures.** A dHash emits
-// `lum(cell) > lum(cell to its right)` with a STRICT comparison, so two adjacent cells of equal
-// brightness give 0 — and a page of horizontal text bars on flat paper is mostly such pairs. A
-// first draft built that way could not discriminate its own pages, and its own setup assertion is
-// what caught it.
+// **Vertical structure is forced by what the hash measures.** Every comparison is a cell against
+// the cell to its RIGHT, so a page of horizontal text bars on flat paper produces almost nothing
+// but equal pairs. A first draft built that way could not discriminate its own pages, and its own
+// setup assertion is what caught it.
 function pageField(idx, w, h) {
+  // **The greys come from a per-page PRNG, and that is the whole reason.** Two closed-form
+  // drafts both aliased and both produced "different pages align" results that were the fixture,
+  // not the hash: `idx * 7 % 7` is zero for EVERY page, and its replacement
+  // `(idx * 3 + c * 5 + …) % 7` has period 7 in `idx`, so pages 0 and 7 were measured 4 bits
+  // apart — a different page reading as the same one. A closed form over a small modulus keeps
+  // finding new ways to collide; seeding on the index has no period to find.
+  // `pagesDiffer` below is the guard, because a third slip of this shape is likelier than not.
+  const rnd = mulberry32(0x9E37 + idx * 2654435761);
   const px = new Uint8Array(w * h).fill(238); // paper
-  paintBar(px, w, h, 0.05, 0.12, 0.10, 0.45 + 0.12 * (idx % 4), 40); // heading
+  paintBar(px, w, h, 0.05, 0.12, 0.10, 0.35 + 0.35 * rnd(), 40); // heading
   for (let c = 0; c < 9; c++) {
-    // **The multiplier must be coprime with the modulus.** A first draft used `idx * 7 % 7`,
-    // which is zero for every page — so every page got identical columns, and three separate
-    // "different pages align" results were this one slip rather than anything about the hash.
-    const g = 60 + ((idx * 3 + c * 5 + (c % 2) * 3) % 7) * 26; // 60..216, page-specific
+    const g = 60 + Math.floor(rnd() * 7) * 26; // 60..216, page-specific
     paintBar(px, w, h, 0.20, 0.86, c / 9 + 0.005, (c + 1) / 9 - 0.005, g);
   }
   return px;
 }
 
+// sparseField paints what most scanned documents actually look like: paper, a heading, and a few
+// lines of text-like ink. It is deliberately NOT `pageField` — that one paints nine full-height
+// columns of strongly differing greys, which is generous to a perceptual hash in a way a real page
+// is not. Two `sparseField` pages differ only in where their lines end, and that is the case where
+// a 9x8 reduction has the least to work with. It exists to hold the hash's LIMIT in place, not to
+// flatter it.
+export function sparseField(idx, w, h) {
+  const px = new Uint8Array(w * h).fill(238); // paper
+  paintBar(px, w, h, 0.08, 0.12, 0.12, 0.55 + 0.05 * idx, 40); // heading
+  for (let i = 0; i < 8; i++) {
+    const end = 0.55 + 0.32 * (((idx * 3 + i * 5) % 7) / 7); // ragged right margin
+    paintBar(px, w, h, 0.20 + i * 0.07, 0.225 + i * 0.07, 0.12, end, 70);
+  }
+  return px;
+}
+
+// pagesDiffer reports how many of the 72 grid cells two page indexes disagree on, reduced the
+// way the hash reduces. It exists so a test can assert its OWN fixture distinguishes the pages
+// it is about to claim the hash distinguishes — the check both aliasing drafts above needed.
+export function pagesDiffer(a, b, { w = 170, h = 220 } = {}) {
+  const cells = (idx) => {
+    const src = pageField(idx, w, h), out = [];
+    for (let gy = 0; gy < 8; gy++) {
+      for (let gx = 0; gx < 9; gx++) {
+        const x0 = Math.floor((gx * w) / 9), x1 = Math.floor(((gx + 1) * w) / 9);
+        const y0 = Math.floor((gy * h) / 8), y1 = Math.floor(((gy + 1) * h) / 8);
+        let s = 0, n = 0;
+        for (let y = y0; y < y1; y++) for (let x = x0; x < x1; x++) { s += src[y * w + x]; n++; }
+        out.push(Math.round(s / n));
+      }
+    }
+    return out;
+  };
+  const p = cells(a), q = cells(b);
+  return p.reduce((n, v, i) => n + (Math.abs(v - q[i]) > 4 ? 1 : 0), 0);
+}
+
 // degrade applies what a scanner does. `ramp` is the one that matters: an illumination gradient
-// biases EVERY left-to-right comparison in the same direction, and a dHash is nothing but 64
-// left-to-right comparisons. Its SIGN decides everything, because the comparison is strict.
-function degrade(src, w, h, { ramp = 0, shiftX = 0, shiftY = 0, noise = 0, invert = false, seed = 7 } = {}) {
+// biases EVERY left-to-right comparison in the same direction, and the page hash is nothing but 64
+// left-to-right comparisons. Under a STRICT `>` its sign decided everything — a brightening ramp
+// moved nothing and a darkening one flipped every tied pair. That is what `pageDHash` was rewritten
+// to survive (/pending 276), and `ramp` in both signs is the fixture that holds it to it.
+function degrade(src, w, h, { ramp = 0, shiftX = 0, shiftY = 0, noise = 0, invert = false, rot = 0, contrast = 1, seed = 7 } = {}) {
   const rnd = mulberry32(seed);
   const out = new Uint8Array(w * h);
   for (let y = 0; y < h; y++) {
     for (let x = 0; x < w; x++) {
-      const sx = Math.min(w - 1, Math.max(0, x - shiftX));
-      const sy = Math.min(h - 1, Math.max(0, y - shiftY));
+      // Rotation about the page centre — real scans skew, and it was the one degradation
+      // this fixture could not express. Nearest-neighbour is enough: the hash reads a 9x8
+      // reduction, which destroys any interpolation difference long before it compares.
+      let fx = x - shiftX, fy = y - shiftY;
+      if (rot) {
+        const a = (rot * Math.PI) / 180, cx = (w - 1) / 2, cy = (h - 1) / 2;
+        const dx = fx - cx, dy = fy - cy;
+        fx = cx + dx * Math.cos(a) + dy * Math.sin(a);
+        fy = cy - dx * Math.sin(a) + dy * Math.cos(a);
+      }
+      const sx = Math.min(w - 1, Math.max(0, Math.round(fx)));
+      const sy = Math.min(h - 1, Math.max(0, Math.round(fy)));
       let v = src[sy * w + sx];
+      // contrast < 1 is a pale scan, pulled toward mid-grey. A FIXED comparison band dies
+      // here — every real difference falls inside it — which is why the band adapts.
+      if (contrast !== 1) v = 128 + (v - 128) * contrast;
       if (invert) v = 255 - v;
       if (ramp) v *= 1 - ramp / 2 + ramp * (x / (w - 1));
       if (noise) v += (rnd() * 2 - 1) * noise;
@@ -206,13 +262,13 @@ function degrade(src, w, h, { ramp = 0, shiftX = 0, shiftY = 0, noise = 0, inver
 
 // makeScanPDF renders `pages` (an array of page INDEXES, so a test can delete, insert or reorder)
 // as full-page greyscale images with no text of any kind.
-export function makeScanPDF(pages = [0, 1, 2, 3], deg = {}, { w = 170, h = 220 } = {}) {
+export function makeScanPDF(pages = [0, 1, 2, 3], deg = {}, { w = 170, h = 220, field = pageField } = {}) {
   const objs = [];
   const kids = [];
   pages.forEach((idx, i) => {
     const pageObj = 3 + i * 3;
     kids.push(`${pageObj} 0 R`);
-    const img = zlib.deflateSync(Buffer.from(degrade(pageField(idx, w, h), w, h, deg)));
+    const img = zlib.deflateSync(Buffer.from(degrade(field(idx, w, h), w, h, deg)));
     const content = 'q 612 0 0 792 0 0 cm /Im0 Do Q';
     objs[pageObj - 1] =
       `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents ${pageObj + 1} 0 R ` +
