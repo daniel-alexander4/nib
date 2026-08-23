@@ -3685,7 +3685,7 @@ Tasks (firmed 2026-08-22):
 - **T10 — seam rows**: the source-port assertion (caveat 7), same-survivor convergence, loser-closed
   (both dialled and accepted), consent-on-dial-won-channel, and the no-record-stays-asymmetric row.
 
-#### P05.S09b — Criterion 16: the ceremony-scoped arm window and the bounded announcer *(D16 amendment, D33; criterion 16 first half)* *(firmed 2026-08-22; split from S09)*
+#### P05.S09b — Criterion 16: the ceremony-scoped arm window and the bounded announcer *(D16 amendment, D33; criterion 16 first half)* *(done 2026-08-22, v1.117.80)*
 Scope: extend the armed listener's wait from the 5-min `sessionAcceptTimeout` to ceremony scope, so
 a multi-party signer who arms and waits their turn is not disarmed before the baton arrives — AND
 bound the LAN announcer so the extension does not turn it into a packet cannon.
@@ -3707,6 +3707,20 @@ Tasks (firmed 2026-08-22):
   arm, consistent with criterion 14 and D6. Driven — a count over a simulated window, not 30 days.
 - **T03 — seam rows**: the arm-window-is-ceremony-scoped observable, the announcer-emission-bounded
   count.
+
+**CLOSED 2026-08-22 (v1.117.80). Acceptance ledger, split on `and`:**
+- *"the arm window is the ceremony's, bounded by D33's 30-day maximum"* — **MET.** `runCeremonyReceive`
+  bounds the connect ctx by `ceremony.MaxCeremonyLife`. **Grill finding, recorded:** the invitation
+  carries no per-ceremony deadline (only the convener-signed record does, which the arm lacks at arm
+  time), so the arm applies the 30-day MAX not the specific deadline — never disarming before a valid
+  baton, but coarse. An `Expires` on the invitation would scope it precisely (/pending 247).
+- *"the announcer does not emit at full rate for the whole window (criterion 14)"* — **MET, red-proved**
+  (`announcer-ignores-its-window`). `lanAnnounceWindow` caps ANNOUNCING (~600 datagrams) independently
+  of the extended LISTEN window; the socket is released when it closes; late discovery falls to the DHT.
+- *"driven"* — **MET.** `TestTheAnnouncerStopsAtItsWindow` drives the cap over a short SIMULATED window
+  (not 30 days), skipping honestly when multicast is unavailable; the T09 co-sign also completes through
+  the extended-window arm. Diff-grill (1 agent): clean bill, double-close / lifetime / no-runSession-
+  regression all verified sound.
 
 #### P05.S10 — Channel loss either side of the confirmation gate *(D18; criterion 15)*
 

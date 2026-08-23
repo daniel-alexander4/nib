@@ -1154,3 +1154,20 @@ a cancelled session's goroutine from parking ITS consent as the session that rep
 anchor keeps that — after a cancel-and-rearm `se.cer` is the new ceremony, so a stale hop's anchor
 is refused — while making the gate reachable without a listener. The test proves both halves: the
 dial-won park succeeds, and the stale park is still refused.
+
+## v1.117.80 — P05.S09b T02: the announcer that would not stop
+
+Criterion 14 over the extended arm. S09b lets a ceremony arm LISTEN for up to D33's 30-day
+MaxCeremonyLife so a multi-party signer is not disarmed before the baton arrives. The 500ms LAN
+announce ticker, left coupled to that, would emit a never-rotating six-word name for 30 days —
+~5.2M multicast datagrams per ceremony. The announce window is capped independently; this row
+reintroduces the coupling.
+
+| Defect reintroduced | What it said | Check that fired |
+| --- | --- | --- |
+| **The announce loop drops its window case** *(replayable: `announcer-ignores-its-window`)* | `the announcer emitted N more datagram(s) AFTER its 700ms window — the cap does not fire, so an arm extended to ceremony scope emits at full rate for the whole deadline` | `TestTheAnnouncerStopsAtItsWindow`, driven over a short SIMULATED window; its `Sent==0` case is a SKIP not a pass (multicast fails in restricted sandboxes), so the "it stopped" assertion is never vacuous |
+
+**Why the window is a parameter, not a const.** The single-builder guard (`TestAnnouncingHasExactlyOneDoor`,
+ADR-009) keeps the `lanAnnouncer` literal in `startAnnouncing`, so the cap could not move to a testable
+helper. Making the window a parameter that the product always fills with `lanAnnounceWindow` and the test
+fills with 700ms drives the cap in 2.6s instead of 30 days, without a mutable product knob.

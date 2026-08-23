@@ -1,0 +1,24 @@
+diff --git a/internal/server/lan.go b/internal/server/lan.go
+index cb109ae..5c593d8 100644
+--- a/internal/server/lan.go
++++ b/internal/server/lan.go
+@@ -154,18 +154,12 @@ func startAnnouncing(myCertPEM []byte, ln announceable, window time.Duration) (*
+ 		// The LAN fast-path window (P05.S09b T02). It bounds ANNOUNCING, never listening: when it
+ 		// fires the socket is released and this returns, while the arm keeps accepting and dialing
+ 		// over the DHT for the rest of the (now ceremony-scoped) window.
+-		windowC := time.After(window)
++		_ = window
+ 		for {
+-			// The outcome is counted by discovery.Socket.Stats() — Sent and SendErrors,
+-			// at the same moments — and printed by `nib discover`. A second pair here
+-			// counted the same fact and nothing read it; see below.
+ 			_, _ = sock.Announce(ann)
+ 			select {
+ 			case <-a.stop:
+ 				return
+-			case <-windowC:
+-				a.sock.Close() // release the LAN presence; Close's own sock.Close is idempotent
+-				return
+ 			case <-t.C:
+ 			}
+ 		}
