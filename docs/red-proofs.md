@@ -1246,3 +1246,15 @@ statement about someone who has started.
 | Defect reintroduced | What it said | Check that fired |
 | --- | --- | --- |
 | **remove the causePeerRecordUnusable branch** *(replayable: `d19-refused-record-reads-as-not-started`)* | `record refused -> unusable, not 'not started': cause = 2, want 5` | `TestD19ClassifierTable`, whose refused/empty rows assert the new cause, with a discriminator (a refused record does not hijack the diagnosis once any candidate was admitted), an ordering row (no DHT still beats a refused record), and a distinctness check that the refused and empty sub-messages differ |
+
+## v1.117.110 — P05 graduation pass: diagnose() read the racy gate on the live path
+
+The v1.117.106 D19 cause-1 fix read `c.gate.Stats()` directly in `diagnose()`. On the live arm-side
+path (`sessionStatus.status -> diagnose`) that runs while `feedCandidates` is still writing the gate
+via `gate.Accept`, so the read is a data race — the exact reason the S11 note said diagnose() reads
+"only atomic/mutex-guarded signals" and never the gate. The graduation pass over the seam inventory
+caught it; `-race` had not, because no test drives `status()` concurrently with an active feed.
+
+| Defect reintroduced | What it said | Check that fired |
+| --- | --- | --- |
+| **diagnose() reads c.gate.Stats() instead of the atomic snapshot** *(replayable: `diagnose-races-the-gate`)* | `diagnose() no longer reads the c.recordRefused atomic — has the snapshot been removed?` | `TestDiagnoseReadsGuardedSignalsNotTheGate`, a source guard asserting diagnose() calls no method on `c.gate` and reads the `recordRefused`/`recordEmpty` atoms instead — chosen over a `-race` behavioural test because reproducing the race needs a live feed driven concurrently with a status poll |
