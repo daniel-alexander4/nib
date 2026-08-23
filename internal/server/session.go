@@ -688,7 +688,11 @@ func (s *Server) serveOneSession(anchor consentAnchor, conn *p2p.Conn, cert, key
 		s.saveReceived(doc, ch.PeerFP, label)
 		return true
 	}
-	final, err := p2p.Receive(ch, cert, key, label, sessionConfirmer{s: s, saw: &saw, anchor: anchor}, sessionVerifier{s, &saw})
+	var rd p2p.ReDeliverer
+	if anchor.cer != nil {
+		rd = anchor.cer // idempotent re-delivery for a ceremony hop (P05.S10); the manual path has none
+	}
+	final, err := p2p.Receive(ch, cert, key, label, sessionConfirmer{s: s, saw: &saw, anchor: anchor}, sessionVerifier{s, &saw}, rd)
 	if err != nil {
 		return saw.v.Load()
 	}

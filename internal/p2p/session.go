@@ -163,7 +163,7 @@ func Initiate(ch Channel, mySignedPDF, myFingerprint []byte, v Verifier) ([]byte
 // the Confirmer for consent and intent, contributes this user's signature, and sends
 // the result back — returning the co-signed document so the receiver keeps it too.
 // peerLabel is this user's pinned label for the peer (for display).
-func Receive(ch Channel, myCertPEM, myKeyPEM []byte, peerLabel string, c Confirmer, v Verifier) ([]byte, error) {
+func Receive(ch Channel, myCertPEM, myKeyPEM []byte, peerLabel string, c Confirmer, v Verifier, rd ReDeliverer) ([]byte, error) {
 	if err := ch.check(); err != nil {
 		return nil, err
 	}
@@ -186,7 +186,7 @@ func Receive(ch Channel, myCertPEM, myKeyPEM []byte, peerLabel string, c Confirm
 	if err != nil {
 		return nil, fmt.Errorf("receive document: %w", err)
 	}
-	final, err := coSignExchange(myCertPEM, myKeyPEM, peerFP, peerLabel, inbound, c)
+	final, err := coSignExchange(myCertPEM, myKeyPEM, peerFP, peerLabel, inbound, c, rd)
 	if err != nil {
 		// **A refusal reaches the peer as a refusal.** This used to write nothing at all
 		// and close, so the initiator's `readFrame` got EOF and its user was shown
@@ -389,7 +389,20 @@ func ReceiveDocument(ch Channel, a Accepter, myFingerprint []byte, v Verifier) (
 // attestation binds to this channel, gets the user's consent, contributes this
 // user's acceptance signature, and returns the co-signed result. A future gRPC
 // transport would be another adapter calling this same function.
-func coSignExchange(myCertPEM, myKeyPEM, peerFP []byte, peerLabel string, inbound []byte, c Confirmer) ([]byte, error) {
+// ReDeliverer lets the receiving side short-circuit the co-sign when it has ALREADY produced a
+// signature for this exact document on a prior, lost channel — idempotent re-delivery (P05.S10,
+// D18/D24). Contribute is non-deterministic (random ECDSA nonce + a wall-clock timestamp), so a
+// re-sign would stack a second, different block; re-delivery hands back the cached bytes instead.
+// The implementation is the server's per-hop cache; nil disables it (the manual/LAN path, which
+// has no ceremony hop to key on).
+type ReDeliverer interface {
+	// Cached returns a previously co-signed result for `inbound`, or nil for none.
+	Cached(inbound []byte) []byte
+	// Store records the co-signed result for `inbound` so a reconnect re-delivers it.
+	Store(inbound, final []byte)
+}
+
+func coSignExchange(myCertPEM, myKeyPEM, peerFP []byte, peerLabel string, inbound []byte, c Confirmer, rd ReDeliverer) ([]byte, error) {
 	ats := ReadAttestations(inbound)
 	if len(ats) != 1 {
 		return nil, fmt.Errorf("expected exactly one prior signer, got %d", len(ats))
@@ -410,6 +423,16 @@ func coSignExchange(myCertPEM, myKeyPEM, peerFP []byte, peerLabel string, inboun
 	}
 	if peer.AcceptedPeer != hex.EncodeToString(myFP) {
 		return nil, errors.New("the peer's attestation does not accept you")
+	}
+
+	// Re-delivery (P05.S10): AFTER the peer-binding checks above — so a reconnect still proves the
+	// inbound is from the pinned peer, no cross-peer cache theft — and BEFORE consent, because the
+	// user already consented to sign THIS document; re-delivering the cached result must not ask
+	// them again. A miss falls through to the fresh exchange.
+	if rd != nil {
+		if cached := rd.Cached(inbound); cached != nil {
+			return cached, nil
+		}
 	}
 
 	accept, intent, appearance, err := c.Confirm(peer, inbound)
@@ -435,7 +458,16 @@ func coSignExchange(myCertPEM, myKeyPEM, peerFP []byte, peerLabel string, inboun
 		Intent:            intent,
 		When:              time.Now(),
 	}
-	return Contribute(inbound, myCertPEM, myKeyPEM, att, appearance, place)
+	final, err := Contribute(inbound, myCertPEM, myKeyPEM, att, appearance, place)
+	if err != nil {
+		return nil, err
+	}
+	// Cache BEFORE the caller writes it back: a writeback lost in flight must still find the
+	// signature on a reconnect (that is the whole re-delivery case).
+	if rd != nil {
+		rd.Store(inbound, final)
+	}
+	return final, nil
 }
 
 // confirmCoSigned checks the returned document is a genuine mutual co-signature of

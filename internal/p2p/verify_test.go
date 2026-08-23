@@ -590,7 +590,7 @@ func TestL2CoversEveryDocumentCarryingEntryPoint(t *testing.T) {
 	}
 	want := []string{
 		"func Initiate(ch Channel, mySignedPDF, myFingerprint []byte, v Verifier)",
-		"func Receive(ch Channel, myCertPEM, myKeyPEM []byte, peerLabel string, c Confirmer, v Verifier)",
+		"func Receive(ch Channel, myCertPEM, myKeyPEM []byte, peerLabel string, c Confirmer, v Verifier, rd ReDeliverer)",
 		"func SendDocument(ch Channel, pdf []byte, myFingerprint []byte, v Verifier)",
 		"func ReceiveDocument(ch Channel, a Accepter, myFingerprint []byte, v Verifier)",
 	}

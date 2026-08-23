@@ -55,7 +55,7 @@ func TestAnIncompleteChannelIsRefusedByEveryEntryPoint(t *testing.T) {
 			return err
 		},
 		"Receive": func(ch Channel) error {
-			_, err := Receive(ch, nil, nil, "Alice", confirmer{accept: true}, okVerifier{})
+			_, err := Receive(ch, nil, nil, "Alice", confirmer{accept: true}, okVerifier{}, nil)
 			return err
 		},
 		"SendDocument": func(ch Channel) error {
