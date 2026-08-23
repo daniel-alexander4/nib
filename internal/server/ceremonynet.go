@@ -220,7 +220,7 @@ func (c *ceremonyID) publishCandidates(armCtx context.Context, transport string)
 // context by `portMapper`, and DELETED by `close()` on teardown. So the normal case leaves
 // nothing on the router. The residue is the CRASH case, and the grill's C8 corrected what it
 // costs: a killed process deletes nothing and the mapping lives until the router-GRANTED lease
-// expires — which is `defaultLeaseSec` (120 s) only if the router honours the request; a router
+// expires — which is `portmap.DefaultLeaseSec` (120 s) only if the router honours the request; a router
 // granting more (a tested value is 7200 s) leaves the hole open that long. Bounded by the grant,
 // not by the 120 s we ask for — recorded rather than claimed as 120 s.
 func (c *ceremonyID) appendMappedCandidate(armCtx context.Context, addrs []ceremony.Endpoint) []ceremony.Endpoint {

@@ -73,6 +73,16 @@ type Mapping struct {
 	// ignores NewLeaseDuration installs a PERMANENT mapping, and a Mapping that reports
 	// 120 either way cannot tell anyone that.
 	LifetimeObserved bool
+	// LeasePermanent is a mapping the router says never expires.
+	//
+	// **It is a separate field because `LifetimeSec = 0` already means the opposite one hop
+	// away.** `refreshAfter` reads a zero lifetime as "no grant was reported, use the floor",
+	// so writing an observed-permanent lease as 0 would refresh a mapping that never expires
+	// every fifteen seconds, forever — four times more work in the one case that needs least.
+	// One `uint32` cannot carry "unknown" and "infinite" for a reader that treats them as
+	// opposites, so it does not have to: LifetimeSec stays the cadence input and this carries
+	// the fact (/pending 260).
+	LeasePermanent bool
 
 	// The delete handle (S07): which mechanism granted the mapping, and — for UPnP — the SOAP
 	// control URL and service type the delete needs.

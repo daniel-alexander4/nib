@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"log"
 	"net/netip"
 	"sync"
 	"time"
@@ -21,6 +22,10 @@ type portMapClient interface {
 	// door — a recorder the test installs and production forgets is the fixture supplying
 	// what production omits, which is how a green here would mean nothing.
 	SetOnRequestSent(fn func(portmap.Mapping))
+	// ObserveLease resolves a lease the mechanism could not report at obtain time. In the
+	// interface for the same reason SetOnRequestSent is: production and the fake go through
+	// the same door, so a green here cannot come from a test-only hookup.
+	ObserveLease(ctx context.Context, m portmap.Mapping) (portmap.Mapping, error)
 }
 
 // portMapper manages ONE router mapping over a ceremony's life (P05.S07): obtained once at
@@ -120,8 +125,15 @@ func (p *portMapper) obtain(ctx context.Context) (netip.AddrPort, bool) {
 // detects it. So the floor binds only while it is still inside the lease.
 func refreshAfter(lifetimeSec uint32, floor time.Duration) time.Duration {
 	if lifetimeSec == 0 {
-		// No grant was reported at all — the UPnP path, where LifetimeObserved is false. The
-		// floor is the only cadence there is.
+		// No grant was reported at all: the floor is the only cadence there is.
+		//
+		// **This used to say "the UPnP path", and that was wrong the day it was written**
+		// (/pending 260). The UPnP branch sets LifetimeSec to the 120 s it REQUESTED and marks
+		// it unobserved, so it never reaches here — it lands on the ordinary half-the-lease
+		// path. What reaches here is a socket-protocol router reporting a zero lifetime.
+		// The distinction matters beyond the comment: it is why an observed-permanent lease is
+		// carried in LeasePermanent rather than as a zero LifetimeSec, which this branch would
+		// read as its opposite and refresh every floor-interval forever.
 		return floor
 	}
 	lease := time.Duration(lifetimeSec) * time.Second
@@ -174,6 +186,26 @@ func (p *portMapper) startRefresh() {
 			cur := p.current
 			p.mu.Unlock()
 
+			// Resolve a lease the obtain could not report, before refreshing on it. Driven by
+			// the PREDICATE rather than by a tick count: `p.current = nm` below replaces the
+			// mapping after every successful refresh, and the UPnP path returns a freshly
+			// unobserved one each time, so a one-shot observation would be erased by the very
+			// next cycle. Its own context, off the refresh's budget, which SSDP already
+			// nearly exhausts.
+			if !cur.LifetimeObserved {
+				octx, ocancel := context.WithTimeout(context.Background(), portMapBudget)
+				observed, oerr := p.client.ObserveLease(octx, cur)
+				ocancel()
+				if oerr == nil && observed.LifetimeObserved {
+					p.reportLease(observed)
+					cur = observed
+					p.mu.Lock()
+					if !p.closed {
+						p.current = observed
+					}
+					p.mu.Unlock()
+				}
+			}
 			rctx, cancel := context.WithTimeout(context.Background(), portMapBudget)
 			nm, _, err := p.client.Refresh(rctx, cur)
 			cancel()
@@ -195,6 +227,29 @@ func (p *portMapper) startRefresh() {
 			p.mu.Unlock()
 		}
 	}()
+}
+
+// reportLease is the READER, and without one this whole path is a third writer to a field
+// nothing consumes.
+//
+// /pending 258 — delete a mapping a crashed run left behind — is deferred behind a gate that
+// reads "a permanent or over-hour lease actually OBSERVED on the UPnP path". Nothing could
+// observe one, and a value resolved into a struct that nobody prints does not discharge it
+// either: an observation nobody can read is not evidence. Nib has no telemetry and this is not
+// a connect failure, so the log is the channel — the local-first SRE's only one.
+//
+// Silent for the ordinary case. It fires for exactly the two states the gate names.
+func (p *portMapper) reportLease(m portmap.Mapping) {
+	switch {
+	case m.LeasePermanent:
+		log.Printf("port mapping on external port %d is PERMANENT — the router ignored the %ds lease "+
+			"we asked for, so a mapping left by a crash will not expire on its own (/pending 258)",
+			m.ExternalPort, portmap.DefaultLeaseSec)
+	case m.LifetimeSec > 3600:
+		log.Printf("port mapping on external port %d was granted a %ds lease against the %ds we asked "+
+			"for — a mapping left by a crash outlives the process by that long (/pending 258)",
+			m.ExternalPort, m.LifetimeSec, portmap.DefaultLeaseSec)
+	}
 }
 
 // close stops the refresh, JOINS the goroutine, and deletes the mapping on a FRESH context.

@@ -276,3 +276,94 @@ func TestThePCPDeleteCarriesTheMappingsOwnNonce(t *testing.T) {
 		t.Fatal("the delete never reached the gateway")
 	}
 }
+
+// TestObserveLease — /pending 260.
+//
+// UPnP-IGD's AddPortMapping has no lease out-argument, so a UPnP mapping carried our REQUEST
+// wearing the granted lease's name — on the mechanism D15 says most consumer routers run. An
+// IGDv1 that silently ignores NewLeaseDuration installs a PERMANENT mapping and answers 200, and
+// nothing in the tree could tell that from a 120-second lease.
+func TestObserveLease(t *testing.T) {
+	st := "urn:schemas-upnp-org:service:WANIPConnection:1"
+	handle := func(m *mockIGD) Mapping {
+		return Mapping{Protocol: UDP, InternalPort: 40404, ExternalPort: 40404, via: mechUPnP,
+			LifetimeSec: DefaultLeaseSec, upnpControlURL: m.srv.URL + "/ctl", upnpServiceType: st}
+	}
+
+	t.Run("a permanent mapping is observed as permanent, not as a zero lease", func(t *testing.T) {
+		m := newMockIGD(t)
+		m.entryLease = "0" // the IGDv1 that ignored the lease we asked for
+		h := handle(m)
+		if h.LifetimeObserved {
+			t.Fatal("setup: the handle already claims an observed lease")
+		}
+		got, err := (&Client{}).ObserveLease(context.Background(), h)
+		if err != nil {
+			t.Fatal(err)
+		}
+		// SETUP, and it is the assertion that stops this being green over an absence: the router
+		// must actually have been ASKED. An ObserveLease that issues no SOAP call and returns a
+		// hopeful struct passes every assertion below without it.
+		select {
+		case <-m.entries:
+		default:
+			t.Fatal("setup: the IGD never received a GetSpecificPortMappingEntry")
+		}
+		if !got.LifetimeObserved {
+			t.Error("the lease was read back and the mapping still reports it unobserved")
+		}
+		if !got.LeasePermanent {
+			t.Error("a NewLeaseDuration of 0 is a mapping that never expires — D15's crash floor is " +
+				"unbounded there, and /pending 258's gate turns on exactly this")
+		}
+		// THE ROW THAT FAILS IF SOMEONE "SIMPLIFIES" BY WRITING THE 0 INTO LifetimeSec.
+		// refreshAfter reads a zero lifetime as "no grant, use the floor", so that would refresh
+		// a mapping that never expires every fifteen seconds, forever.
+		if got.LifetimeSec != DefaultLeaseSec {
+			t.Errorf("LifetimeSec = %d after observing a permanent lease, want it left at %d — a "+
+				"zero here is read as its opposite by the cadence", got.LifetimeSec, DefaultLeaseSec)
+		}
+	})
+
+	t.Run("a real lease is adopted as the cadence input", func(t *testing.T) {
+		m := newMockIGD(t)
+		m.entryLease = "7200"
+		got, err := (&Client{}).ObserveLease(context.Background(), handle(m))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !got.LifetimeObserved || got.LeasePermanent || got.LifetimeSec != 7200 {
+			t.Errorf("observed=%v permanent=%v lifetime=%d, want observed with a 7200s lease",
+				got.LifetimeObserved, got.LeasePermanent, got.LifetimeSec)
+		}
+	})
+
+	t.Run("no lease tag is UNOBSERVED, not permanent", func(t *testing.T) {
+		m := newMockIGD(t)
+		m.entryLease = "" // the tag is absent altogether
+		got, err := (&Client{}).ObserveLease(context.Background(), handle(m))
+		if err != nil {
+			t.Fatal(err)
+		}
+		// extractTag returns "" for a missing tag and for a body it could not parse alike, so a
+		// bare uint32 would report 0 here — and 0 means permanent. That would open /pending 258's
+		// deferral gate on a parse failure.
+		if got.LifetimeObserved || got.LeasePermanent {
+			t.Errorf("an absent NewLeaseDuration was read as an observation (observed=%v permanent=%v)",
+				got.LifetimeObserved, got.LeasePermanent)
+		}
+	})
+
+	t.Run("an entry that is not ours is refused, not read", func(t *testing.T) {
+		m := newMockIGD(t)
+		m.entryDesc, m.entryLease = "Xbox", "0"
+		got, err := (&Client{}).ObserveLease(context.Background(), handle(m))
+		if err == nil {
+			t.Error("the lease of a mapping belonging to another host was read as ours")
+		}
+		if got.LifetimeObserved {
+			t.Error("a refused read-back still marked the mapping observed — a stranger's lease " +
+				"would drive our cadence and our evidence")
+		}
+	})
+}
