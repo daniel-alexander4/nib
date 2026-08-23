@@ -3917,6 +3917,42 @@ the grill. Tasks firmed by that pass; likely T01 gather the signals, T02 classif
 status surface P06 reads, T04 the L1-diagnostic-only guard, T05 driven tests (each cause + the
 degrade).
 
+**DEEPDIVE 2026-08-22 (S11, two agents, verified to file:line). Signals gatherable with NO wire field;
+`*ceremonyID` is the aggregation point (outlives the re-race loop, owns rz/gate/end/portMap).**
+- **Signal 1 — DHT reachable** (cause 2): `cer.rz.Stats()` (`Responses`/`Bootstrapped`/`FetchNodes`/
+  `FetchEmpty`). Collected, ZERO server readers. Cumulative → the union across re-race iterations.
+- **Signal 2 — peer published** (cause 1 vs 3/4): `cer.gate.Stats()` — `Accepted==0` = never published;
+  `Accepted>0 + dialErr` = published-but-unreachable. Collected, unread. Read AFTER the feed goroutines
+  stop (the gate is not concurrent-safe).
+- **Signal 3 — mapping class + 100.64** (cause 3): PRIMARY defect — `ProbeSelf`'s `SelfAddress{Class.Mapping,
+  SharedAddressSpace}` is computed then DISCARDED in `publishCandidates` (`ceremonynet.go:107`). Fix: store
+  it on ceremonyID under mu (mirror `setPortMap`). Caveat-7 satisfied (probe on `cer.end`); present on a
+  genuine remote failure (the LAN did not answer, so publish→ProbeSelf ran).
+- **Signal 4 — port-map obtained** (cause 3 advice, D9): `cer.portMap != nil` = obtained AND publishable.
+  Gap: an obtained-but-UNROUTABLE answer is closed and dropped (`ceremonynet.go:206`), indistinguishable
+  from no-answer. Fix: a tri-state {no-answer, answered-unroutable, answered-published} set in
+  `appendMappedCandidate`'s three branches.
+- **Surface:** a CLASSIFIER, not typed-errors-per-cause (causes 1-4 are the ABSENCE of a connection across
+  the race; cause 5's `ClockSkewError` is lifted FIRST via errors.As). Two readers: the dial-side HTTP
+  error body (flat `{"error": str}` at `server.go:1259` → a `{cause, summary, detail}` body) AND a new
+  `sessionStatus` field for the arm-side cause-1. "Plain first, detail behind a disclosure" needs a NEW
+  two-field message struct.
+- **Fix first:** the co-sign initiate path (`session.go:1345`) does NOT call `connectFailure` (only /send
+  does). Out of scope (nil-guard): non-ceremony `dialAny`, TCP ceremonies (`cer.rz==nil`).
+
+Tasks (firmed 2026-08-22, deepdive):
+- **T01** — retain the two discarded signals: store `SelfAddress` on ceremonyID in `publishCandidates`; add
+  the port-map tri-state in `appendMappedCandidate`.
+- **T02** — the classifier `cer.diagnosis() D19Inputs` (nil-guarding TCP/non-ceremony) reading rz.Stats()/
+  gate.Stats()/cer.self/the tri-state; classify causes 1-4, produce each `{cause, summary, detail}`; cause 3
+  ONE-SIDED (D17), CONDITIONAL advice (D9: only not-100.64 AND port-map-answered), DEGRADES to cause 4 when
+  the mapping observations are absent.
+- **T03** — the surfaces: a `{cause, summary, detail}` message struct; a structured HTTP error body; route
+  the co-sign initiate failure through the classifier; a new `sessionStatus` field for the arm side.
+- **T04** — the L1 pin: DIAGNOSTIC ONLY, never the pin check (asserted in a test).
+- **T05** — driven tests: each cause by driving the signals; cause 3 degrades to cause 4; the CGNAT case
+  names VPN-only.
+
 
 Scope: `connectFailure` yields three sentences — two clock-skew directions and one generic (`session.go:1023-1029`). Causes 1-4 do not exist; P04.S02 built the classification they read.
 Acceptance: criteria 6 and 7 verbatim; criteria 8 and 9 are **already met** by `p2p.ClockSkewError` and are ledgered, not rebuilt. The mapped port and **"no mapping obtained"** become distinguishable states on `/api/session/status`, which is what P06's two disclosure criteria render.
