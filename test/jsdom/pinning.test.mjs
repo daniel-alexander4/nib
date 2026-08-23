@@ -29,8 +29,9 @@ const APP = fs.readFileSync(path.join(REPO, 'web', 'app.js'), 'utf8');
 // Corrected, and then pinned against the server so it cannot drift again. Three of
 // the fifteen entries this replaces — /api/export, /api/sign, /api/stamp — existed
 // in neither the mux nor web/app.js, so the list read 20% more complete than it was.
-// Two more named routes that do not mutate the stored document (/api/flags and
-// /api/assemble are byte-in/byte-out and never reach commitMutation), and
+// One more named route that does not mutate the stored document (/api/flags is
+// byte-in/byte-out: it writes the result into the response and never touches the
+// registry), and
 // '/api/attachments' was the read route; the mutating one is '/api/attachments/add'.
 //
 // Membership is "a misaddressed request DAMAGES the addressed document" — which is
@@ -39,10 +40,19 @@ const APP = fs.readFileSync(path.join(REPO, 'web', 'app.js'), 'utf8');
 // destroys it outright. The old wording said "commits into", and a close commits
 // nothing; it is nonetheless the route where getting the address wrong costs the user
 // the most, so the membership rule is stated by consequence rather than by mechanism.
+//
+// **`/api/assemble` was excluded on a reason that was false, and it is in the list now**
+// (/pending 261, 2026-08-23). The exclusion said it "never reaches commitMutation" — true, and
+// beside the point: it reaches `commitBarrier` (export.go), on the `reload=1` branch that loads
+// the flattened result back as the open document. The membership rule two paragraphs up already
+// names commitBarrier, so the exclusion contradicted the rule it sat under. All three client call
+// sites happen to pass a docId today, so nothing was broken — what was missing is the guard that
+// makes a FOURTH one fail. `/api/flags`, which the same sentence excluded, genuinely is
+// byte-in/byte-out and stays out.
 const MUTATING = [
   '/api/save', '/api/pages', '/api/redact', '/api/outline', '/api/ocr',
   '/api/sanitize', '/api/decrypt', '/api/attachments/add', '/api/undo', '/api/redo',
-  '/api/close-view',
+  '/api/close-view', '/api/assemble',
 ];
 
 test('every route in the MUTATING inventory is a real POST route on the server', () => {

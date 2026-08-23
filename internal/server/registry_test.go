@@ -90,8 +90,14 @@ func TestEveryDocumentResolutionIsHandled(t *testing.T) {
 	// 18, not 17: /api/stamps (v1.109.16) asks whether the addressed document already
 	// carries a stamp layer, and it is a document question like any other — it resolves
 	// the same way rather than reading whichever document happens to be active.
-	if resolveSites != 18 {
-		t.Errorf("expected 18 resolveDoc sites, found %d — update this deliberately if intended", resolveSites)
+	// 22, not 18: the same four install-only routes gained a SECOND resolution, an early one
+	// (/pending 261, v1.117.126). They work from posted bytes, so they used to parse the whole
+	// multipart body and run the PDF operation before the resolve at the commit discovered the
+	// document was gone. The early one is advisory and refuses before the body is read; the one
+	// at the commit stays authoritative, because the document can be closed while the body is in
+	// flight. Two sites per route is the point, not a duplicate to collapse.
+	if resolveSites != 22 {
+		t.Errorf("expected 22 resolveDoc sites, found %d — update this deliberately if intended", resolveSites)
 	}
 	// 8, not 7: P06.S02's handleCloseView resolves with docFor rather than resolveDoc,
 	// because its not-found branch is a 409 ("that document is no longer open") and

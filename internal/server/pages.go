@@ -39,6 +39,17 @@ func carryAttachments(src, dst []byte, err error) ([]byte, error) {
 }
 
 func (s *Server) handlePages(w http.ResponseWriter, r *http.Request) {
+	// **Refuse a request addressed to a document this server no longer holds BEFORE reading the
+	// body.** Without this the handler parses up to maxPDFBytes and runs the whole PDF operation
+	// before the resolve at the commit discovers the document is gone — real work, on a 128 MiB
+	// document, for a request that was never going to land (/pending 261).
+	//
+	// It is ADVISORY and the resolve at the commit stays authoritative: the document can be
+	// closed while the body is being read, so this one cannot be trusted to still hold by the
+	// time there is something to install. Do not "optimise" by reusing the document it resolves.
+	if _, ok := s.resolveDoc(w, r); !ok {
+		return
+	}
 	cleanup, ok := parseMultipart(w, r, maxPDFBytes)
 	if !ok {
 		return
