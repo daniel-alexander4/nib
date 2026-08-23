@@ -1037,6 +1037,13 @@ func (s *Server) runCeremonyReceive(ctx context.Context, cer *ceremonyID, hl *p2
 			conn, cerr = s.connect(cctx, cer, hl, cands, cert, key, peerFP, myFP, false, label, label)
 			ccancel()
 			if cerr != nil {
+				// A peer that connected and dropped BEFORE the exchange (a pre-gate channel loss)
+				// surfaces as a connect error; re-race it while the ceremony window has time. The
+				// deadline itself is a net.Error too, but by then Before(overallDeadline) is false, so
+				// it falls through to disarm rather than spinning.
+				if isTransportLoss(cerr) && time.Now().Before(overallDeadline) {
+					continue
+				}
 				return // the baton never arrived, or the ceremony deadline passed
 			}
 		}
