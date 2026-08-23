@@ -1730,6 +1730,16 @@ func TestCeremonyReDeliversAfterReconnect(t *testing.T) {
 	if n := len(p2p.ReadAttestations(final1)); n != 2 {
 		t.Fatalf("#1 has %d signers, want 2", n)
 	}
+	docCount := func() int {
+		var out struct {
+			Docs []struct {
+				ID string `json:"id"`
+			} `json:"docs"`
+		}
+		sessGet(t, c, ts.URL+"/api/docs", &out)
+		return len(out.Docs)
+	}
+	afterFirst := docCount()
 
 	// --- Initiate #2: the RECONNECT. Bob's post-signing window re-delivers; a fresh spoken check
 	// still runs (D18, new channel) but consent is NOT re-asked (the cache short-circuits it). ---
@@ -1759,6 +1769,12 @@ func TestCeremonyReDeliversAfterReconnect(t *testing.T) {
 	if !bytes.Equal(final1, final2) {
 		t.Errorf("the reconnect returned DIFFERENT bytes than the first co-sign — Bob RE-SIGNED "+
 			"instead of re-delivering (%d vs %d bytes)", len(final1), len(final2))
+	}
+	// The receiver must open the co-signed document ONCE, not once per re-delivery (diff-grill): a
+	// reconnect re-sends the same idempotent bytes, so a second open would stack a duplicate tab.
+	if after := docCount(); after != afterFirst {
+		t.Errorf("Bob's open-document count went from %d to %d across a re-delivery — the receiver "+
+			"opened a DUPLICATE of one idempotent co-signed result", afterFirst, after)
 	}
 	if n := len(p2p.ReadAttestations(final2)); n != 2 {
 		t.Errorf("the re-delivered result has %d signers, want 2", n)
