@@ -3722,7 +3722,32 @@ Tasks (firmed 2026-08-22):
   the extended-window arm. Diff-grill (1 agent): clean bill, double-close / lifetime / no-runSession-
   regression all verified sound.
 
-#### P05.S10 — Channel loss either side of the confirmation gate *(D18; criterion 15)*
+#### P05.S10 — Channel loss either side of the confirmation gate *(D18, D24; criterion 15)*
+Scope: implement D18's split at the confirmation gate (`runVerification`, `verify.go:73`, the L2
+spoken check that precedes any document byte in both `Initiate` and `Receive`):
+- **Channel lost BEFORE both confirmations** — re-race within the remaining connect deadline; the
+  new channel derives a NEW verification string, so both sides re-read and re-confirm (a stale string
+  is replaced, never reused). Today the coordinator does NOT re-race: `runCeremonyReceive` does one
+  `connect` + one `serveOneSession` and disarms (the S09 loop-drop, filed there); the dial side's
+  request simply fails. This is where that is deliberately reworked.
+- **Channel lost AFTER both confirmations** — restart the HOP (not the ceremony; `(ceremony id,
+  roster index)`, D24), re-deriving a fresh verification string, and **RE-DELIVER rather than
+  re-sign**: a hop's receiver signs via `Contribute` right after consent (`session.go:Receive`), so a
+  loss after the receiver signed but before the initiator read the result must NOT sign again — that
+  stacks a second block from one identity, wrong as a record and as a layout (D25). **Re-delivery does
+  not exist anywhere in the tree today** (grep: no reDeliver/redeliver/hopRestart) — it is new state
+  keyed on the hop: "this hop already produced signature X; re-deliver X."
+Acceptance: criterion 15 — *"Losing the channel before confirmation re-races and re-confirms; losing
+it after confirmation restarts the hop and re-delivers rather than re-signs. Both driven"* — driven by
+RECONNECTING mid-ceremony (not asserted), plus D18's channel-binding clause (a confirmation computed
+on one channel is rejected on any other, already held by `ExportKeyingMaterial`, `verify.go`).
+
+Refs: D18 (@1085), D24 (hop as the restart unit), criterion 15 (@2908), `verify.go` (the gate),
+`session.go` Initiate/Receive (the sign point), the S09 connect coordinator (the re-race), and the
+S09 loop-drop note. **DEEPDIVE TRIGGER: fires** — it modifies the existing exchange/session code AND
+adds a re-delivery seam (new stateful flow, a payload the peer must recognise as a re-delivery). Run
+`/deepdive` before the grill. Tasks to be firmed by the deepdive + grill.
+
 
 #### P05.S11 — D19's causes 1-4, and the status surface P06 renders *(D19, D34; criteria 6, 7, 8, 9)*
 Scope: `connectFailure` yields three sentences — two clock-skew directions and one generic (`session.go:1023-1029`). Causes 1-4 do not exist; P04.S02 built the classification they read.
