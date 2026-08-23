@@ -65,6 +65,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"nib/internal/safe"
 )
 
 const (
@@ -364,6 +366,11 @@ func (m *Mux) learn(addr net.Addr) {
 }
 
 func (m *Mux) readLoop() {
+	// The sole reader of the shared socket, processing UNTRUSTED inbound datagrams through
+	// route/peerKey/deliver. Every other detached goroutine on this path carries the recover;
+	// a panic here (a malformed datagram reaching an unhandled path) would otherwise take the
+	// desktop process down with unsaved documents. First statement, so it runs last.
+	defer safe.Recover("udpmux read loop")
 	buf := make([]byte, maxDatagram)
 	for {
 		n, addr, err := m.pc.ReadFrom(buf)
