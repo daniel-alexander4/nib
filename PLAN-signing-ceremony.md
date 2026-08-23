@@ -3881,6 +3881,43 @@ D24's persist-before-deliver / P08's process-kill is P08's; re-delivery re-runs 
 
 
 #### P05.S11 — D19's causes 1-4, and the status surface P06 renders *(D19, D34; criteria 6, 7, 8, 9)*
+Scope: turn a FAILED connect into D19's plain-language diagnosis. Cause 5 (clock skew) already
+ships (D35, `lan.go:497`), and the mapping-class probe already ships (P04: `rendezvous.ProbeSelf`
+→ `Class{Mapping: EndpointIndependent|Dependent}` and `SharedAddressSpace` for 100.64/10). What is
+missing is the CLASSIFICATION of causes 1-4 and their messages: today `connectFailure`
+(`session.go`) returns clock-skew-or-generic, and `ceremonynet.go:335` already says "S11 renders it".
+
+The four causes (D19@1140) and their SIGNALS, all gathered from the connect attempt:
+- **Cause 1 — the peer never published.** The DHT answered but the peer's key held no candidates.
+  → "The other side hasn't started their ceremony yet."
+- **Cause 2 — the rendezvous is unreachable.** No DHT responses at all (bootstrap/query failed).
+  → names the LAN and manual/VPN paths (the two that survive, D14).
+- **Cause 3 — the peer published, the mapping classes explain it.** ONE-SIDED (amended 2026-08-19,
+  no peer class on the wire — D17): THIS side is `EndpointDependent` with NO port-map obtained.
+  → names port mapping and a shared VPN — **but port-mapping advice is CONDITIONAL** (D9 pin): only
+  when the mapped address is NOT in 100.64/10 AND the port-map tier got an answer; otherwise name
+  the VPN path and stop (a CGNAT user cannot port-forward). **Degrades to cause 4 when the two DHT
+  observations do not arrive** (criterion @2907 — expected, not a defect).
+- **Cause 4 — the peer published, the classes do not explain it.** Filtering, a firewall, an
+  asymmetric failure. → an honest "couldn't establish a connection" with the per-tier detail.
+
+Acceptance (criteria @2907, @2922): each of the four causes produces its OWN message; the
+mapping-class test distinguishes the two NAT classes from two DHT observations; cause 3's message
+names port mapping + VPN, never a port-forward a carrier's NAT forbids; cause 3 degrades to cause 4
+when observations are absent. **L1 pin (D19@735): the classification is DIAGNOSTIC ONLY** — it
+changes messages and tier preference, never the pin check; the L1 guard covers it.
+
+Refs: D19 (@1140, the five causes), D9 (the CGNAT port-forward ban), D17 (no peer class on the wire),
+D34 (outbound-call enumeration / DHT disclosure — the disclosure half is P06's, per @2884), the
+existing `ProbeSelf`/`Class`/`SharedAddressSpace`, `connectFailure`, `ClockSkewError` (cause 5).
+**DEEPDIVE TRIGGER: fires** — it modifies the existing connect/failure/status path and reads the
+mapping-class seam P04 built; the signals (DHT-reachable, peer-published, port-map-obtained) are
+scattered across the feed/race and must be gathered without a new wire field. Run `/deepdive` before
+the grill. Tasks firmed by that pass; likely T01 gather the signals, T02 classify + message, T03 the
+status surface P06 reads, T04 the L1-diagnostic-only guard, T05 driven tests (each cause + the
+degrade).
+
+
 Scope: `connectFailure` yields three sentences — two clock-skew directions and one generic (`session.go:1023-1029`). Causes 1-4 do not exist; P04.S02 built the classification they read.
 Acceptance: criteria 6 and 7 verbatim; criteria 8 and 9 are **already met** by `p2p.ClockSkewError` and are ledgered, not rebuilt. The mapped port and **"no mapping obtained"** become distinguishable states on `/api/session/status`, which is what P06's two disclosure criteria render.
 
