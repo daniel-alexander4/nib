@@ -1,0 +1,17 @@
+diff --git a/internal/server/ceremonyid.go b/internal/server/ceremonyid.go
+index 920c8a7..a400e9d 100644
+--- a/internal/server/ceremonyid.go
++++ b/internal/server/ceremonyid.go
+@@ -197,12 +197,8 @@ func (c *ceremonyID) setPortMap(pm *portMapper) {
+ 		pm.close() // close() already ran; delete this mapping rather than leak it
+ 		return
+ 	}
+-	old := c.portMap
+ 	c.portMap = pm
+ 	c.mu.Unlock()
+-	if old != nil && old != pm {
+-		old.close()
+-	}
+ }
+ 
+ // nodeCacheDir is where the DHT's node list lives.

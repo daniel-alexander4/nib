@@ -1345,3 +1345,24 @@ reaches commitMutation". Removing it again breaks nothing: the jsdom guard check
 route is real, and nothing checks that every real one is listed. A hand-kept inventory's
 completeness is exactly what a hand-kept inventory cannot guard, which is why the ordering guard
 above walks the package instead.
+
+## v1.117.130 — sweep 15: the item was deferred and its grill found three live defects
+
+Three rows, none of them from the item that produced them. `/pending 262` asked whether Nib should
+retry a refused UPnP mapping with a permanent lease; the answer is that D15 makes that Dan's call,
+so the item is deferred. Reading the branch to answer it found three things shipping — **two of
+them opened by this week's own commits.**
+
+| Defect reintroduced | What it said | Check that fired |
+| --- | --- | --- |
+| **a UPnP refusal carried on a 200 read as success** *(replayable: `soap-fault-on-a-200-reads-as-success`)* | `an IGD that refused in the body while answering 200 was read as SUCCESS (err=<nil>) — Nib would publish a signed candidate naming a port that was never forwarded` | `TestAFaultOnA200IsStillARefusal`, whose two setup assertions establish that the POST was delivered and the device answered, so the row is about a response rather than a transport failure |
+| **a failed obtain drops its delete handles** *(replayable: `failed-obtain-drops-its-delete-handles`)* | `ceremonynet.go:257 returns without closing the mapper` | `TestAFailedObtainStillClosesItsMapper` — a SOURCE scan, and it says so: the call site builds its own `portmap.Client` and cannot be driven with a fake |
+| **a republish orphans the mapper it replaces** *(replayable: `replacing-the-mapper-orphans-the-old-one`)* | `replacing the stored mapper left the old one open (Unmap 0, want 1) — its refresh goroutine keeps running and its router mapping outlives the ceremony` | `TestReplacingTheStoredMapperClosesTheOldOne`, with a setup assertion that the first mapping was still live at the moment it was replaced |
+
+**Two of the three are regressions from the four days before them, and that is the entry worth
+re-reading.** v1.117.120 gave the mapper a send-time delete handle to close /pending 257's leak, and
+in doing so made an existing early return into a leak of exactly the kind it was closing.
+v1.117.123 turned a one-shot publish into a republish loop and made an existing overwrite into an
+orphan. Neither was visible from the change that caused it: both needed a reader coming at the same
+seam from a different question. **A fix that closes a leak at one door is the moment to walk the
+other doors**, and the grill that found these was pointed at a third thing entirely.

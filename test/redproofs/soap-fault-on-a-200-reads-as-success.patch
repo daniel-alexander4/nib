@@ -1,0 +1,14 @@
+diff --git a/internal/portmap/upnp.go b/internal/portmap/upnp.go
+index 576a232..f17ad16 100644
+--- a/internal/portmap/upnp.go
++++ b/internal/portmap/upnp.go
+@@ -331,9 +331,6 @@ func soapCall(ctx context.Context, client *http.Client, controlURL, serviceType,
+ 	// port that was never forwarded. D19 then read havePortMap as true and told the user their
+ 	// trouble was "most likely a firewall". No legitimate response to any action here carries an
+ 	// errorCode, so its presence is decisive whatever the status line says.
+-	if code := extractTag(data, "errorCode"); code != "" {
+-		return nil, fmt.Errorf("%w: IGD UPnPError %s on a 200 response", ErrResultCode, code)
+-	}
+ 	return data, nil
+ }
+ 
