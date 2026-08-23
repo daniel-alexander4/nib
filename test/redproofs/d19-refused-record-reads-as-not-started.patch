@@ -1,0 +1,32 @@
+diff --git a/internal/server/diagnosis.go b/internal/server/diagnosis.go
+index a611f7b..65930a0 100644
+--- a/internal/server/diagnosis.go
++++ b/internal/server/diagnosis.go
+@@ -100,27 +100,6 @@ func classifyD19(in d19Inputs) diagnosis {
+ 				"both already run.",
+ 		}
+ 	}
+-	// The directory answered AND held a record for this peer, but the gate could not use it — BEFORE
+-	// cause 1, because both leave peerSeen false and "we saw their record" is the more specific (and
+-	// more truthful) thing to say. Refused (stale/wrong-ceremony/forged) and empty (up but no address
+-	// yet) get different advice; neither is "they haven't started".
+-	if !in.peerSeen && (in.recordRefused || in.recordEmpty) {
+-		if in.recordRefused {
+-			return diagnosis{
+-				cause:   causePeerRecordUnusable,
+-				summary: "Found the other side, but couldn't use what they published.",
+-				detail: "Nib reached the directory and found a record for this peer but rejected it — " +
+-					"it may be stale, from a different ceremony, or its clock may be off. Check that " +
+-					"you are both in the same ceremony and your clocks are set, then try again.",
+-			}
+-		}
+-		return diagnosis{
+-			cause:   causePeerRecordUnusable,
+-			summary: "The other side is connecting but hasn't published an address yet.",
+-			detail: "Nib found this peer in the directory, but they have not learned a reachable " +
+-				"address yet. Give it a moment and try again.",
+-		}
+-	}
+ 	// Cause 1 — the directory answered but held nothing for this peer.
+ 	if !in.peerSeen {
+ 		return diagnosis{

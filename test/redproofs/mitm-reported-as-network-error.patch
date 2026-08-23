@@ -1,0 +1,29 @@
+diff --git a/internal/server/session.go b/internal/server/session.go
+index 24793f1..64d6afd 100644
+--- a/internal/server/session.go
++++ b/internal/server/session.go
+@@ -1367,24 +1367,6 @@ func (s *Server) handleSessionInitiate(w http.ResponseWriter, r *http.Request) {
+ 				"the request was shown and went unanswered, so nothing was signed")
+ 			return
+ 		}
+-		// A words-don't-match verdict is the man-in-the-middle signal, not a connect failure —
+-		// verify.go's own doc says it "must never be reported as a network error … 'could not
+-		// connect' invites a retry, which is the worst possible advice when someone is sitting
+-		// between you." The receive side already ends the ceremony on it (runCeremonyReceive's
+-		// default arm); the initiate side is the one synchronous caller a user waits on, so it is
+-		// where the sentence gets written. Lifted BEFORE writeConnectDiagnosis, which would
+-		// otherwise render this as a 502 and — worse — pick an unrelated D19 cause.
+-		if errors.Is(err, p2p.ErrVerificationDeclined) {
+-			httpError(w, http.StatusConflict, "the safety words did not match — this can mean "+
+-				"a machine is sitting between you and the other party, so nothing was signed. "+
+-				"Do not retry blindly: check the four words with them over a channel you trust first.")
+-			return
+-		}
+-		if errors.Is(err, p2p.ErrVerificationTimedOut) {
+-			httpError(w, http.StatusConflict, "the safety words went unconfirmed on the other "+
+-				"side in time, so nothing was signed")
+-			return
+-		}
+ 		// P05.S11: a genuine connect failure (not a decline) gets D19's plain-language diagnosis,
+ 		// classified from the signals on `cer`. `cer` is nil-safe in diagnose(); a non-ceremony or
+ 		// TCP dial falls back to the flat connectFailure message.
