@@ -1128,6 +1128,15 @@ by Dan: there is no name-only path. The sentence before this one is now the whol
 **re-delivers** it (D24) — otherwise resumption stacks a second block from the same identity on
 the page, which is wrong as a record and, per D25, wrong as a layout.
 
+**(Amendment 2026-08-22, P05.S10 deepdive — Dan chose A. The LAW is unchanged; the MECHANISM is named.)**
+"Lost before both confirmations" was found not locally decidable — confirmation is one-sided and the
+peer's never crosses the wire (two-generals). The re-race clause is therefore realised by IDEMPOTENCY,
+not by a "both confirmations" check: the losing side re-races unconditionally, and the receiver, on a
+reconnect, RE-DELIVERS its cached signature (keyed on the hop and the inbound content hash) or, on a
+cache miss, exchanges fresh and re-confirms on the new channel. The cache — not a wire signal — decides
+re-deliver vs fresh, which is why no post-confirmation ACK is needed (and why one would not help). This
+is the implementable form of D24's "re-deliver, do not re-sign".
+
 ### D19 — Failure is diagnosed on the mapping/filtering axis, and names ~~four~~ **five (2026-08-18, D35)** distinct causes *(settled 2026-08-16 via /discuss, auto-adopted; supersedes the CGNAT framing in P05)*
 
 The ladder classifies NAT behaviour on the **RFC 4787 axis — mapping behaviour
@@ -3783,11 +3792,38 @@ requires the receiver to STAY REACHABLE after co-signing (serving re-delivery re
 reinterprets D22's one-session-per-arm TRIPWIRE: a re-delivery is idempotent COMPLETION of the same
 co-signature, not a second one. Cache bounded to the ceremony life, cleared with `cer.close()`.
 
-**PARKED for Dan (decision-level, reshapes D18 + D22):** does S10 adopt the idempotent cache
-(recommended), or a narrower rule (re-race ONLY on failures inside `verificationExchange`, before local
-confirm; anything at/after the document phase fails rather than re-races)? The idempotent path is
-strictly more capable and is the textbook fix, but it rewrites D18's re-race clause and bends the D22
-TRIPWIRE, which is Dan's call. **S10 build is blocked on this; tasks firm once it is answered.**
+**RESOLVED 2026-08-22 — Dan chose A, the idempotent cache.** D18's re-race clause is refined and D22's
+TRIPWIRE reinterpreted (amendment notes on both decisions). The mechanism, and the tasks:
+
+Tasks (firmed 2026-08-22, deepdive + Dan's choice A):
+- **T01 — the re-delivery cache.** After `coSignExchange` returns `final` (`p2p/session.go:189`) and
+  BEFORE the write-back (`:210`), cache `final` keyed on `(ceremony hop, sha256(inbound))` — the inbound
+  CONTENT hash, not the hop alone, so a reconnect with a DIFFERENT document at the same hop never gets the
+  old signature (the stale-signature risk the deepdive named). Lives on `ceremonyID` (per-hop, already the
+  natural key: `ceremonyid.go:28`), bounded to the ceremony life and cleared by `cer.close()`
+  (`session.go:215`) — no signed bytes outlive their ceremony. The manual/LAN path (no `ceremonyID`) is
+  out of scope: it has no hop to key on and no long arm to reconnect into.
+- **T02 — the receiver loops, re-delivering or exchanging fresh.** `runCeremonyReceive` loops
+  `connect`+`serveOneSession` over its `MaxCeremonyLife` cctx instead of one-shot-then-disarm (stop
+  discarding the served bool `session.go:1014`; move `disarmCeremony` off the unconditional defer). On each
+  accepted connection, before running `coSignExchange`: look up the cache by `sha256(inbound)`+hop — a HIT
+  RE-DELIVERS the cached `final` and skips BOTH `Confirm` (no consent re-prompt) and `Contribute` (no
+  re-sign); a MISS runs the fresh exchange, then caches. **This is D22's TRIPWIRE reinterpreted:** a
+  re-delivery is idempotent completion of the ONE co-signature, not a second — the guard that must still
+  hold is "this hop signs at most once", which the cache enforces directly.
+- **T03 — the initiator re-races.** `handleSessionInitiate` loops `connect`+`Initiate` over its
+  `connectDeadline` cctx, re-sending the UNCHANGED `mySignedPDF` (`Initiate` never re-signs its own
+  contribution), so a reconnect hits the receiver's cache. The asymmetric bound is deliberate: the dialer,
+  a waiting user, gives up at `connectDeadline`; the receiver stays reachable for the ceremony.
+- **T04 — the re-entry predicate: re-race a LOST CHANNEL, never a decided outcome.** Loop only on a
+  transport/wire error (`verificationExchange`'s frame errors `verify.go:93-124`, a dropped read/write);
+  a definitive protocol outcome — `ErrCoSignDeclined`, `ErrVerificationDeclined`, `ErrConsentTimedOut` —
+  ends the ceremony, it does not re-race. Re-racing a decline would re-ask a person who already answered.
+- **T05 — driven by reconnecting mid-ceremony, both sides of the gate, plus seams.** Before the gate: a
+  channel dropped inside `verificationExchange` re-races and re-derives FRESH words (EKM, `verify.go:162`).
+  After the gate: a channel dropped after the receiver signed re-delivers the SAME signature — assert the
+  result carries exactly ONE block from the receiver, never two, and that consent was NOT re-prompted.
+  Red-proof the idempotency (a cache that re-signed would double the block).
 
 
 #### P05.S11 — D19's causes 1-4, and the status surface P06 renders *(D19, D34; criteria 6, 7, 8, 9)*
