@@ -382,6 +382,75 @@ function evidenceFor(src, starts, rel, field) {
   return out;
 }
 
+// ── Nested shapes ────────────────────────────────────────────────────────────
+//
+// `fieldsOf` follows EMBEDS. It does not follow a NAMED struct-typed field, so a whole shape
+// rides onto the wire unchecked one type over: `docResponse.Signature sign.Status` carries
+// `sign.Status` and `sign.SignerInfo`, and `sanitizeResponse.Residual pdfops.ScanReport` carries
+// `pdfops.Finding` — the very type whose `detail` was the coincidental reader that laundered
+// D19's `detail` at /pending 254. Same class as `oneProceeding`, one level of indirection out.
+//
+// **Where the recursion stops, stated as a rule rather than left incidental:**
+//  1. Only types `declaredStructs()` found — structs declared under `internal/`. Nothing from
+//     the module cache is ever followed: `time.Time` has no json tags (0 fields, silently) and
+//     `netip.AddrPort` is unexported throughout, so walking them produces confident nonsense.
+//  2. Stop at any type that has its own PUBLISHED entry — it is checked there, with its own
+//     readers. Without this `docsResponse.docs` re-expands every docResponse field.
+//  3. Memoize per type: `sign.SignerInfo` is reached through three shapes and is one field set.
+//  4. A depth cap AND a cycle guard, because the cycle is not hypothetical — `xfdfField.Fields
+//     []xfdfField` exists in `internal/pdfops`, the same package this walk already reaches, and
+//     it cycles through a SLICE, which a pointers-only argument would miss.
+//  5. An ambiguous bare type name is TERMINAL, not a throw. `resolveEmbed` throws for embeds and
+//     must keep throwing; four bare names (`Record`, `Stats`, `result`, `Server`) are already
+//     declared in two packages each, and a new field of one must not break the suite with a
+//     parse error that reads as a scan failure.
+//
+// Nested keys are `pkg.Type.field`, NEVER a bare field name. `fieldsOf` dedups by name, so a
+// flattened `sign.SignerInfo.reason` would collide with `decryptResponse.Reason` and be
+// laundered inside its own shape — the failure this file already documents one field over.
+const NESTED_DEPTH = 4;
+
+// FIELD_DECL matches `Name Type `json:"x"`` — a NAMED field with a type, which is exactly what
+// EMBED is written to exclude.
+const FIELD_DECL = /^\s*[A-Z][A-Za-z0-9_]*\s+([\[\]\*A-Za-z0-9_.\]]+)\s+`json:"([^",]+)/;
+
+// baseTypeName strips slice, pointer, array and map decoration down to the type being named.
+function baseTypeName(t) {
+  let out = t.replace(/^\**/, '').replace(/^(\[\d*\])+/, '').replace(/^\*+/, '');
+  const map = out.match(/^map\[[^\]]*\](.*)$/);
+  if (map) out = map[1].replace(/^\**/, '');
+  return out;
+}
+
+// resolveNamed is resolveEmbed's non-throwing sibling: null on unknown OR ambiguous.
+function resolveNamed(name, fromFile) {
+  if (name.includes('.')) return DECLARED.byQualified.get(name) ?? null;
+  const all = DECLARED.byBare.get(name) ?? [];
+  const samePkg = all.filter((r) => path.dirname(r.file) === path.dirname(fromFile));
+  if (samePkg.length === 1) return samePkg[0];
+  if (all.length === 1) return all[0];
+  return null; // unknown, or ambiguous — terminal either way
+}
+
+// nestedTypes walks a shape and returns every internal struct type reachable through a named
+// struct-typed field, keyed `pkg.Type`.
+function nestedTypes(rec, published, out = new Map(), seen = new Set(), depth = 0) {
+  if (depth >= NESTED_DEPTH) return out;
+  const key = rec.file + '#' + rec.name;
+  if (seen.has(key)) return out;
+  seen.add(key);
+  for (const line of rec.body.split('\n')) {
+    const m = line.replace(/\/\/.*$/, '').match(FIELD_DECL);
+    if (!m) continue;
+    const target = resolveNamed(baseTypeName(m[1]), rec.file);
+    if (!target || published.has(target.name)) continue; // rule 2
+    const id = `${path.basename(path.dirname(target.file))}.${target.name}`;
+    if (!out.has(id)) out.set(id, target);
+    nestedTypes(target, published, out, seen, depth + 1);
+  }
+  return out;
+}
+
 const EVIDENCE = (() => {
   const cache = new Map();
   const source = (rel) => {
@@ -392,9 +461,18 @@ const EVIDENCE = (() => {
     return cache.get(rel);
   };
   const out = new Map(); // "shape.field" -> {declaredIn, field, lines:Set, deferred:bool}
+  const publishedTypes = new Set(PUBLISHED.map((p) => p.type));
+  const nested = new Map(); // "pkg.Type" -> {rec, readers:Set}
   for (const entry of PUBLISHED) {
     const st = STRUCTS.get(entry.type);
     if (!st) continue;
+    const rec = [...DECLARED.byQualified.values()].find((r) => r.file === st.file && r.name === entry.type);
+    if (rec) {
+      for (const [id, target] of nestedTypes(rec, publishedTypes)) {
+        if (!nested.has(id)) nested.set(id, { rec: target, readers: new Set() });
+        for (const r of entry.readers) nested.get(id).readers.add(r);
+      }
+    }
     const deferred = new Set(entry.deferredFields ?? []);
     for (const f of st.fields) {
       const lines = new Set();
@@ -407,6 +485,17 @@ const EVIDENCE = (() => {
       out.set(`${entry.type}.${f.name}`, {
         declaredIn: f.declaredIn, field: f.name, lines, deferred: deferred.has(f.name),
       });
+    }
+  }
+  // The nested shapes, keyed by DECLARING type so a name cannot be laundered across shapes.
+  for (const [id, { rec, readers }] of nested) {
+    for (const f of fieldsOf(rec)) {
+      const lines = new Set();
+      for (const rel of readers) {
+        const { src, starts } = source(rel);
+        for (const site of evidenceFor(src, starts, rel, f.name)) lines.add(site);
+      }
+      out.set(`${id}.${f.name}`, { declaredIn: f.declaredIn, field: f.name, lines, deferred: false });
     }
   }
   return out;
@@ -456,8 +545,8 @@ test('every field of every published shape has a reader in the file that declare
   // The stimulus for the whole file. An empty PUBLISHED table, or a source read that
   // returned nothing, produces the same two empty arrays as a clean tree.
   const checked = [...EVIDENCE.values()].filter((e) => !e.deferred).length;
-  assert.ok(checked >= 60,
-    `only ${checked} fields were checked across ${PUBLISHED.length} shapes — the scan is not reading what it thinks it is`);
+  assert.ok(checked >= 120,
+    `only ${checked} fields were checked across ${PUBLISHED.length} shapes — the scan is not reading what it thinks it is. The figure was 117 before the nested walk and 138 after it (/pending 259); a floor left at the old number would tolerate losing the whole nested population.`);
 });
 
 // ── The coincidence door ─────────────────────────────────────────────────────
@@ -497,6 +586,12 @@ const COINCIDENTAL = {
   'attestationView.fingerprint': 'as above. Every match is a peer / peersResponse / pendingView fingerprint; augmentSigDetails reads acceptedPeer, reason, matched, pinned, rosterHash and oneProceeding, not this.',
   'attestationView.when': 'as above. Matches are `q.when` (cosignQuote) and `s.when` (sign.SignerInfo).',
   'attestationView.valid': 'as above. Matches are `s.valid`, a sign.SignerInfo.',
+  // Reached through docResponse.Signature (and its two embedders) once the nested walk landed —
+  // /pending 259. Both are read in Go only by the side that SETS them (internal/p2p builds every
+  // attestation from them), which by this file\'s own updateResponse.managed doctrine is no
+  // consumer at the far end; the client renders signer identity from attestationView instead.
+  'sign.SignerInfo.reason': 'its ten matches are `pending.reason` (pendingView), `a.reason` (attestationView), `out.reason` (decryptResponse), `info.reason` (listDirResponse) and `ev.reason` (a PromiseRejectionEvent). openSigDetails never reads it.',
+  'sign.SignerInfo.fingerprint': 'the exact twin of attestationView.fingerprint, one type over. Every match is a peer / peersResponse / pendingView fingerprint.',
 };
 
 test('the deferred and coincidental lists describe fields that still exist', () => {
@@ -521,6 +616,16 @@ test('the deferred and coincidental lists describe fields that still exist', () 
   // STIMULUS, and it is the assertion that makes the whole deferral mechanism honest: a
   // deferred field must actually be skipped. If deferredFields were silently ignored, every
   // test here would still pass and `.detail` would be laundered again by the same line.
+  // STIMULUS for the nested walk. Asserting on `signature` itself would pass with the recursion
+  // deleted — it is docResponse's OWN field. `timeBacking` is reachable ONLY through
+  // docResponse.Signature -> sign.Status.Signers -> sign.SignerInfo, so it is false the moment
+  // the walk stops walking.
+  assert.ok(EVIDENCE.has('sign.SignerInfo.timeBacking'),
+    'sign.SignerInfo.timeBacking is not in the inventory, so named struct-typed fields are being followed nowhere and every shape they carry is unchecked');
+  const nestedKeys = [...EVIDENCE.keys()].filter((k) => k.split('.').length === 3);
+  assert.ok(nestedKeys.length >= 18,
+    `only ${nestedKeys.length} fields were reached through a named struct field; the census at v1.117.122 was 21 across sign.Status, sign.SignerInfo, pdfops.ScanReport, pdfops.Finding, pdfops.OutlineItem, pdfops.AttachmentInfo and vault.KeyInfo`);
+
   const deferred = [...EVIDENCE.values()].filter((e) => e.deferred);
   assert.ok(deferred.length >= 6,
     `only ${deferred.length} fields are deferred; P06's two diagnosis shapes defer three each, so the mechanism is not being applied`);

@@ -14,7 +14,14 @@ import (
 
 // Finding is one item of active or hidden content the scan surfaced.
 type Finding struct {
-	Kind     string `json:"kind"`
+	// Kind is the finding's category ("javascript", "launch", …) and is what Severity and
+	// Detail are derived FROM at the append site. It is deliberately not on the wire: the
+	// client renders severity, detail and page, and nothing anywhere read `kind` at the far
+	// end — /pending 259 found it published and unread, hidden behind 31 matches of `f.kind`
+	// on the client's own form-field objects, an unrelated shape. Kept as a field because it
+	// is real internal information; dropped from the JSON because a published field nobody
+	// consumes is the historyEvicted class.
+	Kind     string `json:"-"`
 	Severity string `json:"severity"`       // "high" | "medium" | "low"
 	Detail   string `json:"detail"`         // human-readable, honest about what it is
 	Page     int    `json:"page,omitempty"` // 1-based; 0 = document-level
