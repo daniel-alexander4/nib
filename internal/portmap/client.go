@@ -137,7 +137,7 @@ func (c *Client) mapWithSuggestion(ctx context.Context, proto Protocol, internal
 	// so it never fires from a zero-value Client: SSDP is real LAN multicast and would reach a
 	// real IGD.
 	if c.TryUPnP {
-		if ext, port, ctl, st, err := mapViaUPnP(ctx, proto, internalPort, DefaultLeaseSec, isPrivateHost, c.sent); err == nil {
+		if ext, port, ctl, st, err := mapViaUPnP(ctx, proto, internalPort, DefaultLeaseSec, isPrivateHost, c.sent, discoverIGD); err == nil {
 			// LifetimeSec here is what we ASKED for and LifetimeObserved says so: IGD's
 			// AddPortMapping response has no lease out-argument, so there is nothing to read
 			// back. Reading it with a second GetSpecificPortMappingEntry round trip would not

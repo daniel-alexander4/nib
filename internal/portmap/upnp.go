@@ -399,13 +399,21 @@ func extractTag(body []byte, local string) string {
 // absent but UPnP is not. The internal client IP for `AddPortMapping` is determined per IGD by
 // dialing its (private, screened) host and reading the local address on that path, so the caller
 // supplies nothing about the local network.
-func mapViaUPnP(ctx context.Context, proto Protocol, internalPort uint16, leaseSec uint32, hostOK func(string) bool, record func(Mapping)) (ext netip.Addr, port uint16, controlURL, serviceType string, err error) {
+//
+// `locations` is how the IGD list is obtained, and it is a PARAMETER for the reason
+// `feedCandidates` takes its interval and `punchLoop` its cadence: a policy that cannot be
+// driven has no test. `discoverIGD` does real SSDP multicast — `client_test.go` refuses to drive
+// it for exactly that reason, because it "would reach the developer's actual router" — so
+// everything this loop decides was untestable until the seam existed (/pending 265): what happens
+// when an IGD refuses, when one answers and then fails, and when a second location has to be
+// tried after the first.
+func mapViaUPnP(ctx context.Context, proto Protocol, internalPort uint16, leaseSec uint32, hostOK func(string) bool, record func(Mapping), locations func(context.Context) ([]string, error)) (ext netip.Addr, port uint16, controlURL, serviceType string, err error) {
 	client := igdHTTPClient()
-	locations, err := discoverIGD(ctx)
+	locs, err := locations(ctx)
 	if err != nil {
 		return netip.Addr{}, 0, "", "", err
 	}
-	for _, loc := range locations {
+	for _, loc := range locs {
 		ctl, st, err := controlURLFor(ctx, client, loc, hostOK)
 		if err != nil {
 			continue

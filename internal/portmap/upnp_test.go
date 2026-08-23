@@ -27,7 +27,6 @@ type mockIGD struct {
 	addOK   bool
 	added   chan string // records the AddPortMapping SOAP body seen
 	deleted chan string // records the DeletePortMapping SOAP body seen
-	control string      // an override control URL to test the SSRF guard
 	// The entry GetSpecificPortMappingEntry reports. Defaults describe a mapping this host
 	// owns; a test sets them to somebody else's to drive the refusal arm.
 	entryDesc   string
@@ -48,10 +47,7 @@ func newMockIGD(t *testing.T) *mockIGD {
 	m.srv = httptest.NewServer(mux)
 	t.Cleanup(m.srv.Close)
 
-	control := m.control
-	if control == "" {
-		control = m.srv.URL + "/ctl"
-	}
+	control := m.srv.URL + "/ctl"
 	mux.HandleFunc("/desc.xml", func(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprintf(w, `<?xml version="1.0"?><root xmlns="urn:schemas-upnp-org:device-1-0">`+
 			`<device><deviceList><device><serviceList><service>`+
@@ -369,4 +365,80 @@ func TestAFaultOnA200IsStillARefusal(t *testing.T) {
 		t.Errorf("an IGD that refused in the body while answering 200 was read as SUCCESS (err=%v) — "+
 			"Nib would publish a signed candidate naming a port that was never forwarded", err)
 	}
+}
+
+// TestMapViaUPnPLoop — /pending 265, and it is the first test of any kind over this loop.
+//
+// `mapViaUPnP` called `discoverIGD` unconditionally, and `discoverIGD` does real SSDP multicast —
+// so the orchestration that decides what happens when an IGD refuses, or answers and then fails,
+// or has to be tried after another, had NO coverage at all. Everything around it was tested. The
+// gap was exactly the policy.
+func TestMapViaUPnPLoop(t *testing.T) {
+	at := func(m *mockIGD) func(context.Context) ([]string, error) {
+		return func(context.Context) ([]string, error) { return []string{m.location()}, nil }
+	}
+
+	t.Run("an IGD that refuses records no delete handle", func(t *testing.T) {
+		m := newMockIGD(t)
+		m.addOK = false // answers 718 with a 500
+		var recorded []Mapping
+		_, _, _, _, err := mapViaUPnP(context.Background(), UDP, 40404, 120, anyHost,
+			func(mp Mapping) { recorded = append(recorded, mp) }, at(m))
+
+		// SETUP: the IGD has to have been asked, or "no handle" is true for the wrong reason.
+		select {
+		case <-m.added:
+		default:
+			t.Fatal("setup: the IGD never received an AddPortMapping")
+		}
+		if err == nil {
+			t.Error("a refusing IGD produced a mapping")
+		}
+		if len(recorded) != 0 {
+			t.Errorf("a DEFINITIVE refusal recorded %d delete handle(s) — a UPnP delete is keyed on "+
+				"the external port with no ownership check, so a handle for a mapping that was never "+
+				"made arms a destructive call at whatever else holds that port", len(recorded))
+		}
+	})
+
+	t.Run("a mapping made and then unreadable still leaves a handle", func(t *testing.T) {
+		m := newMockIGD(t)
+		m.extIP = "" // AddPortMapping succeeds; GetExternalIPAddress yields nothing usable
+		var recorded []Mapping
+		_, _, _, _, err := mapViaUPnP(context.Background(), UDP, 40404, 120, anyHost,
+			func(mp Mapping) { recorded = append(recorded, mp) }, at(m))
+
+		select {
+		case <-m.added:
+		default:
+			t.Fatal("setup: the IGD never received an AddPortMapping")
+		}
+		if err == nil {
+			t.Fatal("setup: the external-IP failure did not fail the obtain, so this row is not " +
+				"about the case it names")
+		}
+		if len(recorded) != 1 {
+			t.Errorf("AddPortMapping succeeded and the obtain then failed, and %d handle(s) were "+
+				"recorded — the mapping EXISTS on the router and this is the only thing that could "+
+				"ever delete it", len(recorded))
+		}
+	})
+
+	t.Run("a second location is tried after the first fails", func(t *testing.T) {
+		bad, good := newMockIGD(t), newMockIGD(t)
+		bad.addOK = false
+		locs := func(context.Context) ([]string, error) {
+			return []string{bad.location(), good.location()}, nil
+		}
+		ext, port, ctl, _, err := mapViaUPnP(context.Background(), UDP, 40404, 120, anyHost, nil, locs)
+		if err != nil {
+			t.Fatalf("the loop gave up after the first IGD refused: %v", err)
+		}
+		if port != 40404 || !ext.IsValid() {
+			t.Errorf("the second IGD produced ext=%v port=%d", ext, port)
+		}
+		if !strings.HasPrefix(ctl, good.srv.URL) {
+			t.Errorf("the mapping is attributed to %q, not to the IGD that actually made it (%s)", ctl, good.srv.URL)
+		}
+	})
 }

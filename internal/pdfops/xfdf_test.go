@@ -5,6 +5,7 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+	"unicode/utf8"
 )
 
 // TestFillFormXFDF fills a form from a hand-written XFDF and confirms the text and
@@ -212,5 +213,50 @@ func TestACSVCheckboxCellIsStillABoolean(t *testing.T) {
 	}
 	if xfdfChecked("Off") || xfdfChecked("off") || xfdfChecked("  ") {
 		t.Error("Off is the one name PDF reserves for the unchecked state")
+	}
+}
+
+// TestAnXFDFInAnotherEncodingIsRead — /pending 266.
+//
+// XFDF is an interchange format whose whole job is arriving from another vendor's product, so the
+// encoding it arrives in is not Nib's to dictate. `encoding/xml` refuses a non-UTF-8 declaration
+// outright unless a CharsetReader is set — "encoding declared but Decoder.CharsetReader is nil" —
+// and Nib wrapped that as "invalid XFDF", the same sentence a corrupted or non-XFDF file gets. The
+// user was told their file is not an XFDF when the truth was that Nib did not read that encoding.
+func TestAnXFDFInAnotherEncodingIsRead(t *testing.T) {
+	// "Ada Lovelace" is ASCII; the é makes the encoding matter.
+	body := `<?xml version="1.0" encoding="ISO-8859-1"?>` +
+		`<xfdf xmlns="http://ns.adobe.com/xfdf/"><fields>` +
+		`<field name="fullName"><value>Ren\xe9e</value></field>` +
+		`</fields></xfdf>`
+	raw := []byte(strings.ReplaceAll(body, `\xe9`, "\xe9")) // a real latin-1 byte, not an escape
+
+	// SETUP: the bytes must NOT be valid UTF-8, or the charset path is never exercised and this
+	// row would pass with the CharsetReader removed.
+	if utf8.Valid(raw) {
+		t.Fatal("setup: the fixture is valid UTF-8, so nothing here depends on the declared encoding")
+	}
+
+	values, err := parseXFDF(raw)
+	if err != nil {
+		t.Fatalf("an XFDF declaring ISO-8859-1 was refused: %v", err)
+	}
+	if got := values["fullName"]; len(got) != 1 || got[0] != "Renée" {
+		t.Errorf("fullName read as %q, want %q — the latin-1 byte was not decoded", got, "Renée")
+	}
+}
+
+// TestAnUnreadableEncodingIsNamed — the other half, and the reason the first one is not enough.
+//
+// Something will always be undecodable. The failure then has to say WHICH encoding, because
+// "invalid XFDF" tells the user to give up on a file that is not invalid.
+func TestAnUnreadableEncodingIsNamed(t *testing.T) {
+	_, err := parseXFDF([]byte(`<?xml version="1.0" encoding="x-nonesuch-9000"?>` +
+		`<xfdf xmlns="http://ns.adobe.com/xfdf/"><fields></fields></xfdf>`))
+	if err == nil {
+		t.Fatal("setup: an unknown encoding was accepted, so there is no failure to inspect")
+	}
+	if !strings.Contains(err.Error(), "x-nonesuch-9000") {
+		t.Errorf("the refusal does not name the encoding it could not read: %v", err)
 	}
 }
