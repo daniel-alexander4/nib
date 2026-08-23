@@ -20,8 +20,18 @@ func TestD19ClassifierTable(t *testing.T) {
 		// Cause 2 FIRST — no DHT, even with peerSeen false (which cause 1 also has): ordering matters.
 		{"no DHT at all", d19Inputs{dhtResponded: false}, causeDHTUnreachable, false},
 		{"no DHT, peer also not seen", d19Inputs{dhtResponded: false, peerSeen: false}, causeDHTUnreachable, false},
-		// Cause 1 — DHT up, peer silent.
+		// Cause 1 — DHT up, peer silent AND no record of them at all.
 		{"DHT up, peer not started", d19Inputs{dhtResponded: true, peerSeen: false}, causePeerNotStarted, false},
+		// peer-record-unusable — DHT up, peerSeen false, BUT a record was there and the gate couldn't
+		// use it. Before cause 1: telling a peer who published to "open the ceremony" is the false
+		// statement this separates. Both sub-cases (refused, empty) land here.
+		{"record refused -> unusable, not 'not started'", d19Inputs{dhtResponded: true, peerSeen: false, recordRefused: true}, causePeerRecordUnusable, false},
+		{"record empty -> unusable, not 'not started'", d19Inputs{dhtResponded: true, peerSeen: false, recordEmpty: true}, causePeerRecordUnusable, false},
+		// Discriminator: a refused record does NOT hijack the diagnosis once a candidate WAS admitted
+		// (one address usable, another refused) — peerSeen wins and the mapping classes take over.
+		{"refused but a candidate was admitted -> proceeds to cause 3", d19Inputs{dhtResponded: true, peerSeen: true, recordRefused: true, mappingDependent: true}, causeMappingDependent, true},
+		// Ordering: no DHT still beats a refused record (cause 2 first).
+		{"no DHT beats a refused record", d19Inputs{dhtResponded: false, recordRefused: true}, causeDHTUnreachable, false},
 		// Cause 3 — peer published, endpoint-dependent, no mapping. The advice splits on D9:
 		{"cause3 controllable NAT: port-forward offered", d19Inputs{dhtResponded: true, peerSeen: true, mappingDependent: true}, causeMappingDependent, true},
 		{"cause3 CGNAT: VPN only, no port-forward", d19Inputs{dhtResponded: true, peerSeen: true, mappingDependent: true, sharedSpace: true}, causeMappingDependent, false},
@@ -47,6 +57,15 @@ func TestD19ClassifierTable(t *testing.T) {
 		if d.summary == "" || d.detail == "" {
 			t.Errorf("%s: empty summary or detail", r.name)
 		}
+	}
+	// The two peer-record-unusable sub-cases must give DIFFERENT advice — a refused record (stale /
+	// wrong ceremony / clock) needs a different fix than an empty one (up, no address yet). A single
+	// shared message would defeat the split this cause exists to make.
+	refused := classifyD19(d19Inputs{dhtResponded: true, peerSeen: false, recordRefused: true})
+	empty := classifyD19(d19Inputs{dhtResponded: true, peerSeen: false, recordEmpty: true})
+	if refused.detail == empty.detail || refused.summary == empty.summary {
+		t.Errorf("refused and empty records give the same message (summary %q/%q, detail equal=%v) — "+
+			"the split is vacuous", refused.summary, empty.summary, refused.detail == empty.detail)
 	}
 }
 
