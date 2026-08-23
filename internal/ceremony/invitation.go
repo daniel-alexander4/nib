@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"io"
 	"net/netip"
+	"strconv"
 	"strings"
 
 	"golang.org/x/crypto/hkdf"
@@ -84,8 +85,18 @@ var (
 	// refusal is whole**: a partial pairing from a damaged invitation is worse than none,
 	// because it pins some parties and silently omits others.
 	ErrInvitationCorrupt = errors.New("this invitation is damaged — ask for a fresh copy")
-	// ErrInvitationVersion: a version this build does not know.
+	// ErrInvitationVersion: a version this build does not know because it is NEWER.
 	ErrInvitationVersion = errors.New("this invitation was made by a newer version of Nib")
+	// ErrInvitationOldVersion: a format this build has moved past.
+	//
+	// **Split from ErrInvitationVersion because the old check was a prefix test, and a prefix
+	// test can only ever say "newer".** Every `nib-invite-v…` that was not this build's exact
+	// prefix produced "made by a newer version of Nib" — so the first time InvitationVersion is
+	// bumped, a NEW build handed an ORDINARY v1 invitation would have told the user their
+	// invitation came from the future. Unreachable until that bump, which is exactly why it
+	// would have shipped: the bump is the change that reaches it, and /pending 247 (an
+	// `Expires` field on the invitation) is the change that was going to make the bump.
+	ErrInvitationOldVersion = errors.New("this invitation was made by an older version of Nib")
 	// ErrRosterMismatch: the invitation's roster is not the record's.
 	ErrRosterMismatch = errors.New("this invitation does not describe the ceremony in this document")
 )
@@ -282,6 +293,25 @@ func (i Invitation) Encode() (string, error) {
 	return invitationPrefix + payload + "." + hex.EncodeToString(sum[:4]), nil
 }
 
+// invitationFormatVersion reads N out of a "nib-invite-vN:" prefix, whatever N is. It is what
+// makes the version check a comparison rather than a string mismatch.
+func invitationFormatVersion(t string) (int, bool) {
+	const stem = "nib-invite-v"
+	if !strings.HasPrefix(t, stem) {
+		return 0, false
+	}
+	rest := t[len(stem):]
+	colon := strings.Index(rest, ":")
+	if colon <= 0 {
+		return 0, false
+	}
+	v, err := strconv.Atoi(rest[:colon])
+	if err != nil {
+		return 0, false
+	}
+	return v, true
+}
+
 // ParseInvitation reads the text form.
 //
 // Whitespace anywhere is removed first: an invitation travels through email, chat and
@@ -291,10 +321,15 @@ func (i Invitation) Encode() (string, error) {
 func ParseInvitation(text string) (Invitation, error) {
 	t := strings.Join(strings.Fields(text), "")
 	if !strings.HasPrefix(t, invitationPrefix) {
-		// A prefix from a future version parses as "not an invitation" without this, which
-		// sends the user to the wrong problem.
-		if strings.HasPrefix(t, "nib-invite-v") {
-			return Invitation{}, ErrInvitationVersion
+		// A prefix from another version parses as "not an invitation" without this, which sends
+		// the user to the wrong problem. The comparison is NUMERIC (D32: a skew produces a
+		// sentence naming the mismatch, not a parse error) — a prefix test cannot tell a newer
+		// format from an older one and answered "newer" for both.
+		if v, ok := invitationFormatVersion(t); ok {
+			if v > InvitationVersion {
+				return Invitation{}, ErrInvitationVersion
+			}
+			return Invitation{}, ErrInvitationOldVersion
 		}
 		return Invitation{}, ErrInvitationFormat
 	}
