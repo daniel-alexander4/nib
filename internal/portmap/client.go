@@ -98,8 +98,14 @@ func (c *Client) mapWithSuggestion(ctx context.Context, proto Protocol, internal
 	// real IGD.
 	if c.TryUPnP {
 		if ext, port, ctl, st, err := mapViaUPnP(ctx, proto, internalPort, defaultLeaseSec, isPrivateHost); err == nil {
+			// LifetimeSec here is what we ASKED for and LifetimeObserved says so: IGD's
+			// AddPortMapping response has no lease out-argument, so there is nothing to read
+			// back. Reading it with a second GetSpecificPortMappingEntry round trip would not
+			// fit the 3 s budget on the slowest mechanism; carrying the request as though it
+			// were the answer is what the flag exists to stop.
 			return Mapping{Protocol: proto, InternalPort: internalPort, ExternalPort: port, LifetimeSec: defaultLeaseSec,
-				via: mechUPnP, upnpControlURL: ctl, upnpServiceType: st}, ext, nil
+				LifetimeObserved: false,
+				via:              mechUPnP, upnpControlURL: ctl, upnpServiceType: st}, ext, nil
 		} else if ctx.Err() != nil {
 			return Mapping{}, netip.Addr{}, ctx.Err()
 		}

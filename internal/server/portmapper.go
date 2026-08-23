@@ -67,6 +67,39 @@ func (p *portMapper) obtain(ctx context.Context) (netip.AddrPort, bool) {
 	return netip.AddrPortFrom(ext, m.ExternalPort), true
 }
 
+// refreshAfter is the refresh cadence: half the granted lease, floored, and deliberately with
+// NO ceiling.
+//
+// **No ceiling, and the reason is that a ceiling cannot do the job it looks like it does.**
+// /pending 253 asked for the granted lease to be clamped so D15's crash guarantee ("a mapping
+// left by a SIGKILLed Nib expires on its own") holds independent of the router. It cannot:
+// clamping this number changes a local variable, while the lease the ROUTER holds is whatever
+// it granted, and after SIGKILL nothing of ours runs to shorten it. Re-requesting is not a
+// mechanism either — RFC 6887 and RFC 6886 both let the server assign what it likes, and Refresh
+// already re-sends 120 s every cycle. So the honest position is that the crash floor is the
+// router's, recorded where a reader will meet it, and the only real bound would be a delete on
+// NEXT START, which puts a router port and a control URL on disk and wants its own decision.
+// A ceiling would also cost round trips for nothing: 7200 s granted gives a 3600 s wait against
+// a 300 s race, so the timer never fires, and close() deletes the mapping whatever it says.
+//
+// **The live defect on this line was the FLOOR, in the opposite direction from the item.** An
+// unconditional floor of 15 s applied to a lease SHORTER than itself refreshes after the mapping
+// has already expired — the published record names a dead port until the next cycle, and nothing
+// detects it. So the floor binds only while it is still inside the lease.
+func refreshAfter(lifetimeSec uint32, floor time.Duration) time.Duration {
+	if lifetimeSec == 0 {
+		// No grant was reported at all — the UPnP path, where LifetimeObserved is false. The
+		// floor is the only cadence there is.
+		return floor
+	}
+	lease := time.Duration(lifetimeSec) * time.Second
+	wait := lease / 2
+	if wait < floor && floor < lease {
+		wait = floor
+	}
+	return wait
+}
+
 // startRefresh spawns the refresh loop. It is **self-contained**: stopped only by close()'s
 // `stop` channel, and its Refresh calls use a FRESH bounded context — so it is decoupled from
 // the publish goroutine's context, whose `defer cancel()` fires the instant publish returns
@@ -91,10 +124,7 @@ func (p *portMapper) startRefresh() {
 			if closed || !have {
 				return
 			}
-			wait := time.Duration(m.LifetimeSec/2) * time.Second
-			if wait < p.refreshFloor {
-				wait = p.refreshFloor
-			}
+			wait := refreshAfter(m.LifetimeSec, p.refreshFloor)
 			timer := time.NewTimer(wait)
 			select {
 			case <-p.stop:

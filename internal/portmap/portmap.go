@@ -61,6 +61,18 @@ type Mapping struct {
 	InternalPort uint16
 	ExternalPort uint16
 	LifetimeSec  uint32
+	// LifetimeObserved is false when the mechanism CANNOT report a granted lease, and
+	// LifetimeSec is therefore our request rather than the router's answer.
+	//
+	// True for NAT-PMP and PCP, whose MAP replies carry the lifetime. **False for
+	// UPnP-IGD**, whose AddPortMapping response has no lease out-argument at all — and
+	// UPnP-IGD is, by D15's own words, what the majority of consumer routers actually
+	// have enabled. So on the majority mechanism Nib does not know the lease it holds,
+	// and D15's crash floor there is UNKNOWN rather than 120 s. Recorded as a field
+	// rather than a comment because the difference is not decorative: an IGDv1 that
+	// ignores NewLeaseDuration installs a PERMANENT mapping, and a Mapping that reports
+	// 120 either way cannot tell anyone that.
+	LifetimeObserved bool
 
 	// The delete handle (S07): which mechanism granted the mapping, and — for UPnP — the SOAP
 	// control URL and service type the delete needs. Without these a UPnP mapping cannot be
@@ -156,7 +168,9 @@ func DecodeNATPMPMap(resp []byte, p Protocol, internalPort uint16) (Mapping, err
 		Protocol:     p,
 		InternalPort: got,
 		ExternalPort: binary.BigEndian.Uint16(resp[10:12]),
-		LifetimeSec:  binary.BigEndian.Uint32(resp[12:16]),
+		// NAT-PMP's MAP reply carries the granted lifetime, so this one is observed.
+		LifetimeSec:      binary.BigEndian.Uint32(resp[12:16]),
+		LifetimeObserved: true,
 	}, nil
 }
 
@@ -262,6 +276,8 @@ func DecodePCPMap(resp []byte, p Protocol, nonce [12]byte, internalPort uint16) 
 		Protocol:     p,
 		InternalPort: gotInternal,
 		ExternalPort: externalPort,
-		LifetimeSec:  lifetime,
+		// PCP's MAP response carries the assigned lifetime, so this one is observed.
+		LifetimeSec:      lifetime,
+		LifetimeObserved: true,
 	}, extIP, nil
 }
