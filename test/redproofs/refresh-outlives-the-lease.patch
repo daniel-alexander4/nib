@@ -1,0 +1,16 @@
+diff --git a/internal/server/portmapper.go b/internal/server/portmapper.go
+index 184f267..f8b2794 100644
+--- a/internal/server/portmapper.go
++++ b/internal/server/portmapper.go
+@@ -92,9 +92,8 @@ func refreshAfter(lifetimeSec uint32, floor time.Duration) time.Duration {
+ 		// floor is the only cadence there is.
+ 		return floor
+ 	}
+-	lease := time.Duration(lifetimeSec) * time.Second
+-	wait := lease / 2
+-	if wait < floor && floor < lease {
++	wait := time.Duration(lifetimeSec/2) * time.Second
++	if wait < floor {
+ 		wait = floor
+ 	}
+ 	return wait

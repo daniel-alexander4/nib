@@ -1,0 +1,32 @@
+diff --git a/internal/server/diagnosis.go b/internal/server/diagnosis.go
+index 7c1a34d..6a463e6 100644
+--- a/internal/server/diagnosis.go
++++ b/internal/server/diagnosis.go
+@@ -142,14 +142,6 @@ func classifyD19(in d19Inputs) diagnosis {
+ 		// and global — reached this branch and was told a direct connection "isn't possible" while
+ 		// holding a directly reachable IPv6 endpoint that P05.S05 built the tier for. That is a false
+ 		// statement about reachability, which is worse than bad advice.
+-		if in.v6Independent {
+-			d.summary = "The IPv4 path between these two networks is blocked."
+-			d.detail = "This machine's IPv4 address changes depending on where it connects, so an " +
+-				"IPv4 connection can't be made — but it does have a directly reachable IPv6 " +
+-				"address. If the other side has IPv6 too, try again. If they don't, a VPN you both " +
+-				"run is the way through."
+-			return d
+-		}
+ 		// D9: offer a port-forward ONLY when the user controls a NAT. The two branches below are
+ 		// "the router told us something" and "we learned nothing", and only the first is evidence.
+ 		if in.mapUnroutable || in.sharedSpace {
+@@ -168,10 +160,8 @@ func classifyD19(in d19Inputs) diagnosis {
+ 			// not a better detector, which would only make the false statement more specific: it is
+ 			// to stop promising. The advice is conditioned on a fact only the user has.
+ 			d.detail = "This machine is behind a network that hands out a different address per " +
+-				"destination, and Nib couldn't get an answer from your router — so it can't tell " +
+-				"whether there is one you control. If there is, enabling UPnP or a port-forward on " +
+-				"it may help. If your connection goes through your provider's network instead, a " +
+-				"VPN you both run is the way through."
++				"destination. Enabling UPnP or a port-forward on your router, or using a VPN you " +
++				"both run, would let it connect."
+ 		}
+ 		return d
+ 	}

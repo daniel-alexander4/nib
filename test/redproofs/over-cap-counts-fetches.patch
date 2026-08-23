@@ -1,0 +1,12 @@
+diff --git a/internal/ceremony/gate.go b/internal/ceremony/gate.go
+index 2dfe221..1419021 100644
+--- a/internal/ceremony/gate.go
++++ b/internal/ceremony/gate.go
+@@ -296,7 +296,6 @@ func (g *CandidateGate) Accept(sealed []byte, now time.Time) error {
+ 			// never be admitted later anyway. The cost is that `seen` stops being bounded by
+ 			// MaxCandidates and becomes bounded by traffic instead (8 per record over ~10
+ 			// fetches, so ~80 entries), from an author already verified as the counterparty.
+-			g.seen[a] = true
+ 			g.stats.DroppedOverCap++
+ 			continue
+ 		}
