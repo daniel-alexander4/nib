@@ -42,6 +42,8 @@ func TestD19ClassifierTable(t *testing.T) {
 		{"cause3 learned nothing about the router: advice mentions it, conditioned", d19Inputs{dhtResponded: true, peerSeen: true, mappingDependent: true}, causeMappingDependent, true},
 		// A directly reachable IPv6 endpoint is not a case for port-forward advice at all.
 		{"cause3 with v6 reachable: no port-forward, and no denial of reachability", d19Inputs{dhtResponded: true, peerSeen: true, mappingDependent: true, v6Independent: true}, causeMappingDependent, false},
+		// A gateway that ANSWERED and refused: the one case where a manual port-forward is right.
+		{"cause3 router refused: port-forward IS the advice", d19Inputs{dhtResponded: true, peerSeen: true, mappingDependent: true, mapRefused: true}, causeMappingDependent, true},
 		{"cause3 CGNAT: VPN only, no port-forward", d19Inputs{dhtResponded: true, peerSeen: true, mappingDependent: true, sharedSpace: true}, causeMappingDependent, false},
 		{"cause3 double-NAT: VPN only, no port-forward", d19Inputs{dhtResponded: true, peerSeen: true, mappingDependent: true, mapUnroutable: true}, causeMappingDependent, false},
 		// Cause 3 DEGRADES to cause 4 when the mapping class is unknown/independent.
@@ -199,5 +201,49 @@ func TestCause3NeverPromisesWhatItCannotKnow(t *testing.T) {
 	if !strings.Contains(v6.detail, "IPv6") {
 		t.Errorf("the v6-reachable case does not tell the user the one thing that would let them "+
 			"act on it. detail=%q", v6.detail)
+	}
+}
+
+// TestARefusedGatewayIsNotToldItStayedSilent — /pending 263.
+//
+// Every mechanism reports a definitive refusal the same way — a NAT-PMP or PCP result code, an
+// IGD UPnPError — and all of them used to end as a bare ErrNoMapping, so "the router refused" and
+// "no router answered" became the same value before the diagnosis ever saw them. The refused user
+// was then told, in cause 3's else: "Nib couldn't get an answer from your router — so it can't
+// tell whether there is one you control. If there is, enabling UPnP or a port-forward on it may
+// help." Every clause of that is false here. The router answered, specifically and by code; UPnP
+// is not merely on, it is on and talking.
+//
+// This is a CLASS rather than the 725 case /pending 262 is deferred on: 718 ConflictInMappingEntry
+// is what a stale mapping on the same port produces, and it reaches the same branch.
+func TestARefusedGatewayIsNotToldItStayedSilent(t *testing.T) {
+	refused := classifyD19(d19Inputs{dhtResponded: true, peerSeen: true, mappingDependent: true, mapRefused: true})
+	silent := classifyD19(d19Inputs{dhtResponded: true, peerSeen: true, mappingDependent: true})
+
+	// SETUP: the silent case must still say what it says, or "they differ" below could be true
+	// because the WRONG one changed.
+	if !strings.Contains(silent.detail, "couldn't get an answer from your router") {
+		t.Fatalf("setup: the learned-nothing branch no longer says so, so this row is comparing "+
+			"against something else. detail=%q", silent.detail)
+	}
+
+	if strings.Contains(refused.detail, "couldn't get an answer") {
+		t.Errorf("a router that ANSWERED and refused is told Nib got no answer from it — the one "+
+			"thing that is demonstrably untrue in this case. detail=%q", refused.detail)
+	}
+	if refused.detail == silent.detail {
+		t.Error("a refusal and a silence produce the same sentence, so carrying the refusal buys nothing")
+	}
+	// And the advice inverts: this is the case where a manual port-forward is right, because the
+	// router is the user's and is reachable.
+	if !strings.Contains(refused.detail, "refused") || !strings.Contains(refused.detail, "by hand") {
+		t.Errorf("the refusal case does not tell the user what actually happened or what to do about "+
+			"it. detail=%q", refused.detail)
+	}
+	// The control that keeps this from being a blanket "always offer a port-forward": a carrier
+	// NAT still must not be told to open one.
+	cgnat := classifyD19(d19Inputs{dhtResponded: true, peerSeen: true, mappingDependent: true, sharedSpace: true})
+	if strings.Contains(cgnat.detail, "port-forward") || strings.Contains(cgnat.detail, "UPnP") {
+		t.Errorf("the carrier-NAT case is offering a port-forward again. detail=%q", cgnat.detail)
 	}
 }

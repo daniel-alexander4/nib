@@ -114,6 +114,13 @@ func (c *Client) mapWithSuggestion(ctx context.Context, proto Protocol, internal
 		}
 	}
 
+	// **A definitive REFUSAL is carried out, not flattened into "nothing answered".**
+	// Every mechanism reports one the same way — NAT-PMP and PCP result codes, IGD's
+	// UPnPError — and until now they all ended here as a bare ErrNoMapping, which made
+	// "the router refused" and "no router answered" the same value from this line on. They
+	// are opposite facts: a refusal proves the router IS the user's and IS reachable, which
+	// is the one case where advising a manual port-forward is right (/pending 263).
+	var refused error
 	// PCP and NAT-PMP need the gateway; UPnP does not (it self-discovers over SSDP), so a
 	// missing gateway skips the first two rather than ending the whole tier (diff-grill #3).
 	if gw.IsValid() {
@@ -121,6 +128,8 @@ func (c *Client) mapWithSuggestion(ctx context.Context, proto Protocol, internal
 			return m, ext, nil
 		} else if ctx.Err() != nil {
 			return Mapping{}, netip.Addr{}, ctx.Err()
+		} else if errors.Is(err, ErrResultCode) {
+			refused = err
 		}
 	}
 
@@ -139,9 +148,14 @@ func (c *Client) mapWithSuggestion(ctx context.Context, proto Protocol, internal
 				via:              mechUPnP, upnpControlURL: ctl, upnpServiceType: st}, ext, nil
 		} else if ctx.Err() != nil {
 			return Mapping{}, netip.Addr{}, ctx.Err()
+		} else if errors.Is(err, ErrResultCode) {
+			refused = err
 		}
 	}
 
+	if refused != nil {
+		return Mapping{}, netip.Addr{}, refused
+	}
 	return Mapping{}, netip.Addr{}, ErrNoMapping
 }
 
@@ -158,17 +172,29 @@ func (c *Client) tryGatewayProtocols(ctx context.Context, gw netip.AddrPort, pro
 	// it — exactly what PCP's header wants, and it needs no interface enumeration.
 	clientIP := conn.LocalAddr().(*net.UDPAddr).AddrPort().Addr()
 
+	// A refusal is carried out of here too, and it has to be: flattening it one level lower
+	// than mapWithSuggestion hides it just as completely (/pending 263). Found by the test —
+	// the first draft of that fix only checked this function's RETURN, which was always
+	// ErrNoMapping.
+	var refused error
 	if m, ext, err := c.tryPCP(ctx, conn, proto, clientIP, internalPort, suggestedExternal); err == nil {
 		m.via = mechPCP
 		return m, ext, nil
 	} else if ctx.Err() != nil {
 		return Mapping{}, netip.Addr{}, ctx.Err()
+	} else if errors.Is(err, ErrResultCode) {
+		refused = err
 	}
 	if m, ext, err := c.tryNATPMP(ctx, conn, proto, internalPort, suggestedExternal); err == nil {
 		m.via = mechNATPMP
 		return m, ext, nil
 	} else if ctx.Err() != nil {
 		return Mapping{}, netip.Addr{}, ctx.Err()
+	} else if errors.Is(err, ErrResultCode) {
+		refused = err
+	}
+	if refused != nil {
+		return Mapping{}, netip.Addr{}, refused
 	}
 	return Mapping{}, netip.Addr{}, ErrNoMapping
 }

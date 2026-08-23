@@ -367,3 +367,35 @@ func TestObserveLease(t *testing.T) {
 		}
 	})
 }
+
+// TestARefusalIsCarriedOutNotFlattened — /pending 263.
+//
+// Every mechanism reports a definitive refusal the same way: a NAT-PMP or PCP result code, an IGD
+// UPnPError. All of them used to end here as a bare ErrNoMapping, so from this line on "the router
+// refused" and "no router answered" were the same value — and they are opposite facts. A refusal
+// proves the router is the user's, is reachable, and said no, which is the one case where advising
+// a manual port-forward is right rather than futile.
+func TestARefusalIsCarriedOutNotFlattened(t *testing.T) {
+	// The gateway answers both socket protocols with a refusal code.
+	g := newMockGatewayRefusing(t, 2, 2) // NAT-PMP "not authorised", PCP "not authorised"
+	c := &Client{Gateway: mockAddrPort(t, g)}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	_, _, err := c.Map(ctx, UDP, 40404)
+
+	// SETUP: the gateway has to have been reached at all, or this is the no-answer case wearing
+	// the refusal's name.
+	select {
+	case <-g.leases:
+	default:
+		t.Fatal("setup: the gateway never received a request, so nothing could have refused")
+	}
+	if err == nil {
+		t.Fatal("setup: the refusing gateway produced a mapping")
+	}
+	if !errors.Is(err, ErrResultCode) {
+		t.Errorf("a gateway that ANSWERED and refused produced %v — indistinguishable from no "+
+			"gateway at all, so the diagnosis cannot tell those two users apart", err)
+	}
+}

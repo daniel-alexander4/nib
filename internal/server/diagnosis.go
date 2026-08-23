@@ -67,6 +67,7 @@ func (c *ceremonyID) diagnose() diagnosis {
 		mappingDependent: self.V4.Mapping == rendezvous.MappingEndpointDependent || self.V6.Mapping == rendezvous.MappingEndpointDependent,
 		havePortMap:      c.portMap != nil,
 		mapUnroutable:    c.mapUnroutable,
+		mapRefused:       c.mapRefused,
 		sharedSpace:      self.SharedAddressSpace,
 		v6Independent:    self.V6.Mapping == rendezvous.MappingEndpointIndependent && self.V6.Addr.IsValid(),
 	}
@@ -85,6 +86,7 @@ type d19Inputs struct {
 	mappingDependent bool // this side is endpoint-dependent on either family
 	havePortMap      bool // a routable port-map was obtained and published
 	mapUnroutable    bool // the router answered but the address was unpublishable (double-NAT)
+	mapRefused       bool // a gateway answered the port-map tier and REFUSED (a result code)
 	sharedSpace      bool // the mapped address is carrier space (100.64/10), and V4-ONLY — see below
 	v6Independent    bool // this side has a directly reachable IPv6 endpoint, whatever V4 is doing
 }
@@ -152,6 +154,19 @@ func classifyD19(in d19Inputs) diagnosis {
 		}
 		// D9: offer a port-forward ONLY when the user controls a NAT. The two branches below are
 		// "the router told us something" and "we learned nothing", and only the first is evidence.
+		// A gateway that ANSWERED and refused is the one case where a manual port-forward is
+		// exactly the right advice: the router is the user's, it is reachable, and UPnP is not
+		// merely on but talking — which is why they got a refusal instead of silence. Before the
+		// two branches below, because both of those are about a router that told us nothing
+		// useful, and this one told us something (/pending 263).
+		if in.mapRefused {
+			d.detail = "This machine is behind a network that hands out a different address per " +
+				"destination, and your router refused Nib's request to open a port automatically. " +
+				"It is reachable and it is yours — so adding the port-forward by hand in the " +
+				"router's own settings is the thing that will work here. A VPN you both run also " +
+				"does it."
+			return d
+		}
 		if in.mapUnroutable || in.sharedSpace {
 			d.detail = "This machine is behind a network that hands out a different address per " +
 				"destination — a carrier-grade or double NAT you can't open a port on. A VPN you " +

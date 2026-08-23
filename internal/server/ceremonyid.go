@@ -75,6 +75,10 @@ type ceremonyID struct {
 	// not be published (double-NAT / RFC-1918 / low port) — distinct from "the tier got no answer",
 	// because D9's cause-3 advice diverges: an unroutable answer means a VPN, never a port-forward.
 	mapUnroutable bool
+	// mapRefused is true once a gateway ANSWERED the port-map tier with a refusal — a NAT-PMP or
+	// PCP result code, or an IGD UPnPError. The opposite fact from silence: the router is the
+	// user's, is reachable, and said no (/pending 263).
+	mapRefused bool
 	// peerSeen becomes true once the feed has admitted a candidate for the peer — the "the peer
 	// published" signal for the D19 diagnosis (P05.S11). Atomic, not read off the gate: the gate is
 	// not concurrent-safe and the ARM polls its diagnosis WHILE the feed is running, so cause 1 must
@@ -176,6 +180,18 @@ func (c *ceremonyID) markMapUnroutable() {
 	}
 	c.mu.Lock()
 	c.mapUnroutable = true
+	c.mu.Unlock()
+}
+
+// markMapRefused records that a gateway answered the port-map tier and REFUSED. Monotonic for the
+// same reason as its sibling: a later iteration finding no gateway must not erase the fact that one
+// answered.
+func (c *ceremonyID) markMapRefused() {
+	if c == nil {
+		return
+	}
+	c.mu.Lock()
+	c.mapRefused = true
 	c.mu.Unlock()
 }
 
