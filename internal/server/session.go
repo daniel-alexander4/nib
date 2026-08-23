@@ -589,7 +589,10 @@ func (s *Server) runSession(ln p2p.Listener, cert, key []byte, label, mode strin
 	// and produced nothing would extend the arm window every time somebody dialled, which
 	// is a window an attacker holds open for free.
 	armedUntil := time.Now().Add(sessionAcceptTimeout)
-	timer := time.AfterFunc(sessionAcceptTimeout, func() { s.sess.disarmIf(ln) })
+	timer := time.AfterFunc(sessionAcceptTimeout, func() {
+		defer safe.Recover("arm window expiry")
+		s.sess.disarmIf(ln)
+	})
 	defer timer.Stop()
 	defer s.sess.disarmIf(ln)
 

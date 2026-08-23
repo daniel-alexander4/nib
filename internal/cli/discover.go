@@ -13,6 +13,7 @@ import (
 
 	"nib/internal/discovery"
 	"nib/internal/pairing"
+	"nib/internal/safe"
 )
 
 // cmdDiscover is the link-local discovery diagnostic.
@@ -136,6 +137,7 @@ func runDiscover(out, errw io.Writer, listen time.Duration, quiet bool) int {
 	done := make(chan struct{})
 	defer func() { close(stop); <-done }()
 	go func() {
+		defer safe.Recover("discover announcer")
 		defer close(done)
 		for time.Now().Before(deadline) {
 			select {

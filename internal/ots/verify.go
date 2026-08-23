@@ -312,8 +312,8 @@ func fetchAgreedHeader(ctx context.Context, sources []BlockSource, minAgree int,
 	for _, src := range sources {
 		wg.Add(1)
 		go func(src BlockSource) {
-			defer wg.Done()
 			defer safe.Recover("ots block-header fetch")
+			defer wg.Done()
 			m, t, err := src.BlockHeader(ctx, height)
 			if err != nil {
 				return

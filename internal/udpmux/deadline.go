@@ -3,6 +3,8 @@ package udpmux
 import (
 	"sync"
 	"time"
+
+	"nib/internal/safe"
 )
 
 // deadline is the read or write deadline of one side. It is a faithful port of the
@@ -59,7 +61,14 @@ func (d *deadline) set(t time.Time) {
 			d.waitCh = make(chan struct{})
 		}
 		ch := d.waitCh
-		d.timer = time.AfterFunc(dur, func() { close(ch) })
+		// safe.Recover, not decoration: `close` of an already-closed channel panics, and
+		// this callback sits on the untrusted-datagram path. The set() above guards the
+		// double-close with isClosedChan + timer.Stop(); the recover is what makes the
+		// guard's failure a logged line rather than the desktop process.
+		d.timer = time.AfterFunc(dur, func() {
+			defer safe.Recover("udpmux deadline")
+			close(ch)
+		})
 		return
 	}
 	if !closed {

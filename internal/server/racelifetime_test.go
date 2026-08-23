@@ -7,7 +7,6 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
-	"go/types"
 	"log"
 	"os"
 	"path/filepath"
@@ -228,138 +227,12 @@ func TestSafeRecoverActuallyRecovers(t *testing.T) {
 	}
 }
 
-// TestEveryDetachedGoroutineIsRecovered is the census, made into a guard.
-//
-// `lan.go` used to assert in a comment that its announcer was "the one `go func` in
-// internal/server without it". That was true when written and false from P05.S03, which
-// added four more and recovered none — a sentence describing a census nobody re-ran. A
-// comment cannot notice a fifth goroutine; this can.
-//
-// It asserts the ROUTING (ADR-009): every `go` statement in the package launches a function
-// literal whose first statement is `defer safe.Recover(...)`. It deliberately does NOT check
-// the label text — eight sites checked for agreement say nothing about a ninth added without
-// one, and the label is not the property.
-func TestEveryDetachedGoroutineIsRecovered(t *testing.T) {
-	fset := token.NewFileSet()
-	pkgs, err := parser.ParseDir(fset, ".", func(fi os.FileInfo) bool {
-		return !strings.HasSuffix(fi.Name(), "_test.go")
-	}, 0)
-	if err != nil {
-		t.Fatal(err)
-	}
-	pkg, ok := pkgs["server"]
-	if !ok || len(pkg.Files) == 0 {
-		t.Fatal("setup: internal/server did not parse — every check below would pass on nothing")
-	}
-
-	// **A bare `go f()` is not automatically a finding, and the first draft of this guard
-	// said it was.** `go s.runSession(...)` is recovered — one frame down, at the top of
-	// runSession itself — so a check that only looks at the `go` statement reports a defect
-	// where there is none, and a guard that cries wolf gets relaxed rather than obeyed. So
-	// first collect which package-level functions recover themselves, then resolve callees
-	// against that. It is one hop, not a call graph: a goroutine two frames from its recover
-	// is a shape nobody should be able to write without saying why.
-	recovers := map[string]bool{}
-	for _, f := range pkg.Files {
-		for _, d := range f.Decls {
-			fd, ok := d.(*ast.FuncDecl)
-			if !ok || fd.Body == nil || len(fd.Body.List) == 0 {
-				continue
-			}
-			if def, ok := fd.Body.List[0].(*ast.DeferStmt); ok && isSafeRecover(def.Call) {
-				recovers[fd.Name.Name] = true
-			}
-		}
-	}
-	// STIMULUS for the map itself: if this were empty every bare `go f()` below would be
-	// reported, and the guard would fail loudly for the wrong reason.
-	if len(recovers) == 0 {
-		t.Fatal("setup: no function in internal/server defers safe.Recover first, so the " +
-			"callee resolution below cannot have worked")
-	}
-
-	var found, viaCallee int
-	for name, f := range pkg.Files {
-		ast.Inspect(f, func(n ast.Node) bool {
-			g, ok := n.(*ast.GoStmt)
-			if !ok {
-				return true
-			}
-			found++
-			pos := fset.Position(g.Pos())
-			lit, ok := g.Call.Fun.(*ast.FuncLit)
-			if !ok {
-				// A bare call: recovered only if the callee recovers itself.
-				if calleeRecovers(g.Call.Fun, recovers) {
-					viaCallee++
-					return true
-				}
-				t.Errorf("%s:%d launches `go %s(...)`, and that function does not defer "+
-					"safe.Recover as its first statement. A bare call has nowhere to hang a "+
-					"defer, so either the callee recovers itself or the call is wrapped in a "+
-					"function literal that does.",
-					filepath.Base(name), pos.Line, types.ExprString(g.Call.Fun))
-				return true
-			}
-			if len(lit.Body.List) == 0 {
-				t.Errorf("%s:%d launches an empty goroutine", filepath.Base(name), pos.Line)
-				return true
-			}
-			first, ok := lit.Body.List[0].(*ast.DeferStmt)
-			if !ok || !isSafeRecover(first.Call) {
-				t.Errorf("%s:%d launches a goroutine whose first statement is not "+
-					"`defer safe.Recover(...)`. An unrecovered panic in ANY goroutine takes "+
-					"the desktop process down with the user's unsaved documents, and "+
-					"safe.Recover's own doc requires it at the very top so the goroutine's "+
-					"other defers still run as the stack unwinds.",
-					filepath.Base(name), pos.Line)
-			}
-			return true
-		})
-	}
-
-	// STIMULUS, both directions. Without the first, a walk that parsed nothing reports a
-	// clean bill; without the second, a package that had stopped using goroutines entirely
-	// would too.
-	if found == 0 {
-		t.Fatal("setup: no `go` statement found in internal/server — this guard walked nothing")
-	}
-	if found < 5 {
-		t.Fatalf("setup: found only %d `go` statements; P05.S03 alone added four to lan.go "+
-			"and the announcer makes five, so this walk is not seeing the whole package", found)
-	}
-	// And the callee arm must have been EXERCISED. Without this, a rewrite that turned
-	// every bare `go f()` into a literal would leave the resolution above dead — carried
-	// forever, never run, and wrong the day somebody relies on it.
-	if viaCallee == 0 {
-		t.Error("no `go f()` resolved through a self-recovering callee, so that arm of this " +
-			"guard ran against nothing. If the last such call site was deliberately rewritten " +
-			"as a literal, delete the resolution rather than leaving it unexercised.")
-	}
-}
-
-// calleeRecovers reports whether a bare `go f()` or `go x.f()` names a package-level
-// function that defers safe.Recover as its own first statement.
-func calleeRecovers(fun ast.Expr, recovers map[string]bool) bool {
-	switch f := fun.(type) {
-	case *ast.Ident:
-		return recovers[f.Name]
-	case *ast.SelectorExpr:
-		return recovers[f.Sel.Name]
-	}
-	return false
-}
-
-// isSafeRecover reports whether a call is `safe.Recover(...)`, matched on the selector
-// rather than on the rendered text so a renamed import does not silently pass.
-func isSafeRecover(call *ast.CallExpr) bool {
-	sel, ok := call.Fun.(*ast.SelectorExpr)
-	if !ok || sel.Sel.Name != "Recover" {
-		return false
-	}
-	id, ok := sel.X.(*ast.Ident)
-	return ok && id.Name == "safe"
-}
+// TestEveryDetachedGoroutineIsRecovered LIVED HERE, and now lives at the repo root in
+// `goroutines_test.go`. It was scoped to `pkgs["server"]`, and the law it enforces is not a
+// law about this package: `internal/udpmux`'s readLoop, the shared socket's sole reader of
+// untrusted inbound datagrams, shipped with no recover because this guard could not see it.
+// Moved rather than copied — ADR-009, a rule gets one door — and the root version walks
+// `time.AfterFunc` too, which found two more.
 
 // TestEveryCandidateProducerNamesItsSource — the guard for the defect I nearly shipped.
 //

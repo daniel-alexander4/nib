@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"net"
 	"sync"
+
+	"nib/internal/safe"
 )
 
 // listenerCore is the termination protocol both listeners run, written once.
@@ -171,6 +173,17 @@ func (l *listenerCore) Accept() (*Conn, error) {
 }
 
 // start launches the accept loop once.
+//
+// The recover is HERE rather than inside each transport's acceptLoop, and that is ADR-009:
+// one launch site covers both transports, where two copies in two bodies is a rule with two
+// doors and a third transport arriving with neither. `loop` is a func FIELD, so a bare
+// `go l.loop()` also has no declaration for the guard to resolve it through — the wrapper is
+// what makes the coverage visible as well as true.
 func (l *listenerCore) start() {
-	l.once.Do(func() { go l.loop() })
+	l.once.Do(func() {
+		go func() {
+			defer safe.Recover("accept loop")
+			l.loop()
+		}()
+	})
 }

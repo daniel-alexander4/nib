@@ -16,6 +16,7 @@ import (
 	"encoding/hex"
 	"nib/internal/ceremony"
 	"nib/internal/rendezvous"
+	"nib/internal/safe"
 	"nib/internal/sign"
 	"nib/internal/udpmux"
 	"runtime"
@@ -144,6 +145,7 @@ func runRendezvous(out, errw io.Writer, budget time.Duration, selfTest bool) int
 	signal.Notify(sigs, os.Interrupt, syscall.SIGTERM, syscall.SIGPIPE)
 	defer signal.Stop(sigs)
 	go func() {
+		defer safe.Recover("rendezvous signal watch")
 		select {
 		case <-sigs:
 			cancel()

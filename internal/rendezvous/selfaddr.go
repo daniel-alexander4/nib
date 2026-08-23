@@ -12,6 +12,7 @@ import (
 
 	"github.com/anacrolix/dht/v2/krpc"
 	"nib/internal/addrscope"
+	"nib/internal/safe"
 )
 
 // probeBudget is D16's clock-1 allowance for the DHT self-address probe.
@@ -133,6 +134,7 @@ func (s *Server) ProbeSelf(ctx context.Context) (SelfAddress, error) {
 	for _, addr := range targets {
 		wg.Add(1)
 		go func(a *net.UDPAddr) {
+			defer safe.Recover("self-address probe")
 			defer wg.Done()
 			res := s.dht.Query(ctx, dht.NewAddr(a), "ping", dht.QueryInput{})
 			if res.ToError() != nil {
