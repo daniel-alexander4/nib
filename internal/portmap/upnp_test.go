@@ -90,8 +90,13 @@ func TestUPnPControlURLAndAddPortMapping(t *testing.T) {
 		t.Fatalf("control URL %q not resolved", controlURL)
 	}
 	internal := netip.MustParseAddr("192.168.1.50")
-	if err := soapAddPortMapping(ctx, client, controlURL, st, UDP, internal, 40404, 40404, 120); err != nil {
+	wrote, err := soapAddPortMapping(ctx, client, controlURL, st, UDP, internal, 40404, 40404, 120)
+	if err != nil {
 		t.Fatal(err)
+	}
+	if !wrote {
+		t.Error("the POST succeeded but was not reported as WRITTEN — the send-time recorder " +
+			"would never fire, and /pending 257's UPnP handle would be lost on every path")
 	}
 	// The router assigns the external IP; a client that echoed its input would fail here.
 	ext, err := soapGetExternalIP(ctx, client, controlURL, st)
@@ -122,9 +127,17 @@ func TestUPnPRefusalIsSurfaced(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	err = soapAddPortMapping(ctx, client, controlURL, st, UDP, netip.MustParseAddr("192.168.1.50"), 40404, 40404, 120)
+	wrote, err := soapAddPortMapping(ctx, client, controlURL, st, UDP, netip.MustParseAddr("192.168.1.50"), 40404, 40404, 120)
 	if !errors.Is(err, ErrResultCode) {
 		t.Errorf("an IGD refusal was not surfaced as ErrResultCode: %v", err)
+	}
+	// The POST was written — the refusal came back in the BODY — so `wrote` alone would record a
+	// delete handle. It must not: an ErrResultCode is the IGD saying no mapping was made, and a
+	// UPnP delete is keyed on (external port, protocol) with no ownership check, so recording
+	// here would arm a delete against whatever else holds that port. /pending 257.
+	if !wrote {
+		t.Fatal("setup: the refusal did not come from a written POST, so this row does not " +
+			"exercise the rule it is about")
 	}
 }
 
@@ -207,7 +220,7 @@ func TestUPnPDoesNotFollowRedirects(t *testing.T) {
 	defer igd.Close()
 
 	client := igdHTTPClient()
-	err := soapAddPortMapping(context.Background(), client, igd.URL+"/ctl",
+	_, err := soapAddPortMapping(context.Background(), client, igd.URL+"/ctl",
 		"urn:schemas-upnp-org:service:WANIPConnection:1", UDP,
 		netip.MustParseAddr("192.168.1.50"), 40404, 40404, 120)
 	if err == nil {

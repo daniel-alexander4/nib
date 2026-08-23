@@ -33,6 +33,37 @@ type Client struct {
 	// default ON PURPOSE: SSDP is real multicast on the LAN and could reach a real router, so a
 	// zero-value Client used in a test never fires it. The production caller sets it true.
 	TryUPnP bool
+	// OnRequestSent is the send-time recorder; see SetOnRequestSent. A Client is constructed
+	// per mapper (ceremonynet.go), so this is not shared state.
+	OnRequestSent func(Mapping)
+}
+
+// SetOnRequestSent installs the SEND-TIME recorder: a callback fired the moment a mapping
+// REQUEST has left this host, carrying a handle sufficient to delete whatever that request may
+// have created — before any reply is known, and whether or not one ever arrives.
+//
+// **Why the send and not the reply.** Every error path here returns a zero Mapping, so a request
+// that reached the router and then lost its answer left a mapping nothing could ever delete; it
+// lived to lease expiry, and after the ceremony frees the internal port another process on this
+// machine can bind it and be publicly reachable through the orphaned pinhole. P05.S07 T02's grill
+// required "records the mapping the moment the request is SENT, not only on screened success",
+// and nothing implemented it (/pending 257).
+//
+// The two sharpest cases are not lost replies at all — they are paths that hold a CONFIRMED
+// mapping in a local variable and drop it: a NAT-PMP MAP that decoded before the follow-up
+// external-address exchange failed, and a UPnP AddPortMapping that returned 200 before
+// GetExternalIP failed. Both are ordinary, and both said so in their own comments.
+//
+// A recorded handle is "may exist", never "does exist": deleting a mapping that was never made
+// is a no-op on all three mechanisms, which is what makes recording early the safe direction.
+// The one exception is a definitive UPnP refusal, which is NOT recorded — see mapViaUPnP.
+func (c *Client) SetOnRequestSent(fn func(Mapping)) { c.OnRequestSent = fn }
+
+// sent fires the recorder if one is installed.
+func (c *Client) sent(m Mapping) {
+	if c.OnRequestSent != nil {
+		c.OnRequestSent(m)
+	}
 }
 
 // Map asks the gateway for an inbound mapping of internalPort for proto, trying PCP then
@@ -97,7 +128,7 @@ func (c *Client) mapWithSuggestion(ctx context.Context, proto Protocol, internal
 	// so it never fires from a zero-value Client: SSDP is real LAN multicast and would reach a
 	// real IGD.
 	if c.TryUPnP {
-		if ext, port, ctl, st, err := mapViaUPnP(ctx, proto, internalPort, defaultLeaseSec, isPrivateHost); err == nil {
+		if ext, port, ctl, st, err := mapViaUPnP(ctx, proto, internalPort, defaultLeaseSec, isPrivateHost, c.sent); err == nil {
 			// LifetimeSec here is what we ASKED for and LifetimeObserved says so: IGD's
 			// AddPortMapping response has no lease out-argument, so there is nothing to read
 			// back. Reading it with a second GetSpecificPortMappingEntry round trip would not
@@ -144,7 +175,8 @@ func (c *Client) tryGatewayProtocols(ctx context.Context, gw netip.AddrPort, pro
 
 // exchange sends req and returns the first response, retransmitting once inside perAttempt (or
 // the ctx deadline, whichever is sooner) to ride out a single lost datagram.
-func exchange(ctx context.Context, conn net.Conn, req []byte) ([]byte, error) {
+func exchange(ctx context.Context, conn net.Conn, req []byte, onSent func()) ([]byte, error) {
+	first := true
 	deadline := time.Now().Add(perAttempt)
 	if d, ok := ctx.Deadline(); ok && d.Before(deadline) {
 		deadline = d
@@ -153,6 +185,13 @@ func exchange(ctx context.Context, conn net.Conn, req []byte) ([]byte, error) {
 	for attempt := 0; attempt < 2; attempt++ {
 		if _, err := conn.Write(req); err != nil {
 			return nil, err
+		}
+		// The datagram is out. From here the router may have acted on it whatever we see next,
+		// so the handle is recorded now — once, not per retransmit: the retry carries the same
+		// nonce and ports, and both RFCs make a repeated MAP idempotent.
+		if first && onSent != nil {
+			onSent()
+			first = false
 		}
 		half := time.Now().Add(perAttempt / 2)
 		if half.After(deadline) {
@@ -179,11 +218,18 @@ func (c *Client) tryPCP(ctx context.Context, conn net.Conn, proto Protocol, clie
 		return Mapping{}, netip.Addr{}, err
 	}
 	req := EncodePCPMap(proto, nonce, clientIP, internalPort, suggestedExternal, defaultLeaseSec)
-	resp, err := exchange(ctx, conn, req)
+	resp, err := exchange(ctx, conn, req, func() {
+		c.sent(Mapping{Protocol: proto, InternalPort: internalPort, via: mechPCP, nonce: nonce})
+	})
 	if err != nil {
 		return Mapping{}, netip.Addr{}, err
 	}
-	return DecodePCPMap(resp, proto, nonce, internalPort)
+	m, ext, err := DecodePCPMap(resp, proto, nonce, internalPort)
+	if err != nil {
+		return Mapping{}, netip.Addr{}, err
+	}
+	m.nonce = nonce // the delete needs it; see Mapping.nonce
+	return m, ext, nil
 }
 
 func (c *Client) tryNATPMP(ctx context.Context, conn net.Conn, proto Protocol, internalPort, suggestedExternal uint16) (Mapping, netip.Addr, error) {
@@ -191,7 +237,9 @@ func (c *Client) tryNATPMP(ctx context.Context, conn net.Conn, proto Protocol, i
 	if err != nil {
 		return Mapping{}, netip.Addr{}, err
 	}
-	resp, err := exchange(ctx, conn, req)
+	resp, err := exchange(ctx, conn, req, func() {
+		c.sent(Mapping{Protocol: proto, InternalPort: internalPort, via: mechNATPMP})
+	})
 	if err != nil {
 		return Mapping{}, netip.Addr{}, err
 	}
@@ -203,7 +251,7 @@ func (c *Client) tryNATPMP(ctx context.Context, conn net.Conn, proto Protocol, i
 	// failure here is not fatal to the mapping — the port is mapped — but without the IP there
 	// is no candidate to publish, so it is treated as a miss.
 	extReq := EncodeNATPMPExternalAddress()
-	extResp, err := exchange(ctx, conn, extReq)
+	extResp, err := exchange(ctx, conn, extReq, nil) // creates no mapping; nothing to record
 	if err != nil {
 		return Mapping{}, netip.Addr{}, err
 	}
@@ -245,10 +293,12 @@ func (c *Client) Unmap(ctx context.Context, m Mapping) error {
 		defer conn.Close()
 		var req []byte
 		if m.via == mechPCP {
-			var nonce [12]byte
-			rand.Read(nonce[:])
+			// The mapping's OWN nonce, not a fresh one. PCP names a mapping by
+			// (nonce, protocol, internal port), so a delete minting a new nonce asks the
+			// router to remove a mapping that never existed — a silent no-op, on the success
+			// path as much as anywhere else.
 			clientIP := conn.LocalAddr().(*net.UDPAddr).AddrPort().Addr()
-			req = EncodePCPMap(m.Protocol, nonce, clientIP, m.InternalPort, 0, 0) // lease 0 = delete
+			req = EncodePCPMap(m.Protocol, m.nonce, clientIP, m.InternalPort, 0, 0) // lease 0 = delete
 		} else {
 			req, err = EncodeNATPMPMap(m.Protocol, m.InternalPort, 0, 0) // lease 0, suggested 0 (§3.4)
 			if err != nil {

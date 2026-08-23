@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"encoding/binary"
+	"errors"
 	"net/netip"
 	"sync"
 	"sync/atomic"
@@ -24,13 +25,28 @@ type fakeMapClient struct {
 	gate     chan struct{} // if non-nil, Refresh blocks receiving from it
 	inflight chan struct{} // if non-nil, Refresh signals here when it has started
 
+	// onSent is the send-time recorder, installed through the SAME interface method production
+	// uses (newPortMapper wires it), so a green here cannot come from a test-only hookup.
+	onSent func(portmap.Mapping)
+	// failAfterSending makes Map behave like a request that LEFT the host and then failed —
+	// the /pending 257 case: the router may have created a mapping, and Map returns an error.
+	failAfterSending bool
+
 	mu                sync.Mutex
 	unmapped          bool
 	refreshAfterUnmap bool // set if a Refresh is ever seen after an Unmap — the C3 resurrection
 }
 
+func (f *fakeMapClient) SetOnRequestSent(fn func(portmap.Mapping)) { f.onSent = fn }
+
 func (f *fakeMapClient) Map(ctx context.Context, proto portmap.Protocol, internalPort uint16) (portmap.Mapping, netip.Addr, error) {
 	atomic.AddInt32(&f.maps, 1)
+	if f.onSent != nil {
+		f.onSent(portmap.Mapping{Protocol: proto, InternalPort: internalPort})
+	}
+	if f.failAfterSending {
+		return portmap.Mapping{}, netip.Addr{}, errors.New("portmap: no response")
+	}
 	// LifetimeSec 0 / LifetimeObserved false: "no grant reported", which is both the honest
 	// UPnP value and the one case where refreshAfter returns the floor unchanged — so the test
 	// governs the cadence via refreshFloor rather than through a real 1-second interval that
@@ -305,5 +321,58 @@ func TestAGrantedLeaseIsDistinguishedFromARequestedOne(t *testing.T) {
 	// identically, because the cadence is not where the difference bites — the crash floor is.
 	if refreshAfter(m.LifetimeSec, 15*time.Second) != 3600*time.Second {
 		t.Errorf("a 7200 s grant should still be refreshed at half of it")
+	}
+}
+
+// TestAMapThatFailedAfterSendingIsStillDeleted — /pending 257, at the seam it was filed against.
+//
+// `obtain` returned on error BEFORE recording anything, and `close()` sent a delete only when
+// `have` was true. So a Map whose request reached the router and then failed — a lost reply, a
+// cancel, or the two paths that hold a CONFIRMED mapping and drop it — left nothing to delete.
+// P05.S07 T02's grill-P1 asked for exactly this and S07's close never ledgered that it was unbuilt.
+func TestAMapThatFailedAfterSendingIsStillDeleted(t *testing.T) {
+	f := &fakeMapClient{extIP: netip.MustParseAddr("203.0.113.7"), extPort: 51234, failAfterSending: true}
+	pm := newPortMapper(f, portmap.UDP, 40404)
+
+	if _, ok := pm.obtain(context.Background()); ok {
+		t.Fatal("setup: obtain must fail here — this row is about the error path")
+	}
+	// SETUP: the request has to have LEFT, or there is nothing to delete and the assertion below
+	// would pass on a client that never spoke to the router at all.
+	if atomic.LoadInt32(&f.maps) != 1 {
+		t.Fatalf("setup: Map was called %d times, want 1", atomic.LoadInt32(&f.maps))
+	}
+	pm.close()
+
+	if got := atomic.LoadInt32(&f.unmaps); got != 1 {
+		t.Errorf("close() sent %d deletes after a Map that failed AFTER its request went out, want 1 — "+
+			"the mapping the router may hold lives to lease expiry with nothing able to remove it", got)
+	}
+}
+
+// TestAConfirmedMappingIsNotDeletedTwice — the other arm of the same rule.
+//
+// The send-time handle and the confirmed mapping describe ONE mapping, and they are not equal as
+// structs: the confirmed one carries the granted external port and lease. Comparing whole structs
+// would send two deletes for one mapping, which is why SameTarget exists. Without this row the
+// fix above is free to over-delete and nothing would say so.
+func TestAConfirmedMappingIsNotDeletedTwice(t *testing.T) {
+	f := &fakeMapClient{extIP: netip.MustParseAddr("203.0.113.7"), extPort: 51234}
+	pm := newPortMapper(f, portmap.UDP, 40404)
+
+	if _, ok := pm.obtain(context.Background()); !ok {
+		t.Fatal("setup: obtain should have succeeded")
+	}
+	// SETUP: the recorder must have fired, or "not twice" is true for the wrong reason.
+	pm.mu.Lock()
+	pending := len(pm.pending)
+	pm.mu.Unlock()
+	if pending != 1 {
+		t.Fatalf("setup: %d pending handles recorded, want 1 — the send-time recorder did not fire", pending)
+	}
+	pm.close()
+
+	if got := atomic.LoadInt32(&f.unmaps); got != 1 {
+		t.Errorf("close() sent %d deletes for ONE mapping, want 1", got)
 	}
 }

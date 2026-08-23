@@ -16,6 +16,11 @@ type portMapClient interface {
 	Map(ctx context.Context, proto portmap.Protocol, internalPort uint16) (portmap.Mapping, netip.Addr, error)
 	Refresh(ctx context.Context, m portmap.Mapping) (portmap.Mapping, netip.Addr, error)
 	Unmap(ctx context.Context, m portmap.Mapping) error
+	// SetOnRequestSent installs the send-time recorder. In the interface rather than set by
+	// the caller on the concrete type, so production and the fake wire it through the SAME
+	// door — a recorder the test installs and production forgets is the fixture supplying
+	// what production omits, which is how a green here would mean nothing.
+	SetOnRequestSent(fn func(portmap.Mapping))
 }
 
 // portMapper manages ONE router mapping over a ceremony's life (P05.S07): obtained once at
@@ -34,9 +39,13 @@ type portMapper struct {
 	internalPort uint16
 	refreshFloor time.Duration // smallest refresh interval; a field so tests can shrink it
 
-	mu        sync.Mutex
-	current   portmap.Mapping
-	have      bool
+	mu      sync.Mutex
+	current portmap.Mapping
+	have    bool
+	// pending are handles for requests that LEFT this host and may therefore have created a
+	// mapping, whether or not a reply ever came back. `current` is what we know we have;
+	// this is what we might have, and close() deletes both (/pending 257).
+	pending   []portmap.Mapping
 	closed    bool
 	started   bool
 	portMoved bool // a refresh got a DIFFERENT external port — item 20's stale-record case
@@ -46,12 +55,35 @@ type portMapper struct {
 }
 
 func newPortMapper(client portMapClient, proto portmap.Protocol, internalPort uint16) *portMapper {
-	return &portMapper{
+	p := &portMapper{
 		client: client, proto: proto, internalPort: internalPort,
 		refreshFloor: 15 * time.Second,
 		stop:         make(chan struct{}),
 		done:         make(chan struct{}),
 	}
+	client.SetOnRequestSent(p.recordPending)
+	return p
+}
+
+// maxPendingHandles bounds the set. One obtain plus a refresh every cycle over a long arm is the
+// only way it grows, and each entry is a handle we may have to delete; a cap keeps a wedged
+// router from turning teardown into an unbounded delete storm.
+const maxPendingHandles = 8
+
+// recordPending is the send-time recorder. It is called from inside the portmap client, on
+// whatever goroutine made the request.
+func (p *portMapper) recordPending(m portmap.Mapping) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	for _, e := range p.pending {
+		if e == m {
+			return // the same request, retransmitted or repeated by a refresh
+		}
+	}
+	if len(p.pending) >= maxPendingHandles {
+		return
+	}
+	p.pending = append(p.pending, m)
 }
 
 // obtain performs the first mapping synchronously and returns the external address to publish.
@@ -175,6 +207,7 @@ func (p *portMapper) close() {
 	}
 	p.closed = true
 	m, have, started := p.current, p.have, p.started
+	pending := append([]portmap.Mapping(nil), p.pending...)
 	p.mu.Unlock()
 
 	close(p.stop)
@@ -186,10 +219,25 @@ func (p *portMapper) close() {
 			// and the lease is the backstop for anything the wedge left behind.
 		}
 	}
+	// FRESH context (C2): the arm context is cancelled by the teardown that called us.
+	ctx, cancel := context.WithTimeout(context.Background(), portMapBudget)
+	defer cancel()
 	if have {
-		// FRESH context (C2): the arm context is cancelled by the teardown that called us.
-		ctx, cancel := context.WithTimeout(context.Background(), portMapBudget)
-		defer cancel()
 		_ = p.client.Unmap(ctx, m)
+	}
+	// And everything we may have created but never got an answer for. Deleting a mapping that
+	// was never made is a no-op on all three mechanisms — the socket protocols never read a
+	// reply, and a UPnP delete of a nonexistent entry returns an error this discards — so the
+	// safe direction is to send it. Without this, a Map that failed AFTER its request went out
+	// left a mapping alive to lease expiry with nothing holding a handle to it.
+	for _, pm := range pending {
+		// The confirmed mapping supersedes the handle recorded for the request that produced
+		// it — same mechanism, protocol and internal port is the same thing to delete, and the
+		// granted external port and lease that make the two structs differ are fields a delete
+		// never uses. Comparing whole structs here would send two deletes for one mapping.
+		if have && pm.SameTarget(m) {
+			continue
+		}
+		_ = p.client.Unmap(ctx, pm)
 	}
 }
