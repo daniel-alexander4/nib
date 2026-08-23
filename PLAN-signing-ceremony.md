@@ -3825,6 +3825,43 @@ Tasks (firmed 2026-08-22, deepdive + Dan's choice A):
   result carries exactly ONE block from the receiver, never two, and that consent was NOT re-prompted.
   Red-proof the idempotency (a cache that re-signed would double the block).
 
+**GRILL 2026-08-22 (1 agent, verified against code). Six holes; dispositions fold into the tasks:**
+- **P0 (load-bearing) — the loop has no "done" signal, and staying reachable collides with the TRIPWIRE.**
+  `serveOneSession` returns `true` on a LOST writeback identically to a clean success (`session.go:34`
+  vs `:43`), and a successful `writeFrame` (`:210`) does not mean the initiator READ it (QUIC buffering),
+  so the receiver can never know delivery happened. **Disposition:** after co-signing, stay reachable for a
+  BOUNDED re-delivery window ~= `connectDeadline` (the initiator's own re-race bound), serving idempotent
+  re-deliveries, then disarm — NOT the 30-day pre-signing baton window (S09b). The TRIPWIRE (`session.go:32`,
+  "torn down after one session ... do not widen how long it stays open without a fresh security review") is
+  reinterpreted to "SIGNS at most once" (cache-enforced), and the deepdive+grill+this disposition ARE that
+  review; the live assertion `session_test.go:221` ("one arm has served more than one session") is SCOPED
+  for the ceremony path (it still holds for the manual/LAN arm).
+- **P1 — the re-entry classifier must be a WHITELIST.** `errCommitmentBroken` (the MITM signal, `verify.go:56`)
+  sits OUTSIDE the frame-error range, so "re-race unless the 3 decline sentinels" would RETRY UNDER MITM.
+  **Disposition:** re-race ONLY on positive transport errors (`net.Error`, `io.EOF`, `io.ErrUnexpectedEOF`,
+  deadline); default TERMINATE. Residue: a bare `io.EOF` after decided-then-crashed is indistinguishable
+  from a drop (two-generals), tolerable.
+- **P1 — cross-package seam.** The cache lives on `ceremonyID` (server) but `inbound` exists only in
+  `p2p.Receive` (`session.go:185`). **Disposition:** a `ReDeliverer` interface (`Cached`/`Store`) threaded
+  into `coSignExchange`, consulted AFTER peer-binding validation (`session.go:395-412`, no cross-peer theft)
+  and BEFORE `Confirm`, with the lookup after `runVerification`+the inbound read so the fresh spoken check
+  still runs (D18).
+- **P2 — the true invariant is "at most once per distinct inbound", not "per hop".** A pinned peer varying
+  the document each misses the cache and re-prompts consent. **Disposition:** state the true invariant;
+  bounded by consent+pin (not a new vector), do NOT add a refuse-second-document rule.
+- **P2 — cache concurrency.** Read/write on the receive goroutine races `cer.close()`'s clear. **Disposition:**
+  guard with `ceremonyID.mu` + the `closed`-flag drop pattern (`ceremonyid.go:56,64`).
+- **P2 — looping `connect` re-runs publish/punch/portmap.** **Disposition:** the post-signing window reuses
+  ONE armed `hl.Accept` rather than re-invoking the full `connect` feed per reconnect.
+- **Scope (state, do not build): S10's cache is IN-MEMORY, for channel loss.** D24's "a signature is
+  PERSISTED before it is delivered" (@1553) and P08's process-kill criterion (@3907) are the PERSISTENCE,
+  which is P08's — S10 states it owes P08 nothing there.
+- **Not unattended (state):** re-delivery re-runs the fresh spoken check, so a reconnect needs the human
+  present; a peer reconnecting hours later finds the words gate unmanned and re-delivery times out — correct
+  under D18, and why the post-signing window is bounded.
+
+Grill verdict: the design is sound; the six are joint defects, all dispositioned. **Ready to build.**
+
 
 #### P05.S11 — D19's causes 1-4, and the status surface P06 renders *(D19, D34; criteria 6, 7, 8, 9)*
 Scope: `connectFailure` yields three sentences — two clock-skew directions and one generic (`session.go:1023-1029`). Causes 1-4 do not exist; P04.S02 built the classification they read.
