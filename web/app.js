@@ -1034,8 +1034,10 @@ async function sessionInit() {
   const opDoc = owner.docMeta;
   const fingerprint = els.sinPeer.value;
   if (!fingerprint) return;
+  // P05.S12: an empty address is the LADDER default, not an error — the server's LAN browse (and, for
+  // an invited ceremony, the DHT) finds the armed peer. The typed address is the manual fallback (D8
+  // tier 5), reachable from the Advanced disclosure; a failure now carries S11's D19 diagnosis.
   const address = els.sinAddr.value.trim();
-  if (!address) { toast('Enter the peer’s address'); return; }
   const intent = els.sinIntent.value;
   // Quote against the open document — correct here, since the open document is what
   // we sign and send (unlike the receive flow, which signs the peer's document).
