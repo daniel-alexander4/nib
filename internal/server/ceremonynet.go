@@ -259,6 +259,12 @@ func (c *ceremonyID) feedCandidates(ctx context.Context, out chan<- candidate, p
 			// and the hop, and screens every address — so nothing reaches a dial that a
 			// stranger merely asserted.
 			_ = c.gate.Accept(sealed, time.Now())
+			// Snapshot the D19 cause signals here, in the gate's only writer, so diagnose() (called
+			// concurrently from the live-status path) reads atomics instead of the racy gate. The
+			// Refused()/EmptyRecords counters are monotonic, so Store is idempotent across fetches.
+			gs := c.gate.Stats()
+			c.recordRefused.Store(gs.Refused() > 0)
+			c.recordEmpty.Store(gs.EmptyRecords > 0)
 		}
 		// `Candidates()` is the race set IN ARRIVAL ORDER and `Accept` only ever appends,
 		// so the tail past what we have already sent IS the diff — no second `seen` set,

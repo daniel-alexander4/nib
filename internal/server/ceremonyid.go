@@ -80,6 +80,14 @@ type ceremonyID struct {
 	// not concurrent-safe and the ARM polls its diagnosis WHILE the feed is running, so cause 1 must
 	// key on a signal safe to read live. Set by feedCandidates as it sends each candidate.
 	peerSeen atomic.Bool
+	// recordRefused / recordEmpty are the D19 cause signals for "the peer published but the gate
+	// could not use it" — snapshotted from the gate stats in feedCandidates (the gate's ONLY
+	// writer) so diagnose() reads atomics, never the gate itself. The live arm-side diagnosis
+	// (sessionStatus.status -> diagnose) runs WHILE the feed is still writing the gate, so a direct
+	// gate.Stats() read there is a data race; these atomics are how the invariant "diagnose reads
+	// only guarded signals" survives the P05-close fix that added the cause (v1.117.106).
+	recordRefused atomic.Bool
+	recordEmpty   atomic.Bool
 	// bootstrapDone gates the ARM-side live diagnosis: until the DHT bootstrap has had its chance,
 	// zero DHT responses means "still warming up", not "unreachable", and showing cause 2 then is a
 	// scary false alarm on a healthy machine (P05.S11 diff-grill). Set once, after the arm's Bootstrap.

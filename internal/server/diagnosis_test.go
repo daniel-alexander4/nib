@@ -1,6 +1,7 @@
 package server
 
 import (
+	"os"
 	"strings"
 	"testing"
 )
@@ -98,5 +99,48 @@ func TestD19DiagnosisIsIdentityFree(t *testing.T) {
 				}
 			}
 		}
+	}
+}
+
+// diagnose() runs on TWO paths: the post-connect failure path (feed joined) AND the live-status
+// path (sessionStatus.status -> diagnose), which is called WHILE the ceremony is armed and the
+// feed goroutine is still writing the gate. A direct gate read there is a data race — which is why
+// the D19 cause signals (recordRefused/recordEmpty) are snapshotted into atomics in feedCandidates,
+// the gate's only writer, and diagnose() reads the atomics. This guard encodes that invariant: a
+// future edit that reads the gate directly from diagnose() (the natural way to add another signal)
+// reintroduces the race, and -race will not catch it unless a test happens to drive status()
+// concurrently with an active feed. The source scan does.
+func TestDiagnoseReadsGuardedSignalsNotTheGate(t *testing.T) {
+	src, err := os.ReadFile("diagnosis.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(src)
+	const marker = "func (c *ceremonyID) diagnose()"
+	start := strings.Index(s, marker)
+	if start < 0 {
+		t.Fatal("diagnose() not found in diagnosis.go — this guard has gone blind")
+	}
+	rest := s[start+len(marker):]
+	end := strings.Index(rest, "\nfunc ")
+	if end < 0 {
+		end = len(rest)
+	}
+	body := rest[:end]
+
+	// STIMULUS: diagnose must still be the function we think it is — it reads the atomic snapshot
+	// and keeps the nil guard. Without these the negative check below could pass on a gutted body.
+	if !strings.Contains(body, "c.recordRefused.Load()") {
+		t.Fatal("diagnose() no longer reads the c.recordRefused atomic — has the snapshot been removed?")
+	}
+	if !strings.Contains(body, "c.gate == nil") {
+		t.Fatal("diagnose() no longer nil-guards c.gate — this guard has gone blind")
+	}
+	// THE INVARIANT: no method call on the gate (c.gate.Stats(), c.gate.Candidates(), …). The nil
+	// guard is "c.gate == nil" (no trailing dot), so it does not trip this.
+	if strings.Contains(body, "c.gate.") {
+		t.Error("diagnose() calls a method on c.gate — it runs concurrently with the feed that writes " +
+			"the gate (the live-status path), so a direct gate read is a data race. Snapshot the signal " +
+			"into an atomic in feedCandidates and read that instead.")
 	}
 }
