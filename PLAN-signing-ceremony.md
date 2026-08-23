@@ -2896,8 +2896,24 @@ Tasks:
 - **Never `dht.Server.AddNode` for seeds** — a zero-id node fires `go s.Ping(...)` (`server.go:391-394`), one uncancellable goroutine per seed, and `Ping` already discards its context. `StartingNodes` is the path `Open` already uses.
 - The seed list never carries the issuer's own endpoint, and is not a stable per-issuer identifier — otherwise the invitation discloses the convener's home IP to every recipient and every mail server between, and two invitations from one issuer link by their seed set.
 
-### P05 — The ladder
+### P05 — The ladder *(done 2026-08-22, v1.117.112)*
 Goal: tiers 2, **3** and ~~3~~ **4** exist **(renumbered 2026-08-16, D8)**, all tiers race concurrently, and the manual path is demoted.
+
+**Phase closed 2026-08-22 (v1.117.104→.112).** Twelve slices S01–S12. Full-repo review (5-agent
+fan-out) → hand-off `code-reviews/v1.117.104-p05-close-2026-08-22.md`. Acceptance ledger: **16 MET,
+4 NOT EXERCISED, 1 STRUCK** — the four not-exercised are all Dan-only real-network runs (IPv6-to-IPv6
+crit 1, IPv4-through-NAT crit 2, both-ends-dependent-NAT crit 3, the UDP-blocked half of crit 7) or
+router-side lease expiry (crit 5b); the struck clause is the same-role case (D17 amendment). Review
+fixes v1.117.105→.111: the initiate side now reports a words-don't-match verdict as the MITM signal
+(not a network error); D19 stops telling a peer who published "you haven't started"; a portmap
+`Refresh` mislabel, a udpmux missing recover, a glare/PeerFP contract, and the S12-twin LAN-receive
+reachability — each with a red-proof where it earned one. **The graduation pass caught a data race the
+D19 fix introduced** (`diagnose()` reading the racy gate on the live-status path) and it was fixed +
+guarded. Six findings filed as pending (#248 dead TCP-ceremony path, #250 DroppedOverCap, #251
+IPv6-CGNAT advice, #253 lease clamp, #254 reader-scan precision, #255 recover-guard scope) and three
+design questions parked for Dan (#248 TCP-ceremony intent, #249 send-flow default, #252 consent-card
+validity).
+
 Exit criteria:
 - IPv6-to-IPv6 completes with neither side forwarding a port. **(Dan-only run — plan-review W4, 2026-08-17.)**
 - IPv4-to-IPv4 completes through at least one endpoint-independent NAT. **(Dan-only run — plan-review W4, 2026-08-17.)**
