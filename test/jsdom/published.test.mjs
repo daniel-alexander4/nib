@@ -79,9 +79,21 @@ const PUBLISHED = [
   // P05.S11's D19 diagnosis surface. Published now; RENDERED by P06's ceremony panel, which is built
   // last — so the fields carry a reader only once that lands. Named here (shape) and in UNREAD_KNOWN
   // (fields) so the gap is a recorded decision, not the historyEvicted-shaped oversight this scan exists for.
-  { type: 'diagnosisResponse', readers: ['web/app.js'] },
-  { type: 'diagnosisView', readers: ['web/app.js'] },
+  // `deferredFields` is not scanned AT ALL, which is the difference from UNREAD_KNOWN and the
+  // reason it exists: a shape whose consumer is unbuilt has no reader for any of these, and
+  // parking them one at a time let `detail` — whose name happens to appear elsewhere — be
+  // laundered as covered while `cause` and `summary` sat parked beside it. `error` is genuinely
+  // read (errText) and stays scanned. When P06 lands, delete the deferral; nothing textual can
+  // notice for you, and that limit is real rather than hidden.
+  { type: 'diagnosisResponse', readers: ['web/app.js'], deferredFields: ['cause', 'summary', 'detail'] },
+  { type: 'diagnosisView', readers: ['web/app.js'], deferredFields: ['cause', 'summary', 'detail'] },
   { type: 'externalSignerInfo', readers: ['web/app.js'] },
+  // Moved out of EXCLUDED, whose reason for it was factually WRONG: it was excluded as "a p2p
+  // envelope between two Nib processes, not a client response", and it is the body of
+  // POST /api/cosign/quote, fetched twice in app.js. An exclusion is a stronger laundering than
+  // a coincidence — no regex is even attempted — and it was hiding an unread `page`, since
+  // deleted (/pending 254).
+  { type: 'cosignQuote', readers: ['web/app.js'] },
 
   // Read in Go, not in the client — the whole reason this scan names its readers per
   // shape instead of always looking in app.js.
@@ -125,9 +137,7 @@ const EXCLUDED = {
   release: "GitHub's release JSON, not a shape Nib publishes",
   asset: "GitHub's release JSON, not a shape Nib publishes",
 
-  // Peer-to-peer envelopes exchanged between two Nib processes over the co-sign
-  // transport. Both ends are Go, and internal/p2p owns that contract.
-  cosignQuote: 'p2p envelope between two Nib processes, not a client response',
+
 };
 
 // ── Published, and NOT read ──────────────────────────────────────────────────
@@ -140,13 +150,9 @@ const EXCLUDED = {
 const UNREAD_KNOWN = {
   'updateResponse.managed': 'read in Go by assetURL (internal/server/update.go) BEFORE serialization, to pick a .deb over a raw binary. It is on the wire for no client that wants it. Not counted as read: a field consumed by the code that sets it has no consumer at the far end, which is the whole property here.',
   'imageMeta.mime': 'the image library lists id/name/builtin and the client shows an <img src="/api/images/{id}">, which needs no mime. Informational in a listing API; harmless, and named so it is a decision rather than an oversight.',
-  // P05.S11's D19 diagnosis: the plain summary + technical detail + cause tag. P06's ceremony panel
-  // renders them (plain first, detail behind a disclosure); no client reads them until it is built.
+  // sessionStatus.diagnosis stays HERE rather than in deferredFields: it is a single field on a
+  // shape the client does render, which is exactly what this list is for.
   'sessionStatus.diagnosis': 'P05.S11 arm-side D19 diagnosis; rendered by P06 (the ceremony panel), unbuilt.',
-  'diagnosisResponse.cause': 'P05.S11 D19 machine tag; rendered by P06, unbuilt.',
-  'diagnosisResponse.summary': 'P05.S11 D19 plain summary; rendered by P06, unbuilt.',
-  'diagnosisView.cause': 'P05.S11 D19 machine tag; rendered by P06, unbuilt.',
-  'diagnosisView.summary': 'P05.S11 D19 plain summary; rendered by P06, unbuilt.',
 };
 
 // ── The scan ─────────────────────────────────────────────────────────────────
@@ -235,10 +241,19 @@ const EMBED = /^\s*\*?([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)?)\s*(?
 // Recursive, because an embedded type may itself embed one. `seen` is per-call and
 // guards a cycle: Go forbids a struct embedding itself by value, but a scan does not get
 // to rely on the compiler having run.
+//
+// Each field carries `declaredIn` — the struct that actually declares it — because two
+// shapes reaching the SAME field through an embed are one field with one reader, while two
+// shapes declaring their own identically-named field are two, and the exclusive-evidence
+// check below is meaningless unless it can tell those apart.
 function fieldsOf(rec, seen = new Set()) {
-  if (seen.has(rec.file + '#' + rec.name)) return [];
-  seen.add(rec.file + '#' + rec.name);
-  const own = [...rec.body.matchAll(/`json:"([^",]+)/g)].map((x) => x[1]).filter((x) => x !== '-');
+  const key = rec.file + '#' + rec.name;
+  if (seen.has(key)) return [];
+  seen.add(key);
+  const own = [...rec.body.matchAll(/`json:"([^",]+)/g)]
+    .map((x) => x[1])
+    .filter((x) => x !== '-')
+    .map((name) => ({ name, declaredIn: key }));
   const inherited = [];
   for (const line of rec.body.split('\n')) {
     const bare = line.replace(/\/\/.*$/, '');
@@ -247,7 +262,13 @@ function fieldsOf(rec, seen = new Set()) {
     const target = resolveEmbed(m[1], rec.file);
     if (target) inherited.push(...fieldsOf(target, seen));
   }
-  return [...new Set([...own, ...inherited])];
+  const out = [], names = new Set();
+  for (const f of [...own, ...inherited]) {
+    if (names.has(f.name)) continue;
+    names.add(f.name);
+    out.push(f);
+  }
+  return out;
 }
 
 function scanStructs() {
@@ -296,7 +317,7 @@ test('the scan actually reads the packages it claims to', () => {
   assert.ok(STRUCTS.has('docResponse'),
     'docResponse was not found, so this scan is not looking at the shape the class was discovered on');
   const doc = STRUCTS.get('docResponse');
-  assert.ok(doc.fields.includes('historyEvicted'),
+  assert.ok(doc.fields.some((f) => f.name === 'historyEvicted'),
     'historyEvicted is not among docResponse\'s parsed fields — the field the whole defect class was named for is invisible to the scan');
 
   // And the EMBED half, which is a second way for the scan to go quietly blind.
@@ -310,8 +331,8 @@ test('the scan actually reads the packages it claims to', () => {
   // would pass with embed resolution deleted.
   const view = STRUCTS.get('attestationView');
   assert.ok(view, 'attestationView was not found, so the embed case is not being scanned at all');
-  assert.ok(view.fields.includes('oneProceeding'),
-    `attestationView publishes ${view.fields.length} field(s) (${view.fields.join(', ')}) — oneProceeding is missing, so embedded types are contributing nothing and every field this shape reaches through p2p.SignerAttestation is unchecked`);
+  assert.ok(view.fields.some((f) => f.name === 'oneProceeding'),
+    `attestationView publishes ${view.fields.length} field(s) (${view.fields.map((f) => f.name).join(', ')}) — oneProceeding is missing, so embedded types are contributing nothing and every field this shape reaches through p2p.SignerAttestation is unchecked`);
   assert.ok(view.fields.length >= 10,
     `attestationView resolved to only ${view.fields.length} fields; it declares 1 and embeds 9`);
 });
@@ -330,35 +351,85 @@ test('the table covers every shape the packages publish', () => {
     `the table names shapes that no longer exist, so their entries check nothing: ${stale.join(', ')}`);
 });
 
-test('every field of every published shape has a reader in the file that declares it as one', () => {
+// lineIndex lets a match be attributed to a LINE rather than to a boolean. Which line is the
+// whole of the coincidence check below: "some line in this file mentions .detail" and "the line
+// that mentions .detail belongs to a different shape entirely" are the same green.
+function lineIndex(src) {
+  const starts = [0];
+  for (let k = 0; k < src.length; k++) if (src[k] === '\n') starts.push(k + 1);
+  return starts;
+}
+function lineAt(starts, idx) {
+  let lo = 0, hi = starts.length - 1;
+  while (lo < hi) {
+    const mid = (lo + hi + 1) >> 1;
+    if (starts[mid] <= idx) lo = mid; else hi = mid - 1;
+  }
+  return lo + 1;
+}
+
+// evidenceFor returns the set of `file:line` sites that count as a read of `field`, using the
+// same three spellings the scan has always used: JS property access, JS destructuring, and the
+// Go exported name.
+function evidenceFor(src, starts, rel, field) {
+  const out = new Set();
+  const pats = [
+    new RegExp(`\\.${field}(?![\\w$])`, 'g'),
+    new RegExp(`\\{[^{}]*\\b${field}\\b[^{}]*\\}\\s*=`, 'g'),
+    new RegExp(`\\.${field[0].toUpperCase()}${field.slice(1)}(?![\\w$])`, 'g'),
+  ];
+  for (const re of pats) for (const m of src.matchAll(re)) out.add(`${rel}:${lineAt(starts, m.index)}`);
+  return out;
+}
+
+const EVIDENCE = (() => {
   const cache = new Map();
   const source = (rel) => {
-    if (!cache.has(rel)) cache.set(rel, codeOnly(read(rel)));
+    if (!cache.has(rel)) {
+      const src = codeOnly(read(rel));
+      cache.set(rel, { src, starts: lineIndex(src) });
+    }
     return cache.get(rel);
   };
-
-  const unread = [], fixed = [];
+  const out = new Map(); // "shape.field" -> {declaredIn, field, lines:Set, deferred:bool}
   for (const entry of PUBLISHED) {
-    const s = STRUCTS.get(entry.type);
-    if (!s) continue; // reported by the staleness check above
-    for (const field of s.fields) {
-      // Three spellings, all of them a read. A JS reader may use property access OR
-      // destructuring — `const { docs, activeId } = await res.json()` is how the client
-      // reads docsResponse, and a property-access-only regex reported both fields
-      // unread on this scan's first run. A Go reader spells it as the exported field.
-      const js = new RegExp(`\\.${field}(?![\\w$])`);
-      const destructured = new RegExp(`\\{[^{}]*\\b${field}\\b[^{}]*\\}\\s*=`);
-      const go = new RegExp(`\\.${field[0].toUpperCase()}${field.slice(1)}(?![\\w$])`);
-      const found = entry.readers.some((r) => {
-        const src = source(r);
-        return js.test(src) || go.test(src) || destructured.test(src);
-      });
-      const key = `${entry.type}.${field}`;
-      if (found && UNREAD_KNOWN[key]) {
-        fixed.push(key); // a known-unread field that now HAS a reader: delete its entry
-      } else if (!found && !UNREAD_KNOWN[key]) {
-        unread.push(`${key} (declared ${s.file}, readers: ${entry.readers.join(', ')})`);
+    const st = STRUCTS.get(entry.type);
+    if (!st) continue;
+    const deferred = new Set(entry.deferredFields ?? []);
+    for (const f of st.fields) {
+      const lines = new Set();
+      if (!deferred.has(f.name)) {
+        for (const rel of entry.readers) {
+          const { src, starts } = source(rel);
+          for (const site of evidenceFor(src, starts, rel, f.name)) lines.add(site);
+        }
       }
+      out.set(`${entry.type}.${f.name}`, {
+        declaredIn: f.declaredIn, field: f.name, lines, deferred: deferred.has(f.name),
+      });
+    }
+  }
+  return out;
+})();
+
+test('every field of every published shape has a reader in the file that declares it as one', () => {
+  const unread = [], fixed = [], doubleParked = [];
+  for (const [key, e] of EVIDENCE) {
+    if (e.deferred) continue; // not scanned at all — see deferredFields
+    // A coincidental field is PARKED AS UNREAD, which is the whole point of that list: it
+    // looks read and is not, so counting its matches would re-launder it here. It is a park
+    // like UNREAD_KNOWN, with a stronger claim — "the reader you would find is somebody
+    // else's" — and the two lists must not both hold the same field, or one of them is
+    // describing a state that is not the field's.
+    if (COINCIDENTAL[key]) {
+      if (UNREAD_KNOWN[key]) doubleParked.push(key);
+      continue;
+    }
+    const found = e.lines.size > 0;
+    if (found && UNREAD_KNOWN[key]) {
+      fixed.push(key); // a known-unread field that now HAS a reader: delete its entry
+    } else if (!found && !UNREAD_KNOWN[key]) {
+      unread.push(`${key} (declared ${e.declaredIn})`);
     }
   }
   assert.deepEqual(unread, [],
@@ -370,23 +441,89 @@ test('every field of every published shape has a reader in the file that declare
   assert.deepEqual(fixed, [],
     `these are listed in UNREAD_KNOWN but now HAVE a reader — delete their entries, or the list stops describing anything: ${fixed.join(', ')}`);
 
+  assert.deepEqual(doubleParked, [],
+    `these fields are parked in BOTH UNREAD_KNOWN and COINCIDENTAL: ${doubleParked.join(', ')}. They say different things — "nothing reads it" and "what looks like a reader is another shape's" — and a field cannot be both.`);
+
   // And the third direction, which this file did NOT have until statusResponse.toolbarStyle
   // was deleted and nothing noticed. Both loops above only ever walk fields that exist, so
   // an entry for a field that has been REMOVED is visited by neither and sits there
   // forever — describing a shape the server no longer publishes, in a list whose whole
   // purpose is to be an accurate account of what is unread.
-  const known = new Set();
-  for (const entry of PUBLISHED) {
-    const st = STRUCTS.get(entry.type);
-    if (st) for (const f of st.fields) known.add(`${entry.type}.${f}`);
-  }
-  const vanished = Object.keys(UNREAD_KNOWN).filter((k) => !known.has(k)).sort();
+  const vanished = Object.keys(UNREAD_KNOWN).filter((k) => !EVIDENCE.has(k)).sort();
   assert.deepEqual(vanished, [],
     `UNREAD_KNOWN names fields that no longer exist on any published shape: ${vanished.join(', ')}. They were removed or renamed and the excuse outlived them.`);
 
   // The stimulus for the whole file. An empty PUBLISHED table, or a source read that
   // returned nothing, produces the same two empty arrays as a clean tree.
-  const checked = PUBLISHED.reduce((n2, e) => n2 + (STRUCTS.get(e.type)?.fields.length || 0), 0);
+  const checked = [...EVIDENCE.values()].filter((e) => !e.deferred).length;
   assert.ok(checked >= 60,
     `only ${checked} fields were checked across ${PUBLISHED.length} shapes — the scan is not reading what it thinks it is`);
+});
+
+// ── The coincidence door ─────────────────────────────────────────────────────
+//
+// **The scan above proves a NAME is mentioned in a named file. It cannot tell whose name.**
+// Not a theoretical hole: `diagnosisResponse.detail` and `diagnosisView.detail` are rendered by
+// P06, which is unbuilt, and both passed as consumed on the strength of one `f.detail` in
+// `renderScanReport` — a `pdfops.Finding`, nothing to do with D19 — while their siblings `cause`
+// and `summary` sat correctly parked one line above. A P06-only field reading as covered is the
+// historyEvicted class this file exists to close, one field over. /pending 254.
+//
+// **Two precise fixes were built and measured, and both are refused. Recorded so the next
+// reader does not re-derive them:**
+//
+//  1. *Attribute a match to the shape by proximity or by tracking the variable.* Measured: no Go
+//     type name appears anywhere in app.js (`grep -c docResponse` is 0), so the only anchor is
+//     the route string — and `/api/doc` is fetched at app.js:2757 while `m.historyEvicted` is
+//     read at 8309, through `setDocumentFromServer(out, owner)` → `meta` → `target.docMeta` →
+//     `m`. Anything short of alias tracking across a property stash reports historyEvicted
+//     ITSELF as unread. A guard that cries wolf on the field it is named for gets relaxed.
+//  2. *Require evidence to be EXCLUSIVE — no line may be the sole evidence for two shapes.*
+//     Built, run, and it flagged 20+ fields on its first pass, all of them genuinely read. The
+//     reason is structural: a file-wide `.name` regex hands EVERY shape publishing `name` the
+//     identical set of lines, so set algebra cannot separate "both read, on different lines"
+//     from "one borrows all of the other's". Exclusivity needs per-shape attribution, which is
+//     (1), which is refused.
+//
+// So the door that shuts is the one that is decidable: **a shape whose consumer is unbuilt is
+// deferred WHOLE**, via `deferredFields`, and its fields are not scanned at all — no coincidence
+// can reach them. That is what makes `.detail` unlaunderable rather than luckily-caught. The
+// fields below are the ones a manual pass found already laundered; each names what its matches
+// actually belong to, so the list is an account rather than an excuse.
+const COINCIDENTAL = {
+  'pendingView.valid': 'the consent card does not show whether the peer\'s incoming signature validated — /pending 252, Dan\'s call to render it or declare it omitted. Its only matches are `s.valid` in openSigDetails, a sign.SignerInfo.',
+  'pendingView.acceptedPeer': 'same card, same decision (/pending 252). Its only match is `a.acceptedPeer` in augmentSigDetails, an attestationView.',
+  'attestationView.signer': 'read in Go by the side that SETS it (internal/p2p), never at the far end; the client renders signer identity from sign.Status instead. Its only match is `pending.signer`, a pendingView.',
+  'attestationView.fingerprint': 'as above. Every match is a peer / peersResponse / pendingView fingerprint; augmentSigDetails reads acceptedPeer, reason, matched, pinned, rosterHash and oneProceeding, not this.',
+  'attestationView.when': 'as above. Matches are `q.when` (cosignQuote) and `s.when` (sign.SignerInfo).',
+  'attestationView.valid': 'as above. Matches are `s.valid`, a sign.SignerInfo.',
+};
+
+test('the deferred and coincidental lists describe fields that still exist', () => {
+  // A deferral for a field the shape no longer has is a check that silently stopped running —
+  // the same third direction UNREAD_KNOWN needed after toolbarStyle was deleted and nothing
+  // noticed. Both lists get it, because both are ways of NOT scanning something.
+  const badDeferrals = [];
+  for (const entry of PUBLISHED) {
+    const st = STRUCTS.get(entry.type);
+    if (!st) continue;
+    for (const f of entry.deferredFields ?? []) {
+      if (!st.fields.some((x) => x.name === f)) badDeferrals.push(`${entry.type}.${f}`);
+    }
+  }
+  assert.deepEqual(badDeferrals, [],
+    `these are listed in deferredFields and are not fields of their shape any more: ${badDeferrals.join(', ')}. The shape changed and the deferral outlived it.`);
+
+  const vanished = Object.keys(COINCIDENTAL).filter((k) => !EVIDENCE.has(k)).sort();
+  assert.deepEqual(vanished, [],
+    `COINCIDENTAL names fields that no longer exist on any published shape: ${vanished.join(', ')}`);
+
+  // STIMULUS, and it is the assertion that makes the whole deferral mechanism honest: a
+  // deferred field must actually be skipped. If deferredFields were silently ignored, every
+  // test here would still pass and `.detail` would be laundered again by the same line.
+  const deferred = [...EVIDENCE.values()].filter((e) => e.deferred);
+  assert.ok(deferred.length >= 6,
+    `only ${deferred.length} fields are deferred; P06's two diagnosis shapes defer three each, so the mechanism is not being applied`);
+  assert.ok(deferred.every((e) => e.lines.size === 0),
+    'a deferred field collected evidence, so deferral is not actually skipping the scan');
 });
