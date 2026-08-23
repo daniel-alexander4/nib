@@ -451,3 +451,91 @@ func TestAnUnobservedLeaseIsResolvedAndReported(t *testing.T) {
 			logged.String())
 	}
 }
+
+// TestReplacingTheStoredMapperClosesTheOldOne — found by grilling /pending 262.
+//
+// The republish loop (/pending 256, v1.117.123) turned a one-shot publish into a repeating one,
+// and every cycle builds a fresh mapper. `setPortMap` overwrote the field without closing what it
+// replaced, so the previous mapper was orphaned — refresh goroutine still running, router mapping
+// still installed, and nothing holding a handle to either. Reachable in one ordinary ceremony
+// rather than a corner: the republish period is 240 s inside a 300 s connect deadline.
+func TestReplacingTheStoredMapperClosesTheOldOne(t *testing.T) {
+	first, second := newFake(), newFake()
+	pm1, pm2 := newPortMapper(first, portmap.UDP, 40404), newPortMapper(second, portmap.UDP, 40404)
+	pm1.obtain(context.Background())
+	pm2.obtain(context.Background())
+
+	cer := &ceremonyID{}
+	cer.setPortMap(pm1)
+	// SETUP: the first mapper must be live and undeleted at the moment it is replaced, or
+	// "it got closed" below would be true for the wrong reason.
+	if atomic.LoadInt32(&first.unmaps) != 0 {
+		t.Fatal("setup: the first mapping was already deleted before it was replaced")
+	}
+	cer.setPortMap(pm2)
+
+	if got := atomic.LoadInt32(&first.unmaps); got != 1 {
+		t.Errorf("replacing the stored mapper left the old one open (Unmap %d, want 1) — its refresh "+
+			"goroutine keeps running and its router mapping outlives the ceremony with nothing able "+
+			"to delete it", got)
+	}
+	// And the replacement is the one close() now owns.
+	cer.close()
+	if got := atomic.LoadInt32(&second.unmaps); got != 1 {
+		t.Errorf("the replacement mapping was not deleted by close() (Unmap %d, want 1)", got)
+	}
+}
+
+// TestAFailedObtainStillClosesItsMapper — the source guard, and it is a source guard because the
+// call site builds its own portmap.Client and cannot be driven with a fake.
+//
+// Since v1.117.120 the mapper records a delete handle for every request that LEFT this host, and
+// `close()` is the only thing that drains them. `appendMappedCandidate`'s failure return dropped
+// them — the exact leak /pending 257 was built to close, re-opened at a different door by 257's
+// own change. The screened-out return four lines below already knew to close; this one did not.
+func TestAFailedObtainStillClosesItsMapper(t *testing.T) {
+	src, err := os.ReadFile("ceremonynet.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(string(src), "\n")
+	start, stop := -1, -1
+	for i, l := range lines {
+		if strings.Contains(l, "mapper := newPortMapper(") {
+			start = i
+		}
+		if start >= 0 && strings.Contains(l, "c.setPortMap(mapper)") {
+			stop = i
+			break
+		}
+	}
+	if start < 0 || stop < 0 {
+		t.Fatal("setup: could not find the mapper's creation and storage in appendMappedCandidate — " +
+			"this guard is scanning nothing")
+	}
+	returns := 0
+	for i := start; i < stop; i++ {
+		if !strings.Contains(lines[i], "return addrs") {
+			continue
+		}
+		returns++
+		closed := false
+		for j := i; j >= start && j > i-10; j-- {
+			if strings.Contains(lines[j], "mapper.close()") {
+				closed = true
+				break
+			}
+		}
+		if !closed {
+			t.Errorf("ceremonynet.go:%d returns without closing the mapper. Every request that left "+
+				"this host is recorded in it and close() is the only thing that drains them, so this "+
+				"return drops the delete handles for a mapping the router may well have created.", i+1)
+		}
+	}
+	// STIMULUS: a scan that matched no returns would report a clean bill. Two exist between the
+	// mapper's creation and its storage — the obtain failure and the screened-out address.
+	if returns < 2 {
+		t.Errorf("found %d early return(s) between the mapper's creation and its storage; there are 2, "+
+			"so this guard is not reading what it thinks it is", returns)
+	}
+}

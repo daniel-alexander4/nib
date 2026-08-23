@@ -179,6 +179,17 @@ func (c *ceremonyID) markMapUnroutable() {
 	c.mu.Unlock()
 }
 
+// setPortMap stores the mapper close() will tear down, and closes whatever it replaces.
+//
+// **The replace case became reachable at v1.117.123** (/pending 256), which turned the one-shot
+// publish into a republish loop: every cycle builds a fresh mapper, and overwriting the field
+// orphaned the previous one — its refresh goroutine still running, its router mapping still
+// installed, and nothing holding a handle to either. It is reachable in one ordinary ceremony,
+// not a corner: the republish period is 240 s inside a 300 s connect deadline.
+//
+// The old mapper is closed OUTSIDE the lock. close() joins a goroutine and then talks to the
+// router on a fresh context, and holding the ceremony's mutex across that would stall every
+// other reader of it for up to the join timeout.
 func (c *ceremonyID) setPortMap(pm *portMapper) {
 	c.mu.Lock()
 	if c.closed {
@@ -186,8 +197,12 @@ func (c *ceremonyID) setPortMap(pm *portMapper) {
 		pm.close() // close() already ran; delete this mapping rather than leak it
 		return
 	}
+	old := c.portMap
 	c.portMap = pm
 	c.mu.Unlock()
+	if old != nil && old != pm {
+		old.close()
+	}
 }
 
 // nodeCacheDir is where the DHT's node list lives.

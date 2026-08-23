@@ -35,6 +35,8 @@ type mockIGD struct {
 	// entryLease is what GetSpecificPortMappingEntry reports for NewLeaseDuration; "" omits the
 	// tag entirely, which is a different fact from a zero lease and must stay tellable apart.
 	entryLease string
+	// faultOn200 makes AddPortMapping report a UPnPError in the body with a 200 status line.
+	faultOn200 bool
 	entries    chan string
 }
 
@@ -64,6 +66,13 @@ func newMockIGD(t *testing.T) *mockIGD {
 		switch {
 		case strings.Contains(action, "AddPortMapping"):
 			m.added <- string(body)
+			if m.faultOn200 {
+				// A non-conformant device that reports its refusal in the body while answering
+				// 200. Same class of field deviation as an IGD that ignores NewLeaseDuration.
+				fmt.Fprint(w, `<s:Envelope><s:Body><s:Fault><detail><UPnPError>`+
+					`<errorCode>725</errorCode></UPnPError></s:Fault></s:Body></s:Envelope>`)
+				return
+			}
 			if !m.addOK {
 				w.WriteHeader(http.StatusInternalServerError)
 				fmt.Fprint(w, `<s:Envelope><s:Body><s:Fault><detail><UPnPError>`+
@@ -321,5 +330,43 @@ func TestAUPnPDeleteStillDeletesOurOwn(t *testing.T) {
 		}
 	case <-time.After(2 * time.Second):
 		t.Error("no DeletePortMapping reached the IGD for a mapping this host owns")
+	}
+}
+
+// TestAFaultOnA200IsStillARefusal — found by grilling /pending 262.
+//
+// `soapCall` looked for a UPnPError only when the status line was not 200, and
+// `soapAddPortMapping` never inspects the body — it infers success from the absence of an error.
+// So a device that answers its refusal with a 200 produced a CONFIRMED mapping out of a refused
+// one: the loop records a delete handle, GetExternalIPAddress succeeds (it is an unrelated
+// action), and Nib publishes a signed record naming a public port that was never forwarded.
+// D19 then reads havePortMap as true and tells the user their trouble is "most likely a firewall".
+func TestAFaultOnA200IsStillARefusal(t *testing.T) {
+	m := newMockIGD(t)
+	m.faultOn200 = true
+	client := &http.Client{Timeout: 2 * time.Second}
+	ctx := context.Background()
+	controlURL, st, err := controlURLFor(ctx, client, m.location(), anyHost)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	wrote, err := soapAddPortMapping(ctx, client, controlURL, st, UDP,
+		netip.MustParseAddr("192.168.1.50"), 40404, 40404, 120)
+
+	// SETUP: the POST must actually have been delivered, or this row is about a transport
+	// failure rather than about a device that answered.
+	if !wrote {
+		t.Fatal("setup: the request never left, so the response under test was never received")
+	}
+	select {
+	case <-m.added:
+	default:
+		t.Fatal("setup: the IGD never saw an AddPortMapping")
+	}
+
+	if !errors.Is(err, ErrResultCode) {
+		t.Errorf("an IGD that refused in the body while answering 200 was read as SUCCESS (err=%v) — "+
+			"Nib would publish a signed candidate naming a port that was never forwarded", err)
 	}
 }

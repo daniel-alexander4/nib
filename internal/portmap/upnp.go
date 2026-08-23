@@ -323,6 +323,17 @@ func soapCall(ctx context.Context, client *http.Client, controlURL, serviceType,
 		}
 		return nil, fmt.Errorf("%w: IGD HTTP %d", ErrResultCode, resp.StatusCode)
 	}
+	// **A fault carried on a 200 is still a refusal, and reading success from the absence of an
+	// error is how it got in.** `soapAddPortMapping` never inspects the body — it infers success
+	// from a nil error — so a device answering its UPnPError with 200 produced a confirmed
+	// mapping out of a refused one: the loop recorded a delete handle, GetExternalIPAddress
+	// succeeded (it is an unrelated action), and Nib published a signed record naming a public
+	// port that was never forwarded. D19 then read havePortMap as true and told the user their
+	// trouble was "most likely a firewall". No legitimate response to any action here carries an
+	// errorCode, so its presence is decisive whatever the status line says.
+	if code := extractTag(data, "errorCode"); code != "" {
+		return nil, fmt.Errorf("%w: IGD UPnPError %s on a 200 response", ErrResultCode, code)
+	}
 	return data, nil
 }
 
