@@ -240,7 +240,7 @@ func soapAddPortMapping(ctx context.Context, client *http.Client, controlURL, se
 		`<NewInternalPort>%d</NewInternalPort>`+
 		`<NewInternalClient>%s</NewInternalClient>`+
 		`<NewEnabled>1</NewEnabled>`+
-		`<NewPortMappingDescription>Nib</NewPortMappingDescription>`+
+		`<NewPortMappingDescription>`+upnpMappingDescription+`</NewPortMappingDescription>`+
 		`<NewLeaseDuration>%d</NewLeaseDuration>`+
 		`</u:AddPortMapping>`, serviceType, externalPort, soapProto(proto), internalPort, internalIP.String(), leaseSec)
 	ctx = httptrace.WithClientTrace(ctx, &httptrace.ClientTrace{
@@ -287,6 +287,11 @@ func soapProto(p Protocol) string {
 	}
 	return "UDP"
 }
+
+// upnpMappingDescription is what Nib writes into every IGD mapping it creates, and what a
+// delete requires to find there before it will remove one. One constant, two call sites — the
+// string was a literal at the write site and nothing read it back (ADR-009).
+const upnpMappingDescription = "Nib"
 
 // soapCall POSTs one SOAP action and returns the response body, or an error carrying the IGD's
 // UPnPError code when the router refuses.
@@ -428,7 +433,61 @@ func mapViaUPnP(ctx context.Context, proto Protocol, internalPort uint16, leaseS
 // path. Best-effort, bounded by the http client's own timeout; a slow or absent IGD must not
 // stall the caller's teardown, so the caller runs this under a short fresh context.
 func unmapViaUPnP(ctx context.Context, controlURL, serviceType string, proto Protocol, externalPort uint16) error {
-	return soapDeletePortMapping(ctx, igdHTTPClient(), controlURL, serviceType, proto, externalPort)
+	client := igdHTTPClient()
+	// ASK THE ROUTER WHETHER THIS IS OURS, and refuse if it will not say so.
+	//
+	// `DeletePortMapping` carries only (remote host, external port, protocol) — **no internal
+	// client** — so IGD removes whichever host on the LAN holds that external port. That is
+	// harmless when the mapping was created by us seconds earlier, and it stopped being only
+	// that at /pending 257: a handle is now recorded for a POST that was written and never
+	// answered, and a router that never actually installed it leaves us aiming a cross-host
+	// destructive call at an external port somebody else may hold. The external port is the
+	// internal one, a Linux ephemeral 32768-60999, which is exactly where a console or a
+	// torrent client pins its UDP port.
+	//
+	// So the delete is identity-checked: the entry must carry the description this client
+	// writes AND name this host as its internal client. Both, because a description alone is
+	// a string any LAN device could also use, and an internal client alone would let us delete
+	// a different mapping of our own that something else installed on our behalf.
+	desc, internalClient, err := soapGetPortMappingEntry(ctx, client, controlURL, serviceType, proto, externalPort)
+	if err != nil {
+		// The IGD says there is no such entry (714), or it will not answer. Either way there is
+		// nothing this call may safely remove. Not an error the caller acts on: a mapping that
+		// is already gone is the outcome a delete wanted.
+		return nil
+	}
+	if desc != upnpMappingDescription {
+		return fmt.Errorf("portmap: refusing to delete IGD mapping on external port %d: it is described %q, not %q",
+			externalPort, desc, upnpMappingDescription)
+	}
+	mine, err := internalIPToward(controlURL)
+	if err != nil {
+		return err
+	}
+	if internalClient != mine.String() {
+		return fmt.Errorf("portmap: refusing to delete IGD mapping on external port %d: it belongs to %s, not to this host (%s)",
+			externalPort, internalClient, mine)
+	}
+	return soapDeletePortMapping(ctx, client, controlURL, serviceType, proto, externalPort)
+}
+
+// soapGetPortMappingEntry asks the IGD who owns an external port. It is what makes a UPnP delete
+// safe to aim: the description this client wrote, and the LAN address the entry points at.
+//
+// An empty answer is NOT "ours by default" — extractTag returns "" for a missing tag and for a
+// body it could not parse alike, so the caller compares for equality and refuses on anything else.
+func soapGetPortMappingEntry(ctx context.Context, client *http.Client, controlURL, serviceType string, proto Protocol, externalPort uint16) (description, internalClient string, err error) {
+	resp, err := soapCall(ctx, client, controlURL, serviceType, "GetSpecificPortMappingEntry",
+		fmt.Sprintf(`<u:GetSpecificPortMappingEntry xmlns:u="%s">`+
+			`<NewRemoteHost></NewRemoteHost>`+
+			`<NewExternalPort>%d</NewExternalPort>`+
+			`<NewProtocol>%s</NewProtocol>`+
+			`</u:GetSpecificPortMappingEntry>`, serviceType, externalPort, soapProto(proto)))
+	if err != nil {
+		return "", "", err
+	}
+	return strings.TrimSpace(extractTag(resp, "NewPortMappingDescription")),
+		strings.TrimSpace(extractTag(resp, "NewInternalClient")), nil
 }
 
 // internalIPToward returns this host's source address on the path to the IGD, by opening (but

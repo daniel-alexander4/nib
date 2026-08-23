@@ -28,11 +28,16 @@ type mockIGD struct {
 	added   chan string // records the AddPortMapping SOAP body seen
 	deleted chan string // records the DeletePortMapping SOAP body seen
 	control string      // an override control URL to test the SSRF guard
+	// The entry GetSpecificPortMappingEntry reports. Defaults describe a mapping this host
+	// owns; a test sets them to somebody else's to drive the refusal arm.
+	entryDesc   string
+	entryClient string
 }
 
 func newMockIGD(t *testing.T) *mockIGD {
 	t.Helper()
-	m := &mockIGD{extIP: "9.9.9.9", addOK: true, added: make(chan string, 4), deleted: make(chan string, 4)}
+	m := &mockIGD{extIP: "9.9.9.9", addOK: true, added: make(chan string, 4), deleted: make(chan string, 4),
+		entryDesc: "Nib", entryClient: "127.0.0.1"}
 	mux := http.NewServeMux()
 	m.srv = httptest.NewServer(mux)
 	t.Cleanup(m.srv.Close)
@@ -65,6 +70,14 @@ func newMockIGD(t *testing.T) *mockIGD {
 		case strings.Contains(action, "DeletePortMapping"):
 			m.deleted <- string(body)
 			fmt.Fprint(w, `<s:Envelope><s:Body><u:DeletePortMappingResponse></u:DeletePortMappingResponse></s:Body></s:Envelope>`)
+		case strings.Contains(action, "GetSpecificPortMappingEntry"):
+			fmt.Fprintf(w, `<s:Envelope><s:Body><u:GetSpecificPortMappingEntryResponse>`+
+				`<NewInternalPort>40404</NewInternalPort>`+
+				`<NewInternalClient>%s</NewInternalClient>`+
+				`<NewEnabled>1</NewEnabled>`+
+				`<NewPortMappingDescription>%s</NewPortMappingDescription>`+
+				`<NewLeaseDuration>120</NewLeaseDuration>`+
+				`</u:GetSpecificPortMappingEntryResponse></s:Body></s:Envelope>`, m.entryClient, m.entryDesc)
 		case strings.Contains(action, "GetExternalIPAddress"):
 			fmt.Fprintf(w, `<s:Envelope><s:Body><u:GetExternalIPAddressResponse>`+
 				`<NewExternalIPAddress>%s</NewExternalIPAddress>`+
@@ -236,5 +249,65 @@ func TestExtractTagWithAttributes(t *testing.T) {
 	body := []byte(`<u:Resp xmlns:u="x"><NewExternalIPAddress foo="bar">9.9.9.9</NewExternalIPAddress></u:Resp>`)
 	if got := extractTag(body, "NewExternalIPAddress"); got != "9.9.9.9" {
 		t.Errorf("extractTag with attributes: got %q, want 9.9.9.9", got)
+	}
+}
+
+// TestAUPnPDeleteRefusesAMappingThatIsNotOurs — the safety property /pending 257's send-time
+// handles made load-bearing, found by grilling /pending 258.
+//
+// `DeletePortMapping` carries (remote host, external port, protocol) and NO internal client, so
+// the IGD removes whichever host on the LAN holds that external port. That was harmless while
+// every delete named a mapping we had created seconds earlier. It stopped being harmless when a
+// handle began to be recorded for a POST that was written and never answered: a router that
+// never installed it leaves us aiming a cross-host destructive call at an ephemeral port a
+// console or a torrent client may well hold.
+func TestAUPnPDeleteRefusesAMappingThatIsNotOurs(t *testing.T) {
+	for _, tc := range []struct {
+		name, desc, client, want string
+	}{
+		{"described by somebody else", "Xbox", "127.0.0.1", "not \"Nib\""},
+		{"ours by name but another host's", "Nib", "192.168.1.77", "belongs to 192.168.1.77"},
+		{"the IGD says nothing at all", "", "", "not \"Nib\""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m := newMockIGD(t)
+			m.entryDesc, m.entryClient = tc.desc, tc.client
+			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+			defer cancel()
+
+			err := unmapViaUPnP(ctx, m.srv.URL+"/ctl", "urn:schemas-upnp-org:service:WANIPConnection:1", UDP, 40404)
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Errorf("delete of a mapping that is not ours returned %v, want a refusal naming %q", err, tc.want)
+			}
+			select {
+			case body := <-m.deleted:
+				t.Errorf("a DeletePortMapping was sent for a mapping this host does not own: %s", body)
+			default:
+			}
+		})
+	}
+}
+
+// TestAUPnPDeleteStillDeletesOurOwn — the positive arm, and it is not symmetry for its own sake.
+//
+// An identity check that refuses everything passes every assertion above while breaking the
+// teardown that D15 requires on every exit path. This is the row that would catch that, and the
+// empty-body case in the table above is exactly how it would happen: extractTag returns "" for a
+// missing tag and for an unparseable body alike.
+func TestAUPnPDeleteStillDeletesOurOwn(t *testing.T) {
+	m := newMockIGD(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	if err := unmapViaUPnP(ctx, m.srv.URL+"/ctl", "urn:schemas-upnp-org:service:WANIPConnection:1", UDP, 40404); err != nil {
+		t.Fatalf("the delete of our OWN mapping was refused: %v", err)
+	}
+	select {
+	case body := <-m.deleted:
+		if !strings.Contains(body, "<NewExternalPort>40404</NewExternalPort>") {
+			t.Errorf("the delete named the wrong external port: %s", body)
+		}
+	case <-time.After(2 * time.Second):
+		t.Error("no DeletePortMapping reached the IGD for a mapping this host owns")
 	}
 }
