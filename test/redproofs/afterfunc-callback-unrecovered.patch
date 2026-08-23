@@ -1,0 +1,16 @@
+diff --git a/internal/server/session.go b/internal/server/session.go
+index a4234f0..24793f1 100644
+--- a/internal/server/session.go
++++ b/internal/server/session.go
+@@ -589,10 +589,7 @@ func (s *Server) runSession(ln p2p.Listener, cert, key []byte, label, mode strin
+ 	// and produced nothing would extend the arm window every time somebody dialled, which
+ 	// is a window an attacker holds open for free.
+ 	armedUntil := time.Now().Add(sessionAcceptTimeout)
+-	timer := time.AfterFunc(sessionAcceptTimeout, func() {
+-		defer safe.Recover("arm window expiry")
+-		s.sess.disarmIf(ln)
+-	})
++	timer := time.AfterFunc(sessionAcceptTimeout, func() { s.sess.disarmIf(ln) })
+ 	defer timer.Stop()
+ 	defer s.sess.disarmIf(ln)
+ 

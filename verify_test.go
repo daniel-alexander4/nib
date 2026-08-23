@@ -246,12 +246,27 @@ func TestVerifyContractIsTrue(t *testing.T) {
 		// long as it sat there. Only `./build/redproof.sh <name>` can tell a row from a
 		// file, and running the whole set is a minutes-long job that belongs in a sweep
 		// rather than in `go test`. Recorded as a known gap, not closed.
-		const recorded = 27
+		// **And the tax went unpaid, which is why there is a second arm below.** This
+		// constant last moved at v1.117.50, to 27. P05.S05-S12 and the phase close then
+		// added NINE rows without touching it, so on the tree that shipped P05 this check
+		// would have tolerated losing nine of thirty-six — the exact erosion the paragraph
+		// above says a floor prevents. The original reasoning is refuted by measurement:
+		// an edit that does not HAVE to happen is an edit that does not happen. So the
+		// count is bounded on both sides now. It still fails when a row disappears, and it
+		// fails when the set outgrows it, naming the number to write.
+		const recorded = 44
 		if len(rows) < recorded {
 			t.Errorf("test/redproofs holds %d replayable row(s), want at least %d; "+
 				"build/redproof.sh reports no error on an empty directory, so a row that "+
 				"disappears is invisible to everything except this count",
 				len(rows), recorded)
+		}
+		if len(rows) > recorded {
+			t.Errorf("test/redproofs holds %d replayable row(s) and this constant says %d: "+
+				"raise it to %d in the same commit as the new row. A floor that stops moving "+
+				"stops describing the set — at 27 against 36, nine rows could have been "+
+				"deleted with nothing failing.",
+				len(rows), recorded, len(rows))
 		}
 		for _, r := range rows {
 			body, rerr := os.ReadFile(r)

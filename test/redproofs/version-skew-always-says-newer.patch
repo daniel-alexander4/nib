@@ -1,0 +1,18 @@
+diff --git a/internal/ceremony/invitation.go b/internal/ceremony/invitation.go
+index d619c4f..ff438ae 100644
+--- a/internal/ceremony/invitation.go
++++ b/internal/ceremony/invitation.go
+@@ -325,11 +325,8 @@ func ParseInvitation(text string) (Invitation, error) {
+ 		// the user to the wrong problem. The comparison is NUMERIC (D32: a skew produces a
+ 		// sentence naming the mismatch, not a parse error) — a prefix test cannot tell a newer
+ 		// format from an older one and answered "newer" for both.
+-		if v, ok := invitationFormatVersion(t); ok {
+-			if v > InvitationVersion {
+-				return Invitation{}, ErrInvitationVersion
+-			}
+-			return Invitation{}, ErrInvitationOldVersion
++		if strings.HasPrefix(t, "nib-invite-v") {
++			return Invitation{}, ErrInvitationVersion
+ 		}
+ 		return Invitation{}, ErrInvitationFormat
+ 	}

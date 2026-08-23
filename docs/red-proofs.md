@@ -1258,3 +1258,33 @@ caught it; `-race` had not, because no test drives `status()` concurrently with 
 | Defect reintroduced | What it said | Check that fired |
 | --- | --- | --- |
 | **diagnose() reads c.gate.Stats() instead of the atomic snapshot** *(replayable: `diagnose-races-the-gate`)* | `diagnose() no longer reads the c.recordRefused atomic — has the snapshot been removed?` | `TestDiagnoseReadsGuardedSignalsNotTheGate`, a source guard asserting diagnose() calls no method on `c.gate` and reads the `recordRefused`/`recordEmpty` atoms instead — chosen over a `-race` behavioural test because reproducing the race needs a live feed driven concurrently with a status poll |
+
+## v1.117.113–.118 — sweep 12: seven backlog items, and the guard that could see one package of twelve
+
+Eight rows, one per defect this sweep fixed. Seven are tier 1; the eighth is tier 2 and is a guard
+about a guard, which is the shape this ledger keeps needing.
+
+The through-line: **five of the seven items were not the item as written.** Two proposed fixes were
+overturned outright (a lease clamp that cannot bind what the router holds; an IPv6-CGNAT detector no
+reflexive probe can build), one had to be relocated before it was correct, and two turned out wider
+than reported — the goroutine guard's move found seven sites beyond the one that prompted it, and
+the reader scan's coincidence hole had nine fields in it rather than two, two of which were real
+published-and-unread fields, now deleted.
+
+| Defect reintroduced | What it said | Check that fired |
+| --- | --- | --- |
+| **a goroutine outside `internal/server`, recovered SECOND** *(replayable: `recover-registered-second`)* | `internal/ots/ots.go:78 launches a goroutine whose FIRST statement is not defer safe.Recover(...)` | `TestEveryDetachedGoroutineIsRecovered`, moved to the repo root, discovering its population by walking the tree rather than by a package list |
+| **an unrecovered `time.AfterFunc` callback** *(replayable: `afterfunc-callback-unrecovered`)* | `internal/server/session.go:592 hands time.AfterFunc a callback whose first statement is not defer safe.Recover(...)` | the same guard, through the door the package-local one never walked — AfterFunc runs its callback on its own goroutine |
+| **`DroppedOverCap` counts fetches, not addresses** *(replayable: `over-cap-counts-fetches`)* | `DroppedOverCap = 30 after the same 18 addresses were served three times, want 10 — the counter is reporting the fetch cadence, not the peer` | `TestAnOverCapAddressIsCountedOncePerAddressNotOncePerFetch`, whose two setup assertions hold against fixed AND unfixed code, so a red cannot be a dead stimulus |
+| **D19 cause 3 promises a port-forward** *(replayable: `cause3-promises-a-port-forward`)* | `cause 3 promises a port-forward will work to a user it has no evidence controls a router` | `TestCause3NeverPromisesWhatItCannotKnow`, with a negative control (a router that DID answer with carrier space still gets no port-forward advice at all) so uniform conditioning cannot pass it |
+| **the refresh is scheduled after the lease expires** *(replayable: `refresh-outlives-the-lease`)* | `granted 10s, refresh scheduled at 15s — the mapping expires 5s before we renew it` | `TestTheRefreshCadenceNeverOutlivesTheLease`, which also carries a standing row asserting a LONG grant is not clamped — the item's own proposed fix, encoded so it fails if anyone adds it |
+| **a requested lease posing as a granted one** *(replayable: `requested-lease-posing-as-granted`)* | `a NAT-PMP MAP reply carries the granted lifetime, so it must report as observed` | `TestAGrantedLeaseIsDistinguishedFromARequestedOne`. The UPnP half has no behavioural row and says so: the defect there is an ABSENT DISTINCTION, not a wrong value |
+| **every version skew reads as "newer"** *(replayable: `version-skew-always-says-newer`)* | `an older format: ParseInvitation("nib-invite-v0:…") = this invitation was made by a newer version of Nib` | `TestAVersionSkewNamesTheDirection`, which also asserts the two sentences differ — one sentinel wrapped twice satisfies `errors.Is` and still says the wrong thing |
+| **a shape-level deferral that does not defer** *(replayable: `deferral-silently-ignored`)* | `only 0 fields are deferred … the mechanism is not being applied`, and beneath it the laundering itself: `cause` and `summary` return unread while `detail` sails through on `renderScanReport`'s line | `published.test.mjs`'s deferral stimulus. **No row exists for `decryptResponse.ok`, and that is the honest half:** re-adding the field passes the scan, because its collision is with `Response.ok`, the fetch API's own property, and that is exactly the blind spot the item names |
+
+**And the ledger's own count had stopped describing it.** `verify_test.go`'s floor last moved at
+v1.117.50, to 27, while the set grew to 36 — so the tree that shipped P05 would have tolerated
+losing nine rows silently, the same erosion the floor exists to prevent. The count is bounded on
+both sides now: it still fails when a row disappears, and it fails when the set outgrows it, naming
+the number to write. The original reasoning — "adding a row should not need a test edit" — is
+refuted by measurement: an edit that does not have to happen is an edit that does not happen.

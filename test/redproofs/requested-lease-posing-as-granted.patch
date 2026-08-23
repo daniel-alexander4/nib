@@ -1,0 +1,14 @@
+diff --git a/internal/portmap/portmap.go b/internal/portmap/portmap.go
+index 1081d11..850c8fa 100644
+--- a/internal/portmap/portmap.go
++++ b/internal/portmap/portmap.go
+@@ -169,8 +169,7 @@ func DecodeNATPMPMap(resp []byte, p Protocol, internalPort uint16) (Mapping, err
+ 		InternalPort: got,
+ 		ExternalPort: binary.BigEndian.Uint16(resp[10:12]),
+ 		// NAT-PMP's MAP reply carries the granted lifetime, so this one is observed.
+-		LifetimeSec:      binary.BigEndian.Uint32(resp[12:16]),
+-		LifetimeObserved: true,
++		LifetimeSec: binary.BigEndian.Uint32(resp[12:16]),
+ 	}, nil
+ }
+ 

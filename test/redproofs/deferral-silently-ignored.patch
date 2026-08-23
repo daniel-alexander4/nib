@@ -1,0 +1,13 @@
+diff --git a/test/jsdom/published.test.mjs b/test/jsdom/published.test.mjs
+index 22d8848..f9b19f1 100644
+--- a/test/jsdom/published.test.mjs
++++ b/test/jsdom/published.test.mjs
+@@ -395,7 +395,7 @@ const EVIDENCE = (() => {
+   for (const entry of PUBLISHED) {
+     const st = STRUCTS.get(entry.type);
+     if (!st) continue;
+-    const deferred = new Set(entry.deferredFields ?? []);
++    const deferred = new Set();
+     for (const f of st.fields) {
+       const lines = new Set();
+       if (!deferred.has(f.name)) {
