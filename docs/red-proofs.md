@@ -1171,3 +1171,20 @@ reintroduces the coupling.
 ADR-009) keeps the `lanAnnouncer` literal in `startAnnouncing`, so the cap could not move to a testable
 helper. Making the window a parameter that the product always fills with `lanAnnounceWindow` and the test
 fills with 700ms drives the cap in 2.6s instead of 30 days, without a mutable product knob.
+
+## v1.117.88 — P05.S10: the re-delivery that re-signed
+
+D18/D24's "re-deliver, do not re-sign", made idempotent. A channel lost after the receiver signed
+but before the initiator read the result must re-deliver the CACHED signature on a reconnect, not
+sign again — because `Contribute` is non-deterministic (random ECDSA nonce + a wall-clock
+timestamp), a re-sign would produce a second, different block (D25 wrong).
+
+| Defect reintroduced | What it said | Check that fired |
+| --- | --- | --- |
+| **`coSignExchange` drops the cache lookup and always re-signs** *(replayable: `re-delivery-re-signs`)* | `Confirm was asked again on a re-delivery (now 2) — the user was re-prompted to consent to a document they already signed` | `TestReDeliveryIsIdempotent`, which co-signs one inbound twice and asserts the SAME bytes with consent asked ONCE; the sibling `TestReDelivererMissRunsAFreshExchange` is the control — a DISTINCT document is a miss that signs fresh, so the pass is idempotency, not a cache that returns everything |
+
+**Why the key is the inbound hash, not the hop.** Keying on the hop alone would hand a reconnect
+carrying a different document the previous document's signature (the grill's stale-signature risk).
+Keyed on `sha256(inbound)`, a distinct document is a clean miss (proved by the control test), and the
+lookup sits AFTER the peer-binding validation so only the pinned peer with the original document can
+pull the cached bytes.

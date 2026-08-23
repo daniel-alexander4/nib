@@ -1,0 +1,21 @@
+diff --git a/internal/p2p/session.go b/internal/p2p/session.go
+index 29637eb..0be8c27 100644
+--- a/internal/p2p/session.go
++++ b/internal/p2p/session.go
+@@ -425,16 +425,6 @@ func coSignExchange(myCertPEM, myKeyPEM, peerFP []byte, peerLabel string, inboun
+ 		return nil, errors.New("the peer's attestation does not accept you")
+ 	}
+ 
+-	// Re-delivery (P05.S10): AFTER the peer-binding checks above — so a reconnect still proves the
+-	// inbound is from the pinned peer, no cross-peer cache theft — and BEFORE consent, because the
+-	// user already consented to sign THIS document; re-delivering the cached result must not ask
+-	// them again. A miss falls through to the fresh exchange.
+-	if rd != nil {
+-		if cached := rd.Cached(inbound); cached != nil {
+-			return cached, nil
+-		}
+-	}
+-
+ 	accept, intent, appearance, err := c.Confirm(peer, inbound)
+ 	if err != nil {
+ 		return nil, err
