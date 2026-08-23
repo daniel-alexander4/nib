@@ -246,6 +246,15 @@ func (c *ceremonyID) appendMappedCandidate(armCtx context.Context, addrs []cerem
 	defer cancel()
 	ap, ok := mapper.obtain(mapCtx)
 	if !ok {
+		// **Close it even though nothing was obtained.** Since v1.117.120 the mapper records a
+		// delete handle for every request that LEFT this host, and `close()` is the only thing
+		// that drains them — so returning here dropped the handles for a mapping the router may
+		// well have created. The sharpest instance is on the UPnP path: AddPortMapping answers
+		// 200, the mapping EXISTS, GetExternalIPAddress then fails, and the whole obtain reports
+		// a miss. That is the exact leak /pending 257 was built to close, re-opened at a
+		// different door by 257's own change. The screened-out path below already knew to do
+		// this; this one did not.
+		mapper.close()
 		return addrs // ErrNoMapping, or the arm was cancelled — swallowed (grill F8)
 	}
 	ep, ok := screenedMappedEndpoint(ap.Addr(), ap.Port())
