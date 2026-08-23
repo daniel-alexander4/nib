@@ -54,6 +54,7 @@ type portMapper struct {
 	closed    bool
 	started   bool
 	portMoved bool // a refresh got a DIFFERENT external port — item 20's stale-record case
+	reported  bool // reportLease has already spoken for this mapper
 
 	stop chan struct{}
 	done chan struct{}
@@ -217,6 +218,16 @@ func (p *portMapper) startRefresh() {
 				p.mu.Unlock()
 				return
 			}
+			// **Carry the observation across the refresh.** UPnP's Refresh re-runs the obtain,
+			// which reports the lease we ASKED for and marks it unobserved — so storing `nm`
+			// as-is threw away what ObserveLease had just learned, flipped the mapping back to
+			// unobserved every cycle, and made the loop re-read the lease (and re-log a
+			// permanent one) on every tick forever. Only carried when the refresh names the
+			// same mapping; a moved port is a different mapping and its lease is unknown again.
+			if cur.LifetimeObserved && nm.SameTarget(cur) {
+				nm.LifetimeObserved, nm.LeasePermanent = true, cur.LeasePermanent
+				nm.LifetimeSec = cur.LifetimeSec
+			}
 			if nm.ExternalPort != p.current.ExternalPort {
 				// The router did not honour the same-port request: the published record now
 				// names a dead port. Re-publishing under a new port is item 20 (the
@@ -240,6 +251,13 @@ func (p *portMapper) startRefresh() {
 //
 // Silent for the ordinary case. It fires for exactly the two states the gate names.
 func (p *portMapper) reportLease(m portmap.Mapping) {
+	p.mu.Lock()
+	if p.reported {
+		p.mu.Unlock()
+		return // once per mapper: the fact does not change, and a log line per tick is noise
+	}
+	p.reported = true
+	p.mu.Unlock()
 	switch {
 	case m.LeasePermanent:
 		log.Printf("port mapping on external port %d is PERMANENT — the router ignored the %ds lease "+
