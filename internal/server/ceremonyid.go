@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 
 	"nib/internal/ceremony"
 	"nib/internal/p2p"
@@ -74,6 +75,11 @@ type ceremonyID struct {
 	// not be published (double-NAT / RFC-1918 / low port) — distinct from "the tier got no answer",
 	// because D9's cause-3 advice diverges: an unroutable answer means a VPN, never a port-forward.
 	mapUnroutable bool
+	// peerSeen becomes true once the feed has admitted a candidate for the peer — the "the peer
+	// published" signal for the D19 diagnosis (P05.S11). Atomic, not read off the gate: the gate is
+	// not concurrent-safe and the ARM polls its diagnosis WHILE the feed is running, so cause 1 must
+	// key on a signal safe to read live. Set by feedCandidates as it sends each candidate.
+	peerSeen atomic.Bool
 }
 
 // setStopNet and setPortMap store the two shared fields under the lock.

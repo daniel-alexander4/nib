@@ -266,6 +266,7 @@ func (c *ceremonyID) feedCandidates(ctx context.Context, out chan<- candidate, p
 		// (address, transport) anyway.
 		all := c.gate.Candidates()
 		for _, e := range all[min(sent, len(all)):] {
+			c.peerSeen.Store(true) // a peer-published address reached the race — D19 cause-1 signal (P05.S11)
 			select {
 			case out <- candidate{
 				// **The pin is the PINNED fingerprint, never the record's.** The record
@@ -461,7 +462,11 @@ func (s *Server) feedCeremonyRace(ctx context.Context, cer *ceremonyID, cands []
 	// cancel (P05.S11 grill: the data race). All four feed goroutines join it.
 	var wg sync.WaitGroup
 	wg.Add(1)
-	go func() { defer wg.Done(); cer.feedCandidates(ctx, dht, peerFP, label, name) }()
+	go func() {
+		defer safe.Recover("candidate feed")
+		defer wg.Done()
+		cer.feedCandidates(ctx, dht, peerFP, label, name)
+	}()
 
 	// S08b: the dial side is symmetric — it PUBLISHES its own address (so the arm can punch
 	// toward it) and PUNCHES toward the peer's candidates. Both are suppressed by the same
@@ -469,15 +474,23 @@ func (s *Server) feedCeremonyRace(ctx context.Context, cer *ceremonyID, cands []
 	// wins inside the browse window neither the late publish (D6 privacy) nor further punch
 	// packets fire. The QUIC transport is fixed — the punch is QUIC-only (D8).
 	wg.Add(1)
-	go func() { defer wg.Done(); publishWhenSlow(ctx, cer, transportQUIC) }()
+	go func() {
+		defer safe.Recover("dial publish")
+		defer wg.Done()
+		publishWhenSlow(ctx, cer, transportQUIC)
+	}()
 	punchCh := make(chan candidate, maxRaceCandidates)
 	wg.Add(1)
-	go func() { defer wg.Done(); punchLoop(ctx, cer.end.Punch, &punchBudget{}, punchCh, punchInterval) }()
+	go func() {
+		defer safe.Recover("dial punch")
+		defer wg.Done()
+		punchLoop(ctx, cer.end.Punch, &punchBudget{}, punchCh, punchInterval)
+	}()
 
 	wg.Add(1)
 	go func() {
-		defer wg.Done()
 		defer safe.Recover("candidate merge")
+		defer wg.Done()
 		defer close(in)
 		defer close(punchCh)
 		for _, c := range cands {

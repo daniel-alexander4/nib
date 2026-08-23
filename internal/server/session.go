@@ -350,7 +350,6 @@ func (se *session) respond(d sessionDecision) bool {
 
 func (se *session) status() sessionStatus {
 	se.mu.Lock()
-	defer se.mu.Unlock()
 	st := sessionStatus{Armed: se.ln != nil || se.cer != nil, Address: se.addr, Received: se.received}
 	if se.pending != nil {
 		pv := se.pending.view
@@ -358,6 +357,18 @@ func (se *session) status() sessionStatus {
 	}
 	if se.verify != nil {
 		st.Verify = &verifyView{Words: se.verify.words}
+	}
+	cer := se.cer
+	inSession := se.pending != nil || se.verify != nil
+	se.mu.Unlock()
+
+	// A waiting ceremony arm (not yet in a session) shows why nothing has connected — computed from
+	// signals safe to read while the feed runs (rz.Stats mutex-guarded, peerSeen atomic). Outside the
+	// lock: diagnose() takes rz.mu/cer.mu, and holding se.mu across them would nest three locks.
+	if cer != nil && !inSession {
+		if d := cer.diagnose(); d.cause != causeUndiagnosed {
+			st.Diagnosis = &diagnosisView{Cause: causeName(d.cause), Summary: d.summary, Detail: d.detail}
+		}
 	}
 	return st
 }
@@ -837,6 +848,19 @@ type sessionStatus struct {
 	Verify   *verifyView   `json:"verify,omitempty"`
 	Pending  *pendingView  `json:"pending,omitempty"`
 	Received *receivedInfo `json:"received,omitempty"`
+	// Diagnosis is the live D19 diagnosis for a ceremony arm that is still WAITING — most usefully
+	// "the other side hasn't started" (cause 1) — so the polling UI shows why nothing has connected
+	// yet, rather than a blank wait (P05.S11). Computed lazily from safe signals; nil for a manual
+	// arm or once a session is in progress.
+	Diagnosis *diagnosisView `json:"diagnosis,omitempty"`
+}
+
+// diagnosisView is the arm-side D19 message the status poller carries — plain summary, cause tag,
+// and technical detail behind a disclosure.
+type diagnosisView struct {
+	Cause   string `json:"cause"`
+	Summary string `json:"summary"`
+	Detail  string `json:"detail"`
 }
 
 // verifyView is the four words the user must confirm against what the other person reads
@@ -1342,7 +1366,10 @@ func (s *Server) handleSessionInitiate(w http.ResponseWriter, r *http.Request) {
 				"the request was shown and went unanswered, so nothing was signed")
 			return
 		}
-		httpError(w, http.StatusBadGateway, "co-signing did not complete: "+err.Error())
+		// P05.S11: a genuine connect failure (not a decline) gets D19's plain-language diagnosis,
+		// classified from the signals on `cer`. `cer` is nil-safe in diagnose(); a non-ceremony or
+		// TCP dial falls back to the flat connectFailure message.
+		s.writeConnectDiagnosis(w, cer, err)
 		return
 	}
 	// D10: an arrival adds. Same reasoning as runSession's — the difference here is
