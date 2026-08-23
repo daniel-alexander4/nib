@@ -3953,6 +3953,40 @@ Tasks (firmed 2026-08-22, deepdive):
 - **T05** — driven tests: each cause by driving the signals; cause 3 degrades to cause 4; the CGNAT case
   names VPN-only.
 
+**GRILL 2026-08-22 (S11, verified). Five confirmed holes; corrections fold into T01-T05. `*(in progress 2026-08-22)*`**
+- **CONFIRMED (biggest) — data race on the gate.** `connect`'s failure path cancels but NEVER joins the
+  feed goroutines (`ceremonynet.go:679-691`); an in-flight `Fetch` can run `gate.Accept` AFTER `connect`
+  returns, while `diagnosis()` reads `gate.Stats()` (non-atomic uint64) — a torn read `-race` flags. The
+  deepdive's "read after the feed stops" is asserted, never enforced. **T01 adds a real join** (a WaitGroup
+  through `feedCeremonyRace`/`connect`, or the feed snapshots its Stats at exit).
+- **CONFIRMED — cause 1 vs cause 2 collide on `Accepted==0`**, and `FetchNodes` is the wrong discriminator
+  (it is `.Store()`, last-fetch-only, reads 0 after the cancel aborts the last traversal). **T02 orders the
+  predicates (cause 2 FIRST) and keys DHT-reachable on a CUMULATIVE field** — `FetchEmpty>0` is documented
+  (`dht.go:164`) as exactly "DHT reachable, peer has not published" = cause 1; `Responses==0`/no cumulative
+  response = cause 2.
+- **CONFIRMED — the port-map advice is inverted for double-NAT.** Cause 3 requires `portMap==nil` (the
+  unroutable mapper is closed+dropped, so `setPortMap` never runs), so within cause 3 "answered" means
+  answered-UNROUTABLE = double-NAT, where port-forward advice is the futile thing D9 forbids. **T02's
+  state→advice map:** `no-answer && !Shared` → try UPnP/port-forward; `answered-unroutable OR Shared` →
+  VPN-only. The tri-state is NOT redundant with SharedAddressSpace (double-NAT's reflexive DHT addr can be
+  non-100.64). T02 also states the V4/V6 combination for the single cause-3 decision.
+- **CONFIRMED — store-placement.** Cause 3 is the `len(addrs)==0` case, and `publishCandidates` returns
+  EARLY there (`ceremonynet.go:119`) before the publish — **T01 stores `SelfAddress` immediately after
+  `ProbeSelf` (`:107`), before that early return**, or the signal cause 3 needs is never stored.
+- **CONFIRMED — co-sign bypass, worse than stated.** `handleSessionInitiate` funnels to a bare 502
+  (`session.go:1345`) and does NOT lift `ClockSkewError` (only `/send` does). **T03 puts the classifier in
+  the `else` AFTER the decline(409)/timeout(409)/errUnknownTransport(400) lifts, and adds the
+  `ClockSkewError` errors.As on initiate** (cause 5, new behaviour on this path).
+- **CONFIRMED — the arm side has no failure-return** (`runCeremonyReceive` blocks to MaxCeremonyLife), so a
+  cause-1 `sessionStatus` computed only at the terminal return is 30 days late. **T03 computes the arm-side
+  diagnosis LAZILY when status is polled** (`handleSessionStatus` → `cer.diagnosis()` while not-yet-connected),
+  not a ticker.
+- FINE (verified): the cause-3 degrade (`MappingUnknown` is the zero value, distinct from Independent — no
+  misfire, no nil-deref); the L1 pin (diagnosis feeds nothing back into the pin check).
+- **T05 adds** the `-race` case and the double-NAT (answered-unroutable) case, not only CGNAT.
+
+Grill verdict: the diagnosis design is sound; these are joint defects at the code seams, all dispositioned.
+
 
 Scope: `connectFailure` yields three sentences — two clock-skew directions and one generic (`session.go:1023-1029`). Causes 1-4 do not exist; P04.S02 built the classification they read.
 Acceptance: criteria 6 and 7 verbatim; criteria 8 and 9 are **already met** by `p2p.ClockSkewError` and are ledgered, not rebuilt. The mapped port and **"no mapping obtained"** become distinguishable states on `/api/session/status`, which is what P06's two disclosure criteria render.
