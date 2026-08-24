@@ -110,8 +110,13 @@ func TestCosignQuoteReturnsLinesAndRect(t *testing.T) {
 	if len(q.Lines) != 5 {
 		t.Errorf("quote lines = %d, want 5", len(q.Lines))
 	}
-	if w, h := q.Rect[2]-q.Rect[0], q.Rect[3]-q.Rect[1]; w != 280 || h != 84 {
-		t.Errorf("quote rect size = %gx%g, want 280x84", w, h)
+	// Sized from p2p's door rather than from the literals it happens to produce: a
+	// test that names 280x84 asserts the copy agrees with itself and stays green while
+	// both sites drift together.
+	if want := p2p.NominalBlockRect(); q.Rect[2]-q.Rect[0] != want[2]-want[0] ||
+		q.Rect[3]-q.Rect[1] != want[3]-want[1] {
+		t.Errorf("quote rect size = %gx%g, want %gx%g (p2p.NominalBlockRect)",
+			q.Rect[2]-q.Rect[0], q.Rect[3]-q.Rect[1], want[2]-want[0], want[3]-want[1])
 	}
 	if q.When == "" {
 		t.Error("quote did not return a signing time")

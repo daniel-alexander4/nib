@@ -472,8 +472,15 @@ func TestSessionQuoteForPendingPeer(t *testing.T) {
 	if !strings.Contains(joined, "I consent here") {
 		t.Errorf("quote lines missing the typed intent: %q", q.Lines)
 	}
-	if q.Rect[2]-q.Rect[0] <= 0 || q.Rect[3]-q.Rect[1] <= 0 {
-		t.Errorf("quote rect has no area: %v", q.Rect)
+	// Against p2p's ONE door, not against literals. The previous form asked only that
+	// the rect was non-degenerate, which `{0,0,1,1}` satisfies — so it could not see
+	// this endpoint drifting away from stackPlacement, which is exactly what it had
+	// done: the rect was hand-copied here and the only thing checking it compared the
+	// copy to itself (ADR-009: the guard checks the door).
+	if want := p2p.NominalBlockRect(); q.Rect != want {
+		t.Errorf("session quote rect = %v, want %v — this endpoint no longer agrees with "+
+			"p2p.NominalBlockRect(), so the client sizes its appearance image to one shape "+
+			"and the server places a block of another", q.Rect, want)
 	}
 
 	// Clean up: decline, and let the initiator goroutine finish.

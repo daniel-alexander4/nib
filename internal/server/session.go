@@ -1196,13 +1196,13 @@ func (s *Server) handleSessionQuote(w http.ResponseWriter, r *http.Request) {
 	}
 	// The pending peer is the one the listener was armed for, so it is pinned;
 	// cosignAttestation re-checks that and names "Nib User" as the signer, exactly
-	// as coSignExchange does on accept. The nominal rect mirrors stackPlacement's
-	// constant block size (280×84 pt) — only its aspect is used, to size the PNG.
+	// as coSignExchange does on accept. The nominal rect comes from p2p's one door
+	// rather than being copied here — only its aspect is used, to size the PNG.
 	att, ok := s.cosignAttestation(w, v, cosignParams{Fingerprint: fp, Intent: req.Intent})
 	if !ok {
 		return
 	}
-	writeJSON(w, cosignQuote{Lines: att.AppearanceLines(), Rect: [4]float64{40, 40, 320, 124}})
+	writeJSON(w, cosignQuote{Lines: att.AppearanceLines(), Rect: p2p.NominalBlockRect()})
 }
 
 // handleDoc returns metadata for the open document — name, path, save-ability, and
