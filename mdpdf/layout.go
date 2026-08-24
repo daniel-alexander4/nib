@@ -40,7 +40,26 @@ func (s style) width(text string) float64 {
 	if s.embedded {
 		return font.TextWidth(text, s.font, s.size)
 	}
-	return font.TextWidth(encodedWidth(text), s.font, s.size)
+	return CoreWidth(text, s.font, s.size)
+}
+
+// CoreWidth is the width of text in points when set in a Base-14 CORE font at
+// size pt — measured the way pdfcpu will actually emit it, not the way Go
+// iterates it.
+//
+// This is the exported door for the rule encodedWidth states: pdfcpu measures a
+// core-font string BYTE by byte, so a hand-rolled measurement that ranges over
+// runes under-counts every multi-byte character and a greedy wrapper then packs
+// a line wider than the column it was given. `internal/p2p`'s readme wrapper had
+// exactly that defect while this package's `style.width` did not — one rule with
+// two implementations, one of them tested (ADR-009). Callers outside this package
+// use this rather than calling font.TextWidth directly, because calling it
+// directly with raw UTF-8 is the bug.
+//
+// Core fonts only. An EMBEDDED font is measured by rune, and `style.width` keeps
+// that distinction; a caller with a fallback face wants that path, not this one.
+func CoreWidth(text, fontName string, size int) float64 {
+	return font.TextWidth(encodedWidth(text), fontName, size)
 }
 
 // leading is the baseline-to-baseline distance for lines set in this style.

@@ -68,8 +68,8 @@ var readmeParagraphs = []string{
 		"added after the last signature separately.",
 	"Who each signer accepted: every signature names one party, in the acceptance block on the " +
 		"preceding pages, and that is the only identity that signature vouches for. Where two parties " +
-		"sign together they accept each other. Where more than two do, one of them convenes the " +
-		"proceeding and tells the rest who is on it — so parties who never connected to each other " +
+		"sign together, each names the other. Where more than two do, the parties are the ones named " +
+		"by whoever convened the proceeding — so signers who never connected to each other " +
 		"have not checked each other's identity, and no signature here claims they did.",
 	"These identities are self-generated on each machine and are not vouched for by a certificate " +
 		"authority or any third party. This is not a qualified electronic signature (QES): it proves " +
@@ -93,13 +93,19 @@ func readmeBody() string {
 // Readme page layout constants (A4 portrait, lower-left origin).
 const (
 	readmePageW   = 595.0
-	readmePageH   = 842.0
 	readmeLeft    = 62.0
 	readmeRight   = 62.0
 	readmeBodyTop = 735.0 // baseline of the first body line
 	readmeLeading = 14.0
-	readmeFontPt  = 11.0
-	readmeFont    = "Helvetica"
+	readmeFontPt  = 11
+	// readmeFont/readmeFontPt are BOTH the font the page is rendered in and the
+	// font wrapText measures against. They were two independent literals — the
+	// constants here and "Helvetica"/11 written again into the JSON spec — which is
+	// a wrap computed for one font and a page drawn in another the moment either
+	// moves.
+	readmeFont      = "Helvetica"
+	readmeTitleFont = "Helvetica-Bold"
+	readmeTitlePt   = 16
 )
 
 // readmeLines word-wraps the body into individual rendered lines, with one blank
@@ -184,8 +190,8 @@ func RenderReadme() ([]byte, error) {
 		"paper":  "A4P",
 		"origin": "LowerLeft",
 		"fonts": map[string]any{
-			"title": map[string]any{"name": "Helvetica-Bold", "size": 16},
-			"body":  map[string]any{"name": "Helvetica", "size": 11},
+			"title": map[string]any{"name": readmeTitleFont, "size": readmeTitlePt},
+			"body":  map[string]any{"name": readmeFont, "size": readmeFontPt},
 		},
 		"header": map[string]any{
 			"font":   map[string]any{"name": "$title"},
@@ -214,10 +220,10 @@ func RenderReadme() ([]byte, error) {
 // The width comes from mdpdf.CoreWidth — the real Base-14 metrics, measured the
 // way pdfcpu emits them. It replaced a hand-rolled three-bucket estimate
 // (0.30/0.52/0.85 em) carrying a 3% safety factor, which was measured to
-// under-count the shipped text by up to 3.29% — a margin thinner than its own
+// under-count the shipped text by up to 3.19% — a margin thinner than its own
 // error, so today's page fitting the column was luck rather than design. Capitals
-// were the worst case at ~14% under, because every capital but M and W took the
-// 0.52 default against a real ~0.72.
+// were the worst case at 28% under, because every capital but M and W took the
+// 0.52 default against a real 0.722.
 //
 // **Fixed HERE rather than later, and the reason is the digest.** Changing how
 // text is measured moves every line break, which moves the rendered page, which
@@ -228,8 +234,9 @@ func RenderReadme() ([]byte, error) {
 //
 // One token longer than the column is still emitted alone rather than split: that
 // is a deliberate limit, and readmeOverflow does not catch it because it is a
-// horizontal defect. TestEveryReadmeLineFitsTheColumn is what does.
-func wrapText(s string, maxW, fontPt float64) []string {
+// horizontal defect. ErrReadmeOverflow is vertical only; the column is guarded by
+// TestEveryReadmeLineFitsTheColumn.
+func wrapText(s string, maxW float64, fontPt int) []string {
 	var lines []string
 	var cur string
 	for _, word := range strings.Fields(s) {
@@ -237,7 +244,7 @@ func wrapText(s string, maxW, fontPt float64) []string {
 		if cur != "" {
 			try = cur + " " + word
 		}
-		if mdpdf.CoreWidth(try, readmeFont, int(fontPt)) > maxW && cur != "" {
+		if mdpdf.CoreWidth(try, readmeFont, fontPt) > maxW && cur != "" {
 			lines = append(lines, cur)
 			cur = word
 		} else {
