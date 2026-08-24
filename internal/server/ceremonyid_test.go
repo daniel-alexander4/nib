@@ -3,6 +3,7 @@ package server
 import (
 	"encoding/hex"
 	"errors"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -152,7 +153,15 @@ func TestAnArmedSessionDerivesItsHopFromTheRoster(t *testing.T) {
 	}
 	// And a mangled one is refused rather than ignored — silently dropping it would arm a
 	// session the user believes is part of a ceremony and which is not.
-	if _, err := ceremonyFor("nib-invite-v1:not-real.deadbeef", certs[0], nil, bobFP); err == nil ||
+	//
+	// **The prefix is DERIVED (2026-08-24, P07.S02).** It was the literal `nib-invite-v1:`,
+	// and the moment `InvitationVersion` moved to 2 this fixture stopped being a *mangled*
+	// invitation and became an *older-format* one. The assertion still passed — both are
+	// refusals — so the test went on reporting that a corrupt invitation is refused while
+	// exercising the version path instead. A check that passes for a different reason than it
+	// names is the shape this slice exists to remove.
+	mangled := "nib-invite-v" + strconv.Itoa(ceremony.InvitationVersion) + ":not-real.deadbeef"
+	if _, err := ceremonyFor(mangled, certs[0], nil, bobFP); err == nil ||
 		errors.Is(err, errNoCeremony) {
 		t.Errorf("a corrupt invitation reported %v; it must be refused, not treated as absent", err)
 	}

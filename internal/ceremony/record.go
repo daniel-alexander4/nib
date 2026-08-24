@@ -18,6 +18,7 @@ import (
 	"strings"
 	"time"
 
+	"nib/internal/pdfops"
 	"nib/internal/sign"
 )
 
@@ -49,7 +50,24 @@ import (
 // Two bumps in one day is also why this comment now records BOTH. It said "Bumped to 2"
 // above a constant reading 3 — a doc describing a version the code had already left, which
 // is this repo's most-found defect shape wearing its most harmless-looking clothes.
-const FormatVersion = 3
+//
+// **Bumped to 4 (2026-08-24, P07.S02).** `Party` gained `Capacity` inside the preimage (D20's
+// capacity amendment), so a v3 record read by this build hashes differently and its signature
+// no longer verifies — the same reason as both earlier bumps, and the same remedy: a version
+// sentence rather than a tampering accusation.
+//
+// **Taken NOW because P07.S02 is the first code in the product that ever constructs a
+// `Record`** — every literal in the tree before this slice was inside a `_test.go`. There are
+// no records in the field, so the bump costs nothing today and costs a migration forever after
+// P07 ships.
+//
+// **What guards it, because until this slice nothing did.** No test pinned this constant to a
+// literal — every reference compared it to itself — and there was no golden vector anywhere in
+// the package, so `rosterPreimage` could change shape with the whole repo green.
+// `TestRosterHashGoldenVector` now pins both: it carries a hex literal and asserts this
+// constant against a literal, so a preimage edit without a bump goes red, and a bump without a
+// re-cut vector goes red.
+const FormatVersion = 4
 
 // MaxCeremonyLife caps how far ahead a record's deadline may be set.
 //
@@ -106,6 +124,30 @@ type Party struct {
 	// it a convener could present one roster to the signers and another to a verifier,
 	// differing only in who was obliged to sign, and both would hash the same.
 	Signs bool `json:"signs"`
+	// Capacity is the role this party signs in — "as Director of Acme Ltd", "as attorney
+	// under a power of attorney dated 3 June" — and it is INSIDE the preimage (D20's
+	// capacity amendment, 2026-08-23).
+	//
+	// # Why it is a field rather than part of Intent
+	//
+	// D20 made `intent` one recital with one home, and P07 writes it verbatim into every
+	// signature's `/Reason`. Real instruments have parties signing in DIFFERENT capacities —
+	// as principal, as guarantor, "signed for and on behalf of" a company — and a witness is
+	// bound by nothing the principal agreed to. Under one shared intent a witness's own key
+	// signs "I agree to sign this document", which is an affirmative false statement about
+	// that party's obligation, inside the artifact, signed by them.
+	//
+	// # Why it is inside the commitment, on the same argument that put Signs there
+	//
+	// A convener who could present one roster to the signers and another to a verifier,
+	// differing only in who was obliged to do WHAT, would have both hash the same. Capacity
+	// is a claim about a party's AUTHORITY, which is what a third party relies on.
+	//
+	// Empty is the ordinary case and renders nothing; a ceremony that does not need
+	// capacities must not look misconfigured. **The preimage chunk is written even when the
+	// value is empty** — see rosterPreimage, where the reason is that a conditional chunk
+	// makes the chunk count vary with the data.
+	Capacity string `json:"capacity,omitempty"`
 }
 
 // Record is the ceremony's founding artifact.
@@ -117,6 +159,27 @@ type Record struct {
 	// DocHash is the SHA-256 of the prepared document **with this record removed** — see
 	// DocumentHash. Every party agrees to the same bytes and a resumed hop can prove it.
 	DocHash string `json:"docHash"`
+	// DigestVersion is the ContentDigestVersion `DocHash` was computed under (D32).
+	//
+	// # Why a number that is already inside the digest needs to be beside it too
+	//
+	// `pdfops.ContentDigestVersion` is bound INTO the digest, and its own doc comment says
+	// that exists so "improving the coverage" does not "accuse a counterparty of tampering".
+	// **It did not achieve that, and could not.** Binding a version inside a hash changes the
+	// hash; it cannot produce a sentence, because the reader has nothing to compare. Measured
+	// at the P07.S02 grill: the constant occurred three times in the whole tree, all inside
+	// `attachments.go`, with no reader anywhere. So a build whose digest covers more than the
+	// writer's told the user *"these are not the same document"* — the exact accusation the
+	// constant was added to prevent, produced by a Nib point release.
+	//
+	// D32's rule is that a version mismatch produces a sentence naming the mismatch. That
+	// needs the version carried where a reader can reach it, which is here. `FormatVersion`
+	// has had this shape since v1.116.17 and this is the same remedy applied to the number
+	// that lacked it.
+	//
+	// Inside the preimage, so the convener signs which digest rule they used — otherwise it
+	// is an unsigned hint a tamperer sets to whatever makes the comparison pass.
+	DigestVersion int `json:"digestVersion"`
 	// Roster is ordered; the order is the signing order.
 	Roster []Party `json:"roster"`
 	// Intent is what everyone is agreeing to, and it is the ONLY home for it (D20's
@@ -223,6 +286,10 @@ func rosterPreimage(r Record) ([]byte, error) {
 	p.addString(convenerFingerprint(r.ConvenerCert))
 	p.addString(r.ID)
 	p.addString(r.DocHash)
+	// The digest rule DocHash was computed under, v4. Signed, so it cannot be edited to make
+	// a comparison pass — see Record.DigestVersion for why carrying it beside the hash is not
+	// redundant with binding it inside the hash.
+	p.addUint(uint64(r.DigestVersion))
 	p.addString(r.Intent)
 	p.addString(r.Expires.UTC().Format(time.RFC3339))
 	for _, party := range r.Roster {
@@ -237,6 +304,17 @@ func rosterPreimage(r Record) ([]byte, error) {
 		}
 		p.add([]byte{sg})
 		p.addString(party.Label)
+		// Capacity, v4. **Written unconditionally, including when empty**, and that is the
+		// whole of its correctness argument rather than a style choice.
+		//
+		// The builder's injectivity rests on every chunk carrying a fixed 8-byte length, which
+		// makes the encoding prefix-free — but only while the NUMBER of chunks is determined by
+		// the roster's length rather than by its contents. `if party.Capacity != "" { add }`
+		// would make the chunk count vary with the data, and injectivity would then rest on a
+		// length coincidence (fingerprints always 32, signs always 1) instead of on the prefix
+		// property. C19's "an empty capacity renders nothing" is about RENDERING and is one
+		// careless reading away from an omitted chunk.
+		p.addString(party.Capacity)
 	}
 	return p.bytes(), nil
 }
@@ -259,6 +337,74 @@ func rosterDigest(r Record) ([]byte, error) {
 // be a cycle), so the duplicate goes and the producer gets the coverage — see
 // TestTheRosterTokenIsWellFormedWhereItIsActuallyBuilt.
 
+// ErrNotCanonical reports a record whose stored form is not the one its own commitment
+// binds. Distinct from a tampering accusation, because it is neither: it is a record built
+// by a door that did not canonicalise.
+var ErrNotCanonical = errors.New("the ceremony record is not in canonical form")
+
+// Canonical returns the record in its ONE representation.
+//
+// # Why this exists: every axis the preimage NORMALISES is malleable
+//
+// `rosterPreimage` does not digest the fields as stored. It digests a PROJECTION of them:
+// the fingerprint is `hex.DecodeString`d to 32 raw bytes, so letter case is folded away, and
+// `Expires` is rendered `.UTC().Format(time.RFC3339)`, so the location and everything finer
+// than a second are dropped. Each of those is a place where two DIFFERENT stored records
+// produce ONE commitment and ONE valid ConvenerSig.
+//
+// Both were measured at the P07.S02 grill, and neither is theoretical:
+//
+//   - **Case.** An on-path party uppercases one roster fingerprint. Verify passed, the hash
+//     was byte-identical, the signature still verified — and the invited party was then
+//     refused by `MatchesRecord` with a message printing two strings that differ only in
+//     case. A targeted denial reading as an accusation of forgery against the convener.
+//   - **Sub-second.** Two records whose deadlines differ by 999ms hash identically and both
+//     verify, while the JSON carries the difference. Bounded to under a second, so small —
+//     but it is the same shape, and the same fix closes it.
+//
+// The repair is not to loosen the comparisons around the commitment; that is a check to
+// forget at the next call site. It is to make the disagreement UNREPRESENTABLE: the record is
+// canonicalised before it is signed, and `Verify` refuses one that is not. Then the stored
+// bytes are derivable from the preimage and there is nothing to disagree about. Same move,
+// and the same reasoning, as deleting `Party.Name`.
+func (r Record) Canonical() Record {
+	out := r
+	// The digest rule this build writes. Set here rather than at the convene door for the
+	// same reason Sign canonicalises here: a rule enforced at the caller is one the next
+	// caller forgets. A record arriving from the wire keeps whatever it carries — Canonical
+	// is only ever applied to a record this build is about to sign.
+	if out.DigestVersion == 0 {
+		out.DigestVersion = pdfops.ContentDigestVersion
+	}
+	// UTC and second-truncated, because that is exactly what the preimage renders.
+	out.Expires = r.Expires.UTC().Truncate(time.Second)
+	out.Roster = append([]Party(nil), r.Roster...)
+	for i := range out.Roster {
+		out.Roster[i].Fingerprint = strings.ToLower(out.Roster[i].Fingerprint)
+	}
+	return out
+}
+
+// IsCanonical reports whether r is already in the form Canonical would return.
+//
+// Compared field-by-field against `Canonical()` rather than by re-encoding, so a future
+// normalised axis is caught by adding it to `Canonical` alone.
+func (r Record) IsCanonical() bool {
+	c := r.Canonical()
+	if !r.Expires.Equal(c.Expires) || r.Expires.Location() != time.UTC {
+		return false
+	}
+	if len(r.Roster) != len(c.Roster) {
+		return false
+	}
+	for i := range r.Roster {
+		if r.Roster[i] != c.Roster[i] {
+			return false
+		}
+	}
+	return true
+}
+
 // NewID returns 128 random bits as hex.
 func NewID() (string, error) {
 	b := make([]byte, 16)
@@ -276,6 +422,11 @@ func NewID() (string, error) {
 // do with tampering.
 func (r *Record) Sign(certPEM, keyPEM []byte) error {
 	r.Version = FormatVersion
+	// Canonicalise BEFORE hashing, so the bytes that get stored are the bytes the commitment
+	// binds. Doing it here rather than at the convene door is deliberate: Sign is the one
+	// place a record becomes authoritative, and a rule enforced at the caller is a rule the
+	// next caller forgets (ADR-009).
+	*r = r.Canonical()
 	r.ConvenerCert = string(certPEM)
 	h, err := r.RosterHash()
 	if err != nil {
@@ -324,6 +475,15 @@ func (r Record) Verify(now time.Time) error {
 	if len(r.Roster) == 0 || len(r.Roster) > MaxRoster {
 		return fmt.Errorf("%w: it names %d parties (the limit is %d)",
 			ErrRosterMismatch, len(r.Roster), MaxRoster)
+	}
+	// Canonical form, BEFORE the signature check — see Canonical's doc for the two measured
+	// malleabilities this closes. It comes first because a non-canonical record whose
+	// signature also fails should be reported as the thing the reader can act on: the
+	// signature would verify, since the preimage folds exactly the axes that differ, so
+	// "forged" would be the wrong word for a record that is merely mis-built.
+	if !r.IsCanonical() {
+		return fmt.Errorf("%w: its stored form is not the form its own commitment binds, so two "+
+			"different records could carry this signature", ErrNotCanonical)
 	}
 	h, err := r.RosterHash()
 	if err != nil {

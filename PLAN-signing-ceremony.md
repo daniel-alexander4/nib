@@ -4221,6 +4221,23 @@ Exit criteria:
 items all survive; the phase now has **eleven** slices and **twenty-two** criteria, and the build order
 is S01 · S08 · S02 · S02b · S03 · S04 · S05 · S06 · S07 · S09 · S10.
 
+**Amended 2026-08-24 at S02's grill: S02 SPLIT, so the phase has TWELVE slices and the build order is
+S01 · S08 · S02 · S02a · S02b · S03 · S04 · S05 · S06 · S07 · S09 · S10.** S02 keeps everything inside
+a signed preimage or a hashed structure (unpayable after the first field record); the new S02a is the
+door, the route and what it persists. See the block above S02 for the three measurements that forced it.
+
+**Pin taken 2026-08-24 rather than asked — D29's document freeze moves into this phase, and it is
+reversible.** *"A document under a live ceremony refuses mutating operations and names the ceremony"*
+is currently a **P06** exit criterion (line 4179 below), and **P06 is built LAST, after P07**. So P07
+creates the first convened documents in the product's history and the server-side freeze that protects
+them arrives a phase later. The client-side stopgap does not cover the gap either: `confirmSignatureLoss`
+(`web/app.js:2301`) is `!isSigned() || confirm(...)`, `isSigned()` reads `state !== 'unsigned'`, and a
+convened document **is** Unsigned — so it returns true with **no dialog at all**. Measured. D29's own
+text already says *"a client confirm is not a freeze"*. The criterion is therefore **owed by P07.S02a**,
+where the population it guards is created; P06 keeps the *surface* half (naming the ceremony on screen).
+This moves work between two phases and changes no decision — the same shape as the phase-open pin that
+moved the server-side convene out of P06, and reversible in a word.
+
 **What the firming pass found, each read in the code.** Three things the criteria presuppose were not
 there: **nothing in the product constructs a `ceremony.Record`** (every literal is inside a `_test.go`;
 the only production reader is `ceremony.Extract`) → S02; **L3 has no code**, so "no contribution out of
@@ -4381,23 +4398,98 @@ Acceptance:
 - **Added at the slice grill:** the body cannot outgrow the space above the signature blocks. Measured: the page is 31 rendered lines with a last baseline of **315** against a block-stack top of **220**, and the failure is silent AND destructive — pdfcpu clamps the position it emits, so surplus lines stack on one baseline, and the appearance is an opaque white fill, so a collision **erases** the trust text. `RenderReadme` refuses (`ErrReadmeOverflow`) at the one door, against a floor derived from `stackPlacement` rather than restated as a literal.
 - **Added at the slice grill:** every rendered line fits the column, measured with the **real** Base-14 metrics. `wrapText` hand-rolled a three-bucket estimate with a 3% safety factor while its worst under-measurement was **3.29%** — the margin was luck. Fixed *here* because changing how text is measured moves every line break, which moves `ContentDigest` → `DocHash` → `RosterHash`: free today, unpayable from S02.
 
-#### P07.S02 — Convene: the pre-signing pass, the record, and the invitations, behind one door *(D20, D21, D22, D25; C04, C19, C20)*
-Scope: **nothing in the product constructs a `ceremony.Record`** — every literal is inside a `_test.go`, and
-the only production reader is `ceremony.Extract`. This slice is the missing constructor and its route.
-**It absorbs D25's page allocation** (moved here from S06, 2026-08-23): page count is inside `ContentDigest`,
-so the ordering is **readme → signature pages → `docHash` → `Embed` → first signature**, and a slice that
-allocates pages four slices later moves the digest under every record already convened. One door for the whole
-pre-signing pass, per ADR-009.
+**S02 was SPLIT IN TWO at its grill (2026-08-24) and its irreversible half re-scoped. Verdict:
+overturned.** Record: `<project-memory>/grills/2026-08-24-p07s02-convene.md`. Fourteen seats; thirteen
+returned (the PDF-format seat died on a rate limit before reading its brief — a declared coverage hole,
+not a clean pass). The seam of the split is **inside the commitment vs outside it**, not the panel's
+proposed "silent vs loud": what a signed preimage or a digest commits to is unpayable after the first
+field record, and everything else is an ordinary fix.
+
+**Three measurements refute the text S02 was to be built against, each re-verified by the driver:**
+
+1. **`docHash` is dead from hop 2 on an HONEST ceremony, and the repair this plan adopted at line 4241
+   is REFUTED.** `ContentDigest` hashes `/Annots`; a *visible* signature adds a widget annot; the
+   production path signs visibly. Measured: hop 1 OK, then `CheckDocument` = *"these are not the same
+   document"* — a false accusation against an honest counterparty, every time. The guard cited as
+   discharging it (`record_test.go:366`) signs **invisibly** and cannot fail for the clause's reason.
+   And "byte prefix + `AddedAfter == false`" was run against a document whose **page 1 is blacked out
+   by the last signer**, through both `sign.SignApproval` and the production `p2p.Contribute`:
+   `prefix=true docHashFromPrefix=true addedAfter=false state=valid` — **every clause passes**, two
+   signers, both valid. The repair is anchored only at revision 0 and says nothing about revisions 1..N.
+2. **`ContentDigest` excludes the embedded-files name tree, so an exhibit swap is invisible.** Measured:
+   an attachment's contents changed under the same filename — digest unmoved, `CheckDocument` = nil.
+   The exclusion is *argued* at `embed.go:43-47` ("the signatures cover everything else"), an argument
+   already refuted once **inside the same function** when `/Annots` was folded in.
+3. **FOUR irreversible format decisions, not two — and the count moves BOTH ways.**
+   `ContentDigestVersion` is a third (three occurrences in the whole tree; bound *into* the digest and
+   carried nowhere beside it, so a bump yields the tampering accusation its own comment says it
+   prevents). The ceremony **wire protocol has no version at all**, so C13's third leg is unbuildable.
+   But the *invitation* bump is **not** forced: `/pending 247` already grilled and deferred this work,
+   and its recorded answer is **optional → no bump**. As a `*time.Time` it lands at **S02b**, where its
+   own gate (G1: `MatchesRecord` gains a production caller) is discharged — with nothing locked in by
+   S02 shipping.
+
+**The one rule that kills the largest class:** *every axis the preimage NORMALISES is malleable.*
+`rosterPreimage` hex-decodes fingerprints to raw bytes, so the commitment is case-**folding** — two
+byte-different rosters share one `RosterHash` and one valid `ConvenerSig` — and it commits `Expires` at
+RFC3339 **second** granularity while the JSON carries nanoseconds. Seven comparison sites around that
+one commitment implement two different rules. **The door canonicalises the record before signing**, so
+the disagreement becomes unrepresentable rather than checked — the move that deleted `Party.Name`.
+
+#### P07.S02 — The commitment becomes honest: the digest, the versions, and the guards *(D20, D32; C19, and the precondition for C01/C17)* — **re-scoped 2026-08-24 at its grill** *(done 2026-08-24, v1.117.153)*
+Tasks (grilled 2026-08-24):
+- T01 — the three guards become measurements FIRST, before any field lands: `inPreimage` derived by driving `rosterPreimage`; `TestEveryPartyFieldIsComparedByMatchesRecord` as its twin; a `RosterHash` golden vector; `FormatVersion` pinned to a literal. **First, because every later task is a preimage edit and today nothing can see one.**
+- T02 — the reader scan gains an out-of-package reader per shape and validates its own `published` keys (one unexported field currently drops a whole shape, PASS).
+- T03 — `Party.Capacity`, chunk added unconditionally inside the per-party loop; `FormatVersion` 3 → 4. T01's driven guard is what proves it landed in the commitment.
+- T04 — canonicalisation: `Record.Canonical()` lowercases roster fingerprints and truncates `Expires` to the second the preimage commits to; `Sign` canonicalises; `Verify` refuses a non-canonical record; re-encode reproduces the bytes.
+- T05 — `ContentDigest` covers the embedded-files name tree **minus `nib-ceremony.json`**; `ContentDigestVersion` 2 → 3; the self-reference row (S02-2) stays green.
+- T06 — the `Record` carries the digest version inside the preimage, and a skew produces a sentence naming both numbers rather than *"these are not the same document"*.
+- T07 — `RosterHash` travels in the invitation; `MatchesRecord` compares it. Measured today: one invitation matches any number of records sharing a roster.
+- T08 — the five measured-false doc comments move (`embed.go:14-18`, `:39-41`, `:43-47`, `attachments.go:188-189`, `:191-195`). `attachments.go:265` stays — it is the one that is true.
+- T09 — red proofs for S02-1, S02-3, S02-4, S02-6, S02-7; `verify_test.go`'s `recorded` count moves with them.
+
+Scope: everything that is **inside a signed preimage or a hashed structure**, and therefore free only
+until the first field record. No route, no vault, no mirror — those are S02a. This slice exists because
+S02a cannot be built correctly on a digest that refuses honest documents and a commitment that folds
+case.
+Acceptance:
+- `ContentDigest` covers the **embedded-files name tree minus `nib-ceremony.json`** (self-reference), `ContentDigestVersion` 2 → 3 — driven by swapping an attachment's *contents* under an unchanged filename and requiring the digest to move. The current exclusion is measured false in the window the digest is checked in.
+- **The `Record` carries the digest version it was written under**, inside the preimage — so a future coverage change produces a **version sentence naming both numbers** (D32), never *"these are not the same document"*. Driven by reading a record stamped with a version this build does not write.
+- **What `docHash` proves is written down and the code says the same thing.** Five doc comments are measured FALSE today (`embed.go:14-18`, `:39-41`, `:43-47`, `attachments.go:188-189`, `:191-195` — the last contradicting its own function body at `:265-271`) and move in this commit. `attachments.go:265` is NOT among them: it is the one that describes the code correctly, and deleting it would delete the true statement.
+- `Party.Capacity` inside the per-party loop, **chunk added unconditionally including when empty** (a conditional chunk makes the chunk count variable and injectivity then rests on a length coincidence), `FormatVersion` 3 → 4.
+- **The record is canonical before it is signed** — every roster fingerprint lowercased, `Expires` truncated to the second the preimage commits to — and `Record.Verify` **refuses** a non-canonical record. Driven by requiring that re-encoding a verified record reproduces its own bytes.
+- **`RosterHash` travels in the invitation and `MatchesRecord` compares it.** Measured: `MatchesRecord` compares nothing that varies between two records sharing a roster, so **one invitation authorises any number of records** — a convener can run two chains under one ceremony id with different intents, deadlines and documents, and both parties' checks pass. One field subsumes C17's whole field list and fails closed.
+- **Three guards stop being claims and start being measurements**, each red-proved: `TestEveryPartyFieldIsInTheCommitment` derives `inPreimage` by *driving* `rosterPreimage` (vary one field, require the digest to move) rather than restating it — measured: `Capacity` declared in the map alone ships GREEN with `Director` and `Witness` hashing identically; `MatchesRecord` gains its reflection twin over every `Party` field; and the reader scan gains an out-of-package reader for each new field plus validation of its own `published` keys — measured: one **unexported** field silently drops a whole shape from the scan.
+- A **golden vector** pins `RosterHash` for a fixed record, and a test pins `FormatVersion` to a **literal**. Neither exists today, so the preimage can change with every test green.
+
+#### P07.S02a — Convene: the door, the route, and what it persists *(D20, D21, D22, D25; C04, C20, C22)* — **new, 2026-08-24, split out of S02**
+Scope: **nothing in the product constructs a `ceremony.Record`** — every literal is inside a `_test.go`,
+and the only production reader is `ceremony.Extract`. This slice is the missing constructor and its
+route. **It absorbs D25's page allocation** (moved from S06, 2026-08-23): page count is inside
+`ContentDigest`, so the ordering is **readme → signature pages → `docHash` → `Embed` → first
+signature**. One door for the whole pre-signing pass, per ADR-009.
+**Measured at the grill: `internal/ceremony` MAY import `internal/p2p`** in production code — build,
+vet **and test-compile** green on a clean tree; only the reverse edge cycles, and it is invisible to
+`go build`. So `Convene` lives in `internal/ceremony` and calls `p2p` directly. An injected
+`PrepareDocument` was considered and **refused**: a test could pass a no-op and the ordering guard
+would go green with the readme never appended.
 **Pin (2026-08-23, phase-open): the server-side convene is P07's; P06's sketch item is the panel over it.**
 Acceptance:
-- A four-party record is convened over the API; `Extract` + `Verify` round-trip it; and **a party other than the convener runs `CheckDocument` on what it received and it passes** — `Verify` does not check `docHash`, so without this clause S02 can ship a hash over the wrong bytes and be green everywhere.
-- `Signs:false` and a non-empty `capacity` are representable and survive the round trip (both are inside the preimage).
-- One invitation per party, each `ParseInvitation`-able, **each carrying the ceremony's `expires`** (new field, D32's skew rule covers it) so an armed party can bound itself by the record's deadline rather than by `MaxCeremonyLife` (C21).
-- Refused **by name, through the convene route** — driven separately, each asserting the route's own error text rather than `Record.Verify`'s, which is P01's coverage: a duplicate fingerprint; a roster of one; an empty intent; a deadline that does not admit every remaining hop (C20); **a second convene on a document that already carries a record**; and a mixed-case roster **convenes successfully**, because the commitment is case-insensitive while every string comparison around it is not.
-- Duplicate-fingerprint and roster-of-one refusals also land in `Record.Verify` and `ParseInvitation` — the doors every **non-convener** passes. A bound enforced only at the emitter is the exact inversion of the reasoning `record.go` already records twice.
-- The convener's N−1 invitation secrets are persisted **in the vault**, keyed by `(ceremony id, party fingerprint)`, and are re-readable after a restart — driven by an **absence** check over `~/nib/ceremonies/<id>/`, never by a presence check on the vault. Today they exist only in one HTTP response: close the tab and the ceremony is unrecoverable, not stalled.
-- The unconvened source bytes are retained under the ceremony id, so C04's "start a new ceremony" is a **route** and not a sentence, and the new record inherits the old roster rather than making somebody retype nine fingerprints under pressure.
-- A roster above the D22 sitting ceiling (~8) returns a **distinct, named** soft refusal the API carries and P06 later renders. P06 is built last, so this is the only place in the build order where D22's ceiling pin can land before a screen exists.
+- A four-party record is convened over the API and `Extract` + `Verify` round-trip it. **The `CheckDocument` clause is asserted on the bytes the route RETURNS, re-fetched over HTTP** — not on the handler's own slice, and not framed as "a party other than the convener", which `CheckDocument`'s signature cannot express (it takes bytes and a clock) and which is a copy asserted against itself. **It is asserted at hop 1 only, and says so**: from hop 2 the honest answer is S02's, not a pass.
+- `Signs:false` and a non-empty `capacity` are representable and survive the round trip.
+- **D25's page allocation is driven**, at N=2, N=6, N=7 and N=9 — six blocks to a page, the divisor D25 chose (eight fit geometrically; six leaves a heading and a margin, and `ceil(32/6)=6` pages is what `invitation.go:50` already states). **At N≤2 it allocates ZERO extra pages**, preserving today's shipped two-party output and `readmeFloor`'s pin exactly. `stackPlacement`'s signature does not change — `readmeFloor` and `NominalBlockRect` both derive from it.
+- **The convener's own fingerprint is inserted by the door**, at a caller-chosen roster position, because `identity()` mints a key on first use and a client-supplied roster cannot contain it. Driven on a fresh vault.
+- Refused **by name, through the convene route** — driven separately, each asserting **the route's own sentence**, and the sentences asserted **distinct from one another** (one helper printing one message satisfies six rows otherwise): a duplicate fingerprint (naming *which* party and at *which two positions*); a roster of one; an empty intent; an intent longer than a signature block can render **verbatim** (C15) — refused, never clamped, because `cosign.go:64` silently truncates at 200 runes today and `ctx.fillText` has no `maxWidth`; a deadline that does not admit every remaining hop (C20); and **a second convene on a document that already carries a record**, refused *before* `Embed` so the user never sees pdfcpu's *"an attachment named … already exists"*.
+- **C20 is driven at N≥4**, and its per-hop budget comes from a new `ceremonyHopBudget()` in `internal/server/clocks.go` — the only package that can see all four terms (`connectDeadline` and `bootstrapBudget` are unexported there; `ExchangeBudget` and `MaxRemoteDecisionWait` are in `p2p`). Measured **~29m20s**, not the plan's 23m: `exchangeDeadline` is *"the budget for one PHASE of a session — never for the whole of it"* and `checkCeremonyDeadline` reserves exactly one of them for a whole session, re-pointed here in the same commit. At N=2 the guard cannot tell per-hop from per-ceremony and is vacuous by arithmetic.
+- Duplicate-fingerprint, roster-of-one and empty-intent refusals also land in `Record.Verify` — the door every **non-convener** passes — **driven by constructing the bad record directly**, never through the route, which would refuse first and leave `Verify` uncalled.
+- **`Party.Label` is typed for publication, not lifted from the vault.** `pinnedLabel` returns the convener's *private nickname*, and convene would publish it to every party, inside the commitment, irreversibly. The route echoes what will be published before it commits.
+- The convener's N−1 invitation secrets are persisted **in the vault**, keyed by `(ceremony id, party fingerprint)` with the fingerprint stored as **raw bytes**, re-readable after a genuine reopen from disk — and **`vault.Contents` gains a version gate in the same change**, because an older build silently drops unknown keys on the next ordinary `AddRecent` and the loss is unrecoverable. Driven by an **absence** check over `~/nib/ceremonies/<id>/` that first asserts the directory exists and is non-empty, then walks it recursively — a glob over a directory nothing created is green having read nothing.
+- **A read door for the invitations**, so they are recoverable after a restart. Without it the secrets are written, tested, and reachable by nothing — the ninth member of this phase's built-but-unwired set.
+- The unconvened source bytes are retained under the ceremony id, so C04's "start a new ceremony" is a **route** and not a sentence. **C04's message is true in the state it is reached in**: at convene there are no signatures, so *"the signatures already collected cannot be carried into it"* is false and must be conditioned.
+- The convene route **commits into the open document** (`commitMutation`, inheriting ADR-008's byte cap and the 409), never a download — a download-only convene leaves the convener's tab holding the *unconvened source*, so re-convening it succeeds silently and every issued invitation is dead. It joins `MUTATING` in the pin inventory in the same commit; both reconciliations are subset-only and cannot catch an addition.
+- The mirror is written through `WriteFileAtomicDurable`, not two bare `os.WriteFile`s, and **`document.pdf` is written before `record.json`** so the record's presence is the commit point.
+- A roster above the D22 sitting ceiling (~8) returns a **distinct, named soft refusal — a warning the API carries, not a refusal** (D22's pin makes ~8 a copywriting bound and 32 the hard cap). A hard refusal at 8 would make C03, C18 and C21 — all nine-party — unreachable through the door S02a exists to build.
+- **A visible ceremony page is rendered in the same pre-signing pass**, carrying the ceremony id, the recital verbatim, and each party in roster order with label, capacity, short fingerprint and whether they are obliged to sign. This lands S08's struck "name the convener" clause, which was moved here and had no bullet. **The plan's "only `Record.ID` and the convener's fingerprint are printable" is too narrow**: the hash fixed point binds only `DocHash` and `RosterHash`; `Intent`, `Expires`, every `Label`, `Capacity` and `Signs` are decided *before* the page is rendered, so the whole record except the two hashes is printable. Without it a flattened or scanned bundle carries `[NibRoster:…]` tokens whose preimage exists nowhere in the exhibit. Inherits S08's four measured hazards for party-supplied bytes on a page: WinAnsi-encodability, `%` (pdfcpu treats it as a placeholder introducer), embedded newlines, and an unsplittable over-long token.
 
 #### P07.S02b — Invitation consumption: parse, reconcile, pin, scope *(D21, D29; C17)* — **new, 2026-08-23**
 Scope: the panel found the convene half owned and the **consume half owned by nobody**. `AddCeremonyPeer` and

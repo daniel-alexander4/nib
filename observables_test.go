@@ -73,11 +73,20 @@ var published = map[string][]string{
 	// its fields with comments stripped. A first draft of this table was written from
 	// memory and named four wrong files — the scan reporting a false orphan is worse than
 	// no scan, so the table is evidence like everything else here.
-	"udpmux.Stats":             {"internal/cli/rendezvous.go", "internal/udpmux/mux.go"},
-	"rendezvous.Stats":         {"internal/cli/rendezvous.go", "internal/rendezvous/dht.go"},
-	"rendezvous.SelfAddress":   {"internal/rendezvous/selfaddr.go", "internal/cli/rendezvous.go"},
-	"discovery.Stats":          {"internal/cli/discover.go"},
-	"discovery.Seen":           {"internal/cli/discover.go", "internal/server/discover.go"},
+	"udpmux.Stats":           {"internal/cli/rendezvous.go", "internal/udpmux/mux.go"},
+	"rendezvous.Stats":       {"internal/cli/rendezvous.go", "internal/rendezvous/dht.go"},
+	"rendezvous.SelfAddress": {"internal/rendezvous/selfaddr.go", "internal/cli/rendezvous.go"},
+	"discovery.Stats":        {"internal/cli/discover.go"},
+	// `discovery.Seen` was named here and has **never been discovered** — found 2026-08-24 by
+	// this file's own new `published`-key validation, on its first run. `Seen` embeds
+	// `Announcement`, and discoverObservables treats an embed as "fields this scan cannot see"
+	// and drops the whole shape. So the entry claimed coverage it never had.
+	//
+	// Removed rather than repaired, because repairing it is a change to the DISCOVERER (walk
+	// embedded structs) which would newly discover shapes across ten packages and is not this
+	// slice's. The coverage lost is narrow and is stated rather than assumed: `Seen`'s embedded
+	// half IS covered, through the `discovery.Announcement` entry below; what is uncovered is
+	// its own `From` field. Filed for the discoverer fix.
 	"discovery.Announcement":   {"internal/discovery/announce.go", "internal/server/discover.go"},
 	"p2p.Channel":              {"internal/p2p/verify.go", "internal/p2p/channel.go"},
 	"p2p.SignerAttestation":    {"web/app.js", "internal/server/cosign.go", "internal/ceremony/record.go"},
@@ -127,6 +136,20 @@ var unreadKnown = map[string]string{
 	"rendezvous.Stats.Loaded":        "deliberate — see internal/cli/rendezvous.go's scratch-directory comment",
 	"rendezvous.Stats.Saved":         "deliberate — written by the deferred Close, after the output is printed",
 	"rendezvous.Stats.CacheRejected": "deliberate — always false against a scratch directory",
+
+	// **Parked HONESTLY rather than passing silently (2026-08-24, P07.S02).** This scan's
+	// declared readers for `ceremony.Party` are `record.go` and `invitation.go` — both inside
+	// the DEFINING package — so any new field satisfies it the moment the producer mentions
+	// it once. Measured at the P07.S02 grill: `Capacity` added to `Party` and to
+	// `rosterPreimage` passes this scan with **no display reader anywhere**.
+	//
+	// So `Capacity` is entered here deliberately. It IS published, it IS committed, and
+	// nothing renders it yet — which is the true state, and it would otherwise have shipped
+	// as a green. Deleting this line is what P07.S07 does when a signature block renders it
+	// (C19). The same limitation applies to `Record`/`Invitation` and is stated in the
+	// package doc below rather than repeated per field.
+	"ceremony.Party.Capacity": "published and committed at P07.S02; the block renderer that " +
+		"displays it is P07.S07 (C19). Delete this line then.",
 }
 
 func TestEveryPublishedObservableHasANamedReader(t *testing.T) {
@@ -220,6 +243,24 @@ func TestEveryPublishedObservableHasANamedReader(t *testing.T) {
 	for k := range excluded {
 		if _, ok := shapes[k]; !ok {
 			t.Errorf("%s is excluded but is no longer a published observable", k)
+		}
+	}
+	// **And for `published` itself, which was the one table nothing validated (2026-08-24,
+	// P07.S02).** `unreadKnown` and `excluded` are both checked against the discovered set;
+	// `published` was not, so a shape that stopped being discovered simply vanished from the
+	// scan. Measured at the grill: adding ONE UNEXPORTED field to `ceremony.Party` drops it
+	// out of discoverObservables entirely — the count went 26 → 25 and the run PASSED, with
+	// nothing anywhere saying `ceremony.Party` was no longer covered.
+	//
+	// The stimulus floor below is `len(shapes) < 20`, so six shapes could have disappeared
+	// before anything noticed. A coverage gate that silently stops covering something is the
+	// vacuous green applied to itself.
+	for name := range published {
+		if _, ok := shapes[name]; !ok {
+			t.Errorf("`published` names %q and it was NOT discovered as a published observable. "+
+				"Either the type was renamed or deleted — in which case remove the entry — or it "+
+				"stopped being discoverable (an unexported field will do it), in which case this "+
+				"scan has quietly stopped covering a shape it claims to cover.", name)
 		}
 	}
 	t.Logf("scanned %d published observables across %d packages", len(shapes), len(observablePackages))

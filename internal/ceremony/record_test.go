@@ -5,6 +5,9 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"errors"
+	"image"
+	"image/color"
+	"image/png"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -111,6 +114,108 @@ func TestRosterHashCoversEveryAxis(t *testing.T) {
 	}
 }
 
+// TestEveryRecordFieldIsInTheCommitment is the completeness half of the guard above, and it
+// exists because that one is a HAND LIST.
+//
+// `TestRosterHashCoversEveryAxis` names nine axes and says why each matters — which is worth
+// keeping, because the reasons are the specification. What it cannot do is notice a TENTH.
+// Measured at the P07.S02 grill: the same shape one level down (`inPreimage` over `Party`)
+// shipped a field outside the commitment while reading green, and this slice then added
+// `Record.DigestVersion`, which the nine-axis list does not mention.
+//
+// So: the list documents why; this drives what. Every field of Record moves RosterHash, or it
+// is named below with its reason.
+func TestEveryRecordFieldIsInTheCommitment(t *testing.T) {
+	// Deliberately outside the commitment, each with its reason.
+	excluded := map[string]string{
+		"ConvenerSig": "it IS the signature over this hash — a value cannot be inside the " +
+			"preimage it signs",
+	}
+
+	certA, _, fpA := identity(t, "Convener A")
+	certB, _, fpB := identity(t, "Convener B")
+	base := Record{
+		Version: FormatVersion, ID: "id", DocHash: strings.Repeat("ab", 32),
+		DigestVersion: 3, Intent: "intent",
+		Expires:      time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC),
+		Roster:       []Party{{Fingerprint: fpA, Label: "Convener", Signs: false}},
+		ConvenerCert: string(certA),
+	}
+
+	ty := reflect.TypeOf(Record{})
+	if ty.NumField() == 0 {
+		t.Fatal("Record has no fields — this guard would pass vacuously")
+	}
+	moved := 0
+	for i := 0; i < ty.NumField(); i++ {
+		f := ty.Field(i)
+		if excluded[f.Name] != "" {
+			continue
+		}
+		var mutate func(r *Record)
+		switch f.Name {
+		case "ConvenerCert":
+			// Two REAL certs: convenerFingerprint returns "" for anything unparseable, so two
+			// junk strings would both hash as empty and this row would fail for the wrong
+			// reason. The roster gains B so the record stays internally coherent.
+			mutate = func(r *Record) {
+				r.ConvenerCert = string(certB)
+				r.Roster = []Party{{Fingerprint: fpB, Label: "Convener", Signs: false}}
+			}
+		case "Roster":
+			mutate = func(r *Record) {
+				r.Roster = append(append([]Party(nil), r.Roster...),
+					Party{Fingerprint: strings.Repeat("22", 32), Label: "A", Signs: true})
+			}
+		default:
+			switch f.Type.Kind() {
+			case reflect.String:
+				mutate = func(r *Record) {
+					reflect.ValueOf(r).Elem().FieldByName(f.Name).SetString("something else")
+				}
+			case reflect.Int:
+				mutate = func(r *Record) {
+					reflect.ValueOf(r).Elem().FieldByName(f.Name).SetInt(99)
+				}
+			default:
+				if f.Type == reflect.TypeOf(time.Time{}) {
+					mutate = func(r *Record) { r.Expires = r.Expires.Add(24 * time.Hour) }
+					break
+				}
+				t.Fatalf("Record.%s is a %s and this guard has no mutation rule for that kind. "+
+					"Add one — a field it cannot vary is a field it cannot cover.", f.Name, f.Type)
+			}
+		}
+		want, err := base.RosterHash()
+		if err != nil {
+			t.Fatal(err)
+		}
+		r := base
+		mutate(&r)
+		got, err := r.RosterHash()
+		if err != nil {
+			t.Fatalf("Record.%s: %v", f.Name, err)
+		}
+		if bytes.Equal(got, want) {
+			t.Errorf("Record.%s varies and RosterHash does NOT move, so the field is OUTSIDE the "+
+				"commitment — two records differing in it carry one valid ConvenerSig. Add it to "+
+				"rosterPreimage, or name it in `excluded` with why.", f.Name)
+			continue
+		}
+		moved++
+	}
+	if moved == 0 {
+		t.Fatal("no Record field moved RosterHash — the preimage is not reading the record, so " +
+			"this guard measured nothing")
+	}
+	for f := range excluded {
+		if _, ok := ty.FieldByName(f); !ok {
+			t.Errorf("`excluded` names %q and Record has no such field, so the exclusion covers "+
+				"nothing and is quietly weakening this guard.", f)
+		}
+	}
+}
+
 // TestRosterHashIsNotAmbiguousAcrossFieldBoundaries: the axes are length-prefixed, so two
 // records that differ only in where a boundary falls must not collide.
 //
@@ -143,53 +248,358 @@ func TestRosterHashIsNotAmbiguousAcrossFieldBoundaries(t *testing.T) {
 	}
 }
 
-// TestEveryPartyFieldIsInTheCommitment replaced an exclusion test (2026-08-22, D21).
+// TestEveryPartyFieldIsInTheCommitment — EVERY field of a roster entry is inside
+// `rosterPreimage`, or it is named here with its reason.
 //
-// What it was: TestTheNameIsNotInTheCommitment, which set `Party.Name` to different words and
-// asserted RosterHash did not move. That test cannot exist any more — `Name` is gone (see
-// Party's own doc for why), and the property it guarded is now structural rather than
-// arithmetic: there is no wordlist-derived value in a roster entry to keep out.
+// A field added to Party and NOT added to the preimage sits silently outside the commitment:
+// the copy the signers read and the copy a verifier reads can differ in it and both hash the
+// same. That is precisely what `Party.Name` was for three phases (see Party's own doc), and
+// no test in this package could see it, because a test that asserts ONE named field's
+// exclusion says nothing about the next field somebody adds.
 //
-// What it is now is the stronger question, and the one the deletion opened. EVERY field of a
-// roster entry is inside `rosterPreimage`, or it is named here with its reason. A field added
-// to Party and NOT added to the preimage sits silently outside the commitment: the copy the
-// signers read and the copy a verifier reads can differ in it and both hash the same. That is
-// precisely what `Name` was for three phases, and no test in this package could see it,
-// because a test that asserts one named field's exclusion says nothing about the next field
-// somebody adds. This one goes red in the same commit that adds it.
+// **Two rewrites, and the second is the one that matters.** It replaced an exclusion test in
+// 2026-08-22 (D21) — `TestTheNameIsNotInTheCommitment`, which could not survive `Name`'s
+// deletion. Then, at the **P07.S02 grill (2026-08-24), it was found to be a CLAIM rather than
+// a MEASUREMENT** and rewritten again.
 //
-// The stimulus is the struct's own field set, so the inverse loop is not a nicety: without
-// it, a Party with no fields at all would satisfy the first loop vacuously.
+// What it was: a hand-maintained `inPreimage` map, checked against `reflect.TypeOf(Party{})`
+// — never against `rosterPreimage` itself. So it compared one restatement of the preimage to
+// the struct, and the function it was about was not in the loop at all. Measured on a
+// pristine export at the grill: adding `Capacity` to `Party` and to `inPreimage` ONLY, with
+// `rosterPreimage` untouched, shipped **green** — with `Director` and `Witness` hashing
+// identically. The guard's own failure message pointed the implementer at the map ("Add it to
+// rosterPreimage, OR name it in `excluded`"), which is the cheaper of the two edits.
+//
+// What it is now: for every field of Party, vary THAT FIELD ALONE and require RosterHash to
+// move. There is no list to keep in step, because the preimage is driven rather than
+// described. A field added to Party and not to rosterPreimage goes red on the field's own
+// name, in the same commit that adds it.
+//
+// **The stimulus assertion moved with the rewrite**, and that is not bookkeeping: the old one
+// asserted the struct's field set was non-empty, which is the wrong axis — it could not tell a
+// preimage that reads the roster from one that ignores it. The new one requires that at least
+// one field actually MOVED the hash.
+//
+// The `excluded` map survives for a genuine future exclusion, and it now costs something to
+// use: an entry must say why, and the inverse loop below checks it still names a real field.
 func TestEveryPartyFieldIsInTheCommitment(t *testing.T) {
-	// The fields rosterPreimage actually digests, read at the line (record.go).
-	inPreimage := map[string]bool{
-		"Fingerprint": true,
-		"Signs":       true,
-		"Label":       true,
-	}
-	// Deliberately outside, each with its reason. EMPTY is the correct state and is not an
-	// oversight: `Name` is the only entry this map would ever have carried, and it is not a
-	// field any more. An unexplained entry here is how the next one gets parked and forgotten.
+	// Deliberately outside the commitment, each with its reason. EMPTY is the correct state:
+	// `Name` is the only entry this map would ever have carried and it is not a field any
+	// more. An unexplained entry is how the next one gets parked and forgotten.
 	excluded := map[string]string{}
 
 	ty := reflect.TypeOf(Party{})
+	if ty.NumField() == 0 {
+		t.Fatal("Party has no fields — every loop below would pass vacuously")
+	}
+	moved := 0
 	for i := 0; i < ty.NumField(); i++ {
-		f := ty.Field(i).Name
-		if inPreimage[f] || excluded[f] != "" {
+		f := ty.Field(i)
+		if reason := excluded[f.Name]; reason != "" {
 			continue
 		}
-		t.Errorf("Party.%s is published but is not in rosterPreimage and carries no reason. "+
-			"A field outside the commitment can differ between the copy the signers read and "+
-			"the copy a verifier reads while both hash the same — which is what Party.Name was. "+
-			"Add it to rosterPreimage, or name it in `excluded` with why.", f)
-	}
-	// A name here for a field that no longer exists makes the guard quietly weaker — the same
-	// hole `unreadKnown` polices one level out — and it is also the stimulus assertion.
-	for f := range inPreimage {
-		if _, ok := ty.FieldByName(f); !ok {
-			t.Errorf("inPreimage names %q and Party has no such field. Either the field was "+
-				"renamed and this guard is now covering nothing, or it left the preimage.", f)
+		a, b := twoPartyValues(t, f)
+		ra := Record{
+			ID: "id", DocHash: strings.Repeat("cd", 32), Intent: "intent",
+			Expires: time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC),
+			Roster:  []Party{basePartyWith(t, f.Name, a)},
 		}
+		rb := ra
+		rb.Roster = []Party{basePartyWith(t, f.Name, b)}
+		ha, err := ra.RosterHash()
+		if err != nil {
+			t.Fatalf("Party.%s: rosterHash over value A: %v", f.Name, err)
+		}
+		hb, err := rb.RosterHash()
+		if err != nil {
+			t.Fatalf("Party.%s: rosterHash over value B: %v", f.Name, err)
+		}
+		if bytes.Equal(ha, hb) {
+			t.Errorf("Party.%s varies (%v vs %v) and RosterHash does NOT move, so the field is "+
+				"OUTSIDE the commitment. The copy the signers read and the copy a verifier reads "+
+				"can differ in it while both hash the same — which is what Party.Name was. Add it "+
+				"to rosterPreimage's per-party loop, or name it in `excluded` with why.",
+				f.Name, a, b)
+			continue
+		}
+		moved++
+	}
+	// The stimulus assertion, and it is aimed at the right axis this time: if NOTHING moved
+	// the hash, rosterPreimage is not reading the roster at all and every row above passed
+	// for a reason that has nothing to do with per-field coverage.
+	if moved == 0 {
+		t.Fatal("no Party field moved RosterHash — rosterPreimage is not digesting the roster, " +
+			"so this guard measured nothing")
+	}
+	for f := range excluded {
+		if _, ok := ty.FieldByName(f); !ok {
+			t.Errorf("`excluded` names %q and Party has no such field, so the exclusion covers "+
+				"nothing and is quietly weakening this guard.", f)
+		}
+	}
+}
+
+// basePartyWith returns a valid Party with one field overridden.
+//
+// Valid matters: rosterPreimage refuses a fingerprint that is not 32 raw bytes of hex
+// (record.go), so a naive reflect.Zero would make every row fail for the wrong reason.
+func basePartyWith(t *testing.T, field string, v any) Party {
+	t.Helper()
+	p := Party{Fingerprint: strings.Repeat("11", 32), Label: "base", Signs: true}
+	rv := reflect.ValueOf(&p).Elem().FieldByName(field)
+	if !rv.IsValid() || !rv.CanSet() {
+		t.Fatalf("Party.%s cannot be set through reflect — this guard cannot cover it", field)
+	}
+	rv.Set(reflect.ValueOf(v))
+	return p
+}
+
+// twoPartyValues gives two distinct, VALID values for one Party field.
+//
+// Per-field rather than per-kind for Fingerprint, because "two distinct strings" is not two
+// distinct fingerprints and the preimage would refuse them.
+func twoPartyValues(t *testing.T, f reflect.StructField) (any, any) {
+	t.Helper()
+	if f.Name == "Fingerprint" {
+		return strings.Repeat("11", 32), strings.Repeat("22", 32)
+	}
+	switch f.Type.Kind() {
+	case reflect.String:
+		return "alpha", "beta"
+	case reflect.Bool:
+		return false, true
+	default:
+		t.Fatalf("Party.%s is a %s and this guard has no two-distinct-values rule for that kind. "+
+			"Add one — a field this guard cannot vary is a field it cannot cover.", f.Name, f.Type.Kind())
+		return nil, nil
+	}
+}
+
+// TestEveryPartyFieldIsComparedByMatchesRecord is the twin of the guard above, on the
+// COMPARISON side, and it exists because the two sides were asymmetric.
+//
+// The commitment side had a per-field structural guard (however weak — see above). The
+// comparison side has a four-row hand table (invitation_test.go) that names `fingerprint
+// swapped`, `signs flipped`, `party added` and `id changed`. `Label` is inside the preimage
+// and is compared by nothing; a second such field would have been the second silent one.
+//
+// Why an uncompared field matters: the invitation is UNSIGNED. The record is the only signed
+// copy of the roster, so a field MatchesRecord skips is a field a tampered invitation can
+// disagree with the record about, forever, with every check green.
+func TestEveryPartyFieldIsComparedByMatchesRecord(t *testing.T) {
+	// Named exclusions only, each with its reason.
+	excluded := map[string]string{}
+
+	ty := reflect.TypeOf(Party{})
+	if ty.NumField() == 0 {
+		t.Fatal("Party has no fields — this guard would pass vacuously")
+	}
+	cert, key, cfp := identity(t, "Convener")
+	caught := 0
+	for i := 0; i < ty.NumField(); i++ {
+		f := ty.Field(i)
+		if excluded[f.Name] != "" {
+			continue
+		}
+		a, b := twoPartyValues(t, f)
+		rec := draft(t, cfp, strings.Repeat("33", 32))
+		rec.Roster[1] = basePartyWith(t, f.Name, a)
+		if err := rec.Sign(cert, key); err != nil {
+			t.Fatal(err)
+		}
+		invs, err := NewInvitations(rec)
+		if err != nil {
+			t.Fatalf("Party.%s: %v", f.Name, err)
+		}
+		var inv Invitation
+		for _, v := range invs {
+			inv = v
+		}
+		// The tamper: the party's row in the INVITATION says something the signed record does
+		// not. Nothing signs the invitation, so this is a one-byte edit on the wire.
+		inv.Roster = append([]Party(nil), inv.Roster...)
+		inv.Roster[1] = basePartyWith(t, f.Name, b)
+		if err := inv.MatchesRecord(rec); err == nil {
+			t.Errorf("Party.%s differs between the invitation (%v) and the signed record (%v) "+
+				"and MatchesRecord ACCEPTS it. The invitation is unsigned, so a field it does not "+
+				"compare is one a tamperer owns. Compare it, or name it in `excluded` with why.",
+				f.Name, b, a)
+			continue
+		}
+		caught++
+	}
+	if caught == 0 {
+		t.Fatal("MatchesRecord refused nothing for any field — the tamper is not reaching it, " +
+			"so this guard measured nothing")
+	}
+}
+
+// TestAVerifiedRecordIsCanonical drives the two axes the preimage NORMALISES, which are the
+// two places a stored record can differ from what its own commitment binds.
+//
+// Both were measured at the P07.S02 grill against the tree as it then stood, and both
+// produced a valid signature over a record that was not the record on disk. See Canonical's
+// doc for the harm; this is the check that makes it unrepresentable.
+//
+// The sub-clauses are separate on purpose. A single "is it canonical" assertion would go
+// green the moment ONE axis were fixed, and the case axis is the loud one — so the
+// sub-second axis is exactly the one that would have been left behind.
+func TestAVerifiedRecordIsCanonical(t *testing.T) {
+	cert, key, cfp := identity(t, "Convener")
+	_, _, afp := identity(t, "A")
+
+	t.Run("signing canonicalises both axes", func(t *testing.T) {
+		r := draft(t, cfp, afp)
+		r.Roster[1].Fingerprint = strings.ToUpper(afp)
+		r.Expires = time.Date(2026, 9, 1, 12, 0, 0, 500_000_000, time.FixedZone("x", 5*3600))
+		if err := r.Sign(cert, key); err != nil {
+			t.Fatal(err)
+		}
+		if got := r.Roster[1].Fingerprint; got != afp {
+			t.Errorf("Sign left a non-lowercase fingerprint %q; the preimage hex-decodes it, so "+
+				"the stored case is outside the commitment and two records share one signature", got)
+		}
+		if r.Expires.Nanosecond() != 0 {
+			t.Errorf("Sign left sub-second precision (%s); the preimage renders RFC3339 to the "+
+				"second, so those digits are outside the commitment", r.Expires.Format(time.RFC3339Nano))
+		}
+		if r.Expires.Location() != time.UTC {
+			t.Errorf("Sign left location %v; the preimage renders .UTC(), so the zone is outside "+
+				"the commitment", r.Expires.Location())
+		}
+		if err := r.Verify(time.Date(2026, 8, 24, 0, 0, 0, 0, time.UTC)); err != nil {
+			t.Fatalf("a record Sign canonicalised must verify: %v", err)
+		}
+
+		// **The byte round trip, which is the clause as written and is stronger than the
+		// field checks above.** Canonical form's whole purpose is that the STORED bytes are
+		// derivable from what the commitment binds — so encoding a verified record, decoding
+		// it, and encoding it again must produce identical bytes. A field-by-field check can
+		// pass while some axis nobody thought to assert still moves under a round trip.
+		enc1, err := r.Encode()
+		if err != nil {
+			t.Fatal(err)
+		}
+		back, err := Decode(enc1)
+		if err != nil {
+			t.Fatal(err)
+		}
+		enc2, err := back.Encode()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !bytes.Equal(enc1, enc2) {
+			t.Errorf("a verified record does not survive an encode/decode/encode round trip "+
+				"byte-identically:\n first: %s\nsecond: %s", enc1, enc2)
+		}
+		// And the decoded copy must still be canonical and still verify — otherwise the
+		// round trip is what makes a record non-canonical, which is worse than not having
+		// the rule.
+		if !back.IsCanonical() {
+			t.Error("a canonical record decoded from its own JSON is no longer canonical")
+		}
+		if err := back.Verify(time.Date(2026, 8, 24, 0, 0, 0, 0, time.UTC)); err != nil {
+			t.Errorf("a canonical record does not verify after a JSON round trip: %v", err)
+		}
+	})
+
+	// The refusal half. Sign canonicalises, so a non-canonical record can only arrive from
+	// somewhere else — which is exactly the case that matters, because a record arrives from
+	// another party over the wire.
+	for _, c := range []struct {
+		name string
+		mut  func(r *Record)
+		why  string
+	}{
+		{"an uppercase roster fingerprint", func(r *Record) {
+			r.Roster[1].Fingerprint = strings.ToUpper(r.Roster[1].Fingerprint)
+		}, "the preimage hex-decodes fingerprints, so case is folded and both forms carry one " +
+			"valid ConvenerSig — while MatchesRecord compares the strings and refuses one of them"},
+		{"a sub-second deadline", func(r *Record) {
+			r.Expires = r.Expires.Add(500 * time.Millisecond)
+		}, "the preimage renders RFC3339 to the second, so the fractional part is unsigned"},
+		{"a non-UTC deadline", func(r *Record) {
+			r.Expires = r.Expires.In(time.FixedZone("elsewhere", 5*3600))
+		}, "the preimage renders .UTC(), so the stored zone is unsigned"},
+	} {
+		t.Run("refused: "+c.name, func(t *testing.T) {
+			r := draft(t, cfp, afp)
+			if err := r.Sign(cert, key); err != nil {
+				t.Fatal(err)
+			}
+			now := time.Date(2026, 8, 24, 0, 0, 0, 0, time.UTC)
+			// Setup assertion: it must verify BEFORE the mutation, or the refusal below could
+			// be for any reason at all.
+			if err := r.Verify(now); err != nil {
+				t.Fatalf("setup: the signed record must verify before the mutation: %v", err)
+			}
+			c.mut(&r)
+			// The mutation must NOT break the signature — that is the whole point. If it did,
+			// the axis would already be committed and this row would be testing nothing.
+			h, err := r.RosterHash()
+			if err != nil {
+				t.Fatal(err)
+			}
+			sig, err := hex.DecodeString(r.ConvenerSig)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := sign.VerifyDigest(h, sig, []byte(r.ConvenerCert)); err != nil {
+				t.Fatalf("%s broke the signature, so this axis is already inside the commitment "+
+					"and this row is vacuous", c.name)
+			}
+			if err := r.Verify(now); !errors.Is(err, ErrNotCanonical) {
+				t.Errorf("%s produced a record whose signature still verifies and Verify said %v "+
+					"— want ErrNotCanonical. %s", c.name, err, c.why)
+			}
+		})
+	}
+}
+
+// TestRosterHashGoldenVector pins the commitment to a literal.
+//
+// **There was no golden vector anywhere in this package, and no test pinned FormatVersion to
+// a literal** (found at the P07.S02 grill, 2026-08-24) — every reference compared the
+// constant to itself. So `rosterPreimage` could change shape with the whole repo green, and
+// the version guarding it could fail to move with equal silence. That is the one failure a
+// per-field guard cannot see: it proves each field is covered and says nothing about the
+// bytes, the order, or the domain tag.
+//
+// When this test goes red, the preimage changed. That is either a bug or a format bump — and
+// a format bump means FormatVersion moves and the vector below is re-cut in the same commit.
+func TestRosterHashGoldenVector(t *testing.T) {
+	// FormatVersion pinned as a LITERAL, deliberately. Comparing the constant to itself is
+	// what the rest of the suite already does and it cannot fail.
+	if FormatVersion != 4 {
+		t.Fatalf("FormatVersion is %d and this vector was cut for 4. If the format changed on "+
+			"purpose, re-cut the vector below in the same commit; if not, this is the bug.",
+			FormatVersion)
+	}
+	r := Record{
+		Version: FormatVersion,
+		ID:      "0123456789abcdef0123456789abcdef",
+		DocHash: strings.Repeat("ab", 32),
+		// A LITERAL, not pdfops.ContentDigestVersion. The vector pins the preimage's SHAPE;
+		// wiring it to the constant would let a digest-rule bump slide the vector along with
+		// it and quietly stop pinning anything.
+		DigestVersion: 3,
+		Intent:        "We agree to co-sign the lease",
+		Expires:       time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC),
+		Roster: []Party{
+			{Fingerprint: strings.Repeat("11", 32), Label: "Convener", Signs: false},
+			{Fingerprint: strings.Repeat("22", 32), Label: "A", Signs: true},
+		},
+	}
+	h, err := r.RosterHash()
+	if err != nil {
+		t.Fatal(err)
+	}
+	const want = "bb8ec37b8640287d871534607a23fd2e81da6508eb6b46173c97e67fe663b056"
+	got := hex.EncodeToString(h)
+	if got != want {
+		t.Fatalf("RosterHash over the pinned record is %s and the vector says %s — the preimage "+
+			"changed. Either this is the bug, or the format moved and both this vector and "+
+			"FormatVersion are re-cut together.", got, want)
 	}
 }
 
@@ -362,8 +772,9 @@ func TestARecordSurvivesIncrementalSignatures(t *testing.T) {
 		t.Fatalf("setup: the freshly embedded record does not check out: %v", err)
 	}
 
+	invisible := doc
 	for i, id := range []struct{ cert, key []byte }{{aCert, aKey}, {bCert, bKey}, {aCert, aKey}} {
-		doc, err = sign.SignApproval(doc, id.cert, id.key, sign.Options{
+		invisible, err = sign.SignApproval(invisible, id.cert, id.key, sign.Options{
 			Name:   "signer",
 			Reason: "co-signing",
 			When:   time.Now(),
@@ -374,7 +785,7 @@ func TestARecordSurvivesIncrementalSignatures(t *testing.T) {
 	}
 
 	// The stimulus for the assertion below: there really are three signatures on it now.
-	st := sign.Verify(doc)
+	st := sign.Verify(invisible)
 	if n := len(st.Signers); n != 3 {
 		t.Fatalf("setup: the document carries %d signatures, want 3 — the recompute below "+
 			"would not be crossing any incremental updates", n)
@@ -383,19 +794,65 @@ func TestARecordSurvivesIncrementalSignatures(t *testing.T) {
 		t.Fatalf("setup: the signatures do not verify (%s), so this is not the case caveat 10 names", st.State)
 	}
 
-	// Caveat 10, and the hop-4 clause with it: a party holding the document after three
-	// incremental signatures reads the record, verifies it, and recomputes the hash itself.
-	got, err := CheckDocument(doc, time.Now())
+	// Caveat 10: the RECORD survives three incremental signatures — it is still there, it
+	// still parses, and its convener signature still verifies.
+	got, err := Extract(invisible)
 	if err != nil {
-		t.Fatalf("after three incremental signatures the record no longer checks out: %v", err)
+		t.Fatalf("after three incremental signatures the record cannot be read: %v", err)
+	}
+	if err := got.Verify(time.Now()); err != nil {
+		t.Fatalf("after three incremental signatures the record no longer verifies: %v", err)
 	}
 	if got.ID != r.ID {
 		t.Errorf("the record came back with id %s, want %s", got.ID, r.ID)
 	}
-	if got.DocHash != hash {
-		t.Errorf("the recomputed document hash is %s, the record says %s — a later party "+
-			"cannot prove it holds the document the ceremony was written for", got.DocHash, hash)
+
+	// And the digest is unmoved — **by these signatures, which are INVISIBLE.**
+	if _, err := CheckDocument(invisible, time.Now()); err != nil {
+		t.Fatalf("three invisible signatures moved the digest: %v", err)
 	}
+
+	// ---------------------------------------------------------------------------------
+	// **The limit, asserted rather than left to a comfortable green (2026-08-24, P07.S02).**
+	//
+	// Everything above signs with no Appearance. The production path does not: `p2p.Contribute`
+	// sets one whenever the caller supplies appearance bytes, and the live consent flow always
+	// does. A VISIBLE signature adds a widget annotation, ContentDigest hashes /Annots, and the
+	// digest therefore moves at the FIRST such signature.
+	//
+	// This test was previously cited — in this file, in embed.go and in the plan — as
+	// discharging D20's "hop-4 clause". It could not: it signed invisibly, so its final
+	// assertion was unconditionally true and could not fail for the reason the clause is about.
+	// Rather than delete the test or pretend the clause holds, the limit is now MEASURED here,
+	// so the next reader finds the boundary instead of a green they will trust.
+	visible, err := p2p.Contribute(doc, aCert, aKey,
+		p2p.Attestation{Signer: "A", When: time.Now()}, onePixelPNG(t),
+		p2p.Placement{Page: 1, Rect: [4]float64{40, 40, 320, 124}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if vst := sign.Verify(visible); vst.State != sign.Valid || len(vst.Signers) != 1 {
+		t.Fatalf("setup: the visible signature did not take (%s, %d signers)", vst.State, len(vst.Signers))
+	}
+	if _, err := CheckDocument(visible, time.Now()); err == nil {
+		t.Error("a VISIBLE signature left the digest unchanged. If that is now true, the " +
+			"convene-time-only limit recorded in embed.go and in the P07.S02 grill has been " +
+			"lifted and every claim resting on it should be revisited — this is good news, not " +
+			"a failure, but it must not pass silently.")
+	}
+}
+
+// onePixelPNG is the smallest valid appearance image: enough to make a signature VISIBLE,
+// which is the only property the tests using it care about.
+func onePixelPNG(t *testing.T) []byte {
+	t.Helper()
+	img := image.NewRGBA(image.Rect(0, 0, 1, 1))
+	img.Set(0, 0, color.RGBA{0, 0, 0, 255})
+	var b bytes.Buffer
+	if err := png.Encode(&b, img); err != nil {
+		t.Fatal(err)
+	}
+	return b.Bytes()
 }
 
 // TestEmbedRefusesASignedDocument — the same refusal PrepareDocument already makes about
