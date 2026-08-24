@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# Tier 4 of Nib's test harness: run TWO real nib binaries against each other and
+# Tier 4 of Nib's test harness: run N real nib binaries against each other and
 # complete a ceremony between them — once per transport, TCP and QUIC (D14).
 #
-# Usage: ./build/pairrepro.sh [--keep|--lan|--v6]
+# Usage: ./build/pairrepro.sh [-n N] [--lan] [--v6] [--keep]
 #
 # ── Why a fourth tier ────────────────────────────────────────────────────────
 # Tiers 1-3 all run ONE Nib. A ceremony is two people on two machines, and every
@@ -26,6 +26,39 @@
 #     side rather than reported by the sender.
 #
 # ── Where it still stops ─────────────────────────────────────────────────────
+# **N instances are N parties who can all reach each other, which a ceremony is
+# not.** `-n N` (P07.S01) boots N homes, N vaults and N identities and asserts they
+# are genuinely distinct, but every one is on loopback with no NAT, no roster and no
+# ceremony identity — there is no `ceremony.Record` in the product to build one from
+# until P07.S02. So what this tier can currently say about N is about the HARNESS,
+# not about a ceremony of N.
+#
+# Three specific blind spots at N, stated rather than left to be discovered:
+#   * **The model refuses hop 2.** `coSignExchange` takes one prior signer only, so
+#     no relay longer than one hop completes until P07.S03 removes it. The `-n`
+#     path asserts that refusal rather than skipping — it goes red on the day S03
+#     lands, which is what makes the N-party runs get switched on.
+#   * **Arm expiry is observable but not drivable.** A ceremony arm bounds itself by
+#     `MaxCeremonyLife` and a manual one by `sessionAcceptTimeout` (5 min); every
+#     arm here is manual, because no invitation exists before P07.S02b. A slow run
+#     can therefore fail for a reason that will not exist later.
+#   * **The run manufactures permanent pins.** Parties pin each other by hex through
+#     `/api/peers/pin`, which is exactly the residue D29 forbids; ceremony-scoped
+#     pins arrive with invitation consumption at P07.S02b, and this harness should
+#     stop hand-pinning then.
+#
+# **`--lan` and `--v6` are N=2-only, and the refusal is enforced above rather than
+# documented here alone.** `--lan`'s zero-egress assertion holds only while arms
+# carry no invitation — from P07.S02b every arm is a ceremony arm that publishes to
+# the DHT after its browse window, and N−1 of them would. `--v6` generalises
+# mechanically but has nothing N-shaped to observe until a hop exists.
+#
+# **A `fail` inside a command substitution exits the SUBSHELL, not this script.**
+# Every `$( )` whose result matters is checked by its caller for that reason; the
+# EXIT trap takes `$?` as an argument rather than reading a flag, because a flag set
+# in a subshell never reaches the parent and the work dir would be deleted on
+# exactly the runs whose logs are the diagnosis.
+#
 # **It cannot see two networks.** Both instances are on loopback, so everything
 # NAT, routing, MTU and firewall does to a real connection is invisible here —
 # and those are precisely what P03-P05's ladder exists to survive. A ceremony
@@ -62,6 +95,58 @@
 set -uo pipefail
 cd "$(dirname "$0")/.."
 
+# ── Flags, parsed once, in any order ─────────────────────────────────────────
+#
+# **This replaced three independent reads of `$1` and it was a live defect, not
+# tidying.** `LAN`, `KEEP` and `V6` each tested `"${1:-}"` alone, so only the FIRST
+# argument was ever seen: `--keep --v6` set `KEEP=1, V6=0` and ran the ordinary
+# loopback ceremony while the operator believed they had driven tier 4c, and the
+# closing banner reads the same either way. That is ADR-010's shape — a run
+# configured past the very disagreement it exists to find — arriving through the
+# harness's own argument parsing rather than through the protocol.
+#
+# The namespace re-exec below carries the whole flag set for the same reason: it
+# used to hard-code `--lan`, so `--lan --keep` dropped `--keep` even with a
+# correct parser in front of it.
+LAN=0; KEEP=0; V6=0; N=2
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --lan)  LAN=1 ;;
+    --keep) KEEP=1 ;;
+    --v6)   V6=1 ;;
+    -n)     shift; N="${1:-}" ;;
+    -n*)    N="${1#-n}" ;;
+    -h|--help)
+      echo "usage: $0 [-n N] [--lan] [--v6] [--keep]"; exit 0 ;;
+    *) echo "FAIL: unknown argument '$1' — usage: $0 [-n N] [--lan] [--v6] [--keep]" >&2; exit 1 ;;
+  esac
+  shift
+done
+case "$N" in
+  ''|*[!0-9]*) echo "FAIL: -n wants a whole number, got '$N'" >&2; exit 1 ;;
+esac
+[ "$N" -ge 2 ] || { echo "FAIL: -n $N — a ceremony needs at least two parties" >&2; exit 1; }
+# --lan and --v6 are N=2-only in this slice; see "Where it still stops".
+if [ "$N" != "2" ] && { [ "$LAN" = "1" ] || [ "$V6" = "1" ]; }; then
+  echo "FAIL: --lan and --v6 are N=2-only (P07.S01) — see the ceiling note in this file" >&2
+  exit 1
+fi
+# **The combination is refused, and leaving it unrefused was the surviving half of the
+# very defect the parser above was written for.** With both set, `V6=1` and
+# `CEREMONY_HOST=[::1]` — but every consumer of them is gated on `port != "lan"`, so
+# the v6-bind stimulus is skipped and the transport probe takes the LAN branch and
+# never touches `$PROBE_HOST`. The run then prints the ordinary LAN pass while the
+# operator believes they drove 4b and 4c at once. The LAN arm binds no address at all,
+# which is P03's whole point, so there is nothing for v6 to be.
+if [ "$LAN" = "1" ] && [ "$V6" = "1" ]; then
+  echo "FAIL: --lan and --v6 cannot be combined — the LAN arm binds no address, so nothing is v6" >&2
+  exit 1
+fi
+FLAGS=""
+[ "$LAN" = "1" ] && FLAGS="$FLAGS --lan"
+[ "$KEEP" = "1" ] && FLAGS="$FLAGS --keep"
+[ "$V6" = "1" ] && FLAGS="$FLAGS --v6"
+
 for dep in go curl python3; do
   command -v "$dep" >/dev/null 2>&1 || {
     echo "$dep not installed; skipping the two-instance ceremony tests"; exit 0; }
@@ -86,8 +171,6 @@ done
 # assertion would then be true of a process trying constantly. A black-hole
 # default route makes attempts into real packets the counter can see: probed at
 # 0 before, 2 after a connect to 1.1.1.1.
-LAN=0
-[ "${1:-}" = "--lan" ] && LAN=1
 if [ "$LAN" = "1" ] && [ "${NIB_LAN_NS:-}" != "1" ]; then
   for dep in unshare ip nft; do
     command -v "$dep" >/dev/null 2>&1 || { echo "SKIP: $dep is not installed (--lan needs it)"; exit 0; }
@@ -117,8 +200,8 @@ if [ "$LAN" = "1" ] && [ "${NIB_LAN_NS:-}" != "1" ]; then
       ip daddr != 224.0.0.0/4 counter comment "offlink4"
     nft add rule inet egress out ip6 daddr != fd00:9::/64 ip6 daddr != ::1 \
       ip6 daddr != ff00::/8 ip6 daddr != fe80::/10 counter comment "offlink6"
-    NIB_LAN_NS=1 NIB_PAIR_BIN="$1" exec "$2" --lan
-  ' _ "$PREBUILT" "$0"
+    NIB_LAN_NS=1 NIB_PAIR_BIN="$1" exec "$2" $3
+  ' _ "$PREBUILT" "$0" "$FLAGS"
 fi
 
 # Reads the off-link packet counter the namespace installed.
@@ -135,8 +218,6 @@ for o in d.get("nftables",[]):
 print(t)'
 }
 
-KEEP=0
-[ "${1:-}" = "--keep" ] && KEEP=1
 
 # ── v6 mode: the ceremony transport runs over IPv6 loopback ──────────────────
 # `--v6` is P05.S05's hermetic analogue of criterion 1 ("IPv6-to-IPv6 completes
@@ -163,8 +244,6 @@ KEEP=0
 # value carrying a port would bind `…:port:port` and fail. It moves the ceremony
 # off loopback onto a real global/ULA address on the same host — closer to the
 # real path, still one host.
-V6=0
-[ "${1:-}" = "--v6" ] && V6=1
 
 # The ceremony transport host, in the two spellings the tools want: bracketed for
 # the arm bind and the dialled address (host:port URLs), bare for bash /dev/tcp.
@@ -179,39 +258,162 @@ if [ "$V6" = "1" ]; then
   CEREMONY_HOST="[$PROBE_HOST]"                              # bracketed, for URLs
 fi
 
-PORT_A="${NIB_PAIR_PORT_A:-18541}"
-PORT_B="${NIB_PAIR_PORT_B:-18542}"
-A="http://127.0.0.1:$PORT_A"
-B="http://127.0.0.1:$PORT_B"
-SESSION_PORT="${NIB_PAIR_SESSION_PORT:-18543}"
-# A second port for the QUIC run. Distinct rather than reused because the two
-# ceremonies run back to back and a listener's teardown is not instantaneous —
-# a reused port would make a bind race look like a transport failure.
-SESSION_PORT_QUIC="${NIB_PAIR_SESSION_PORT_QUIC:-18544}"
-WORK="$(mktemp -d)"
-PID_A=""; PID_B=""
+# ── The port block, derived ONCE ─────────────────────────────────────────────
+#
+# One array, built here, **both probed and used**. That identity is the whole
+# point: a pre-flight whose population is not the run's population proves nothing
+# about the run, which is instrument.md's Population field stated as shell.
+#
+# N API ports, then one session port per hop per transport. Distinct rather than
+# reused because consecutive ceremonies run back to back and a listener's teardown
+# is not instantaneous — a reused port makes a bind race look like a transport
+# failure, which is why the two-party run always had two.
+PORT_BASE="${NIB_PAIR_PORT_BASE:-18541}"
+API_PORTS=(); for i in $(seq 1 "$N"); do API_PORTS+=( "$((PORT_BASE + i - 1))" ); done
+SESSION_BASE="${NIB_PAIR_SESSION_BASE:-$((PORT_BASE + N))}"
+SESSION_PORTS=(); for i in $(seq 1 $(( (N - 1) * 2 )) ); do SESSION_PORTS+=( "$((SESSION_BASE + i - 1))" ); done
+ALL_PORTS=( "${API_PORTS[@]}" "${SESSION_PORTS[@]}" )
 
-cleanup() {
+# NIB_PAIR_PORT_A/B kept working because they are this harness's published knobs and
+# an operator's muscle memory — NOT because anything in the tree passes them; a grep
+# finds no caller outside this file, and no red-proof row uses one. Honoured only at
+# N=2, where they mean what they meant.
+if [ "$N" = "2" ]; then
+  API_PORTS[0]="${NIB_PAIR_PORT_A:-${API_PORTS[0]}}"
+  API_PORTS[1]="${NIB_PAIR_PORT_B:-${API_PORTS[1]}}"
+  SESSION_PORTS[0]="${NIB_PAIR_SESSION_PORT:-${SESSION_PORTS[0]}}"
+  SESSION_PORTS[1]="${NIB_PAIR_SESSION_PORT_QUIC:-${SESSION_PORTS[1]}}"
+  ALL_PORTS=( "${API_PORTS[@]}" "${SESSION_PORTS[@]}" )
+fi
+
+URLS=(); HOMES=(); PIDS=(); WATCHERS=()
+for i in $(seq 1 "$N"); do
+  URLS+=( "http://127.0.0.1:${API_PORTS[$((i-1))]}" )
+  HOMES+=( "" )   # filled once WORK exists
+done
+
+SESSION_PORT="${SESSION_PORTS[0]}"
+SESSION_PORT_QUIC="${SESSION_PORTS[1]}"
+A="${URLS[0]}"
+B="${URLS[1]}"
+
+CEREMONY_N=0
+ELAPSED_TOTAL=0
+WORK="$(mktemp -d)"
+for i in $(seq 1 "$N"); do HOMES[$((i-1))]="$WORK/i$i"; done
+
+# ── Teardown, and why the trap reads $? ──────────────────────────────────────
+#
+# `cleanup` takes the exit status as an ARGUMENT rather than reading a flag,
+# because `fail` runs inside subshells — the watchers, the ceremony pipeline — and
+# a `FAILED=1` set there never reaches the parent's copy. The work dir would then
+# be deleted on exactly the runs whose logs are the only diagnosis. At eight hops
+# the log is what names the broken instance.
+#
+# And it prints on the exit STATUS, not unconditionally: v1.117.131 was committed
+# on a red suite because a banner printed either way.
+cleanup() { # exit-status
+  local st="${1:-0}"
   if [ "$KEEP" = "1" ]; then
-    echo "--keep: A at $A (pid $PID_A), B at $B (pid $PID_B), work dir $WORK"
+    echo "--keep: work dir $WORK"
+    for i in $(seq 1 "$N"); do echo "  instance $i at ${URLS[$((i-1))]} (pid ${PIDS[$((i-1))]:-?})"; done
     return
   fi
-  [ -n "$PID_A" ] && kill "$PID_A" >/dev/null 2>&1
-  [ -n "$PID_B" ] && kill "$PID_B" >/dev/null 2>&1
+  # Watchers first: they poll the instances, and killing the instances first
+  # leaves them spinning against a dead port for the rest of their timeout.
+  for pid in "${WATCHERS[@]:-}"; do [ -n "$pid" ] && kill "$pid" >/dev/null 2>&1; done
+  for pid in "${PIDS[@]:-}"; do [ -n "$pid" ] && kill "$pid" >/dev/null 2>&1; done
+  # **Wait for them to actually be GONE, and do not use `wait` to do it.** The
+  # instance pids come out of a command substitution, so they are children of a
+  # subshell that has already exited — this shell cannot reap them and `wait`
+  # returns instantly with an error, which is the degenerate "waited" that proves
+  # nothing. `kill` is asynchronous too, so checking `kill -0` immediately after it
+  # reports every instance as a survivor. Poll instead, and only then assert.
+  for pid in "${WATCHERS[@]:-}" "${PIDS[@]:-}"; do
+    [ -n "$pid" ] || continue
+    for _ in $(seq 1 40); do kill -0 "$pid" 2>/dev/null || break; sleep 0.05; done
+  done
+  local alive=""
+  for pid in "${WATCHERS[@]:-}" "${PIDS[@]:-}"; do
+    [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null && alive="$alive $pid"
+  done
+  if [ -n "$alive" ]; then
+    for pid in $alive; do kill -9 "$pid" >/dev/null 2>&1; done
+    echo "WARN: processes did not exit on TERM and were killed:$alive" >&2
+  fi
+  if [ "$st" != "0" ]; then
+    echo "the run failed — work dir PRESERVED at $WORK" >&2
+    for i in $(seq 1 "$N"); do
+      [ -f "${HOMES[$((i-1))]}/nib.log" ] && echo "  instance $i log: ${HOMES[$((i-1))]}/nib.log" >&2
+    done
+    return
+  fi
   rm -rf "$WORK"
 }
-trap cleanup EXIT INT TERM
+trap 'cleanup $?' EXIT
+# **`exit 130` is load-bearing.** A trap handler that RETURNS resumes the successor
+# of the interrupted command, so Ctrl-C used to tear the instances down, print
+# "work dir PRESERVED", and then carry on against dead instances — and an interrupt
+# landing after the last assertion exited 0, whereupon the EXIT trap ran `cleanup 0`
+# and deleted the directory the first cleanup had just preserved. Measured.
+trap 'cleanup 1; exit 130' INT TERM
 
 fail() { echo "FAIL: $*" >&2; exit 1; }
 
-# Refuse ports someone else holds, BEFORE building — the same lesson tier 3
-# learned: a leftover --keep run makes the failure surface four steps later and
-# blames the wrong thing.
-for p in "$PORT_A" "$PORT_B"; do
-  if curl -fsS -o /dev/null --max-time 2 "http://127.0.0.1:$p/api/status" 2>/dev/null; then
-    fail "something is already serving 127.0.0.1:$p — a leftover --keep run? Stop it, or set NIB_PAIR_PORT_A/B."
-  fi
+# ── The pre-flight, by BIND ──────────────────────────────────────────────────
+#
+# Refuse ports someone else holds, BEFORE building — the lesson tier 3 learned: a
+# leftover --keep run makes the failure surface four steps later and blames the
+# wrong thing.
+#
+# **It probes by bind, and the old `curl /api/status` could not do this job.** That
+# probe detected only *a nib*, so any other holder passed it; and extending its
+# CONNECT shape to the session ports would have been worse than useless, because a
+# UDP connect succeeds against a free port — the QUIC half could only ever have
+# reported pass. A bind attempt is the one instrument that answers for both
+# families, and it answers for a holder that is not a nib.
+port_holder() { # port host -> prints what holds it, or nothing
+  python3 - "$1" "$2" <<'PYBIND'
+import socket, sys
+p = int(sys.argv[1]); host = sys.argv[2]; held = []
+# **The family comes from the host the run will actually bind.** Probing 127.0.0.1
+# while the session socket binds `[::1]` is a probe whose population is not the
+# run's — measured: a holder on `[::1]:18543` passed the pre-flight and the run
+# died four steps later at "B could not arm a session", which is exactly the
+# blame-the-wrong-thing this probe exists to prevent.
+af = socket.AF_INET6 if ":" in host else socket.AF_INET
+for kind, sk in (("tcp", socket.SOCK_STREAM), ("udp", socket.SOCK_DGRAM)):
+    s = socket.socket(af, sk)
+    # SO_REUSEADDR is what makes the TCP probe discriminate rather than just refuse.
+    # Without it a socket left in TIME_WAIT by the PREVIOUS run reads as "held", so
+    # two runs back to back fail the pre-flight for a port nothing is listening on —
+    # measured, on the first N=4 run of this slice. With it, TIME_WAIT binds (a
+    # server would set the same option) and a live LISTEN still refuses.
+    #
+    # **TCP only.** UDP has no TIME_WAIT, so the option buys nothing there and costs
+    # the discrimination: a UDP holder that sets REUSEADDR itself would go undetected.
+    if kind == "tcp":
+        s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    try:
+        s.bind((host, p))
+    except OSError:
+        held.append(kind)
+    finally:
+        s.close()
+print(",".join(held))
+PYBIND
+}
+held=""
+for p in "${ALL_PORTS[@]}"; do
+  h="$(port_holder "$p" "$PROBE_HOST")"
+  [ -n "$h" ] && held="$held $p($h)"
 done
+if [ -n "$held" ]; then
+  echo "FAIL: ports already held:$held" >&2
+  echo "      the run wanted this whole block: ${ALL_PORTS[*]}" >&2
+  echo "      a leftover --keep run? Stop it, or set NIB_PAIR_PORT_BASE." >&2
+  exit 1
+fi
 
 if [ -n "${NIB_PAIR_BIN:-}" ]; then
   # Built outside the namespace: inside it there is no network, and the black-hole
@@ -247,42 +449,69 @@ wait_up() { # url
   return 1
 }
 
-PID_A="$(start A "$PORT_A" "$WORK/a")"
-PID_B="$(start B "$PORT_B" "$WORK/b")"
-wait_up "$A" || { cat "$WORK/a/nib.log" >&2; fail "instance A did not come up"; }
-wait_up "$B" || { cat "$WORK/b/nib.log" >&2; fail "instance B did not come up"; }
+# ── Boot, and the two assertions that keep the roster honest ─────────────────
+#
+# `instances up` and `distinct identities` are asserted SEPARATELY, with their own
+# messages, because "an instance never booted" and "two instances share a key" are
+# two defects with one symptom. A single `sort -u | wc -l` compared against the
+# length of the list that answered is green for both: four of nine booting yields
+# four distinct fingerprints and the run calls itself nine.
+for i in $(seq 1 "$N"); do
+  PIDS+=( "$(start "i$i" "${API_PORTS[$((i-1))]}" "${HOMES[$((i-1))]}")" )
+done
+UP=0
+for i in $(seq 1 "$N"); do
+  if wait_up "${URLS[$((i-1))]}"; then
+    UP=$((UP + 1))
+  else
+    echo "instance $i (${URLS[$((i-1))]}) did not come up; its log:" >&2
+    cat "${HOMES[$((i-1))]}/nib.log" >&2 2>/dev/null || true
+  fi
+done
+[ "$UP" = "$N" ] || fail "asked for $N instances and $UP answered — the run would proceed with a smaller roster and report the larger one"
 
 # Each instance enrols its OWN key under its OWN home, which is what gives them
-# two different identities. A shared vault would make every assertion below
-# vacuous — the two "peers" would be one key agreeing with itself.
-for pair in "$A:$WORK/a" "$B:$WORK/b"; do
-  url="${pair%%:/*}"; url="${pair%:*}"; home="${pair##*:}"
+# different identities. A shared vault would make every assertion below vacuous —
+# the "peers" would be one key agreeing with itself.
+for i in $(seq 1 "$N"); do
+  url="${URLS[$((i-1))]}"; home="${HOMES[$((i-1))]}"
   curl -fsS -X POST "$url/api/ssh/enroll" -H 'Content-Type: application/json' \
     -d "{\"mode\":\"create\",\"keyPath\":\"$home/home/.ssh/id_ed25519\"}" >/dev/null \
-    || fail "could not enrol a key on $url"
+    || fail "could not enrol a key on instance $i ($url)"
 done
 
 csrf() { curl -fsS "$1/api/status" | jget csrf; }
-CSRF_A="$(csrf "$A")"; CSRF_B="$(csrf "$B")"
-[ -n "$CSRF_A" ] && [ -n "$CSRF_B" ] || fail "no CSRF token from one of the instances"
+CSRFS=(); FPS=()
+for i in $(seq 1 "$N"); do
+  url="${URLS[$((i-1))]}"
+  tok="$(csrf "$url")"
+  [ -n "$tok" ] || fail "instance $i ($url) returned no CSRF token"
+  CSRFS+=( "$tok" )
+  fp="$(curl -fsS "$url/api/peers" | jget fingerprint)"
+  [ "${#fp}" = 64 ] || fail "instance $i ($url) has no identity fingerprint (got '${fp}')"
+  FPS+=( "$fp" )
+  # The six-word name is P01.S02's only tier-4 reader. Per instance rather than
+  # for the first alone: it used to be checked on A only, and sat in the block
+  # this loop replaced.
+  nm="$(curl -fsS "$url/api/peers" | jget name)"
+  [ "$(echo "$nm" | wc -w)" = 6 ] || fail "instance $i reports the name '$nm', which is not six words"
+done
 
-FP_A="$(curl -fsS "$A/api/peers" | jget fingerprint)"
-FP_B="$(curl -fsS "$B/api/peers" | jget fingerprint)"
-NAME_A="$(curl -fsS "$A/api/peers" | jget name)"
-[ "${#FP_A}" = 64 ] && [ "${#FP_B}" = 64 ] || fail "one instance has no identity fingerprint"
-
-# THE assertion that makes this a two-instance harness rather than one process
-# talking to itself.
+# THE assertion that makes this an N-instance harness rather than one process
+# talking to itself — compared to $N, never to the length of the list that
+# answered.
 #
-# **Defence in depth, and the probe said so.** Trying to make the two share a
-# vault does not reach here: the second instance's enrolment returns 409 first,
-# because a vault already exists. So this line guards a state the enrolment guard
-# already prevents — kept because it is the assertion a future refactor of either
-# guard would need, and because it fires correctly when the two fingerprints are
-# equal (probed directly, 2026-08-19).
-[ "$FP_A" != "$FP_B" ] || fail "both instances have the SAME identity ($FP_A) — they are sharing a vault, and every assertion below would be one key agreeing with itself"
-# The six-word name came along with it (P01.S02), so this tier sees it too.
-[ "$(echo "$NAME_A" | wc -w)" = 6 ] || fail "instance A reports the name '$NAME_A', which is not six words"
+# **Its argument changed at N and the old comment would have been read as licence
+# to keep it weak.** At two, sharing a vault could not even reach here: the second
+# enrolment 409s first, so the check was defence in depth against a state another
+# guard already prevented (probed 2026-08-19). At N the realistic failure is the
+# harness's OWN indexing — instance 5's fingerprint read from instance 1's URL —
+# about which the 409 says nothing. So this is load-bearing now, not a spare.
+DISTINCT="$(printf '%s\n' "${FPS[@]}" | sort -u | wc -l)"
+[ "$DISTINCT" = "$N" ] || fail "the $N instances reported only $DISTINCT distinct identities — either two are sharing a vault, or the driver read one instance's fingerprint from another's URL, and every assertion below would be one key agreeing with itself"
+
+FP_A="${FPS[0]}"; FP_B="${FPS[1]}"
+CSRF_A="${CSRFS[0]}"; CSRF_B="${CSRFS[1]}"
 
 # Pin each other, by hex — the only way to pin (P01: no screen accepts a name).
 curl -fsS -X POST "$A/api/peers/pin" -H 'Content-Type: application/json' -H "X-CSRF-Token: $CSRF_A" \
@@ -330,6 +559,7 @@ watch_verify() { # url csrf outfile
 # than through a second path written to suit whichever one came second.
 ceremony() { # transport port outfile
   local transport="$1" port="$2" out="$3"
+  local t0; t0="$(date +%s)"
 
   # A pristine document each time: a ceremony over the previous ceremony's output
   # would carry three signatures and the count below would assert the wrong thing.
@@ -459,11 +689,26 @@ ceremony() { # transport port outfile
   # The property only two instances can see.
   [ "$words_a" = "$words_b" ] || fail "[$transport] the two instances derived DIFFERENT verification words — A saw '$words_a' and B saw '$words_b'. Two people comparing these would read a mismatch as an attack."
 
-  [ "$code" = "200" ] || { cat "$init_out" >&2; cat "$WORK/b/nib.log" >&2; fail "[$transport] initiate returned HTTP $code"; }
+  [ "$code" = "200" ] || { cat "$init_out" >&2; cat "${HOMES[1]}/nib.log" >&2; fail "[$transport] initiate returned HTTP $code"; }
 
   # The ceremony completed only if the document carries BOTH signatures — read
   # from B's side, because asking A whether A signed is asking the thing under test.
-  curl -fsS "$B/api/pdf" -o "$out" || fail "[$transport] could not fetch B's document"
+  # By document ID, never the active-document fallback. `/api/pdf` with no
+  # `X-Nib-Doc` and no `?doc=` returns whatever that instance happens to have
+  # active, so "which document did this hop produce" has no answer once an
+  # instance holds more than one — which is every N>2 relay. Addressing it by id
+  # makes the two-party run stricter today and gives the question an answer later.
+  CEREMONY_N=$((CEREMONY_N + 1))
+  local docid ndocs
+  docid="$(curl -fsS "$B/api/docs" | jget activeId)"
+  ndocs="$(curl -fsS "$B/api/docs" | python3 -c 'import json,sys;print(len(json.load(sys.stdin).get("docs",[])))')"
+  [ -n "$docid" ] || fail "[$transport] B reports no active document to fetch"
+  # The population, asserted rather than assumed: after ceremony k, B holds
+  # exactly k arrivals. Without this, "the active document" is a guess that
+  # happens to be right at N=2 and stops being right the moment an instance
+  # holds a document it did not just receive.
+  [ "$ndocs" = "$CEREMONY_N" ] || fail "[$transport] after ceremony $CEREMONY_N, B holds $ndocs document(s) — the active one may not be this ceremony's arrival"
+  curl -fsS "$B/api/pdf?doc=$docid" -o "$out" || fail "[$transport] could not fetch B's document $docid"
   python3 - "$out" "$transport" <<'PYSIG' || exit 1
 import sys
 b = open(sys.argv[1], "rb").read()
@@ -475,8 +720,125 @@ if n < 2:
     sys.exit(1)
 print(f"[{sys.argv[2]}] the finished document carries {n} signatures")
 PYSIG
+  # H25 — elapsed, PRINTED and never thresholded.
+  #
+  # A four-second run and a four-minute run both pass, and the second is one hop from
+  # `sessionAcceptTimeout` (5 min), which every arm here is bounded by because no
+  # invitation exists before P07.S02b. A threshold would be wrong for Z6's reason —
+  # a loaded machine is not a defect — but a number nobody prints is a margin nobody
+  # can see shrinking as N grows.
+  local t1; t1="$(date +%s)"
+  echo "[$transport] hop took $((t1 - t0))s (arm ceiling is $((5 * 60))s while arms are manual)"
+  ELAPSED_TOTAL=$((ELAPSED_TOTAL + t1 - t0))
   WORDS="$words_a"
 }
+
+# ── N >= 3: the expected red, and why it is here ─────────────────────────────
+#
+# **This slice deliberately does not build the N-party relay, and this assertion is
+# what stops that from becoming a silent skip.** `coSignExchange` refuses anything
+# but one prior signer (`internal/p2p/session.go:407`), so hop 2 of any baton fails
+# today; P07.S03 is the slice whose acceptance says it removes that refusal. Until
+# then the honest options were a skip, an `|| true`, or a run behind an env var
+# nobody sets — the shape `docs/red-proofs.md` already records as "a harness reports
+# a pass for the tests it happens to name".
+#
+# So instead: drive ONE hop past the two-party case and assert the product refuses
+# it, by name. The day S03 lands, this goes red and whoever is holding S03 has to
+# switch the N-party path on. That is the only mechanism here that makes the
+# switch-on happen rather than be remembered.
+if [ "$N" != "2" ]; then
+  echo "N=$N: boot and identity verified; probing the model's current ceiling…"
+  # Party 1 -> 2, the ordinary two-party ceremony, to produce a 2-signature document.
+  for i in 1 2; do
+    j=$(( i == 1 ? 2 : 1 ))
+    curl -fsS -X POST "${URLS[$((i-1))]}/api/peers/pin" -H 'Content-Type: application/json' \
+      -H "X-CSRF-Token: ${CSRFS[$((i-1))]}" \
+      -d "{\"fingerprint\":\"${FPS[$((j-1))]}\",\"label\":\"p$j\"}" >/dev/null \
+      || fail "instance $i could not pin instance $j"
+  done
+  ceremony tcp "${SESSION_PORTS[0]}" "$WORK/hop1.pdf"
+  echo "hop 1 completed; the document carries two signatures"
+
+  # Party 3 pins party 2 and arms; party 2 offers it the 2-signature document.
+  curl -fsS -X POST "${URLS[2]}/api/peers/pin" -H 'Content-Type: application/json' \
+    -H "X-CSRF-Token: ${CSRFS[2]}" -d "{\"fingerprint\":\"${FPS[1]}\",\"label\":\"p2\"}" >/dev/null \
+    || fail "instance 3 could not pin instance 2"
+  curl -fsS -X POST "${URLS[1]}/api/peers/pin" -H 'Content-Type: application/json' \
+    -H "X-CSRF-Token: ${CSRFS[1]}" -d "{\"fingerprint\":\"${FPS[2]}\",\"label\":\"p3\"}" >/dev/null \
+    || fail "instance 2 could not pin instance 3"
+  hop2port="${SESSION_PORTS[2]}"   # N>=3 always has (N-1)*2 >= 4 entries
+  curl -fsS -X POST "${URLS[2]}/api/session/arm" -H 'Content-Type: application/json' \
+    -H "X-CSRF-Token: ${CSRFS[2]}" \
+    -d "{\"fingerprint\":\"${FPS[1]}\",\"bind\":\"127.0.0.1:$hop2port\",\"mode\":\"cosign\",\"transport\":\"tcp\"}" >/dev/null \
+    || fail "instance 3 could not arm for hop 2"
+  # The spoken check runs BEFORE the contribution, on both sides, and both are
+  # blocked waiting for it — so hop 2 needs its own watchers exactly as hop 1 does.
+  # **Without them this probe reported HTTP 409 "the safety words went unconfirmed"
+  # and the discrimination clause below caught it**: the refusal being asserted would
+  # have been credited to the model's ceiling when it was really a missing watcher.
+  rm -f "$WORK/w2_a" "$WORK/w2_b"
+  watch_verify "${URLS[1]}" "${CSRFS[1]}" "$WORK/w2_a" & WATCHERS+=( $! )
+  watch_verify "${URLS[2]}" "${CSRFS[2]}" "$WORK/w2_b" & WATCHERS+=( $! )
+  (
+    for _ in $(seq 1 240); do
+      if [ -n "$(curl -fsS "${URLS[2]}/api/session/status" 2>/dev/null | jget pending.fingerprint)" ]; then
+        curl -fsS -X POST "${URLS[2]}/api/session/respond" -H 'Content-Type: application/json' \
+          -H "X-CSRF-Token: ${CSRFS[2]}" -d '{"accept":true,"intent":"hop 2"}' >/dev/null 2>&1
+        exit 0
+      fi
+      sleep 0.25
+    done
+  ) & WATCHERS+=( $! )
+  hop2code="$(curl -sS -X POST "${URLS[1]}/api/session/initiate" -H "X-CSRF-Token: ${CSRFS[1]}" \
+    -F "pdf=@$WORK/hop1.pdf" -F "appearance=@$WORK/sig.png" \
+    -F "params={\"fingerprint\":\"${FPS[2]}\",\"intent\":\"hop 2\"}" \
+    -F "address=127.0.0.1:$hop2port" -F "transport=tcp" \
+    -o "$WORK/hop2.json" -w '%{http_code}')"
+  # Stimulus before grading: the spoken check really ran on hop 2. Without this the
+  # refusal below could be credited to the model while the hop never reached it.
+  [ -s "$WORK/w2_a" ] && [ -s "$WORK/w2_b" ] \
+    || fail "hop 2 never reached the spoken check on both sides (a='$(cat "$WORK/w2_a" 2>/dev/null)' b='$(cat "$WORK/w2_b" 2>/dev/null)') — whatever the initiate returned, it is not the model's contribution ceiling"
+  if [ "$hop2code" = "200" ]; then
+    fail "hop 2 SUCCEEDED (HTTP 200) — the product no longer refuses a document with two prior signers.
+      That is P07.S03's job, and it means the N-party relay can now be driven. Build it:
+      the acceptance moved to S03 and S05 when S01 was narrowed at its grill (2026-08-23).
+      Delete this block and switch -n 4 / -n 9 on."
+  fi
+  # ── What this probe MEASURED, and why the assertion is shaped like this ──────
+  #
+  # The refusal is not observable by name on either side today, and finding that
+  # out is what this probe was worth. `refusalAck` (`internal/p2p/session.go:266`)
+  # carries exactly two classes — consent-timeout and declined. Every other
+  # `coSignExchange` refusal returns `(0, false)`, writes no ack frame, and the
+  # receiver closes; the initiator reads **EOF**. So `expected exactly one prior
+  # signer`, "the document was not signed by the connected peer" and "the peer's
+  # attestation does not accept you" all arrive as `receive co-signed document: EOF`
+  # — a transport error for what is a rule refusal, logged nowhere on the receiving
+  # side either. D23 says a refusal is "never a hang, never a silent no-op"; over
+  # the wire it is currently silent. **P07.S03 owns fixing that**, and its
+  # acceptance gained a clause for it when this probe measured it (2026-08-23).
+  #
+  # So the assertion accepts EITHER shape and prints which one it saw. That keeps
+  # it honest through the intermediate state where S03 names the refusal but has
+  # not yet removed it — it would otherwise go red for the right reason with a
+  # message pointing at the wrong thing.
+  if grep -q "expected exactly one prior signer" "${HOMES[2]}/nib.log" "$WORK/hop2.json" 2>/dev/null; then
+    echo "      the refusal arrived BY NAME (HTTP $hop2code) — the wire now carries it"
+  elif grep -q "receive co-signed document: EOF\|could not connect to peer" "$WORK/hop2.json" 2>/dev/null; then
+    echo "      the refusal arrived FLATTENED to EOF (HTTP $hop2code) — today's shape, S03's to fix"
+  else
+    echo "--- instance 3 log ---" >&2; tail -20 "${HOMES[2]}/nib.log" >&2 2>/dev/null || true
+    echo "--- initiate body ---" >&2; head -c 400 "$WORK/hop2.json" >&2 2>/dev/null || true
+    fail "hop 2 failed with HTTP $hop2code, but as neither the named one-prior-signer refusal nor the EOF flattening — something else is broken, and without this clause it would have been credited as the model's ceiling"
+  fi
+  echo "PASS: $N instances booted with $N distinct identities (${ELAPSED_TOTAL}s of hops), and the model"
+  echo "      still refuses"
+  echo "      hop 2 (see the line above for how the refusal arrived). The N-party relay is"
+  echo "      P07.S03's (the removal) and P07.S05's (the baton topology); this run switches"
+  echo "      on there, and this probe goes red on the day it should."
+  exit 0
+fi
 
 if [ "$LAN" = "1" ]; then
   # The egress counter must be able to FIRE, or asserting it is zero says nothing.
@@ -514,7 +876,7 @@ if [ "$LAN" = "1" ]; then
   after="$(offlink_packets)"
   [ "$after" = "$baseline" ] \
     || fail "the ceremony emitted $((after - baseline)) packets destined off the link — P03's exit criterion says a LAN ceremony completes with NO outbound internet traffic"
-  echo "PASS: a ceremony completed over BOTH transports with no address and no transport"
+  echo "PASS: a ceremony completed over BOTH transports with no address and no transport (${ELAPSED_TOTAL}s of hops)"
   echo "      typed anywhere, and nothing left the link"
   echo "      words: tcp=$WORDS_LAN quic=$WORDS_LAN_QUIC"
   exit 0
@@ -537,6 +899,6 @@ cmp -s "$WORK/final.tcp.pdf" "$WORK/final.quic.pdf" \
 [ "$WORDS_TCP" != "$WORDS_QUIC" ] \
   || fail "both ceremonies produced the same verification words ('$WORDS_TCP') — the channel binding is not per-session"
 
-echo "PASS: a ceremony completed between two instances over BOTH transports"
+echo "PASS: a ceremony completed between two instances over BOTH transports (${ELAPSED_TOTAL}s of hops)"
 echo "      tcp:  $WORDS_TCP"
 echo "      quic: $WORDS_QUIC"
