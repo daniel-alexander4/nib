@@ -197,8 +197,16 @@ function pageField(idx, w, h) {
 export function sparseField(idx, w, h) {
   const px = new Uint8Array(w * h).fill(238); // paper
   paintBar(px, w, h, 0.08, 0.12, 0.12, 0.55 + 0.05 * idx, 40); // heading
+  // A PRNG seeded per page, NOT a closed form over a small modulus. `(idx*3 + i*5) % 7`
+  // has period 7 in idx, so page 7's eight body lines were byte-identical to page 0's and
+  // page 8's to page 1's — and every page was a cyclic ROTATION of one multiset of eight
+  // lengths, which also makes the column ink profile identical across the whole family.
+  // Measured on the shipped hash: sp0 vs sp7 was 3 bits, a "different page" this family
+  // rated as closer than any same-page degradation. That is the THIRD slip of the shape
+  // the comment above predicts, in the one fixture whose job is to hold the hash's limit.
+  const rnd = mulberry32(1000 + idx * 97);
   for (let i = 0; i < 8; i++) {
-    const end = 0.55 + 0.32 * (((idx * 3 + i * 5) % 7) / 7); // ragged right margin
+    const end = 0.55 + 0.32 * rnd(); // ragged right margin
     paintBar(px, w, h, 0.20 + i * 0.07, 0.225 + i * 0.07, 0.12, end, 70);
   }
   return px;
@@ -207,9 +215,14 @@ export function sparseField(idx, w, h) {
 // pagesDiffer reports how many of the 72 grid cells two page indexes disagree on, reduced the
 // way the hash reduces. It exists so a test can assert its OWN fixture distinguishes the pages
 // it is about to claim the hash distinguishes — the check both aliasing drafts above needed.
-export function pagesDiffer(a, b, { w = 170, h = 220 } = {}) {
+// **`field` is a parameter because hard-wiring it is what let the third aliasing slip
+// through.** This guard was written for exactly that class and then pointed only at
+// `pageField`, so `sparseField` — the fixture most in need of it, being the sparse one —
+// was never checked by it at all. A guard that covers one of two populations reports a
+// safety it did not establish for the other.
+export function pagesDiffer(a, b, { w = 170, h = 220, field = pageField } = {}) {
   const cells = (idx) => {
-    const src = pageField(idx, w, h), out = [];
+    const src = field(idx, w, h), out = [];
     for (let gy = 0; gy < 8; gy++) {
       for (let gx = 0; gx < 9; gx++) {
         const x0 = Math.floor((gx * w) / 9), x1 = Math.floor(((gx + 1) * w) / 9);

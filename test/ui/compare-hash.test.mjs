@@ -163,6 +163,21 @@ test('the margin is not inverted — a different page is further away than the s
   // SETUP: assert the FIXTURE distinguishes these pages before claiming the hash does. Two earlier
   // drafts of `pageField` aliased — `idx * 7 % 7` for every page, then a period of 7 in `idx` —
   // and each produced a confident "different pages align" that was the fixture, not the hash.
+  // The sparse family gets the same check, and it never had one. `pagesDiffer` was written
+  // for exactly this class of fixture aliasing and then hard-wired to `pageField`, so the
+  // fixture that most needs it — the sparse one, which by design carries the least into a
+  // 9x8 reduction — was never covered. Measured before this: `sparseField` page 7 was
+  // byte-identical to page 0 and page 8 to page 1, and every page was a cyclic rotation of
+  // one multiset of line lengths. Asserted over EVERY pair, because an alias between any
+  // two is what makes a "different page" number below mean nothing.
+  for (let a = 0; a < 9; a++) {
+    for (let b = a + 1; b < 9; b++) {
+      const d = pagesDiffer(a, b, { field: sparseField });
+      assert.ok(d > 4,
+        `sparse pages ${a} and ${b} differ in only ${d} of 72 reduced cells — these two fixture pages are effectively the same page, so any distance measured between them says nothing about the hash`);
+    }
+  }
+
   assert.ok(pagesDiffer(0, 5) > 20,
     `page 0 and page 5 differ in only ${pagesDiffer(0, 5)} of 72 reduced cells — the fixture is not drawing two distinguishable pages, so a small distance below would say nothing about the hash`);
 
