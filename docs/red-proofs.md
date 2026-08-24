@@ -1502,3 +1502,44 @@ its own `EXPECT`.
 a check fail; it never asserts that the patch contains *only* the defect. The new guard is the
 missing half, and it was free: all 71 patches already touch exactly one file, so the rule was
 an invariant the set obeyed and nothing enforced.
+
+## P07.S02 — the commitment stops folding what it claims to bind (v1.117.153)
+
+Five rows, all tier 1, all replayable. The slice was re-scoped at its grill from "convene, behind
+one door" to the half that is **irreversible** — everything inside a signed preimage or a hashed
+structure — because three of these five are defects that could not be fixed after the first record
+existed in the field.
+
+**Two of the five are defects in GUARDS, not in features**, which is the shape this project keeps
+finding: the check that would have caught the mistake was itself a claim.
+
+| the defect, restored | what goes red | the check |
+|---|---|---|
+| **the embedded-files axis is dropped from `ContentDigest`** *(replayable: `ceremony-digest-blind-to-exhibits`)* | `an exhibit's contents changed under an unchanged filename and the digest did not move` | `TestContentDigestCoversAttachedExhibits`, three arms — contents, rename, removal — because "some mutation moves it" cannot stand in for three. Measured before building: a `Schedule-A.txt` reading `rent is 1000/mo` re-added as `rent is 100000/mo` left the digest byte-identical and `CheckDocument` nil. The exclusion was *argued* — "tamper-evidence for everything else is what the signatures are for" — and the argument fails in the pre-signature window, which is the **only** window this digest is checked in |
+| **`Party.Capacity` is on the struct and out of `rosterPreimage`** *(replayable: `ceremony-capacity-outside-the-commitment`)* | `Party.Capacity varies (alpha vs beta) and RosterHash does NOT move, so the field is OUTSIDE the commitment` | `TestEveryPartyFieldIsInTheCommitment`, **rewritten from a claim into a measurement**. It compared a hand-maintained `inPreimage` map against `reflect.TypeOf(Party{})` and never against the preimage — measured on a pristine export, `Capacity` declared in the map ALONE ships green with `Director` and `Witness` hashing identically, and the guard's own failure message pointed the implementer at the map. It now drives the preimage per field, so there is nothing to silence |
+| **`Verify` stops refusing a non-canonical record** *(replayable: `ceremony-record-not-canonical`)* | `…produced a record whose signature still verifies and Verify said <nil> — want ErrNotCanonical` | `TestAVerifiedRecordIsCanonical`, three axes (hex case, sub-second, non-UTC). **Each arm asserts the mutation does NOT break the signature before asserting the refusal** — otherwise the axis would already be committed and the row would be vacuous. `rosterPreimage` hex-decodes fingerprints, so the commitment is case-FOLDING: two byte-different rosters share one valid `ConvenerSig` |
+| **`MatchesRecord` stops comparing the commitment** *(replayable: `one-invitation-many-records`)* | `the invitation for one ceremony ACCEPTED a second signed record with a different intent` | `TestOneInvitationMatchesExactlyOneRecord`. Measured: the per-field checks compare **nothing that varies between two records sharing a roster**, so a convener could run two chains under one ceremony id — one party carried a lease, another a deed of sale at a different price — and every check passed |
+| **`CheckDocument` stops reading the record's digest version** *(replayable: `digest-version-bound-not-carried`)* | `a digest-rule skew reported <nil> — want ErrDigestVersion` | `TestADigestVersionSkewSaysSoRatherThanAccusing`, which asserts the **sentence** and not only the sentinel: both numbers present, and the tampering wording absent. `ContentDigestVersion` claimed in its own doc to prevent this and could not — bound INTO the digest, three occurrences in the tree, no reader anywhere. Binding a version inside a hash changes the number without giving any reader something to compare |
+
+### The two guards that were claims, and how they now differ
+
+`TestRosterHashCoversEveryAxis` names nine `Record` axes and says why each matters. That is worth
+keeping — the reasons are the specification — but a hand list **cannot notice a tenth**, and
+`Record.DigestVersion` was the tenth. `TestEveryRecordFieldIsInTheCommitment` now drives every field
+with one named exclusion (`ConvenerSig`: a value cannot be inside the preimage it signs). Dropping
+`DigestVersion` from the preimage turns the new guard red **while the nine-axis list stays green**,
+which is the demonstration that the completeness half was needed.
+
+Neither of those is recorded as a replayable row, deliberately: the `ceremony-capacity-outside-the-commitment`
+patch already exercises the same mechanism one level down, and a second row proving the same class
+would be a row that reads as coverage without adding any.
+
+### And one the slice could not close
+
+`TestARecordSurvivesIncrementalSignatures` was cited — in this file's ancestors, in `embed.go` and in
+the plan — as discharging D20's hop-4 clause. It **signed invisibly**, so its final assertion was
+unconditionally true. It now asserts the LIMIT: a *visible* signature moves the digest, so
+`CheckDocument` fails from hop 2 on an honest ceremony. That is a measured boundary, not a fix — the
+per-hop continuity mechanism is S05's and S06's, and the repair the plan had adopted (byte prefix
+plus `AddedAfter == false`) was measured at this slice's grill to **pass** on a document whose first
+page had been blacked out by the last signer.

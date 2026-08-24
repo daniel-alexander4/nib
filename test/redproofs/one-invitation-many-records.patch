@@ -1,0 +1,13 @@
+diff --git a/internal/ceremony/invitation.go b/internal/ceremony/invitation.go
+index 14a0034..ec50ee8 100644
+--- a/internal/ceremony/invitation.go
++++ b/internal/ceremony/invitation.go
+@@ -650,7 +650,7 @@ func (i Invitation) MatchesRecord(r Record) error {
+ 	if err != nil {
+ 		return err
+ 	}
+-	if !strings.EqualFold(i.RosterHash, hex.EncodeToString(rh)) {
++	if false {
+ 		// Fall through to the per-field loops so the message names the axis, if one of them
+ 		// can. If none can, the generic sentence below the loops is the answer: the record
+ 		// differs in something the roster comparison cannot see, which is the whole point.

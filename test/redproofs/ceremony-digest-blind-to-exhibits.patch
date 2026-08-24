@@ -1,0 +1,14 @@
+diff --git a/internal/pdfops/attachments.go b/internal/pdfops/attachments.go
+index f3eef5c..e22b238 100644
+--- a/internal/pdfops/attachments.go
++++ b/internal/pdfops/attachments.go
+@@ -329,9 +329,6 @@ func ContentDigest(pdf []byte) (string, error) {
+ 	// Sorted by name so the digest is a property of the document rather than of pdfcpu's
+ 	// enumeration order; the name and the bytes are hashed as separate length-prefixed
+ 	// chunks, so a rename and an edit cannot be made to cancel out.
+-	if err := hashEmbeddedFiles(ctx, h); err != nil {
+-		return "", err
+-	}
+ 	return hex.EncodeToString(h.Sum(nil)), nil
+ }
+ 
