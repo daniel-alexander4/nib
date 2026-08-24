@@ -33,6 +33,14 @@ continuously connected; a convener may be non-signing; signature blocks get a fr
 six. **D20–D25 and L3 added; D2, D4, D6, D13, D16, D17, D18 amended; D12 withdrawn on Dan's
 instruction; the group-ceremony out-of-scope entry struck; P01, P05 and P06 amended and P07
 added; caveat 5 narrowed and caveats 10–11 written.** Stage 2 has still not run.)
+Reviewed 2026-08-23 (**plan-review pass** over P07's firmed slice list — structural gate passed with one
+warning; 14 seats, 10 criticals, 51 warnings, 24 info, all dispositioned. **Verdict: the firmed slice list
+failed and was restructured** — eleven slices, twenty-two numbered criteria, S08 and D25's page allocation
+moved ahead of the convene route, and a new S02b for invitation consumption. Three decisions amended on
+Dan's call: D20 gains a per-party `capacity` (FormatVersion 3 → 4), D22 re-bases `AcceptedPeer` onto the
+previous *signing* roster entry, D23 keeps signing order fixed and records why. The pass's own headline is
+that **`docHash` is dead on the real path and its guard signs invisibly** — measured, not argued. No slice
+had been built when this ran.)
 Amended 2026-08-18 (**holistic pass** — the second of the day, Dan's instruction: the whole plan
 read end to end against the code it names, after the UX pass had rebuilt its spine. Twenty-one
 items: six read at the line, eight unwritten lifecycle states, four judgment calls, three that
@@ -1242,10 +1250,40 @@ pass reads from it rather than asking a person**.
 |---|---|---|
 | `id` | 128 random bits | names the hop that resumes; without it "continue" is a guess about which ceremony |
 | `docHash` | SHA-256 of the prepared document | every party agrees to the same bytes, and a resumed hop can prove it |
-| `roster` | ordered `{name, fingerprint, label, signs}` | the order **is** the roster's order; `signs:false` is the non-signing convener (Dan, 2026-08-18) |
-| `intent` | what everyone is agreeing to — **the only home; see the pin below** | today each side types its own sentence; a four-party signing agrees to one thing |
+| `roster` | ordered `{fingerprint, label, signs, capacity}` | the order **is** the roster's order; `signs:false` is the non-signing convener (Dan, 2026-08-18); `capacity` added 2026-08-23, see the pin below (`name` deleted v1.117.41 — it was a pure function of the fingerprint) |
+| `intent` | the ceremony's **recital** — what the proceeding is about — **the only home; see the pin below** | today each side types its own sentence; a four-party signing agrees to one thing |
 | `expires` | the ceremony deadline, in days | D16's clock 3 |
 | `rosterHash` | commitment over all of the above — **axes enumerated below** | the token every signature carries (D2 pin), so all signatures attest to one proceeding |
+
+**(amended 2026-08-23 — plan-review, Dan's call: a roster entry gains a `capacity`, and `intent`
+becomes the recital rather than the whole story. FormatVersion 3 → 4.)**
+
+D20 made `intent` a single string and P07 was to write it **verbatim into every signature's signed
+`/Reason`**. The legal-documents seat read that against how executed documents actually work and
+found the collapse: real instruments have parties signing in **different capacities** — as principal,
+as witness, as guarantor, "signed for and on behalf of" a company — and a witness is bound by nothing
+the principal agreed to. Under D20 as written, a witness's own key signs *"I agree to sign this
+document"*, and the block above their signature says the same. **That is an affirmative false
+statement about that party's obligation, inside the artifact, signed by them** — and it is what an
+opposing solicitor reads out.
+
+The two are different fields and the decision had collapsed them. So: **`intent` stays exactly as it
+is** — one recital, one home, committed, rendered once — and **`Party` gains a `capacity` string,
+inside the preimage** on precisely the argument that put `signs` there: a convener who could present
+one roster to the signers and another to a verifier, differing only in who was obliged to do what,
+would have both hash the same. Each party's block renders its own capacity; the recital renders once.
+
+**The timing is the whole decision, not a detail of it.** This is a `FormatVersion` 3 → 4 bump, and
+**P07.S02 is the first code in the product that ever constructs a `Record`** — the panel established
+that every `Record` literal in the tree today is inside a `_test.go`. There are no records in the
+field, so the bump costs nothing now and costs a migration forever after P07 ships. Taken now for
+that reason and no other.
+
+**What discharges it:** a P07 criterion in which a four-party ceremony convened with two distinct
+capacities produces a document whose blocks render **each party's own**, and whose signed `/Reason`s
+differ in capacity while carrying one identical recital. An empty capacity is the ordinary case and
+renders nothing — it is not a required field, and a ceremony that does not need it must not look
+misconfigured.
 
 **(Stage 6 pin, crypto pack PLAN-2, 2026-08-18 — "commitment over all of the above" is a gesture, not
 a specification.)** `rosterHash` is the token every signature in the document carries, and this table
@@ -1516,14 +1554,47 @@ accepted fingerprint, so every party accepting a non-signing convener leaves **`
 every signature of the finished document** — a verifier reads a document whose every signer attests
 to somebody absent.
 
-**Adopted: the attestation binds to the record, not to the wire.** `AcceptedPeer` names the party's
-**predecessor in the roster**; checks 2 and 3 are re-based onto *the document's signers equal the
-record's roster prefix* (which L3 already requires) plus a separate, weaker check that **the wire
-peer is the record's carrier**. **What discharges this specifically:** a P07 criterion in which **a
-four-party ceremony with a non-signing convener completes and every signature on the finished
-document reports `Matched`** — not the existing "every attestation shares one `[NibRoster:…]`
-commitment" bullet, which is satisfied perfectly by a document on which no signature matches any
-other.
+**Adopted: the attestation binds to the record, not to the wire.** ~~`AcceptedPeer` names the party's
+**predecessor in the roster**~~ **— amended 2026-08-23, see below**; checks 2 and 3 are re-based onto
+*the document's signers equal the record's roster prefix* (which L3 already requires) plus a separate,
+weaker check that **the wire peer is the record's carrier**. **What discharges this specifically:** a
+P07 criterion in which **a four-party ceremony with a non-signing convener completes and every
+signature on the finished document reports `Matched`** — not the existing "every attestation shares
+one `[NibRoster:…]`commitment" bullet, which is satisfied perfectly by a document on which no
+signature matches any other.
+
+**(amended 2026-08-23 — plan-review, Dan's call. `AcceptedPeer` names the previous SIGNING roster
+entry, and the first signer gets a state of its own.)** The pin above said "predecessor in the
+roster", and **six independent panel seats found that unsatisfiable by the criterion it was written
+to discharge.** `crossBind` (`internal/p2p/attestation.go`, `crossBind`) sets `Matched` only when
+*another valid signature on this document* holds the accepted fingerprint, and skips any attestation
+whose `AcceptedPeer` is empty. Read literally, a `signs:false` convener at `roster[0]` is the
+predecessor of the first signing party — and holds no signature — so that signature is `Matched:
+false` **always, in exactly the configuration D22 introduced**. Reading it as "predecessor signer"
+does not rescue it either: the first signer still has none.
+
+Three things settle, and the third is the point:
+
+1. **`AcceptedPeer` names the previous entry in the roster that has `signs:true`.** Non-signing
+   parties are skipped rather than named, so the field always names somebody who is expected to have
+   a signature on the document.
+2. **`crossBind` stays document-scoped, unchanged.** The tempting repair — "`Matched` if the
+   fingerprint is anywhere in the roster" — converts `Matched` from *a real valid co-signer's key is
+   on this document* into *the record says so*, under which a **one-signature** document reports
+   `Matched`. That is L2's silent downgrade arriving through the criterion written to prevent it, and
+   it is refused here so no slice reaches for it under pressure.
+3. **The first signer is reported as its own state — *first signer, no predecessor* — never as an
+   unmatched attestation.** This is what makes 1 and 2 compatible. It also fixes a live UI defect the
+   panel found underneath: `augmentSigDetails` (`web/app.js`) drops any attestation with a falsy
+   `acceptedPeer` from `attested` **entirely**, so on an N-party document the first signer vanishes
+   from the summary while `attested.every(a => a.matched)` can still be true — the verdict line prints
+   over a document with an unaccounted-for signer.
+
+**What discharges this, amended:** criterion 14 becomes *every signature **that has a signing
+predecessor** reports `Matched`*, **plus** a counter-clause — an attestation naming a fingerprint that
+is in the roster but has produced no valid signature must still report `Matched: false`. The
+counter-clause is not decoration: without it, clause 2 above is unenforced and the weakening it
+refuses is invisible.
 
 *Amending D2 is owed through `/discuss`* — see the pin there.
 
@@ -1549,6 +1620,47 @@ alone cannot tell a *wrong* signer from a *late* one.
 
 *What this deletes:* D13's role picker and the whole of D17's role-conflict machinery. Two people
 picking the same role is only possible because roles are picked.
+
+**(amended 2026-08-23 — plan-review, Dan's call: order stays fixed, and the reason it stays is now
+written down, because it never was.)**
+
+The legal-documents seat put the question D23 had not answered: **the three enforcement layers above
+all justify *detecting* out-of-order signing, and none of them says why the order should be fixed in
+the first place.** In practice execution order is usually not meaningful; where it is (a guarantee
+executed after the principal obligation) it is a property of the instrument, not of the software. And
+the cost is concrete: party 4 is available today, party 2 is on leave for a week, and nothing may
+happen — parties 3 and 4 are refused by L3 though both are willing, present and named in the same
+signed roster. If party 2's leave outruns `expires`, the ceremony ends and every signature already
+collected is discarded (D25/D28's "start a new ceremony", whose real cost is stated there).
+
+Cheaper than it looks, too: `hopBetween` numbers hops by **static roster position**, so every
+rendezvous key, salt and seed derivation is already independent of who signs when. What actually
+binds order is L3's *prefix* predicate and D22's predecessor rule — and both are being written from
+scratch in P07.
+
+**Order stays fixed, and the argument is not that flexibility is unwanted.** It is:
+
+- **The loosening is forward-compatible; the tightening is not.** Prefix → subset can ship in any
+  later phase, and every document signed under the stricter rule stays valid under the looser one.
+  Waiting forecloses nothing. That is not true in the other direction, so the asymmetry decides it.
+- **It couples to D22's 2026-08-23 amendment.** "The previous signing roster entry" is well-defined
+  only under fixed order; with a free order `AcceptedPeer` must name the predecessor *in signing
+  sequence* or the whole prior set — which reopens the field D22 has just settled, in the same phase,
+  with L3 still unimplemented.
+- **The prefix predicate is smaller.** "Signers equal the roster prefix" is one comparison; the
+  subset form needs no-duplicates, each-valid, each-cross-bound and caller-has-not-yet-signed. L3 is a
+  security law with no implementation yet, and the simpler correct thing is what gets built first.
+
+**What this obliges instead, and it is not optional.** The convener must order the roster by expected
+availability **at convene time**, and that order is permanent — so the boundary is **convene, not the
+first signature** (P07 criterion 4 is re-pointed accordingly), and P06's convene copy must tell the
+convener that order is fixed once invitations go out. A constraint that exists, is enforced three
+times, and is disclosed nowhere is what this amendment refuses to leave standing.
+
+**Deferred, with its trigger rather than as a road not taken:** relax L3 to *a subset of the roster,
+no duplicates, each valid and cross-bound, and the caller is a roster member who has not yet signed*
+— **when a real ceremony is blocked by roster order**, which is the evidence this decision currently
+lacks in either direction.
 
 ### D24 — The hop is the unit of resumption; a signature is persisted before it is delivered *(settled 2026-08-18 — UX pass)*
 
@@ -4068,165 +4180,249 @@ Exit criteria:
 - **The ceremony record is labelled in the attachments panel for what it is, and cannot be removed while the ceremony is live. (added 2026-08-18, D29.)**
 - **A party's in-progress copy is labelled as in-progress and never as the finished document. (added 2026-08-18, D28.)**
 
-Slices *(sketch)*: the ceremony panel replacing the tab and its three modals; convene-and-invite; the connect-and-confirm screen; the roster and position display; **the roster-shaped consent screen (D27); the end-state surfaces (D28); the document freeze and the attachments label (D29);** failure surfaces; docs and README.
+Slices *(sketch)*: the ceremony panel replacing the tab and its three modals; **the convene-and-invite PANEL, over P07.S02's route** *(re-pointed 2026-08-23 — the server-side convene is P07's; a pin two hundred lines below is not what a builder reading this list will see)*; the connect-and-confirm screen; the roster and position display; **the roster-shaped consent screen (D27); the end-state surfaces (D28); the document freeze and the attachments label (D29);** failure surfaces; docs and README.
 
 ### P07 — More than two parties: **the model** **(added 2026-08-18 — D22, D23, D25, D27; amended the same day — D28, D29; built BEFORE P06 — Stage 2 grill; **split 2026-08-18, plan-review: lifecycle and delivery moved to P08**)**
-Goal: a ceremony of N parties completes as a convener-driven serial relay, survives being
-interrupted at any hop, and cannot be signed out of order. Last, because it needs the record
+Goal: a ceremony of N parties completes as a convener-driven serial ~~relay~~ **baton** (renamed
+2026-08-23 — "relay" is what the out-of-scope list forbids for carrier-grade NAT, and D22's own word
+is baton), ~~survives being interrupted at any hop,~~ **persists every hop before it returns
+(C22) — surviving interruption is P08's, and the struck clause described machinery no slice in this
+phase builds** *(struck 2026-08-23, plan-review)*, and cannot be signed out of order. Last, because it needs the record
 (P01), a working transport (P02), a working ladder (P05) and a roster-shaped surface (P06); the
 artifact model it rides on already carries no two-party assumption (D2 pin).
 
 Exit criteria:
-- **A four-party ceremony completes, every signature valid, every attestation sharing one `[NibRoster:…]` commitment, and `crossBind` matching each signer against the others. (D2 pin, D22.)**
-- **A non-signing convener completes a ceremony: the finished document carries the signers' signatures and none of the convener's. (D22, Dan's call.)**
-- **The signature blocks of a nine-party ceremony are all on the page and none overlaps the readme body — driven by rendering and measuring, not by asserting a rect. (D25.)** The measurement is the point: the defect this closes is invisible to every assertion about placement arithmetic, because the arithmetic is what is wrong.
-- **A ceremony cannot grow a party after the first signature: the attempt is refused with a distinct message naming a new ceremony as the answer. (D25 — pages are allocated up front.)**
-- **A contribution offered by the wrong party, or onto a document with the wrong prefix, is refused by the L3 guard in Go with a named error — driven for both cases separately, and with the UI bypassed. (D23, L3.)** A test that drives it through the panel proves the panel, not the law.
-- **Every criterion in this phase is driven by the multi-instance harness (D26), not by hand. (added 2026-08-18.)** A four-party ceremony verified once, manually, at the phase gate is the shape of check this repo has already been burned by.
-- **A non-signing convener completes a ceremony over the carry route, and the finished document contains no signature of theirs. (added 2026-08-18, D22 pin.)** Driven — and note it cannot pass on `Initiate`, which demands the caller's own signature back, so a green here is evidence the third route exists.
-- **The appended trust page describes a ceremony of N, the About dialog says the same thing, and the drift guard is green. (added 2026-08-18, D27.)** The guard (`internal/p2p/readme_test.go:61`) is what makes this one criterion rather than two that can drift.
-- **A nine-party document's visible blocks and signature details each name the ceremony rather than one neighbour. (added 2026-08-18, D27.)**
-- Documentation and README updated in the same phase (STANDARDS docs-parity).
-- **Every row of `<project-memory>/instruments/ceremony.md` carries a disposition — `keep-live` / `gated` / `deleted` — filled at this phase's close. (added 2026-08-18, verification pack V8.)** An inventory whose disposition column was never filled is a record of intentions; 224 such rows accumulated in another project before anyone noticed. A row whose reader is a standing criterion is never silenced.
-- **Each of D33's four numbers is enforced on the externally-supplied path, driven by supplying a value past the bound. (added 2026-08-18, crypto pack PLAN-4.)** A test that supplies a value *inside* the bound cannot see an unenforced parameter.
-- **A version skew produces a sentence naming the mismatch, not a parse error — driven for the record, the invitation and the ceremony protocol separately. (added 2026-08-18, D32.)**
-- **A four-party ceremony with a NON-SIGNING convener completes, and every signature on the finished document reports `Matched`. (added 2026-08-18, plan-review, D22/D2 pin.)** The "every attestation shares one `[NibRoster:…]` commitment" bullet is satisfied perfectly by a document on which no signature matches any other — this is the clause that sees the hub breaking the channel binding.
-- **Every signature block on a completed ceremony carries the record's intent verbatim. (added 2026-08-18, plan-review, D20 intent pin.)** None of the record round-trip bullets ever reads a signature block.
-- **A completed ceremony whose convener has `signs:false` renders as complete, not as missing a signer. (added 2026-08-18, plan-review, D27 pin.)** The "no signature of theirs" bullet is a fact about the document and says nothing about what the verifier reports.
+- **C01.** **A four-party ceremony completes, every signature valid, every attestation sharing one `[NibRoster:…]` commitment, and `crossBind` matching each signer against the others. (D2 pin, D22.)**
+- **C02.** **A non-signing convener completes a ceremony: the finished document carries the signers' signatures and none of the convener's. (D22, Dan's call.)**
+- **C03.** **The signature blocks of a nine-party ceremony are all on the page and none overlaps the readme body — driven by rendering and measuring, not by asserting a rect. (D25.)** The measurement is the point: the defect this closes is invisible to every assertion about placement arithmetic, because the arithmetic is what is wrong.
+- **C04.** **A ceremony cannot grow a party ~~after the first signature~~ *once its invitations have been issued* (re-pointed 2026-08-23, plan-review, D23 amendment): the attempt is refused with a distinct message naming a new ceremony as the answer, AND that message states that the signatures already collected cannot be carried into it. (D25 — pages are allocated up front.)** The boundary is **convene**, not the first signature: adding a party changes `rosterHash`, so every invitation already sent fails `MatchesRecord` on roster length — the gap between convene and first signature is precisely when a convener remembers the second landlord, and it was unspecified. The carried-signatures clause is asserted separately because it is the half a builder omits, being the bad news.
+- **C05.** **A contribution offered by the wrong party, or onto a document with the wrong prefix, is refused by the L3 guard in Go with a named error — driven for both cases separately, and with the UI bypassed. (D23, L3.)** A test that drives it through the panel proves the panel, not the law.
+- **C06.** **Every criterion in this phase is driven by the multi-instance harness (D26), not by hand. (added 2026-08-18.)** A four-party ceremony verified once, manually, at the phase gate is the shape of check this repo has already been burned by.
+- **C07.** **A non-signing convener completes a ceremony over the carry route, and the finished document contains no signature of theirs. (added 2026-08-18, D22 pin.)** Driven — and note it cannot pass on `Initiate`, which demands the caller's own signature back, so a green here is evidence the third route exists.
+- **C08.** **The appended trust page describes a ceremony of N, the About dialog says the same thing, and the drift guard is green. (added 2026-08-18, D27.)** The guard (`internal/p2p/readme_test.go:61`) is what makes this one criterion rather than two that can drift.
+- **C09.** **A nine-party document's visible blocks and signature details each name the ceremony rather than one neighbour. (added 2026-08-18, D27.)**
+- **C10.** Documentation and README updated in the same phase (STANDARDS docs-parity).
+- **C11.** **Every row of `<project-memory>/instruments/ceremony.md` carries a disposition — `keep-live` / `gated` / `deleted` — filled at this phase's close. (added 2026-08-18, verification pack V8.)** An inventory whose disposition column was never filled is a record of intentions; 224 such rows accumulated in another project before anyone noticed. A row whose reader is a standing criterion is never silenced.
+- **C12.** **Each of D33's four numbers is enforced on the externally-supplied path, driven by supplying a value past the bound. (added 2026-08-18, crypto pack PLAN-4.)** A test that supplies a value *inside* the bound cannot see an unenforced parameter.
+- **C13.** **A version skew produces a sentence naming the mismatch, not a parse error — driven for the record, the invitation and the ceremony protocol separately. (added 2026-08-18, D32.)**
+- **C14.** ~~**A four-party ceremony with a NON-SIGNING convener completes, and every signature on the finished document reports `Matched`.**~~ **Amended 2026-08-23 (plan-review, D22's amendment): a four-party ceremony with a NON-SIGNING convener completes; every signature THAT HAS A SIGNING PREDECESSOR reports `Matched`; the first signer reports *first signer — no predecessor*; and an attestation naming a fingerprint that is in the roster but produced no valid signature still reports `Matched: false`.** The last clause is the one that keeps this a criterion rather than a formality — without it, the repair that satisfies the first two is loosening `crossBind` to consult the roster, under which a one-signature document reports `Matched`. (added 2026-08-18, plan-review, D22/D2 pin.) The "every attestation shares one `[NibRoster:…]` commitment" bullet is satisfied perfectly by a document on which no signature matches any other — this is the clause that sees the hub breaking the channel binding.
+- **C15.** **Every signature block on a completed ceremony carries the record's intent verbatim. (added 2026-08-18, plan-review, D20 intent pin.)** None of the record round-trip bullets ever reads a signature block.
+- **C16.** **A completed ceremony whose convener has `signs:false` renders as complete, not as missing a signer. (added 2026-08-18, plan-review, D27 pin.)** The "no signature of theirs" bullet is a fact about the document and says nothing about what the verifier reports.
+- **C17.** **A party reconciles the document it was handed against the invitation it holds, BEFORE the consent gate — driven separately with (a) a one-byte-altered invitation and (b) a well-formed record for a different ceremony, each refused by name, UI bypassed. (added 2026-08-23, plan-review.)** `CheckDocument` and `MatchesRecord` exist, are tested, and have **zero production callers**; P01.S07's "a one-byte-altered invitation is refused by name" was discharged by a unit test on a function nothing on the real path calls. D21's corrected pin calls this comparison the single point of failure of the whole design. The reconciliation must also cover `intent`, `expires` and `capacity` — all are inside the commitment and `MatchesRecord` compares none of them.
+- **C18.** **A document carrying the roster prefix of an INCOMPLETE ceremony renders as incomplete, naming how many obliged signers are absent — driven at five of nine. (added 2026-08-23, plan-review.)** C16 is its twin and is satisfied vacuously today, because nothing in the verdict path knows a roster: a nine-party ceremony abandoned at hop 5 currently renders *untampered, 5 signers, every attestation matched, one proceeding*, and no surface says four obliged parties never signed. C16 asks the verifier not to cry wolf; this asks it to cry at all.
+- **C19.** **A four-party ceremony convened with two distinct capacities produces a document whose blocks render each party's OWN capacity, and whose signed `/Reason`s differ in capacity while carrying one identical recital. (added 2026-08-23, D20's capacity amendment.)** An empty capacity renders nothing and is the ordinary case.
+- **C20.** **A four-party ceremony whose deadline admits hop 1 but not hop 3 is refused AT CONVENE, not at hop 3. (added 2026-08-23, plan-review.)** `checkCeremonyDeadline` reserves one exchange budget regardless of hops remaining, so at N=9 a ceremony passes early hops and then refuses parties 6-9 on a document already carrying five signatures. The reservation is also under-sized for even one hop: the real per-hop ceiling from the constants is ~23 minutes, reserved as six.
+- **C21.** **An armed party whose ceremony deadline has passed disarms without being told by anyone. (added 2026-08-23, plan-review.)** The arm bounds itself by `MaxCeremonyLife` — thirty days — because the invitation carries no expiry, and P07 turns one arm into N−1. Measured: ~21,700 DHT operations per armed party over that window, so a stalled nine-party ceremony is ~3.2 M packets against D33's budgeted 93,000 — and D33's figure counts *hops*, not *arms*.
+- **C22.** **The convener's baton and every hop's output are written to the ceremony mirror before the HTTP response returns, and a ceremony's directory is findable by id. (added 2026-08-23, plan-review.)** Write-only; resumption stays P08. `WriteMirror` has zero production callers and no session path writes to disk, so a ceremony's whole state is an unsaved in-memory tab: lose it between hops and every signature collected is gone on every party's machine. This criterion is what turns *ceremony destroyed* into *ceremony stalled*, and it is why P07's goal sentence no longer claims interruption-survival it does not build.
 
 ~~Slices *(sketch)*: the roster-prefix contribution gate and the L3 guard; `coSignExchange` re-based off `len(ats) != 1` **and off the wire peer (D22/D2 pin)**; the carry route for a non-signing convener (D22 pin); the roster-shaped `Confirmer` (D27); the readme and About rewrite behind the drift guard (D27); the placement policy and page allocation; the record's intent populating every block (D20 pin).~~ **Firmed 2026-08-23 into S01–S10 below.**
 
-**What the firming pass found that the sketch did not name, each read in the code rather than
-inferred.** The sketch's seven items all survive and are S03–S08; three more slices exist because
-three things the criteria presuppose turned out not to be there.
+**Firmed 2026-08-23, then restructured the same day by a 14-seat `/plan-review`.** The sketch's seven
+items all survive; the phase now has **eleven** slices and **twenty-two** criteria, and the build order
+is S01 · S08 · S02 · S02b · S03 · S04 · S05 · S06 · S07 · S09 · S10.
 
-1. **Nothing in the product constructs a `ceremony.Record`.** Every literal in the tree is inside a
-   `_test.go`; the only production reader is `ceremony.Extract` at `internal/server/ceremonynet.go:665`.
-   The founding artifact of every criterion in this phase cannot come into existence through the API
-   the harness drives — and D26's clause requires exactly that. **S02.**
-2. **L3 has no code.** A search for the law across the Go tree matches nothing outside comments, so
-   "no contribution out of roster order" is at present a convention — which is the thing D23's own
-   text says a law must not be. The sketch named it, but as a gate to *re-base*, and there is
-   nothing to re-base. **S03.**
-3. **The harness boots exactly two nibs.** Four criteria name a four-party or nine-party ceremony
-   and every one is qualified by "driven by the multi-instance harness (D26), not by hand". **S01**,
-   first, on P02.S01's precedent and for its reason.
+**What the firming pass found, each read in the code.** Three things the criteria presuppose were not
+there: **nothing in the product constructs a `ceremony.Record`** (every literal is inside a `_test.go`;
+the only production reader is `ceremony.Extract`) → S02; **L3 has no code**, so "no contribution out of
+roster order" is at present the convention D23 says it must not be → S03; and **the harness boots
+exactly two nibs** while four criteria name four or nine parties → S01.
 
-**And one thing the firming pass could not settle from the plan, decided and pinned rather than
-asked.** P06's sketch carries "convene-and-invite", but P06 is the *surface* and is built LAST,
-after this phase. A screen over a route that does not exist cannot be what P07's criteria are
-driven through. **Pin (2026-08-23, phase-open): the server-side convene is P07.S02's; P06's sketch
-item is the panel over it.** Reversible — it moves work between two phases and changes no decision.
+**What the review then found, and it reframed the phase.** *P07's criteria assume an integrity
+substrate that is written but unwired.* `docHash`, `CheckDocument`, `MatchesRecord`, `AddCeremonyPeer`,
+`PruneCeremonyPeers` and `WriteMirror` are all built, all tested, and all have **zero production
+callers**. Ten critical clusters, six of them reached by three or more seats that could not see each
+other. Four consequences shaped the list above:
 
-#### P07.S01 — The harness grows a roster: N instances, one driver *(D26; criterion 6 is a precondition for every other)*
-Scope: `build/pairrepro.sh` boots exactly two nibs — its own header says so ("run TWO real nib
-binaries"), and its `start()` helper (`build/pairrepro.sh:233`) already takes `name port home`, so
-the generalisation is a parameterisation and not a rewrite. Every P07 criterion is qualified by
-*"driven by the multi-instance harness (D26), not by hand"*, and four of them name a **four-party**
-or **nine-party** ceremony. First slice, on P02.S01's precedent and for its reason: it is what lets
-any later slice prove a ceremony at all.
+1. **`docHash` is dead on the real path** — `ContentDigest` was widened to hash `/Annots` *after* D20
+   took its "identical across three incremental signatures" measurement, and a visible signature adds a
+   widget annot. Measured: `CheckDocument` passes before any signature and fails after the first
+   *visible* one. **The guard that says otherwise signs invisibly** — a vacuous green over the clause
+   D20 calls "what makes the hop-4 clause buildable at all". `docHash` becomes a **convene-time-only**
+   identity; hop continuity is the byte prefix plus `AddedAfter == false`. D20's exclusion paragraph,
+   `embed.go`'s doc comment and `attachments.go`'s "pre-FIRST-signature hop" comment are all currently
+   untrue of the code and are fixed with it.
+2. **Order of build changed twice for one reason: page count and readme body are both inside the
+   digest.** S08 moves ahead of S02, and D25's page allocation moves *into* S02, because a slice that
+   changes either after a record is convened moves `docHash` under every party.
+3. **A whole half of the model had no owner** — invitation consumption, which is now S02b, and which
+   also carries the two criteria P01's close parked on "P07's convene-and-decline machinery" that
+   neither this phase's criteria nor its first firming had picked up.
+4. **The first firming's S06 scope was wrong in all three of its numbers**, and D25 had already said so
+   on 2026-08-18. See S06.
+
+**One pin taken rather than asked, at firming:** the server-side convene is P07.S02's; P06's sketch item
+is the panel over it. P06 is the *surface* and is built last, so a screen over a route that does not
+exist cannot be what these criteria are driven through. Reversible — it moves work between two phases
+and changes no decision.
+
+**Three decisions moved, all Dan's call 2026-08-23** and written where they belong rather than here:
+D22 (`AcceptedPeer` names the previous *signing* roster entry, `crossBind` stays document-scoped, the
+first signer gets a state of its own), D20 (`Party` gains a `capacity` inside the preimage;
+`FormatVersion` 3 → 4, taken now because no records exist in the field), and D23 (signing order stays
+fixed, with its reason written down for the first time and the relaxation deferred against a named
+trigger).
+
+**Hand-off:** `<project-memory>/plan-reviews/2026-08-23.md` — every finding, every `file:line`, and the
+21 info items not carried here.
+
+#### P07.S01 — The harness grows a roster: N instances AND an N-party driver *(D26; C06 is a precondition for every other)*
+Scope: `pairrepro.sh` boots exactly two nibs. Its `start()` helper does take `name port home`, so *that*
+generalises — but `ceremony()` hard-codes `$A`/`$B`, `FP_A`/`FP_B`, `CSRF_A`/`CSRF_B`, one arm, one initiate,
+two watchers and a final `n < 2` `/ByteRange` count, **and passes no invitation on either side**, so it drives
+the manual two-party path. "The existing two-party run still completes" would therefore prove nothing about a
+record-driven ceremony, and the slice is scoped to the driver as well as the boot.
 Acceptance:
-- N nib instances boot with N homes, N vaults and N identities, and are torn down together — driven at N=4 and N=9.
-- **The existing two-party run still completes under the generalised driver**, both transports. A refactor that changes nothing is how this slice proves it is the same harness rather than a second one.
-- Booting fewer instances than the driver was asked for **fails loudly**, never silently runs a smaller ceremony — a harness that quietly drops a party is the shape that makes a nine-party criterion pass at two.
+- N instances boot with N homes, N vaults and N identities — asserted as **a set of N distinct fingerprints of size exactly N**, not as N successful boots. Per D26's own words at P02.S01, a harness that boots two Nibs and asserts nothing is the vacuous green it exists to prevent; nine processes sharing three identities passes any naive pairwise generalisation of today's `FP_A != FP_B`.
+- The roster-order relay is expressed **once**, driven at N=4 and N=9, with the signature count asserted `== N_signing` rather than `>= 2`.
+- **All N−1 parties arm before the first hop and are never re-armed mid-run** — that is what a real ceremony does, and it is what makes C21 and the TCP five-minute auto-disarm fail honestly instead of being configured past (the ADR-010 shape).
+- Booting fewer instances than asked for **fails loudly** and earns a red proof by making the driver drop one; every instance is tracked, killed and **waited for** before the work dir is removed, driven by a failure injected at instance 5; the pre-flight probes every API **and** session port the run will use; and **on failure the work dir is preserved and its path printed**, because at eight hops the log is the only thing that says which instance broke.
 
-#### P07.S02 — Convene: a ceremony record is built, signed and embedded by production code *(D20, D21, D22)*
-Scope: **nothing in the product constructs a `ceremony.Record`.** Every `ceremony.Record{...}`
-literal in the tree is inside a `_test.go`; the only production reader is
-`ceremony.Extract` (`internal/server/ceremonynet.go:665`, `checkCeremonyDeadline`). `Record`,
-`RosterHash`, `Sign`, `Verify`, `Hop`, `NewInvitations` and `Embed` are all built and all reachable
-from tests only, so the founding artifact of every P07 criterion has no way to come into existence
-through the API the harness drives. This slice is the missing constructor and its route.
-**The plan did not schedule it anywhere** — P06's sketch says "convene-and-invite", but P06 is the
-*surface* and is built LAST, after this phase; a screen over a route that does not exist cannot be
-what P07's criteria are driven through. **Pin (2026-08-23, phase-open): the server-side convene is
-P07's; P06's sketch item is the panel over it.**
+#### P07.S08 — The readme and About describe a ceremony of N, honestly *(D27; C08)* — **moved ahead of S02, 2026-08-23**
+Scope: **it moves first because it changes the readme body, and the readme body is inside `ContentDigest`,
+which is inside the `docHash` S02 commits to.** Rewriting it after S02 would move the digest under every
+record already convened. `readme.go` asserts two-party in **three** places, not the one the first firming
+named: "signed by **two people**", "In **two-party** signing the second …", and "How the **two people** know
+who they signed with". `trustClaims` is the single source the drift guard binds, and none of its four entries
+mentions parties, order or a ceremony — so "the About dialog says the same thing and the guard is green" is
+dischargeable today by an About that never mentions co-signing at all.
 Acceptance:
-- A four-party record is convened over the API, and `Extract` + `Verify` round-trip it off the returned document.
-- The convener is in the roster and signed the commitment; `Signs:false` is representable and survives the round trip (D22 — it is inside the preimage).
-- One invitation per party, each `ParseInvitation`-able, each scoped to its own party.
-- Refused **by name**, each driven separately: a duplicate fingerprint in the roster; a convener absent from the roster; a deadline beyond `MaxCeremonyLife`; a roster of one.
+- The **rendered** body — text extracted from `RenderReadme`'s output, not the Go string constant — describes a ceremony of N, and **no longer contains "two people" or "In two-party signing"**. The negative clause is the load-bearing half: the positive one cannot fail.
+- **The N-party claims are ADDED to `trustClaims`**, which is what makes them guarded, and the guard is shown to still bite.
+- The page states the **trust topology honestly**: identities were *asserted by the convener in an invitation*, each party verified the convener, and **non-adjacent parties did not verify each other**. Today's paragraph says each party "pinned the other's identity out of band … by comparing a fingerprint in person", which under D22's hub is false for every non-convener pair — the sentence an opposing solicitor reads out, and the cross-examination is one question long.
+- The page **names the convener** — label and fingerprint — and says what a shared roster commitment does and does not prove.
 
-#### P07.S03 — The L3 guard: the roster-prefix contribution gate *(D23, L3; criterion 5, Stage 6 pin V1)*
-Scope: **L3 has no code.** A search for the law across the Go tree matches nothing outside comments
-— the repo law "no contribution out of roster order" is currently a convention, which is the exact
-thing D23 says it must not be. One door, per ADR-009: a single predicate that answers *may this
-caller contribute to this document under this record*, with every call site routed through it.
+#### P07.S02 — Convene: the pre-signing pass, the record, and the invitations, behind one door *(D20, D21, D22, D25; C04, C19, C20)*
+Scope: **nothing in the product constructs a `ceremony.Record`** — every literal is inside a `_test.go`, and
+the only production reader is `ceremony.Extract`. This slice is the missing constructor and its route.
+**It absorbs D25's page allocation** (moved here from S06, 2026-08-23): page count is inside `ContentDigest`,
+so the ordering is **readme → signature pages → `docHash` → `Embed` → first signature**, and a slice that
+allocates pages four slices later moves the digest under every record already convened. One door for the whole
+pre-signing pass, per ADR-009.
+**Pin (2026-08-23, phase-open): the server-side convene is P07's; P06's sketch item is the panel over it.**
+Acceptance:
+- A four-party record is convened over the API; `Extract` + `Verify` round-trip it; and **a party other than the convener runs `CheckDocument` on what it received and it passes** — `Verify` does not check `docHash`, so without this clause S02 can ship a hash over the wrong bytes and be green everywhere.
+- `Signs:false` and a non-empty `capacity` are representable and survive the round trip (both are inside the preimage).
+- One invitation per party, each `ParseInvitation`-able, **each carrying the ceremony's `expires`** (new field, D32's skew rule covers it) so an armed party can bound itself by the record's deadline rather than by `MaxCeremonyLife` (C21).
+- Refused **by name, through the convene route** — driven separately, each asserting the route's own error text rather than `Record.Verify`'s, which is P01's coverage: a duplicate fingerprint; a roster of one; an empty intent; a deadline that does not admit every remaining hop (C20); **a second convene on a document that already carries a record**; and a mixed-case roster **convenes successfully**, because the commitment is case-insensitive while every string comparison around it is not.
+- Duplicate-fingerprint and roster-of-one refusals also land in `Record.Verify` and `ParseInvitation` — the doors every **non-convener** passes. A bound enforced only at the emitter is the exact inversion of the reasoning `record.go` already records twice.
+- The convener's N−1 invitation secrets are persisted **in the vault**, keyed by `(ceremony id, party fingerprint)`, and are re-readable after a restart — driven by an **absence** check over `~/nib/ceremonies/<id>/`, never by a presence check on the vault. Today they exist only in one HTTP response: close the tab and the ceremony is unrecoverable, not stalled.
+- The unconvened source bytes are retained under the ceremony id, so C04's "start a new ceremony" is a **route** and not a sentence, and the new record inherits the old roster rather than making somebody retype nine fingerprints under pressure.
+- A roster above the D22 sitting ceiling (~8) returns a **distinct, named** soft refusal the API carries and P06 later renders. P06 is built last, so this is the only place in the build order where D22's ceiling pin can land before a screen exists.
+
+#### P07.S02b — Invitation consumption: parse, reconcile, pin, scope *(D21, D29; C17)* — **new, 2026-08-23**
+Scope: the panel found the convene half owned and the **consume half owned by nobody**. `AddCeremonyPeer` and
+`PruneCeremonyPeers` — D29's ceremony-scoped revocable pins — have **zero production callers**, and
+`handleSessionArm` refuses an unpinned peer. So without this slice the phase's own four- and nine-party runs
+create **permanent** pins on strangers, which is verbatim the harm D29 was written to prevent, delivered by the
+harness that proves the phase. It also carries **P01's two parked criteria**, which its close recorded as
+"waiting on P07's convene-and-decline machinery" and which no P07 criterion or slice had picked up.
+Acceptance:
+- Accepting an invitation establishes the pins its roster carries: **no party performs a manual fingerprint pin to take part in a ceremony they were invited to**, which is the step D21 exists to remove.
+- On first receipt of the document the party runs `CheckDocument` **and** `MatchesRecord` against the invitation its arm was built from, before the consent gate — the C17 clause, guarded ADR-009-style by asserting the call site routes through the door, not by asserting the function can return an error.
+- `MatchesRecord` compares `intent`, `expires`, `capacity` and `label` as well as the fingerprints and `signs` flags. It compares none of them today, and all are inside the commitment — so a convener handing later parties a different **intent** is refused by nothing, and P07.S07 writes that intent verbatim into every signature.
+- After a ceremony a party **declined**, `PruneCeremonyPeers` leaves the peer list byte-identical to before (P01's parked criterion, driven at last).
+- The invitation secret is never written to `~/nib/ceremonies/`, driven by searching the mirror after a ceremony is **armed** (P01's other parked criterion — the half its own close could not exercise).
+
+#### P07.S03 — The L3 guard: the roster-prefix contribution gate *(D23, L3; C05, Stage 6 pin V1)*
+Scope: **L3 has no code** — the law matches nothing in the Go tree outside comments, so "no contribution out of
+roster order" is at present the convention D23 says it must not be. One door per ADR-009, and the slice opens
+with the seam that makes one door possible at all.
+- **T01 — break the import cycle first.** `internal/p2p` cannot import `internal/ceremony`: `record_test.go` is
+  `package ceremony` and imports `p2p`, so the edge is a cycle — compile-tested by the panel, and already
+  recorded in `record.go` as the reason `RosterToken` was deleted. S03, S04 and S07 all need record facts inside
+  `p2p`, and so does D22's amendment. Move `record_test.go` to `package ceremony_test`; its `p2p` uses touch no
+  unexported identifier. Decided here rather than discovered at S04, because the alternative is a partial
+  re-implementation of the roster rule inside `p2p` — the ADR-009 shape this slice's own scope invokes.
+Scope, continued: **the gate reads the record the party verified at arm time** (S02b's invitation-matched copy).
+The document-borne record is only ever *compared* to it, never the authority — otherwise the gate reads a
+substituted record and answers yes to its own question, which is reachable today because `Embed` refuses only an
+*already-signed* document, `Record.Verify` asks only that the signer appear in that record's own roster, and
+`ContentDigest` excludes attachments.
 Acceptance:
 - A contribution by the **wrong party** is refused in Go with a named error, UI bypassed.
-- A contribution onto a document with the **wrong prefix** is refused in Go with a named error, UI bypassed — **driven separately** from the clause above, because one fixture satisfying both is the shape the criterion's own note forbids.
-- A right-party, right-prefix contribution is **admitted**, so the guard is not passing by refusing everything.
-- **L3's own negative fixture** — not shared with L1 or L2 — earns a row in `docs/red-proofs.md` and replays with `./build/redproof.sh`.
+- A contribution onto a document with the **wrong prefix** is refused in Go with a named error, UI bypassed — **driven separately**, because one fixture satisfying both is what C05's own note forbids.
+- A prefix naming the right identities but carrying a signature that **does not verify, or is not cross-bound**, is refused by name. L3 and D23 both say "each one valid and cross-bound"; without this clause S03's acceptance is narrower than the law it implements.
+- A **substituted but well-formed** record is refused by name — the compound above, driven.
+- A right-party, right-prefix contribution is **admitted**, and the slice removes `coSignExchange`'s `len(ats) != 1` refusal in the same commit, so the door has a live call site rather than sitting beside a two-party legacy.
+- The same predicate answers **"whose turn is it, and is it mine"** as a question, not only as a refusal — P06's replacement role-conflict criterion promises the panel computes its enabled action from "the same function the server's L3 check uses", and a check that only refuses forces P06 to retrofit a read-only query.
+- **A source-level guard enumerates every contribution entry point and fails when one does not call the predicate**, with a stimulus assertion that the walk found a non-zero population. ADR-009 asserts routing, not the text each site prints; the precedent is `TestL2CoversEveryDocumentCarryingEntryPoint` in the same package.
+- **L3's own negative fixture** — not shared with L1 or L2 — earns a row in `docs/red-proofs.md`, replays under `./build/redproof.sh`, and **the floor constant in `verify_test.go` moves in the same commit**.
 
-#### P07.S04 — `coSignExchange` re-based off the record, not off "exactly one prior signer" *(D22, D2 pin; criteria 1, 14)*
-Scope: `internal/p2p/session.go:406` refuses anything but a single prior signer —
-`if len(ats) != 1 { return nil, fmt.Errorf("expected exactly one prior signer, got %d", len(ats)) }`
-— and the two checks under it bind `AcceptedPeer` to the **wire** peer (`:414`, `:423`). D22's
-adopted resolution is that the attestation binds to the **record**: `AcceptedPeer` names the
-party's predecessor in the roster, the prefix check is S03's door, and the wire peer is checked
-separately and more weakly as the record's carrier. `att` at `:453` also sets no `RosterHash`, so
-today no production signature carries a commitment at all.
+#### P07.S04 — `coSignExchange` re-based off the record *(D22 as amended 2026-08-23, D2 pin; C01)*
+Scope: `coSignExchange` refuses anything but a single prior signer, and the two checks under it bind the
+document's signer to the **wire** peer and require that signer to have accepted **this user** — the second is
+what D22 re-bases. `att` sets no `RosterHash`, so today no production signature carries a commitment at all.
+Per D22's amendment, `AcceptedPeer` names the previous roster entry with `signs:true`; `crossBind` stays
+document-scoped and unchanged. C14 and C16 belong to **S05**, which is where a non-signing convener can first
+complete a ceremony at all.
 Acceptance:
-- A four-party ceremony completes, every signature `Valid`.
-- Every attestation carries the **same** `[NibRoster:…]` commitment and `OneProceeding` is true.
-- **Every signature reports `Matched`** on a four-party ceremony with a non-signing convener — the clause D22's pin says exists to see the hub breaking channel binding, and the one the shared-commitment clause above is satisfied by a document that fails.
-- The wire peer is still checked: a document arriving from a peer who is not the record's carrier for this hop is refused by name.
+- A four-party ceremony completes, every signature `Valid`, every attestation carrying the same `[NibRoster:…]` commitment with `OneProceeding` true.
+- **The commitment on every valid signature equals `RosterHash()` of the record embedded in the same document.** `markOneProceeding` compares the tokens only to *each other*, so a document with no record at all whose signers share an arbitrary 64-hex reports one proceeding today. This clause needs the T01 seam and is why T01 is not optional.
+- The **token carries a version** (`[NibRoster:1:…]`), because `FormatVersion` sits inside the roster preimage — so a format skew between two builds yields different tokens, `OneProceeding` goes false, and the UI accuses the parties of tampering. That is exactly the wrong-sentence failure D32 exists to forbid, arriving through the one surface D32 excused.
+- A document arriving from a peer who is not the record's carrier for this hop is refused by name.
+- **Re-delivery works on BOTH transports.** A TCP ceremony routes past the re-delivery cache entirely, so the receiver consents, signs, and the signature is discarded in-process — at N=9 that is eight independent chances. Driven per transport, because `pairrepro.sh` drives both and a clause that does not say so will only ever exercise QUIC.
+- `ReadAttestations` is split so the two HTTP handlers and `NextPlacement` read the **already-computed** `document.sig` instead of re-verifying: measured at **5.2 s per request** for nine signatures on a 95 MiB document, on request-handling paths, with the answer already cached and thrown away. **A criterion with a number in it**, because one phrased as "completes" cannot see a quadratic. (CLAUDE.md hot-path rule — the change is a removal of work from that path, not an addition.)
 
-#### P07.S05 — The carry route: a non-signing convener moves the baton *(D22 pin; criteria 2, 7, 16)*
-Scope: there is no carry verb. `Initiate` demands the caller's own signature back
-(`confirmCoSigned` requires `gotMe`, `internal/p2p/session.go:~486`), and
-`SendDocument`/`ReceiveDocument` is the one-way flow with no attestation and no record. Criterion 7
-says in as many words that it *cannot pass on `Initiate`* — that is true of the code as it stands,
-and a green here is therefore evidence the third route exists rather than a restatement.
+#### P07.S05 — The carry route: a non-signing convener moves the baton *(D22 pin; C02, C07, C14, C16, C18, C21, C22)*
+Scope: there is no carry verb — `Initiate` demands the caller's own signature back, and
+`SendDocument`/`ReceiveDocument` is the one-way flow with no attestation and no record. C07 says in as many
+words that it *cannot pass on `Initiate`*, which is true of the code as it stands.
 Acceptance:
-- A four-party ceremony with a `signs:false` convener completes **over the carry route**, driven by the harness.
-- The finished document contains **no signature of the convener's**.
-- The same ceremony attempted through `Initiate` **fails** — the criterion's own evidence clause.
-- The completed document **renders as complete, not as missing a signer** (criterion 16): a fact about what the verifier reports, which the "no signature of theirs" clause above says nothing about.
+- A four-party ceremony with a `signs:false` convener completes **over the carry route**, driven by the harness; the finished document contains **no signature of the convener's**; and the same ceremony attempted through `Initiate` fails.
+- **Every signature that has a signing predecessor reports `Matched`; the first signer reports its own state; an attestation naming a roster fingerprint that produced no valid signature reports `Matched: false`** (C14 as amended).
+- The completed document **renders as complete** (C16) **and a five-of-nine document renders as incomplete, naming how many obliged signers are absent** (C18). The two are one piece of work and neither is safe alone.
+- **The carry route binds what comes back to what went out**: it asserts the byte prefix **and** runs S03's predicate over the returned document before the next hop is dialled, driven by a hostile hop *k* returning a different document. `Initiate` has this and says why; without it the convener relays whatever a malicious party hands back, and S03's door — which answers the *contributor's* question — is passed through by nobody.
+- A hop **replaces the baton rather than accumulating arrivals**: a nine-party ceremony leaves the convener with **one** ceremony document open, not nine against a cap of eight.
+- Every hop's output is **written to the mirror before the response returns** (C22), and an arm ends at the **record's** deadline rather than at `MaxCeremonyLife` (C21).
+- The LAN tier is **re-announced when the convener's dial for hop k begins**: the announce window is five minutes, so from the fourth party onward a "same room" ceremony silently runs over the public DHT. Driven by a nine-party ceremony completing **with the DHT tier disabled**.
 
-#### P07.S06 — Placement: the pages a roster needs, allocated up front *(D25; criteria 3, 4)*
-Scope: `stackPlacement` (`internal/p2p/cosign.go:68-81`) computes `y0 = 40 + index*(84+12)`, with no
-page bound and no knowledge of the readme body. On a 792 pt page that puts block index 7 at
-712–796 — over the top edge — and index 8 at 808–892, **entirely off the page**. A nine-party
-ceremony loses two blocks today. Separately, `NextPlacement` derives its index from
-`len(sign.Verify(pdf).Signers)` (`:39`), which counts **every** signature including a pre-existing
-Finalize that is not a co-sign block, so the index is not the roster position.
+#### P07.S06 — Placement: measured, on the pages S02 allocated *(D25; C03)*
+Scope, **re-derived from measurement 2026-08-23 — the first firming got all three numbers wrong.** The block
+page is **always A4 595×842**, whatever the source paper, because `RenderReadme` hardcodes `A4P`; the earlier
+scope said 792. With `y0 = 40 + i*96` and `height 84`: **blocks 3 through 7 overlap the readme body** (baselines
+735 → 343) and **block 8 is clipped by 50 pt** — one block lost, not two, and **the overlap fires at four
+parties, not nine**, which is what D25 said on 2026-08-18 and the first firming lost. Measured: the whole
+nine-block stack applies **silently**, `state=valid signers=9 addedAfter=false`. Allocation itself moved to S02;
+this slice is placement and its measurement.
 Acceptance:
-- **Rendered and measured**, never asserted on a rect — the criterion says the arithmetic is what is wrong, so an assertion about the arithmetic cannot see it.
-- Nine blocks all inside the page box, and none intersecting the readme body's ink.
-- A ceremony **cannot grow a party after the first signature**: refused with a distinct message naming a new ceremony as the answer.
+- **Six blocks to a page** (D25's number, absent from the first firming): a roster of nine allocates **two** signature pages, sized from the roster's **signing count** — an appended page for a party who never signs is a blank page in a signed document. Driven by a roster whose length and signing count straddle a page boundary.
+- **Rendered and measured, and the measurement is DIFFERENTIAL** — the block is painted on opaque white and the readme body is black on white, so a scan of the composited page finds no readme ink under a block *because the block covered it*, satisfying the criterion with exactly the defect D25 exists to catch. Compare the ink extent of the block-free document against the placed rects, or key the fixture's blocks by colour.
+- A **positive control** asserts each block's ink **is present**: a raster cannot distinguish "off the page" from "never drawn", and absence must not pass as compliance.
+- Overlap driven at **N=4** and the page-box clip at **N=9** — different fixtures, because one nine-party fixture satisfying both is the shape C05's own note forbids elsewhere in this phase.
+- `NextPlacement` reads the target page's **MediaBox** and refuses — named error, never a clamp — a rect that will not fit, driven on a page that is not A4. `stackPlacement` reads no geometry today and `bottom = 40.0` is a distance from the *coordinate origin*, not the page's lower edge; Nib's own split path produces tiles with an offset MediaBox.
+- The block index comes from the contributing party's **roster position**, not from `len(Verify(pdf).Signers)`: an invisible contribution burns a slot, the count can go **down** when a signer's blob will not parse, and a foreign approval signature shifts the origin.
+- The red proof shows the failure is **silent** — `valid`, `addedAfter=false` — beside the missing ink, or it will be read as a crash-class bug.
 
-#### P07.S07 — Every block names the ceremony, and carries the record's intent verbatim *(D20 pin, D27; criteria 9, 15)*
-Scope: `coSignExchange` takes the intent from `c.Confirm` (`internal/p2p/session.go:453`), i.e.
-typed per hop, while `Record.Intent`'s own doc calls the record *"the ONLY home for it (D20's
-plan-review pin)"* — so the field and the code disagree today. And `AppearanceLines`
-(`internal/p2p/attestation.go:138-146`) renders `Accepts: <label> [<short fp>]`: one neighbour,
-which is what criterion 9 says a nine-party block may not say. The roster-shaped `Confirmer` (D27)
-is the same seam from the consent side — it is handed one `SignerAttestation` (`session.go:107`).
+#### P07.S07 — Every block names its party, its capacity and its ceremony *(D20 pin as amended, D27; C09, C15, C19)*
+Scope: `coSignExchange` takes the intent from `c.Confirm` — typed per hop — while `Record.Intent` calls itself
+"the ONLY home for it". `AppearanceLines` renders `Accepts: <label> [<short fp>]`: one neighbour, which is what
+C09 says an N-party block may not say. And the panel found the axis nobody had checked — **every signer is
+called "Nib User"**, a hardcoded constant at three sites, while `Party.Label` sits inside the signed commitment
+with **no display reader anywhere**. A criterion about naming the *ceremony* is satisfied perfectly by nine
+identical blocks reading `Signer: Nib User`.
 Acceptance:
-- Every signature's signed `/Reason` carries `rec.Intent` **verbatim** — none of the record round-trip criteria ever reads a signature block, which is why this is its own clause.
-- Every visible block on a nine-party document names the **ceremony**, not one neighbour.
+- Every signature's signed `/Reason` carries `rec.Intent` **verbatim** as the recital, plus **that party's own `capacity`** (C19); the `Confirmer`-returned intent is **discarded** on the ceremony path and `defaultIntent` is unreachable when a record is present.
+- **Every block names the party as the record names them** — `Party.Label`, falling back to the fingerprint — and `Attestation.Signer` comes from the record rather than the constant. The data is already there and already committed; this is a read.
+- Every visible block on a nine-party document names the **ceremony** — by its recital and roster position ("Party 6 of 9 · <recital>"), **not by a hex id**. P06 bans hex fingerprints from the primary flow and nothing bans a hex ceremony id from the page a stranger reads.
 - The `Confirmer` is shown **every** party who has already signed, driven with a three-signature document.
+- **The signature-details panel and the verifier verdict** are covered too, which is C09's other half and D27's item 3: the panel renders every signature on a nine-party document, its "of N" denominator equals what Go reports, and the two-party string "each party's signature attests to **the other's** key" is **unreachable** on a document carrying a roster token.
 
-#### P07.S08 — The readme and About describe a ceremony of N *(D27; criterion 8)*
-Scope: `internal/p2p/readme.go:39` reads "In two-party signing the second …" — the appended trust
-page describes two-party signing. `trustClaims` (`:16`) is the single source and
-`TestAboutCopyContainsTrustClaims` (`internal/p2p/readme_test.go:61`) is the drift guard, which is
-what makes this one criterion rather than two that can drift.
+#### P07.S09 — D33's placement guard, and the protocol version *(D32, D33; C12, C13)*
+Scope, **re-derived 2026-08-23**: most of what the first firming asked for already ships. Record skew and
+invitation skew both refuse with directional sentences and the invitation half is already red-proved; three of
+D33's four numbers are already enforced at their external doors. Two things are genuinely missing, and one of
+them is what D33 says discharges it.
 Acceptance:
-- The rendered readme body describes a ceremony of N parties.
-- The About dialog says the same thing, and the drift guard is green.
-- The guard is shown to still bite: a claim present in `trustClaims` and absent from `web/index.html` reds it.
+- **The law/tunable placement guard** — a source-level check that fails if either law figure is reachable from the tunable block. D33 says **twice** that this, and *not* the drive-a-value-past-the-bound bullet, is what discharges it; no such guard exists. (P05.S04 T05 built part of this; point at it rather than rebuilding it.)
+- The **ceremony protocol version** exists and is announced before the first frame, producing a sentence naming the mismatch. It does not exist today — the only protocol identifier is the QUIC ALPN, which yields a TLS alert. **The announce is read with `readFrameMax` at its own small bound**, because it becomes the first parse on the socket, ahead of the human gate, and the reason every pre-gate frame is bounded is already written out at that site.
+- The fourth number's clause is re-worded to what is observable: `punchBudgetPerSide` bounds **our own emission** and has no external supplier, so "supplied past the bound" names no path. Driven instead as *a hop that exhausts the budget drops and reports, and the report has a named reader* — D33's own "drops and reports; it never fails the ceremony".
+- Skew is driven for **four** surfaces, not three: record, invitation, protocol, **and the attestation tag**, whose skew today silently yields `AcceptedPeer=""`, `RosterHash=""` and a verdict of *not one proceeding* — the failure D32 forbids, arriving through the surface D32 excused.
 
-#### P07.S09 — Version skew speaks, and D33's four numbers bind the outside path *(D32, D33; criteria 12, 13)*
-Acceptance:
-- A version skew produces a sentence **naming the mismatch**, not a parse error — driven **separately** for the record, the invitation and the ceremony protocol.
-- Each of D33's four numbers is refused when supplied **past** the bound on the externally-supplied path; a test that supplies a value inside the bound cannot see an unenforced parameter.
-
-#### P07.S10 — Docs, README, and the phase close *(criteria 10, 11)*
+#### P07.S10 — Docs, README, and the phase close *(C10, C11)*
 Acceptance:
 - Documentation and README updated in this phase (STANDARDS docs-parity).
-- Every row of `<project-memory>/instruments/ceremony.md` carries a disposition — `keep-live` / `gated` / `deleted` — filled at the close. A row whose reader is a standing criterion is never silenced.
+- `nib verify` reports the ceremony: the roster, who was **obliged** to sign, who signed, and the one-proceeding verdict. It prints state, signer count and `AddedAfter` today, so a stranger told "check it with nib" gets `valid (9 signer(s))` — and the CLI is the surface a dispute actually uses.
+- Every row of the seam inventory carries a disposition — and the criterion names **both files**: `instruments/ceremony.md` (233 inventory rows) **and the 60 ceremony rows in `instruments/P05.md`**, which that file itself flags as a hazard. **210 rows name a declared reader** and disposition mechanically; **4** are tagged *no standing reader* and need judgment; **23 have no reader column at all** — Category 2 seams and Category 3 gap-downs — and fit neither path, which is stated here rather than discovered. A per-row Disposition column replaces the range-addressed prose of prior closes: a range cannot distinguish a row individually considered from one swept in.
 
 **(plan-review pin: this phase was one phase doing two jobs — 2026-08-18, adopted by Dan.)** P07 had
 reached **30 exit criteria against a slice sketch**, having absorbed pins from five review passes,
