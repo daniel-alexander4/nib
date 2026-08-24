@@ -778,7 +778,7 @@ invariant, and it says so in the test rather than implying a red it never produc
 | --- | --- | --- |
 | **The hop taken as a constant instead of derived from the roster** | `party 1 with peer 2 derived hop 0, want 1 — the two ends of one hop must agree without negotiating` | `TestAnArmedSessionDerivesItsHopFromTheRoster`, on a THREE-party fixture: a two-party ceremony has exactly one hop and cannot distinguish a derived number from a constant |
 | **A corrupt invitation treated as an absent one** | `a corrupt invitation reported "this session has no ceremony identity"; it must be refused, not treated as absent` | the same test. Silently dropping it arms a session the user believes is part of a ceremony and which is not |
-| **A pin derived from a range variable over a record's addresses** | `zz_l1fixture.go: redProofWireDerivedPin sets candidate.Fingerprint from wire-derived data ([]byte(e.Addr.String())). L1: nothing learned from the network may influence WHICH peer is accepted` | `TestNothingWireDerivedReachesAPin`, widened at this slice |
+| **A pin derived from a range variable over a record's addresses** *(the fixture this row cited was never in the tree; it is now `l1-wire-derived-pin`, see below)* | `zz_l1fixture.go: redProofWireDerivedPin sets candidate.Fingerprint from wire-derived data. L1: nothing learned from the network may influence WHICH peer is accepted` | `TestNothingWireDerivedReachesAPin`, widened at this slice |
 
 **The vacuous fix, demonstrated rather than argued.** With the guard's vocabulary widened to
 `ceremony.`/`rendezvous.` but its propagation left matching only `*ast.AssignStmt`, the planted
@@ -1458,3 +1458,47 @@ naive join yields `"Aboutthisco-signeddocument"` and `contains("two people")` co
 against the un-rewritten page**. Built that way, the load-bearing negative clause would have passed
 *before* the work was done. The rows use `api.ExtractContent`, whose literal `(…) Tj` runs are joined
 and whitespace-collapsed so a phrase spanning a wrap boundary still matches.
+
+
+## L1 and L2 become replayable, and a patch stops being able to lie (v1.117.151)
+
+Two rows, both tier 1, closing the two-thirds of the Stage-6 pin (verification pack V1) that
+had never been replayable. The pin says **each** of L1, L2 and L3 ships a negative fixture
+planting a violation of *that law specifically*, and each earns a row here. L3 is P07.S03's.
+Before this, **zero of the 69 recorded rows drove an L1 or L2 guard** — their entries were
+prose: proven red once, re-checked by nothing.
+
+| Defect reintroduced | What it said | Check that fired |
+| --- | --- | --- |
+| **a non-test file lets wire data reach a pin** *(replayable: `l1-wire-derived-pin`)* | `zz_l1fixture.go: redProofWireDerivedPin sets candidate.Fingerprint from wire-derived data ([]byte(seen.From.String())). L1: nothing learned from the network may influence WHICH peer is accepted — the pin comes from the vault` | `TestNothingWireDerivedReachesAPin` |
+| **`Initiate` stops calling `runVerification`** *(replayable: `l2-exchange-reached-unconfirmed`)* | `Initiate never asked the verifier — the path reaches the document exchange unconfirmed, which is exactly what L2 forbids` | `TestL2NoDocumentBytesCrossBeforeBothConfirmations`, on BOTH transports |
+
+**The L1 row is the one the item was named for.** This file cited
+`zz_l1fixture.go: redProofWireDerivedPin` as though it were a durable fixture and **no such
+file was ever in the tree** — a throwaway recorded as a record, which is exactly what
+`build/redproof.sh` exists to make impossible. The fixture now lives inside the patch, so it
+is re-applied on every replay and cannot rot unnoticed. Note what its guard's shape forced:
+`TestNothingWireDerivedReachesAPin` is an AST taint analysis over **non-test** files, so the
+fixture has to be real Go in the package rather than a test helper — which is why the patch
+adds a whole file, and why a throwaway was tempting in the first place.
+
+**The L2 row proves which of its guard's two assertions is load-bearing.** The guard drives
+four entry points with a declining verifier and asserts both that the call fails with
+`ErrVerificationDeclined` **and** that the verifier was actually called. A path that never
+asks fails too — for another reason — so it satisfies the first assertion while being the
+precise defect L2 forbids. The planted defect fires the second one.
+
+### And a patch can no longer carry more than the defect it names
+
+`TestEveryRedProofPatchTouchesOneFile` is new, and it comes from a defect found in this
+repo's own rows a version earlier: four P07.S08 patches had been generated with a bare
+`git diff` while `test/redproofs/*.patch` are **themselves tracked**, so each regeneration
+swept the previously-rewritten patches into the next. One reached 214 lines and six hunks for
+a one-comment mutation — and **all four still replayed green**, because a patch carrying
+extra hunks still applies and the `PROVE` command still fails for its own reason and prints
+its own `EXPECT`.
+
+**`build/redproof.sh` structurally cannot see this.** A red proof asserts that a defect makes
+a check fail; it never asserts that the patch contains *only* the defect. The new guard is the
+missing half, and it was free: all 71 patches already touch exactly one file, so the rule was
+an invariant the set obeyed and nothing enforced.
