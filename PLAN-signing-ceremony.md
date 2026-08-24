@@ -4265,17 +4265,41 @@ trigger).
 **Hand-off:** `<project-memory>/plan-reviews/2026-08-23.md` — every finding, every `file:line`, and the
 21 info items not carried here.
 
-#### P07.S01 — The harness grows a roster: N instances AND an N-party driver *(D26; C06 is a precondition for every other)*
-Scope: `pairrepro.sh` boots exactly two nibs. Its `start()` helper does take `name port home`, so *that*
-generalises — but `ceremony()` hard-codes `$A`/`$B`, `FP_A`/`FP_B`, `CSRF_A`/`CSRF_B`, one arm, one initiate,
-two watchers and a final `n < 2` `/ByteRange` count, **and passes no invitation on either side**, so it drives
-the manual two-party path. "The existing two-party run still completes" would therefore prove nothing about a
-record-driven ceremony, and the slice is scoped to the driver as well as the boot.
+#### P07.S01 — The harness grows a roster: N instances and their lifecycle *(D26; C06 is a precondition for every other)* *(done 2026-08-23, v1.117.143)*
+Tasks (grilled 2026-08-23):
+- T01 — a real flag parser: `-n N` plus `--lan`/`--v6`/`--keep` in any order and any combination.
+- T02 — the instance array: N homes, N config dirs, N identities, one `start()` per instance.
+- T03 — one port array derived once, probed by **bind** (TCP and UDP) and then used, so the probed population *is* the run's.
+- T04 — the identity block per instance: fingerprint set of size exactly N, six-word name each, CSRF each.
+- T05 — the lifecycle: `trap 'cleanup $?' EXIT`, every pid tracked and `wait`ed, `kill -0` post-conditions, work dir preserved on failure with its path printed.
+- T06 — the two-party ceremony re-expressed through the generalised boot, fetching the finished document **by id**.
+- T07 — the harness's own ceiling paragraph extended for N; `verify_test.go`'s tier-table guard extended to rows `4b`/`4c` (closes /pending 279).
+- T08 — the expected-red assertion at N≥3, naming S03 as the slice that must delete it.
+
+**The slice narrowed at its grill, and the reason is the build order.** It was scoped as "N
+instances **and** an N-party driver". The attack established that the driver cannot be built in
+this position: `coSignExchange` refuses anything but one prior signer
+(`internal/p2p/session.go:407`), so **hop 2 of any baton fails until S03 removes it**; and the only
+relay expressible before **S05**'s carry verb is the *chain* — party *k* re-uploads to
+`/api/session/initiate`, which signs the initiator again (`buildCoSigned`, `internal/server/session.go:1295`), so
+`N_signing` is forced to N, a non-signing convener is unrepresentable, and the block count is
+2(N−1) rather than N. "The relay is expressed **once**" was therefore false as scoped: it would be
+expressed once against the chain and rewritten by S05.
+
+**And P02.S01's precedent does not transfer.** D26 put the harness first *there* because the
+two-party co-sign already worked and the harness was built to observe it. "Harness first" and
+"harness for a ceremony that does not exist" are different arguments; only the first has precedent.
+
+So S01 keeps its coordinate and delivers **the instance lifecycle** — all of it drivable today,
+none of it dependent on the model. The driver's acceptance moves to S03 and S05, verbatim, where it
+can be driven.
 Acceptance:
-- N instances boot with N homes, N vaults and N identities — asserted as **a set of N distinct fingerprints of size exactly N**, not as N successful boots. Per D26's own words at P02.S01, a harness that boots two Nibs and asserts nothing is the vacuous green it exists to prevent; nine processes sharing three identities passes any naive pairwise generalisation of today's `FP_A != FP_B`.
-- The roster-order relay is expressed **once**, driven at N=4 and N=9, with the signature count asserted `== N_signing` rather than `>= 2`.
-- **All N−1 parties arm before the first hop and are never re-armed mid-run** — that is what a real ceremony does, and it is what makes C21 and the TCP five-minute auto-disarm fail honestly instead of being configured past (the ADR-010 shape).
-- Booting fewer instances than asked for **fails loudly** and earns a red proof by making the driver drop one; every instance is tracked, killed and **waited for** before the work dir is removed, driven by a failure injected at instance 5; the pre-flight probes every API **and** session port the run will use; and **on failure the work dir is preserved and its path printed**, because at eight hops the log is the only thing that says which instance broke.
+- **`-n N` boots N instances with N homes, N config dirs and N identities**, asserted as a set of N distinct fingerprints **of size exactly N** — compared to `N`, never to the length of the list that answered — with `instances-up == N` as a **separate** assertion and its own message, because "an instance is missing" and "two instances share a key" are two defects with one symptom. Every instance's pairing name is six words, not instance 1's alone (P01.S02's only tier-4 reader, today applied to A and sitting in the block this rewrites). Driven at N=4 and N=9.
+- **`-n` defaults to 2 and the default run is the ceremony that passes today** — same two-party path, both transports, same cross-run assertions — so `CONTRIBUTING.md` row 4 keeps its meaning for the four slices before an N-party ceremony can complete at all. The finished document is fetched **by document id** rather than by the active-document fallback, which makes the two-party run stricter today and gives "which document did this hop produce" an answer at N.
+- **Flags parse in any order, and every combination is either honoured or refused by name** *(amended at the slice's review: `--lan --v6` is now REFUSED rather than accepted — every v6 consumer is gated on `port != "lan"`, so the pair parsed and printed the ordinary LAN pass while the operator believed they had driven 4b and 4c at once. The LAN arm binds no address at all, which is P03's whole point, so there is nothing for v6 to be).** Today `LAN`, `KEEP` and `V6` each test `"${1:-}"` alone, so `--keep --v6` silently runs the ordinary loopback ceremony while the operator believes they drove tier 4c — the ADR-010 "configured past the disagreement" shape, in the harness's own argument parsing. `--lan` and `--v6` are declared **N=2-only in this slice**, in the file's own ceiling section, with the reason.
+- **The pre-flight probes every port the run will use** — N API ports and the computed session-port block — **by bind attempt on both `SOCK_STREAM` and `SOCK_DGRAM`, in the family the run will actually bind**, printing the whole block on refusal. (`SO_REUSEADDR` on the TCP probe only: it is what stops a `TIME_WAIT` socket from the previous run reading as held, and UDP has no `TIME_WAIT`, so there it would only cost the discrimination.) Today's probe is `curl …/api/status`, which detects only a *nib*; and a **connect** probe cannot answer for UDP at all, because it succeeds against a free port — so the QUIC half of a connect-shaped pre-flight could only ever report pass.
+- **The lifecycle is asserted, not assumed:** every instance and every watcher subshell is tracked, killed, and then **polled until `kill -0` fails** — `wait` is deliberately not the instrument for the instances, because they come out of a command substitution and are this shell's grandchildren, so `wait` returns instantly with an error, which is the degenerate "waited" that proves nothing. On failure the work dir is preserved and its path printed, driven by a failure injected at instance 5 of 9; the trap reads `$?` rather than a flag, because `fail` runs inside subshells and a flag set there never reaches the parent (and because a banner printed unconditionally instead of on the exit status is v1.117.131's lesson).
+- **At N≥3 the harness asserts the product still refuses hop 2, as an expected red** — accepting *either* the named refusal *or* today's EOF flattening and printing which it saw, because the probe measured that the refusal is carried on the wire in neither direction (see S03's clause); a verbatim assertion would go red for the right reason with a message pointing at the wrong thing, with a comment naming S03 as the slice that must delete it. This is the slice's honesty and it is load-bearing: without it the N≥3 path is a skip, an `|| true`, or a run behind an env var nobody sets, and nothing makes anyone switch it on. With it, the harness goes red the day the product stops refusing.
 
 #### P07.S08 — The readme and About describe a ceremony of N, honestly *(D27; C08)* — **moved ahead of S02, 2026-08-23**
 Scope: **it moves first because it changes the readme body, and the readme body is inside `ContentDigest`,
@@ -4343,10 +4367,12 @@ Acceptance:
 - A contribution onto a document with the **wrong prefix** is refused in Go with a named error, UI bypassed — **driven separately**, because one fixture satisfying both is what C05's own note forbids.
 - A prefix naming the right identities but carrying a signature that **does not verify, or is not cross-bound**, is refused by name. L3 and D23 both say "each one valid and cross-bound"; without this clause S03's acceptance is narrower than the law it implements.
 - A **substituted but well-formed** record is refused by name — the compound above, driven.
+- **The refusal reaches the INITIATOR by name, not as a transport error** *(added 2026-08-23 — measured by S01's ceiling probe, which is what a tier-4 hop-2 attempt is for)*. `refusalAck` (`internal/p2p/session.go:266-273`) carries exactly two classes, consent-timeout and declined; every other `coSignExchange` refusal returns `(0, false)`, writes no ack frame, and the receiver closes — so `expected exactly one prior signer`, *the document was not signed by the connected peer* and *the peer's attestation does not accept you* all arrive at the initiator as `receive co-signed document: EOF`, and are logged nowhere on the receiving side either. **D23 says a refusal is "never a hang, never a silent no-op"; over the wire it is currently silent.** Refusing by name *in Go* is not the same as the party who offered the contribution learning the name, and the L3 criterion's "UI bypassed" wording tests the predicate, not the wire. Driven end-to-end at tier 4, both transports.
 - A right-party, right-prefix contribution is **admitted**, and the slice removes `coSignExchange`'s `len(ats) != 1` refusal in the same commit, so the door has a live call site rather than sitting beside a two-party legacy.
 - The same predicate answers **"whose turn is it, and is it mine"** as a question, not only as a refusal — P06's replacement role-conflict criterion promises the panel computes its enabled action from "the same function the server's L3 check uses", and a check that only refuses forces P06 to retrofit a read-only query.
 - **A source-level guard enumerates every contribution entry point and fails when one does not call the predicate**, with a stimulus assertion that the walk found a non-zero population. ADR-009 asserts routing, not the text each site prints; the precedent is `TestL2CoversEveryDocumentCarryingEntryPoint` in the same package.
 - **L3's own negative fixture** — not shared with L1 or L2 — earns a row in `docs/red-proofs.md`, replays under `./build/redproof.sh`, and **the floor constant in `verify_test.go` moves in the same commit**.
+- **The N-party driver completes at N=4** *(moved here from S01 at its grill, 2026-08-23 — this is the first slice where a document carrying more than one prior signature is admissible at all)*: all N−1 parties **armed before the first hop and never re-armed** (a per-instance arm-POST count of exactly 1, plus the reported `address` byte-identical to what it was at arm time, because a re-arm changes the ephemeral port); each asserted `armed:true` immediately before its own hop is dialled, so an expiry fails by party number rather than as "hop 8 could not connect"; the per-hop words watcher keyed on the **absent→present transition** with per-hop filenames, because one filename plus a reset is safe only at N=2 and a stale file from hop k−1 otherwise satisfies hop k's stimulus check; and the block count asserted against **`N_signing` derived from the roster the driver was handed**, never a literal — through `Initiate` every intermediate party signs twice, so the count is 2(N−1) and becomes N only over S05's carry route. The **distinct-signer set** is asserted too, because `/ByteRange` counts blocks and one party signing four times satisfies any count.
 
 #### P07.S04 — `coSignExchange` re-based off the record *(D22 as amended 2026-08-23, D2 pin; C01)*
 Scope: `coSignExchange` refuses anything but a single prior signer, and the two checks under it bind the
@@ -4374,6 +4400,7 @@ Acceptance:
 - **The carry route binds what comes back to what went out**: it asserts the byte prefix **and** runs S03's predicate over the returned document before the next hop is dialled, driven by a hostile hop *k* returning a different document. `Initiate` has this and says why; without it the convener relays whatever a malicious party hands back, and S03's door — which answers the *contributor's* question — is passed through by nobody.
 - A hop **replaces the baton rather than accumulating arrivals**: a nine-party ceremony leaves the convener with **one** ceremony document open, not nine against a cap of eight.
 - Every hop's output is **written to the mirror before the response returns** (C22), and an arm ends at the **record's** deadline rather than at `MaxCeremonyLife` (C21).
+- **The relay is expressed once, in the baton topology**, driven at N=4 and N=9 over both transports *(moved here from S01 at its grill, 2026-08-23 — this is the first slice with a carry verb, so it is the first slice in which the topology is final rather than a chain S05 would rewrite)*, with all 2(N−1) word-strings **pairwise distinct**, and each hop's document asserted to **contain the previous hop's as a byte prefix** — not merely to differ from it, which at N is a tautology, since `/api/pdf` returns that instance's active document and no instance is fetched twice in one relay.
 - The LAN tier is **re-announced when the convener's dial for hop k begins**: the announce window is five minutes, so from the fourth party onward a "same room" ceremony silently runs over the public DHT. Driven by a nine-party ceremony completing **with the DHT tier disabled**.
 
 #### P07.S06 — Placement: measured, on the pages S02 allocated *(D25; C03)*

@@ -20,6 +20,7 @@ for things it never looked at.
 | 4 | `./build/pairrepro.sh` | a ceremony between TWO real binaries, two vaults, two identities — over BOTH transports |
 | 4b | `./build/pairrepro.sh --lan` | the same ceremony with **no address typed anywhere**, in a namespace, asserting nothing left the link |
 | 4c | `./build/pairrepro.sh --v6` | the same ceremony over **IPv6 loopback** (`[::1]`) on both transports, with the v6 bind asserted so a v4 fallback cannot pass for it — P05.S05's hermetic half of criterion 1 |
+| 4d | `./build/pairrepro.sh -n 3` | **N instances, and the model's current ceiling asserted as an expected red** — three homes, three vaults, three distinct identities, and a hop-2 attempt that must still be refused. It goes red the day P07.S03 removes `coSignExchange`'s one-prior-signer refusal, which is what makes the N-party runs get switched on rather than remembered |
 | 5 | `./build/mcastrepro.sh` | link-local discovery between two processes, in a network namespace of its own |
 
 **Tier 0 builds for the host only, and that is a hole tier 1 now covers.**

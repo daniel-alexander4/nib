@@ -7,7 +7,6 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
-	"strconv"
 	"strings"
 	"testing"
 )
@@ -212,10 +211,28 @@ func TestVerifyContractIsTrue(t *testing.T) {
 	// and leaving the commands mentioned in a sentence kept this green — and the table
 	// is the part that pairs each command with a tier number and with what it verifies.
 	// Asserted as rows so the structure has to survive, not just the words.
-	for i, cmd := range []string{"`go build ./...`", "`go test ./...`", "`./build/jsdomtest.sh`", "`./build/uirepro.sh`", "`./build/pairrepro.sh`", "`./build/mcastrepro.sh`"} {
-		row := "| " + strconv.Itoa(i) + " | " + cmd
-		if !strings.Contains(contract, row) {
-			t.Errorf("the tier table has lost its row %d (%q) — the commands may still be named in prose, which is what made this check pass over a deleted table", i, row)
+	// **The tier column is a LITERAL, not a loop index, and that is the fix.** This
+	// built its prefix as `"| " + strconv.Itoa(i) + " | "` over i in 0..5, so it
+	// matched rows 0-5 and nothing else — while CONTRIBUTING.md carries EIGHT rows.
+	// `| 4b |` (`--lan`) and `| 4c |` (`--v6`) matched no prefix any iteration
+	// produced, so both could be deleted from the contract with every tier green.
+	// 4c is P05.S05's hermetic half of criterion 1, i.e. a phase-close criterion
+	// whose harness row nothing held in place. Found by the verification SME pack
+	// during P07's plan-review (/pending 279).
+	for _, row := range []struct{ tier, cmd string }{
+		{"0", "`go build ./...`"},
+		{"1", "`go test ./...`"},
+		{"2", "`./build/jsdomtest.sh`"},
+		{"3", "`./build/uirepro.sh`"},
+		{"4", "`./build/pairrepro.sh`"},
+		{"4b", "`./build/pairrepro.sh --lan`"},
+		{"4c", "`./build/pairrepro.sh --v6`"},
+		{"4d", "`./build/pairrepro.sh -n 3`"},
+		{"5", "`./build/mcastrepro.sh`"},
+	} {
+		want := "| " + row.tier + " | " + row.cmd
+		if !strings.Contains(contract, want) {
+			t.Errorf("the tier table has lost its row %s (%q) — the commands may still be named in prose, which is what made this check pass over a deleted table", row.tier, want)
 		}
 	}
 
