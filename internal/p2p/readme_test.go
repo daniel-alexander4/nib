@@ -112,7 +112,12 @@ func renderedReadme(t *testing.T) string {
 	}
 	var runs []string
 	for _, m := range litRE.FindAllStringSubmatch(buf.String(), -1) {
-		runs = append(runs, m[1])
+		// Undo the PDF string escaping and the WinAnsi single-byte encoding, or a
+		// phrase containing a bracket arrives as `\(QES\)` and a phrase containing an
+		// em dash arrives with a raw 0x97. Both would make a POSITIVE assertion fail
+		// noisily — but they would make the load-bearing NEGATIVE assertion pass
+		// quietly, which is the direction that matters.
+		runs = append(runs, winAnsiToUTF8(pdfUnescape(m[1])))
 	}
 	flat := strings.Join(strings.Fields(strings.Join(runs, " ")), " ")
 	// Setup assertion, and it is not ceremony: every assertion built on this is a
@@ -124,6 +129,38 @@ func renderedReadme(t *testing.T) string {
 			len(runs), len(flat), readmeTitle)
 	}
 	return flat
+}
+
+// pdfUnescape undoes the PDF literal escaping pdfcpu applies to `(`, `)` and `\`.
+func pdfUnescape(s string) string {
+	var b strings.Builder
+	for i := 0; i < len(s); i++ {
+		if s[i] == '\\' && i+1 < len(s) {
+			i++
+		}
+		b.WriteByte(s[i])
+	}
+	return b.String()
+}
+
+// winAnsiToUTF8 maps the CP1252 bytes pdfcpu emits back to runes. Only the
+// characters the readme actually uses are mapped; everything else is Latin-1,
+// which is byte-identical.
+func winAnsiToUTF8(s string) string {
+	var b strings.Builder
+	for i := 0; i < len(s); i++ {
+		switch c := s[i]; c {
+		case 0x97:
+			b.WriteRune('\u2014') // em dash
+		case 0x96:
+			b.WriteRune('\u2013') // en dash
+		case 0x92:
+			b.WriteRune('\u2019') // right single quote
+		default:
+			b.WriteByte(c)
+		}
+	}
+	return b.String()
 }
 
 // The RENDERED page must no longer describe the ceremony as exactly two people.
@@ -197,10 +234,16 @@ func TestRenderReadmeRefusesAnOverflowingBody(t *testing.T) {
 
 // Every rendered line must fit the text column.
 //
-// Measured with mdpdf.CoreWidth — the real Base-14 metrics in their ENCODED form.
-// Calling font.TextWidth on raw UTF-8 is the bug, not the fix: it iterates BYTES,
-// so a line containing an em dash measures 15.90 where the glyph is 11.00 and the
-// guard passes for the wrong reason.
+// **What this catches, and what it deliberately cannot.** It measures with the same
+// function wrapText breaks on, so it is CIRCULAR with respect to the metric itself:
+// it cannot tell a correct width table from a wrong one, and it was green against
+// the hand-rolled estimate this slice deleted. What it does catch is a wrapper that
+// packs past the column it was given — driven, a limit of maxW*1.10 fires it — and a
+// line that cannot be broken at all. The metric's own correctness is guarded one
+// level down, by mdpdf's coverage tests, which is where the encoded-form rule lives.
+//
+// Calling font.TextWidth on raw UTF-8 is the bug, not the fix: it iterates BYTES, so
+// a line containing an em dash measures 15.90 where the glyph is 11.00.
 func TestEveryReadmeLineFitsTheColumn(t *testing.T) {
 	maxW := readmePageW - readmeLeft - readmeRight
 	n := 0
@@ -209,13 +252,39 @@ func TestEveryReadmeLineFitsTheColumn(t *testing.T) {
 			continue
 		}
 		n++
-		if w := mdpdf.CoreWidth(ln, readmeFont, int(readmeFontPt)); w > maxW {
+		if w := mdpdf.CoreWidth(ln, readmeFont, readmeFontPt); w > maxW {
 			t.Errorf("line runs %.2fpt past the %.0fpt column (nothing clips it, so it prints "+
 				"off the sheet): %q", w-maxW, maxW, ln)
 		}
 	}
 	if n == 0 {
 		t.Fatal("no non-empty lines measured, so this test asserted nothing")
+	}
+}
+
+// The About guard's stripping is exercised directly: the red proof for it deletes
+// #aboutMain and stops at the "could not locate" fatal, so these branches are never
+// reached by it.
+func TestAboutScanIgnoresCommentsScriptsAndMarkup(t *testing.T) {
+	strip := func(body string) string {
+		body = htmlCommentRE.ReplaceAllString(body, " ")
+		body = htmlScriptRE.ReplaceAllString(body, " ")
+		body = htmlTagRE.ReplaceAllString(body, " ")
+		return strings.Join(strings.Fields(body), " ")
+	}
+	for _, c := range []struct{ name, in, wantAbsent, wantPresent string }{
+		{"comment", `<p>kept</p><!-- hidden claim -->`, "hidden claim", "kept"},
+		{"script", `<p>kept</p><script>var s = "hidden claim";</script>`, "hidden claim", "kept"},
+		{"attribute", `<p title="hidden claim">kept</p>`, "hidden claim", "kept"},
+		{"tagsplit", `<p>one</p><p>two</p>`, "onetwo", "one two"},
+	} {
+		got := strip(c.in)
+		if strings.Contains(got, c.wantAbsent) {
+			t.Errorf("%s: %q survived stripping and would satisfy a claim check: %q", c.name, c.wantAbsent, got)
+		}
+		if !strings.Contains(got, c.wantPresent) {
+			t.Errorf("%s: visible text %q was lost: %q", c.name, c.wantPresent, got)
+		}
 	}
 }
 

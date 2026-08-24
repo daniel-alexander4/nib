@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"time"
@@ -227,6 +228,18 @@ func (s *Server) buildCoSigned(w http.ResponseWriter, pdf, cert, key []byte, att
 	if sign.Verify(pdf).State == sign.Unsigned {
 		p, err := p2p.PrepareDocument(pdf)
 		if err != nil {
+			// 400 only for the one failure that IS the caller's document — an
+			// already-signed file, which PrepareDocument refuses by name. Everything
+			// else here is Nib's own: a bad render spec, or ErrReadmeOverflow, which
+			// says the trust page's own boilerplate no longer fits its own page. A 400
+			// on those tells a small-practice user their document is bad and sends them
+			// looking at the wrong thing.
+			if errors.Is(err, p2p.ErrReadmeOverflow) {
+				httpError(w, http.StatusInternalServerError,
+					"Nib could not build the trust-explainer page that goes on a co-signed "+
+						"document, so nothing was signed. This is a fault in Nib, not in your file.")
+				return nil, false
+			}
 			httpError(w, http.StatusBadRequest, "could not prepare document: "+err.Error())
 			return nil, false
 		}
