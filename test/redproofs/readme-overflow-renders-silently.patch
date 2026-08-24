@@ -1,8 +1,8 @@
 diff --git a/internal/p2p/readme.go b/internal/p2p/readme.go
-index 1ab2c26..cd6d87a 100644
+index 870058a..0c2bd2a 100644
 --- a/internal/p2p/readme.go
 +++ b/internal/p2p/readme.go
-@@ -163,7 +163,7 @@ func RenderReadme() ([]byte, error) {
+@@ -169,7 +169,7 @@ func RenderReadme() ([]byte, error) {
  	lines := readmeLines()
  	// Refuse here rather than letting a later assertion notice: this is the one
  	// door that produces the page, so a caller cannot ship an unreadable one.
