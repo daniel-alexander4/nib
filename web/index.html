@@ -389,7 +389,7 @@
   <!-- First-run intro: explains what the SSH key is and protects, shown over the
        setup wizard until the user clicks off it. -->
   <!-- First-run wizard / recovery: unlock Nib with an SSH key. -->
-  <div id="authOverlay" hidden>
+  <div id="authOverlay" role="dialog" aria-modal="true" aria-labelledby="authTitle" tabindex="-1" hidden>
     <form id="authForm">
       <img class="brand brand-lg" src="./nib.svg" alt="Nib" />
       <h2 id="authTitle">Set up Nib</h2>
