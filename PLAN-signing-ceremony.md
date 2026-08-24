@@ -4301,7 +4301,71 @@ Acceptance:
 - **The lifecycle is asserted, not assumed:** every instance and every watcher subshell is tracked, killed, and then **polled until `kill -0` fails** — `wait` is deliberately not the instrument for the instances, because they come out of a command substitution and are this shell's grandchildren, so `wait` returns instantly with an error, which is the degenerate "waited" that proves nothing. On failure the work dir is preserved and its path printed, driven by a failure injected at instance 5 of 9; the trap reads `$?` rather than a flag, because `fail` runs inside subshells and a flag set there never reaches the parent (and because a banner printed unconditionally instead of on the exit status is v1.117.131's lesson).
 - **At N≥3 the harness asserts the product still refuses hop 2, as an expected red** — accepting *either* the named refusal *or* today's EOF flattening and printing which it saw, because the probe measured that the refusal is carried on the wire in neither direction (see S03's clause); a verbatim assertion would go red for the right reason with a message pointing at the wrong thing, with a comment naming S03 as the slice that must delete it. This is the slice's honesty and it is load-bearing: without it the N≥3 path is a skip, an `|| true`, or a run behind an env var nobody sets, and nothing makes anyone switch it on. With it, the harness goes red the day the product stops refusing.
 
-#### P07.S08 — The readme and About describe a ceremony of N, honestly *(D27; C08)* — **moved ahead of S02, 2026-08-23**
+#### P07.S08 — The readme and About describe a ceremony of N, honestly *(D27; C08)* — **moved ahead of S02, 2026-08-23** *(in progress 2026-08-23)*
+Tasks (grilled 2026-08-23 — 13 seats; the grill **amended** the slice, struck clause 4, and corrected clause 3's wording twice):
+- T01 — the line budget becomes a **refusal at one door**: `RenderReadme` returns `ErrReadmeOverflow` when the computed last baseline would fall under the block stack, and the guard asserts routing through the door (ADR-009).
+- T02 — the rendered-text instrument: `api.ExtractContent`, runs joined and whitespace collapsed.
+- T03 — the prose rewrite, inside the measured budget, asserting only what the document RECORDS.
+- T04 — `trustClaims` gains the N-party claims; the About dialog gains its first co-signing copy; the shared modal rule gains `overflow`, and `.sigcard` a `max-height`, or the new copy is unreachable.
+- T05 — four red-proof rows, and `verify_test.go`'s `recorded` 65 → 69 in the same commit.
+
+**What the grill changed, and why the slice is not what it was.**
+
+**Clause 4 (name the convener — label and fingerprint) is STRUCK from S08 and moved to S02**, where a
+verified `Record` exists. Five seats reached this independently. It is not buildable here — `RenderReadme()`
+takes no arguments, `buildCoSigned` (`internal/server/cosign.go:225`) holds no record, and **no production
+code constructs a `ceremony.Record` at all**. Worse, building it would re-create the precise defect
+`Party.Name` was deleted to make unrepresentable: one fact in two places with nothing comparing them —
+`MatchesRecord` (`internal/ceremony/invitation.go:578`) compares `Fingerprint` and `Signs` and **skips
+`Label`**, though `Label` IS inside the roster preimage (`record.go:239`). And the page is written by
+whoever signs **first**, not necessarily the convener, with every later signature then vouching for it.
+S02 inherits four measured render-door guards with it (WinAnsi, `%`, newline, length) — see the inventory.
+
+**Clause 3's wording was wrong in two ways, and both over-claimed.** "Each party *verified* the convener"
+is **false**: nothing signs the invitation, so the convener's fingerprint IS the root of trust
+(`internal/ceremony/invitation.go:34-39`) — the honest verb is *accepted*. And "non-adjacent parties"
+imports a **chain**; D22 is a **hub**, and `hopBetween` (`record.go:415`) says "Alice and Bob in a
+three-party ceremony never speak" — so the true limitation is stronger: *no two parties other than the
+convener verified each other*. The page therefore asserts only what the document **records**, never what
+the humans **did** off-page — the one formulation true on both exchange routes (the live session runs a
+fail-closed spoken check at `internal/p2p/verify.go:229`; the manual file-passing route has no channel and
+runs none) and at every N.
+
+**The overflow defect is real, silent, and destructive — and the two obvious instruments are blind.**
+Measured: `RenderReadme` computes a last baseline of **−189** at 61 drawn lines, but pdfcpu **clamps** the
+emitted position (a requested y of −50 and of −5000 both land at **421.0**, A4's centre), so 62 runs
+collapse to **49 distinct baselines with 14 sharing one** — an illegible smear over the trust text, with
+`err == nil` and `PageCount == 1`. Rendered y **saturates**; extracted text is **always present**;
+`PageCount` **cannot move**, because the spec hardcodes `"pages": {"1": …}`. Only the **computed** baseline
+has reach. The appearance is an opaque white fill (`web/app.js:961`), so a collision **erases** rather than
+overlaps.
+
+**The budget, measured against the rendered artifact rather than the constants:** the body is 29 lines with
+a last baseline of **346** (not 343 — pdfcpu adds a 3pt `Td`), block 1's top is **220**, and
+`minY = 346 − 14 × (added lines)`. So **8 added lines clear by 14pt and the 9th lands on the block**. The
+deepdive costed the rewrite as additive at 12–20 lines and concluded it could not fit; paragraph 4 is the
+false one and is itself 6 rendered lines, so **replacing** rather than appending measures **+4**.
+
+**Clause 2 is larger than it reads, in two directions.** The About dialog contains **no co-signing copy at
+all** — its four `trustClaims` matches are single-signature claims it satisfies incidentally — so this is
+new copy, not an edit. And the copy would be **unreachable**: `body > div[id$="Modal"]` is
+`align-items: center` with no `overflow` (`web/style.css:475`) and `.sigcard` has no `max-height` (`:661`),
+so overflow escapes both ends with no scroll in either direction. Only `.aboutdoc` — the *licence* pane —
+scrolls, while the comment above `.aboutcard` claims both are bounded. The fix goes on the shared rule,
+which that comment's own reasoning demands ("a dialog that ever needs to opt out should get a class, not a
+removal from a list").
+
+**The guard this slice must strengthen is the fifth instance of a hole this repo has already recorded four
+times.** `TestAboutCopyContainsTrustClaims` is `strings.Contains` over the whole of `web/index.html`: it
+never locates the dialog, so it is satisfied by an HTML comment, a `<script>` string, or a leftover after
+`#aboutModal` is deleted. `docs/red-proofs.md`'s vacuous-green table names instances two, three and four.
+`internal/server/pinbehaviour_test.go:96` is the model — extract the named block, `Fatal` if it is gone,
+and hold a population floor.
+
+**Refuted, and recorded so it is not re-raised:** the `github.com/daniel-alexander4/nib` link in the
+About block does **not** violate the global no-github rule — `origin` is that remote and
+`internal/server/update.go:24` polls it for releases. It stays.
+
 Scope: **it moves first because it changes the readme body, and the readme body is inside `ContentDigest`,
 which is inside the `docHash` S02 commits to.** Rewriting it after S02 would move the digest under every
 record already convened. `readme.go` asserts two-party in **three** places, not the one the first firming

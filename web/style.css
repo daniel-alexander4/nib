@@ -476,6 +476,17 @@ body > div[id$="Modal"] {
   position: fixed; inset: 0; z-index: 110;
   background: rgba(17, 17, 27, 0.7);
   display: flex; align-items: center; justify-content: center;
+  /* A centered flex item taller than the viewport overflows BOTH ends, and with
+     the default overflow:visible there is no scroll in either direction — so the
+     clipped part is unreachable by mouse, keyboard and screen reader alike, and
+     the dialog's own Close button can end up off-screen. Measured on the About
+     dialog at 1366x701 BEFORE any copy was added: the card ran from -26.7 to
+     727.4 with its heading already cut off, and the page did not scroll.
+     `safe` keeps centering while refusing to push content past the start edge;
+     `overflow:auto` supplies the scroll for what is still too tall. Fixed on the
+     shared rule rather than on .aboutcard because ten dialogs sit on this rule and
+     share the trap — which is what the note above already argues for. */
+  overflow: auto; align-items: safe center; padding: 16px;
 }
 
 /* signature-details modal: one row per signer */
@@ -577,7 +588,7 @@ body > div[id$="Modal"] {
    narrow readable column; the licence/notices view is wider. The card is capped
    at the viewport so neither can overflow. */
 .aboutcard { max-width: 92vw; }
-#aboutMain { display: flex; flex-direction: column; gap: 10px; max-width: 480px; }
+#aboutMain { display: flex; flex-direction: column; gap: 10px; max-width: 480px; min-height: 0; overflow-y: auto; }
 .aboutcard h4 { margin: 0; font-size: 13px; color: var(--subtext1); }
 .aboutcard p { margin: 0; }
 .aboutcard ul { margin: 0; padding-left: 20px; display: flex; flex-direction: column; gap: 4px; }
@@ -661,6 +672,10 @@ body > div[id$="Modal"] {
 .sigcard {
   background: var(--mantle); border: 1px solid var(--surface0);
   border-radius: 12px; padding: 20px; display: flex; flex-direction: column; gap: 12px;
+  /* Bound the card itself too: the modal's overflow:auto scrolls the OVERLAY, and a
+     card taller than the viewport would still push its own controls out of reach on
+     a short screen. `min()` keeps it at its natural height whenever that fits. */
+  max-height: min(100%, calc(100vh - 32px));
 }
 .sigcard h3 { margin: 0; }
 #sigCanvas { background: #fff; border-radius: 6px; cursor: crosshair; touch-action: none; }
