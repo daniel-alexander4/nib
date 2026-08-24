@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -34,7 +35,7 @@ func TestAnInvitationRoundTripsThroughAPaste(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.HasPrefix(text, "nib-invite-v1:") {
+	if !strings.HasPrefix(text, invitationPrefix) {
 		t.Errorf("the text form does not announce what it is: %.30s", text)
 	}
 
@@ -83,7 +84,7 @@ func TestACorruptedInvitationIsRefusedWholly(t *testing.T) {
 		t.Fatalf("setup: the intact invitation does not parse: %v", err)
 	}
 
-	body := strings.TrimPrefix(text, "nib-invite-v1:")
+	body := strings.TrimPrefix(text, invitationPrefix)
 	flip := func(s string, i int) string {
 		b := []byte(s)
 		if b[i] == 'A' {
@@ -98,9 +99,9 @@ func TestACorruptedInvitationIsRefusedWholly(t *testing.T) {
 		text string
 		want error
 	}{
-		{"a flipped character mid-payload", "nib-invite-v1:" + flip(body, len(body)/2), ErrInvitationCorrupt},
-		{"a truncated payload", "nib-invite-v1:" + body[:len(body)/2], ErrInvitationCorrupt},
-		{"the checksum removed", "nib-invite-v1:" + strings.Split(body, ".")[0], ErrInvitationCorrupt},
+		{"a flipped character mid-payload", invitationPrefix + flip(body, len(body)/2), ErrInvitationCorrupt},
+		{"a truncated payload", invitationPrefix + body[:len(body)/2], ErrInvitationCorrupt},
+		{"the checksum removed", invitationPrefix + strings.Split(body, ".")[0], ErrInvitationCorrupt},
 		{"an ordinary sentence", "here is the link I promised", ErrInvitationFormat},
 		{"an empty string", "", ErrInvitationFormat},
 		{"a future version", "nib-invite-v9:abc.dead", ErrInvitationVersion},
@@ -658,5 +659,98 @@ func TestAVersionSkewNamesTheDirection(t *testing.T) {
 	// errors.Is above and still tell the user the same wrong thing.
 	if ErrInvitationVersion.Error() == ErrInvitationOldVersion.Error() {
 		t.Error("the two version errors read identically, so naming the direction buys nothing")
+	}
+}
+
+// TestOneInvitationMatchesExactlyOneRecord — the invitation binds to ONE signed record.
+//
+// **Measured at the P07.S02 grill, against the tree as it then stood:** MatchesRecord compared
+// the id, the roster length, each party's fingerprint and `signs` flag, and the convener —
+// nothing that varies between two records SHARING a roster. A second record with the same id
+// and roster, a different intent, a different DocHash and a deadline 72h later, signed by the
+// same convener, was accepted by the first record's invitation.
+//
+// The harm is a convener running two chains under one ceremony id: Alice carried a lease,
+// Bob carried a deed of sale at a different price. Both records verify. Both parties'
+// MatchesRecord passes. Each finished document reports one proceeding, because within each
+// document every signature carries that document's own commitment. Nothing either party can
+// run compares the two.
+func TestOneInvitationMatchesExactlyOneRecord(t *testing.T) {
+	cert, key, cfp := identity(t, "Convener")
+	_, _, afp := identity(t, "A")
+
+	first := draft(t, cfp, afp)
+	if err := first.Sign(cert, key); err != nil {
+		t.Fatal(err)
+	}
+	invs, err := NewInvitations(first)
+	if err != nil {
+		t.Fatal(err)
+	}
+	inv := invs[afp]
+	// Setup assertion: it must match its OWN record, or every refusal below is meaningless.
+	if err := inv.MatchesRecord(first); err != nil {
+		t.Fatalf("setup: the invitation must match the record it was made from: %v", err)
+	}
+
+	for _, c := range []struct {
+		name string
+		mut  func(r *Record)
+	}{
+		{"a different intent", func(r *Record) { r.Intent = "We agree to the DEED OF SALE at 250000" }},
+		{"a different document", func(r *Record) { r.DocHash = strings.Repeat("cd", 32) }},
+		{"a later deadline", func(r *Record) { r.Expires = r.Expires.Add(72 * time.Hour) }},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			// A SECOND record: same id, same roster, same convener — only the axis under test
+			// differs. Re-signed, so it is a record the convener genuinely made, not a forgery.
+			second := draft(t, cfp, afp)
+			second.ID = first.ID
+			second.Roster = append([]Party(nil), first.Roster...)
+			c.mut(&second)
+			if err := second.Sign(cert, key); err != nil {
+				t.Fatal(err)
+			}
+			// Both records are genuinely valid — that is what makes this an authorisation
+			// question rather than a tampering one.
+			now := time.Date(2026, 8, 24, 0, 0, 0, 0, time.UTC)
+			if err := second.Verify(now); err != nil {
+				t.Fatalf("the second record must itself verify, or this row tests a broken "+
+					"record rather than a second proceeding: %v", err)
+			}
+			if err := inv.MatchesRecord(second); err == nil {
+				t.Errorf("the invitation for one ceremony ACCEPTED a second signed record with "+
+					"%s. One invitation must authorise exactly one record, or a convener can run "+
+					"two proceedings under one ceremony id and every party's check passes.", c.name)
+			}
+		})
+	}
+}
+
+// TestTheInvitationPrefixCarriesTheVersion — one number, one home.
+//
+// The prefix used to be the literal "nib-invite-v1:" beside `InvitationVersion = 1`, with
+// nothing relating them. That is only harmless while the number never moves, and the number
+// moving is exactly when it bites: `ParseInvitation` reads the version out of the PREFIX to
+// decide whether an invitation is newer or older than this build, so a bumped constant with a
+// stale literal leaves that path unreachable and every skew reported as "newer".
+func TestTheInvitationPrefixCarriesTheVersion(t *testing.T) {
+	want := "nib-invite-v" + strconv.Itoa(InvitationVersion) + ":"
+	if invitationPrefix != want {
+		t.Fatalf("invitationPrefix is %q and InvitationVersion is %d, so the two disagree; a "+
+			"reader deciding newer-vs-older from the prefix would answer for the wrong version",
+			invitationPrefix, InvitationVersion)
+	}
+	// And the direction-aware path actually works in BOTH directions at this version — the
+	// half that was unreachable while the prefix was a literal.
+	older := "nib-invite-v" + strconv.Itoa(InvitationVersion-1) + ":abc.dead"
+	if _, err := ParseInvitation(older); !errors.Is(err, ErrInvitationOldVersion) {
+		t.Errorf("an invitation one version BEHIND reported %v — want ErrInvitationOldVersion. "+
+			"Telling a user their older invitation came from the future is the defect this "+
+			"split exists to prevent.", err)
+	}
+	newer := "nib-invite-v" + strconv.Itoa(InvitationVersion+1) + ":abc.dead"
+	if _, err := ParseInvitation(newer); !errors.Is(err, ErrInvitationVersion) {
+		t.Errorf("an invitation one version AHEAD reported %v — want ErrInvitationVersion", err)
 	}
 }

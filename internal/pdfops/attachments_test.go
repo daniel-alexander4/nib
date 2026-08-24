@@ -787,3 +787,126 @@ func TestTheStreamBodyItselfEntersTheDigest(t *testing.T) {
 			"page image can be substituted for one of the same size and the digest will not move")
 	}
 }
+
+// TestContentDigestCoversAttachedExhibits — an attachment's CONTENTS are inside the digest.
+//
+// **Measured at the P07.S02 grill, against the tree as it then stood:** a `Schedule-A.txt`
+// reading "rent is 1000/mo" was removed and re-added under the SAME filename reading
+// "rent is 100000/mo"; the digest did not move and `ceremony.CheckDocument` returned nil.
+// A party could substitute an attached schedule and every check in the design said yes.
+//
+// The exclusion had an argument — "tamper-evidence for everything else is what the
+// signatures are for" — and the argument does not hold in the window this digest is checked
+// in: the document is UNSIGNED there (which is exactly why a structural rewrite is legal),
+// so there is no signature to be the fallback. That is the same refutation that folded
+// /Annots in one release earlier, applied to the axis it did not reach.
+func TestContentDigestCoversAttachedExhibits(t *testing.T) {
+	base, err := testpdf.Text("the lease, see Schedule A")
+	if err != nil {
+		t.Fatal(err)
+	}
+	withEx, err := AddAttachment(base, "Schedule-A.txt", []byte("rent is 1000/mo"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	before, err := ContentDigest(withEx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Setup assertion: the exhibit must actually BE there, or the swap below is a no-op and
+	// a moved digest would be measuring something else entirely.
+	got, err := ExtractAttachment(withEx, "Schedule-A.txt")
+	if err != nil || string(got) != "rent is 1000/mo" {
+		t.Fatalf("setup: the exhibit is not in the document (%q, %v)", got, err)
+	}
+
+	t.Run("the contents move it", func(t *testing.T) {
+		stripped, err := RemoveAttachment(withEx, "Schedule-A.txt")
+		if err != nil {
+			t.Fatal(err)
+		}
+		swapped, err := AddAttachment(stripped, "Schedule-A.txt", []byte("rent is 100000/mo"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		after, err := ContentDigest(swapped)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if after == before {
+			t.Errorf("an exhibit's contents changed under an unchanged filename and the digest "+
+				"did not move (%s) — a party can substitute a schedule and CheckDocument passes",
+				before[:16])
+		}
+	})
+
+	t.Run("the name moves it", func(t *testing.T) {
+		stripped, err := RemoveAttachment(withEx, "Schedule-A.txt")
+		if err != nil {
+			t.Fatal(err)
+		}
+		renamed, err := AddAttachment(stripped, "Schedule-B.txt", []byte("rent is 1000/mo"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		after, err := ContentDigest(renamed)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if after == before {
+			t.Error("an exhibit was renamed with identical contents and the digest did not move " +
+				"— name and bytes are hashed as separate chunks precisely so a rename and an " +
+				"edit cannot be made to cancel out")
+		}
+	})
+
+	t.Run("removing it moves it", func(t *testing.T) {
+		stripped, err := RemoveAttachment(withEx, "Schedule-A.txt")
+		if err != nil {
+			t.Fatal(err)
+		}
+		after, err := ContentDigest(stripped)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if after == before {
+			t.Error("the exhibit was removed entirely and the digest did not move")
+		}
+	})
+}
+
+// TestTheCeremonyRecordIsNotInItsOwnDigest is the companion, and it is a REGRESSION PIN
+// rather than a bug report: it is green today and its value is that it goes red if anyone
+// widens the embedded-files axis without keeping the exclusion.
+//
+// A digest that covered the record would be a fixed point — the record carries DocHash,
+// which is this digest of the document the record sits in — so the value would have to be
+// known before it could be computed. Not merely hard: impossible.
+func TestTheCeremonyRecordIsNotInItsOwnDigest(t *testing.T) {
+	base, err := testpdf.Text("the lease")
+	if err != nil {
+		t.Fatal(err)
+	}
+	before, err := ContentDigest(base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	withRecord, err := AddAttachment(base, CeremonyRecordName, []byte(`{"id":"whatever"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Setup assertion, because "the digest did not move" is exactly what a failed
+	// AddAttachment would also produce.
+	if got, err := ExtractAttachment(withRecord, CeremonyRecordName); err != nil || len(got) == 0 {
+		t.Fatalf("setup: the record is not attached (%v)", err)
+	}
+	after, err := ContentDigest(withRecord)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after != before {
+		t.Errorf("attaching %s moved the digest (%s -> %s) — the record contains this digest, so "+
+			"a digest that covers the record is a fixed point and no party could ever recompute it",
+			CeremonyRecordName, before[:16], after[:16])
+	}
+}

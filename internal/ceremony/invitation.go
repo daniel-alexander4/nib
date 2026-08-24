@@ -72,9 +72,33 @@ const SecretLen = 32
 
 // InvitationVersion is the invitation's format version (D32), carried in the text form's
 // prefix so a reader knows what it is holding before it parses anything.
-const InvitationVersion = 1
+//
+// **Bumped to 2 (2026-08-24, P07.S02).** The invitation gained `RosterHash`, which
+// MatchesRecord REQUIRES — an invitation without it carries nothing binding it to one
+// ceremony record, and the field is refused rather than defaulted, for the reason
+// ConvenerFingerprint's own comment records: an opt-in check is one an attacker turns off
+// with a one-byte edit. A required field is a format change, so the version moves. (The
+// `Seeds` precedent argued the other way for an OPTIONAL field and still does.)
+//
+// Free to take now: nothing in the product has ever constructed an invitation — P07.S02 is
+// the first code that constructs a `Record`, and invitations are made from one — so there is
+// no population in the field to migrate.
+const InvitationVersion = 2
 
-const invitationPrefix = "nib-invite-v1:"
+// invitationPrefix is DERIVED from InvitationVersion, and that is a fix rather than a tidy-up.
+//
+// It was the literal `"nib-invite-v1:"`, i.e. two homes for one number with nothing tying
+// them. `ParseInvitation`'s direction-aware check (ErrInvitationVersion vs
+// ErrInvitationOldVersion) reads the version out of the PREFIX; the JSON-level check is
+// direction-blind and always says "newer". So bumping the constant while leaving the literal
+// would have left the numeric path unreachable and told a user holding an ordinary older
+// invitation that it "was made by a newer version of Nib" — the precise sentence
+// ErrInvitationOldVersion was split out to prevent, and whose own comment names this bump as
+// the change that would reach it.
+//
+// A `var` rather than a `const` because Go cannot fold strconv into a constant expression.
+// `TestTheInvitationPrefixCarriesTheVersion` is the guard.
+var invitationPrefix = "nib-invite-v" + strconv.Itoa(InvitationVersion) + ":"
 
 var (
 	// ErrInvitationFormat: the text is not an invitation at all. Distinct from a corrupted
@@ -115,6 +139,34 @@ type Invitation struct {
 	// ConvenerFingerprint identifies who convened, so a party can check the record's
 	// signer against what the invitation told them to expect.
 	ConvenerFingerprint string `json:"convener"`
+	// RosterHash is the record's commitment, hex — the ONE value that binds this invitation
+	// to exactly one signed record (D20's preimage; added 2026-08-24, P07.S02).
+	//
+	// # What it fixes, measured
+	//
+	// Before this, MatchesRecord compared the id, the roster length, each party's fingerprint
+	// and `signs` flag, and the convener — i.e. **nothing that varies between two records
+	// sharing a roster.** Measured at the P07.S02 grill: a second record with the same id and
+	// the same roster, but a different `Intent`, a different `DocHash` and a deadline 72h
+	// later, signed by the same convener, was ACCEPTED by the first record's invitation.
+	//
+	// So one invitation authorised any number of records. A convener could run two chains
+	// under one ceremony id — carrying Alice a lease and Bob a deed of sale at a different
+	// price — and both parties' checks passed, because within each document every signature
+	// carried that document's own commitment. Nothing either party could run compared the two.
+	//
+	// # Why one hash rather than a list of fields
+	//
+	// C17 asks MatchesRecord to cover `intent`, `expires` and `capacity` as well. A per-field
+	// list is a rule that drifts: it is what left `Label` uncompared for three phases, and
+	// `Capacity` would have been the second. The commitment already covers every axis at once
+	// and is what the signature is over, so comparing it subsumes the list, covers fields that
+	// do not exist yet, and **fails closed** — a tamperer cannot make a forged hash match a
+	// record they cannot sign as the convener.
+	//
+	// Required, never optional. `ConvenerFingerprint`'s own comment records why: an opt-in
+	// check (`if x != ""`) is a check an attacker turns off with a one-byte edit.
+	RosterHash string `json:"rosterHash"`
 	// Seeds are DHT bootstrap addresses (D6's second half), so the common case does not
 	// depend on a shipped list that rots — three of the five Nib ships were dead the day
 	// they were written.
@@ -235,6 +287,10 @@ func NewInvitations(r Record) (map[string]Invitation, error) {
 	if !ok {
 		return nil, errors.New("the record's convener is not in its own roster")
 	}
+	rh, err := r.RosterHash()
+	if err != nil {
+		return nil, err
+	}
 	out := map[string]Invitation{}
 	for _, p := range r.Roster {
 		if strings.EqualFold(p.Fingerprint, conv.Fingerprint) {
@@ -251,6 +307,7 @@ func NewInvitations(r Record) (map[string]Invitation, error) {
 			Roster:              append([]Party(nil), r.Roster...),
 			Secret:              sec,
 			ConvenerFingerprint: conv.Fingerprint,
+			RosterHash:          hex.EncodeToString(rh),
 		}
 	}
 	if len(out) == 0 {
@@ -576,6 +633,41 @@ func (i Invitation) Hops() int {
 // A one-byte change to a fingerprint in the invitation therefore surfaces HERE, by name,
 // rather than as a handshake that mysteriously fails later.
 func (i Invitation) MatchesRecord(r Record) error {
+	// THE COMMITMENT FIRST. Every check below it is a per-field comparison, and per-field
+	// comparisons are what let a convener present two different records under one roster —
+	// measured, see Invitation.RosterHash. This one binds the invitation to exactly one
+	// record, covering every axis the preimage covers, including axes added later.
+	//
+	// The per-field checks below are KEPT rather than replaced, and the reason is the
+	// sentence: this comparison can only ever say "this is not that record", while the loops
+	// below say WHICH party and WHICH field — which is what a convener needs in order to fix
+	// it. Cheap, and they now run only on records that already failed the real check.
+	if i.RosterHash == "" {
+		return fmt.Errorf("%w: the invitation carries no commitment, so there is nothing that "+
+			"binds it to one ceremony record", ErrRosterMismatch)
+	}
+	rh, err := r.RosterHash()
+	if err != nil {
+		return err
+	}
+	if !strings.EqualFold(i.RosterHash, hex.EncodeToString(rh)) {
+		// Fall through to the per-field loops so the message names the axis, if one of them
+		// can. If none can, the generic sentence below the loops is the answer: the record
+		// differs in something the roster comparison cannot see, which is the whole point.
+		if err := i.matchesRosterFields(r); err != nil {
+			return err
+		}
+		return fmt.Errorf("%w: the invitation commits to ceremony %s and this document's record "+
+			"commits to %s — same roster, different proceeding (the intent, the deadline or the "+
+			"document itself has changed)", ErrRosterMismatch,
+			short(i.RosterHash), short(hex.EncodeToString(rh)))
+	}
+	return i.matchesRosterFields(r)
+}
+
+// matchesRosterFields is the per-field half, kept for its SENTENCES rather than for its
+// coverage — MatchesRecord's commitment comparison is what actually binds.
+func (i Invitation) matchesRosterFields(r Record) error {
 	if i.ID != r.ID {
 		return fmt.Errorf("%w: the invitation is for ceremony %s and the document carries %s",
 			ErrRosterMismatch, short(i.ID), short(r.ID))
@@ -584,15 +676,45 @@ func (i Invitation) MatchesRecord(r Record) error {
 		return fmt.Errorf("%w: the invitation lists %d parties and the document's record lists %d",
 			ErrRosterMismatch, len(i.Roster), len(r.Roster))
 	}
+	// **The WHOLE entry is compared, not a list of fields (2026-08-24, P07.S02 grill).**
+	//
+	// It used to compare `Fingerprint` and `Signs` and nothing else — so `Label`, which is
+	// INSIDE the commitment (record.go's per-party loop), could differ between the unsigned
+	// invitation a party reads and the signed record they sign against, with every check
+	// green. `Party.Capacity` would have been the second such field, and capacity is a claim
+	// about a party's AUTHORITY: a party shown "as Director" by the invitation while the
+	// record says "as Guarantor" consents to one thing and signs another.
+	//
+	// `Party` is all-comparable (strings and a bool), so `!=` on the struct covers every
+	// field there is and every field anyone adds — there is no list to keep in step, which is
+	// the same reason `Party.Name` was deleted rather than checked. `TestEveryPartyField-
+	// IsComparedByMatchesRecord` drives it per field and goes red on the field's own name.
+	//
+	// This assumes both sides are CANONICAL: `ParseInvitation` lowercases the invitation's
+	// fingerprints and `Record.Verify` refuses a non-canonical record, so a case difference is
+	// a refused record rather than a mismatched comparison.
 	for n := range i.Roster {
 		a, b := i.Roster[n], r.Roster[n]
-		if a.Fingerprint != b.Fingerprint {
+		if a == b {
+			continue
+		}
+		// Name the axis that actually differs; a refusal that says "these differ" while
+		// printing two identical-looking strings reads as a broken program.
+		switch {
+		case a.Fingerprint != b.Fingerprint:
 			return fmt.Errorf("%w: party %d is %s in the invitation and %s in the document's record",
 				ErrRosterMismatch, n+1, short(a.Fingerprint), short(b.Fingerprint))
-		}
-		if a.Signs != b.Signs {
+		case a.Signs != b.Signs:
 			return fmt.Errorf("%w: party %d is %s in the invitation and %s in the document's record",
 				ErrRosterMismatch, n+1, signsWord(a.Signs), signsWord(b.Signs))
+		case a.Label != b.Label:
+			return fmt.Errorf("%w: party %d is called %q in the invitation and %q in the "+
+				"document's record", ErrRosterMismatch, n+1, a.Label, b.Label)
+		default:
+			// A field added to Party and not given a sentence above. Refusing generically is
+			// correct and is better than accepting; the guard names which field.
+			return fmt.Errorf("%w: party %d differs between the invitation and the document's "+
+				"record", ErrRosterMismatch, n+1)
 		}
 	}
 	// The convener, which this check skipped entirely — while ConvenerFingerprint's own doc

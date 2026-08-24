@@ -14,14 +14,35 @@ import (
 // A PDF attachment rather than metadata or a custom dictionary, and the choice was
 // **measured rather than reasoned** (caveat 10, discharged 2026-08-18): an attachment added
 // in the pre-signing structural pass survives three incremental signatures byte-identical,
-// and attaching one *after* a signature invalidates every signature on the document. That
-// second half is why PrepareDocument is the only place a record can be embedded.
-const AttachmentName = "nib-ceremony.json"
+// and attaching one *after* a signature invalidates every signature on the document.
+//
+// **The sentence that used to follow — "that second half is why PrepareDocument is the only
+// place a record can be embedded" — named a call site that cannot exist** (found 2026-08-24,
+// P07.S02). `p2p.PrepareDocument` calls `AppendReadme` and nothing else; it CANNOT embed a
+// record, because `internal/p2p` cannot import this package. Nothing in production embedded a
+// record at all when that sentence was written. What enforces the rule is `Embed`'s own
+// signature check below, and the convene door that calls it in order.
+//
+// **The name itself lives in `internal/pdfops` (2026-08-24, P07.S02)**, because `ContentDigest`
+// must exclude this one file from the embedded-files axis it now covers — a digest that hashed
+// the record would be a fixed point, since the record contains that digest. `pdfops` cannot
+// import this package (this one imports it), so one constant with two readers beats two
+// constants that can drift. ADR-009.
+const AttachmentName = pdfops.CeremonyRecordName
 
 // ErrNoRecord is returned when a document carries no ceremony record. Distinct from a
 // malformed one: an ordinary PDF has no record and that is not an error, while a document
 // that has one which will not parse is a broken ceremony.
 var ErrNoRecord = errors.New("document carries no ceremony record")
+
+// ErrDigestVersion reports a record whose DocHash was computed under a different
+// content-digest rule than this build uses.
+//
+// Its own sentinel, and not a shape of the hash-mismatch error, for the reason D32 exists:
+// the two mean opposite things to a reader. A hash mismatch says somebody changed the
+// document. This says the two builds measure the document differently and the numbers were
+// never comparable — nobody has done anything wrong, and the fix is an update.
+var ErrDigestVersion = errors.New("this ceremony's document hash was computed under a different version of Nib")
 
 // DocumentHash is the value a record's DocHash field holds, and the one a later party
 // recomputes to check it.
@@ -36,15 +57,40 @@ var ErrNoRecord = errors.New("document carries no ceremony record")
 // identity, so the convener and a party at hop four would compute different numbers from
 // the same document, every time.
 //
-// pdfops.ContentDigest is stable where that is not: measured identical across adding the
-// attachment and across three incremental signatures. That is what makes the hop-4 clause
-// buildable at all.
+// pdfops.ContentDigest is stable where a byte hash is not: measured identical across adding
+// the attachment, and across a REWRITE of the same document.
 //
-// **The narrowing, stated rather than discovered:** it covers the page count and every
-// page's content stream, and NOT annotations, form values, attachments or metadata. It
-// answers "is this the same document" about what is on the pages, which is what a ceremony
-// is convened over; everything else is covered by the signatures, which hash the real bytes
-// and flip to invalid on any edit. See the plan pin on D20.
+// # What this hash proves, and to whom — corrected 2026-08-24 (P07.S02), by measurement
+//
+// The three paragraphs that used to stand here were false of the code, and one of them was
+// load-bearing for a plan clause. They are recorded rather than deleted, because the wrong
+// version is the one a reader will have in their head:
+//
+//   - It said the digest was "measured identical … across three incremental signatures", and
+//     that "makes the hop-4 clause buildable at all". **Measured false on the real path.**
+//     ContentDigest hashes each page's /Annots, and a VISIBLE signature adds a widget annot;
+//     `p2p.Contribute` supplies an appearance on every production co-sign. The measurement
+//     behind the old sentence was taken with INVISIBLE signatures, and so is the guard that
+//     was cited as discharging it. On an honest four-party ceremony `CheckDocument` passes at
+//     hop 1 and fails from hop 2 — with a sentence accusing an honest counterparty.
+//   - It said the digest does "NOT [cover] annotations, form values, attachments or
+//     metadata". Annotations and form values were folded in at v1.116.18 and attachments at
+//     this slice; the sentence outlived both.
+//   - It said "everything else is covered by the signatures … and flip to invalid on any
+//     edit". **False in the window this digest is checked in**, which is exactly the window
+//     where a structural rewrite is legal: the document is UNSIGNED, so there is no signature
+//     to be the fallback. Measured: an attached schedule swapped under an unchanged filename
+//     left the digest unmoved and CheckDocument clean.
+//
+// **So, stated honestly:** this digest proves that the pages, their geometry and resources,
+// their annotations and the document's embedded files are the ones the ceremony was convened
+// over — **to the convener, and to anyone who sees the document before the first VISIBLE
+// signature.** It is a convene-time identity. Later parties in a hop chain get a byte-prefix
+// relationship rather than a recomputable commitment, and that chain is anchored only at the
+// convener. Building the per-hop continuity that would replace it is NOT this slice's, and
+// the mechanism the plan adopted for it — byte prefix plus `AddedAfter == false` — was
+// measured at this slice's grill to PASS on a document whose first page had been blacked out
+// by the last signer. See the grill record before relying on it.
 func DocumentHash(pdf []byte) (string, error) {
 	return pdfops.ContentDigest(pdf)
 }
@@ -91,6 +137,21 @@ func CheckDocument(pdf []byte, now time.Time) (Record, error) {
 	}
 	if err := r.Verify(now); err != nil {
 		return r, err
+	}
+	// The digest-rule skew, BEFORE the hash comparison — because the hash comparison is what
+	// produces the wrong sentence. Two builds that hash different axes will always disagree
+	// about the number; saying "these are not the same document" describes a tampered file,
+	// and this is a Nib version difference. D32: a skew produces a sentence naming the
+	// mismatch, never a verdict about the counterparty.
+	//
+	// A zero means a record written before the field existed. There are none in the field —
+	// P07.S02 is the first code that ever constructs a Record — so this is treated as the
+	// skew it is rather than defaulted, which would silently compare across digest rules.
+	if r.DigestVersion != pdfops.ContentDigestVersion {
+		return r, fmt.Errorf("%w: this ceremony's document hash was computed under Nib's "+
+			"content-digest rule %d and this build uses rule %d, so the two numbers are not "+
+			"comparable — update Nib rather than treating this as a changed document",
+			ErrDigestVersion, r.DigestVersion, pdfops.ContentDigestVersion)
 	}
 	got, err := DocumentHash(pdf)
 	if err != nil {

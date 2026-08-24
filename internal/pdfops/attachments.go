@@ -185,14 +185,30 @@ func AddAttachment(pdf []byte, name string, data []byte) ([]byte, error) {
 // the convener one number and every later party a different one. Attaching and then
 // detaching is not an identity either.
 //
-// This is stable where that is not. Measured on the same run: identical across adding an
-// attachment and across three incremental signatures.
+// This is stable where that is not. Measured: identical across adding an attachment, and
+// across a rewrite of the same document.
 //
-// **What it does not cover, stated rather than discovered:** annotations, form field
-// values, attachments, and metadata. It answers "is this the same document" about the
-// visible content, which is what a ceremony is convened over. Tamper-evidence for
-// everything else is what the signatures are for — they cover the actual bytes, and any
-// edit to them flips the verification verdict.
+// # What it covers, and the exclusion list that outlived its own truth
+//
+// **Covered:** page count; per page the content stream, MediaBox/CropBox/Rotate, the page
+// resources followed into font and XObject streams, and /Annots in full; and the catalog's
+// embedded-files name tree, minus the ceremony record (see CeremonyRecordName).
+//
+// **Not covered:** document metadata, and the AcroForm structure outside page /Annots.
+//
+// This comment used to carry an exclusion list reading "annotations, form field values,
+// attachments, and metadata", justified by "tamper-evidence for everything else is what the
+// signatures are for — they cover the actual bytes, and any edit to them flips the
+// verification verdict". **Three of those four are now covered, and the justification was
+// refuted twice by measurement** (v1.116.18 for annotations and form values; P07.S02 for
+// attachments). The argument fails for one reason both times: the window this digest is
+// checked in is the PRE-SIGNATURE window — that is precisely when a structural rewrite is
+// legal — so there is no signature to be the fallback it names. It also contradicted the
+// body of its own function, which had folded /Annots in with a comment saying so.
+//
+// It is recorded rather than deleted because the same argument will be offered for the next
+// axis, and it is wrong the same way. Also worth stating: "any edit flips the verdict" is
+// itself false of an INCREMENTAL update, which is how every co-signature is applied.
 //
 // # It covers the page RESOURCES too, and until v1.116.18 it did not
 //
@@ -230,7 +246,32 @@ func AddAttachment(pdf []byte, name string, data []byte) ([]byte, error) {
 // Bump it whenever the set of hashed axes changes. `Record.FormatVersion` is a different
 // number answering a different question (what the roster preimage binds); a digest change does
 // not need to move that, but it does need to move this.
-const ContentDigestVersion = 2
+//
+// **Bumped to 3 (2026-08-24, P07.S02).** The embedded-files name tree is now covered — see
+// CeremonyRecordName and the attachment block in ContentDigest for what was measured.
+//
+// **And the constant was doing only half its job until this slice.** It was bound INTO the
+// digest and carried nowhere beside it — three occurrences in the whole tree, all in this
+// file — so nothing could ever compare two versions. Binding a version inside a hash changes
+// the number; it cannot produce a sentence, because the reader has nothing to read. A build
+// with version 3 meeting a record written under 2 therefore produced the exact accusation the
+// paragraph above says this constant prevents. `Record` now carries the digest version it was
+// written under, so the mismatch is reported as a skew (D32) rather than as tampering.
+const ContentDigestVersion = 3
+
+// CeremonyRecordName is the one embedded file ContentDigest must NOT hash.
+//
+// It lives here rather than in `internal/ceremony` because the exclusion is a property of the
+// digest, and `internal/pdfops` cannot import `internal/ceremony` (that package imports this
+// one). `ceremony.AttachmentName` is defined as this constant, so there is one name and not
+// two that can drift — ADR-009.
+//
+// **Why it is excluded, and it is not a preference:** the record contains `DocHash`, which is
+// this digest of the document the record is embedded in. A digest that covered the record
+// would be a fixed point — the value would have to be known before it could be computed.
+// Measured stable both ways at the P07.S02 grill: embedding the record leaves the digest
+// byte-identical, before and after this slice widened the coverage.
+const CeremonyRecordName = "nib-ceremony.json"
 
 func ContentDigest(pdf []byte) (string, error) {
 	ctx, err := api.ReadValidateAndOptimize(bytes.NewReader(pdf), model.NewDefaultConfiguration())
@@ -272,7 +313,77 @@ func ContentDigest(pdf []byte) (string, error) {
 		hashChunk(h, []byte("Annots"))
 		hashObject(ctx.XRefTable, d["Annots"], h, 0)
 	}
+	// EMBEDDED FILES, v3 — and the exclusion above it was refuted the same way the
+	// annotations exclusion was, one paragraph up: by asking what the argument actually
+	// covers in the window this digest is checked in.
+	//
+	// The old sentence was "attachments are not covered; tamper-evidence for everything else
+	// is what the signatures are for". **Measured at the P07.S02 grill:** an attached
+	// `Schedule-A.txt` reading "rent is 1000/mo" was removed and re-added under the SAME
+	// filename reading "rent is 100000/mo"; the digest did not move and `CheckDocument`
+	// returned nil. The document is unsigned in that window — which is precisely when
+	// `Embed` permits a structural rewrite — so there was no signature to be the fallback the
+	// argument named. For a lease, the schedule IS the agreement, exactly as the form values
+	// are.
+	//
+	// Sorted by name so the digest is a property of the document rather than of pdfcpu's
+	// enumeration order; the name and the bytes are hashed as separate length-prefixed
+	// chunks, so a rename and an edit cannot be made to cancel out.
+	if err := hashEmbeddedFiles(ctx, h); err != nil {
+		return "", err
+	}
 	return hex.EncodeToString(h.Sum(nil)), nil
+}
+
+// hashEmbeddedFiles folds the catalog name tree into the digest, minus the ceremony record.
+//
+// Page-level /FileAttachment annotations are deliberately NOT walked here: they hang off
+// `/Annots`, which the per-page loop above already hashes. Hashing them twice would be
+// harmless but would state the coverage in two places.
+func hashEmbeddedFiles(ctx *model.Context, h hash.Hash) error {
+	aa, err := ctx.ListAttachments()
+	if err != nil {
+		// A document with no name tree is the ordinary case and is not an error; pdfcpu
+		// reports it as one on some inputs. Hash the count as zero and carry on, so an
+		// unreadable tree cannot silently look like an empty one.
+		hashChunk(h, []byte("embedded-files"))
+		hashUint(h, 0)
+		return nil
+	}
+	names := make([]string, 0, len(aa))
+	for _, a := range aa {
+		name := a.FileName
+		if name == "" {
+			name = a.ID
+		}
+		if clean := attachmentName(name); clean != "" {
+			name = clean
+		}
+		if name == CeremonyRecordName {
+			continue // the self-reference; see CeremonyRecordName
+		}
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	hashChunk(h, []byte("embedded-files"))
+	hashUint(h, uint64(len(names)))
+	for _, name := range names {
+		hashChunk(h, []byte(name))
+		a, err := ctx.ExtractAttachment(model.Attachment{ID: name})
+		if err != nil || a == nil || a.Reader == nil {
+			// Named in the tree but unreadable. Hash a marker rather than skipping: a file
+			// that cannot be read is a different document from one that is not there, and
+			// silently skipping would let an attacker hide an edit behind a broken filespec.
+			hashChunk(h, []byte("unreadable"))
+			continue
+		}
+		b, err := io.ReadAll(a.Reader)
+		if err != nil {
+			return fmt.Errorf("attachment %q: %w", name, err)
+		}
+		hashChunk(h, b)
+	}
+	return nil
 }
 
 // hashChunk writes a length-prefixed byte string, and hashUint a length-prefixed integer.
