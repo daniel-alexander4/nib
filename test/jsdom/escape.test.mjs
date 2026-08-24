@@ -129,3 +129,97 @@ test('no innerHTML assignment takes anything but a literal or a number', () => {
   // matching and every assertion above ran over nothing.
   assert.ok(sites >= 5, `found ${sites} innerHTML site(s) — the scanner has gone blind`);
 });
+
+// --- dialog semantics and focus ------------------------------------------------
+//
+// These assert the live DOM, not index.html, and that is not a stylistic choice: the
+// attributes are stamped at boot over `body > div[id$="Modal"]` and are never written
+// into the file. A static scan of index.html would go red forever, including against a
+// correct fix. Same boot, same population, same floor and same offender-naming message
+// as the Escape test above, because the failure mode is identical — dialog 39 is the one
+// that will not have it.
+
+const modals = () => [...doc.querySelectorAll('body > div[id$="Modal"]')];
+
+test('every dialog says it is a dialog', () => {
+  const ms = modals();
+  assert.ok(ms.length >= 30, `only ${ms.length} dialogs found — this scan is not reading the DOM`);
+  for (const [attr, want] of [['role', 'dialog'], ['aria-modal', 'true'], ['tabindex', '-1']]) {
+    const bare = ms.filter((m) => m.getAttribute(attr) !== want).map((m) => m.id);
+    assert.deepEqual(bare, [],
+      `these dialogs are missing ${attr}="${want}", so a screen reader does not treat them as dialogs: ${bare.join(', ')}`);
+  }
+});
+
+// Presence is the cheap wrong check: aria-labelledby pointing at an id that does not
+// exist announces NOTHING, and is worse than no label because the browser stops falling
+// back. So the target must resolve AND carry text.
+test('every dialog names itself, and the name resolves', () => {
+  const ms = modals();
+  assert.ok(ms.length >= 30, `only ${ms.length} dialogs found — this scan is not reading the DOM`);
+  const broken = ms.filter((m) => {
+    const id = m.getAttribute('aria-labelledby');
+    if (!id) return true;
+    const el = doc.getElementById(id);
+    return !el || !el.textContent.trim();
+  }).map((m) => m.id);
+  assert.deepEqual(broken, [],
+    `these dialogs have no aria-labelledby, or it points at something with no text — an unresolvable label announces nothing at all: ${broken.join(', ')}`);
+});
+
+test('opening a dialog moves focus into it', async () => {
+  const m = doc.getElementById('aboutModal');
+  doc.getElementById('menubar')?.querySelector('button')?.focus();
+  m.hidden = false;
+  await settle();
+  assert.ok(m.contains(doc.activeElement) || doc.activeElement === m,
+    `focus stayed on ${doc.activeElement && doc.activeElement.id} when the About dialog opened, so a keyboard user is still behind the scrim`);
+  m.hidden = true;
+  await settle();
+});
+
+// **A REGRESSION guard, not a fix guard — it passes today and that is the point.** Five
+// dialogs focus their own field synchronously right after unhiding, and the observer's
+// record arrives a microtask later. Delete the `m.contains(document.activeElement)`
+// condition in app.js and this goes red.
+test('a dialog that focuses its own field keeps it', async () => {
+  const m = doc.getElementById('decryptModal');
+  const pw = doc.getElementById('decryptPw');
+  if (!m || !pw) return; // the dialog was renamed; the population guards above will say so
+  m.hidden = false;
+  pw.focus();
+  await settle();
+  assert.equal(doc.activeElement && doc.activeElement.id, 'decryptPw',
+    'the focus observer stomped a dialog that had already placed focus in its own field');
+  m.hidden = true;
+  await settle();
+});
+
+test('focus cannot leave an open dialog', async () => {
+  const m = doc.getElementById('aboutModal');
+  m.hidden = false;
+  await settle();
+  const outside = doc.getElementById('menubar')?.querySelector('button');
+  if (outside) {
+    outside.focus();
+    await settle();
+    assert.ok(m.contains(doc.activeElement) || doc.activeElement === m,
+      'focus escaped to the toolbar behind an open dialog — with aria-modal="true" the reader has been told that element does not exist');
+  }
+  m.hidden = true;
+  await settle();
+});
+
+// ## What this cannot see
+//
+// - **Whether a focus target is actually rendered.** jsdom ignores `hidden` and has no
+//   layout: `.focus()` SUCCEEDS on an element inside a hidden container here, and hiding
+//   a container does not blur its focused descendant. So focus RESTORE has no honest test
+//   at this tier — a tier-2 "focus was restored to the trigger" assertion passes on the
+//   exact bug it would exist to catch (a trigger inside a collapsed dropdown). Restore is
+//   tested in test/ui/ instead, where activeElement is the browser's.
+// - **Whether a screen reader announces the dialog, or whether aria-modal actually prunes
+//   the background.** No tier in this repo runs AT. This has NO OWNER and is not deferred
+//   to one — it is unfixable here, and saying so is the point.
+// - Whether the container shows an unwanted UA focus ring when focused programmatically,
+//   and whether the scrim genuinely blocks pointer interaction. Both are tier 3's.

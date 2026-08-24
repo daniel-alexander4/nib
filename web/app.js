@@ -7635,6 +7635,110 @@ document.addEventListener('keydown', (e) => {
   else top.hidden = true; // a dialog with no cancel control: hide it rather than trap the user
 });
 
+// --- dialog semantics and focus -----------------------------------------------
+// Every `body > div[id$="Modal"]` is a modal dialog and none of them said so: 38
+// overlays, zero `role="dialog"`, zero `aria-modal`, zero `aria-labelledby`, and
+// opening one moved no focus while closing one restored none. Escape already worked
+// (above), so what was broken was SC 2.4.3 and 4.1.2, not 2.1.2.
+//
+// **Stamped at boot from the live DOM, not written into index.html.** The 38 are
+// enumerated by matching the selector, so dialog 39 is covered by existing rather
+// than by its author remembering — which is the same argument the Escape handler's
+// own guard makes ("the next dialog added is the one that will not have it"). It is
+// also why the guard for this boots the app and reads the DOM: the attributes are
+// never in the file, so a static scan of index.html would be red forever.
+//
+// `aria-modal="true"` tells a screen reader to prune everything outside the dialog.
+// Shipping that WITHOUT containment is a net regression — the user would Tab to
+// elements the reader has been told do not exist — so the redirect below is not
+// optional garnish, it is the other half of the attribute.
+const modalSelector = 'body > div[id$="Modal"]';
+
+for (const m of document.querySelectorAll(modalSelector)) {
+  m.setAttribute('role', 'dialog');
+  m.setAttribute('aria-modal', 'true');
+  if (!m.hasAttribute('tabindex')) m.setAttribute('tabindex', '-1');
+  // aria-labelledby POINTS at the heading rather than copying its text, because three
+  // of these titles are rewritten by JS at runtime (saveAsTitle, srvTitle, aboutTitle);
+  // a string copied at boot would announce "Save" for an export. A dialog with no
+  // heading deliberately gets no label — an invented one is a lie, and the guard is
+  // what should complain.
+  const h = m.querySelector('h3, h2');
+  if (h) {
+    if (!h.id) h.id = m.id + 'Title';
+    m.setAttribute('aria-labelledby', h.id);
+  }
+}
+
+// The last two focus targets. Two, not one, because dialogs genuinely stack — showVerify
+// opens verifyModal while sessionInitModal is still open — so the opener to restore may
+// itself be inside another dialog; and because the dialog being opened may already hold
+// focus (below), in which case the most recent target is the wrong answer.
+let focusTrail = [];
+document.addEventListener('focusin', (e) => {
+  focusTrail.push(e.target);
+  if (focusTrail.length > 2) focusTrail.shift();
+});
+
+// Containment. On focusin, if the topmost open dialog does not contain the target, pull
+// focus back to the dialog itself. Reading the live DOM each time rather than computing
+// first/last focusable at open time, because six of these dialogs build their rows AFTER
+// opening (loadKeys, loadPeers, browseDir, the outline and attachment lists) and a
+// sentinel captured at open would be stale before the user pressed Tab.
+//
+// **It cannot loop or strand**: the redirect target is the dialog container, which was
+// given tabindex="-1" above, so the focus call always succeeds. Do not "simplify" that
+// tabindex away.
+document.addEventListener('focusin', (e) => {
+  const open = [...document.querySelectorAll(modalSelector + ':not([hidden])')];
+  const top = open[open.length - 1];
+  if (!top || top.contains(e.target)) return;
+  top.focus();
+});
+
+// Focus in on open, focus back on close. One observer per dialog rather than one subtree
+// observer on body: all 38 are direct children of body and none is created at runtime, so
+// a boot-time enumeration is total — and observing them individually sees 113 relevant
+// mutations instead of the whole app's 190.
+for (const m of document.querySelectorAll(modalSelector)) {
+  let wasOpen = !m.hidden;
+  let opener = null;
+  new MutationObserver(() => {
+    const open = !m.hidden;
+    // A state machine, not a reaction: closeDocBoundModals() hides twenty-odd dialogs
+    // unconditionally on every view switch, most of them already hidden, and firing
+    // restore-focus on each of those would teleport the user on every tab change.
+    if (open === wasOpen) return;
+    wasOpen = open;
+    if (open) {
+      // The most recent focus that is NOT already inside this dialog. Five dialogs focus
+      // their own field synchronously right after unhiding (decryptPw, encryptPw,
+      // extractPages, saveAsName+select, and openModal via openBrowse) and the observer
+      // record arrives a microtask later — measured — so without this they would be
+      // stomped half a tick after they landed. They need no edit of their own.
+      opener = [...focusTrail].reverse().find((el) => el && !m.contains(el)) || null;
+      if (!m.contains(document.activeElement)) m.focus();
+      return;
+    }
+    // Restore only if focus was actually inside this dialog, and only to an opener that
+    // is still connected AND still laid out. Most of these are launched from a dropdown
+    // item, and the menu collapses in the same click that opens the dialog — so by the
+    // time it closes the saved opener is inside a `display: none` subtree, where .focus()
+    // is a silent no-op and the browser drops focus to <body>. That is the same SC 2.4.3
+    // harm this code exists to remove, relocated.
+    // Whether focus was inside is read from the TRAIL, not from activeElement — because
+    // by the time this observer runs (a microtask after `hidden` is set) a real browser
+    // has already blurred the focused descendant to <body>, so activeElement always says
+    // "not inside" and the restore never fires. jsdom does NOT blur on hide, so tier 2 is
+    // green against that defect; only test/ui/dialogfocus.test.mjs can see it, and it did.
+    const hadFocus = focusTrail.some((el) => el && (el === m || m.contains(el)));
+    if (!hadFocus) return;
+    if (opener && opener.isConnected && opener.offsetParent !== null) opener.focus();
+    else document.getElementById('menubar')?.querySelector('button')?.focus();
+    opener = null;
+  }).observe(m, { attributes: true, attributeFilter: ['hidden'] });
+}
+
 async function saveSettings(body) {
   try {
     const res = await apiFetch('/api/settings', {
