@@ -1,0 +1,13 @@
+diff --git a/internal/ceremony/record.go b/internal/ceremony/record.go
+index 4b013ac..0bce769 100644
+--- a/internal/ceremony/record.go
++++ b/internal/ceremony/record.go
+@@ -481,7 +481,7 @@ func (r Record) Verify(now time.Time) error {
+ 	// signature also fails should be reported as the thing the reader can act on: the
+ 	// signature would verify, since the preimage folds exactly the axes that differ, so
+ 	// "forged" would be the wrong word for a record that is merely mis-built.
+-	if !r.IsCanonical() {
++	if false {
+ 		return fmt.Errorf("%w: its stored form is not the form its own commitment binds, so two "+
+ 			"different records could carry this signature", ErrNotCanonical)
+ 	}

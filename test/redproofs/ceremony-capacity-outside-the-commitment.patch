@@ -1,0 +1,13 @@
+diff --git a/internal/ceremony/record.go b/internal/ceremony/record.go
+index 4b013ac..1a3eb13 100644
+--- a/internal/ceremony/record.go
++++ b/internal/ceremony/record.go
+@@ -314,7 +314,7 @@ func rosterPreimage(r Record) ([]byte, error) {
+ 		// length coincidence (fingerprints always 32, signs always 1) instead of on the prefix
+ 		// property. C19's "an empty capacity renders nothing" is about RENDERING and is one
+ 		// careless reading away from an omitted chunk.
+-		p.addString(party.Capacity)
++		_ = party.Capacity
+ 	}
+ 	return p.bytes(), nil
+ }
