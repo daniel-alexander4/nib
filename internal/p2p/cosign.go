@@ -62,6 +62,24 @@ func Contribute(pdf, certPEM, keyPEM []byte, att Attestation, appearance []byte,
 	return sign.SignApproval(pdf, certPEM, keyPEM, opts)
 }
 
+// NominalBlockRect is the attestation block's rect at index 0 — the size a client
+// rasterises its appearance image to, before the server computes the authoritative
+// placement on the document that will actually carry it.
+//
+// It exists because the rule had TWO implementations. `internal/server/session.go`
+// returned a hand-copied `{40, 40, 320, 124}` with a comment saying it "mirrors
+// stackPlacement's constant block size", and the only thing asserting that was a
+// test comparing the literal to 280x84 — the copy agreeing with itself, never with
+// stackPlacement. ADR-009: a rule gets one door, and the guard checks the door.
+//
+// **The hand-copy's REASON was sound and is preserved.** `handleSessionQuote`
+// deliberately never reads the open document, because the responder's block goes on
+// the *received* document and binding to the open one would use the wrong page
+// geometry. So this is a size template, not a placement — the caller wants a rect of
+// the right shape and must not care where it says it is. Only the aspect is consumed
+// (`web/app.js:956` reads `rect[2]-rect[0]` and `rect[3]-rect[1]` and nothing else).
+func NominalBlockRect() [4]float64 { return stackPlacement(1, 0).Rect }
+
 // stackPlacement positions the next attestation block on the last page, stacked
 // upward from the bottom margin so successive parties' blocks sit side by side in
 // document space rather than overlapping.
