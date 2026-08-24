@@ -1,0 +1,13 @@
+diff --git a/internal/p2p/session.go b/internal/p2p/session.go
+index 29637eb..a9c7a90 100644
+--- a/internal/p2p/session.go
++++ b/internal/p2p/session.go
+@@ -120,7 +120,7 @@ func Initiate(ch Channel, mySignedPDF, myFingerprint []byte, v Verifier) ([]byte
+ 	peerFP := ch.PeerFP
+ 	_ = conn.SetDeadline(time.Now().Add(exchangeDeadline))
+ 	// The spoken check, before a single document byte (L2).
+-	if err := runVerification(ch, true, myFingerprint, v); err != nil {
++	if err := error(nil); err != nil { // L2 fixture: the confirmation is skipped
+ 		return nil, err
+ 	}
+ 	// Re-armed: the gate above spent wall-clock while nothing was on the wire. See

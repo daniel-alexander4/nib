@@ -1,0 +1,18 @@
+diff --git a/internal/server/zz_l1fixture.go b/internal/server/zz_l1fixture.go
+new file mode 100644
+index 0000000..ff5357d
+--- /dev/null
++++ b/internal/server/zz_l1fixture.go
+@@ -0,0 +1,12 @@
++package server
++
++import "nib/internal/discovery"
++
++// redProofWireDerivedPin is the negative fixture for L1 — nothing learned from the
++// network may influence WHICH peer is accepted. It takes a wire type and lets the
++// value reach a candidate's Fingerprint, which is the pin.
++//
++// It exists only inside a red proof's patch; it is never in the tree.
++func redProofWireDerivedPin(seen discovery.Seen) candidate {
++	return candidate{Fingerprint: []byte(seen.From.String())}
++}

@@ -271,7 +271,7 @@ func TestVerifyContractIsTrue(t *testing.T) {
 		// an edit that does not HAVE to happen is an edit that does not happen. So the
 		// count is bounded on both sides now. It still fails when a row disappears, and it
 		// fails when the set outgrows it, naming the number to write.
-		const recorded = 69
+		const recorded = 71
 		if len(rows) < recorded {
 			t.Errorf("test/redproofs holds %d replayable row(s), want at least %d; "+
 				"build/redproof.sh reports no error on an empty directory, so a row that "+
@@ -337,6 +337,47 @@ func TestVerifyContractIsTrue(t *testing.T) {
 // looking are two statements of the same fact, and a browser added to one and not the
 // other is exactly the drift that produces a package recommending something nib will
 // never launch.
+// A red proof asserts that a defect makes a check fail. It does NOT assert that the
+// patch contains only the defect — and it structurally cannot, because a patch carrying
+// extra hunks still applies and the PROVE command still fails for its own reason and
+// prints its own EXPECT.
+//
+// That gap was not theoretical. Four P07.S08 rows were generated with a bare `git diff`
+// while `test/redproofs/*.patch` are themselves TRACKED, so each regeneration swept the
+// previously-rewritten patches into the next; one reached 214 lines and six hunks for a
+// one-comment mutation, and all four replayed green in that state.
+//
+// One file per patch was already true of all 71 — a rule the set obeyed and nothing
+// enforced, which is the definition of the thing that drifts.
+func TestEveryRedProofPatchTouchesOneFile(t *testing.T) {
+	patches, err := filepath.Glob("test/redproofs/*.patch")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(patches) < 2 {
+		t.Fatalf("found %d red-proof patches — this scan is not reading the directory, so "+
+			"every assertion below would pass over nothing", len(patches))
+	}
+	for _, p := range patches {
+		b, err := os.ReadFile(p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var files []string
+		for _, ln := range strings.Split(string(b), "\n") {
+			if strings.HasPrefix(ln, "+++ ") {
+				files = append(files, strings.TrimPrefix(ln, "+++ "))
+			}
+		}
+		if len(files) != 1 {
+			t.Errorf("%s patches %d files, want 1 — a red proof whose patch carries more than "+
+				"its own defect still replays green, because the check fails for its own reason "+
+				"either way. Regenerate it with `git diff -- <one file>`. Files: %v",
+				filepath.Base(p), len(files), files)
+		}
+	}
+}
+
 func TestPackageDeclaresABrowser(t *testing.T) {
 	spec, err := os.ReadFile("build/nfpm.yaml")
 	if err != nil {
