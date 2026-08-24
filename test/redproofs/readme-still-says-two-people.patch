@@ -1,5 +1,5 @@
 diff --git a/internal/p2p/readme.go b/internal/p2p/readme.go
-index 1ab2c26..f39cced 100644
+index 870058a..1f8f812 100644
 --- a/internal/p2p/readme.go
 +++ b/internal/p2p/readme.go
 @@ -67,7 +67,7 @@ var readmeParagraphs = []string{
@@ -8,6 +8,6 @@ index 1ab2c26..f39cced 100644
  	"Who each signer accepted: every signature names one party, in the acceptance block on the " +
 -		"preceding pages, and that is the only identity that signature vouches for. Where two parties " +
 +		"preceding pages, and that is the only identity that signature vouches for. Where two people " +
- 		"sign together they accept each other. Where more than two do, one of them convenes the " +
- 		"proceeding and tells the rest who is on it — so parties who never connected to each other " +
+ 		"sign together, each names the other. Where more than two do, the parties are the ones named " +
+ 		"by whoever convened the proceeding — so signers who never connected to each other " +
  		"have not checked each other's identity, and no signature here claims they did.",
