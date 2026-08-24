@@ -1421,3 +1421,40 @@ never close, and the finding only reproduced against a realistic sparse page —
 than predicted. And the numbers that sized the fix came from a replica of the reduction rather than
 the product; the replica box-filtered, the product did not, and every distance it predicted was
 wrong. The replica said a text page was 23 bits from blank. The browser said 4.
+
+## P07.S08 — the trust page describes a ceremony of N, and overflow stops being silent (v1.117.144)
+
+Four rows, all tier 1. Two are about what the page *says*, two about whether anyone can *read* it.
+The fourth is the interesting one: it is a row that **could not have been recorded the day before**.
+
+| Defect reintroduced | What it said | Check that fired |
+| --- | --- | --- |
+| **one paragraph reverts to the two-party wording** *(replayable: `readme-still-says-two-people`)* | `the rendered readme still says "two people" — the page describes a ceremony of exactly two, and P07 makes it N` | `TestRenderedReadmeNoLongerSaysTwoParty`, against the RENDERED page rather than the Go constant |
+| **`RenderReadme` stops refusing an oversized body** *(replayable: `readme-overflow-renders-silently`)* | `RenderReadme() error = <nil>, want ErrReadmeOverflow — a body past the page renders without complaint, which is the silent failure this door exists to stop` | `TestRenderReadmeRefusesAnOverflowingBody` |
+| **the refusal is inert and the body grows into the blocks** *(replayable: `readme-body-overflows-the-block-stack`)* | `the last body baseline is 189 and the signature-block stack starts at 220: 40 lines is 31pt too many. The block appearance is an opaque fill, so it does not overlap the trust text, it erases it` | `TestReadmeBodyClearsTheAttestationStack` |
+| **`#aboutMain` is deleted and the six claims survive in an HTML comment** *(replayable: `about-dialog-deleted-claims-survive`)* | `could not locate the About dialog's #aboutMain block in web/index.html — this scan would otherwise read the whole file and pass on a comment, so it fails rather than reporting a drift check it did not perform` | `TestAboutCopyContainsTrustClaims`, rewritten to read the dialog's TEXT |
+
+**The fourth row is the fifth instance of a hole this file already records three times.** The guard
+was `strings.Contains` over the whole of `web/index.html`, and it is the *sole* discharge of P07's
+C08. Measured against exactly this mutation before the rewrite: with the dialog deleted outright and
+the six claim strings left behind in one comment, the old form returned **true for all six**. The
+vacuous-green table above records the same shape at `published.test.mjs` (second),
+`TestNothingDecidesOnTheArrivalInterface` (third) and `TestResolutionLivesOutsideTheDiscoveryPackage`
+(fourth), each time with the fix written one file away from the previous one.
+
+**Two instruments were proposed for the overflow rows and both measured blind**, which is why the
+guard reads a computed number rather than the artifact. `RenderReadme` computes a last baseline of
+**−189** at 61 drawn lines, but pdfcpu **clamps** what it emits — a requested `y` of `−50` and of
+`−5000` both land at **421.0**, A4's vertical centre — so 62 runs collapse to **49 distinct
+baselines with 14 sharing one**. Reading the *rendered* position therefore saturates: forty overflow
+lines and four hundred are indistinguishable. Reading the *extracted text* is blind too, because
+every overflowing line is still in the content stream. And `PageCount` cannot move at all, because
+the spec hardcodes `"pages": {"1": …}` — which is why `TestRenderReadmeOnePage` has never been able
+to fail on this and now says so in its own doc comment.
+
+**A third instrument was rejected for the text rows, for the opposite reason.** `digitorus/pdf`
+returns one run **per glyph** with `W=0` and spaces expressed as positioning rather than glyphs, so a
+naive join yields `"Aboutthisco-signeddocument"` and `contains("two people")` comes back **false
+against the un-rewritten page**. Built that way, the load-bearing negative clause would have passed
+*before* the work was done. The rows use `api.ExtractContent`, whose literal `(…) Tj` runs are joined
+and whitespace-collapsed so a phrase spanning a wrap boundary still matches.

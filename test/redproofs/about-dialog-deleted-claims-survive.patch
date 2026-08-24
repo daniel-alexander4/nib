@@ -1,0 +1,61 @@
+diff --git a/web/index.html b/web/index.html
+index 7c2399c..a9b98c4 100644
+--- a/web/index.html
++++ b/web/index.html
+@@ -1377,55 +1377,7 @@
+     <div class="sigcard aboutcard">
+       <h3 id="aboutTitle">About Nib</h3>
+ 
+-      <div id="aboutMain">
+-        <p class="aboutver">Version <span id="aboutVersion">—</span> ·
+-          <a href="https://github.com/daniel-alexander4/nib" target="_blank" rel="noopener">project home</a></p>
+-        <p>Nib fills, signs, and redacts PDFs entirely on this computer. Your
+-          documents are never uploaded.</p>
+-
+-        <h4>What a Nib signature proves</h4>
+-        <p>When you <strong>Finalize &amp; sign</strong>, Nib certifies the document so any
+-          later change is detectable. A valid signature shows three things:</p>
+-        <ul>
+-          <li><strong>Tamper-evidence</strong> — the document hasn't changed since it was signed.</li>
+-          <li><strong>Key-holder</strong> — it was signed by whoever holds your signing key.</li>
+-          <li><strong>Time</strong> — when it was signed (independently verifiable if you add a timestamp authority).</li>
+-        </ul>
+-
+-        <h4>What it doesn't prove</h4>
+-        <p>Your signing identity is <strong>self-generated on this machine</strong> — it is
+-          <strong>not</strong> vouched for by a certificate authority or any third party. So a
+-          Nib signature does <strong>not</strong> establish your legal identity to someone who
+-          doesn't already trust your key, and it is not a qualified electronic signature (QES).
+-          It proves the document is intact and was signed by your key — not who you are to a
+-          stranger.</p>
+-
+-      <h4>Co-signing with other people</h4>
+-      <p>A document can be signed by two or more people. Each signature names the one
+-        party that signer accepted, in a visible block on the page. Where two parties sign
+-        together they accept each other; where more than two do, one of them convenes the
+-        proceeding and tells the rest who is on it — so parties who never connected to each
+-        other <strong>have not checked each other's identity</strong>, and no signature
+-        claims they did.</p>
+-      <p>The same trust limits apply to every signature on a co-signed document: each
+-        proves its own signer held their key and that the document has not changed since,
+-        and none of them establishes anyone's legal identity to a stranger.</p>
+-
+-        <h4>Working with several documents</h4>
+-        <p>Opening a document <strong>adds</strong> it — the one you had stays open. A strip
+-          of tabs appears above the page once there are two; click one to switch. Each
+-          document keeps its own page, zoom, scroll position and typed values while you are
+-          on another.</p>
+-        <p><strong>Close view</strong> puts down the document you are looking at and moves
+-          to the next tab; <strong>Close all</strong> puts down every one. With a single
+-          document open there is just <strong>Close</strong>. Reloading this window brings
+-          every open document back — they live in the Nib process on your computer, not in
+-          the page. Nib holds eight documents, or 512 MB of them, whichever comes first.</p>
+-
+-        <p class="libhint">Nib is free software under the AGPLv3 and bundles third-party
+-          open-source components.</p>
+-      </div>
+-
++      <!-- hasnt changed since it was signed signed by whoever holds vouched for by a certificate authority qualified electronic signature two or more people have not checked each others identity -->
+       <pre id="aboutDocText" class="aboutdoc" hidden></pre>
+ 
+       <div class="sigbtns">
