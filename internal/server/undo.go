@@ -2,8 +2,10 @@ package server
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
 
+	"nib/internal/ceremony"
 	"nib/internal/sign"
 )
 
@@ -61,6 +63,29 @@ const (
 // window for a close to land in between, which is the very defect.
 func (s *Server) commitMutation(doc *document, input, result []byte) error {
 	sig := sign.Verify(result)
+	// **D29's freeze, on the SERVER's bytes and BEFORE the lock — both halves were wrong in
+	// the first draft and the slice's own diff review found each.**
+	//
+	// It checked `input`, and the doc comment claimed the input "carries a record only if a
+	// ceremony already existed". False at two of six call sites: `pages.go` and `outline.go`
+	// pass `formFileBytes(w, r, "pdf")` — the CLIENT's bytes. A request posting a PDF with
+	// nib-ceremony.json stripped therefore passed the freeze and then replaced doc.data,
+	// bypassing D29 on exactly the two routes whose input the server does not own. The
+	// document the rule is about is the one the server holds.
+	//
+	// And it ran inside the lock. ceremony.Extract is a full pdfcpu parse, so every commit in
+	// the product was doing one while holding the GLOBAL server mutex. docBytes takes its own
+	// brief lock; the window between that snapshot and the lock below is benign, because the
+	// only way a document gains a record is convene, which is itself a barrier that would be
+	// refused if one already existed.
+	// nil is a caller passing a document that was already gone; the registration test below
+	// owns that case and answers errDocClosed. Reading bytes off it first would panic on a
+	// path this door is contractually required to handle.
+	if doc != nil {
+		if err := ceremonyFreeze(s.docBytes(doc)); err != nil {
+			return err
+		}
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	// The TARGET document, passed in, not whatever happens to be active. Resolving
@@ -132,6 +157,18 @@ func (s *Server) byteCapLocked(doc *document, result []byte) error {
 // was discarded is the worst reply this server can give.
 func (s *Server) commitBarrier(doc *document, result []byte) error {
 	sig := sign.Verify(result)
+	// D29's freeze, on the server's bytes and before the lock — see commitMutation. It
+	// matters more at this door: a barrier operation is destructive, so redaction on a
+	// convened document would leave every other party's copy hashing to bytes that no longer
+	// exist anywhere.
+	// nil is a caller passing a document that was already gone; the registration test below
+	// owns that case and answers errDocClosed. Reading bytes off it first would panic on a
+	// path this door is contractually required to handle.
+	if doc != nil {
+		if err := ceremonyFreeze(s.docBytes(doc)); err != nil {
+			return err
+		}
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	// See commitMutation. It matters more here: these are the irreversible
@@ -418,4 +455,65 @@ func (s *Server) handleRedo(w http.ResponseWriter, r *http.Request) {
 	doc.sig = sign.Verify(next)
 	s.mu.Unlock()
 	writeJSON(w, s.docResponse(doc))
+}
+
+// --- D29's freeze -------------------------------------------------------------
+
+// ErrCeremonyFrozen refuses a mutating operation on a document under a live ceremony.
+//
+// Its own sentinel so the refusal can name the ceremony rather than reading as a generic
+// failure — D29's wording is "refuse and name the ceremony", because a user told only that
+// an edit failed will try again.
+var ErrCeremonyFrozen = errors.New("this document is part of a signing ceremony")
+
+// ceremonyFreeze refuses to mutate a document that already carries a ceremony record.
+//
+// # Why it tests the DOCUMENT THE SERVER HOLDS, and not the result
+//
+// Convene itself commits — it appends a readme, signature pages and a ceremony page, and
+// embeds the record — so a guard on the RESULT would refuse the one operation that is
+// supposed to create a ceremony. The pre-op document is what distinguishes "a ceremony
+// already exists" from "one is being created".
+//
+// It must be the SERVER's copy of that document, never the operation's `input` parameter:
+// two of commitMutation's six call sites pass bytes posted by the client, so a request with
+// the record stripped would otherwise walk straight through.
+//
+// # Why here rather than at each route — and the one route this did NOT reach
+//
+// D29 says mutating operations refuse; there are a dozen of them, and a rule enforced at
+// eleven is not a rule. Both commit doors call this, so eleven routes inherit it.
+//
+// **They are not all of them, and the first draft of this comment said they were.** It read
+// "a thirteenth route inherits it without anybody remembering to" — a confident false
+// statement, found by this slice's own diff review: `handleSave` writes the file itself and
+// assigns doc.data under the registry lock, reaching NEITHER door, while sitting in tier 2's
+// MUTATING inventory. It calls this function directly now, and
+// `TestEveryMutatingRouteReachesTheCeremonyFreeze` asserts the ROUTING for the whole
+// inventory rather than testing the two doors — because a test that calls commitMutation
+// in-process cannot see a route that skips it, which is exactly how this got through.
+//
+// # What this replaces, and it was not a stopgap — it never fired at all
+//
+// The client warns before a destructive edit via `confirmSignatureLoss` (web/app.js), and
+// D29 already says "a client confirm is not a freeze". Measured at P07.S02's grill, it is
+// weaker even than that: the predicate is `!isSigned()`, `isSigned()` reads
+// `state !== 'unsigned'`, and a convened document IS unsigned — an attachment is not a
+// signature — so on precisely these documents the confirm short-circuits to true and **no
+// dialog is shown at all**.
+//
+// The freeze is unconditional on the ceremony's deadline. An expired ceremony is still a
+// ceremony whose parties hold invitations naming this document's hash; silently allowing
+// edits once the clock runs out would break their copies rather than this user's.
+func ceremonyFreeze(docBytes []byte) error {
+	rec, err := ceremony.Extract(docBytes)
+	if err != nil {
+		// No record, or one that will not parse. A document whose record is unreadable is
+		// not demonstrably under a ceremony, and refusing every edit on an unparseable
+		// attachment would strand a user with no way out — D34's self-healing rule.
+		return nil
+	}
+	return fmt.Errorf("%w: it belongs to ceremony %s, and editing it now would change the "+
+		"document every other party was invited to sign. Their copies would stop matching "+
+		"this one", ErrCeremonyFrozen, rec.ID)
 }

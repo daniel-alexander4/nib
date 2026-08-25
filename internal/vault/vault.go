@@ -17,13 +17,15 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"nib/internal/atomicfile"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
 
-	"golang.org/x/crypto/argon2"
 	"nib/internal/sshkey"
+
+	"golang.org/x/crypto/argon2"
 )
 
 // fileName is the vault's on-disk name within the app config directory.
@@ -152,8 +154,48 @@ type ExternalSigner struct {
 	ChainPEM []byte `json:"chain,omitempty"`
 }
 
+// CeremonySecret is one party's invitation secret, held by the CONVENER.
+//
+// # Why the convener holds N-1 secrets at rest at all
+//
+// A recipient's invitation travels in the arm request and is never persisted —
+// `internal/server`'s sessionArmRequest says so at the line, and that reasoning is
+// unchanged. This is the other side: the convener MINTS every party's secret and is the only
+// one who can re-issue an invitation. Before P07.S02a those secrets existed in exactly one
+// HTTP response, so closing the tab made the ceremony unrecoverable rather than merely
+// stalled. They go in the vault, sealed to the user's SSH key, because that is where the
+// signing key and the pinned peers already live and D29 puts key material there rather than
+// beside ordinary files in ~/nib.
+type CeremonySecret struct {
+	// Ceremony is the record's 32-hex id.
+	Ceremony string `json:"ceremony"`
+	// Fingerprint is the party's SHA-256 SPKI as RAW BYTES.
+	//
+	// Bytes, not the hex string, and it matters: a map or a string key reintroduces the
+	// case predicate that P07.S02 spent a slice making unrepresentable, at a NEW site where
+	// nothing compares it against a signed copy. `bytes.Equal` has one answer.
+	Fingerprint []byte `json:"fingerprint"`
+	// Secret is the 32 bytes the rendezvous, the record encryption and the channel binding
+	// are all derived from.
+	Secret []byte `json:"secret"`
+}
+
 // Contents is the decrypted vault payload.
 type Contents struct {
+	// Version is what this build wrote into the PAYLOAD, distinct from the envelope's.
+	//
+	// **Added 2026-08-24 (P07.S02a), and the envelope's gate does not reach here.**
+	// checkEnvelopeVersion refuses a vault whose ENVELOPE is newer, and its comment explains
+	// exactly why that matters: encoding/json discards unknown keys, so an older build that
+	// opens and re-saves silently drops everything it does not know. That reasoning applies
+	// word for word to Contents, which had no version at all — measured: a payload carrying a
+	// `ceremonySecrets` key opens on a build that lacks the field, and one AddRecent (i.e.
+	// opening any PDF) rewrites the file without it.
+	//
+	// Harmless while the only unknown fields were things nobody read. Not harmless now: the
+	// secrets below are the only copy, and losing them makes a ceremony unrecoverable —
+	// which is the precise state S02a exists to prevent.
+	Version        int               `json:"version,omitempty"`
 	Images         []Image           `json:"images,omitempty"`
 	Recent         []string          `json:"recent,omitempty"` // recent file paths, newest first
 	Identity       *Identity         `json:"identity,omitempty"`
@@ -161,6 +203,28 @@ type Contents struct {
 	Profile        map[string]string `json:"profile,omitempty"` // autofill field name -> value
 	Settings       Settings          `json:"settings,omitempty"`
 	PinnedPeers    []PinnedPeer      `json:"pinnedPeers,omitempty"`
+	// CeremonySecrets is a flat slice, mirroring PinnedPeers, not a map.
+	//
+	// A map would have to be keyed by a hex STRING (a []byte cannot be a map key), which is
+	// the case predicate again; and a prune over a map-of-maps is a delete plus an
+	// empty-parent sweep, two rules where a slice has one loop.
+	CeremonySecrets []CeremonySecret `json:"ceremonySecrets,omitempty"`
+}
+
+// contentsVersion is what this build writes into Contents, and the highest it will open.
+const contentsVersion = 1
+
+// checkContentsVersion refuses a payload written by a NEWER Nib, for checkEnvelopeVersion's
+// reason applied one layer in. A zero is a vault written before the field existed and is
+// read as version 0, not refused: those payloads are this build's own.
+func checkContentsVersion(v int) error {
+	if v > contentsVersion {
+		return fmt.Errorf("this vault's contents were written by a newer version of Nib "+
+			"(payload format %d, this build understands %d) — update Nib rather than opening "+
+			"it here, or anything the newer version stored will be dropped the next time "+
+			"Nib saves", v, contentsVersion)
+	}
+	return nil
 }
 
 const maxRecent = 10
@@ -310,7 +374,7 @@ func OpenSSHAt(dir, keyPath string, passphrase []byte) (*Vault, error) {
 			continue
 		}
 		var c Contents
-		derr = json.Unmarshal(plain, &c)
+		c, derr = decodeContents(plain)
 		zero(plain)
 		if derr != nil {
 			zero(key)
@@ -363,7 +427,7 @@ func openSSH(dir string, passphrase []byte) (*Vault, error) {
 			continue
 		}
 		var c Contents
-		err = json.Unmarshal(plain, &c)
+		c, err = decodeContents(plain)
 		zero(plain) // scrub the decrypted plaintext (carries the signing key), as Migrate does
 		if err != nil {
 			zero(key) // discard path: the unwrapped content key won't be retained — scrub it too
@@ -400,7 +464,7 @@ func Migrate(dir, password, pubLine, keyPath string) (*Vault, error) {
 		return nil, ErrWrongPassword
 	}
 	var c Contents
-	err = json.Unmarshal(plain, &c)
+	c, err = decodeContents(plain)
 	zero(plain)
 	if err != nil {
 		return nil, fmt.Errorf("corrupt vault contents: %w", err)
@@ -614,12 +678,16 @@ func Validate(raw []byte) error {
 		if derr != nil {
 			return errors.New("backup is corrupt: its contents do not decrypt")
 		}
-		var c Contents
-		uerr = json.Unmarshal(plain, &c)
-		zero(plain)
-		if uerr != nil {
-			return errors.New("backup is corrupt: its contents do not parse")
+		// The payload is parsed for its VERSION as well as its shape: a backup whose contents
+		// were written by a newer Nib is refused here rather than after the overwrite. (The
+		// envelope's own ceiling at this door is /pending 287 and is deliberately not folded
+		// in — it is a filed, grill-pending item and gets its own pass.)
+		if _, uerr = decodeContents(plain); uerr != nil {
+			zero(plain)
+			return errors.New("backup is corrupt: its contents do not parse, or they were " +
+				"written by a newer version of Nib")
 		}
+		zero(plain)
 		return nil
 	}
 	if locked {
@@ -936,6 +1004,23 @@ const envelopeVersion = 2
 // reached by an ordinary user: a downgrade, a second machine, or a vault synced through a
 // shared folder between two versions. The vault holds the only copy of the signing
 // identity, so a silent lossy rewrite of it is the worst shape this package has.
+// decodeContents parses a decrypted payload and refuses one written by a newer Nib.
+//
+// **One door, because the rule had four call sites and would have had four copies.** The
+// payload is unmarshalled at four places — the SSH repair path, OpenSSH, the password path
+// and the backup validator — and a version gate applied at three of them is a gate that does
+// not exist. ADR-009: the rule is written once and every site calls it.
+func decodeContents(plain []byte) (Contents, error) {
+	var c Contents
+	if err := json.Unmarshal(plain, &c); err != nil {
+		return Contents{}, err
+	}
+	if err := checkContentsVersion(c.Version); err != nil {
+		return Contents{}, err
+	}
+	return c, nil
+}
+
 func checkEnvelopeVersion(v int) error {
 	if v > envelopeVersion {
 		return fmt.Errorf("this vault was written by a newer version of Nib (format %d, "+
@@ -947,6 +1032,10 @@ func checkEnvelopeVersion(v int) error {
 }
 
 func (v *Vault) save() error {
+	// Stamp the payload version on every write, so a file this build saves is readable back
+	// as this build's. Set here rather than at each mutator for the reason save() is the one
+	// door they all pass through.
+	v.contents.Version = contentsVersion
 	plain, err := json.Marshal(v.contents)
 	if err != nil {
 		return err
@@ -1043,7 +1132,8 @@ func newGCM(key []byte) (cipher.AEAD, error) {
 // leave a stale or truncated file on disk. The vault holds keys; it gets the
 // full-durability treatment.
 // WriteFileAtomicDurable is writeFileAtomic, exported for the one caller outside this
-// package that writes a VAULT.
+// package that writes a VAULT (handleVaultImport). Anything that is NOT a vault should call
+// internal/atomicfile directly and choose its own mode.
 //
 // `internal/server` has a function of the same name with a different contract: it renames
 // atomically and never fsyncs. `handleVaultImport` used it to replace `vault.nib`, so the
@@ -1053,37 +1143,125 @@ func newGCM(key []byte) (cipher.AEAD, error) {
 // contracts is also how nobody noticed.
 func WriteFileAtomicDurable(path string, data []byte) error { return writeFileAtomic(path, data) }
 
+// writeFileAtomic is the vault's durable write: 0600, via internal/atomicfile.
+//
+// **The implementation moved out at P07.S02a** and the mode stayed here, which is the split
+// that matters — the vault holds keys, so its perm is not a caller's choice. The rule itself
+// now has one door for the three consumers that need it (this, the vault import, and the
+// ceremony mirror); it had two implementations with different contracts before, and this
+// file's own comment above records what that cost.
 func writeFileAtomic(path string, data []byte) error {
-	tmp, err := os.CreateTemp(filepath.Dir(path), ".vault-*.tmp")
-	if err != nil {
-		return err
+	return atomicfile.WriteDurable(path, data, 0o600)
+}
+
+// --- ceremony secrets (P07.S02a) ---------------------------------------------
+
+// CeremonySecrets returns every secret held for one ceremony, deep-copied.
+//
+// Deep-copied like PinnedPeers, and here it is not merely tidy: the slices are 32-byte
+// channel secrets, and handing a caller the backing array would let anything downstream
+// mutate the vault's own copy without going through save().
+func (v *Vault) CeremonySecrets(ceremony string) []CeremonySecret {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	var out []CeremonySecret
+	for _, s := range v.contents.CeremonySecrets {
+		if s.Ceremony != ceremony {
+			continue
+		}
+		out = append(out, CeremonySecret{
+			Ceremony:    s.Ceremony,
+			Fingerprint: append([]byte(nil), s.Fingerprint...),
+			Secret:      append([]byte(nil), s.Secret...),
+		})
 	}
-	tmpName := tmp.Name()
-	defer os.Remove(tmpName)
-	if _, err := tmp.Write(data); err != nil {
-		tmp.Close()
-		return err
+	return out
+}
+
+// CeremonySecret returns one party's secret for one ceremony.
+func (v *Vault) CeremonySecret(ceremony string, fingerprint []byte) ([]byte, bool) {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	for _, s := range v.contents.CeremonySecrets {
+		if s.Ceremony == ceremony && bytes.Equal(s.Fingerprint, fingerprint) {
+			return append([]byte(nil), s.Secret...), true
+		}
 	}
-	if err := tmp.Chmod(0o600); err != nil {
-		tmp.Close()
-		return err
+	return nil, false
+}
+
+// AddCeremonySecret stores one party's invitation secret and persists the vault.
+//
+// Upsert by (ceremony, fingerprint) like addPinned, so re-issuing an invitation to one party
+// replaces that party's secret rather than accumulating two rows for one seat — of which
+// only one would ever be found again.
+func (v *Vault) AddCeremonySecret(ceremony string, fingerprint, secret []byte) error {
+	if ceremony == "" {
+		// The same refusal PruneCeremonyPeers makes, for the same reason: there is no
+		// ceremony called "", and a secret filed under one is a secret nothing can prune.
+		return errors.New("a ceremony secret needs a ceremony id")
 	}
-	if err := tmp.Sync(); err != nil {
-		tmp.Close()
-		return err
+	if len(fingerprint) == 0 || len(secret) == 0 {
+		return errors.New("a ceremony secret needs a party and a secret")
 	}
-	if err := tmp.Close(); err != nil {
-		return err
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	for i := range v.contents.CeremonySecrets {
+		s := &v.contents.CeremonySecrets[i]
+		if s.Ceremony == ceremony && bytes.Equal(s.Fingerprint, fingerprint) {
+			// Zero the one being replaced. PruneCeremonySecrets does this fourteen lines
+			// below with the reason at the line — "do not let the old backing array outlive
+			// it" — and re-issuing an invitation drops a 32-byte secret exactly as removing
+			// one does. Same rule, and it was applied at one of the two places it applies.
+			zero(s.Secret)
+			s.Secret = append([]byte(nil), secret...)
+			return v.save()
+		}
 	}
-	if err := os.Rename(tmpName, path); err != nil {
-		return err
+	v.contents.CeremonySecrets = append(v.contents.CeremonySecrets, CeremonySecret{
+		Ceremony:    ceremony,
+		Fingerprint: append([]byte(nil), fingerprint...),
+		Secret:      append([]byte(nil), secret...),
+	})
+	return v.save()
+}
+
+// PruneCeremonySecrets removes every secret for one ceremony. Returns how many went.
+//
+// The teardown half, and it exists in the same slice as the write for a reason recorded at
+// P07.S02a's grill: `RemoveMirror` and `PruneCeremonyPeers` both shipped with ZERO production
+// callers, so the ceremony's residue already had two owners that were never wired. A third
+// write with no delete would be the same shape again, and this one is key material.
+func (v *Vault) PruneCeremonySecrets(ceremony string) (int, error) {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	if ceremony == "" {
+		return 0, errors.New("prune needs a ceremony id")
 	}
-	// Persist the directory entry so the rename itself survives a crash.
-	dir, err := os.Open(filepath.Dir(path))
-	if err != nil {
-		return nil // rename succeeded; dir-sync is best-effort belt-and-suspenders
+	var kept []CeremonySecret
+	var going [][]byte
+	n := 0
+	for _, s := range v.contents.CeremonySecrets {
+		if s.Ceremony == ceremony {
+			going = append(going, s.Secret)
+			n++
+			continue
+		}
+		kept = append(kept, s)
 	}
-	defer dir.Close()
-	_ = dir.Sync()
-	return nil
+	before := v.contents.CeremonySecrets
+	v.contents.CeremonySecrets = kept
+	// **Zero only once the removal is DURABLE.** The first draft zeroed inside the loop, so a
+	// failing save() left the on-disk vault still holding every secret while the in-memory
+	// copies were already scrubbed — key material at rest with nothing in the process that
+	// could re-write or re-read it, and the caller (unconvene) discards the error. Restoring
+	// the slice on failure keeps the two views of the vault agreeing.
+	if err := v.save(); err != nil {
+		v.contents.CeremonySecrets = before
+		return 0, err
+	}
+	for _, sec := range going {
+		zero(sec)
+	}
+	return n, nil
 }

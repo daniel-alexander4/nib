@@ -98,6 +98,31 @@ const (
 // the server can assert its own consent window fits inside it.
 func MaxRemoteDecisionWait() time.Duration { return remoteDecisionDeadline }
 
+// SessionBudget is the worst-case wall-clock ONE session can consume, end to end.
+//
+// # Why this lives here and not where it is consumed
+//
+// It is the sum of the deadlines `Initiate` actually arms, and how many times it arms them is
+// a fact about `Initiate` — so a caller that adds the constants up itself is restating a rule
+// it cannot see. `internal/server`'s checkCeremonyDeadline did exactly that and got it wrong
+// in the most expensive direction: it reserved ONE `ExchangeBudget()` for a whole session,
+// against exchangeDeadline's own doc saying it is "the budget for one PHASE of a session —
+// never for the whole of it". Measured: 6 minutes reserved against 24 minutes of session.
+//
+// The three arms, in order, and each is re-armed rather than shared because no budget may
+// span more than one human wait:
+//
+//	exchangeDeadline        the spoken verification gate
+//	exchangeDeadline        re-armed, covering a write of up to 128 MiB
+//	remoteDecisionDeadline  the read that waits on BOTH of the peer's human gates
+//
+// TestSessionBudgetCountsEveryDeadlineInitiateArms holds this in step with the code: it scans
+// Initiate for SetDeadline calls and fails if the count moves, so a fourth arm cannot be added
+// without this sum being read.
+func SessionBudget() time.Duration {
+	return 2*exchangeDeadline + remoteDecisionDeadline
+}
+
 // Confirmer is the receiving side's consent gate. Shown the connected peer's
 // attestation (their identity, accepted-peer, and intent, read from the document
 // they signed) and the document itself, it returns whether to co-sign, this user's

@@ -1048,15 +1048,32 @@ func TestTheMirrorRoundTrips(t *testing.T) {
 		t.Fatal(err)
 	}
 	root := t.TempDir()
-	dir, err := WriteMirror(root, r, []byte("%PDF-1.7\nfake"))
+	// **A REAL document, and the record's DocHash names it (updated 2026-08-24, P07.S02a).**
+	// The fixture was []byte("%PDF-1.7\nfake"): fine while the mirror stored whatever it was
+	// handed, and no longer, because ReadMirror now checks an unsigned stored document against
+	// the record that names it. A round-trip test whose payload is not a document cannot tell
+	// a working mirror from one that lost the bytes and put something else there.
+	doc, derr := testpdf.Text("the lease")
+	if derr != nil {
+		t.Fatal(derr)
+	}
+	h, derr := DocumentHash(doc)
+	if derr != nil {
+		t.Fatal(derr)
+	}
+	r.DocHash = h
+	if err := r.Sign(cert, key); err != nil {
+		t.Fatal(err)
+	}
+	dir, err := WriteMirror(root, r, doc)
 	if err != nil {
 		t.Fatal(err)
 	}
-	back, pdf, err := ReadMirror(root, r.ID)
+	back, pdf, err := ReadMirror(root, r.ID, time.Now())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if back.ID != r.ID || string(pdf) != "%PDF-1.7\nfake" {
+	if back.ID != r.ID || len(pdf) != len(doc) {
 		t.Errorf("mirror round-trip lost data: id=%s pdf=%d bytes", back.ID, len(pdf))
 	}
 	if err := back.Verify(time.Now()); err != nil {
