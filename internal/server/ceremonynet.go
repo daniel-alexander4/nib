@@ -672,11 +672,27 @@ func checkCeremonyDeadline(pdf []byte, now time.Time) error {
 	if err := rec.Verify(now); err != nil {
 		return fmt.Errorf("this document's ceremony record does not verify: %w", err)
 	}
-	if !rec.Expires.After(now.Add(p2p.ExchangeBudget())) {
-		return fmt.Errorf("this ceremony ends at %s, which is less than one exchange budget "+
-			"(%s) away — starting a hop now would ask somebody to consent to a signature on a "+
+	// **Reserve a whole HOP, not one phase of one (fixed 2026-08-24, P07.S02a, C20).**
+	//
+	// This reserved `p2p.ExchangeBudget()` — 6 minutes — against a hop that can spend
+	// 29m20s. exchangeDeadline's own doc says it is "the budget for one PHASE of a session —
+	// never for the whole of it", and this read it as the whole. Measured consequence: with
+	// `Expires = now+7m` the check PASSED and the far party's consent landed thirteen minutes
+	// after the ceremony had ended — verbatim the harm the paragraph above says it prevents.
+	//
+	// The guard for it was self-referential too: ceremonydeadline_test.go derived its own
+	// expectation from the same call, so it could not fail for the reservation being wrong.
+	//
+	// Still ONE hop rather than every REMAINING hop: this function is handed a document and a
+	// clock and does not know the local party's position in the roster, so "how many hops are
+	// left" is not answerable here. Convene reserves `Hops() × ceremonyHopBudget()` up front,
+	// which is C20's clause; refining this to the remaining hops needs the hop index and is
+	// S05's carry route.
+	if budget := ceremonyHopBudget(); !rec.Expires.After(now.Add(budget)) {
+		return fmt.Errorf("this ceremony ends at %s, which is less than one hop (%s) away — "+
+			"starting a hop now would ask somebody to consent to a signature on a "+
 			"proceeding that has already ended by the time it completes",
-			rec.Expires.UTC().Format(time.RFC3339), p2p.ExchangeBudget())
+			rec.Expires.UTC().Format(time.RFC3339), budget)
 	}
 	return nil
 }

@@ -246,6 +246,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/peers/remove", s.requireUnlocked(s.handlePeersRemove))
 	mux.HandleFunc("POST /api/cosign/quote", s.requireUnlocked(s.handleCosignQuote))
 	mux.HandleFunc("POST /api/cosign/sign", s.requireUnlocked(s.handleCosignSign))
+	mux.HandleFunc("POST /api/ceremony/convene", s.requireUnlocked(s.handleCeremonyConvene))
+	mux.HandleFunc("POST /api/ceremony/invites", s.requireUnlocked(s.handleCeremonyInvites))
 	mux.HandleFunc("GET /api/attestations", s.requireUnlocked(s.handleAttestations))
 	mux.HandleFunc("POST /api/session/arm", s.requireUnlocked(s.handleSessionArm))
 	mux.HandleFunc("POST /api/session/disarm", s.requireUnlocked(s.handleSessionDisarm))
@@ -676,6 +678,21 @@ func (s *Server) handleSave(w http.ResponseWriter, r *http.Request) {
 	// should not reach the disk at all.
 	if !s.isRegistered(doc) {
 		httpError(w, http.StatusConflict, "that document is no longer open")
+		return
+	}
+	// **D29's freeze, and this route is why the rule needed a THIRD site (2026-08-24, P07.S02a).**
+	//
+	// handleSave reaches neither commit door: it writes the file itself and assigns doc.data
+	// under the lock below. So the freeze hung on commitMutation and commitBarrier covered
+	// eleven mutating routes and not this one — while /api/save sits in tier 2's own MUTATING
+	// inventory. Found by the slice's own diff review; the freeze's doc comment claimed a
+	// thirteenth route would inherit the rule, and this is the twelfth that did not.
+	//
+	// Before the write, on the same reasoning as the registry check above: a save on a
+	// convened document must not reach the disk at all, because the file on disk is the copy
+	// every other party was invited to sign.
+	if err := ceremonyFreeze(s.docBytes(doc)); err != nil {
+		httpError(w, http.StatusConflict, err.Error())
 		return
 	}
 	if err := writeFileAtomic(doc.path, data); err != nil {

@@ -20,6 +20,8 @@ import (
 	"time"
 
 	"nib/internal/sign"
+
+	"nib/mdpdf"
 )
 
 // defaultIntent is the agreement an attestation records when the caller gives none.
@@ -263,4 +265,78 @@ func markOneProceeding(ats []SignerAttestation) {
 			ats[i].OneProceeding = true
 		}
 	}
+}
+
+// blockTextPt is the point size the attestation block's text renders at.
+//
+// The block is rasterised by the client (web/app.js renderAttestation) onto a canvas sized
+// rect × 3, at `min(lineH*0.7, 9*scale)` pixels — so the effective size in PDF points, once
+// the image is stretched back to fill the rect, is capped at 9. Named here rather than left
+// implicit because the intent bound below is computed from it, and a bound derived from a
+// number nobody wrote down is a bound that drifts when the canvas changes.
+const blockTextPt = 9
+
+// blockTextWidth is the drawable width of one block line, in points: the rect's width less
+// the padding the rasteriser leaves on each side (4 canvas px at scale 3 ≈ 4 points once
+// stretched back).
+func blockTextWidth() float64 {
+	r := NominalBlockRect()
+	return (r[2] - r[0]) - 2*4
+}
+
+// IntentFitsBlock reports whether a recital renders in full on a signature block.
+//
+// # Why this is a REFUSAL and not a clamp
+//
+// `internal/server`'s cosignAttestation silently truncates the intent at 200 runes, and the
+// client's `ctx.fillText` takes no maxWidth, so anything wider than the block is silently
+// clipped at the canvas edge. Two independent silent truncations of one string — and under
+// C15 that string is the ceremony's recital, committed inside RosterHash and required to
+// appear *verbatim* on every block. A recital that renders cut in half is a document that
+// says something other than what everyone signed.
+//
+// This repo's law is refuse-not-clamp (ErrReadmeOverflow is the precedent, and S08's finding
+// that pdfcpu CLAMPS overflow is what made its own instrument blind), so the convene door
+// refuses and the convener retypes rather than discovering it on the finished document.
+//
+// # The limit this bound exposes, stated rather than hidden
+//
+// It is ONE line, because AppearanceLines emits one entry per line and nothing wraps the
+// recital across several. That makes the ceiling tight for a real recital. Widening it is
+// **S07's** — the slice that owns rendering into blocks — and the fix there is to wrap the
+// recital over however many lines it needs, at which point this bound is recomputed from the
+// same geometry rather than raised by hand.
+func IntentFitsBlock(intent string) bool {
+	return mdpdf.CoreWidth("Intent: "+intent, readmeFont, blockTextPt) <= blockTextWidth()
+}
+
+// MaxIntentRunes is the longest recital that fits, measured rather than asserted — the
+// number a refusal quotes so a convener knows how much to cut.
+//
+// Measured rather than a fixed character count, because count is not width: "MMMM" and
+// "iiii" differ by nearly 3x at these metrics, so any constant is wrong for capitals or
+// wasteful for lower case.
+//
+// **Binary search, and the linear version was a denial of service.** The first draft walked
+// n down one rune at a time, calling IntentFitsBlock — a full CoreWidth over the prefix — at
+// every step. Measured on the shipped metrics: 24ms at 1,000 runes, 2.45s at 10,000, and
+// **77 seconds at 50,000**. The convene route's body limit is 1 MiB, so a convener pasting a
+// clause out of the contract into the recital field could hang one core for hours with no
+// response ever written. Quadratic work on a request path is reachable without malice, which
+// is what made it a defect rather than a slow path.
+//
+// The predicate is monotone in n — a prefix of a fitting string fits — so a bisection is
+// exact, not an approximation, and it is O(log n) calls.
+func MaxIntentRunes(intent string) int {
+	rs := []rune(intent)
+	lo, hi := 0, len(rs) // lo always fits, hi is not yet known to
+	for lo < hi {
+		mid := (lo + hi + 1) / 2
+		if IntentFitsBlock(string(rs[:mid])) {
+			lo = mid
+		} else {
+			hi = mid - 1
+		}
+	}
+	return lo
 }

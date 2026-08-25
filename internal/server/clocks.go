@@ -3,6 +3,7 @@ package server
 import (
 	"time"
 
+	"nib/internal/p2p"
 	"nib/internal/rendezvous"
 )
 
@@ -134,3 +135,35 @@ const (
 	// polls in a 300 s race gives hundreds of thousands over thirty days.
 	candidateFetchEvery = 5 * time.Second
 )
+
+// ceremonyHopBudget is the worst-case wall-clock ONE ceremony hop can consume: bootstrap,
+// the connect race, and the whole session.
+//
+// # Why it lives here, which is not where anyone would look for it
+//
+// It sums four terms and **no other package can see all four.** `connectDeadline` and
+// `bootstrapBudget` are unexported constants in this file; `p2p.SessionBudget()` is derived
+// inside the package that arms the deadlines. So `internal/ceremony` cannot compute it, and
+// `internal/p2p` cannot either — which is exactly why the two panels that derived a per-hop
+// figure at P07's planning both produced a number without checking which package could
+// arrive at it. The convene door therefore takes the budget as a PARAMETER rather than
+// reaching for it, and this is the one place that fills it in.
+//
+// The clock-independence pin above forbids implementing one clock in terms of another; it
+// does not forbid SUMMING them, which is what `candidateLife` already does over
+// `rendezvousPublishBudget`.
+//
+// # The measurement, and the number it replaces
+//
+//	bootstrapBudget       20s   the DHT table is warm before anybody dials
+//	connectDeadline      300s   the race
+//	p2p.SessionBudget()   24m   verification + a 128 MiB write + both of the peer's gates
+//	                    -------
+//	                     29m20s
+//
+// P07's plan quotes ~23 minutes for this and that figure is **refuted** — it omits the second
+// `exchangeDeadline` arm, the one covering the document write. The direction of C20 stands and
+// its arithmetic did not.
+func ceremonyHopBudget() time.Duration {
+	return bootstrapBudget + connectDeadline + p2p.SessionBudget()
+}

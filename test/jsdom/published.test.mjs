@@ -127,6 +127,11 @@ const EXCLUDED = {
   urlRequest: 'request body, read by its handler',
   pathRequest: 'request body, read by its handler',
   saveAsRequest: 'request body, read by its handler',
+  // P07.S02a's convene route (v1.117.155). The two request shapes are the ordinary
+  // client-to-server case above.
+  conveneRequest: 'request body, read by its handler',
+  convenePartyRequest: 'request body, read by its handler',
+  ceremonyInvitesRequest: 'request body, read by its handler',
   listDirRequest: 'request body, read by its handler',
   ocrRequest: 'request body, read by its handler',
   tableRequest: 'request body, read by its handler',
@@ -138,6 +143,17 @@ const EXCLUDED = {
   asset: "GitHub's release JSON, not a shape Nib publishes",
 
 
+  // **Server → client, and GENUINELY UNREAD today (P07.S02a, v1.117.155).**
+  //
+  // Excluded rather than listed with `web/app.js` as a reader, because nothing in the client
+  // reads them: P06 builds the convene panel and is built LAST. Naming a reader that does not
+  // read would be this scan asserting coverage against a filename — the false green it exists
+  // to prevent — and `historyEvicted` is what happens when a shape is simply left out.
+  //
+  // Delete these two entries when P06's panel renders the invitations. The Go-side twin of
+  // this parking is in observables_test.go for ceremony.Convened and vault.CeremonySecret.
+  conveneResponse: 'P07.S02a ships the route before P06 builds its panel; no client reader yet',
+  conveneInvite: 'P07.S02a ships the route before P06 builds its panel; no client reader yet',
 };
 
 // ── Published, and NOT read ──────────────────────────────────────────────────

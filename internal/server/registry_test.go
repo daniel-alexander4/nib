@@ -96,8 +96,14 @@ func TestEveryDocumentResolutionIsHandled(t *testing.T) {
 	// document was gone. The early one is advisory and refuses before the body is read; the one
 	// at the commit stays authoritative, because the document can be closed while the body is in
 	// flight. Two sites per route is the point, not a duplicate to collapse.
-	if resolveSites != 22 {
-		t.Errorf("expected 22 resolveDoc sites, found %d — update this deliberately if intended", resolveSites)
+	// 23, not 22: P07.S02a's convene route (v1.117.155). It commits new bytes into the open
+	// document — a readme, N signature pages, a ceremony page and the record — so it resolves
+	// like any other mutating route rather than reading whichever document is active. That
+	// matters more here than elsewhere: convene is multi-second, and docFor's fallback to the
+	// active document would let the record land in whichever tab the user switched to while
+	// it ran.
+	if resolveSites != 23 {
+		t.Errorf("expected 23 resolveDoc sites, found %d — update this deliberately if intended", resolveSites)
 	}
 	// 8, not 7: P06.S02's handleCloseView resolves with docFor rather than resolveDoc,
 	// because its not-found branch is a 409 ("that document is no longer open") and

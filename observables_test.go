@@ -87,11 +87,18 @@ var published = map[string][]string{
 	// slice's. The coverage lost is narrow and is stated rather than assumed: `Seen`'s embedded
 	// half IS covered, through the `discovery.Announcement` entry below; what is uncovered is
 	// its own `From` field. Filed for the discoverer fix.
-	"discovery.Announcement":   {"internal/discovery/announce.go", "internal/server/discover.go"},
-	"p2p.Channel":              {"internal/p2p/verify.go", "internal/p2p/channel.go"},
-	"p2p.SignerAttestation":    {"web/app.js", "internal/server/cosign.go", "internal/ceremony/record.go"},
-	"p2p.Placement":            {"internal/p2p/cosign.go", "internal/sign/identity.go"},
-	"ceremony.Record":          {"internal/ceremony/record.go", "internal/server/ceremonynet.go"},
+	"discovery.Announcement": {"internal/discovery/announce.go", "internal/server/discover.go"},
+	"p2p.Channel":            {"internal/p2p/verify.go", "internal/p2p/channel.go"},
+	"p2p.SignerAttestation":  {"web/app.js", "internal/server/cosign.go", "internal/ceremony/record.go"},
+	"p2p.Placement":          {"internal/p2p/cosign.go", "internal/sign/identity.go"},
+	"ceremony.Record":        {"internal/ceremony/record.go", "internal/server/ceremonynet.go"},
+	// **Parked as "no reader yet" mid-slice, and the parking was STALE IN ITS OWN COMMIT.**
+	// The convene route landed in the same slice and reads every field of both shapes, so the
+	// honest entry is a reader rather than an exclusion. Found at the slice's diff review,
+	// which noted the sharper half: as parked, DELETING the route would have left this scan
+	// green — the exact failure the file exists to prevent.
+	"ceremony.Convened":        {"internal/server/convene.go"},
+	"vault.CeremonySecret":     {"internal/server/convene.go", "internal/vault/vault.go"},
 	"ceremony.CandidateRecord": {"internal/ceremony/candidate.go", "internal/server/ceremonynet.go"},
 	"ceremony.Invitation":      {"internal/ceremony/invitation.go", "internal/server/ceremonyid.go"},
 	"ceremony.Party":           {"internal/ceremony/record.go", "internal/ceremony/invitation.go"},

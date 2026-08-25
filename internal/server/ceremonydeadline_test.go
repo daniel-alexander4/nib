@@ -84,11 +84,27 @@ func docWithRecord(t *testing.T, in time.Duration, tamper bool) []byte {
 // proceeding that has already ended. The outer clock has to reserve the inner one's worst case.
 func TestAHopDoesNotStartAfterTheCeremonyCanOutliveIt(t *testing.T) {
 	now := time.Now()
-	budget := p2p.ExchangeBudget()
 
-	// SETUP: a deadline comfortably past one exchange budget is ACCEPTED. Without this the
-	// refusal below is equally true of a check that refuses every ceremony, which would break
-	// the feature outright while looking like a safety property.
+	// **The expectation is a LITERAL, not the call under test (fixed 2026-08-24, P07.S02a).**
+	//
+	// This read `budget := p2p.ExchangeBudget()` and then asserted against a check that
+	// computed its threshold from the same call — so the two agreed by construction and the
+	// test could not fail for the reservation being WRONG. It was: 6 minutes reserved against
+	// a hop that can spend 29m20s, which is the defect this test names in its own doc comment
+	// and could not see.
+	//
+	// A literal means a deliberate constant change edits this line and re-reads the sum in
+	// ceremonyHopBudget; an accidental one goes red.
+	const budget = 29*time.Minute + 20*time.Second
+	if got := ceremonyHopBudget(); got != budget {
+		t.Fatalf("ceremonyHopBudget() is %s and this test was written for %s. If the clocks "+
+			"moved on purpose, move this literal too and re-read C20 in the plan, which quotes "+
+			"a per-hop figure; if not, this is the bug.", got, budget)
+	}
+
+	// SETUP: a deadline comfortably past one hop is ACCEPTED. Without this the refusal below
+	// is equally true of a check that refuses every ceremony, which would break the feature
+	// outright while looking like a safety property.
 	roomy := docWithRecord(t, budget+time.Hour, false)
 	if err := checkCeremonyDeadline(roomy, now); err != nil {
 		t.Fatalf("setup: a ceremony ending %s from now was refused (%v), so the refusal "+
@@ -104,9 +120,20 @@ func TestAHopDoesNotStartAfterTheCeremonyCanOutliveIt(t *testing.T) {
 			"%s. It is not expired — which is why comparing against `now` alone passes it — "+
 			"but it cannot finish, and the far party is asked to consent to a signature on a "+
 			"proceeding that ends first.", budget/2, budget)
-	} else if !strings.Contains(err.Error(), "exchange budget") {
+	} else if !strings.Contains(err.Error(), "one hop") {
 		t.Errorf("refused with %q, which does not say why — a user told only that their "+
 			"ceremony is over cannot tell it from one that never started", err)
+	}
+
+	// **The regression this whole change is about**, asserted directly: a deadline that clears
+	// one PHASE budget but not one HOP must be refused. Under the old reservation this was the
+	// passing case, and the far party's consent landed after the ceremony had ended.
+	betweenPhaseAndHop := docWithRecord(t, p2p.ExchangeBudget()+time.Minute, false)
+	if err := checkCeremonyDeadline(betweenPhaseAndHop, now); err == nil {
+		t.Errorf("a hop was allowed to start with %s left — more than one exchange budget (%s) "+
+			"but far less than one hop (%s). Reserving the phase budget for a whole session is "+
+			"exactly what exchangeDeadline's own doc forbids.",
+			p2p.ExchangeBudget()+time.Minute, p2p.ExchangeBudget(), budget)
 	}
 
 	// A document with NO record is the ordinary two-party co-sign. It has no deadline to
