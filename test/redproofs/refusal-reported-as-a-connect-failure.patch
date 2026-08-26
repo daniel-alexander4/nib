@@ -1,0 +1,25 @@
+diff --git a/internal/server/session.go b/internal/server/session.go
+index f9c3b64..dfa3d90 100644
+--- a/internal/server/session.go
++++ b/internal/server/session.go
+@@ -1492,10 +1492,6 @@ func (s *Server) handleSessionInitiate(w http.ResponseWriter, r *http.Request) {
+ 		//
+ 		// The message is the refusal's own, because those sentences already name the party, the
+ 		// position and the axis — a re-write here would be a second copy of them drifting.
+-		if p2p.IsContributionRefusal(err) {
+-			httpError(w, http.StatusConflict, err.Error())
+-			return
+-		}
+ 		// P05.S11: a genuine connect failure (not a decline) gets D19's plain-language diagnosis,
+ 		// classified from the signals on `cer`. `cer` is nil-safe in diagnose(); a non-ceremony or
+ 		// TCP dial falls back to the flat connectFailure message.
+@@ -1657,9 +1653,6 @@ func connectFailure(err error) string {
+ 	// function from `diagnosis.go`, so a rule enforced only at the caller holds at one of two
+ 	// sites — the ADR-009 shape. Same argument as the skew above it: the peer connected, and
+ 	// "could not connect" invites the retry that is wrong advice for every one of these.
+-	if p2p.IsContributionRefusal(err) {
+-		return err.Error()
+-	}
+ 	return "could not connect to peer: " + err.Error()
+ }
+ 
