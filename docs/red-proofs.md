@@ -1705,3 +1705,17 @@ mistake with a total blast radius. `TestTheNegotiatedProtocolIsNotRequiredByChec
 row, because the patch would be a one-line addition to a function whose every other line is a
 requirement, and a row restoring "somebody added a field to a list" teaches nothing the guard's
 own failure message does not already say.
+
+### Two older rows went stale in the same change, and `--all` is what found them
+
+`cosign-decline-arrives-as-eof` and `timeout-reported-as-decline` both patch `refusalAck`, whose
+signature changed here — so both applied cleanly against the code they were written for and not
+against this one. Neither the Go suite nor any individual replay would have said so: a stale row
+fails only when somebody re-proves it, and until v1.117.156 re-proving the whole set meant
+hand-rolling a loop.
+
+**This is the second time in one day.** The first replay of the whole set found eight invalid rows
+of eighty-one; this one found two of ninety-nine, on the same day the change that staled them was
+written. The difference is that `./build/redproof.sh --all` now exists, so the gap between "a row
+stopped being valid" and "somebody noticed" is one command rather than one archaeology project.
+Both re-recorded against `9f8a36e` and replaying green.
