@@ -1800,3 +1800,27 @@ hostile hop needs a hostile PEER and that is a second process or a hand-rolled f
 proof patches the product and reruns a check; here the check would still pass, because the helper
 carries its own copy of the two tests. **Recorded as owed** rather than counted: it lands with the
 rest of S05 when the route can be driven end to end.
+
+### S05 staled four more rows, and two of them were disposed of rather than re-recorded
+
+The pattern named two entries up held again, harder: the carry route edited the neighbourhood of
+four rows at once. Two were straightforward re-records (`initiating-side-skips-the-l3-gate`, and
+`l3-admits-a-substituted-proceeding` — whose *fixture* had also been left pointing forward when the
+cross-binding direction inverted, so it failed on the wrong axis until it was fixed). The other two
+were not:
+
+- **`carry-relays-a-hostile-hop` was DELETED as a duplicate.** It was written this slice to restore
+  the cross-binding check being switched off — which, once the exemption inverted from "all but the
+  last" to "all but the first", is byte-for-byte the mutation `l3-admits-an-uncrossbound-prefix`
+  already restores. Two rows for one mutation is coverage that reads as two and is one. Its
+  inversion story moved into the surviving row's spec.
+- **`channel-binding-reads-the-first-signer` was RETIRED, because its defect stopped having a
+  consequence.** It restored `peer := ats[0]`, and it earned its place when that variable fed the
+  two channel bindings. P07.S05 replaced both with L3 inside a ceremony, and outside one
+  `len(ats) != 1` makes index 0 and index last the same attestation — so the patch now applies
+  cleanly and **the check passes**. What `peer` still decides is which signature the consent card
+  describes, which is a real property and a different claim; it is owed a guard of its own and is
+  named in P07.S05a rather than left standing under a row that no longer proves it.
+
+`recorded` 109 → 107, and a floor going **down** is worth saying out loud: it is what the ledger
+looks like when a slice removes the reason a guard existed rather than when somebody deletes one.
