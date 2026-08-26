@@ -133,9 +133,21 @@ case "$N" in
   ''|*[!0-9]*) echo "FAIL: -n wants a whole number, got '$N'" >&2; exit 1 ;;
 esac
 [ "$N" -ge 2 ] || { echo "FAIL: -n $N — a ceremony needs at least two parties" >&2; exit 1; }
-# --lan and --v6 are N=2-only in this slice; see "Where it still stops".
-if [ "$N" != "2" ] && { [ "$LAN" = "1" ] || [ "$V6" = "1" ]; }; then
-  echo "FAIL: --lan and --v6 are N=2-only (P07.S01) — see the ceiling note in this file" >&2
+# **`--lan` accepts any N since P07.S05c; `--v6` is still N=2-only.**
+#
+# The pair were refused together at P07.S01, when there was no N-party relay for either to drive.
+# There is now, and the LAN clause's ONLY driver is `--lan -n 9`: a nine-party ceremony has eight
+# hops and the armed side's announcement lasts five minutes, so from the fourth party onward a
+# same-room ceremony falls through to the public DHT unless the answering listener works. A refusal
+# here left that clause with no way to be exercised at all — and it was the second of two barriers,
+# the first being that the `N != 2` block `exit 0`s three lines before the `LAN` block.
+#
+# `--v6` stays N=2-only because nothing in the relay is v6-specific yet: the session ports would
+# need bracketed literals throughout and the v6-bind stimulus is gated on `port != "lan"`. Refused
+# by name rather than left to produce a run that looks like a v6 pass and is not.
+if [ "$N" != "2" ] && [ "$V6" = "1" ]; then
+  echo "FAIL: --v6 is N=2-only — the relay's ports are not v6-shaped yet, and a run that skipped" >&2
+  echo "      the v6 stimulus would print an ordinary pass while proving nothing about v6" >&2
   exit 1
 fi
 # **The combination is refused, and leaving it unrefused was the surviving half of the
@@ -149,10 +161,23 @@ if [ "$LAN" = "1" ] && [ "$V6" = "1" ]; then
   echo "FAIL: --lan and --v6 cannot be combined — the LAN arm binds no address, so nothing is v6" >&2
   exit 1
 fi
+# **The WHOLE flag set, and `-n` was missing from it (found P07.S05c).**
+#
+# The comment on the namespace re-exec below already records why this variable exists: it used to
+# hard-code `--lan`, so `--lan --keep` silently dropped `--keep`. `-n` was added afterwards and
+# never joined it, so `--lan -n 9` re-executed inside the namespace as `--lan` alone and ran the
+# TWO-PARTY ceremony while the operator believed they had driven a nine-party one. The same defect
+# the variable was created for, one flag later — which is what a list that has to be maintained by
+# hand looks like when a new member arrives.
+#
+# It was the THIRD of three barriers between the LAN clause and its only driver. The other two: an
+# explicit `--lan` is N=2-only refusal, and the `N != 2` block exiting three lines before the LAN
+# block. Any one alone made `--lan -n 9` impossible, which is why nobody had ever run it.
 FLAGS=""
 [ "$LAN" = "1" ] && FLAGS="$FLAGS --lan"
 [ "$KEEP" = "1" ] && FLAGS="$FLAGS --keep"
 [ "$V6" = "1" ] && FLAGS="$FLAGS --v6"
+FLAGS="$FLAGS -n $N"
 
 for dep in go curl python3; do
   command -v "$dep" >/dev/null 2>&1 || {
@@ -701,6 +726,7 @@ ceremony() { # transport port outfile from to [indoc] [want_sigs] [want_proceedi
     # later.
     local probeport="$port"
     [ -z "$armaddr" ] || probeport="${armaddr##*:}"
+    [ -n "$probeport" ] || fail "[$transport] no port to probe — neither a typed port nor a pre-armed address reached here"
     if (exec 3<>"/dev/tcp/$PROBE_HOST/$probeport") 2>/dev/null; then
       exec 3<&- 3>&-
       [ "$transport" = "tcp" ] || fail "[$transport] port $probeport answers TCP — the QUIC run is listening on a TCP socket, so it is the TCP path wearing a different label"
@@ -740,8 +766,8 @@ ceremony() { # transport port outfile from to [indoc] [want_sigs] [want_proceedi
     -F "pdf=@$indoc" -F "appearance=@$WORK/sig.png" \
     -F "params={\"fingerprint\":\"$FP_B\",\"intent\":\"I agree to co-sign\"}" \
     $( [ -z "$inv" ] || printf %s "-F invitation=$inv" ) \
-    $( [ -z "$armaddr" ] || printf %s "-F address=$armaddr" ) \
-    $( [ -n "$armaddr" ] || [ "$port" = "lan" ] || printf %s "-F address=$CEREMONY_HOST:$port" ) \
+    $( [ "$port" = "lan" ] || [ -z "$armaddr" ] || printf %s "-F address=$armaddr" ) \
+    $( [ "$port" = "lan" ] || [ -n "$armaddr" ] || printf %s "-F address=$CEREMONY_HOST:$port" ) \
     $( [ "$port" = "lan" ] || printf %s "-F transport=$transport" ) \
     -o "$init_out" -w '%{http_code}' > "$WORK/initiate.code" 2>"$WORK/initiate.err"
   local code
@@ -904,6 +930,34 @@ PYATT
 # it, by name. The day S03 lands, this goes red and whoever is holding S03 has to
 # switch the N-party path on. That is the only mechanism here that makes the
 # switch-on happen rather than be remembered.
+# egress_preamble proves the off-link counter can FIRE before anything asserts it is zero.
+#
+# **Extracted at P07.S05c so the N-party LAN run can use it too.** It was inline in the two-party
+# LAN block, which is also where the `N != 2` block's `exit 0` put it out of reach — the two modes
+# were mutually exclusive by ordering rather than by design, so `--lan -n 9` ran the fixed-port
+# relay and never touched the link at all.
+#
+# The stimulus is not decoration: the first version of this instrument used a namespace with no
+# default route and read zero after a real connect attempt, because the kernel refused at routing
+# before the output hook. Provoked in BOTH families separately, because one rule per family means
+# one blind spot per family — a single IPv4 probe once passed while the IPv6 rule did not exist,
+# and Nib announces on an IPv6 group.
+egress_preamble() {
+  local before mid provoked
+  before="$(offlink_packets)"
+  timeout 2 bash -c 'exec 3<>/dev/tcp/1.1.1.1/80' 2>/dev/null || true
+  mid="$(offlink_packets)"
+  [ "$mid" -gt "$before" ] \
+    || fail "the off-link counter did not move for an IPv4 connect to 1.1.1.1 ($before -> $mid) — it cannot see outbound IPv4, so asserting zero below would prove nothing"
+  timeout 2 bash -c 'exec 3<>/dev/tcp/2606:4700:4700::1111/80' 2>/dev/null || true
+  provoked="$(offlink_packets)"
+  [ "$provoked" -gt "$mid" ] \
+    || fail "the off-link counter did not move for an IPv6 connect ($mid -> $provoked) — it is IPv6-BLIND, which is what an \`ip daddr\` rule in an inet table is by itself, and Nib announces on an IPv6 group"
+  echo "egress counter proven live in both families: $before -> $mid (v4) -> $provoked (v6)"
+  nft reset counters table inet egress >/dev/null 2>&1 || true
+  baseline="$(offlink_packets)"
+}
+
 if [ "$N" != "2" ]; then
   echo "N=$N: boot and identity verified; probing the model's current ceiling…"
   # Party 1 -> 2, the ordinary two-party ceremony, to produce a 2-signature document.
@@ -1018,8 +1072,8 @@ print(next(i['invitation'] for i in d['invites'] if i['fingerprint'].lower()=='$
   # a flag here (`session.go:1408`), so this harness cannot accidentally drive the wrong verb.
   # With N parties on the roster the convener is one of them and N-1 sign, so there are N-1 hops
   # and the finished document carries N-1 signatures.
-  relay() { # transport
-    local transport="$1"
+  relay() { # transport [lan]
+    local transport="$1" mode="${2:-}"
     local n_hops=$(( N - 1 ))
     echo "relay over $transport: convening $N parties, non-signing convener, $n_hops hops…"
 
@@ -1093,7 +1147,15 @@ print(next(x['invitation'] for x in d['invites'] if x['fingerprint'].lower()=='$
     local i
     for i in $(seq 2 "$N"); do
       local body code
-      body="{\"fingerprint\":\"${FPS[0]}\",\"bind\":\"$CEREMONY_HOST:0\",\"mode\":\"cosign\",\"transport\":\"$transport\",\"invitation\":\"${INVITES[$i]}\"}"
+      # **In LAN mode the bind is OMITTED ENTIRELY**, which is P03's first exit criterion stated
+      # as a shell command: nothing types an address anywhere, the party binds ephemerally and
+      # announces the port it got, and the convener learns it from the link. Everywhere else the
+      # bind is `:0` — also ephemeral, so the no-re-arm check below has teeth either way.
+      if [ "$mode" = "lan" ]; then
+        body="{\"fingerprint\":\"${FPS[0]}\",\"mode\":\"cosign\",\"transport\":\"$transport\",\"invitation\":\"${INVITES[$i]}\"}"
+      else
+        body="{\"fingerprint\":\"${FPS[0]}\",\"bind\":\"$CEREMONY_HOST:0\",\"mode\":\"cosign\",\"transport\":\"$transport\",\"invitation\":\"${INVITES[$i]}\"}"
+      fi
       code="$(curl -sS -X POST "${URLS[$((i-1))]}/api/session/arm" -H 'Content-Type: application/json' \
         -H "X-CSRF-Token: ${CSRFS[$((i-1))]}" -d "$body" -o "$WORK/relay.arm.$transport.$i.json" -w '%{http_code}')"
       [ "$code" = "200" ] \
@@ -1130,7 +1192,13 @@ print(next(x['invitation'] for x in d['invites'] if x['fingerprint'].lower()=='$
       [ "$now_addr" = "${ARM_ADDR[$to]}" ] \
         || fail "[$transport] instance $to reports address $now_addr, armed at ${ARM_ADDR[$to]} — the address moved, so it was RE-ARMED between hop 1 and hop $k"
 
-      ceremony "$transport" "" "$out" 1 "$to" "$prev" "$k" 1 "${INVITES[$to]}" "${ARM_ADDR[$to]}"
+      # **In LAN mode the convener is told NOTHING — not the address, not the transport.** The
+      # announcement is the only thing that can carry them, which is the whole clause. The arm
+      # address is still passed so this function knows the party is already armed; the `lan` port
+      # is what stops it being typed into the dial.
+      local dialport=""
+      [ "$mode" != "lan" ] || dialport="lan"
+      ceremony "$transport" "$dialport" "$out" 1 "$to" "$prev" "$k" 1 "${INVITES[$to]}" "${ARM_ADDR[$to]}"
       RELAY_WORDS+=( "$WORDS" )
 
       # **The byte prefix, which is what makes this a BATON rather than N ceremonies.** Asserting
@@ -1220,10 +1288,55 @@ PYSET
   # of every ceremony dial and the hop spins until `connectDeadline`. Measured here at N=4: hop 1
   # over TCP left the receiver armed and idle while the convener never reached its verification
   # string. QUIC is driven first so a TCP failure is read as the transport question it is.
-  relay quic
-  WORDS_RELAY_QUIC=( "${RELAY_WORDS[@]}" ); FINAL_QUIC="$RELAY_FINAL"
-  relay tcp
-  WORDS_RELAY_TCP=( "${RELAY_WORDS[@]}" ); FINAL_TCP="$RELAY_FINAL"
+  # ── `--lan -n N`: the relay ON THE LINK, with nothing typed (P07.S05c, T04) ────────────────
+  #
+  # **These two modes used to be mutually exclusive by ORDERING rather than by design.** This
+  # block `exit 0`s a few lines below, three lines before the `LAN` block, so `--lan -n 9` ran the
+  # fixed-port relay and never touched the link — the clause's own driver could not be invoked.
+  #
+  # It is the run the LAN clause exists for: a nine-party ceremony has eight hops, and the armed
+  # side's announcement lasts five minutes, so from the fourth party onward a same-room ceremony
+  # silently runs over the public DHT unless the answering listener works. The egress counter is
+  # what makes that a measurement rather than a claim.
+  if [ "$LAN" = "1" ]; then
+    egress_preamble
+    # **TCP first here, and QUIC first everywhere else — the asymmetry is a FINDING, not a
+    # preference (P07.S05c).** Running QUIC first makes the TCP relay that follows fail with a 502
+    # whose cause is *"Couldn't reach the rendezvous network"* — a D19 verdict about the DHT, for a
+    # peer that is on the link and announcing. Reproduced twice; TCP first, both relays complete.
+    # So the QUIC relay leaves state that a following TCP relay on the same instances cannot get
+    # past, and what that state is has not been established. Filed.
+    #
+    # The order is TCP-first because QUIC-first MASKS the larger finding below: the run dies at the
+    # 502 before it ever reaches the egress assertion, and the egress assertion is what caught a
+    # ceremony leaking to the internet.
+    relay tcp lan
+    WORDS_RELAY_TCP=( "${RELAY_WORDS[@]}" ); FINAL_TCP="$RELAY_FINAL"
+    relay quic lan
+    WORDS_RELAY_QUIC=( "${RELAY_WORDS[@]}" ); FINAL_QUIC="$RELAY_FINAL"
+    after="$(offlink_packets)"
+    # **This is RED against shipped code, and it is the clause's own criterion (P07.S05c).**
+    #
+    # Measured: a two-party LAN ceremony emits ZERO off-link packets; a four-party LAN ceremony
+    # relay emits 120. The difference is the invitation. A ceremony hop calls `dialerCeremony`,
+    # which opens a rendezvous and calls `rz.Bootstrap` unconditionally — reaching for the PUBLIC
+    # DHT — and the arm side does the same. `ceremonynet.go` already suppresses the late PUBLISH
+    # when the LAN answers inside the browse window; nothing suppresses the bootstrap.
+    #
+    # So P03's exit criterion — *"a LAN ceremony completes with NO outbound internet traffic"* — is
+    # false for every ceremony that carries an invitation, which is every ceremony P07 builds. It
+    # survived because the only `--lan` run was the TWO-PARTY one, which has no invitation and
+    # therefore no `cer`; and `--lan -n N` was impossible until this slice removed three separate
+    # barriers to it. Nothing had ever measured a ceremony on a link.
+    [ "$after" = "$baseline" ] \
+      || fail "a $N-party LAN relay emitted $((after - baseline)) packets destined off the link — P03's exit criterion says a LAN ceremony completes with NO outbound internet traffic, and a ceremony hop bootstraps the DHT unconditionally (dialerCeremony). A two-party LAN ceremony emits zero; the difference is the invitation."
+    echo "[lan] $(( (N - 1) * 2 )) hops over two transports, and nothing left the link"
+  else
+    relay quic
+    WORDS_RELAY_QUIC=( "${RELAY_WORDS[@]}" ); FINAL_QUIC="$RELAY_FINAL"
+    relay tcp
+    WORDS_RELAY_TCP=( "${RELAY_WORDS[@]}" ); FINAL_TCP="$RELAY_FINAL"
+  fi
 
   # ── The word-strings: EQUAL within a hop, DISTINCT across hops ──────────────
   #
@@ -1284,24 +1397,7 @@ PYWORDS
 fi
 
 if [ "$LAN" = "1" ]; then
-  # The egress counter must be able to FIRE, or asserting it is zero says nothing.
-  # This is the stimulus assertion, and it is not decoration: the first version of
-  # this instrument used a namespace with no default route and read zero after a real
-  # connect attempt, because the kernel refused at routing before the output hook.
-  # Provoked in BOTH families, separately, because one rule per family means one blind
-  # spot per family. A single IPv4 probe passed while the IPv6 rule did not exist.
-  before="$(offlink_packets)"
-  timeout 2 bash -c 'exec 3<>/dev/tcp/1.1.1.1/80' 2>/dev/null || true
-  mid="$(offlink_packets)"
-  [ "$mid" -gt "$before" ] \
-    || fail "the off-link counter did not move for an IPv4 connect to 1.1.1.1 ($before -> $mid) — it cannot see outbound IPv4, so asserting zero below would prove nothing"
-  timeout 2 bash -c 'exec 3<>/dev/tcp/2606:4700:4700::1111/80' 2>/dev/null || true
-  provoked="$(offlink_packets)"
-  [ "$provoked" -gt "$mid" ] \
-    || fail "the off-link counter did not move for an IPv6 connect ($mid -> $provoked) — it is IPv6-BLIND, which is what an \`ip daddr\` rule in an inet table is by itself, and Nib announces on an IPv6 group"
-  echo "egress counter proven live in both families: $before -> $mid (v4) -> $provoked (v6)"
-  nft reset counters table inet egress >/dev/null 2>&1 || true
-  baseline="$(offlink_packets)"
+  egress_preamble
 
   # BOTH transports over the link, and A is told NEITHER the address nor the
   # transport — the announcement is the only thing that can carry them.

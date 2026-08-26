@@ -42,6 +42,22 @@ const announceEvery = 500 * time.Millisecond
 // window. The socket is released when this closes, not held idle until disarm.
 const lanAnnounceWindow = 5 * time.Minute
 
+// hopAnnounceWindow is how long the DIALLING side announces itself while a ceremony hop is in
+// flight (P07.S05c).
+//
+// **Its whole job is to be heard by one browse, so it is measured against that browse and not
+// against the arm.** `findPeerOnLAN` listens for `browseWindow` — two seconds — and closes; an
+// announcement that outlives the browse it was sent for is a standing beacon by another name,
+// which is exactly what `lanAnnounceWindow` above refuses at scale. Ten seconds is five browses'
+// worth of margin for a scheduler, and it ends when the hop does either way: the caller closes the
+// announcer on return.
+//
+// It is a variable rather than a constant so a test can drive a hop whose window has ALREADY
+// expired, which is the only case this mechanism exists for — a hop inside the window passes
+// without exercising anything, and a test that waited five real minutes for the interesting case
+// would not be run.
+var hopAnnounceWindow = 10 * time.Second
+
 // lanAnnouncer is the armed side's presence on the link. It exists only while a session
 // is armed — that is the whole of what the plan's egress enumeration authorises, and it
 // is also what keeps the exposure small: a Nib that is not expecting anybody says
@@ -611,4 +627,133 @@ func raceKey(c candidate) string {
 		addr = ap.String()
 	}
 	return addr + "\x00" + c.Transport
+}
+
+// answerHopSeekers is the armed side of P07.S05c: it listens for the peer this session is armed
+// for, and re-announces when it hears them.
+//
+// # Why this exists, and why it is the cheap half
+//
+// A ceremony arm outlives its own announcement by up to thirty days. `lanAnnounceWindow` above
+// caps the announcement at five minutes and says why — keeping the 500 ms ticker for the arm's
+// life is ≈5.2M multicast datagrams per ceremony — so from the fourth party onward a same-room
+// ceremony silently runs over the public DHT, which is the leak D6 exists against.
+//
+// The plan's own sentence for this was *"the LAN tier is re-announced when the convener's dial for
+// hop k begins"*, and no such mechanism can exist: `startAnnouncing` runs on the armed side and
+// `browsePeers` only listens, so a dialler has nothing it can send that makes a remote peer speak.
+//
+// **What settles the design is an asymmetry rather than a trade-off: listening is free.** Every
+// beacon shape pays per datagram; a browse held open pays nothing at all. So the party who must be
+// found listens indefinitely, and the party who knows a hop is starting sends one bounded burst
+// (`hopAnnounceWindow`, on the dialling side). This is the listening half.
+//
+// # Why it answers ONE fingerprint, and why that is what stops an amplification loop
+//
+// It answers only sightings that resolve to `peerFP` — the peer this arm was raised for. Under
+// D22 a ceremony is a hub, so for a party that is the convener and nobody else, and the convener
+// is dialling rather than armed-and-browsing. Two armed parties therefore never answer each
+// other, which is the loop a "re-announce on hearing any pinned peer" rule would create: A hears
+// B, answers; B hears A, answers; forever, between two machines with nothing to say.
+//
+// The rate limit is the second half of the same argument and is not redundant with it: a convener
+// that re-dials, or a link that duplicates a datagram, must not start a second announcer while the
+// first is live.
+//
+// # L1 is untouched
+//
+// An answer discloses exactly what this party's own arm announcement already discloses — the
+// six-word name and the port. `Matches(fp, name)` recomputes the name from a fingerprint the
+// receiver ALREADY HOLDS, and `pairing.decode` is unexported precisely so a name never resolves to
+// a pin. So a stranger's announcement cannot make this party answer, and an answer cannot tell a
+// stranger anything they could not already have heard.
+func (s *Server) answerHopSeekers(ctx context.Context, cert []byte, ln announceable, peerFP []byte) {
+	v := s.unlockedVault()
+	if v == nil {
+		return
+	}
+	var pins []vault.PinnedPeer
+	for _, p := range v.PinnedPeers() {
+		if bytes.Equal(p.Fingerprint, peerFP) {
+			pins = append(pins, p)
+		}
+	}
+	if len(pins) == 0 {
+		return // nothing to recognise, so nothing to answer
+	}
+	var nonce [8]byte
+	if _, err := rand.Read(nonce[:]); err != nil {
+		return
+	}
+	sock, err := discovery.Open(nonce)
+	if err != nil {
+		return // no usable interface: the DHT and the accept still race, as everywhere else here
+	}
+	defer sock.Close()
+
+	var answering *lanAnnouncer
+	defer func() {
+		if answering != nil {
+			answering.Close()
+		}
+	}()
+	var lastAnswer time.Time
+	for {
+		if ctx.Err() != nil {
+			return
+		}
+		// A short read deadline rather than a long one, so ctx cancellation is noticed promptly
+		// at disarm instead of after a multi-minute blocking read. The cost is a wakeup per
+		// second on a quiet link, which is a timer and not a datagram.
+		seen, rerr := sock.Read(time.Now().Add(time.Second))
+		if rerr != nil {
+			continue // a timeout is the ordinary case; ctx is what ends this loop
+		}
+		if _, ok := resolve(pins, seen); !ok {
+			continue
+		}
+		if time.Since(lastAnswer) < hopAnnounceWindow {
+			continue // one answer per window: a re-dial must not stack a second announcer
+		}
+		if answering != nil {
+			answering.Close()
+		}
+		ann, aerr := startAnnouncing(cert, ln, hopAnnounceWindow)
+		if aerr != nil {
+			continue // loopback bind or no interface — never fatal to the arm
+		}
+		answering, lastAnswer = ann, time.Now()
+	}
+}
+
+// allQUICCandidates reports whether EVERY candidate can be dialled on the ceremony's shared
+// endpoint, and that there is at least one.
+//
+// The glare join races QUIC candidates only (`filterQUIC`), so a path that takes it silently
+// discards everything else it was given. That makes the safe question "can it race all of this?"
+// rather than "can it race any of this" — and the difference is not academic.
+//
+// **Measured, and the "any" version was written first and failed on a link.** A four-party LAN
+// relay ran QUIC and then TCP over the same instances. On the TCP run the browse heard the party's
+// live TCP announcement AND a lingering QUIC one from the run before, so "any" was true, the glare
+// path was taken, the only reachable candidate was discarded, and the user was told *"Couldn't
+// reach the rendezvous network"* — a D19 cause about the DHT, for a peer that was on the link and
+// announcing.
+//
+// It is asked AFTER the browse because on a link the transport arrives in the announcement
+// (ADR-010) and the request names nothing at all.
+//
+// **What is still owed** is racing both kinds side by side, so a mixed set loses neither — that is
+// `/pending 298` and belongs to P05's coordinator. This routes a mixed set to the path that can
+// dial every member, which is strictly better than routing it to one that can dial some.
+func allQUICCandidates(cands []candidate) bool {
+	if len(cands) == 0 {
+		return false
+	}
+	for _, c := range cands {
+		if c.Transport != transportQUIC {
+			return false
+		}
+	}
+	return true
 }

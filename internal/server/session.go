@@ -1116,6 +1116,16 @@ func (s *Server) runCeremonyReceive(ctx context.Context, cer *ceremonyID, hl *p2
 	if ann, aerr := startAnnouncing(cert, quicEndpointAnnounce{hl.Addr()}, lanAnnounceWindow); aerr == nil {
 		defer ann.Close()
 	}
+	// **And after that window closes, this arm can still be FOUND (P07.S05c, T02).** The
+	// announcement above is five minutes; the arm is ceremony-scoped and may be thirty days, so
+	// from the fourth party onward a same-room ceremony would silently run over the public DHT.
+	// This listens — which costs nothing — and answers the one peer it is armed for when that peer
+	// announces itself at the start of its hop. See `answerHopSeekers` for why it is one
+	// fingerprint and not every pinned one.
+	go func() {
+		defer safe.Recover("hop seeker answers")
+		s.answerHopSeekers(ctx, cert, quicEndpointAnnounce{hl.Addr()}, peerFP)
+	}()
 	// Warm the DHT so connect's feed can fetch the peer's candidates and publish ours. Not fatal:
 	// the accept side and any fixed candidates still race, and D19 cause 2 names a dead DHT.
 	bctx, bcancel := context.WithTimeout(ctx, bootstrapBudget)
@@ -1422,6 +1432,45 @@ func (s *Server) handleSessionInitiate(w http.ResponseWriter, r *http.Request) {
 		}
 		return p2p.Initiate(ch, signed, myFP, sessionVerifier{s, nil}, cer.l3Roster())
 	}
+	// ── The dialing side ANNOUNCES before it browses (P07.S05c, T01) ────────────────────────
+	//
+	// **The clause said "the LAN tier is re-announced when the convener's dial for hop k begins",
+	// and no such mechanism can exist**: `startAnnouncing` runs on the armed side only and
+	// `browsePeers` only listens, so a dialer has nothing it can send that makes a remote peer
+	// speak. What CAN exist is the inverse, and it is cheaper than every beacon: **listening is
+	// free**. An armed party holds a browse open for its ceremony's life at zero egress; the party
+	// that knows a hop is starting sends one bounded burst. This is that burst.
+	//
+	// It is the convener's ORDINARY announcement — no new message and no format version. A
+	// ceremony dialler already holds a listening endpoint (the glare join arms one on the shared
+	// socket below), so it has something truthful to announce, which is exactly what an earlier
+	// design for a "seek" datagram was working around.
+	//
+	// **Order is the whole of it, and it is why the handshake listener is armed HERE rather than
+	// after the browse.** `peerAddresses` browses for two seconds and closes (`lan.go:234`,
+	// `discover.go:21`) — an answer that arrives before that socket opens is lost, and an
+	// announcement made after it closes is heard by nobody. So: arm, announce, browse. Arming
+	// first also means a peer that answers by DIALLING us finds the endpoint already listening
+	// rather than a socket that will exist in two seconds.
+	//
+	// Bounded by this request rather than by `lanAnnounceWindow`: the burst exists to be heard
+	// during one hop's browse, and outliving the hop would put it back in the standing-beacon
+	// class this whole design refuses.
+	var hl *p2p.HandshakeListener
+	if cer != nil && cer.rz != nil {
+		var herr error
+		if hl, herr = p2p.QUICListenHandshakeOn(cer.end, cert, key, peerFP); herr != nil {
+			httpError(w, http.StatusInternalServerError, "could not arm the racing accept: "+herr.Error())
+			return
+		}
+		defer hl.Close()
+		// Never fatal, exactly as on the arm side: a host with no usable interface, or a loopback
+		// bind, still races the DHT and its own accept. `startAnnouncing` refuses a loopback bind
+		// BY NAME, which is why this is silent on the tier-4 harness and live in the namespace.
+		if ann, aerr := startAnnouncing(cert, quicEndpointAnnounce{hl.Addr()}, hopAnnounceWindow); aerr == nil {
+			defer ann.Close()
+		}
+	}
 	cands, ok := s.peerAddresses(w, v, address, r.FormValue("transport"), peerFP)
 	if !ok {
 		return
@@ -1457,15 +1506,25 @@ func (s *Server) handleSessionInitiate(w http.ResponseWriter, r *http.Request) {
 	// the glare branch still runs and a TCP-only candidate learned from the LAN or the DHT is
 	// still dropped. That needs the racer to run both kinds side by side, which is a change to
 	// P05's coordinator rather than to this route. Filed.
-	wantTransport := r.FormValue("transport")
+	// **ONE predicate, named once, and DECIDED AFTER THE BROWSE (P07.S05c).**
+	//
+	// The glare path races QUIC candidates only, so taking it when there is no QUIC candidate to
+	// race is the P07.S05b defect: an empty race that spins until `connectDeadline`. S05b fixed
+	// the case where the request NAMES a transport; this fixes the case that matters on a link,
+	// where nothing is named and the transport arrives in the announcement (ADR-010). The
+	// candidates are in hand by now — `peerAddresses` has already browsed — so the question is
+	// decidable rather than a guess from the request.
+	//
+	// Measured: a four-party LAN relay over TCP. Nothing is typed, so the old predicate saw an
+	// empty transport, took the glare path, and dropped the only candidate there was.
+	//
+	// **ALL, not ANY** — see `allQUICCandidates`. The glare path discards everything it cannot
+	// dial, so a mixed set must go to the path that can dial every member. Handling both kinds
+	// side by side is `/pending 298` and belongs to P05's coordinator.
+	glare := hl != nil && (r.FormValue("transport") == transportQUIC ||
+		(r.FormValue("transport") == "" && allQUICCandidates(cands)))
 	var final []byte
-	if cer != nil && cer.rz != nil && (wantTransport == "" || wantTransport == transportQUIC) {
-		hl, herr := p2p.QUICListenHandshakeOn(cer.end, cert, key, peerFP)
-		if herr != nil {
-			httpError(w, http.StatusInternalServerError, "could not arm the racing accept: "+herr.Error())
-			return
-		}
-		defer hl.Close()
+	if glare {
 		// P05.S10: re-race a LOST channel, re-sending the UNCHANGED signed document (Initiate never
 		// re-signs its own contribution), so the peer re-delivers its cached signature idempotently
 		// instead of co-signing twice. Bounded by connectDeadline; a decided outcome (decline, MITM,
