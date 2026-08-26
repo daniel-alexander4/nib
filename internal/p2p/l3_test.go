@@ -121,7 +121,10 @@ func TestTheGateAdmitsTheRightPartyAtEveryPosition(t *testing.T) {
 		if err := AdmitContribution(doc, r, p.fp); err != nil {
 			t.Fatalf("position %d: the right party was refused: %v", i+1, err)
 		}
-		doc = l3Chain(t, doc, []l3Party{p}, []l3Party{order[(i+1)%len(order)]}, "")
+		// Accepts its PREDECESSOR (P07.S05, D22 amended). The first signer accepts itself here,
+		// which reads as "nobody before me" to `crossBind` — a self-accept never matches, and the
+		// first signature is exempt anyway.
+		doc = l3Chain(t, doc, []l3Party{p}, []l3Party{order[max(i-1, 0)]}, "")
 	}
 	// And the end state is its own answer rather than a fourth turn.
 	if _, err := NextContributor(doc, r); !errors.Is(err, ErrCeremonyComplete) {
@@ -167,27 +170,33 @@ func TestTheGateRefusesEachThingByName(t *testing.T) {
 	wrongOrder := l3Chain(t, l3Prepared(t), []l3Party{b}, []l3Party{c}, "")
 	record(t, "wrong prefix", AdmitContribution(wrongOrder, r, c.fp), ErrPrefixMismatch)
 
-	// 4. A prefix that is NOT CROSS-BOUND: A signed accepting a stranger who never signs, so
-	//    A's attestation attests to nobody on this document. The identities are exactly right,
-	//    which is the point — an identity-only check would admit this.
-	place, err := NextPlacement(l3Prepared(t))
+	// 4. A prefix that is NOT CROSS-BOUND: A signs normally, then B signs attesting to a
+	//    STRANGER who never signs — so B's attestation attests to nobody on this document. The
+	//    identities are exactly right, which is the point: an identity-only check would admit it.
+	//
+	//    **B and not A, because the FIRST signature is exempt** (P07.S05): a signature accepts its
+	//    predecessor, and the first has none. Written against A, this fixture would assert nothing.
+	dangling := l3Chain(t, l3Prepared(t), []l3Party{a}, []l3Party{a}, "")
+	place, err := NextPlacement(dangling)
 	if err != nil {
 		t.Fatal(err)
 	}
-	dangling, err := Contribute(l3Prepared(t), a.cert, a.key, Attestation{
-		Signer: "A", AcceptedPeer: stranger.fp, Intent: "ok", When: time.Now(),
+	dangling, err = Contribute(dangling, b.cert, b.key, Attestation{
+		Signer: "B", AcceptedPeer: stranger.fp, Intent: "ok", When: time.Now(),
 	}, nil, place)
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Then B signs on top, so A is no longer the LAST signature and its cross-binding is due.
-	dangling = l3Chain(t, dangling, []l3Party{b}, []l3Party{c}, "")
 	// Stimulus: the identities ARE the roster prefix, so this fixture isolates cross-binding.
 	ats := ReadAttestations(dangling)
 	if len(ats) != 2 || !strings.EqualFold(ats[0].Fingerprint, a.fp) ||
 		!strings.EqualFold(ats[1].Fingerprint, b.fp) {
 		t.Fatalf("setup: the fixture's signers are not A then B, so a refusal below would be "+
 			"about the prefix rather than about cross-binding: %+v", ats)
+	}
+	if ats[1].Matched {
+		t.Fatal("setup: the second signature IS cross-bound, so this fixture does not isolate " +
+			"the property it is named for")
 	}
 	record(t, "prefix not cross-bound", AdmitContribution(dangling, r, c.fp), ErrPrefixUnproven)
 
@@ -436,7 +445,9 @@ func TestTheChannelBindingReadsTheLastSigner(t *testing.T) {
 	}}
 	// A, then B, then C — each accepting the next, and C accepting ME because C is the party
 	// handing the document over.
-	doc := l3Chain(t, l3Prepared(t), []l3Party{a, b, c}, []l3Party{b, c, me}, "")
+	// Each accepts its PREDECESSOR; A is first and accepts itself, which never matches and is
+	// exempt (P07.S05).
+	doc := l3Chain(t, l3Prepared(t), []l3Party{a, b, c}, []l3Party{a, a, b}, "")
 	ats := ReadAttestations(doc)
 	if len(ats) != 3 {
 		t.Fatalf("setup: %d signatures, want 3", len(ats))
@@ -460,14 +471,24 @@ func TestTheChannelBindingReadsTheLastSigner(t *testing.T) {
 			"the connection to the wrong party.", err)
 	}
 
-	// And the other direction, which is what stops "read the last one" becoming "read any of
-	// them": a document whose last signer is NOT the connected peer is still refused.
+	// **The other direction changed at P07.S05, and the change is the point.** It used to be "a
+	// document whose last signer is NOT the connected peer is refused" — which is exactly the
+	// conflation the carry route removes, because a carrier hands over a document it did not
+	// sign. Inside a ceremony the residue is that the party on the socket belongs to THIS
+	// proceeding: A is a roster member and may carry, a stranger may not.
 	aFPb, _ := hex.DecodeString(a.fp)
-	_, err = coSignExchange(me.cert, me.key, aFPb, "A", doc,
+	if _, err := coSignExchange(me.cert, me.key, aFPb, "A", doc,
+		l3Confirmer{accept: true, intent: "I agree"}, nil, roster); err != nil {
+		t.Errorf("a roster member carrying a document it did not sign was refused (%v) — that is "+
+			"the carry route, and refusing it is the conflation P07.S05 removes", err)
+	}
+	strangerFP := bytes.Repeat([]byte{0xfe}, 32)
+	_, err = coSignExchange(me.cert, me.key, strangerFP, "Stranger", doc,
 		l3Confirmer{accept: true, intent: "I agree"}, nil, roster)
-	if err == nil {
-		t.Error("a document was accepted from a peer who is not its last signer — the binding " +
-			"has become 'any signer on the document', which is no binding at all")
+	if !errors.Is(err, ErrNotTheConnectedPeer) {
+		t.Errorf("a document was accepted over a connection to somebody outside the roster "+
+			"(%v). The TLS pin says who they are; nothing then says they are a party to this "+
+			"proceeding, and the binding has become no binding at all.", err)
 	}
 }
 
@@ -541,5 +562,72 @@ func TestTheRelayCeilingAtFourParties(t *testing.T) {
 		t.Errorf("B was refused a document carrying exactly the roster prefix before them (%v). "+
 			"If this fails, the relay is blocked by the MODEL and not merely by the absence of a "+
 			"carry route — which would move the problem from P07.S05 to here.", err)
+	}
+}
+
+// TestASignatureAcceptsItsPREDECESSOR — D22 as amended, and the direction is the finding.
+//
+// **Pointing this forward is wrong and the suite proved it**: with `AcceptedPeer` set to the NEXT
+// signing party, three two-party ceremony tests failed with *"peer's signature does not accept
+// you"*. `crossBind` sets `Matched` when the accepted party is itself a valid signer **on this
+// document**, and only a predecessor can be — a successor has not signed yet. Accepting forward
+// leaves every signature unmatched until the one after it lands, and the last one unmatched
+// forever.
+//
+// C14 as amended: *"every signature that has a signing predecessor reports Matched; the first
+// signer reports its own state"*.
+func TestASignatureAcceptsItsPREDECESSOR(t *testing.T) {
+	conv, a, b := l3Identity(t, "Convener"), l3Identity(t, "A"), l3Identity(t, "B")
+	// A non-signing convener FIRST in the roster, so the signing order and the roster order
+	// differ — otherwise "the previous signing party" and "the previous roster entry" are the
+	// same thing and this cannot tell them apart.
+	r := Roster{Entries: []RosterEntry{
+		{Fingerprint: conv.fp, Signs: false},
+		{Fingerprint: a.fp, Signs: true},
+		{Fingerprint: b.fp, Signs: true},
+	}}
+	if got := PredecessorOf(r, a.fp); got != "" {
+		t.Errorf("the FIRST signer's predecessor is %s, want none — there is nobody before them, "+
+			"and C14 says the first signer reports its own state", shortFP(got))
+	}
+	if got := PredecessorOf(r, b.fp); !strings.EqualFold(got, a.fp) {
+		t.Errorf("B's predecessor is %s, want A (%s)", shortFP(got), shortFP(a.fp))
+	}
+	// **The non-signing convener is skipped, not counted.** If it were counted, B would attest to
+	// a party that never signs and `crossBind` would report B unmatched forever — which is the
+	// carry route failing in exactly the way this direction exists to prevent.
+	if got := PredecessorOf(r, conv.fp); got != "" {
+		t.Errorf("a NON-SIGNING party has a predecessor (%s) — it holds no position in the "+
+			"signing order at all", shortFP(got))
+	}
+	// And somebody outside the roster has none.
+	if got := PredecessorOf(r, strings.Repeat("ff", 32)); got != "" {
+		t.Errorf("a stranger has a predecessor: %s", shortFP(got))
+	}
+}
+
+// TestBothContributionDoorsAgreeOnWhatASignatureAccepts — ADR-009 on the MEANING, not the call.
+//
+// There are two doors that build an attestation — `coSignExchange` here and `buildCoSigned` in
+// `internal/server` — and for a while only one of them read `AcceptedPeer` off the roster. They
+// coincided at N=2 by luck (the wire peer IS the other signer there) and would have parted company
+// at the first carry hop, with one door attesting to the previous signer and the other to a
+// convener who never signs.
+func TestBothContributionDoorsAgreeOnWhatASignatureAccepts(t *testing.T) {
+	for _, tc := range []struct{ dir, file string }{
+		{".", "session.go"},
+		{filepath.Join("..", "server"), "cosign.go"},
+	} {
+		raw, err := os.ReadFile(filepath.Join(tc.dir, tc.file))
+		if err != nil {
+			t.Fatal(err)
+		}
+		code := l3StripComments(string(raw))
+		if !strings.Contains(code, "PredecessorOf(") {
+			t.Errorf("%s/%s builds a contribution and never reads AcceptedPeer off the roster. "+
+				"The two doors then disagree about what a signature ACCEPTS — one attests to the "+
+				"previous signer, the other to whoever is on the socket, which under a carry "+
+				"route is a convener who never signs.", tc.dir, tc.file)
+		}
 	}
 }

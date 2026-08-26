@@ -140,16 +140,23 @@ func NextContributor(pdf []byte, r Roster) (RosterEntry, error) {
 				"is %s", ErrPrefixMismatch, i+1, shortFP(a.Fingerprint), ordinal(i+1),
 				shortFP(signing[i].Fingerprint))
 		}
-		// **Cross-binding, and the LAST signature is exempt — measured, not conceded.**
+		// **Cross-binding, and the FIRST signature is exempt — inverted at P07.S05, measured.**
 		//
 		// `Matched` means the signer's accepted peer is itself a valid signer on this document.
-		// The party who signed most recently accepted somebody who has not signed yet, so it is
-		// false for them and becomes true the moment the next block lands. Measured on a
-		// three-signature chain: after one signature `matched=false`; after two, signature 1 is
-		// matched and signature 2 is not; after three, all three are — because in that probe the
-		// last signer accepted the first, which is exactly why the rule is written as "all but
-		// the last" rather than "all".
-		if i < len(ats)-1 && !a.Matched {
+		// This rule was written as "all but the LAST" while `AcceptedPeer` named the wire peer,
+		// which in a two-party exchange is the signer's successor — so the most recent signature
+		// attested to somebody who had not signed yet.
+		//
+		// D22's amendment points it the other way: a signature accepts its PREDECESSOR
+		// (`PredecessorOf`), so every signature after the first attests to a party who has
+		// already signed, and the first accepts nobody because there is nobody before it. That is
+		// C14 as amended in as many words — *"every signature that has a signing predecessor
+		// reports Matched; the first signer reports its own state"*.
+		//
+		// Measured when it was still "all but the last": a four-party carry-route ceremony failed
+		// at hop 2 with *"signature 1 attests to a peer who is not a valid signer of this
+		// document"* — the first signer, exempt under the new direction and not under the old.
+		if i > 0 && !a.Matched {
 			return RosterEntry{}, fmt.Errorf("%w: signature %d (%s) attests to a peer who is "+
 				"not a valid signer of this document", ErrPrefixUnproven, i+1,
 				shortFP(a.Fingerprint))
@@ -165,6 +172,57 @@ func NextContributor(pdf []byte, r Roster) (RosterEntry, error) {
 		return RosterEntry{}, ErrCeremonyComplete
 	}
 	return signing[len(ats)], nil
+}
+
+// PredecessorOf names the signing party immediately BEFORE `me` in the roster, or "" when `me` is
+// the first signer or is not a signing member (P07.S05, D22 as amended).
+//
+// **This is what a signature accepts, and it is not the wire peer.** `Attestation.AcceptedPeer`
+// used to be set to whoever was on the other end of the socket, which is correct only while every
+// carrier also signs. Under a carry route the wire peer is a non-signing convener, and a signature
+// accepting THEM attests to somebody who never signs.
+//
+// **The PREVIOUS entry, not the next, and the direction is the whole of C14 as amended:** *"every
+// signature that has a signing predecessor reports `Matched`; the first signer reports its own
+// state"*. `crossBind` sets `Matched` when the accepted party is itself a valid signer **on this
+// document**, and only a predecessor can be — a successor has not signed yet, so accepting forward
+// would leave every signature unmatched until the one after it landed, and the last one unmatched
+// forever. Measured: pointing this forward broke three two-party ceremony tests with *"peer's
+// signature does not accept you"*.
+//
+// The first signer accepts "" and that is correct rather than a gap: there is nobody before them.
+func PredecessorOf(r Roster, me string) string {
+	signing := make([]string, 0, len(r.Entries))
+	for _, e := range r.Entries {
+		if e.Signs {
+			signing = append(signing, e.Fingerprint)
+		}
+	}
+	for i, fp := range signing {
+		if strings.EqualFold(fp, me) {
+			if i > 0 {
+				return signing[i-1]
+			}
+			return ""
+		}
+	}
+	return ""
+}
+
+// InRoster reports whether a fingerprint is a party to this ceremony at all — signing or not.
+//
+// **What replaces "the document was signed by the connected peer" inside a ceremony (P07.S05).**
+// That check conflated the signer with the socket, which holds only while every carrier signs. The
+// honest residue is that the party on the other end is a party to THIS proceeding: the TLS pin
+// still says who they are, and L3's prefix rule still says the signatures are the roster's, so
+// what this adds is that the two belong to the same ceremony.
+func InRoster(r Roster, fp string) bool {
+	for _, e := range r.Entries {
+		if strings.EqualFold(e.Fingerprint, fp) {
+			return true
+		}
+	}
+	return false
 }
 
 // AdmitContribution answers *may I contribute now* — the refusal form, over the same predicate.

@@ -116,7 +116,7 @@ func TestSessionArmReceiveSign(t *testing.T) {
 			return
 		}
 		defer conn.Close()
-		final, e := p2p.Initiate(conn.Channel, aSigned, aFPBytes, initiatorVerifier)
+		final, e := p2p.Initiate(conn.Channel, aSigned, aFPBytes, initiatorVerifier, p2p.Roster{})
 		if e != nil {
 			errc <- e
 			return
@@ -320,7 +320,7 @@ func TestSessionDeclineLeavesOpenDoc(t *testing.T) {
 			return
 		}
 		defer conn.Close()
-		if _, e := p2p.Initiate(conn.Channel, aSigned, aFPBytes, okVerifier{}); e == nil {
+		if _, e := p2p.Initiate(conn.Channel, aSigned, aFPBytes, okVerifier{}, p2p.Roster{}); e == nil {
 			errc <- nil // a declined round-trip must surface an error to the initiator
 			return
 		}
@@ -453,7 +453,7 @@ func TestSessionQuoteForPendingPeer(t *testing.T) {
 			return
 		}
 		defer conn.Close()
-		_, _ = p2p.Initiate(conn.Channel, aSigned, aFPBytes, okVerifier{}) // declined below; an error is expected
+		_, _ = p2p.Initiate(conn.Channel, aSigned, aFPBytes, okVerifier{}, p2p.Roster{}) // declined below; an error is expected
 		errc <- nil
 	}()
 
@@ -1504,7 +1504,7 @@ func TestCeremonyReceiverDialsAndCoSigns(t *testing.T) {
 			errc <- e
 			return
 		}
-		final, e := p2p.Initiate(conn.Channel, aSigned, aFPBytes, initiatorVerifier)
+		final, e := p2p.Initiate(conn.Channel, aSigned, aFPBytes, initiatorVerifier, p2p.Roster{})
 		if e != nil {
 			errc <- e
 			return
@@ -1666,7 +1666,7 @@ func TestCeremonyReDeliversAfterReconnect(t *testing.T) {
 			return nil, e
 		}
 		defer conn.Close()
-		return p2p.Initiate(conn.Channel, aSigned, aFPBytes, &recordingVerifier{})
+		return p2p.Initiate(conn.Channel, aSigned, aFPBytes, &recordingVerifier{}, p2p.Roster{})
 	}
 
 	// --- Initiate #1: a full co-sign (verify + consent). ---
@@ -1832,7 +1832,7 @@ func TestCeremonyReRacesAfterEarlyChannelLoss(t *testing.T) {
 			return
 		}
 		defer conn2.Close()
-		f, err := p2p.Initiate(conn2.Channel, aSigned, aFPBytes, &recordingVerifier{})
+		f, err := p2p.Initiate(conn2.Channel, aSigned, aFPBytes, &recordingVerifier{}, p2p.Roster{})
 		if err != nil {
 			e2 <- err
 			return

@@ -51,7 +51,7 @@ func TestAnIncompleteChannelIsRefusedByEveryEntryPoint(t *testing.T) {
 
 	calls := map[string]func(ch Channel) error{
 		"Initiate": func(ch Channel) error {
-			_, err := Initiate(ch, pdf, fp, okVerifier{})
+			_, err := Initiate(ch, pdf, fp, okVerifier{}, Roster{})
 			return err
 		},
 		"Receive": func(ch Channel) error {

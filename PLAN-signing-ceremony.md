@@ -4748,13 +4748,45 @@ Acceptance:
 - **Re-delivery works on BOTH transports.** A TCP ceremony routes past the re-delivery cache entirely, so the receiver consents, signs, and the signature is discarded in-process — at N=9 that is eight independent chances. Driven per transport, because `pairrepro.sh` drives both and a clause that does not say so will only ever exercise QUIC.
 - `ReadAttestations` is split so the two HTTP handlers and `NextPlacement` read the **already-computed** `document.sig` instead of re-verifying: measured at **5.2 s per request** for nine signatures on a 95 MiB document, on request-handling paths, with the answer already cached and thrown away. **A criterion with a number in it**, because one phrased as "completes" cannot see a quadratic. (CLAUDE.md hot-path rule — the change is a removal of work from that path, not an addition.)
 
-#### P07.S05 — The carry route: a non-signing convener moves the baton *(D22 pin; C02, C07, C14, C16, C18, C21, C22)*
+#### P07.S05 — The carry route: a non-signing convener moves the baton *(D22 pin; C02, C07, C14, C21, C22)* *(in progress)*
+Tasks (grilled 2026-08-25 — `grills/2026-08-25-p07s05-the-carry-route.md`; deepdive folded in):
+- T01 — `AcceptedPeer` names the **previous signing roster entry** (D22 amended), not the wire peer. *(done 2026-08-25, v1.117.172 — and **the direction was wrong in this task's own wording until the suite refuted it**: written as the NEXT signer, three two-party ceremony tests failed with *"peer's signature does not accept you"*. `crossBind` matches only a party who has ALREADY signed, so accepting forward leaves every signature unmatched until its successor lands and the last one unmatched forever. C14 as amended says predecessor, and that is what it is.)*
+- T02 — the receive-side binding re-based. *(done — and **L3 subsumes BOTH old checks** rather than one being relaxed: its prefix rule establishes that the signatures are the roster's, in order, valid and cross-bound, against the record verified at arm time. What it does not say is that the party on the SOCKET belongs to this proceeding, so `InRoster` is asked and nothing else is. `confirmCoSigned` was re-based with it — a chain's first signer accepts nobody, so demanding that my own signature accept the peer fails for the initiator, measured.)*
+- T03 — `p2p.Carry`. *(done — and the two return checks are **not** redundant, measured: with the prefix check alone a hostile hop's reply signed by the WRONG party is accepted, because the prefix says the bytes grew from mine and says nothing about who signed the part that grew.)*
+- T04 — the route, and ONE ceremony document per relay rather than an arrival per hop. **← outstanding**
+- T05 — a four-party ceremony with a `signs:false` convener completing; the same through `Initiate` failing. *(done at the PROTOCOL level, both transports — three signatures, none the convener's, every one after the first cross-bound, chain complete. The server-side route drive belongs with T04.)*
+- T06 — red proofs; `recorded` moves.
+
+**MEASURED at the grill: the receive side refuses a carrier, and L3 disagrees with it.** A
+three-party roster with a `signs:false` convener, A having signed, the convener carrying to B:
+`coSignExchange` answers *"the document was not signed by the connected peer"* while
+`AdmitContribution` answers `<nil>` and names B as the next contributor. The binding compares the
+document's last signer against the TLS-pinned **wire peer**, and under a carry route the wire peer
+is the carrier while the last signer is the previous *signing* party. **That conflation — "who
+signed" with "who I am connected to" — is true only while every carrier also signs**, which is the
+assumption this slice exists to remove. `crossBind` then reports the last signature as unmatched
+until its successor signs, which is C14 as amended in as many words.
+
+**SPLIT — the surfaces and the harness become P07.S05a.** C16/C18's rendering, the mirror per hop
+(C22), the record deadline (C21), the N=4/N=9 driver over both transports and the LAN re-announce
+are downstream of the verb existing: their first run would otherwise also be the verb's first run,
+and a failure ambiguous between them — the argument that split S03a from S03b.
+
+**The three deferred clauses land with THIS half**, not S05a: `S03b`'s T03, `S04`'s clause 1 and
+`S04`'s clause 4 N≥3 half were all resequenced behind "S05's carry verb", and this is that verb.
 Scope: there is no carry verb — `Initiate` demands the caller's own signature back, and
 `SendDocument`/`ReceiveDocument` is the one-way flow with no attestation and no record. C07 says in as many
 words that it *cannot pass on `Initiate`*, which is true of the code as it stands.
 Acceptance:
 - A four-party ceremony with a `signs:false` convener completes **over the carry route**, driven by the harness; the finished document contains **no signature of the convener's**; and the same ceremony attempted through `Initiate` fails.
 - **Every signature that has a signing predecessor reports `Matched`; the first signer reports its own state; an attestation naming a roster fingerprint that produced no valid signature reports `Matched: false`** (C14 as amended).
+- ~~The completed document renders as complete (C16) … the LAN tier is re-announced at hop k~~ **MOVED to P07.S05a, 2026-08-25 at this slice's grill** — rendering and harness work, downstream of the verb existing at all.
+
+
+#### P07.S05a — The ceremony's surfaces and the N-party driver *(C16, C18, C21, C22; D22 pin)* — **new, 2026-08-25, split out of S05**
+Scope: everything about a completed relay that is not the relay. Downstream of S05, which is what
+produces the document these clauses describe.
+Acceptance:
 - The completed document **renders as complete** (C16) **and a five-of-nine document renders as incomplete, naming how many obliged signers are absent** (C18). The two are one piece of work and neither is safe alone.
 - **The carry route binds what comes back to what went out**: it asserts the byte prefix **and** runs S03's predicate over the returned document before the next hop is dialled, driven by a hostile hop *k* returning a different document. `Initiate` has this and says why; without it the convener relays whatever a malicious party hands back, and S03's door — which answers the *contributor's* question — is passed through by nobody.
 - A hop **replaces the baton rather than accumulating arrivals**: a nine-party ceremony leaves the convener with **one** ceremony document open, not nine against a cap of eight.

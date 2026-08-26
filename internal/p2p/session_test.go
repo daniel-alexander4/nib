@@ -63,7 +63,7 @@ func TestConfirmCoSignedRequiresBothSignatures(t *testing.T) {
 	// Genuine mutual co-sign: Alice signs accepting Bob, Bob co-signs accepting Alice.
 	aSigned := signAsInitiator(t, aCert, aKey, bFP)
 	mutual := contribute(t, aSigned, bCert, bKey, bAcceptsA)
-	if err := confirmCoSigned(mutual, bFP, aFP); err != nil {
+	if err := confirmCoSigned(mutual, bFP, aFP, false); err != nil {
 		t.Errorf("genuine mutual co-sign rejected: %v", err)
 	}
 
@@ -77,7 +77,7 @@ func TestConfirmCoSignedRequiresBothSignatures(t *testing.T) {
 		t.Fatal(err)
 	}
 	bOnly := contribute(t, prepared, bCert, bKey, bAcceptsA)
-	if err := confirmCoSigned(bOnly, bFP, aFP); err == nil {
+	if err := confirmCoSigned(bOnly, bFP, aFP, false); err == nil {
 		t.Error("accepted a reply missing the initiator's own signature")
 	}
 }
@@ -97,7 +97,7 @@ func TestInitiateRejectsReplayedCoSignature(t *testing.T) {
 
 		// An earlier, genuine mutual co-signature between the same two identities.
 		replay := contribute(t, signAsInitiator(t, aCert, aKey, bFP), bCert, bKey, bAcceptsA)
-		if err := confirmCoSigned(replay, bFP, aFP); err != nil {
+		if err := confirmCoSigned(replay, bFP, aFP, false); err != nil {
 			t.Fatalf("fixture is not a valid mutual co-signature: %v", err)
 		}
 
@@ -134,7 +134,7 @@ func TestInitiateRejectsReplayedCoSignature(t *testing.T) {
 			t.Fatal(err)
 		}
 		defer conn.Close()
-		if _, err := Initiate(conn.Channel, aSigned, aFP, okVerifier{}); err == nil {
+		if _, err := Initiate(conn.Channel, aSigned, aFP, okVerifier{}, Roster{}); err == nil {
 			t.Error("initiator accepted a replayed prior co-signature")
 		}
 		if err := <-recvErr; err != nil {
@@ -175,7 +175,7 @@ func TestSessionRoundTrip(t *testing.T) {
 			t.Fatal(err)
 		}
 		defer conn.Close()
-		final, err := Initiate(conn.Channel, aSigned, aFP, okVerifier{})
+		final, err := Initiate(conn.Channel, aSigned, aFP, okVerifier{}, Roster{})
 		if err != nil {
 			t.Fatalf("initiate: %v", err)
 		}
@@ -236,7 +236,7 @@ func TestSessionReceiverDeclines(t *testing.T) {
 		// nothing and closed, so `Initiate` returned `receive co-signed document: EOF` and
 		// the assertion passed. The user was shown a 502 that reads as a network fault and
 		// invites a retry — for a refusal.
-		_, ierr := Initiate(conn.Channel, aSigned, aFP, okVerifier{})
+		_, ierr := Initiate(conn.Channel, aSigned, aFP, okVerifier{}, Roster{})
 		if !errors.Is(ierr, ErrCoSignDeclined) {
 			t.Errorf("initiator got %v; want ErrCoSignDeclined. A decline that reaches the "+
 				"peer as EOF is reported as a transport failure and invites the retry a "+
@@ -310,7 +310,7 @@ func TestARefusalTellsThePeerWHICHRefusalItWas(t *testing.T) {
 
 				var got error
 				if tc.coSign {
-					_, got = Initiate(conn.Channel, signAsInitiator(t, aCert, aKey, bFP), aFP, okVerifier{})
+					_, got = Initiate(conn.Channel, signAsInitiator(t, aCert, aKey, bFP), aFP, okVerifier{}, Roster{})
 				} else {
 					got = SendDocument(conn.Channel, []byte("%PDF-1.4\nhello"), aFP, okVerifier{})
 				}

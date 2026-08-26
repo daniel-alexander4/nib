@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strings"
 	"time"
 
 	"nib/internal/sign"
@@ -137,7 +138,8 @@ type Confirmer interface {
 // already prepared and signed, receives the fully co-signed result, and confirms
 // the peer actually co-signed it and accepted this user. mySignedPDF is the output
 // of the local prepare + Contribute; myFingerprint is this user's SPKI pin.
-func Initiate(ch Channel, mySignedPDF, myFingerprint []byte, v Verifier) ([]byte, error) {
+// roster is the ceremony's signing order, or the zero Roster outside a ceremony (P07.S05).
+func Initiate(ch Channel, mySignedPDF, myFingerprint []byte, v Verifier, roster Roster) ([]byte, error) {
 	if err := ch.check(); err != nil {
 		return nil, err
 	}
@@ -179,8 +181,87 @@ func Initiate(ch Channel, mySignedPDF, myFingerprint []byte, v Verifier) ([]byte
 	if !bytes.HasPrefix(final, mySignedPDF) {
 		return nil, errors.New("returned document is not the one sent this session")
 	}
-	if err := confirmCoSigned(final, peerFP, myFingerprint); err != nil {
+	if err := confirmCoSigned(final, peerFP, myFingerprint, len(roster.Entries) > 0); err != nil {
 		return nil, err
+	}
+	return final, nil
+}
+
+// Carry hands a document to the party whose turn it is and collects their contribution **without
+// contributing one of its own** (P07.S05, C07).
+//
+// # Why Initiate cannot do this
+//
+// `Initiate` demands the document back CO-SIGNED — `confirmCoSigned` fails unless this user's own
+// valid signature is on it. A non-signing convener has none and never will, so C07's carrier is
+// unrepresentable through that verb, which is what the plan says at the line. `SendDocument` is
+// the other direction of the same problem: it is one-way, the receiver keeps the file, and a
+// one-byte ack comes back rather than the contribution the carrier went to fetch.
+//
+// # What binds the return, since "it is co-signed by me" cannot
+//
+// Two things, and neither is optional.
+//
+//   - **The byte prefix.** The result must be what went out plus a trailing incremental update.
+//     `Initiate` has this check and states its reasoning: the signer is strictly append-only, so
+//     anything else is a different document, and without it a hostile hop can return a file these
+//     identities co-signed at some other time.
+//   - **L3's predicate, over the RETURNED document.** The carrier is not the contributor, so
+//     S03's door — which answers the contributor's question — is passed through by nobody on this
+//     path unless the carrier asks it here. It establishes that the signatures on what came back
+//     are exactly the roster's, in order, each valid and cross-bound, and that the chain has
+//     advanced by the one party this hop was for.
+//
+// The second is the one a reviewer will be tempted to drop as redundant. It is not: the prefix
+// says the bytes grew from mine, and says nothing at all about WHO signed the part that grew.
+func Carry(ch Channel, pdf, myFingerprint []byte, v Verifier, roster Roster) ([]byte, error) {
+	if err := ch.check(); err != nil {
+		return nil, err
+	}
+	if len(roster.Entries) == 0 {
+		// A carry is a ceremony act. Without a roster there is no signing order, nothing to
+		// advance, and no way to check what comes back — so this fails closed rather than
+		// degrading into an unchecked relay.
+		return nil, errors.New("carrying a ceremony document needs its roster")
+	}
+	// Whose turn it is BEFORE the hop, so the advance below is measured rather than assumed.
+	want, err := NextContributor(pdf, roster)
+	if err != nil {
+		return nil, fmt.Errorf("this document is not ready to be carried: %w", err)
+	}
+	conn := ch.Stream
+	_ = conn.SetDeadline(time.Now().Add(exchangeDeadline))
+	// The spoken check, before a single document byte (L2) — the same gate every other
+	// document-carrying entry point takes, for the same reason.
+	if err := runVerification(ch, true, myFingerprint, v); err != nil {
+		return nil, err
+	}
+	_ = conn.SetDeadline(time.Now().Add(exchangeDeadline))
+	if err := writeFrame(conn, pdf); err != nil {
+		return nil, fmt.Errorf("send document: %w", err)
+	}
+	_ = conn.SetDeadline(time.Now().Add(remoteDecisionDeadline))
+	final, err := readFrame(conn)
+	if err != nil {
+		return nil, fmt.Errorf("receive carried document: %w", err)
+	}
+	if rerr, ok := refusalFor(final, true); ok {
+		return nil, rerr
+	}
+	if !bytes.HasPrefix(final, pdf) {
+		return nil, errors.New("the carried document is not the one that was handed over")
+	}
+	// The chain advanced by exactly the party this hop was for. `NextContributor` re-walks the
+	// whole prefix, so this also establishes that nothing earlier was disturbed.
+	next, nerr := NextContributor(final, roster)
+	switch {
+	case errors.Is(nerr, ErrCeremonyComplete):
+		// The last signer has signed. Nothing follows, and that is the end of the relay.
+	case nerr != nil:
+		return nil, fmt.Errorf("the carried document does not follow this ceremony's order: %w", nerr)
+	case strings.EqualFold(next.Fingerprint, want.Fingerprint):
+		return nil, fmt.Errorf("%w: the document came back still waiting for %s, so nothing was "+
+			"contributed", ErrPrefixMismatch, shortFP(want.Fingerprint))
 	}
 	return final, nil
 }
@@ -594,8 +675,8 @@ func coSignExchange(myCertPEM, myKeyPEM, peerFP []byte, peerLabel string, inboun
 	if !inCeremony && len(ats) != 1 {
 		return nil, fmt.Errorf("%w: got %d", ErrWrongPriorSignerCount, len(ats))
 	}
-	if len(ats) == 0 {
-		return nil, errors.New("the document carries no signature to co-sign")
+	if !inCeremony && len(ats) == 0 {
+		return nil, ErrWrongPriorSignerCount
 	}
 	// **The peer who handed this over is the LAST signer, not the first.**
 	//
@@ -611,22 +692,57 @@ func coSignExchange(myCertPEM, myKeyPEM, peerFP []byte, peerLabel string, inboun
 	// and false for S05's non-signing convener, whose carry route is where C14 and C16 live. And
 	// re-basing what `AcceptedPeer` MEANS — the previous signing roster entry rather than the
 	// wire peer — is D22's amendment and P07.S04's.
-	peer := ats[len(ats)-1]
-	if !peer.Valid {
-		return nil, errors.New("the peer's signature does not verify")
-	}
-	// Channel binding (the "right channel / right attested peer" check): the
-	// document's signer must be the very identity the TLS handshake pinned — not
-	// just any valid signature — and that signer must have accepted *this* user.
-	if peer.Fingerprint != hex.EncodeToString(peerFP) {
-		return nil, ErrNotTheConnectedPeer
+	// **The party the consent gate is about, and at hop 1 of a carry route there is no signer.**
+	//
+	// Outside a ceremony, and at every hop after the first, this is the last signature on the
+	// document — the party whose contribution this user is being asked to build on. On the FIRST
+	// hop of a carry route the document is unsigned: the convener carries it and signs nothing,
+	// so the only thing known about the other end is the identity the TLS handshake pinned. That
+	// is what the gate is given, with no signature and `Valid` false, because saying anything
+	// else would be describing a signature that does not exist.
+	//
+	// **What the consent card then shows at hop 1 is P07.S05a's** — this hands it a truthful
+	// value rather than deciding how it reads.
+	peer := SignerAttestation{Fingerprint: hex.EncodeToString(peerFP)}
+	if len(ats) > 0 {
+		peer = ats[len(ats)-1]
+		if !peer.Valid {
+			return nil, errors.New("the peer's signature does not verify")
+		}
 	}
 	myFP, err := sign.Fingerprint(myCertPEM)
 	if err != nil {
 		return nil, err
 	}
-	if peer.AcceptedPeer != hex.EncodeToString(myFP) {
-		return nil, ErrPeerDoesNotAcceptYou
+	if inCeremony {
+		// **Re-based off the record (P07.S05, D22 amended).**
+		//
+		// The two checks below — the document's signer IS the pinned peer, and that signer
+		// accepted me — conflate the signer with the socket. That holds only while every carrier
+		// also signs, and this slice is the one that stops it holding: under a carry route the
+		// wire peer is a non-signing convener and the last signer is the previous signing party.
+		// Measured before the change: `coSignExchange` answered *"the document was not signed by
+		// the connected peer"* on a hop `AdmitContribution` had already said was mine.
+		//
+		// Inside a ceremony **L3 subsumes both**. Its prefix rule establishes that the signatures
+		// on this document are exactly the roster's signers before me, in order, each valid and
+		// cross-bound — which is strictly more than "the last one accepted me", and it is checked
+		// against the record this party verified at arm time rather than against a claim in the
+		// document. What L3 does not say is that the party on the SOCKET belongs to this
+		// proceeding, so that is asked here and nothing else is.
+		if !InRoster(roster, hex.EncodeToString(peerFP)) {
+			return nil, ErrNotTheConnectedPeer
+		}
+	} else {
+		// Outside a ceremony there is no roster and no ordering, so the pairwise binding is all
+		// there is: the document's signer must be the very identity the TLS handshake pinned —
+		// not just any valid signature — and that signer must have accepted *this* user.
+		if peer.Fingerprint != hex.EncodeToString(peerFP) {
+			return nil, ErrNotTheConnectedPeer
+		}
+		if peer.AcceptedPeer != hex.EncodeToString(myFP) {
+			return nil, ErrPeerDoesNotAcceptYou
+		}
 	}
 
 	// **L3 (D23): no contribution out of roster order.**
@@ -673,9 +789,22 @@ func coSignExchange(myCertPEM, myKeyPEM, peerFP []byte, peerLabel string, inboun
 	if err != nil {
 		return nil, err
 	}
+	// **What this signature ACCEPTS is the next signing party, not the wire peer (P07.S05,
+	// D22 amended).** Outside a ceremony there is no roster and the two are the same thing; inside
+	// one they part company the moment a non-signing convener carries the baton, and a signature
+	// accepting the CARRIER attests to somebody who never signs — leaving the chain broken at
+	// every hop and `crossBind` reporting it so.
+	//
+	// `PredecessorOf` returns "" for the FIRST signer, which is correct and is C14 as amended:
+	// the first signature accepts nobody, because there is nobody before it.
+	accepted := hex.EncodeToString(peerFP)
+	if inCeremony {
+		myFPHex := hex.EncodeToString(myFP)
+		accepted = PredecessorOf(roster, myFPHex)
+	}
 	att := Attestation{
 		Signer:            idCert.Subject.CommonName,
-		AcceptedPeer:      hex.EncodeToString(peerFP),
+		AcceptedPeer:      accepted,
 		AcceptedPeerLabel: peerLabel,
 		Intent:            intent,
 		When:              time.Now(),
@@ -698,7 +827,21 @@ func coSignExchange(myCertPEM, myKeyPEM, peerFP []byte, peerLabel string, inboun
 // the peer. Requiring the initiator's own signature too anchors the result to the
 // document this user signed — a peer cannot strip it and substitute a different
 // document that only it signed, since a valid signature binds to its own bytes.
-func confirmCoSigned(final, peerFP, myFP []byte) error {
+// inCeremony re-bases what "co-signed" means for a chain (P07.S05, D22 amended).
+//
+// **Outside a ceremony the pair is the whole relationship**: two people, each accepting the other,
+// and both halves are load-bearing. **Inside one it is a CHAIN**, and a signature accepts its
+// PREDECESSOR — so the first signer accepts nobody. Demanding that my own signature accept the
+// peer therefore fails for the party who signs first, which at N=2 is the initiator: measured, a
+// two-party ceremony hop returned *"your signature in the returned document does not accept the
+// peer"* with every existing test green, because every one of them drives the manual path.
+//
+// What is kept inside a ceremony is the half that still means something: the peer's signature is
+// valid and accepts ME. What is dropped is the demand that mine accept THEM — which is a claim
+// about the chain's direction that L3's prefix rule already owns, and owns better, because it
+// checks against the record this party verified at arm time rather than against the document.
+// My own signature must still be present and valid, or the peer has returned something else.
+func confirmCoSigned(final, peerFP, myFP []byte, inCeremony bool) error {
 	peer, me := hex.EncodeToString(peerFP), hex.EncodeToString(myFP)
 	var gotPeer, gotMe bool
 	for _, a := range ReadAttestations(final) {
@@ -715,7 +858,7 @@ func confirmCoSigned(final, peerFP, myFP []byte) error {
 			if !a.Valid {
 				return errors.New("your own signature is missing or altered in the returned document")
 			}
-			if a.AcceptedPeer != peer {
+			if !inCeremony && a.AcceptedPeer != peer {
 				return errors.New("your signature in the returned document does not accept the peer")
 			}
 			gotMe = true
