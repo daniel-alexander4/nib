@@ -1,8 +1,8 @@
 diff --git a/internal/server/session.go b/internal/server/session.go
-index 24793f1..64d6afd 100644
+index f9c3b64..970b989 100644
 --- a/internal/server/session.go
 +++ b/internal/server/session.go
-@@ -1367,24 +1367,6 @@ func (s *Server) handleSessionInitiate(w http.ResponseWriter, r *http.Request) {
+@@ -1464,24 +1464,6 @@ func (s *Server) handleSessionInitiate(w http.ResponseWriter, r *http.Request) {
  				"the request was shown and went unanswered, so nothing was signed")
  			return
  		}
@@ -24,6 +24,6 @@ index 24793f1..64d6afd 100644
 -				"side in time, so nothing was signed")
 -			return
 -		}
- 		// P05.S11: a genuine connect failure (not a decline) gets D19's plain-language diagnosis,
- 		// classified from the signals on `cer`. `cer` is nil-safe in diagnose(); a non-ceremony or
- 		// TCP dial falls back to the flat connectFailure message.
+ 		// **A contribution refusal is not a connect failure either (P07.S03b).** The three
+ 		// branches above lift the refusals that had sentinels; P07.S03a gave sentinels to nine
+ 		// more and they fell straight through to here, where `writeConnectDiagnosis` renders a
