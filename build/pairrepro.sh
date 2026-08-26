@@ -875,9 +875,16 @@ print(next(i['invitation'] for i in d['invites'] if i['fingerprint'].lower()=='$
   #          carrier signs AGAIN, and L3 refuses it BY NAME at the carrier's own machine
   #   and    party 3, handed that document unchanged, IS admitted
   #
-  # So the ceiling is a missing ROUTE, not a missing model: nothing hands the baton on without
-  # contributing. That is P07.S05's carry verb, and this assertion names it rather than pointing
-  # at "the model" the way its predecessor did.
+  # **The carry verb landed at P07.S05 and this probe is still right — for a narrower reason, and
+  # the narrowing is recorded because the sentence here was stale once already.** `p2p.Carry`
+  # exists and `/api/session/initiate` takes it for a `signs:false` roster member. The convener in
+  # THIS run signs (the roster below is built with every party signing), so what is refused is a
+  # SIGNING party taking a second turn — which is correct and is L3's whole point.
+  #
+  # What this run still cannot show is a relay COMPLETING, and the reason is the harness rather
+  # than the product: hop 1 here is the manual two-party exchange, over a document unrelated to
+  # the ceremony convened afterwards. Driving a real relay needs hop 1 to be a ceremony hop, which
+  # is P07.S05a's N=4/N=9 driver.
   if grep -q "not this party's turn" "$WORK/hop2.json" 2>/dev/null; then
     echo "      L3 refused the CARRIER re-signing, by name, at its own machine (HTTP $hop2code)"
   else
@@ -887,8 +894,9 @@ print(next(i['invitation'] for i in d['invites'] if i['fingerprint'].lower()=='$
   fi
   echo "PASS: $N instances booted with $N distinct identities (${ELAPSED_TOTAL}s of hops), a real"
   echo "      ceremony was convened, instance 3 took part with NO manual pin, and the relay"
-  echo "      stops exactly where it should: nothing can hand the baton on without contributing."
-  echo "      That route is P07.S05's, and this probe goes red the day it lands."
+  echo "      stops where this harness can take it: a SIGNING party cannot take a second turn."
+  echo "      The carry verb exists (P07.S05); driving a relay to completion needs hop 1 to be a"
+  echo "      ceremony hop, which is P07.S05a's N=4/N=9 driver."
   exit 0
 fi
 

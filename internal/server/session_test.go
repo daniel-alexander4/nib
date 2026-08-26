@@ -211,11 +211,30 @@ func TestSessionArmReceiveSign(t *testing.T) {
 	}
 
 	// Bob's open document is the doubly-signed result.
-	pr := write(t, c, csrf, http.MethodGet, ts.URL+"/api/pdf", "", nil)
-	pdf, _ := io.ReadAll(pr.Body)
-	pr.Body.Close()
+	//
+	// **Polled, not read once — this assertion was FLAKY and was sighted failing (2026-08-25).**
+	// The initiator's `result` fires when `Initiate` returns, which happens as soon as the
+	// receiver has written the co-signed frame; the receiver's `openArrival` runs AFTER that
+	// write. So "the initiator finished" is not a barrier for "the receiver installed", and an
+	// immediate read lands in that window and sees the pre-arrival document. It reported
+	// *"open document has 0 signers, want 2"*, and passed on the next two full runs — a guard
+	// that is right 99 times in 100 is one nobody can trust the hundredth time.
+	//
+	// The poll has a deadline and FAILS rather than skipping, so a receiver that never installs
+	// is still caught; what is removed is only the assumption about ordering.
+	var pdf []byte
+	for deadline := time.Now().Add(10 * time.Second); ; {
+		pr := write(t, c, csrf, http.MethodGet, ts.URL+"/api/pdf", "", nil)
+		pdf, _ = io.ReadAll(pr.Body)
+		pr.Body.Close()
+		if len(p2p.ReadAttestations(pdf)) == 2 || !time.Now().Before(deadline) {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
 	if n := len(p2p.ReadAttestations(pdf)); n != 2 {
-		t.Errorf("open document has %d signers, want 2", n)
+		t.Errorf("open document has %d signers, want 2 — the receiver never installed the "+
+			"co-signed arrival", n)
 	}
 
 	// **A completed session SPENDS the arm** — D22's one-session-per-arm, and the
