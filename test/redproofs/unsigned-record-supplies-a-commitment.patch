@@ -1,0 +1,13 @@
+diff --git a/internal/ceremony/embed.go b/internal/ceremony/embed.go
+index fd5c97d..a7c74c2 100644
+--- a/internal/ceremony/embed.go
++++ b/internal/ceremony/embed.go
+@@ -128,7 +128,7 @@ func Embed(pdf []byte, r Record) ([]byte, error) {
+ // returned for the same reason — every one of them means the same thing to the caller, which is
+ // "this document cannot tell you which ceremony it belongs to".
+ func ProceedingOf(pdf []byte, now time.Time) p2p.Proceeding {
+-	r, err := CheckRecord(pdf, now)
++	r, err := Extract(pdf)
+ 	if err != nil {
+ 		return p2p.Proceeding{}
+ 	}

@@ -1,0 +1,13 @@
+diff --git a/internal/p2p/attestation.go b/internal/p2p/attestation.go
+index ff6335d..bafe4fd 100644
+--- a/internal/p2p/attestation.go
++++ b/internal/p2p/attestation.go
+@@ -158,7 +158,7 @@ func (a Attestation) reason() string {
+ 		// Placed BEFORE the user-controlled text, like the SPKI token, and matched by a
+ 		// regexp requiring exactly 64 hex — safeText strips brackets from the label and
+ 		// intent, so neither can forge one.
+-		roster = " [NibRoster:" + strconv.Itoa(a.RosterVersion) + ":" + safeHex(a.RosterHash) + "]"
++		roster = " [NibRoster:" + safeHex(a.RosterHash) + "]"
+ 	}
+ 	return fmt.Sprintf("%s Accepts %s [SPKI:%s]%s. %s", attestationTag,
+ 		safeText(a.AcceptedPeerLabel), safeHex(a.AcceptedPeer), roster, safeText(a.intent()))
