@@ -1,0 +1,14 @@
+diff --git a/internal/server/session.go b/internal/server/session.go
+index a4a2625..8b97ace 100644
+--- a/internal/server/session.go
++++ b/internal/server/session.go
+@@ -1459,7 +1459,8 @@ func (s *Server) handleSessionInitiate(w http.ResponseWriter, r *http.Request) {
+ 	// P05's coordinator rather than to this route. Filed.
+ 	wantTransport := r.FormValue("transport")
+ 	var final []byte
+-	if cer != nil && cer.rz != nil && (wantTransport == "" || wantTransport == transportQUIC) {
++	if cer != nil && cer.rz != nil {
++		_ = wantTransport
+ 		hl, herr := p2p.QUICListenHandshakeOn(cer.end, cert, key, peerFP)
+ 		if herr != nil {
+ 			httpError(w, http.StatusInternalServerError, "could not arm the racing accept: "+herr.Error())
