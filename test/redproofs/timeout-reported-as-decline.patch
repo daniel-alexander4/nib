@@ -1,15 +1,15 @@
 diff --git a/internal/p2p/session.go b/internal/p2p/session.go
-index c606702..6377ce4 100644
+index 00f15ce..c048ddb 100644
 --- a/internal/p2p/session.go
 +++ b/internal/p2p/session.go
-@@ -265,9 +265,7 @@ var ErrConsentTimedOut = errors.New("nobody answered the consent request in time
+@@ -396,9 +396,7 @@ func errorForCode(code byte) error {
  // one half of one feature reported a refusal as an outcome and the other reported it as EOF.
- func refusalAck(err error) (byte, bool) {
+ func refusalAck(err error, named bool) ([]byte, bool) {
  	switch {
 -	case errors.Is(err, ErrConsentTimedOut):
--		return ackTimedOut, true
+-		return []byte{ackTimedOut}, true
 -	case errors.Is(err, ErrDeclined), errors.Is(err, ErrCoSignDeclined):
 +	case errors.Is(err, ErrConsentTimedOut), errors.Is(err, ErrDeclined), errors.Is(err, ErrCoSignDeclined):
- 		return ackDeclined, true
- 	default:
- 		return 0, false
+ 		return []byte{ackDeclined}, true
+ 	}
+ 	// **Only to a peer that can read it (P07.S03a).** `named` is the negotiated-ALPN answer, and
