@@ -2248,7 +2248,7 @@ function repaintForActiveView() {
     : 'Save (overwrites the original)';
   all('.pageCount').forEach((s) => { s.textContent = '/ ' + (open ? view.pdfDocument.numPages : 0); });
   all('.pageNum').forEach((i) => { i.value = open ? view.viewer.currentPageNumber : 1; });
-  updateBadge(view.lastSig); // idempotent re-assignment; NEVER updateBadge(null) here
+  updateBadge(view.lastSig, view.inCeremony); // idempotent re-assignment; NEVER updateBadge(null) here
 
   // The sidebars are NOT rebuilt. P05.S05 gave each view its own grid and outline list, so
   // activation SHOWS them — which is the phase-open decision, taken because
@@ -2440,7 +2440,12 @@ async function setDocumentFromServer(meta, target = view) {
   // updateBadge WRITES view.lastSig as its first statement, so a background load must not
   // call it — that would overwrite the ACTIVE view's signature result, which is the trust
   // decision the details modal shows. The target's own value is recorded directly instead.
-  if (target === view) updateBadge(meta.signature); else target.lastSig = meta.signature;
+  if (target === view) {
+    updateBadge(meta.signature, meta.inCeremony);
+  } else {
+    target.lastSig = meta.signature;
+    target.inCeremony = !!meta.inCeremony;
+  }
   // Rebuild any embedded signing flags as markers and offer the signing flow.
   target.docHadFlags = Array.isArray(meta.flags) && meta.flags.length > 0;
   target.signLocked = target.docHadFlags; // a received signing document opens locked, non-editable
@@ -2520,7 +2525,7 @@ function closeDocument() {
   view.docHadFlags = false;
   view.signLocked = false;
   els.signBanner.hidden = true;
-  updateBadge(null); // resets view.lastSig, the badge, and the details button together
+  updateBadge(null); // resets view.lastSig, view.inCeremony, the badge, and the details button together
 
   // Back to the launch markup, not merely to something empty (index.html).
   els.viewerWrap.classList.remove('has-doc');
@@ -3664,7 +3669,7 @@ async function save() {
     // document is open, and that is what the id answers.
     if (!view.docMeta || view.docMeta.id !== doc.id) { toast('Saved'); return; }
 
-    updateBadge(meta.signature);
+    updateBadge(meta.signature, meta.inCeremony);
     toast('Saved');
     // If detected fields were baked in, reload so the page shows the stamped
     // text and the transient input widgets are cleared. view.overlayFields is read only
@@ -3682,8 +3687,9 @@ async function save() {
 }
 
 // --- signature badge ---------------------------------------------------------
-function updateBadge(sig) {
+function updateBadge(sig, inCeremony) {
   view.lastSig = sig;
+  view.inCeremony = !!inCeremony;
   const b = els.sigBadge;
   const signers = sig?.signers || [];
   const map = {
@@ -3702,8 +3708,9 @@ function updateBadge(sig) {
   b.className = 'badge ' + cls;
   b.textContent = label;
   b.title = label;
-  // Details only exist for a signed document (valid or modified).
-  els.sigDetailsBtn.hidden = !signers.length;
+  // Details only exist for a signed document (valid or modified) — OR for a document in a
+  // ceremony, which has an obliged-signer count to report before anyone has signed at all.
+  els.sigDetailsBtn.hidden = !signers.length && !view.inCeremony;
 }
 
 // timeLabel turns a signer's time backing into honest plain English.
@@ -3715,7 +3722,10 @@ function timeLabel(s) {
 
 async function openSigDetails() {
   const signers = view.lastSig?.signers || [];
-  if (!signers.length) return;
+  // A ceremony document with NO signatures still has something to say: how many parties are
+  // obliged, and that none of them has signed. That is C18's extreme case, and until P07.S05a
+  // it was unreachable — this returned early and the button was hidden besides.
+  if (!signers.length && !view.inCeremony) return;
   const body = els.sigDetailsBody;
   body.innerHTML = '';
   const rows = signers.map((s) => {
@@ -3759,11 +3769,15 @@ async function openSigDetails() {
 // Go (p2p); this only renders. Wording stays key-level — it confirms each party
 // attests to the other's fingerprint, not a CA-vouched identity.
 async function augmentSigDetails(rows) {
-  let atts;
+  let atts, body;
   try {
     const res = await apiFetch('/api/attestations');
     if (!res.ok) return;
-    atts = (await res.json()).attestations || [];
+    // The WHOLE body, not only the attestations: `obliged`/`signed` are the ceremony's
+    // completeness (C16/C18) and live beside the list rather than inside it, because they are a
+    // fact about the roster and not about any one signature.
+    body = await res.json();
+    atts = body.attestations || [];
   } catch { return; }
   const attested = [];
   atts.forEach((a, i) => {
@@ -3840,6 +3854,34 @@ async function augmentSigDetails(rows) {
           ' signature(s) name a ceremony, and they do not all commit to the same one. '
           + 'This document was not produced by a single agreed proceeding.';
       }
+    }
+    els.sigDetailsBody.appendChild(p);
+  }
+  // **Whether the ceremony is FINISHED, which none of the lines above answer** (C16/C18).
+  //
+  // "Mutually co-signed" and "one proceeding" are both true of a nine-party ceremony abandoned at
+  // hop five: every signature verifies, every attestation cross-binds, and they all name the same
+  // record. C18's own words — a document like that renders *untampered, 5 signers, every
+  // attestation matched, one proceeding*, and no surface says four obliged parties never signed.
+  //
+  // **`obliged === 0` means the server could read no ceremony record**, which is an ordinary
+  // two-party co-sign or a document whose record is unreadable. Saying "0 of 0 signed" about one
+  // would be a verdict on a proceeding that does not exist, so the whole block is skipped — the
+  // same three-state discipline the proceeding line above uses.
+  //
+  // A `signs:false` convener is not counted as obliged, which is C16: a ceremony they carried to
+  // completion reads complete rather than short a signer.
+  const obliged = Number(body.obliged || 0);
+  const signedCount = Number(body.signed || 0);
+  if (obliged > 0) {
+    const p = document.createElement('div');
+    if (signedCount >= obliged) {
+      p.className = 'sigmutual';
+      p.textContent = '✓ Complete — all ' + obliged + ' obliged signer(s) of this ceremony have signed.';
+    } else {
+      p.className = 'sigatt-warn';
+      p.textContent = '⚠ Incomplete — ' + signedCount + ' of ' + obliged + ' obliged signer(s) '
+        + 'have signed. ' + (obliged - signedCount) + ' have not, so this ceremony is not finished.';
     }
     els.sigDetailsBody.appendChild(p);
   }

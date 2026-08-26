@@ -238,35 +238,38 @@ type Proceeding struct {
 	// so it is a value the signer picks; agreement among signers is not evidence that the thing
 	// they agree about exists.
 	Commitment string
+	// Signing is the fingerprints the record obliges to sign, in roster order, or nil when the
+	// caller has no record to read them from (P07.S05a).
+	//
+	// **It is what lets a verifier say a ceremony is INCOMPLETE.** C18's own text says the verdict
+	// was unbuildable because "nothing in the verdict path knows a roster"; a record reader
+	// arrived on that path at P07.S04, and this is the roster travelling the rest of the way. A
+	// document abandoned at hop 5 of nine renders *untampered, 5 signers, every attestation
+	// matched, one proceeding* without it, and no surface says four obliged parties never signed.
+	//
+	// **C16 falls out of the same list rather than needing a mechanism.** A `signs:false` convener
+	// is not in it, so a completed ceremony they carried renders complete instead of short a
+	// signer — which is C16 asking the verifier not to cry wolf, and C18 asking it to cry at all.
+	Signing []string
 }
 
-// ClaimsAProceeding reports whether any signature on an already-verified document names a
-// ceremony at all.
+// Completeness reports how many of the obliged signers have a VALID signature on this document,
+// and how many there are.
 //
-// **A cheap discriminator so the expensive lookup is conditional (P07.S04).** Answering "which
-// proceeding is this document's" costs an attachment extraction — a pdfcpu parse — and the
-// attestations route is request-handling code, where `CLAUDE.md` says work goes only if it is
-// unavoidable. It is avoidable here: a document whose signatures name no ceremony has no
-// proceeding to check them against, and that is the overwhelming majority of documents. This
-// reads the already-verified `/Reason` strings and parses nothing.
-//
-// It is NEARLY the discriminator the client uses to decide whether to say anything about
-// proceedings (`web/app.js`: `attested.filter((a) => a.rosterHash)`) — nearly, because this one
-// also requires the signature to be valid, and the client's does not. The difference is safe in
-// one direction only and that is why it is written down: a document whose ONLY ceremony token is
-// on an invalid signature skips the lookup here, so no commitment is supplied, so nothing reports
-// one proceeding — and the client then shows its warning, which is the honest answer for a
-// tampered signature naming a ceremony. The reverse would not be safe, and nothing produces it.
-func ClaimsAProceeding(st sign.Status) bool {
-	for _, sg := range st.Signers {
-		if !sg.Valid || !strings.Contains(sg.Reason, attestationTag) {
-			continue
-		}
-		if rosterToken.MatchString(sg.Reason) {
-			return true
+// Zero obliged means the caller supplied no record — an ordinary two-party co-sign, or a document
+// whose record could not be read — and a caller must say nothing about completeness rather than
+// report "0 of 0". `TestCompletenessSaysNothingWithoutARoster` holds that.
+func Completeness(ats []SignerAttestation, p Proceeding) (signed, obliged int) {
+	obliged = len(p.Signing)
+	for _, want := range p.Signing {
+		for _, a := range ats {
+			if a.Valid && strings.EqualFold(a.Fingerprint, want) {
+				signed++
+				break
+			}
 		}
 	}
-	return false
+	return signed, obliged
 }
 
 // Attestations reads each signer's attestation from an ALREADY VERIFIED document.

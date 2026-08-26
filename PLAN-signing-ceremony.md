@@ -4784,15 +4784,66 @@ Acceptance:
 - ~~The completed document renders as complete (C16) … the LAN tier is re-announced at hop k~~ **MOVED to P07.S05a, 2026-08-25 at this slice's grill** — rendering and harness work, downstream of the verb existing at all.
 
 
-#### P07.S05a — The ceremony's surfaces and the N-party driver *(C16, C18, C21, C22; D22 pin)* — **new, 2026-08-25, split out of S05**
+#### P07.S05a — The ceremony's surfaces *(C16, C18, C22; D22 pin)* — **new, 2026-08-25, split out of S05** *(in progress)*
+Tasks (grilled 2026-08-25 — `grills/2026-08-25-p07s05a-the-surfaces.md`; deepdive folded in):
+- T01 — the consent card names which signature it describes, including the hop-1 carry case where there is none.
+- T02 — the proceeding carries the obliged signers; the attestations route publishes signed-and-obliged counts; the client renders complete vs "5 of 9 obliged signers".
+- T03 — every hop writes the mirror before its response returns (C22).
+- T04 — red proofs; `recorded` moves.
+
+**THE MEASUREMENT THAT DECIDED T02's SHAPE: every cheap gate on the proceeding lookup is unsound,
+and the route pays one parse.** The lookup is a pdfcpu read on a request path, so the first two
+attempts were both gates. A **byte scan for the attachment's name is a FALSE NEGATIVE on a real
+record** — measured, `Extract` succeeds while `bytes.Contains(pdf, "nib-ceremony.json")` is false,
+because pdfcpu puts the file-spec into a compressed object stream, so it is not even a necessary
+condition. **Caching the proceeding beside `doc.sig` is unsound twice** — fourteen sites assign
+`sig`, so ADR-009's one door would have to be built first, and `ProceedingOf` takes `now` because
+the record expires. So the lookup is unconditional, and the hot-path rule is satisfied by what the
+route no longer does: before S04 it re-verified every signature over the whole file (size × signers)
+and now it reads the file once, independent of signature count, on a route a user opens by clicking.
+
+**TWO CLAUSES BELOW WERE ALREADY MET, BY P07.S05** — the carry route's return binding (driven
+through the real verb against a hostile receiver, both arms) and the baton replacement
+(`installCeremonyResult`, driven at nine hops). They were listed here when the split was drafted
+and settled into S05 as it was built. Recorded so this slice's ledger does not credit itself with
+another slice's work.
+
+**C18's OWN PREMISE STOPPED BEING TRUE AT P07.S04, and that is what makes it buildable.** C18 says
+the verdict is unbuildable because *"nothing in the verdict path knows a roster"* — true when
+written, and false since `ceremony.ProceedingOf` put a record reader on the attestations route. So
+the proceeding already crossing that boundary carries the obliged signers, and **C16 falls out of
+the same count** rather than needing a mechanism of its own: a `signs:false` convener is not
+obliged, so a completed ceremony with one renders complete.
+
+**C21 IS BLOCKED ON `/pending 247`, WHICH WAS DECLINED ON A MEASURED ARGUMENT — parked, see the
+closing batch.** `session.go:1137` sets the arm's bound to `MaxCeremonyLife`, and the comment gives
+the plan's own reason: *"the invitation carries no per-ceremony deadline"*. Adding one is 247,
+deferred behind three gates; G1 was discharged at S02b, and **G2 is not bookkeeping** — it measured
+that a tamperable arm-time deadline is *"negative in one direction, zero in the other"*, since an
+attacker who SHORTENS it closes the arm early and `MatchesRecord` cannot run until the document
+arrives. So C21 asks for the field 247 declined to build, for a reason 247 measured; **the clause
+is left unbuilt and the collision written here rather than quietly satisfied.** What is NOT blocked,
+and is worth separating: `checkCeremonyDeadline` already refuses to START a hop that cannot finish
+before the record expires, which is the harm C21's sentence is about. What remains is an arm that
+stops *waiting* — cost, a listener idle for up to thirty days.
+
+**SPLIT — the N-party driver becomes P07.S05b.** It asserts what a completed relay *renders*, so
+building them together makes the driver's first run also the renderer's first run.
 Scope: everything about a completed relay that is not the relay. Downstream of S05, which is what
 produces the document these clauses describe.
 Acceptance:
 - **The consent card names WHICH signature it is describing.** Owed from P07.S05: `coSignExchange` picks `ats[len(ats)-1]` for the gate, and at hop 1 of a carry route there is no prior signature at all, so it is handed the identity the TLS handshake pinned with `Valid` false. The retired `channel-binding-reads-the-first-signer` row proved the OLD consequence of getting that index wrong; nothing proves the new one.
-- The completed document **renders as complete** (C16) **and a five-of-nine document renders as incomplete, naming how many obliged signers are absent** (C18). The two are one piece of work and neither is safe alone.
-- **The carry route binds what comes back to what went out**: it asserts the byte prefix **and** runs S03's predicate over the returned document before the next hop is dialled, driven by a hostile hop *k* returning a different document. `Initiate` has this and says why; without it the convener relays whatever a malicious party hands back, and S03's door — which answers the *contributor's* question — is passed through by nobody.
-- A hop **replaces the baton rather than accumulating arrivals**: a nine-party ceremony leaves the convener with **one** ceremony document open, not nine against a cap of eight.
-- Every hop's output is **written to the mirror before the response returns** (C22), and an arm ends at the **record's** deadline rather than at `MaxCeremonyLife` (C21).
+- The completed document **renders as complete** (C16) **and a five-of-nine document renders as incomplete, naming how many obliged signers are absent** (C18). The two are one piece of work and neither is safe alone. **Built — and the clause had THREE doors, of which the plan named one.** The count is computed by `p2p.Completeness` and published by the attestations route; the two that were not planned were found by driving it: (1) the route's proceeding lookup was gated on `ClaimsAProceeding` — *does any signature name a ceremony* — so a **convened but unsigned** document, which is C18's own extreme case, reported no counts at all; (2) the details modal is reached through a button gated on `signers.length` and an early return on the same, so even a correct count was **unreachable** on that document. Both fixed, both guarded (`TestAConvenedDocumentReportsItsObligedSignersBeforeAnyoneHasSigned`, `ceremonycomplete.test.mjs`), both mutation-tested.
+- ~~The carry route binds what comes back to what went out…~~ **MET AT P07.S05** (`TestCarryRefusesAHostileHop`, both arms, through the real verb against a hostile receiver). Recorded rather than re-credited. `Initiate` has this and says why; without it the convener relays whatever a malicious party hands back, and S03's door — which answers the *contributor's* question — is passed through by nobody.
+- ~~A hop replaces the baton rather than accumulating arrivals…~~ **MET AT P07.S05** (`installCeremonyResult`, driven at nine hops). Recorded rather than re-credited.
+- Every hop's output is **written to the mirror before the response returns** (C22). **Built** — `mirrorHop`, called at `session.go:1543` before `writeJSON` and at `openArrival` (`:815`) for the receiving side, which C22's "before the response returns" wording does not reach because there is no response there. ~~and an arm ends at the record's deadline rather than at `MaxCeremonyLife` (C21)~~ — **C21 PARKED, see above.**
+- ~~The relay is expressed once … the LAN tier is re-announced at hop k~~ **MOVED to P07.S05b, 2026-08-25 at this slice's grill** — a harness slice, downstream of the surfaces it asserts.
+
+
+#### P07.S05b — The N-party driver at N=4 and N=9 *(C05, C21 pin; D22)* — **new, 2026-08-25, split out of S05a**
+Scope: the tier-4 harness for a completed relay. Downstream of S05a, which produces what it asserts.
+It also absorbs **P07.S03b's T03**, which was resequenced behind S05's carry verb and is the same run.
+Acceptance:
 - **The relay is expressed once, in the baton topology**, driven at N=4 and N=9 over both transports *(moved here from S01 at its grill, 2026-08-23 — this is the first slice with a carry verb, so it is the first slice in which the topology is final rather than a chain S05 would rewrite)*, with all 2(N−1) word-strings **pairwise distinct**, and each hop's document asserted to **contain the previous hop's as a byte prefix** — not merely to differ from it, which at N is a tautology, since `/api/pdf` returns that instance's active document and no instance is fetched twice in one relay.
 - The LAN tier is **re-announced when the convener's dial for hop k begins**: the announce window is five minutes, so from the fourth party onward a "same room" ceremony silently runs over the public DHT. Driven by a nine-party ceremony completing **with the DHT tier disabled**.
 

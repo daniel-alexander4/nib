@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -220,17 +221,30 @@ func TestTheAttestationsRouteDoesNotReVerify(t *testing.T) {
 	if !strings.Contains(body, "doc.sig") {
 		t.Error("the attestations route does not read the cached signature status")
 	}
-	// And the proceeding lookup stays CONDITIONAL: it is a pdfcpu parse, and CLAUDE.md's hot-path
-	// rule says work goes on a request path only when it is unavoidable. Here it is avoidable.
-	claims := strings.Index(body, "ClaimsAProceeding(")
-	lookup := strings.Index(body, "ProceedingOf(")
-	if claims < 0 || lookup < 0 {
-		t.Fatal("the attestations route no longer gates the proceeding lookup")
+	// **The proceeding lookup is UNCONDITIONAL, and that is the corrected state (P07.S05a).**
+	//
+	// This guard used to assert the lookup was GATED — on `ClaimsAProceeding`, so an ordinary
+	// document paid no pdfcpu parse. The gate was wrong on its own terms: a convened but UNSIGNED
+	// document has no signatures, so it never claimed a proceeding, and it is exactly C18's case.
+	// Measured at tier 6, the route reported no counts at all for it.
+	//
+	// Both cheaper replacements were measured and refused — a byte scan for the attachment name is
+	// a false negative on a real record (pdfcpu compresses the file-spec into an object stream),
+	// and caching is unsound because fourteen sites assign `sig` and the record expires. The
+	// reasoning is written out at the call site.
+	//
+	// **So what is guarded here is that the lookup happens at all**, and the hot-path property is
+	// carried by the two assertions above: the route does not re-verify, and it reads the cached
+	// status. That is the request-path work S04 removed, and it is an order of magnitude more than
+	// the one read this adds.
+	if !strings.Contains(body, "ProceedingOf(") {
+		t.Error("the attestations route no longer resolves the document's proceeding, so a " +
+			"ceremony document reports no obliged-signer count and C18 cannot render")
 	}
-	if claims > lookup {
-		t.Error("the attestations route resolves the document's proceeding BEFORE asking whether " +
-			"any signature names one, so every ordinary document pays a pdfcpu attachment parse " +
-			"per request for a question that does not apply to it")
+	if strings.Contains(body, "ClaimsAProceeding(") {
+		t.Error("the attestations route gates the proceeding lookup on a signature naming a " +
+			"ceremony — which a convened but UNSIGNED document never does, so C18's own extreme " +
+			"case (0 of N signed) reports nothing")
 	}
 }
 
@@ -417,5 +431,103 @@ func TestTheInitiateRouteInstallsThroughTheRelayDoor(t *testing.T) {
 		t.Error("the initiate route still calls addDoc, which is D10's UNCAPPED arrival path — " +
 			"correct for a document that arrives out of the blue, wrong for the same proceeding " +
 			"coming back one signature further on")
+	}
+}
+
+// TestACompletedHopReachesTheMirror — C22, and the gap it closes is that `WriteMirror` had exactly
+// ONE caller.
+//
+// Before this, the mirror recorded what a convener STARTED and never what anybody signed: the
+// durable record of a ceremony stopped at the moment it began. C22 says every hop's output is
+// written before the response returns.
+//
+// Driven through the door both sides call, with the three states it has to tell apart: a ceremony
+// document is mirrored, an ordinary co-sign is not, and neither is a failure.
+func TestACompletedHopReachesTheMirror(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	s := &Server{epoch: "test-epoch"}
+
+	doc := convenedBytes(t)
+	rec, err := ceremony.Extract(doc)
+	if err != nil {
+		t.Fatalf("setup: the fixture carries no record (%v)", err)
+	}
+	// Stimulus: nothing is there yet, so the file below is this call's doing.
+	dir, err := ceremony.MirrorDir(home+"/nib", rec.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "document.pdf")); err == nil {
+		t.Fatal("setup: the mirror already holds this ceremony's document")
+	}
+
+	s.mirrorHop(doc)
+	if _, err := os.Stat(filepath.Join(dir, "document.pdf")); err != nil {
+		t.Fatalf("a completed hop left no document in the mirror (%v) — this machine keeps no "+
+			"durable copy of what it just signed", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "record.json")); err != nil {
+		t.Errorf("the mirror holds a document and no record (%v)", err)
+	}
+
+	// **An ordinary co-sign is NOT mirrored**, and that is what stops this becoming "write every
+	// arrival to ~/nib/ceremonies": there is no ceremony, so there is nothing to record.
+	before := countFiles(t, filepath.Join(home, "nib", "ceremonies"))
+	plain, perr := testpdf.Text("an ordinary page")
+	if perr != nil {
+		t.Fatal(perr)
+	}
+	s.mirrorHop(plain)
+	if after := countFiles(t, filepath.Join(home, "nib", "ceremonies")); after != before {
+		t.Errorf("a document with no ceremony record wrote %d file(s) into the ceremony mirror",
+			after-before)
+	}
+}
+
+func countFiles(t *testing.T, root string) int {
+	t.Helper()
+	n := 0
+	_ = filepath.Walk(root, func(_ string, info os.FileInfo, err error) error {
+		if err == nil && info != nil && !info.IsDir() {
+			n++
+		}
+		return nil
+	})
+	return n
+}
+
+// TestBothSidesOfAHopMirrorIt — ADR-009 on the routing, and on C22's ORDER.
+//
+// `mirrorHop` writing correctly says nothing about whether either side calls it. And the order is
+// part of the clause: mirroring AFTER the response would tell the user the hop completed and then
+// write the record, so a crash in between leaves a user who was told their signature is safe and a
+// machine with no copy of it.
+func TestBothSidesOfAHopMirrorIt(t *testing.T) {
+	src, err := os.ReadFile("session.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	code := stripLineComments(string(src))
+	for _, fn := range []string{"handleSessionInitiate", "openArrival"} {
+		body := funcBodyFrom(code, strings.Index(code, "func (s *Server) "+fn+"("))
+		if body == "" {
+			t.Fatalf("cannot find %s", fn)
+		}
+		if !strings.Contains(body, "mirrorHop(") {
+			t.Errorf("%s does not mirror the hop's output — C22 says EVERY hop's output is "+
+				"written, and a rule holding at one of the two sides is the ADR-009 shape", fn)
+		}
+	}
+	// The ORDER, on the side that has a response to return.
+	body := funcBodyFrom(code, strings.Index(code, "func (s *Server) handleSessionInitiate("))
+	mirror := strings.Index(body, "mirrorHop(")
+	reply := strings.LastIndex(body, "writeJSON(")
+	if mirror < 0 || reply < 0 {
+		t.Fatal("handleSessionInitiate: cannot find both the mirror and the reply")
+	}
+	if mirror > reply {
+		t.Error("the hop is mirrored AFTER the response returns, so a crash in between leaves a " +
+			"user who was told their signature is safe and a machine with no copy of it")
 	}
 }

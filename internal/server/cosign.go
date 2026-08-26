@@ -107,6 +107,20 @@ type attestationView struct {
 
 type attestationsResponse struct {
 	Attestations []attestationView `json:"attestations"`
+	// Obliged is how many parties this document's ceremony record obliges to sign, and Signed how
+	// many of them have a valid signature on it (C16/C18, P07.S05a).
+	//
+	// **Zero obliged means "no ceremony record was readable here" and the client must say
+	// nothing** — an ordinary two-party co-sign has no roster, and reporting "0 of 0 signed"
+	// about one would be a verdict on a proceeding that does not exist. It is the same
+	// three-state discipline the proceeding line already uses.
+	//
+	// Together they are C18: a nine-party ceremony abandoned at hop 5 renders *untampered, 5
+	// signers, every attestation matched, one proceeding* without them, and no surface says four
+	// obliged parties never signed. And they are C16: a `signs:false` convener is not obliged, so
+	// a ceremony they carried to completion reads complete rather than short a signer.
+	Obliged int `json:"obliged,omitempty"`
+	Signed  int `json:"signed,omitempty"`
 }
 
 // handleAttestations returns the co-signing attestations on the open document —
@@ -138,10 +152,32 @@ func (s *Server) handleAttestations(w http.ResponseWriter, r *http.Request) {
 	// is request-handling code. A document whose signatures name no ceremony has no proceeding to
 	// be checked against, so the question is not asked — the same discriminator the client uses
 	// before it says anything about proceedings at all.
-	proc := p2p.Proceeding{}
-	if p2p.ClaimsAProceeding(doc.sig) {
-		proc = ceremony.ProceedingOf(s.docBytes(doc), time.Now())
-	}
+	// **The proceeding lookup is UNCONDITIONAL, and every cheaper gate was measured and refused
+	// (P07.S05a).**
+	//
+	// It was `ClaimsAProceeding` — does any signature name a ceremony. That is the right question
+	// for the agreement verdict and the wrong one for completeness: a **convened but unsigned**
+	// document has no signatures at all and is exactly the case C18 is about, 0 of N obliged
+	// signers. Measured at tier 6, the route answered `{"attestations":[]}` with no counts for
+	// precisely that document.
+	//
+	// Two cheaper gates were built and both are unsound:
+	//
+	//   - **A byte scan for the attachment's name is a FALSE NEGATIVE on a real record.** Measured:
+	//     `Extract` succeeds while `bytes.Contains(pdf, "nib-ceremony.json")` is false, because
+	//     pdfcpu puts the file-spec name in a compressed object stream. It is not even a necessary
+	//     condition, so it cannot gate anything.
+	//   - **Caching the proceeding beside `doc.sig` is unsound twice over.** Fourteen sites assign
+	//     `sig`, so there is no one door to hang it on (ADR-009 would have to be built first), and
+	//     `ProceedingOf` takes `now` because the record expires — a cached proceeding answers a
+	//     question about a moment that has passed.
+	//
+	// So it is one pdfcpu read per request on this route, and the hot-path rule is satisfied by
+	// what the route no longer does rather than by a gate. Before S04 it called `ReadAttestations`,
+	// which re-verifies every signature over the whole file: size × signers. This is one read of
+	// the file, independent of signature count, and the route is opened by a user clicking the
+	// signature-details button — not a per-frame path. Measured at ~0.5 ms on a 3 KB document.
+	proc := ceremony.ProceedingOf(s.docBytes(doc), time.Now())
 	atts := p2p.Attestations(doc.sig, proc)
 	views := make([]attestationView, 0, len(atts))
 	for _, a := range atts {
@@ -151,7 +187,8 @@ func (s *Server) handleAttestations(w http.ResponseWriter, r *http.Request) {
 		}
 		views = append(views, view)
 	}
-	writeJSON(w, attestationsResponse{Attestations: views})
+	signed, obliged := p2p.Completeness(atts, proc)
+	writeJSON(w, attestationsResponse{Attestations: views, Signed: signed, Obliged: obliged})
 }
 
 func (s *Server) handleCosignQuote(w http.ResponseWriter, r *http.Request) {
