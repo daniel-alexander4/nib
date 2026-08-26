@@ -1745,3 +1745,24 @@ So it could never have distinguished the two shapes and would have reported the 
 **No row for that**, and the reason is the shape of it: the fix is a harness grep, and a red proof
 replays a patch against the product. What guards it instead is that the wrapper it keyed on no
 longer exists — the row above is what keeps it gone.
+
+## P07.S04 — "one proceeding" stops meaning "the signers agree" (v1.117.169)
+
+Five rows, all tier 1. **Two restore the state the product was in**, and one restores a defect a
+mutation pass found that neither existing test could reach.
+
+| the defect, restored | what goes red | the check |
+|---|---|---|
+| **one proceeding means the signers agree** *(replayable: `agreement-among-signers-is-a-proceeding`)* | `is reported as part of one proceeding` | `TestAgreementAmongSignersIsNotAProceeding`. Measured at the grill: two parties signing with the same arbitrary `abab…` value **they chose themselves**, on a document with **no ceremony record at all**, reported one proceeding on every signature — and the client renders *"✓ One proceeding — every signature on this document commits to the same ceremony."* The token is inside the signed `/Reason`, so it is a value the signer picks |
+| **an unsigned record supplies a commitment** *(replayable: `unsigned-record-supplies-a-commitment`)* | `commits to a record NOBODY SIGNED` | `TestAnUnsignedRecordIsNotAProceeding`. **Found by mutation, not by review** — neither existing arm went red against it, because both compare against a *different* hash, so a commitment lifted from an unverified record still failed to match and the tests stayed green. The third arm is same roster, same id, record unsigned |
+| **the token loses its format version** *(replayable: `roster-token-loses-its-version`)* | `does not carry the token in its documented shape` | `TestTheRosterTokenIsWellFormedWhereItIsActuallyBuilt`. `FormatVersion` is the first substantive axis of `rosterPreimage`, so two builds at different versions digest the identical roster to different hashes — and the client's honest reading was *"not produced by a single agreed proceeding"*, an accusation about people who agreed on everything, caused by one of them updating Nib |
+| **a commitment is written without its version** *(replayable: `bare-commitment-written-without-its-version`)* | `was written into the signature` | `TestARosterHashWithoutAVersionCarriesNoToken`. **Both, or neither** — emitting nothing is the fail-closed direction, because a missing commitment disqualifies. The reader refuses version 0 for the same reason, so the pair cannot come through one door and not the other. Three fixtures failed loudly on this rule when it landed rather than silently carrying no commitment |
+| **the attestations route re-verifies** *(replayable: `attestations-route-re-verifies`)* | `which verifies the whole` | `TestTheAttestationsRouteDoesNotReVerify`. Signature-count × document-**size** work on a request path with `document.sig` cached beside the bytes. The guard is structural **and says why**: measured, nine signatures on 31 KB is single-digit milliseconds, so the plan's 5.2 s needs ~95 MiB — a timing assertion on a small fixture measures noise, and a large fixture costs a minute on every `go test` |
+
+### The UI branch has no row, and the reader scan is why it exists at all
+
+`RosterVersion` is published, so `TestEveryPublishedObservableHasANamedReader` refused it until the
+client had a branch that used it — which is how the "this is a version difference, not a
+disagreement" sentence came to be written. That scan is a standing guard over every published
+field, so a row restoring "the field is published and nobody is told" would duplicate a check that
+already runs on every `go test`.
