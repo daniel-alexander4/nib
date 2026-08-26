@@ -1779,3 +1779,24 @@ all three were found by `./build/redproof.sh --all` rather than by anything else
 worth naming: **a red proof is coupled to the SHAPE of the code around its defect, not only to the
 defect.** A row whose neighbourhood is being actively edited goes stale without anybody touching
 the thing it proves — which is exactly why the sweep has to be a command rather than an intention.
+
+## P07.S05 — the carry route (v1.117.172–.173)
+
+Four rows for the half of the slice that landed, all tier 1. **One of them restores a direction the
+plan's own task list had written the wrong way round.**
+
+| the defect, restored | what goes red | the check |
+|---|---|---|
+| **a signature accepts its successor** *(replayable: `a-signature-accepts-its-successor`)* | `want A` | `TestASignatureAcceptsItsPREDECESSOR`. `crossBind` matches only a party who has **already** signed, so accepting forward leaves every signature unmatched until its successor lands and the last one unmatched forever. Measured when the task was implemented as written: three two-party ceremony tests failed with *"peer's signature does not accept you"* |
+| **the receiver refuses a carrier because it did not sign** *(replayable: `carrier-refused-because-it-did-not-sign`)* | `the signer refused the carrier` | `TestAFourPartyCeremonyCompletesOverTheCarryRoute`, both transports. The state the product was in: the binding compared the last signer to the **wire peer**, so `coSignExchange` answered *"the document was not signed by the connected peer"* on a hop `AdmitContribution` had already admitted |
+| **the cross-binding rule stops firing** *(replayable: `carry-relays-a-hostile-hop`)* | `prefix not cross-bound: admitted` | `TestTheGateRefusesEachThingByName`. **The exemption inverted at this slice and its fixture inverted with it** — "all but the LAST" was written while `AcceptedPeer` named the successor; it is "all but the FIRST" now, caught by a four-party carry ceremony failing at hop 2 |
+| **the route always contributes** *(replayable: `the-route-always-contributes`)* | `the route can no longer both carry and contribute` | `TestWhetherYouSignIsReadOffTheRoster`. A `signs:false` convener would sign a ceremony they were convened not to sign, and a signature cannot be taken back off a document. The guard also asserts the **order**: the decision must come before `buildCoSigned` |
+
+### Carry's two return checks have no row yet, and the reason is the fixture
+
+`TestCarryRefusesAHostileHop` drives both — a reply that is not a prefix extension, and one that is
+but was signed by the wrong party — through a helper rather than through the verb, because a
+hostile hop needs a hostile PEER and that is a second process or a hand-rolled frame writer. A red
+proof patches the product and reruns a check; here the check would still pass, because the helper
+carries its own copy of the two tests. **Recorded as owed** rather than counted: it lands with the
+rest of S05 when the route can be driven end to end.
