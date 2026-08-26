@@ -4842,7 +4842,7 @@ Acceptance:
 - ~~The relay is expressed once … the LAN tier is re-announced at hop k~~ **MOVED to P07.S05b, 2026-08-25 at this slice's grill** — a harness slice, downstream of the surfaces it asserts.
 
 
-#### P07.S05b — The N-party driver at N=4 and N=9 *(C05, C21 pin; D22)* — **new, 2026-08-25, split out of S05a** *(in progress)*
+#### P07.S05b — The N-party driver at N=4 and N=9 *(C05, C21 pin; D22)* — **new, 2026-08-25, split out of S05a** *(done 2026-08-25, v1.117.181 — the relay COMPLETES at N=4 and N=9 over both transports; it absorbed P07.S03b's T03 and found three production defects, none of them in the relay; the LAN clause moved to S05c)*
 Scope: the tier-4 harness for a completed relay. Downstream of S05a, which produces what it asserts.
 It also absorbs **P07.S03b's T03**, which was resequenced behind S05's carry verb and is the same run.
 
@@ -4859,7 +4859,7 @@ and the trigger is recorded there rather than skipped):
   no-re-arm check to have teeth: with a fixed port the address is identical before and after a
   re-arm, which is the vacuous green the clause itself warns about.)*
 - ~~T04 — the seek announcement~~ and ~~T05 — `--lan -n 9`~~ **MOVED to P07.S05c**, see above.
-- T06 — red proofs; `recorded` moves.
+- T06 — red proofs; `recorded` moves. *(done 2026-08-25, v1.117.181 — four rows, and THREE of them record the state the product had been shipping in for four slices. The fourth is **tier 4**, because the accumulation property needs a real relay with enough hops to cross ADR-005's cap and is a DELTA rather than a total. `recorded` 117 → 121.)*
 
 **BUILDING T01–T02 FOUND THREE DEFECTS, AND THE LARGEST IS P07.S04's MISSING WRITER.**
 

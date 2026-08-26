@@ -1888,3 +1888,38 @@ own comment now carries the correction, and the half of its claim that was wrong
 conditional) points at `completeness-gated-on-a-signature` instead.
 
 `recorded` 112 → 117.
+
+---
+
+## P07.S05b — a nine-party ceremony completes, and S04's writer was never there (v1.117.180–.181)
+
+Four rows. **Three record a state the product had been shipping in for four slices**, which is the
+slice's finding rather than its incidental output: the driver that completes a relay is what made
+them visible, and none of them is about the relay.
+
+| Defect reintroduced | Check that fired | What it said |
+|---|---|---|
+| `ceremony-signature-names-no-ceremony` — `StampCommitment` is a no-op, so no contribution carries `[NibRoster:…]` | `TestACeremonySignatureNamesItsCeremony`, tier 1 | "a signature that does not name its proceeding leaves OneProceeding false forever and L3's substituted-proceeding refusal with nothing to compare" |
+| `one-contribution-door-skips-the-commitment` — the initiating door stops calling the one door | `TestEveryContributionEntryPointReachesTheGate`, tier 1 | "buildCoSigned adds a signature block without stamping the ceremony's commitment on it" |
+| `ceremony-hop-forced-onto-quic` — the glare path is selected without consulting the transport | `TestACeremonyHopIsNotForcedOntoQUIC`, tier 1 | "so a TCP ceremony hop races an empty candidate set and spins until connectDeadline with the receiver armed and idle" |
+| `relay-accumulates-instead-of-replacing` — `installCeremonyResult` adds instead of replacing | `./build/pairrepro.sh -n 4`, **tier 4** | "8 hops added 8 documents to the convener — the baton is accumulating instead of being replaced, and at N=9 ADR-005's cap of 8 refuses the ceremony partway through" |
+
+**The first row is the one worth reading twice.** P07.S04's whole clause 2 was *"OneProceeding
+means agreement WITH the document's record"*, and it shipped the token format, the reader, D32's
+version-skew sentence and L3's proceeding check — **with no writer**. Every ceremony signature
+carried no commitment, `OneProceeding` was false on every real document, and
+`ErrProceedingMismatch` compared against a field that was always `""`.
+
+**And the guard written to notice could not have.**
+`TestTheCommitmentCheckIsLimitedUntilS04` asserted "no production attestation carries a RosterHash"
+and had a `Skip` arm for the day one did — over a fixture it hand-signed with an explicit empty
+commitment. It measured its own input, so the arm was unreachable whatever production did. That is
+the difference between a boundary asserted and a boundary *described*, and it cost four slices.
+
+**The fourth row is tier 4 and nothing cheaper can see it.** The failure needs a real relay with
+enough hops to cross ADR-005's cap, and the property is a **delta** rather than a total — eight
+hops must leave the same footprint as one. A unit test over `installCeremonyResult` asserts the
+function replaces; this asserts a ceremony walked end to end through the real routes actually goes
+through that door at every hop.
+
+`recorded` 117 → 121.

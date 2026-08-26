@@ -1,0 +1,14 @@
+diff --git a/internal/p2p/l3.go b/internal/p2p/l3.go
+index f1fb053..eb7cd8e 100644
+--- a/internal/p2p/l3.go
++++ b/internal/p2p/l3.go
+@@ -87,8 +87,7 @@ func StampCommitment(att *Attestation, r Roster) {
+ 	if r.Commitment == "" || r.CommitmentVersion <= 0 {
+ 		return
+ 	}
+-	att.RosterHash = r.Commitment
+-	att.RosterVersion = r.CommitmentVersion
++	_ = att
+ }
+ 
+ var (
