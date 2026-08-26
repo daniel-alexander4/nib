@@ -1719,3 +1719,29 @@ of eighty-one; this one found two of ninety-nine, on the same day the change tha
 written. The difference is that `./build/redproof.sh --all` now exists, so the gap between "a row
 stopped being valid" and "somebody noticed" is one command rather than one archaeology project.
 Both re-recorded against `9f8a36e` and replaying green.
+
+## P07.S03b — the refusal that arrived and was then dressed as a network fault (v1.117.165–.167)
+
+One row, tier 1. It is the layer above `P07.S03a`'s, and it is what made that slice's fix
+invisible from outside.
+
+| the defect, restored | what goes red | the check |
+|---|---|---|
+| **a refusal is reported as a connect failure** *(replayable: `refusal-reported-as-a-connect-failure`)* | `a refusal wearing a transport sentence` | `TestARefusalIsNotReportedAsAConnectFailure`. Both lifts are in the patch, because a rule enforced at one of two doors is the ADR-009 shape: `diagnosis.go` reaches `connectFailure` independently of the handler. Measured at **tier 4**: the refusal crossed the wire correctly and came out of the API as `{"error":"could not connect to peer: a co-signature takes exactly one prior signer"}` — a 502, wrapped in a false claim, and on the ceremony path also given a D19 *network* cause |
+
+The guard asserts the **whole enumeration** and the **routing**, not one sentence: the failure mode
+is a class of refusals falling through, so a test naming one of them would go green while eight
+others still landed in the 502. Its control keeps the predicate from becoming "everything is a
+refusal" — a genuine dial failure still gets its connect sentence.
+
+### And the probe that should have caught it could not
+
+`pairrepro.sh -n 4` reported *"the refusal arrived FLATTENED to EOF"* about a refusal that had
+arrived perfectly well by name. Two independent defects in the probe, either sufficient: its
+by-name branch grepped a message P07.S03a had renamed, and its fallback branch matched
+`could not connect to peer` — the server's **generic wrapper**, present on the named refusal too.
+So it could never have distinguished the two shapes and would have reported the old one forever.
+
+**No row for that**, and the reason is the shape of it: the fix is a harness grep, and a red proof
+replays a patch against the product. What guards it instead is that the wrapper it keyed on no
+longer exists — the row above is what keeps it gone.
