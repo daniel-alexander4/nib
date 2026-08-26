@@ -1627,3 +1627,134 @@ func hexOf(b []byte) string { return hex.EncodeToString(b) }
 
 // signVerify is sign.Verify, named locally so these tests read as "the already-verified status".
 func signVerify(pdf []byte) sign.Status { return sign.Verify(pdf) }
+
+// TestAnIncompleteCeremonyIsReportedIncomplete — C18, driven at five of nine, and C16 with it.
+//
+// C18's own words for what happens without this: a nine-party ceremony abandoned at hop five
+// renders *untampered, 5 signers, every attestation matched, one proceeding* — every one of those
+// true — and **no surface says four obliged parties never signed**. "Mutually co-signed" and "one
+// proceeding" are both facts about the signatures that ARE there.
+//
+// C16 is the same count read the other way: a `signs:false` convener is not obliged, so a ceremony
+// they carried to completion must read complete rather than short a signer. Both are driven here
+// because they are one mechanism and a test for either alone would pass on a build that had only
+// that half.
+func TestAnIncompleteCeremonyIsReportedIncomplete(t *testing.T) {
+	cert, key, cfp := identity(t, "Convener")
+	base, err := testpdf.Form()
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Nine parties: a NON-SIGNING convener plus eight obliged signers, so the roster length and
+	// the obliged count differ — otherwise "obliged" and "everyone" are the same number and this
+	// cannot tell them apart.
+	type signer struct {
+		cert, key []byte
+		fp        string
+	}
+	var signers []signer
+	r := draft(t, cfp)
+	r.Roster[0].Signs = false
+	for i := 0; i < 8; i++ {
+		c, k, fp := identity(t, string(rune('A'+i)))
+		signers = append(signers, signer{c, k, fp})
+		r.Roster = append(r.Roster, Party{Fingerprint: fp, Label: string(rune('A' + i)), Signs: true})
+	}
+	h, err := DocumentHash(base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.DocHash = h
+	if err := r.Sign(cert, key); err != nil {
+		t.Fatal(err)
+	}
+	tok, err := r.RosterHash()
+	if err != nil {
+		t.Fatal(err)
+	}
+	commitment := hex.EncodeToString(tok)
+	doc, err := Embed(base, r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Stimulus: nine roster entries, EIGHT obliged. A test that could not tell those apart would
+	// pass on a build that counted the roster.
+	proc := ProceedingOf(doc, time.Now())
+	if len(r.Roster) != 9 || len(proc.Signing) != 8 {
+		t.Fatalf("setup: %d roster entries and %d obliged — they must DIFFER, or the "+
+			"non-signing convener is invisible to every assertion below",
+			len(r.Roster), len(proc.Signing))
+	}
+
+	// Five of the eight sign, then stop.
+	partial := doc
+	for i := 0; i < 5; i++ {
+		prev := ""
+		if i > 0 {
+			prev = signers[i-1].fp
+		}
+		partial = signWithRoster(t, partial, signers[i].cert, signers[i].key, signers[i].fp,
+			prev, commitment)
+	}
+	ats := p2p.Attestations(sign.Verify(partial), ProceedingOf(partial, time.Now()))
+	signed, obliged := p2p.Completeness(ats, ProceedingOf(partial, time.Now()))
+	if obliged != 8 {
+		t.Errorf("an abandoned ceremony reports %d obliged signers, want 8", obliged)
+	}
+	if signed != 5 {
+		t.Errorf("an abandoned ceremony reports %d signed, want 5 — the client renders this as "+
+			"\"5 of 8 obliged signer(s) have signed\", and without it the document reads as "+
+			"untampered, five signers, one proceeding, with nothing saying three never signed",
+			signed)
+	}
+
+	// And the completion, which is C16: all eight sign, the convener signs nothing, and it must
+	// read COMPLETE rather than short the convener.
+	full := partial
+	for i := 5; i < 8; i++ {
+		full = signWithRoster(t, full, signers[i].cert, signers[i].key, signers[i].fp,
+			signers[i-1].fp, commitment)
+	}
+	fats := p2p.Attestations(sign.Verify(full), ProceedingOf(full, time.Now()))
+	fsigned, fobliged := p2p.Completeness(fats, ProceedingOf(full, time.Now()))
+	if fsigned != fobliged {
+		t.Errorf("a COMPLETED ceremony carried by a non-signing convener reports %d of %d — it "+
+			"is short its convener, who was convened not to sign. That is C16: the verifier "+
+			"must not cry wolf over a party with no obligation.", fsigned, fobliged)
+	}
+	// The convener really did sign nothing, or "complete" above is complete for the wrong reason.
+	for _, a := range fats {
+		if strings.EqualFold(a.Fingerprint, cfp) {
+			t.Fatal("setup: the convener signed, so C16's case is not the one being driven")
+		}
+	}
+}
+
+// TestCompletenessSaysNothingWithoutARoster — the third state, and the one that would misreport
+// every ordinary co-sign in the product.
+//
+// A two-party co-sign carries no record, so there is no roster and no obligation. Reporting "0 of
+// 0 signed" about one is a verdict on a proceeding that does not exist — and the client's whole
+// block keys on `obliged > 0`, so a non-zero here would put a completeness line on every document
+// Nib has ever signed.
+func TestCompletenessSaysNothingWithoutARoster(t *testing.T) {
+	aCert, aKey, afp := identity(t, "A")
+	bCert, bKey, bfp := identity(t, "B")
+	base, err := testpdf.Form()
+	if err != nil {
+		t.Fatal(err)
+	}
+	plain := signWithRoster(t, base, aCert, aKey, afp, bfp, "")
+	plain = signWithRoster(t, plain, bCert, bKey, bfp, afp, "")
+	ats := p2p.Attestations(sign.Verify(plain), ProceedingOf(plain, time.Now()))
+	// Stimulus: it really is a signed two-party document, so a zero below is about the ROSTER.
+	if len(ats) != 2 {
+		t.Fatalf("setup: %d attestations on the two-party fixture", len(ats))
+	}
+	signed, obliged := p2p.Completeness(ats, ProceedingOf(plain, time.Now()))
+	if obliged != 0 || signed != 0 {
+		t.Errorf("an ordinary two-party co-sign reports %d of %d obliged — it has no ceremony "+
+			"record and no obligation, and the client would put a completeness line on every "+
+			"document Nib has ever signed", signed, obliged)
+	}
+}

@@ -810,6 +810,9 @@ func (s *Server) serveOneSession(anchor consentAnchor, cer *ceremonyID, conn *p2
 // openArrival opens a co-signed document alongside whatever the user already had (D10) — an arrival
 // opens, never replaces. Named so a reload does not show it as "Untitled".
 func (s *Server) openArrival(label string, final []byte) {
+	// C22 on the RECEIVING side too — the same fact about the same party, and the side C22's
+	// "before the response returns" wording does not reach because there is no response here.
+	s.mirrorHop(final)
 	s.addDoc(&document{name: arrivalDocName(label), data: final, sig: sign.Verify(final)})
 }
 
@@ -1534,6 +1537,10 @@ func (s *Server) handleSessionInitiate(w http.ResponseWriter, r *http.Request) {
 	if wroteCommitFailure(w, ierr) {
 		return
 	}
+	// C22: **before the response returns**, not after. A caller that mirrored afterwards would
+	// have told the user the hop completed and then written the record — so a crash in between
+	// leaves a user who was told their signature is safe and a machine with no copy of it.
+	s.mirrorHop(final)
 	writeJSON(w, s.docResponse(installed))
 }
 

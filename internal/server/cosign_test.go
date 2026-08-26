@@ -176,3 +176,63 @@ func TestAttestationsEndpoint(t *testing.T) {
 		t.Errorf("Bob should not be pinned: %+v", b)
 	}
 }
+
+// TestAConvenedDocumentReportsItsObligedSignersBeforeAnyoneHasSigned — C18's extreme case.
+//
+// A **convened but unsigned** document is the one C18 is most about: two parties are obliged
+// and neither has signed, so nothing about it is complete and no signature exists to say so.
+// The route reported nothing at all for it, because the proceeding lookup was gated on
+// `ClaimsAProceeding` — *does any signature name a ceremony* — and a document with no
+// signatures never does. Measured at tier 6 (P07.S05a): `{"attestations":[]}`.
+//
+// **This also pins the declared limit of `inCeremony`.** The document is opened COLD from
+// disk, so `doc.ceremony` is empty and `inCeremony` is false — while the counts, which come
+// from the record in the bytes, are exactly right. The two answer different questions and
+// this test is where that is visible rather than inferred.
+func TestAConvenedDocumentReportsItsObligedSignersBeforeAnyoneHasSigned(t *testing.T) {
+	ts, _ := startServer(t)
+	c, csrf := authedClient(t, ts)
+
+	pdf := docWithRecord(t, time.Hour, false)
+	path := filepath.Join(t.TempDir(), "convened.pdf")
+	if err := os.WriteFile(path, pdf, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	resp := write(t, c, csrf, http.MethodPost, ts.URL+"/api/open", "application/json", jsonBody(openRequest{Path: path}))
+	var opened docResponse
+	json.NewDecoder(resp.Body).Decode(&opened)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("open status = %d", resp.StatusCode)
+	}
+	// STIMULUS: the fixture really is unsigned. Without this the counts below could be read
+	// off a document that had been signed by the fixture builder, which is a different case
+	// and would not exercise the gate that was wrong.
+	if n := len(opened.Signature.Signers); n != 0 {
+		t.Fatalf("the fixture carries %d signature(s); this case is about a document with none", n)
+	}
+
+	r, err := c.Get(ts.URL + "/api/attestations")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer r.Body.Close()
+	var got attestationsResponse
+	json.NewDecoder(r.Body).Decode(&got)
+	if len(got.Attestations) != 0 {
+		t.Errorf("attestations = %d on an unsigned document, want 0", len(got.Attestations))
+	}
+	if got.Obliged != 2 {
+		t.Errorf("obliged = %d, want 2 — the route reports no roster for a convened document, "+
+			"so C18 cannot say that nobody has signed yet", got.Obliged)
+	}
+	if got.Signed != 0 {
+		t.Errorf("signed = %d on a document nobody has signed, want 0", got.Signed)
+	}
+	// The declared limit, asserted rather than left to be discovered: opened cold, the server
+	// does not know this document belongs to a ceremony IT is running, so the client's
+	// details button stays gated on signatures. The counts are still right.
+	if opened.InCeremony {
+		t.Error("a document opened from disk reports inCeremony, which this process cannot know")
+	}
+}

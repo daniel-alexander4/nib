@@ -153,6 +153,33 @@ if [ "$code" = 200 ]; then
   [ "$CID2" != "$CID" ] && ok "A convened a SECOND ceremony with the same counterparty" || no "second ceremony" "same id"
 else no "second convene" "$code $(cat "$SP/resp.json")"; fi
 
+# CLAUSE 7 — C18/C16 (P07.S05a): the convened document reports how many obliged signers it has,
+# and that NONE of them have signed yet.
+#
+# This is the count a verifier needs before it can say a ceremony is incomplete. On the convened
+# document it is the extreme case — two obliged, zero signed — and it is drivable here because
+# convening is the one ceremony act this tier completes.
+curl -fsS -c "$SP/A.jar" -b "$SP/A.jar" "$A_BASE/api/attestations" -o "$SP/atts.json"
+python3 - "$SP/atts.json" <<'PYC' && ok "the convened document reports 0 of 2 obliged signers (C18)" || no "C18 counts" "$(head -c 300 "$SP/atts.json")"
+import json, sys
+d = json.load(open(sys.argv[1]))
+ob, sg = d.get("obliged", 0), d.get("signed", 0)
+sys.exit(0 if ob == 2 and sg == 0 else 1)
+PYC
+
+# CLAUSE 8 — the same route says NOTHING about completeness for a document with no ceremony.
+# Without this, "obliged: 2" above is equally true of a route that reports the signer count under
+# a different name, and every ordinary co-sign in the product would grow a completeness line.
+code=$(post B /api/open "{\"path\":\"$SP/lease.pdf\"}")
+if [ "$code" = 200 ]; then
+  curl -fsS -c "$SP/B.jar" -b "$SP/B.jar" "$B_BASE/api/attestations" -o "$SP/atts_plain.json"
+  python3 - "$SP/atts_plain.json" <<'PYP' && ok "a document with no ceremony reports no obliged signers at all" || no "C18 third state" "$(head -c 200 "$SP/atts_plain.json")"
+import json, sys
+d = json.load(open(sys.argv[1]))
+sys.exit(0 if not d.get("obliged") and not d.get("signed") else 1)
+PYP
+else no "open a plain document on B" "$code"; fi
+
 # CLAUSE 7 — L3 (P07.S03): B tries to sign out of turn, through the real initiate route.
 #
 # A is first in the roster and has not signed. B initiating a co-sign is therefore a contribution

@@ -3,6 +3,7 @@ package p2p
 import (
 	"bytes"
 	"context"
+	"encoding/hex"
 	"errors"
 	"os"
 	"strings"
@@ -753,4 +754,86 @@ func hostileReceiver(t *testing.T, ln Listener, cert, key []byte, reply []byte, 
 		}
 		done <- writeFrame(conn.Channel.Stream, reply)
 	}()
+}
+
+// TestTheConsentGateIsGivenTheRightSignature — the guard P07.S05 owed, and the one the retired
+// `channel-binding-reads-the-first-signer` row used to provide by accident.
+//
+// `coSignExchange` hands the `Confirmer` one `SignerAttestation` — the party the user is being
+// asked to build on. That used to be protected sideways: the same `peer` variable fed the channel
+// bindings, so getting the index wrong failed a binding. P07.S05 replaced those bindings with L3
+// inside a ceremony, so **the index now decides only what the consent card describes, and nothing
+// checked it.** The row that proved the old consequence was retired rather than left standing over
+// a claim it no longer proved; this is the new claim.
+//
+// Two states, and the second is what the carry route introduced:
+//
+//   - signatures present → the LAST one, the party whose contribution this builds on;
+//   - none at all → the identity the TLS handshake pinned, with no signature and `Valid` false,
+//     because at hop 1 of a carry route the convener has signed nothing and saying anything else
+//     would describe a signature that does not exist.
+func TestTheConsentGateIsGivenTheRightSignature(t *testing.T) {
+	conv, a, b := l3Identity(t, "Convener"), l3Identity(t, "A"), l3Identity(t, "B")
+	me := l3Identity(t, "Me")
+	roster := Roster{Entries: []RosterEntry{
+		{Fingerprint: conv.fp, Signs: false},
+		{Fingerprint: a.fp, Signs: true},
+		{Fingerprint: b.fp, Signs: true},
+		{Fingerprint: me.fp, Signs: true},
+	}}
+	convFP, _ := hex.DecodeString(conv.fp)
+
+	// State 1: two signatures, and the gate must see the LAST.
+	doc := l3Chain(t, l3Prepared(t), []l3Party{a, b}, []l3Party{a, a}, "")
+	ats := ReadAttestations(doc)
+	if len(ats) != 2 || strings.EqualFold(ats[0].Fingerprint, ats[1].Fingerprint) {
+		t.Fatalf("setup: the fixture's two signers must DIFFER, or first and last are the same "+
+			"attestation and this cannot discriminate: %+v", ats)
+	}
+	rec := &recordingConfirmer{}
+	if _, err := coSignExchange(me.cert, me.key, convFP, "Convener", doc, rec, nil, roster); err != nil {
+		t.Fatalf("the hop was refused: %v", err)
+	}
+	if !strings.EqualFold(rec.seen.Fingerprint, b.fp) {
+		t.Errorf("the consent gate was shown %s, want the LAST signer B (%s) — the card names "+
+			"the party whose contribution the user is being asked to build on, and at every hop "+
+			"past the first that is not the one who signed FIRST",
+			shortFP(rec.seen.Fingerprint), shortFP(b.fp))
+	}
+
+	// State 2: the carry route's first hop — no signatures at all.
+	first := l3Identity(t, "First")
+	r2 := Roster{Entries: []RosterEntry{
+		{Fingerprint: conv.fp, Signs: false},
+		{Fingerprint: first.fp, Signs: true},
+	}}
+	unsigned := l3Prepared(t)
+	if n := len(ReadAttestations(unsigned)); n != 0 {
+		t.Fatalf("setup: the fixture carries %d signatures, want none", n)
+	}
+	rec2 := &recordingConfirmer{}
+	if _, err := coSignExchange(first.cert, first.key, convFP, "Convener", unsigned, rec2, nil, r2); err != nil {
+		t.Fatalf("hop 1 of a carry route was refused: %v", err)
+	}
+	if !strings.EqualFold(rec2.seen.Fingerprint, conv.fp) {
+		t.Errorf("with no prior signature the gate was shown %q — it must be the identity the "+
+			"TLS handshake pinned, which is who is actually handing the document over",
+			rec2.seen.Fingerprint)
+	}
+	if rec2.seen.Valid {
+		t.Error("with no prior signature the gate was told the peer's signature is VALID — there " +
+			"is no signature, and the consent card would tell the user somebody signed this")
+	}
+	if rec2.seen.Signer != "" || rec2.seen.Reason != "" {
+		t.Errorf("with no prior signature the gate was given a signer name or reason (%+v) — "+
+			"both would be describing a signature that does not exist", rec2.seen)
+	}
+}
+
+// recordingConfirmer accepts and remembers what it was shown.
+type recordingConfirmer struct{ seen SignerAttestation }
+
+func (c *recordingConfirmer) Confirm(peer SignerAttestation, _ []byte) (bool, string, []byte, error) {
+	c.seen = peer
+	return true, "I accept", nil, nil
 }

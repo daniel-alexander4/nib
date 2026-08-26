@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"log"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -412,6 +413,47 @@ func ceremonyIDOf(c *ceremonyID) string {
 		return ""
 	}
 	return c.inv.ID
+}
+
+// mirrorHop writes a completed hop's output to this machine's ceremony mirror (C22).
+//
+// **One door for both sides of a hop (ADR-009).** The initiating side calls it before its HTTP
+// response returns, which is C22's wording; the receiving side calls it when it installs its own
+// copy, which C22's wording does not reach and which is the same fact about the same party — the
+// document they just put their signature on. A rule written at one of two sides is the shape this
+// repo keeps finding.
+//
+// **`WriteMirror` had exactly ONE caller before this — convene.** So the mirror recorded what a
+// convener started and never what anybody signed: the durable record of a ceremony stopped at the
+// moment it began.
+//
+// **It takes the DOCUMENT and not a ceremony**, which is what lets both sides call it: the record
+// travels inside the bytes, so a caller that has the result has everything. A document with no
+// record is an ordinary co-sign and returns silently — that is the majority of arrivals and it is
+// not a failure to report.
+//
+// Best-effort and it SAYS SO when it fails. The signature exists on the document whether or not
+// this write lands, so failing the hop over it would discard a real signature to protect a copy of
+// it. A log line is the channel, on the shape `unconvene`'s own review established, and it names
+// what was lost rather than that something was.
+func (s *Server) mirrorHop(final []byte) {
+	if len(final) == 0 {
+		return
+	}
+	rec, err := ceremony.Extract(final)
+	if errors.Is(err, ceremony.ErrNoRecord) {
+		return // an ordinary co-sign: no ceremony, nothing to mirror
+	}
+	if err != nil {
+		log.Printf("a completed hop carries a ceremony record that cannot be read, so nothing "+
+			"was mirrored: %v — this machine keeps no durable copy of what it just signed", err)
+		return
+	}
+	if _, err := ceremony.WriteMirror(defaultOutputDir(), rec, final); err != nil {
+		log.Printf("ceremony %s: the completed hop could not be written to the mirror: %v — the "+
+			"signature is on the document either way, but this machine has no copy of it under "+
+			"~/nib/ceremonies", rec.ID, err)
+	}
 }
 
 // errNoCeremony reports an arm with no invitation — not an error, the ordinary case.

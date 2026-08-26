@@ -426,6 +426,24 @@ type docResponse struct {
 	// find an empty undo stack and no account of where it went. Omitted while false,
 	// so a document that has never been evicted serializes exactly as before.
 	HistoryEvicted bool `json:"historyEvicted,omitempty"`
+
+	// InCeremony says this document belongs to a signing ceremony this process is part of,
+	// so the client can offer the signature-details surface on a document with NO signatures.
+	//
+	// **It exists because C18's own extreme case was unreachable (P07.S05a).** The details
+	// button is gated on `signers.length`, which is the right gate for a modal that lists
+	// signatures — and a **convened but unsigned** document has none, while being exactly the
+	// document whose "0 of 2 obliged signers have signed" the user needs to read. The route
+	// published the counts and nothing could open them.
+	//
+	// **Its limit, declared rather than discovered:** it is `doc.ceremony != ""`, which this
+	// process sets when it convenes a ceremony or installs a hop's result. A ceremony document
+	// OPENED COLD from disk does not set it, so the button stays hidden there. Making it exact
+	// costs a pdfcpu parse at every door that installs a document, and those doors are fourteen
+	// — ADR-009's one door would have to be built first. The narrow version is honest about
+	// which documents it covers; a parse per install would be a much larger change than the
+	// clause that needs it.
+	InCeremony bool `json:"inCeremony,omitempty"`
 }
 
 // handleOpen loads a PDF from a server-side path. Opening by path is what makes
@@ -1198,6 +1216,7 @@ func (s *Server) docResponse(doc *document) docResponse {
 		CanUndo:        len(doc.undo) > 0,
 		CanRedo:        len(doc.redo) > 0,
 		HistoryEvicted: doc.historyEvicted,
+		InCeremony:     doc.ceremony != "",
 	}
 	// The bytes are read AFTER the lock is released, deliberately: FlagsJSON parses
 	// the PDF, and holding the server mutex across a parse would serialize every
