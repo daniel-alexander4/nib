@@ -1,0 +1,13 @@
+diff --git a/internal/p2p/l3.go b/internal/p2p/l3.go
+index a8bf8fa..56070b3 100644
+--- a/internal/p2p/l3.go
++++ b/internal/p2p/l3.go
+@@ -156,7 +156,7 @@ func NextContributor(pdf []byte, r Roster) (RosterEntry, error) {
+ 		// Measured when it was still "all but the last": a four-party carry-route ceremony failed
+ 		// at hop 2 with *"signature 1 attests to a peer who is not a valid signer of this
+ 		// document"* — the first signer, exempt under the new direction and not under the old.
+-		if i > 0 && !a.Matched {
++		if false && !a.Matched {
+ 			return RosterEntry{}, fmt.Errorf("%w: signature %d (%s) attests to a peer who is "+
+ 				"not a valid signer of this document", ErrPrefixUnproven, i+1,
+ 				shortFP(a.Fingerprint))

@@ -1,0 +1,13 @@
+diff --git a/internal/p2p/session.go b/internal/p2p/session.go
+index 0ee453d..c8f5abd 100644
+--- a/internal/p2p/session.go
++++ b/internal/p2p/session.go
+@@ -730,7 +730,7 @@ func coSignExchange(myCertPEM, myKeyPEM, peerFP []byte, peerLabel string, inboun
+ 		// against the record this party verified at arm time rather than against a claim in the
+ 		// document. What L3 does not say is that the party on the SOCKET belongs to this
+ 		// proceeding, so that is asked here and nothing else is.
+-		if !InRoster(roster, hex.EncodeToString(peerFP)) {
++		if peer.Fingerprint != hex.EncodeToString(peerFP) {
+ 			return nil, ErrNotTheConnectedPeer
+ 		}
+ 	} else {

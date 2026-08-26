@@ -1,0 +1,15 @@
+diff --git a/internal/p2p/l3.go b/internal/p2p/l3.go
+index a8bf8fa..a2e05b4 100644
+--- a/internal/p2p/l3.go
++++ b/internal/p2p/l3.go
+@@ -200,8 +200,8 @@ func PredecessorOf(r Roster, me string) string {
+ 	}
+ 	for i, fp := range signing {
+ 		if strings.EqualFold(fp, me) {
+-			if i > 0 {
+-				return signing[i-1]
++			if i+1 < len(signing) {
++				return signing[i+1]
+ 			}
+ 			return ""
+ 		}
