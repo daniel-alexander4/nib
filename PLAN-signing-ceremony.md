@@ -4677,13 +4677,15 @@ Tasks (grilled 2026-08-25 — `grills/2026-08-25-p07s03a-l3-on-the-wire.md`):
 
 #### P07.S03b — The N-party driver at N=4 *(D23, L3; C05)* — **new, 2026-08-25, split out of S03a** *(T01/T02 done 2026-08-25, v1.117.165–.168; **T03 RESEQUENCED to follow P07.S05** — measured blocked on its carry verb)*
 **Build-order note (2026-08-25):** S03b's remaining task is behind S05, so the order is
-S01 · S08 · S02 · S02a · S02b · S03 · S03a · **S03b(T01,T02)** · S04 · S05 · **S03b(T03)** · S06 · S07 · S09 · S10.
+S01 · S08 · S02 · S02a · S02b · S03 · S03a · **S03b(T01,T02)** · S04 · S05 · S05a · S05b ·
+**S03b(T03)** · S05c · S06 · S07 · S09 · S10. *(S05a, S05b and S05c were split out of S05 and
+of each other on 2026-08-25; S03b's T03 lands with S05b's driver, which is the run it needed.)*
 Resequencing is not a decision about the product; it is where the measurement put the work.
 Tasks:
 - T01 — the refusal stops being reported as a connect failure, and the probe that should have seen it stops being pointed at the wrong string. *(done 2026-08-25, v1.117.165)*
 - T02 — the harness drives a REAL ceremony: convene, issue invitations, accept them, arm WITH the invitation — so hop 2 is a ceremony hop at all. Its own doc names hand-pinning as the residue D29 forbids and says this harness should stop when S02b lands; S02b has landed. *(done 2026-08-25, v1.117.167 — for the N≥3 path; hop 1 still hand-pins and is the remaining half, named in the harness's own blind-spot list)*
   **And the old probe's TOPOLOGY was wrong, not only its pinning.** It drove hop 2 as party 2 → party 3; under D22 that is **not a hop at all**, because `hopBetween` refuses any pair without the convener at one end. A ceremony's second hop is convener → party 3, and the old shape was a chain the model has never had. The rewritten probe also needs **no watchers, no far-side arm and no port**: the refusal is raised at the carrier's own machine, inside `buildCoSigned`, before any network work.
-- T03 — ~~the relay completes at N=4~~ **BLOCKED on P07.S05's carry verb — measured 2026-08-25, and the measurement contradicts this clause's own arithmetic.** The clause assumes the relay completes once `len(ats) != 1` is conditioned, and notes that *"through `Initiate` every intermediate party signs twice, so the count is 2(N−1)"*. **Those two cannot both be true under L3**: a signature twice from the same party is a prefix that is not the roster's signing order, and refusing that is the whole of D23. Driven through the real hop sequence — hop 1 completes with exactly the roster prefix; at hop 2 `/api/session/initiate` applies the LOCAL signature before it sends (`buildCoSigned`), so the carrier signs again and **L3 refuses it by name, at the near end**; and B, handed the document unchanged, **IS admitted**. So the model already supports the relay and what does not exist is a route that hands the baton on **without contributing** — which is S05's carry verb, exactly. `TestTheRelayCeilingAtFourParties` is that measurement, and it starts failing at its last assertion the day S05 lands, which is when to delete it.
+- T03 — ~~the relay completes at N=4~~ **DONE at P07.S05b, 2026-08-25** (the driver, at N=4 and N=9, with this clause's own extra assertions — armed-once, still-armed-at-its-hop, the distinct-signer set). It was **BLOCKED on P07.S05's carry verb — measured 2026-08-25, and the measurement contradicts this clause's own arithmetic.** The clause assumes the relay completes once `len(ats) != 1` is conditioned, and notes that *"through `Initiate` every intermediate party signs twice, so the count is 2(N−1)"*. **Those two cannot both be true under L3**: a signature twice from the same party is a prefix that is not the roster's signing order, and refusing that is the whole of D23. Driven through the real hop sequence — hop 1 completes with exactly the roster prefix; at hop 2 `/api/session/initiate` applies the LOCAL signature before it sends (`buildCoSigned`), so the carrier signs again and **L3 refuses it by name, at the near end**; and B, handed the document unchanged, **IS admitted**. So the model already supports the relay and what does not exist is a route that hands the baton on **without contributing** — which is S05's carry verb, exactly. `TestTheRelayCeilingAtFourParties` is that measurement, and it starts failing at its last assertion the day S05 lands, which is when to delete it.
 - T04 — red proofs; `recorded` moves. *(done 2026-08-25, v1.117.168 — one row, for the layer that undid S03a's fix; `recorded` 99 → 100. T03's row follows T03.)*
 
 **T01 found three defects and the first two were mine (2026-08-25).** Running the N=4 probe after
@@ -4840,12 +4842,141 @@ Acceptance:
 - ~~The relay is expressed once … the LAN tier is re-announced at hop k~~ **MOVED to P07.S05b, 2026-08-25 at this slice's grill** — a harness slice, downstream of the surfaces it asserts.
 
 
-#### P07.S05b — The N-party driver at N=4 and N=9 *(C05, C21 pin; D22)* — **new, 2026-08-25, split out of S05a**
+#### P07.S05b — The N-party driver at N=4 and N=9 *(C05, C21 pin; D22)* — **new, 2026-08-25, split out of S05a** *(in progress)*
 Scope: the tier-4 harness for a completed relay. Downstream of S05a, which produces what it asserts.
 It also absorbs **P07.S03b's T03**, which was resequenced behind S05's carry verb and is the same run.
+
+Tasks (grilled 2026-08-25 — `grills/2026-08-25-p07s05b-the-n-party-driver.md`; deepdive did NOT fire,
+and the trigger is recorded there rather than skipped):
+- T01 — `ceremony()` parameterised over (from, to); the two-party callers are the control. *(done — the two-party run is byte-for-byte the same steps, so the refactor's own control is that nothing about it changed)*
+- T02 — the relay driver at N=4, both transports, hop k's document a byte prefix of hop k+1's. *(done — and it found three production defects, above)*
+- T03 — N=9, and the word-string property as amended below. *(done — 8 hops on both transports, 8 distinct strings each, and no string shared between the two relays)*
+- **T03b — P07.S03b's T03, absorbed here rather than left pointing at a coordinate that has closed.**
+  Its own list asked for more than "the relay completes": every party **armed before hop 1 and never
+  re-armed**, each asserted `armed:true` immediately before its hop so an expiry fails by party
+  number, and the **distinct-signer set** — because `/ByteRange` counts blocks, so one party signing
+  eight times satisfies every per-hop count. *(done — and the binds had to become EPHEMERAL for the
+  no-re-arm check to have teeth: with a fixed port the address is identical before and after a
+  re-arm, which is the vacuous green the clause itself warns about.)*
+- ~~T04 — the seek announcement~~ and ~~T05 — `--lan -n 9`~~ **MOVED to P07.S05c**, see above.
+- T06 — red proofs; `recorded` moves.
+
+**BUILDING T01–T02 FOUND THREE DEFECTS, AND THE LARGEST IS P07.S04's MISSING WRITER.**
+
+- **No production signature carried its ceremony commitment.** S04 shipped the `[NibRoster:v:hash]`
+  token format, the reader, D32's version-skew sentence and L3's substituted-proceeding check —
+  and **no writer**. Neither contribution door set `Attestation.RosterHash`, so `OneProceeding` was
+  false on every real ceremony, C19/C01's "every signature names its ceremony" was unimplemented,
+  and `ErrProceedingMismatch` was unreachable. Measured: a completed relay hop's attestation read
+  `[NibCoSign:1] Accepts p1 [SPKI:]. I accept`. Fixed by `p2p.StampCommitment`, ONE door called by
+  both contribution sites (ADR-009), with `Roster` gaining a `CommitmentVersion` because
+  `internal/p2p` cannot import `internal/ceremony`. **And the guard meant to catch this could
+  never have fired**: `TestTheCommitmentCheckIsLimitedUntilS04` had a `Skip` arm for the day a
+  signature carried a commitment, over a fixture it hand-signed with an explicit empty one — it
+  measured its own input. Replaced by `TestACeremonySignatureNamesItsCeremony`, which drives the
+  production door, plus a second arm on the two-door routing walk.
+- **A ceremony hop could not be dialled over TCP at all.** `dialerCeremony` opens a QUIC shared
+  endpoint unconditionally, so `handleSessionInitiate` took the glare branch for every hop, and
+  that branch feeds its race through `filterQUIC` — every TCP candidate dropped, the hop spinning
+  until `connectDeadline` with the receiver armed and idle. **No tier had ever carried a document
+  over a ceremony dial on TCP**: the N≥3 probe is refused 409 at the near end before any network
+  work, and the two-party runs carry no invitation. Fixed for an explicitly-named transport; the
+  residual — an unnamed transport still drops TCP candidates learned from the LAN or DHT — is
+  `/pending 298`, because it is a change to P05's coordinator.
+- **The arm must carry the invitation** (harness). `handleSessionArm` resolves the ceremony from
+  `req.Invitation` and the receive path reads its roster from there; without it the receiver has an
+  empty roster and refuses hop 1 with *"a co-signature takes exactly one prior signer"* — correctly,
+  because outside a ceremony an unsigned document is not something to co-sign.
+
+**And one POSITIVE confirmation, recorded because a driver's job is to confirm as well as refute:**
+S05a's completeness counts are right in a live relay — the attestations route reported
+`obliged: 3, signed: 1` at hop 1 of a four-party ceremony with a non-signing convener.
+
+**CLAUSE 1's ARITHMETIC IS WRONG, AND THE SHIPPED HARNESS REFUTES IT.** *"All 2(N−1) word-strings
+pairwise distinct"* is unsatisfiable by construction: `pairrepro.sh:697` asserts that the two sides
+of a hop derive the **same** string, which is L2's entire point, so N−1 of the 2(N−1) pairs are
+necessarily equal. Re-stated as two properties, and the pair is **stronger** than the original —
+"pairwise distinct over 16" would have been satisfied by a run that never compared the two sides of
+anything.
+
+**CLAUSE 2 NAMES A MECHANISM THAT CANNOT EXIST.** `startAnnouncing` runs on the **armed** side
+(`session.go:642`, `:1116`) and `browsePeers` only listens, so **a dialer has nothing it can send
+that makes a remote peer speak** — the convener's dial cannot re-announce party k. The harm is real
+(`lan.go:34-43` measures the naive fix at 5.2M datagrams per ceremony) and the intent is one hop from
+a good mechanism: **the seeker announces and the armed side answers**, ~2 datagrams per hop and no
+standing beacon. A slow beacon was refuted by measurement — the browse is **2 s** (`discover.go:21`),
+so a 30 s beacon is heard 7% of the time, and matching the two costs either 1.3M datagrams or 30 s
+added to every remote hop. The cost of the recommendation is stated: it is a **discovery wire-format
+change**, version 2 → 3 under ADR-010. L1 is unchanged and is what makes an answer safe — a seek
+carries the six-word name, and `Matches` resolves it only against a fingerprint the receiver already
+holds, so an armed party answers only a name it already recognises.
+
+**THE DHT-OFF RUN NEEDS TIER 5's ISOLATION, AND `--lan -n 9` CANNOT REACH IT TODAY.** No
+DHT-disable switch exists and none should be added — `redproof.sh`'s own argument, *"a switch whose
+whole purpose is to break the program is the same gun with a better excuse"*, covers a switch that
+disables a tier. The namespace `--lan` already runs in IS the instrument. But the `N != 2` probe at
+`:797` `exit 0`s at `:900`, three lines before the `LAN` block, so the two modes are mutually
+exclusive by ordering rather than by design.
+
+**SPLIT AFTER ALL — the LAN re-announce becomes P07.S05c, and the grill's own argument INVERTS
+once the driver exists.** The grill said not to split: *the ambiguity a split would remove is
+removed by ordering T04 after T03*. That held while the driver was unbuilt. It is built and green
+now — N=4 and N=9, both transports — so a split no longer creates the ambiguity the earlier splits
+were avoiding; it removes it, because the instrument that would judge the announce change is
+already landed, passing, and committed.
+
+**And measurement changed what the clause IS.** The grill costed it as a discovery wire-format
+change (a "seek" datagram, version 2 → 3). Reading the code refutes that: `runCeremonyReceive`
+already announces its shared endpoint for `lanAnnounceWindow`, and its own comment says *"the
+dialing side BROWSES for a ceremony peer"* — so the browse exists and the seek does not need a new
+message at all. **The asymmetry that decides the design is that LISTENING IS FREE**: the party who
+must be found can hold a browse open for the ceremony's whole life at zero egress, while every
+beacon shape pays per datagram. What is missing is one bounded announcement from the DIALING side,
+which today announces nothing. That is a change to P05's ceremony networking on both sides — not a
+harness change, and not a wire-format change either.
+
+So S05b closes as what its title says it is: the N-party driver.
+
 Acceptance:
-- **The relay is expressed once, in the baton topology**, driven at N=4 and N=9 over both transports *(moved here from S01 at its grill, 2026-08-23 — this is the first slice with a carry verb, so it is the first slice in which the topology is final rather than a chain S05 would rewrite)*, with all 2(N−1) word-strings **pairwise distinct**, and each hop's document asserted to **contain the previous hop's as a byte prefix** — not merely to differ from it, which at N is a tautology, since `/api/pdf` returns that instance's active document and no instance is fetched twice in one relay.
+- **The relay is expressed once, in the baton topology**, driven at N=4 and N=9 over both transports *(moved here from S01 at its grill, 2026-08-23 — this is the first slice with a carry verb, so it is the first slice in which the topology is final rather than a chain S05 would rewrite)*, with the 2(N−1) word-string observations **equal within each hop and pairwise distinct across hops** *(amended 2026-08-25 at this slice's grill — "all pairwise distinct" is unsatisfiable, see above)*, and each hop's document asserted to **contain the previous hop's as a byte prefix** — not merely to differ from it, which at N is a tautology, since `/api/pdf` returns that instance's active document and no instance is fetched twice in one relay.
 - The LAN tier is **re-announced when the convener's dial for hop k begins**: the announce window is five minutes, so from the fourth party onward a "same room" ceremony silently runs over the public DHT. Driven by a nine-party ceremony completing **with the DHT tier disabled**.
+
+#### P07.S05c — The LAN tier at hop k *(C05 pin; D6, D8)* — **new, 2026-08-25, split out of S05b**
+Scope: a ceremony that starts in one room stays on the link for all N−1 of its hops. Downstream of
+S05b, whose driver is the instrument that judges it and is already green.
+
+**The clause the plan wrote cannot be implemented, and the mechanism that CAN be is cheaper than
+the one the grill designed.** The text says *"the LAN tier is re-announced when the convener's dial
+for hop k begins"*. `startAnnouncing` runs on the **armed** side (`session.go:642`, `:1116`) and
+`browsePeers` only listens, so a dialer has nothing it can send that makes a remote peer speak. The
+harm is real and `lan.go:34-43` measures it against itself: the arm lives for the ceremony's life —
+up to D33's thirty days since P05.S09b — while the announcement stops after **five minutes**, so
+from the fourth party onward a same-room ceremony silently runs over the public DHT. Keeping the
+2/s ticker for the arm's life is ≈5.2M datagrams per ceremony, which is what that comment refuses.
+
+**The asymmetry that decides the design: listening is free.** Every beacon shape pays per datagram;
+a browse held open pays nothing at all. And the pieces are already built — `runCeremonyReceive`
+announces its shared endpoint and its own comment says *"the dialing side BROWSES for a ceremony
+peer"*. What is missing is one **bounded announcement from the DIALING side**, which today announces
+nothing, so the armed party can hear the convener arrive and answer. That is not a wire-format
+change: the grill costed it as a discovery version 2 → 3 "seek" datagram, and reading the code
+refutes that — the seek is the convener's ordinary announcement, which it must send anyway.
+
+Acceptance:
+- The **dialing** side announces its shared endpoint while a ceremony hop is in flight, bounded by
+  the hop rather than by `lanAnnounceWindow`, and stops when the hop ends.
+- An armed ceremony party **hears its convener arrive after its own announce window has closed**
+  and the hop completes on the link — driven at the hop where today's five minutes have expired,
+  because a hop inside the window passes without exercising anything.
+- A **nine-party ceremony completes with the DHT unreachable**, in the namespace `--lan` already
+  runs in, with the egress counter still at its baseline. **No DHT-disable switch is added:**
+  `redproof.sh`'s own argument — *"a switch whose whole purpose is to break the program is the same
+  gun with a better excuse"* — covers a switch that disables a tier, and the namespace is the
+  honest instrument.
+- `--lan -n 9` **reaches the LAN block at all.** Today the `N != 2` probe `exit 0`s three lines
+  before it, so the two modes are mutually exclusive by ordering rather than by design.
+- Egress is **measured, not argued**: datagrams per ceremony reported for N=9 and compared against
+  the 5.2M figure `lan.go` refuses.
 
 #### P07.S06 — Placement: measured, on the pages S02 allocated *(D25; C03)*
 Scope, **re-derived from measurement 2026-08-23 — the first firming got all three numbers wrong.** The block

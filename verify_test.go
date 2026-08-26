@@ -227,7 +227,7 @@ func TestVerifyContractIsTrue(t *testing.T) {
 		{"4", "`./build/pairrepro.sh`"},
 		{"4b", "`./build/pairrepro.sh --lan`"},
 		{"4c", "`./build/pairrepro.sh --v6`"},
-		{"4d", "`./build/pairrepro.sh -n 3`"},
+		{"4d", "`./build/pairrepro.sh -n 4`"},
 		{"5", "`./build/mcastrepro.sh`"},
 	} {
 		want := "| " + row.tier + " | " + row.cmd

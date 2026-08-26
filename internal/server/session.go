@@ -1432,8 +1432,34 @@ func (s *Server) handleSessionInitiate(w http.ResponseWriter, r *http.Request) {
 	// (role-from-endpoint, the C6 default; the record-role refinement for multi-hop is T06), so it
 	// promotes the surviving channel as the initiator and runs Initiate below. Outside a ceremony
 	// this is raceWithRendezvous + Initiate exactly as before.
+	// **The glare join is QUIC-ONLY, so a hop that is not QUIC must not take it (P07.S05b).**
+	//
+	// `connect` feeds its dial race through `filterQUIC` — *"the shared endpoint speaks QUIC, and
+	// a non-QUIC candidate cannot be handshake-dialled on it"* — and `dialerCeremony` opens that
+	// endpoint for EVERY ceremony, unconditionally. So the branch below was taken for every hop of
+	// every ceremony, and a TCP candidate was filtered out of all of them: a ceremony dialled over
+	// TCP raced an empty candidate set and spun until `connectDeadline`, five minutes, with the
+	// receiver armed and idle the whole time.
+	//
+	// **It had never been driven.** The tier-4 N>=3 probe passes `transport=tcp` with an invitation
+	// and is refused 409 by L3 at the near end, before any network work; every other ceremony test
+	// is in-process with a hand-built channel; and the two-party tier-4 runs carry no invitation,
+	// so `cer` is nil and they take the else branch. Found by P07.S05b's relay driver, whose first
+	// TCP hop hung.
+	//
+	// `raceWithRendezvous` is the else branch and it already handles a ceremony correctly — it
+	// dials each candidate on that candidate's own transport (`ceremonynet.go:534`) out of the
+	// shared endpoint. What it does not do is the symmetric glare join, which is exactly right:
+	// there is no shared endpoint on TCP to join over (`ceremonyid.go:240`, "QUIC only, and the
+	// limit is structural rather than an omission").
+	//
+	// **The residual gap, stated rather than left to be discovered:** when no transport is named,
+	// the glare branch still runs and a TCP-only candidate learned from the LAN or the DHT is
+	// still dropped. That needs the racer to run both kinds side by side, which is a change to
+	// P05's coordinator rather than to this route. Filed.
+	wantTransport := r.FormValue("transport")
 	var final []byte
-	if cer != nil && cer.rz != nil {
+	if cer != nil && cer.rz != nil && (wantTransport == "" || wantTransport == transportQUIC) {
 		hl, herr := p2p.QUICListenHandshakeOn(cer.end, cert, key, peerFP)
 		if herr != nil {
 			httpError(w, http.StatusInternalServerError, "could not arm the racing accept: "+herr.Error())

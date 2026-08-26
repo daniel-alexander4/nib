@@ -279,36 +279,62 @@ func corruptSignatureBlob(t *testing.T, pdf []byte) []byte {
 	return out
 }
 
-// TestTheCommitmentCheckIsLimitedUntilS04 — the boundary, asserted rather than left as a
-// comfortable green.
+// TestACeremonySignatureNamesItsCeremony — C19/C01 at the receiving door, behaviourally.
 //
-// No production attestation carries a `RosterHash` today: neither `coSignExchange`'s `att` nor
-// `internal/server`'s `cosignAttestation` sets one. So the substituted-proceeding refusal above
-// fires only on signatures that DO carry a commitment, and on the real path there are none —
-// which means L3's proceeding check is, for now, defence against a document some future build
-// wrote, not against today's. Making signatures carry it is P07.S04's.
+// **This replaces `TestTheCommitmentCheckIsLimitedUntilS04`, which could not have detected S04
+// landing OR failing to land.** That test asserted "no production attestation carries a
+// RosterHash" and had a `Skip` arm for the day one did — but its fixture was `l3Chain(…, "")`,
+// a document it hand-signed with an explicit empty commitment, so the arm was unreachable
+// whatever production did. It measured its own input. P07.S04 shipped the token format, the
+// reader, the version-skew sentence and L3's proceeding check with **no writer**, this guard
+// stayed green, and the gap was found at P07.S05b by a tier-4 relay hop whose completed
+// signature read `[NibCoSign:1] Accepts p1 [SPKI:]. I accept` — no `[NibRoster:…]` at all.
 //
-// If this test ever fails because a commitment IS present, that is good news and the limit
-// recorded here should be revisited — but it must not pass silently.
-func TestTheCommitmentCheckIsLimitedUntilS04(t *testing.T) {
+// So the subject is the production door, not a fixture: `coSignExchange` signs, and what it
+// produced is read back off the document.
+func TestACeremonySignatureNamesItsCeremony(t *testing.T) {
 	a, b := l3Identity(t, "A"), l3Identity(t, "B")
-	r := l3Roster(a, b)
-	r.Commitment = strings.Repeat("cd", 32)
-	// A document signed the way PRODUCTION signs it — no RosterHash on the attestation.
-	doc := l3Chain(t, l3Prepared(t), []l3Party{a}, []l3Party{b}, "")
-	ats := ReadAttestations(doc)
-	if len(ats) != 1 {
-		t.Fatalf("setup: %d signatures", len(ats))
+	roster := l3Roster(a, b)
+	roster.Commitment = strings.Repeat("cd", 32)
+	roster.CommitmentVersion = 4
+
+	aFP, _ := hex.DecodeString(a.fp)
+	inbound := l3Chain(t, l3Prepared(t), []l3Party{a}, []l3Party{b}, "")
+	signed, err := coSignExchange(b.cert, b.key, aFP, "A", inbound, &recordingConfirmer{}, nil, roster)
+	if err != nil {
+		t.Fatalf("the ceremony hop was refused: %v", err)
 	}
-	if ats[0].RosterHash != "" {
-		t.Skip("a signature now carries a commitment — P07.S04 has landed and this limit is " +
-			"lifted; revisit Roster.Commitment's doc and this test")
+	ats := ReadAttestations(signed)
+	if len(ats) != 2 {
+		t.Fatalf("setup: the exchange produced %d signature(s), want 2", len(ats))
 	}
-	if err := AdmitContribution(doc, r, b.fp); err != nil {
-		t.Errorf("the gate refused a document whose signatures carry NO commitment (%v). "+
-			"Nothing in production sets one yet, so requiring it would refuse every honest "+
-			"ceremony — the same shape P07.S02b caught when CheckDocument would have refused "+
-			"every honest hop-1 arrival", err)
+	last := ats[len(ats)-1]
+	if !strings.EqualFold(last.RosterHash, roster.Commitment) {
+		t.Errorf("the receiving door signed inside a ceremony and its attestation carries "+
+			"RosterHash %q, want %q — a signature that does not name its proceeding leaves "+
+			"OneProceeding false forever and L3's substituted-proceeding refusal with nothing "+
+			"to compare", last.RosterHash, roster.Commitment)
+	}
+	if last.RosterVersion != 4 {
+		t.Errorf("the commitment carries version %d, want 4 — Render emits the token only when "+
+			"BOTH the hash and a non-zero version are present, so a half-stamped attestation "+
+			"silently carries nothing at all", last.RosterVersion)
+	}
+
+	// The other direction, and it is the half that keeps the rule honest: an ordinary two-party
+	// co-sign belongs to no proceeding, and a commitment on it would be a claim about one that
+	// does not exist.
+	plain, perr := coSignExchange(b.cert, b.key, aFP, "A", inbound, &recordingConfirmer{}, nil, Roster{})
+	if perr != nil {
+		t.Fatalf("the ordinary two-party co-sign was refused: %v", perr)
+	}
+	pats := ReadAttestations(plain)
+	if len(pats) != 2 {
+		t.Fatalf("setup: the non-ceremony exchange produced %d signature(s), want 2", len(pats))
+	}
+	if h := pats[len(pats)-1].RosterHash; h != "" {
+		t.Errorf("an ordinary co-sign outside any ceremony carries the commitment %q — it names "+
+			"a proceeding that does not exist", h)
 	}
 }
 
@@ -362,6 +388,20 @@ func TestEveryContributionEntryPointReachesTheGate(t *testing.T) {
 						"a party can contribute out of roster order through it. D23: no "+
 						"contribution out of roster order, at every site that makes one.",
 						label, e.Name(), fn.name)
+				}
+				// **The same walk, for the same reason, over the COMMITMENT (P07.S05b).**
+				//
+				// "A signature inside a ceremony names that ceremony" is a second rule holding at
+				// these same two doors, and it shipped at neither: P07.S04 built the token, the
+				// reader, the version-skew sentence and L3's proceeding check, and no writer — so
+				// `OneProceeding` was false on every real ceremony and `ErrProceedingMismatch` was
+				// unreachable. The guard that was meant to notice built its own commitment-free
+				// fixture, so its "S04 has landed" arm could never fire.
+				if !strings.Contains(fn.body, "StampCommitment(") {
+					t.Errorf("%s/%s: %s adds a signature block without stamping the ceremony's "+
+						"commitment on it, so a signature made in a proceeding does not name it "+
+						"— OneProceeding cannot be true and L3's substituted-proceeding refusal "+
+						"has nothing to compare (C19, C01)", label, e.Name(), fn.name)
 				}
 			}
 		}
