@@ -4941,7 +4941,63 @@ Acceptance:
 - **The relay is expressed once, in the baton topology**, driven at N=4 and N=9 over both transports *(moved here from S01 at its grill, 2026-08-23 — this is the first slice with a carry verb, so it is the first slice in which the topology is final rather than a chain S05 would rewrite)*, with the 2(N−1) word-string observations **equal within each hop and pairwise distinct across hops** *(amended 2026-08-25 at this slice's grill — "all pairwise distinct" is unsatisfiable, see above)*, and each hop's document asserted to **contain the previous hop's as a byte prefix** — not merely to differ from it, which at N is a tautology, since `/api/pdf` returns that instance's active document and no instance is fetched twice in one relay.
 - The LAN tier is **re-announced when the convener's dial for hop k begins**: the announce window is five minutes, so from the fourth party onward a "same room" ceremony silently runs over the public DHT. Driven by a nine-party ceremony completing **with the DHT tier disabled**.
 
-#### P07.S05c — The LAN tier at hop k *(C05 pin; D6, D8)* — **new, 2026-08-25, split out of S05b**
+#### P07.S05c — The LAN tier at hop k *(C05 pin; D6, D8)* — **new, 2026-08-25, split out of S05b** *(in progress)*
+Tasks (grilled 2026-08-25 — `grills/2026-08-25-p07s05c-the-lan-tier-at-hop-k.md`; the deepdive did
+NOT fire, and the one trigger that would have — a wire-format move — was *checked* rather than
+assumed, because the S05b grill had costed this as a discovery version bump):
+- T01 — the dialing side announces its ceremony endpoint before it browses, bounded by the hop. *(built — `hopAnnounceWindow`, and the ORDER is the whole of it: arm, announce, browse)*
+- T02 — an armed party browses for the arm's life and re-announces on hearing a peer it has pinned
+  for this ceremony; bounded, rate-limited, never itself a seek. *(built — `answerHopSeekers`, which answers ONE fingerprint, the peer the arm was raised for; under D22 that is the convener, and it is what stops two armed parties answering each other forever)*
+- T03 — the driver reaches a hop **after** the announce window has expired; the window becomes a
+  parameter so the test does not wait five minutes. *(the window is a variable; the expired-hop drive is not built)*
+- T04 — `--lan -n 9` reaches the LAN block, and a nine-party ceremony completes in the namespace. *(the three barriers are removed and a four-party LAN relay COMPLETES over both transports — see below. N=9 not yet driven.)*
+- T05 — egress measured and reported for N=9, against the 5.2M figure `lan.go` refuses. *(measured at N=4, and it is RED against shipped code — `/pending 299`)*
+- T06 — red proofs; `recorded` moves.
+
+**THE CLAUSE'S DRIVER HAD THREE INDEPENDENT BARRIERS, AND ANY ONE ALONE MADE IT IMPOSSIBLE.** An
+explicit *"`--lan` and `--v6` are N=2-only"* refusal, dating from P07.S01 when there was no relay
+for either to drive; the `N != 2` block's `exit 0`, three lines before the `LAN` block, so the two
+modes were mutually exclusive by ordering rather than by design; and **the namespace re-exec
+silently dropping `-n`** — `FLAGS` carries `--lan --keep --v6` and nothing else, so `--lan -n 4`
+re-executed inside the namespace as `--lan` alone and ran a TWO-PARTY ceremony while printing a
+pass. That last one is the exact defect `FLAGS` was created for, one flag later.
+
+**And with them gone, the first measurement of a ceremony on a link found a D6 leak the plan's own
+criterion forbids.** A two-party LAN ceremony emits **zero** off-link packets; a four-party LAN
+relay emits **120**. The difference is the invitation: a ceremony hop calls `dialerCeremony`, which
+bootstraps the public DHT unconditionally, and the arm side does the same — `ceremonynet.go`
+suppresses the late *publish* when the LAN answers and nothing suppresses the *bootstrap*. So P03's
+exit criterion, *"a LAN ceremony completes with NO outbound internet traffic"*, is false for every
+ceremony that carries an invitation. `/pending 299`.
+
+**A second finding is recorded with its cause NOT established**, because saying so is the honest
+state: running the QUIC relay before the TCP one makes the TCP relay fail at hop 1 with a D19
+verdict about the DHT, for a peer that is on the link and announcing. TCP first, both complete.
+`/pending 300`. The harness runs TCP first and says why at the line — QUIC-first masks the leak
+above, because the run dies before reaching the egress assertion.
+
+**THE MEASUREMENT THAT SETTLES THE DESIGN, AND IT REVERSES S05b's GRILL.** That grill costed this
+as a discovery format version 2 → 3 "seek" datagram. Reading the code refuses it: **the seek is the
+convener's ORDINARY announcement**, because a convener in a QUIC ceremony already holds a listening
+endpoint (`connect` arms `QUICListenHandshakeOn` on the shared socket), so it has something
+truthful to announce and needs no new message. What decides the shape is an asymmetry rather than a
+trade-off — **listening is free**: every beacon pays per datagram and a held-open browse pays
+nothing, so the party who must be found listens indefinitely and the party who knows a hop is
+starting sends one bounded burst.
+
+**Four measurements shape the build.** `peerAddresses` **never browses when an address is typed**
+(`lan.go:296`), so the change must not hang off the typed path. `findPeerOnLAN` is a **one-shot
+2-second browse** (`lan.go:234`, `discover.go:21`) — enough for an announce-then-listen exchange,
+but **the order matters**, since an answer that arrives before the browse opens is lost. **The armed
+side never browses at all**, which is the half that does not exist. And `runCeremonyReceive`
+already announces, with a comment that says why — the machinery is there and the *window* is what
+is wrong.
+
+**One existing sentence is amended rather than quietly contradicted.** `lan.go:43` ends *"The
+socket is released when this closes, not held idle until disarm."* Holding a **receive** socket for
+the arm's life breaks its letter and keeps its reason, which is datagrams — a listener emits none.
+The comparison belongs in the code: a socket and a goroutine for the ceremony, against 5.2M
+datagrams.
 Scope: a ceremony that starts in one room stays on the link for all N−1 of its hops. Downstream of
 S05b, whose driver is the instrument that judges it and is already green.
 

@@ -565,14 +565,21 @@ func TestACeremonyHopIsNotForcedOntoQUIC(t *testing.T) {
 		t.Fatal("handleSessionInitiate no longer holds both dial paths — this guard is reading " +
 			"the wrong function, and its clean result would be about nothing")
 	}
-	// The predicate that selects the glare path must consult the requested transport.
-	i := strings.Index(body, "QUICListenHandshakeOn(")
-	head := body[:i]
-	j := strings.LastIndex(head, "if cer != nil")
+	// **Anchored on the ASSIGNMENT, not on a branch (re-pointed at P07.S05c).** The predicate is
+	// read at two sites now — arming-and-announcing before the browse, and the dial branch — and
+	// when they were two separate expressions this guard could only watch one of them: P07.S05c
+	// moved the arming and the guard fired on the site it was still pointed at, correctly, but for
+	// the wrong reason. One named predicate is the fix at both levels.
+	j := strings.Index(body, "glare :=")
 	if j < 0 {
-		t.Fatal("cannot find the branch that selects the glare path")
+		t.Fatal("cannot find the named glare predicate — the two sites are choosing separately " +
+			"again, and this guard can only watch one of them")
 	}
-	pred := head[j:]
+	end := strings.Index(body[j:], "\n\tvar ")
+	if end < 0 {
+		end = 200
+	}
+	pred := body[j : j+end]
 	if !strings.Contains(pred, "transportQUIC") {
 		t.Error("the glare/shared-endpoint path is selected without consulting the requested " +
 			"transport. That path races QUIC candidates only (filterQUIC), and dialerCeremony " +
