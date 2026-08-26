@@ -1,0 +1,13 @@
+diff --git a/internal/p2p/session.go b/internal/p2p/session.go
+index 00f15ce..64358d3 100644
+--- a/internal/p2p/session.go
++++ b/internal/p2p/session.go
+@@ -406,7 +406,7 @@ func refusalAck(err error, named bool) ([]byte, bool) {
+ 	// exactly what it was before this version existed. Sending it anyway would make an older
+ 	// initiator print "returned document is not the one sent this session" — a tampering verdict
+ 	// produced by a version skew, which D32 forbids.
+-	if named {
++	if true {
+ 		if code := refusalCode(err); code != 0 {
+ 			return []byte{ackRefused, code}, true
+ 		}

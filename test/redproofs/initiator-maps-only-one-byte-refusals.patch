@@ -1,0 +1,17 @@
+diff --git a/internal/p2p/session.go b/internal/p2p/session.go
+index 00f15ce..1407400 100644
+--- a/internal/p2p/session.go
++++ b/internal/p2p/session.go
+@@ -173,8 +173,10 @@ func Initiate(ch Channel, mySignedPDF, myFingerprint []byte, v Verifier) ([]byte
+ 	// length test that used to gate this would have sent it straight to the prefix check — which
+ 	// says "returned document is not the one sent this session", a tampering verdict about an
+ 	// honest peer. `refusalFor` discriminates by its own shape.
+-	if rerr, ok := refusalFor(final, true); ok {
+-		return nil, rerr
++	if len(final) == 1 {
++		if rerr, ok := refusalFor(final, true); ok {
++			return nil, rerr
++		}
+ 	}
+ 	if !bytes.HasPrefix(final, mySignedPDF) {
+ 		return nil, errors.New("returned document is not the one sent this session")

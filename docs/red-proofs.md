@@ -1683,3 +1683,25 @@ written — delete the call in `internal/p2p` and it names `coSignExchange`; del
 restore exactly those deletions and assert the *behaviour* that follows, which is strictly more
 than the routing claim. A row proving the guard notices a deletion whose consequence is already
 recorded twice would read as coverage without adding any.
+
+## P07.S03a — L3 on the wire (v1.117.162)
+
+Five rows, all tier 1, all replayable. **Two of them restore the state the product was actually
+in**, and one restores a defect that would have been introduced by the obvious implementation.
+
+| the defect, restored | what goes red | the check |
+|---|---|---|
+| **an L3 refusal reaches the initiator as EOF** *(replayable: `l3-refusal-arrives-as-eof`)* | `want ErrNotYourTurn` | `TestAnL3RefusalReachesTheInitiatorByName`, end to end over **both** transports. This is where the product was: `refusalAck` recognised two classes, everything else wrote no frame and closed, so a refusal arrived as `receive co-signed document: EOF` — a network fault, inviting the retry a refusal must not invite. The test's stimulus asserts both ends negotiated v2 first, without which it would pass forever on a transport where ALPN was never wired |
+| **a named refusal is sent to a peer that cannot read one** *(replayable: `named-refusal-sent-to-an-older-peer`)* | `was sent to a peer that did not negotiate it` | `TestARefusalIsOnlySentToAPeerThatCanReadIt`. **The D32 violation the negotiation exists to prevent.** A build predating this version maps a one-byte reply and otherwise falls to the prefix check, so an unfamiliar frame makes it tell its user *"returned document is not the one sent this session"* — a tampering verdict about an honest peer, produced by a version skew. The guard's other half stops the fix becoming "send nothing to anybody" |
+| **the initiator maps only one-byte refusals** *(replayable: `initiator-maps-only-one-byte-refusals`)* | `want ErrNotYourTurn` | same end-to-end test. The named refusal is two bytes, so the old length gate sends it past to the prefix check and the honest peer that just refused is reported as having returned a replay. The discrimination is a property of the bytes — `refusalFor` checks its own shape, a document is never two bytes, and every PDF begins `%PDF-` (0x25, not 4) |
+| **an unknown code decodes to a known one** *(replayable: `unknown-refusal-code-decodes-to-a-known-one`)* | `want ErrRefusedUnknown` | `TestEveryRefusalCodeRoundTripsToItsOwnSentinel`, which walks the whole enumeration in **both** directions — a wire code is a value two builds must agree on, and two tables that map it are a protocol that can disagree with itself, which is the defect `refusalAck`'s own doc records from the last time |
+| **an ALPN config site drops the v2 offer** *(replayable: `alpn-site-drops-the-v2-offer`)* | `sets NextProtos to something other than sessionALPN` | `TestEveryALPNConfigSiteOffersTheSameList`. Connections through that listener never negotiate, so L3 refusals on that path silently revert to EOF — and **every behavioural test stays green**, because they drive the sites left alone. The population-floor shape, one layer below `TestL2CoversEveryDocumentCarryingEntryPoint` |
+
+### The `check()` exclusion has no row, and it is guarded anyway
+
+`Channel.check()` must NOT require `Proto`: empty is a legal value meaning "this peer predates the
+versioned session protocol", so requiring it would refuse every older peer outright — a one-line
+mistake with a total blast radius. `TestTheNegotiatedProtocolIsNotRequiredByCheck` holds it. No
+row, because the patch would be a one-line addition to a function whose every other line is a
+requirement, and a row restoring "somebody added a field to a list" teaches nothing the guard's
+own failure message does not already say.

@@ -4673,7 +4673,7 @@ Tasks (grilled 2026-08-25 — `grills/2026-08-25-p07s03a-l3-on-the-wire.md`):
 - T02 — the refusal frame: a new ack byte plus a **CODE**, not a reason string, written only to a v2 peer, through the ONE door `refusalAck`/`refusalFor` already are (ADR-009). *(done — **the code is a security decision rather than economy**: the text would be written by the REFUSING side and displayed by the initiator, so free text is a string a hostile peer chooses appearing in this user's interface. A code is mapped to this build's own sentence, so the peer chooses which of a fixed set of things is said and never what it says.)*
 - T03 — L3's sentinels routed onto it, and the two channel bindings with them. *(done — and it needed three NEW sentinels: `expected exactly one prior signer`, *the document was not signed by the connected peer* and *the peer's attestation does not accept you* were bare `errors.New` values, so "refuse by name" was not expressible for them at all)*
 - T04 — the skew driven in BOTH directions, because it is the case no ordinary test reaches. *(done)*
-- T05 — red proofs; `recorded` moves.
+- T05 — red proofs; `recorded` moves. *(done 2026-08-25, v1.117.163 — five rows, two of which restore the state the product was actually in; `recorded` 94 → 99)*
 
 #### P07.S03b — The N-party driver at N=4 *(D23, L3; C05)* — **new, 2026-08-25, split out of S03a**
 Scope: the tier-4 harness. Downstream of S03a, which is what gives it a named refusal to assert.

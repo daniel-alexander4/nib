@@ -1,0 +1,13 @@
+diff --git a/internal/p2p/quic.go b/internal/p2p/quic.go
+index 2003a1d..f4a4c6c 100644
+--- a/internal/p2p/quic.go
++++ b/internal/p2p/quic.go
+@@ -104,7 +104,7 @@ func QUICDial(ctx context.Context, addr string, identityCertPEM, identityKeyPEM,
+ 	if err != nil {
+ 		return nil, err
+ 	}
+-	cfg.NextProtos = sessionALPN
++	cfg.NextProtos = []string{alpn}
+ 
+ 	remote, err := net.ResolveUDPAddr("udp", addr)
+ 	if err != nil {

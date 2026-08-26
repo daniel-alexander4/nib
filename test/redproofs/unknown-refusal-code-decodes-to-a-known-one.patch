@@ -1,0 +1,13 @@
+diff --git a/internal/p2p/session.go b/internal/p2p/session.go
+index 00f15ce..81686d6 100644
+--- a/internal/p2p/session.go
++++ b/internal/p2p/session.go
+@@ -384,7 +384,7 @@ func errorForCode(code byte) error {
+ 	case refusePriorSignerCount:
+ 		return ErrWrongPriorSignerCount
+ 	}
+-	return fmt.Errorf("%w (code %d)", ErrRefusedUnknown, code)
++	return ErrNotYourTurn
+ }
+ 
+ // refusalAck and refusalFor are the ONE door between a refusal and its wire byte.
