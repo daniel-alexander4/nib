@@ -977,7 +977,11 @@ func TestEverySignatureCarriesOneCommitment(t *testing.T) {
 	sameCeremony := signWithRoster(t, doc, aCert, aKey, afp, bfp, rosterHex)
 	sameCeremony = signWithRoster(t, sameCeremony, bCert, bKey, bfp, afp, rosterHex)
 
-	ats := p2p.ReadAttestations(sameCeremony)
+	// **Through the door a real caller uses.** `ReadAttestations` supplies no commitment, so it
+	// can never report one proceeding — which is P07.S04's fix, not a regression: agreement
+	// among signers is a fact about what they wrote, and this test is about agreement with the
+	// record the DOCUMENT carries.
+	ats := p2p.Attestations(sign.Verify(sameCeremony), ProceedingOf(sameCeremony, time.Now()))
 	if len(ats) != 2 {
 		t.Fatalf("setup: %d attestations, want 2", len(ats))
 	}
@@ -1004,7 +1008,7 @@ func TestEverySignatureCarriesOneCommitment(t *testing.T) {
 	split := signWithRoster(t, doc, aCert, aKey, afp, bfp, rosterHex)
 	split = signWithRoster(t, split, bCert, bKey, bfp, afp, otherHex)
 
-	sats := p2p.ReadAttestations(split)
+	sats := p2p.Attestations(sign.Verify(split), ProceedingOf(split, time.Now()))
 	if len(sats) != 2 {
 		t.Fatalf("setup: %d attestations on the split document, want 2", len(sats))
 	}
@@ -1030,6 +1034,11 @@ func signWithRoster(t *testing.T, pdf, certPEM, keyPEM []byte, myFP, peerFP, ros
 		Intent:       "I agree to co-sign",
 		When:         time.Now(),
 		RosterHash:   roster,
+		// **The version travels with the hash, and `reason()` emits NEITHER without it**
+		// (P07.S04). From `FormatVersion` rather than a literal: this fixture stands in for the
+		// production writer that does not exist yet, and a literal here would keep passing on the
+		// day the record format moves while the real thing produced an uninterpretable token.
+		RosterVersion: FormatVersion,
 	}
 	out, err := p2p.Contribute(pdf, certPEM, keyPEM, att, nil, place)
 	if err != nil {
@@ -1453,3 +1462,168 @@ func oneInvitation(t *testing.T, r Record) (Invitation, error) {
 	t.Fatal("no invitation was minted for any roster party")
 	return Invitation{}, nil
 }
+
+// TestAgreementAmongSignersIsNotAProceeding — P07.S04's measured defect, driven.
+//
+// `markOneProceeding` compared the signatures' commitments **only to each other**. The token
+// lives inside the signed `/Reason`, so it is a value the signer picks — and two parties who both
+// write the same 64-hex value they invented, on a document carrying **no ceremony record at all**,
+// were reported as one proceeding on every signature. `web/app.js` renders that as
+// *"✓ One proceeding — every signature on this document commits to the same ceremony."*
+//
+// It was latent only because nothing populated the token. C01 is the change that populates it, so
+// this is a precondition of C01 rather than an improvement beside it.
+//
+// The control comes FIRST and is the same one the test above drives: a REAL ceremony still reports
+// one proceeding, or this fix has simply turned the verdict off.
+func TestAgreementAmongSignersIsNotAProceeding(t *testing.T) {
+	cert, key, cfp := identity(t, "Convener")
+	aCert, aKey, afp := identity(t, "A")
+	bCert, bKey, bfp := identity(t, "B")
+	base, err := testpdf.Form()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// The control: a genuine ceremony, its own record, its own commitment.
+	r := draft(t, cfp, afp, bfp)
+	h, err := DocumentHash(base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.DocHash = h
+	if err := r.Sign(cert, key); err != nil {
+		t.Fatal(err)
+	}
+	tokBytes, err := r.RosterHash()
+	if err != nil {
+		t.Fatal(err)
+	}
+	real := hex.EncodeToString(tokBytes)
+	doc, err := Embed(base, r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	honest := signWithRoster(t, doc, aCert, aKey, afp, bfp, real)
+	honest = signWithRoster(t, honest, bCert, bKey, bfp, afp, real)
+	for i, a := range p2p.Attestations(sign.Verify(honest), ProceedingOf(honest, time.Now())) {
+		if !a.OneProceeding {
+			t.Fatalf("signature %d of an HONEST ceremony is not reported as one proceeding — the "+
+				"fix has turned the verdict off rather than basing it on the record", i)
+		}
+	}
+
+	// **And the defect: no record anywhere, and a value the signers made up.**
+	invented := strings.Repeat("ab", 32)
+	if invented == real {
+		t.Fatal("setup: the invented commitment collides with the real one")
+	}
+	forged := signWithRoster(t, base, aCert, aKey, afp, bfp, invented)
+	forged = signWithRoster(t, forged, bCert, bKey, bfp, afp, invented)
+	// Stimulus: the document really carries no record, and both signatures really carry the
+	// invented token — otherwise the verdict below would be false for a different reason.
+	if _, err := Extract(forged); !errors.Is(err, ErrNoRecord) {
+		t.Fatalf("setup: the forged document carries a record (%v)", err)
+	}
+	ats := p2p.Attestations(sign.Verify(forged), ProceedingOf(forged, time.Now()))
+	if len(ats) != 2 {
+		t.Fatalf("setup: %d attestations, want 2", len(ats))
+	}
+	for i, a := range ats {
+		if a.RosterHash != invented {
+			t.Fatalf("setup: signature %d carries %q, want the invented token", i, a.RosterHash)
+		}
+		if a.OneProceeding {
+			t.Errorf("signature %d of a document with NO ceremony record, whose signers both "+
+				"wrote a commitment they chose themselves, is reported as part of one "+
+				"proceeding. The client renders that as \"✓ One proceeding — every signature on "+
+				"this document commits to the same ceremony\", over a ceremony that does not "+
+				"exist.", i)
+		}
+	}
+}
+
+// TestAnUnsignedRecordIsNotAProceeding — the third way "✓ One proceeding" could be false, and the
+// one the first two arms do not reach.
+//
+// `TestAgreementAmongSignersIsNotAProceeding` covers a document with NO record. This covers a
+// document that HAS one, whose signatures commit to its real hash, and whose record **nobody
+// signed** — so nothing binds that roster to a convener. Found by mutating `ProceedingOf` to
+// ignore `CheckRecord`'s error and noticing that neither existing arm went red: both of them
+// compare against a *different* hash, so a commitment lifted from an unverified record would
+// still have matched.
+//
+// The record has to be a verifying one for the control, and the same record unsigned for the
+// arm — same roster, same id, so the only difference is the signature.
+func TestAnUnsignedRecordIsNotAProceeding(t *testing.T) {
+	cert, key, cfp := identity(t, "Convener")
+	aCert, aKey, afp := identity(t, "A")
+	bCert, bKey, bfp := identity(t, "B")
+	base, err := testpdf.Form()
+	if err != nil {
+		t.Fatal(err)
+	}
+	h, err := DocumentHash(base)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	build := func(sign bool) ([]byte, string) {
+		t.Helper()
+		r := draft(t, cfp, afp, bfp)
+		r.DocHash = h
+		if sign {
+			if err := r.Sign(cert, key); err != nil {
+				t.Fatal(err)
+			}
+		}
+		tok, err := r.RosterHash()
+		if err != nil {
+			t.Fatal(err)
+		}
+		hex := hexOf(tok)
+		doc, err := Embed(base, r)
+		if err != nil {
+			t.Fatal(err)
+		}
+		out := signWithRoster(t, doc, aCert, aKey, afp, bfp, hex)
+		out = signWithRoster(t, out, bCert, bKey, bfp, afp, hex)
+		return out, hex
+	}
+
+	// The control: signed record, and the ✓ is earned.
+	signed, _ := build(true)
+	for i, a := range p2p.Attestations(signVerify(signed), ProceedingOf(signed, time.Now())) {
+		if !a.OneProceeding {
+			t.Fatalf("signature %d of a SIGNED record's ceremony is not one proceeding — the "+
+				"arm below would then prove nothing", i)
+		}
+	}
+
+	// The arm: identical roster, identical commitments on both signatures, record unsigned.
+	unsigned, _ := build(false)
+	if _, err := Extract(unsigned); err != nil {
+		t.Fatalf("setup: the unsigned-record fixture carries no record at all (%v)", err)
+	}
+	ats := p2p.Attestations(signVerify(unsigned), ProceedingOf(unsigned, time.Now()))
+	if len(ats) != 2 {
+		t.Fatalf("setup: %d attestations, want 2", len(ats))
+	}
+	for i, a := range ats {
+		if a.RosterHash == "" {
+			t.Fatalf("setup: signature %d carries no commitment, so the verdict below is not "+
+				"about the record", i)
+		}
+		if a.OneProceeding {
+			t.Errorf("signature %d commits to a record NOBODY SIGNED and is reported as part of "+
+				"one proceeding. Nothing binds that roster to a convener, so the ✓ would be "+
+				"vouching for a ceremony anyone could have written into the document.", i)
+		}
+	}
+}
+
+// hexOf is the hex spelling a commitment travels as.
+func hexOf(b []byte) string { return hex.EncodeToString(b) }
+
+// signVerify is sign.Verify, named locally so these tests read as "the already-verified status".
+func signVerify(pdf []byte) sign.Status { return sign.Verify(pdf) }

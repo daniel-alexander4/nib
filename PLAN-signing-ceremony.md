@@ -4702,7 +4702,38 @@ Scope: the tier-4 harness. Downstream of S03a, which is what gives it a named re
 Acceptance:
 - **The N-party driver completes at N=4** *(moved here from S01 at its grill, 2026-08-23 — this is the first slice where a document carrying more than one prior signature is admissible at all)*: all N−1 parties **armed before the first hop and never re-armed** (a per-instance arm-POST count of exactly 1, plus the reported `address` byte-identical to what it was at arm time, because a re-arm changes the ephemeral port); each asserted `armed:true` immediately before its own hop is dialled, so an expiry fails by party number rather than as "hop 8 could not connect"; the per-hop words watcher keyed on the **absent→present transition** with per-hop filenames, because one filename plus a reset is safe only at N=2 and a stale file from hop k−1 otherwise satisfies hop k's stimulus check; and the block count asserted against **`N_signing` derived from the roster the driver was handed**, never a literal — through `Initiate` every intermediate party signs twice, so the count is 2(N−1) and becomes N only over S05's carry route. The **distinct-signer set** is asserted too, because `/ByteRange` counts blocks and one party signing four times satisfies any count.
 
-#### P07.S04 — `coSignExchange` re-based off the record *(D22 as amended 2026-08-23, D2 pin; C01)*
+#### P07.S04 — `coSignExchange` re-based off the record *(D22 as amended 2026-08-23, D2 pin; C01)* *(done 2026-08-25, v1.117.169 — T01–T04; clause 1 and clause 4's N≥3 half RESEQUENCED behind P07.S05, clause 5 met at S02b)*
+Tasks (grilled 2026-08-25 — `grills/2026-08-25-p07s04-cosign-rebased.md`; deepdive folded in, because its whole output is this slice's shape):
+- T01 — the seam: `Attestations(st sign.Status, p Proceeding)` beside `ReadAttestations(pdf)`. **This is the "T01 seam" clause 2 already names, and it is the same seam clause 6 wants.** *(done — plus `ceremony.ProceedingOf`, ONE door for "which proceeding is this document's", because deriving it twice is how one of them ends up comparing the signatures to each other)*
+- T02 — `OneProceeding` means agreement **with the document's record**, not agreement among signers. *(done — and a mutation pass found a THIRD false-✓ shape neither arm reached: a record that is present and **unsigned**. `ProceedingOf` goes through `CheckRecord`, so a roster nobody vouched for supplies no commitment.)*
+- T03 — the token carries its format version. *(done — `[NibRoster:<v>:<hash>]`, and **both or neither**: `reason()` emits no token for a hash without a version, and the reader refuses version 0, so the pair cannot be produced through one door and not the other. The UI gained the branch that says "this is a version difference, not a disagreement" — which the published-shape reader scan is what forced, by refusing a field nobody was told about.)*
+- T04 — the attestations route stops re-verifying. *(done — it reads `document.sig`, and the proceeding lookup is **conditional** on a signature actually naming a ceremony, so an ordinary document pays no pdfcpu parse per request. `NextPlacement` is **not** changed and says why: its two call sites hold freshly-built bytes with no cached status to read, so there is nothing there to stop re-verifying. The number is not asserted — see the size finding above; the guard is structural and states that.)*
+- T05 — red proofs; `recorded` moves.
+
+**MEASURED at the grill: the ✓ this slice would make reachable is false today.** `markOneProceeding`
+(`attestation.go:234`) compares commitments **only to each other** — the clause says so, and the probe
+shows the cost. Two parties signing with the same arbitrary `abab…` commitment they chose themselves,
+on a document carrying **no `nib-ceremony.json` at all**, report `oneProceeding: true` on every
+signature, and `web/app.js:3814` renders *"✓ One proceeding — every signature on this document commits
+to the same ceremony."* The token is inside the signed `/Reason`, so it is a value the signer picks.
+**It is latent only because nothing populates the token** — and this slice is the change that
+populates it. So T02 is not an improvement shipped alongside C01; it is a **precondition** of C01 not
+shipping a false ✓.
+
+**Clause 1 is BLOCKED on P07.S05 — the same wall S03b's T03 hit**, and for the same measured reason:
+`TestTheRelayCeilingAtFourParties` shows the carrier cannot re-sign, so a four-party ceremony cannot
+complete until S05's carry verb exists. Clause 1 and clause 4's N≥3 half are **resequenced behind
+S05**, not parked.
+
+**Clause 5 was met at P07.S02b, by a different slice** — the TCP-ceremony re-delivery gap (`rd` read
+off `anchor.cer`, empty on the accept-loop path). Guarded structurally; `/pending 289` owns the
+behavioural drive. Recorded so this slice's ledger does not credit itself with it.
+
+**Clause 6's number is SIZE-driven, not signature-driven.** Measured: nine signatures on a 31 KB
+document cost single-digit milliseconds and scale roughly linearly in signature count. The 5.2 s
+figure is dominated by document SIZE — each signature's byte range is hashed over the whole file, so
+the cost is size × signers. The remedy is right either way, but **the fixture has to be large or the
+criterion cannot see its own number**, which is the "instrument coarser than the clause" failure.
 Scope: `coSignExchange` refuses anything but a single prior signer, and the two checks under it bind the
 document's signer to the **wire** peer and require that signer to have accepted **this user** — the second is
 what D22 re-bases. `att` sets no `RosterHash`, so today no production signature carries a commitment at all.

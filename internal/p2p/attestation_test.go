@@ -116,15 +116,19 @@ func TestCrossBindRequiresValidity(t *testing.T) {
 // p2p cannot import ceremony, because ceremony's own tests import p2p.
 func TestTheRosterTokenIsWellFormedWhereItIsActuallyBuilt(t *testing.T) {
 	const h = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
-	a := Attestation{AcceptedPeer: strings.Repeat("a", 64), AcceptedPeerLabel: "Marta", RosterHash: h}
+	a := Attestation{AcceptedPeer: strings.Repeat("a", 64), AcceptedPeerLabel: "Marta",
+		RosterHash: h, RosterVersion: 4}
 	got := a.reason()
-	if !strings.Contains(got, "[NibRoster:"+h+"]") {
+	// The VERSION travels with the hash (P07.S04). Without it a reader cannot tell a different
+	// ceremony from a different record format, and the client's honest reading of a mismatch is
+	// an accusation about the parties.
+	if !strings.Contains(got, "[NibRoster:4:"+h+"]") {
 		t.Fatalf("reason() = %q\ndoes not carry the token in its documented shape", got)
 	}
 
 	// It must survive the parser that reads it back, which is the whole point of a token.
 	m := rosterToken.FindStringSubmatch(got)
-	if m == nil || m[1] != h {
+	if m == nil || m[1] != "4" || m[2] != h {
 		t.Fatalf("the token this code produced does not match the regexp this code parses "+
 			"it with: %q", got)
 	}
@@ -138,12 +142,40 @@ func TestTheRosterTokenIsWellFormedWhereItIsActuallyBuilt(t *testing.T) {
 
 	// The forgery safeHex's doc describes: user-controlled text cannot place an earlier
 	// token that wins FindStringSubmatch.
+	// The crafted token is VERSIONED too (P07.S04) — an attacker writes whatever shape the
+	// parser reads, so a forgery arm using the old unversioned spelling would be testing that
+	// the regexp ignores a string it was never going to match.
 	evil := Attestation{
 		AcceptedPeer:      strings.Repeat("a", 64),
-		AcceptedPeerLabel: "x] [NibRoster:" + strings.Repeat("b", 64) + "] y",
+		AcceptedPeerLabel: "x] [NibRoster:4:" + strings.Repeat("b", 64) + "] y",
 		RosterHash:        h,
+		RosterVersion:     4,
 	}
-	if m := rosterToken.FindStringSubmatch(evil.reason()); m == nil || m[1] != h {
+	if m := rosterToken.FindStringSubmatch(evil.reason()); m == nil || m[2] != h {
 		t.Fatalf("a crafted label displaced the real roster token: %q", evil.reason())
+	}
+}
+
+// TestARosterHashWithoutAVersionCarriesNoToken — both, or neither.
+//
+// A commitment with no format version is one nothing can interpret: `FormatVersion` is the first
+// substantive axis of the roster preimage, so a bare hash leaves a reader unable to tell a
+// different ceremony from a different record format — which is the ambiguity the version exists
+// to remove. Emitting no token is the fail-CLOSED direction, because `markOneProceeding` treats a
+// missing commitment as disqualifying: the signature reads as "not part of this proceeding"
+// rather than as a commitment somebody might compare.
+func TestARosterHashWithoutAVersionCarriesNoToken(t *testing.T) {
+	const h = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+	// Stimulus: WITH a version the same attestation does carry one, so the absence below is
+	// about the version and not about the fixture.
+	withV := Attestation{AcceptedPeer: strings.Repeat("a", 64), RosterHash: h, RosterVersion: 4}
+	if !strings.Contains(withV.reason(), "NibRoster") {
+		t.Fatal("setup: a versioned commitment produced no token at all")
+	}
+	bare := Attestation{AcceptedPeer: strings.Repeat("a", 64), RosterHash: h}
+	if got := bare.reason(); strings.Contains(got, "NibRoster") {
+		t.Errorf("a commitment with no format version was written into the signature: %q. "+
+			"A reader handed a bare hash cannot tell a different ceremony from a different "+
+			"record format, and the client renders the second as the first.", got)
 	}
 }

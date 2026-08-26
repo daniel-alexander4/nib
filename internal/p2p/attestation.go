@@ -16,6 +16,7 @@ package p2p
 import (
 	"fmt"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -54,6 +55,21 @@ type Attestation struct {
 	// pairwise claims: signer 3 attesting only to signer 2 says nothing about what signer
 	// 1 agreed to, and every signature carrying the same commitment does.
 	RosterHash string
+	// RosterVersion is the record FORMAT version the commitment was computed under, and it
+	// travels beside it (P07.S04).
+	//
+	// **Without it a format skew is indistinguishable from tampering, through the one surface
+	// D32 excused.** `FormatVersion` is the first substantive axis of `rosterPreimage`
+	// (`ceremony/record.go`), so two builds at different versions digest the IDENTICAL roster to
+	// different hashes. The commitments then disagree, and the client's honest reading of that
+	// is *"This document was not produced by a single agreed proceeding"* — an accusation about
+	// the parties, caused by one of them having updated Nib. Carrying the version lets a reader
+	// say which it is.
+	//
+	// Zero is refused by `reason()` when a hash is present: an unversioned commitment is one
+	// nothing can interpret, and there is no population to be lenient towards — no production
+	// attestation has ever carried a commitment at all.
+	RosterVersion int
 }
 
 // attestationTag marks a /Reason as one this package WROTE, and ReadAttestations requires
@@ -77,8 +93,16 @@ const attestationTag = "[NibCoSign:1]"
 // spkiToken matches the machine-readable peer fingerprint embedded in /Reason.
 var spkiToken = regexp.MustCompile(`\[SPKI:([0-9a-fA-F]{64})\]`)
 
-// rosterToken matches the Ceremony Record commitment embedded in /Reason (D20).
-var rosterToken = regexp.MustCompile(`\[NibRoster:([0-9a-fA-F]{64})\]`)
+// rosterToken matches the Ceremony Record commitment embedded in /Reason (D20), with the record
+// FORMAT version it was computed under (P07.S04).
+//
+// **Only the versioned form is a token.** There is no unversioned population to be lenient
+// towards — measured: no production attestation has ever carried a commitment — and accepting
+// both would leave a reader unable to say whether a missing version means "old build" or "the
+// field was stripped", which is the ambiguity the version exists to remove. The same argument
+// `InvitationVersion` made at P07.S02: a required field is a format change, and a format with no
+// population in the field is free to make.
+var rosterToken = regexp.MustCompile(`\[NibRoster:([0-9]{1,4}):([0-9a-fA-F]{64})\]`)
 
 func (a Attestation) intent() string {
 	if a.Intent == "" {
@@ -124,11 +148,17 @@ func safeText(s string) string {
 // are bracket-stripped so they can't forge the token (see safeText).
 func (a Attestation) reason() string {
 	roster := ""
-	if a.RosterHash != "" {
+	// **Both, or neither.** A commitment with no format version is one nothing can interpret:
+	// `FormatVersion` is the first substantive axis of the roster preimage, so a reader handed a
+	// bare hash cannot tell a different ceremony from a different record format. Emitting no
+	// token is the fail-CLOSED direction — `markOneProceeding` treats a missing commitment as
+	// disqualifying, so the signature reads as "not part of this proceeding" rather than as a
+	// commitment somebody might compare. `TestARosterHashWithoutAVersionCarriesNoToken` drives it.
+	if a.RosterHash != "" && a.RosterVersion > 0 {
 		// Placed BEFORE the user-controlled text, like the SPKI token, and matched by a
 		// regexp requiring exactly 64 hex — safeText strips brackets from the label and
 		// intent, so neither can forge one.
-		roster = " [NibRoster:" + safeHex(a.RosterHash) + "]"
+		roster = " [NibRoster:" + strconv.Itoa(a.RosterVersion) + ":" + safeHex(a.RosterHash) + "]"
 	}
 	return fmt.Sprintf("%s Accepts %s [SPKI:%s]%s. %s", attestationTag,
 		safeText(a.AcceptedPeerLabel), safeHex(a.AcceptedPeer), roster, safeText(a.intent()))
@@ -165,6 +195,11 @@ type SignerAttestation struct {
 	// RosterHash is the Ceremony Record commitment this signature carries ("" on an
 	// ordinary two-party co-sign, which has no record).
 	RosterHash string `json:"rosterHash,omitempty"`
+	// RosterVersion is the record format version that commitment was computed under, 0 when the
+	// signature carries none. Published so a reader can tell a FORMAT SKEW from a disagreement:
+	// two builds at different versions digest the same roster to different hashes, and calling
+	// that "not one proceeding" accuses the parties of something an update caused (D32).
+	RosterVersion int `json:"rosterVersion,omitempty"`
 	// OneProceeding is true when every VALID signature on the document carries the same
 	// non-empty roster commitment.
 	//
@@ -182,7 +217,66 @@ type SignerAttestation struct {
 // signed /Reason, and cross-binds each accepted peer against the other signers'
 // actual fingerprints (Matched).
 func ReadAttestations(pdf []byte) []SignerAttestation {
-	st := sign.Verify(pdf)
+	return Attestations(sign.Verify(pdf), Proceeding{})
+}
+
+// Proceeding is what the caller knows about the ceremony a document is supposed to belong to.
+//
+// **Primitives, not a `ceremony.Record`, for the reason L3's `Roster` is** — `p2p` cannot import
+// `internal/ceremony`: since P07.S02a that is a production import cycle, not a test one. The
+// caller holds the record and passes what this package needs to check against.
+type Proceeding struct {
+	// Commitment is the RosterHash of the record the DOCUMENT carries, hex, or "" when the
+	// caller has none to offer.
+	//
+	// **Empty means `OneProceeding` can never be true, and that is the fix rather than a
+	// limitation.** `markOneProceeding` used to compare the signatures' commitments only to each
+	// other, so a document with no ceremony record at all — whose signers had both written the
+	// same 64-hex value they chose themselves — reported one proceeding on every signature, and
+	// the client rendered *"✓ One proceeding — every signature on this document commits to the
+	// same ceremony."* Measured at P07.S04's grill. The token lives inside the signed `/Reason`,
+	// so it is a value the signer picks; agreement among signers is not evidence that the thing
+	// they agree about exists.
+	Commitment string
+}
+
+// ClaimsAProceeding reports whether any signature on an already-verified document names a
+// ceremony at all.
+//
+// **A cheap discriminator so the expensive lookup is conditional (P07.S04).** Answering "which
+// proceeding is this document's" costs an attachment extraction — a pdfcpu parse — and the
+// attestations route is request-handling code, where `CLAUDE.md` says work goes only if it is
+// unavoidable. It is avoidable here: a document whose signatures name no ceremony has no
+// proceeding to check them against, and that is the overwhelming majority of documents. This
+// reads the already-verified `/Reason` strings and parses nothing.
+//
+// It is NEARLY the discriminator the client uses to decide whether to say anything about
+// proceedings (`web/app.js`: `attested.filter((a) => a.rosterHash)`) — nearly, because this one
+// also requires the signature to be valid, and the client's does not. The difference is safe in
+// one direction only and that is why it is written down: a document whose ONLY ceremony token is
+// on an invalid signature skips the lookup here, so no commitment is supplied, so nothing reports
+// one proceeding — and the client then shows its warning, which is the honest answer for a
+// tampered signature naming a ceremony. The reverse would not be safe, and nothing produces it.
+func ClaimsAProceeding(st sign.Status) bool {
+	for _, sg := range st.Signers {
+		if !sg.Valid || !strings.Contains(sg.Reason, attestationTag) {
+			continue
+		}
+		if rosterToken.MatchString(sg.Reason) {
+			return true
+		}
+	}
+	return false
+}
+
+// Attestations reads each signer's attestation from an ALREADY VERIFIED document.
+//
+// **Split out at P07.S04 for two reasons that turn out to be one seam.** A caller that already
+// holds a `sign.Status` — every HTTP handler with an open document does, in `document.sig` — was
+// re-verifying the whole file to get here, which is signature-count × document-size work on a
+// request path with the answer already cached beside it. And the proceeding check needs somewhere
+// to take the document's own commitment from, which a `(pdf []byte)` signature has nowhere to put.
+func Attestations(st sign.Status, p Proceeding) []SignerAttestation {
 	out := make([]SignerAttestation, 0, len(st.Signers))
 	for _, s := range st.Signers {
 		sa := SignerAttestation{Signer: s.Name, Fingerprint: s.Fingerprint, Reason: s.Reason, When: s.When, Valid: s.Valid}
@@ -194,13 +288,21 @@ func ReadAttestations(pdf []byte) []SignerAttestation {
 				sa.AcceptedPeer = m[1]
 			}
 			if m := rosterToken.FindStringSubmatch(s.Reason); m != nil {
-				sa.RosterHash = m[1]
+				// **Version 0 is refused on the way IN as well as on the way out.** `reason()`
+				// emits neither half without both; a signer writing `[NibRoster:0:…]` into their
+				// own /Reason by hand would otherwise produce the pair the writer is forbidden
+				// to produce, and a state reachable through one door and not the other is a
+				// state nothing downstream was written against.
+				if v, err := strconv.Atoi(m[1]); err == nil && v > 0 {
+					sa.RosterVersion = v
+					sa.RosterHash = m[2]
+				}
 			}
 		}
 		out = append(out, sa)
 	}
 	crossBind(out)
-	markOneProceeding(out)
+	markOneProceeding(out, p.Commitment)
 	return out
 }
 
@@ -231,33 +333,39 @@ func shortFingerprint(hexFP string) string {
 	return hexFP[0:4] + " " + hexFP[4:8] + " " + hexFP[8:12] + " " + hexFP[12:16] + "..."
 }
 
-// markOneProceeding sets OneProceeding when every VALID signature carries the same
-// non-empty roster commitment (D20, D2's UX pin).
+// markOneProceeding sets OneProceeding when every VALID signature commits to the ceremony record
+// THIS DOCUMENT CARRIES (D20, D2's UX pin).
 //
 // Only valid signatures are considered, for the same reason crossBind ignores invalid
 // ones: a broken signature attests to nothing, so letting it vote would let a tampered
 // signature deny a genuine ceremony. And an empty commitment on any valid signature is
 // disqualifying rather than ignored — a signer who carried no record is a signer who
 // agreed to something else.
-func markOneProceeding(ats []SignerAttestation) {
-	first, n := "", 0
+//
+// **`want` is the record's own commitment, and comparing to it rather than to the other
+// signatures is P07.S04's whole point.** Measured at its grill: two parties signing with the same
+// arbitrary value they chose themselves, on a document with no ceremony record at all, reported
+// one proceeding on every signature — and the client renders that as "✓ One proceeding". The
+// token lives inside the signed `/Reason`, so agreement among signers is a fact about what they
+// wrote, not evidence that the ceremony they name exists.
+//
+// An empty `want` therefore disqualifies: a caller that cannot say which ceremony this document
+// belongs to must not be able to produce the ✓.
+func markOneProceeding(ats []SignerAttestation, want string) {
+	if want == "" {
+		return
+	}
+	n := 0
 	for _, a := range ats {
 		if !a.Valid {
 			continue
 		}
 		n++
-		if a.RosterHash == "" {
-			return
-		}
-		if first == "" {
-			first = a.RosterHash
-			continue
-		}
-		if a.RosterHash != first {
+		if !strings.EqualFold(a.RosterHash, want) {
 			return
 		}
 	}
-	if n == 0 || first == "" {
+	if n == 0 {
 		return
 	}
 	for i := range ats {
