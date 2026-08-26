@@ -823,10 +823,23 @@ if [ "$N" != "2" ]; then
   # it honest through the intermediate state where S03 names the refusal but has
   # not yet removed it — it would otherwise go red for the right reason with a
   # message pointing at the wrong thing.
-  if grep -q "expected exactly one prior signer" "${HOMES[2]}/nib.log" "$WORK/hop2.json" 2>/dev/null; then
+  # **The by-name branch is checked FIRST and the EOF branch is now anchored, because this
+  # probe MISCLASSIFIED its own result (2026-08-25, P07.S03b).** Two defects, and either alone
+  # was enough. The name it grepped for — `expected exactly one prior signer` — was renamed when
+  # P07.S03a gave the refusal a sentinel, so the by-name branch could no longer match anything.
+  # And the EOF branch matched `could not connect to peer`, which is the SERVER'S GENERIC
+  # WRAPPER and was present on the named refusal too: `{"error":"could not connect to peer: a
+  # co-signature takes exactly one prior signer"}`. So the probe reported "flattened to EOF"
+  # about a refusal that had arrived perfectly well by name, and would have gone on doing so
+  # forever — a guard pointed at the wrong string, reading as a measurement.
+  #
+  # Fixed at both ends: the name is matched on the SENTINEL's wording, and the EOF branch is
+  # anchored to the transport shapes alone. The wrapper itself was the third defect and is gone
+  # from the product — a refusal is no longer dressed as a connect failure.
+  if grep -q "takes exactly one prior signer" "${HOMES[2]}/nib.log" "$WORK/hop2.json" 2>/dev/null; then
     echo "      the refusal arrived BY NAME (HTTP $hop2code) — the wire now carries it"
-  elif grep -q "receive co-signed document: EOF\|could not connect to peer" "$WORK/hop2.json" 2>/dev/null; then
-    echo "      the refusal arrived FLATTENED to EOF (HTTP $hop2code) — today's shape, S03's to fix"
+  elif grep -qE "receive co-signed document: EOF|none answered as the pinned peer" "$WORK/hop2.json" 2>/dev/null; then
+    echo "      the refusal arrived FLATTENED to a transport error (HTTP $hop2code)"
   else
     echo "--- instance 3 log ---" >&2; tail -20 "${HOMES[2]}/nib.log" >&2 2>/dev/null || true
     echo "--- initiate body ---" >&2; head -c 400 "$WORK/hop2.json" >&2 2>/dev/null || true

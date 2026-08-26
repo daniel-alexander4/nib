@@ -4675,7 +4675,25 @@ Tasks (grilled 2026-08-25 — `grills/2026-08-25-p07s03a-l3-on-the-wire.md`):
 - T04 — the skew driven in BOTH directions, because it is the case no ordinary test reaches. *(done)*
 - T05 — red proofs; `recorded` moves. *(done 2026-08-25, v1.117.163 — five rows, two of which restore the state the product was actually in; `recorded` 94 → 99)*
 
-#### P07.S03b — The N-party driver at N=4 *(D23, L3; C05)* — **new, 2026-08-25, split out of S03a**
+#### P07.S03b — The N-party driver at N=4 *(D23, L3; C05)* — **new, 2026-08-25, split out of S03a** *(in progress)*
+Tasks:
+- T01 — the refusal stops being reported as a connect failure, and the probe that should have seen it stops being pointed at the wrong string. *(done 2026-08-25, v1.117.165)*
+- T02 — the harness drives a REAL ceremony: convene, issue invitations, accept them, arm WITH the invitation — so hop 2 is a ceremony hop at all. Its own doc names hand-pinning as the residue D29 forbids and says this harness should stop when S02b lands; S02b has landed.
+- T03 — the relay completes at N=4, with the acceptance clause's own conditions (arm-POST count, per-hop word watchers keyed on the absent→present transition, block count from the roster, distinct-signer set).
+- T04 — red proofs; `recorded` moves.
+
+**T01 found three defects and the first two were mine (2026-08-25).** Running the N=4 probe after
+S03a — which its own doc says "goes red on the day S03 lands" — it reported *"the refusal arrived
+FLATTENED to EOF"*. It had not. **(1)** The product wrapped the named refusal in
+`connectFailure`'s "could not connect to peer" and sent it to `writeConnectDiagnosis`, which
+renders a 502 and picks a **D19 network cause** — for an exchange the peer connected to and
+refused. That is the wire fix undone one layer up, and it is the harm `verify.go` already states
+for its own case: *"could not connect" invites a retry*. Lifted at BOTH doors, because
+`connectFailure` is reached from `diagnosis.go` too. **(2)** The probe's by-name branch grepped
+`expected exactly one prior signer`, which S03a renamed when it gave the refusal a sentinel.
+**(3)** Its EOF branch matched `could not connect to peer` — the server's generic wrapper, present
+on the named refusal too — so it could **never** have distinguished the two and would have
+reported the old shape forever. A guard pointed at the wrong string, reading as a measurement.
 Scope: the tier-4 harness. Downstream of S03a, which is what gives it a named refusal to assert.
 Acceptance:
 - **The N-party driver completes at N=4** *(moved here from S01 at its grill, 2026-08-23 — this is the first slice where a document carrying more than one prior signature is admissible at all)*: all N−1 parties **armed before the first hop and never re-armed** (a per-instance arm-POST count of exactly 1, plus the reported `address` byte-identical to what it was at arm time, because a re-arm changes the ephemeral port); each asserted `armed:true` immediately before its own hop is dialled, so an expiry fails by party number rather than as "hop 8 could not connect"; the per-hop words watcher keyed on the **absent→present transition** with per-hop filenames, because one filename plus a reset is safe only at N=2 and a stale file from hop k−1 otherwise satisfies hop k's stimulus check; and the block count asserted against **`N_signing` derived from the roster the driver was handed**, never a literal — through `Initiate` every intermediate party signs twice, so the count is 2(N−1) and becomes N only over S05's carry route. The **distinct-signer set** is asserted too, because `/ByteRange` counts blocks and one party signing four times satisfies any count.

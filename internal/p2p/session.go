@@ -337,6 +337,27 @@ var (
 	ErrRefusedUnknown = errors.New("the peer refused this contribution for a reason this version of Nib does not know")
 )
 
+// IsContributionRefusal reports whether err is the far side REFUSING a contribution, as opposed
+// to anything failing.
+//
+// **Exported because the distinction has to survive the trip up to HTTP, and it did not.** A
+// refusal that reaches `writeConnectDiagnosis` is rendered as a 502 wrapped in "could not connect
+// to peer" and given a D19 network cause — for an exchange in which the peer connected perfectly
+// well and said no. Measured at tier 4 the day the wire started carrying names: the refusal
+// arrived correctly and came out of the API as
+// `{"error":"could not connect to peer: a co-signature takes exactly one prior signer"}`, so the
+// wire fix was undone one layer up.
+//
+// The same argument `connectFailure` already makes for `ClockSkewError`, and the same argument
+// `verify.go` makes about a words-don't-match verdict: "could not connect" invites a retry, and a
+// retry is the wrong advice for every one of these.
+//
+// One door (ADR-009): it is `refusalCode` — the same enumeration the wire uses — so a class added
+// there is lifted here without a second list to keep in step.
+func IsContributionRefusal(err error) bool {
+	return refusalCode(err) != 0 || errors.Is(err, ErrRefusedUnknown)
+}
+
 // refusalCode maps a refusal to its wire code, or 0 for one that has none.
 func refusalCode(err error) byte {
 	switch {

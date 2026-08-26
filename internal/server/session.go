@@ -1482,6 +1482,20 @@ func (s *Server) handleSessionInitiate(w http.ResponseWriter, r *http.Request) {
 				"side in time, so nothing was signed")
 			return
 		}
+		// **A contribution refusal is not a connect failure either (P07.S03b).** The three
+		// branches above lift the refusals that had sentinels; P07.S03a gave sentinels to nine
+		// more and they fell straight through to here, where `writeConnectDiagnosis` renders a
+		// 502 wrapped in "could not connect to peer" AND picks a D19 network cause — for an
+		// exchange in which the peer connected perfectly well and refused. Measured at tier 4:
+		// `{"error":"could not connect to peer: a co-signature takes exactly one prior signer"}`,
+		// which is the wire fix undone one layer up.
+		//
+		// The message is the refusal's own, because those sentences already name the party, the
+		// position and the axis — a re-write here would be a second copy of them drifting.
+		if p2p.IsContributionRefusal(err) {
+			httpError(w, http.StatusConflict, err.Error())
+			return
+		}
 		// P05.S11: a genuine connect failure (not a decline) gets D19's plain-language diagnosis,
 		// classified from the signals on `cer`. `cer` is nil-safe in diagnose(); a non-ceremony or
 		// TCP dial falls back to the flat connectFailure message.
@@ -1637,6 +1651,14 @@ func connectFailure(err error) string {
 	var skew *p2p.ClockSkewError
 	if errors.As(err, &skew) {
 		return skew.Error()
+	}
+	// **And a refusal is not a connect failure either (P07.S03b).** The handler lifts these
+	// before it gets here, and this is the SECOND door: `writeConnectDiagnosis` also reaches this
+	// function from `diagnosis.go`, so a rule enforced only at the caller holds at one of two
+	// sites — the ADR-009 shape. Same argument as the skew above it: the peer connected, and
+	// "could not connect" invites the retry that is wrong advice for every one of these.
+	if p2p.IsContributionRefusal(err) {
+		return err.Error()
 	}
 	return "could not connect to peer: " + err.Error()
 }
