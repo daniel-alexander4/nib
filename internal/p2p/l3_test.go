@@ -396,3 +396,72 @@ func l3StripComments(src string) string {
 	}
 	return b.String()
 }
+
+// TestTheChannelBindingReadsTheLastSigner — the change conditioning `len(ats) != 1` forced, and
+// the one nothing else would have caught.
+//
+// `coSignExchange`'s two channel bindings ask whether the document was signed by the connected
+// peer and whether that signer accepted this user. At N=2 there is one attestation and reading
+// index 0 or index last is the same thing — which is why every existing test stays green either
+// way. At hop k there are k of them, and `ats[0]` is the party who signed FIRST. With the
+// single-prior-signer rule off for ceremonies, reading index 0 would bind the channel to whoever
+// signed first and let every later hop past: a peer could hand over a document they had nothing
+// to do with, provided the FIRST signer happened to be the pinned identity.
+//
+// Driven at three signatures, where the two readings genuinely disagree.
+func TestTheChannelBindingReadsTheLastSigner(t *testing.T) {
+	a, b, c := l3Identity(t, "A"), l3Identity(t, "B"), l3Identity(t, "C")
+	me := l3Identity(t, "Me")
+	roster := Roster{Entries: []RosterEntry{
+		{Fingerprint: a.fp, Signs: true},
+		{Fingerprint: b.fp, Signs: true},
+		{Fingerprint: c.fp, Signs: true},
+		{Fingerprint: me.fp, Signs: true},
+	}}
+	// A, then B, then C — each accepting the next, and C accepting ME because C is the party
+	// handing the document over.
+	doc := l3Chain(t, l3Prepared(t), []l3Party{a, b, c}, []l3Party{b, c, me}, "")
+	ats := ReadAttestations(doc)
+	if len(ats) != 3 {
+		t.Fatalf("setup: %d signatures, want 3", len(ats))
+	}
+	// **The stimulus, and it is the whole test:** the first and last signers must DIFFER, or
+	// index 0 and index last are the same attestation and nothing below discriminates.
+	if strings.EqualFold(ats[0].Fingerprint, ats[len(ats)-1].Fingerprint) {
+		t.Fatal("setup: the first and last signers are the same party, so this fixture cannot " +
+			"tell ats[0] from ats[len-1]")
+	}
+
+	cFPb, err := hex.DecodeString(c.fp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// C is the connected peer. Reading ats[0] would compare A against C and refuse.
+	if _, err := coSignExchange(me.cert, me.key, cFPb, "C", doc,
+		l3Confirmer{accept: true, intent: "I agree"}, nil, roster); err != nil {
+		t.Fatalf("the document handed over by C, the LAST signer, was refused: %v. The channel "+
+			"binding is reading the first attestation, so at every hop past the first it binds "+
+			"the connection to the wrong party.", err)
+	}
+
+	// And the other direction, which is what stops "read the last one" becoming "read any of
+	// them": a document whose last signer is NOT the connected peer is still refused.
+	aFPb, _ := hex.DecodeString(a.fp)
+	_, err = coSignExchange(me.cert, me.key, aFPb, "A", doc,
+		l3Confirmer{accept: true, intent: "I agree"}, nil, roster)
+	if err == nil {
+		t.Error("a document was accepted from a peer who is not its last signer — the binding " +
+			"has become 'any signer on the document', which is no binding at all")
+	}
+}
+
+// l3Confirmer is a Confirmer that answers immediately, so these tests are about the gate rather
+// than about the consent gate one line below it.
+type l3Confirmer struct {
+	accept bool
+	intent string
+}
+
+func (c l3Confirmer) Confirm(SignerAttestation, []byte) (bool, string, []byte, error) {
+	return c.accept, c.intent, nil, nil
+}
