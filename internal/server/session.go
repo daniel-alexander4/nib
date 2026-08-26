@@ -797,7 +797,7 @@ func (s *Server) serveOneSession(anchor consentAnchor, cer *ceremonyID, conn *p2
 		// different block.
 		rd = cer
 	}
-	final, rerr := p2p.Receive(ch, cert, key, label, sessionConfirmer{s: s, saw: &saw, anchor: anchor, cer: cer}, sessionVerifier{s, &saw}, rd)
+	final, rerr := p2p.Receive(ch, cert, key, label, sessionConfirmer{s: s, saw: &saw, anchor: anchor, cer: cer}, sessionVerifier{s, &saw}, rd, cer.l3Roster())
 	if rerr != nil {
 		return saw.v.Load(), nil, rerr
 	}
@@ -1380,16 +1380,14 @@ func (s *Server) handleSessionInitiate(w http.ResponseWriter, r *http.Request) {
 		httpError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	signed, ok := s.buildCoSigned(w, pdfBytes, cert, key, att, appearance)
-	if !ok {
-		return
-	}
-	cands, ok := s.peerAddresses(w, v, address, r.FormValue("transport"), peerFP)
-	if !ok {
-		return
-	}
 	// The dialing side's ceremony identity, from the same pasteable invitation the arm takes.
 	// Absent, this is the manual and LAN path exactly as before.
+	//
+	// **Resolved BEFORE buildCoSigned (moved 2026-08-25, P07.S03).** It used to sit below, and
+	// the L3 gate needs the roster before the local signature is applied — for the reason the
+	// deadline check above already states in its own words: refusing after `buildCoSigned` leaves
+	// the user signed into something this build has just refused. A signature cannot be taken
+	// back off a document.
 	peerLabel, _ := pinnedLabel(v, peerFP)
 	cer, cerr := s.dialerCeremony(r.FormValue("invitation"), cert, key, peerFP)
 	if cerr != nil && !errors.Is(cerr, errNoCeremony) {
@@ -1397,6 +1395,14 @@ func (s *Server) handleSessionInitiate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer cer.close()
+	signed, ok := s.buildCoSigned(w, pdfBytes, cert, key, att, appearance, cer.l3Roster())
+	if !ok {
+		return
+	}
+	cands, ok := s.peerAddresses(w, v, address, r.FormValue("transport"), peerFP)
+	if !ok {
+		return
+	}
 	// P05.S09: for a CEREMONY the dialing side also LISTENS, over the one shared endpoint, and the
 	// glare join keeps whichever connection both ends agree on — so a peer that wins by dialing US
 	// is joined here instead of being refused. The dialing side of a co-sign is the INITIATOR

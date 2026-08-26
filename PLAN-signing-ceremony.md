@@ -4568,7 +4568,47 @@ Acceptance:
 - After a ceremony a party **declined**, `PruneCeremonyPeers` leaves the peer list byte-identical to before (P01's parked criterion, driven at last).
 - The invitation secret is never written to `~/nib/ceremonies/`, driven by searching the mirror after a ceremony is **armed** (P01's other parked criterion — the half its own close could not exercise).
 
-#### P07.S03 — The L3 guard: the roster-prefix contribution gate *(D23, L3; C05, Stage 6 pin V1)*
+#### P07.S03 — The L3 guard: the roster-prefix contribution gate *(D23, L3; C05, Stage 6 pin V1)* *(done 2026-08-25, v1.117.159 — T01 REFUTED and replaced, slice SPLIT; the substituted-record clause is met at the predicate and `not exercised` on the production path until S04 makes signatures carry a commitment, asserted as a limit rather than left green)*
+Tasks (grilled 2026-08-25 — `grills/2026-08-25-p07s03-the-l3-gate.md`, verdict **amended and SPLIT**; deepdive first, `deepdives/2026-08-25-p07s03-the-l3-gate.md`):
+- T01 — `p2p.NextContributor` + `p2p.AdmitContribution`: one predicate, two shapes, over `[]SignerAttestation` and a roster of primitives. *(done)*
+- T02 — both contribution entry points routed through it, roster threaded from the arm's verified record. *(done — and the dialing route's `dialerCeremony` MOVED above `buildCoSigned`, because refusing after the local signature is applied leaves the user signed out of turn and a signature cannot be taken back off a document)*
+- T03 — the four refusals, each asserted **distinct from the others**. *(done — five, in fact: 'not in the roster at all' is its own fact and its own sentence)*
+- T04 — the two-package routing guard, with its stimulus **per directory**, because a total of two is also what reading one package and finding both there looks like. *(done, mutation-tested in both directions)*
+- T05 — `len(ats) != 1` **conditioned** on the presence of a roster, not deleted. *(done — and it forced a second change: with the rule off, the two channel bindings had to read the LAST attestation rather than `ats[0]`, or they would bind the channel to whoever signed FIRST and let every later hop past. The limit is named at the line: it assumes the carrier also signs, which S05's non-signing convener breaks.)*
+- T06 — red proofs; `recorded` moves.
+
+**T01 IS REFUTED AND REPLACED (2026-08-25, measured).** The task said the import cycle must be
+broken by moving `record_test.go` to `package ceremony_test`. Two things are wrong with that and
+the second is fatal. It is **four files, not one** (`convene_test.go`, `embed_test.go`,
+`mirror_durable_test.go`, `record_test.go` are all `package ceremony` and all import `p2p`), and
+they use `ceremony`'s unexported identifiers throughout — so the move breaks them, and the task's
+"its `p2p` uses touch no unexported identifier" checks the wrong direction. And **the cycle is now
+a PRODUCTION cycle that no test move can touch**: P07.S02a put `Convene` in `internal/ceremony`
+calling `p2p` directly (`convene.go:10`), so adding the reverse edge fails to *build*:
+`imports nib/internal/ceremony from session.go / imports nib/internal/p2p from convene.go: import
+cycle not allowed`. The task was written before S02a existed.
+
+**And no cycle needs breaking.** `ReadAttestations` (`internal/p2p/attestation.go:184`) already
+returns every fact L3 asks about, in signature order — `Fingerprint`, `Valid`, `Matched` (the
+cross-binding), `RosterHash`, `OneProceeding`. So the predicate is a **pure function in `p2p` over
+primitives**, taking a roster of `(fingerprint, signs)` pairs and the local fingerprint, and `p2p`
+needs no `ceremony` type at all. Better than the interface shape also considered: no indirection,
+no implementation to keep in step, both entry points calling one function. It also honours this
+slice's own scope note — the caller supplies the roster, and the caller is the side holding the
+record it verified at arm time.
+
+**SPLIT — the wire and the driver become P07.S03a.** Two of the ten clauses are not gate work: the
+initiator-learns-the-name clause is a **protocol version step** (`refusalAck`, `session.go:284`,
+carries exactly two classes and everything else reaches the initiator as `receive co-signed
+document: EOF`; a new ack byte an older build must not misread is D32's skew rule), and the N=4
+tier-4 driver over both transports is a harness slice. Both move to S03a, verbatim.
+
+**And the `len(ats) != 1` removal is CONDITIONAL, which this slice did not say.** Removed
+outright, an ordinary **non-ceremony** two-party co-sign would accept a document carrying three
+prior signers with nothing to refuse it — the gate exists only where there is a roster. With a
+roster the gate decides; without one the single-prior-signer rule stands, as one branch with the
+reason at the line.
+
 Scope: **L3 has no code** — the law matches nothing in the Go tree outside comments, so "no contribution out of
 roster order" is at present the convention D23 says it must not be. One door per ADR-009, and the slice opens
 with the seam that makes one door possible at all.
@@ -4588,11 +4628,27 @@ Acceptance:
 - A contribution onto a document with the **wrong prefix** is refused in Go with a named error, UI bypassed — **driven separately**, because one fixture satisfying both is what C05's own note forbids.
 - A prefix naming the right identities but carrying a signature that **does not verify, or is not cross-bound**, is refused by name. L3 and D23 both say "each one valid and cross-bound"; without this clause S03's acceptance is narrower than the law it implements.
 - A **substituted but well-formed** record is refused by name — the compound above, driven.
-- **The refusal reaches the INITIATOR by name, not as a transport error** *(added 2026-08-23 — measured by S01's ceiling probe, which is what a tier-4 hop-2 attempt is for)*. `refusalAck` (`internal/p2p/session.go:266-273`) carries exactly two classes, consent-timeout and declined; every other `coSignExchange` refusal returns `(0, false)`, writes no ack frame, and the receiver closes — so `expected exactly one prior signer`, *the document was not signed by the connected peer* and *the peer's attestation does not accept you* all arrive at the initiator as `receive co-signed document: EOF`, and are logged nowhere on the receiving side either. **D23 says a refusal is "never a hang, never a silent no-op"; over the wire it is currently silent.** Refusing by name *in Go* is not the same as the party who offered the contribution learning the name, and the L3 criterion's "UI bypassed" wording tests the predicate, not the wire. Driven end-to-end at tier 4, both transports.
+- ~~The refusal reaches the INITIATOR by name…~~ **MOVED to P07.S03a, 2026-08-25 at the grill** — it is a protocol version step, not gate work.
 - A right-party, right-prefix contribution is **admitted**, and the slice removes `coSignExchange`'s `len(ats) != 1` refusal in the same commit, so the door has a live call site rather than sitting beside a two-party legacy.
 - The same predicate answers **"whose turn is it, and is it mine"** as a question, not only as a refusal — P06's replacement role-conflict criterion promises the panel computes its enabled action from "the same function the server's L3 check uses", and a check that only refuses forces P06 to retrofit a read-only query.
 - **A source-level guard enumerates every contribution entry point and fails when one does not call the predicate**, with a stimulus assertion that the walk found a non-zero population. ADR-009 asserts routing, not the text each site prints; the precedent is `TestL2CoversEveryDocumentCarryingEntryPoint` in the same package.
 - **L3's own negative fixture** — not shared with L1 or L2 — earns a row in `docs/red-proofs.md`, replays under `./build/redproof.sh`, and **the floor constant in `verify_test.go` moves in the same commit**.
+- ~~The N-party driver completes at N=4…~~ **MOVED to P07.S03a, 2026-08-25 at the grill** — a harness slice, and it cannot run until S03a puts the refusal on the wire.
+
+
+
+#### P07.S03a — L3 on the wire, and the N-party driver *(D23, L3; C05)* — **new, 2026-08-25, split out of S03**
+Scope: S03 makes the gate refuse **in Go**; this slice makes the party who offered the contribution
+**learn why**, and drives the whole thing at N=4. Split because both are outside the gate:
+`refusalAck` (`internal/p2p/session.go:284`) is the ONE door between a refusal and its wire byte
+and carries exactly two classes — consent-timeout and declined. Everything else returns
+`(0, false)`, writes no ack frame, and the receiver closes, so every protocol refusal arrives at
+the initiator as `receive co-signed document: EOF` and is logged nowhere on the receiving side.
+Adding L3's refusals is therefore a **protocol change**: a new ack byte an older build must not
+mistake for one of the two it knows, which is D32's skew rule and a design step rather than a
+switch statement.
+Acceptance:
+- **The refusal reaches the INITIATOR by name, not as a transport error** *(added 2026-08-23 — measured by S01's ceiling probe, which is what a tier-4 hop-2 attempt is for)*. `refusalAck` (`internal/p2p/session.go:266-273`) carries exactly two classes, consent-timeout and declined; every other `coSignExchange` refusal returns `(0, false)`, writes no ack frame, and the receiver closes — so `expected exactly one prior signer`, *the document was not signed by the connected peer* and *the peer's attestation does not accept you* all arrive at the initiator as `receive co-signed document: EOF`, and are logged nowhere on the receiving side either. **D23 says a refusal is "never a hang, never a silent no-op"; over the wire it is currently silent.** Refusing by name *in Go* is not the same as the party who offered the contribution learning the name, and the L3 criterion's "UI bypassed" wording tests the predicate, not the wire. Driven end-to-end at tier 4, both transports.
 - **The N-party driver completes at N=4** *(moved here from S01 at its grill, 2026-08-23 — this is the first slice where a document carrying more than one prior signature is admissible at all)*: all N−1 parties **armed before the first hop and never re-armed** (a per-instance arm-POST count of exactly 1, plus the reported `address` byte-identical to what it was at arm time, because a re-arm changes the ephemeral port); each asserted `armed:true` immediately before its own hop is dialled, so an expiry fails by party number rather than as "hop 8 could not connect"; the per-hop words watcher keyed on the **absent→present transition** with per-hop filenames, because one filename plus a reset is safe only at N=2 and a stale file from hop k−1 otherwise satisfies hop k's stimulus check; and the block count asserted against **`N_signing` derived from the roster the driver was handed**, never a literal — through `Initiate` every intermediate party signs twice, so the count is 2(N−1) and becomes N only over S05's carry route. The **distinct-signer set** is asserted too, because `/ByteRange` counts blocks and one party signing four times satisfies any count.
 
 #### P07.S04 — `coSignExchange` re-based off the record *(D22 as amended 2026-08-23, D2 pin; C01)*

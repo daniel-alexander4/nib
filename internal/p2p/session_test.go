@@ -166,7 +166,7 @@ func TestSessionRoundTrip(t *testing.T) {
 				return
 			}
 			defer conn.Close()
-			_, e := Receive(conn.Channel, bCert, bKey, "Alice", confirmer{accept: true, intent: "I accept"}, okVerifier{}, nil)
+			_, e := Receive(conn.Channel, bCert, bKey, "Alice", confirmer{accept: true, intent: "I accept"}, okVerifier{}, nil, Roster{})
 			recvErr <- e
 		}()
 
@@ -222,7 +222,7 @@ func TestSessionReceiverDeclines(t *testing.T) {
 				return
 			}
 			defer conn.Close()
-			_, e := Receive(conn.Channel, bCert, bKey, "Alice", confirmer{accept: false}, okVerifier{}, nil)
+			_, e := Receive(conn.Channel, bCert, bKey, "Alice", confirmer{accept: false}, okVerifier{}, nil, Roster{})
 			recvErr <- e
 		}()
 
@@ -294,7 +294,7 @@ func TestARefusalTellsThePeerWHICHRefusalItWas(t *testing.T) {
 					}
 					defer conn.Close()
 					if tc.coSign {
-						_, e := Receive(conn.Channel, bCert, bKey, "Alice", tc.confirm, okVerifier{}, nil)
+						_, e := Receive(conn.Channel, bCert, bKey, "Alice", tc.confirm, okVerifier{}, nil, Roster{})
 						recvErr <- e
 						return
 					}
