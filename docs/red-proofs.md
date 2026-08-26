@@ -1659,3 +1659,27 @@ The `MatchesRecord` completeness guard has no row either. Its own mutation — c
 whole-`Party` comparison down to fingerprints — is one level down from
 `ceremony-capacity-outside-the-commitment`, already recorded at P07.S02, and a second row proving
 the same class reads as coverage without adding any.
+
+## P07.S03 — L3 gets a door (v1.117.159–.160)
+
+Six rows, all tier 1, all replayable. **L3's negative fixtures are its own** — not shared with L1
+or L2 — which is the slice's own acceptance clause and the reason the L2 population floor was
+*updated* rather than loosened when `Receive`'s signature changed.
+
+| the defect, restored | what goes red | the check |
+|---|---|---|
+| **the prefix is no longer compared against the roster** *(replayable: `l3-admits-the-wrong-prefix`)* | `want the signatures on this document are not the ceremony's signing order` | `TestTheGateRefusesEachThingByName`. **The assertion is the SENTENCE, and that is the finding**: with the identity check off the gate still refuses — it counts signatures and computes a different "next" — so a row asking only "was it refused?" would stay green. What it *says* is *"it is not this party's turn"*, sending the user to wait for a turn that will never come |
+| **the prefix is no longer required to be cross-bound** *(replayable: `l3-admits-an-uncrossbound-prefix`)* | `prefix not cross-bound: admitted` | same test, its own fixture: A signs accepting a stranger who never signs, B signs on top so A's cross-binding is due, and the identities ARE the roster prefix — asserted before anything is graded, so a red here cannot be about order. The LAST signature is exempt by construction, measured on a three-signature chain |
+| **the document's verify state is no longer asked** *(replayable: `l3-admits-an-unreadable-signature`)* | `want ErrPrefixUnproven` | `TestAnInvalidPrefixSignatureIsRefused`. **A broken signature does not report itself invalid — it VANISHES.** Measured: a body tamper leaves `sign.Verify` reporting `unsigned` with zero signers, a corrupted `/Contents` leaves it `invalid`, also zero. `ReadAttestations` iterates `st.Signers`, so the per-signature `Valid` check cannot fire and an attestation-only gate reads an unreadable document as "nobody has signed yet" |
+| **a substituted proceeding is admitted** *(replayable: `l3-admits-a-substituted-proceeding`)* | `substituted proceeding: admitted` | same test. Valid signatures, right order, right identities — committing to a ceremony that is not this one. Its reach is limited today and the limit is a separate assertion, not a comment: no production attestation carries a commitment yet, so `TestTheCommitmentCheckIsLimitedUntilS04` skips loudly the day one does |
+| **the channel binding reads the FIRST signer** *(replayable: `channel-binding-reads-the-first-signer`)* | `The channel binding is reading the first attestation` | `TestTheChannelBindingReadsTheLastSigner`, at THREE signatures — at N=2 index 0 and index last are the same attestation and every other test in the package is green either way. Conditioning `len(ats) != 1` is what made this reachable: at hop k, `ats[0]` is the party who signed first, not the one on the other end of the connection |
+| **the INITIATING side skips the gate** *(replayable: `initiating-side-skips-the-l3-gate`)* | `a party signed out of roster order through the initiating door` | `TestTheInitiatingSideIsGatedToo`. It asserts that **nothing was signed**, not merely that an error came back: `buildCoSigned` applies the local signature and a signature cannot be taken back off a document — the same reasoning the ceremony deadline check one caller up already states |
+
+### The routing guard has no row, deliberately
+
+`TestEveryContributionEntryPointReachesTheGate` was mutation-tested in both directions while it was
+written — delete the call in `internal/p2p` and it names `coSignExchange`; delete it in
+`internal/server` and it names `buildCoSigned`. It earns no row because the two rows above already
+restore exactly those deletions and assert the *behaviour* that follows, which is strictly more
+than the routing claim. A row proving the guard notices a deletion whose consequence is already
+recorded twice would read as coverage without adding any.
