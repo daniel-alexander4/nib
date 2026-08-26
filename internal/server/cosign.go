@@ -311,6 +311,8 @@ func (s *Server) buildCoSigned(w http.ResponseWriter, pdf, cert, key []byte, att
 		//
 		// The first signer accepts "" — there is nobody before them, and that is C14 as amended.
 		att.AcceptedPeer = p2p.PredecessorOf(roster, hex.EncodeToString(myFP))
+		// And it NAMES the ceremony, through the one door the receiving side also uses.
+		p2p.StampCommitment(&att, roster)
 	}
 	prepared := pdf
 	if sign.Verify(pdf).State == sign.Unsigned {

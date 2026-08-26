@@ -48,14 +48,47 @@ type Roster struct {
 	// Commitment is the record's RosterHash, hex, or "" when the caller has none to offer.
 	//
 	// **Checked where present and never REQUIRED, and that is a stated limit rather than
-	// leniency.** No production attestation carries one today: neither `coSignExchange`'s `att`
-	// nor `internal/server`'s `cosignAttestation` sets `Attestation.RosterHash`, so a gate that
-	// demanded a commitment would refuse every honest ceremony — the same mistake P07.S02b
-	// caught one door over, where `CheckDocument` would have refused every honest hop-1 arrival.
-	// Making signatures carry it is **P07.S04's** (`att` sets no RosterHash is that slice's own
-	// opening sentence). `TestTheCommitmentCheckIsLimitedUntilS04` asserts this boundary so the
-	// next reader finds it instead of a green they will trust.
+	// leniency.** A document signed before this build carries no commitment, and a gate that
+	// demanded one would refuse every such hop — the same mistake P07.S02b caught one door over,
+	// where `CheckDocument` would have refused every honest hop-1 arrival.
+	//
+	// **The paragraph that stood here said no production attestation carries one, and named
+	// P07.S04 as the slice that would change it. S04 did not, and nothing noticed** — it built
+	// the token format, the reader, the version-skew sentence and this check, and shipped no
+	// WRITER, so `OneProceeding` was false on every real ceremony and `ErrProceedingMismatch`
+	// below was unreachable. Found at P07.S05b by the relay driver, whose first completed hop
+	// reported `[NibCoSign:1] Accepts p1 [SPKI:]. I accept` — no `[NibRoster:…]` at all.
+	// `StampCommitment` is the writer, and it is one door for both contribution paths.
 	Commitment string
+
+	// CommitmentVersion is the record format version `Commitment` was computed under, and it
+	// travels WITH the commitment for ADR-010's reason: a hash and the rules that produced it are
+	// one fact, and a bare digest cannot tell a disagreement from a version skew. `internal/p2p`
+	// cannot import `internal/ceremony`, so the caller that read the record supplies it.
+	CommitmentVersion int
+}
+
+// StampCommitment makes a contribution NAME the ceremony it belongs to.
+//
+// **One door for both contribution paths (ADR-009).** A signature is applied in exactly two
+// places — `internal/server`'s `buildCoSigned`, the initiating side, and `coSignExchange`, the
+// receiving side — and "a signature inside a ceremony carries that ceremony's commitment" is one
+// rule, so it is written once and both call it. Writing it at each site is how P07.S04 came to
+// have a reader for a field nothing ever set.
+//
+// Outside a ceremony the roster is empty and this is a no-op, which is correct: an ordinary
+// two-party co-sign belongs to no proceeding and a commitment on it would be a claim about one
+// that does not exist.
+//
+// **Both fields or neither.** `Attestation.Render` emits the token only when the hash and a
+// non-zero version are BOTH present, so a half-stamped attestation silently carries nothing;
+// setting them together here is what makes that emission rule reachable rather than defensive.
+func StampCommitment(att *Attestation, r Roster) {
+	if r.Commitment == "" || r.CommitmentVersion <= 0 {
+		return
+	}
+	att.RosterHash = r.Commitment
+	att.RosterVersion = r.CommitmentVersion
 }
 
 var (

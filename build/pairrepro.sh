@@ -305,6 +305,14 @@ A="${URLS[0]}"
 B="${URLS[1]}"
 
 CEREMONY_N=0
+# Arrivals PER INSTANCE, keyed by 1-based index. `CEREMONY_N` counts hops in the run and is
+# still printed; this is what the population assertion compares against, because in a relay
+# each party receives once and the run's hop count is not any one party's document count.
+declare -A ARRIVALS=()
+declare -A INVITES=()   # per-instance ceremony invitation, filled by relay()
+declare -A ARM_ADDR=()  # per-instance address reported at arm time; a change means a re-arm
+RELAY_WORDS=(); RELAY_FINAL=""
+WORDS_RELAY_QUIC=(); WORDS_RELAY_TCP=(); FINAL_QUIC=""; FINAL_TCP=""
 ELAPSED_TOTAL=0
 WORK="$(mktemp -d)"
 for i in $(seq 1 "$N"); do HOMES[$((i-1))]="$WORK/i$i"; done
@@ -564,29 +572,84 @@ watch_verify() { # url csrf outfile
 # from opening A's document to reading the finished one off B is inside the
 # function, so both transports are driven through exactly the same steps rather
 # than through a second path written to suit whichever one came second.
-ceremony() { # transport port outfile
+# **Parameterised over its two ENDS at P07.S05b.** It read the globals `A`/`B`/`CSRF_A`/`FP_B`,
+# which are instances 1 and 2 and nothing else (`:304-305`), so a relay could not be expressed
+# through it at all — the N>=3 block had to hand-roll each hop with raw `curl`, and its own closing
+# lines named that as the gap: *"driving a relay to completion needs hop 1 to be a ceremony hop"*.
+#
+# The two-party callers pass `1 2` explicitly rather than relying on a default. A default would
+# make a future caller that forgets the indices run silently between instances 1 and 2 — which is
+# exactly the class of green this harness exists to refuse.
+#
+# `local` is dynamically scoped in bash, so the subshells and helpers below see these bindings
+# rather than the globals. That is what lets the body stay unchanged.
+ceremony() { # transport port outfile from to [indoc] [want_sigs] [want_proceeding] [invitation]
   local transport="$1" port="$2" out="$3"
+  local fi="$4" ti="$5"
+  local indoc="${6:-$WORK/doc.pdf}" want="${7:-2}" wantproc="${8:-0}" inv="${9:-}" armaddr="${10:-}"
+  [ -n "$fi" ] && [ -n "$ti" ] \
+    || fail "ceremony() was called without both endpoints — it is parameterised over (from, to) since P07.S05b"
+  local A="${URLS[$((fi-1))]}" B="${URLS[$((ti-1))]}"
+  local CSRF_A="${CSRFS[$((fi-1))]}" CSRF_B="${CSRFS[$((ti-1))]}"
+  local FP_A="${FPS[$((fi-1))]}" FP_B="${FPS[$((ti-1))]}"
   local t0; t0="$(date +%s)"
 
-  # A pristine document each time: a ceremony over the previous ceremony's output
-  # would carry three signatures and the count below would assert the wrong thing.
-  curl -fsS -X POST "$A/api/open" -H 'Content-Type: application/json' -H "X-CSRF-Token: $CSRF_A" \
-    -d "{\"path\":\"$WORK/doc.pdf\"}" >/dev/null || fail "[$transport] A could not open the document"
+  # The document this hop builds on. A pristine one for a two-party run — a ceremony over the
+  # previous ceremony's output would carry three signatures and the count below would assert the
+  # wrong thing — and the PREVIOUS HOP's output for a relay, which is the whole of what a baton is.
+  #
+  # **A relay hop does NOT open it, and that is the product's shape rather than a shortcut
+  # (P07.S05b).** `/api/session/initiate` takes the document as a form upload, so the open is only
+  # the two-party flow's "the initiator has this file on screen". On a relay the convener already
+  # holds the ceremony's document and `installCeremonyResult` REPLACES it by ceremony id at every
+  # hop (ADR-005/008's cap is why that door exists) — so opening each hop's output as a NEW
+  # document is the harness inventing accumulation the product does not have.
+  #
+  # It is not cosmetic. Measured: at N=4 the convener hit `maxOpenDocs` (8) partway through the
+  # second transport and `/api/open` returned 409. At N=9 it would refuse at hop 7 of the first.
+  if [ -z "$inv" ]; then
+    curl -fsS -X POST "$A/api/open" -H 'Content-Type: application/json' -H "X-CSRF-Token: $CSRF_A" \
+      -d "{\"path\":\"$indoc\"}" >/dev/null || fail "[$transport] instance $fi could not open $indoc"
+  fi
 
   # B arms a receive session for co-signing, on this transport.
   #
   # In LAN mode the bind is OMITTED ENTIRELY — nothing types an address anywhere,
   # which is P03's first exit criterion stated as a shell command. B binds
   # ephemerally and announces the port it got; A learns it from the link.
-  local armbody
-  if [ "$port" = "lan" ]; then
-    armbody="{\"fingerprint\":\"$FP_A\",\"mode\":\"cosign\",\"transport\":\"$transport\"}"
+  #
+  # **The arm carries the INVITATION for a ceremony hop, and leaving it out is not a small
+  # omission (P07.S05b).** `handleSessionArm` resolves the ceremony from `req.Invitation`
+  # (`session.go:1015`) and stores it on the session; the receive path reads its roster from
+  # there (`:800`). Without it the receiver has an EMPTY roster, so `coSignExchange` takes its
+  # non-ceremony branch and refuses hop 1 with *"a co-signature takes exactly one prior signer"* —
+  # correctly, because outside a ceremony an unsigned document is not something to co-sign.
+  # Measured here: that is exactly the 409 the first relay run got back.
+  # **A PRE-ARMED party is not re-armed here (P07.S03b's T03).** A real ceremony's parties arm once
+  # and wait; arming just before each hop is the harness making its own life easy, and it hides
+  # exactly the failure the clause is about — an arm that expired while the baton was elsewhere.
+  # When the caller has already armed this party it passes the address the arm reported, and this
+  # function does not touch the session.
+  local armbody inv_field=""
+  [ -z "$inv" ] || inv_field=",\"invitation\":\"$inv\""
+  if [ -n "$armaddr" ]; then
+    armbody=""
+  elif [ "$port" = "lan" ]; then
+    armbody="{\"fingerprint\":\"$FP_A\",\"mode\":\"cosign\",\"transport\":\"$transport\"$inv_field}"
   else
-    armbody="{\"fingerprint\":\"$FP_A\",\"bind\":\"$CEREMONY_HOST:$port\",\"mode\":\"cosign\",\"transport\":\"$transport\"}"
+    armbody="{\"fingerprint\":\"$FP_A\",\"bind\":\"$CEREMONY_HOST:$port\",\"mode\":\"cosign\",\"transport\":\"$transport\"$inv_field}"
   fi
-  curl -fsS -X POST "$B/api/session/arm" -H 'Content-Type: application/json' -H "X-CSRF-Token: $CSRF_B" \
-    -d "$armbody" >/dev/null \
-    || fail "[$transport] B could not arm a session"
+  # **The BODY, not just the status.** `curl -f` prints "The requested URL returned error: 400"
+  # and swallows the sentence the server wrote — which at N=9 left an arm failure with no
+  # diagnosis at all. Every refusal on this route is a sentence about what was wrong with the
+  # request, and a harness that discards it is asking a later reader to guess.
+  if [ -n "$armbody" ]; then
+    local armcode
+    armcode="$(curl -sS -X POST "$B/api/session/arm" -H 'Content-Type: application/json' \
+      -H "X-CSRF-Token: $CSRF_B" -d "$armbody" -o "$WORK/arm.$transport.json" -w '%{http_code}')"
+    [ "$armcode" = "200" ] \
+      || fail "[$transport] instance $ti could not arm a session (HTTP $armcode): $(head -c 300 "$WORK/arm.$transport.json")"
+  fi
 
   # In v6 mode, the STIMULUS assertion: B actually bound a v6 socket. The ceremony
   # completing already proves the dial crossed `[::1]` (initiate is handed that address
@@ -631,11 +694,19 @@ ceremony() { # transport port outfile
     else
       [ "$transport" != "tcp" ] || fail "[$transport] the announced port $lanport does not answer TCP, so the LAN TCP run is not on the transport it asked for"
     fi
-  elif (exec 3<>"/dev/tcp/$PROBE_HOST/$port") 2>/dev/null; then
-    exec 3<&- 3>&-
-    [ "$transport" = "tcp" ] || fail "[$transport] port $port answers TCP — the QUIC run is listening on a TCP socket, so it is the TCP path wearing a different label"
   else
-    [ "$transport" != "tcp" ] || fail "[$transport] port $port does not answer TCP, so the TCP run is not on the transport it asked for"
+    # A PRE-ARMED party bound an ephemeral port, so the port to probe is the one it reported
+    # rather than one this run chose. The probe matters more there, not less: a relay hop is the
+    # only place a party's transport was fixed at arm time and is being trusted several hops
+    # later.
+    local probeport="$port"
+    [ -z "$armaddr" ] || probeport="${armaddr##*:}"
+    if (exec 3<>"/dev/tcp/$PROBE_HOST/$probeport") 2>/dev/null; then
+      exec 3<&- 3>&-
+      [ "$transport" = "tcp" ] || fail "[$transport] port $probeport answers TCP — the QUIC run is listening on a TCP socket, so it is the TCP path wearing a different label"
+    else
+      [ "$transport" != "tcp" ] || fail "[$transport] port $probeport does not answer TCP, so the TCP run is not on the transport it asked for"
+    fi
   fi
 
   # Both sides must confirm the spoken check (P01.S05) before any document byte
@@ -666,9 +737,11 @@ ceremony() { # transport port outfile
   echo "initiating the ceremony over $transport…"
   local init_out="$WORK/initiate.$transport.json"
   curl -sS -X POST "$A/api/session/initiate" -H "X-CSRF-Token: $CSRF_A" \
-    -F "pdf=@$WORK/doc.pdf" -F "appearance=@$WORK/sig.png" \
+    -F "pdf=@$indoc" -F "appearance=@$WORK/sig.png" \
     -F "params={\"fingerprint\":\"$FP_B\",\"intent\":\"I agree to co-sign\"}" \
-    $( [ "$port" = "lan" ] || printf %s "-F address=$CEREMONY_HOST:$port" ) \
+    $( [ -z "$inv" ] || printf %s "-F invitation=$inv" ) \
+    $( [ -z "$armaddr" ] || printf %s "-F address=$armaddr" ) \
+    $( [ -n "$armaddr" ] || [ "$port" = "lan" ] || printf %s "-F address=$CEREMONY_HOST:$port" ) \
     $( [ "$port" = "lan" ] || printf %s "-F transport=$transport" ) \
     -o "$init_out" -w '%{http_code}' > "$WORK/initiate.code" 2>"$WORK/initiate.err"
   local code
@@ -705,24 +778,36 @@ ceremony() { # transport port outfile
   # active, so "which document did this hop produce" has no answer once an
   # instance holds more than one — which is every N>2 relay. Addressing it by id
   # makes the two-party run stricter today and gives the question an answer later.
+  # **Counted PER RECEIVING INSTANCE since P07.S05b, and the global it replaced was right only
+  # for a two-party run.** `CEREMONY_N` counted every hop in the run and compared it to how many
+  # documents *instance 2* held — true when instance 2 is the receiver every time, and false the
+  # moment a relay walks the roster, where each party receives once and the count would drift by
+  # the number of hops that went elsewhere.
+  ARRIVALS[$ti]=$(( ${ARRIVALS[$ti]:-0} + 1 ))
   CEREMONY_N=$((CEREMONY_N + 1))
   local docid ndocs
   docid="$(curl -fsS "$B/api/docs" | jget activeId)"
   ndocs="$(curl -fsS "$B/api/docs" | python3 -c 'import json,sys;print(len(json.load(sys.stdin).get("docs",[])))')"
-  [ -n "$docid" ] || fail "[$transport] B reports no active document to fetch"
-  # The population, asserted rather than assumed: after ceremony k, B holds
-  # exactly k arrivals. Without this, "the active document" is a guess that
-  # happens to be right at N=2 and stops being right the moment an instance
-  # holds a document it did not just receive.
-  [ "$ndocs" = "$CEREMONY_N" ] || fail "[$transport] after ceremony $CEREMONY_N, B holds $ndocs document(s) — the active one may not be this ceremony's arrival"
-  curl -fsS "$B/api/pdf?doc=$docid" -o "$out" || fail "[$transport] could not fetch B's document $docid"
-  python3 - "$out" "$transport" <<'PYSIG' || exit 1
+  [ -n "$docid" ] || fail "[$transport] instance $ti reports no active document to fetch"
+  # The population, asserted rather than assumed: after its k-th arrival, the receiving instance
+  # holds exactly k. Without this, "the active document" is a guess that happens to be right at
+  # N=2 and stops being right the moment an instance holds a document it did not just receive.
+  [ "$ndocs" = "${ARRIVALS[$ti]}" ] \
+    || fail "[$transport] after arrival ${ARRIVALS[$ti]} at instance $ti, it holds $ndocs document(s) — the active one may not be this hop's arrival"
+  curl -fsS "$B/api/pdf?doc=$docid" -o "$out" || fail "[$transport] could not fetch instance $ti's document $docid"
+  # **The expected count is a PARAMETER since P07.S05b, and it is an equality now.** It was
+  # `n < 2`, which is right for a two-party run and useless for a relay: at hop k the document
+  # must carry exactly k+1 signatures, and `>=` would pass a hop that somehow signed twice —
+  # which is precisely the defect L3 exists to refuse and which this harness has watched the
+  # product commit (the carrier re-signing, P07.S03b).
+  python3 - "$out" "$transport" "$want" <<'PYSIG' || exit 1
 import sys
 b = open(sys.argv[1], "rb").read()
 n = b.count(b"/ByteRange")
-if n < 2:
+want = int(sys.argv[3])
+if n != want:
     print(f"FAIL: [{sys.argv[2]}] the co-signed document carries {n} signature byte-ranges, "
-          f"want 2 — the ceremony did not produce a document signed by both parties",
+          f"want exactly {want} — fewer means a party did not sign, more means one signed twice",
           file=sys.stderr)
     sys.exit(1)
 print(f"[{sys.argv[2]}] the finished document carries {n} signatures")
@@ -741,30 +826,55 @@ PYSIG
   # route did not start claiming one anyway.
   curl -fsS "$B/api/attestations" -H "X-Nib-Doc: $docid" -o "$WORK/atts.$transport.json" \
     || fail "[$transport] the attestations route did not answer for B's document"
-  python3 - "$WORK/atts.$transport.json" "$transport" <<'PYATT' || exit 1
+  # **`oneProceeding` is asserted in BOTH directions since P07.S05b, and which one is a
+  # parameter.** This block used to require it FALSE unconditionally, correctly: no production
+  # attestation carried a commitment, so a document from this harness had no proceeding to be one
+  # of. P07.S04 populates the token and P07.S05 relays it, so a real ceremony hop must now claim
+  # one — and a check that only ever requires FALSE would report a green for the exact regression
+  # that matters, a relay whose signatures stopped naming their ceremony.
+  #
+  # **`matched` is not required on the FIRST attestation of a relay, and working out which end was
+  # exempt took reading `PredecessorOf` rather than reasoning about it.** `AcceptedPeer` names the
+  # previous SIGNING roster entry (`l3.go:194`), and for the first signer that is `""` — they
+  # accept nobody, because nobody signed before them. So attestation 0 of a relay names no peer
+  # and can never cross-bind, while every later one must. Outside a ceremony the binding is
+  # pairwise and mutual, so all of them must — which is why this is keyed on `wantproc`.
+  python3 - "$WORK/atts.$transport.json" "$transport" "$want" "$wantproc" <<'PYATT' || exit 1
 import json, sys
 d = json.load(open(sys.argv[1]))
 ats = d.get("attestations") or []
-t = sys.argv[2]
-if len(ats) != 2:
+t, want, wantproc = sys.argv[2], int(sys.argv[3]), sys.argv[4] == "1"
+if len(ats) != want:
     print(f"FAIL: [{t}] the attestations route reports {len(ats)} attestation(s) on a document "
-          f"carrying two signatures — it reads the cached status now, and the cached status is "
-          f"wrong or the route is reading the wrong document", file=sys.stderr)
+          f"carrying {want} signature(s) — it reads the cached status now, and the cached status "
+          f"is wrong or the route is reading the wrong document", file=sys.stderr)
     sys.exit(1)
 for i, a in enumerate(ats):
     if not a.get("valid"):
         print(f"FAIL: [{t}] attestation {i} is not valid", file=sys.stderr); sys.exit(1)
-    if not a.get("matched"):
-        print(f"FAIL: [{t}] attestation {i} is not cross-bound — crossBind runs on the same "
-              f"data whether the status was cached or recomputed, so this says the cached "
-              f"status is not the same status", file=sys.stderr); sys.exit(1)
-    if a.get("oneProceeding"):
-        print(f"FAIL: [{t}] attestation {i} claims to be part of one proceeding, on a document "
-              f"whose signatures carry no ceremony commitment at all. That verdict now means "
-              f"agreement with the document's RECORD, and there is none.", file=sys.stderr)
+    if not a.get("matched") and not (wantproc and i == 0):
+        print(f"FAIL: [{t}] attestation {i} is not cross-bound. In a relay only the FIRST signer "
+              f"is exempt — they accept nobody because nobody signed before them; every later "
+              f"party accepts their predecessor, and crossBind runs on the same data whether the "
+              f"status was cached or recomputed", file=sys.stderr); sys.exit(1)
+    if wantproc and i == 0 and a.get("matched"):
+        print(f"FAIL: [{t}] the FIRST signer's attestation cross-binds to somebody. They accept "
+              f"nobody — PredecessorOf returns \"\" for the first signing roster entry — so a "
+              f"match here means the attestation names a peer it should not have", file=sys.stderr)
         sys.exit(1)
-print(f"[{t}] the attestations route answers from the cached status: 2 valid, cross-bound, "
-      f"no proceeding claimed")
+    if bool(a.get("oneProceeding")) != wantproc:
+        if wantproc:
+            print(f"FAIL: [{t}] attestation {i} does NOT claim one proceeding, on a hop of a real "
+                  f"ceremony — the signature has stopped carrying the roster commitment, so a "
+                  f"verifier can no longer tell this document was produced by an agreed "
+                  f"proceeding", file=sys.stderr)
+        else:
+            print(f"FAIL: [{t}] attestation {i} claims to be part of one proceeding, on a document "
+                  f"whose signatures carry no ceremony commitment at all. That verdict means "
+                  f"agreement with the document's RECORD, and there is none.", file=sys.stderr)
+        sys.exit(1)
+print(f"[{t}] the attestations route answers from the cached status: {len(ats)} valid, "
+      f"cross-bound, proceeding claimed={wantproc}")
 PYATT
 
   # H25 — elapsed, PRINTED and never thresholded.
@@ -804,7 +914,7 @@ if [ "$N" != "2" ]; then
       -d "{\"fingerprint\":\"${FPS[$((j-1))]}\",\"label\":\"p$j\"}" >/dev/null \
       || fail "instance $i could not pin instance $j"
   done
-  ceremony tcp "${SESSION_PORTS[0]}" "$WORK/hop1.pdf"
+  ceremony tcp "${SESSION_PORTS[0]}" "$WORK/hop1.pdf" 1 2
   echo "hop 1 completed; the document carries two signatures"
 
   # ── Hop 2, as a REAL ceremony, and it now fails at the NEAR end ──────────────
@@ -892,11 +1002,284 @@ print(next(i['invitation'] for i in d['invites'] if i['fingerprint'].lower()=='$
     fail "hop 2 failed with HTTP $hop2code, but not as L3's not-your-turn refusal — something
       else is broken, and without this clause it would have been credited as the relay ceiling"
   fi
-  echo "PASS: $N instances booted with $N distinct identities (${ELAPSED_TOTAL}s of hops), a real"
-  echo "      ceremony was convened, instance 3 took part with NO manual pin, and the relay"
-  echo "      stops where this harness can take it: a SIGNING party cannot take a second turn."
-  echo "      The carry verb exists (P07.S05); driving a relay to completion needs hop 1 to be a"
-  echo "      ceremony hop, which is P07.S05a's N=4/N=9 driver."
+  echo "  the model's ceiling holds: a SIGNING party cannot take a second turn."
+
+  # ── The relay, walked end to end (P07.S05b) ─────────────────────────────────
+  #
+  # **This is the clause "the relay is expressed once, in the baton topology".** Everything above
+  # this line is the ceiling probe that stood in for it while there was no carry verb; it is kept
+  # because "a signing party cannot take a second turn" is still a property and it is L3's whole
+  # point. What follows is the relay itself, and it is a LOOP over hops rather than a hop written
+  # out N times — which is what "expressed once" has to mean in a harness whose previous shape
+  # hand-rolled a single hop with raw curl.
+  #
+  # The convener does NOT sign. That is D22's motivating case and the one that could not work at
+  # all before P07.S05: every hop is a `Carry`, chosen off the roster by the route rather than by
+  # a flag here (`session.go:1408`), so this harness cannot accidentally drive the wrong verb.
+  # With N parties on the roster the convener is one of them and N-1 sign, so there are N-1 hops
+  # and the finished document carries N-1 signatures.
+  relay() { # transport
+    local transport="$1"
+    local n_hops=$(( N - 1 ))
+    echo "relay over $transport: convening $N parties, non-signing convener, $n_hops hops…"
+
+    # A ceremony of its own, so the run's two transports cannot share a document or a record.
+    local roster='{"fingerprint":"'"${FPS[0]}"'","label":"p1","signs":false}'
+    local i
+    for i in $(seq 2 "$N"); do
+      roster="$roster,"'{"fingerprint":"'"${FPS[$((i-1))]}"'","label":"p'"$i"'","signs":true}'
+    done
+    local expires
+    expires="$(python3 -c "import datetime;print((datetime.datetime.now(datetime.timezone.utc)+datetime.timedelta(hours=48)).strftime('%Y-%m-%dT%H:%M:%SZ'))")"
+    curl -fsS -X POST "${URLS[0]}/api/open" -H 'Content-Type: application/json' \
+      -H "X-CSRF-Token: ${CSRFS[0]}" -d "{\"path\":\"$WORK/doc.pdf\"}" >/dev/null \
+      || fail "[$transport] the convener could not open the document to convene over"
+    local code
+    code="$(curl -sS -X POST "${URLS[0]}/api/ceremony/convene" -H 'Content-Type: application/json' \
+      -H "X-CSRF-Token: ${CSRFS[0]}" \
+      -d "{\"roster\":[$roster],\"intent\":\"We agree\",\"expires\":\"$expires\",\"convenerSigns\":false}" \
+      -o "$WORK/relay.convene.$transport.json" -w '%{http_code}')"
+    [ "$code" = "200" ] \
+      || fail "[$transport] convening $N parties failed (HTTP $code): $(head -c 300 "$WORK/relay.convene.$transport.json")"
+
+    # The convened document is the baton's first state: it carries the record, and NO signatures.
+    local docid
+    docid="$(python3 -c "
+import json;print(json.load(open('$WORK/relay.convene.$transport.json')).get('document',{}).get('id',''))" 2>/dev/null)"
+    [ -n "$docid" ] || docid="$(curl -fsS "${URLS[0]}/api/docs" | jget activeId)"
+    curl -fsS "${URLS[0]}/api/pdf?doc=$docid" -o "$WORK/relay.$transport.hop0.pdf" \
+      || fail "[$transport] could not fetch the convened document"
+    # STIMULUS: the baton really starts unsigned. Every count below is relative to this, so a
+    # convened document that arrived already signed would shift all of them by one and the run
+    # would still pass — asserting N-1 signatures on a document that started with one.
+    local start_sigs
+    start_sigs="$(python3 -c "print(open('$WORK/relay.$transport.hop0.pdf','rb').read().count(b'/ByteRange'))")"
+    [ "$start_sigs" = "0" ] \
+      || fail "[$transport] the convened document already carries $start_sigs signature(s) — every count in this relay is relative to zero"
+
+    # Every party accepts its invitation. NO /api/peers/pin anywhere on this path (D21).
+    for i in $(seq 2 "$N"); do
+      local inv
+      inv="$(python3 -c "
+import json
+d=json.load(open('$WORK/relay.convene.$transport.json'))
+print(next(x['invitation'] for x in d['invites'] if x['fingerprint'].lower()=='${FPS[$((i-1))]}'.lower()))" 2>/dev/null)"
+      [ -n "$inv" ] || fail "[$transport] convene issued no invitation for instance $i"
+      INVITES[$i]="$inv"
+      code="$(curl -sS -X POST "${URLS[$((i-1))]}/api/ceremony/accept" -H 'Content-Type: application/json' \
+        -H "X-CSRF-Token: ${CSRFS[$((i-1))]}" \
+        -d "$(python3 -c "import json;print(json.dumps({'invitation':'$inv'}))")" \
+        -o "$WORK/relay.accept.$transport.$i.json" -w '%{http_code}')"
+      [ "$code" = "200" ] \
+        || fail "[$transport] instance $i could not accept its invitation (HTTP $code): $(head -c 300 "$WORK/relay.accept.$transport.$i.json")"
+      # D22 is a HUB: accepting pins the CONVENER and nobody else, whatever N is.
+      [ "$(python3 -c "import json;print(json.load(open('$WORK/relay.accept.$transport.$i.json'))['pinned'])" 2>/dev/null)" = "1" ] \
+        || fail "[$transport] instance $i's accept established more or fewer than one pin — D22 is a hub, so a party pins the convener and nobody else"
+    done
+
+    # ── Every party arms ONCE, before hop 1, and is never re-armed (P07.S03b's T03) ───────────
+    #
+    # This is what a real ceremony looks like: the parties arm and wait, and the convener walks
+    # the roster. Arming just before each hop is the harness making its own life easy, and it
+    # cannot see the failure the clause is about — an arm that expired while the baton was
+    # somewhere else. At N=9 the last party waits through seven hops before its turn.
+    #
+    # **The binds are EPHEMERAL, and that is what gives the no-re-arm check teeth.** With a fixed
+    # port the address is the same before and after a re-arm, so comparing it proves nothing; with
+    # `:0` the kernel picks, and a re-arm lands somewhere else. The clause says so in as many
+    # words — *"the reported address byte-identical to what it was at arm time, because a re-arm
+    # changes the ephemeral port"* — and a fixed-port version of this check would have been the
+    # vacuous green it warns about.
+    local i
+    for i in $(seq 2 "$N"); do
+      local body code
+      body="{\"fingerprint\":\"${FPS[0]}\",\"bind\":\"$CEREMONY_HOST:0\",\"mode\":\"cosign\",\"transport\":\"$transport\",\"invitation\":\"${INVITES[$i]}\"}"
+      code="$(curl -sS -X POST "${URLS[$((i-1))]}/api/session/arm" -H 'Content-Type: application/json' \
+        -H "X-CSRF-Token: ${CSRFS[$((i-1))]}" -d "$body" -o "$WORK/relay.arm.$transport.$i.json" -w '%{http_code}')"
+      [ "$code" = "200" ] \
+        || fail "[$transport] instance $i could not arm before hop 1 (HTTP $code): $(head -c 300 "$WORK/relay.arm.$transport.$i.json")"
+      ARM_ADDR[$i]="$(python3 -c "import json;print(json.load(open('$WORK/relay.arm.$transport.$i.json')).get('address',''))" 2>/dev/null)"
+      [ -n "${ARM_ADDR[$i]}" ] \
+        || fail "[$transport] instance $i armed and reported no address, so nothing can be dialled at its hop"
+    done
+    echo "[$transport] all $(( N - 1 )) signing parties armed before hop 1"
+
+    # **What the convener holds BEFORE the hops**, so the assertion after them is a delta rather
+    # than a total. A total is contaminated by everything the run did earlier and would drift with
+    # the harness; a delta answers the question the clause is about — does a relay accumulate?
+    local before_docs
+    before_docs="$(curl -fsS "${URLS[0]}/api/docs" | python3 -c 'import json,sys;print(len(json.load(sys.stdin).get("docs",[])))')"
+
+    # The hops. Party k+1 receives hop k, and hop k's input is hop k-1's output — which is the
+    # baton, and is why this loop is the topology rather than a description of it.
+    local k prev="$WORK/relay.$transport.hop0.pdf"
+    RELAY_WORDS=()
+    for k in $(seq 1 "$n_hops"); do
+      local to=$(( k + 1 ))
+      local out="$WORK/relay.$transport.hop$k.pdf"
+      # **Still armed, at the address it reported, immediately before its hop is dialled.** This
+      # fails by PARTY NUMBER rather than as "hop 8 could not connect", which is the difference
+      # between a diagnosis and a symptom — and a changed address is a re-arm, which is the thing
+      # the clause forbids.
+      local st now_addr armed_now
+      st="$(curl -fsS "${URLS[$((to-1))]}/api/session/status" 2>/dev/null)"
+      armed_now="$(printf '%s' "$st" | python3 -c 'import json,sys;print(json.load(sys.stdin).get("armed"))' 2>/dev/null)"
+      now_addr="$(printf '%s' "$st" | python3 -c 'import json,sys;print(json.load(sys.stdin).get("address",""))' 2>/dev/null)"
+      [ "$armed_now" = "True" ] \
+        || fail "[$transport] instance $to is no longer armed at hop $k of $n_hops — its arm did not survive the $(( k - 1 )) hop(s) before its turn, which is exactly what a party at the far end of a relay has to do"
+      [ "$now_addr" = "${ARM_ADDR[$to]}" ] \
+        || fail "[$transport] instance $to reports address $now_addr, armed at ${ARM_ADDR[$to]} — the address moved, so it was RE-ARMED between hop 1 and hop $k"
+
+      ceremony "$transport" "" "$out" 1 "$to" "$prev" "$k" 1 "${INVITES[$to]}" "${ARM_ADDR[$to]}"
+      RELAY_WORDS+=( "$WORDS" )
+
+      # **The byte prefix, which is what makes this a BATON rather than N ceremonies.** Asserting
+      # the documents merely DIFFER is a tautology here: `/api/pdf` is addressed by id and no
+      # instance is fetched twice in one relay, so two hops' documents differ whatever happened.
+      # A PDF is signed incrementally, so hop k's output must literally begin with hop k-1's
+      # bytes — anything else means the party started from a document of their own.
+      python3 - "$prev" "$out" "$transport" "$k" <<'PYPFX' || exit 1
+import sys
+prev = open(sys.argv[1], "rb").read()
+cur  = open(sys.argv[2], "rb").read()
+t, k = sys.argv[3], sys.argv[4]
+if not cur.startswith(prev):
+    n = next((i for i, (a, b) in enumerate(zip(prev, cur)) if a != b), min(len(prev), len(cur)))
+    print(f"FAIL: [{t}] hop {k}'s document does not begin with hop {int(k)-1}'s bytes — they "
+          f"diverge at byte {n} of {len(prev)}. The party did not build on the baton they were "
+          f"handed, so the relay is N ceremonies over one file rather than one proceeding.",
+          file=sys.stderr)
+    sys.exit(1)
+print(f"[{t}] hop {k}: {len(prev)} -> {len(cur)} bytes, the previous hop's document is a prefix")
+PYPFX
+      prev="$out"
+    done
+
+    # **The convener holds ONE ceremony document at the end, not one per hop.** This is what
+    # `installCeremonyResult` is for: a fourth commit door that REPLACES by ceremony id rather than
+    # adding an arrival, because ADR-005 caps a machine at eight open documents and a nine-party
+    # relay has eight hops. Without the replacement a convener would be refused its own ceremony at
+    # hop 7 — and the refusal would arrive as a 409 on an unrelated-looking route, which is exactly
+    # how this run first found the harness's own accumulation.
+    local cdocs grew
+    cdocs="$(curl -fsS "${URLS[0]}/api/docs" | python3 -c 'import json,sys;print(len(json.load(sys.stdin).get("docs",[])))')"
+    grew=$(( cdocs - before_docs ))
+    # **The delta must not scale with the number of hops, and ONE is the whole claim.** Every hop
+    # returns a document to the convener; `installCeremonyResult` replaces the previous one by
+    # ceremony id instead of adding an arrival, so eight hops leave exactly the same footprint as
+    # one. A relay that accumulated would be refused its own ceremony at hop 7 by ADR-005's cap.
+    [ "$grew" -le 1 ] \
+      || fail "[$transport] $n_hops hops added $grew documents to the convener ($before_docs -> $cdocs) — the baton is accumulating instead of being replaced, and at N=9 ADR-005's cap of 8 refuses the ceremony partway through"
+    [ "$cdocs" -le 8 ] \
+      || fail "[$transport] the convener holds $cdocs documents, past ADR-005's cap of 8"
+    echo "[$transport] $n_hops hops added $grew document to the convener ($before_docs -> $cdocs)"
+
+    # ── The distinct-SIGNER set, which no count can give you (P07.S03b's T03) ──
+    #
+    # `/ByteRange` counts BLOCKS, so one party signing eight times satisfies any count the hops
+    # assert. What has to hold is that the finished document was signed by the roster's signing
+    # parties, each once, in roster order — which is L3's rule read off the result instead of off
+    # the gate that was supposed to enforce it.
+    #
+    # Read from the LAST hop's attestations, which `ceremony()` already fetched from the receiving
+    # instance by document id.
+    python3 - "$WORK/atts.$transport.json" "$transport" "${FPS[@]}" <<'PYSET' || exit 1
+import json, sys
+path, t = sys.argv[1], sys.argv[2]
+fps = [f.lower() for f in sys.argv[3:]]
+signing = fps[1:]  # party 1 is the non-signing convener
+ats = json.load(open(path)).get("attestations") or []
+got = [a.get("fingerprint", "").lower() for a in ats]
+if len(got) != len(signing):
+    print(f"FAIL: [{t}] the finished document carries {len(got)} attestation(s) for "
+          f"{len(signing)} obliged signers", file=sys.stderr)
+    sys.exit(1)
+if len(set(got)) != len(got):
+    dupes = sorted({f for f in got if got.count(f) > 1})
+    print(f"FAIL: [{t}] a party signed more than once — {[d[:12] for d in dupes]}. A signature "
+          f"COUNT cannot see this: /ByteRange counts blocks, so one party signing "
+          f"{len(got)} times satisfies every per-hop count in this run.", file=sys.stderr)
+    sys.exit(1)
+if got != signing:
+    print(f"FAIL: [{t}] the signers are not the roster's signing parties in order.\n"
+          f"  got   {[g[:12] for g in got]}\n  want  {[w[:12] for w in signing]}\n"
+          f"L3's whole rule is that the signatures on a document are the roster's prefix; this "
+          f"reads that off the RESULT rather than off the gate meant to enforce it.",
+          file=sys.stderr)
+    sys.exit(1)
+print(f"[{t}] {len(got)} distinct signers, in roster order, one signature each")
+PYSET
+
+    RELAY_FINAL="$prev"
+  }
+
+  # **QUIC first, and the order is a finding rather than a preference.** A ceremony hop is dialled
+  # through `connect()` (`ceremonynet.go:737`), whose dial race is fed through `filterQUIC` —
+  # *"the shared endpoint speaks QUIC, and a non-QUIC candidate cannot be handshake-dialled on it"*
+  # — and `dialerCeremony` opens that endpoint UNCONDITIONALLY. So a TCP candidate is filtered out
+  # of every ceremony dial and the hop spins until `connectDeadline`. Measured here at N=4: hop 1
+  # over TCP left the receiver armed and idle while the convener never reached its verification
+  # string. QUIC is driven first so a TCP failure is read as the transport question it is.
+  relay quic
+  WORDS_RELAY_QUIC=( "${RELAY_WORDS[@]}" ); FINAL_QUIC="$RELAY_FINAL"
+  relay tcp
+  WORDS_RELAY_TCP=( "${RELAY_WORDS[@]}" ); FINAL_TCP="$RELAY_FINAL"
+
+  # ── The word-strings: EQUAL within a hop, DISTINCT across hops ──────────────
+  #
+  # **The clause said "all 2(N-1) word-strings pairwise distinct" and that is unsatisfiable by
+  # construction** — `ceremony()` asserts at every hop that the two ends derived the SAME string,
+  # which is L2's entire point, so N-1 of the 2(N-1) observations are necessarily equal pairs.
+  # Amended at this slice's grill into the two properties the clause was reaching for, and the
+  # pair is stronger than the original: "pairwise distinct over 2(N-1)" would have been satisfied
+  # by a run that never compared the two ends of anything.
+  #
+  # The equal-within-a-hop half is already asserted inside `ceremony()` (it fails the hop by name
+  # if the two ends disagree). What is left is across hops, and it is what says the channel
+  # binding is per-session rather than per-ceremony: every hop of one relay shares a ceremony, a
+  # record and a convener, so a binding derived from any of those would repeat.
+  python3 - "$N" "${WORDS_RELAY_QUIC[@]}" "--" "${WORDS_RELAY_TCP[@]}" <<'PYWORDS' || exit 1
+import sys
+n = int(sys.argv[1])
+rest = sys.argv[2:]
+cut = rest.index("--")
+runs = {"quic": rest[:cut], "tcp": rest[cut + 1:]}
+for t, words in runs.items():
+    if len(words) != n - 1:
+        print(f"FAIL: [{t}] the relay recorded {len(words)} word-string(s) for {n-1} hops — a hop "
+              f"that produced none would make the distinctness check below vacuous",
+              file=sys.stderr)
+        sys.exit(1)
+    if any(not w.strip() for w in words):
+        print(f"FAIL: [{t}] a hop recorded an EMPTY word-string, so nothing was compared for it",
+              file=sys.stderr)
+        sys.exit(1)
+    if len(set(words)) != len(words):
+        dupes = [w for w in set(words) if words.count(w) > 1]
+        print(f"FAIL: [{t}] two hops of one relay derived the SAME verification words {dupes!r}. "
+              f"Every hop here shares a ceremony, a record and a convener, so a repeat means the "
+              f"binding comes from one of those rather than from the channel — and two parties "
+              f"reading the same four words at different hops cannot tell the hops apart.",
+              file=sys.stderr)
+        sys.exit(1)
+    print(f"[{t}] {len(words)} hops, {len(set(words))} distinct verification strings")
+# And the two relays are different ceremonies, so no string may cross between them either.
+overlap = set(runs["quic"]) & set(runs["tcp"])
+if overlap:
+    print(f"FAIL: a verification string appears in BOTH relays ({overlap!r}) — they are separate "
+          f"ceremonies over separate channels", file=sys.stderr)
+    sys.exit(1)
+PYWORDS
+
+  # The two relays really produced different documents, or one of them re-read the other's.
+  cmp -s "$FINAL_QUIC" "$FINAL_TCP" \
+    && fail "the two relays returned BYTE-IDENTICAL final documents — one re-read the other's result"
+
+  echo "PASS: $N instances, and a $N-party ceremony COMPLETED as a baton relay over BOTH"
+  echo "      transports (${ELAPSED_TOTAL}s of hops): a non-signing convener carried it through"
+  echo "      $(( N - 1 )) hops, each hop's document containing the previous one as a byte prefix,"
+  echo "      every hop's verification string distinct, and the model's ceiling still refusing a"
+  echo "      signing party a second turn."
   exit 0
 fi
 
@@ -928,9 +1311,9 @@ if [ "$LAN" = "1" ]; then
   # exists to find: B armed QUIC, A dialled whatever A was told, and they agreed
   # because somebody outside the protocol told them the same answer. The LAN runs
   # now pass it to B only.
-  ceremony tcp lan "$WORK/final.lan.pdf"
+  ceremony tcp lan "$WORK/final.lan.pdf" 1 2
   WORDS_LAN="$WORDS"
-  ceremony quic lan "$WORK/final.lan.quic.pdf"
+  ceremony quic lan "$WORK/final.lan.quic.pdf" 1 2
   WORDS_LAN_QUIC="$WORDS"
 
   after="$(offlink_packets)"
@@ -942,9 +1325,9 @@ if [ "$LAN" = "1" ]; then
   exit 0
 fi
 
-ceremony tcp "$SESSION_PORT" "$WORK/final.tcp.pdf"
+ceremony tcp "$SESSION_PORT" "$WORK/final.tcp.pdf" 1 2
 WORDS_TCP="$WORDS"
-ceremony quic "$SESSION_PORT_QUIC" "$WORK/final.quic.pdf"
+ceremony quic "$SESSION_PORT_QUIC" "$WORK/final.quic.pdf" 1 2
 WORDS_QUIC="$WORDS"
 
 # The QUIC run really fetched ITS OWN document. /api/pdf returns B's active

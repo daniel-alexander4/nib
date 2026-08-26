@@ -531,3 +531,52 @@ func TestBothSidesOfAHopMirrorIt(t *testing.T) {
 			"user who was told their signature is safe and a machine with no copy of it")
 	}
 }
+
+// TestACeremonyHopIsNotForcedOntoQUIC — the branch that made a TCP ceremony undialable.
+//
+// `handleSessionInitiate` chooses between the glare/shared-endpoint path and `raceWithRendezvous`.
+// The glare path feeds its dial race through `filterQUIC` — *"the shared endpoint speaks QUIC, and
+// a non-QUIC candidate cannot be handshake-dialled on it"* — and `dialerCeremony` opens that
+// endpoint for EVERY ceremony, unconditionally. So the predicate `cer != nil && cer.rz != nil`
+// selected it for every hop of every ceremony, and a TCP candidate was filtered out of all of
+// them: the hop raced an empty set until `connectDeadline`, five minutes, receiver armed and idle.
+//
+// **Structural, and the reason is the same one `TestBothSidesOfAHopMirrorIt` gives.** The property
+// is which branch a request takes; a completed request over QUIC looks identical whether or not
+// the predicate can also admit TCP. The behavioural driver is tier 4's relay, which is what found
+// it — and tier 4 is not in the default run, which is why this guard exists at all.
+//
+// **No tier had ever carried a document over a ceremony dial on TCP.** The tier-4 N>=3 probe
+// passes `transport=tcp` with an invitation and is refused 409 by L3 at the near end before any
+// network work; every other ceremony test is in-process with a hand-built channel; and the
+// two-party tier-4 runs carry no invitation, so `cer` is nil and they take the else branch.
+func TestACeremonyHopIsNotForcedOntoQUIC(t *testing.T) {
+	src, err := os.ReadFile("session.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	code := stripLineComments(string(src))
+	body := funcBodyFrom(code, strings.Index(code, "func (s *Server) handleSessionInitiate("))
+	if body == "" {
+		t.Fatal("cannot find handleSessionInitiate")
+	}
+	// Stimulus: this really is the function that chooses, or the absence below means nothing.
+	if !strings.Contains(body, "QUICListenHandshakeOn(") || !strings.Contains(body, "raceWithRendezvous(") {
+		t.Fatal("handleSessionInitiate no longer holds both dial paths — this guard is reading " +
+			"the wrong function, and its clean result would be about nothing")
+	}
+	// The predicate that selects the glare path must consult the requested transport.
+	i := strings.Index(body, "QUICListenHandshakeOn(")
+	head := body[:i]
+	j := strings.LastIndex(head, "if cer != nil")
+	if j < 0 {
+		t.Fatal("cannot find the branch that selects the glare path")
+	}
+	pred := head[j:]
+	if !strings.Contains(pred, "transportQUIC") {
+		t.Error("the glare/shared-endpoint path is selected without consulting the requested " +
+			"transport. That path races QUIC candidates only (filterQUIC), and dialerCeremony " +
+			"opens a QUIC endpoint for every ceremony — so a TCP ceremony hop races an empty " +
+			"candidate set and spins until connectDeadline with the receiver armed and idle.")
+	}
+}

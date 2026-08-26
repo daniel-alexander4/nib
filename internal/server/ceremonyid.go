@@ -378,7 +378,13 @@ func (c *ceremonyID) l3Roster() p2p.Roster {
 	if c == nil {
 		return p2p.Roster{}
 	}
-	out := p2p.Roster{Commitment: c.inv.RosterHash}
+	// **The version travels with the commitment.** It is this build's record format version, not
+	// a field of the invitation, and that is the right value: the commitment is what THIS build
+	// computes and verifies the record under. Two parties on different formats digest the same
+	// roster to different hashes, their tokens differ, and D32's skew sentence — not an accusation
+	// — is what the reader sees. An invitation-carried version would only let a sender claim a
+	// format it is not using.
+	out := p2p.Roster{Commitment: c.inv.RosterHash, CommitmentVersion: ceremony.FormatVersion}
 	for _, p := range c.inv.Roster {
 		out.Entries = append(out.Entries, p2p.RosterEntry{Fingerprint: p.Fingerprint, Signs: p.Signs})
 	}
