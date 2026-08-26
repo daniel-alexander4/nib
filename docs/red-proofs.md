@@ -27,6 +27,13 @@ is the point. A row is only added after the red was observed — never from inte
 applies the row's defect as a patch, runs the named check, and **asserts the check FAILS**.
 `./build/redproof.sh` with no argument lists what is recorded.
 
+**`./build/redproof.sh --all` replays every row**, reports the whole set rather than stopping at
+the first failure, and exits non-zero if any row did not re-prove. It exists because the sweep it
+belongs in had no door: `verify_test.go`'s count guard can see a row that DISAPPEARS and not one
+that no longer re-proves, said so in its own comment, and stayed a known gap for as long as
+running the set meant hand-rolling a shell loop. The first person to actually run it found eight
+invalid rows of eighty-one (v1.117.156).
+
 **Nineteen rows are replayable** (v1.117.43; nine at v1.117.26, six added at v1.117.39). Ask
 `./build/redproof.sh` with no argument rather than reading a list here — **this sentence said
 "nine" while the directory held fifteen**, because a count written into prose beside a set that
@@ -1543,3 +1550,83 @@ unconditionally true. It now asserts the LIMIT: a *visible* signature moves the 
 per-hop continuity mechanism is S05's and S06's, and the repair the plan had adopted (byte prefix
 plus `AddedAfter == false`) was measured at this slice's grill to **pass** on a document whose first
 page had been blacked out by the last signer.
+
+## P07.S02a — convene exists, and three guards could not see it (v1.117.155)
+
+Five rows, all tier 1, all replayable. **Four of the five restore a defect that the check written
+for it could not see** — the slice's own finding, and the reason its ledger entry reads the way it
+does: the code was mostly fine and the instruments were not. Every one was found by mutating the
+subject and re-running; none by reading.
+
+| the defect, restored | what goes red | the check |
+|---|---|---|
+| **`handleSave` loses its `ceremonyFreeze` call** *(replayable: `save-route-escapes-the-ceremony-freeze`)* | `/api/save (handleSave) is a MUTATING route and reaches neither a commit door nor ceremonyFreeze` | `TestEveryMutatingRouteReachesTheCeremonyFreeze`, reading tier 2's `MUTATING` inventory from its own file rather than restating it. `handleSave` reaches neither commit door — it writes the file itself — so a freeze hung on `commitMutation` and `commitBarrier` covered eleven routes and not this one. **The patch deletes the call and KEEPS the comment**: the first draft substring-matched the raw body, and `handleSave` names both doors only inside the prose explaining that it reaches neither, so the guard read that sentence as proof of coverage and this exact deletion left the suite green. If the comment-stripping is ever removed, this row goes green and says so |
+| **`PrepareCeremonyDocument` becomes `return pdf, nil`** *(replayable: `convened-document-never-built`)* | `the convened document has 1 pages, want 4 — pages are allocated from the SIGNING count` | `TestTheConvenedDocumentIsBUILT`. Measured with this exact mutation applied: **every convene test in the package stayed green.** `CheckDocument` proves hash-then-embed and cannot see whether a page was ever appended — and `Convene`'s doc comment refuses dependency injection *precisely* on the ground that "the guard would not go green with the readme never appended". It did. The assertion is written against `SignaturePagesFor(signing)` rather than a literal, with a setup assertion that the signer count and the roster length **straddle a page boundary**: an earlier fixture used seven signers of eight parties, which both round to two pages, so the assertion was correct and could not fire |
+| **`atomicfile.WriteDurable` becomes `os.WriteFile`** *(replayable: `durable-write-writes-through`)* | `the file kept inode N, so the bytes were written THROUGH the existing file` | `TestWriteDurableREPLACESTheFileRatherThanWritingThrough`. The package's other two tests — content-at-the-requested-mode, and overwrites-leaving-no-temporary — **both stay green against this patch**, because `os.WriteFile` satisfies every observation they make, and the one test that could tell them apart hit its own `t.Skip`. It now discriminates on **inode** and on the mode of a file pre-created at 0644, which is the state `os.WriteFile` preserves and a rename does not — `os.WriteFile` honours perm only on CREATE |
+| **a second `Contents` decoder, receiver named `out`, in `builtin.go`** *(replayable: `contents-decoded-outside-the-door`)* | `these decode a Contents payload outside decodeContents: [builtin.go:recentFromPayload]` | `TestEveryContentsDecodeGoesThroughTheDoor` — ADR-009 asserted on the **routing**, not on each site's behaviour. The first draft counted the literal `json.Unmarshal(plain, &c)` in `vault.go` alone, so a decoder spelled differently evaded it and `builtin.go` was never read at all. A payload read outside the door means a vault written by a newer Nib is accepted and the next ordinary `AddRecent` — opening any PDF — rewrites it without the keys this build does not know. For a ceremony invitation secret that is the only copy |
+| **`WriteMirror` writes `record.json` before `document.pdf`** *(replayable: `mirror-record-written-first`)* | `the record was written FIRST, so a torn write leaves (record, no document)` | `TestTheRecordIsTheCommitPoint`, the one guard here that was right as first written. A torn write in that order leaves a state **byte-identical** to the deliberately document-less mirror `WriteMirror` itself creates, so a resuming party cannot tell "no document yet" from "the document was lost". The stimulus is a `record.json` path made unwritable by a directory in its place, **asserted unwritable before the write is attempted** — without that, "document.pdf exists" says nothing about ordering |
+
+### What these four have in common
+
+Not one of them was a wrong computation. In each case a property was stated correctly — in a doc
+comment, in a plan bullet, in the guard's own name — and the check written to hold it could be
+satisfied without the property being true: by prose that named the call, by a hash that could not
+observe the axis, by a `t.Skip`, by a spelling. **The tell is the same every time: patch the
+subject to do nothing at all and see whether anything goes red.** Four of these five did not, and
+none of the four would have been found by reading.
+
+## The replay set replayed WHOLE, for the first time — eight of eighty-one were invalid (v1.117.156)
+
+Recording P07.S02a's five rows meant running the harness anyway, so the whole set was replayed
+rather than just the new rows. **Eight of eighty-one did not re-prove.** The set had never been
+replayed end to end: `/pending 275` — "the red-proof archaeology" — was carried open for five
+sweeps, attempted by none, and declined.
+
+Every one of the eight had been counted as coverage the whole time. `verify_test.go`'s floor sees
+a row that **disappears** and cannot see one that no longer re-proves; it says so in its own
+comment, and the eight are that comment measured.
+
+| row | how it failed | why |
+|---|---|---|
+| `added-after-fails-closed` | **the check still PASSED** | the sharp one — see below |
+| `roster-entry-carries-a-name` | red, but **not for its own reason** | P07.S02 rewrote the guard "from a claim into a measurement", so its sentence changed; the `EXPECT` token still named the old one. The row's defect still fires — a stale token cannot be told from a deleted check by an exit status, which is the whole reason the token exists |
+| `cgnat-told-to-port-forward` | STALE | `/pending 263` added the `mapRefused` branch above the one the patch cut |
+| `deferral-silently-ignored` | STALE | `published.test.mjs` grew; the hunk moved ~100 lines |
+| `failed-obtain-drops-its-delete-handles` | STALE | the `markMapRefused` block landed directly above the deleted `mapper.close()` |
+| `hop-starts-inside-its-own-budget` | STALE | P07.S02a re-pointed the check at `ceremonyHopBudget()`, rewriting the lines the patch replaced |
+| `stale-consent-on-new-session` | STALE | P05.S09 generalised `se.ln == ln` into a `consentAnchor`, so the guard the patch removes is spelled differently |
+| `upnp-delete-not-identity-checked` | STALE | the two inline checks moved into `verifiedUPnPEntry` when a second caller needed them (ADR-009) |
+
+All eight are re-recorded against `62424f9` and replay green.
+
+### The one that was not bookkeeping
+
+`added-after-fails-closed` applied cleanly and **the check passed with the defect in place**. That
+is the harness's second failure mode, and it means the ledger's claim about that row was false.
+
+The row cuts `addedAfterVerdict`'s `return trailing || err != nil` down to `return trailing` — the
+fail-closed rule, which is a *named function* precisely because "an inline expression is one
+careless refactor away from `a` alone, and nothing would fail". `TestAddedAfterFailsClosed` drives
+it as a five-row table. **Not one of those rows could see the error arm any more.** `/pending 270`
+later added a disagreement rule ahead of it —
+
+```go
+if librarySawSigners && !sawSignature { return true }
+```
+
+— and every table row carrying `err != nil` also satisfies *that*, or satisfies `trailing` alone.
+So the arm the test is named for had been uncovered since 270 landed, and the table still read as
+though it were tested. The missing case is the one where both enumerations agree a signature is
+present and nothing trailing was found, so the error is the only thing left that can warn; it is
+now the table's third row, and with it the defect goes red again.
+
+**The verdict could have gone quiet exactly the way the guard did** — which is the sentence the
+guard's own doc comment already contained, about the verdict, and not about itself.
+
+### What this changes
+
+`./build/redproof.sh --all` now replays the set as one command, reports every failure rather than
+the first, and exits non-zero if any row did not re-prove. The gap was never that nobody knew —
+`verify_test.go` names it, and so does the v1.117.39 entry above ("a sweep that adds rows should
+replay the whole set, not just its own"). The gap was that doing it meant hand-rolling a loop, and
+**an audit that has to be improvised each time is one that happens once every eighty-one rows.**

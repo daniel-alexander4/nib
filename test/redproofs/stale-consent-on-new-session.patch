@@ -1,13 +1,13 @@
 diff --git a/internal/server/session.go b/internal/server/session.go
-index 2e55d1a..45cde94 100644
+index 46b29f2..83567ed 100644
 --- a/internal/server/session.go
 +++ b/internal/server/session.go
-@@ -207,7 +207,7 @@ func (se *session) disarmIf(ln p2p.Listener) {
- func (se *session) setPending(ln p2p.Listener, p *pendingReq) bool {
+@@ -272,7 +272,7 @@ func (a consentAnchor) current(se *session) bool {
+ func (se *session) setPending(a consentAnchor, p *pendingReq) bool {
  	se.mu.Lock()
  	defer se.mu.Unlock()
--	if se.ln == nil || se.ln != ln {
-+	if se.ln == nil {
+-	if !a.current(se) {
++	if se.ln == nil && se.cer == nil {
  		return false
  	}
  	se.pending = p

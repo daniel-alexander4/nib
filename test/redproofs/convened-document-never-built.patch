@@ -1,0 +1,32 @@
+diff --git a/internal/p2p/sigpages.go b/internal/p2p/sigpages.go
+index 1a92290..eabf685 100644
+--- a/internal/p2p/sigpages.go
++++ b/internal/p2p/sigpages.go
+@@ -200,26 +200,5 @@ func PrepareCeremonyDocument(pdf []byte, id CeremonyID, convenerFP []byte, signe
+ 	if signers < 1 {
+ 		return nil, fmt.Errorf("a ceremony needs at least one signing party, not %d", signers)
+ 	}
+-	out, err := PrepareDocument(pdf)
+-	if err != nil {
+-		return nil, err
+-	}
+-	cer, err := renderCeremonyPage(id, convenerFP, signers)
+-	if err != nil {
+-		return nil, fmt.Errorf("render the ceremony page: %w", err)
+-	}
+-	if out, err = pdfops.Append(out, cer); err != nil {
+-		return nil, fmt.Errorf("append the ceremony page: %w", err)
+-	}
+-	n := signaturePages(signers)
+-	for i := 1; i <= n; i++ {
+-		page, err := renderSignaturePage(id, i, n)
+-		if err != nil {
+-			return nil, fmt.Errorf("render signature page %d of %d: %w", i, n, err)
+-		}
+-		if out, err = pdfops.Append(out, page); err != nil {
+-			return nil, fmt.Errorf("append signature page %d of %d: %w", i, n, err)
+-		}
+-	}
+-	return out, nil
++	return pdf, nil
+ }

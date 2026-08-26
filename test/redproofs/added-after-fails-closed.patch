@@ -1,11 +1,11 @@
 diff --git a/internal/sign/verify.go b/internal/sign/verify.go
-index f2a95e1..3674a75 100644
+index 8fd6f9b..8eec650 100644
 --- a/internal/sign/verify.go
 +++ b/internal/sign/verify.go
-@@ -126,7 +126,7 @@ func Verify(data []byte) Status {
- // it — an inline expression is one careless refactor away from `a` alone, which is the
- // silent-clean behaviour this replaced, and nothing would fail. This is what the test binds.
- func addedAfterVerdict(trailing bool, err error) bool {
+@@ -142,7 +142,7 @@ func addedAfterVerdict(trailing, sawSignature bool, err error, librarySawSigners
+ 	if librarySawSigners && !sawSignature {
+ 		return true
+ 	}
 -	return trailing || err != nil
 +	return trailing
  }

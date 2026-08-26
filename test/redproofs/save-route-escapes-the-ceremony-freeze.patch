@@ -1,0 +1,15 @@
+diff --git a/internal/server/server.go b/internal/server/server.go
+index 00a78ef..5d2cd00 100644
+--- a/internal/server/server.go
++++ b/internal/server/server.go
+@@ -691,10 +691,6 @@ func (s *Server) handleSave(w http.ResponseWriter, r *http.Request) {
+ 	// Before the write, on the same reasoning as the registry check above: a save on a
+ 	// convened document must not reach the disk at all, because the file on disk is the copy
+ 	// every other party was invited to sign.
+-	if err := ceremonyFreeze(s.docBytes(doc)); err != nil {
+-		httpError(w, http.StatusConflict, err.Error())
+-		return
+-	}
+ 	if err := writeFileAtomic(doc.path, data); err != nil {
+ 		httpError(w, http.StatusInternalServerError, "could not write file")
+ 		return

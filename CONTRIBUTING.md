@@ -61,7 +61,9 @@ And `./build/redproof.sh <name>` replays a recorded red proof: it exports HEAD t
 tree, applies the row's defect as a patch, runs the named check and asserts it FAILS **with its
 own assertion's token** — not merely that something exited non-zero, which is also what a
 deleted or uncompilable check produces. `./build/redproof.sh` with no argument lists what is
-recorded. The ledger it backs is `docs/red-proofs.md`, and it is what makes the "proven red at
+recorded, and **`./build/redproof.sh --all` replays every row** — a minutes-long job that belongs
+in a sweep rather than in `go test`, and the only thing that can tell a valid row from a file that
+merely exists. The ledger it backs is `docs/red-proofs.md`, and it is what makes the "proven red at
 least once" sentence below auditable rather than asserted. Not every row is mechanised; the
 ledger says which are.
 

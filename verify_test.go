@@ -262,7 +262,12 @@ func TestVerifyContractIsTrue(t *testing.T) {
 		// so it had never been a valid row, and this count was satisfied by it for as
 		// long as it sat there. Only `./build/redproof.sh <name>` can tell a row from a
 		// file, and running the whole set is a minutes-long job that belongs in a sweep
-		// rather than in `go test`. Recorded as a known gap, not closed.
+		// rather than in `go test`. **The gap is still here and it is no longer without a
+		// door:** `./build/redproof.sh --all` is that sweep's one command (v1.117.156),
+		// added when the set was first replayed whole and EIGHT of its eighty-one rows
+		// turned out to be invalid — seven stale patches and one whose EXPECT token no
+		// longer matched. This count had been satisfied by all eight for as long as their
+		// files existed, which is the paragraph above, measured.
 		// **And the tax went unpaid, which is why there is a second arm below.** This
 		// constant last moved at v1.117.50, to 27. P05.S05-S12 and the phase close then
 		// added NINE rows without touching it, so on the tree that shipped P05 this check
@@ -271,7 +276,7 @@ func TestVerifyContractIsTrue(t *testing.T) {
 		// an edit that does not HAVE to happen is an edit that does not happen. So the
 		// count is bounded on both sides now. It still fails when a row disappears, and it
 		// fails when the set outgrows it, naming the number to write.
-		const recorded = 76
+		const recorded = 81
 		if len(rows) < recorded {
 			t.Errorf("test/redproofs holds %d replayable row(s), want at least %d; "+
 				"build/redproof.sh reports no error on an empty directory, so a row that "+

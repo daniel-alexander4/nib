@@ -4462,7 +4462,7 @@ Acceptance:
 - **Three guards stop being claims and start being measurements**, each red-proved: `TestEveryPartyFieldIsInTheCommitment` derives `inPreimage` by *driving* `rosterPreimage` (vary one field, require the digest to move) rather than restating it — measured: `Capacity` declared in the map alone ships GREEN with `Director` and `Witness` hashing identically; `MatchesRecord` gains its reflection twin over every `Party` field; and the reader scan gains an out-of-package reader for each new field plus validation of its own `published` keys — measured: one **unexported** field silently drops a whole shape from the scan.
 - A **golden vector** pins `RosterHash` for a fixed record, and a test pins `FormatVersion` to a **literal**. Neither exists today, so the preimage can change with every test green.
 
-#### P07.S02a — Convene: the door, the route, and what it persists *(D20, D21, D22, D25, D29; C04, C20, C22)* — **new, 2026-08-24, split out of S02** *(done 2026-08-24, v1.117.155)*
+#### P07.S02a — Convene: the door, the route, and what it persists *(D20, D21, D22, D25, D29; C04, C20, C22)* — **new, 2026-08-24, split out of S02** *(done 2026-08-24, v1.117.155; T09's red proofs recorded against that commit at v1.117.156, 2026-08-25)*
 Tasks (grilled 2026-08-24):
 - T01 — `p2p.PrepareCeremonyDocument(pdf, signers)`: readme + `signaturePages(signers)` rendered-and-appended, ONE pre-signing geometry door. `PrepareDocument(pdf)` re-expressed through it at signers=2 so today's output is byte-for-byte unchanged; the divisor derives from `stackPlacement` rather than restating it.
 - T02 — the ceremony page (id, recital, obliged count, convener as fingerprint + six-word name), rendered in the same pass, with a guard that it carries no party-supplied bytes.
@@ -4472,7 +4472,7 @@ Tasks (grilled 2026-08-24):
 - T06 — the mirror through `WriteFileAtomicDurable`, `document.pdf` before `record.json` so the record's presence is the commit point.
 - T07 — `POST /api/ceremony/convene` + the read door for invitations; `requireUnlocked`, `resolveDoc`, `commitMutation`; the `MUTATING` inventory row.
 - T08 — D29's freeze: a document under a live ceremony refuses mutating operations, server-side, driven through a real edit.
-- T09 — red proofs for the new rows; `recorded` moves with them.
+- T09 — red proofs for the new rows; `recorded` moves with them. *(done 2026-08-25, v1.117.156 — five rows, **four of them restoring a defect the check written for it could not see**; `recorded` 76 → 81)*
 Scope: **nothing in the product constructs a `ceremony.Record`** — every literal is inside a `_test.go`,
 and the only production reader is `ceremony.Extract`. This slice is the missing constructor and its
 route. **It absorbs D25's page allocation** (moved from S06, 2026-08-23): page count is inside
