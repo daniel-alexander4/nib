@@ -1,8 +1,8 @@
 diff --git a/internal/p2p/l3.go b/internal/p2p/l3.go
-index 4c4743b..8d4f96a 100644
+index a8bf8fa..9172c20 100644
 --- a/internal/p2p/l3.go
 +++ b/internal/p2p/l3.go
-@@ -154,7 +154,7 @@ func NextContributor(pdf []byte, r Roster) (RosterEntry, error) {
+@@ -161,7 +161,7 @@ func NextContributor(pdf []byte, r Roster) (RosterEntry, error) {
  				"not a valid signer of this document", ErrPrefixUnproven, i+1,
  				shortFP(a.Fingerprint))
  		}

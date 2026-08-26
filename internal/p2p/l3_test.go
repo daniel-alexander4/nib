@@ -203,7 +203,9 @@ func TestTheGateRefusesEachThingByName(t *testing.T) {
 	// 5. A SUBSTITUTED but well-formed proceeding: valid signatures in the right order, each
 	//    committing to a ceremony that is not this one.
 	other := strings.Repeat("ab", 32)
-	substituted := l3Chain(t, l3Prepared(t), []l3Party{a, b}, []l3Party{b, c}, other)
+	// Accepts point at PREDECESSORS (P07.S05); pointing them forward leaves signature 2
+	// uncross-bound and this arm then fails on the wrong axis — measured.
+	substituted := l3Chain(t, l3Prepared(t), []l3Party{a, b}, []l3Party{a, a}, other)
 	mine := r
 	mine.Commitment = strings.Repeat("cd", 32)
 	record(t, "substituted proceeding", AdmitContribution(substituted, mine, c.fp), ErrProceedingMismatch)

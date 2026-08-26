@@ -4788,6 +4788,7 @@ Acceptance:
 Scope: everything about a completed relay that is not the relay. Downstream of S05, which is what
 produces the document these clauses describe.
 Acceptance:
+- **The consent card names WHICH signature it is describing.** Owed from P07.S05: `coSignExchange` picks `ats[len(ats)-1]` for the gate, and at hop 1 of a carry route there is no prior signature at all, so it is handed the identity the TLS handshake pinned with `Valid` false. The retired `channel-binding-reads-the-first-signer` row proved the OLD consequence of getting that index wrong; nothing proves the new one.
 - The completed document **renders as complete** (C16) **and a five-of-nine document renders as incomplete, naming how many obliged signers are absent** (C18). The two are one piece of work and neither is safe alone.
 - **The carry route binds what comes back to what went out**: it asserts the byte prefix **and** runs S03's predicate over the returned document before the next hop is dialled, driven by a hostile hop *k* returning a different document. `Initiate` has this and says why; without it the convener relays whatever a malicious party hands back, and S03's door — which answers the *contributor's* question — is passed through by nobody.
 - A hop **replaces the baton rather than accumulating arrivals**: a nine-party ceremony leaves the convener with **one** ceremony document open, not nine against a cap of eight.

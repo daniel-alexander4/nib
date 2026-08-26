@@ -1,8 +1,8 @@
 diff --git a/internal/server/cosign.go b/internal/server/cosign.go
-index c8821c1..ad524af 100644
+index 0b26a9a..1a71661 100644
 --- a/internal/server/cosign.go
 +++ b/internal/server/cosign.go
-@@ -237,17 +237,6 @@ func (s *Server) buildCoSigned(w http.ResponseWriter, pdf, cert, key []byte, att
+@@ -253,28 +253,6 @@ func (s *Server) buildCoSigned(w http.ResponseWriter, pdf, cert, key []byte, att
  	//
  	// 409 rather than 400: this is a refusal about the STATE of a proceeding, not about a
  	// malformed request, and the user's action is to wait rather than to correct a field.
@@ -16,6 +16,17 @@ index c8821c1..ad524af 100644
 -			httpError(w, http.StatusConflict, err.Error())
 -			return nil, false
 -		}
+-		// **What this signature ACCEPTS comes off the roster too (P07.S05, D22 amended).**
+-		//
+-		// The caller built `att` before the ceremony was resolved, from the peer it is dialling —
+-		// which is the wire peer, and under a carry route the wire peer is a non-signing convener.
+-		// A first signer would then attest to somebody who never signs, and the two contribution
+-		// doors would disagree about what `AcceptedPeer` MEANS: `coSignExchange` already reads it
+-		// off the roster. Overridden here rather than at the caller because this is the same door
+-		// the gate above hangs on, and a rule at one of two doors is the ADR-009 shape.
+-		//
+-		// The first signer accepts "" — there is nobody before them, and that is C14 as amended.
+-		att.AcceptedPeer = p2p.PredecessorOf(roster, hex.EncodeToString(myFP))
 -	}
  	prepared := pdf
  	if sign.Verify(pdf).State == sign.Unsigned {
