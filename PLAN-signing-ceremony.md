@@ -4505,7 +4505,47 @@ Acceptance:
   **It carries NO party-supplied bytes, and that is a decision with a reason rather than caution.** The legal seat argued for the full roster — every party with label, capacity and short fingerprint — on the ground that a flattened or scanned bundle otherwise carries `[NibRoster:…]` tokens whose preimage exists nowhere in the exhibit. **That argument is overstated, and measuring why is what settled the scope:** `RosterHash` digests `DocHash`, and `DocHash` is `ContentDigest` of the page that would carry it — a fixed point. So **no printed page can ever make those tokens recomputable**; a flattened copy is unverifiable with the full roster on it and unverifiable without. Once verifiability is off the table the page's job is *legibility and honest incompleteness*, and that needs no free text at all: the id is hex, the recital is already rendered verbatim into every block by C15, "5 of 9 obliged signers" is a **count** and is C18's whole substance, and the convener's six-word name is **derived** from their fingerprint. Measured: the wordlist is 2048 words, ASCII `a-z`, ≤8 characters, no `%`, no backslash — render-safe by construction and bounded at 53 characters.
   **Per-party labels and capacities are S07's**, which already owns rendering capacity into signature blocks and must solve S08's four measured hazards there (WinAnsi-encodability, `%` as a pdfcpu placeholder introducer, embedded newlines, an unsplittable over-long token). Doing it in two slices would be two implementations of one escaping rule — ADR-009. This also removes the `Label`-from-the-vault hazard from this page entirely: the convener is named by a value nobody typed.
 
-#### P07.S02b — Invitation consumption: parse, reconcile, pin, scope *(D21, D29; C17)* — **new, 2026-08-23**
+#### P07.S02b — Invitation consumption: parse, reconcile, pin, scope *(D21, D29; C17)* — **new, 2026-08-23** *(done 2026-08-25, v1.117.157 — ledger below; one clause SUPERSEDED by measurement (`CheckDocument` cannot pass for a receiving party at any hop) and one `not exercised` (the TCP-ceremony path is guarded structurally, not driven), filed as `/pending`)*
+Tasks (grilled 2026-08-25 — `grills/2026-08-25-p07s02b-invitation-consumption.md`, verdict **amended**; deepdive first, `deepdives/2026-08-25-p07s02b-invitation-consumption.md`):
+- T01 — one door for the ceremony pin, called by convene AND accept (ADR-009); the guard asserts routing, not each site's text.
+- T02 — `POST /api/ceremony/accept`: parse, pin the convener ceremony-scoped, answer with the invitation's public facts.
+- T03 — the ceremony passed **explicitly** to `serveOneSession`/`runSession`; `consentAnchor` untouched. Closes the TCP re-delivery gap in the same change.
+- T04 — the C17 gate in `sessionConfirmer.Confirm`, before `setPending`: `MatchesRecord` every hop, `CheckDocument` **hop 1 only**.
+- T05 — the `MatchesRecord` completeness guard, structural rather than a per-field list.
+- T06 — `PruneCeremonyPeers` on decline; P01's parked criterion driven.
+- T07 — P01's other parked criterion: the invitation secret is absent from `~/nib/ceremonies/` after an arm.
+- T08 — red proofs; `recorded` moves.
+**Amended 2026-08-25 at its grill — three findings the slice as written could not have produced.**
+**(1) D22 is a HUB, not a chain.** `hopBetween` (`record.go:585`) refuses any pair without the
+convener at one end, so a non-convener's set of possible hop partners is **{the convener}**, of
+size one. "Establishes the pins its roster carries" reads as N−1; the topology makes it one, and
+pinning the other thirty would pin strangers this party can never dial — the harm D29 exists to
+prevent, delivered by its own fix.
+**(2) The convener has the same problem from the other side and nothing was going to fix it.**
+`internal/server/convene.go` never pins: its only vault write is `AddCeremonySecret`
+(`convene.go:173`). So the convener manually pins N−1 parties before arming against any of them.
+Folded in here as one door both routes call, per ADR-009.
+**(3) A gate keyed on the consent anchor would be BLIND on the TCP ceremony path.** `consentAnchor`
+is built at two sites and only `session.go:1084` carries the ceremony; `runSession` is never handed
+one although the arm stored it (`session.go:989` then `:996`). The same nil already costs
+re-delivery: `rd = anchor.cer` (`session.go:709`) leaves `ReDeliverer` nil on a TCP ceremony, whose
+contract says nil means "the manual/LAN path, **which has no ceremony hop to key on**" — false
+there, and the accept loop re-arms, so a reconnect re-signs. The ceremony is therefore passed
+**explicitly** rather than filled into the anchor: `current` (`session.go:247`) prefers `cer`, so
+populating it would silently re-point that path's staleness test and change what
+`stale-consent-on-new-session` guards.
+**And bullet 3 below is REALITY DRIFT, in two directions.** `capacity` and `label` have been
+compared since v1.117.153 — `matchesRosterFields` compares the whole `Party` struct with `!=`, so
+there is no work owed. `intent` and `expires` are **not carried by the invitation at all**
+(`invitation.go:128`), so there is nothing to compare, and the harm the bullet names is already
+unreachable: the only intent a party sees is the record's, which is signed and inside
+`rosterPreimage`. **Adding the fields would CREATE the exposure** — `RosterHash` is the record's
+own digest copied into an unsigned invitation, so an attacker editing `i.Intent` leaves it
+matching. The bullet is replaced by the rule that generalises it, the same trade `RosterHash` made
+over a per-field list.
+**And `CheckDocument` cannot run at every hop.** `embed.go:74` measures it passing at hop 1 and
+failing from hop 2 on an *honest* ceremony, because a visible signature moves the digest. Running
+it unconditionally would refuse honest documents and take S03's N=4 driver with it.
 Scope: the panel found the convene half owned and the **consume half owned by nobody**. `AddCeremonyPeer` and
 `PruneCeremonyPeers` — D29's ceremony-scoped revocable pins — have **zero production callers**, and
 `handleSessionArm` refuses an unpinned peer. So without this slice the phase's own four- and nine-party runs
@@ -4513,9 +4553,18 @@ create **permanent** pins on strangers, which is verbatim the harm D29 was writt
 harness that proves the phase. It also carries **P01's two parked criteria**, which its close recorded as
 "waiting on P07's convene-and-decline machinery" and which no P07 criterion or slice had picked up.
 Acceptance:
-- Accepting an invitation establishes the pins its roster carries: **no party performs a manual fingerprint pin to take part in a ceremony they were invited to**, which is the step D21 exists to remove.
-- On first receipt of the document the party runs `CheckDocument` **and** `MatchesRecord` against the invitation its arm was built from, before the consent gate — the C17 clause, guarded ADR-009-style by asserting the call site routes through the door, not by asserting the function can return an error.
-- `MatchesRecord` compares `intent`, `expires`, `capacity` and `label` as well as the fingerprints and `signs` flags. It compares none of them today, and all are inside the commitment — so a convener handing later parties a different **intent** is refused by nothing, and P07.S07 writes that intent verbatim into every signature.
+- Accepting an invitation establishes the pins it needs: **no party performs a manual fingerprint pin to take part in a ceremony they were invited to**, which is the step D21 exists to remove. **For a counterparty that is exactly ONE pin — the convener** *(amended 2026-08-25: D22 is a hub)* — and **the convene route pins the roster on the other side**, through the same door.
+- On first receipt of the document the party runs `CheckDocument` **and** `MatchesRecord` against the invitation its arm was built from, before the consent gate — the C17 clause, guarded ADR-009-style by asserting the call site routes through the door, not by asserting the function can return an error. **`MatchesRecord` at every hop; `CheckDocument`'s hash comparison at NO hop** *(amended twice on
+  2026-08-25 — first to "hop 1 only" from `embed.go:74`, then to this by probing the real receive
+  path)*. **Measured:** the document a counterparty is handed always carries at least the sender's
+  co-signature, that signature is visible on every production path, and `ContentDigest` hashes
+  `/Annots` — so at the **hop-1** receiver the record extracts and verifies while `CheckDocument`
+  answers *"these are not the same document"*, accusing an honest convener of tampering. The
+  clause is therefore not buildable at hop 1 either, and the honest split is `ceremony.CheckRecord`
+  (record present, convener signature verifies, digest rule comparable) for the arrival gate, with
+  the hash comparison left where `embed.go` already says it lives: a **convene-time identity**,
+  answerable only before the first visible signature. **The gate must reach the TCP ceremony path too**, which is finding (3) above.
+- ~~`MatchesRecord` compares `intent`, `expires`, `capacity` and `label` as well as the fingerprints and `signs` flags. It compares none of them today…~~ **Superseded 2026-08-25 at the slice grill — see the amendment above.** In its place: **a structural guard that every `Invitation` field with a `Record` counterpart is compared**, so the field `/pending 247` adds cannot arrive uncompared. A per-field list is what left `Label` uncompared for three phases.
 - After a ceremony a party **declined**, `PruneCeremonyPeers` leaves the peer list byte-identical to before (P01's parked criterion, driven at last).
 - The invitation secret is never written to `~/nib/ceremonies/`, driven by searching the mirror after a ceremony is **armed** (P01's other parked criterion — the half its own close could not exercise).
 

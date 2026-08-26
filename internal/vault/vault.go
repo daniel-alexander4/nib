@@ -115,14 +115,28 @@ type Identity struct {
 type PinnedPeer struct {
 	Fingerprint []byte `json:"fingerprint"`
 	Label       string `json:"label,omitempty"`
-	// Ceremony is the id of the ceremony whose invitation created this pin, or "" for one
-	// the user made themselves (D29).
+	// Ceremonies are the ids of the ceremonies that created this pin, or empty for one the
+	// user made themselves (D29).
 	//
-	// It exists so an invitation's pins can be taken away again. Consuming an invitation
-	// pins every party on its roster — people the user has never met and may never meet
-	// again — and without a scope those strangers stay in the peer list for good. A pin
-	// the user promoted has no ceremony and survives every prune.
-	Ceremony string `json:"ceremony,omitempty"`
+	// It exists so an invitation's pins can be taken away again. Consuming an invitation pins
+	// the parties it needs — people the user has never met and may never meet again — and
+	// without a scope those strangers stay in the peer list for good. A pin the user made has
+	// no ceremony and survives every prune.
+	//
+	// **A SET, not one id, and that is a measured fix rather than generality (P07.S02b).** It
+	// was a single string, and a second ceremony naming a party the first had already pinned
+	// left the pin scoped to the FIRST — so finishing or declining ceremony A unpinned a peer
+	// ceremony B still needed, and B's next arm failed with "that peer isn't pinned". Measured
+	// before the change: two AddCeremonyPeer calls for one fingerprint left `ceremony-A`, and
+	// pruning A removed the pin outright. The same counterparty across two matters is the
+	// ordinary case for this product's user, not an exotic one.
+	//
+	// **No migration, and that is a fact about the field rather than an assumption.**
+	// `AddCeremonyPeer` had zero production callers until this slice, so no vault anywhere
+	// carries a ceremony-scoped pin and there is nothing to carry forward. `contentsVersion`
+	// moves so an older build refuses the payload rather than silently dropping the key — which
+	// would turn every ceremony pin into a permanent one, the exact harm D29 exists to prevent.
+	Ceremonies []string `json:"ceremonies,omitempty"`
 }
 
 // Settings holds the user's togglable UI preferences. Zero values are the
@@ -212,7 +226,15 @@ type Contents struct {
 }
 
 // contentsVersion is what this build writes into Contents, and the highest it will open.
-const contentsVersion = 1
+// contentsVersion is the vault payload's format version (D32).
+//
+// **2 as of P07.S02b:** `PinnedPeer.Ceremony` became `PinnedPeer.Ceremonies`, a set, so a pin two
+// ceremonies both need survives either one ending. An older build would drop the unknown
+// `ceremonies` key on its next ordinary save and leave every ceremony pin PERMANENT — the harm
+// D29 exists to prevent — so the version moves and `checkContentsVersion` refuses rather than
+// silently rewriting. Nothing is migrated because there is nothing to migrate: `AddCeremonyPeer`
+// had no production caller before that slice, so no vault carries a scoped pin.
+const contentsVersion = 2
 
 // checkContentsVersion refuses a payload written by a NEWER Nib, for checkEnvelopeVersion's
 // reason applied one layer in. A zero is a vault written before the field existed and is
@@ -827,7 +849,7 @@ func (v *Vault) PinnedPeers() []PinnedPeer {
 		out[i] = PinnedPeer{
 			Fingerprint: append([]byte(nil), p.Fingerprint...),
 			Label:       p.Label,
-			Ceremony:    p.Ceremony,
+			Ceremonies:  append([]string(nil), p.Ceremonies...),
 		}
 	}
 	return out
@@ -854,20 +876,48 @@ func (v *Vault) addPinned(fingerprint []byte, label, ceremony string) error {
 	defer v.mu.Unlock()
 	for i := range v.contents.PinnedPeers {
 		if bytes.Equal(v.contents.PinnedPeers[i].Fingerprint, fingerprint) {
-			v.contents.PinnedPeers[i].Label = label
-			// Promotion is one-way: a user pin stays a user pin, and a ceremony pin becomes
-			// a user pin the moment the user pins it themselves.
+			// **A ceremony pin never RENAMES an existing pin (P07.S02b).**
+			//
+			// The doc comment above already said an existing pin is never downgraded, and the
+			// code honoured that for `Ceremony` and not for `Label` — so accepting an
+			// invitation would have overwritten the user's own private nickname for a peer
+			// they had pinned themselves, with whatever label the convener published. That is
+			// a stranger editing this user's peer list by inviting them, and it was invisible
+			// because `AddCeremonyPeer` had no production caller until this slice gave it one.
+			//
+			// The user's own pin (ceremony == "") still updates the label, because that IS the
+			// user renaming their own peer, which is what AddPinnedPeer is for.
 			if ceremony == "" {
-				v.contents.PinnedPeers[i].Ceremony = ""
+				v.contents.PinnedPeers[i].Label = label
+				// Promotion is one-way: a user pin stays a user pin, and a ceremony pin
+				// becomes a user pin the moment the user pins it themselves. Every scope goes
+				// with it — a pin the user has made their own must not be taken away by a
+				// prune for a ceremony that happened to introduce them.
+				v.contents.PinnedPeers[i].Ceremonies = nil
+			} else {
+				if v.contents.PinnedPeers[i].Label == "" {
+					// An unnamed pin is not a name to protect. This is the only case where a
+					// ceremony may write a label onto a pin it did not create.
+					v.contents.PinnedPeers[i].Label = label
+				}
+				// A user pin (no scopes) is NOT given one: a ceremony must not be able to
+				// make a relationship the user established revocable.
+				if len(v.contents.PinnedPeers[i].Ceremonies) > 0 {
+					v.contents.PinnedPeers[i].Ceremonies = addScope(
+						v.contents.PinnedPeers[i].Ceremonies, ceremony)
+				}
 			}
 			return v.save()
 		}
 	}
-	v.contents.PinnedPeers = append(v.contents.PinnedPeers, PinnedPeer{
+	fresh := PinnedPeer{
 		Fingerprint: append([]byte(nil), fingerprint...),
 		Label:       label,
-		Ceremony:    ceremony,
-	})
+	}
+	if ceremony != "" {
+		fresh.Ceremonies = []string{ceremony}
+	}
+	v.contents.PinnedPeers = append(v.contents.PinnedPeers, fresh)
 	return v.save()
 }
 
@@ -884,14 +934,48 @@ func (v *Vault) PruneCeremonyPeers(ceremony string) (int, error) {
 	var kept []PinnedPeer
 	n := 0
 	for _, p := range v.contents.PinnedPeers {
-		if p.Ceremony == ceremony {
-			n++
+		// **The scope is dropped; the PIN goes only when its last scope does.** A pin two
+		// ceremonies both needed used to be removed by whichever ended first, leaving the
+		// other's next arm refusing an unpinned peer. A user pin has no scopes at all and is
+		// untouched here, which is the property `Ceremonies`' own doc calls one-way promotion.
+		before := len(p.Ceremonies)
+		if before == 0 {
+			kept = append(kept, p)
 			continue
 		}
-		kept = append(kept, p)
+		p.Ceremonies = dropScope(p.Ceremonies, ceremony)
+		if len(p.Ceremonies) == before {
+			kept = append(kept, p)
+			continue
+		}
+		n++
+		if len(p.Ceremonies) > 0 {
+			kept = append(kept, p) // another ceremony still needs this peer
+		}
 	}
 	v.contents.PinnedPeers = kept
 	return n, v.save()
+}
+
+// addScope returns scopes with id present exactly once, preserving order.
+func addScope(scopes []string, id string) []string {
+	for _, s := range scopes {
+		if s == id {
+			return scopes
+		}
+	}
+	return append(scopes, id)
+}
+
+// dropScope returns scopes without id.
+func dropScope(scopes []string, id string) []string {
+	out := scopes[:0:0]
+	for _, s := range scopes {
+		if s != id {
+			out = append(out, s)
+		}
+	}
+	return out
 }
 
 // RemovePinnedPeer unpins the peer with the given fingerprint (no-op if absent).

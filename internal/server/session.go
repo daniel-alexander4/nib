@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net"
 	"net/http"
 	"os"
@@ -395,9 +396,34 @@ type sessionConfirmer struct {
 	// anchor names the operation this consent belongs to, so setPending can refuse a request from a
 	// goroutine whose session has already been replaced — a listener (manual) or a ceremony (S09).
 	anchor consentAnchor
+	// cer is the ceremony this session belongs to, or nil outside one. **Separate from `anchor`
+	// on purpose** — the anchor carries a ceremony only on the QUIC coordinator path, so a gate
+	// reading it would be blind on every TCP ceremony hop. See serveOneSession.
+	cer *ceremonyID
 }
 
 func (sc sessionConfirmer) Confirm(peer p2p.SignerAttestation, doc []byte) (bool, string, []byte, error) {
+	// **C17, and it runs BEFORE anything is put in front of the user (P07.S02b).**
+	//
+	// The order is the clause: a party reconciles the document against the invitation its arm
+	// was built from, and only then is asked to consent. Reversed, the user reads and accepts a
+	// document that the ceremony they were invited to does not describe — and by then they have
+	// signed it.
+	//
+	// It also sits before `sc.saw.mark()`, and that is defence rather than a fix — **stated
+	// precisely, because the first draft of this comment claimed it protects the arm and that is
+	// false on this path.** `p2p.Receive` runs the spoken check before it reads a single document
+	// byte, and `sessionVerifier.ConfirmVerification` marks there — so on every co-sign the arm is
+	// already spent by the time this function is entered, and moving this check after the mark
+	// would change nothing today. It is kept in this order because the ordering is the one that
+	// stays correct if a path ever reaches `Confirm` without a spoken check first: a document the
+	// gate refused was shown to nobody, and nothing that shows nobody anything should spend an
+	// arm. The load-bearing half is the ordering against `setPending` above.
+	if sc.cer != nil {
+		if err := sc.cer.checkArrival(doc, time.Now()); err != nil {
+			return false, "", nil, err
+		}
+	}
 	sc.saw.mark() // the consent request is about to go on screen
 	// Park the received document for review (served via /api/session/pending-pdf)
 	// rather than replacing the open document — that only changes on accept, in
@@ -413,12 +439,50 @@ func (sc sessionConfirmer) Confirm(peer p2p.SignerAttestation, doc []byte) (bool
 	defer sc.s.sess.clearPendingIf(req)
 	select {
 	case d := <-ch:
+		if !d.accept {
+			// **A decline ends this party's part in the ceremony, so its pins go (D29, P07.S02b).**
+			//
+			// The pins were taken on to make the ceremony possible; refusing the document is
+			// refusing the ceremony, and a revocable pin that outlives the thing it was for is
+			// a permanent pin with extra steps. P01's parked criterion is exactly this and it
+			// has been waiting for a caller since that phase closed.
+			//
+			// **A TIMEOUT is not a decline and does not prune** — that path returns
+			// `ErrConsentTimedOut` below rather than coming through here. Nobody was at the
+			// machine; the user has decided nothing, and unpinning on their behalf would make
+			// stepping away from the desk revoke a relationship.
+			sc.s.declineCeremony(sc.cer)
+		}
 		return d.accept, d.intent, d.appearance, nil
 	case <-time.After(sessionConsentTimeout):
 		// **Not `(false, nil)`.** That is what a user who read the document and refused it
 		// returns, and collapsing the two here means the peer is told a person declined
 		// when nobody was at the machine. See p2p.ErrConsentTimedOut.
 		return false, "", nil, p2p.ErrConsentTimedOut
+	}
+}
+
+// declineCeremony revokes the ceremony-scoped pins this machine took on for one ceremony (D29).
+//
+// Nil-safe in the ceremony: the manual and LAN paths have none, and a declined transfer there has
+// nothing to revoke.
+//
+// Best-effort and it SAYS SO when it fails. A pin left behind is the failure that matters here —
+// the peer list then shows a peer the user never chose, indistinguishable from one they did — and
+// this runs on the p2p goroutine with no response left to write into, so a log line is the only
+// channel there is. That is the shape `unconvene`'s own review established.
+func (s *Server) declineCeremony(cer *ceremonyID) {
+	if cer == nil {
+		return
+	}
+	v := s.unlockedVault()
+	if v == nil {
+		return // locked mid-session; the pins are in a vault nothing can write to right now
+	}
+	if _, err := v.PruneCeremonyPeers(cer.inv.ID); err != nil {
+		log.Printf("declined ceremony %s: could not remove its peer pins: %v — the peer list "+
+			"still carries a pin this machine took on only for a ceremony that was refused",
+			cer.inv.ID, err)
 	}
 }
 
@@ -551,7 +615,12 @@ func arrivalDocName(peerLabel string) string {
 // co-signs with the user's consent (making the result the open document) or accepts a
 // one-way document transfer and saves it under ~/nib. It always disarms on exit — one
 // session per arm.
-func (s *Server) runSession(ln p2p.Listener, cert, key []byte, label, mode string, inbound *atomic.Bool) {
+//
+// cer is the ceremony this arm belongs to, or nil for the manual/LAN arm. **Handed in rather
+// than left behind (P07.S02b):** `handleSessionArm` stored it on the session — `s.sess.arm(ln,
+// cer)` — and then started this goroutine without it, so every TCP ceremony hop ran as though it
+// were a manual transfer. See serveOneSession's own note for what depended on that.
+func (s *Server) runSession(ln p2p.Listener, cer *ceremonyID, cert, key []byte, label, mode string, inbound *atomic.Bool) {
 	// This goroutine handles a pinned peer's inbound document; a panic in the p2p or
 	// sign code must not crash the desktop process. The defers below (disarm, Close)
 	// still run as the stack unwinds.
@@ -637,7 +706,7 @@ func (s *Server) runSession(ln p2p.Listener, cert, key []byte, label, mode strin
 		if inbound != nil {
 			inbound.Store(true)
 		}
-		served, final, _ := s.serveOneSession(consentAnchor{ln: ln}, conn, cert, key, label, mode, myFP)
+		served, final, _ := s.serveOneSession(consentAnchor{ln: ln}, cer, conn, cert, key, label, mode, myFP)
 		if final != nil {
 			s.openArrival(label, final)
 		}
@@ -662,7 +731,19 @@ func (s *Server) runSession(ln p2p.Listener, cert, key []byte, label, mode strin
 // function, and it is why the co-signing decline needed a sentinel of its own
 // (`p2p.ErrCoSignDeclined`) rather than the bare error it used to return — `errors.Is`
 // could not otherwise tell it from the protocol error declared one line away.
-func (s *Server) serveOneSession(anchor consentAnchor, conn *p2p.Conn, cert, key []byte, label, mode string, myFP []byte) (served bool, coSigned []byte, err error) {
+// cer is the ceremony this session belongs to, or nil outside one.
+//
+// **Explicit, rather than read off `anchor.cer` (P07.S02b).** The anchor carries a ceremony only
+// on the QUIC coordinator path (`consentAnchor{cer: cer}`); the accept loop builds
+// `consentAnchor{ln: ln}` and a TCP ceremony hop therefore arrived here with no ceremony at all,
+// although the arm had stored one. Two things depended on that nil and were wrong for it — the
+// re-deliverer below, and P07.S02b's C17 gate.
+//
+// Filling in `anchor.cer` on the TCP path would have been the smaller diff and the wrong change:
+// `consentAnchor.current` PREFERS `cer` when it is non-nil, so that path's stale-goroutine test
+// would silently switch from listener-identity to ceremony-identity — a change to what
+// `stale-consent-on-new-session` guards, smuggled in under another slice's name.
+func (s *Server) serveOneSession(anchor consentAnchor, cer *ceremonyID, conn *p2p.Conn, cert, key []byte, label, mode string, myFP []byte) (served bool, coSigned []byte, err error) {
 	// **Deferred here rather than closed by the caller**, so the connection is released
 	// even if this function panics. `runSession`'s `safe.Recover` catches such a panic and
 	// keeps the desktop process alive, which is exactly the case where a caller-side
@@ -706,10 +787,17 @@ func (s *Server) serveOneSession(anchor consentAnchor, conn *p2p.Conn, cert, key
 		return true, nil, nil // a transfer saves itself; no co-signed document to open
 	}
 	var rd p2p.ReDeliverer
-	if anchor.cer != nil {
-		rd = anchor.cer // idempotent re-delivery for a ceremony hop (P05.S10); the manual path has none
+	if cer != nil {
+		// Idempotent re-delivery for a ceremony hop (P05.S10). **From `cer`, not `anchor.cer`
+		// (P07.S02b)**: this used to read the anchor, which is empty on the TCP ceremony path,
+		// so a TCP hop got nil — and `ReDeliverer`'s own contract says nil means "the manual/LAN
+		// path, which has no ceremony hop to key on", which was false there. The accept loop
+		// re-arms for the remainder and accepts again, so a peer reconnecting after a lost
+		// channel reached `coSignExchange` with no cache and `Contribute` stacked a second,
+		// different block.
+		rd = cer
 	}
-	final, rerr := p2p.Receive(ch, cert, key, label, sessionConfirmer{s: s, saw: &saw, anchor: anchor}, sessionVerifier{s, &saw}, rd)
+	final, rerr := p2p.Receive(ch, cert, key, label, sessionConfirmer{s: s, saw: &saw, anchor: anchor, cer: cer}, sessionVerifier{s, &saw}, rd)
 	if rerr != nil {
 		return saw.v.Load(), nil, rerr
 	}
@@ -993,7 +1081,7 @@ func (s *Server) handleSessionArm(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var inbound atomic.Bool
-	go s.runSession(ln, cert, key, label, req.Mode, &inbound)
+	go s.runSession(ln, cer, cert, key, label, req.Mode, &inbound)
 	// Warm the DHT and, unless the local network answers first, publish where we can be
 	// reached. Started after the arm so a refused arm leaves no background work behind.
 	s.startArmedRendezvous(cer, req.Transport, &inbound)
@@ -1081,7 +1169,7 @@ func (s *Server) runCeremonyReceive(ctx context.Context, cer *ceremonyID, hl *p2
 				return // the baton never arrived, or the ceremony deadline passed
 			}
 		}
-		_, final, xerr := s.serveOneSession(consentAnchor{cer: cer}, conn, cert, key, label, mode, myFP)
+		_, final, xerr := s.serveOneSession(consentAnchor{cer: cer}, cer, conn, cert, key, label, mode, myFP)
 		if final != nil && !opened {
 			s.openArrival(label, final) // once: a re-delivery re-sends the SAME idempotent result
 			opened = true
