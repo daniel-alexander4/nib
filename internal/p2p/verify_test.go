@@ -483,7 +483,7 @@ func TestL2NoDocumentBytesCrossBeforeBothConfirmations(t *testing.T) {
 		run  func(t *testing.T, initiator bool, conn *Conn, myFP, peerFP []byte, v Verifier) error
 	}{
 		{"Initiate", func(t *testing.T, _ bool, conn *Conn, myFP, _ []byte, v Verifier) error {
-			_, e := Initiate(conn.Channel, pdf, myFP, v)
+			_, e := Initiate(conn.Channel, pdf, myFP, v, Roster{})
 			return e
 		}},
 		{"SendDocument", func(t *testing.T, _ bool, conn *Conn, myFP, _ []byte, v Verifier) error {
@@ -589,12 +589,17 @@ func TestL2CoversEveryDocumentCarryingEntryPoint(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := []string{
-		"func Initiate(ch Channel, mySignedPDF, myFingerprint []byte, v Verifier)",
+		// The trailing Roster arrived at P07.S05, when confirmCoSigned had to stop demanding
+		// that a chain be a mutual pair. Updated rather than loosened, for the reason above.
+		"func Initiate(ch Channel, mySignedPDF, myFingerprint []byte, v Verifier, roster Roster)",
 		// The trailing Roster arrived at P07.S03 (the L3 gate). Updated here rather than
 		// loosened to a prefix match: the point of pinning the WHOLE signature is that a
 		// parameter list which changes shape gets looked at, and a prefix match would have
 		// accepted this edit silently.
 		"func Receive(ch Channel, myCertPEM, myKeyPEM []byte, peerLabel string, c Confirmer, v Verifier, rd ReDeliverer, roster Roster)",
+		// Carry joined at P07.S05: a carrier moves a whole document across the wire without
+		// contributing a signature, so it takes the same gate for the same reason.
+		"func Carry(ch Channel, pdf, myFingerprint []byte, v Verifier, roster Roster)",
 		"func SendDocument(ch Channel, pdf []byte, myFingerprint []byte, v Verifier)",
 		"func ReceiveDocument(ch Channel, a Accepter, myFingerprint []byte, v Verifier)",
 	}

@@ -292,7 +292,7 @@ func TestADeclinedSpokenCheckSpendsTheArm(t *testing.T) {
 			return
 		}
 		defer conn.Close()
-		_, e = p2p.Initiate(conn.Channel, aSigned, aFPBytes, okVerifier{})
+		_, e = p2p.Initiate(conn.Channel, aSigned, aFPBytes, okVerifier{}, p2p.Roster{})
 		errc <- e // an error is expected: this side is declined
 	}()
 
@@ -449,7 +449,7 @@ func testAbandonedThenSession(t *testing.T, abandoned int) {
 			return
 		}
 		defer conn.Close()
-		final, e := p2p.Initiate(conn.Channel, aSigned, aFPBytes, okVerifier{})
+		final, e := p2p.Initiate(conn.Channel, aSigned, aFPBytes, okVerifier{}, p2p.Roster{})
 		if e != nil {
 			errc <- e
 			return

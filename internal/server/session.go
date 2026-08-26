@@ -1430,7 +1430,7 @@ func (s *Server) handleSessionInitiate(w http.ResponseWriter, r *http.Request) {
 				err = cerr
 				break
 			}
-			final, err = p2p.Initiate(conn.Channel, signed, myFP, sessionVerifier{s, nil})
+			final, err = p2p.Initiate(conn.Channel, signed, myFP, sessionVerifier{s, nil}, cer.l3Roster())
 			conn.Close()
 			ccancel()
 			if err == nil || !isTransportLoss(err) || !time.Now().Before(deadline) {
@@ -1443,7 +1443,7 @@ func (s *Server) handleSessionInitiate(w http.ResponseWriter, r *http.Request) {
 		if cerr != nil {
 			err = cerr
 		} else {
-			final, err = p2p.Initiate(conn.Channel, signed, myFP, sessionVerifier{s, nil})
+			final, err = p2p.Initiate(conn.Channel, signed, myFP, sessionVerifier{s, nil}, cer.l3Roster())
 			conn.Close()
 		}
 	}

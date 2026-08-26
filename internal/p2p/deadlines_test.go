@@ -115,10 +115,13 @@ func TestEveryEntryPointReArmsAfterItsHumanGate(t *testing.T) {
 				fn.Name.Name)
 		}
 	}
-	// The floor. Four entry points carry document bytes and all four carry the gate; zero
-	// or one means the matcher stopped matching and every assertion above ran over nothing.
-	if checked != 4 {
-		t.Fatalf("found %d entry point(s) calling runVerification, want 4 (Initiate, "+
+	// The floor. FIVE entry points carry document bytes and all five carry the gate; zero or one
+	// means the matcher stopped matching and every assertion above ran over nothing.
+	//
+	// `Carry` joined at P07.S05 — a carrier moves a whole document across the wire, so it takes
+	// the same gate for the same reason, and the count moving is the tax a new entry point pays.
+	if checked != 5 {
+		t.Fatalf("found %d entry point(s) calling runVerification, want 5 (Initiate, Carry, "+
 			"Receive, SendDocument, ReceiveDocument) — the matcher has gone blind", checked)
 	}
 }
