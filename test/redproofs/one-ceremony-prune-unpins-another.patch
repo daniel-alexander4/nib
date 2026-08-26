@@ -1,0 +1,14 @@
+diff --git a/internal/vault/vault.go b/internal/vault/vault.go
+index 6fa2089..66bcb51 100644
+--- a/internal/vault/vault.go
++++ b/internal/vault/vault.go
+@@ -949,9 +949,6 @@ func (v *Vault) PruneCeremonyPeers(ceremony string) (int, error) {
+ 			continue
+ 		}
+ 		n++
+-		if len(p.Ceremonies) > 0 {
+-			kept = append(kept, p) // another ceremony still needs this peer
+-		}
+ 	}
+ 	v.contents.PinnedPeers = kept
+ 	return n, v.save()

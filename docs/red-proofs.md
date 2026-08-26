@@ -1630,3 +1630,32 @@ the first, and exits non-zero if any row did not re-prove. The gap was never tha
 `verify_test.go` names it, and so does the v1.117.39 entry above ("a sweep that adds rows should
 replay the whole set, not just its own"). The gap was that doing it meant hand-rolling a loop, and
 **an audit that has to be improvised each time is one that happens once every eighty-one rows.**
+
+## P07.S02b — the invitation is consumed, and D22 turned out to be a hub (v1.117.157)
+
+Seven rows, all tier 1, all replayable. **Two restore defects this slice INTRODUCED reachability
+for** — `AddCeremonyPeer` and `PruneCeremonyPeers` had no production caller until now, so their
+bugs had never been reachable — and one restores a state the product was actually in.
+
+| the defect, restored | what goes red | the check |
+|---|---|---|
+| **a ceremony pin renames a pin the user made** *(replayable: `ceremony-pin-renames-a-user-pin`)* | `the ceremony renamed the user's peer to "Party 2"` | `TestACeremonyPinNeverRenamesAPinTheUserMade`. `addPinned` assigned the label unconditionally while `AddCeremonyPeer`'s doc said an existing pin is never downgraded — true of `Ceremony`, false of `Label`. Accepting an invitation would have overwritten the user's private nickname with whatever the convener published: **a stranger editing this machine's peer list by inviting it.** Two controls guard the fix from becoming "labels are frozen" — the user renaming their own peer still works, and an unnamed pin may be filled in |
+| **ending one ceremony unpins a peer another still needs** *(replayable: `one-ceremony-prune-unpins-another`)* | `ending ceremony A removed a peer ceremony B still needs` | `TestTwoCeremoniesCanShareAPin`. Measured on a probe before the fix: two `AddCeremonyPeer` calls for one fingerprint left `ceremony-A`, and pruning A removed the pin outright, so B's next arm refused an unpinned peer the user never unpinned. `PinnedPeer.Ceremony` became `Ceremonies`, a set; `contentsVersion` 1 → 2, with no migration because there was no population. The same counterparty across two matters is the **ordinary** case for this product's user |
+| **the consent gate never reconciles the document** *(replayable: `consent-gate-skips-the-arrival-check`)* | `Confirm does not contain "checkArrival("` | `TestTheConsentGateRoutesThroughTheArrivalCheck` — ADR-009, on the ROUTING, with `//` stripped. It asserts three orderings, not just the call: before `setPending` (C17's clause IS the order — an unreconciled document read and accepted is one already signed), before `saw.mark()`, and that a decline prunes while a consent **timeout** does not |
+| **a TCP ceremony hop runs with no ceremony** *(replayable: `ceremony-session-loses-its-ceremony`)* | `serveOneSession reads ` + "`anchor.cer`" | `TestEveryCeremonySessionGetsItsCeremony`. The anchor carries a ceremony only on the QUIC coordinator path, so a TCP hop got nil — and `ReDeliverer`'s contract says nil means *"the manual/LAN path, which has no ceremony hop to key on"*, false there. **Structural, and the gap is measured rather than assumed:** the re-delivery test that exists runs the QUIC path and stays GREEN against this patch. A tier-4 drive is `/pending 289` |
+| **the arrival check accepts any document** *(replayable: `arrival-check-accepts-any-document`)* | `a document with no ceremony record at all was accepted` | `TestTheArrivalCheckRefusesADocumentTheInvitationDoesNotDescribe`, two arms that fail differently — no record at all, and a valid record for a DIFFERENT ceremony — with the control driven FIRST, because a gate that refuses everything satisfies both |
+| **accepting an invitation pins nobody** *(replayable: `accept-pins-nobody`)* | `after accepting the invitation, arming still failed` | `TestAcceptingAnInvitationRemovesTheManualPin`, written as **arm fails → accept → arm succeeds** rather than as "a pin appeared in the vault". The refusal this closes is `handleSessionArm`'s, and a pin that does not satisfy the door it was made for satisfies nothing |
+| **convening pins nobody** *(replayable: `convene-pins-nobody`)* | `is not pinned after convening` | `TestConveningPinsItsRosterAndKeepsTheSecretOutOfTheMirror` — **the first Go test of any kind over `POST /api/ceremony/convene`.** S02a live-verified that route with a scratchpad script that no longer exists, so between the two slices the product's only ceremony-creating surface was exercised by nothing committed |
+
+### What is NOT recorded, and why
+
+`CheckDocument`'s absence from the arrival gate has no row, because the defect it would restore is
+one the code cannot be in: the clause was **refuted**, not implemented and then guarded. Probed on
+the real receive path — the hop-1 receiver's copy carries one valid signature, its record extracts
+and verifies, and `CheckDocument` answers *"these are not the same document"*, accusing an honest
+convener. A row would encode the wrong lesson.
+
+The `MatchesRecord` completeness guard has no row either. Its own mutation — cutting the
+whole-`Party` comparison down to fingerprints — is one level down from
+`ceremony-capacity-outside-the-commitment`, already recorded at P07.S02, and a second row proving
+the same class reads as coverage without adding any.

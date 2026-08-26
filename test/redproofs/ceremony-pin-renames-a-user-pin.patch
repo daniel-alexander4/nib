@@ -1,0 +1,13 @@
+diff --git a/internal/vault/vault.go b/internal/vault/vault.go
+index 6fa2089..48c4e9f 100644
+--- a/internal/vault/vault.go
++++ b/internal/vault/vault.go
+@@ -887,7 +887,7 @@ func (v *Vault) addPinned(fingerprint []byte, label, ceremony string) error {
+ 			//
+ 			// The user's own pin (ceremony == "") still updates the label, because that IS the
+ 			// user renaming their own peer, which is what AddPinnedPeer is for.
+-			if ceremony == "" {
++			if true {
+ 				v.contents.PinnedPeers[i].Label = label
+ 				// Promotion is one-way: a user pin stays a user pin, and a ceremony pin
+ 				// becomes a user pin the moment the user pins it themselves. Every scope goes
