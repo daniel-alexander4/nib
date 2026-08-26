@@ -1,0 +1,13 @@
+diff --git a/internal/p2p/l3.go b/internal/p2p/l3.go
+index 4c4743b..0926a70 100644
+--- a/internal/p2p/l3.go
++++ b/internal/p2p/l3.go
+@@ -135,7 +135,7 @@ func NextContributor(pdf []byte, r Roster) (RosterEntry, error) {
+ 			return RosterEntry{}, fmt.Errorf("%w: signature %d (%s) does not verify",
+ 				ErrPrefixUnproven, i+1, shortFP(a.Fingerprint))
+ 		}
+-		if !strings.EqualFold(a.Fingerprint, signing[i].Fingerprint) {
++		if false {
+ 			return RosterEntry{}, fmt.Errorf("%w: signature %d is %s and the roster's %s signer "+
+ 				"is %s", ErrPrefixMismatch, i+1, shortFP(a.Fingerprint), ordinal(i+1),
+ 				shortFP(signing[i].Fingerprint))

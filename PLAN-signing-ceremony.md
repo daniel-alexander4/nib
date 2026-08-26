@@ -4575,7 +4575,7 @@ Tasks (grilled 2026-08-25 — `grills/2026-08-25-p07s03-the-l3-gate.md`, verdict
 - T03 — the four refusals, each asserted **distinct from the others**. *(done — five, in fact: 'not in the roster at all' is its own fact and its own sentence)*
 - T04 — the two-package routing guard, with its stimulus **per directory**, because a total of two is also what reading one package and finding both there looks like. *(done, mutation-tested in both directions)*
 - T05 — `len(ats) != 1` **conditioned** on the presence of a roster, not deleted. *(done — and it forced a second change: with the rule off, the two channel bindings had to read the LAST attestation rather than `ats[0]`, or they would bind the channel to whoever signed FIRST and let every later hop past. The limit is named at the line: it assumes the carrier also signs, which S05's non-signing convener breaks.)*
-- T06 — red proofs; `recorded` moves.
+- T06 — red proofs; `recorded` moves. *(done 2026-08-25, v1.117.161 — six rows, one of which (`l3-admits-the-wrong-prefix`) asserts the SENTENCE because the mutation still refuses, just wrongly; `recorded` 88 → 94)*
 
 **T01 IS REFUTED AND REPLACED (2026-08-25, measured).** The task said the import cycle must be
 broken by moving `record_test.go` to `package ceremony_test`. Two things are wrong with that and

@@ -1,0 +1,13 @@
+diff --git a/internal/p2p/l3.go b/internal/p2p/l3.go
+index 4c4743b..8d4f96a 100644
+--- a/internal/p2p/l3.go
++++ b/internal/p2p/l3.go
+@@ -154,7 +154,7 @@ func NextContributor(pdf []byte, r Roster) (RosterEntry, error) {
+ 				"not a valid signer of this document", ErrPrefixUnproven, i+1,
+ 				shortFP(a.Fingerprint))
+ 		}
+-		if r.Commitment != "" && a.RosterHash != "" &&
++		if false && r.Commitment != "" && a.RosterHash != "" &&
+ 			!strings.EqualFold(a.RosterHash, r.Commitment) {
+ 			return RosterEntry{}, fmt.Errorf("%w: signature %d commits to proceeding %s and this "+
+ 				"one is %s", ErrProceedingMismatch, i+1, shortFP(a.RosterHash),

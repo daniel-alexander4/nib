@@ -1,0 +1,22 @@
+diff --git a/internal/server/cosign.go b/internal/server/cosign.go
+index c8821c1..ad524af 100644
+--- a/internal/server/cosign.go
++++ b/internal/server/cosign.go
+@@ -237,17 +237,6 @@ func (s *Server) buildCoSigned(w http.ResponseWriter, pdf, cert, key []byte, att
+ 	//
+ 	// 409 rather than 400: this is a refusal about the STATE of a proceeding, not about a
+ 	// malformed request, and the user's action is to wait rather than to correct a field.
+-	if len(roster.Entries) > 0 {
+-		myFP, err := sign.Fingerprint(cert)
+-		if err != nil {
+-			httpError(w, http.StatusInternalServerError, "could not read your own fingerprint")
+-			return nil, false
+-		}
+-		if err := p2p.AdmitContribution(pdf, roster, hex.EncodeToString(myFP)); err != nil {
+-			httpError(w, http.StatusConflict, err.Error())
+-			return nil, false
+-		}
+-	}
+ 	prepared := pdf
+ 	if sign.Verify(pdf).State == sign.Unsigned {
+ 		p, err := p2p.PrepareDocument(pdf)
