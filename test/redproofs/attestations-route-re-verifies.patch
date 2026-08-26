@@ -1,11 +1,11 @@
 diff --git a/internal/server/cosign.go b/internal/server/cosign.go
-index 95879ef..301fe49 100644
+index affc459..3aa9ab0 100644
 --- a/internal/server/cosign.go
 +++ b/internal/server/cosign.go
-@@ -142,7 +142,8 @@ func (s *Server) handleAttestations(w http.ResponseWriter, r *http.Request) {
- 	if p2p.ClaimsAProceeding(doc.sig) {
- 		proc = ceremony.ProceedingOf(s.docBytes(doc), time.Now())
- 	}
+@@ -178,7 +178,8 @@ func (s *Server) handleAttestations(w http.ResponseWriter, r *http.Request) {
+ 	// the file, independent of signature count, and the route is opened by a user clicking the
+ 	// signature-details button — not a per-frame path. Measured at ~0.5 ms on a 3 KB document.
+ 	proc := ceremony.ProceedingOf(s.docBytes(doc), time.Now())
 -	atts := p2p.Attestations(doc.sig, proc)
 +	_ = proc
 +	atts := p2p.ReadAttestations(s.docBytes(doc))

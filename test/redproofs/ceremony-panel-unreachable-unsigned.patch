@@ -1,0 +1,13 @@
+diff --git a/web/app.js b/web/app.js
+index b525ed6..d083ed6 100644
+--- a/web/app.js
++++ b/web/app.js
+@@ -3710,7 +3710,7 @@ function updateBadge(sig, inCeremony) {
+   b.title = label;
+   // Details only exist for a signed document (valid or modified) — OR for a document in a
+   // ceremony, which has an obliged-signer count to report before anyone has signed at all.
+-  els.sigDetailsBtn.hidden = !signers.length && !view.inCeremony;
++  els.sigDetailsBtn.hidden = !signers.length;
+ }
+ 
+ // timeLabel turns a signer's time backing into honest plain English.

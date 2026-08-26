@@ -4784,7 +4784,7 @@ Acceptance:
 - ~~The completed document renders as complete (C16) … the LAN tier is re-announced at hop k~~ **MOVED to P07.S05a, 2026-08-25 at this slice's grill** — rendering and harness work, downstream of the verb existing at all.
 
 
-#### P07.S05a — The ceremony's surfaces *(C16, C18, C22; D22 pin)* — **new, 2026-08-25, split out of S05** *(in progress)*
+#### P07.S05a — The ceremony's surfaces *(C16, C18, C22; D22 pin)* — **new, 2026-08-25, split out of S05** *(done 2026-08-25, v1.117.179 — three clauses met, one PARKED (C21); the completeness clause had three doors and the plan named one)*
 Tasks (grilled 2026-08-25 — `grills/2026-08-25-p07s05a-the-surfaces.md`; deepdive folded in):
 - T01 — the consent card names which signature it describes, including the hop-1 carry case where there is none.
 - T02 — the proceeding carries the obliged signers; the attestations route publishes signed-and-obliged counts; the client renders complete vs "5 of 9 obliged signers".

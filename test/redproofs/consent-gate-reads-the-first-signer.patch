@@ -1,0 +1,13 @@
+diff --git a/internal/p2p/session.go b/internal/p2p/session.go
+index 0ee453d..d9c6894 100644
+--- a/internal/p2p/session.go
++++ b/internal/p2p/session.go
+@@ -705,7 +705,7 @@ func coSignExchange(myCertPEM, myKeyPEM, peerFP []byte, peerLabel string, inboun
+ 	// value rather than deciding how it reads.
+ 	peer := SignerAttestation{Fingerprint: hex.EncodeToString(peerFP)}
+ 	if len(ats) > 0 {
+-		peer = ats[len(ats)-1]
++		peer = ats[0]
+ 		if !peer.Valid {
+ 			return nil, errors.New("the peer's signature does not verify")
+ 		}
