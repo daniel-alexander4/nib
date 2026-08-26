@@ -1,0 +1,13 @@
+diff --git a/internal/server/session.go b/internal/server/session.go
+index 8277b38..449e5d7 100644
+--- a/internal/server/session.go
++++ b/internal/server/session.go
+@@ -795,7 +795,7 @@ func (s *Server) serveOneSession(anchor consentAnchor, cer *ceremonyID, conn *p2
+ 		// re-arms for the remainder and accepts again, so a peer reconnecting after a lost
+ 		// channel reached `coSignExchange` with no cache and `Contribute` stacked a second,
+ 		// different block.
+-		rd = cer
++		rd = anchor.cer
+ 	}
+ 	final, rerr := p2p.Receive(ch, cert, key, label, sessionConfirmer{s: s, saw: &saw, anchor: anchor, cer: cer}, sessionVerifier{s, &saw}, rd)
+ 	if rerr != nil {

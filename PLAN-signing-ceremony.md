@@ -4514,7 +4514,7 @@ Tasks (grilled 2026-08-25 — `grills/2026-08-25-p07s02b-invitation-consumption.
 - T05 — the `MatchesRecord` completeness guard, structural rather than a per-field list.
 - T06 — `PruneCeremonyPeers` on decline; P01's parked criterion driven.
 - T07 — P01's other parked criterion: the invitation secret is absent from `~/nib/ceremonies/` after an arm.
-- T08 — red proofs; `recorded` moves.
+- T08 — red proofs; `recorded` moves. *(done 2026-08-25, v1.117.158 — seven rows, two restoring defects this slice made REACHABLE for the first time; `recorded` 81 → 88)*
 **Amended 2026-08-25 at its grill — three findings the slice as written could not have produced.**
 **(1) D22 is a HUB, not a chain.** `hopBetween` (`record.go:585`) refuses any pair without the
 convener at one end, so a non-convener's set of possible hop partners is **{the convener}**, of
