@@ -465,3 +465,65 @@ type l3Confirmer struct {
 func (c l3Confirmer) Confirm(SignerAttestation, []byte) (bool, string, []byte, error) {
 	return c.accept, c.intent, nil, nil
 }
+
+// TestTheRelayCeilingAtFourParties — where the N-party relay actually stops, measured, and it is
+// not where the plan said.
+//
+// P07.S03b's driver clause assumes the relay completes at N=4 once `len(ats) != 1` is conditioned,
+// and notes that "through `Initiate` every intermediate party signs twice, so the count is
+// 2(N−1)". **Those two cannot both be true under L3.** A signature twice from the same party is a
+// prefix that is not the roster's signing order, and refusing that is the whole of D23.
+//
+// What this drives is the real hop sequence and prints where it stops:
+//
+//   - hop 1: the convener signs, A co-signs. Two signatures, exactly the roster prefix.
+//   - hop 2: `/api/session/initiate` applies the LOCAL signature before it sends
+//     (`buildCoSigned`), so the carrier would sign again — and L3 refuses it, by name, at the
+//     near end. **This is the gate.**
+//   - and B, handed the document unchanged, IS admitted.
+//
+// So the model already supports the relay; what does not exist is a route that hands the baton on
+// **without contributing**. That is P07.S05's carry verb, and this test is the measurement that
+// says so — it will start failing at its last assertion the day S05 lands, which is the right
+// moment to delete it.
+func TestTheRelayCeilingAtFourParties(t *testing.T) {
+	conv, a, b := l3Identity(t, "Convener"), l3Identity(t, "A"), l3Identity(t, "B")
+	c := l3Identity(t, "C")
+	roster := Roster{Entries: []RosterEntry{
+		{Fingerprint: conv.fp, Signs: true},
+		{Fingerprint: a.fp, Signs: true},
+		{Fingerprint: b.fp, Signs: true},
+		{Fingerprint: c.fp, Signs: true},
+	}}
+
+	// Hop 1, in full: the convener contributes, then A does.
+	doc := l3Chain(t, l3Prepared(t), []l3Party{conv}, []l3Party{a}, "")
+	if err := AdmitContribution(doc, roster, a.fp); err != nil {
+		t.Fatalf("hop 1: A was refused on an honest first hop: %v", err)
+	}
+	doc = l3Chain(t, doc, []l3Party{a}, []l3Party{conv}, "")
+	if n := len(ReadAttestations(doc)); n != 2 {
+		t.Fatalf("setup: hop 1 left %d signatures, want 2", n)
+	}
+
+	// Hop 2, as `/api/session/initiate` would do it: the carrier signs before sending.
+	err := AdmitContribution(doc, roster, conv.fp)
+	if err == nil {
+		t.Fatal("the carrier was admitted to sign a SECOND time. Two signatures from one party " +
+			"are not the roster's signing order, and if this is now allowed then L3's prefix " +
+			"rule has stopped being the rule D23 describes.")
+	}
+	if !errors.Is(err, ErrNotYourTurn) {
+		t.Errorf("the carrier's second signature was refused with %v, want ErrNotYourTurn — the "+
+			"reason matters, because it is what points at S05's carry route rather than at a "+
+			"broken document", err)
+	}
+
+	// And the other half, which is what makes the ceiling a ROUTE problem and not a model one:
+	// B, handed the document unchanged, is admitted.
+	if err := AdmitContribution(doc, roster, b.fp); err != nil {
+		t.Errorf("B was refused a document carrying exactly the roster prefix before them (%v). "+
+			"If this fails, the relay is blocked by the MODEL and not merely by the absence of a "+
+			"carry route — which would move the problem from P07.S05 to here.", err)
+	}
+}
