@@ -67,6 +67,15 @@ merely exists. The ledger it backs is `docs/red-proofs.md`, and it is what makes
 least once" sentence below auditable rather than asserted. Not every row is mechanised; the
 ledger says which are.
 
+And `./build/ceremonyrepro.sh` runs a ceremony between two real PROCESSES over real HTTP: A
+convenes and B accepts, each with its own `$HOME`, its own vault and its own signing identity, so
+the invitation crosses between two binaries as text rather than being handed around inside one
+process. It is where "the invitation one binary produces is the invitation the other accepts" is
+actually driven — a single-process test assumes that rather than checking it. It skips cleanly
+when curl or python3 are absent. **It exists because the previous version of it did not:**
+P07.S02a live-verified the convene route with a script in a session scratchpad, the scratchpad was
+wiped, and the product's only ceremony-creating surface was then exercised by nothing committed.
+
 There is also `./build/winrepro.sh`, which runs the Windows binary under wine to
 check the places `path/filepath` answers differently, and to run a **second
 launch** against a live first one — the single-instance hand-off, on the platform

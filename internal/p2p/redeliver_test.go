@@ -45,7 +45,7 @@ func TestReDeliveryIsIdempotent(t *testing.T) {
 	conf := countingConfirmer{intent: "I accept", n: &calls}
 	rd := &mapReDeliverer{m: map[string][]byte{}}
 
-	final1, err := coSignExchange(bCert, bKey, aFP, "Alice", inbound, conf, rd)
+	final1, err := coSignExchange(bCert, bKey, aFP, "Alice", inbound, conf, rd, Roster{})
 	if err != nil {
 		t.Fatalf("first co-sign: %v", err)
 	}
@@ -57,7 +57,7 @@ func TestReDeliveryIsIdempotent(t *testing.T) {
 	}
 
 	// The reconnect: the SAME inbound again.
-	final2, err := coSignExchange(bCert, bKey, aFP, "Alice", inbound, conf, rd)
+	final2, err := coSignExchange(bCert, bKey, aFP, "Alice", inbound, conf, rd, Roster{})
 	if err != nil {
 		t.Fatalf("re-delivery: %v", err)
 	}
@@ -91,10 +91,10 @@ func TestReDelivererMissRunsAFreshExchange(t *testing.T) {
 	conf := countingConfirmer{intent: "I accept", n: &calls}
 	rd := &mapReDeliverer{m: map[string][]byte{}}
 
-	if _, err := coSignExchange(bCert, bKey, aFP, "Alice", in1, conf, rd); err != nil {
+	if _, err := coSignExchange(bCert, bKey, aFP, "Alice", in1, conf, rd, Roster{}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := coSignExchange(bCert, bKey, aFP, "Alice", in2, conf, rd); err != nil {
+	if _, err := coSignExchange(bCert, bKey, aFP, "Alice", in2, conf, rd, Roster{}); err != nil {
 		t.Fatal(err)
 	}
 	if calls != 2 {

@@ -188,7 +188,13 @@ func Initiate(ch Channel, mySignedPDF, myFingerprint []byte, v Verifier) ([]byte
 // the Confirmer for consent and intent, contributes this user's signature, and sends
 // the result back — returning the co-signed document so the receiver keeps it too.
 // peerLabel is this user's pinned label for the peer (for display).
-func Receive(ch Channel, myCertPEM, myKeyPEM []byte, peerLabel string, c Confirmer, v Verifier, rd ReDeliverer) ([]byte, error) {
+// roster is the ceremony's signing order, or the zero Roster outside a ceremony (P07.S03).
+//
+// **The zero value is the manual/LAN path and is not a defaulted permission.** Where a roster is
+// present the L3 gate decides who may contribute; where there is none there is no signing order
+// to be out of, and the single-prior-signer rule below stands. One branch, stated at the line,
+// rather than two paths that differ silently.
+func Receive(ch Channel, myCertPEM, myKeyPEM []byte, peerLabel string, c Confirmer, v Verifier, rd ReDeliverer, roster Roster) ([]byte, error) {
 	if err := ch.check(); err != nil {
 		return nil, err
 	}
@@ -211,7 +217,7 @@ func Receive(ch Channel, myCertPEM, myKeyPEM []byte, peerLabel string, c Confirm
 	if err != nil {
 		return nil, fmt.Errorf("receive document: %w", err)
 	}
-	final, err := coSignExchange(myCertPEM, myKeyPEM, peerFP, peerLabel, inbound, c, rd)
+	final, err := coSignExchange(myCertPEM, myKeyPEM, peerFP, peerLabel, inbound, c, rd, roster)
 	if err != nil {
 		// **A refusal reaches the peer as a refusal.** This used to write nothing at all
 		// and close, so the initiator's `readFrame` got EOF and its user was shown
@@ -427,12 +433,38 @@ type ReDeliverer interface {
 	Store(inbound, final []byte)
 }
 
-func coSignExchange(myCertPEM, myKeyPEM, peerFP []byte, peerLabel string, inbound []byte, c Confirmer, rd ReDeliverer) ([]byte, error) {
+func coSignExchange(myCertPEM, myKeyPEM, peerFP []byte, peerLabel string, inbound []byte, c Confirmer, rd ReDeliverer, roster Roster) ([]byte, error) {
 	ats := ReadAttestations(inbound)
-	if len(ats) != 1 {
+	inCeremony := len(roster.Entries) > 0
+	// **The single-prior-signer rule is CONDITIONED, not deleted (P07.S03, T05).**
+	//
+	// The slice's task says to remove it "so the door has a live call site rather than sitting
+	// beside a two-party legacy", and removed outright it would let an ordinary NON-ceremony
+	// two-party co-sign accept a document carrying three prior signers with nothing to refuse
+	// it — the L3 gate exists only where there is a roster. So: with a roster the gate decides,
+	// without one this rule stands. A ceremony at hop 2 was otherwise refused here before the
+	// gate could ever run, which is what would have made the gate dead for every N > 2.
+	if !inCeremony && len(ats) != 1 {
 		return nil, fmt.Errorf("expected exactly one prior signer, got %d", len(ats))
 	}
-	peer := ats[0]
+	if len(ats) == 0 {
+		return nil, errors.New("the document carries no signature to co-sign")
+	}
+	// **The peer who handed this over is the LAST signer, not the first.**
+	//
+	// The two bindings below ask whether the document was signed by the connected peer and
+	// whether that signer accepted this user. At N=2 there is one attestation and the two
+	// readings coincide; at hop k there are k of them and `ats[0]` is the party who signed
+	// FIRST, who is not the one on the other end of this connection. Reading index 0 with the
+	// single-signer rule removed would bind the channel to whoever signed first and let every
+	// later hop past.
+	//
+	// **The limit, named rather than left to be discovered:** this assumes the party who carries
+	// the baton also signs it, which is true through `Initiate` (every intermediate party signs)
+	// and false for S05's non-signing convener, whose carry route is where C14 and C16 live. And
+	// re-basing what `AcceptedPeer` MEANS — the previous signing roster entry rather than the
+	// wire peer — is D22's amendment and P07.S04's.
+	peer := ats[len(ats)-1]
 	if !peer.Valid {
 		return nil, errors.New("the peer's signature does not verify")
 	}
@@ -448,6 +480,24 @@ func coSignExchange(myCertPEM, myKeyPEM, peerFP []byte, peerLabel string, inboun
 	}
 	if peer.AcceptedPeer != hex.EncodeToString(myFP) {
 		return nil, errors.New("the peer's attestation does not accept you")
+	}
+
+	// **L3 (D23): no contribution out of roster order.**
+	//
+	// Before the consent gate, because a party asked to consent to a document they may not sign
+	// has been asked the wrong question — and before the re-delivery short-circuit below, so a
+	// reconnect cannot hand back a cached signature for a position the roster has since moved
+	// past.
+	//
+	// **After the two channel bindings above, and that is deliberate.** Both predate this slice
+	// and every path relied on them; putting a new check in front changes which error a caller
+	// sees for a document that fails both, and the bindings answer the more specific question —
+	// "this is not the peer you are connected to" beats "it is not your turn" when both are
+	// true. The gate is new and yields precedence to the invariants it joins.
+	if inCeremony {
+		if err := AdmitContribution(inbound, roster, hex.EncodeToString(myFP)); err != nil {
+			return nil, err
+		}
 	}
 
 	// Re-delivery (P05.S10): AFTER the peer-binding checks above — so a reconnect still proves the

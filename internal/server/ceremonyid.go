@@ -358,6 +358,31 @@ func (c *ceremonyID) checkArrival(pdf []byte, now time.Time) error {
 	return c.inv.MatchesRecord(rec)
 }
 
+// l3Roster is what the L3 gate is handed: the signing order and this proceeding's commitment,
+// as primitives (P07.S03).
+//
+// **From the INVITATION, and that is the scope's own requirement rather than convenience.** S03
+// says the gate reads "the record the party verified at arm time" and never the one carried by
+// the document — a gate reading the document's own record answers its own question, which is
+// reachable today because `Embed` refuses only an already-signed document, `Record.Verify` asks
+// only that the signer appear in that record's own roster, and `ContentDigest` excludes
+// attachments. The invitation is that verified copy: `MatchesRecord` binds it to exactly one
+// signed record (P07.S02b's arrival gate), so its roster is the record's roster or the hop never
+// got this far.
+//
+// Nil-safe: the manual and LAN paths have no ceremony, and the zero Roster is what tells the gate
+// there is no signing order to be out of.
+func (c *ceremonyID) l3Roster() p2p.Roster {
+	if c == nil {
+		return p2p.Roster{}
+	}
+	out := p2p.Roster{Commitment: c.inv.RosterHash}
+	for _, p := range c.inv.Roster {
+		out.Entries = append(out.Entries, p2p.RosterEntry{Fingerprint: p.Fingerprint, Signs: p.Signs})
+	}
+	return out
+}
+
 // errNoCeremony reports an arm with no invitation — not an error, the ordinary case.
 var errNoCeremony = errors.New("this session has no ceremony identity")
 

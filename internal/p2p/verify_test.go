@@ -590,7 +590,11 @@ func TestL2CoversEveryDocumentCarryingEntryPoint(t *testing.T) {
 	}
 	want := []string{
 		"func Initiate(ch Channel, mySignedPDF, myFingerprint []byte, v Verifier)",
-		"func Receive(ch Channel, myCertPEM, myKeyPEM []byte, peerLabel string, c Confirmer, v Verifier, rd ReDeliverer)",
+		// The trailing Roster arrived at P07.S03 (the L3 gate). Updated here rather than
+		// loosened to a prefix match: the point of pinning the WHOLE signature is that a
+		// parameter list which changes shape gets looked at, and a prefix match would have
+		// accepted this edit silently.
+		"func Receive(ch Channel, myCertPEM, myKeyPEM []byte, peerLabel string, c Confirmer, v Verifier, rd ReDeliverer, roster Roster)",
 		"func SendDocument(ch Channel, pdf []byte, myFingerprint []byte, v Verifier)",
 		"func ReceiveDocument(ch Channel, a Accepter, myFingerprint []byte, v Verifier)",
 	}

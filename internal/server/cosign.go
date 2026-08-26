@@ -210,7 +210,9 @@ func (s *Server) handleCosignSign(w http.ResponseWriter, r *http.Request) {
 		httpError(w, http.StatusInternalServerError, "could not load identity")
 		return
 	}
-	signed, ok := s.buildCoSigned(w, pdfBytes, cert, key, att, appearance)
+	// The manual co-sign route has no ceremony, so the zero Roster: there is no signing
+	// order for a two-party exchange to be out of.
+	signed, ok := s.buildCoSigned(w, pdfBytes, cert, key, att, appearance, p2p.Roster{})
 	if !ok {
 		return
 	}
@@ -223,7 +225,29 @@ func (s *Server) handleCosignSign(w http.ResponseWriter, r *http.Request) {
 // and signed, so it is co-signed as-is by an incremental update. Shared by the
 // Track A download path (/api/cosign/sign) and the live dial path
 // (/api/session/initiate). Writes the HTTP error itself and returns ok=false.
-func (s *Server) buildCoSigned(w http.ResponseWriter, pdf, cert, key []byte, att p2p.Attestation, appearance []byte) ([]byte, bool) {
+// roster is the ceremony's signing order, or the zero Roster outside a ceremony (P07.S03).
+func (s *Server) buildCoSigned(w http.ResponseWriter, pdf, cert, key []byte, att p2p.Attestation, appearance []byte, roster p2p.Roster) ([]byte, bool) {
+	// **L3 (D23), before a single byte is signed.** This is the INITIATING party's contribution
+	// entry point — the second of the two the rule has to hold at, and the one in this package.
+	//
+	// Before `PrepareDocument` and before `Contribute`, on the same reasoning the ceremony
+	// deadline check states one caller up: refusing after the local signature is applied leaves
+	// the user signed into a position the ceremony says is not theirs, and a signature cannot be
+	// taken back off a document.
+	//
+	// 409 rather than 400: this is a refusal about the STATE of a proceeding, not about a
+	// malformed request, and the user's action is to wait rather than to correct a field.
+	if len(roster.Entries) > 0 {
+		myFP, err := sign.Fingerprint(cert)
+		if err != nil {
+			httpError(w, http.StatusInternalServerError, "could not read your own fingerprint")
+			return nil, false
+		}
+		if err := p2p.AdmitContribution(pdf, roster, hex.EncodeToString(myFP)); err != nil {
+			httpError(w, http.StatusConflict, err.Error())
+			return nil, false
+		}
+	}
 	prepared := pdf
 	if sign.Verify(pdf).State == sign.Unsigned {
 		p, err := p2p.PrepareDocument(pdf)

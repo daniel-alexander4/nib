@@ -91,7 +91,17 @@ var published = map[string][]string{
 	"p2p.Channel":            {"internal/p2p/verify.go", "internal/p2p/channel.go"},
 	"p2p.SignerAttestation":  {"web/app.js", "internal/server/cosign.go", "internal/ceremony/record.go"},
 	"p2p.Placement":          {"internal/p2p/cosign.go", "internal/sign/identity.go"},
-	"ceremony.Record":        {"internal/ceremony/record.go", "internal/server/ceremonynet.go"},
+	// L3's roster entry (P07.S03). Both fields are read by the predicate itself and both are
+	// WRITTEN by the server, from the invitation it matched against the record at arm time —
+	// which is why this is primitives rather than a `ceremony.Record`: `p2p` cannot import
+	// `ceremony` (a production import cycle since P07.S02a), and it does not need to.
+	//
+	// **`p2p.Roster` is deliberately absent, and it is a gap rather than a decision.** This scan
+	// discovers shapes RETURNED by exported functions, and `Roster` is only ever a parameter —
+	// `NextContributor` returns a `RosterEntry`. So its `Commitment` field is covered by nothing
+	// here. Named rather than left as a silent hole in a scan that reads as exhaustive.
+	"p2p.RosterEntry": {"internal/p2p/l3.go", "internal/server/ceremonyid.go"},
+	"ceremony.Record": {"internal/ceremony/record.go", "internal/server/ceremonynet.go"},
 	// **Parked as "no reader yet" mid-slice, and the parking was STALE IN ITS OWN COMMIT.**
 	// The convene route landed in the same slice and reads every field of both shapes, so the
 	// honest entry is a reader rather than an exclusion. Found at the slice's diff review,
