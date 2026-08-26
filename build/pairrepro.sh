@@ -26,26 +26,33 @@
 #     side rather than reported by the sender.
 #
 # ── Where it still stops ─────────────────────────────────────────────────────
-# **N instances are N parties who can all reach each other, which a ceremony is
-# not.** `-n N` (P07.S01) boots N homes, N vaults and N identities and asserts they
-# are genuinely distinct, but every one is on loopback with no NAT, no roster and no
-# ceremony identity — there is no `ceremony.Record` in the product to build one from
-# until P07.S02. So what this tier can currently say about N is about the HARNESS,
-# not about a ceremony of N.
+# **N instances are N parties on loopback: no NAT, and no second machine.** `-n N`
+# (P07.S01) boots N homes, N vaults and N identities and asserts they are genuinely
+# distinct. Since P07.S03b the N>=3 path also convenes a REAL ceremony through
+# `/api/ceremony/convene`, hands instance 3 its invitation, and has it take part with
+# no manual pin — so what this tier says about N is now about a ceremony and not only
+# about the harness.
 #
-# Three specific blind spots at N, stated rather than left to be discovered:
-#   * **The model refuses hop 2.** `coSignExchange` takes one prior signer only, so
-#     no relay longer than one hop completes until P07.S03 removes it. The `-n`
-#     path asserts that refusal rather than skipping — it goes red on the day S03
-#     lands, which is what makes the N-party runs get switched on.
+# The blind spots at N, stated rather than left to be discovered. **Two of the three
+# that stood here until 2026-08-25 are gone, and the third was wrong about its own
+# subject:**
+#   * **The relay stops at hop 2, and NOT for the reason this file used to give.** It
+#     said `coSignExchange` takes one prior signer only, "until P07.S03 removes it".
+#     S03 conditioned that rule and the relay still stops — measured: hop 1 leaves
+#     exactly the roster prefix, `/api/session/initiate` then applies the LOCAL
+#     signature before it sends (`buildCoSigned`), so the carrier signs a SECOND time
+#     and L3 refuses it by name at the carrier's own machine; and party 3, handed that
+#     document unchanged, IS admitted. The ceiling is a missing ROUTE — nothing hands
+#     the baton on without contributing — which is **P07.S05's carry verb**. The probe
+#     asserts that refusal by name and goes red the day S05 lands.
 #   * **Arm expiry is observable but not drivable.** A ceremony arm bounds itself by
-#     `MaxCeremonyLife` and a manual one by `sessionAcceptTimeout` (5 min); every
-#     arm here is manual, because no invitation exists before P07.S02b. A slow run
-#     can therefore fail for a reason that will not exist later.
-#   * **The run manufactures permanent pins.** Parties pin each other by hex through
-#     `/api/peers/pin`, which is exactly the residue D29 forbids; ceremony-scoped
-#     pins arrive with invitation consumption at P07.S02b, and this harness should
-#     stop hand-pinning then.
+#     `MaxCeremonyLife` and a manual one by `sessionAcceptTimeout` (5 min). Hop 1's
+#     arms are still manual, so a slow run can fail for a reason that will not exist
+#     once hop 1 is convened too.
+#   * ~~The run manufactures permanent pins.~~ **Closed for the N>=3 path (P07.S03b):**
+#     instance 3 is pinned by ACCEPTING its invitation, which is D21's whole point, and
+#     the run asserts the accept established exactly one pin. Hop 1 still hand-pins and
+#     is the remaining half.
 #
 # **`--lan` and `--v6` are N=2-only, and the refusal is enforced above rather than
 # documented here alone.** `--lan`'s zero-egress assertion holds only while arms
@@ -760,96 +767,88 @@ if [ "$N" != "2" ]; then
   ceremony tcp "${SESSION_PORTS[0]}" "$WORK/hop1.pdf"
   echo "hop 1 completed; the document carries two signatures"
 
-  # Party 3 pins party 2 and arms; party 2 offers it the 2-signature document.
-  curl -fsS -X POST "${URLS[2]}/api/peers/pin" -H 'Content-Type: application/json' \
-    -H "X-CSRF-Token: ${CSRFS[2]}" -d "{\"fingerprint\":\"${FPS[1]}\",\"label\":\"p2\"}" >/dev/null \
-    || fail "instance 3 could not pin instance 2"
-  curl -fsS -X POST "${URLS[1]}/api/peers/pin" -H 'Content-Type: application/json' \
-    -H "X-CSRF-Token: ${CSRFS[1]}" -d "{\"fingerprint\":\"${FPS[2]}\",\"label\":\"p3\"}" >/dev/null \
-    || fail "instance 2 could not pin instance 3"
-  hop2port="${SESSION_PORTS[2]}"   # N>=3 always has (N-1)*2 >= 4 entries
-  curl -fsS -X POST "${URLS[2]}/api/session/arm" -H 'Content-Type: application/json' \
-    -H "X-CSRF-Token: ${CSRFS[2]}" \
-    -d "{\"fingerprint\":\"${FPS[1]}\",\"bind\":\"127.0.0.1:$hop2port\",\"mode\":\"cosign\",\"transport\":\"tcp\"}" >/dev/null \
-    || fail "instance 3 could not arm for hop 2"
-  # The spoken check runs BEFORE the contribution, on both sides, and both are
-  # blocked waiting for it — so hop 2 needs its own watchers exactly as hop 1 does.
-  # **Without them this probe reported HTTP 409 "the safety words went unconfirmed"
-  # and the discrimination clause below caught it**: the refusal being asserted would
-  # have been credited to the model's ceiling when it was really a missing watcher.
-  rm -f "$WORK/w2_a" "$WORK/w2_b"
-  watch_verify "${URLS[1]}" "${CSRFS[1]}" "$WORK/w2_a" & WATCHERS+=( $! )
-  watch_verify "${URLS[2]}" "${CSRFS[2]}" "$WORK/w2_b" & WATCHERS+=( $! )
-  (
-    for _ in $(seq 1 240); do
-      if [ -n "$(curl -fsS "${URLS[2]}/api/session/status" 2>/dev/null | jget pending.fingerprint)" ]; then
-        curl -fsS -X POST "${URLS[2]}/api/session/respond" -H 'Content-Type: application/json' \
-          -H "X-CSRF-Token: ${CSRFS[2]}" -d '{"accept":true,"intent":"hop 2"}' >/dev/null 2>&1
-        exit 0
-      fi
-      sleep 0.25
-    done
-  ) & WATCHERS+=( $! )
-  hop2code="$(curl -sS -X POST "${URLS[1]}/api/session/initiate" -H "X-CSRF-Token: ${CSRFS[1]}" \
+  # ── Hop 2, as a REAL ceremony, and it now fails at the NEAR end ──────────────
+  #
+  # **Rewritten 2026-08-25 (P07.S03b T02), and the old shape was wrong in two ways.**
+  #
+  # It drove hop 2 as party 2 -> party 3. **Under D22 that is not a hop at all**: `hopBetween`
+  # refuses any pair without the convener at one end — "under a convener hub every hop has the
+  # convener at one end" — so a ceremony's second hop is convener -> party 3, and the old
+  # topology was a chain the model has never had.
+  #
+  # And it hand-pinned, which is the residue D29 forbids and which the blind-spot list at the top
+  # of this file said to stop doing when P07.S02b landed. It has. The parties are pinned by
+  # ACCEPTING an invitation, which is D21's whole point, and the run asserts that no manual pin
+  # was needed.
+  #
+  # The refusal is now raised BEFORE any network work: `/api/session/initiate` applies the local
+  # signature in `buildCoSigned`, the L3 gate runs there, and the carrier signing a second time is
+  # refused at its own machine. So hop 2 needs no watchers, no arm on the far side, and no
+  # unreachable port — which is why all of that is gone.
+  echo "convening a real $N-party ceremony…"
+  roster='{"fingerprint":"'"${FPS[0]}"'","label":"p1","signs":true}'
+  for i in $(seq 2 "$N"); do
+    roster="$roster,"'{"fingerprint":"'"${FPS[$((i-1))]}"'","label":"p'"$i"'","signs":true}'
+  done
+  expires="$(python3 -c "import datetime;print((datetime.datetime.now(datetime.timezone.utc)+datetime.timedelta(hours=48)).strftime('%Y-%m-%dT%H:%M:%SZ'))")"
+  curl -fsS -X POST "${URLS[0]}/api/open" -H 'Content-Type: application/json' \
+    -H "X-CSRF-Token: ${CSRFS[0]}" -d "{\"path\":\"$WORK/doc.pdf\"}" >/dev/null \
+    || fail "instance 1 could not open the document to convene over"
+  curl -sS -X POST "${URLS[0]}/api/ceremony/convene" -H 'Content-Type: application/json' \
+    -H "X-CSRF-Token: ${CSRFS[0]}" \
+    -d "{\"roster\":[$roster],\"intent\":\"We agree\",\"expires\":\"$expires\",\"convenerSigns\":true}" \
+    -o "$WORK/convene.json" -w '%{http_code}' > "$WORK/convene.code" 2>/dev/null
+  [ "$(cat "$WORK/convene.code")" = "200" ] \
+    || fail "convene failed (HTTP $(cat "$WORK/convene.code")): $(head -c 300 "$WORK/convene.json")"
+  inv3="$(python3 -c "
+import json
+d=json.load(open('$WORK/convene.json'))
+print(next(i['invitation'] for i in d['invites'] if i['fingerprint'].lower()=='${FPS[2]}'.lower()))" 2>/dev/null)"
+  [ -n "$inv3" ] || fail "convene issued no invitation for instance 3"
+
+  # Instance 3 accepts. **No /api/peers/pin anywhere on this path** — that is the assertion.
+  acode="$(curl -sS -X POST "${URLS[2]}/api/ceremony/accept" -H 'Content-Type: application/json' \
+    -H "X-CSRF-Token: ${CSRFS[2]}" -d "$(python3 -c "import json;print(json.dumps({'invitation':'$inv3'}))")" \
+    -o "$WORK/accept.json" -w '%{http_code}')"
+  [ "$acode" = "200" ] \
+    || fail "instance 3 could not accept its invitation (HTTP $acode): $(head -c 300 "$WORK/accept.json")"
+  [ "$(python3 -c "import json;print(json.load(open('$WORK/accept.json'))['pinned'])" 2>/dev/null)" = "1" ] \
+    || fail "accepting the invitation established no pin, so D21's step was not removed"
+
+  # Hop 2: the CONVENER offers instance 3 the document hop 1 produced.
+  hop2code="$(curl -sS -X POST "${URLS[0]}/api/session/initiate" -H "X-CSRF-Token: ${CSRFS[0]}" \
     -F "pdf=@$WORK/hop1.pdf" -F "appearance=@$WORK/sig.png" \
     -F "params={\"fingerprint\":\"${FPS[2]}\",\"intent\":\"hop 2\"}" \
-    -F "address=127.0.0.1:$hop2port" -F "transport=tcp" \
+    -F "address=127.0.0.1:${SESSION_PORTS[2]}" -F "transport=tcp" -F "invitation=$inv3" \
     -o "$WORK/hop2.json" -w '%{http_code}')"
-  # Stimulus before grading: the spoken check really ran on hop 2. Without this the
-  # refusal below could be credited to the model while the hop never reached it.
-  [ -s "$WORK/w2_a" ] && [ -s "$WORK/w2_b" ] \
-    || fail "hop 2 never reached the spoken check on both sides (a='$(cat "$WORK/w2_a" 2>/dev/null)' b='$(cat "$WORK/w2_b" 2>/dev/null)') — whatever the initiate returned, it is not the model's contribution ceiling"
   if [ "$hop2code" = "200" ]; then
-    fail "hop 2 SUCCEEDED (HTTP 200) — the product no longer refuses a document with two prior signers.
-      That is P07.S03's job, and it means the N-party relay can now be driven. Build it:
-      the acceptance moved to S03 and S05 when S01 was narrowed at its grill (2026-08-23).
-      Delete this block and switch -n 4 / -n 9 on."
+    fail "hop 2 SUCCEEDED (HTTP 200) — the carrier signed a second time and the far side took it.
+      If that is now correct, P07.S05's carry route has landed and this whole block should go,
+      along with TestTheRelayCeilingAtFourParties in internal/p2p."
   fi
-  # ── What this probe MEASURED, and why the assertion is shaped like this ──────
+  # ── What this probe MEASURES now ─────────────────────────────────────────────
   #
-  # The refusal is not observable by name on either side today, and finding that
-  # out is what this probe was worth. `refusalAck` (`internal/p2p/session.go:266`)
-  # carries exactly two classes — consent-timeout and declined. Every other
-  # `coSignExchange` refusal returns `(0, false)`, writes no ack frame, and the
-  # receiver closes; the initiator reads **EOF**. So `expected exactly one prior
-  # signer`, "the document was not signed by the connected peer" and "the peer's
-  # attestation does not accept you" all arrive as `receive co-signed document: EOF`
-  # — a transport error for what is a rule refusal, logged nowhere on the receiving
-  # side either. D23 says a refusal is "never a hang, never a silent no-op"; over
-  # the wire it is currently silent. **P07.S03 owns fixing that**, and its
-  # acceptance gained a clause for it when this probe measured it (2026-08-23).
+  # Not "the model refuses hop 2" — it does not. Measured at P07.S03b:
   #
-  # So the assertion accepts EITHER shape and prints which one it saw. That keeps
-  # it honest through the intermediate state where S03 names the refusal but has
-  # not yet removed it — it would otherwise go red for the right reason with a
-  # message pointing at the wrong thing.
-  # **The by-name branch is checked FIRST and the EOF branch is now anchored, because this
-  # probe MISCLASSIFIED its own result (2026-08-25, P07.S03b).** Two defects, and either alone
-  # was enough. The name it grepped for — `expected exactly one prior signer` — was renamed when
-  # P07.S03a gave the refusal a sentinel, so the by-name branch could no longer match anything.
-  # And the EOF branch matched `could not connect to peer`, which is the SERVER'S GENERIC
-  # WRAPPER and was present on the named refusal too: `{"error":"could not connect to peer: a
-  # co-signature takes exactly one prior signer"}`. So the probe reported "flattened to EOF"
-  # about a refusal that had arrived perfectly well by name, and would have gone on doing so
-  # forever — a guard pointed at the wrong string, reading as a measurement.
+  #   hop 1  the convener contributes, party 2 co-signs: exactly the roster prefix
+  #   hop 2  /api/session/initiate applies the LOCAL signature first (buildCoSigned), so the
+  #          carrier signs AGAIN, and L3 refuses it BY NAME at the carrier's own machine
+  #   and    party 3, handed that document unchanged, IS admitted
   #
-  # Fixed at both ends: the name is matched on the SENTINEL's wording, and the EOF branch is
-  # anchored to the transport shapes alone. The wrapper itself was the third defect and is gone
-  # from the product — a refusal is no longer dressed as a connect failure.
-  if grep -q "takes exactly one prior signer" "${HOMES[2]}/nib.log" "$WORK/hop2.json" 2>/dev/null; then
-    echo "      the refusal arrived BY NAME (HTTP $hop2code) — the wire now carries it"
-  elif grep -qE "receive co-signed document: EOF|none answered as the pinned peer" "$WORK/hop2.json" 2>/dev/null; then
-    echo "      the refusal arrived FLATTENED to a transport error (HTTP $hop2code)"
+  # So the ceiling is a missing ROUTE, not a missing model: nothing hands the baton on without
+  # contributing. That is P07.S05's carry verb, and this assertion names it rather than pointing
+  # at "the model" the way its predecessor did.
+  if grep -q "not this party's turn" "$WORK/hop2.json" 2>/dev/null; then
+    echo "      L3 refused the CARRIER re-signing, by name, at its own machine (HTTP $hop2code)"
   else
-    echo "--- instance 3 log ---" >&2; tail -20 "${HOMES[2]}/nib.log" >&2 2>/dev/null || true
     echo "--- initiate body ---" >&2; head -c 400 "$WORK/hop2.json" >&2 2>/dev/null || true
-    fail "hop 2 failed with HTTP $hop2code, but as neither the named one-prior-signer refusal nor the EOF flattening — something else is broken, and without this clause it would have been credited as the model's ceiling"
+    fail "hop 2 failed with HTTP $hop2code, but not as L3's not-your-turn refusal — something
+      else is broken, and without this clause it would have been credited as the relay ceiling"
   fi
-  echo "PASS: $N instances booted with $N distinct identities (${ELAPSED_TOTAL}s of hops), and the model"
-  echo "      still refuses"
-  echo "      hop 2 (see the line above for how the refusal arrived). The N-party relay is"
-  echo "      P07.S03's (the removal) and P07.S05's (the baton topology); this run switches"
-  echo "      on there, and this probe goes red on the day it should."
+  echo "PASS: $N instances booted with $N distinct identities (${ELAPSED_TOTAL}s of hops), a real"
+  echo "      ceremony was convened, instance 3 took part with NO manual pin, and the relay"
+  echo "      stops exactly where it should: nothing can hand the baton on without contributing."
+  echo "      That route is P07.S05's, and this probe goes red the day it lands."
   exit 0
 fi
 
