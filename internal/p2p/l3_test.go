@@ -15,6 +15,12 @@ import (
 	"nib/internal/testpdf"
 )
 
+// fixtureRosterVersion is the record format version these fixtures write into their tokens. It is
+// a literal, not `ceremony.FormatVersion`, because `p2p` cannot import `ceremony` — and it does
+// not need to: this package reads the version off the wire, and only the writer needs to know
+// which one is current.
+const fixtureRosterVersion = 4
+
 type l3Party struct {
 	cert, key []byte
 	fp        string
@@ -52,10 +58,20 @@ func l3Chain(t *testing.T, doc []byte, order []l3Party, accepts []l3Party, roste
 		if err != nil {
 			t.Fatal(err)
 		}
-		doc, err = Contribute(doc, p.cert, p.key, Attestation{
+		att := Attestation{
 			Signer: "P", AcceptedPeer: accepted, Intent: "ok", When: time.Now(),
 			RosterHash: rosterHash,
-		}, nil, place)
+		}
+		if rosterHash != "" {
+			// **`reason()` emits neither the hash nor the version without both** (P07.S04), so a
+			// fixture that sets only the hash silently carries no commitment at all — and every
+			// assertion about proceedings then passes for the wrong reason. A literal here
+			// because `p2p` cannot see `ceremony.FormatVersion`: the cycle is a production one
+			// since P07.S02a, and this package reads the version off the wire as an integer
+			// rather than knowing which one is current.
+			att.RosterVersion = fixtureRosterVersion
+		}
+		doc, err = Contribute(doc, p.cert, p.key, att, nil, place)
 		if err != nil {
 			t.Fatalf("signature %d: %v", i+1, err)
 		}

@@ -173,3 +173,61 @@ func TestARefusalIsNotReportedAsAConnectFailure(t *testing.T) {
 			"the diagnosis has already written a 502 and chosen a D19 cause")
 	}
 }
+
+// TestTheAttestationsRouteDoesNotReVerify — P07.S04 clause 6, asserted on the ROUTING because the
+// cost cannot be asserted at this granularity.
+//
+// The route was calling `p2p.ReadAttestations(s.docBytes(doc))`, which verifies the whole file
+// again — while `document.sig` sits beside the bytes, computed wherever they were installed.
+// Measured at the slice's grill: the cost is dominated by document SIZE rather than by signature
+// count, because each signature's byte range is hashed over the whole file. Nine signatures on a
+// 31 KB document is single-digit milliseconds; the plan's 5.2 s figure needs ~95 MiB.
+//
+// **So this guard is structural, and says why rather than pretending otherwise.** A timing
+// assertion on a small fixture would measure noise, and building a 95 MiB fixture in a unit test
+// trades a request-path regression for a minute on every `go test` run. What is checkable, and
+// what actually regresses, is whether the handler re-verifies at all.
+func TestTheAttestationsRouteDoesNotReVerify(t *testing.T) {
+	src, err := os.ReadFile("cosign.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	code := stripLineComments(string(src))
+	i := strings.Index(code, "func (s *Server) handleAttestations(")
+	if i < 0 {
+		// The handler may be named differently; find it by the response type it writes.
+		i = strings.Index(code, "attestationsResponse{Attestations: views}")
+		if i < 0 {
+			t.Fatal("cannot find the attestations handler — this guard is reading the wrong file")
+		}
+		i = strings.LastIndex(code[:i], "func (s *Server) ")
+	}
+	body := funcBodyFrom(code, i)
+	if body == "" {
+		t.Fatal("could not brace-match the attestations handler")
+	}
+	// Stimulus: it really is the handler that builds the attestation views.
+	if !strings.Contains(body, "attestationsResponse{") {
+		t.Fatal("the function found does not write attestationsResponse — wrong subject")
+	}
+	if strings.Contains(body, "ReadAttestations(") {
+		t.Error("the attestations route calls ReadAttestations, which verifies the whole " +
+			"document again. document.sig is already computed beside the bytes, and the cost " +
+			"of re-verifying is signature-count × document-SIZE on a request path.")
+	}
+	if !strings.Contains(body, "doc.sig") {
+		t.Error("the attestations route does not read the cached signature status")
+	}
+	// And the proceeding lookup stays CONDITIONAL: it is a pdfcpu parse, and CLAUDE.md's hot-path
+	// rule says work goes on a request path only when it is unavoidable. Here it is avoidable.
+	claims := strings.Index(body, "ClaimsAProceeding(")
+	lookup := strings.Index(body, "ProceedingOf(")
+	if claims < 0 || lookup < 0 {
+		t.Fatal("the attestations route no longer gates the proceeding lookup")
+	}
+	if claims > lookup {
+		t.Error("the attestations route resolves the document's proceeding BEFORE asking whether " +
+			"any signature names one, so every ordinary document pays a pdfcpu attachment parse " +
+			"per request for a question that does not apply to it")
+	}
+}

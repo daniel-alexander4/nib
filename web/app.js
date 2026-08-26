@@ -3815,14 +3815,31 @@ async function augmentSigDetails(rows) {
       p.className = 'sigmutual';
       p.textContent = '✓ One proceeding — every signature on this document commits to the same ceremony.';
     } else {
-      // Deliberately not phrased as tampering. The honest statement is about disagreement:
-      // it covers a mixed document (one ceremony signature and one ordinary co-sign) as
-      // well as two different ceremonies, and a verifier must not accuse where it can only
-      // observe.
+      // **A FORMAT SKEW is not a disagreement, and saying so is D32 (P07.S04).**
+      //
+      // `rosterVersion` is the record format version the commitment was computed under, and
+      // `FormatVersion` is the first substantive axis of the roster preimage — so two builds at
+      // different versions digest the IDENTICAL roster to different hashes. Without this branch
+      // the sentence below fires, and it tells two people who agreed on everything that their
+      // document "was not produced by a single agreed proceeding" because one of them updated
+      // Nib. That is an accusation caused by a version difference, through the one surface D32
+      // excused.
+      const versions = [...new Set(claimed.map((a) => a.rosterVersion || 0))];
       p.className = 'sigatt-warn';
-      p.textContent = '⚠ Not one proceeding — ' + claimed.length + ' of ' + attested.length +
-        ' signature(s) name a ceremony, and they do not all commit to the same one. '
-        + 'This document was not produced by a single agreed proceeding.';
+      if (versions.length > 1) {
+        p.textContent = '⚠ These signatures were made by versions of Nib that record a ceremony '
+          + 'differently (formats ' + versions.join(' and ') + '), so their commitments are not '
+          + 'comparable. This is a version difference, not a disagreement — update every party '
+          + 'to the same version of Nib before relying on this check.';
+      } else {
+        // Deliberately not phrased as tampering. The honest statement is about disagreement:
+        // it covers a mixed document (one ceremony signature and one ordinary co-sign) as
+        // well as two different ceremonies, and a verifier must not accuse where it can only
+        // observe.
+        p.textContent = '⚠ Not one proceeding — ' + claimed.length + ' of ' + attested.length +
+          ' signature(s) name a ceremony, and they do not all commit to the same one. '
+          + 'This document was not produced by a single agreed proceeding.';
+      }
     }
     els.sigDetailsBody.appendChild(p);
   }

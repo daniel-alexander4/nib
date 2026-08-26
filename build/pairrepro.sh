@@ -727,6 +727,46 @@ if n < 2:
     sys.exit(1)
 print(f"[{sys.argv[2]}] the finished document carries {n} signatures")
 PYSIG
+  # ── The attestations route, on a really-signed document (P07.S04) ────────────
+  #
+  # It reads `document.sig` now instead of re-verifying the whole file, so what has to be
+  # checked is that it still ANSWERS — with the same attestations, cross-bound, from the cached
+  # status. Read from B's side, on B's arrival, by document id: asking A about A is asking the
+  # thing under test, and the active-document fallback has no answer once an instance holds more
+  # than one.
+  #
+  # `oneProceeding` is NOT asserted here and that is honest rather than an omission: no
+  # production attestation carries a commitment yet (C01 is blocked on P07.S05's carry route), so
+  # a document from this harness has no proceeding to be one of. What IS asserted is that the
+  # route did not start claiming one anyway.
+  curl -fsS "$B/api/attestations" -H "X-Nib-Doc: $docid" -o "$WORK/atts.$transport.json" \
+    || fail "[$transport] the attestations route did not answer for B's document"
+  python3 - "$WORK/atts.$transport.json" "$transport" <<'PYATT' || exit 1
+import json, sys
+d = json.load(open(sys.argv[1]))
+ats = d.get("attestations") or []
+t = sys.argv[2]
+if len(ats) != 2:
+    print(f"FAIL: [{t}] the attestations route reports {len(ats)} attestation(s) on a document "
+          f"carrying two signatures — it reads the cached status now, and the cached status is "
+          f"wrong or the route is reading the wrong document", file=sys.stderr)
+    sys.exit(1)
+for i, a in enumerate(ats):
+    if not a.get("valid"):
+        print(f"FAIL: [{t}] attestation {i} is not valid", file=sys.stderr); sys.exit(1)
+    if not a.get("matched"):
+        print(f"FAIL: [{t}] attestation {i} is not cross-bound — crossBind runs on the same "
+              f"data whether the status was cached or recomputed, so this says the cached "
+              f"status is not the same status", file=sys.stderr); sys.exit(1)
+    if a.get("oneProceeding"):
+        print(f"FAIL: [{t}] attestation {i} claims to be part of one proceeding, on a document "
+              f"whose signatures carry no ceremony commitment at all. That verdict now means "
+              f"agreement with the document's RECORD, and there is none.", file=sys.stderr)
+        sys.exit(1)
+print(f"[{t}] the attestations route answers from the cached status: 2 valid, cross-bound, "
+      f"no proceeding claimed")
+PYATT
+
   # H25 — elapsed, PRINTED and never thresholded.
   #
   # A four-second run and a four-minute run both pass, and the second is one hop from

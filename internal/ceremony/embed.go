@@ -1,10 +1,12 @@
 package ceremony
 
 import (
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"time"
 
+	"nib/internal/p2p"
 	"nib/internal/pdfops"
 	"nib/internal/sign"
 )
@@ -109,6 +111,32 @@ func Embed(pdf []byte, r Record) ([]byte, error) {
 		return nil, err
 	}
 	return pdfops.AddAttachment(pdf, AttachmentName, b)
+}
+
+// ProceedingOf is what a document claims about the ceremony it belongs to, in the form
+// `internal/p2p` can check signatures against (P07.S04).
+//
+// **One door for "which proceeding is this document's" (ADR-009).** `p2p` cannot import this
+// package — since P07.S02a that is a production import cycle — so it takes the commitment as a
+// primitive, and every caller that has a document routes through here rather than deriving it.
+// Deriving it in two places is how one of them ends up comparing the signatures to each other,
+// which is the defect this whole seam exists to close.
+//
+// **A document with no record, or one that does not verify, yields the ZERO Proceeding**, and
+// that is deliberate: `markOneProceeding` treats an empty commitment as disqualifying, so a
+// document whose record cannot be read can never be reported as one proceeding. Errors are not
+// returned for the same reason — every one of them means the same thing to the caller, which is
+// "this document cannot tell you which ceremony it belongs to".
+func ProceedingOf(pdf []byte, now time.Time) p2p.Proceeding {
+	r, err := CheckRecord(pdf, now)
+	if err != nil {
+		return p2p.Proceeding{}
+	}
+	h, err := r.RosterHash()
+	if err != nil {
+		return p2p.Proceeding{}
+	}
+	return p2p.Proceeding{Commitment: hex.EncodeToString(h)}
 }
 
 // Extract reads the record out of a document.

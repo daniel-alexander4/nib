@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"time"
 
+	"nib/internal/ceremony"
 	"nib/internal/p2p"
 	"nib/internal/sign"
 	"nib/internal/vault"
@@ -126,7 +127,22 @@ func (s *Server) handleAttestations(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, attestationsResponse{Attestations: []attestationView{}})
 		return
 	}
-	atts := p2p.ReadAttestations(s.docBytes(doc))
+	// **The cached status, not a re-verify (P07.S04, clause 6).** `document.sig` is computed
+	// wherever the bytes are installed; this route was calling `ReadAttestations`, which verifies
+	// the whole file again — signature-count × document-SIZE work, on a request path, with the
+	// answer already sitting beside the bytes. Measured at the slice's grill: the cost is
+	// dominated by size rather than by signature count, because each signature's byte range is
+	// hashed over the whole document.
+	//
+	// The proceeding lookup is CONDITIONAL, because it costs a pdfcpu attachment parse and this
+	// is request-handling code. A document whose signatures name no ceremony has no proceeding to
+	// be checked against, so the question is not asked — the same discriminator the client uses
+	// before it says anything about proceedings at all.
+	proc := p2p.Proceeding{}
+	if p2p.ClaimsAProceeding(doc.sig) {
+		proc = ceremony.ProceedingOf(s.docBytes(doc), time.Now())
+	}
+	atts := p2p.Attestations(doc.sig, proc)
 	views := make([]attestationView, 0, len(atts))
 	for _, a := range atts {
 		view := attestationView{SignerAttestation: a}
