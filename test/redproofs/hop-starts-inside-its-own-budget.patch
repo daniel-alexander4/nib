@@ -1,16 +1,17 @@
 diff --git a/internal/server/ceremonynet.go b/internal/server/ceremonynet.go
-index a3c3c80..baa48c9 100644
+index 3d67b57..3f0bc88 100644
 --- a/internal/server/ceremonynet.go
 +++ b/internal/server/ceremonynet.go
-@@ -375,11 +375,5 @@ func checkCeremonyDeadline(pdf []byte, now time.Time) error {
- 	if err := rec.Verify(now); err != nil {
- 		return fmt.Errorf("this document's ceremony record does not verify: %w", err)
- 	}
--	if !rec.Expires.After(now.Add(p2p.ExchangeBudget())) {
--		return fmt.Errorf("this ceremony ends at %s, which is less than one exchange budget "+
--			"(%s) away — starting a hop now would ask somebody to consent to a signature on a "+
+@@ -688,12 +688,6 @@ func checkCeremonyDeadline(pdf []byte, now time.Time) error {
+ 	// left" is not answerable here. Convene reserves `Hops() × ceremonyHopBudget()` up front,
+ 	// which is C20's clause; refining this to the remaining hops needs the hop index and is
+ 	// S05's carry route.
+-	if budget := ceremonyHopBudget(); !rec.Expires.After(now.Add(budget)) {
+-		return fmt.Errorf("this ceremony ends at %s, which is less than one hop (%s) away — "+
+-			"starting a hop now would ask somebody to consent to a signature on a "+
 -			"proceeding that has already ended by the time it completes",
--			rec.Expires.UTC().Format(time.RFC3339), p2p.ExchangeBudget())
+-			rec.Expires.UTC().Format(time.RFC3339), budget)
 -	}
  	return nil
  }
+ 

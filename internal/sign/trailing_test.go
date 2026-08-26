@@ -93,6 +93,17 @@ func TestAddedAfterFailsClosed(t *testing.T) {
 	}{
 		{"clean and readable", false, true, nil, true, false},
 		{"content found", true, true, nil, true, true},
+		// **The row that isolates the ERROR arm, and it was missing (2026-08-25, v1.117.156).**
+		//
+		// Both enumerations agree a signature is there, so the disagreement rule above does not
+		// fire; nothing trailing was found, so `trailing` is false. The ONLY thing that can make
+		// this warn is `err != nil` — which is what this test is named for. Found by re-recording
+		// this row's red proof against HEAD: with `return trailing || err != nil` cut down to
+		// `return trailing`, every other row here still passed, because /pending 270's
+		// disagreement rule (added later) satisfies one and `trailing` satisfies the other. The
+		// arm had been uncovered since that rule landed and the table still read as if it were
+		// tested — the guard's own claim, gone quiet exactly the way the verdict it guards could.
+		{"readable-signature disagreement aside, an errored check alone warns", false, true, errParseFail, true, true},
 		{"unreadable is a warning, not clean", false, false, errParseFail, true, true},
 		{"unreadable stays a warning even if it also found content", true, true, errParseFail, true, true},
 		// An unsigned document: neither enumeration sees a signature, and there is nothing to

@@ -31,7 +31,7 @@
 #
 # A row that cannot be re-proved is worth more as a loud failure than as a line of prose.
 #
-# Usage: ./build/redproof.sh [name]     (no name lists what is recorded)
+# Usage: ./build/redproof.sh [name|--all]   (no argument lists what is recorded)
 set -uo pipefail
 cd "$(dirname "$0")/.."
 REPO="$PWD"
@@ -47,6 +47,40 @@ list() {
 
 name="${1:-}"
 [ -n "$name" ] || { list; exit 0; }
+
+# ── --all: replay every row, and report the set rather than the first failure ────
+#
+# `verify_test.go`'s count guard names its own blind spot in so many words: it can see a row
+# that DISAPPEARS and not one that no longer re-proves, "and running the whole set is a
+# minutes-long job that belongs in a sweep rather than in `go test`". It stayed a known gap
+# because there was no one command to run in that sweep — the first person to actually do it
+# hand-rolled a shell loop, and found EIGHT invalid rows of 81 (2026-08-25, v1.117.156).
+#
+# So the sweep gets a door. It exits non-zero if any row fails and prints every failure, not
+# just the first: a run that stops at the first stale patch tells you nothing about the other
+# seventy, which is how "some rows are stale" stays indistinguishable from "one row is stale".
+if [ "$name" = "--all" ]; then
+  pass=0; failed=""
+  for m in "$DIR"/*.sh; do
+    [ -e "$m" ] || { echo "no rows recorded" >&2; exit 1; }
+    n="$(basename "${m%.sh}")"
+    if out="$("$0" "$n" 2>&1)" && printf '%s' "$out" | grep -q '^ok:'; then
+      pass=$((pass + 1))
+    else
+      failed="$failed $n"
+      echo "── $n"
+      printf '%s\n' "$out" | grep -v '^re-proving' | head -6
+    fi
+  done
+  if [ -n "$failed" ]; then
+    echo
+    echo "FAIL: $pass row(s) re-proved;$failed did not." >&2
+    echo "      A row that cannot be re-proved claims a coverage it no longer has." >&2
+    exit 1
+  fi
+  echo "ok: all $pass recorded rows still go red against their own defects"
+  exit 0
+fi
 spec="$DIR/$name.sh"
 [ -f "$spec" ] || { echo "FAIL: no red proof named '$name'" >&2; list >&2; exit 1; }
 

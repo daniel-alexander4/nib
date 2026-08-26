@@ -1,23 +1,48 @@
 diff --git a/internal/server/diagnosis.go b/internal/server/diagnosis.go
-index a5fb2b8..7f287f2 100644
+index 7e14d40..28f9df1 100644
 --- a/internal/server/diagnosis.go
 +++ b/internal/server/diagnosis.go
-@@ -102,15 +102,9 @@ func classifyD19(in d19Inputs) diagnosis {
- 		// D9: offer port-forward ONLY when the user controls a NAT — the router gave NO answer AND the
- 		// address is not carrier space. Within cause 3 an "answer" is always the unroutable double-NAT
- 		// one (a routable answer would be havePortMap), which cannot be port-forwarded either.
+@@ -167,27 +167,22 @@ func classifyD19(in d19Inputs) diagnosis {
+ 				"does it."
+ 			return d
+ 		}
 -		if in.mapUnroutable || in.sharedSpace {
 -			d.detail = "This machine is behind a network that hands out a different address per " +
 -				"destination — a carrier-grade or double NAT you can't open a port on. A VPN you " +
 -				"both already run is the way through."
 -		} else {
+-			// **This branch is reached by learning NOTHING, and it used to read that as evidence
+-			// the user controls a NAT.** `mapUnroutable` is set only where a gateway ANSWERED with
+-			// a screened-out address (ceremonynet.go); a gateway that never answers at all —
+-			// PCP absent, UPnP switched off, carrier NAT, an IPv6-transition network — leaves both
+-			// it and `sharedSpace` false and fell to here. `sharedSpace` cannot rescue it either:
+-			// it is `addrscope.SharedSpace`, 100.64/10, IPv4-only by construction, and DS-Lite,
+-			// NAT64 and 464XLAT are all invisible to a reflexive probe (a NAT64 prefix is a
+-			// DESTINATION, never a source — addrscope says so at the line). So the honest move is
+-			// not a better detector, which would only make the false statement more specific: it is
+-			// to stop promising. The advice is conditioned on a fact only the user has.
 -			d.detail = "This machine is behind a network that hands out a different address per " +
--				"destination. Enabling UPnP or a port-forward on your router, or using a VPN you " +
--				"both run, would let it connect."
+-				"destination, and Nib couldn't get an answer from your router — so it can't tell " +
+-				"whether there is one you control. If there is, enabling UPnP or a port-forward on " +
+-				"it may help. If your connection goes through your provider's network instead, a " +
+-				"VPN you both run is the way through."
 -		}
++
++		// **This branch is reached by learning NOTHING, and it used to read that as evidence
++		// the user controls a NAT.** `mapUnroutable` is set only where a gateway ANSWERED with
++		// a screened-out address (ceremonynet.go); a gateway that never answers at all —
++		// PCP absent, UPnP switched off, carrier NAT, an IPv6-transition network — leaves both
++		// it and `sharedSpace` false and fell to here. `sharedSpace` cannot rescue it either:
++		// it is `addrscope.SharedSpace`, 100.64/10, IPv4-only by construction, and DS-Lite,
++		// NAT64 and 464XLAT are all invisible to a reflexive probe (a NAT64 prefix is a
++		// DESTINATION, never a source — addrscope says so at the line). So the honest move is
++		// not a better detector, which would only make the false statement more specific: it is
++		// to stop promising. The advice is conditioned on a fact only the user has.
 +		d.detail = "This machine is behind a network that hands out a different address per " +
-+			"destination. Enabling UPnP or a port-forward on your router, or using a VPN you " +
-+			"both run, would let it connect."
++			"destination, and Nib couldn't get an answer from your router — so it can't tell " +
++			"whether there is one you control. If there is, enabling UPnP or a port-forward on " +
++			"it may help. If your connection goes through your provider's network instead, a " +
++			"VPN you both run is the way through."
  		return d
  	}
  	// Cause 4 — the peer published, the classes do not explain it: filtering, a firewall, asymmetry.

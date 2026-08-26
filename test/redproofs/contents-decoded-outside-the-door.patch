@@ -1,0 +1,19 @@
+diff --git a/internal/vault/builtin.go b/internal/vault/builtin.go
+index 5983397..14000ec 100644
+--- a/internal/vault/builtin.go
++++ b/internal/vault/builtin.go
+@@ -118,3 +118,14 @@ func AutoSetup(dir string) (bool, error) {
+ 	}
+ 	return false, nil
+ }
++
++// recentFromPayload reads the recent-documents list out of a decrypted payload without
++// opening the vault. Convenience for the first-run wizard, which wants the list before the
++// key is chosen.
++func recentFromPayload(plain []byte) ([]string, error) {
++	var out Contents
++	if err := json.Unmarshal(plain, &out); err != nil {
++		return nil, err
++	}
++	return out.Recent, nil
++}
