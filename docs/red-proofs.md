@@ -1766,3 +1766,16 @@ client had a branch that used it — which is how the "this is a version differe
 disagreement" sentence came to be written. That scan is a standing guard over every published
 field, so a row restoring "the field is published and nobody is told" would duplicate a check that
 already runs on every `go test`.
+
+### And a third stale row, from the slice two before it
+
+`mitm-reported-as-network-error` patches the block of lifted refusals in
+`handleSessionInitiate`, and **P07.S03b inserted a new lift into that block** — the contribution
+refusal, which had been falling through to `writeConnectDiagnosis` and coming out as a 502. The
+row's trailing context stopped matching.
+
+That is now three rows staled in two days by changes made two and three slices away from them, and
+all three were found by `./build/redproof.sh --all` rather than by anything else. The pattern is
+worth naming: **a red proof is coupled to the SHAPE of the code around its defect, not only to the
+defect.** A row whose neighbourhood is being actively edited goes stale without anybody touching
+the thing it proves — which is exactly why the sweep has to be a command rather than an intention.
