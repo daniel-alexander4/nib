@@ -129,7 +129,7 @@ func QUICListenOn(e *SharedEndpoint, identityCertPEM, identityKeyPEM, pinnedSPKI
 	if err != nil {
 		return nil, err
 	}
-	cfg.NextProtos = []string{alpn}
+	cfg.NextProtos = sessionALPN
 	ln, err := e.tr.Listen(cfg, quicConfig())
 	if err != nil {
 		return nil, err
