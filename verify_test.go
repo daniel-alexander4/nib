@@ -276,7 +276,7 @@ func TestVerifyContractIsTrue(t *testing.T) {
 		// an edit that does not HAVE to happen is an edit that does not happen. So the
 		// count is bounded on both sides now. It still fails when a row disappears, and it
 		// fails when the set outgrows it, naming the number to write.
-		const recorded = 112
+		const recorded = 117
 		if len(rows) < recorded {
 			t.Errorf("test/redproofs holds %d replayable row(s), want at least %d; "+
 				"build/redproof.sh reports no error on an empty directory, so a row that "+
@@ -305,6 +305,28 @@ func TestVerifyContractIsTrue(t *testing.T) {
 			patch := strings.TrimSuffix(r, ".sh") + ".patch"
 			if _, perr := os.Stat(patch); perr != nil {
 				t.Errorf("%s has no matching .patch: %v", r, perr)
+			}
+		}
+
+		// And the OTHER direction: a `.patch` with no `.sh`.
+		//
+		// The loop above walks the drivers, so a patch left behind when a row is renamed is
+		// invisible to it — it satisfies nothing and nothing complains. **Produced for real
+		// while writing P07.S05a**: a row was recorded as `completeness-gated-on-a-claim`,
+		// renamed to `-on-a-signature` when the first patch would not build, and the original
+		// patch sat in the directory afterwards looking exactly like a row.
+		//
+		// It matters because a stray patch is not inert: `redproof.sh --all` reports on the
+		// rows it finds, so an orphan reads as coverage to anyone counting files rather than
+		// replays.
+		patches, perr := filepath.Glob("test/redproofs/*.patch")
+		if perr != nil {
+			t.Fatal(perr)
+		}
+		for _, pf := range patches {
+			if _, serr := os.Stat(strings.TrimSuffix(pf, ".patch") + ".sh"); serr != nil {
+				t.Errorf("%s has no matching .sh, so it is a defect nothing replays — delete "+
+					"it, or write the driver it was recorded for", pf)
 			}
 		}
 	}

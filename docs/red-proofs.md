@@ -75,11 +75,13 @@ Each row's defect is generated with `git diff`, never typed: a hand-written diff
 numbers wrong and then fails as "stale" for a reason that has nothing to do with the code —
 the one failure this script must not invent.
 
-**Not every row is recorded yet.** Two are (`empty-state-message`, tier 2;
-`risky-actions-rendition`, tier 1), which is what proves the shape rather than what finishes
-the job; the rest are still prose here and can be added one `.sh` + `.patch` pair at a time.
+**Not every row is recorded, and the sentence saying so has to keep its own number.** It began
+at two (`empty-state-message`, tier 2; `risky-actions-rendition`, tier 1) — enough to prove the
+shape, not to finish the job — and the set is now **117** replayable pairs against a ledger of
+prose rows that still outnumber them. The rest can be added one `.sh` + `.patch` pair at a time.
 Saying so is the point — a partially-mechanised ledger that claimed to be complete would be
-the same failure this file exists to fix.
+the same failure this file exists to fix, and the count is pinned in `verify_test.go` rather
+than here so that a stale sentence cannot be the only thing that knows.
 
 ---
 
@@ -1852,3 +1854,37 @@ the frame, reply with anything. Twenty lines. The shortcut was taken because a h
 like a second process, and it is not.
 
 `recorded` 107 → 112.
+
+---
+
+## P07.S05a — the count was right and no user could open it (v1.117.178–.179)
+
+Five rows. **Four of the five are about a surface rather than a computation**, and that is the
+slice: C18's completeness sentence was computed correctly by code that already existed, and the
+question every one of these rows asks is whether anybody can *reach* it.
+
+| Defect reintroduced | Check that fired | What it said |
+|---|---|---|
+| `completeness-gated-on-a-signature` — the attestations route resolves the proceeding only for a document that already carries a signature | `TestAConvenedDocumentReportsItsObligedSignersBeforeAnyoneHasSigned` | "obliged = 0, want 2 — the route reports no roster for a convened document, so C18 cannot say that nobody has signed yet" |
+| `ceremony-panel-unreachable-unsigned` — `updateBadge` hides the details button on any document with no signatures | `ceremonycomplete.test.mjs`, tier 2 | "the details button is hidden on a ceremony document, so C18 has no surface at all" |
+| `ceremony-panel-returns-early-unsigned` — `openSigDetails` returns early on the same condition | `ceremonycomplete.test.mjs`, tier 2 | "the panel did not report the ceremony's completeness" |
+| `consent-gate-reads-the-first-signer` — `coSignExchange` hands the Confirmer `ats[0]` rather than the last attestation | `TestTheConsentGateIsGivenTheRightSignature` | "the consent gate was shown …, want the LAST signer B — the card names the party whose contribution the user is being asked to build on" |
+| `hop-mirrored-after-the-response` — `handleSessionInitiate` mirrors after `writeJSON` rather than before | `TestBothSidesOfAHopMirrorIt` | "the hop is mirrored AFTER the response returns, so a crash in between leaves a user who was told their signature is safe and a machine with no copy of it" |
+
+**Two rows for one sentence, deliberately.** The panel has two doors and each closes the surface
+alone: restore the button gate and the control disappears; restore the early return and the control
+is offered and does nothing. A single row would let the other regress in silence — the ADR-009
+shape, arriving through the *proofs* rather than through the code.
+
+**The patch restates a defect the fix DELETED, and says so.** The shipped gate was
+`p2p.ClaimsAProceeding(doc.sig)`, which went with the fix, so a patch restoring it by name would
+fail to **build** rather than fail its check — red for the wrong reason, the third failure mode.
+`len(doc.sig.Signers) > 0` is the same gate in its consequence: it excludes exactly the unsigned
+document, which is the whole defect.
+
+**`attestations-route-re-verifies` was made STALE by this slice and re-recorded**, caught by
+replaying it rather than by noticing — its patch context named the gate that no longer exists. Its
+own comment now carries the correction, and the half of its claim that was wrong (the lookup being
+conditional) points at `completeness-gated-on-a-signature` instead.
+
+`recorded` 112 → 117.

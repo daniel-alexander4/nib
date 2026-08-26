@@ -1,0 +1,13 @@
+diff --git a/web/app.js b/web/app.js
+index b525ed6..68a575d 100644
+--- a/web/app.js
++++ b/web/app.js
+@@ -3725,7 +3725,7 @@ async function openSigDetails() {
+   // A ceremony document with NO signatures still has something to say: how many parties are
+   // obliged, and that none of them has signed. That is C18's extreme case, and until P07.S05a
+   // it was unreachable — this returned early and the button was hidden besides.
+-  if (!signers.length && !view.inCeremony) return;
++  if (!signers.length) return;
+   const body = els.sigDetailsBody;
+   body.innerHTML = '';
+   const rows = signers.map((s) => {

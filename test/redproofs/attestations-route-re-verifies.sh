@@ -11,8 +11,12 @@
 # fixture would measure noise, and a 95 MiB fixture would cost a minute on every `go test` run. So
 # what is checked is whether the handler re-verifies at all — which is what actually regresses.
 #
-# The guard also holds the proceeding lookup CONDITIONAL on a signature naming a ceremony, so an
-# ordinary document pays no pdfcpu parse per request (CLAUDE.md's hot-path rule).
+# **The second half of this guard was CORRECTED at P07.S05a, and the patch re-recorded with it.**
+# It used to hold the proceeding lookup conditional on a signature naming a ceremony. That gate was
+# wrong on its own terms — a convened but UNSIGNED document never names one, and it is exactly the
+# case C18 is about — so the lookup is now unconditional and the hot-path property is carried by
+# what this row already proves: the route does not re-verify. See `completeness-gated-on-a-signature`
+# for the gate's own row.
 TIER="tier 1 — go test"
 PROVE="go test ./internal/server/ -run TestTheAttestationsRouteDoesNotReVerify -count=1"
 EXPECT="which verifies the whole"

@@ -1,0 +1,14 @@
+diff --git a/internal/server/session.go b/internal/server/session.go
+index a4e2a5e..c1a0cf9 100644
+--- a/internal/server/session.go
++++ b/internal/server/session.go
+@@ -1540,8 +1540,8 @@ func (s *Server) handleSessionInitiate(w http.ResponseWriter, r *http.Request) {
+ 	// C22: **before the response returns**, not after. A caller that mirrored afterwards would
+ 	// have told the user the hop completed and then written the record — so a crash in between
+ 	// leaves a user who was told their signature is safe and a machine with no copy of it.
+-	s.mirrorHop(final)
+ 	writeJSON(w, s.docResponse(installed))
++	s.mirrorHop(final)
+ }
+ 
+ // sendResult reports the outcome of a one-way send: Sent on a confirmed receipt,
