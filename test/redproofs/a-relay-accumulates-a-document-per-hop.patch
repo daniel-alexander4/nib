@@ -1,0 +1,13 @@
+diff --git a/internal/server/server.go b/internal/server/server.go
+index 96f68c1..884fa19 100644
+--- a/internal/server/server.go
++++ b/internal/server/server.go
+@@ -1042,7 +1042,7 @@ func (s *Server) installCeremonyResult(ceremonyID, name string, data []byte) (*d
+ 	sig := sign.Verify(data)
+ 	s.mu.Lock()
+ 	defer s.mu.Unlock()
+-	if ceremonyID != "" {
++	if false {
+ 		for _, d := range s.docs {
+ 			if d.ceremony != ceremonyID {
+ 				continue

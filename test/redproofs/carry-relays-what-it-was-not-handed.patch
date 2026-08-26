@@ -1,0 +1,15 @@
+diff --git a/internal/p2p/session.go b/internal/p2p/session.go
+index 0ee453d..23dfbff 100644
+--- a/internal/p2p/session.go
++++ b/internal/p2p/session.go
+@@ -248,9 +248,7 @@ func Carry(ch Channel, pdf, myFingerprint []byte, v Verifier, roster Roster) ([]
+ 	if rerr, ok := refusalFor(final, true); ok {
+ 		return nil, rerr
+ 	}
+-	if !bytes.HasPrefix(final, pdf) {
+-		return nil, errors.New("the carried document is not the one that was handed over")
+-	}
++
+ 	// The chain advanced by exactly the party this hop was for. `NextContributor` re-walks the
+ 	// whole prefix, so this also establishes that nothing earlier was disturbed.
+ 	next, nerr := NextContributor(final, roster)
