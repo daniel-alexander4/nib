@@ -1395,9 +1395,29 @@ func (s *Server) handleSessionInitiate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer cer.close()
-	signed, ok := s.buildCoSigned(w, pdfBytes, cert, key, att, appearance, cer.l3Roster())
-	if !ok {
-		return
+	// **Carrying or contributing is read off the roster, not chosen (P07.S05, C07).**
+	//
+	// A `signs:false` roster member moves the baton and adds nothing; anyone else contributes.
+	// There is no separate route and no flag on the request, so a non-signing convener cannot
+	// accidentally sign and a signer cannot accidentally skip their turn — both unrepresentable
+	// rather than checked. `buildCoSigned` is SKIPPED on the carry path, which is the whole
+	// point: it is the door that applies the local signature.
+	carrying := cer.carries(hex.EncodeToString(myFP))
+	signed := pdfBytes
+	if !carrying {
+		var ok bool
+		signed, ok = s.buildCoSigned(w, pdfBytes, cert, key, att, appearance, cer.l3Roster())
+		if !ok {
+			return
+		}
+	}
+	// One exchange verb, chosen once, so the two dial paths below cannot drift into disagreeing
+	// about which one this hop is.
+	exchange := func(ch p2p.Channel) ([]byte, error) {
+		if carrying {
+			return p2p.Carry(ch, signed, myFP, sessionVerifier{s, nil}, cer.l3Roster())
+		}
+		return p2p.Initiate(ch, signed, myFP, sessionVerifier{s, nil}, cer.l3Roster())
 	}
 	cands, ok := s.peerAddresses(w, v, address, r.FormValue("transport"), peerFP)
 	if !ok {
@@ -1430,7 +1450,7 @@ func (s *Server) handleSessionInitiate(w http.ResponseWriter, r *http.Request) {
 				err = cerr
 				break
 			}
-			final, err = p2p.Initiate(conn.Channel, signed, myFP, sessionVerifier{s, nil}, cer.l3Roster())
+			final, err = exchange(conn.Channel)
 			conn.Close()
 			ccancel()
 			if err == nil || !isTransportLoss(err) || !time.Now().Before(deadline) {
@@ -1443,7 +1463,7 @@ func (s *Server) handleSessionInitiate(w http.ResponseWriter, r *http.Request) {
 		if cerr != nil {
 			err = cerr
 		} else {
-			final, err = p2p.Initiate(conn.Channel, signed, myFP, sessionVerifier{s, nil}, cer.l3Roster())
+			final, err = exchange(conn.Channel)
 			conn.Close()
 		}
 	}
