@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"nib/internal/ceremony"
 	"nib/internal/p2p"
 	"nib/internal/sign"
 	"nib/internal/testpdf"
@@ -229,5 +230,61 @@ func TestTheAttestationsRouteDoesNotReVerify(t *testing.T) {
 		t.Error("the attestations route resolves the document's proceeding BEFORE asking whether " +
 			"any signature names one, so every ordinary document pays a pdfcpu attachment parse " +
 			"per request for a question that does not apply to it")
+	}
+}
+
+// TestWhetherYouSignIsReadOffTheRoster — C07's structural half.
+//
+// A `signs:false` roster member moves the baton and adds nothing. What makes this safe is that it
+// is not a *choice*: there is no carry route, no flag on the request, and no branch a caller can
+// take by mistake — `/api/session/initiate` reads the roster and takes the carry path or the
+// contribution path accordingly. So a non-signing convener cannot accidentally sign, and a signer
+// cannot accidentally skip their turn.
+func TestWhetherYouSignIsReadOffTheRoster(t *testing.T) {
+	conv := strings.Repeat("c0", 32)
+	signer := strings.Repeat("a1", 32)
+	inv := ceremony.Invitation{Roster: []ceremony.Party{
+		{Fingerprint: conv, Signs: false},
+		{Fingerprint: signer, Signs: true},
+	}}
+	cer := &ceremonyID{inv: inv}
+	if !cer.carries(conv) {
+		t.Error("a signs:false roster member does not carry — they would contribute a signature " +
+			"to a ceremony they were convened not to sign")
+	}
+	if cer.carries(signer) {
+		t.Error("a SIGNING party carries — they would skip their own turn, and the chain would " +
+			"never advance past them")
+	}
+	if cer.carries(strings.Repeat("ff", 32)) {
+		t.Error("a party outside the roster carries")
+	}
+	if (*ceremonyID)(nil).carries(conv) {
+		t.Error("the manual path carries — there is no roster there and nothing to carry for")
+	}
+
+	// **And the ROUTING**, because the predicate alone says nothing about whether the handler
+	// asks it. Asserted with `//` stripped, and on the ORDER: `buildCoSigned` applies the local
+	// signature, so a carry decided after it has already signed.
+	src, err := os.ReadFile("session.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	code := stripLineComments(string(src))
+	body := funcBodyFrom(code, strings.Index(code, "func (s *Server) handleSessionInitiate("))
+	if body == "" {
+		t.Fatal("cannot find handleSessionInitiate")
+	}
+	decide := strings.Index(body, "cer.carries(")
+	sign := strings.Index(body, "buildCoSigned(")
+	carry := strings.Index(body, "p2p.Carry(")
+	if decide < 0 || sign < 0 || carry < 0 {
+		t.Fatalf("handleSessionInitiate: carries=%d buildCoSigned=%d Carry=%d — one of the three "+
+			"is gone and the route can no longer both carry and contribute", decide, sign, carry)
+	}
+	if decide > sign {
+		t.Error("the route decides whether it carries AFTER buildCoSigned, which applies the " +
+			"local signature — so a carrier has already signed by the time anything asks " +
+			"whether they should have, and a signature cannot be taken back off a document")
 	}
 }

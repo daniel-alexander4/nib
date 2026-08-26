@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -381,6 +382,25 @@ func (c *ceremonyID) l3Roster() p2p.Roster {
 		out.Entries = append(out.Entries, p2p.RosterEntry{Fingerprint: p.Fingerprint, Signs: p.Signs})
 	}
 	return out
+}
+
+// carries reports whether this machine moves the baton for this ceremony without contributing to
+// it — a roster member with `signs:false` (P07.S05, C07).
+//
+// **Whether you sign is a fact about the roster, not a choice**, which is why there is no separate
+// carry route and no flag on the request. `/api/session/initiate` asks this and takes the carry
+// path or the contribution path accordingly, so a non-signing convener cannot accidentally sign
+// and a signer cannot accidentally skip their turn — both are unrepresentable rather than checked.
+func (c *ceremonyID) carries(meFP string) bool {
+	if c == nil {
+		return false
+	}
+	for _, p := range c.inv.Roster {
+		if strings.EqualFold(p.Fingerprint, meFP) {
+			return !p.Signs
+		}
+	}
+	return false
 }
 
 // errNoCeremony reports an arm with no invitation — not an error, the ordinary case.
