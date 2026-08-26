@@ -4637,7 +4637,7 @@ Acceptance:
 
 
 
-#### P07.S03a — L3 on the wire, and the N-party driver *(D23, L3; C05)* — **new, 2026-08-25, split out of S03**
+#### P07.S03a — L3 on the wire *(D23, L3, D32; C05)* — **new, 2026-08-25, split out of S03** *(done 2026-08-25, v1.117.162 — the end-to-end clause is met on BOTH transports; the tier-4 half of it moved to S03b with the driver, since a tier-4 run needs the driver that S03b builds)*
 Scope: S03 makes the gate refuse **in Go**; this slice makes the party who offered the contribution
 **learn why**, and drives the whole thing at N=4. Split because both are outside the gate:
 `refusalAck` (`internal/p2p/session.go:284`) is the ONE door between a refusal and its wire byte
@@ -4649,6 +4649,35 @@ mistake for one of the two it knows, which is D32's skew rule and a design step 
 switch statement.
 Acceptance:
 - **The refusal reaches the INITIATOR by name, not as a transport error** *(added 2026-08-23 — measured by S01's ceiling probe, which is what a tier-4 hop-2 attempt is for)*. `refusalAck` (`internal/p2p/session.go:266-273`) carries exactly two classes, consent-timeout and declined; every other `coSignExchange` refusal returns `(0, false)`, writes no ack frame, and the receiver closes — so `expected exactly one prior signer`, *the document was not signed by the connected peer* and *the peer's attestation does not accept you* all arrive at the initiator as `receive co-signed document: EOF`, and are logged nowhere on the receiving side either. **D23 says a refusal is "never a hang, never a silent no-op"; over the wire it is currently silent.** Refusing by name *in Go* is not the same as the party who offered the contribution learning the name, and the L3 criterion's "UI bypassed" wording tests the predicate, not the wire. Driven end-to-end at tier 4, both transports.
+- ~~The N-party driver completes at N=4…~~ **MOVED to P07.S03b, 2026-08-25 at this slice's grill.** A harness slice, and downstream of this one: it asserts a NAMED refusal at tier 4, which does not exist until the wire carries one. Built together, the driver's first run is also the protocol's first run and a failure is ambiguous between them.
+
+**Amended 2026-08-25 at its grill — a bare new ack byte VIOLATES D32, measured by tracing an older
+initiator.** `Initiate` reads one frame, maps a ONE-BYTE frame through `refusalFor`, and otherwise
+falls to `if !bytes.HasPrefix(final, mySignedPDF)`. So a build that predates this slice, handed a
+frame `[4]`, gets `refusalFor` → `default` → `(nil, false)` → the prefix check → **"returned
+document is not the one sent this session"**: a verdict about the counterparty, reading as a replay
+or a tamper, produced by a version skew. That is the exact shape D32 forbids. A multi-byte frame
+lands on the same sentence by a shorter path. **So the question is not which byte — it is whether
+the new refusal is sent to a peer who can read it**, which makes this a negotiation.
+
+**And the negotiation already exists.** `alpn = "nib/1"` is set on every QUIC config; quic-go
+requires a non-empty `NextProtos` and a mismatch is a hard handshake failure, so offering
+`["nib/2","nib/1"]` negotiates `nib/1` against an older peer in both directions and nothing
+breaks. TCP (`transport.go:70`) sets no `NextProtos` at all, and adding it degrades correctly by
+Go's own rules: a peer that offers none leaves `NegotiatedProtocol` empty on the other side, which
+IS the signal. No new frames, no new round trip, no new failure mode. **The negotiated protocol
+must NOT join `Channel.check()`'s required set** — empty is legal and means an old peer, so
+requiring it would turn a compatibility signal into a compatibility break.
+Tasks (grilled 2026-08-25 — `grills/2026-08-25-p07s03a-l3-on-the-wire.md`):
+- T01 — `alpn2` offered alongside `alpn` on every QUIC config and added to the TCP config; `Channel` gains the negotiated protocol; `check()` does NOT require it. *(done — and a source-level guard now holds every `NextProtos` site to one list, because a new listener written with `[]string{alpn}` would silently never negotiate v2 while every behavioural test stayed green)*
+- T02 — the refusal frame: a new ack byte plus a **CODE**, not a reason string, written only to a v2 peer, through the ONE door `refusalAck`/`refusalFor` already are (ADR-009). *(done — **the code is a security decision rather than economy**: the text would be written by the REFUSING side and displayed by the initiator, so free text is a string a hostile peer chooses appearing in this user's interface. A code is mapped to this build's own sentence, so the peer chooses which of a fixed set of things is said and never what it says.)*
+- T03 — L3's sentinels routed onto it, and the two channel bindings with them. *(done — and it needed three NEW sentinels: `expected exactly one prior signer`, *the document was not signed by the connected peer* and *the peer's attestation does not accept you* were bare `errors.New` values, so "refuse by name" was not expressible for them at all)*
+- T04 — the skew driven in BOTH directions, because it is the case no ordinary test reaches. *(done)*
+- T05 — red proofs; `recorded` moves.
+
+#### P07.S03b — The N-party driver at N=4 *(D23, L3; C05)* — **new, 2026-08-25, split out of S03a**
+Scope: the tier-4 harness. Downstream of S03a, which is what gives it a named refusal to assert.
+Acceptance:
 - **The N-party driver completes at N=4** *(moved here from S01 at its grill, 2026-08-23 — this is the first slice where a document carrying more than one prior signature is admissible at all)*: all N−1 parties **armed before the first hop and never re-armed** (a per-instance arm-POST count of exactly 1, plus the reported `address` byte-identical to what it was at arm time, because a re-arm changes the ephemeral port); each asserted `armed:true` immediately before its own hop is dialled, so an expiry fails by party number rather than as "hop 8 could not connect"; the per-hop words watcher keyed on the **absent→present transition** with per-hop filenames, because one filename plus a reset is safe only at N=2 and a stale file from hop k−1 otherwise satisfies hop k's stimulus check; and the block count asserted against **`N_signing` derived from the roster the driver was handed**, never a literal — through `Initiate` every intermediate party signs twice, so the count is 2(N−1) and becomes N only over S05's carry route. The **distinct-signer set** is asserted too, because `/ByteRange` counts blocks and one party signing four times satisfies any count.
 
 #### P07.S04 — `coSignExchange` re-based off the record *(D22 as amended 2026-08-23, D2 pin; C01)*

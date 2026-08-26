@@ -169,10 +169,12 @@ func Initiate(ch Channel, mySignedPDF, myFingerprint []byte, v Verifier) ([]byte
 	// A refusal, not a document. Checked before the prefix test because that test would
 	// report a one-byte refusal as "not the one sent this session" — true, unhelpful, and
 	// indistinguishable from a replay attempt.
-	if len(final) == 1 {
-		if rerr, ok := refusalFor(final[0], true); ok {
-			return nil, rerr
-		}
+	// **Any frame, not only a one-byte one (P07.S03a).** The named refusal is two bytes, and the
+	// length test that used to gate this would have sent it straight to the prefix check — which
+	// says "returned document is not the one sent this session", a tampering verdict about an
+	// honest peer. `refusalFor` discriminates by its own shape.
+	if rerr, ok := refusalFor(final, true); ok {
+		return nil, rerr
 	}
 	if !bytes.HasPrefix(final, mySignedPDF) {
 		return nil, errors.New("returned document is not the one sent this session")
@@ -229,9 +231,9 @@ func Receive(ch Channel, myCertPEM, myKeyPEM []byte, peerLabel string, c Confirm
 		// One byte, and a co-signed document is never one byte — it is the sent document
 		// plus a trailing incremental update, which `Initiate` re-checks by prefix — so the
 		// frame is unambiguous.
-		if b, ok := refusalAck(err); ok {
+		if b, ok := refusalAck(err, ch.SpeaksNamedRefusals()); ok {
 			_ = conn.SetDeadline(time.Now().Add(postConsentDeadline))
-			_ = writeFrame(conn, []byte{b}) // best-effort
+			_ = writeFrame(conn, b) // best-effort
 		}
 		return nil, err
 	}
@@ -264,6 +266,33 @@ const (
 	// declining, because it means something different to the user and to whoever reads the
 	// log."* The consent gate now has the pair too.
 	ackTimedOut = 3
+	// ackRefused is "the receiving side refused this contribution for a protocol reason", and it
+	// is followed by exactly one CODE byte (P07.S03a).
+	//
+	// **A code, not a sentence, and that is a security decision rather than economy.** The text
+	// is written by the REFUSING side and displayed by the initiator, so free text would be a
+	// string a hostile peer chooses appearing in this user's interface. A code is mapped to this
+	// build's OWN sentence, so the peer chooses which of a fixed set of things is said and never
+	// what it says.
+	//
+	// Two bytes is unambiguous against a document for two independent reasons: a co-signed
+	// document is never two bytes, and every PDF begins `%PDF-` — 0x25, not 4. `TestARefusalFrame
+	// CannotBeMistakenForADocument` drives both.
+	ackRefused = 4
+)
+
+// Refusal codes. **Append only, and never renumber**: a code is a wire value, and a build that
+// reads an old code as a new meaning is worse than one that does not recognise it at all.
+const (
+	refuseNotYourTurn        = 1
+	refuseNotInRoster        = 2
+	refusePrefixMismatch     = 3
+	refusePrefixUnproven     = 4
+	refuseProceedingMismatch = 5
+	refuseCeremonyComplete   = 6
+	refuseNotConnectedPeer   = 7
+	refusePeerDoesNotAccept  = 8
+	refusePriorSignerCount   = 9
 )
 
 // ErrDeclined reports that the receiving user declined a one-way document transfer.
@@ -287,6 +316,77 @@ var ErrCoSignDeclined = errors.New("co-signing declined")
 // ackTimedOut on the wire; `Initiate` and `SendDocument` turn that byte back into this.
 var ErrConsentTimedOut = errors.New("nobody answered the consent request in time")
 
+var (
+	// ErrNotTheConnectedPeer: the document was not signed by the peer on the other end.
+	//
+	// **A sentinel because the wire needs a name (P07.S03a).** These three were bare
+	// `errors.New` values, so `refusalAck` could not recognise them and they reached the
+	// initiator as `receive co-signed document: EOF` — a network fault, inviting the retry a
+	// refusal must not invite. "Refused by name in Go" is not the same as the party who offered
+	// the contribution learning the name.
+	ErrNotTheConnectedPeer = errors.New("the document was not signed by the connected peer")
+	// ErrPeerDoesNotAcceptYou: the document's signer attested to somebody else.
+	ErrPeerDoesNotAcceptYou = errors.New("the peer's attestation does not accept you")
+	// ErrWrongPriorSignerCount: outside a ceremony, a co-sign takes exactly one prior signer.
+	ErrWrongPriorSignerCount = errors.New("a co-signature takes exactly one prior signer")
+	// ErrRefusedUnknown: the peer refused with a code this build does not know.
+	//
+	// **D32's shape, and it is the reason this protocol is negotiated at all.** A skew produces
+	// a sentence naming the mismatch — never a verdict about the counterparty. The code is
+	// carried in the message so a bug report says which one.
+	ErrRefusedUnknown = errors.New("the peer refused this contribution for a reason this version of Nib does not know")
+)
+
+// refusalCode maps a refusal to its wire code, or 0 for one that has none.
+func refusalCode(err error) byte {
+	switch {
+	case errors.Is(err, ErrNotYourTurn):
+		return refuseNotYourTurn
+	case errors.Is(err, ErrNotInRoster):
+		return refuseNotInRoster
+	case errors.Is(err, ErrPrefixMismatch):
+		return refusePrefixMismatch
+	case errors.Is(err, ErrPrefixUnproven):
+		return refusePrefixUnproven
+	case errors.Is(err, ErrProceedingMismatch):
+		return refuseProceedingMismatch
+	case errors.Is(err, ErrCeremonyComplete):
+		return refuseCeremonyComplete
+	case errors.Is(err, ErrNotTheConnectedPeer):
+		return refuseNotConnectedPeer
+	case errors.Is(err, ErrPeerDoesNotAcceptYou):
+		return refusePeerDoesNotAccept
+	case errors.Is(err, ErrWrongPriorSignerCount):
+		return refusePriorSignerCount
+	}
+	return 0
+}
+
+// errorForCode maps a wire code back to this build's own sentinel.
+func errorForCode(code byte) error {
+	switch code {
+	case refuseNotYourTurn:
+		return ErrNotYourTurn
+	case refuseNotInRoster:
+		return ErrNotInRoster
+	case refusePrefixMismatch:
+		return ErrPrefixMismatch
+	case refusePrefixUnproven:
+		return ErrPrefixUnproven
+	case refuseProceedingMismatch:
+		return ErrProceedingMismatch
+	case refuseCeremonyComplete:
+		return ErrCeremonyComplete
+	case refuseNotConnectedPeer:
+		return ErrNotTheConnectedPeer
+	case refusePeerDoesNotAccept:
+		return ErrPeerDoesNotAcceptYou
+	case refusePriorSignerCount:
+		return ErrWrongPriorSignerCount
+	}
+	return fmt.Errorf("%w (code %d)", ErrRefusedUnknown, code)
+}
+
 // refusalAck and refusalFor are the ONE door between a refusal and its wire byte.
 //
 // ADR-009: a rule holding at more than one call site is written once and every site calls
@@ -294,21 +394,44 @@ var ErrConsentTimedOut = errors.New("nobody answered the consent request in time
 // each side keeps for itself is a protocol that can disagree with itself. It did: the
 // transfer path had an explicit declined byte and the co-signature path had none at all, so
 // one half of one feature reported a refusal as an outcome and the other reported it as EOF.
-func refusalAck(err error) (byte, bool) {
+func refusalAck(err error, named bool) ([]byte, bool) {
 	switch {
 	case errors.Is(err, ErrConsentTimedOut):
-		return ackTimedOut, true
+		return []byte{ackTimedOut}, true
 	case errors.Is(err, ErrDeclined), errors.Is(err, ErrCoSignDeclined):
-		return ackDeclined, true
-	default:
-		return 0, false
+		return []byte{ackDeclined}, true
 	}
+	// **Only to a peer that can read it (P07.S03a).** `named` is the negotiated-ALPN answer, and
+	// withholding the frame from an older peer is not a downgrade: that peer's behaviour is
+	// exactly what it was before this version existed. Sending it anyway would make an older
+	// initiator print "returned document is not the one sent this session" — a tampering verdict
+	// produced by a version skew, which D32 forbids.
+	if named {
+		if code := refusalCode(err); code != 0 {
+			return []byte{ackRefused, code}, true
+		}
+	}
+	return nil, false
 }
 
 // refusalFor maps a receipt byte back to its sentinel. `coSign` says which of the two
 // decline sentinels to use, since they name different flows to the user.
-func refusalFor(b byte, coSign bool) (error, bool) {
-	switch b {
+// **What a hostile peer can do with this, stated rather than left to be worked out.** The frame is
+// chosen by the refusing side, so a peer may send any code it likes — including a co-signature
+// refusal on a one-way transfer, where none of them can honestly arise. What that buys is the
+// choice of WHICH of a fixed set of this build's own sentences appears; it is not free text, it
+// carries nothing the peer authored, and it cannot make the exchange succeed. That is the whole
+// reason the wire carries a CODE and not a reason string.
+func refusalFor(frame []byte, coSign bool) (error, bool) {
+	// The named refusal, two bytes. Checked first and by its OWN length, so a one-byte frame can
+	// never be read as a truncated one.
+	if len(frame) == 2 && frame[0] == ackRefused {
+		return errorForCode(frame[1]), true
+	}
+	if len(frame) != 1 {
+		return nil, false
+	}
+	switch frame[0] {
 	case ackTimedOut:
 		return ErrConsentTimedOut, true
 	case ackDeclined:
@@ -361,10 +484,8 @@ func SendDocument(ch Channel, pdf []byte, myFingerprint []byte, v Verifier) erro
 	if len(ack) == 1 && ack[0] == ackOK {
 		return nil
 	}
-	if len(ack) == 1 {
-		if rerr, ok := refusalFor(ack[0], false); ok {
-			return rerr
-		}
+	if rerr, ok := refusalFor(ack, false); ok {
+		return rerr
 	}
 	return errors.New("unexpected receipt from peer")
 }
@@ -400,8 +521,13 @@ func ReceiveDocument(ch Channel, a Accepter, myFingerprint []byte, v Verifier) (
 	if err != nil {
 		// A refusal is an OUTCOME and gets a receipt; anything else is a fault and the
 		// sender learns of it as a dropped connection, which is what it is.
-		if b, ok := refusalAck(err); ok {
-			_ = writeFrame(conn, []byte{b}) // best-effort
+		// **The one-way transfer path passes `false`, and that is a decision.** L3 is about a
+		// ceremony's signing order and a transfer has none — there is no roster, no contribution
+		// and nothing to be out of order about — so this path can only ever produce the two
+		// classes it already had. Passing the negotiated flag would be a wider door for a set of
+		// refusals that cannot reach it.
+		if b, ok := refusalAck(err, false); ok {
+			_ = writeFrame(conn, b) // best-effort
 		}
 		return nil, err
 	}
@@ -445,7 +571,7 @@ func coSignExchange(myCertPEM, myKeyPEM, peerFP []byte, peerLabel string, inboun
 	// without one this rule stands. A ceremony at hop 2 was otherwise refused here before the
 	// gate could ever run, which is what would have made the gate dead for every N > 2.
 	if !inCeremony && len(ats) != 1 {
-		return nil, fmt.Errorf("expected exactly one prior signer, got %d", len(ats))
+		return nil, fmt.Errorf("%w: got %d", ErrWrongPriorSignerCount, len(ats))
 	}
 	if len(ats) == 0 {
 		return nil, errors.New("the document carries no signature to co-sign")
@@ -472,14 +598,14 @@ func coSignExchange(myCertPEM, myKeyPEM, peerFP []byte, peerLabel string, inboun
 	// document's signer must be the very identity the TLS handshake pinned — not
 	// just any valid signature — and that signer must have accepted *this* user.
 	if peer.Fingerprint != hex.EncodeToString(peerFP) {
-		return nil, errors.New("the document was not signed by the connected peer")
+		return nil, ErrNotTheConnectedPeer
 	}
 	myFP, err := sign.Fingerprint(myCertPEM)
 	if err != nil {
 		return nil, err
 	}
 	if peer.AcceptedPeer != hex.EncodeToString(myFP) {
-		return nil, errors.New("the peer's attestation does not accept you")
+		return nil, ErrPeerDoesNotAcceptYou
 	}
 
 	// **L3 (D23): no contribution out of roster order.**

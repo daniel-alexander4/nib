@@ -53,7 +53,22 @@ type Channel struct {
 	// verification string would be four words two parties agreed on over *some*
 	// channel, which is what a relay in the middle would also be able to arrange.
 	Export Exporter
+
+	// Proto is the negotiated ALPN, or "" when the peer offered none (P07.S03a).
+	//
+	// **Deliberately NOT part of check(), and that is the whole point of it.** Every other field
+	// here is a security property established elsewhere, so a zero value is dangerous and check()
+	// fails closed on each. This one is a COMPATIBILITY signal: empty is a legal, meaningful
+	// value meaning "this peer predates the versioned session protocol". Requiring it would turn
+	// the signal into a break and refuse every older peer outright — which is the opposite of
+	// what a negotiation is for.
+	Proto string
 }
+
+// SpeaksNamedRefusals reports whether the peer negotiated a session protocol that can read a
+// named refusal frame. False for every peer that predates it, which is why nothing may be
+// WITHHELD on this basis — only added.
+func (c Channel) SpeaksNamedRefusals() bool { return c.Proto == alpn2 }
 
 // errChannelIncomplete reports a Channel missing a field the core cannot proceed without.
 var errChannelIncomplete = errors.New("incomplete channel")

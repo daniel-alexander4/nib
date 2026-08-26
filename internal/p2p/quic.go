@@ -23,6 +23,27 @@ import (
 // quic-go REQUIRES a non-empty NextProtos, so this is not optional decoration.
 const alpn = "nib/1"
 
+// alpn2 is the session protocol version that can read a NAMED refusal (P07.S03a).
+//
+// **A negotiation rather than a new byte, and D32 is why.** `Initiate` maps a ONE-BYTE reply
+// through `refusalFor` and otherwise falls to `if !bytes.HasPrefix(final, mySignedPDF)`. So a
+// build that predates this version, handed an unfamiliar refusal frame, reaches `default` →
+// `(nil, false)` → the prefix check, and tells its user *"returned document is not the one sent
+// this session"* — a verdict about the counterparty, reading as a replay or a tamper, produced by
+// a version skew. That is precisely the outcome D32 forbids. So the new refusal is sent only to a
+// peer that has said it can read one.
+//
+// **It costs nothing and cannot break an older peer.** quic-go requires a non-empty NextProtos
+// and a mismatch is a hard handshake failure — but offering both, most-preferred first, negotiates
+// `nib/1` against an older peer in either direction. On TCP, Go leaves NegotiatedProtocol empty
+// when the client offers no ALPN extension at all, which is exactly the signal wanted: empty means
+// "old peer", not "error".
+const alpn2 = "nib/2"
+
+// sessionALPN is the offer list, most preferred first. One list, set at every config site, so the
+// two transports cannot drift into offering different things (ADR-009).
+var sessionALPN = []string{alpn2, alpn}
+
 // quicIdle is how long a QUIC connection may sit with nothing on it before the
 // transport closes it, and quicKeepAlive is why it never gets there during a ceremony.
 //
@@ -83,7 +104,7 @@ func QUICDial(ctx context.Context, addr string, identityCertPEM, identityKeyPEM,
 	if err != nil {
 		return nil, err
 	}
-	cfg.NextProtos = []string{alpn}
+	cfg.NextProtos = sessionALPN
 
 	remote, err := net.ResolveUDPAddr("udp", addr)
 	if err != nil {
@@ -250,7 +271,7 @@ func QUICDialHandshakeOn(ctx context.Context, e *SharedEndpoint, addr string, id
 	if err != nil {
 		return nil, err
 	}
-	cfg.NextProtos = []string{alpn}
+	cfg.NextProtos = sessionALPN
 	remote, err := net.ResolveUDPAddr("udp", addr)
 	if err != nil {
 		return nil, err
@@ -288,7 +309,7 @@ func QUICListen(addr string, identityCertPEM, identityKeyPEM, pinnedSPKI []byte)
 	if err != nil {
 		return nil, err
 	}
-	cfg.NextProtos = []string{alpn}
+	cfg.NextProtos = sessionALPN
 
 	sock, err := net.ListenPacket("udp", addr)
 	if err != nil {
@@ -487,7 +508,7 @@ func quicChannel(qc *quic.Conn, st *quic.Stream) (Channel, error) {
 	if err != nil {
 		return Channel{}, err
 	}
-	return Channel{Stream: st, PeerFP: fp, Export: cs.ExportKeyingMaterial}, nil
+	return Channel{Stream: st, PeerFP: fp, Export: cs.ExportKeyingMaterial, Proto: cs.NegotiatedProtocol}, nil
 }
 
 // Compile-time proof that a QUIC stream satisfies the session core's Stream. If quic-go
@@ -559,7 +580,7 @@ func QUICListenHandshakeOn(e *SharedEndpoint, identityCertPEM, identityKeyPEM, p
 	if err != nil {
 		return nil, err
 	}
-	cfg.NextProtos = []string{alpn}
+	cfg.NextProtos = sessionALPN
 	ln, err := e.tr.Listen(cfg, quicConfig())
 	if err != nil {
 		return nil, err

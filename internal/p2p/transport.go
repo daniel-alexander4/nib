@@ -69,6 +69,12 @@ func SessionTLS(identityCertPEM, identityKeyPEM, pinnedSPKI []byte, server bool)
 	}
 	cfg := &tls.Config{
 		Certificates: []tls.Certificate{leaf},
+		// **ALPN on the TCP path too (P07.S03a).** It had none at all, so this transport could
+		// not tell an old peer from a new one and the refusal negotiation would have been
+		// QUIC-only — a rule reaching one of two transports, which is the ADR-009 shape. Adding
+		// it cannot break an older peer: Go leaves NegotiatedProtocol empty when the client sends
+		// no ALPN extension, and an empty value is what this protocol reads as "old".
+		NextProtos: sessionALPN,
 		// TLS 1.3 only: the peer signs the handshake transcript with the leaf key
 		// (CertificateVerify), binding the pinned identity to THIS channel. Pinned
 		// explicitly so a future transport that re-defaults the config (e.g. gRPC's
@@ -474,7 +480,7 @@ func TLSChannel(conn *tls.Conn) (Channel, error) {
 	if err != nil {
 		return Channel{}, err
 	}
-	return Channel{Stream: conn, PeerFP: fp, Export: cs.ExportKeyingMaterial}, nil
+	return Channel{Stream: conn, PeerFP: fp, Export: cs.ExportKeyingMaterial, Proto: cs.NegotiatedProtocol}, nil
 }
 
 // verifiedPeerFingerprint reads the verified peer's SPKI fingerprint from a
