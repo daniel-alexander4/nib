@@ -1,0 +1,15 @@
+diff --git a/internal/p2p/session.go b/internal/p2p/session.go
+index 0ee453d..35d4fe4 100644
+--- a/internal/p2p/session.go
++++ b/internal/p2p/session.go
+@@ -254,7 +254,10 @@ func Carry(ch Channel, pdf, myFingerprint []byte, v Verifier, roster Roster) ([]
+ 	// The chain advanced by exactly the party this hop was for. `NextContributor` re-walks the
+ 	// whole prefix, so this also establishes that nothing earlier was disturbed.
+ 	next, nerr := NextContributor(final, roster)
++	_, _ = next, nerr
+ 	switch {
++	case true:
++	case false:
+ 	case errors.Is(nerr, ErrCeremonyComplete):
+ 		// The last signer has signed. Nothing follows, and that is the end of the relay.
+ 	case nerr != nil:

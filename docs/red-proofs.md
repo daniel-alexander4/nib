@@ -1824,3 +1824,31 @@ were not:
 
 `recorded` 109 → 107, and a floor going **down** is worth saying out loud: it is what the ledger
 looks like when a slice removes the reason a guard existed rather than when somebody deletes one.
+
+## P07.S05 closed — the relay's document, and the proofs that stopped being owed (v1.117.176)
+
+Five more rows, all tier 1. Two of them are the pair the previous entry recorded as **owed**, and
+the reason they stopped being owed is worth more than the rows.
+
+| the defect, restored | what goes red | the check |
+|---|---|---|
+| **the carrier relays a document it did not hand over** *(replayable: `carry-relays-what-it-was-not-handed`)* | `a different document` | `TestCarryRefusesAHostileHop`, through the **real verb** against a hostile receiver |
+| **the carrier relays a contribution out of order** *(replayable: `carry-relays-a-contribution-out-of-order`)* | `extended_by_the_wrong_party` | same test, and it is a separate row because **the prefix says the bytes grew from mine and nothing about who signed the part that grew** — measured: with the prefix alone, a reply extended by the wrong party is accepted |
+| **a relay accumulates a document per hop** *(replayable: `a-relay-accumulates-a-document-per-hop`)* | `the registry holds` | `TestARelayReplacesTheBatonRatherThanAccumulating`, driven at **nine** hops — two is also what a door that replaces "the active document" looks like, and eight is where the count cap is |
+| **the relay door skips the byte cap** *(replayable: `relay-door-skips-the-byte-cap`)* | `want ErrTooManyBytes` | `TestTheRelayDoorHonoursTheByteCap`. A tightening rather than a preserved property: the door these bytes used to take applies no cap at all |
+| **the initiate route bypasses the relay door** *(replayable: `initiate-route-bypasses-the-relay-door`)* | `does not install through the relay door` | `TestTheInitiateRouteInstallsThroughTheRelayDoor`. **Found by mutation** — swapping the call back left every behavioural test green, because they drive the door directly and nothing drove the route |
+
+### Why the first two were owed, and what closing them cost
+
+They were recorded as owed because their fixture ran `Carry`'s two return checks **in a helper
+beside the test** rather than through the verb. That is a fixture asserting itself: the mutation
+that matters is deleting a check *from `Carry`*, and a helper carrying its own copy of the check
+stays green against exactly that. A red proof would have replayed green and the ledger would have
+claimed coverage it did not have — the second failure mode, arriving through the test rather than
+through the code.
+
+What it cost to close was a **hostile receiver**: accept one connection, run the spoken check, read
+the frame, reply with anything. Twenty lines. The shortcut was taken because a hostile peer *sounded*
+like a second process, and it is not.
+
+`recorded` 107 → 112.

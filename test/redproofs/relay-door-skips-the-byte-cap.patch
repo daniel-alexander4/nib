@@ -1,0 +1,15 @@
+diff --git a/internal/server/server.go b/internal/server/server.go
+index 96f68c1..2f3f33c 100644
+--- a/internal/server/server.go
++++ b/internal/server/server.go
+@@ -1047,9 +1047,7 @@ func (s *Server) installCeremonyResult(ceremonyID, name string, data []byte) (*d
+ 			if d.ceremony != ceremonyID {
+ 				continue
+ 			}
+-			if err := s.byteCapLocked(d, data); err != nil {
+-				return nil, err
+-			}
++
+ 			d.data = data
+ 			d.sig = sig
+ 			s.activeID = d.id
