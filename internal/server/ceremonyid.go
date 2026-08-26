@@ -403,6 +403,17 @@ func (c *ceremonyID) carries(meFP string) bool {
 	return false
 }
 
+// ceremonyIDOf is the ceremony a session belongs to, or "" outside one.
+//
+// Nil-safe, because every caller that has a `*ceremonyID` also has the manual path where there is
+// none — and a helper that made each of them write the nil check is a rule at N call sites.
+func ceremonyIDOf(c *ceremonyID) string {
+	if c == nil {
+		return ""
+	}
+	return c.inv.ID
+}
+
 // errNoCeremony reports an arm with no invitation — not an error, the ordinary case.
 var errNoCeremony = errors.New("this session has no ceremony identity")
 

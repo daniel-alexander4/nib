@@ -1,6 +1,7 @@
 package server
 
 import (
+	"bytes"
 	"encoding/hex"
 	"errors"
 	"net/http/httptest"
@@ -286,5 +287,135 @@ func TestWhetherYouSignIsReadOffTheRoster(t *testing.T) {
 		t.Error("the route decides whether it carries AFTER buildCoSigned, which applies the " +
 			"local signature — so a carrier has already signed by the time anything asks " +
 			"whether they should have, and a signature cannot be taken back off a document")
+	}
+}
+
+// TestARelayReplacesTheBatonRatherThanAccumulating — the clause, driven at nine hops.
+//
+// Every hop of an N-party ceremony returns the SAME proceeding one signature further on. Through
+// `addDoc` — D10's arrival path, and where this used to go — each one opened a document alongside
+// the last, so a nine-party relay left the convener holding **nine copies of one ceremony against
+// a count cap of eight**: the ninth hop would have been refused for a reason that has nothing to
+// do with the ceremony.
+//
+// Nine rather than two, because two is also what a door that replaces *the active* document looks
+// like, and because eight is where the count cap is: a fixture that stops at seven cannot tell a
+// working replace from a lucky one.
+func TestARelayReplacesTheBatonRatherThanAccumulating(t *testing.T) {
+	s := &Server{epoch: "test-epoch"}
+	const ceremony = "ceremony-abc"
+	var last *document
+	for hop := 1; hop <= 9; hop++ {
+		// Each hop's bytes are longer, the way an appended signature makes them.
+		data := bytes.Repeat([]byte{'x'}, 100*hop)
+		got, err := s.installCeremonyResult(ceremony, "relay.pdf", data)
+		if err != nil {
+			t.Fatalf("hop %d: %v", hop, err)
+		}
+		s.mu.Lock()
+		n := len(s.docs)
+		s.mu.Unlock()
+		if n != 1 {
+			t.Fatalf("after hop %d the registry holds %d documents, want 1 — a relay that "+
+				"accumulates hits the count cap of %d before a nine-party ceremony finishes",
+				hop, n, maxOpenDocs)
+		}
+		if hop > 1 && got != last {
+			t.Errorf("hop %d opened a NEW document rather than replacing the baton", hop)
+		}
+		if !bytes.Equal(got.data, data) {
+			t.Errorf("hop %d: the document does not carry that hop's bytes", hop)
+		}
+		if got.id != s.activeID {
+			t.Errorf("hop %d: the baton is not the active document, so the user is looking at "+
+				"something else while the ceremony advances", hop)
+		}
+		last = got
+	}
+
+	// **The control, and it is what stops this becoming "replace everything".** A SECOND ceremony
+	// gets its own document, and an ordinary document is untouched by either.
+	other, err := s.installCeremonyResult("ceremony-def", "other.pdf", []byte("second"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if other == last {
+		t.Fatal("a different ceremony replaced the first one's baton — one document would then " +
+			"carry two proceedings")
+	}
+	s.mu.Lock()
+	n := len(s.docs)
+	s.mu.Unlock()
+	if n != 2 {
+		t.Errorf("two ceremonies hold %d documents, want 2", n)
+	}
+	// And a non-ceremony arrival still ADDS, because D10 is unchanged for it.
+	if _, err := s.installCeremonyResult("", "arrival.pdf", []byte("plain")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.installCeremonyResult("", "arrival2.pdf", []byte("plain")); err != nil {
+		t.Fatal(err)
+	}
+	s.mu.Lock()
+	n = len(s.docs)
+	s.mu.Unlock()
+	if n != 4 {
+		t.Errorf("two ordinary arrivals beside two ceremonies hold %d documents, want 4 — an "+
+			"arrival with no ceremony must still add, which is D10 and is unchanged", n)
+	}
+}
+
+// TestTheRelayDoorHonoursTheByteCap — ADR-008, at the fourth door.
+//
+// "The byte cap binds every door that grows a document", and a relay hop grows one. The door that
+// used to carry these bytes — `addDoc` — applies no cap at all, so this is a tightening rather
+// than a preserved property, and it is asserted rather than assumed.
+func TestTheRelayDoorHonoursTheByteCap(t *testing.T) {
+	s := &Server{epoch: "test-epoch", maxDocBytes: 1000}
+	if _, err := s.installCeremonyResult("c1", "relay.pdf", bytes.Repeat([]byte{'x'}, 900)); err != nil {
+		t.Fatalf("the first hop was refused under the budget: %v", err)
+	}
+	// A hop that would push past the ceiling is refused, and with ADR-008's error.
+	_, err := s.installCeremonyResult("c1", "relay.pdf", bytes.Repeat([]byte{'x'}, 1200))
+	if !errors.Is(err, ErrTooManyBytes) {
+		t.Errorf("a hop past the byte ceiling returned %v, want ErrTooManyBytes — ADR-008 says "+
+			"the cap binds every door that grows a document, and this is the door a relay grows "+
+			"one through", err)
+	}
+	// **And the replace is measured on the TOTAL, not the delta**: a hop that makes the document
+	// SMALLER can never be refused, however tight the budget.
+	if _, err := s.installCeremonyResult("c1", "relay.pdf", []byte("small")); err != nil {
+		t.Errorf("a hop that shrinks the document was refused (%v)", err)
+	}
+}
+
+// TestTheInitiateRouteInstallsThroughTheRelayDoor — ADR-009, on the ROUTING.
+//
+// `installCeremonyResult` replacing correctly says nothing about whether the route uses it. Found
+// by mutation: swapping the call back to `addDoc` left every behavioural test above green, because
+// they drive the door directly and nothing drives the route's installation.
+func TestTheInitiateRouteInstallsThroughTheRelayDoor(t *testing.T) {
+	src, err := os.ReadFile("session.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	code := stripLineComments(string(src))
+	body := funcBodyFrom(code, strings.Index(code, "func (s *Server) handleSessionInitiate("))
+	if body == "" {
+		t.Fatal("cannot find handleSessionInitiate")
+	}
+	// Stimulus: this really is the handler that installs the result.
+	if !strings.Contains(body, "docResponse(") {
+		t.Fatal("the function found does not write a document response — wrong subject")
+	}
+	if !strings.Contains(body, "installCeremonyResult(") {
+		t.Error("the initiate route does not install through the relay door, so each hop of an " +
+			"N-party ceremony opens a new document — nine copies of one proceeding against a " +
+			"count cap of eight, and no byte cap at all on the way in")
+	}
+	if strings.Contains(body, "s.addDoc(") {
+		t.Error("the initiate route still calls addDoc, which is D10's UNCAPPED arrival path — " +
+			"correct for a document that arrives out of the blue, wrong for the same proceeding " +
+			"coming back one signature further on")
 	}
 }

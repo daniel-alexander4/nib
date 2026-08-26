@@ -4,12 +4,12 @@ import (
 	"bytes"
 	"context"
 	"errors"
-	"fmt"
 	"os"
 	"strings"
 	"testing"
 	"time"
 
+	"nib/internal/sign"
 	"nib/internal/testpdf"
 )
 
@@ -640,16 +640,13 @@ func TestTheSameCeremonyThroughInitiateFails(t *testing.T) {
 // the prefix check alone, an honest ceremony still passes and so does this.
 func TestCarryRefusesAHostileHop(t *testing.T) {
 	conv := l3Identity(t, "Convener")
-	a, b, c := l3Identity(t, "A"), l3Identity(t, "B"), l3Identity(t, "C")
+	a, c := l3Identity(t, "A"), l3Identity(t, "C")
 	roster := Roster{Entries: []RosterEntry{
 		{Fingerprint: conv.fp, Signs: false},
 		{Fingerprint: a.fp, Signs: true},
-		{Fingerprint: b.fp, Signs: true},
 		{Fingerprint: c.fp, Signs: true},
 	}}
 	carried := l3Prepared(t)
-
-	// What an HONEST hop 1 returns, as the control: A's signature appended.
 	honest := l3Chain(t, carried, []l3Party{a}, []l3Party{a}, "")
 
 	for _, tc := range []struct {
@@ -668,58 +665,92 @@ func TestCarryRefusesAHostileHop(t *testing.T) {
 		{
 			// The document that WAS handed over, extended — by the wrong party. C signs when it
 			// is A's turn, so the bytes grew from mine and the chain did not advance as the
-			// roster says it must.
+			// roster says it must. **This is the arm the prefix check cannot see.**
 			name:  "extended by the wrong party",
 			reply: l3Chain(t, carried, []l3Party{c}, []l3Party{c}, ""),
 			want:  "does not follow this ceremony's order",
 		},
+		{
+			// The control, last so a failure above cannot be blamed on the fixture: the honest
+			// reply goes through the same verb over the same wire.
+			name:  "the honest reply",
+			reply: honest,
+			want:  "",
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			// Stimulus: the honest reply passes the same code, so a refusal below is about the
-			// hostile reply and not about the fixture.
-			if err := carryCheck(t, carried, honest, roster); err != nil {
-				t.Fatalf("setup: the honest reply was refused (%v)", err)
+			tr := transports[0]
+			ln, err := tr.listen("127.0.0.1:0", a.cert, a.key, mustFP(t, conv.cert))
+			if err != nil {
+				t.Fatal(err)
 			}
-			err := carryCheck(t, carried, tc.reply, roster)
-			if err == nil {
+			defer ln.Close()
+			recv := make(chan error, 1)
+			hostileReceiver(t, ln, a.cert, a.key, tc.reply, recv)
+
+			conn, err := tr.dial(context.Background(), ln.Addr().String(), conv.cert, conv.key,
+				mustFP(t, a.cert), 10*time.Second)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer conn.Close()
+			_, cerr := Carry(conn.Channel, carried, mustFP(t, conv.cert), okVerifier{}, roster)
+			<-recv
+			if tc.want == "" {
+				if cerr != nil {
+					t.Fatalf("the honest reply was refused (%v) — every refusal above would "+
+						"then be a verb that refuses everything", cerr)
+				}
+				return
+			}
+			if cerr == nil {
 				t.Fatalf("a hostile hop returning %s was accepted, and the carrier would have "+
 					"relayed it to the next party", tc.name)
 			}
-			if !strings.Contains(err.Error(), tc.want) {
+			if !strings.Contains(cerr.Error(), tc.want) {
 				t.Errorf("refused with %q, want a refusal naming %q — the two arms must fail "+
 					"for different reasons or one of them is not being exercised",
-					err.Error(), tc.want)
+					cerr.Error(), tc.want)
 			}
 		})
 	}
-	_ = b
 }
 
-// carryCheck runs the return-binding half of Carry over a reply, without a socket.
-//
-// **The checks are duplicated here deliberately and the duplication is bounded**: driving the real
-// `Carry` needs a hostile PEER, which is a second process or a hand-rolled frame writer, and this
-// arm is about what the carrier does with bytes rather than about how they arrived.
-// `TestAFourPartyCeremonyCompletesOverTheCarryRoute` drives the real verb end to end over both
-// transports, so the wire half is not left unexercised.
-func carryCheck(t *testing.T, sent, reply []byte, roster Roster) error {
+// mustFP is a fingerprint or a fatal.
+func mustFP(t *testing.T, cert []byte) []byte {
 	t.Helper()
-	if !bytes.HasPrefix(reply, sent) {
-		return errors.New("the carried document is not the one that was handed over")
-	}
-	want, err := NextContributor(sent, roster)
+	fp, err := sign.Fingerprint(cert)
 	if err != nil {
-		t.Fatalf("setup: the sent document is not ready to be carried: %v", err)
+		t.Fatal(err)
 	}
-	next, nerr := NextContributor(reply, roster)
-	switch {
-	case errors.Is(nerr, ErrCeremonyComplete):
-		return nil
-	case nerr != nil:
-		return fmt.Errorf("the carried document does not follow this ceremony's order: %w", nerr)
-	case strings.EqualFold(next.Fingerprint, want.Fingerprint):
-		return fmt.Errorf("%w: the document came back still waiting for %s", ErrPrefixMismatch,
-			shortFP(want.Fingerprint))
-	}
-	return nil
+	return fp
+}
+
+// hostileReceiver accepts one connection, completes the spoken check, reads the document it is
+// handed, and replies with `reply` — whatever that is.
+//
+// **It exists so `Carry`'s return checks are driven through the VERB and not through a copy of
+// them.** The first version of these two arms ran the checks in a helper beside the test, which
+// is a fixture asserting itself: the mutation that matters is deleting a check from `Carry`, and
+// a helper carrying its own copy stays green against exactly that. Recorded because the shortcut
+// was taken and then undone.
+func hostileReceiver(t *testing.T, ln Listener, cert, key []byte, reply []byte, done chan<- error) {
+	t.Helper()
+	go func() {
+		conn, err := ln.Accept()
+		if err != nil {
+			done <- err
+			return
+		}
+		defer conn.Close()
+		if err := runVerification(conn.Channel, false, fingerprint(t, cert), okVerifier{}); err != nil {
+			done <- err
+			return
+		}
+		if _, err := readFrame(conn.Channel.Stream); err != nil {
+			done <- err
+			return
+		}
+		done <- writeFrame(conn.Channel.Stream, reply)
+	}()
 }

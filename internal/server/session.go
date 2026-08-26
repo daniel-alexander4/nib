@@ -1522,10 +1522,18 @@ func (s *Server) handleSessionInitiate(w http.ResponseWriter, r *http.Request) {
 		s.writeConnectDiagnosis(w, cer, err)
 		return
 	}
-	// D10: an arrival adds. Same reasoning as runSession's — the difference here is
-	// only that a user is waiting on this response, so the document they get back is
-	// the arrival, which addDoc has made active.
-	installed := s.addDoc(&document{name: arrivalDocName(peerLabel), data: final, sig: sign.Verify(final)})
+	// **A relay REPLACES the baton; an ordinary arrival still adds (P07.S05).**
+	//
+	// D10's rule — an arrival adds — is about a document that arrives out of the blue, and it is
+	// unchanged for the manual and two-party paths. A ceremony hop is not that: each hop of an
+	// N-party relay returned the SAME proceeding one signature further on, and every one of them
+	// opened a new document, so a nine-party ceremony left the convener holding nine copies
+	// against a count cap of eight. `installCeremonyResult` replaces by ceremony id and states
+	// why it is a fourth commit door rather than one of the three.
+	installed, ierr := s.installCeremonyResult(ceremonyIDOf(cer), arrivalDocName(peerLabel), final)
+	if wroteCommitFailure(w, ierr) {
+		return
+	}
 	writeJSON(w, s.docResponse(installed))
 }
 

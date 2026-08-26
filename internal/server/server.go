@@ -100,6 +100,16 @@ type document struct {
 	data []byte
 	sig  sign.Status
 
+	// ceremony is the id of the ceremony this document is the baton for, or "" for every
+	// ordinary document (P07.S05).
+	//
+	// **It exists so a relay REPLACES rather than accumulates.** Each hop of an N-party ceremony
+	// used to arrive through `addDoc`, which opens a document alongside whatever is already
+	// there — so a nine-party relay left the convener holding nine copies of one proceeding,
+	// against a count cap of eight. Keyed on the ceremony rather than on the name because a name
+	// is user-visible text that can collide, and the thing being identified is the proceeding.
+	ceremony string
+
 	// undo/redo are this document's own history. They live here rather than on the
 	// Server because a per-server ring means an operation on one document pops a
 	// state belonging to another — the same class of defect as an unpinned
@@ -995,6 +1005,66 @@ func (s *Server) addDoc(doc *document) *document {
 	s.registerLocked(doc)
 	s.mu.Unlock()
 	return doc
+}
+
+// installCeremonyResult makes `data` the document this ceremony is carried in: it REPLACES the
+// bytes of the document already open for that ceremony, or opens one the first time (P07.S05).
+//
+// # Why a fourth door rather than one of the three
+//
+// A relay hop grows a document, so ADR-008 requires it to pass the byte cap — which rules out
+// `addDoc`, the uncapped arrival path it used to take. And it must not consult **D29's freeze**,
+// which rules out `commitMutation` and `commitBarrier`: the freeze refuses a document that carries
+// a ceremony record, and every document this door touches carries one by construction.
+//
+// **The exemption is safe for a reason, not by exception.** The freeze exists so a USER cannot
+// change bytes that other parties were invited to sign. This is the opposite motion: it is those
+// other parties' signatures arriving. And it is not taken on trust — `Initiate` and `Carry` both
+// refuse a result that is not what this machine sent plus a trailing update (the byte prefix), and
+// `Carry` additionally runs L3 over the return, so the bytes replacing the document are provably
+// an extension of the bytes it already held. A peer cannot substitute a different document here;
+// it can only append to the one that went out.
+//
+// # What it does not do
+//
+// It does not apply the COUNT cap on a replace, because a replace opens nothing. The first hop
+// takes the full count-and-bytes path, so a ceremony that cannot be opened is refused at the same
+// door as any other document.
+//
+// `/api/session/initiate` is deliberately **not** in tier 2's MUTATING inventory, for the reason
+// `/api/ceremony/accept` is not: that list drives the misaddressed-document guard, and this route
+// takes its PDF as posted bytes rather than by document id, so there is no `X-Nib-Doc` for it to
+// pin. Named here rather than merely absent.
+func (s *Server) installCeremonyResult(ceremonyID, name string, data []byte) (*document, error) {
+	// Verified OUTSIDE the lock: it is a full parse over the whole file, and every commit in the
+	// product was doing one while holding s.mu until P07.S02a moved the freeze out for the same
+	// reason.
+	sig := sign.Verify(data)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if ceremonyID != "" {
+		for _, d := range s.docs {
+			if d.ceremony != ceremonyID {
+				continue
+			}
+			if err := s.byteCapLocked(d, data); err != nil {
+				return nil, err
+			}
+			d.data = data
+			d.sig = sig
+			s.activeID = d.id
+			return d, nil
+		}
+	}
+	if len(s.docs) >= maxOpenDocs {
+		return nil, ErrTooManyOpen
+	}
+	fresh := &document{name: name, data: data, sig: sig, ceremony: ceremonyID}
+	if err := s.byteCapLocked(nil, data); err != nil {
+		return nil, err
+	}
+	s.registerLocked(fresh)
+	return fresh, nil
 }
 
 // setDoc installs doc as the open document, REPLACING whatever was open, and
