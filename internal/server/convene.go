@@ -176,6 +176,36 @@ func (s *Server) handleCeremonyConvene(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	// **The convener's own pins, through the same door the invitee uses (P07.S02b, ADR-009).**
+	//
+	// D21 removes the manual pin for a party who was invited; it is the same step for the
+	// convener, who otherwise pins N-1 fingerprints by hand before arming against any of them.
+	// This route never pinned anything — its only vault write was AddCeremonySecret above —
+	// so the rule reached one of its two sites.
+	//
+	// Inside the rollback window, and `unconvene` prunes them: a convene whose commit fails
+	// must not leave the convener's peer list carrying a ceremony that does not exist.
+	//
+	// The whole roster minus the convener, which is the OPPOSITE of what the invitee passes
+	// and is the same fact about D22 read from the hub rather than a spoke — see
+	// pinCeremonyRoster.
+	//
+	// **`selfFP` is read from the record rather than from `cert`**, because the record is what
+	// the parties will hold: if those two ever disagreed, deriving from `cert` would skip a
+	// party the roster does contain and pin one it does not. `Convener()` looks the convener up
+	// IN the roster, so a false here is the door having produced a record that does not name
+	// its own convener — an internal inconsistency, not a user error.
+	convener, ok := out.Record.Convener()
+	if !ok {
+		httpError(w, http.StatusInternalServerError,
+			"the convened record does not name its own convener, so nothing was convened")
+		return
+	}
+	if _, perr := pinCeremonyRoster(v, out.Record.ID, out.Record.Roster, convener.Fingerprint); perr != nil {
+		httpError(w, http.StatusInternalServerError,
+			"the ceremony's parties could not be pinned, so nothing was convened: "+perr.Error())
+		return
+	}
 	// **commitBarrier, not commitMutation — undo must not be able to un-convene.**
 	//
 	// Convene creates state OUTSIDE the document: N-1 secrets in the vault and a directory
@@ -242,6 +272,13 @@ func (s *Server) unconvene(v *vault.Vault, root, id string) {
 	if err := ceremony.RemoveMirror(root, id); err != nil {
 		log.Printf("convene rollback: could not remove %s: %v — a ceremony directory is left "+
 			"under the output folder for a ceremony that was never convened", id, err)
+	}
+	// The pins, third, and reported for the same reason as the other two: a convener left
+	// holding ceremony-scoped pins for a ceremony that never existed has no way to see them as
+	// such — the peer list shows a peer, and only the prune knows it was provisional.
+	if _, err := v.PruneCeremonyPeers(id); err != nil {
+		log.Printf("convene rollback: could not remove ceremony %s's peer pins: %v — the peer "+
+			"list carries pins for a ceremony that was never convened", id, err)
 	}
 }
 

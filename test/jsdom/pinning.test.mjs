@@ -61,6 +61,14 @@ const MUTATING = [
   // falls back to the ACTIVE document when no X-Nib-Doc is present, so an unpinned convene
   // would commit a ceremony record into whichever tab the user switched to while it ran.
   '/api/ceremony/convene',
+  // **`/api/ceremony/accept` is deliberately NOT here (P07.S02b).** The membership rule is
+  // "commits into or destroys a document", and accept does neither: it parses an invitation and
+  // writes a vault pin, carries no X-Nib-Doc, and cannot touch any document's bytes. Listing it
+  // would put it in front of the misaddressed-document guard, which would then be asserting a
+  // pin rule about a route with nothing to pin — and it would owe the ceremony freeze a routing
+  // it has no reason to have. Named here rather than merely absent, because `/api/assemble` was
+  // left out of this list on a reason that turned out to be false, and an absence with no
+  // sentence is indistinguishable from an oversight.
 ];
 
 test('every route in the MUTATING inventory is a real POST route on the server', () => {

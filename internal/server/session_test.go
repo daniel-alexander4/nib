@@ -1457,33 +1457,10 @@ func TestCeremonyReceiverDialsAndCoSigns(t *testing.T) {
 	aFP := hex.EncodeToString(aFPBytes)
 	pinPeer(t, c, csrf, ts.URL, aFP)
 
-	// A two-party ceremony putting Alice and Bob on one hop; Bob's invitation lets his arm take the
-	// connect path. Alice (first party) signs the record.
-	cid, err := ceremony.NewID()
-	if err != nil {
-		t.Fatal(err)
-	}
-	rec := ceremony.Record{
-		ID:      cid,
-		DocHash: strings.Repeat("cd", 32),
-		Intent:  "We agree to co-sign",
-		Expires: time.Now().Add(48 * time.Hour),
-		Roster: []ceremony.Party{
-			{Fingerprint: aFP, Label: "Alice", Signs: true},
-			{Fingerprint: bFP, Label: "Bob", Signs: true},
-		},
-	}
-	if err := rec.Sign(aCert, aKey); err != nil {
-		t.Fatal(err)
-	}
-	invites, err := ceremony.NewInvitations(rec)
-	if err != nil {
-		t.Fatal(err)
-	}
-	bobInv, err := invites[bFP].Encode()
-	if err != nil {
-		t.Fatal(err)
-	}
+	// A REAL two-party ceremony putting Alice and Bob on one hop; Bob's invitation lets his
+	// arm take the connect path. Alice convenes and therefore signs the record — see
+	// convenedTwoParty.
+	prepared, bobInv := convenedTwoParty(t, aCert, aKey, aFP, bFP)
 
 	// Alice: a raw HANDSHAKED QUIC listener. She accepts Bob's dial and INITIATES on it — the
 	// role-opposite arrangement. She never dials, so the accepting side here is proof Bob dialed.
@@ -1516,16 +1493,6 @@ func TestCeremonyReceiverDialsAndCoSigns(t *testing.T) {
 			return
 		}
 		defer conn.Close()
-		base, e := testpdf.Form()
-		if e != nil {
-			errc <- e
-			return
-		}
-		prepared, e := p2p.PrepareDocument(base)
-		if e != nil {
-			errc <- e
-			return
-		}
 		place, e := p2p.NextPlacement(prepared)
 		if e != nil {
 			errc <- e
@@ -1662,21 +1629,12 @@ func TestCeremonyReDeliversAfterReconnect(t *testing.T) {
 	aFP := hex.EncodeToString(aFPBytes)
 	pinPeer(t, c, csrf, ts.URL, aFP)
 
-	cid, _ := ceremony.NewID()
-	rec := ceremony.Record{
-		ID: cid, DocHash: strings.Repeat("ef", 32), Intent: "We agree", Expires: time.Now().Add(48 * time.Hour),
-		Roster: []ceremony.Party{{Fingerprint: aFP, Label: "Alice", Signs: true}, {Fingerprint: bFP, Label: "Bob", Signs: true}},
-	}
-	if err := rec.Sign(aCert, aKey); err != nil {
-		t.Fatal(err)
-	}
-	invites, _ := ceremony.NewInvitations(rec)
-	bobInv, _ := invites[bFP].Encode()
+	// A REAL ceremony: the document carries the record its invitation commits to, so it
+	// survives C17's arrival gate. See convenedTwoParty.
+	prepared, bobInv := convenedTwoParty(t, aCert, aKey, aFP, bFP)
 
 	// Alice signs ONCE — the same document for both Initiates, so Bob's cache (keyed on the inbound)
 	// hits on the reconnect.
-	base, _ := testpdf.Form()
-	prepared, _ := p2p.PrepareDocument(base)
 	place, _ := p2p.NextPlacement(prepared)
 	att := p2p.Attestation{Signer: "Alice", AcceptedPeer: bFP, AcceptedPeerLabel: "Bob", Intent: "I agree", When: time.Now()}
 	aSigned, err := p2p.Contribute(prepared, aCert, aKey, att, nil, place)
@@ -1825,19 +1783,8 @@ func TestCeremonyReRacesAfterEarlyChannelLoss(t *testing.T) {
 	aFP := hex.EncodeToString(aFPBytes)
 	pinPeer(t, c, csrf, ts.URL, aFP)
 
-	cid, _ := ceremony.NewID()
-	rec := ceremony.Record{
-		ID: cid, DocHash: strings.Repeat("ba", 32), Intent: "We agree", Expires: time.Now().Add(48 * time.Hour),
-		Roster: []ceremony.Party{{Fingerprint: aFP, Label: "Alice", Signs: true}, {Fingerprint: bFP, Label: "Bob", Signs: true}},
-	}
-	if err := rec.Sign(aCert, aKey); err != nil {
-		t.Fatal(err)
-	}
-	invites, _ := ceremony.NewInvitations(rec)
-	bobInv, _ := invites[bFP].Encode()
-
-	base, _ := testpdf.Form()
-	prepared, _ := p2p.PrepareDocument(base)
+	// A REAL ceremony — see convenedTwoParty.
+	prepared, bobInv := convenedTwoParty(t, aCert, aKey, aFP, bFP)
 	place, _ := p2p.NextPlacement(prepared)
 	att := p2p.Attestation{Signer: "Alice", AcceptedPeer: bFP, AcceptedPeerLabel: "Bob", Intent: "I agree", When: time.Now()}
 	aSigned, _ := p2p.Contribute(prepared, aCert, aKey, att, nil, place)
@@ -1907,4 +1854,64 @@ func TestCeremonyReRacesAfterEarlyChannelLoss(t *testing.T) {
 	case <-time.After(20 * time.Second):
 		t.Fatal("the ceremony did not complete after an early channel loss — the loop did not re-race")
 	}
+}
+
+// convenedTwoParty builds a REAL two-party ceremony: a convened document carrying a signed
+// record, and the second party's invitation, which agree by construction because
+// `ceremony.Convene` made both.
+//
+// **Added at P07.S02b, and it replaces three fixtures that could not have been honest.** They
+// built a `ceremony.Record` with `DocHash: strings.Repeat("cd", 32)` and never embedded it, then
+// sent a document with no record on it at all — which was invisible for as long as nothing
+// checked, and stopped being invisible the moment C17's arrival gate arrived. The gate refusing
+// them is the gate working; a fixture that cannot survive the product's own reconciliation was
+// never testing a ceremony.
+//
+// `Convene` rather than hand-assembly for the same reason: the record's `DocHash` must be the
+// hash of the document it is embedded in, and `RosterHash` must commit to that, and getting
+// either wrong by hand produces a fixture that passes today and refuses tomorrow.
+func convenedTwoParty(t *testing.T, cCert, cKey []byte, cFP, otherFP string) (doc []byte, otherInvite string) {
+	t.Helper()
+	base, err := testpdf.Form()
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := ceremony.Convene(base, ceremony.ConveneRequest{
+		Roster: []ceremony.Party{
+			{Fingerprint: cFP, Label: "Alice", Signs: true},
+			{Fingerprint: otherFP, Label: "Bob", Signs: true},
+		},
+		Intent:  "We agree to co-sign",
+		Expires: time.Now().Add(48 * time.Hour),
+		// A generous hop budget: these tests are about the channel, and a deadline refusal
+		// here would fail them for a reason that has nothing to do with what they assert.
+		HopBudget:     time.Hour,
+		ConvenerSigns: true,
+	}, cCert, cKey, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, inv := range out.Invites {
+		if strings.EqualFold(inv.Party.Fingerprint, otherFP) {
+			otherInvite = inv.Text
+		}
+	}
+	if otherInvite == "" {
+		t.Fatalf("setup: convene issued no invitation for %s — the arm below would take the "+
+			"manual path and this would not be a ceremony test at all", short8(otherFP))
+	}
+	// Stimulus: the document really does carry a record that reconciles, or the arrival gate
+	// these fixtures now pass through would be passing for the wrong reason.
+	if _, err := ceremony.CheckRecord(out.Document, time.Now()); err != nil {
+		t.Fatalf("setup: the convened document's own record does not check out: %v", err)
+	}
+	return out.Document, otherInvite
+}
+
+// short8 is the eight-character form used in test failure messages.
+func short8(fp string) string {
+	if len(fp) > 8 {
+		return fp[:8]
+	}
+	return fp
 }

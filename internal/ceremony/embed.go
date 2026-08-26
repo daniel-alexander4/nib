@@ -131,6 +131,45 @@ func Extract(pdf []byte) (Record, error) {
 // itself — the convener's own bytes satisfy a round-trip test without anyone recomputing
 // anything.
 func CheckDocument(pdf []byte, now time.Time) (Record, error) {
+	r, err := CheckRecord(pdf, now)
+	if err != nil {
+		return r, err
+	}
+	got, err := DocumentHash(pdf)
+	if err != nil {
+		return r, err
+	}
+	if got != r.DocHash {
+		return r, fmt.Errorf("the document does not match the ceremony record: it hashes to %s "+
+			"and the record was written for %s — these are not the same document",
+			short(got), short(r.DocHash))
+	}
+	return r, nil
+}
+
+// CheckRecord is CheckDocument's first three questions and not its fourth: is there a record,
+// does its convener signature verify, and was it written under a digest rule this build can
+// compare against. It does NOT compare the document's hash.
+//
+// # Why this split exists (P07.S02b)
+//
+// **A receiving party can never pass `CheckDocument`, at any hop — measured, not argued.** The
+// document handed to a counterparty always carries at least the sender's co-signature, that
+// signature is VISIBLE on every production path (`buildCoSigned` supplies appearance bytes), a
+// visible signature adds a widget annotation, and `ContentDigest` hashes `/Annots`. Measured at
+// this slice: the hop-1 receiver's copy carries one valid signature, `Extract` and `Record.Verify`
+// both return nil, and `CheckDocument` returns *"these are not the same document"* — an
+// accusation of tampering aimed at an honest convener.
+//
+// So C17's *"the party runs CheckDocument"* is not buildable as written, for hop 1 any more than
+// for hop 4, and the honest split is this one: the record-level questions are answerable by
+// everybody and are what the arrival gate asks; the hash comparison is a **convene-time
+// identity**, answerable only before the first visible signature. `embed.go`'s own paragraph
+// above says so in those words; this function is that sentence made callable.
+//
+// `CheckDocument` keeps the hash comparison and keeps its callers — the convener checking their
+// own bytes, and the tests that measure the boundary.
+func CheckRecord(pdf []byte, now time.Time) (Record, error) {
 	r, err := Extract(pdf)
 	if err != nil {
 		return Record{}, err
@@ -152,15 +191,6 @@ func CheckDocument(pdf []byte, now time.Time) (Record, error) {
 			"content-digest rule %d and this build uses rule %d, so the two numbers are not "+
 			"comparable — update Nib rather than treating this as a changed document",
 			ErrDigestVersion, r.DigestVersion, pdfops.ContentDigestVersion)
-	}
-	got, err := DocumentHash(pdf)
-	if err != nil {
-		return r, err
-	}
-	if got != r.DocHash {
-		return r, fmt.Errorf("the document does not match the ceremony record: it hashes to %s "+
-			"and the record was written for %s — these are not the same document",
-			short(got), short(r.DocHash))
 	}
 	return r, nil
 }

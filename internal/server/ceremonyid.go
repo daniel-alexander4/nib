@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"nib/internal/ceremony"
 	"nib/internal/p2p"
@@ -320,6 +321,41 @@ func (c *ceremonyID) close() {
 	if c.end != nil {
 		c.end.Close()
 	}
+}
+
+// checkArrival is C17: the party reconciles the document it was handed against the invitation
+// its arm was built from, BEFORE the consent gate.
+//
+// # What it asks, and the one it deliberately does not
+//
+// `ceremony.CheckRecord` — a record is there, its convener signature verifies, and its digest
+// rule is one this build can compare against. Then `MatchesRecord`, which compares the
+// invitation's commitment against the record's and so binds this invitation to exactly ONE
+// record, covering every axis the preimage covers.
+//
+// **`CheckDocument`'s hash comparison is NOT asked, and that is measured rather than
+// conceded.** The document a counterparty is handed always carries at least the sender's
+// co-signature; that signature is visible on every production path; `ContentDigest` hashes
+// `/Annots`. Measured at this slice: the hop-1 receiver's copy verifies, its record extracts and
+// verifies, and `CheckDocument` answers *"these are not the same document"* — accusing an honest
+// convener of tampering. A gate that asked it would refuse every honest ceremony at hop 1, which
+// is the whole product. See `ceremony.CheckRecord`.
+//
+// # Why it is here and not in the confirmer
+//
+// ADR-009: the gate is one door, and its guard asserts that the confirmer routes THROUGH it
+// rather than asserting the text this function prints. `sessionConfirmer.Confirm` is the only
+// caller and it is the only place a received document exists before the user sees it.
+func (c *ceremonyID) checkArrival(pdf []byte, now time.Time) error {
+	rec, err := ceremony.CheckRecord(pdf, now)
+	if err != nil {
+		return fmt.Errorf("this document's ceremony record could not be checked: %w", err)
+	}
+	// Returned unwrapped: MatchesRecord's sentences already name the axis and the two values,
+	// and a preamble in front of "the invitation commits to ceremony X and this document's
+	// record commits to Y" makes the user read past the diagnosis. Unwrapped also keeps
+	// `errors.Is(err, ceremony.ErrRosterMismatch)` answerable by the caller.
+	return c.inv.MatchesRecord(rec)
 }
 
 // errNoCeremony reports an arm with no invitation — not an error, the ordinary case.

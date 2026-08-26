@@ -132,6 +132,8 @@ const EXCLUDED = {
   conveneRequest: 'request body, read by its handler',
   convenePartyRequest: 'request body, read by its handler',
   ceremonyInvitesRequest: 'request body, read by its handler',
+  // P07.S02b's accept route (v1.117.157).
+  acceptRequest: 'request body, read by its handler',
   listDirRequest: 'request body, read by its handler',
   ocrRequest: 'request body, read by its handler',
   tableRequest: 'request body, read by its handler',
@@ -154,6 +156,11 @@ const EXCLUDED = {
   // this parking is in observables_test.go for ceremony.Convened and vault.CeremonySecret.
   conveneResponse: 'P07.S02a ships the route before P06 builds its panel; no client reader yet',
   conveneInvite: 'P07.S02a ships the route before P06 builds its panel; no client reader yet',
+  // Same parking, same panel, one slice later (P07.S02b, v1.117.157). `/api/ceremony/accept`
+  // is the invitee's door and P06 builds the screen that shows a party who invited them, who
+  // else is on the roster, and in what capacity. Delete these two with the convene pair.
+  acceptResponse: 'P07.S02b ships the route before P06 builds its panel; no client reader yet',
+  acceptedParty: 'P07.S02b ships the route before P06 builds its panel; no client reader yet',
 };
 
 // ── Published, and NOT read ──────────────────────────────────────────────────

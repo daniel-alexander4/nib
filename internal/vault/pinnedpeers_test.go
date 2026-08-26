@@ -173,16 +173,16 @@ func TestPinnedPeersReportsWhetherAPinIsCeremonyScoped(t *testing.T) {
 		t.Fatalf("setup: %d pins returned, want 2", len(byFP))
 	}
 
-	if got := byFP[hex.EncodeToString(guest)].Ceremony; got != ceremony {
-		t.Errorf("a ceremony-scoped pin reports Ceremony = %q, want %q — D29's mark does not "+
-			"survive the accessor, so no caller outside this package can tell it apart from a "+
-			"pin the user made deliberately", got, ceremony)
+	if got := byFP[hex.EncodeToString(guest)].Ceremonies; len(got) != 1 || got[0] != ceremony {
+		t.Errorf("a ceremony-scoped pin reports Ceremonies = %q, want [%q] — D29's mark does "+
+			"not survive the accessor, so no caller outside this package can tell it apart "+
+			"from a pin the user made deliberately", got, ceremony)
 	}
 	// And the other direction, which is the half that makes the first meaningful: a
 	// user pin must NOT claim a ceremony. A copy that filled the field unconditionally
 	// would pass the assertion above.
-	if got := byFP[hex.EncodeToString(user)].Ceremony; got != "" {
-		t.Errorf("a pin the user made reports Ceremony = %q, want empty", got)
+	if got := byFP[hex.EncodeToString(user)].Ceremonies; len(got) != 0 {
+		t.Errorf("a pin the user made reports Ceremonies = %q, want none", got)
 	}
 
 	// Promotion is one-way: re-pinning a ceremony peer as a user peer clears the mark,
@@ -192,8 +192,8 @@ func TestPinnedPeersReportsWhetherAPinIsCeremonyScoped(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, p := range v.PinnedPeers() {
-		if bytes.Equal(p.Fingerprint, guest) && p.Ceremony != "" {
-			t.Errorf("after promotion the pin still reports Ceremony = %q", p.Ceremony)
+		if bytes.Equal(p.Fingerprint, guest) && len(p.Ceremonies) != 0 {
+			t.Errorf("after promotion the pin still reports Ceremonies = %q", p.Ceremonies)
 		}
 	}
 }
