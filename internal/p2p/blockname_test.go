@@ -150,35 +150,55 @@ func TestAnUnlabelledPartyFallsBackToItsFingerprintAndNeverToAConstant(t *testin
 // TestACapacityRendersOnlyForThePartyThatHasOne is D20's amendment: capacity is per-party, and an
 // empty one renders NOTHING rather than an empty field.
 //
-// The two halves fail differently on purpose. Reading the capacity off the wrong roster entry
-// gives every party party 2's capacity — caught by the second half; rendering an empty capacity as
-// a blank line makes a ceremony that needs none look misconfigured — caught by the first.
+// # Why TWO parties carry a capacity, which the first version got wrong
+//
+// The first version gave a capacity to one party only. It went red against a `StampCommitment`
+// reading `order[0].Capacity` instead of `order[pos].Capacity` — but for the wrong reason: with
+// party 0 holding no capacity, the wrong-index read gives everyone `""`, so the sole signal was
+// party 1 LOSING its capacity and the "reads the wrong entry" assertion never fired at all. Its
+// red proof was rejected by `redproof.sh` on exactly that ground ("went red, but not for its own
+// reason"), which is the third outcome that harness exists to distinguish.
+//
+// With capacities on parties 0 and 1 the two failures separate: reading the wrong entry gives
+// party 1 party 0's authority — a positive, wrong statement about who they are — while reading
+// nothing leaves it blank. A fixture that cannot tell those apart cannot claim to guard either.
 func TestACapacityRendersOnlyForThePartyThatHasOne(t *testing.T) {
-	r, parties := labelledRoster(t, 4, map[int]string{1: "as Guarantor"})
+	const (
+		cap0 = "as Director of Acme Ltd"
+		cap1 = "as Guarantor"
+	)
+	r, parties := labelledRoster(t, 4, map[int]string{0: cap0, 1: cap1})
 	for i, p := range parties {
 		att := Attestation{When: time.Now()}
 		StampCommitment(&att, r, p.fp)
-		lines := att.AppearanceLines()
-		joined := strings.Join(lines, "\n")
+		joined := strings.Join(att.AppearanceLines(), "\n")
 		has := strings.Contains(joined, "Capacity:")
-		if i == 1 {
-			if !has {
-				t.Errorf("party 1 signs %q and the block does not say so:\n%s",
-					r.Entries[1].Capacity, joined)
+		mine, theirs := "", ""
+		switch i {
+		case 0:
+			mine, theirs = cap0, cap1
+		case 1:
+			mine, theirs = cap1, cap0
+		}
+
+		if mine != "" {
+			if !has || !strings.Contains(joined, mine) {
+				t.Errorf("party %d signs %q and the block does not say so:\n%s", i, mine, joined)
 			}
-			if !strings.Contains(joined, "as Guarantor") {
-				t.Errorf("party 1's block carries a Capacity line without their capacity:\n%s", joined)
+			if strings.Contains(joined, theirs) {
+				t.Errorf("party %d's block carries the OTHER party's capacity — the entry is "+
+					"being read by the wrong index, so a party is given somebody else's "+
+					"authority:\n%s", i, joined)
 			}
-		} else {
-			if has {
-				t.Errorf("party %d has no capacity and their block carries a Capacity line "+
-					"anyway — a ceremony that needs no capacities must not look "+
-					"misconfigured:\n%s", i, joined)
-			}
-			if strings.Contains(joined, "as Guarantor") {
-				t.Errorf("party %d's block carries party 1's capacity — the entry is being read "+
-					"by the wrong index:\n%s", i, joined)
-			}
+			continue
+		}
+		if has {
+			t.Errorf("party %d has no capacity and their block carries a Capacity line anyway — "+
+				"a ceremony that needs no capacities must not look misconfigured:\n%s", i, joined)
+		}
+		if strings.Contains(joined, cap0) || strings.Contains(joined, cap1) {
+			t.Errorf("party %d has no capacity and their block carries another party's — the "+
+				"entry is being read by the wrong index:\n%s", i, joined)
 		}
 	}
 }
