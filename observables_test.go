@@ -77,6 +77,14 @@ var published = map[string][]string{
 	"rendezvous.Stats":       {"internal/cli/rendezvous.go", "internal/rendezvous/dht.go"},
 	"rendezvous.SelfAddress": {"internal/rendezvous/selfaddr.go", "internal/cli/rendezvous.go"},
 	"discovery.Stats":        {"internal/cli/discover.go"},
+	// **Declared with its DEFINING file as the only reader, which is the honest answer and is
+	// deliberately weak (P07.S06).** `SignatureWidgets` has no product caller: it is the positive
+	// control D25's placement clause asks for, answering "was this block DRAWN, and where" without
+	// a rasteriser. Naming a guard here would be worse than naming nothing, because this scan's
+	// standing rule is that tests do not count — "a counter a test asserts and no human ever sees
+	// is exactly the shape this scan exists to find". So every field is parked in `unreadKnown`
+	// beneath, where it stays visible instead of passing.
+	"pdfops.SignatureWidget": {"internal/pdfops/attachments.go"},
 	// **`discovery.Seen` is back, and the reason it was removed dissolved on being measured
 	// (/pending 284, 2026-08-27).** It was named here and had **never been discovered**: `Seen`
 	// embeds `Announcement`, and `discoverObservables` treated an embed as "fields this scan
@@ -146,6 +154,25 @@ var excluded = map[string]string{}
 // Deleting an entry is how one gets fixed; a NEW unread field cannot be parked without
 // somebody writing a line, which is the intended cost.
 var unreadKnown = map[string]string{
+	// **`pdfops.SignatureWidget`, P07.S06, and it is entered here the day it is written.**
+	//
+	// `SignatureWidgets` is the positive control D25's placement clause asks for: it answers "was
+	// this block DRAWN, and where" without a rasteriser, because a check on placement ARITHMETIC
+	// cannot distinguish "placed correctly" from "not placed at all" — both leave a valid document
+	// and sign.Verify reports an invisible signature exactly as it reports a visible one.
+	//
+	// Its only reader is a GUARD, and this scan's own standing rule is that tests do not count:
+	// "a counter a test asserts and no human ever sees is exactly the shape this scan exists to
+	// find". That rule is right and it is not suspended here — so rather than claim a reader, the
+	// three fields are parked visibly. The honest state is that nothing in the product surfaces
+	// where a block was drawn.
+	//
+	// Deleting these is what a UI that reports "your block is on page 6 of this document" does,
+	// and P07.S07 is the slice that renders block content.
+	"pdfops.SignatureWidget.Page":  "read by the P07.S06 placement guard only; no product surface reports where a block landed",
+	"pdfops.SignatureWidget.Rect":  "read by the P07.S06 placement guard only; no product surface reports where a block landed",
+	"pdfops.SignatureWidget.HasAP": "read by the P07.S06 placement guard only; nothing tells a user their block is blank",
+
 	// The node-cache trio. DELIBERATELY unprinted, and `internal/cli/rendezvous.go` says so
 	// at the line: this command uses a SCRATCH directory, so Loaded is always 0 and
 	// CacheRejected always false, and "printing them as if they were findings reads as a

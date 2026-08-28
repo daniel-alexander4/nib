@@ -602,3 +602,95 @@ func attachmentName(name string) string {
 	}
 	return name
 }
+
+// SignatureWidget is one visible signature's appearance on a page.
+type SignatureWidget struct {
+	Page  int        // 1-based
+	Rect  [4]float64 // llx, lly, urx, ury in PDF points
+	HasAP bool       // an appearance stream is attached, so there is something to draw
+}
+
+// SignatureWidgets reports every signature widget annotation and where it sits.
+//
+// **It answers "was this block DRAWN, and where" without a rasteriser** — which is the positive
+// control D25's placement clause asks for, in the only form this repo can produce. The clause is
+// right that "a raster cannot distinguish 'off the page' from 'never drawn'", and the corollary is
+// that a check on placement arithmetic alone cannot distinguish "placed correctly" from "not
+// placed at all": both leave a valid document, and `sign.Verify` reports an INVISIBLE signature
+// exactly as it reports a visible one.
+//
+// `HasAP` is the half that separates a widget from a drawing. An annotation with no /AP has a
+// rectangle and no appearance stream, so a reader renders nothing there — the block would be
+// "placed" by every geometric measure and blank on the page.
+//
+// This is not a rendered measurement and does not claim to be: it reads the file's structure, so
+// it cannot see a block that is drawn in white on white, or one an /AP stream positions outside
+// its own BBox. The rendered half needs pdf.js and belongs at tier 3.
+func SignatureWidgets(pdf []byte) ([]SignatureWidget, error) {
+	ctx, err := api.ReadValidateAndOptimize(bytes.NewReader(pdf), model.NewDefaultConfiguration())
+	if err != nil {
+		return nil, err
+	}
+	root, err := ctx.Catalog()
+	if err != nil {
+		return nil, err
+	}
+	var out []SignatureWidget
+	eachPage(ctx.XRefTable, root, func(page types.Dict, nr int) {
+		for _, a := range derefArray(ctx.XRefTable, page["Annots"]) {
+			annot := derefDict(ctx.XRefTable, a)
+			if annot == nil || nameVal(annot, "Subtype") != "Widget" {
+				continue
+			}
+			// /FT may live on the widget or be inherited from its AcroForm field parent; a
+			// signature widget that carries neither is not one.
+			ft := nameVal(annot, "FT")
+			if ft == "" {
+				if parent := derefDict(ctx.XRefTable, annot["Parent"]); parent != nil {
+					ft = nameVal(parent, "FT")
+				}
+			}
+			if ft != "Sig" {
+				continue
+			}
+			r := derefArray(ctx.XRefTable, annot["Rect"])
+			if len(r) != 4 {
+				continue
+			}
+			var rect [4]float64
+			ok := true
+			for i, v := range r {
+				f, isF := numeric(ctx.XRefTable, v)
+				if !isF {
+					ok = false
+					break
+				}
+				rect[i] = f
+			}
+			if !ok {
+				continue
+			}
+			out = append(out, SignatureWidget{
+				Page:  nr,
+				Rect:  rect,
+				HasAP: derefDict(ctx.XRefTable, annot["AP"]) != nil,
+			})
+		}
+	})
+	return out, nil
+}
+
+// numeric dereferences an object to a float, accepting both PDF numeric types.
+func numeric(xt *model.XRefTable, o types.Object) (float64, bool) {
+	d, err := xt.Dereference(o)
+	if err != nil {
+		return 0, false
+	}
+	switch v := d.(type) {
+	case types.Integer:
+		return float64(v.Value()), true
+	case types.Float:
+		return v.Value(), true
+	}
+	return 0, false
+}

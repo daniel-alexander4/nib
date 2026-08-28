@@ -1554,3 +1554,32 @@ func Optimize(pdf []byte) ([]byte, error) {
 	}
 	return out.Bytes(), nil
 }
+
+// PageBox returns a page's MediaBox as llx, lly, urx, ury in PDF points.
+//
+// **The origin is the point, and that is why this returns a box rather than a size.**
+// `api.PageDims` gives width and height, which is enough for a page whose box starts at (0,0) and
+// wrong for one that does not — and Nib's own split path produces exactly that: `CutPage`'s tiles
+// carry an **offset** MediaBox, as the comment on SplitPage says in as many words. A caller that
+// places content at "40 points up" using dimensions alone is measuring from the coordinate origin
+// and not from the page's lower edge, and on a tile those are different places.
+//
+// `page` is 1-based, as everywhere else in this package.
+func PageBox(pdf []byte, page int) (llx, lly, urx, ury float64, err error) {
+	ctx, err := api.ReadValidateAndOptimize(bytes.NewReader(pdf), model.NewDefaultConfiguration())
+	if err != nil {
+		return 0, 0, 0, 0, err
+	}
+	if page < 1 || page > ctx.PageCount {
+		return 0, 0, 0, 0, fmt.Errorf("page %d is outside this document's %d page(s)", page, ctx.PageCount)
+	}
+	_, _, attrs, err := ctx.PageDict(page, false)
+	if err != nil {
+		return 0, 0, 0, 0, err
+	}
+	if attrs == nil || attrs.MediaBox == nil {
+		return 0, 0, 0, 0, fmt.Errorf("page %d declares no MediaBox", page)
+	}
+	mb := attrs.MediaBox
+	return mb.LL.X, mb.LL.Y, mb.UR.X, mb.UR.Y, nil
+}

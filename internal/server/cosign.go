@@ -237,17 +237,23 @@ func (s *Server) handleCosignQuote(w http.ResponseWriter, r *http.Request) {
 		httpError(w, http.StatusBadRequest, "no document open")
 		return
 	}
-	// The placement's position varies, but its size is constant, and the client
-	// only uses the rectangle's width:height to size the rasterized block — /sign
-	// recomputes the authoritative placement on the prepared document.
-	place, err := p2p.NextPlacement(s.docBytes(doc))
-	if err != nil {
-		httpError(w, http.StatusInternalServerError, "could not place attestation")
-		return
-	}
+	// **The size template, not a placement — and this is the SECOND copy of that rule
+	// (P07.S06, ADR-009).** `NominalBlockRect` was written because "the rule had TWO
+	// implementations"; it fixed the hand-copied literal in this package and left this site,
+	// which computed a real placement — a full PageCount plus a sign.Verify over the open
+	// document — to publish a rect whose POSITION nothing reads. `web/app.js:956` takes
+	// `rect[2]-rect[0]` and `rect[3]-rect[1]` and nothing else, and the comment that used to
+	// sit here said exactly that while doing the opposite.
+	//
+	// The divergence was invisible precisely because the discarded half is the half that
+	// differs. It stops being invisible the moment placement needs a roster: the responder's
+	// block goes on the RECEIVED document, so this route has no roster and must not have one —
+	// binding to the open document would use the wrong page geometry, which is the reason
+	// `NominalBlockRect` records for existing at all. `/sign` computes the authoritative
+	// placement on the document that will actually carry it.
 	writeJSON(w, cosignQuote{
 		Lines: att.AppearanceLines(),
-		Rect:  place.Rect,
+		Rect:  p2p.NominalBlockRect(),
 		When:  att.When.UTC().Format(time.RFC3339),
 	})
 }
@@ -310,12 +316,14 @@ func (s *Server) buildCoSigned(w http.ResponseWriter, pdf, cert, key []byte, att
 	//
 	// 409 rather than 400: this is a refusal about the STATE of a proceeding, not about a
 	// malformed request, and the user's action is to wait rather than to correct a field.
+	// Hoisted out of the ceremony branch below (P07.S06): the placement needs it too, and
+	// computing it twice would be a second answer to "who am I" in one function.
+	myFP, err := sign.Fingerprint(cert)
+	if err != nil {
+		httpError(w, http.StatusInternalServerError, "could not read your own fingerprint")
+		return nil, false
+	}
 	if len(roster.Entries) > 0 {
-		myFP, err := sign.Fingerprint(cert)
-		if err != nil {
-			httpError(w, http.StatusInternalServerError, "could not read your own fingerprint")
-			return nil, false
-		}
 		if err := p2p.AdmitContribution(pdf, roster, hex.EncodeToString(myFP)); err != nil {
 			httpError(w, http.StatusConflict, err.Error())
 			return nil, false
@@ -355,9 +363,13 @@ func (s *Server) buildCoSigned(w http.ResponseWriter, pdf, cert, key []byte, att
 		}
 		prepared = p
 	}
-	place, err := p2p.NextPlacement(prepared)
+	// One door, branching on the roster (P07.S06). Inside a ceremony this party's block goes on
+	// the signature page their ROSTER POSITION allocates — not on the last page indexed by a count
+	// of signatures, which put every block of a nine-party ceremony on the second signature page
+	// and the last of them 50 pt off it. `myFP` is already computed above for AdmitContribution.
+	place, err := p2p.PlacementFor(prepared, roster, hex.EncodeToString(myFP))
 	if err != nil {
-		httpError(w, http.StatusInternalServerError, "could not place attestation")
+		httpError(w, http.StatusInternalServerError, "could not place attestation: "+err.Error())
 		return nil, false
 	}
 	signed, err := p2p.Contribute(prepared, cert, key, att, appearance, place)
