@@ -1358,6 +1358,12 @@
           <div class="cidrow"><span id="srvReasonCap" class="cidcap">Their signed statement</span>
             <span id="srvPeerReason"></span></div>
         </div>
+        <!-- Who has already signed (D27 item 3, C09). In a ceremony the connected peer is not
+             the roster: under a carry route it is a non-signing convener, and at hop 6 it is
+             whoever dialled rather than the five parties whose signatures this user is about to
+             join. Rendered in both states — a list, or the sentence saying there are none — so
+             "nobody has signed yet" and "Nib did not look" do not render the same. -->
+        <div id="srvSigners" class="consentid"></div>
         <div id="srvPreview" class="docpreview"></div>
         <label id="srvIntentRow">What you're agreeing to
           <textarea id="srvIntent" rows="2">I agree to sign this document.</textarea></label>

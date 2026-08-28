@@ -5320,15 +5320,20 @@ Acceptance:
 - The `Confirmer`-returned intent is **discarded** on the ceremony path, and `defaultIntent` is **unreachable** when a record is present — driven by a Confirmer returning something else and a Confirmer returning `""`.
 - An invitation whose intent differs from the record's is **refused by name** before consent (C17's intent third).
 
-#### P07.S07c — The surfaces: the consent gate, the panel, the verdict *(D27; C09 other half)* — **new, 2026-08-28, split out of S07**
+#### P07.S07c — The surfaces: the consent gate, the panel, the verdict *(D27; C09 other half)* — **new, 2026-08-28, split out of S07** *(done 2026-08-28, v1.117.220 — 3 clauses, all met; 4 red proofs, **two of which failed on their first attempt and both failures were in my own tests**: the denominator fixture had nine rows and nine signatures, so the two counts it distinguishes were the same number and the patch changed nothing; and the consent-signer tests called the function directly, so deleting its only caller left them green. One clause PINNED — the discriminator is the document's SHAPE, not whether it carries a record)*
 Scope, **re-derived at the split from the code**: on a nine-party document the first signer's
 `AcceptedPeer` is `""` (`PredecessorOf`), so `augmentSigDetails` (`web/app.js:3787`) returns early on
 its row and the panel renders **8 of 9**; `attested.length >= 2 && every(matched)` then prints *"each
 party's signature attests to **the other's** key"* over a nine-party ceremony.
+- T01 — `pendingView` carries every signature already on the arriving document; `Confirm` fills it. *(done)*
+- T02 — the consent screen renders them, and renders the empty case as a sentence rather than as nothing. *(done)*
+- T03 — the panel draws a row for every co-signing signature, including the first signer, whose row states C14's no-predecessor case. *(done — it had never had a surface)*
+- T04 — the denominator is Go's signature count. *(done)*
+- T05 — the mutual sentence is reserved for a mutual PAIR; a baton of any length gets a chain sentence. *(done — pinned; see below)*
 Acceptance:
 - The `Confirmer` is shown **every** party who has already signed, driven with a three-signature document.
 - The panel renders **every** signature on a nine-party document, and its "of N" denominator equals what Go reports.
-- The two-party string *"each party's signature attests to the other's key"* is **unreachable** on a document carrying a roster token.
+- ~~The two-party string *"each party's signature attests to the other's key"* is **unreachable** on a document carrying a roster token.~~ **Pinned 2026-08-28 at the slice, on a driven contradiction: the discriminator is the PARTY COUNT, not the presence of a record.** A two-party ceremony *is* mutual and that sentence is true of it — and `test/jsdom/oneproceeding.test.mjs` drives precisely that document (two parties naming different ceremonies) and asserts the positive survives, so a disagreement is *reported* rather than summarised away by deleting the good news. Suppressing on the roster token would have removed a true sentence to fix a false one. Re-pointed at C09's own text, which says nine: **the string is unreachable on a document with MORE THAN TWO signing parties**, which get a chain sentence instead — and "mutually" is itself false of a baton, since party 1 accepts nobody and nobody accepts party 9.
 
 #### P07.S09 — D33's placement guard, and the protocol version *(D32, D33; C12, C13)*
 Scope, **re-derived 2026-08-23**: most of what the first firming asked for already ships. Record skew and

@@ -74,6 +74,10 @@ const PUBLISHED = [
   { type: 'sessionStatus', readers: ['web/app.js'] },
   { type: 'receivedInfo', readers: ['web/app.js'] },
   { type: 'pendingView', readers: ['web/app.js'] },
+  // Who has already signed the arriving document (P07.S07c, D27 item 3). Rendered by
+  // `renderConsentSigners`, which draws a row per signer and marks an invalid one rather than
+  // dropping it — so all three fields have a reader on the consent screen.
+  { type: 'pendingSigner', readers: ['web/app.js'] },
   { type: 'verifyView', readers: ['web/app.js'] },
   { type: 'sendResult', readers: ['web/app.js'] },
   // P05.S11's D19 diagnosis surface. Published now; RENDERED by P06's ceremony panel, which is built

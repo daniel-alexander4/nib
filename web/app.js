@@ -141,6 +141,7 @@ const els = {
   srvWaitAddr: $('srvWaitAddr'), srvWaitPeer: $('srvWaitPeer'), srvDisarm: $('srvDisarm'),
   srvPeerLabel: $('srvPeerLabel'), srvPeerFp: $('srvPeerFp'), srvPeerCopy: $('srvPeerCopy'),
   srvReasonCap: $('srvReasonCap'), srvPeerReason: $('srvPeerReason'), srvPreview: $('srvPreview'),
+  srvSigners: $('srvSigners'),
   srvIntentRow: $('srvIntentRow'), srvIntent: $('srvIntent'),
   srvDecline: $('srvDecline'), srvAccept: $('srvAccept'),
   authOverlay: $('authOverlay'), authForm: $('authForm'), authTitle: $('authTitle'),
@@ -1290,8 +1291,60 @@ function showConsent(pending) {
   els.srvPeerLabel.textContent = pending.signer || recvArmedLabel || 'your pinned peer';
   els.srvPeerFp.textContent = groupFingerprint(recvPeerFp);
   els.srvPeerReason.textContent = pending.reason || '(none given)';
+  renderConsentSigners(pending.signers || []);
   showRecvView('srvConsent');
   loadPendingPreview(recvPoll);
+}
+
+// renderConsentSigners lists everyone already on the document the user is being asked to join
+// (D27 item 3, C09).
+//
+// **The connected peer is not the roster, and in a ceremony it is often not even a signer.**
+// `showConsent` above names one person — who the server saw connect — and under a carry route
+// that is a non-signing convener. A party asked to sign sixth was told about one person while
+// holding a document bearing five signatures.
+//
+// **Both states render.** An empty list produces the sentence rather than nothing, because
+// "nobody has signed this yet" and "Nib did not look" are different facts and an absent element
+// says the second. The first hop of a ceremony and every one-way transfer take that branch, and
+// they are the ordinary case rather than an error.
+//
+// An INVALID signature is listed and marked, never dropped: a document arriving with a broken
+// signature on it is exactly what the user needs to see before adding theirs, and silently
+// omitting it would make the list shorter and the document look cleaner than it is.
+function renderConsentSigners(signers) {
+  const box = els.srvSigners;
+  if (!box) return;
+  box.innerHTML = '';
+  const cap = document.createElement('div');
+  cap.className = 'cidlabel';
+  cap.textContent = 'Already signed by';
+  box.appendChild(cap);
+  if (!signers.length) {
+    const p = document.createElement('p');
+    p.className = 'libhint';
+    p.textContent = 'Nobody yet — you would be the first to sign this document.';
+    box.appendChild(p);
+    return;
+  }
+  for (const s of signers) {
+    const row = document.createElement('div');
+    row.className = 'cidrow';
+    const who = document.createElement('strong');
+    who.textContent = s.signer || '(unnamed)';
+    row.appendChild(who);
+    const fp = document.createElement('span');
+    fp.className = 'cidcap';
+    fp.textContent = ' ' + groupFingerprint((s.fingerprint || '').slice(0, 8)) + '…';
+    row.appendChild(fp);
+    if (!s.valid) {
+      const bad = document.createElement('span');
+      bad.className = 'sigatt-warn';
+      bad.textContent = ' — this signature does not verify';
+      row.appendChild(bad);
+    }
+    box.appendChild(row);
+  }
 }
 
 // loadPendingPreview renders the received document in its own pdf.js instance,
@@ -3786,7 +3839,16 @@ async function augmentSigDetails(rows) {
   } catch { return; }
   const attested = [];
   atts.forEach((a, i) => {
-    if (!a.acceptedPeer || !rows[i]) return;
+    // **Every co-signing signature gets a row, including the one that accepts nobody
+    // (P07.S07c, C09, C14).**
+    //
+    // This read `if (!a.acceptedPeer) return`, which is exactly the FIRST SIGNER of a ceremony:
+    // `PredecessorOf` returns "" for them because there is nobody before them, which C14 as
+    // amended calls out by name. So on a nine-party document the panel rendered EIGHT rows and
+    // silently dropped the party who went first — the one a reader is most likely to be
+    // checking. A signature carrying a roster commitment is part of the proceeding whether or
+    // not it accepts a predecessor.
+    if ((!a.acceptedPeer && !a.rosterHash) || !rows[i]) return;
     attested.push(a);
     const box = document.createElement('div');
     box.className = 'sigatt';
@@ -3794,7 +3856,13 @@ async function augmentSigDetails(rows) {
     what.textContent = a.reason.replace(/\[SPKI:([0-9a-fA-F]{64})\]/, (_, h) => '[' + groupFingerprint(h.slice(0, 8)) + '…]');
     box.appendChild(what);
     const verdict = document.createElement('div');
-    if (a.matched) {
+    if (!a.acceptedPeer && a.rosterHash) {
+      // C14's own words, given a surface for the first time. This is not a failure to match —
+      // it is the correct and expected state of the party who signed first, and rendering it as
+      // "not a confirmed co-signer" would accuse the one signature that cannot be anything else.
+      verdict.className = 'sigatt-ok';
+      verdict.textContent = '✓ First signer — there was no earlier party for this signature to accept.';
+    } else if (a.matched) {
       verdict.className = 'sigatt-ok';
       verdict.textContent = '✓ Accepts a co-signer of this document' + (a.pinned ? ', whom you have pinned' : '');
     } else {
@@ -3806,10 +3874,42 @@ async function augmentSigDetails(rows) {
     box.appendChild(verdict);
     rows[i].appendChild(box);
   });
-  if (attested.length >= 2 && attested.every((a) => a.matched)) {
+  // Which signatures claim a ceremony. Computed here rather than below, because it now gates
+  // the mutual-co-sign sentence as well as the proceeding line.
+  const claimed = attested.filter((a) => a.rosterHash);
+  // **"each party’s signature attests to the OTHER’s key" is a two-party sentence, and it fired
+  // on nine-party ceremonies (P07.S07c, C09).**
+  //
+  // `matched` is per-pair, so on a completed baton every signature after the first matches its
+  // predecessor and the condition held — printing a sentence about "the other party" over a
+  // document with nine of them. It is not merely imprecise: a reader checking a nine-party deed
+  // was told the document is a mutual exchange between two people. And "mutually" is itself
+  // false of a baton: party 1 accepts nobody and nobody accepts party 9.
+  //
+  // **The discriminator is the PARTY COUNT, not whether a record is present**, and the slice's
+  // own acceptance said the latter until this was driven. A two-party ceremony IS mutual and its
+  // sentence is true; `oneproceeding.test.mjs` drives exactly that document — two parties naming
+  // different ceremonies — and asserts the positive survives so a disagreement is reported
+  // rather than summarised away. Suppressing on the record would have deleted a true sentence to
+  // fix a false one. The plan clause is pinned to C09's own text, which says nine.
+  //
+  // The chain branch is `>= 2`, not `> 2`, and driving it is what found that. A TWO-party
+  // ceremony is a baton as well — party 0 accepts nobody — so `every(matched)` is false for it
+  // and it fell through both branches, saying nothing positive at all. The mutual branch is
+  // exactly the documents where "the other" is a correct word: two signatures, each matching.
+  // Its condition is C14 as amended: every signature THAT HAS A PREDECESSOR is matched, the
+  // first having none.
+  if (attested.length === 2 && attested.every((a) => a.matched)) {
     const m = document.createElement('div');
     m.className = 'sigmutual';
     m.textContent = '✓ Mutually co-signed — each party’s signature attests to the other’s key.';
+    els.sigDetailsBody.appendChild(m);
+  } else if (attested.length >= 2 &&
+      attested.every((a) => a.matched || (!a.acceptedPeer && a.rosterHash))) {
+    const m = document.createElement('div');
+    m.className = 'sigmutual';
+    m.textContent = '✓ Every signature after the first attests to the party before it — ' +
+      attested.length + ' parties, each one bound to the one ahead of them.';
     els.sigDetailsBody.appendChild(m);
   }
   // Whether they all signed the SAME proceeding, which "mutually co-signed" above does
@@ -3827,7 +3927,6 @@ async function augmentSigDetails(rows) {
   // `oneProceeding` is false — identical to the disagreement case if read naively. So the
   // discriminator is whether ANY signature claims a ceremony; only then is agreement a
   // question that has been asked.
-  const claimed = attested.filter((a) => a.rosterHash);
   if (claimed.length) {
     const p = document.createElement('div');
     if (attested.every((a) => a.oneProceeding)) {
@@ -3855,7 +3954,12 @@ async function augmentSigDetails(rows) {
         // it covers a mixed document (one ceremony signature and one ordinary co-sign) as
         // well as two different ceremonies, and a verifier must not accuse where it can only
         // observe.
-        p.textContent = '⚠ Not one proceeding — ' + claimed.length + ' of ' + attested.length +
+        // **The denominator is every signature on the document, not the filtered subset.**
+        // `attested.length` counts only the rows this function drew, so a document with a
+        // foreign approval signature on it reported "2 of 2" while carrying three — and before
+        // P07.S07c it under-counted a ceremony by one, because the first signer was skipped.
+        // What a reader compares this against is the signature count Go reports.
+        p.textContent = '⚠ Not one proceeding — ' + claimed.length + ' of ' + atts.length +
           ' signature(s) name a ceremony, and they do not all commit to the same one. '
           + 'This document was not produced by a single agreed proceeding.';
       }
