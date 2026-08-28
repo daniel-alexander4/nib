@@ -158,6 +158,13 @@ type Server struct {
 	vault *vault.Vault // unlocked vault, nil until the SSH key unlocks it
 	csrf  string       // per-process CSRF token, issued when the vault unlocks
 
+	// punchMu guards punchBudgets: D33's per-(hop, side) packet counters, keyed by ceremony id
+	// (P07.S09b). Held here because a "side" is this MACHINE in a proceeding, and the two
+	// `ceremonyID`s that punch for one hop — the armed one and the dialing one — do not outlive
+	// each other. Before this each built its own and a side emitted twice the law figure.
+	punchMu      sync.Mutex
+	punchBudgets map[string]*punchBudget
+
 	// The document registry. Today it holds at most one entry and every route
 	// acts on the active id, so behaviour is identical to the single `doc` field
 	// this replaces — the registry exists so that P03.S02 can put ids on the wire

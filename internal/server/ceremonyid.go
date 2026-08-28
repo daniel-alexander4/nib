@@ -40,6 +40,11 @@ type ceremonyID struct {
 	// signed by the identity, not by the ceremony, and the publish path needs both.
 	certPEM, keyPEM []byte
 
+	// punch is D33's per-(hop, side) packet budget, shared with the OTHER ceremonyID this machine
+	// holds for the same ceremony (P07.S09b). Set by punchBudget() below; read by diagnose() so
+	// the drops reach D19's sentence. Guarded by mu, like every other field diagnose() reads.
+	punch *punchBudget
+
 	// end is the ONE socket the DHT and the armed listener share, and rz is the rendezvous
 	// server on its DHT view. Both nil on the TCP transport — see openRendezvous.
 	end *p2p.SharedEndpoint
@@ -550,6 +555,23 @@ func (c *ceremonyID) l3Roster() p2p.Roster {
 		})
 	}
 	return out
+}
+
+// punchBudget returns this ceremony's packet budget on this machine, and remembers it so
+// `diagnose` can report the drops.
+//
+// Both punch loops of one hop call it and both get the same counter — that is the whole point,
+// and it is why the budget is keyed by ceremony id on the Server rather than built at the call
+// site. Nil-safe: a punch outside any ceremony has no proceeding to share a budget within.
+func (c *ceremonyID) punchBudget(s *Server) *punchBudget {
+	if c == nil {
+		return &punchBudget{}
+	}
+	b := s.punchBudgetFor(c.inv.ID)
+	c.mu.Lock()
+	c.punch = b
+	c.mu.Unlock()
+	return b
 }
 
 // carries reports whether this machine moves the baton for this ceremony without contributing to
