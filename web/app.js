@@ -2994,7 +2994,12 @@ function pageFingerprints(texts, tag) {
 // the match test: exact equality for text fingerprints, or a perceptual-hash
 // distance threshold for scans — within-threshold pairs become aligned diagonals,
 // everything else a gap, which is exactly LCS with a fuzzy equality predicate.
-function alignPages(ka, kb, eq = (x, y) => x === y) {
+// **Exported for tier 3 (/pending 282).** The threshold's effect is not visible at the threshold:
+// what the user sees is how many pages the LCS below aligns, and a test that reimplemented this
+// would be a private copy of the thing under measurement — the failure this file's compare-hash
+// test records twice, once where a copy kept every assertion green against a product that had
+// changed, and once where the copy AGREED with a product defect and confirmed it back.
+export function alignPages(ka, kb, eq = (x, y) => x === y) {
   const m = ka.length, n = kb.length;
   const dp = Array.from({ length: m + 1 }, () => new Int32Array(n + 1));
   for (let i = m - 1; i >= 0; i--) {
