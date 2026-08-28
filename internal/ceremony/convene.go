@@ -162,6 +162,22 @@ func Convene(pdf []byte, req ConveneRequest, certPEM, keyPEM []byte, now time.Ti
 	if err := checkIntent(req.Intent); err != nil {
 		return Convened{}, err
 	}
+	// **The other two strings that reach a signature block (P07.S07a).**
+	//
+	// Until this slice a party's `Label` and `Capacity` were carried, committed and never
+	// rendered, so their width could not matter. Now a block says `Signer: <label>` and
+	// `Capacity: <capacity>`, drawn by the same `ctx.fillText` with no `maxWidth` that
+	// `IntentFitsBlock` exists to protect the recital from — two more silent clippings, of which
+	// capacity is the worse: it is a claim about a party's AUTHORITY, it is inside the signed
+	// commitment, and half of it on the page is a document that says something other than what
+	// the parties agreed.
+	//
+	// Refused at CONVENE, on the same reasoning as the recital: this is the last moment the
+	// convener can retype it, and the alternative is discovering it on a finished document that
+	// several people have already signed.
+	if err := checkRosterText(roster); err != nil {
+		return Convened{}, err
+	}
 
 	signing := 0
 	for _, p := range roster {
@@ -319,6 +335,39 @@ func canonicalRoster(req ConveneRequest, convFP string) ([]Party, error) {
 // measured before it is refused. Belt and braces alongside MaxIntentRunes's bisection: a
 // cheap constant refusal beats a fast measurement of something absurd.
 const maxIntentInput = 4096
+
+// checkRosterText refuses a label or a capacity that would not render in full on a block.
+//
+// Named per party rather than generically, because the convener's action is to shorten ONE
+// person's entry and a message that does not say whose sends them to re-read the whole roster.
+func checkRosterText(roster []Party) error {
+	for _, p := range roster {
+		who := p.Label
+		if who == "" {
+			who = short(p.Fingerprint)
+		}
+		if n := len([]rune(p.Label)); n > maxIntentInput {
+			return fmt.Errorf("%w: %s's label is %d characters, and a label is a name rather "+
+				"than a document", ErrIntentTooLong, who, n)
+		}
+		if !p2p.LabelFitsBlock(p.Label) {
+			return fmt.Errorf("%w: %s's label is %d characters and about %d fit. Every signature "+
+				"block names its party in full, so Nib refuses a label it would have to cut",
+				ErrIntentTooLong, who, len([]rune(p.Label)), p2p.MaxLabelRunes(p.Label))
+		}
+		if n := len([]rune(p.Capacity)); n > maxIntentInput {
+			return fmt.Errorf("%w: %s's capacity is %d characters, and a capacity is a phrase "+
+				"rather than a document", ErrIntentTooLong, who, n)
+		}
+		if !p2p.CapacityFitsBlock(p.Capacity) {
+			return fmt.Errorf("%w: %s's capacity is %d characters and about %d fit. A capacity is "+
+				"a claim about that party's authority and their block carries it in full, so Nib "+
+				"refuses one it would have to cut",
+				ErrIntentTooLong, who, len([]rune(p.Capacity)), p2p.MaxCapacityRunes(p.Capacity))
+		}
+	}
+	return nil
+}
 
 func checkIntent(intent string) error {
 	if strings.TrimSpace(intent) == "" {

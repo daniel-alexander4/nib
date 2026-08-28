@@ -812,9 +812,10 @@ func coSignExchange(myCertPEM, myKeyPEM, peerFP []byte, peerLabel string, inboun
 		Intent:            intent,
 		When:              time.Now(),
 	}
-	// This signature NAMES its ceremony (C19/C01), through the one door both contribution paths
-	// use. A no-op outside a ceremony, where there is no proceeding to name.
-	StampCommitment(&att, roster)
+	// This signature NAMES its ceremony (C19/C01) and this party (P07.S07a), through the one door
+	// both contribution paths use. A no-op outside a ceremony, where there is no proceeding to
+	// name and the certificate's own common name is the honest answer for the signer.
+	StampCommitment(&att, roster, hex.EncodeToString(myFP))
 	final, err := Contribute(inbound, myCertPEM, myKeyPEM, att, appearance, place)
 	if err != nil {
 		return nil, err

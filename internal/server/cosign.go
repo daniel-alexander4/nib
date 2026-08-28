@@ -339,8 +339,13 @@ func (s *Server) buildCoSigned(w http.ResponseWriter, pdf, cert, key []byte, att
 		//
 		// The first signer accepts "" — there is nobody before them, and that is C14 as amended.
 		att.AcceptedPeer = p2p.PredecessorOf(roster, hex.EncodeToString(myFP))
-		// And it NAMES the ceremony, through the one door the receiving side also uses.
-		p2p.StampCommitment(&att, roster)
+		// And it NAMES the ceremony — and, since P07.S07a, this party: their label, their
+		// capacity and their position in the signing order, through the one door the receiving
+		// side also uses. `att.Signer` arrives here as the `"Nib User"` constant
+		// `cosignAttestation` sets for the manual co-sign; inside a ceremony the roster overrides
+		// it, which is why the constant is left where it is rather than deleted — a document
+		// co-signed outside a ceremony genuinely has no roster to be named by.
+		p2p.StampCommitment(&att, roster, hex.EncodeToString(myFP))
 	}
 	prepared := pdf
 	if sign.Verify(pdf).State == sign.Unsigned {
