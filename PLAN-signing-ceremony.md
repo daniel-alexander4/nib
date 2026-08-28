@@ -5205,7 +5205,7 @@ away in `answerLoop`. What was added is a reader, not a browse. **And `answerHop
 caller** — the QUIC arm — so the TCP arm gained it too, which also closes a findability gap S05c
 left open.
 
-#### P07.S06 — Placement: measured, on the pages S02 allocated *(D25; C03)* *(done 2026-08-27, v1.117.210 — 6 met, 1 PARTLY: the rendered half of the differential measurement is owed and filed)*
+#### P07.S06 — Placement: measured, on the pages S02 allocated *(D25; C03)* *(done 2026-08-27, v1.117.210 — 6 met, 1 PARTLY: the rendered half of the differential measurement owed and filed as /pending 302. **Discharged 2026-08-28, v1.117.212**: the item's blocker — "a tier-3 ceremony fixture" — was refuted, the appearance writer being roster-blind and reachable through `/api/cosign/sign` with no peer. `test/ui/blockink.test.mjs` renders the readme page across a sixth contribution and measures the block's ink against the widget's own /Rect; block 6 covers 4660 pixels of readme prose, and blocks 1–2 sit on a blank margin, which is why two contributions were not enough. Three replayable rows, one of which this slice's own structural guard stays GREEN against. Residue: /pending 305, the nine-party rendered case with real block content, which P07.S07's fixture unblocks.)*
 Scope, **re-derived from measurement 2026-08-23 — the first firming got all three numbers wrong.** The block
 page is **always A4 595×842**, whatever the source paper, because `RenderReadme` hardcodes `A4P`; the earlier
 scope said 792. With `y0 = 40 + i*96` and `height 84`: **blocks 3 through 7 overlap the readme body** (baselines
