@@ -785,7 +785,10 @@ func coSignExchange(myCertPEM, myKeyPEM, peerFP []byte, peerLabel string, inboun
 	if err != nil {
 		return nil, err
 	}
-	place, err := NextPlacement(inbound)
+	// One door, and it branches on the roster rather than the caller doing so (P07.S06): inside a
+	// ceremony the block goes on the signature page this party's ROSTER POSITION allocates, and
+	// outside one it stacks on the readme page as it always has.
+	place, err := PlacementFor(inbound, roster, hex.EncodeToString(myFP))
 	if err != nil {
 		return nil, err
 	}

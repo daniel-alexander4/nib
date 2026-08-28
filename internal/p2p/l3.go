@@ -109,6 +109,19 @@ var (
 	ErrPrefixUnproven = errors.New("a signature already on this document does not prove what the roster requires")
 	// ErrProceedingMismatch: a signature carries a commitment to a different ceremony.
 	ErrProceedingMismatch = errors.New("this document's signatures are not all from this ceremony")
+	// ErrNoSignaturePages: this document does not carry the signature pages its roster needs.
+	//
+	// A REFUSAL and never a fallback (P07.S06). The tempting behaviour is to place the block on
+	// whatever page exists — which is the readme page, which is the overlap D25 exists to catch,
+	// arrived at by the code that was fixing it.
+	ErrNoSignaturePages = errors.New("this document has no signature page for this party's block")
+	// ErrBlockOffThePage: the block's rect does not fit the target page's MediaBox.
+	//
+	// Named rather than clamped, because pdfcpu CLAMPS overflow silently — measured at P07.S08,
+	// where it made an instrument blind to the very thing it was built to see. A clamp turns "the
+	// block is off the page" into "the block is a different size", and only one of those is
+	// visible to a reader of the finished document.
+	ErrBlockOffThePage = errors.New("this party's block does not fit on the page it was placed")
 	// ErrCeremonyComplete: every signing party has signed; there is no next contributor.
 	ErrCeremonyComplete = errors.New("every signing party has already signed this document")
 )
@@ -123,12 +136,7 @@ var (
 // It returns the roster entry whose contribution the document is waiting for, having first
 // established that everything already on the document is the prefix before it.
 func NextContributor(pdf []byte, r Roster) (RosterEntry, error) {
-	signing := make([]RosterEntry, 0, len(r.Entries))
-	for _, e := range r.Entries {
-		if e.Signs {
-			signing = append(signing, e)
-		}
-	}
+	signing := SigningOrder(r)
 	if len(signing) == 0 {
 		return RosterEntry{}, fmt.Errorf("%w: this roster has no signing parties", ErrPrefixMismatch)
 	}
@@ -225,21 +233,47 @@ func NextContributor(pdf []byte, r Roster) (RosterEntry, error) {
 //
 // The first signer accepts "" and that is correct rather than a gap: there is nobody before them.
 func PredecessorOf(r Roster, me string) string {
-	signing := make([]string, 0, len(r.Entries))
+	signing := SigningOrder(r)
+	i, ok := SigningPositionOf(r, me)
+	if !ok || i == 0 {
+		return ""
+	}
+	return signing[i-1].Fingerprint
+}
+
+// SigningOrder is the roster's signing parties, in roster order — the ONE door onto "who signs,
+// and in what sequence" (ADR-009).
+//
+// The walk is three lines and it had three copies: `NextContributor`, `PredecessorOf` and
+// `AdmitContribution` each filtered `e.Signs` for their own purpose. Three copies of a filter is
+// not a crisis on the day it is written; it is the state ADR-009 describes, and P07.S06 was about
+// to add a fourth for the block index. The predicate that decides a party's POSITION now decides
+// it once, so a rule change reaches the placement, the prefix check and the refusal together.
+func SigningOrder(r Roster) []RosterEntry {
+	out := make([]RosterEntry, 0, len(r.Entries))
 	for _, e := range r.Entries {
 		if e.Signs {
-			signing = append(signing, e.Fingerprint)
+			out = append(out, e)
 		}
 	}
-	for i, fp := range signing {
-		if strings.EqualFold(fp, me) {
-			if i > 0 {
-				return signing[i-1]
-			}
-			return ""
+	return out
+}
+
+// SigningPositionOf is a signing party's 0-based place in that order, and whether they hold one.
+//
+// **This is what a visible block's index must come from (D25, P07.S06).** It is NOT
+// `len(sign.Verify(pdf).Signers)`, which was the old rule and is wrong three ways the plan names:
+// an invisible contribution burns a slot, the count can go DOWN when a signature blob will not
+// parse (a destroyed signature VANISHES rather than reporting invalid — see NextContributor), and
+// a foreign approval signature shifts the origin. A party's position in the roster is a fact about
+// the ceremony; a count of signatures on a file is a fact about the file.
+func SigningPositionOf(r Roster, fp string) (int, bool) {
+	for i, e := range SigningOrder(r) {
+		if strings.EqualFold(e.Fingerprint, fp) {
+			return i, true
 		}
 	}
-	return ""
+	return 0, false
 }
 
 // InRoster reports whether a fingerprint is a party to this ceremony at all — signing or not.

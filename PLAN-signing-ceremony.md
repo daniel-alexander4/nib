@@ -5205,7 +5205,7 @@ away in `answerLoop`. What was added is a reader, not a browse. **And `answerHop
 caller** — the QUIC arm — so the TCP arm gained it too, which also closes a findability gap S05c
 left open.
 
-#### P07.S06 — Placement: measured, on the pages S02 allocated *(D25; C03)*
+#### P07.S06 — Placement: measured, on the pages S02 allocated *(D25; C03)* *(done 2026-08-27, v1.117.210 — 6 met, 1 PARTLY: the rendered half of the differential measurement is owed and filed)*
 Scope, **re-derived from measurement 2026-08-23 — the first firming got all three numbers wrong.** The block
 page is **always A4 595×842**, whatever the source paper, because `RenderReadme` hardcodes `A4P`; the earlier
 scope said 792. With `y0 = 40 + i*96` and `height 84`: **blocks 3 through 7 overlap the readme body** (baselines
@@ -5221,6 +5221,53 @@ Acceptance:
 - `NextPlacement` reads the target page's **MediaBox** and refuses — named error, never a clamp — a rect that will not fit, driven on a page that is not A4. `stackPlacement` reads no geometry today and `bottom = 40.0` is a distance from the *coordinate origin*, not the page's lower edge; Nib's own split path produces tiles with an offset MediaBox.
 - The block index comes from the contributing party's **roster position**, not from `len(Verify(pdf).Signers)`: an invisible contribution burns a slot, the count can go **down** when a signer's blob will not parse, and a foreign approval signature shifts the origin.
 - The red proof shows the failure is **silent** — `valid`, `addedAfter=false` — beside the missing ink, or it will be read as a crash-class bug.
+
+Tasks *(deepdive + grill 2026-08-27, `grills/2026-08-27-p07s06-placement.md`; verdict amended)*:
+- **T01** — the ceremony placement door: page and within-page index from the party's roster
+  **signing position**, both derived from `blocksPerPage`/`SignaturePagesFor` so D25's six gets no
+  second copy. `NextPlacement(pdf)` is unchanged for the non-ceremony path — the two-party co-sign
+  has no roster, so these are two rules and not two implementations of one. **The defect S02's own
+  comment already named:** page order is `[source…][readme][ceremony][sig 1 … sig n]` and
+  `NextPlacement` targets the LAST page, so at nine signers every block lands on sig page 2 indexed
+  by the global signer count — signature page 1 receives nothing and blocks 6–8 climb off the box.
+- **T02** — `stackPlacement` reads the target page's **MediaBox** and refuses by name, never
+  clamps. Driven on a non-A4 page, which Nib's own split path produces.
+- **T03** — **the finding this scope did not contain.** `NominalBlockRect` exists because *"the
+  rule had TWO implementations"* — and it fixed one and left another. Two routes emit
+  `cosignQuote`: `session.go:1418` uses `NominalBlockRect()`, and `cosign.go:243` runs a full
+  `PageCount` + `sign.Verify` over the open document to publish a rect whose position the client
+  never reads (`web/app.js:956` takes width and height and nothing else) — its own comment beside
+  it says so. It is a **precondition** here, not a tidy: placement is about to need a roster and
+  that site has none, nor should it.
+- **T04** — the differential ink measurement with its positive control, N=4 and N=9 as separate
+  fixtures.
+- **T05** — the driver clause 1 still owes (below).
+- **T06** — red proofs; `recorded` moves.
+
+**Ledger — 6 met, 1 partly.** Six blocks to a page: **met at S02** (see below), driver added here.
+Roster-position index: met, driven on a roster whose signing order and roster order differ, and
+red-proved. Overlap at N=4 / clip at N=9 as separate fixtures: met. MediaBox refusal, named and
+never a clamp: met, driven on **Nib's own offset tiles** — measured, `SplitPage(base,1,2,2,false)`
+produces boxes like `(297.5,421)-(595,842)`, so the clause's premise is checked rather than
+asserted. Positive control: met **structurally** — `pdfops.SignatureWidgets` reads the widget back
+out of the signed bytes (page, rect, and whether an /AP exists at all), because a check on
+placement arithmetic cannot tell "placed correctly" from "not placed at all"; probed red by
+dropping the appearance.
+
+**PARTLY: the RENDERED half of the differential measurement.** The clause wants a scan of the
+composited page. There is no PDF rasteriser in Go (checked: `go.mod` has none), so it belongs at
+tier 3 with pdf.js, where `stamplace.test.mjs` is the precedent — and tier 3 has no ceremony
+fixture, which is machinery comparable in size to this slice. **What the fix changes about the
+question:** blocks now live on dedicated signature pages, so "no readme ink under a block" is no
+longer a scan — it is that no block is on that page at all, which is asserted structurally here.
+What remains genuinely unrendered is a block drawn white-on-white or an /AP positioning content
+outside its own BBox. Filed rather than implied.
+
+**Clause 1's build half is ALREADY MET, by S02** — recorded so this slice does not credit itself
+with another's work, the bookkeeping S04 and S05a both owed. `internal/ceremony/convene.go:166-171`
+counts `p.Signs` and nothing else and hands that to `PrepareCeremonyDocument` (`:196`), so a
+`signs:false` convener already allocates no page. What is owed is the **driver** the clause names:
+a roster whose length and signing count straddle a page boundary.
 
 #### P07.S07 — Every block names its party, its capacity and its ceremony *(D20 pin as amended, D27; C09, C15, C19)*
 Scope: `coSignExchange` takes the intent from `c.Confirm` — typed per hop — while `Record.Intent` calls itself
