@@ -24,6 +24,35 @@
 // INVERT — same-page 46, different-page 32. There is no constant that separates them, which is
 // /pending 277's finding arriving through the consumer. That is the case for a different hash, not
 // a different number, and it is filed as such.
+// ── pHash was measured as a replacement and REJECTED, so nobody re-derives it ────────────────
+//
+// /pending 282 recorded that a pHash — DCT of a 32×32 reduction, low 8×8 band, 63 bits — "reaches
+// the oracle's own ceiling and the shipped hash does not", scoring 64/66 where the shipped hash
+// produced zero correct diagonals. Re-measured on the corrected fixtures at v1.117.200, against
+// the shipped hash through this same LCS, one 8-page document versus rescans of itself:
+//
+//     regime      dhash worst / nearest-different      phash worst / nearest-different
+//     gentle          2 / 18   separates                    2 /  8   separates
+//     moderate       10 / 22   separates                   14 / 10   OVERLAPS
+//     hard           28 / 30   separates                   18 / 16   OVERLAPS
+//
+// **The shipped hash separates in all three; the candidate overlaps in two.** 282's pHash numbers
+// came from the same fixture family whose aliasing v1.117.152 corrected — the doubt that
+// invalidated its threshold half applies to its hash half too, and the entry flagged it for one
+// and not the other.
+//
+// **The gate 282 named is discharged rather than inherited.** It said JPEG blocking lives at 8×8,
+// exactly the basis a DCT hash reads, so real scans could hurt pHash in a way synthetic fixtures
+// cannot show. Measured with a real browser JPEG round-trip at q0.6, with a stimulus assertion
+// proving it fired — **11.5M pixels changed across 32 pages, 89% of the worst page, max delta 46**
+// — and BOTH hashes returned bit-identical results. At a mean reduction whose cells span several
+// JPEG blocks, the blocking averages away entirely. The risk was real to name and is not real.
+//
+// **The caveat, because one fixture family is not a proof:** these pages are nine vertical bars,
+// which is close to a single horizontal frequency — plausibly kind to a difference hash and unkind
+// to a low-frequency DCT band. What is established is that pHash does not beat the shipped hash
+// HERE, not that no perceptual hash could. A future attempt should bring its own fixture family
+// and re-run this comparison rather than citing 282's numbers.
 import test, { after } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
