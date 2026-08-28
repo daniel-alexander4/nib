@@ -4678,7 +4678,7 @@ Tasks (grilled 2026-08-25 — `grills/2026-08-25-p07s03a-l3-on-the-wire.md`):
 #### P07.S03b — The N-party driver at N=4 *(D23, L3; C05)* — **new, 2026-08-25, split out of S03a** *(T01/T02 done 2026-08-25, v1.117.165–.168; **T03 RESEQUENCED to follow P07.S05** — measured blocked on its carry verb)*
 **Build-order note (2026-08-25):** S03b's remaining task is behind S05, so the order is
 S01 · S08 · S02 · S02a · S02b · S03 · S03a · **S03b(T01,T02)** · S04 · S05 · S05a · S05b ·
-**S03b(T03)** · S05c · S06 · S07 · S09 · S10. *(S05a, S05b and S05c were split out of S05 and
+**S03b(T03)** · S05c · S05d · S06 · S07 · S09 · S10. *(S05a, S05b and S05c were split out of S05 and
 of each other on 2026-08-25; S03b's T03 lands with S05b's driver, which is the run it needed.)*
 Resequencing is not a decision about the product; it is where the measurement put the work.
 Tasks:
@@ -4941,7 +4941,7 @@ Acceptance:
 - **The relay is expressed once, in the baton topology**, driven at N=4 and N=9 over both transports *(moved here from S01 at its grill, 2026-08-23 — this is the first slice with a carry verb, so it is the first slice in which the topology is final rather than a chain S05 would rewrite)*, with the 2(N−1) word-string observations **equal within each hop and pairwise distinct across hops** *(amended 2026-08-25 at this slice's grill — "all pairwise distinct" is unsatisfiable, see above)*, and each hop's document asserted to **contain the previous hop's as a byte prefix** — not merely to differ from it, which at N is a tautology, since `/api/pdf` returns that instance's active document and no instance is fetched twice in one relay.
 - The LAN tier is **re-announced when the convener's dial for hop k begins**: the announce window is five minutes, so from the fourth party onward a "same room" ceremony silently runs over the public DHT. Driven by a nine-party ceremony completing **with the DHT tier disabled**.
 
-#### P07.S05c — The LAN tier at hop k *(C05 pin; D6, D8)* — **new, 2026-08-25, split out of S05b** *(in progress)*
+#### P07.S05c — The LAN tier at hop k *(C05 pin; D6, D8)* — **new, 2026-08-25, split out of S05b** *(done 2026-08-27, v1.117.182–.185 — the mechanism, its driver, and the three barriers that made the clause undrivable; the EGRESS clause is RED against shipped code and moves to S05d with the instrument that found it)*
 Tasks (grilled 2026-08-25 — `grills/2026-08-25-p07s05c-the-lan-tier-at-hop-k.md`; the deepdive did
 NOT fire, and the one trigger that would have — a wire-format move — was *checked* rather than
 assumed, because the S05b grill had costed this as a discovery version bump):
@@ -4966,7 +4966,7 @@ the `resolve` gate left it green. The seam now hands the resolved candidate to t
 which production ignores and the test asserts on. **L1 is a property about WHICH peer, and a count
 cannot see it.**
 - T04 — `--lan -n 9` reaches the LAN block, and a nine-party ceremony completes in the namespace. *(the three barriers are removed and a four-party LAN relay COMPLETES over both transports — see below. N=9 not yet driven.)*
-- T05 — egress measured and reported for N=9, against the 5.2M figure `lan.go` refuses. *(measured at N=4, and it is RED against shipped code — `/pending 299`)*
+- T05 — egress measured and reported for N=9, against the 5.2M figure `lan.go` refuses. *(the instrument is built and wired; the measurement is RED against shipped code and the clause **moves to P07.S05d** — `/pending 299`. Recorded as resequenced rather than met, because the run exists and says so.)*
 - T06 — red proofs; `recorded` moves. *(done 2026-08-27, v1.117.184–.185 — four rows, `recorded` 121 → 125. **Three record states no run in the tree reaches**, which is why the policy was separated from its socket. The fourth came back **"the check still PASSED"** and was right: `--lan -n 4` losing its `-n` is invisible by construction, because a two-party ceremony passes its own assertions. So the requested N now travels out of band and the child compares parsed against asked — a guard for the class, not the instance.)*
 
 **THE CLAUSE'S DRIVER HAD THREE INDEPENDENT BARRIERS, AND ANY ONE ALONE MADE IT IMPOSSIBLE.** An
@@ -5048,6 +5048,38 @@ Acceptance:
   before it, so the two modes are mutually exclusive by ordering rather than by design.
 - Egress is **measured, not argued**: datagrams per ceremony reported for N=9 and compared against
   the 5.2M figure `lan.go` refuses.
+
+#### P07.S05d — A LAN ceremony stops reaching the internet *(C05 pin; D6, D8, P03's exit criterion)* — **new, 2026-08-27, split out of S05c**
+Scope: the DHT bootstrap stops firing before anyone knows whether the LAN will answer. Downstream
+of S05c only in the sense that matters — **its instrument already exists and is green on everything
+else**, which is the condition that made the last two splits right rather than evasive.
+
+**Measured, not argued.** In the namespace, with an nft counter on off-link traffic: a **two-party**
+LAN ceremony emits **0** packets; a **four-party** LAN relay emits **120**. The difference is the
+invitation. `dialerCeremony` opens a rendezvous and calls `rz.Bootstrap` unconditionally, and
+`runCeremonyReceive` does the same — so the public DHT is contacted on every hop, before anyone
+knows whether the link will answer. `ceremonynet.go` already suppresses the late PUBLISH and
+further punch packets under LAN-window logic, and says so; **nothing suppresses the bootstrap**.
+
+So **P03's exit criterion — "a LAN ceremony completes with NO outbound internet traffic" — is false
+for every ceremony that carries an invitation**, which is every ceremony P07 builds. It survived
+four phases because the only `--lan` run was the two-party one, which has no invitation and
+therefore no `cer` at all.
+
+**The shape, and it is a shape rather than a decision.** The dialer browses BEFORE it dials
+(`peerAddresses`), so on that side the answer is already in hand: bootstrap only when the browse
+returned nothing. The arm side is the harder half — it cannot know whether the dialer will find it
+on the link — and the existing `publishWhenSlow` delay is where a lazy bootstrap would naturally
+fold in. The cost to state and measure: the DHT tier starts later, which D8's racing ladder is
+built to absorb, but `bootstrapBudget` and the punch both want the socket warm early.
+
+Acceptance:
+- A **nine-party** LAN relay completes in the namespace with the egress counter **at its baseline**,
+  over both transports — which is `./build/pairrepro.sh --lan -n 9`, already wired and currently red.
+- A ceremony with **no LAN peer** still reaches the DHT tier, and the added latency is **measured
+  and printed** rather than assumed acceptable.
+- The arm side's `bootstrapDone` reader keeps a truthful answer: D19's arm-side diagnosis is only
+  meaningful after a bootstrap, and a lazy one must not make that flag lie.
 
 #### P07.S06 — Placement: measured, on the pages S02 allocated *(D25; C03)*
 Scope, **re-derived from measurement 2026-08-23 — the first firming got all three numbers wrong.** The block
