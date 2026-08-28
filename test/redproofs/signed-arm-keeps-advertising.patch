@@ -1,0 +1,16 @@
+diff --git a/internal/server/lan.go b/internal/server/lan.go
+index b77586d..43d9491 100644
+--- a/internal/server/lan.go
++++ b/internal/server/lan.go
+@@ -765,10 +765,7 @@ func answerLoop(ctx context.Context, b browser, pins []vault.PinnedPeer, now fun
+ 		//
+ 		// It keeps looping rather than returning: the arm outlives the hop, and a re-race can put
+ 		// it back in a state where being found matters again.
+-		idle := wanted != nil && !wanted()
+-		if idle && stop != nil {
+-			stop()
+-		}
++		idle := false
+ 		// A short read deadline rather than a long one, so ctx cancellation is noticed promptly at
+ 		// disarm instead of after a multi-minute blocking read. The cost is a wakeup per second on
+ 		// a quiet link, which is a timer and not a datagram.

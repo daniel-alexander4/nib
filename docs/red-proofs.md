@@ -2108,3 +2108,41 @@ is a tripwire rather than a repair.
 touching zero files** — they are hand-written unified diffs with no git header, they apply, and they
 replay. A guard that fires on the wrong thing while missing what it was written for is the failure
 this ledger keeps recording, so the count is on `+++` lines, which both formats share.
+
+---
+
+## /pending 300 — the stale announcement, found with the instrument built for it (v1.117.199–.201)
+
+| Defect reintroduced | Check that fired | What it said |
+|---|---|---|
+| `signed-arm-keeps-advertising` — the per-iteration `wanted`/`stop` check removed | `TestASignedArmStopsAnnouncingAndStopsAnswering`, tier 1 | "the arm never released its announcer after signing … a release that waited for a sighting would wait forever" |
+
+**This is the sweep's one item that went from "cause NOT established" to a measured mechanism**, and
+what changed was building the instrument the item itself named as its blocker: *"nothing in the tree
+can show what a machine hears on the link."* `GET /api/lan/heard` answered it in one run — after a
+four-party QUIC relay completed, the convener still heard **all three parties announcing QUIC
+endpoints**, six candidates, on both probes four seconds apart.
+
+**The chain, each link measured rather than argued.** An arm keeps its announcer for the whole
+post-signing re-delivery window (five minutes) → a later ceremony browses a link full of stale
+announcements → if its own fresh announcement is missed inside the two-second browse the set is
+entirely stale → all-QUIC, so the glare path is taken → the dial goes to endpoints that will not
+serve this ceremony → *"Couldn't reach the rendezvous network"*, a verdict about the DHT for a peer
+on the link and announcing.
+
+**Two sites, and the second is why the first was not enough.** Closing the arm announcer at signing
+took six stale candidates to **two** — the pair belonging to the party whose hop had just finished,
+still present four seconds later. Those came from `answerHopSeekers`, whose gate ran only when a
+sighting resolved; once a hop has signed nothing is announcing to it, **so the gate never ran at
+all**. Per-iteration now, with a stop callback that releases an answer already in flight. Measured
+after: two in-flight datagrams in the first probe, **nothing** in the second.
+
+**And the check acts AFTER the read.** A `continue` at the top of the loop would skip its only
+blocking call and spin a long-lived goroutine at full CPU — the read's one-second deadline is what
+paces it. The comment says so at the line, because the obvious edit is the wrong one.
+
+**The instrument shipped broken and using it is what found that too.** `link_report`'s f-string used
+backslash-escaped quotes inside the expression — a `SyntaxError` before Python 3.12 — so it would
+have printed nothing on the failure it exists for. One commit old, and caught on first use.
+
+`recorded` 131 → 132.
