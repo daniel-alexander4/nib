@@ -793,12 +793,46 @@ func (v *Vault) Identity() (certPEM, keyPEM []byte, ok bool) {
 	return append([]byte(nil), id.CertPEM...), append([]byte(nil), id.KeyPEM...), true
 }
 
-// SetIdentity stores the signing identity and persists the vault.
-func (v *Vault) SetIdentity(certPEM, keyPEM []byte) error {
+// SetIdentityIfAbsent stores the signing identity ONLY if the vault has none, persists the vault,
+// and returns whichever identity is authoritative afterwards — the caller's, or the one that was
+// already there.
+//
+// # Why there is no unconditional setter
+//
+// This replaced `SetIdentity`, which overwrote whatever was present. Its one caller —
+// `internal/server`'s `identity()` — was a read-then-write across two separate lock holds:
+// `Identity()` said absent, the caller minted a key, `SetIdentity` stored it. Nothing held the lock
+// across the gap, so two near-simultaneous first callers both minted and the second overwrote the
+// first. **Measured: eight concurrent callers against one fresh vault produced 3 distinct
+// identities, 6 of them holding a certificate the vault did not hold** (/pending 285).
+//
+// A checked setter beside the unconditional one would have left the defect one call site away. The
+// unconditional one had exactly one caller and no other need, so it is gone — the race is not
+// fixed here, it is **unrepresentable**, which is the difference between a bug that stays fixed and
+// one that comes back through a second door.
+//
+// # Why the caller mints speculatively rather than passing a callback
+//
+// Key generation stays OUTSIDE this lock. A `mint func()` called under the lock would put an
+// arbitrary caller's work inside the vault's critical section, and `save()` is already doing disk
+// I/O there. So the caller mints first and offers the result; a loser's key is simply discarded and
+// it receives the winner's, which is the property that matters — every caller leaves holding the
+// identity the vault actually has.
+func (v *Vault) SetIdentityIfAbsent(certPEM, keyPEM []byte) (cert, key []byte, err error) {
 	v.mu.Lock()
 	defer v.mu.Unlock()
+	if id := v.contents.Identity; id != nil {
+		// Somebody else won. Hand back theirs, not the caller's.
+		return append([]byte(nil), id.CertPEM...), append([]byte(nil), id.KeyPEM...), nil
+	}
 	v.contents.Identity = &Identity{CertPEM: certPEM, KeyPEM: keyPEM}
-	return v.save()
+	if serr := v.save(); serr != nil {
+		// Leave no identity behind that the disk does not have: a later caller must mint again
+		// rather than inherit one this process failed to persist.
+		v.contents.Identity = nil
+		return nil, nil, serr
+	}
+	return append([]byte(nil), certPEM...), append([]byte(nil), keyPEM...), nil
 }
 
 // ExternalSigner returns a copy of the imported PKCS#12 signing identity, if any.

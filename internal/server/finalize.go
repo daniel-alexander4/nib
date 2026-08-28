@@ -130,6 +130,21 @@ func (s *Server) handleIdentity(w http.ResponseWriter, r *http.Request) {
 }
 
 // identity returns the vault's signing identity, generating one on first use.
+//
+// **The mint is SPECULATIVE and the store decides (/pending 285).** This was a read-then-write
+// across two separate vault lock holds — `Identity()` said absent, this minted, `SetIdentity`
+// overwrote — and nothing held the lock across the gap. Measured: eight concurrent first callers
+// against one fresh vault produced **3 distinct identities, 6 of them holding a certificate the
+// vault did not hold**. It needs only near-simultaneous first calls, which two browser tabs will
+// do, and `identity()` has eight callers.
+//
+// For `finalize` the loser signed with an orphaned key, which is bad and local. For a **ceremony
+// record** it is durable and cross-party: the record would name a convener whose key the machine
+// had discarded, so no later hop could act as convener and no re-convene could prove continuity.
+//
+// `SetIdentityIfAbsent` returns whichever identity is authoritative, so a loser discards its key
+// and leaves holding the winner's. Generation stays outside the vault lock — the point is which
+// identity is STORED, not who did the work.
 func identity(v *vault.Vault) (cert, key []byte, err error) {
 	cert, key, ok := v.Identity()
 	if ok {
@@ -139,10 +154,7 @@ func identity(v *vault.Vault) (cert, key []byte, err error) {
 	if err != nil {
 		return nil, nil, err
 	}
-	if err := v.SetIdentity(cert, key); err != nil {
-		return nil, nil, err
-	}
-	return cert, key, nil
+	return v.SetIdentityIfAbsent(cert, key)
 }
 
 // formFileBytes reads a named multipart file. If w is nil, missing files are not
