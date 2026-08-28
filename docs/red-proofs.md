@@ -1960,3 +1960,32 @@ ceremony carrying an invitation bootstraps the public DHT unconditionally, so P0
 no-outbound-traffic criterion is false for every ceremony P07 builds (`/pending 299`).
 
 `recorded` 121 → 125.
+
+---
+
+## /pending 289 — re-delivery existed on one transport of two (v1.117.187)
+
+| Defect reintroduced | Check that fired | What it said |
+|---|---|---|
+| `tcp-ceremony-cannot-redeliver` — `runSession` returns on `served`, so the TCP listener closes at the co-sign | `TestCeremonyReDeliversAfterReconnect/tcp`, tier 1 | `initiator: dial tcp 127.0.0.1:…: connect: connection refused` |
+| `redelivery-window-rearms-per-reconnect` — `postSign` assigned again inside the loop | `TestTheArmWindowIsNotExtendedByConnectionsThatProduceNoSession`, tier 1 | "the re-delivery window must be fixed once when the hop signs, or each reconnect pushes it out" |
+
+**The item said this needed tier 4, and its own twin refuted that.** The entry's reason for filing
+rather than building was *"that is a tier-4 shape (`pairrepro.sh`), not a package test"* — while
+`TestCeremonyReDeliversAfterReconnect`, the QUIC drive it cites as the reason the gap is invisible,
+**is** a package test. The only transport-specific part was the handful of lines that dial. Made
+table-driven, and the TCP subtest went red on its first run.
+
+**What it found is larger than what was filed.** The entry described a *guard* that was structural.
+The truth was that the *behaviour* was absent: P05.S10's criterion 15 is implemented in
+`runCeremonyReceive` and was never implemented in `runSession`, so a TCP ceremony wrote a
+re-delivery cache that nothing could reach. A structural guard asserting both call sites pass a
+ceremony says nothing about what either does with it — which is the ADR-009 lesson read from the
+other end: routing is necessary and not sufficient.
+
+**And the fix tripped a guard, correctly.** There are two absolute deadlines now, so the arm-window
+rule — every `timer.Reset` a remainder, never a fresh period — had to be stated for both, and it
+gained a second arm: `postSign` assigned exactly once. Both arms mutation-tested; they fail
+independently, which is why they are two rows.
+
+`recorded` 125 → 127.

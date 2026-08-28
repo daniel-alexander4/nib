@@ -1,0 +1,15 @@
+diff --git a/internal/server/session.go b/internal/server/session.go
+index f0f0fb6..57c9886 100644
+--- a/internal/server/session.go
++++ b/internal/server/session.go
+@@ -736,9 +736,7 @@ func (s *Server) runSession(ln p2p.Listener, cer *ceremonyID, cert, key []byte,
+ 			// cost an arm that outlives its session — P05.S01's whole point is that the arm is
+ 			// one-shot. Before signing there is nothing to re-deliver, and `served` is then a
+ 			// decline or a consent timeout, which are decisions rather than losses.
+-			if cer == nil || !cer.hasSigned() {
+-				return // the arm is spent on a session, which is what it is for
+-			}
++			return // the arm is spent on a session, which is what it is for
+ 			if postSign.IsZero() {
+ 				// The initiator's own re-race bound, so the window closes at the moment the far
+ 				// side stops trying — the same figure runCeremonyReceive uses, for the same reason.

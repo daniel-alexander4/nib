@@ -1,0 +1,12 @@
+diff --git a/internal/server/session.go b/internal/server/session.go
+index f0f0fb6..1771dc4 100644
+--- a/internal/server/session.go
++++ b/internal/server/session.go
+@@ -754,6 +754,7 @@ func (s *Server) runSession(ln p2p.Listener, cer *ceremonyID, cert, key []byte,
+ 				timer.Reset(remaining)
+ 				continue
+ 			}
++			postSign = time.Now().Add(connectDeadline)
+ 			if time.Now().After(postSign) {
+ 				return
+ 			}
