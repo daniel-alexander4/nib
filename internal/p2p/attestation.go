@@ -70,6 +70,18 @@ type Attestation struct {
 	// nothing can interpret, and there is no population to be lenient towards — no production
 	// attestation has ever carried a commitment at all.
 	RosterVersion int
+	// Capacity is the role THIS party signs in, from their own roster entry (D20's capacity
+	// amendment, C19). Empty is the ordinary case and renders nothing.
+	Capacity string
+	// Position and RosterSize are this party's place in the SIGNING order, 1-based, and how many
+	// signatories the ceremony has — the "Party 6 of 9" a block says instead of naming one
+	// neighbour (C09).
+	//
+	// **Both zero outside a ceremony, which is what selects the two-party appearance.** They are
+	// set only by `StampCommitment`, so there is one writer and the block cannot claim a position
+	// in a proceeding that does not exist.
+	Position   int
+	RosterSize int
 }
 
 // attestationTag marks a /Reason as one this package WROTE, and ReadAttestations requires
@@ -167,14 +179,40 @@ func (a Attestation) reason() string {
 // AppearanceLines is the visible attestation block text, one entry per line — the
 // canonical content a client renders into the signature's appearance image. The
 // full fingerprint lives in the signed /Reason; here it is shortened for the eye.
+//
+// # Two shapes, because a ceremony block may not say what a two-party block says (C09, P07.S07a)
+//
+// Outside a ceremony the block names the one counterparty this signature accepts, which is the
+// whole truth of a two-party co-sign.
+//
+// Inside one it must not. `Accepts: <label> [<short fp>]` names ONE NEIGHBOUR, and on a
+// nine-party document nine blocks each naming their predecessor describe a chain of pairwise
+// claims rather than the proceeding every one of them committed to. So the ceremony block says
+// which party this is *of how many* — the fact the roster establishes and the neighbour does not.
+//
+// **The position is not a hex id, deliberately.** P06 bans hex fingerprints from the primary
+// flow; nothing banned a hex ceremony id from the page a stranger reads, and a block reading
+// `Ceremony a3f1…` names the proceeding in a way no human can check against anything.
+//
+// The capacity line is present only when the party has one — an empty capacity renders nothing,
+// so a ceremony that needs no capacities does not look misconfigured (D20's amendment).
 func (a Attestation) AppearanceLines() []string {
-	return []string{
+	out := []string{
 		"Nib co-signing attestation",
 		fmt.Sprintf("Signer: %s", a.Signer),
-		fmt.Sprintf("Accepts: %s  [%s]", a.AcceptedPeerLabel, shortFingerprint(a.AcceptedPeer)),
+	}
+	if a.Capacity != "" {
+		out = append(out, fmt.Sprintf("Capacity: %s", a.Capacity))
+	}
+	if a.RosterSize > 0 {
+		out = append(out, fmt.Sprintf("Party %d of %d", a.Position, a.RosterSize))
+	} else {
+		out = append(out, fmt.Sprintf("Accepts: %s  [%s]", a.AcceptedPeerLabel, shortFingerprint(a.AcceptedPeer)))
+	}
+	return append(out,
 		fmt.Sprintf("Intent: %s", a.intent()),
 		fmt.Sprintf("Time: %s", a.When.UTC().Format("2006-01-02 15:04 MST")),
-	}
+	)
 }
 
 // SignerAttestation is one verified signer's attestation, read back from the
@@ -417,8 +455,30 @@ func blockTextWidth() float64 {
 // **S07's** — the slice that owns rendering into blocks — and the fix there is to wrap the
 // recital over however many lines it needs, at which point this bound is recomputed from the
 // same geometry rather than raised by hand.
-func IntentFitsBlock(intent string) bool {
-	return mdpdf.CoreWidth("Intent: "+intent, readmeFont, blockTextPt) <= blockTextWidth()
+func IntentFitsBlock(intent string) bool { return blockLineFits("Intent: ", intent) }
+
+// CapacityFitsBlock and LabelFitsBlock are the same rule for the other two user-supplied strings
+// that reach a block — and they exist because P07.S07a is what PUT them there.
+//
+// **Before this slice the rule had one field and one door; the slice gave it three fields.** A
+// capacity and a label are convener-supplied, unbounded, and rendered by the same `ctx.fillText`
+// with no `maxWidth` — so each was a second and third silent clipping of exactly the kind
+// `IntentFitsBlock`'s own comment calls a defect. Capacity is the worse of the two: it is a claim
+// about a party's AUTHORITY ("as attorney under a power of attorney dated 3 June"), it is inside
+// the signed commitment, and half of it on the page is a document that says something other than
+// what the parties agreed.
+//
+// One measurement behind all three (ADR-009), because "a block line must fit" is one rule. Three
+// copies of `CoreWidth(...) <= blockTextWidth()` differing only in their prefix is how the prefix
+// and the geometry drift apart.
+func CapacityFitsBlock(capacity string) bool { return blockLineFits("Capacity: ", capacity) }
+
+// LabelFitsBlock bounds the party label a block renders as `Signer: <label>`.
+func LabelFitsBlock(label string) bool { return blockLineFits("Signer: ", label) }
+
+// blockLineFits is the one measurement: does `prefix+value` render in full on one block line.
+func blockLineFits(prefix, value string) bool {
+	return mdpdf.CoreWidth(prefix+value, readmeFont, blockTextPt) <= blockTextWidth()
 }
 
 // MaxIntentRunes is the longest recital that fits, measured rather than asserted — the
@@ -438,12 +498,23 @@ func IntentFitsBlock(intent string) bool {
 //
 // The predicate is monotone in n — a prefix of a fitting string fits — so a bisection is
 // exact, not an approximation, and it is O(log n) calls.
-func MaxIntentRunes(intent string) int {
-	rs := []rune(intent)
+func MaxIntentRunes(intent string) int { return maxRunesOnLine("Intent: ", intent) }
+
+// MaxCapacityRunes and MaxLabelRunes are the same bisection for the two fields P07.S07a added to
+// the block. Same door, same monotonicity argument, same O(log n) cost — and the quadratic
+// version's denial of service is one this slice would otherwise have reintroduced twice, on a
+// route whose body limit is 1 MiB.
+func MaxCapacityRunes(capacity string) int { return maxRunesOnLine("Capacity: ", capacity) }
+
+// MaxLabelRunes is the same for a party label.
+func MaxLabelRunes(label string) int { return maxRunesOnLine("Signer: ", label) }
+
+func maxRunesOnLine(prefix, value string) int {
+	rs := []rune(value)
 	lo, hi := 0, len(rs) // lo always fits, hi is not yet known to
 	for lo < hi {
 		mid := (lo + hi + 1) / 2
-		if IntentFitsBlock(string(rs[:mid])) {
+		if blockLineFits(prefix, string(rs[:mid])) {
 			lo = mid
 		} else {
 			hi = mid - 1

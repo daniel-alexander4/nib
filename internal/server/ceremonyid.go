@@ -529,8 +529,16 @@ func (c *ceremonyID) l3Roster() p2p.Roster {
 	// — is what the reader sees. An invitation-carried version would only let a sender claim a
 	// format it is not using.
 	out := p2p.Roster{Commitment: c.inv.RosterHash, CommitmentVersion: ceremony.FormatVersion}
+	// **The WHOLE entry, and the fields that used to be dropped here are the point (P07.S07a).**
+	// `Label` and `Capacity` were left on the floor, so every block said `Signer: Nib User` while
+	// the label sat inside the signed commitment with no display reader anywhere. They are safe to
+	// carry from the invitation for the reason `p2p.RosterEntry` records: `matchesRosterFields`
+	// compares the whole `ceremony.Party` struct against the signed record, and `checkArrival`
+	// runs it before consent.
 	for _, p := range c.inv.Roster {
-		out.Entries = append(out.Entries, p2p.RosterEntry{Fingerprint: p.Fingerprint, Signs: p.Signs})
+		out.Entries = append(out.Entries, p2p.RosterEntry{
+			Fingerprint: p.Fingerprint, Signs: p.Signs, Label: p.Label, Capacity: p.Capacity,
+		})
 	}
 	return out
 }

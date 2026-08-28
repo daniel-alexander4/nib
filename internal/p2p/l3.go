@@ -39,6 +39,23 @@ type RosterEntry struct {
 	// in the roster and none in the signing order (D22), so the two sequences differ and the
 	// prefix rule is about the SIGNING one.
 	Signs bool
+	// Label is what the convener calls this party, for display — and it is what a block says
+	// instead of `"Nib User"` (P07.S07a).
+	//
+	// **It is trustworthy here for a reason worth stating, because it arrives from an UNSIGNED
+	// invitation.** `Invitation.matchesRosterFields` compares the WHOLE `ceremony.Party` struct
+	// against the signed record's roster, and `checkArrival` runs that before consent — so a label
+	// that differs between the invitation a party reads and the record they sign against is a
+	// refused hop, not a mislabelled block. That comparison is why this can be a display value the
+	// signature commits to rather than a hint.
+	Label string
+	// Capacity is the role this party signs in — "as Director of Acme Ltd" (D20's capacity
+	// amendment). Empty is the ordinary case and renders nothing.
+	//
+	// Verified by the same whole-struct comparison as Label, and it matters more: capacity is a
+	// claim about a party's AUTHORITY, so a party shown "as Director" by the invitation while the
+	// record says "as Guarantor" would consent to one thing and sign another.
+	Capacity string
 }
 
 // Roster is what the gate is handed: the signing order, and the commitment every signature in
@@ -83,12 +100,44 @@ type Roster struct {
 // **Both fields or neither.** `Attestation.Render` emits the token only when the hash and a
 // non-zero version are BOTH present, so a half-stamped attestation silently carries nothing;
 // setting them together here is what makes that emission rule reachable rather than defensive.
-func StampCommitment(att *Attestation, r Roster) {
+//
+// **It also stamps the PARTY, and that is P07.S07a folding a second rule into this door rather
+// than opening one beside it.** "A signature inside a ceremony says who signed it, in what
+// capacity, and at which position" is the same shape of rule as "it names its ceremony", it holds
+// at the same two call sites, and both sites already call this. A `StampParty` beside
+// `StampCommitment` would be two doors onto one rule at two sites each — the ADR-009 shape this
+// function's own comment was written about.
+func StampCommitment(att *Attestation, r Roster, meFP string) {
 	if r.Commitment == "" || r.CommitmentVersion <= 0 {
 		return
 	}
 	att.RosterHash = r.Commitment
 	att.RosterVersion = r.CommitmentVersion
+
+	// **The party's own entry, read from the SIGNING order** — not from `r.Entries`, because a
+	// non-signing convener holds a roster position and none in the signing order, and "Party 6 of
+	// 9" counts signatories. `SigningPositionOf` is the one door onto that index (it is what the
+	// block's PAGE already comes from, P07.S06), so the number on the block and the page it is
+	// drawn on cannot disagree.
+	pos, ok := SigningPositionOf(r, meFP)
+	if !ok {
+		// A non-signing carrier reaches neither contribution door — `carries()` routes it to the
+		// baton path — so this is unreachable on the real path and is left as a no-op rather than
+		// an error: stamping a position onto a party that has none would be the false statement.
+		return
+	}
+	order := SigningOrder(r)
+	att.Position = pos + 1 // 1-based for the eye; SigningPositionOf is 0-based
+	att.RosterSize = len(order)
+	att.Capacity = order[pos].Capacity
+	// **Falling back to the fingerprint, never to a constant.** An unlabelled party is one the
+	// convener did not name, and the honest block says which key signed rather than inventing a
+	// person. `"Nib User"` on nine blocks is the defect this closes.
+	if lbl := order[pos].Label; lbl != "" {
+		att.Signer = lbl
+	} else {
+		att.Signer = shortFingerprint(order[pos].Fingerprint)
+	}
 }
 
 var (

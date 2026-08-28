@@ -5269,19 +5269,61 @@ counts `p.Signs` and nothing else and hands that to `PrepareCeremonyDocument` (`
 `signs:false` convener already allocates no page. What is owed is the **driver** the clause names:
 a roster whose length and signing count straddle a page boundary.
 
-#### P07.S07 — Every block names its party, its capacity and its ceremony *(D20 pin as amended, D27; C09, C15, C19)*
+#### P07.S07 — Every block names its party, its capacity and its ceremony *(D20 pin as amended, D27; C09, C15, C19)* — **SPLIT 2026-08-28 at its grill into S07a · S07b · S07c**
+**Why it split, and both reasons were read at the line.** (1) The scope says of the party's name
+"the data is already there and already committed; this is a read". True of the RECORD and false of
+the roster the signing path is handed: `l3Roster` (`ceremonyid.go:531`) copies `Fingerprint` and
+`Signs` out of the invitation and drops `Label` and `Capacity`. It is a read plus a widening.
+(2) `rec.Intent` is not reachable the way the acceptance assumes. `l3Roster`'s own doc states the
+S03 rule — the gate reads "the record the party verified at arm time" and **never** the one carried
+by the document, because "a gate reading the document's own record answers its own question". The
+invitation is that verified copy and it carries `Label` and `Capacity` (compared as a WHOLE `Party`
+struct by `matchesRosterFields`, so both are checked against the signed record before consent) — but
+it carries **no intent**. So the recital clause is a format change plus a new comparison, which is
+also C17's unbuilt intent half, and it must not ride along with a widening that needs neither.
 Scope: `coSignExchange` takes the intent from `c.Confirm` — typed per hop — while `Record.Intent` calls itself
 "the ONLY home for it". `AppearanceLines` renders `Accepts: <label> [<short fp>]`: one neighbour, which is what
 C09 says an N-party block may not say. And the panel found the axis nobody had checked — **every signer is
 called "Nib User"**, a hardcoded constant at three sites, while `Party.Label` sits inside the signed commitment
 with **no display reader anywhere**. A criterion about naming the *ceremony* is satisfied perfectly by nine
 identical blocks reading `Signer: Nib User`.
+
+#### P07.S07a — The party's own name and capacity reach the block *(D20 pin as amended, D27; C09 part, C19 part)* — **new, 2026-08-28, split out of S07** *(done 2026-08-28, v1.117.215 — 4 clauses, all met; 6 red proofs. Its diff-grill found a defect the slice itself INTRODUCED: `Label` and `Capacity` reach a block that `ctx.fillText` draws with no `maxWidth`, so each was a second and third silent clipping of the kind `IntentFitsBlock` exists to refuse — bounded at the convene door through one measurement, capacity being the one that matters since it is a claim about a party's AUTHORITY)*
+Scope: the widening the split found. `p2p.RosterEntry` carries `Label` and `Capacity`; `l3Roster`
+stops dropping them; and the two contribution doors read this party's own entry through **one** door
+rather than each building its own attestation facts (ADR-009 — `StampCommitment` is already that
+door and gains the party). No format change: the invitation already carries both fields and
+`matchesRosterFields` already compares them against the signed record.
+- T01 — `p2p.RosterEntry` carries `Label` and `Capacity`; `l3Roster` stops dropping them. *(done)*
+- T02 — `StampCommitment` gains the party: label-or-fingerprint, capacity, and position in the signing order, at the one door both contribution sites already call. *(done — folded into the existing door rather than opened beside it, so `l3_test.go`'s routing scan covers both sites for free)*
+- T03 — `AppearanceLines` grows a ceremony shape: `Party k of n` instead of `Accepts: <one neighbour>`, and a Capacity line only when there is one. *(done)*
+- T04 — the block-line bound covers all three user-supplied strings, refused at convene. *(done — **not in the original plan**; the diff-grill found the slice introducing it)*
+- T05 — guards at N=9 with nine distinct identities, plus the `l3Roster` arm no p2p fixture can reach. *(done — 6 red proofs)*
 Acceptance:
-- Every signature's signed `/Reason` carries `rec.Intent` **verbatim** as the recital, plus **that party's own `capacity`** (C19); the `Confirmer`-returned intent is **discarded** on the ceremony path and `defaultIntent` is unreachable when a record is present.
-- **Every block names the party as the record names them** — `Party.Label`, falling back to the fingerprint — and `Attestation.Signer` comes from the record rather than the constant. The data is already there and already committed; this is a read.
-- Every visible block on a nine-party document names the **ceremony** — by its recital and roster position ("Party 6 of 9 · <recital>"), **not by a hex id**. P06 bans hex fingerprints from the primary flow and nothing bans a hex ceremony id from the page a stranger reads.
+- **Every block names the party as the record names them** — `Party.Label`, falling back to the fingerprint — and `Attestation.Signer` comes from the roster rather than the `"Nib User"` constant, at **both** contribution doors.
+- A block renders **that party's own `capacity`** (C19's rendering half), and an empty capacity renders nothing — a ceremony that needs no capacities must not look misconfigured.
+- Every visible block in a ceremony names the **ceremony** by roster position ("Party 6 of 9"), **not by a hex id**, and the two-party `Accepts: <one neighbour>` line is **unreachable** inside a ceremony (C09's block half).
+- Driven at **N=9** in Go, over a real ceremony fixture with nine distinct identities, and the nine blocks are **distinct** — the defect this closes is nine identical blocks reading `Signer: Nib User`, which every assertion about one block passes.
+
+#### P07.S07b — The record's intent becomes the recital *(D20 pin; C15, C19 part, advances C17)* — **new, 2026-08-28, split out of S07**
+Scope: `Invitation` gains `Intent` (version bump) and `MatchesRecord` compares it against `r.Intent`
+— C17's own words are that the reconciliation "must also cover `intent`, `expires` and `capacity`",
+and this is the intent third. Only then can `p2p.Roster` carry an intent the receiving side is
+entitled to trust, and only then can the discard rule below be more than a preference.
+Acceptance:
+- Every signature's signed `/Reason` carries the record's `Intent` **verbatim** as the recital, plus that party's own `capacity` (C19's signed half).
+- The `Confirmer`-returned intent is **discarded** on the ceremony path, and `defaultIntent` is **unreachable** when a record is present — driven by a Confirmer returning something else and a Confirmer returning `""`.
+- An invitation whose intent differs from the record's is **refused by name** before consent (C17's intent third).
+
+#### P07.S07c — The surfaces: the consent gate, the panel, the verdict *(D27; C09 other half)* — **new, 2026-08-28, split out of S07**
+Scope, **re-derived at the split from the code**: on a nine-party document the first signer's
+`AcceptedPeer` is `""` (`PredecessorOf`), so `augmentSigDetails` (`web/app.js:3787`) returns early on
+its row and the panel renders **8 of 9**; `attested.length >= 2 && every(matched)` then prints *"each
+party's signature attests to **the other's** key"* over a nine-party ceremony.
+Acceptance:
 - The `Confirmer` is shown **every** party who has already signed, driven with a three-signature document.
-- **The signature-details panel and the verifier verdict** are covered too, which is C09's other half and D27's item 3: the panel renders every signature on a nine-party document, its "of N" denominator equals what Go reports, and the two-party string "each party's signature attests to **the other's** key" is **unreachable** on a document carrying a roster token.
+- The panel renders **every** signature on a nine-party document, and its "of N" denominator equals what Go reports.
+- The two-party string *"each party's signature attests to the other's key"* is **unreachable** on a document carrying a roster token.
 
 #### P07.S09 — D33's placement guard, and the protocol version *(D32, D33; C12, C13)*
 Scope, **re-derived 2026-08-23**: most of what the first firming asked for already ships. Record skew and
