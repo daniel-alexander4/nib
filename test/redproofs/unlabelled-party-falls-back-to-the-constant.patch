@@ -1,0 +1,13 @@
+diff --git a/internal/p2p/l3.go b/internal/p2p/l3.go
+index 55fab82..64f1898 100644
+--- a/internal/p2p/l3.go
++++ b/internal/p2p/l3.go
+@@ -135,8 +135,6 @@ func StampCommitment(att *Attestation, r Roster, meFP string) {
+ 	// person. `"Nib User"` on nine blocks is the defect this closes.
+ 	if lbl := order[pos].Label; lbl != "" {
+ 		att.Signer = lbl
+-	} else {
+-		att.Signer = shortFingerprint(order[pos].Fingerprint)
+ 	}
+ }
+ 

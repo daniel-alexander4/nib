@@ -1,0 +1,13 @@
+diff --git a/internal/p2p/attestation.go b/internal/p2p/attestation.go
+index 59b35bf..f055c4a 100644
+--- a/internal/p2p/attestation.go
++++ b/internal/p2p/attestation.go
+@@ -204,7 +204,7 @@ func (a Attestation) AppearanceLines() []string {
+ 	if a.Capacity != "" {
+ 		out = append(out, fmt.Sprintf("Capacity: %s", a.Capacity))
+ 	}
+-	if a.RosterSize > 0 {
++	if false {
+ 		out = append(out, fmt.Sprintf("Party %d of %d", a.Position, a.RosterSize))
+ 	} else {
+ 		out = append(out, fmt.Sprintf("Accepts: %s  [%s]", a.AcceptedPeerLabel, shortFingerprint(a.AcceptedPeer)))
