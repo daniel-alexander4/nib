@@ -236,3 +236,67 @@ func TestAConvenedDocumentReportsItsObligedSignersBeforeAnyoneHasSigned(t *testi
 		t.Error("a document opened from disk reports inCeremony, which this process cannot know")
 	}
 }
+
+// TestTheManualCoSignRefusesAnIntentItWouldHaveToCut — /pending 286, the repo's refuse-not-clamp law
+// on the path that was still clamping.
+//
+// `buildAttestation` did `intent = string(rs[:maxIntentLen])` — a silent 200-rune truncation, no
+// error and no echo — on a value that is signed into the attestation's `/Reason` AND rendered on the
+// block. So the signed reason could carry text the block did not show, and the block could show a
+// sentence cut mid-word above somebody's signature.
+//
+// **200 runes was the wrong bound as well as the wrong behaviour, because count is not width.**
+// `IntentFitsBlock` measures the rendered string against the block's real geometry — "MMMM" and
+// "iiii" differ by nearly 3x at these metrics — which is why the ceremony's convene door has
+// refused on that measurement since P07.S02a. This is the manual path being routed through the same
+// door (ADR-009), not a second bound beside it.
+//
+// **The long fixture is under 200 runes on purpose.** A 300-character string would fail against the
+// old clamp too, for the wrong reason; this one is short enough that the rune count accepted it and
+// wide enough that the block cannot show it, so only the measured check can refuse it.
+func TestTheManualCoSignRefusesAnIntentItWouldHaveToCut(t *testing.T) {
+	ts, _ := startServer(t)
+	c, csrf := authedClient(t, ts)
+
+	pdf, err := testpdf.Form()
+	if err != nil {
+		t.Fatal(err)
+	}
+	pdfPath := filepath.Join(t.TempDir(), "d.pdf")
+	if err := os.WriteFile(pdfPath, pdf, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	fp := strings.Repeat("ab", 32)
+	pinPeer(t, c, csrf, ts.URL, fp)
+	resp := write(t, c, csrf, http.MethodPost, ts.URL+"/api/open", "application/json",
+		jsonBody(openRequest{Path: pdfPath}))
+	resp.Body.Close()
+
+	// Wide, and UNDER the old 200-rune clamp — see the note above.
+	long := strings.Repeat("MW", 60) // 120 runes, and far wider than a block line
+	if n := len([]rune(long)); n >= 200 {
+		t.Fatalf("setup: the fixture is %d runes, so the OLD clamp would have refused it too and "+
+			"this test would pass without the measured check", n)
+	}
+	if p2p.IntentFitsBlock(long) {
+		t.Fatalf("setup: the fixture fits a block, so there is nothing here to refuse")
+	}
+
+	resp2 := write(t, c, csrf, http.MethodPost, ts.URL+"/api/cosign/quote", "application/json",
+		jsonBody(cosignParams{Fingerprint: fp, Intent: long}))
+	defer resp2.Body.Close()
+	body, _ := io.ReadAll(resp2.Body)
+	if resp2.StatusCode == http.StatusOK {
+		t.Fatalf("an intent the block cannot show was ACCEPTED (HTTP 200). It would have been cut "+
+			"silently: the signed /Reason carries text the block never shows, and the block shows "+
+			"a sentence ending mid-word above a signature. Body: %s", body)
+	}
+	if resp2.StatusCode != http.StatusBadRequest {
+		t.Errorf("quote status = %d, want 400 — a refusal the user can act on, not a fault",
+			resp2.StatusCode)
+	}
+	// The refusal has to say how much fits, or the user's only move is to guess.
+	if !strings.Contains(string(body), "fit") {
+		t.Errorf("the refusal does not tell the user how much fits: %s", body)
+	}
+}
