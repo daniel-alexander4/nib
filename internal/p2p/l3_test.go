@@ -545,8 +545,8 @@ func (c l3Confirmer) Confirm(SignerAttestation, []byte) (bool, string, []byte, e
 	return c.accept, c.intent, nil, nil
 }
 
-// TestTheRelayCeilingAtFourParties — where the N-party relay actually stops, measured, and it is
-// not where the plan said.
+// TestTheRelayCeilingAtFourParties — where the N-party relay stopped BEFORE P07.S05, measured, and
+// it was not where the plan said. The ceiling is gone; the two refusals it pins are not.
 //
 // P07.S03b's driver clause assumes the relay completes at N=4 once `len(ats) != 1` is conditioned,
 // and notes that "through `Initiate` every intermediate party signs twice, so the count is
@@ -561,10 +561,21 @@ func (c l3Confirmer) Confirm(SignerAttestation, []byte) (bool, string, []byte, e
 //     near end. **This is the gate.**
 //   - and B, handed the document unchanged, IS admitted.
 //
-// So the model already supports the relay; what does not exist is a route that hands the baton on
-// **without contributing**. That is P07.S05's carry verb, and this test is the measurement that
-// says so — it will start failing at its last assertion the day S05 lands, which is the right
-// moment to delete it.
+// So the model already supports the relay; what did not exist was a route that hands the baton on
+// **without contributing**. That was P07.S05's carry verb, and `Carry` (`session.go:217`) is it.
+//
+// **The expiry this comment used to claim was wrong, and it is corrected rather than deleted
+// (2026-08-27, checked at S03b's close).** It said the test "will start failing at its last
+// assertion the day S05 lands, which is the right moment to delete it". It has not and it cannot:
+// the last assertion is that **B is admitted a document carrying exactly the roster prefix**, and
+// S05 added a *route* without changing the *predicate* — so the assertion was true before the
+// carry verb and is true after it. A test carrying a self-declared expiry that can never fire is
+// worse than one carrying none, because the next reader takes the green as evidence the condition
+// has not arrived.
+//
+// What the test still earns its place for is unchanged and is not about a ceiling: L3 refuses a
+// second signature from one party **by name**, and admits a correct prefix. Both are D23, both are
+// worth pinning, and neither expires.
 func TestTheRelayCeilingAtFourParties(t *testing.T) {
 	conv, a, b := l3Identity(t, "Convener"), l3Identity(t, "A"), l3Identity(t, "B")
 	c := l3Identity(t, "C")
