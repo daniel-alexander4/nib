@@ -5335,14 +5335,44 @@ Acceptance:
 - The panel renders **every** signature on a nine-party document, and its "of N" denominator equals what Go reports.
 - ~~The two-party string *"each party's signature attests to the other's key"* is **unreachable** on a document carrying a roster token.~~ **Pinned 2026-08-28 at the slice, on a driven contradiction: the discriminator is the PARTY COUNT, not the presence of a record.** A two-party ceremony *is* mutual and that sentence is true of it — and `test/jsdom/oneproceeding.test.mjs` drives precisely that document (two parties naming different ceremonies) and asserts the positive survives, so a disagreement is *reported* rather than summarised away by deleting the good news. Suppressing on the roster token would have removed a true sentence to fix a false one. Re-pointed at C09's own text, which says nine: **the string is unreachable on a document with MORE THAN TWO signing parties**, which get a chain sentence instead — and "mutually" is itself false of a baton, since party 1 accepts nobody and nobody accepts party 9.
 
-#### P07.S09 — D33's placement guard, and the protocol version *(D32, D33; C12, C13)*
+#### P07.S09 — D33's placement guard, and the protocol version *(D32, D33; C12, C13)* — **SPLIT 2026-08-28 at its grill into S09a · S09b**
+**Why, and the second reason is a premise this slice got wrong.** (1) The placement guard is
+self-contained, source-level and is what D33 says discharges it; the version work is a wire
+question. (2) **The scope says of the ceremony protocol version "it does not exist today — the only
+protocol identifier is the QUIC ALPN, which yields a TLS alert". It exists.** `alpn`/`alpn2`
+(`internal/p2p/quic.go`) are a versioned, NEGOTIATED session protocol with a production reader
+(`Channel.SpeaksNamedRefusals`), offered most-preferred-first at every config site so an older peer
+negotiates down rather than failing — P07.S03a built exactly that, for exactly D32's reason. A TLS
+alert happens only when the offer lists are DISJOINT, which needs a future build that has dropped
+`nib/1` and `nib/2`. So what is owed is not a version — it is **a sentence when the handshake fails
+that way**, and `alpn`'s own doc already argues the handshake failure is the right *mechanism*: *"an
+ALPN mismatch is a clean, immediate handshake failure naming the protocol… The alternative —
+negotiating and then failing somewhere inside the exchange — is the confusing one."* Building the
+announce frame the acceptance describes would add an unauthenticated parse **ahead of the human
+gate**, which the acceptance itself flags as needing its own bound — a new attack surface bought to
+replace a mechanism that works. D32 is untouched: a skew still owes a sentence. **Pinned, not
+struck** — the mechanism changes, the decision does not.
 Scope, **re-derived 2026-08-23**: most of what the first firming asked for already ships. Record skew and
 invitation skew both refuse with directional sentences and the invitation half is already red-proved; three of
 D33's four numbers are already enforced at their external doors. Two things are genuinely missing, and one of
 them is what D33 says discharges it.
+
+#### P07.S09a — D33's law/tunable placement guard *(D33; C12 part)* — **new, 2026-08-28, split out of S09** *(done 2026-08-28, v1.117.222 — 2 clauses, both met; 3 red proofs, and **two of the first three mutations failed to compile rather than failing the guard**, which is the outcome `redproof.sh` distinguishes from a real red. Re-done as compiling mutations, and the second of them exposed a false positive in the guard itself: a substring match on `name + " = "` would have failed an ordinary typed declaration, so the check is parsed rather than grepped)*
+Scope: the source-level check D33 names twice as what discharges it. Found at the grill and it is
+not hypothetical: **`maxCandidatesPerSource = 8` sits INSIDE the tunable block (`clocks.go`) as a
+bare literal, and its own comment says the eight is D33's law figure** — *"it is what each source is
+already bounded to upstream: `maxLANCandidates` is 8 per browse and `ceremony.MaxCandidates` is 8
+per record"*. So the law figure's value is reachable from the tunable block today, by hand-copy,
+which is the exact condition D33's discharge names.
+- T01 — `maxCandidatesPerSource` derived from the bounds it tracks rather than copying their literal. *(done)*
+- T02 — the source-level guard, both arms: no law figure declared in the tunable block, and each law figure still declared with the structure it bounds. *(done — the second arm exists because deleting a figure outright passes the first)*
 Acceptance:
 - **The law/tunable placement guard** — a source-level check that fails if either law figure is reachable from the tunable block. D33 says **twice** that this, and *not* the drive-a-value-past-the-bound bullet, is what discharges it; no such guard exists. (P05.S04 T05 built part of this; point at it rather than rebuilding it.)
-- The **ceremony protocol version** exists and is announced before the first frame, producing a sentence naming the mismatch. It does not exist today — the only protocol identifier is the QUIC ALPN, which yields a TLS alert. **The announce is read with `readFrameMax` at its own small bound**, because it becomes the first parse on the socket, ahead of the human gate, and the reason every pre-gate frame is bounded is already written out at that site.
+- The per-source cap is **derived** from the bounds it claims to track rather than copying their value, so raising one upstream cannot silently leave it behind.
+
+#### P07.S09b — The version sentence, the punch-budget reader, and skew at four surfaces *(D32, D33; C12 part, C13)* — **new, 2026-08-28, split out of S09**
+Acceptance:
+- ~~The **ceremony protocol version** exists and is announced before the first frame~~ **Pinned 2026-08-28 (see the split note above): the version exists and is negotiated; what is owed is a SENTENCE when two builds' ALPN offer lists are disjoint, rather than a bare handshake error. No pre-gate frame is added.**
 - The fourth number's clause is re-worded to what is observable: `punchBudgetPerSide` bounds **our own emission** and has no external supplier, so "supplied past the bound" names no path. Driven instead as *a hop that exhausts the budget drops and reports, and the report has a named reader* — D33's own "drops and reports; it never fails the ceremony".
 - Skew is driven for **four** surfaces, not three: record, invitation, protocol, **and the attestation tag**, whose skew today silently yields `AcceptedPeer=""`, `RosterHash=""` and a verdict of *not one proceeding* — the failure D32 forbids, arriving through the surface D32 excused.
 

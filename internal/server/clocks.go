@@ -3,6 +3,7 @@ package server
 import (
 	"time"
 
+	"nib/internal/ceremony"
 	"nib/internal/p2p"
 	"nib/internal/rendezvous"
 )
@@ -82,15 +83,27 @@ const (
 	// dialled. That is the capture attack `maxLANCandidates` closed at the browse level
 	// (`discover.go`), re-opened one layer up.
 	//
-	// Eight, because it is what each source is already bounded to upstream:
-	// `maxLANCandidates` is 8 per browse and `ceremony.MaxCandidates` is 8 per record. So
-	// this figure does not narrow any honest source — it only stops a source exceeding
-	// the bound it already has, at the one place that can see more than one of them.
+	// **DERIVED, not eight (P07.S09a, D33's discharge).** It is what each source is already
+	// bounded to upstream — `maxLANCandidates` is 8 per browse and `ceremony.MaxCandidates` is
+	// 8 per record — so this figure does not narrow any honest source; it only stops a source
+	// exceeding the bound it already has, at the one place that can see more than one of them.
+	//
+	// It was written as a bare `8` with that sentence beside it, which put **D33's law figure
+	// inside the tunable block by hand-copy**. D33's discharge is a guard that fails "if either
+	// law figure is reachable from the tunable block", and a literal an operator can edit here
+	// is precisely that: raise `ceremony.MaxCandidates` and this silently stays behind, capping
+	// an honest DHT source below the bound its own record is allowed. The comment claiming the
+	// two agree is not a mechanism, and `NominalBlockRect` is this repo's standing example of
+	// what a hand-copy plus a comment costs.
+	//
+	// `max` rather than either one: the rule is "no source may exceed the bound it already has",
+	// so the cap has to admit the most generous honest source. If the two diverge, taking the
+	// smaller would silently narrow the other — the same defect one direction over.
 	//
 	// **P05.S03's acceptance asked for this and shipped without it**, with the ledger
 	// reporting only "the size half met"; the defect was invisible because there was one
 	// source, and one source makes a global cap and a per-source cap the same thing.
-	maxCandidatesPerSource = 8
+	maxCandidatesPerSource = max(maxLANCandidates, ceremony.MaxCandidates)
 
 	// bootstrapBudget bounds the DHT's first contact with the network.
 	//
