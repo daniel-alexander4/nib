@@ -1,0 +1,13 @@
+diff --git a/internal/server/ceremonyid.go b/internal/server/ceremonyid.go
+index c043ace..237b0b0 100644
+--- a/internal/server/ceremonyid.go
++++ b/internal/server/ceremonyid.go
+@@ -175,7 +175,7 @@ func (c *ceremonyID) holdDHT(ctx context.Context, base time.Duration) bool {
+ 		if ns == 0 {
+ 			return true // nobody is watching the link at all — the dial side, unchanged
+ 		}
+-		left := lanFirstBudget - time.Since(time.Unix(0, ns))
++		left := lanFirstBudget
+ 		if left <= 0 {
+ 			return true // the link went quiet and stayed quiet
+ 		}

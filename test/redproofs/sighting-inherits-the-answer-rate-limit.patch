@@ -1,0 +1,20 @@
+diff --git a/internal/server/lan.go b/internal/server/lan.go
+index 3283ffe..e00303c 100644
+--- a/internal/server/lan.go
++++ b/internal/server/lan.go
+@@ -803,12 +803,12 @@ func answerLoop(ctx context.Context, b browser, pins []vault.PinnedPeer, now fun
+ 		// It is past `resolve`, so it is the arm's OWN expected peer and never a stranger — the
+ 		// screen is pins, not wire bytes (L1), and it is the same screen the answer already
+ 		// trusts.
+-		if sighted != nil {
+-			sighted(now())
+-		}
+ 		if !lastAnswer.IsZero() && now().Sub(lastAnswer) < hopAnnounceWindow {
+ 			continue // one answer per window: a re-dial must not stack a second announcer
+ 		}
++		if sighted != nil {
++			sighted(now())
++		}
+ 		if answer(c) {
+ 			lastAnswer = now()
+ 		}
