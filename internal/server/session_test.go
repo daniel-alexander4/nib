@@ -1629,7 +1629,30 @@ func postJSON(t *testing.T, c *http.Client, csrf, url string, body map[string]an
 // the cached signature instead of signing again. Bob cannot tell a reconnect-after-lost-writeback
 // from a reconnect-after-received, so the second Initiate exercises exactly the re-delivery path.
 // Asserts idempotency (both ends get the same bytes) and that consent was asked ONCE.
+// TestCeremonyReDeliversAfterReconnect — P05.S10's re-delivery, on BOTH transports.
+//
+// **The TCP case was filed as needing tier 4 and it does not (/pending 289, closed 2026-08-27).**
+// The entry's reason for filing rather than building was *"that is a tier-4 shape
+// (`pairrepro.sh`), not a package test"* — and its own QUIC twin, this very test, is a package
+// test. The only transport-specific part is the handful of lines that dial.
+//
+// **Why TCP needs its own run at all.** P07.S02b found that `runSession` was never handed the
+// ceremony, so every TCP ceremony hop ran with `cer == nil` — which left `p2p.ReDeliverer` nil,
+// whose contract says nil means *"the manual/LAN path, which has no ceremony hop to key on"*. A
+// peer reconnecting after a lost channel then reached `coSignExchange` with no cache and
+// `Contribute` stacked a second, different block. It was fixed and guarded STRUCTURALLY, and this
+// test — the only behavioural drive of re-delivery — ran QUIC, where `anchor.cer` was set, and
+// stayed green against the exact regression.
+//
+// Table-driven rather than copied, so the two transports cannot drift and a TCP case that stops
+// running is a missing subtest rather than a file nobody notices.
 func TestCeremonyReDeliversAfterReconnect(t *testing.T) {
+	for _, transport := range []string{"quic", "tcp"} {
+		t.Run(transport, func(t *testing.T) { redeliveryAfterReconnect(t, transport) })
+	}
+}
+
+func redeliveryAfterReconnect(t *testing.T, transport string) {
 	ts, _ := startServer(t)
 	c, csrf := authedClient(t, ts)
 
@@ -1664,13 +1687,25 @@ func TestCeremonyReDeliversAfterReconnect(t *testing.T) {
 	// Bob arms the ceremony (accept-only: no peer Address).
 	var armed sessionStatus
 	sessDecode(t, write(t, c, csrf, http.MethodPost, ts.URL+"/api/session/arm", "application/json",
-		jsonBody(armRequest{Fingerprint: aFP, Bind: "127.0.0.1:0", Transport: "quic", Invitation: bobInv})), &armed)
+		jsonBody(armRequest{Fingerprint: aFP, Bind: "127.0.0.1:0", Transport: transport, Invitation: bobInv})), &armed)
 	if !armed.Armed || armed.Address == "" {
 		t.Fatalf("arm failed: %+v", armed)
 	}
 
 	// One Alice Initiate against Bob's shared endpoint. Returns the co-signed result.
 	initiate := func() ([]byte, error) {
+		// **The only transport-specific lines in this test**, and that is the point: everything
+		// the re-delivery contract is about happens above the channel, so both transports must
+		// reach it by the same route. TCP dials directly; QUIC goes out a shared endpoint and is
+		// promoted, because the glare join owns the single handshaked listener.
+		if transport == "tcp" {
+			conn, e := p2p.Dial(context.Background(), armed.Address, aCert, aKey, bFPBytes, 10*time.Second)
+			if e != nil {
+				return nil, e
+			}
+			defer conn.Close()
+			return p2p.Initiate(conn.Channel, aSigned, aFPBytes, &recordingVerifier{}, p2p.Roster{})
+		}
 		aEnd, e := p2p.NewSharedEndpoint("127.0.0.1:0")
 		if e != nil {
 			return nil, e
