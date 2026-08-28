@@ -667,7 +667,10 @@ func raceKey(c candidate) string {
 // receiver ALREADY HOLDS, and `pairing.decode` is unexported precisely so a name never resolves to
 // a pin. So a stranger's announcement cannot make this party answer, and an answer cannot tell a
 // stranger anything they could not already have heard.
-func (s *Server) answerHopSeekers(ctx context.Context, cert []byte, ln announceable, peerFP []byte) {
+// `wanted` reports whether this arm still wants to be found. Once the hop has signed, a peer that
+// reaches us can only be re-delivering and already holds the address, so answering would put a
+// stale candidate on the link for the next ceremony's browse to pick up (/pending 300).
+func (s *Server) answerHopSeekers(ctx context.Context, cert []byte, ln announceable, peerFP []byte, wanted func() bool) {
 	v := s.unlockedVault()
 	if v == nil {
 		return
@@ -697,7 +700,20 @@ func (s *Server) answerHopSeekers(ctx context.Context, cert []byte, ln announcea
 			answering.Close()
 		}
 	}()
-	answerLoop(ctx, sock, pins, time.Now, func(candidate) bool {
+	// `stop` runs on EVERY loop iteration, not only when a sighting resolves — which is the whole
+	// point of it being separate from the answer callback. An answer runs for `hopAnnounceWindow`,
+	// and once the hop has signed nothing is announcing to us any more, so a check that only fired
+	// on a resolved sighting would never fire at all: measured, the last party of a relay went on
+	// advertising for the full window after signing, and was still doing so on a second probe four
+	// seconds later. Closing the arm announcer alone took six stale candidates to two; this takes
+	// the two.
+	stop := func() {
+		if answering != nil {
+			answering.Close()
+			answering = nil
+		}
+	}
+	answerLoop(ctx, sock, pins, time.Now, wanted, stop, func(candidate) bool {
 		ann, aerr := startAnnouncing(cert, ln, hopAnnounceWindow)
 		if aerr != nil {
 			return false // loopback bind or no interface — never fatal to the arm
@@ -732,11 +748,26 @@ func (s *Server) answerHopSeekers(ctx context.Context, cert []byte, ln announcea
 // from "answered a stranger" — measured: deleting the `resolve` gate below left the first version
 // of `TestTheArmAnswersItsOwnPeerAndNobodyElse` green, because a stranger's sighting and the
 // peer's produce the same COUNT. L1 is the property here and a count cannot see it.
-func answerLoop(ctx context.Context, b browser, pins []vault.PinnedPeer, now func() time.Time, answer func(candidate) bool) {
+// `wanted` reports whether this arm still wants to be found; `stop` releases whatever it is
+// announcing when that goes false. Both are checked once per iteration rather than per sighting,
+// because the state this is about — the hop has signed — is exactly the state in which nothing is
+// announcing to us any more.
+func answerLoop(ctx context.Context, b browser, pins []vault.PinnedPeer, now func() time.Time, wanted func() bool, stop func(), answer func(candidate) bool) {
 	var lastAnswer time.Time
 	for {
 		if ctx.Err() != nil {
 			return
+		}
+		// **Checked here, acted on AFTER the read.** A `continue` at this point would skip the
+		// only blocking call in the loop and spin a long-lived goroutine at full CPU — the read's
+		// one-second deadline is what paces this. So the state is captured, the announcer released
+		// immediately, and the answering suppressed below.
+		//
+		// It keeps looping rather than returning: the arm outlives the hop, and a re-race can put
+		// it back in a state where being found matters again.
+		idle := wanted != nil && !wanted()
+		if idle && stop != nil {
+			stop()
 		}
 		// A short read deadline rather than a long one, so ctx cancellation is noticed promptly at
 		// disarm instead of after a multi-minute blocking read. The cost is a wakeup per second on
@@ -744,6 +775,9 @@ func answerLoop(ctx context.Context, b browser, pins []vault.PinnedPeer, now fun
 		seen, rerr := b.Read(now().Add(time.Second))
 		if rerr != nil {
 			continue // a timeout is the ordinary case; ctx is what ends this loop
+		}
+		if idle {
+			continue // signed: a reconnect needs the listener, not another advertisement
 		}
 		c, ok := resolve(pins, seen)
 		if !ok {

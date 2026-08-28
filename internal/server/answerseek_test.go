@@ -114,7 +114,7 @@ func TestTheArmAnswersItsOwnPeerAndNobodyElse(t *testing.T) {
 		s, e := br.Read(d)
 		reads++
 		return s, e
-	}), pins, now, func(c candidate) bool {
+	}), pins, now, nil, nil, func(c candidate) bool {
 		answers = append(answers, now())
 		answeredFor = append(answeredFor, c.Fingerprint)
 		return true
@@ -171,7 +171,7 @@ func TestAFailedAnswerDoesNotSpendTheWindow(t *testing.T) {
 		<-br.done
 		cancel()
 	}()
-	answerLoop(ctx, br, pins, func() time.Time { return base }, func(candidate) bool {
+	answerLoop(ctx, br, pins, func() time.Time { return base }, nil, nil, func(candidate) bool {
 		tries++
 		return false // never managed to announce
 	})
@@ -185,3 +185,69 @@ func TestAFailedAnswerDoesNotSpendTheWindow(t *testing.T) {
 type browserFunc func(time.Time) (discovery.Seen, error)
 
 func (f browserFunc) Read(d time.Time) (discovery.Seen, error) { return f(d) }
+
+// TestASignedArmStopsAnnouncingAndStopsAnswering — /pending 300, the mechanism.
+//
+// **Measured before the fix:** after a four-party QUIC relay completed, the convener still heard
+// all three parties announcing QUIC endpoints — six candidates, two per party — because an arm
+// keeps its announcer for the whole post-signing re-delivery window. A later ceremony on the same
+// machines then browses a link full of them, and if its own fresh announcement is missed inside the
+// two-second browse, the candidate set is entirely stale. That is how a TCP relay following a QUIC
+// one failed at hop 1 with a D19 verdict about the DHT, for a peer on the link and announcing.
+//
+// A re-delivery is a RECONNECT: the peer already holds the address, so the window needs the
+// listener and not the advertisement.
+//
+// **`wanted` is checked every ITERATION, not per sighting, and that distinction is the whole test.**
+// Once the hop has signed, nothing is announcing to this party any more — so a check that only ran
+// when a sighting resolved would never run at all. Closing the arm announcer alone took six stale
+// candidates to two; the two that remained belonged to the party whose hop had just finished, and
+// were still there on a second probe four seconds later.
+func TestASignedArmStopsAnnouncingAndStopsAnswering(t *testing.T) {
+	cert, _, err := sign.GenerateIdentity("Convener")
+	if err != nil {
+		t.Fatal(err)
+	}
+	fp, _ := sign.Fingerprint(cert)
+	pins := []vault.PinnedPeer{{Fingerprint: fp, Label: "Convener"}}
+
+	signed := false
+	stops, answers := 0, 0
+	br := &scriptedBrowser{done: make(chan struct{}), seen: []discovery.Seen{
+		seenFrom(t, fp, 5002), // pre-signing: this one is answered
+		seenFrom(t, fp, 5002), // post-signing: this one is not
+	}}
+	base := time.Now()
+	reads := 0
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() { <-br.done; cancel() }()
+
+	answerLoop(ctx,
+		browserFunc(func(d time.Time) (discovery.Seen, error) {
+			s, e := br.Read(d)
+			reads++
+			if reads >= 1 {
+				signed = true // the hop signs after the first sighting
+			}
+			return s, e
+		}),
+		pins,
+		func() time.Time { return base.Add(time.Duration(reads) * 2 * hopAnnounceWindow) },
+		func() bool { return !signed },
+		func() { stops++ },
+		func(candidate) bool { answers++; return true },
+	)
+
+	if answers != 1 {
+		t.Errorf("the arm answered %d time(s), want 1 — it must answer while it still needs to be "+
+			"found and stop once it has signed, or it leaves a stale candidate on the link for "+
+			"the next ceremony's browse", answers)
+	}
+	if stops == 0 {
+		t.Error("the arm never released its announcer after signing. `stop` is checked per " +
+			"ITERATION for exactly this reason: once the hop has signed nothing is announcing to " +
+			"it, so a release that waited for a sighting would wait forever — which is the " +
+			"residue that survived closing the arm announcer alone")
+	}
+}

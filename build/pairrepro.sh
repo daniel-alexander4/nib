@@ -275,7 +275,7 @@ link_report() { # from to transport
 d=json.load(sys.stdin)
 if d.get("note"): print("    note:", d["note"])
 for h in d.get("heard", []):
-    print(f"    {h[\"label\"]:<10} {h[\"addr\"]:<24} {h[\"transport\"]}")
+    print("    %-10s %-24s %s" % (h["label"], h["addr"], h["transport"]))
 if not d.get("heard"): print("    (heard nothing)")' >&2 || echo "    (could not ask)" >&2
   done
 }
