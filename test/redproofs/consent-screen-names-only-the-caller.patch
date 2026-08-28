@@ -1,0 +1,13 @@
+diff --git a/internal/server/session.go b/internal/server/session.go
+index 1fd2157..7bbadbd 100644
+--- a/internal/server/session.go
++++ b/internal/server/session.go
+@@ -435,7 +435,7 @@ func (sc sessionConfirmer) Confirm(peer p2p.SignerAttestation, doc []byte) (bool
+ 		Reason: peer.Reason, Valid: peer.Valid,
+ 		// Every party already on the document, not just the one on the other end of the socket
+ 		// (P07.S07c).
+-		Signers: signersSoFar(doc),
++
+ 	}
+ 	// The request is held so the defer can name it: an unconditional clear drops whatever
+ 	// is pending when it fires, which after a disarm-and-rearm is a LATER session's consent.

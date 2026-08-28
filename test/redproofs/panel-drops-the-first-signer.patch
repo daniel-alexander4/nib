@@ -1,0 +1,13 @@
+diff --git a/web/app.js b/web/app.js
+index e87588f..d0ea21b 100644
+--- a/web/app.js
++++ b/web/app.js
+@@ -3848,7 +3848,7 @@ async function augmentSigDetails(rows) {
+     // silently dropped the party who went first — the one a reader is most likely to be
+     // checking. A signature carrying a roster commitment is part of the proceeding whether or
+     // not it accepts a predecessor.
+-    if ((!a.acceptedPeer && !a.rosterHash) || !rows[i]) return;
++    if (!a.acceptedPeer || !rows[i]) return;
+     attested.push(a);
+     const box = document.createElement('div');
+     box.className = 'sigatt';
