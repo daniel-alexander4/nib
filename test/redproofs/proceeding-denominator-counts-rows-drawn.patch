@@ -1,0 +1,13 @@
+diff --git a/web/app.js b/web/app.js
+index e87588f..2cdd9d7 100644
+--- a/web/app.js
++++ b/web/app.js
+@@ -3959,7 +3959,7 @@ async function augmentSigDetails(rows) {
+         // foreign approval signature on it reported "2 of 2" while carrying three — and before
+         // P07.S07c it under-counted a ceremony by one, because the first signer was skipped.
+         // What a reader compares this against is the signature count Go reports.
+-        p.textContent = '⚠ Not one proceeding — ' + claimed.length + ' of ' + atts.length +
++        p.textContent = '⚠ Not one proceeding — ' + claimed.length + ' of ' + attested.length +
+           ' signature(s) name a ceremony, and they do not all commit to the same one. '
+           + 'This document was not produced by a single agreed proceeding.';
+       }

@@ -1,0 +1,13 @@
+diff --git a/web/app.js b/web/app.js
+index e87588f..497e070 100644
+--- a/web/app.js
++++ b/web/app.js
+@@ -3899,7 +3899,7 @@ async function augmentSigDetails(rows) {
+   // exactly the documents where "the other" is a correct word: two signatures, each matching.
+   // Its condition is C14 as amended: every signature THAT HAS A PREDECESSOR is matched, the
+   // first having none.
+-  if (attested.length === 2 && attested.every((a) => a.matched)) {
++  if (attested.every((a) => a.matched || (!a.acceptedPeer && a.rosterHash))) {
+     const m = document.createElement('div');
+     m.className = 'sigmutual';
+     m.textContent = '✓ Mutually co-signed — each party’s signature attests to the other’s key.';
