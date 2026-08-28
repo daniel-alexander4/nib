@@ -73,3 +73,8 @@ home today.
 - [ADR-010: An announcement carries the transport](010-announcement-carries-the-transport.md) —
   extends ADR-007: a port without its transport is not an address, so a QUIC-armed peer was
   dialled over TCP; format version 2, and the tier-4 harness that was configured past it
+- [ADR-011: The link gets its window first](011-the-link-gets-its-window-first.md) — nothing
+  reaches the public DHT until the local link has had `browseWindow`: the bootstrap is lazy
+  behind one door, the fetch waits as the publish always did, and the dial side holds on its
+  browse result rather than a timer. A four-party LAN relay emitted 120 off-link packets and the
+  two-party run could not see it; the arm-side remainder is named, not implied

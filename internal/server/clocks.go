@@ -104,6 +104,21 @@ const (
 	//
 	// It runs AT ARM rather than inside the race, so the table is warm before anybody dials.
 	bootstrapBudget = 20 * time.Second
+	// lanFirstBudget is how long the link-local tier gets TO ITSELF before the DHT tier opens,
+	// and it applies only when the browse actually found the peer on the link (P07.S05d).
+	//
+	// `browseWindow` is the wrong figure for that case and the measurement says so. It is how long
+	// a browse LISTENS; using it as the DHT hold-off makes the criterion a race between a 2 s timer
+	// and the hop, and a nine-party LAN relay lost that race often enough to emit 105 off-link
+	// packets with the lazy bootstrap already in place. A hop that found its peer on the link
+	// completes in 1–3 s wall including consent and signing, and the connection itself in well
+	// under a second; 30 s is an order of magnitude past the worst observed hop and a tenth of
+	// `connectDeadline`, so the DHT fallback is still comfortably inside the race it belongs to.
+	//
+	// It is a hold, never a refusal: a LAN candidate that turns out stale still falls through to
+	// the DHT tier, which is what keeps this from trading D6's privacy for a ceremony that cannot
+	// complete.
+	lanFirstBudget = 30 * time.Second
 
 	// portMapBudget is D16's clock-1 for the port-mapping request (PCP then NAT-PMP), 3 s and
 	// STRICTLY ITS OWN. The plan-review clock-independence pin forbids implementing one clock

@@ -1193,12 +1193,12 @@ func (s *Server) runCeremonyReceive(ctx context.Context, cer *ceremonyID, hl *p2
 		// reaches us can only be re-delivering, and it already has the address (/pending 300).
 		s.answerHopSeekers(ctx, cert, quicEndpointAnnounce{hl.Addr()}, peerFP, func() bool { return !cer.hasSigned() })
 	}()
-	// Warm the DHT so connect's feed can fetch the peer's candidates and publish ours. Not fatal:
-	// the accept side and any fixed candidates still race, and D19 cause 2 names a dead DHT.
-	bctx, bcancel := context.WithTimeout(ctx, bootstrapBudget)
-	_ = cer.rz.Bootstrap(bctx)
-	bcancel()
-	cer.bootstrapDone.Store(true) // the arm-side diagnosis is meaningful only after this (diff-grill)
+	// **No bootstrap here (S05d).** The QUIC arm used to warm the DHT before anyone knew whether
+	// the link would answer, which is off-link traffic on every hop of every ceremony carrying an
+	// invitation. connect's feed and publish now reach it through `cer.ensureBootstrapped` after
+	// the LAN window, and `bootstrapDone` is set inside that door — so this path no longer claims
+	// a bootstrap it did not do. Still not fatal when it fails: the accept side and any fixed
+	// candidates race regardless, and D19 cause 2 names a dead DHT.
 
 	// The re-race / re-delivery loop (P05.S10). Two phases keyed on whether this hop has signed:
 	//

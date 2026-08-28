@@ -5049,7 +5049,7 @@ Acceptance:
 - Egress is **measured, not argued**: datagrams per ceremony reported for N=9 and compared against
   the 5.2M figure `lan.go` refuses.
 
-#### P07.S05d — A LAN ceremony stops reaching the internet *(C05 pin; D6, D8, P03's exit criterion)* — **new, 2026-08-27, split out of S05c**
+#### P07.S05d — A LAN ceremony stops reaching the internet *(C05 pin; D6, D8, P03's exit criterion)* — **new, 2026-08-27, split out of S05c** *(in progress)*
 Scope: the DHT bootstrap stops firing before anyone knows whether the LAN will answer. Downstream
 of S05c only in the sense that matters — **its instrument already exists and is green on everything
 else**, which is the condition that made the last two splits right rather than evasive.
@@ -5074,12 +5074,79 @@ fold in. The cost to state and measure: the DHT tier starts later, which D8's ra
 built to absorb, but `bootstrapBudget` and the punch both want the socket warm early.
 
 Acceptance:
-- A **nine-party** LAN relay completes in the namespace with the egress counter **at its baseline**,
-  over both transports — which is `./build/pairrepro.sh --lan -n 9`, already wired and currently red.
+- ~~A **nine-party** LAN relay completes in the namespace with the egress counter **at its
+  baseline**, over both transports.~~ **Resequenced to S05e, 2026-08-27, on a measurement.** See the
+  split note below.
 - A ceremony with **no LAN peer** still reaches the DHT tier, and the added latency is **measured
   and printed** rather than assumed acceptable.
 - The arm side's `bootstrapDone` reader keeps a truthful answer: D19's arm-side diagnosis is only
   meaningful after a bootstrap, and a lazy one must not make that flag lie.
+- The **dial** side stops guessing: `peerAddresses` browses before the race, so a `sourceLAN`
+  candidate is the link having already answered, and the DHT tier holds on that fact rather than on
+  a two-second timer racing the hop.
+
+**SPLIT at the measurement, 2026-08-27.** With the bootstrap lazy, the fetch windowed and the dial
+side holding on its own browse result, a four-party LAN relay went **120 → 9** off-link packets and
+a nine-party relay stayed at **~60–111**. A per-call stack probe over all nine instances named the
+remainder exactly: **instances 1 and 2 emit nothing; instances 3 through 9 each reach the DHT twice
+(publish and fetch), and they are precisely the parties whose hop arrives after their LAN window
+has closed.** All eight signing parties arm before hop 1, hops take 1–3 s, and an arm's window is
+2 s — so from the third party onward every arm pre-publishes.
+
+That is **a different mechanism from anything this slice touches**, and it needs a signal the arm
+does not have: the arm ANNOUNCES rather than browses, and `answerHopSeekers` filters sightings to
+its own expected peer, who is not on the link until its turn. The cheap fixes are all timers, and a
+timer is what was just measured losing. It becomes **S05e**, below.
+
+Tasks *(from the 2026-08-27 deepdive + grill; verdict confirmed, and the fix is TWO changes)*:
+- **T01** — `ensureBootstrapped(ctx)` on `ceremonyID`, `sync.Once`-guarded, replacing **three**
+  eager call sites. The scope above names two; `startArmedRendezvous` (`ceremonynet.go:397`) is a
+  third, and it is the one the **TCP** arm uses — `runCeremonyReceive` says in as many words that
+  it does not start it. `bootstrapDone` is set inside the door, so a path that no longer bootstraps
+  eagerly cannot leave its reader believing it did.
+- **T02** — `feedCandidates` waits `browseWindow` before its first fetch. **Without this T01 buys
+  nothing**: `publishLoop` already takes that first-delay (`:462`, `:478-480`) and the *fetch* does
+  not (`:315-316`), so a lazy bootstrap merely moves the first off-link packet by microseconds.
+- **T03** — the cost measured and printed: hop start to first DHT reach with no LAN peer.
+- **T04** — `--lan -n 9` at the baseline, over both transports.
+- **T05** — red proofs; `recorded` moves.
+
+#### P07.S05e — The arm stops pre-publishing *(C05 pin; D6, P03's exit criterion)* — **new, 2026-08-27, split out of S05d on a measurement**
+Scope: an arm whose hop has not arrived yet publishes its address to the public DHT, and in a relay
+that is every party from the third onward.
+
+**Measured, per instance.** `./build/pairrepro.sh --lan -n 9` at v1.117.203, with a stack probe on
+every call to `ensureBootstrapped`: **i1 and i2 reach the DHT zero times; i3 through i9 reach it
+twice each** — once through `publishCandidates` and once through `feedCandidates`, both from the
+arm's own `connect` → `feedCeremonyRace`. The pattern is not noise: i1 is the non-signing convener
+and i2's hop starts immediately, so those two are reached inside their window. Every other party
+arms before hop 1 and waits 2 s × its position.
+
+**Why the S05d shape does not extend.** The dial side holds on `hasLANCandidate`, which is a browse
+result it already has. The arm has none: it announces rather than browses, and `answerLoop` filters
+sightings to its **own expected peer**, who does not appear on the link until the hop begins. So the
+arm cannot distinguish "the link will deliver my peer in fourteen seconds" from "nobody is here".
+
+**The shape, and it is the one signal that is real rather than a timer.** During a relay the link is
+never quiet: party *k*−1 browses for party *k* at every hop, and those seeks carry roster identities.
+An arm that browses for the **whole roster** rather than only its expected peer hears the ceremony
+happening and renews its DHT hold on evidence; a ceremony with no LAN parties hears nothing and the
+DHT tier opens after `lanFirstBudget`. It degrades in the right direction and it is falsifiable.
+
+To state and check: a hostile announcer can delay another party's DHT fallback by renewing the hold,
+bounded by `lanFirstBudget` per renewal. Renewing only on sightings that resolve to a **roster**
+party — roster membership is not wire-derived, so L1 is intact — is what keeps that from being a
+stranger's lever.
+Acceptance:
+- A **nine-party** LAN relay completes in the namespace with the egress counter **at its baseline**,
+  over both transports — `./build/pairrepro.sh --lan -n 9`, which is red at 60–111 packets and whose
+  per-instance distribution is recorded above, so a partial fix cannot read as a whole one.
+- The hold renews on **evidence**, not on a timer: driven by a fake browser, an arm that keeps
+  hearing roster parties holds indefinitely and one that stops falls through within `lanFirstBudget`.
+- A **stranger's** announcement does not renew the hold, driven separately — a count cannot see the
+  difference and `answerLoop`'s own history says so.
+- The remote path's cost is measured: an arm with nothing on the link reaches the DHT within
+  `lanFirstBudget`, and that number is printed rather than assumed.
 
 #### P07.S06 — Placement: measured, on the pages S02 allocated *(D25; C03)*
 Scope, **re-derived from measurement 2026-08-23 — the first firming got all three numbers wrong.** The block
