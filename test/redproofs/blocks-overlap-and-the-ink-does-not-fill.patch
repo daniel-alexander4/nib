@@ -1,0 +1,13 @@
+diff --git a/internal/p2p/cosign.go b/internal/p2p/cosign.go
+index 6157919..d8c8f90 100644
+--- a/internal/p2p/cosign.go
++++ b/internal/p2p/cosign.go
+@@ -184,7 +184,7 @@ func stackPlacement(lastPage, index int) Placement {
+ 		x1     = 320.0
+ 		bottom = 40.0
+ 		height = 84.0
+-		gap    = 12.0
++		gap    = -42.0
+ 	)
+ 	y0 := bottom + float64(index)*(height+gap)
+ 	return Placement{
