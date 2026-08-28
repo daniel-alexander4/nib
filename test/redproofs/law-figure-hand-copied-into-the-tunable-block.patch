@@ -1,0 +1,21 @@
+diff --git a/internal/server/clocks.go b/internal/server/clocks.go
+index 96ff432..b28da04 100644
+--- a/internal/server/clocks.go
++++ b/internal/server/clocks.go
+@@ -3,7 +3,6 @@ package server
+ import (
+ 	"time"
+ 
+-	"nib/internal/ceremony"
+ 	"nib/internal/p2p"
+ 	"nib/internal/rendezvous"
+ )
+@@ -103,7 +102,7 @@ const (
+ 	// **P05.S03's acceptance asked for this and shipped without it**, with the ledger
+ 	// reporting only "the size half met"; the defect was invisible because there was one
+ 	// source, and one source makes a global cap and a per-source cap the same thing.
+-	maxCandidatesPerSource = max(maxLANCandidates, ceremony.MaxCandidates)
++	maxCandidatesPerSource = 8
+ 
+ 	// bootstrapBudget bounds the DHT's first contact with the network.
+ 	//
