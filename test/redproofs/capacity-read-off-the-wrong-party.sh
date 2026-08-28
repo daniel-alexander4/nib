@@ -10,3 +10,10 @@
 TIER="tier 1 — go test"
 PROVE="go test ./internal/p2p/ -run TestACapacityRendersOnlyForThePartyThatHasOne"
 EXPECT="the entry is being read by the wrong index"
+#
+# **This row was REJECTED on its first replay and the fixture is what changed.** The guard gave a
+# capacity to one party only, so the wrong-index read handed everyone "" and the sole signal was
+# party 1 losing its capacity — `redproof.sh` reported "went red, but not for its own reason",
+# which is the third outcome it exists to distinguish from a pass and from a deleted check. Two
+# parties now carry different capacities, so reading the wrong entry produces a positive, wrong
+# statement about a party's authority rather than an absence.
