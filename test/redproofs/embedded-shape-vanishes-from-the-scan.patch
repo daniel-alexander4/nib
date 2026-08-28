@@ -1,0 +1,140 @@
+diff --git a/observables_test.go b/observables_test.go
+index 8a9afb0..83e561e 100644
+--- a/observables_test.go
++++ b/observables_test.go
+@@ -77,16 +77,24 @@ var published = map[string][]string{
+ 	"rendezvous.Stats":       {"internal/cli/rendezvous.go", "internal/rendezvous/dht.go"},
+ 	"rendezvous.SelfAddress": {"internal/rendezvous/selfaddr.go", "internal/cli/rendezvous.go"},
+ 	"discovery.Stats":        {"internal/cli/discover.go"},
+-	// `discovery.Seen` was named here and has **never been discovered** — found 2026-08-24 by
+-	// this file's own new `published`-key validation, on its first run. `Seen` embeds
+-	// `Announcement`, and discoverObservables treats an embed as "fields this scan cannot see"
+-	// and drops the whole shape. So the entry claimed coverage it never had.
++	// **`discovery.Seen` is back, and the reason it was removed dissolved on being measured
++	// (/pending 284, 2026-08-27).** It was named here and had **never been discovered**: `Seen`
++	// embeds `Announcement`, and `discoverObservables` treated an embed as "fields this scan
++	// cannot see" and dropped the whole shape — so the entry claimed coverage it never had, which
++	// this file's own `published`-key validation caught on its first run.
+ 	//
+-	// Removed rather than repaired, because repairing it is a change to the DISCOVERER (walk
+-	// embedded structs) which would newly discover shapes across ten packages and is not this
+-	// slice's. The coverage lost is narrow and is stated rather than assumed: `Seen`'s embedded
+-	// half IS covered, through the `discovery.Announcement` entry below; what is uncovered is
+-	// its own `From` field. Filed for the discoverer fix.
++	// It was removed rather than repaired because repairing it meant changing the DISCOVERER,
++	// *"which would newly discover shapes across ten packages"*. **Counted: it discovers exactly
++	// one.** Of 56 exported data shapes across all ten scanned packages, `Seen` is the only one
++	// that embeds anything at all. The blast radius the fix was waiting on was one shape and one
++	// field.
++	//
++	// The discoverer now records embeds instead of dropping the shape, and admits a shape whose
++	// embedded types are themselves discovered — `Seen`'s own field is `From`, and its embedded
++	// half stays covered by the `Announcement` entry below rather than being repeated here. An
++	// embed whose type is NOT discovered is reported by name, because a shape that vanishes from
++	// the scan reads identically to one that publishes nothing.
++	"discovery.Seen":         {"internal/server/discover.go"},
+ 	"discovery.Announcement": {"internal/discovery/announce.go", "internal/server/discover.go"},
+ 	"p2p.Channel":            {"internal/p2p/verify.go", "internal/p2p/channel.go"},
+ 	"p2p.SignerAttestation":  {"web/app.js", "internal/server/cosign.go", "internal/ceremony/record.go"},
+@@ -313,6 +321,9 @@ func discoverObservables(t *testing.T) map[string]observable {
+ 			file   string
+ 			fields []string
+ 			tag    map[string]string
++			// embeds names each embedded type. An embed carries fields this scan cannot
++			// attribute to THIS shape; what it must not do is make the shape vanish.
++			embeds []string
+ 		}
+ 		cands := map[string]cand{}
+ 		returned := map[string]bool{}
+@@ -333,11 +344,25 @@ func discoverObservables(t *testing.T) map[string]observable {
+ 						return true
+ 					}
+ 					var fields []string
++					var embeds []string
+ 					tags := map[string]string{}
+ 					unexported := false
+ 					for _, fl := range st.Fields.List {
+ 						if len(fl.Names) == 0 {
+-							unexported = true // an embed carries fields this scan cannot see
++							// **An embed is RECORDED, not a reason to drop the shape (/pending 284).**
++							//
++							// This used to set `unexported`, which discarded the whole struct: an
++							// embed carries fields the scan cannot attribute here, so the shape was
++							// treated as unscannable. `discovery.Seen` embeds `Announcement`, so it
++							// had never been discovered at all, and the `published` entry naming its
++							// readers claimed coverage it never had.
++							//
++							// The entry filed against this asked how many OTHER shapes embed and said
++							// nobody had counted. Counted: across all ten scanned packages, of 56
++							// exported data shapes, **exactly one embeds** — `Seen` — and the type it
++							// embeds is itself discovered. So the blast radius the entry was waiting
++							// on is one shape and one field.
++							unexported = true
+ 							continue
+ 						}
+ 						jt := ""
+@@ -359,7 +384,7 @@ func discoverObservables(t *testing.T) map[string]observable {
+ 						}
+ 					}
+ 					if len(fields) > 0 && !unexported {
+-						cands[d.Name.Name] = cand{file: f, fields: fields, tag: tags}
++						cands[d.Name.Name] = cand{file: f, fields: fields, tag: tags, embeds: embeds}
+ 					}
+ 				case *ast.FuncDecl:
+ 					if !d.Name.IsExported() || d.Type.Results == nil {
+@@ -375,14 +400,53 @@ func discoverObservables(t *testing.T) map[string]observable {
+ 			})
+ 		}
+ 		for name, c := range cands {
+-			if returned[name] {
+-				out[short+"."+name] = observable{file: c.file, fields: c.fields, tag: c.tag}
++			if !returned[name] {
++				continue
++			}
++			// **An embed is fine when the embedded type is ITSELF covered, and a finding when it
++			// is not.** `Seen`'s own field is `From`; its embedded half is covered through the
++			// separate `discovery.Announcement` entry, so walking into the embed here would make
++			// `Seen`'s reader repeat every field `Announcement` already requires.
++			//
++			// What must not happen is the old behaviour — silently dropping the shape — because a
++			// shape that vanishes from the scan takes its coverage with it and looks exactly like
++			// a shape that was never published. So an embed whose type is not discovered is
++			// reported BY NAME rather than dropped quietly.
++			missing := ""
++			for _, e := range c.embeds {
++				if _, known := cands[e]; !known {
++					missing = e
++					break
++				}
++			}
++			if missing != "" {
++				t.Errorf("%s.%s embeds %s, which this scan does not discover — so %s's fields are "+
++					"covered by nothing and the shape would once have been dropped whole, which "+
++					"reads identically to a shape that publishes nothing. Give %s an entry, or "+
++					"record here why it cannot have one.", short, name, missing, missing, missing)
++				continue
+ 			}
++			out[short+"."+name] = observable{file: c.file, fields: c.fields, tag: c.tag}
+ 		}
+ 	}
+ 	return out
+ }
+ 
++// embedName is the bare type name of an embedded field — `Announcement`, `p2p.Channel`'s
++// `Channel`, `*Foo`'s `Foo`. Only the name is needed: the question is whether the scan discovered
++// a shape by that name in the same package.
++func embedName(e ast.Expr) string {
++	switch v := e.(type) {
++	case *ast.Ident:
++		return v.Name
++	case *ast.StarExpr:
++		return embedName(v.X)
++	case *ast.SelectorExpr:
++		return v.Sel.Name
++	}
++	return "?"
++}
++
+ // typeIdents pulls the bare type names out of a result expression, through pointers, slices,
+ // maps and arrays — a `map[string]Invitation` publishes Invitation just as a bare return does.
+ func typeIdents(e ast.Expr) []string {
