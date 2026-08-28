@@ -1,0 +1,16 @@
+diff --git a/internal/p2p/cosign.go b/internal/p2p/cosign.go
+index 6157919..a129b9f 100644
+--- a/internal/p2p/cosign.go
++++ b/internal/p2p/cosign.go
+@@ -138,9 +138,8 @@ func ceremonyPlacement(pdf []byte, r Roster, me string) (Placement, error) {
+ 			"signers needs %d signature page(s) after its readme and ceremony pages",
+ 			ErrNoSignaturePages, total, len(SigningOrder(r)), pages)
+ 	}
+-	first := total - pages + 1 // 1-based page number of signature page 1
+-	page := first + pos/blocksPerPage
+-	return fitToPage(pdf, stackPlacement(page, pos%blocksPerPage))
++	_ = pages
++	return stackPlacement(total, pos), nil
+ }
+ 
+ // fitToPage translates a placement onto the target page's real MediaBox and refuses one that will
