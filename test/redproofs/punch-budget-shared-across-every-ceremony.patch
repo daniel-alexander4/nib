@@ -1,0 +1,17 @@
+diff --git a/internal/server/punch.go b/internal/server/punch.go
+index 345d4d4..8068a16 100644
+--- a/internal/server/punch.go
++++ b/internal/server/punch.go
+@@ -108,10 +108,10 @@ func (s *Server) punchBudgetFor(id string) *punchBudget {
+ 	if s.punchBudgets == nil {
+ 		s.punchBudgets = map[string]*punchBudget{}
+ 	}
+-	b, ok := s.punchBudgets[id]
++	b, ok := s.punchBudgets[""]
+ 	if !ok {
+ 		b = &punchBudget{}
+-		s.punchBudgets[id] = b
++		s.punchBudgets[""] = b
+ 	}
+ 	return b
+ }
