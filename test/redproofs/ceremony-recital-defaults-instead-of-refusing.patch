@@ -1,0 +1,15 @@
+diff --git a/internal/p2p/cosign.go b/internal/p2p/cosign.go
+index 3d3ba97..2ac98a9 100644
+--- a/internal/p2p/cosign.go
++++ b/internal/p2p/cosign.go
+@@ -72,9 +72,7 @@ func Contribute(pdf, certPEM, keyPEM []byte, att Attestation, appearance []byte,
+ 	// one that must carry that ceremony's recital, and it is the same discriminator
+ 	// `markOneProceeding` uses. An ordinary two-party co-sign has no commitment and keeps the
+ 	// default, which is correct — it belongs to no proceeding and there is no recital to carry.
+-	if att.RosterHash != "" && att.Intent == "" {
+-		return nil, ErrNoCeremonyIntent
+-	}
++
+ 	opts := sign.Options{
+ 		Name:   att.Signer,
+ 		Reason: att.reason(),

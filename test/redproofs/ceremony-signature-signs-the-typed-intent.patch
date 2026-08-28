@@ -1,0 +1,13 @@
+diff --git a/internal/p2p/l3.go b/internal/p2p/l3.go
+index eaa4ef6..8ccd1ac 100644
+--- a/internal/p2p/l3.go
++++ b/internal/p2p/l3.go
+@@ -139,7 +139,7 @@ func StampCommitment(att *Attestation, r Roster, meFP string) {
+ 	// "I agree to sign this document." — Nib inventing a recital nobody wrote, on a proceeding
+ 	// whose recital is inside the commitment. `ErrNoCeremonyIntent` below is what an empty one
+ 	// gets instead, and it is why `defaultIntent` is unreachable when a record is present.
+-	att.Intent = r.Intent
++	_ = r.Intent
+ 
+ 	// **The party's own entry, read from the SIGNING order** — not from `r.Entries`, because a
+ 	// non-signing convener holds a roster position and none in the signing order, and "Party 6 of

@@ -1,0 +1,18 @@
+diff --git a/internal/server/session.go b/internal/server/session.go
+index 03c9c92..1abc0b5 100644
+--- a/internal/server/session.go
++++ b/internal/server/session.go
+@@ -1550,12 +1550,7 @@ func (s *Server) handleSessionInitiate(w http.ResponseWriter, r *http.Request) {
+ 	// refuses with "document carries no ceremony record", which is every ordinary two-party
+ 	// co-sign. `TestSessionInitiate` went red on exactly that. The receiving side has always had
+ 	// this guard (`if sc.cer != nil`); this door needed the same one.
+-	if cer != nil {
+-		if err := cer.checkArrival(pdfBytes, time.Now()); err != nil {
+-			httpError(w, http.StatusConflict, err.Error())
+-			return
+-		}
+-	}
++
+ 	carrying := cer.carries(hex.EncodeToString(myFP))
+ 	signed := pdfBytes
+ 	if !carrying {
