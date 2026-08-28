@@ -4949,7 +4949,22 @@ assumed, because the S05b grill had costed this as a discovery version bump):
 - T02 — an armed party browses for the arm's life and re-announces on hearing a peer it has pinned
   for this ceremony; bounded, rate-limited, never itself a seek. *(built — `answerHopSeekers`, which answers ONE fingerprint, the peer the arm was raised for; under D22 that is the convener, and it is what stops two armed parties answering each other forever)*
 - T03 — the driver reaches a hop **after** the announce window has expired; the window becomes a
-  parameter so the test does not wait five minutes. *(the window is a variable; the expired-hop drive is not built)*
+  parameter so the test does not wait five minutes. *(done, and at tier 1 rather than tier 4 — see below)*
+
+**T01/T02 SHIPPED WIRED, CORRECT AND UNPROVEN, WHICH IS THE VACUOUS-GREEN SHAPE.** Every hop of
+every run in the tree falls **inside** the five-minute announce window, so the one state the
+mechanism exists for — a peer arriving after it has expired — was reached by nothing. A real socket
+cannot drive that without five minutes of wall clock or a knob in the shipped binary, so the
+POLICY was separated from the socket (`answerLoop`) and driven with a fake clock and a fake
+browser: a stranger gets no answer, the arm's own peer does, the same peer inside the window does
+not, and after the window does. Three mutations, all caught.
+
+**And the first version of that guard could not see the property it was written for.** `answer`
+took no arguments, so the test could count answers and not identify them — and a stranger's
+sighting plus a later one produces the same COUNT as the peer's sighting plus a later one. Deleting
+the `resolve` gate left it green. The seam now hands the resolved candidate to the answer callback,
+which production ignores and the test asserts on. **L1 is a property about WHICH peer, and a count
+cannot see it.**
 - T04 — `--lan -n 9` reaches the LAN block, and a nine-party ceremony completes in the namespace. *(the three barriers are removed and a four-party LAN relay COMPLETES over both transports — see below. N=9 not yet driven.)*
 - T05 — egress measured and reported for N=9, against the 5.2M figure `lan.go` refuses. *(measured at N=4, and it is RED against shipped code — `/pending 299`)*
 - T06 — red proofs; `recorded` moves.
