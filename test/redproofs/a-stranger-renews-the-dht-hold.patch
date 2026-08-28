@@ -1,0 +1,14 @@
+diff --git a/internal/server/lan.go b/internal/server/lan.go
+index 3283ffe..61ec29f 100644
+--- a/internal/server/lan.go
++++ b/internal/server/lan.go
+@@ -788,6 +788,9 @@ func answerLoop(ctx context.Context, b browser, pins []vault.PinnedPeer, now fun
+ 		if idle {
+ 			continue // signed: a reconnect needs the listener, not another advertisement
+ 		}
++		if sighted != nil {
++			sighted(now())
++		}
+ 		c, ok := resolve(pins, seen)
+ 		if !ok {
+ 			continue // not the peer this arm is for — see the amplification note above

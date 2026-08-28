@@ -1,0 +1,13 @@
+diff --git a/internal/server/ceremonyid.go b/internal/server/ceremonyid.go
+index c043ace..83f7f95 100644
+--- a/internal/server/ceremonyid.go
++++ b/internal/server/ceremonyid.go
+@@ -169,7 +169,7 @@ func (c *ceremonyID) holdDHT(ctx context.Context, base time.Duration) bool {
+ 				// seconds, and a first sighting that lands at 2.1 s would otherwise have missed.
+ 				// A genuinely remote arm therefore pays exactly one `lanFirstBudget` and then
+ 				// publishes, which is the acceptance clause in as many words.
+-				ns = c.linkWatchAt.Load()
++				ns = 0
+ 			}
+ 		}
+ 		if ns == 0 {
