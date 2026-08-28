@@ -133,6 +133,24 @@ case "$N" in
   ''|*[!0-9]*) echo "FAIL: -n wants a whole number, got '$N'" >&2; exit 1 ;;
 esac
 [ "$N" -ge 2 ] || { echo "FAIL: -n $N — a ceremony needs at least two parties" >&2; exit 1; }
+# **The N the outer invocation asked for, carried out of band and compared (P07.S05c).**
+#
+# The namespace re-exec below rebuilds its argument list from `$FLAGS`, a variable maintained by
+# hand — and `-n` was missing from it, so `--lan -n 4` re-executed as `--lan` alone, ran a
+# TWO-PARTY ceremony, and printed its pass. Nothing failed, because a two-party run passes its own
+# assertions perfectly well; the operator simply did not get the run they asked for.
+#
+# **A red proof for that came back "the check still PASSED", which is how this guard came to
+# exist.** There was no check. `$FLAGS` is the wrong place to assert — a structural test on a
+# string says nothing about what the child received — so the requested N travels separately, in the
+# environment, and the child compares what it PARSED against what was ASKED. Any future flag that
+# goes missing from the list fails here by name instead of silently shrinking the run.
+if [ -n "${NIB_PAIR_WANT_N:-}" ] && [ "$N" != "$NIB_PAIR_WANT_N" ]; then
+  echo "FAIL: this run was asked for -n $NIB_PAIR_WANT_N and parsed -n $N — the re-exec into the" >&2
+  echo "      network namespace dropped the flag, so the run would have completed a ${N}-party" >&2
+  echo "      ceremony and reported it as a ${NIB_PAIR_WANT_N}-party one" >&2
+  exit 1
+fi
 # **`--lan` accepts any N since P07.S05c; `--v6` is still N=2-only.**
 #
 # The pair were refused together at P07.S01, when there was no N-party relay for either to drive.
@@ -232,8 +250,8 @@ if [ "$LAN" = "1" ] && [ "${NIB_LAN_NS:-}" != "1" ]; then
       ip daddr != 224.0.0.0/4 counter comment "offlink4"
     nft add rule inet egress out ip6 daddr != fd00:9::/64 ip6 daddr != ::1 \
       ip6 daddr != ff00::/8 ip6 daddr != fe80::/10 counter comment "offlink6"
-    NIB_LAN_NS=1 NIB_PAIR_BIN="$1" exec "$2" $3
-  ' _ "$PREBUILT" "$0" "$FLAGS"
+    NIB_LAN_NS=1 NIB_PAIR_WANT_N="$4" NIB_PAIR_BIN="$1" exec "$2" $3
+  ' _ "$PREBUILT" "$0" "$FLAGS" "$N"
 fi
 
 # Reads the off-link packet counter the namespace installed.

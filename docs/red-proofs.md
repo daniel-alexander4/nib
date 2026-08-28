@@ -1923,3 +1923,41 @@ function replaces; this asserts a ceremony walked end to end through the real ro
 through that door at every hop.
 
 `recorded` 117 → 121.
+
+---
+
+## P07.S05c — the seeker announces, the sought listens (v1.117.182–.184)
+
+Four rows. **Three of them cannot be reached by any run in the tree**, and that is the slice: the
+mechanism exists for a peer arriving *after* the arm's five-minute announce window has expired, and
+every hop of every run falls inside it. The policy was separated from its socket so a fake clock
+could reach the state a real one needs five minutes to.
+
+| Defect reintroduced | Check that fired | What it said |
+|---|---|---|
+| `arm-answers-any-announcer` — the L1 gate deleted, so an arm answers any sighting | `TestTheArmAnswersItsOwnPeerAndNobodyElse`, tier 1 | "answer 0 was for , want this arm's own peer … an arm that answers a name it does not hold is L1's whole prohibition, and it makes two armed parties answer each other forever" |
+| `arm-answers-once-and-never-again` — the rate limit becomes permanent | same | "a first-only means a later hop of the same ceremony cannot find this party at all, which is the whole reason this mechanism exists" |
+| `failed-answer-spends-the-window` — the clock is stamped even when nothing was announced | `TestAFailedAnswerDoesNotSpendTheWindow`, tier 1 | "a failed answer spent the rate-limit window, so a party that never actually announced was then silenced" |
+| `lan-namespace-drops-n` — `FLAGS` loses `-n`, so `--lan -n 4` runs a two-party ceremony | `./build/pairrepro.sh --lan -n 4`, **tier 4 `--lan`** | the signature count: a two-party run produces 2 where a relay hop produces its hop number |
+
+**The first row is the one to read twice, because the guard that catches it could not catch it
+when it was written.** `answer` took no arguments, so the test counted answers without identifying
+them — and a stranger's sighting followed by a later one produces the same **count** as the peer's
+sighting followed by a later one. Deleting the gate left every assertion green. The seam now hands
+the resolved candidate to the answer callback, which production ignores and the test asserts on.
+
+**L1 is a property about WHICH peer, and a count cannot see it.** That is the same lesson P07.S05b
+recorded one slice earlier from the other end of the codebase — *"`/ByteRange` counts blocks, so
+one party signing eight times satisfies any count"* — and the distinct-signer set was the answer
+there. Twice in two slices, on opposite sides of the tree: **when the property is identity, count
+the identities.**
+
+**The fourth row is the harness, and it is the third of three barriers** that stood between the LAN
+clause and its only driver — the others being an explicit `--lan is N=2-only` refusal and the
+`N != 2` block's `exit 0` three lines before the `LAN` block. Any one alone made `--lan -n 9`
+impossible. With all three gone, the first measurement of a ceremony on a link found that a
+ceremony carrying an invitation bootstraps the public DHT unconditionally, so P03's
+no-outbound-traffic criterion is false for every ceremony P07 builds (`/pending 299`).
+
+`recorded` 121 → 125 (the tier-4 row lands one commit later — its patch has to be cut against a
+HEAD that already contains the guard it defeats, and that guard is in this commit).

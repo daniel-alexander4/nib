@@ -1,0 +1,16 @@
+diff --git a/internal/server/lan.go b/internal/server/lan.go
+index 4829793..3be71de 100644
+--- a/internal/server/lan.go
++++ b/internal/server/lan.go
+@@ -752,9 +752,8 @@ func answerLoop(ctx context.Context, b browser, pins []vault.PinnedPeer, now fun
+ 		if !lastAnswer.IsZero() && now().Sub(lastAnswer) < hopAnnounceWindow {
+ 			continue // one answer per window: a re-dial must not stack a second announcer
+ 		}
+-		if answer(c) {
+-			lastAnswer = now()
+-		}
++		answer(c)
++		lastAnswer = now()
+ 	}
+ }
+ 
