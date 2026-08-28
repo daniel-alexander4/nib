@@ -274,8 +274,14 @@ link_report() { # from to transport
       | python3 -c 'import json,sys
 d=json.load(sys.stdin)
 if d.get("note"): print("    note:", d["note"])
+# The window is printed even on a non-empty answer: "heard nothing" and "listened for 200ms"
+# are different faults with the same line, which is this function own reason for existing.
+print("    listened %sms" % d.get("windowMs"))
 for h in d.get("heard", []):
-    print("    %-10s %-24s %s" % (h["label"], h["addr"], h["transport"]))
+    # The six-word NAME as well as the label: the label is this harness own bookkeeping and the
+    # name is what the peer actually announced, so a mismatch between them is visible here and
+    # nowhere else.
+    print("    %-10s %-24s %-6s %s" % (h["label"], h["addr"], h["transport"], h["name"]))
 if not d.get("heard"): print("    (heard nothing)")' >&2 || echo "    (could not ask)" >&2
   done
 }
