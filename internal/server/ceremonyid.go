@@ -103,6 +103,102 @@ type ceremonyID struct {
 	// bootstrapOnce/bootstrapErr are ensureBootstrapped's door. See its comment.
 	bootstrapOnce sync.Once
 	bootstrapErr  error
+	// linkSeenAt is when this arm last resolved its OWN expected peer on the local link, in unix
+	// nanoseconds; zero means never. Written by answerLoop's sighting hook, read by holdDHT.
+	// Atomic because the answer loop and the candidate feed are different goroutines.
+	linkSeenAt atomic.Int64
+	// linkWatchAt is when this arm STARTED watching the link, same units. It is what makes "never
+	// seen" different from "not looking": the dial side sets neither and is unaffected, and an arm
+	// that has not heard anything yet is still owed its budget rather than released on a race
+	// between its answer loop starting and the candidate feed's first wait ending.
+	linkWatchAt atomic.Int64
+}
+
+// watchingLink records that this arm has started listening for its peer on the link.
+func (c *ceremonyID) watchingLink(at time.Time) {
+	if c == nil {
+		return
+	}
+	c.linkWatchAt.CompareAndSwap(0, at.UnixNano())
+}
+
+// noteLinkSighting records that the party this arm is waiting for is on the local link.
+//
+// **It is the arm's half of ADR-011, and the signal was already being computed.** `answerLoop`
+// resolves `resolve(pins, seen)` on every iteration, where `answerHopSeekers` built `pins` from
+// this arm's own expected peer — so "the party I am waiting for is on this link" was already
+// asked, already screened against PINS rather than wire bytes (L1: a stranger's announcement does
+// not resolve, and never reaches here), and simply had no reader for this purpose.
+func (c *ceremonyID) noteLinkSighting(at time.Time) {
+	if c == nil {
+		return
+	}
+	c.linkSeenAt.Store(at.UnixNano())
+}
+
+// holdDHT blocks until this ceremony may reach the public DHT, and reports whether it may at all
+// (false means the ceremony ended first).
+//
+// **Why a renewable hold rather than a duration.** S05d gave the DIAL side a decisive answer —
+// `peerAddresses` browses before the race, so a LAN candidate is the link having already answered.
+// The arm has no such one-shot answer: it is waiting, and in a relay it may wait through seven
+// other hops. Measured at nine parties, that is exactly who leaked — instances 1 and 2 reached the
+// DHT zero times and 3 through 9 reached it twice each, which is precisely the parties whose turn
+// comes after a fixed window closes.
+//
+// So the arm holds on EVIDENCE and re-asks: every sighting of its own expected peer pushes the
+// deadline out by `lanFirstBudget`, and a link that stops carrying that peer stops renewing. It
+// degrades in the right direction — a genuinely remote ceremony never renews at all and pays
+// `base`, which is the same cost it paid before this existed.
+//
+// On the dial side nothing writes `linkSeenAt`, so the loop below runs zero times and the
+// behaviour is identical to the plain wait it replaced. That is deliberate: one door, and the
+// side that does not need renewal does not get a second code path (ADR-009).
+func (c *ceremonyID) holdDHT(ctx context.Context, base time.Duration) bool {
+	if !waitCtx(ctx, base) {
+		return false
+	}
+	for {
+		ns := int64(0)
+		if c != nil {
+			ns = c.linkSeenAt.Load()
+			if ns == 0 {
+				// Never heard anything YET is not the same as not looking. Measuring from when
+				// the watch began is what stops the release being a race between the answer loop
+				// starting and this wait ending: announcements arrive at 2/s, `base` is two
+				// seconds, and a first sighting that lands at 2.1 s would otherwise have missed.
+				// A genuinely remote arm therefore pays exactly one `lanFirstBudget` and then
+				// publishes, which is the acceptance clause in as many words.
+				ns = c.linkWatchAt.Load()
+			}
+		}
+		if ns == 0 {
+			return true // nobody is watching the link at all — the dial side, unchanged
+		}
+		left := lanFirstBudget - time.Since(time.Unix(0, ns))
+		if left <= 0 {
+			return true // the link went quiet and stayed quiet
+		}
+		if !waitCtx(ctx, left) {
+			return false
+		}
+	}
+}
+
+// waitCtx sleeps for d, reporting false if ctx ended first. A non-positive d still checks ctx, so
+// a caller cannot skip cancellation by asking for no wait.
+func waitCtx(ctx context.Context, d time.Duration) bool {
+	if d <= 0 {
+		return ctx.Err() == nil
+	}
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-t.C:
+		return true
+	case <-ctx.Done():
+		return false
+	}
 }
 
 // ensureBootstrapped is the ONE door onto the DHT's first contact with the network (ADR-009),

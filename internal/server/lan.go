@@ -670,7 +670,7 @@ func raceKey(c candidate) string {
 // `wanted` reports whether this arm still wants to be found. Once the hop has signed, a peer that
 // reaches us can only be re-delivering and already holds the address, so answering would put a
 // stale candidate on the link for the next ceremony's browse to pick up (/pending 300).
-func (s *Server) answerHopSeekers(ctx context.Context, cert []byte, ln announceable, peerFP []byte, wanted func() bool) {
+func (s *Server) answerHopSeekers(ctx context.Context, cert []byte, ln announceable, peerFP []byte, wanted func() bool, sighted, watching func(time.Time)) {
 	v := s.unlockedVault()
 	if v == nil {
 		return
@@ -693,6 +693,12 @@ func (s *Server) answerHopSeekers(ctx context.Context, cert []byte, ln announcea
 		return // no usable interface: the DHT and the accept still race, as everywhere else here
 	}
 	defer sock.Close()
+	// The watch has begun. Recorded AFTER the socket opens and the pins are known, because an arm
+	// that could not open a socket is not watching the link and must not hold the DHT tier on a
+	// silence it was never in a position to hear (S05e).
+	if sighted != nil {
+		watching(time.Now())
+	}
 
 	var answering *lanAnnouncer
 	defer func() {
@@ -713,7 +719,7 @@ func (s *Server) answerHopSeekers(ctx context.Context, cert []byte, ln announcea
 			answering = nil
 		}
 	}
-	answerLoop(ctx, sock, pins, time.Now, wanted, stop, func(candidate) bool {
+	answerLoop(ctx, sock, pins, time.Now, wanted, stop, sighted, func(candidate) bool {
 		ann, aerr := startAnnouncing(cert, ln, hopAnnounceWindow)
 		if aerr != nil {
 			return false // loopback bind or no interface — never fatal to the arm
@@ -748,11 +754,14 @@ func (s *Server) answerHopSeekers(ctx context.Context, cert []byte, ln announcea
 // from "answered a stranger" — measured: deleting the `resolve` gate below left the first version
 // of `TestTheArmAnswersItsOwnPeerAndNobodyElse` green, because a stranger's sighting and the
 // peer's produce the same COUNT. L1 is the property here and a count cannot see it.
+// `sighted` is called for every resolved sighting of this arm's own peer, before the answer rate
+// limit — see the comment at the call site for why the two must not share a gate.
+//
 // `wanted` reports whether this arm still wants to be found; `stop` releases whatever it is
 // announcing when that goes false. Both are checked once per iteration rather than per sighting,
 // because the state this is about — the hop has signed — is exactly the state in which nothing is
 // announcing to us any more.
-func answerLoop(ctx context.Context, b browser, pins []vault.PinnedPeer, now func() time.Time, wanted func() bool, stop func(), answer func(candidate) bool) {
+func answerLoop(ctx context.Context, b browser, pins []vault.PinnedPeer, now func() time.Time, wanted func() bool, stop func(), sighted func(time.Time), answer func(candidate) bool) {
 	var lastAnswer time.Time
 	for {
 		if ctx.Err() != nil {
@@ -782,6 +791,20 @@ func answerLoop(ctx context.Context, b browser, pins []vault.PinnedPeer, now fun
 		c, ok := resolve(pins, seen)
 		if !ok {
 			continue // not the peer this arm is for — see the amplification note above
+		}
+		// **The sighting, reported BEFORE the answer rate limit and not after it (S05e).**
+		//
+		// The gate below is `hopAnnounceWindow` and exists so a re-dial cannot stack a second
+		// announcer — a rule about ANNOUNCING. Observing is a different rate over the same
+		// stream, and hanging it off the same gate would make it silently inherit that period:
+		// the hold would stop renewing during exactly the stretch in which the peer is most
+		// present on the link, which is the opposite of what the evidence says.
+		//
+		// It is past `resolve`, so it is the arm's OWN expected peer and never a stranger — the
+		// screen is pins, not wire bytes (L1), and it is the same screen the answer already
+		// trusts.
+		if sighted != nil {
+			sighted(now())
 		}
 		if !lastAnswer.IsZero() && now().Sub(lastAnswer) < hopAnnounceWindow {
 			continue // one answer per window: a re-dial must not stack a second announcer

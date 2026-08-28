@@ -5126,7 +5126,7 @@ with two findings underneath it: `/api/lan/heard`'s shapes were outside the read
 scan's matcher could not see its reader's style at all. A harness that skips cleanly when its
 dependencies are absent also skips cleanly when nobody runs it.
 
-#### P07.S05e — The arm stops pre-publishing *(C05 pin; D6, P03's exit criterion)* — **new, 2026-08-27, split out of S05d on a measurement**
+#### P07.S05e — The arm stops pre-publishing *(C05 pin; D6, P03's exit criterion)* — **new, 2026-08-27, split out of S05d on a measurement** *(done 2026-08-27, v1.117.207)*
 Scope: an arm whose hop has not arrived yet publishes its address to the public DHT, and in a relay
 that is every party from the third onward.
 
@@ -5137,31 +5137,73 @@ arm's own `connect` → `feedCeremonyRace`. The pattern is not noise: i1 is the 
 and i2's hop starts immediately, so those two are reached inside their window. Every other party
 arms before hop 1 and waits 2 s × its position.
 
-**Why the S05d shape does not extend.** The dial side holds on `hasLANCandidate`, which is a browse
-result it already has. The arm has none: it announces rather than browses, and `answerLoop` filters
-sightings to its **own expected peer**, who does not appear on the link until the hop begins. So the
-arm cannot distinguish "the link will deliver my peer in fourteen seconds" from "nobody is here".
+~~**Why the S05d shape does not extend:** the arm announces rather than browses, and `answerLoop`
+filters sightings to its own expected peer, who does not appear on the link until the hop begins.~~
+~~**The shape:** an arm that browses for the whole roster renews its DHT hold on evidence.~~
 
-**The shape, and it is the one signal that is real rather than a timer.** During a relay the link is
-never quiet: party *k*−1 browses for party *k* at every hop, and those seeks carry roster identities.
-An arm that browses for the **whole roster** rather than only its expected peer hears the ceremony
-happening and renews its DHT hold on evidence; a ceremony with no LAN parties hears nothing and the
-DHT tier opens after `lanFirstBudget`. It degrades in the right direction and it is falsifiable.
+**PIN, 2026-08-27 (S05e's grill). Both struck: the premise was false and the shape it produced was
+wrong.**
 
-To state and check: a hostile announcer can delay another party's DHT fallback by renewing the hold,
-bounded by `lanFirstBudget` per renewal. Renewing only on sightings that resolve to a **roster**
-party — roster membership is not wire-derived, so L1 is intact — is what keeps that from being a
-stranger's lever.
+**The premise, measured at the lines.** Every armed party announces **from the moment it arms**, for
+`lanAnnounceWindow` = **5 minutes** at 2/s (`internal/server/lan.go:43`, `session.go:1180`) —
+unprompted, not in answer to a seek — and a browse is passive (`discover.go:290`). A nine-party
+relay completes in ~20 s. So a waiting arm's predecessor **is** on the link the whole time, and
+"does not appear until the hop begins" was simply not true.
+
+**Which makes the roster-wide browse both wrong and unnecessary.** Wrong, because audibility of
+*some* roster party is not evidence that *your* hop arrives over the link: roster A→B→C with **A and
+C on one link and B remote** has C hold its publish on hearing A, while B — the party actually
+dialling C — cannot find it, for as long as A keeps announcing. Unnecessary, because `answerLoop`
+(`lan.go:782`) already resolves the right question every iteration — `resolve(pins, seen)`, with
+`pins` built from the arm's **own expected peer** (`lan.go:678-683`). That `ok` is *"the party I am
+waiting for is on this link"*: already asked, already screened against pins rather than wire bytes
+(L1 intact, and a stranger is already dropped there), and already correct on the mixed ceremony
+above, because A is not in C's pins.
+
+**So the slice is to feed the sighting the arm already resolves into the hold** — not a new browse,
+not a new socket, not a roster walk.
+
+**And the S05d lesson repeats at the same count:** `answerHopSeekers` has **one** caller
+(`session.go:1194`, the QUIC arm). The TCP arm never starts it, so wiring the hold only where the
+signal already is would fix one of two paths with nothing failing.
 Acceptance:
 - A **nine-party** LAN relay completes in the namespace with the egress counter **at its baseline**,
   over both transports — `./build/pairrepro.sh --lan -n 9`, which is red at 60–111 packets and whose
   per-instance distribution is recorded above, so a partial fix cannot read as a whole one.
 - The hold renews on **evidence**, not on a timer: driven by a fake browser, an arm that keeps
-  hearing roster parties holds indefinitely and one that stops falls through within `lanFirstBudget`.
+  hearing its peer holds indefinitely and one that stops falls through within `lanFirstBudget`.
 - A **stranger's** announcement does not renew the hold, driven separately — a count cannot see the
   difference and `answerLoop`'s own history says so.
 - The remote path's cost is measured: an arm with nothing on the link reaches the DHT within
   `lanFirstBudget`, and that number is printed rather than assumed.
+
+Tasks *(from the 2026-08-27 grill; verdict amended — the correction makes the slice smaller)*:
+- **T01** — the resolved sighting renews a link-liveness deadline on the ceremony, hooked after
+  `resolve` and **before** the answer rate limit. That gate is `hopAnnounceWindow` and exists so a
+  re-dial does not stack a second announcer; renewing only on *answered* sightings would let the
+  hold lapse during exactly the period the peer is most present. Observing and announcing are two
+  different rates over one stream, and one gate over both makes the second inherit the first's period.
+- **T02** — the TCP arm gets the same signal, or the slice fixes one of two paths.
+- **T03** — driven: renews on the peer, does **not** renew on a stranger, lapses within
+  `lanFirstBudget` when the link goes quiet, and an arm hearing nothing still reaches the DHT.
+- **T04** — `--lan -n 9` at the baseline over both transports; the remote-path cost printed.
+- **T05** — red proofs; `recorded` moves.
+
+**Ledger — 4 met, 0 not met.** Clause 1 (nine-party LAN relay at baseline, both transports):
+**met** — `./build/pairrepro.sh --lan -n 9` prints *"16 hops over two transports, and nothing left
+the link"*, confirmed on two consecutive runs, with the two-party control unregressed. **P03's exit
+criterion is green for the first time since it was written.** Clause 2 (renews on evidence, lapses
+without): met, driven by the fake browser and the injected clock, four arms, each probed red.
+Clause 3 (a stranger does not renew): met, and asserted on WHOSE sighting rather than on a count —
+`answerLoop`'s own first version was green because a stranger's and the peer's produce the same
+count. Clause 4 (remote cost measured): met — **30.001 s**, one `lanFirstBudget` from the moment
+the arm starts watching, against a 300 s connect deadline.
+
+**The grill made this slice smaller, not larger.** Its scope named a roster-wide browse; that shape
+has collateral on a mixed ceremony, and the exact signal was already being computed one function
+away in `answerLoop`. What was added is a reader, not a browse. **And `answerHopSeekers` had one
+caller** — the QUIC arm — so the TCP arm gained it too, which also closes a findability gap S05c
+left open.
 
 #### P07.S06 — Placement: measured, on the pages S02 allocated *(D25; C03)*
 Scope, **re-derived from measurement 2026-08-23 — the first firming got all three numbers wrong.** The block

@@ -645,6 +645,30 @@ func (s *Server) runSession(ln p2p.Listener, cer *ceremonyID, cert, key []byte, 
 		armAnnouncer = ann
 		defer ann.Close()
 	}
+	// **The TCP arm answers hop seekers too, and reports the sighting (P07.S05e T02).**
+	//
+	// `runCeremonyReceive` has done this since S05c, and this path never did — so a TCP ceremony
+	// arm could not be found after its five-minute announcement expired, which is the whole defect
+	// S05c's own comment describes ("from the fourth party onward a same-room ceremony would
+	// silently run over the public DHT"), and it had no evidence to hold its DHT publish on.
+	//
+	// **Two arm paths living in two functions is the same count S05d found one day earlier** for
+	// the bootstrap: the plan named two eager sites and there were three, because these two arms
+	// are not one function. A slice wired only where the machinery already existed would have
+	// fixed QUIC and left TCP, with nothing failing to say so.
+	//
+	// Bound to this goroutine rather than to the process: the arm ends, the answering ends.
+	if cer != nil {
+		if fp, derr := hex.DecodeString(cer.peer); derr == nil && len(fp) > 0 {
+			hctx, hcancel := context.WithCancel(context.Background())
+			defer hcancel()
+			go func() {
+				defer safe.Recover("hop seeker answers")
+				s.answerHopSeekers(hctx, cert, ln, fp,
+					func() bool { return !cer.hasSigned() }, cer.noteLinkSighting, cer.watchingLink)
+			}()
+		}
+	}
 	// This user's own fingerprint, for the verification string — it binds both identities,
 	// and this goroutine holds the cert rather than the fingerprint.
 	myFP, err := sign.Fingerprint(cert)
@@ -1191,7 +1215,8 @@ func (s *Server) runCeremonyReceive(ctx context.Context, cer *ceremonyID, hl *p2
 		defer safe.Recover("hop seeker answers")
 		// `cer.hasSigned` is the "still worth finding" test: once this hop has signed, a peer that
 		// reaches us can only be re-delivering, and it already has the address (/pending 300).
-		s.answerHopSeekers(ctx, cert, quicEndpointAnnounce{hl.Addr()}, peerFP, func() bool { return !cer.hasSigned() })
+		s.answerHopSeekers(ctx, cert, quicEndpointAnnounce{hl.Addr()}, peerFP,
+			func() bool { return !cer.hasSigned() }, cer.noteLinkSighting, cer.watchingLink)
 	}()
 	// **No bootstrap here (S05d).** The QUIC arm used to warm the DHT before anyone knew whether
 	// the link would answer, which is off-link traffic on every hop of every ceremony carrying an

@@ -114,7 +114,7 @@ func TestTheArmAnswersItsOwnPeerAndNobodyElse(t *testing.T) {
 		s, e := br.Read(d)
 		reads++
 		return s, e
-	}), pins, now, nil, nil, func(c candidate) bool {
+	}), pins, now, nil, nil, nil, func(c candidate) bool {
 		answers = append(answers, now())
 		answeredFor = append(answeredFor, c.Fingerprint)
 		return true
@@ -171,7 +171,7 @@ func TestAFailedAnswerDoesNotSpendTheWindow(t *testing.T) {
 		<-br.done
 		cancel()
 	}()
-	answerLoop(ctx, br, pins, func() time.Time { return base }, nil, nil, func(candidate) bool {
+	answerLoop(ctx, br, pins, func() time.Time { return base }, nil, nil, nil, func(candidate) bool {
 		tries++
 		return false // never managed to announce
 	})
@@ -236,6 +236,7 @@ func TestASignedArmStopsAnnouncingAndStopsAnswering(t *testing.T) {
 		func() time.Time { return base.Add(time.Duration(reads) * 2 * hopAnnounceWindow) },
 		func() bool { return !signed },
 		func() { stops++ },
+		nil,
 		func(candidate) bool { answers++; return true },
 	)
 
