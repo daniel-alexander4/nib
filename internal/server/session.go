@@ -430,7 +430,13 @@ func (sc sessionConfirmer) Confirm(peer p2p.SignerAttestation, doc []byte) (bool
 	// rather than replacing the open document — that only changes on accept, in
 	// runSession. A declined or timed-out request leaves the open doc untouched.
 	ch := make(chan sessionDecision, 1)
-	view := pendingView{Signer: peer.Signer, Fingerprint: peer.Fingerprint, AcceptedPeer: peer.AcceptedPeer, Reason: peer.Reason, Valid: peer.Valid}
+	view := pendingView{
+		Signer: peer.Signer, Fingerprint: peer.Fingerprint, AcceptedPeer: peer.AcceptedPeer,
+		Reason: peer.Reason, Valid: peer.Valid,
+		// Every party already on the document, not just the one on the other end of the socket
+		// (P07.S07c).
+		Signers: signersSoFar(doc),
+	}
 	// The request is held so the defer can name it: an unconditional clear drops whatever
 	// is pending when it fires, which after a disarm-and-rearm is a LATER session's consent.
 	req := &pendingReq{view: view, doc: doc, resp: ch}
@@ -1057,6 +1063,46 @@ type pendingView struct {
 	AcceptedPeer string `json:"acceptedPeer"`
 	Reason       string `json:"reason"`
 	Valid        bool   `json:"valid"`
+	// Signers is every party who has ALREADY signed this document, in signature order
+	// (D27 item 3, C09; P07.S07c).
+	//
+	// **The consent screen showed exactly one person, and in a ceremony that is the wrong
+	// one.** It named the connected peer — who under a carry route is a non-signing convener,
+	// and who at hop 6 is whoever dialled rather than the five parties whose signatures the
+	// user is about to join. A party asked to sign sixth was told about one person and shown a
+	// document bearing five signatures, which is the decision D27 says they must be equipped to
+	// make.
+	//
+	// Empty on the first hop of a ceremony and on an ordinary transfer, and that is a fact the
+	// screen states rather than a list it omits: "nobody has signed this yet" and "we did not
+	// look" must not render the same.
+	Signers []pendingSigner `json:"signers"`
+}
+
+// pendingSigner is one already-present signature, for the consent screen.
+//
+// `Signer` is the name the signature carries, which since P07.S07a is the party's roster label
+// rather than the `"Nib User"` constant — so a nine-party ceremony's consent screen names nine
+// different people instead of nine copies of one.
+type pendingSigner struct {
+	Signer      string `json:"signer"`
+	Fingerprint string `json:"fingerprint"`
+	Valid       bool   `json:"valid"`
+}
+
+// signersSoFar reads the signatures already on a document.
+//
+// `sign.Verify` rather than `p2p.Attestations`: the question is who has signed, which the
+// signature list answers directly, and the attestation machinery would additionally parse
+// /Reason and cross-bind — work whose answers this screen does not show. The consent gate is a
+// human pause, not a hot path, but a verify it does not use is still a verify.
+func signersSoFar(doc []byte) []pendingSigner {
+	st := sign.Verify(doc)
+	out := make([]pendingSigner, 0, len(st.Signers))
+	for _, s := range st.Signers {
+		out = append(out, pendingSigner{Signer: s.Name, Fingerprint: s.Fingerprint, Valid: s.Valid})
+	}
+	return out
 }
 
 func (s *Server) handleSessionArm(w http.ResponseWriter, r *http.Request) {
