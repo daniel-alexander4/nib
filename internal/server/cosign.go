@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"time"
@@ -22,7 +23,9 @@ import (
 // client the exact lines and rectangle to render, and /sign signs from the same
 // inputs — the client never re-derives the attestation, only rasterizes it.
 
-const maxIntentLen = 200
+// maxIntentLen was a silent 200-rune clamp on the manual co-sign path (/pending 286). It is gone:
+// the bound that matters is `p2p.IntentFitsBlock`, which measures the rendered WIDTH against the
+// block's geometry rather than counting runes, and refuses. See buildAttestation.
 
 // cosignParams are the attestation inputs shared by /quote and /sign.
 type cosignParams struct {
@@ -62,9 +65,26 @@ func (s *Server) cosignAttestation(w http.ResponseWriter, v *vault.Vault, p cosi
 		httpError(w, http.StatusBadRequest, "that peer isn't pinned — pin their fingerprint first")
 		return p2p.Attestation{}, false
 	}
+	// **REFUSED, not clamped, and through the door the ceremony path already uses (/pending 286).**
+	//
+	// This silently did `intent = string(rs[:maxIntentLen])` — no error, no echo — on a value that
+	// is signed into the attestation's `/Reason` and rendered on the block. The repo's law is
+	// refuse-not-clamp: `ErrReadmeOverflow` is the precedent, and P07.S08's finding that pdfcpu
+	// CLAMPS overflow is what made its own instrument blind.
+	//
+	// **And 200 runes was the wrong bound anyway, because count is not width.** `IntentFitsBlock`
+	// measures the rendered string against the block's real geometry — "MMMM" and "iiii" differ by
+	// nearly 3x at these metrics — so a rune count is wrong for capitals and wasteful for lower
+	// case. The convene door has refused on that measurement since P07.S02a; this is the MANUAL
+	// co-sign path, which was never routed through it. One rule, one door (ADR-009).
 	intent := p.Intent
-	if rs := []rune(intent); len(rs) > maxIntentLen {
-		intent = string(rs[:maxIntentLen])
+	if !p2p.IntentFitsBlock(intent) {
+		httpError(w, http.StatusBadRequest, fmt.Sprintf(
+			"that intent is %d characters and about %d fit. The signature block carries it in "+
+				"full, so Nib refuses an intent it would have to cut rather than showing a "+
+				"shortened one above your signature.",
+			len([]rune(intent)), p2p.MaxIntentRunes(intent)))
+		return p2p.Attestation{}, false
 	}
 	// The client may name the time, but not an arbitrary one: `when` is signed into the
 	// attestation, so an unbounded value lets a caller mint a co-signature dated years
