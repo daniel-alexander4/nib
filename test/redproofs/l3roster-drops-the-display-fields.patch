@@ -1,0 +1,13 @@
+diff --git a/internal/server/ceremonyid.go b/internal/server/ceremonyid.go
+index c593911..b0d4f71 100644
+--- a/internal/server/ceremonyid.go
++++ b/internal/server/ceremonyid.go
+@@ -537,7 +537,7 @@ func (c *ceremonyID) l3Roster() p2p.Roster {
+ 	// runs it before consent.
+ 	for _, p := range c.inv.Roster {
+ 		out.Entries = append(out.Entries, p2p.RosterEntry{
+-			Fingerprint: p.Fingerprint, Signs: p.Signs, Label: p.Label, Capacity: p.Capacity,
++			Fingerprint: p.Fingerprint, Signs: p.Signs,
+ 		})
+ 	}
+ 	return out

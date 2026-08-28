@@ -1,0 +1,13 @@
+diff --git a/internal/p2p/l3.go b/internal/p2p/l3.go
+index 55fab82..5270cfe 100644
+--- a/internal/p2p/l3.go
++++ b/internal/p2p/l3.go
+@@ -129,7 +129,7 @@ func StampCommitment(att *Attestation, r Roster, meFP string) {
+ 	order := SigningOrder(r)
+ 	att.Position = pos + 1 // 1-based for the eye; SigningPositionOf is 0-based
+ 	att.RosterSize = len(order)
+-	att.Capacity = order[pos].Capacity
++	att.Capacity = order[0].Capacity
+ 	// **Falling back to the fingerprint, never to a constant.** An unlabelled party is one the
+ 	// convener did not name, and the honest block says which key signed rather than inventing a
+ 	// person. `"Nib User"` on nine blocks is the defect this closes.
