@@ -1,0 +1,14 @@
+diff --git a/internal/server/clocks.go b/internal/server/clocks.go
+index 96ff432..17a14d5 100644
+--- a/internal/server/clocks.go
++++ b/internal/server/clocks.go
+@@ -52,6 +52,9 @@ const (
+ 	// which is what the missing test would have been: green with neither constant read.
+ 	connectDeadline = 300 * time.Second
+ 
++	// D33 law figure, mirrored here for convenience.
++	MaxCandidates = 8
++
+ 	// maxRaceCandidates bounds the DISTINCT candidates one race may dial, across every
+ 	// tier. **Law, not tuning** (D16's plan-review pin, 2026-08-17): the backoff bounds how
+ 	// fast the race emits and nothing bounded how much, and under D6 an attacker supplies

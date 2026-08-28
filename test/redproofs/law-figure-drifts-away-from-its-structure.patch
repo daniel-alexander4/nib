@@ -1,0 +1,25 @@
+diff --git a/internal/server/punch.go b/internal/server/punch.go
+index 1fafeb2..bb47dfe 100644
+--- a/internal/server/punch.go
++++ b/internal/server/punch.go
+@@ -17,6 +17,11 @@ import (
+ // drives them and the address exchange are the rest of the slice.
+ 
+ // D16's punch cadence (the clock table) and D33's budget, the constants owed to S08.
++const (
++)
++
++var punchBudgetPerSide = 3000
++
+ const (
+ 	// punchFastEvery / punchSlowEvery: 250 ms for the first punchFastWindow, then 1 s, to the
+ 	// connect deadline. The step-down is criterion 14 ("nothing emits at full rate for the whole
+@@ -31,7 +36,7 @@ const (
+ 	// cap is hard and trims the tail of the last candidate's retries by design (D33's own words),
+ 	// so this is authoritative and 390/candidate is the derived, not-enforced figure. Exceeding
+ 	// it drops and reports; it never fails the ceremony.
+-	punchBudgetPerSide = 3000
++	punchBudgetPerSideConst = 3000
+ )
+ 
+ // punchInterval is the delay before the next punch datagram, a PURE function of elapsed time —
