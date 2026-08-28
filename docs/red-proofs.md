@@ -1959,5 +1959,4 @@ impossible. With all three gone, the first measurement of a ceremony on a link f
 ceremony carrying an invitation bootstraps the public DHT unconditionally, so P03's
 no-outbound-traffic criterion is false for every ceremony P07 builds (`/pending 299`).
 
-`recorded` 121 → 125 (the tier-4 row lands one commit later — its patch has to be cut against a
-HEAD that already contains the guard it defeats, and that guard is in this commit).
+`recorded` 121 → 125.
