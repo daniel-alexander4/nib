@@ -249,6 +249,7 @@ func (s *Server) Handler() http.Handler {
 	// Protected — require the vault unlocked (+ CSRF on writes).
 	mux.HandleFunc("GET /api/vault/export", s.requireUnlocked(s.handleVaultExport))
 	mux.HandleFunc("POST /api/vault/import", s.requireUnlocked(s.handleVaultImport))
+	mux.HandleFunc("GET /api/lan/heard", s.requireUnlocked(s.handleLANHeard))
 	mux.HandleFunc("GET /api/ssh/keys", s.requireUnlocked(s.handleKeysList))
 	mux.HandleFunc("POST /api/ssh/keys", s.requireUnlocked(s.handleKeysAdd))
 	mux.HandleFunc("POST /api/ssh/keys/remove", s.requireUnlocked(s.handleKeysRemove))

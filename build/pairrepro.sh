@@ -254,6 +254,32 @@ if [ "$LAN" = "1" ] && [ "${NIB_LAN_NS:-}" != "1" ]; then
   ' _ "$PREBUILT" "$0" "$FLAGS" "$N"
 fi
 
+# link_report prints what BOTH ends of a failed hop hear on the link.
+#
+# **Built because /pending 300 could not be diagnosed without it.** A QUIC relay followed by a TCP
+# relay over the same instances fails at hop 1 with a D19 verdict about the DHT, for a peer that is
+# on the link and announcing — and the only evidence available was the failure itself. Every
+# candidate cause (a lingering announcement from the previous arm, an endpoint not released at
+# disarm, the D19 cause being wrong again) is a question about what the dialler could SEE, and
+# nothing could answer it.
+#
+# Both ends, because "the convener heard nothing" and "the party announced nothing" are different
+# faults with the same symptom, and a report from one end cannot tell them apart.
+link_report() { # from to transport
+  local fi="$1" ti="$2" transport="$3"
+  echo "--- what each end hears on the link [$transport] ---" >&2
+  for i in "$fi" "$ti"; do
+    echo "  instance $i:" >&2
+    curl -fsS "${URLS[$((i-1))]}/api/lan/heard" 2>/dev/null \
+      | python3 -c 'import json,sys
+d=json.load(sys.stdin)
+if d.get("note"): print("    note:", d["note"])
+for h in d.get("heard", []):
+    print(f"    {h[\"label\"]:<10} {h[\"addr\"]:<24} {h[\"transport\"]}")
+if not d.get("heard"): print("    (heard nothing)")' >&2 || echo "    (could not ask)" >&2
+  done
+}
+
 # Reads the off-link packet counter the namespace installed.
 offlink_packets() {
   # The SUM across both family rules. Reading only the first was the IPv6 blind spot.
@@ -813,7 +839,7 @@ ceremony() { # transport port outfile from to [indoc] [want_sigs] [want_proceedi
   # The property only two instances can see.
   [ "$words_a" = "$words_b" ] || fail "[$transport] the two instances derived DIFFERENT verification words — A saw '$words_a' and B saw '$words_b'. Two people comparing these would read a mismatch as an attack."
 
-  [ "$code" = "200" ] || { cat "$init_out" >&2; cat "${HOMES[1]}/nib.log" >&2; fail "[$transport] initiate returned HTTP $code"; }
+  [ "$code" = "200" ] || { cat "$init_out" >&2; cat "${HOMES[1]}/nib.log" >&2; link_report "$fi" "$ti" "$transport"; fail "[$transport] initiate returned HTTP $code"; }
 
   # The ceremony completed only if the document carries BOTH signatures — read
   # from B's side, because asking A whether A signed is asking the thing under test.
@@ -1318,20 +1344,22 @@ PYSET
   # what makes that a measurement rather than a claim.
   if [ "$LAN" = "1" ]; then
     egress_preamble
-    # **TCP first here, and QUIC first everywhere else — the asymmetry is a FINDING, not a
-    # preference (P07.S05c).** Running QUIC first makes the TCP relay that follows fail with a 502
-    # whose cause is *"Couldn't reach the rendezvous network"* — a D19 verdict about the DHT, for a
-    # peer that is on the link and announcing. Reproduced twice; TCP first, both relays complete.
-    # So the QUIC relay leaves state that a following TCP relay on the same instances cannot get
-    # past, and what that state is has not been established. Filed.
+    # **QUIC first, matching every other run in this file — and the ordering workaround that was
+    # here is gone (/pending 300).** Running QUIC first once made the TCP relay that followed fail
+    # with a 502 whose cause was *"Couldn't reach the rendezvous network"* — a D19 verdict about the
+    # DHT, for a peer on the link and announcing — and TCP-first completed both. Reproduced twice
+    # then, it does **not** reproduce on the current tree: two QUIC-first runs at v1.117.199 walked
+    # all six hops and reached the egress assertion below.
     #
-    # The order is TCP-first because QUIC-first MASKS the larger finding below: the run dies at the
-    # 502 before it ever reaches the egress assertion, and the egress assertion is what caught a
-    # ceremony leaking to the internet.
-    relay tcp lan
-    WORDS_RELAY_TCP=( "${RELAY_WORDS[@]}" ); FINAL_TCP="$RELAY_FINAL"
+    # **That makes it a race rather than an ordering fault**, which is what "reproduced twice, then
+    # not twice" looks like, so the order is no longer a workaround. The narrowed hypothesis is
+    # recorded on the item: a browse that hears ONLY a lingering QUIC announcement from the previous
+    # arm sees an all-QUIC candidate set, takes the glare path, and dials an endpoint that is gone.
+    # `link_report` above is what makes that checkable the next time it fires.
     relay quic lan
     WORDS_RELAY_QUIC=( "${RELAY_WORDS[@]}" ); FINAL_QUIC="$RELAY_FINAL"
+    relay tcp lan
+    WORDS_RELAY_TCP=( "${RELAY_WORDS[@]}" ); FINAL_TCP="$RELAY_FINAL"
     after="$(offlink_packets)"
     # **This is RED against shipped code, and it is the clause's own criterion (P07.S05c).**
     #

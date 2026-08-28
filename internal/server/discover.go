@@ -1,8 +1,11 @@
 package server
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"net"
+	"net/http"
 	"strconv"
 	"time"
 
@@ -331,4 +334,88 @@ func browsePeers(b browser, pins []vault.PinnedPeer, window time.Duration) []can
 		out = append(out, seen[k])
 	}
 	return out
+}
+
+// lanHeard is one announcement this machine resolved on the link, for diagnostics.
+//
+// **It carries the announced TRANSPORT, and that is the field the route exists for.** A port
+// number alone is ambiguous — under QUIC it is a UDP port and under TCP a TCP port (ADR-010) — and
+// the failures this route is meant to diagnose are all a peer being dialled on the wrong one.
+type lanHeard struct {
+	Fingerprint string `json:"fingerprint"`
+	Label       string `json:"label"`
+	Name        string `json:"name"`
+	Addr        string `json:"addr"`
+	Transport   string `json:"transport"`
+}
+
+type lanHeardResponse struct {
+	// Heard is every pinned peer announcing on the link right now, in the order heard.
+	Heard []lanHeard `json:"heard"`
+	// WindowMs is how long it listened, so a reader can tell "nobody is there" from
+	// "nobody answered in two seconds".
+	WindowMs int `json:"windowMs"`
+	// Note carries the reason when the browse could not run at all — no usable interface, a
+	// firewall swallowing the group. Empty on a normal answer, including an empty one.
+	Note string `json:"note,omitempty"`
+}
+
+// handleLANHeard reports what this machine hears on the link: every PINNED peer announcing right
+// now, with the transport each announced.
+//
+// # Why this exists
+//
+// Nothing in the tree could answer "what does this machine hear?", and three separate
+// investigations have wanted it. A ceremony that falls through to the DHT, a peer dialled on the
+// wrong transport, a relay that works in one order and not the other — every one of them is a
+// question about the link, and the only evidence available was the failure itself. `/pending 300`
+// names the gap in as many words: *"the first step is a browse-level instrument — nothing in the
+// tree can show what a machine hears on the link, which is its own gap."*
+//
+// It is also the local-first answer to "when it breaks on a stranger's machine, what can they tell
+// you?" — a question this product has no telemetry to answer any other way.
+//
+// # What it does NOT disclose
+//
+// Only peers already pinned in this vault. `resolve` matches an announcement's six-word name
+// against the pins, and `pairing.Matches` recomputes the name from a fingerprint the receiver
+// already holds — there is no path from a name to a fingerprint, which is why `pairing.decode` is
+// unexported. So this reports what the caller could already have learned by arming, and L1 is
+// untouched: nothing here reaches identity, and nothing here dials.
+//
+// Read-only, unlocked-vault only, and it opens its own socket rather than borrowing an armed
+// session's, so asking the question cannot disturb one in progress.
+func (s *Server) handleLANHeard(w http.ResponseWriter, r *http.Request) {
+	v := vaultFrom(r)
+	pins := v.PinnedPeers()
+	if len(pins) == 0 {
+		writeJSON(w, lanHeardResponse{Heard: []lanHeard{}, WindowMs: int(browseWindow / time.Millisecond),
+			Note: "no peers are pinned, so no announcement could be recognised"})
+		return
+	}
+	var nonce [8]byte
+	if _, err := rand.Read(nonce[:]); err != nil {
+		httpError(w, http.StatusInternalServerError, "could not start a browse")
+		return
+	}
+	sock, err := discovery.Open(nonce)
+	if err != nil {
+		// Not an error to the caller: a host with no usable interface is the ordinary case this
+		// route is often asked about, and a 500 would hide the answer behind a fault.
+		writeJSON(w, lanHeardResponse{Heard: []lanHeard{}, WindowMs: int(browseWindow / time.Millisecond),
+			Note: "could not listen on this network: " + err.Error()})
+		return
+	}
+	defer sock.Close()
+	out := lanHeardResponse{Heard: []lanHeard{}, WindowMs: int(browseWindow / time.Millisecond)}
+	for _, c := range browsePeers(sock, pins, browseWindow) {
+		out.Heard = append(out.Heard, lanHeard{
+			Fingerprint: hex.EncodeToString(c.Fingerprint),
+			Label:       c.Label,
+			Name:        c.Name,
+			Addr:        c.Addr,
+			Transport:   c.Transport,
+		})
+	}
+	writeJSON(w, out)
 }
