@@ -640,7 +640,9 @@ func (s *Server) runSession(ln p2p.Listener, cer *ceremonyID, cert, key []byte, 
 	// The LISTENER, not its port: whether this session may be announced at all is a fact
 	// about the address it bound, and `startAnnouncing` is the door that decides it
 	// (ADR-009). A loopback bind announces nothing.
+	var armAnnouncer *lanAnnouncer
 	if ann, err := startAnnouncing(cert, ln, lanAnnounceWindow); err == nil {
+		armAnnouncer = ann
 		defer ann.Close()
 	}
 	// This user's own fingerprint, for the verification string — it binds both identities,
@@ -741,6 +743,11 @@ func (s *Server) runSession(ln p2p.Listener, cer *ceremonyID, cert, key []byte, 
 				return // the arm is spent on a session, which is what it is for
 			}
 			if postSign.IsZero() {
+				// **Stop announcing, for the reason runCeremonyReceive's twin gives (/pending 300):**
+				// a re-delivery is a reconnect by a peer that already holds this address, so the
+				// window needs the listener and not the advertisement. Announcing through it
+				// leaves a stale candidate on the link that a later ceremony's browse can pick up.
+				armAnnouncer.Close()
 				// The initiator's own re-race bound, so the window closes at the moment the far
 				// side stops trying — the same figure runCeremonyReceive uses, for the same reason.
 				//
@@ -1169,7 +1176,9 @@ func (s *Server) runCeremonyReceive(ctx context.Context, cer *ceremonyID, hl *p2
 	// and is forced onto the DHT — the privacy leak the LAN-window suppression exists to avoid — or
 	// cannot connect at all where the DHT is unreachable. It never fails the arm; a host with no
 	// usable interface still races over the DHT and the accept.
+	var armAnnouncer *lanAnnouncer
 	if ann, aerr := startAnnouncing(cert, quicEndpointAnnounce{hl.Addr()}, lanAnnounceWindow); aerr == nil {
+		armAnnouncer = ann
 		defer ann.Close()
 	}
 	// **And after that window closes, this arm can still be FOUND (P07.S05c, T02).** The
@@ -1180,7 +1189,9 @@ func (s *Server) runCeremonyReceive(ctx context.Context, cer *ceremonyID, hl *p2
 	// fingerprint and not every pinned one.
 	go func() {
 		defer safe.Recover("hop seeker answers")
-		s.answerHopSeekers(ctx, cert, quicEndpointAnnounce{hl.Addr()}, peerFP)
+		// `cer.hasSigned` is the "still worth finding" test: once this hop has signed, a peer that
+		// reaches us can only be re-delivering, and it already has the address (/pending 300).
+		s.answerHopSeekers(ctx, cert, quicEndpointAnnounce{hl.Addr()}, peerFP, func() bool { return !cer.hasSigned() })
 	}()
 	// Warm the DHT so connect's feed can fetch the peer's candidates and publish ours. Not fatal:
 	// the accept side and any fixed candidates still race, and D19 cause 2 names a dead DHT.
@@ -1245,6 +1256,26 @@ func (s *Server) runCeremonyReceive(ctx context.Context, cer *ceremonyID, hl *p2
 		}
 		if postSignDeadline.IsZero() && cer.hasSigned() {
 			postSignDeadline = time.Now().Add(connectDeadline) // first signature arms the re-delivery window
+			// **And STOP ANNOUNCING, because the window needs the listener and not the
+			// advertisement (/pending 300).**
+			//
+			// A re-delivery is a RECONNECT: the peer already has this address, so nothing about
+			// the post-signing window requires telling the link about it. Announcing through it
+			// invites somebody NEW to a hop that is finished.
+			//
+			// Measured: after a four-party QUIC relay completed, the convener still heard all
+			// three parties announcing QUIC endpoints — six candidates, two per party. A later
+			// ceremony on the same machines then browses a link full of them, and if its own
+			// fresh announcement is missed inside the two-second browse, the candidate set is
+			// entirely stale. That is how a TCP relay following a QUIC one came to fail at hop 1
+			// with a D19 verdict about the DHT, for a peer that was on the link and announcing.
+			//
+			// `allQUICCandidates` (v1.117.182) already stops a MIXED set from taking the glare
+			// path, which is why the failure became intermittent rather than reliable. This
+			// removes the stale candidates instead of tolerating them, which is the half that
+			// keeps the ordinary case honest too: a machine should not advertise a session that
+			// will refuse the next person to answer it.
+			armAnnouncer.Close()
 		}
 		switch {
 		case xerr == nil:
