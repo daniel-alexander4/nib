@@ -83,7 +83,7 @@ const SecretLen = 32
 // Free to take now: nothing in the product has ever constructed an invitation — P07.S02 is
 // the first code that constructs a `Record`, and invitations are made from one — so there is
 // no population in the field to migrate.
-const InvitationVersion = 2
+const InvitationVersion = 3
 
 // invitationPrefix is DERIVED from InvitationVersion, and that is a fix rather than a tidy-up.
 //
@@ -139,6 +139,35 @@ type Invitation struct {
 	// ConvenerFingerprint identifies who convened, so a party can check the record's
 	// signer against what the invitation told them to expect.
 	ConvenerFingerprint string `json:"convener"`
+	// Intent is the ceremony's recital — the sentence every signature's /Reason carries verbatim
+	// (D20, C15). Added 2026-08-28, P07.S07b, and `InvitationVersion` went 2 -> 3 for it.
+	//
+	// # Why the invitation carries it at all, when the record already does
+	//
+	// `internal/p2p` applies the signature and cannot import `internal/ceremony` (the cycle runs
+	// the other way — `convene.go` calls `p2p.IntentFitsBlock`), so it cannot read the record. It
+	// is handed a `p2p.Roster`, and `l3Roster` builds that from the INVITATION and never from the
+	// document — which is `ceremonyid.go`'s own stated S03 rule: the gate reads "the record the
+	// party verified at arm time", because a gate reading the document's own record answers its
+	// own question. So the recital reaches the signing path here or nowhere.
+	//
+	// # Why that is not an unsigned hint, which is the obvious objection
+	//
+	// It would be one on its own: `RosterHash` binds the invitation to a record, but editing
+	// `Intent` alone leaves that hash untouched and the comparison still passes. What makes it
+	// trustworthy is `MatchesRecord` comparing it AGAINST `r.Intent` — the same treatment
+	// `matchesRosterFields` gives every `Party` field, and C17's own words: the reconciliation
+	// "must also cover `intent`, `expires` and `capacity`". Without that comparison this field
+	// would be exactly the shape `Record.DigestVersion`'s comment warns about, "an unsigned hint
+	// a tamperer sets to whatever makes the comparison pass".
+	//
+	// # Why a version bump rather than an optional field
+	//
+	// It is REQUIRED, and a required field is a format change. An optional one would leave a
+	// reader unable to tell "an older build made this" from "the field was stripped" — the same
+	// argument `rosterToken` makes for refusing an unversioned commitment, and there is no
+	// population in the field to be lenient towards.
+	Intent string `json:"intent"`
 	// RosterHash is the record's commitment, hex — the ONE value that binds this invitation
 	// to exactly one signed record (D20's preimage; added 2026-08-24, P07.S02).
 	//
@@ -280,8 +309,10 @@ func validateSeeds(in []netip.AddrPort) (kept []netip.AddrPort, dropped int, err
 // # The wire format does not change
 //
 // A recipient's invitation has the same shape it always had; only the bytes in `Secret`
-// differ between them. So `InvitationVersion` stays at 1, `ParseInvitation` is untouched, and
-// nothing a party does with an invitation changes.
+// differ between them, so per-hop secrets needed no version of their own and `ParseInvitation`
+// was untouched by them. (The sentence here said "`InvitationVersion` stays at 1" and was left
+// behind by two later bumps — 2 for `RosterHash`, 3 for `Intent`. It described this change and
+// was read as describing the constant.)
 func NewInvitations(r Record) (map[string]Invitation, error) {
 	conv, ok := r.Convener()
 	if !ok {
@@ -307,6 +338,7 @@ func NewInvitations(r Record) (map[string]Invitation, error) {
 			Roster:              append([]Party(nil), r.Roster...),
 			Secret:              sec,
 			ConvenerFingerprint: conv.Fingerprint,
+			Intent:              r.Intent,
 			RosterHash:          hex.EncodeToString(rh),
 		}
 	}
@@ -671,6 +703,17 @@ func (i Invitation) matchesRosterFields(r Record) error {
 	if i.ID != r.ID {
 		return fmt.Errorf("%w: the invitation is for ceremony %s and the document carries %s",
 			ErrRosterMismatch, short(i.ID), short(r.ID))
+	}
+	// **C17's intent third (P07.S07b).** The clause asks the reconciliation to cover `intent`,
+	// `expires` and `capacity`; capacity arrived with the whole-struct `Party` comparison below,
+	// and this is intent. It is not redundant with the commitment check above: that one answers
+	// "is this the record my invitation names", and this one is what makes the invitation's own
+	// copy of the recital — which is the copy the signing path reads, because `internal/p2p`
+	// cannot read a record — safe to sign into a /Reason.
+	if i.Intent != r.Intent {
+		return fmt.Errorf("%w: the invitation's recital is %q and this document's record says "+
+			"%q — every signature carries the recital verbatim, so these are two different "+
+			"proceedings however alike they look", ErrRosterMismatch, i.Intent, r.Intent)
 	}
 	if len(i.Roster) != len(r.Roster) {
 		return fmt.Errorf("%w: the invitation lists %d parties and the document's record lists %d",

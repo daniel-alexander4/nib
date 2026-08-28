@@ -90,6 +90,17 @@ INV=$(python3 -c "
 import json;d=json.load(open('$SP/resp.json'))
 print(next(i['invitation'] for i in d['invites'] if i['fingerprint'].lower()=='$B_FP'.lower()))")
 [ -n "$INV" ] || { echo "no invitation for B"; exit 1; }
+# The FIRST ceremony's document, captured before clause 6 convenes a second one over it.
+#
+# **Clause 7 used to fetch /api/pdf at the point of use and got the SECOND ceremony's document**,
+# pairing it with this first ceremony's invitation. It still went red and it still said "not this
+# party's turn", so it read as driving L3 — but two conditions were true at once (wrong turn AND
+# wrong ceremony) and nothing could say which one L3 fired on. P07.S07b made that visible by
+# adding the arrival check to the dial door, whose refusal names the ceremony mismatch and
+# arrives first. Capturing the right document here leaves the out-of-turn condition as the only
+# one present, which is what clause 7 has always claimed to test.
+curl -fsS -c "$SP/A.jar" -b "$SP/A.jar" "$A_BASE/api/pdf" -o "$SP/convened1.pdf"
+[ -s "$SP/convened1.pdf" ] || { echo "could not capture the first ceremony's document"; exit 1; }
 
 # CLAUSE 1 — the convener's own pins (D21 from the hub side).
 get A /api/peers >"$SP/apeers.json"
@@ -186,7 +197,7 @@ else no "open a plain document on B" "$code"; fi
 # out of roster order, and it must be refused BEFORE the local signature is applied — the gate
 # runs inside buildCoSigned, which is reached before any dialing, so this needs no peer at all.
 # Driven on the CONVENED document B would actually be handed.
-curl -s -c "$SP/A.jar" -b "$SP/A.jar" "$A_BASE/api/pdf" -o "$SP/convened.pdf"
+cp "$SP/convened1.pdf" "$SP/convened.pdf"
 if [ ! -s "$SP/convened.pdf" ]; then no "L3 setup" "could not fetch the convened document"; else
   python3 -c "
 import base64,sys

@@ -11,11 +11,20 @@ import (
 // bullet rather than implementing it.
 //
 // The bullet said `MatchesRecord` should compare `intent`, `expires`, `capacity` and `label`.
-// Two of those have been compared since v1.117.153 — `matchesRosterFields` compares the whole
-// `Party` struct with `!=`, which is every field there is — and the other two are **not carried
-// by the invitation at all**, so there is nothing to compare and adding the fields would create
-// the exposure rather than close it: `RosterHash` is the record's own digest copied into an
-// UNSIGNED invitation, so an attacker editing `i.Intent` would leave the hash matching.
+// Label and capacity have been compared since v1.117.153 — `matchesRosterFields` compares the
+// whole `Party` struct with `!=`, which is every field there is.
+//
+// **Intent joined them at v1.117.218 (P07.S07b), and the paragraph that stood here argued it
+// should not.** It said intent was "not carried by the invitation at all, so there is nothing to
+// compare, and adding the field would create the exposure rather than close it: `RosterHash` is
+// the record's own digest copied into an UNSIGNED invitation, so an attacker editing `i.Intent`
+// would leave the hash matching." Every clause of that is true of the field ALONE and it is why
+// the field could not be added alone. What changed is not the risk assessment but the reason to
+// take it: `internal/p2p` applies the signature, cannot import `internal/ceremony`, and reads its
+// roster from the invitation — so C15's "every block carries the record's recital verbatim" is
+// reachable only if the invitation carries the recital. The exposure that paragraph names is then
+// closed by the comparison this test drives, which is the same trade every other carried field
+// already makes. `Expires` is still uncarried and is still `/pending 247`'s.
 //
 // So the bullet is replaced by the rule that generalises it, which is the same trade `RosterHash`
 // itself made over a per-field list: **every field of `Invitation` is either driven here, or
@@ -30,6 +39,7 @@ func TestEveryInvitationFieldWithARecordCounterpartIsCompared(t *testing.T) {
 			i.Roster = append([]Party(nil), i.Roster...)
 			i.Roster[1].Capacity = "as Guarantor"
 		},
+		"Intent":              func(i *Invitation) { i.Intent = i.Intent + " (and one more thing)" },
 		"RosterHash":          func(i *Invitation) { i.RosterHash = strings.Repeat("0", len(i.RosterHash)) },
 		"ConvenerFingerprint": func(i *Invitation) { i.ConvenerFingerprint = i.Roster[1].Fingerprint },
 	}

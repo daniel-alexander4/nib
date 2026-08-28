@@ -22,6 +22,14 @@ func PrepareDocument(pdf []byte) ([]byte, error) {
 	return AppendReadme(pdf)
 }
 
+// ErrNoCeremonyIntent: a contribution names a ceremony and carries no recital.
+//
+// Reachable only through a roster built without one, which means the invitation that produced it
+// predates `Invitation.Intent` or was assembled by hand. Refused rather than defaulted: see
+// Contribute.
+var ErrNoCeremonyIntent = errors.New("this ceremony's recital did not reach the signature, so " +
+	"nothing would be signed but Nib's own default sentence")
+
 // Placement is where a signer's visible attestation block sits.
 type Placement struct {
 	Page int        // 1-based
@@ -52,6 +60,21 @@ func NextPlacement(pdf []byte) (Placement, error) {
 // p.Rect, see Attestation.AppearanceLines); if empty the signature is invisible
 // but still carries the machine-readable attestation in its signed /Reason.
 func Contribute(pdf, certPEM, keyPEM []byte, att Attestation, appearance []byte, p Placement) ([]byte, error) {
+	// **A ceremony signature with no recital is refused here, which is what makes `defaultIntent`
+	// unreachable when a record is present (C15, P07.S07b).**
+	//
+	// `StampCommitment` copies the record's recital onto the attestation and discards the
+	// caller's. If the roster carried none, `intent()` would fall back to `defaultIntent` and the
+	// signature would read "I agree to sign this document." over a proceeding whose recital is
+	// inside the commitment every other signature carries — Nib inventing the sentence.
+	//
+	// The test is the COMMITMENT rather than a flag: a signature naming a ceremony is exactly the
+	// one that must carry that ceremony's recital, and it is the same discriminator
+	// `markOneProceeding` uses. An ordinary two-party co-sign has no commitment and keeps the
+	// default, which is correct — it belongs to no proceeding and there is no recital to carry.
+	if att.RosterHash != "" && att.Intent == "" {
+		return nil, ErrNoCeremonyIntent
+	}
 	opts := sign.Options{
 		Name:   att.Signer,
 		Reason: att.reason(),

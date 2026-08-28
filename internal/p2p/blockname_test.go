@@ -34,7 +34,14 @@ import (
 // be measuring.
 func labelledRoster(t *testing.T, n int, capacities map[int]string) (Roster, []l3Party) {
 	t.Helper()
-	r := Roster{Commitment: strings.Repeat("ab", 32), CommitmentVersion: 4}
+	// The recital is required inside a ceremony (P07.S07b): `Contribute` refuses a signature
+	// that names a proceeding and carries no recital, rather than letting `defaultIntent`
+	// speak for one.
+	r := Roster{
+		Commitment:        strings.Repeat("ab", 32),
+		CommitmentVersion: 4,
+		Intent:            "We agree to co-sign the lease",
+	}
 	parties := make([]l3Party, 0, n)
 	for i := 0; i < n; i++ {
 		p := l3Identity(t, fmt.Sprintf("cert-cn-%d", i))
