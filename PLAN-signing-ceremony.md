@@ -5049,7 +5049,7 @@ Acceptance:
 - Egress is **measured, not argued**: datagrams per ceremony reported for N=9 and compared against
   the 5.2M figure `lan.go` refuses.
 
-#### P07.S05d — A LAN ceremony stops reaching the internet *(C05 pin; D6, D8, P03's exit criterion)* — **new, 2026-08-27, split out of S05c** *(in progress)*
+#### P07.S05d — A LAN ceremony stops reaching the internet *(C05 pin; D6, D8, P03's exit criterion)* — **new, 2026-08-27, split out of S05c** *(done 2026-08-27, v1.117.205)*
 Scope: the DHT bootstrap stops firing before anyone knows whether the LAN will answer. Downstream
 of S05c only in the sense that matters — **its instrument already exists and is green on everything
 else**, which is the condition that made the last two splits right rather than evasive.
@@ -5110,6 +5110,21 @@ Tasks *(from the 2026-08-27 deepdive + grill; verdict confirmed, and the fix is 
 - **T03** — the cost measured and printed: hop start to first DHT reach with no LAN peer.
 - **T04** — `--lan -n 9` at the baseline, over both transports.
 - **T05** — red proofs; `recorded` moves.
+
+**Ledger — 3 met, 1 resequenced.** Clause 2 (no LAN peer still reaches the DHT, latency measured
+and printed): met — **2.005 s**, one `browseWindow`, printed by
+`TestTheAddedLatencyToTheDHTTierIsMeasured`. Clause 3 (`bootstrapDone` stays truthful): met, set
+inside the door on success **and** failure, red-proved — a flag set only on success inverts D19,
+because the machine whose network is dead is the one that never gets told. Clause 4 (the dial side
+holds on its browse result): met, two-armed, both arms red-proved. Clause 1 (nine parties at
+baseline): **resequenced to S05e** on the per-instance measurement above; four parties went
+120 → 9. Four red proofs, `recorded` 132 → 136.
+
+**And tier 2 was red before this slice touched anything** — v1.117.178 added a jsdom file without
+raising the count, and nothing had run tier 2 in the nine slices since. Fixed at v1.117.205, along
+with two findings underneath it: `/api/lan/heard`'s shapes were outside the reader scan, and the
+scan's matcher could not see its reader's style at all. A harness that skips cleanly when its
+dependencies are absent also skips cleanly when nobody runs it.
 
 #### P07.S05e — The arm stops pre-publishing *(C05 pin; D6, P03's exit criterion)* — **new, 2026-08-27, split out of S05d on a measurement**
 Scope: an arm whose hop has not arrived yet publishes its address to the public DHT, and in a relay
