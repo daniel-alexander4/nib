@@ -1,0 +1,12 @@
+diff --git a/build/pairrepro.sh b/build/pairrepro.sh
+index 063d939..9ab023c 100755
+--- a/build/pairrepro.sh
++++ b/build/pairrepro.sh
+@@ -195,7 +195,6 @@ FLAGS=""
+ [ "$LAN" = "1" ] && FLAGS="$FLAGS --lan"
+ [ "$KEEP" = "1" ] && FLAGS="$FLAGS --keep"
+ [ "$V6" = "1" ] && FLAGS="$FLAGS --v6"
+-FLAGS="$FLAGS -n $N"
+ 
+ for dep in go curl python3; do
+   command -v "$dep" >/dev/null 2>&1 || {

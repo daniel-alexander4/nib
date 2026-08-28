@@ -4967,7 +4967,7 @@ which production ignores and the test asserts on. **L1 is a property about WHICH
 cannot see it.**
 - T04 — `--lan -n 9` reaches the LAN block, and a nine-party ceremony completes in the namespace. *(the three barriers are removed and a four-party LAN relay COMPLETES over both transports — see below. N=9 not yet driven.)*
 - T05 — egress measured and reported for N=9, against the 5.2M figure `lan.go` refuses. *(measured at N=4, and it is RED against shipped code — `/pending 299`)*
-- T06 — red proofs; `recorded` moves.
+- T06 — red proofs; `recorded` moves. *(done 2026-08-27, v1.117.184–.185 — four rows, `recorded` 121 → 125. **Three record states no run in the tree reaches**, which is why the policy was separated from its socket. The fourth came back **"the check still PASSED"** and was right: `--lan -n 4` losing its `-n` is invisible by construction, because a two-party ceremony passes its own assertions. So the requested N now travels out of band and the child compares parsed against asked — a guard for the class, not the instance.)*
 
 **THE CLAUSE'S DRIVER HAD THREE INDEPENDENT BARRIERS, AND ANY ONE ALONE MADE IT IMPOSSIBLE.** An
 explicit *"`--lan` and `--v6` are N=2-only"* refusal, dating from P07.S01 when there was no relay
