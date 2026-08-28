@@ -297,6 +297,9 @@ func TestACeremonySignatureNamesItsCeremony(t *testing.T) {
 	roster := l3Roster(a, b)
 	roster.Commitment = strings.Repeat("cd", 32)
 	roster.CommitmentVersion = 4
+	// Required since P07.S07b: a signature that names a proceeding carries that proceeding's
+	// recital, and `Contribute` refuses rather than letting `defaultIntent` speak for one.
+	roster.Intent = "We agree to co-sign the lease"
 
 	aFP, _ := hex.DecodeString(a.fp)
 	inbound := l3Chain(t, l3Prepared(t), []l3Party{a}, []l3Party{b}, "")

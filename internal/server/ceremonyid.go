@@ -489,9 +489,11 @@ func (c *ceremonyID) close() {
 //
 // # Why it is here and not in the confirmer
 //
-// ADR-009: the gate is one door, and its guard asserts that the confirmer routes THROUGH it
-// rather than asserting the text this function prints. `sessionConfirmer.Confirm` is the only
-// caller and it is the only place a received document exists before the user sees it.
+// ADR-009: the gate is one door, and its guard asserts that both callers route THROUGH it
+// rather than asserting the text this function prints. There are TWO: `sessionConfirmer.Confirm`,
+// where a received document exists before the user sees it, and `handleSessionInitiate`, where a
+// pasted invitation supplies the roster whose label, capacity and recital the local signature is
+// about to carry. This comment named only the first until P07.S07b, and the second had no check.
 func (c *ceremonyID) checkArrival(pdf []byte, now time.Time) error {
 	rec, err := ceremony.CheckRecord(pdf, now)
 	if err != nil {
@@ -528,7 +530,14 @@ func (c *ceremonyID) l3Roster() p2p.Roster {
 	// roster to different hashes, their tokens differ, and D32's skew sentence — not an accusation
 	// — is what the reader sees. An invitation-carried version would only let a sender claim a
 	// format it is not using.
-	out := p2p.Roster{Commitment: c.inv.RosterHash, CommitmentVersion: ceremony.FormatVersion}
+	// **`Intent` comes from the invitation and is safe to because `MatchesRecord` compares it
+	// against the record's (P07.S07b).** Without that comparison this would be an unsigned hint;
+	// with it, the invitation's copy is the record's copy or the hop was refused.
+	out := p2p.Roster{
+		Commitment:        c.inv.RosterHash,
+		CommitmentVersion: ceremony.FormatVersion,
+		Intent:            c.inv.Intent,
+	}
 	// **The WHOLE entry, and the fields that used to be dropped here are the point (P07.S07a).**
 	// `Label` and `Capacity` were left on the floor, so every block said `Signer: Nib User` while
 	// the label sat inside the signed commitment with no display reader anywhere. They are safe to

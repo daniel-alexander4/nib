@@ -1527,6 +1527,35 @@ func (s *Server) handleSessionInitiate(w http.ResponseWriter, r *http.Request) {
 	// accidentally sign and a signer cannot accidentally skip their turn — both unrepresentable
 	// rather than checked. `buildCoSigned` is SKIPPED on the carry path, which is the whole
 	// point: it is the door that applies the local signature.
+	// **C17 on the DIAL side, and it had exactly one caller before this (P07.S07b).**
+	//
+	// `checkArrival` reconciles the document against the invitation this ceremony identity was
+	// built from, and it ran only in `sessionConfirmer.Confirm` — the receiving side. So a party
+	// who INITIATES used its invitation's roster to gate L3 and, since S07a, to write labels and
+	// capacities onto its own signature block, having never compared that invitation to the
+	// record the document actually carries. `checkCeremonyDeadline` above verifies the record's
+	// own signature, which is a different question: it says the record is genuine, not that it is
+	// the record this invitation names.
+	//
+	// S07b is what made that untenable rather than merely asymmetric: the recital joins the
+	// labels and capacities read off the invitation, and it is signed into every /Reason
+	// verbatim. One rule, both doors (ADR-009).
+	//
+	// Placed BESIDE the deadline check and before `buildCoSigned`, on the deadline check's own
+	// stated reasoning: refusing after the local signature is applied leaves the user signed into
+	// something this build has just refused, and a signature cannot be taken back off a document.
+	//
+	// **Guarded on `cer != nil`, and the suite caught its absence.** `checkArrival` calls
+	// `CheckRecord` before it touches its receiver, so a nil `*ceremonyID` does not panic — it
+	// refuses with "document carries no ceremony record", which is every ordinary two-party
+	// co-sign. `TestSessionInitiate` went red on exactly that. The receiving side has always had
+	// this guard (`if sc.cer != nil`); this door needed the same one.
+	if cer != nil {
+		if err := cer.checkArrival(pdfBytes, time.Now()); err != nil {
+			httpError(w, http.StatusConflict, err.Error())
+			return
+		}
+	}
 	carrying := cer.carries(hex.EncodeToString(myFP))
 	signed := pdfBytes
 	if !carrying {

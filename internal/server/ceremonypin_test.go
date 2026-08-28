@@ -74,12 +74,64 @@ func TestDecliningACeremonyRevokesItsPins(t *testing.T) {
 	}
 }
 
+// TestTheDialSideAlsoRoutesThroughTheArrivalCheck is the second door (P07.S07b).
+//
+// `handleSessionInitiate` reads its ceremony identity from a pasted invitation and hands
+// `l3Roster()` to the L3 gate and to `buildCoSigned`, which stamps that roster's label, capacity
+// and — since this slice — its RECITAL onto the signature it applies. All three are read from an
+// unsigned invitation, so the same reconciliation the receiving side has always run has to run
+// here, and it has to run BEFORE the local signature exists: refusing afterwards leaves the user
+// signed into something this build has just refused, and a signature cannot be taken back off a
+// document. That is the deadline check's own stated reasoning one line above it.
+func TestTheDialSideAlsoRoutesThroughTheArrivalCheck(t *testing.T) {
+	src, err := os.ReadFile("session.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	code := stripLineComments(string(src))
+	i := strings.Index(code, "func (s *Server) handleSessionInitiate(")
+	if i < 0 {
+		t.Fatal("cannot find handleSessionInitiate — this guard is reading the wrong thing")
+	}
+	body := funcBodyFrom(code, i)
+	if body == "" {
+		t.Fatal("could not brace-match handleSessionInitiate's body")
+	}
+	arrival := strings.Index(body, "checkArrival(")
+	if arrival < 0 {
+		t.Fatal("handleSessionInitiate never reconciles its invitation against the document's " +
+			"record. It reads the roster from a pasted invitation and signs a block carrying " +
+			"that roster's label, capacity and recital, so an invitation naming a different " +
+			"proceeding is signed into the document unchallenged — C17 at the door nobody " +
+			"checked.")
+	}
+	build := strings.Index(body, "buildCoSigned(")
+	if build < 0 {
+		t.Fatal("handleSessionInitiate no longer applies the local signature; this guard is " +
+			"asserting an order between things that are no longer both here")
+	}
+	if arrival > build {
+		t.Error("handleSessionInitiate applies the local signature BEFORE reconciling the " +
+			"invitation against the record. Refusing after that leaves the user signed into a " +
+			"proceeding this build has just refused, and a signature cannot be taken back off a " +
+			"document.")
+	}
+}
+
 // TestTheConsentGateRoutesThroughTheArrivalCheck — ADR-009, asserted on the ROUTING.
 //
-// The rule is "a received document is reconciled against its invitation BEFORE the user sees
-// it", and it holds at one call site: `sessionConfirmer.Confirm`. Asserting that `checkArrival`
-// *can* return an error says nothing about whether anything calls it — which is exactly the
-// shape ADR-009 was written from, and exactly how this slice's C17 clause could ship dead.
+// The rule is "a document is reconciled against its invitation BEFORE it is acted on", and it
+// holds at TWO call sites — `sessionConfirmer.Confirm` here and `handleSessionInitiate` in the
+// companion test below. Asserting that `checkArrival` *can* return an error says nothing about
+// whether anything calls it — which is exactly the shape ADR-009 was written from, and exactly
+// how this slice's C17 clause could ship dead.
+//
+// **This comment said "one call site" and that was true when it was written and wrong by
+// P07.S07b.** The second door existed the whole time and had no check on it: a party who
+// INITIATES used its invitation's roster to gate L3, and after P07.S07a to write labels and
+// capacities onto its own block, having never compared that invitation to the record the
+// document carries. A guard scoped to one function cannot report the absence of the other, which
+// is why the companion below scans a different function rather than widening this one.
 //
 // Three properties, and the ORDER is one of them:
 //

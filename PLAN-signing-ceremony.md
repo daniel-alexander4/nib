@@ -5305,11 +5305,16 @@ Acceptance:
 - Every visible block in a ceremony names the **ceremony** by roster position ("Party 6 of 9"), **not by a hex id**, and the two-party `Accepts: <one neighbour>` line is **unreachable** inside a ceremony (C09's block half).
 - Driven at **N=9** in Go, over a real ceremony fixture with nine distinct identities, and the nine blocks are **distinct** — the defect this closes is nine identical blocks reading `Signer: Nib User`, which every assertion about one block passes.
 
-#### P07.S07b — The record's intent becomes the recital *(D20 pin; C15, C19 part, advances C17)* — **new, 2026-08-28, split out of S07**
+#### P07.S07b — The record's intent becomes the recital *(D20 pin; C15, C19 part, advances C17)* — **new, 2026-08-28, split out of S07** *(done 2026-08-28, v1.117.218 — 3 clauses, all met; 5 red proofs. **Its deepdive found `checkArrival` had exactly ONE caller**: the dial side never reconciled its invitation against the document's record, so a party who INITIATES gated L3 and — since S07a — wrote labels and capacities onto its own signature block from an invitation nothing had checked. C17 at the door nobody looked at, closed here because this slice adds the recital to that same unchecked set. And the tier-6 harness's L3 clause was firing on TWO conditions at once — it paired ceremony 1's invitation with ceremony 2's document — so it read as driving out-of-turn while nothing could say which refusal it got)*
 Scope: `Invitation` gains `Intent` (version bump) and `MatchesRecord` compares it against `r.Intent`
 — C17's own words are that the reconciliation "must also cover `intent`, `expires` and `capacity`",
 and this is the intent third. Only then can `p2p.Roster` carry an intent the receiving side is
 entitled to trust, and only then can the discard rule below be more than a preference.
+- T01 — `Invitation.Intent`, `InvitationVersion` 2 → 3, `NewInvitations` populates it. *(done)*
+- T02 — `MatchesRecord` compares it against `r.Intent`, by name, quoting both sentences. *(done — C17's intent third)*
+- T03 — `p2p.Roster.Intent`; `l3Roster` carries it; `StampCommitment` overwrites the caller's unconditionally. *(done)*
+- T04 — `Contribute` refuses a commitment-bearing signature with no recital, so `defaultIntent` is unreachable by construction rather than by the roster happening to carry one. *(done)*
+- T05 — `checkArrival` at the DIAL door too. *(done — **not in the plan**; the deepdive found the door had no check, and the guard's own comment said "the only caller")*
 Acceptance:
 - Every signature's signed `/Reason` carries the record's `Intent` **verbatim** as the recital, plus that party's own `capacity` (C19's signed half).
 - The `Confirmer`-returned intent is **discarded** on the ceremony path, and `defaultIntent` is **unreachable** when a record is present — driven by a Confirmer returning something else and a Confirmer returning `""`.

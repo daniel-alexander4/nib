@@ -78,6 +78,19 @@ type Roster struct {
 	// `StampCommitment` is the writer, and it is one door for both contribution paths.
 	Commitment string
 
+	// Intent is the ceremony's recital, verbatim from the record (D20, C15, P07.S07b).
+	//
+	// **It is what a ceremony signature's /Reason says, and the `Confirmer`'s answer is
+	// DISCARDED in favour of it.** D20 makes the recital one sentence with one home; a hop
+	// whose signer typed their own would produce N signatures agreeing on a commitment and
+	// disagreeing about what they agreed to. Empty inside a ceremony is refused rather than
+	// defaulted — see `Contribute`'s caller — because `defaultIntent` on a ceremony signature
+	// would be Nib inventing the recital nobody wrote.
+	//
+	// Supplied by the caller for the same reason `Commitment` is: `internal/p2p` cannot import
+	// `internal/ceremony`, so the party that read the record hands it over.
+	Intent string
+
 	// CommitmentVersion is the record format version `Commitment` was computed under, and it
 	// travels WITH the commitment for ADR-010's reason: a hash and the rules that produced it are
 	// one fact, and a bare digest cannot tell a disagreement from a version skew. `internal/p2p`
@@ -113,6 +126,20 @@ func StampCommitment(att *Attestation, r Roster, meFP string) {
 	}
 	att.RosterHash = r.Commitment
 	att.RosterVersion = r.CommitmentVersion
+	// **The recital is the RECORD's, and whatever the caller put here is discarded (C15, D20).**
+	//
+	// On the receiving side that value is what the `Confirmer` returned — the sentence the local
+	// user typed into their consent screen. On the initiating side it is `cosignParams.Intent`,
+	// typed into the co-sign dialog. Both are the wrong answer inside a ceremony: D20 makes the
+	// recital one sentence with one home, and N parties each signing their own version would
+	// produce N signatures agreeing on a commitment and disagreeing about what they agreed to.
+	//
+	// Overwritten unconditionally rather than only when non-empty. `intent()` falls back to
+	// `defaultIntent` on empty, so a conditional here would leave a ceremony signature reading
+	// "I agree to sign this document." — Nib inventing a recital nobody wrote, on a proceeding
+	// whose recital is inside the commitment. `ErrNoCeremonyIntent` below is what an empty one
+	// gets instead, and it is why `defaultIntent` is unreachable when a record is present.
+	att.Intent = r.Intent
 
 	// **The party's own entry, read from the SIGNING order** — not from `r.Entries`, because a
 	// non-signing convener holds a roster position and none in the signing order, and "Party 6 of
