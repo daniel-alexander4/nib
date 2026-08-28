@@ -328,6 +328,47 @@ func TestVerifyContractIsTrue(t *testing.T) {
 				t.Errorf("%s has no matching .sh, so it is a defect nothing replays — delete "+
 					"it, or write the driver it was recorded for", pf)
 			}
+			// **A patch must contain ONLY the defect it names (/pending 278).**
+			//
+			// The harness structurally cannot see this: a red proof asserts that a defect makes a
+			// check fail, never that the patch contains nothing else. Four rows were once
+			// generated with a bare `git diff` while `test/redproofs/*.patch` are themselves
+			// tracked, so each regeneration swept the previous ones in — one came out at 214 lines
+			// and six hunks for a one-comment mutation, and all four still replayed GREEN. Every
+			// check passed and every row was wrong about what it recorded.
+			//
+			// Two arms, and the second is the specific one. A patch touching more than one file is
+			// almost always the bare-`git diff` mistake; a patch touching `test/redproofs/` is
+			// that mistake exactly, and it stays detectable even if a legitimate multi-file
+			// mutation is ever needed.
+			body, berr := os.ReadFile(pf)
+			if berr != nil {
+				t.Fatal(berr)
+			}
+			// Counted on `+++`, not on `diff --git`. Four rows in the set are hand-written
+			// unified diffs with no git header at all — they apply, they replay red, and a
+			// header-based count reported every one of them as touching ZERO files, which is a
+			// guard that fires on the wrong thing while missing what it was written for.
+			files, self := 0, false
+			for _, ln := range strings.Split(string(body), "\n") {
+				if !strings.HasPrefix(ln, "+++ ") {
+					continue
+				}
+				files++
+				if strings.Contains(ln, "test/redproofs/") {
+					self = true
+				}
+			}
+			if files != 1 {
+				t.Errorf("%s patches %d files; a red proof plants ONE defect, and a patch with "+
+					"more is the bare-`git diff` mistake that once swept four rows into each "+
+					"other while every one of them still replayed green", pf, files)
+			}
+			if self {
+				t.Errorf("%s patches a file under test/redproofs/ — it was generated with a bare "+
+					"`git diff` and captured other rows' patches as part of its own defect. Use "+
+					"`git diff -- <the one file>`", pf)
+			}
 		}
 	}
 

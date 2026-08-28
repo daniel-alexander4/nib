@@ -2077,3 +2077,34 @@ did not is proving a negative about the page cache. What is checkable — and wh
 — is whether a caller reaches the door at all.
 
 `recorded` 129 → 131.
+
+
+---
+
+## /pending 278 — two thirds already shipped, and the third is a guard the harness cannot be (v1.117.196)
+
+**No new rows. This closes an item by measuring it, and two of its three halves were already done.**
+
+The entry's headline — *"zero of the 65 rows drives an L1 or L2 guard"* — was true on 2026-08-23 and
+is not now. `l1-wire-derived-pin` drives `TestNothingWireDerivedReachesAPin` and
+`l2-exchange-reached-unconfirmed` drives `TestL2NoDocumentBytesCrossBeforeBothConfirmations`; both
+replay red, both patch exactly one file. The phantom citation it named — a row quoting
+`zz_l1fixture.go: redProofWireDerivedPin`, a file that was never in the tree — is annotated at both
+of its sites and points at the real row.
+
+**What was left is the half the harness structurally cannot check itself.** A red proof asserts that
+a defect makes a check fail; it never asserts that the patch contains *only* that defect. Four rows
+were once generated with a bare `git diff` while `test/redproofs/*.patch` are themselves tracked, so
+each regeneration swept the previous ones in — one came out at 214 lines and six hunks for a
+one-comment mutation, and **all four still replayed green**. Every check passed and every row was
+wrong about what it recorded.
+
+`verify_test.go` now requires each patch to touch exactly one file, and separately refuses any patch
+that modifies `test/redproofs/` — the specific shape, which stays detectable even if a legitimate
+multi-file mutation is ever needed. Measured across all 131 rows: **zero violations**, so the guard
+is a tripwire rather than a repair.
+
+**And writing it found a smaller thing.** Counting `diff --git` headers reported **four rows as
+touching zero files** — they are hand-written unified diffs with no git header, they apply, and they
+replay. A guard that fires on the wrong thing while missing what it was written for is the failure
+this ledger keeps recording, so the count is on `+++` lines, which both formats share.
