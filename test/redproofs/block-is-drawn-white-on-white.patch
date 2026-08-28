@@ -1,0 +1,15 @@
+diff --git a/web/app.js b/web/app.js
+index 419a8c4..6a972f4 100644
+--- a/web/app.js
++++ b/web/app.js
+@@ -959,8 +959,8 @@ async function renderAttestation(lines, rect) {
+   cv.height = Math.round(h * scale);
+   const ctx = cv.getContext('2d');
+   ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, cv.width, cv.height);
+-  ctx.strokeStyle = '#000'; ctx.lineWidth = scale; ctx.strokeRect(0, 0, cv.width, cv.height);
+-  ctx.fillStyle = '#000'; ctx.textBaseline = 'top';
++  ctx.strokeStyle = '#fff'; ctx.lineWidth = scale; ctx.strokeRect(0, 0, cv.width, cv.height);
++  ctx.fillStyle = '#fff'; ctx.textBaseline = 'top';
+   const pad = 4 * scale;
+   const lineH = (cv.height - 2 * pad) / lines.length;
+   ctx.font = Math.min(lineH * 0.7, 9 * scale) + 'px sans-serif';

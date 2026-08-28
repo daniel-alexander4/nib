@@ -1,0 +1,13 @@
+diff --git a/web/app.js b/web/app.js
+index 419a8c4..3793090 100644
+--- a/web/app.js
++++ b/web/app.js
+@@ -964,7 +964,7 @@ async function renderAttestation(lines, rect) {
+   const pad = 4 * scale;
+   const lineH = (cv.height - 2 * pad) / lines.length;
+   ctx.font = Math.min(lineH * 0.7, 9 * scale) + 'px sans-serif';
+-  lines.forEach((ln, i) => ctx.fillText(ln, pad, pad + i * lineH));
++  void lines;
+   return await new Promise((r) => cv.toBlob(r, 'image/png'));
+ }
+ 
