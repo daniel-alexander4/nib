@@ -1,0 +1,13 @@
+diff --git a/internal/server/cosign.go b/internal/server/cosign.go
+index 1004232..bf26bb4 100644
+--- a/internal/server/cosign.go
++++ b/internal/server/cosign.go
+@@ -253,7 +253,7 @@ func (s *Server) handleCosignQuote(w http.ResponseWriter, r *http.Request) {
+ 	// placement on the document that will actually carry it.
+ 	writeJSON(w, cosignQuote{
+ 		Lines: att.AppearanceLines(),
+-		Rect:  p2p.NominalBlockRect(),
++		Rect:  [4]float64{40, 40, 320, 124},
+ 		When:  att.When.UTC().Format(time.RFC3339),
+ 	})
+ }

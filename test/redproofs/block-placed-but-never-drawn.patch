@@ -1,0 +1,13 @@
+diff --git a/internal/p2p/cosign.go b/internal/p2p/cosign.go
+index 6157919..9553dba 100644
+--- a/internal/p2p/cosign.go
++++ b/internal/p2p/cosign.go
+@@ -57,7 +57,7 @@ func Contribute(pdf, certPEM, keyPEM []byte, att Attestation, appearance []byte,
+ 		Reason: att.reason(),
+ 		When:   att.When,
+ 	}
+-	if len(appearance) > 0 {
++	if false {
+ 		opts.Appearance = &sign.Appearance{Image: appearance, Page: p.Page, Rect: p.Rect}
+ 	}
+ 	return sign.SignApproval(pdf, certPEM, keyPEM, opts)

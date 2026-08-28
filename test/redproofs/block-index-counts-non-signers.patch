@@ -1,0 +1,13 @@
+diff --git a/internal/p2p/l3.go b/internal/p2p/l3.go
+index 40e6778..8449a3a 100644
+--- a/internal/p2p/l3.go
++++ b/internal/p2p/l3.go
+@@ -268,7 +268,7 @@ func SigningOrder(r Roster) []RosterEntry {
+ // a foreign approval signature shifts the origin. A party's position in the roster is a fact about
+ // the ceremony; a count of signatures on a file is a fact about the file.
+ func SigningPositionOf(r Roster, fp string) (int, bool) {
+-	for i, e := range SigningOrder(r) {
++	for i, e := range r.Entries {
+ 		if strings.EqualFold(e.Fingerprint, fp) {
+ 			return i, true
+ 		}
