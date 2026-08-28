@@ -1,0 +1,13 @@
+diff --git a/internal/ceremony/invitation.go b/internal/ceremony/invitation.go
+index 228854d..b377236 100644
+--- a/internal/ceremony/invitation.go
++++ b/internal/ceremony/invitation.go
+@@ -338,7 +338,7 @@ func NewInvitations(r Record) (map[string]Invitation, error) {
+ 			Roster:              append([]Party(nil), r.Roster...),
+ 			Secret:              sec,
+ 			ConvenerFingerprint: conv.Fingerprint,
+-			Intent:              r.Intent,
++
+ 			RosterHash:          hex.EncodeToString(rh),
+ 		}
+ 	}

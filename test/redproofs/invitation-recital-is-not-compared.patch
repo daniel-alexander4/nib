@@ -1,0 +1,13 @@
+diff --git a/internal/ceremony/invitation.go b/internal/ceremony/invitation.go
+index 228854d..db03921 100644
+--- a/internal/ceremony/invitation.go
++++ b/internal/ceremony/invitation.go
+@@ -710,7 +710,7 @@ func (i Invitation) matchesRosterFields(r Record) error {
+ 	// "is this the record my invitation names", and this one is what makes the invitation's own
+ 	// copy of the recital — which is the copy the signing path reads, because `internal/p2p`
+ 	// cannot read a record — safe to sign into a /Reason.
+-	if i.Intent != r.Intent {
++	if false {
+ 		return fmt.Errorf("%w: the invitation's recital is %q and this document's record says "+
+ 			"%q — every signature carries the recital verbatim, so these are two different "+
+ 			"proceedings however alike they look", ErrRosterMismatch, i.Intent, r.Intent)
