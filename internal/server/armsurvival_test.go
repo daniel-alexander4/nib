@@ -212,9 +212,15 @@ func TestTheArmWindowIsNotExtendedByConnectionsThatProduceNoSession(t *testing.T
 		}
 		resets++
 		arg := types.ExprString(call.Args[0])
-		if !strings.Contains(arg, "remaining") {
-			t.Errorf("the accept timer is reset to %q; it must be reset to the REMAINDER of "+
-				"the window fixed at arm time, or every connection that produces no session "+
+		// **Two absolute deadlines now, and the rule is the same for both (/pending 289).**
+		// `armedUntil` is fixed at arm time; `postSign` is fixed once, when a ceremony hop has
+		// signed, and bounds the re-delivery window `runCeremonyReceive` has always had and this
+		// loop did not. What must never appear is a reset to a fresh PERIOD — that is what lets
+		// each connection push a window out, and it is the same defect whichever window it is.
+		// So the argument must be a remainder: a `remaining` local, or `time.Until` of a deadline.
+		if !strings.Contains(arg, "remaining") && !strings.Contains(arg, "time.Until(") {
+			t.Errorf("the accept timer is reset to %q; it must be reset to the REMAINDER of an "+
+				"absolute deadline fixed once, or every connection that produces no session "+
 				"extends the arm", arg)
 		}
 		return true
@@ -222,6 +228,29 @@ func TestTheArmWindowIsNotExtendedByConnectionsThatProduceNoSession(t *testing.T
 	if resets == 0 {
 		t.Fatal("setup: runSession resets no timer, so the accept loop does not re-arm its " +
 			"window at all and this half of the guard policed nothing")
+	}
+
+	// **And the second deadline is fixed ONCE, like the first.** `postSign` is assigned inside the
+	// loop by necessity — the signing moment is discovered there, not known at arm time — so the
+	// `inLoop` check above cannot police it. What can be policed is that there is exactly one
+	// assignment: a second would re-arm the re-delivery window on every reconnect, which is the
+	// free-window defect wearing the other deadline's name.
+	var postSigns int
+	ast.Inspect(fn, func(n ast.Node) bool {
+		as, ok := n.(*ast.AssignStmt)
+		if !ok {
+			return true
+		}
+		for _, lhs := range as.Lhs {
+			if id, ok := lhs.(*ast.Ident); ok && id.Name == "postSign" {
+				postSigns++
+			}
+		}
+		return true
+	})
+	if postSigns != 1 {
+		t.Errorf("`postSign` is assigned %d time(s) in runSession; the re-delivery window must be "+
+			"fixed once when the hop signs, or each reconnect pushes it out", postSigns)
 	}
 }
 

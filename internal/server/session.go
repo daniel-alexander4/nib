@@ -658,6 +658,10 @@ func (s *Server) runSession(ln p2p.Listener, cer *ceremonyID, cert, key []byte, 
 	// and produced nothing would extend the arm window every time somebody dialled, which
 	// is a window an attacker holds open for free.
 	armedUntil := time.Now().Add(sessionAcceptTimeout)
+	// postSign is the re-delivery window's deadline, zero until this arm has signed. opened keeps
+	// the co-signed document opening ONCE across re-deliveries. Both mirror runCeremonyReceive.
+	var postSign time.Time
+	opened := false
 	timer := time.AfterFunc(sessionAcceptTimeout, func() {
 		defer safe.Recover("arm window expiry")
 		s.sess.disarmIf(ln)
@@ -707,17 +711,67 @@ func (s *Server) runSession(ln p2p.Listener, cer *ceremonyID, cert, key []byte, 
 			inbound.Store(true)
 		}
 		served, final, _ := s.serveOneSession(consentAnchor{ln: ln}, cer, conn, cert, key, label, mode, myFP)
-		if final != nil {
-			s.openArrival(label, final)
+		if final != nil && !opened {
+			s.openArrival(label, final) // once: a re-delivery re-sends the SAME idempotent result
+			opened = true
 		}
 		if served {
-			return // the arm is spent on a session, which is what it is for
+			// ── The post-signing RE-DELIVERY window, on the TCP ceremony path (/pending 289) ──
+			//
+			// **P05.S10's criterion 15 was implemented on ONE of the two transports.**
+			// `runCeremonyReceive` — the QUIC ceremony path — keeps accepting for a bounded window
+			// after it signs, because *"a lost writeback is indistinguishable from a clean success:
+			// writeFrame does not confirm the initiator READ it"*. This loop returned instead, so on
+			// TCP the listener closed the moment the co-sign completed and a reconnect was met with
+			// `connection refused`. `coSignExchange` still wrote its cache; nothing could ever come
+			// back for it.
+			//
+			// It was invisible because the one behavioural drive of re-delivery ran QUIC, and the
+			// TCP rule was guarded only structurally — asserting that both call sites PASS a
+			// ceremony says nothing about what either does with it. Found by running that test's
+			// own body over TCP.
+			//
+			// **Gated on a ceremony that has SIGNED, and both halves matter.** Without a ceremony
+			// there is no `ReDeliverer` and no cache, so holding the arm open would buy nothing and
+			// cost an arm that outlives its session — P05.S01's whole point is that the arm is
+			// one-shot. Before signing there is nothing to re-deliver, and `served` is then a
+			// decline or a consent timeout, which are decisions rather than losses.
+			if cer == nil || !cer.hasSigned() {
+				return // the arm is spent on a session, which is what it is for
+			}
+			if postSign.IsZero() {
+				// The initiator's own re-race bound, so the window closes at the moment the far
+				// side stops trying — the same figure runCeremonyReceive uses, for the same reason.
+				//
+				// **An ABSOLUTE deadline, fixed once, and the timer reset to its REMAINDER** — the
+				// rule `TestTheArmWindowIsNotExtendedByConnectionsThatProduceNoSession` polices,
+				// and it applies to this second window for the same reason it applies to the
+				// first: a `Reset` to a fresh period would let each reconnect push the window out,
+				// and a re-delivery window anybody who can reach the listener holds open for free
+				// is the same defect one phase later.
+				postSign = time.Now().Add(connectDeadline)
+				remaining := time.Until(postSign)
+				timer.Reset(remaining)
+				continue
+			}
+			if time.Now().After(postSign) {
+				return
+			}
+			continue
 		}
 		remaining := time.Until(armedUntil)
-		if remaining <= 0 {
+		if postSign.IsZero() {
+			if remaining <= 0 {
+				return
+			}
+			timer.Reset(remaining)
+			continue
+		}
+		// Inside the re-delivery window an unserved connection is an ordinary failed reconnect;
+		// keep the window rather than falling back to the pre-signing bound, which is longer.
+		if time.Now().After(postSign) {
 			return
 		}
-		timer.Reset(remaining)
 	}
 }
 
