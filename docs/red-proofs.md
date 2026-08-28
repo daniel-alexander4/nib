@@ -2018,3 +2018,33 @@ the message names it. A guard for a state that cannot occur today is exactly whe
 hides.
 
 `recorded` 127 → 128.
+
+---
+
+## /pending 285 — the identity race, and a guard that fired only sometimes (v1.117.190–.191)
+
+| Defect reintroduced | Check that fired | What it said |
+|---|---|---|
+| `identity-minted-twice-under-race` — the if-absent check removed, so the identity store overwrites unconditionally | `TestConcurrentFirstCallersAllGetTheStoredIdentity`, tier 1 | "8 concurrent first callers minted 5 DISTINCT identities; every one of them believes it holds this machine's signing key, and all but one is wrong" |
+
+**The row is here twice over: once for the defect, once for what recording it exposed.** The first
+version of the guard reproduced 5 distinct identities on one run and **zero** on the next, and the
+red proof came back *"the check still PASSED"* — the third failure mode, arriving through a guard
+that was correct and merely probabilistic.
+
+**A race guard that fires sometimes reads as a pass on the run where it mattered**, and nothing
+distinguishes it from one that works. It now drives **40 fresh vaults** and fails on the first round
+that diverges, naming the round; each round gets its own vault, because a second round against a
+vault that already holds an identity takes the fast path and proves nothing. Confirmed reproducing
+five runs out of five, and the row replayed three times.
+
+**And the fix is a deletion, not an addition.** `SetIdentity` overwrote unconditionally and had
+exactly one production caller. A checked setter *beside* it would have left the defect one call site
+away, so the unconditional one is gone — the race is unrepresentable rather than fixed, which is the
+difference between a bug that stays fixed and one that returns through a second door.
+
+The check asserts two things and the second has the teeth: that every caller **agrees** is necessary
+and not sufficient, because they could all agree on a key the vault does not hold — the same orphan
+by another route. So it reads the vault back and requires the agreed identity to be the stored one.
+
+`recorded` 128 → 129.

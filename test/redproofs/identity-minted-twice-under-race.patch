@@ -1,0 +1,15 @@
+diff --git a/internal/vault/vault.go b/internal/vault/vault.go
+index 779061c..6701000 100644
+--- a/internal/vault/vault.go
++++ b/internal/vault/vault.go
+@@ -821,10 +821,6 @@ func (v *Vault) Identity() (certPEM, keyPEM []byte, ok bool) {
+ func (v *Vault) SetIdentityIfAbsent(certPEM, keyPEM []byte) (cert, key []byte, err error) {
+ 	v.mu.Lock()
+ 	defer v.mu.Unlock()
+-	if id := v.contents.Identity; id != nil {
+-		// Somebody else won. Hand back theirs, not the caller's.
+-		return append([]byte(nil), id.CertPEM...), append([]byte(nil), id.KeyPEM...), nil
+-	}
+ 	v.contents.Identity = &Identity{CertPEM: certPEM, KeyPEM: keyPEM}
+ 	if serr := v.save(); serr != nil {
+ 		// Leave no identity behind that the disk does not have: a later caller must mint again
