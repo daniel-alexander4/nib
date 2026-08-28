@@ -675,6 +675,25 @@ func Validate(raw []byte) error {
 	if env.Version == 0 || len(env.Cipher) == 0 || len(env.Nonce) == 0 {
 		return errors.New("not a vault backup")
 	}
+	// **The CEILING, through the same door `Open` uses (/pending 287).**
+	//
+	// This had a floor and no ceiling, so a vault stamped with a future format passed validation,
+	// was written over the user's own by the import handler, and was then refused by `Open` — the
+	// previous vault gone and the new one unopenable until they update. The handler's own doc
+	// calls this function *"the only thing standing between a mis-picked file and the permanent
+	// loss of the signing identity"*, and it let through exactly the file the reader would not
+	// open, AFTER the overwrite.
+	//
+	// `checkEnvelopeVersion` is the door and it already existed; this caller simply did not use
+	// it, which is `checkEnvelopeVersion`'s own recorded history repeating at the one site the
+	// original fix did not reach. ADR-009: a rule gets one door, and every site calls it.
+	//
+	// It is checked BEFORE the floor below, so a future-format vault is refused as a future format
+	// rather than as one that "predates SSH-key sealing" — the second sentence would send the user
+	// looking for a migration that is not what they need.
+	if err := checkEnvelopeVersion(env.Version); err != nil {
+		return err
+	}
 	if env.Version < 2 || len(env.SSH) == 0 {
 		// A v1 password vault parses perfectly and has no key slots at all, so
 		// importing one would replace a working vault with a file this build has no
@@ -1253,12 +1272,19 @@ func newGCM(key []byte) (cipher.AEAD, error) {
 // package that writes a VAULT (handleVaultImport). Anything that is NOT a vault should call
 // internal/atomicfile directly and choose its own mode.
 //
-// `internal/server` has a function of the same name with a different contract: it renames
-// atomically and never fsyncs. `handleVaultImport` used it to replace `vault.nib`, so the
-// rename was atomic and the data blocks were not durable — a power loss inside the
-// writeback window leaves the vault present and garbage while the original, the only copy
-// of the identity, is already gone. Two same-named functions with different durability
-// contracts is also how nobody noticed.
+// **`internal/server` HAD a function of the same name with a different contract** — it renamed
+// atomically and never fsynced — and `handleVaultImport` used it to replace `vault.nib`, so the
+// rename was atomic and the data blocks were not durable: a power loss inside the writeback window
+// left the vault present and garbage while the original, the only copy of the identity, was
+// already gone. Two same-named functions with different durability contracts is also how nobody
+// noticed.
+//
+// **That twin is gone (/pending 287, 2026-08-27).** Its four callers now name their own mode at
+// the call site — `atomicfile.WriteDurable` for the three that hold the only copy of something
+// (in-place save, save-as, a document a peer sent) and `atomicfile.Write` for the one that does
+// not (a split export, re-derivable from a document still open). The paragraph above is kept in
+// the past tense rather than deleted, because the shape it describes is the reason this comment
+// exists and a reader arriving at a third copy needs to know it has happened before.
 func WriteFileAtomicDurable(path string, data []byte) error { return writeFileAtomic(path, data) }
 
 // writeFileAtomic is the vault's durable write: 0600, via internal/atomicfile.

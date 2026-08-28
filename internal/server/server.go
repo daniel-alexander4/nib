@@ -15,6 +15,7 @@ import (
 	"io/fs"
 	"log"
 	"net/http"
+	"nib/internal/atomicfile"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -724,7 +725,8 @@ func (s *Server) handleSave(w http.ResponseWriter, r *http.Request) {
 		httpError(w, http.StatusConflict, err.Error())
 		return
 	}
-	if err := writeFileAtomic(doc.path, data); err != nil {
+	// **The user's ORIGINAL, overwritten in place** — the strongest only-copy case in the tree.
+	if err := atomicfile.WriteDurable(doc.path, data, 0o600); err != nil {
 		httpError(w, http.StatusInternalServerError, "could not write file")
 		return
 	}
@@ -1302,26 +1304,6 @@ func (s *Server) docBytes(doc *document) []byte {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return doc.data
-}
-
-// writeFileAtomic writes data to a temp file in the same directory then renames
-// it over path, so an interrupted save can't leave a half-written PDF.
-func writeFileAtomic(path string, data []byte) error {
-	dir := filepath.Dir(path)
-	tmp, err := os.CreateTemp(dir, ".nib-*.tmp")
-	if err != nil {
-		return err
-	}
-	tmpName := tmp.Name()
-	defer os.Remove(tmpName) // no-op once the rename succeeds
-	if _, err := tmp.Write(data); err != nil {
-		tmp.Close()
-		return err
-	}
-	if err := tmp.Close(); err != nil {
-		return err
-	}
-	return os.Rename(tmpName, path)
 }
 
 // loopbackOnly admits a request only when both the connecting peer and the

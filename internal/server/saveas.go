@@ -11,6 +11,7 @@ import (
 	"io"
 	"io/fs"
 	"net/http"
+	"nib/internal/atomicfile"
 	"os"
 	"path/filepath"
 	"sort"
@@ -177,7 +178,9 @@ func (s *Server) handleWriteFile(w http.ResponseWriter, r *http.Request) {
 		httpError(w, http.StatusInternalServerError, "could not create folder")
 		return
 	}
-	if err := writeFileAtomic(target, data); err != nil {
+	// The only copy: the signature on it cannot be re-derived identically, so a save that
+	// reports success must mean the bytes are on disk (atomicfile.WriteDurable's own rule).
+	if err := atomicfile.WriteDurable(target, data, 0o600); err != nil {
 		httpError(w, http.StatusInternalServerError, "could not write file")
 		return
 	}

@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"fmt"
 	"net/http"
+	"nib/internal/atomicfile"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -148,7 +149,9 @@ func writeSplitParts(w http.ResponseWriter, dir string, parts []pdfops.SplitPart
 			httpError(w, http.StatusBadRequest, "unsafe file name")
 			return
 		}
-		if err := writeFileAtomic(full, p.Data); err != nil {
+		// Re-derivable: every part comes from the document still open in this process, so an
+		// export can simply be run again. Atomic, not durable — see atomicfile.Write.
+		if err := atomicfile.Write(full, p.Data, 0o600); err != nil {
 			httpError(w, http.StatusInternalServerError, "could not write "+p.Name)
 			return
 		}
