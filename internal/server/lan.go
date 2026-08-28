@@ -775,9 +775,13 @@ func answerLoop(ctx context.Context, b browser, pins []vault.PinnedPeer, now fun
 // It is asked AFTER the browse because on a link the transport arrives in the announcement
 // (ADR-010) and the request names nothing at all.
 //
-// **What is still owed** is racing both kinds side by side, so a mixed set loses neither — that is
-// `/pending 298` and belongs to P05's coordinator. This routes a mixed set to the path that can
-// dial every member, which is strictly better than routing it to one that can dial some.
+// **What is still owed, stated narrowly because the wide version of it is fixed (/pending 298,
+// closed 2026-08-27).** No candidate is dropped any more: the glare path runs only when every
+// candidate can be dialled on it, and everything else goes to `raceWithRendezvous`, which dials
+// each candidate on its own transport. What a mixed set loses is not a candidate but the GLARE
+// JOIN — the symmetric accept that lets a peer who can only reach us by dialling us be joined
+// rather than refused. That is a NAT-traversal tier degrading, not a peer becoming unreachable,
+// and racing both kinds side by side belongs to P05's coordinator rather than to this predicate.
 func allQUICCandidates(cands []candidate) bool {
 	if len(cands) == 0 {
 		return false
