@@ -1367,27 +1367,28 @@ PYSET
     relay tcp lan
     WORDS_RELAY_TCP=( "${RELAY_WORDS[@]}" ); FINAL_TCP="$RELAY_FINAL"
     after="$(offlink_packets)"
-    # **STILL RED, and by S05d it is red for a NARROWER reason — do not read the number alone.**
+    # **GREEN since P07.S05e (v1.117.207), and this is the criterion it took four phases to reach.**
     #
     # P03's exit criterion is *"a LAN ceremony completes with NO outbound internet traffic"*, and it
-    # was false for every ceremony carrying an invitation, which is every ceremony P07 builds. It
+    # was false for every ceremony carrying an invitation — which is every ceremony P07 builds. It
     # survived four phases because the only `--lan` run was the TWO-PARTY one, which has no
     # invitation and therefore no `cer` at all: the run that existed to prove the criterion was the
     # one shape that could not reach the defect. `--lan -n N` was impossible until S05c removed
     # three separate barriers to it.
     #
-    # **S05d closed the bootstrap and the dial side.** The bootstrap is lazy behind one door, the
-    # fetch waits as the publish always did, and the dial side holds on its own browse result
-    # instead of a two-second timer. Four-party: 120 -> 9.
+    # The arithmetic it took, in order, because each step looked sufficient and was not:
+    #   120 packets  four parties, nothing suppressing the bootstrap at all
+    #     9 packets  S05d: bootstrap lazy behind one door, fetch windowed, dial side holding on
+    #                its own browse result rather than a two-second timer
+    #     0 packets  S05e: the ARM holding on evidence — every sighting of its own expected peer
+    #                renews the hold, and an arm that hears nothing pays one budget and publishes
     #
-    # **What remains is S05e, and it is the ARM.** Probed per instance at nine parties: i1 and i2
-    # reach the DHT zero times; i3 through i9 reach it twice each, from the arm's own connect. All
-    # eight signing parties arm before hop 1, hops take 1-3 s, and an arm's window is 2 s — so from
-    # the third party onward every arm pre-publishes while waiting for a turn that has not come.
-    # An arm announces rather than browses and cannot yet tell "my peer arrives in fourteen
-    # seconds" from "nobody is here"; S05e gives it that signal.
+    # **A regression here is most likely a hold that stopped renewing**, not a new eager caller:
+    # the bootstrap has an AST guard asserting it has exactly one door, and the arm's half does
+    # not. Probe per instance before assuming otherwise — a stack trace on `ensureBootstrapped` is
+    # what found the arm in the first place, and `link_report` above says what each end hears.
     [ "$after" = "$baseline" ] \
-      || fail "a $N-party LAN relay emitted $((after - baseline)) packets destined off the link — P03's exit criterion says a LAN ceremony completes with NO outbound internet traffic. Since S05d the bootstrap is lazy and the dial side holds on its browse result; what is left is the ARM pre-publishing while it waits for a turn that has not come, which is P07.S05e. Probe per instance before assuming a new cause: i1/i2 clean and i3+ reaching twice each is the KNOWN remainder, and any other distribution is not."
+      || fail "a $N-party LAN relay emitted $((after - baseline)) packets destined off the link — P03's exit criterion says a LAN ceremony completes with NO outbound internet traffic, and this went to ZERO at P07.S05e over 16 hops and two transports. This is a REGRESSION, not a known remainder. Probe per instance: a stack trace on ensureBootstrapped names the caller, and link_report says what each end hears."
     echo "[lan] $(( (N - 1) * 2 )) hops over two transports, and nothing left the link"
   else
     relay quic

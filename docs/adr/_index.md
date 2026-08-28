@@ -76,5 +76,6 @@ home today.
 - [ADR-011: The link gets its window first](011-the-link-gets-its-window-first.md) — nothing
   reaches the public DHT until the local link has had `browseWindow`: the bootstrap is lazy
   behind one door, the fetch waits as the publish always did, and the dial side holds on its
-  browse result rather than a timer. A four-party LAN relay emitted 120 off-link packets and the
-  two-party run could not see it; the arm-side remainder is named, not implied
+  browse result rather than a timer, and the ARM holds on evidence — a sighting of its own expected
+  peer, which `answerLoop` already resolved. 120 off-link packets → 9 → 0; the two-party run that
+  was supposed to prove the criterion was the one shape that could not reach the defect

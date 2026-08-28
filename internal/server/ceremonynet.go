@@ -327,9 +327,7 @@ func (c *ceremonyID) feedCandidates(ctx context.Context, out chan<- candidate, p
 	// `lanFirstBudget` when the browse already FOUND the peer there — see feedCeremonyRace. A
 	// fixed 2 s made the criterion a race against the hop, and the hop won often enough to emit
 	// 105 packets on a nine-party relay.
-	select {
-	case <-time.After(hold):
-	case <-ctx.Done():
+	if !c.holdDHT(ctx, hold) {
 		return
 	}
 	// The DHT's first contact with the network, through its one door. A failure is not fatal — the
@@ -496,7 +494,14 @@ func publishWhenSlow(ctx context.Context, cer *ceremonyID, transport string, hol
 	// to fix: the peer's gate has already admitted the old address and its cap has no room for
 	// the new one, which is item 20 and needs a decision this loop cannot make. `portMoved`
 	// still has no reader; the republish does not silently become one.
-	publishLoop(ctx, hold, republishEvery(), func(ctx context.Context) {
+	// The hold is taken HERE rather than as publishLoop's `first`, because it is renewable on the
+	// arm (S05e) and publishLoop's parameter is a duration. publishLoop keeps its parameter — its
+	// tests drive it with small durations and counting, which is the only way to drive a period
+	// with no fake clock in this package — and is handed zero once the hold has been served.
+	if !cer.holdDHT(ctx, hold) {
+		return
+	}
+	publishLoop(ctx, 0, republishEvery(), func(ctx context.Context) {
 		_ = cer.publishCandidates(ctx, transport)
 	})
 }
