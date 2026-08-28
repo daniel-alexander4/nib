@@ -697,32 +697,64 @@ func (s *Server) answerHopSeekers(ctx context.Context, cert []byte, ln announcea
 			answering.Close()
 		}
 	}()
+	answerLoop(ctx, sock, pins, time.Now, func(candidate) bool {
+		ann, aerr := startAnnouncing(cert, ln, hopAnnounceWindow)
+		if aerr != nil {
+			return false // loopback bind or no interface — never fatal to the arm
+		}
+		if answering != nil {
+			answering.Close()
+		}
+		answering = ann
+		return true
+	})
+}
+
+// answerLoop is answerHopSeekers' POLICY, separated from its socket so it can be driven.
+//
+// **The separation is the point, not tidiness.** The case this whole mechanism exists for is a
+// peer arriving AFTER the arm's own five-minute announcement has expired — and every hop of every
+// run so far falls inside that window, so the mechanism shipped with nothing exercising the only
+// state it was built for. That is the vacuous-green shape: code that is correct, wired, and
+// unproven, with a passing suite that says nothing about it. A real socket cannot drive it without
+// either five minutes of wall clock or a knob in the shipped binary; a fake clock and a fake
+// browser drive it in microseconds.
+//
+// `now` is injected for the same reason: the rate limit is a duration, and a test that had to
+// sleep through it would be a test nobody runs.
+//
+// `answer` reports whether it actually announced. A false — a loopback bind, no usable interface —
+// must NOT count as an answer, or the rate limit would silence a party that never spoke.
+//
+// **It is handed the RESOLVED candidate, and production ignores it.** The answer is an ordinary
+// announcement of this arm's own endpoint, so nothing about the peer is needed to make it. It is
+// passed because a test that cannot see WHICH sighting was answered cannot tell "answered my peer"
+// from "answered a stranger" — measured: deleting the `resolve` gate below left the first version
+// of `TestTheArmAnswersItsOwnPeerAndNobodyElse` green, because a stranger's sighting and the
+// peer's produce the same COUNT. L1 is the property here and a count cannot see it.
+func answerLoop(ctx context.Context, b browser, pins []vault.PinnedPeer, now func() time.Time, answer func(candidate) bool) {
 	var lastAnswer time.Time
 	for {
 		if ctx.Err() != nil {
 			return
 		}
-		// A short read deadline rather than a long one, so ctx cancellation is noticed promptly
-		// at disarm instead of after a multi-minute blocking read. The cost is a wakeup per
-		// second on a quiet link, which is a timer and not a datagram.
-		seen, rerr := sock.Read(time.Now().Add(time.Second))
+		// A short read deadline rather than a long one, so ctx cancellation is noticed promptly at
+		// disarm instead of after a multi-minute blocking read. The cost is a wakeup per second on
+		// a quiet link, which is a timer and not a datagram.
+		seen, rerr := b.Read(now().Add(time.Second))
 		if rerr != nil {
 			continue // a timeout is the ordinary case; ctx is what ends this loop
 		}
-		if _, ok := resolve(pins, seen); !ok {
-			continue
+		c, ok := resolve(pins, seen)
+		if !ok {
+			continue // not the peer this arm is for — see the amplification note above
 		}
-		if time.Since(lastAnswer) < hopAnnounceWindow {
+		if !lastAnswer.IsZero() && now().Sub(lastAnswer) < hopAnnounceWindow {
 			continue // one answer per window: a re-dial must not stack a second announcer
 		}
-		if answering != nil {
-			answering.Close()
+		if answer(c) {
+			lastAnswer = now()
 		}
-		ann, aerr := startAnnouncing(cert, ln, hopAnnounceWindow)
-		if aerr != nil {
-			continue // loopback bind or no interface — never fatal to the arm
-		}
-		answering, lastAnswer = ann, time.Now()
 	}
 }
 
