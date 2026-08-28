@@ -1989,3 +1989,32 @@ gained a second arm: `postSign` assigned exactly once. Both arms mutation-tested
 independently, which is why they are two rows.
 
 `recorded` 125 → 127.
+
+---
+
+## /pending 284 — the blast radius was one shape (v1.117.189)
+
+| Defect reintroduced | Check that fired | What it said |
+|---|---|---|
+| `embedded-shape-vanishes-from-the-scan` — `discoverObservables` drops any shape with an embedded field | `TestEveryPublishedObservableHasANamedReader`, tier 1 | "`published` names \"discovery.Seen\" and it was NOT discovered as a published observable … this scan has quietly stopped covering a shape it claims to cover" |
+
+**The failure mode is the one this scan exists to prevent, turned on the scan itself.** A shape that
+vanishes from a reader scan reads identically to a shape that publishes nothing: the count goes
+down, every remaining entry passes, and nothing says a field went uncovered. It was caught only
+because the `published` keys were later validated against the discovered set — the *discovery* half
+had been unchecked, which is the same asymmetry `docs/red-proofs.md` records elsewhere as a check
+that grades the response without asserting the stimulus.
+
+**The item was filed as a Finding rather than Low Hanging Fruit because of a question nobody had
+answered** — *"how many OTHER shapes in the ten scanned packages embed? Nobody has counted."*
+Counted: **of 56 exported data shapes across all ten packages, exactly one embeds**, and the type it
+embeds is itself discovered. The blast radius the fix had been waiting on was one shape and one
+field.
+
+**And the fix's second arm has no case in the tree, so it was probed rather than assumed.** An embed
+whose type is *not* discovered is now reported by name instead of dropped — a state nothing in the
+repo produces, so the probe made `Announcement` undiscoverable (one unexported field) and confirmed
+the message names it. A guard for a state that cannot occur today is exactly where a vacuous green
+hides.
+
+`recorded` 127 → 128.
