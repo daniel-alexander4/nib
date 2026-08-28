@@ -150,6 +150,12 @@ func (c *ceremonyID) publishCandidates(armCtx context.Context, transport string)
 	if c == nil || c.rz == nil {
 		return errNoCeremony
 	}
+	// The DHT's first contact with the network, through its one door (S05d). ProbeSelf below is
+	// itself off-link traffic, so this is not merely "warm the table first" — both callers reach
+	// here only after the LAN window, and a ceremony the link answered never arrives at all.
+	if berr := c.ensureBootstrapped(armCtx); berr != nil {
+		return fmt.Errorf("could not reach the rendezvous network: %w", berr)
+	}
 	self, err := c.rz.ProbeSelf(armCtx)
 	if err != nil {
 		return fmt.Errorf("could not learn this machine's public address: %w", err)
@@ -300,7 +306,7 @@ func screenedMappedEndpoint(ext netip.Addr, port uint16) (ceremony.Endpoint, boo
 // **It closes `out`, and that is the contract that lets the race end.** `raceCandidates`
 // watches its parent context, but its feeder also has to stop consuming — and P05.S03's leak
 // was exactly this shape one layer down. The caller owns the context; this owns the channel.
-func (c *ceremonyID) feedCandidates(ctx context.Context, out chan<- candidate, peerFP []byte, label, name string, interval func(time.Duration) time.Duration) {
+func (c *ceremonyID) feedCandidates(ctx context.Context, out chan<- candidate, peerFP []byte, label, name string, hold time.Duration, interval func(time.Duration) time.Duration) {
 	defer safe.Recover("candidate feed")
 	defer close(out)
 	if c == nil || c.rz == nil {
@@ -310,6 +316,25 @@ func (c *ceremonyID) feedCandidates(ctx context.Context, out chan<- candidate, p
 	if err != nil {
 		return
 	}
+	// **The LAN window, before the first fetch (S05d).** `publishLoop` has always taken this delay
+	// as its `first` parameter and says why; the FETCH did not, so a LAN-local ceremony read from
+	// the public DHT before anyone knew the link would answer. Both halves of the leak had to close
+	// together: a lazy bootstrap with an unwindowed fetch immediately after it moves the first
+	// off-link packet by microseconds. The cost is that the DHT tier starts `hold` later, which
+	// D8's ladder races concurrently and is built to absorb.
+	//
+	// `hold` is `browseWindow` when nobody knows whether the link will answer, and
+	// `lanFirstBudget` when the browse already FOUND the peer there — see feedCeremonyRace. A
+	// fixed 2 s made the criterion a race against the hop, and the hop won often enough to emit
+	// 105 packets on a nine-party relay.
+	select {
+	case <-time.After(hold):
+	case <-ctx.Done():
+		return
+	}
+	// The DHT's first contact with the network, through its one door. A failure is not fatal — the
+	// fetch below simply finds nothing and D19 cause 2 is the sentence for it.
+	_ = c.ensureBootstrapped(ctx)
 	sent := 0
 	started := time.Now()
 	for {
@@ -392,13 +417,11 @@ func (s *Server) startArmedRendezvous(cer *ceremonyID, transport string, inbound
 		defer cancel()
 		cer.setStopNet(cancel) // under the lock (grill C5)
 
-		bctx, bcancel := context.WithTimeout(ctx, bootstrapBudget)
-		defer bcancel()
-		if err := cer.rz.Bootstrap(bctx); err != nil {
-			// Not fatal to the ceremony: the LAN and manual tiers are untouched, and D19
-			// cause 2 exists to say so to the user. S11 renders it.
-			return
-		}
+		// No bootstrap here. It is LAZY, behind the LAN window below, through
+		// cer.ensureBootstrapped — which is what makes a LAN ceremony emit nothing (S05d).
+		// A bootstrap failure is not fatal to the ceremony either: the LAN and manual tiers
+		// are untouched, D19 cause 2 exists to say so to the user, and S11 renders it. It
+		// is now reported by the publish that needed it rather than by returning here.
 
 		// The LAN window. A peer that reaches this listener inside it makes the publish
 		// unnecessary, and `reached` is already the thing that records "a connection put
@@ -416,7 +439,7 @@ func (s *Server) startArmedRendezvous(cer *ceremonyID, transport string, inbound
 		// peer's QUIC Initial can land. Concurrent with the publish below and bound to the arm
 		// ctx, so it runs for the whole ceremony and stops at teardown.
 		punchCh := make(chan candidate, maxRaceCandidates)
-		go cer.feedCandidates(ctx, punchCh, nil, "", "", rendezvousInterval)
+		go cer.feedCandidates(ctx, punchCh, nil, "", "", browseWindow, rendezvousInterval)
 		go punchLoop(ctx, cer.end.Punch, &punchBudget{}, punchCh, punchInterval)
 
 		// The ARM ctx, not a publish-budget child: the port-mapping REFRESH lives as long as the
@@ -431,6 +454,20 @@ func (s *Server) startArmedRendezvous(cer *ceremonyID, transport string, inbound
 		// ends the ceremony; wait for it.
 		<-ctx.Done()
 	}()
+}
+
+// hasLANCandidate reports whether the browse found the peer on the local link.
+//
+// It reads the SOURCE rather than the address: an address that merely looks link-local may have
+// been typed by the user or published to the DHT by the peer, and neither is evidence that this
+// machine heard the peer announce in this room.
+func hasLANCandidate(cands []candidate) bool {
+	for _, c := range cands {
+		if c.Source == sourceLAN {
+			return true
+		}
+	}
+	return false
 }
 
 // hopScoped drops any candidate that does not belong to the hop this race is for.
@@ -452,14 +489,14 @@ func hopScoped(c candidate, hop int) bool {
 // has already won (ctx cancelled) — the dial-side mirror of the arm's LAN-window suppression
 // (grill CONFIRMED-3). Without the wait, every LAN-local ceremony would leak the dialer's
 // publish-write to the DHT, the correlation handle the arm was built to suppress.
-func publishWhenSlow(ctx context.Context, cer *ceremonyID, transport string) {
+func publishWhenSlow(ctx context.Context, cer *ceremonyID, transport string, hold time.Duration) {
 	defer safe.Recover("dial publish")
 	// Each republish re-reads the mapper's CURRENT endpoints, so a refreshed lease that kept
 	// its external port is carried automatically. A lease that MOVED port is not this loop's
 	// to fix: the peer's gate has already admitted the old address and its cap has no room for
 	// the new one, which is item 20 and needs a decision this loop cannot make. `portMoved`
 	// still has no reader; the republish does not silently become one.
-	publishLoop(ctx, browseWindow, republishEvery(), func(ctx context.Context) {
+	publishLoop(ctx, hold, republishEvery(), func(ctx context.Context) {
 		_ = cer.publishCandidates(ctx, transport)
 	})
 }
@@ -546,6 +583,15 @@ func (s *Server) raceWithRendezvous(cer *ceremonyID, cands []candidate, cert, ke
 func (s *Server) feedCeremonyRace(ctx context.Context, cer *ceremonyID, cands []candidate, peerFP []byte, label, name string) (<-chan candidate, *sync.WaitGroup) {
 	in := make(chan candidate, maxRaceCandidates)
 	dht := make(chan candidate, maxRaceCandidates)
+	// **The dial side already knows, and this is where it says so (P07.S05d).** `peerAddresses`
+	// browses BEFORE this runs, so a LAN candidate in `cands` is the link having answered — not a
+	// guess about whether it will. Holding the DHT tier on a fixed `browseWindow` instead made
+	// D6's suppression a race between a 2 s timer and the hop; the hop won often enough that a
+	// nine-party LAN relay emitted 105 off-link packets with the lazy bootstrap already in place.
+	hold := browseWindow
+	if hasLANCandidate(cands) {
+		hold = lanFirstBudget
+	}
 	// The gate writer is `feedCandidates` (`cer.gate.Accept`), and the gate is not concurrent-safe.
 	// The caller (connect) cancels and JOINS this WaitGroup before returning, so the re-race loop's
 	// next connect does not spawn a second feed while this one's writer is still running — two
@@ -555,7 +601,7 @@ func (s *Server) feedCeremonyRace(ctx context.Context, cer *ceremonyID, cands []
 	go func() {
 		defer safe.Recover("candidate feed")
 		defer wg.Done()
-		cer.feedCandidates(ctx, dht, peerFP, label, name, rendezvousInterval)
+		cer.feedCandidates(ctx, dht, peerFP, label, name, hold, rendezvousInterval)
 	}()
 
 	// S08b: the dial side is symmetric — it PUBLISHES its own address (so the arm can punch
@@ -567,7 +613,7 @@ func (s *Server) feedCeremonyRace(ctx context.Context, cer *ceremonyID, cands []
 	go func() {
 		defer safe.Recover("dial publish")
 		defer wg.Done()
-		publishWhenSlow(ctx, cer, transportQUIC)
+		publishWhenSlow(ctx, cer, transportQUIC, hold)
 	}()
 	punchCh := make(chan candidate, maxRaceCandidates)
 	wg.Add(1)
@@ -633,14 +679,11 @@ func (s *Server) dialerCeremony(text string, cert, key, peerFP []byte) (*ceremon
 		return nil, err
 	}
 	cer.end, cer.rz = end, rz
-	ctx, cancel := context.WithTimeout(context.Background(), bootstrapBudget)
-	defer cancel()
-	if berr := rz.Bootstrap(ctx); berr != nil {
-		// Bootstrapping failed: the DHT tier will find nothing, the LAN and manual tiers
-		// are unaffected, and the race below still runs over whatever it was handed. D19
-		// cause 2 is the sentence for this and S11 renders it.
-		return cer, nil
-	}
+	// **No bootstrap here (S05d).** This runs BEFORE `peerAddresses` browses the link, so at this
+	// point nobody knows whether the LAN will answer — and bootstrapping is off-link traffic. It is
+	// deferred to `ensureBootstrapped`, which the two DHT verbs call after the LAN window. A
+	// bootstrap failure still means the DHT tier finds nothing while the LAN and manual tiers are
+	// unaffected; D19 cause 2 is the sentence for it and S11 renders it.
 	return cer, nil
 }
 

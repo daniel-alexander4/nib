@@ -97,8 +97,56 @@ type ceremonyID struct {
 	recordEmpty   atomic.Bool
 	// bootstrapDone gates the ARM-side live diagnosis: until the DHT bootstrap has had its chance,
 	// zero DHT responses means "still warming up", not "unreachable", and showing cause 2 then is a
-	// scary false alarm on a healthy machine (P05.S11 diff-grill). Set once, after the arm's Bootstrap.
+	// scary false alarm on a healthy machine (P05.S11 diff-grill). Set once, inside
+	// ensureBootstrapped, which is the only thing that bootstraps.
 	bootstrapDone atomic.Bool
+	// bootstrapOnce/bootstrapErr are ensureBootstrapped's door. See its comment.
+	bootstrapOnce sync.Once
+	bootstrapErr  error
+}
+
+// ensureBootstrapped is the ONE door onto the DHT's first contact with the network (ADR-009),
+// and it is LAZY.
+//
+// **P07.S05d, and it is a packet count rather than an argument.** P03's exit criterion says a LAN
+// ceremony completes with NO outbound internet traffic. Measured in the namespace with an nft
+// counter on off-link traffic: a two-party LAN ceremony emitted 0 packets and a four-party LAN
+// relay emitted 120. The difference is the invitation. THREE sites bootstrapped eagerly — the
+// dialer at construction, and BOTH arm paths, which are different functions (`startArmedRendezvous`
+// for TCP, `runCeremonyReceive` for QUIC) — so the public DHT was contacted on every hop of every
+// ceremony that carries an invitation, which is every ceremony P07 builds. It survived four phases
+// because the only `--lan` run was the two-party one, which has no invitation and therefore no
+// ceremony object at all: the run that was supposed to prove the criterion was the one shape that
+// could not reach the defect.
+//
+// Lazy alone would not have been enough, and that is the other half of the fix. `publishLoop`
+// already waits `browseWindow` before its first publish and says why; `feedCandidates` did not
+// wait before its first Fetch. So a bootstrap deferred to first use, with an unwindowed fetch
+// immediately after it, moves the first off-link packet by microseconds. Both DHT verbs now come
+// through this door, and both are behind the window.
+//
+// **Once per ceremony object is exactly the attempt count the three eager calls already had** — a
+// fresh ceremonyID per hop on the dialer, one per arm — so `sync.Once` preserves today's behaviour
+// rather than introducing a new limit on retry. Said out loud because a future reader will
+// otherwise read Once as one.
+//
+// The first caller's ctx governs the attempt and later callers get the cached result; every caller
+// is bound to the ceremony's own lifetime, so a ctx that dies is a ceremony that is ending.
+func (c *ceremonyID) ensureBootstrapped(ctx context.Context) error {
+	if c == nil || c.rz == nil {
+		return errNoCeremony
+	}
+	c.bootstrapOnce.Do(func() {
+		bctx, cancel := context.WithTimeout(ctx, bootstrapBudget)
+		defer cancel()
+		c.bootstrapErr = c.rz.Bootstrap(bctx)
+		// Set INSIDE the door, at the moment the attempt completes, rather than at the old
+		// call sites. D19's arm-side diagnosis is gated on this flag, and a lazy path that
+		// never bootstraps must not leave a reader believing it did: a ceremony the LAN
+		// answered never bootstraps and now never claims to have.
+		c.bootstrapDone.Store(true)
+	})
+	return c.bootstrapErr
 }
 
 // setStopNet and setPortMap store the two shared fields under the lock.

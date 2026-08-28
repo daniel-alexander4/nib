@@ -1361,21 +1361,27 @@ PYSET
     relay tcp lan
     WORDS_RELAY_TCP=( "${RELAY_WORDS[@]}" ); FINAL_TCP="$RELAY_FINAL"
     after="$(offlink_packets)"
-    # **This is RED against shipped code, and it is the clause's own criterion (P07.S05c).**
+    # **STILL RED, and by S05d it is red for a NARROWER reason — do not read the number alone.**
     #
-    # Measured: a two-party LAN ceremony emits ZERO off-link packets; a four-party LAN ceremony
-    # relay emits 120. The difference is the invitation. A ceremony hop calls `dialerCeremony`,
-    # which opens a rendezvous and calls `rz.Bootstrap` unconditionally — reaching for the PUBLIC
-    # DHT — and the arm side does the same. `ceremonynet.go` already suppresses the late PUBLISH
-    # when the LAN answers inside the browse window; nothing suppresses the bootstrap.
+    # P03's exit criterion is *"a LAN ceremony completes with NO outbound internet traffic"*, and it
+    # was false for every ceremony carrying an invitation, which is every ceremony P07 builds. It
+    # survived four phases because the only `--lan` run was the TWO-PARTY one, which has no
+    # invitation and therefore no `cer` at all: the run that existed to prove the criterion was the
+    # one shape that could not reach the defect. `--lan -n N` was impossible until S05c removed
+    # three separate barriers to it.
     #
-    # So P03's exit criterion — *"a LAN ceremony completes with NO outbound internet traffic"* — is
-    # false for every ceremony that carries an invitation, which is every ceremony P07 builds. It
-    # survived because the only `--lan` run was the TWO-PARTY one, which has no invitation and
-    # therefore no `cer`; and `--lan -n N` was impossible until this slice removed three separate
-    # barriers to it. Nothing had ever measured a ceremony on a link.
+    # **S05d closed the bootstrap and the dial side.** The bootstrap is lazy behind one door, the
+    # fetch waits as the publish always did, and the dial side holds on its own browse result
+    # instead of a two-second timer. Four-party: 120 -> 9.
+    #
+    # **What remains is S05e, and it is the ARM.** Probed per instance at nine parties: i1 and i2
+    # reach the DHT zero times; i3 through i9 reach it twice each, from the arm's own connect. All
+    # eight signing parties arm before hop 1, hops take 1-3 s, and an arm's window is 2 s — so from
+    # the third party onward every arm pre-publishes while waiting for a turn that has not come.
+    # An arm announces rather than browses and cannot yet tell "my peer arrives in fourteen
+    # seconds" from "nobody is here"; S05e gives it that signal.
     [ "$after" = "$baseline" ] \
-      || fail "a $N-party LAN relay emitted $((after - baseline)) packets destined off the link — P03's exit criterion says a LAN ceremony completes with NO outbound internet traffic, and a ceremony hop bootstraps the DHT unconditionally (dialerCeremony). A two-party LAN ceremony emits zero; the difference is the invitation."
+      || fail "a $N-party LAN relay emitted $((after - baseline)) packets destined off the link — P03's exit criterion says a LAN ceremony completes with NO outbound internet traffic. Since S05d the bootstrap is lazy and the dial side holds on its browse result; what is left is the ARM pre-publishing while it waits for a turn that has not come, which is P07.S05e. Probe per instance before assuming a new cause: i1/i2 clean and i3+ reaching twice each is the KNOWN remainder, and any other distribution is not."
     echo "[lan] $(( (N - 1) * 2 )) hops over two transports, and nothing left the link"
   else
     relay quic
