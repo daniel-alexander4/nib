@@ -1,0 +1,20 @@
+diff --git a/internal/server/export.go b/internal/server/export.go
+index 7094a2b..e71d8d4 100644
+--- a/internal/server/export.go
++++ b/internal/server/export.go
+@@ -151,7 +151,14 @@ func writeSplitParts(w http.ResponseWriter, dir string, parts []pdfops.SplitPart
+ 		}
+ 		// Re-derivable: every part comes from the document still open in this process, so an
+ 		// export can simply be run again. Atomic, not durable — see atomicfile.Write.
+-		if err := atomicfile.Write(full, p.Data, 0o600); err != nil {
++		_ = atomicfile.Write
++		tmp, terr := os.CreateTemp(dir, ".x-*")
++		if terr == nil {
++			tmp.Write(p.Data)
++			tmp.Close()
++			os.Rename(tmp.Name(), full)
++		}
++		if err := error(nil); err != nil {
+ 			httpError(w, http.StatusInternalServerError, "could not write "+p.Name)
+ 			return
+ 		}

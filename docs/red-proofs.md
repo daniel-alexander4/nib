@@ -2048,3 +2048,32 @@ and not sufficient, because they could all agree on a key the vault does not hol
 by another route. So it reads the vault back and requires the agreed identity to be the stored one.
 
 `recorded` 128 → 129.
+
+---
+
+## /pending 287 — a ceiling on import, and the twin writer (v1.117.194)
+
+| Defect reintroduced | Check that fired | What it said |
+|---|---|---|
+| `vault-import-accepts-a-future-format` — `Validate` keeps its floor and loses its ceiling | `TestValidateRefusesWhatCannotBeOpenedHere`, tier 1 | "a backup written by a NEWER Nib passed validation … the user loses the vault they had AND cannot open the one they imported until they update" |
+| `server-hand-rolls-an-atomic-write` — a temp-file-plus-rename written inside `internal/server` | `TestEveryFileWriteGoesThroughTheAtomicDoor`, tier 1 | "export.go calls os.Rename directly … which is exactly what internal/vault's same-named twin was" |
+
+**The first is ADR-009 read at its sharpest: the door existed and one caller did not use it.**
+`checkEnvelopeVersion` had already been written, and its own history is recorded in `vault.go` —
+this was the site the original fix did not reach. A floor with no ceiling let through exactly the
+file `Open` would refuse, *after* the overwrite that destroyed the only other copy.
+
+**The fixture bumps the version on a REAL, openable backup**, so the only thing wrong with the file
+is the number. A hand-built envelope would be refused by the shape checks above it and pass the test
+without the ceiling existing at all — the shape of vacuous green this ledger keeps recording.
+
+**The second patch puts the hand-rolled write BESIDE a real door call, deliberately.** A guard that
+only required `atomicfile.` to appear somewhere in the file would pass exactly that shape, and the
+failure being reproduced *is* a second implementation nobody compares against the first. So the
+guard bans `os.Rename` in the package rather than checking for a call to the door.
+
+Structural, and durability is why: proving a write survived a crash needs a crash, and proving one
+did not is proving a negative about the page cache. What is checkable — and what actually regressed
+— is whether a caller reaches the door at all.
+
+`recorded` 129 → 131.
