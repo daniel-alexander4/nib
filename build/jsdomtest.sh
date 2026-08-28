@@ -56,7 +56,13 @@ Nib_files="$(find test/jsdom -maxdepth 1 -name '*.test.mjs' | wc -l | tr -d ' ')
 # deliberate act the guard exists to force; it went unbumped for nine commits, during which
 # this harness EXITED 1 while still printing "# pass 96 / # fail 0" above it. Read the exit
 # status, not the totals — the totals were true and the tier was red.
-Nib_expect_files=18
+#
+# **And it happened AGAIN, exactly as described.** v1.117.178 (P07.S05a) added
+# ceremonycomplete.test.mjs and left this literal at 18, so tier 2 was red from that commit
+# until P07.S05d ran it — nine slices later. The guard worked; nobody asked it. The lesson is
+# not about the number, it is that a tier which "skips cleanly when its dependencies are absent"
+# also skips cleanly when nobody runs it.
+Nib_expect_files=19
 if [ "$Nib_files" -ne "$Nib_expect_files" ]; then
   echo "FAIL: expected $Nib_expect_files jsdom test files, found $Nib_files — a test file was added or dropped." >&2
   echo "      If deliberate, update Nib_expect_files in this script." >&2

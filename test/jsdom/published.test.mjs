@@ -99,6 +99,15 @@ const PUBLISHED = [
   // shape instead of always looking in app.js.
   { type: 'handoffResponse', readers: ['internal/instance/instance.go'] },
   { type: 'Record', readers: ['internal/instance/instance.go', 'internal/server/handoff.go'] },
+
+  // `/api/lan/heard`'s two shapes. Their reader is the tier-4 HARNESS, not the client — the
+  // route is a browse-level instrument built because /pending 300 could not be diagnosed
+  // without one, and `link_report` is what reads it. Entered in PUBLISHED rather than EXCLUDED
+  // on purpose: it IS published, it does have a reader, and excluding it would launder a shape
+  // that a future client change could quietly stop matching. This scan names readers per shape
+  // precisely so a non-client reader is expressible.
+  { type: 'lanHeard', readers: ['build/pairrepro.sh'] },
+  { type: 'lanHeardResponse', readers: ['build/pairrepro.sh'] },
 ];
 
 // ── The exclusions ───────────────────────────────────────────────────────────
@@ -400,6 +409,16 @@ function evidenceFor(src, starts, rel, field) {
     new RegExp(`\\.${field}(?![\\w$])`, 'g'),
     new RegExp(`\\{[^{}]*\\b${field}\\b[^{}]*\\}\\s*=`, 'g'),
     new RegExp(`\\.${field[0].toUpperCase()}${field.slice(1)}(?![\\w$])`, 'g'),
+    // **Bracket and .get() access, because a non-JS reader was invisible to the three above.**
+    // The table has always said a reader need not be `web/app.js`, and two of them are Go — but
+    // `/api/lan/heard`'s reader is a shell harness driving Python, which reaches every field as
+    // `d["heard"]` and `d.get("note")`. Against the dotted patterns alone that reader matched
+    // NOTHING, so six fields with a real consumer reported as unread. That failure runs in the
+    // dangerous direction as well as this one: a matcher that cannot see a whole reader style
+    // cannot tell "nobody reads it" from "I cannot read the reader", and both come out as a
+    // finding somebody will eventually park.
+    new RegExp(`\\[\\s*['"\`]${field}['"\`]\\s*\\]`, 'g'),
+    new RegExp(`\\.get\\(\\s*['"\`]${field}['"\`]`, 'g'),
   ];
   for (const re of pats) for (const m of src.matchAll(re)) out.add(`${rel}:${lineAt(starts, m.index)}`);
   return out;
