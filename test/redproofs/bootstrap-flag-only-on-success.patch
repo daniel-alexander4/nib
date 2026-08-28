@@ -1,0 +1,15 @@
+diff --git a/internal/server/ceremonyid.go b/internal/server/ceremonyid.go
+index e83e0f7..f94c492 100644
+--- a/internal/server/ceremonyid.go
++++ b/internal/server/ceremonyid.go
+@@ -144,7 +144,9 @@ func (c *ceremonyID) ensureBootstrapped(ctx context.Context) error {
+ 		// call sites. D19's arm-side diagnosis is gated on this flag, and a lazy path that
+ 		// never bootstraps must not leave a reader believing it did: a ceremony the LAN
+ 		// answered never bootstraps and now never claims to have.
+-		c.bootstrapDone.Store(true)
++		if c.bootstrapErr == nil {
++			c.bootstrapDone.Store(true)
++		}
+ 	})
+ 	return c.bootstrapErr
+ }

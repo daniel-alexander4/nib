@@ -1,0 +1,12 @@
+diff --git a/internal/server/ceremonynet.go b/internal/server/ceremonynet.go
+index e9ec57e..26063f4 100644
+--- a/internal/server/ceremonynet.go
++++ b/internal/server/ceremonynet.go
+@@ -423,6 +423,7 @@ func (s *Server) startArmedRendezvous(cer *ceremonyID, transport string, inbound
+ 		// are untouched, D19 cause 2 exists to say so to the user, and S11 renders it. It
+ 		// is now reported by the publish that needed it rather than by returning here.
+ 
++		_ = cer.rz.Bootstrap(ctx)
+ 		// The LAN window. A peer that reaches this listener inside it makes the publish
+ 		// unnecessary, and `reached` is already the thing that records "a connection put
+ 		// something in front of the local user".

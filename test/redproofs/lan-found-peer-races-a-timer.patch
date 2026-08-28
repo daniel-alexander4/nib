@@ -1,0 +1,15 @@
+diff --git a/internal/server/ceremonynet.go b/internal/server/ceremonynet.go
+index e9ec57e..99f2dff 100644
+--- a/internal/server/ceremonynet.go
++++ b/internal/server/ceremonynet.go
+@@ -589,8 +589,9 @@ func (s *Server) feedCeremonyRace(ctx context.Context, cer *ceremonyID, cands []
+ 	// D6's suppression a race between a 2 s timer and the hop; the hop won often enough that a
+ 	// nine-party LAN relay emitted 105 off-link packets with the lazy bootstrap already in place.
+ 	hold := browseWindow
++	_ = lanFirstBudget
+ 	if hasLANCandidate(cands) {
+-		hold = lanFirstBudget
++		hold = browseWindow
+ 	}
+ 	// The gate writer is `feedCandidates` (`cer.gate.Accept`), and the gate is not concurrent-safe.
+ 	// The caller (connect) cancels and JOINS this WaitGroup before returning, so the re-race loop's
