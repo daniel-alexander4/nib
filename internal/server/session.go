@@ -11,6 +11,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"nib/internal/atomicfile"
 	"os"
 	"path/filepath"
 	"strings"
@@ -879,7 +880,8 @@ func (s *Server) saveReceived(doc, peerFP []byte, peerLabel string) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return
 	}
-	if err := writeFileAtomic(path, doc); err != nil {
+	// A document a PEER sent. Losing it means asking them to send again, and they may be gone.
+	if err := atomicfile.WriteDurable(path, doc, 0o600); err != nil {
 		return
 	}
 	s.sess.setReceived(&receivedInfo{Path: path, Peer: peerLabel})

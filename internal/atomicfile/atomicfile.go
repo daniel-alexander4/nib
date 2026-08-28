@@ -21,6 +21,42 @@ import (
 	"path/filepath"
 )
 
+// Write writes data to path via a temp file and a rename: ATOMIC, and deliberately not durable.
+//
+// **The pair exists so a caller has to choose, and the choice is the point.** `WriteDurable`'s own
+// contract draws the line — *"callers that hold the only copy of something get this; callers that
+// can re-derive their output do not need it"* — and a single function cannot express that. A door
+// that only offered durability would put an fsync per file on a split export, which writes one file
+// per part from a document that is still open; a door that only offered this would leave a user's
+// saved original recoverable only as far as the page cache.
+//
+// So: re-derivable output takes this. Anything that is the only copy takes `WriteDurable`, and
+// says so at the call site.
+//
+// perm is applied to the temp file BEFORE the rename, for the same reason as below: the file is
+// never briefly readable at the process umask's default under its final name.
+func Write(path string, data []byte, perm os.FileMode) error {
+	dir := filepath.Dir(path)
+	tmp, err := os.CreateTemp(dir, ".tmp-*")
+	if err != nil {
+		return err
+	}
+	tmpName := tmp.Name()
+	defer os.Remove(tmpName) // no-op once the rename succeeds
+	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Chmod(perm); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tmpName, path)
+}
+
 // WriteDurable writes data to path via a temp file, fsync, rename and a parent-directory
 // fsync.
 //

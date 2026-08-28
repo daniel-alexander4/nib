@@ -415,6 +415,46 @@ func TestValidateRefusesWhatCannotBeOpenedHere(t *testing.T) {
 		}
 	})
 
+	// /pending 287. `Validate` had a floor and NO ceiling: `env.Version < 2` refused the past and
+	// nothing refused the future. A vault stamped with a newer format passed here, was written
+	// over the user's own by the import handler, and was then refused by `Open` — the previous
+	// vault gone and the new one unopenable until they update. The handler's own doc calls
+	// `Validate` *"the only thing standing between a mis-picked file and the permanent loss of the
+	// signing identity"*.
+	//
+	// Driven by BUMPING THE VERSION ON A REAL, OPENABLE BACKUP, so the only thing wrong with the
+	// file is the number. A hand-built envelope would be refused by the shape checks above and
+	// pass this test without the ceiling existing at all.
+	t.Run("a backup from a NEWER Nib is refused", func(t *testing.T) {
+		var env map[string]any
+		if err := json.Unmarshal(good, &env); err != nil {
+			t.Fatal(err)
+		}
+		// Stimulus: it really is openable as-is, or "refused after the bump" says nothing.
+		if err := Validate(good); err != nil {
+			t.Fatalf("setup: the unmodified backup does not validate (%v), so bumping its version "+
+				"proves nothing", err)
+		}
+		env["version"] = envelopeVersion + 1
+		raw, err := json.Marshal(env)
+		if err != nil {
+			t.Fatal(err)
+		}
+		err = Validate(raw)
+		if err == nil {
+			t.Fatal("a backup written by a NEWER Nib passed validation. The import handler " +
+				"overwrites the live vault on the strength of this answer, and Open then refuses " +
+				"the result — so the user loses the vault they had AND cannot open the one they " +
+				"imported until they update.")
+		}
+		// It must be refused AS a future format. "Predates SSH-key sealing" would send the user
+		// looking for a migration, which is not what they need.
+		if !strings.Contains(err.Error(), "newer version of Nib") {
+			t.Errorf("a future-format backup was refused with %q — the reason has to name the "+
+				"version, or the user is told to fix the wrong thing", err)
+		}
+	})
+
 	t.Run("a v1 password vault is refused", func(t *testing.T) {
 		v1Dir := t.TempDir()
 		writeV1Vault(t, v1Dir, "pw", Contents{Profile: map[string]string{"email": "dan@x.com"}})
