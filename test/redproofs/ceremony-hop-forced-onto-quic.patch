@@ -1,14 +1,14 @@
 diff --git a/internal/server/session.go b/internal/server/session.go
-index a4a2625..8b97ace 100644
+index 1fd2157..6ce34ea 100644
 --- a/internal/server/session.go
 +++ b/internal/server/session.go
-@@ -1459,7 +1459,8 @@ func (s *Server) handleSessionInitiate(w http.ResponseWriter, r *http.Request) {
- 	// P05's coordinator rather than to this route. Filed.
- 	wantTransport := r.FormValue("transport")
+@@ -1708,8 +1708,7 @@ func (s *Server) handleSessionInitiate(w http.ResponseWriter, r *http.Request) {
+ 	// **ALL, not ANY** — see `allQUICCandidates`. The glare path discards everything it cannot
+ 	// dial, so a mixed set must go to the path that can dial every member. Handling both kinds
+ 	// side by side is `/pending 298` and belongs to P05's coordinator.
+-	glare := hl != nil && (r.FormValue("transport") == transportQUIC ||
+-		(r.FormValue("transport") == "" && allQUICCandidates(cands)))
++	glare := hl != nil
  	var final []byte
--	if cer != nil && cer.rz != nil && (wantTransport == "" || wantTransport == transportQUIC) {
-+	if cer != nil && cer.rz != nil {
-+		_ = wantTransport
- 		hl, herr := p2p.QUICListenHandshakeOn(cer.end, cert, key, peerFP)
- 		if herr != nil {
- 			httpError(w, http.StatusInternalServerError, "could not arm the racing accept: "+herr.Error())
+ 	if glare {
+ 		// P05.S10: re-race a LOST channel, re-sending the UNCHANGED signed document (Initiate never

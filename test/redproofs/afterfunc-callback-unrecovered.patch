@@ -1,11 +1,11 @@
 diff --git a/internal/server/session.go b/internal/server/session.go
-index a4234f0..24793f1 100644
+index 1fd2157..395bce5 100644
 --- a/internal/server/session.go
 +++ b/internal/server/session.go
-@@ -589,10 +589,7 @@ func (s *Server) runSession(ln p2p.Listener, cert, key []byte, label, mode strin
- 	// and produced nothing would extend the arm window every time somebody dialled, which
- 	// is a window an attacker holds open for free.
- 	armedUntil := time.Now().Add(sessionAcceptTimeout)
+@@ -695,10 +695,7 @@ func (s *Server) runSession(ln p2p.Listener, cer *ceremonyID, cert, key []byte,
+ 	// the co-signed document opening ONCE across re-deliveries. Both mirror runCeremonyReceive.
+ 	var postSign time.Time
+ 	opened := false
 -	timer := time.AfterFunc(sessionAcceptTimeout, func() {
 -		defer safe.Recover("arm window expiry")
 -		s.sess.disarmIf(ln)

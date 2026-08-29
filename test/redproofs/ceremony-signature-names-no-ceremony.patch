@@ -1,14 +1,14 @@
 diff --git a/internal/p2p/l3.go b/internal/p2p/l3.go
-index f1fb053..eb7cd8e 100644
+index eaa4ef6..bf5dbce 100644
 --- a/internal/p2p/l3.go
 +++ b/internal/p2p/l3.go
-@@ -87,8 +87,7 @@ func StampCommitment(att *Attestation, r Roster) {
+@@ -124,8 +124,7 @@ func StampCommitment(att *Attestation, r Roster, meFP string) {
  	if r.Commitment == "" || r.CommitmentVersion <= 0 {
  		return
  	}
 -	att.RosterHash = r.Commitment
 -	att.RosterVersion = r.CommitmentVersion
 +	_ = att
- }
- 
- var (
+ 	// **The recital is the RECORD's, and whatever the caller put here is discarded (C15, D20).**
+ 	//
+ 	// On the receiving side that value is what the `Confirmer` returned — the sentence the local

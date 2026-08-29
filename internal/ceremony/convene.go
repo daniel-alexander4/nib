@@ -105,7 +105,25 @@ var (
 	// Refused BEFORE Embed deliberately. pdfops.AddAttachment refuses a duplicate name with
 	// `an attachment named "nib-ceremony.json" already exists` — a true sentence naming a PDF
 	// internal, shown to a solicitor. This is the same fact in words they can act on.
-	ErrAlreadyConvened = errors.New("this document is already part of a ceremony")
+	//
+	// # It names the answer and the cost, and the cost is the half that was missing
+	//
+	// C04 asks for two things beyond the refusal: that the message "names a new ceremony as the
+	// answer", AND "states that the signatures already collected cannot be carried into it" —
+	// and it says why the second is written separately: *"it is the half a builder omits, being
+	// the bad news."* It was omitted. Until P07's phase close this read "this document is
+	// already part of a ceremony" and stopped, which tells a convener what is wrong and nothing
+	// about what it costs them.
+	//
+	// The cost is real and is the reason C04 exists. Adding a party changes `rosterHash`, so
+	// every invitation already issued fails `MatchesRecord` on roster length; a new ceremony is
+	// the only way forward, and it starts from a document with no signatures on it. A convener
+	// who remembers the second landlord after three people have signed needs to know that before
+	// they start, not after.
+	ErrAlreadyConvened = errors.New("this document is already part of a ceremony, so it cannot " +
+		"take another party. Convene a NEW ceremony from the original unsigned document — and " +
+		"note that any signatures already collected on this one cannot be carried into it: " +
+		"everyone who has signed will have to sign again")
 	// ErrRosterTooSmall: a ceremony of one has no hop and nothing to invite.
 	ErrRosterTooSmall = errors.New("a ceremony needs at least two parties")
 	// ErrRosterTooLarge: past the hard cap (D33).
