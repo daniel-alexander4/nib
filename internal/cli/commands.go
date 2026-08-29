@@ -955,7 +955,7 @@ func cmdVerify(args []string) int {
 	fs := flag.NewFlagSet("nib verify", flag.ContinueOnError)
 	var asJSON bool
 	fs.BoolVar(&asJSON, "json", false, "emit one JSON object per file instead of a text report")
-	fs.Usage = usageFunc(fs, "nib verify [--json] FILE...", "Report each file's signature integrity. Exit 2 if any file is unsigned, modified, or has content added after its last signature.")
+	fs.Usage = usageFunc(fs, "nib verify [--json] FILE...", "Report each file's signature integrity, and the ceremony it belongs to if it has one.\nExit 2 if any file is unsigned, modified, has content added after its last\nsignature, or belongs to a ceremony some obliged party has not signed.")
 	if code, ok := parse(fs, args); !ok {
 		return code
 	}
@@ -972,16 +972,32 @@ func cmdVerify(args []string) int {
 			continue
 		}
 		st := sign.Verify(data)
+		cer := ceremonyReportOf(data, st, time.Now())
 		if asJSON {
 			b, _ := json.Marshal(struct {
 				File string `json:"file"`
 				sign.Status
-			}{p, st})
+				Ceremony *ceremonyReportJSON `json:"ceremony,omitempty"`
+			}{p, st, cer.json()})
 			fmt.Println(string(b))
 		} else {
 			fmt.Printf("%s: %s\n", p, describeStatus(st))
+			for _, line := range cer.lines() {
+				fmt.Printf("  %s\n", line)
+			}
 		}
-		if st.State != sign.Valid || st.AddedAfter {
+		// **An unfinished ceremony exits non-zero too (P07.S10).**
+		//
+		// The README ships `nib verify contract.pdf && echo "signature intact"`, and a nine-party
+		// deed that four obliged parties never signed is not a document a script should wave
+		// through. Every signature on it is valid and `State` is Valid, so without this the
+		// machine-readable channel says "fine" about a document the human-readable channel
+		// describes as unfinished.
+		//
+		// That is the same divergence `AddedAfter` was added to this condition to close, recorded
+		// three paragraphs down: "the CLI was the one surface where the machine-readable channel
+		// disagreed with the human one". The help text moves with it.
+		if st.State != sign.Valid || st.AddedAfter || cer.incomplete() {
 			// AddedAfter too, and it is the case that mattered.
 			//
 			// `sign.Verify` reports State=Valid with AddedAfter=true for a document

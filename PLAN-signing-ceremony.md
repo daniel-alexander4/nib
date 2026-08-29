@@ -5396,7 +5396,10 @@ Acceptance:
 - ~~The fourth number's clause is re-worded to what is observable…~~ **Moved to S09b at the split and built there (v1.117.224) — it is a D33 clause, not a D32 one, and it turned out to be a law figure emitted at 2× rather than an unread counter.**
 - Skew is driven for **four** surfaces, not three: record, invitation, protocol, **and the attestation tag**, whose skew today silently yields `AcceptedPeer=""`, `RosterHash=""` and a verdict of *not one proceeding* — the failure D32 forbids, arriving through the surface D32 excused.
 
-#### P07.S10 — Docs, README, and the phase close *(C10, C11)*
+#### P07.S10 — Docs, README, and the phase close *(C10, C11)* *(slice half done 2026-08-28, v1.117.230 — both acceptance bullets met; 3 red proofs. **C11 is the phase close's graduation pass and is NOT this slice's** — it is discharged at the close, not here. The live drive is what earned this slice: the first fixture used `PrepareCeremonyDocument`, which allocates the pages and embeds no record, so `nib verify` reported nothing at all and every unit test would have passed against it)*
+- T01 — `ceremonyReportOf`: roster, obliged, signed, the one-proceeding verdict, and the recital, read from the DOCUMENT's own record (the verifier holds no invitation — the opposite of the L3 gate's rule, and for the opposite reason). *(done)*
+- T02 — an unfinished ceremony exits 2. **Rung 2, taken and recorded**: the README ships `nib verify contract.pdf && echo "signature intact"`, and a nine-party deed four obliged parties never signed must not pass that. Same divergence `AddedAfter` was added to this condition to close. Help text moved with it. *(done)*
+- T03 — README: the command table, the exit-status paragraph, and a worked example checked against the real binary's output rather than written from memory. *(done)*
 Acceptance:
 - Documentation and README updated in this phase (STANDARDS docs-parity).
 - `nib verify` reports the ceremony: the roster, who was **obliged** to sign, who signed, and the one-proceeding verdict. It prints state, signer count and `AddedAfter` today, so a stranger told "check it with nib" gets `valid (9 signer(s))` — and the CLI is the surface a dispute actually uses.
