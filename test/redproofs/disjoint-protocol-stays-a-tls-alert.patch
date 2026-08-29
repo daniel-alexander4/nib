@@ -1,0 +1,13 @@
+diff --git a/internal/p2p/quic.go b/internal/p2p/quic.go
+index 9e814c5..860239a 100644
+--- a/internal/p2p/quic.go
++++ b/internal/p2p/quic.go
+@@ -96,7 +96,7 @@ func asProtocolSkew(err error) error {
+ 	if err == nil {
+ 		return nil
+ 	}
+-	if strings.Contains(err.Error(), "no application protocol") {
++	if false {
+ 		return &ProtocolSkewError{Offered: append([]string(nil), sessionALPN...)}
+ 	}
+ 	return err
