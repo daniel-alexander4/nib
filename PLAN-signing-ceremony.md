@@ -5335,7 +5335,7 @@ Acceptance:
 - The panel renders **every** signature on a nine-party document, and its "of N" denominator equals what Go reports.
 - ~~The two-party string *"each party's signature attests to the other's key"* is **unreachable** on a document carrying a roster token.~~ **Pinned 2026-08-28 at the slice, on a driven contradiction: the discriminator is the PARTY COUNT, not the presence of a record.** A two-party ceremony *is* mutual and that sentence is true of it — and `test/jsdom/oneproceeding.test.mjs` drives precisely that document (two parties naming different ceremonies) and asserts the positive survives, so a disagreement is *reported* rather than summarised away by deleting the good news. Suppressing on the roster token would have removed a true sentence to fix a false one. Re-pointed at C09's own text, which says nine: **the string is unreachable on a document with MORE THAN TWO signing parties**, which get a chain sentence instead — and "mutually" is itself false of a baton, since party 1 accepts nobody and nobody accepts party 9.
 
-#### P07.S09 — D33's placement guard, and the protocol version *(D32, D33; C12, C13)* — **SPLIT 2026-08-28 at its grill into S09a · S09b**
+#### P07.S09 — D33's placement guard, and the protocol version *(D32, D33; C12, C13)* — **SPLIT 2026-08-28 at its grill into S09a · S09b · S09c**
 **Why, and the second reason is a premise this slice got wrong.** (1) The placement guard is
 self-contained, source-level and is what D33 says discharges it; the version work is a wire
 question. (2) **The scope says of the ceremony protocol version "it does not exist today — the only
@@ -5370,9 +5370,26 @@ Acceptance:
 - **The law/tunable placement guard** — a source-level check that fails if either law figure is reachable from the tunable block. D33 says **twice** that this, and *not* the drive-a-value-past-the-bound bullet, is what discharges it; no such guard exists. (P05.S04 T05 built part of this; point at it rather than rebuilding it.)
 - The per-source cap is **derived** from the bounds it claims to track rather than copying their value, so raising one upstream cannot silently leave it behind.
 
-#### P07.S09b — The version sentence, the punch-budget reader, and skew at four surfaces *(D32, D33; C12 part, C13)* — **new, 2026-08-28, split out of S09**
+#### P07.S09b — The punch budget: one per side, and its report gets a reader *(D33; C12 part)* — **new, 2026-08-28, split out of S09** *(done 2026-08-28, v1.117.224 — 3 clauses, all met; 3 red proofs. A LAW figure was being emitted at 2× silently, with two doc comments asserting the opposite of the code; and the test that shows the report has a reader is what moved the report above `diagnose`'s scope check, where it had been unreachable without a live DHT)*
+Scope, from the grill, and the finding is a law figure exceeded rather than an unread counter.
+`punchLoop`'s own doc says the armed side and the dialing side run one loop each *"sharing one
+per-side budget"*. **They do not share it.** Each call site constructs `&punchBudget{}` inline
+(`ceremonynet.go:441` and `:628`), the arm and the dial hold different `ceremonyID`s and different
+sockets, and P05.S09's symmetric racing has one machine doing both for one hop — so a side emits
+**6,000** packets against D33's 3,000. And `report()`, whose doc says it exists *"for D19/S11 to
+surface"*, has **no production caller at all**: S11 shipped without wiring it, so the "reports" half
+of D33's drop-and-report is written and unread.
+- T01 — the budget keyed by ceremony id on the Server; both punch loops reach it through `ceremonyID.punchBudget`. *(done)*
+- T02 — `punchReport` on D19's diagnosis, above the scope check. *(done — moved there by its own test)*
+- T03 — guards: identity, exhaustion across both handles, per-ceremony isolation, the empty-id branch, and the registry under `-race`. *(done)*
 Acceptance:
-- ~~The **ceremony protocol version** exists and is announced before the first frame~~ **Pinned 2026-08-28 (see the split note above): the version exists and is negotiated; what is owed is a SENTENCE when two builds' ALPN offer lists are disjoint, rather than a bare handshake error. No pre-gate frame is added.**
+- One budget per **(hop, side)** — one machine, one ceremony — so the arm's punch loop and the dial's spend the same 3,000. Driven by running both for one ceremony id and asserting the total.
+- The report has a **named production reader**: D19's diagnosis, which is where `report()`'s own doc says it was going.
+- A hop that exhausts the budget **drops and reports** and never fails the ceremony (D33's own words), driven at the loop.
+
+#### P07.S09c — The version sentence and skew at four surfaces *(D32; C13)* — **new, 2026-08-28, split out of S09**
+Acceptance:
+- ~~The **ceremony protocol version** exists and is announced before the first frame~~ **Pinned 2026-08-28 (see S09's split note): the version exists and is negotiated; what is owed is a SENTENCE when two builds' ALPN offer lists are disjoint, rather than a bare handshake error. No pre-gate frame is added.**
 - The fourth number's clause is re-worded to what is observable: `punchBudgetPerSide` bounds **our own emission** and has no external supplier, so "supplied past the bound" names no path. Driven instead as *a hop that exhausts the budget drops and reports, and the report has a named reader* — D33's own "drops and reports; it never fails the ceremony".
 - Skew is driven for **four** surfaces, not three: record, invitation, protocol, **and the attestation tag**, whose skew today silently yields `AcceptedPeer=""`, `RosterHash=""` and a verdict of *not one proceeding* — the failure D32 forbids, arriving through the surface D32 excused.
 

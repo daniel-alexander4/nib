@@ -2,6 +2,7 @@ package server
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
 
 	"nib/internal/p2p"
@@ -50,8 +51,25 @@ type diagnosis struct {
 // `gate.Accepted == 0`, and "no DHT at all" must be distinguished from "DHT answered, peer silent"
 // by a CUMULATIVE field (`Responses`), never the last-fetch-only `FetchNodes`.
 func (c *ceremonyID) diagnose() diagnosis {
-	if c == nil || c.rz == nil || c.gate == nil {
-		return diagnosis{cause: causeUndiagnosed} // manual/LAN or TCP ceremony — out of D19's scope
+	if c == nil {
+		return diagnosis{cause: causeUndiagnosed}
+	}
+	// **D33's report is gathered BEFORE the scope check, and a test is what moved it here.**
+	//
+	// It sat after `classifyD19`, which made it unreachable except on a ceremony holding a live
+	// rendezvous and gate — so the one assertion that could show the report had a reader needed a
+	// live DHT to run. That is a coupling between two unrelated facts: whether D19 can classify
+	// the failure, and whether this machine dropped packets over a law figure. The second is true
+	// or false on its own.
+	c.mu.Lock()
+	punch := c.punch
+	c.mu.Unlock()
+	report := punchReport(punch)
+
+	if c.rz == nil || c.gate == nil {
+		// manual/LAN or TCP ceremony — out of D19's scope, but a dropped packet is still a
+		// dropped packet and still gets said.
+		return diagnosis{cause: causeUndiagnosed, detail: report}
 	}
 	// The gate itself is NOT read here: diagnose() also runs on the live-status path, concurrently
 	// with the feed that writes the gate, so the record-refused/empty signals are snapshotted into
@@ -72,7 +90,36 @@ func (c *ceremonyID) diagnose() diagnosis {
 		v6Independent:    self.V6.Mapping == rendezvous.MappingEndpointIndependent && self.V6.Addr.IsValid(),
 	}
 	c.mu.Unlock()
-	return classifyD19(in)
+	d := classifyD19(in)
+	d.detail += report
+	return d
+}
+
+// punchReport is D33's "reports" half, and until P07.S09b it had no reader anywhere —
+// `punchBudget.report()`'s own doc named D19/S11 as its destination and S11 shipped without
+// wiring it, so a hop that hit the packet ceiling dropped silently and the user was told only
+// that nothing answered.
+//
+// **A DETAIL line rather than a cause of its own.** Exhausting the budget is not why the connect
+// failed: D33 says it "drops and reports; it never fails the ceremony", so promoting it to a
+// cause would name a symptom as the culprit. It belongs where a reader looks after the summary
+// has told them what happened.
+//
+// **Empty when nothing was dropped.** A hop that stayed inside the budget has nothing to report,
+// and a line saying "0 dropped" on every failed connect is noise that teaches a reader to skip
+// the place the real number will one day appear.
+func punchReport(b *punchBudget) string {
+	if b == nil {
+		return ""
+	}
+	spent, dropped := b.report()
+	if dropped == 0 {
+		return ""
+	}
+	return fmt.Sprintf(" NAT-traversal packet budget exhausted: %d sent, %d dropped over D33's "+
+		"per-hop ceiling of %d — the last candidates' retries were trimmed, which narrows the "+
+		"chance of a punch landing without being the reason this connect failed.",
+		spent, dropped, punchBudgetPerSide)
 }
 
 // d19Inputs are the four (plus advice) signals a diagnosis is classified from. Extracting them makes

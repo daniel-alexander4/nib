@@ -44,9 +44,23 @@ func punchInterval(elapsed time.Duration) time.Duration {
 	return punchSlowEvery
 }
 
-// punchBudget is the per-(hop, side) packet counter across all candidates (D33). One lives per
-// ceremonyID (a ceremonyID IS one hop, one side), and every punch datagram spends one before it
-// is sent. It drops-and-reports on exhaustion rather than failing the ceremony.
+// punchBudget is the per-(hop, side) packet counter across all candidates (D33). Every punch
+// datagram spends one before it is sent, and it drops-and-reports on exhaustion rather than
+// failing the ceremony.
+//
+// # One per (hop, side) means one per MACHINE per ceremony, not one per ceremonyID
+//
+// This doc used to say "one lives per ceremonyID (a ceremonyID IS one hop, one side)" and the
+// code built one inline at each of the two punch call sites. **A ceremonyID is not a side.** The
+// armed path and the dialing path hold DIFFERENT `ceremonyID` values with different sockets, and
+// P05.S09's symmetric racing has one machine running both for the same hop — `glare.go` opens by
+// saying so, and `punchLoop`'s own doc says the two "share one per-side budget". They shared
+// nothing: each got its own 3,000, so a side emitted **6,000 against D33's law figure of 3,000**,
+// silently, with two comments asserting otherwise.
+//
+// So the budget is keyed by the ceremony's own id and held by the Server, which is the only thing
+// on this machine that outlives both `ceremonyID`s. A side is a machine in a proceeding; that is
+// what `(hop, side)` names.
 type punchBudget struct {
 	mu      sync.Mutex
 	spent   int
@@ -69,11 +83,37 @@ func (b *punchBudget) spend() bool {
 }
 
 // report returns how many were sent and how many dropped over the cap — the "reports" half of
-// D33's drop-and-report, for D19/S11 to surface.
+// D33's drop-and-report.
+//
+// **Its doc said "for D19/S11 to surface" and S11 shipped without wiring it**, so until P07.S09b
+// the only callers were tests: D33's drop-and-report had a drop and no report. `diagnose` is the
+// reader now, which is where this sentence always said it was going.
 func (b *punchBudget) report() (spent, dropped int) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	return b.spent, b.dropped
+}
+
+// punchBudgetFor returns the one budget this machine spends on that ceremony, creating it on
+// first use. Both punch loops of one hop reach the same counter through it.
+//
+// An empty id is a punch outside any ceremony — no proceeding to share a budget within, so it
+// gets its own rather than joining a process-wide pool that would let unrelated work starve it.
+func (s *Server) punchBudgetFor(id string) *punchBudget {
+	if id == "" {
+		return &punchBudget{}
+	}
+	s.punchMu.Lock()
+	defer s.punchMu.Unlock()
+	if s.punchBudgets == nil {
+		s.punchBudgets = map[string]*punchBudget{}
+	}
+	b, ok := s.punchBudgets[id]
+	if !ok {
+		b = &punchBudget{}
+		s.punchBudgets[id] = b
+	}
+	return b
 }
 
 // ipv4Target returns the candidate's address as a *net.UDPAddr if it is a punch target — an

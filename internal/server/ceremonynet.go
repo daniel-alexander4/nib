@@ -438,7 +438,7 @@ func (s *Server) startArmedRendezvous(cer *ceremonyID, transport string, inbound
 		// ctx, so it runs for the whole ceremony and stops at teardown.
 		punchCh := make(chan candidate, maxRaceCandidates)
 		go cer.feedCandidates(ctx, punchCh, nil, "", "", browseWindow, rendezvousInterval)
-		go punchLoop(ctx, cer.end.Punch, &punchBudget{}, punchCh, punchInterval)
+		go punchLoop(ctx, cer.end.Punch, cer.punchBudget(s), punchCh, punchInterval)
 
 		// The ARM ctx, not a publish-budget child: the port-mapping REFRESH lives as long as the
 		// arm, and binding it to the 45 s publish budget would kill it mid-race (grill C4).
@@ -625,7 +625,7 @@ func (s *Server) feedCeremonyRace(ctx context.Context, cer *ceremonyID, cands []
 	go func() {
 		defer safe.Recover("dial punch")
 		defer wg.Done()
-		punchLoop(ctx, cer.end.Punch, &punchBudget{}, punchCh, punchInterval)
+		punchLoop(ctx, cer.end.Punch, cer.punchBudget(s), punchCh, punchInterval)
 	}()
 
 	wg.Add(1)
