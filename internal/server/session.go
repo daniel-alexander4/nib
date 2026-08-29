@@ -1015,6 +1015,22 @@ func (s *Server) serveOneSession(anchor consentAnchor, cer *ceremonyID, conn *p2
 		rd = cer
 	}
 	final, rerr := p2p.Receive(ch, cert, key, label, sessionConfirmer{s: s, saw: &saw, anchor: anchor, cer: cer}, sessionVerifier{s, &saw}, rd, cer.l3Roster())
+	// **"Signed but not saved" is an outcome with a document, not a failure (P08.S02, D24 as
+	// amended).** The peer has the signature; this machine could not keep a copy. So the error is
+	// reported to the user and the document is still returned, opened and treated as arrived —
+	// which is what makes the recovery possible at all: the bytes are in a tab the user can save
+	// somewhere with space.
+	//
+	// D24's sentence VERBATIM, both halves. The criterion quoted only "signed but not saved", and
+	// the clause that prevents the loss is the second one: closing Nib is what destroys it.
+	if p2p.PersistFailed(rerr) {
+		s.sess.noteFailure("signed-not-saved",
+			"Signed, but not saved — do not close Nib.",
+			"The other party has your signature; it is on their copy of the document either way. "+
+				"What failed is this machine keeping its own copy, so closing Nib now would lose "+
+				"it. The document is open — save a copy somewhere with space. Reason: "+rerr.Error())
+		rerr = nil
+	}
 	if rerr != nil {
 		return saw.v.Load(), nil, rerr
 	}
@@ -1027,9 +1043,14 @@ func (s *Server) serveOneSession(anchor consentAnchor, cer *ceremonyID, conn *p2
 // openArrival opens a co-signed document alongside whatever the user already had (D10) — an arrival
 // opens, never replaces. Named so a reload does not show it as "Untitled".
 func (s *Server) openArrival(label string, final []byte) {
-	// C22 on the RECEIVING side too — the same fact about the same party, and the side C22's
-	// "before the response returns" wording does not reach because there is no response here.
-	s.mirrorHop(final)
+	// **The mirror write is NOT here any more (P08.S02).** It used to be, and that was the defect:
+	// `openArrival` runs after `p2p.Receive` has already put the document on the wire, so the bytes
+	// reached the peer first and the disk second, best-effort, with a log line on failure. D24 asks
+	// for the opposite order and says why. The write now happens inside `ceremonyID.Store`, which
+	// `coSignExchange` calls before the frame — one door, before the wire, and able to report.
+	//
+	// `mirrorHop` survives for the INITIATING side (`handleSessionInitiate`), where there is no
+	// `ReDeliverer` and the response is the ordering C22 names.
 	s.addDoc(&document{name: arrivalDocName(label), data: final, sig: sign.Verify(final)})
 }
 

@@ -509,18 +509,50 @@ func TestBothSidesOfAHopMirrorIt(t *testing.T) {
 		t.Fatal(err)
 	}
 	code := stripLineComments(string(src))
-	for _, fn := range []string{"handleSessionInitiate", "openArrival"} {
-		body := funcBodyFrom(code, strings.Index(code, "func (s *Server) "+fn+"("))
-		if body == "" {
-			t.Fatalf("cannot find %s", fn)
-		}
-		if !strings.Contains(body, "mirrorHop(") {
-			t.Errorf("%s does not mirror the hop's output — C22 says EVERY hop's output is "+
-				"written, and a rule holding at one of the two sides is the ADR-009 shape", fn)
-		}
+	// **The INITIATING side, which has a response to return and therefore an order to keep.**
+	body := funcBodyFrom(code, strings.Index(code, "func (s *Server) handleSessionInitiate("))
+	if body == "" {
+		t.Fatal("cannot find handleSessionInitiate")
+	}
+	if !strings.Contains(body, "mirrorHop(") {
+		t.Error("handleSessionInitiate does not mirror the hop's output — C22 says EVERY hop's " +
+			"output is written, and a rule holding at one of the two sides is the ADR-009 shape")
+	}
+
+	// **The RECEIVING side moved, and this is the point the move was for (P08.S02).**
+	//
+	// It used to be `openArrival`, which runs AFTER `p2p.Receive` has already put the document on
+	// the wire — so the bytes reached the peer first and the disk second, best-effort. D24 asks for
+	// the opposite and says why: a crash between signing and delivering must still leave the
+	// signature somewhere. The write is now in `ceremonyID.Store`, which `coSignExchange` calls
+	// before `writeFrame`.
+	//
+	// Asserted at the door rather than at `openArrival`, because the rule is "the receiving side
+	// writes before it sends" and `openArrival` can no longer express it — it runs after both.
+	cerSrc, cerErr := os.ReadFile("ceremonyid.go")
+	if cerErr != nil {
+		t.Fatal(cerErr)
+	}
+	cerCode := stripLineComments(string(cerSrc))
+	store := funcBodyFrom(cerCode, strings.Index(cerCode, "func (c *ceremonyID) Store("))
+	if store == "" {
+		t.Fatal("cannot find ceremonyID.Store — the receiving side's durable write lives there")
+	}
+	if !strings.Contains(store, "persistContribution(") {
+		t.Error("ceremonyID.Store does not persist the contribution — the receiving side's half " +
+			"of C22 is there because it is the only place that runs BEFORE the frame goes out")
+	}
+	// And it must not have drifted back into openArrival, which would be the old order restored.
+	arrival := funcBodyFrom(code, strings.Index(code, "func (s *Server) openArrival("))
+	if arrival == "" {
+		t.Fatal("cannot find openArrival")
+	}
+	if strings.Contains(arrival, "mirrorHop(") {
+		t.Error("openArrival mirrors the hop again — that runs after p2p.Receive has already sent " +
+			"the document, which is the ordering D24 exists to invert, and it would now be the " +
+			"second write of the same bytes in one hop")
 	}
 	// The ORDER, on the side that has a response to return.
-	body := funcBodyFrom(code, strings.Index(code, "func (s *Server) handleSessionInitiate("))
 	mirror := strings.Index(body, "mirrorHop(")
 	reply := strings.LastIndex(body, "writeJSON(")
 	if mirror < 0 || reply < 0 {
