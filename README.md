@@ -856,7 +856,7 @@ isn't a known command (a PDF path, or nothing) still opens the app as usual.
 | `nib timestamp FILE…` | Write an OpenTimestamps proof (`FILE.ots`) for each file, skipping any file that already has one. |
 | `nib timestamp --force FILE…` | Re-stamp even where a proof exists, discarding it. |
 | `nib timestamp --verify FILE…` | Check each file against its `FILE.ots` proof. |
-| `nib verify [--json] FILE…` | Report each file's signature integrity. Exit `2` if any file is unsigned, modified, **or has content added after its last signature**. |
+| `nib verify [--json] FILE…` | Report each file's signature integrity, and the **ceremony** it belongs to if it has one — the roster, who was obliged to sign, who has, and whether every signature commits to the same proceeding. Exit `2` if any file is unsigned, modified, has content added after its last signature, **or belongs to a ceremony an obliged party has not signed**. |
 | `nib optimize IN -o OUT` | Losslessly shrink a PDF (or `-w FILE…` to rewrite in place). |
 | `nib merge IN… -o OUT` | Concatenate PDFs, in order, into one. |
 | `nib sanitize IN -o OUT` | Strip identifying metadata and active content — JavaScript, auto-actions, embedded files (or `-w FILE…`). |
@@ -884,9 +884,31 @@ isn't a known command (a PDF path, or nothing) still opens the app as usual.
 Commands that produce a PDF write it to `-o`/`--out`; `timestamp` writes a
 sidecar `.ots` beside each input and `verify` prints a report. Flags may go
 before or after the file arguments. The exit status is non-zero on failure —
-`verify` returns `2` when a signature is invalid, absent, **or valid over only
-part of the document**, the last being a counterparty who returned your signed
-contract with pages appended — so a check drops straight into a script:
+`verify` returns `2` when a signature is invalid, absent, **valid over only
+part of the document**, or **valid over only part of the roster** — the third being a
+counterparty who returned your signed contract with pages appended, and the fourth a
+multi-party document some obliged party never signed. Both are cases where every
+signature present is genuine and the document is still not what it looks like, so a
+check drops straight into a script:
+
+On a document that carries a ceremony, `verify` also prints the roster — so a stranger
+handed a nine-party deed can see at a glance who was supposed to sign and who has:
+
+```
+lease.pdf: valid (5 signer(s))
+  ceremony 19db9b44b8d3…: 5 of 9 obliged signer(s) have signed
+  recital: "We agree to be bound by the lease of 14 Elm Row"
+  INCOMPLETE — 4 obliged party(ies) have not signed
+  every signature commits to this document's ceremony
+  ✓ Alice Tenant                 signed
+  ✗ Frank Director               HAS NOT SIGNED
+```
+
+`--json` carries the same facts as fields (`obliged`, `signed`, `complete`,
+`oneProceeding`, `missing`), so a script never has to parse the sentence. A document
+with no ceremony gets no ceremony section and no `ceremony` key — most signed PDFs
+belong to no proceeding, and describing them as a ceremony of nobody would be a
+verdict on something that does not exist.
 
 ```sh
 nib verify contract.pdf && echo "signature intact"
