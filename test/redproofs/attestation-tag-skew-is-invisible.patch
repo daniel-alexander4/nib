@@ -1,0 +1,21 @@
+diff --git a/internal/p2p/attestation.go b/internal/p2p/attestation.go
+index 50afd52..c1a7b75 100644
+--- a/internal/p2p/attestation.go
++++ b/internal/p2p/attestation.go
+@@ -358,15 +358,9 @@ func Attestations(st sign.Status, p Proceeding) []SignerAttestation {
+ 		// The tag is required, not just the token — see attestationTag. safeText strips
+ 		// brackets from the label and intent this package interpolates, so a co-signer
+ 		// cannot smuggle either marker through the fields it controls.
+-		// The tag at ANY version, so a newer one is legible rather than invisible (P07.S09c).
+-		if m := attestationTagRE.FindStringSubmatch(s.Reason); m != nil {
+-			if v, err := strconv.Atoi(m[1]); err == nil {
+-				sa.TagVersion = v
+-			}
+-		}
+ 		// Parsed only at a version this build knows. A newer tag leaves every field empty and
+ 		// `TagVersion` set, which is what lets the reader say which of the two it is.
+-		if sa.TagVersion == attestationTagVersion {
++		if strings.Contains(s.Reason, attestationTag) {
+ 			if m := spkiToken.FindStringSubmatch(s.Reason); m != nil {
+ 				sa.AcceptedPeer = m[1]
+ 			}
