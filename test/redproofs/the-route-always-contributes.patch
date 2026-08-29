@@ -1,11 +1,11 @@
 diff --git a/internal/server/session.go b/internal/server/session.go
-index 958593a..a7bec37 100644
+index 1fd2157..54964bf 100644
 --- a/internal/server/session.go
 +++ b/internal/server/session.go
-@@ -1402,7 +1402,8 @@ func (s *Server) handleSessionInitiate(w http.ResponseWriter, r *http.Request) {
- 	// accidentally sign and a signer cannot accidentally skip their turn — both unrepresentable
- 	// rather than checked. `buildCoSigned` is SKIPPED on the carry path, which is the whole
- 	// point: it is the door that applies the local signature.
+@@ -1602,7 +1602,8 @@ func (s *Server) handleSessionInitiate(w http.ResponseWriter, r *http.Request) {
+ 			return
+ 		}
+ 	}
 -	carrying := cer.carries(hex.EncodeToString(myFP))
 +	carrying := false
 +	_ = cer.carries

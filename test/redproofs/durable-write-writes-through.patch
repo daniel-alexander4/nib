@@ -1,16 +1,8 @@
 diff --git a/internal/atomicfile/atomicfile.go b/internal/atomicfile/atomicfile.go
-index 4099f92..c59edca 100644
+index 3169775..9a2cf6b 100644
 --- a/internal/atomicfile/atomicfile.go
 +++ b/internal/atomicfile/atomicfile.go
-@@ -18,7 +18,6 @@ package atomicfile
- 
- import (
- 	"os"
--	"path/filepath"
- )
- 
- // WriteDurable writes data to path via a temp file, fsync, rename and a parent-directory
-@@ -32,39 +31,5 @@ import (
+@@ -68,39 +68,5 @@ func Write(path string, data []byte, perm os.FileMode) error {
  // perm is applied to the temp file BEFORE the rename, so the file is never briefly readable
  // at the process umask's default under its final name.
  func WriteDurable(path string, data []byte, perm os.FileMode) error {

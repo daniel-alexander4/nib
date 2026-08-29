@@ -1,12 +1,13 @@
 diff --git a/internal/server/cosign.go b/internal/server/cosign.go
-index 53d99a8..8c376ac 100644
+index 0f05ce2..2384fd5 100644
 --- a/internal/server/cosign.go
 +++ b/internal/server/cosign.go
-@@ -312,7 +312,6 @@ func (s *Server) buildCoSigned(w http.ResponseWriter, pdf, cert, key []byte, att
- 		// The first signer accepts "" — there is nobody before them, and that is C14 as amended.
- 		att.AcceptedPeer = p2p.PredecessorOf(roster, hex.EncodeToString(myFP))
- 		// And it NAMES the ceremony, through the one door the receiving side also uses.
--		p2p.StampCommitment(&att, roster)
+@@ -345,7 +345,7 @@ func (s *Server) buildCoSigned(w http.ResponseWriter, pdf, cert, key []byte, att
+ 		// `cosignAttestation` sets for the manual co-sign; inside a ceremony the roster overrides
+ 		// it, which is why the constant is left where it is rather than deleted — a document
+ 		// co-signed outside a ceremony genuinely has no roster to be named by.
+-		p2p.StampCommitment(&att, roster, hex.EncodeToString(myFP))
++
  	}
  	prepared := pdf
  	if sign.Verify(pdf).State == sign.Unsigned {
