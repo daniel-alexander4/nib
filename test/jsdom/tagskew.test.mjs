@@ -83,7 +83,16 @@ async function panelText(next) {
 }
 
 test('a signature from a newer Nib is reported as unreadable, not as a disagreement', async () => {
-  const txt = await panelText([att(A, B), fromNewerNib(B)]);
+  // **The readable signature carries `oneProceeding: false`, and that is not a fixture choice.**
+  // Go's `markOneProceeding` treats an empty commitment on a VALID signature as disqualifying, so
+  // one unreadable signature turns the verdict negative for EVERY signature on the document —
+  // asserted in `internal/p2p/tagskew_test.go`, in the language that owns the rule.
+  //
+  // The first version of this fixture set it true, which is a state Go never produces: the panel
+  // then printed "✓ One proceeding" over a document containing a signature nobody had read, and
+  // the red proof for this row went red for the wrong reason. A fixture that models the server
+  // generously drives a defect that cannot happen and misses the one that can.
+  const txt = await panelText([att(A, B, { oneProceeding: false }), fromNewerNib(B)]);
 
   // STIMULUS: the panel drew. Without this the absence assertion below passes against a panel
   // that rendered nothing, which is what a broken fetch produces.
