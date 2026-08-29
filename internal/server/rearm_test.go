@@ -3,6 +3,7 @@ package server
 import (
 	"encoding/json"
 	"net/http"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -679,5 +680,64 @@ func TestABackgroundFailureReachesTheStatusAndOutlivesTheSession(t *testing.T) {
 	if n := status(t).Notice; n != nil {
 		t.Errorf("a fresh arm kept the previous failure: %+v — the user would be shown a reason "+
 			"for something that is no longer happening", n)
+	}
+}
+
+// TestSignedButNotSavedLeavesTheDocumentOpenToBeSaved is P08.S08's recovery half, unblocked by
+// D24's amendment (Dan, option A, 2026-08-29).
+//
+// # Why a sentence alone would not have been a discharge
+//
+// "Signed but not saved — do not close Nib" tells a user their key has been used and this machine
+// kept nothing. If that is all it does, the only action available is to leave Nib running forever,
+// and the next power cut destroys the signature anyway. A warning over an unrescuable state is not
+// a remedy.
+//
+// What makes it rescuable is that the document is still OPENED. The bytes are complete and valid —
+// the peer has them — so a tab the user can Save-As from is the whole recovery: they pick somewhere
+// with space through the door that already exists.
+//
+// That only works because the persist failure stops being an error before the caller opens the
+// document. Asserted structurally, on `TestBothSidesOfAHopMirrorIt`'s precedent: the property is
+// which path a failure takes, and driving a real full disk needs a filesystem this suite cannot
+// assume. The end-to-end drive against a mode-0500 directory is owed and is named in the plan.
+func TestSignedButNotSavedLeavesTheDocumentOpenToBeSaved(t *testing.T) {
+	src, err := os.ReadFile("session.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	code := stripLineComments(string(src))
+	body := funcBodyFrom(code, strings.Index(code, "func (s *Server) serveOneSession("))
+	if body == "" {
+		t.Fatal("cannot find serveOneSession")
+	}
+
+	note := strings.Index(body, "PersistFailed(")
+	if note < 0 {
+		t.Fatal("serveOneSession does not distinguish a persist failure — it would then be " +
+			"returned as an ordinary error, the document would never be opened, and the user " +
+			"would be left with a signature that exists nowhere they can reach")
+	}
+	// The clearing must come BEFORE the general error return, or the document is dropped.
+	clear := strings.Index(body, "rerr = nil")
+	bail := strings.Index(body, "if rerr != nil {")
+	if clear < 0 || bail < 0 {
+		t.Fatal("cannot find both the persist-failure clearing and the general error return")
+	}
+	if clear > bail {
+		t.Error("the persist failure is cleared AFTER the error return, so a signed-but-not-saved " +
+			"hop returns nil for the document and the user has nothing to save — which turns the " +
+			"warning into the whole of the remedy")
+	}
+
+	// And the sentence names the action, not only the state.
+	notice := funcBodyFrom(code, strings.Index(code, "func (s *Server) serveOneSession("))
+	if !strings.Contains(notice, "do not close Nib") {
+		t.Error("the notice drops D24's second clause — 'signed but not saved' names the state " +
+			"and 'do not close Nib' is the half that prevents the loss")
+	}
+	if !strings.Contains(notice, "save a copy") {
+		t.Error("the notice names no action — leaving Nib open forever is not a remedy, and the " +
+			"document is in a tab precisely so it can be saved somewhere with space")
 	}
 }
