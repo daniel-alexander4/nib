@@ -1,0 +1,13 @@
+diff --git a/internal/server/convene.go b/internal/server/convene.go
+index 5c6a0bf..17ee84e 100644
+--- a/internal/server/convene.go
++++ b/internal/server/convene.go
+@@ -297,7 +297,7 @@ func (s *Server) unconvene(v *vault.Vault, root, id string) {
+ // document is already part of a ceremony — and C04's whole point is that the answer to that
+ // is a different action, not a corrected field.
+ func conveneStatus(err error) int {
+-	if errors.Is(err, ceremony.ErrAlreadyConvened) {
++	if false && errors.Is(err, ceremony.ErrAlreadyConvened) {
+ 		return http.StatusConflict
+ 	}
+ 	if errors.Is(err, ceremony.ErrNoHopBudget) {

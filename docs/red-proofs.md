@@ -2209,3 +2209,26 @@ non-PDF then makes fail. The lesson is the general one: a stimulus that changes 
 not a stimulus, and the harness caught it rather than the reviewer.
 
 `recorded` 181 → 184.
+
+## P08.S07 — two refusals that were already there *(v1.117.246)*
+
+Two rows, tier 1, and both prove something about a check rather than about new behaviour.
+
+**`already-convened-is-not-a-conflict`.** Stop mapping `ErrAlreadyConvened` to 409 and a second
+convene answers 400 — "everything the convener can fix" — for the one refusal that is not about a
+field they can correct. The refusal has existed since P07.S02a and was driven only at the *package*;
+this row is the route, which C13's word "server-side" asks for and which nothing had ever asserted.
+
+**`reissue-regenerates-the-secret`, and it exists because the test it proves is otherwise true by
+construction.** `handleCeremonyInvites` reads each party's secret back from the vault, so "every
+other party's state is untouched" passes against any behaviour at all. The patch mints fresh secrets
+instead, which makes every re-issued invitation differ from the one convene handed out — silently
+invalidating the copies every party still holds. Without it the assertion restates "nothing changed"
+in a function that changes nothing.
+
+**Its first cut went red for the wrong reason and the harness said so:** removing the only use of
+`v` left `declared and not used`, so the check failed to *compile* — which `redproof.sh` reports
+distinctly, because a non-zero exit is also what a deleted check produces. Same shape P07.S09a hit
+with two of its first three mutations. Re-cut to keep the call and discard its result.
+
+`recorded` 184 → 186.
