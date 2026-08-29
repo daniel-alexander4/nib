@@ -975,7 +975,12 @@ func (v *Vault) addPinned(fingerprint []byte, label, ceremony string) error {
 }
 
 // PruneCeremonyPeers removes every pin created by the named ceremony, leaving pins the
-// user made themselves (D29). Returns how many were removed.
+// user made themselves (D29).
+//
+// **Returns how many pins it TOUCHED, not how many it removed** — corrected 2026-08-29 by the
+// P08.S01 deepdive. `n` increments on every scope DROP (below), and a pin a second ceremony still
+// needs is counted here and then kept. `TestTwoCeremoniesCanShareAPin` asserts exactly that and
+// calls it "pins touched", so the behaviour is the tested one and this sentence was the wrong half.
 func (v *Vault) PruneCeremonyPeers(ceremony string) (int, error) {
 	v.mu.Lock()
 	defer v.mu.Unlock()

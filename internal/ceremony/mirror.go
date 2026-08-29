@@ -174,7 +174,16 @@ func ReadMirror(root, id string, now time.Time) (Record, []byte, error) {
 	return r, pdf, nil
 }
 
-// RemoveMirror deletes a ceremony's directory — the close-out prune (D29).
+// RemoveMirror deletes a ceremony's directory.
+//
+// **It is NOT the close-out prune, though it was written to be** — corrected 2026-08-29 by the
+// P08.S01 deepdive, which found the claim describing a caller that does not exist. Its only
+// production caller is `unconvene`, the convene ROLLBACK (`internal/server/convene.go:272`), so
+// today a ceremony that completes, declines, expires or is abandoned keeps its directory forever.
+// D29's close-out prune is P08.S06's, and this function is what it will call.
+//
+// `os.RemoveAll`, so it takes whatever else is in the directory with it — including any leftover
+// `.tmp-*` from an interrupted `atomicfile` write, which nothing else sweeps.
 func RemoveMirror(root, id string) error {
 	dir, err := MirrorDir(root, id)
 	if err != nil {
