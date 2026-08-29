@@ -222,3 +222,88 @@ func TestAReIssuedInvitationStillMatchesItsRecord(t *testing.T) {
 		}
 	}
 }
+
+// TestTheCeremonyListingSaysWhenThisNibMustNotAct is P08.S03's route half.
+//
+// # Why there is no lock, and why this test is about a NOTE rather than a refusal
+//
+// The plan asked for an exclusive lock on `~/nib/ceremonies/`. There is no locking anywhere in this
+// tree, and adding some would be a second cross-process policy contradicting the one that already
+// exists: `cmd/nib/main.go` decides deliberately that a launch which loses the instance race
+// *"carries on and serves"*, because *"a launch that loses twice is better off running than
+// refusing to start"*.
+//
+// The signal is already maintained — `instanceToken` is empty exactly when this process is not the
+// recorded instance — so a non-primary Nib reads and must not act. `startServer` sets no token, so
+// the fixture IS the non-primary case, which is the one worth driving: it is the state a user
+// reaches by double-clicking Nib twice.
+func TestTheCeremonyListingSaysWhenThisNibMustNotAct(t *testing.T) {
+	ts, pdfPath := startServer(t)
+	c, csrf := authedClient(t, ts)
+	if code, body := postForCode(t, c, csrf, ts.URL+"/api/open", openRequest{Path: pdfPath}); code != http.StatusOK {
+		t.Fatalf("open: %d %s", code, body)
+	}
+	me := myFingerprint(t, c, ts.URL)
+	code, body := postForCode(t, c, csrf, ts.URL+"/api/ceremony/convene", conveneRequest{
+		Roster: []convenePartyRequest{
+			{Fingerprint: me, Label: "Convener", Signs: true},
+			{Fingerprint: strings.Repeat("2b", 32), Label: "The other party", Signs: true},
+		},
+		Intent:        "We agree to co-sign the lease",
+		Expires:       time.Now().Add(48 * time.Hour).UTC().Format(time.RFC3339),
+		ConvenerSigns: true,
+	})
+	if code != http.StatusOK {
+		t.Fatalf("convene: %d %s", code, body)
+	}
+	var conv conveneResponse
+	if err := json.Unmarshal([]byte(body), &conv); err != nil {
+		t.Fatal(err)
+	}
+
+	res, err := c.Get(ts.URL + "/api/ceremonies")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer res.Body.Close()
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("the listing returned %d", res.StatusCode)
+	}
+	var got ceremoniesResponse
+	if err := json.NewDecoder(res.Body).Decode(&got); err != nil {
+		t.Fatal(err)
+	}
+	// Stimulus: the ceremony that was just convened is actually in the answer, so the assertions
+	// below are about a populated listing and not an empty one.
+	var found bool
+	for _, s := range got.Ceremonies {
+		if s.ID == conv.Ceremony {
+			found = true
+			if s.State != ceremony.LoadOK {
+				t.Errorf("the ceremony just convened lists as %s (%s)", s.State, s.Reason)
+			}
+			if s.Intent == "" || len(s.Roster) != 2 {
+				t.Errorf("the entry carries intent %q and %d parties — the listing answers from "+
+					"record.json, so both are available without opening the document",
+					s.Intent, len(s.Roster))
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("the ceremony just convened (%s) is not in the listing of %d",
+			conv.Ceremony, len(got.Ceremonies))
+	}
+
+	// This fixture holds no instance record, which is what a second Nib looks like.
+	if got.Primary {
+		t.Fatal("setup: the fixture reports itself primary, so the note below cannot be checked")
+	}
+	if got.Note == "" {
+		t.Error("a Nib that is not this machine's recorded instance lists the ceremonies and says " +
+			"nothing about it — two processes would then both resume and both prune the same " +
+			"folder, with no lock between them")
+	}
+	if !strings.Contains(got.Note, "already running") {
+		t.Errorf("the note does not say why this Nib must not act: %q", got.Note)
+	}
+}

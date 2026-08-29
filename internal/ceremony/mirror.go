@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"time"
 
 	"nib/internal/atomicfile"
@@ -190,4 +191,124 @@ func RemoveMirror(root, id string) error {
 		return err
 	}
 	return os.RemoveAll(dir)
+}
+
+// The listing (P08.S03) — what a resumed Nib can say about the ceremonies on this machine.
+
+// LoadState classifies what happened when one stored ceremony was read.
+//
+// **Four outcomes, not two, and the reason is that three of them brick a ceremony while looking
+// alike.** `ReadMirror` collapses every failure into one error and its only production caller then
+// collapses that into one 404, so a Nib update mid-ceremony — which moves `FormatVersion` and makes
+// `Verify` refuse — is indistinguishable from a forged record and from a directory the user deleted.
+// Each of those wants a different sentence and a different remedy, and one of them (skew) must stay
+// PRUNABLE, which a verdict of "does not verify" would forbid.
+type LoadState string
+
+const (
+	// LoadOK: the record read and verified.
+	LoadOK LoadState = "ok"
+	// LoadAbsent: a directory with no record.json. Ordinary — `WriteMirror` writes the record
+	// LAST, so this is also what a torn write leaves, and both mean "nothing usable here yet".
+	LoadAbsent LoadState = "absent"
+	// LoadUnparseable: record.json exists and is not a record. Local damage.
+	LoadUnparseable LoadState = "unparseable"
+	// LoadVersionSkew: written by a Nib whose record format this build does not know. **Not
+	// damage and not forgery** — the vault says the equivalent in plain language rather than
+	// accusing anyone (`checkContentsVersion`), and this is that sentence for the mirror.
+	LoadVersionSkew LoadState = "version-skew"
+	// LoadUnverifiable: it parsed, and its convener signature, canonical form, roster bound or
+	// deadline ceiling did not hold. This is the one that IS an accusation, and it is the only
+	// one of the four that should read as one.
+	LoadUnverifiable LoadState = "unverifiable"
+)
+
+// Stored is one ceremony as the listing reports it.
+//
+// **The document is never opened to build this.** Measured at the P08.S01 deepdive: `ReadMirror`
+// costs 10 ms at 100 pages, 69 ms at 500 and 195 ms at 1000 — superlinear, on text-only fixtures —
+// because it runs `sign.Verify` and, while unsigned, a full `ContentDigest`. At fifty stored
+// ceremonies that is seconds on a request path. So the listing answers from `record.json` alone.
+//
+// **Which is why it carries no signature count and no "next action".** Those need the document, and
+// the honest split is that the list says which ceremonies exist and the detail comes when one is
+// opened. D24's *"2 of 4 signed — waiting for Amir"* is a panel line about ONE ceremony, and the
+// panel can afford to open one.
+type Stored struct {
+	ID    string    `json:"id"`
+	State LoadState `json:"state"`
+	// Reason is the sentence for a non-OK state, already written for a person.
+	Reason string `json:"reason,omitempty"`
+	// The rest are populated only for LoadOK.
+	Intent  string    `json:"intent,omitempty"`
+	Expires time.Time `json:"expires,omitempty"`
+	Roster  []Party   `json:"roster,omitempty"`
+}
+
+// ReadStored loads one ceremony's record and classifies the outcome. It does NOT read the document.
+func ReadStored(root, id string, now time.Time) Stored {
+	s := Stored{ID: id, State: LoadOK}
+	dir, err := MirrorDir(root, id)
+	if err != nil {
+		s.State, s.Reason = LoadUnparseable, "that is not a ceremony id"
+		return s
+	}
+	b, err := os.ReadFile(filepath.Join(dir, "record.json"))
+	if err != nil {
+		s.State = LoadAbsent
+		s.Reason = "this ceremony has no record on this machine — its folder may have been " +
+			"removed, or it was interrupted before anything was written"
+		return s
+	}
+	r, err := Decode(b)
+	if err != nil {
+		s.State = LoadUnparseable
+		s.Reason = "this ceremony's record is on this machine but cannot be read — the file is " +
+			"damaged"
+		return s
+	}
+	if verr := r.Verify(now); verr != nil {
+		// **Skew first, and it is the ordering that matters.** `Verify` checks the version before
+		// anything else, so every skewed record also fails the checks below it; classifying in the
+		// other order would report a newer Nib's ceremony as forged.
+		if errors.Is(verr, ErrVersion) {
+			s.State = LoadVersionSkew
+			s.Reason = "this ceremony was created by a newer version of Nib — update Nib to " +
+				"open it. It is not damaged."
+			return s
+		}
+		s.State = LoadUnverifiable
+		s.Reason = "this ceremony's record does not verify: " + verr.Error()
+		return s
+	}
+	s.Intent, s.Expires, s.Roster = r.Intent, r.Expires, r.Roster
+	return s
+}
+
+// ListStored enumerates the ceremonies on this machine, one entry each, sorted by id.
+//
+// **One bad entry never costs another (D34's self-healing rule).** Every directory is classified
+// independently, so a hand-deleted, damaged or version-skewed ceremony degrades to its own row and
+// the rest still load — which is the whole of C12, and the reason this returns a slice of outcomes
+// rather than a slice plus an error.
+//
+// A name that is not a ceremony id is skipped silently rather than reported: the directory is under
+// the user's own `~/nib`, and anything else in there is theirs, not a broken ceremony.
+func ListStored(root string, now time.Time) ([]Stored, error) {
+	ents, err := os.ReadDir(filepath.Join(root, "ceremonies"))
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil // no ceremonies yet is not a failure
+		}
+		return nil, err
+	}
+	var out []Stored
+	for _, e := range ents {
+		if !e.IsDir() || !idPattern.MatchString(e.Name()) {
+			continue
+		}
+		out = append(out, ReadStored(root, e.Name(), now))
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+	return out, nil
 }
