@@ -676,6 +676,30 @@ func ceremonyFor(text string, myCertPEM, myKeyPEM []byte, peerFP []byte) (*cerem
 	me := hex.EncodeToString(myFP)
 	peer := hex.EncodeToString(peerFP)
 
+	// **"Your key is not the one this ceremony was created for" is a different fact from "you two
+	// are not adjacent", and D28 asks for it by name (P08.S04, C07).**
+	//
+	// A party who re-enrolled their vault since accepting the invitation has a NEW fingerprint, and
+	// the roster still names the old one. `Hop` refuses that — correctly — but it refuses it in the
+	// same sentence it uses for a pair who simply do not share a hop, and it names a hex fragment.
+	// The user's actual situation is that their signing identity changed, which is the one thing
+	// they can recognise and the one thing that tells them a new ceremony is needed.
+	//
+	// **The convener cannot detect this and it is not their check.** From their side a re-enrolled
+	// party and a stranger present the same thing: a certificate they have not pinned, refused at
+	// the handshake. That refusal is what L1 is for and it stays. This is the half the party
+	// themselves can answer, and they can answer it offline, before anything is dialled.
+	//
+	// No fingerprint in the sentence: P06's first exit criterion keeps hex off the primary flow,
+	// and the tree's own idiom names the word and never the value ("that peer isn't pinned — pin
+	// their fingerprint first").
+	if _, mine := rosterEntry(inv.Roster, me); !mine {
+		return nil, errors.New("this ceremony's roster does not name your current signing key — " +
+			"it was created for a different one. If you re-enrolled since accepting the " +
+			"invitation, that key cannot take its place: a signature from a key the roster does " +
+			"not name is the substitution pinning exists to refuse. The convener has to convene a " +
+			"new ceremony")
+	}
 	hop, err := inv.Hop(me, peer)
 	if err != nil {
 		// The three ways this fails are all worth distinguishing for a user, and `Hop`'s
