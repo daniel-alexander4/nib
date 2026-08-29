@@ -513,3 +513,74 @@ func TestAnInvitationReIssuedMidCeremonyLeavesEveryoneElseUntouched(t *testing.T
 		}
 	}
 }
+
+// TestAnIdentityTheRosterDoesNotNameIsRefusedByName is P08.S04's C07 half.
+//
+// # Whose check this is, and why it is not the convener's
+//
+// D28: "A signer's identity changed since the record was written — a re-enrolled vault. The pin no
+// longer matches the roster, and today that surfaces as a generic handshake failure."
+//
+// From the CONVENER's side that is unfixable and should be: a re-enrolled party and a stranger
+// present the same thing, a certificate the convener has not pinned, refused at the handshake. That
+// refusal is L1 working, and accepting the new key would be exactly the substitution L1 forbids —
+// "arriving through the front door", as D28 puts it.
+//
+// The half that CAN be answered is the party's own, and they can answer it offline before anything
+// is dialled: their fingerprint is no longer in the roster of the invitation they hold. Today that
+// is refused by `Hop` in the same sentence it gives a pair who merely are not adjacent, and it names
+// a hex fragment. This asserts the two are distinguishable, because they call for different actions
+// — one means "wait your turn", the other means "the ceremony has to be convened again".
+func TestAnIdentityTheRosterDoesNotNameIsRefusedByName(t *testing.T) {
+	ts, _ := startServer(t)
+	c, csrf := authedClient(t, ts)
+	me := myFingerprint(t, c, ts.URL)
+
+	// The stimulus: an invitation whose roster names THIS machine arms fine, so the refusal below
+	// is about the roster's contents and not about the arm path being broken.
+	good, convenerFP := inviteFor(t, me)
+	if acode, abody := postForCode(t, c, csrf, ts.URL+"/api/ceremony/accept",
+		acceptRequest{Invitation: good}); acode != http.StatusOK {
+		t.Fatalf("setup: accept returned %d %s", acode, abody)
+	}
+	if code, body := postForCode(t, c, csrf, ts.URL+"/api/session/arm", armRequest{
+		Fingerprint: convenerFP, Bind: "127.0.0.1:0", Transport: "tcp", Invitation: good,
+	}); code != http.StatusOK {
+		t.Fatalf("setup: arming with a roster that names this machine returned %d %s", code, body)
+	}
+	if code, body := postForCode(t, c, csrf, ts.URL+"/api/session/disarm", struct{}{}); code != http.StatusOK {
+		t.Fatalf("disarm: %d %s", code, body)
+	}
+
+	// Now an invitation for a ceremony convened around somebody ELSE — which is what this machine's
+	// own invitation becomes the moment its vault is re-enrolled and its fingerprint changes.
+	stranger := strings.Repeat("7e", 32)
+	other, otherConvener := inviteFor(t, stranger)
+	// The convener has to be pinned or the arm refuses for that reason first, which would tell us
+	// nothing about the roster.
+	if code, body := postForCode(t, c, csrf, ts.URL+"/api/peers/pin",
+		struct {
+			Fingerprint string `json:"fingerprint"`
+			Label       string `json:"label"`
+		}{otherConvener, "Convener"}); code != http.StatusOK {
+		t.Fatalf("setup: pinning the convener returned %d %s", code, body)
+	}
+
+	code, body := postForCode(t, c, csrf, ts.URL+"/api/session/arm", armRequest{
+		Fingerprint: otherConvener, Bind: "127.0.0.1:0", Transport: "tcp", Invitation: other,
+	})
+	if code != http.StatusBadRequest {
+		t.Fatalf("arming with an invitation whose roster does not name this machine returned %d: %s",
+			code, body)
+	}
+	if !strings.Contains(body, "does not name your current signing key") {
+		t.Errorf("the refusal does not say that the identity is the problem: %q — a party who "+
+			"re-enrolled needs to know a new ceremony is required, and the generic hop message "+
+			"reads as 'wait your turn'", body)
+	}
+	// P06's first exit criterion keeps hex off the primary flow, and this is a message a user acts
+	// on. The tree's own idiom names the word and never the value.
+	if strings.Contains(body, me[:12]) || strings.Contains(body, stranger[:12]) {
+		t.Errorf("the refusal carries a fingerprint: %q", body)
+	}
+}
