@@ -452,7 +452,14 @@ func (c *ceremonyID) close() {
 	c.closed = true
 	stop := c.stopNet
 	mapper := c.portMap
-	c.reDelivery = nil // drop the signed outputs with the ceremony (D6: no signed bytes at rest)
+	// Drop the signed outputs with the ceremony. **The parenthetical this line used to carry —
+	// "D6: no signed bytes at rest" — was false of the system and is corrected here (2026-08-29,
+	// the P08.S01 deepdive):** `mirrorHop` (below) writes the same co-signed document to
+	// `~/nib/ceremonies/<id>/document.pdf` on both sides of every hop, so signed bytes are already
+	// at rest and have been since P07.S02a. What this line actually does is drop the IN-MEMORY
+	// copy, which is worth doing on its own terms. Their retention is the close-out prune's
+	// question, and that prune has no caller yet (see `ceremony.RemoveMirror`).
+	c.reDelivery = nil
 	c.mu.Unlock()
 	if stop != nil {
 		// Cancel the background work FIRST, so Close's own join has something finite to

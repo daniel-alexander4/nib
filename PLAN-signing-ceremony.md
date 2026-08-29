@@ -5657,9 +5657,20 @@ missing one.
 Scope: the three absences the plan-review found under everything else. **(a)** A third mirror file,
 `state.json` — unsigned, machine-local, carrying its own layout version — because `Record` cannot
 hold mutable state and `WriteMirror`'s document-then-record ordering is a *first-write* argument
-that does not survive a third file. **(b)** `/api/ceremony/accept` writes the mirror and stores the
-invitee's **own** secret through the existing `AddCeremonySecret` door, ceremony-scoped so the
-close-out prune takes it away — in the vault, never in the mirror, which D29 forbids in terms.
+that does not survive a third file. **(b)** `/api/ceremony/accept` persists the invitee's own ceremony — **in the vault, and NOT as a
+mirror**, which is an amendment this slice's own deepdive forced before its grill (2026-08-29). The
+first firming said "writes the mirror"; that is not buildable. `WriteMirror` writes `r.Encode()` and
+`ReadMirror` calls `r.Verify(now)`, so a mirror needs `ConvenerSig` and `ConvenerCert` — and the
+`Invitation` type carries neither, nor `DocHash`, nor `Expires`. **An invitee holds no Record until
+the document reaches its hop** (`checkArrival` → `CheckRecord`, `internal/server/session.go:424` and
+`:1600`), so there is nothing to write. What it *can* persist is the invitation itself, and the
+deepdive established that is sufficient: `ceremonyFor` needs only the invitation text, this
+machine's cert/key and the peer fingerprint (`internal/server/ceremonyid.go:657-684`). The secret
+travels inside it, so the whole thing goes where D29 puts key material — a `contentsVersion` 2→3
+bump, whose skew direction the vault already handles correctly (`internal/vault/vault.go:242-249`).
+**It ships with its prune in the same change**: `PruneCeremonySecrets` has only the convene-rollback
+caller today, so the write alone would leave permanent key material on every invitee's machine —
+D29's own harm, delivered by its own fix.
 **(c)** `ReadMirror`'s version skew lifted out of its generic *"does not verify"* wrap into a named
 D32 skew outcome, so a Nib update mid-ceremony does not make every live ceremony unloadable *and*
 unprunable while telling the user the vocabulary of forgery.
