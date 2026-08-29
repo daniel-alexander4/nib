@@ -1,6 +1,7 @@
 package server
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -276,11 +277,56 @@ func (c *ceremonyID) Cached(inbound []byte) []byte {
 		return nil
 	}
 	c.mu.Lock()
-	defer c.mu.Unlock()
 	if c.closed {
+		c.mu.Unlock()
 		return nil
 	}
-	return c.reDelivery[reDeliverKey(inbound)]
+	hit := c.reDelivery[reDeliverKey(inbound)]
+	c.mu.Unlock()
+	if hit != nil {
+		return hit
+	}
+	// **A miss in memory is not a miss (P08.S02, C01).** The map dies with the process, and D24's
+	// whole subject is a ceremony that outlives one. A party killed after signing and restarted has
+	// its contribution on disk — `Store` put it there before the frame went out — and without this
+	// read-through the reconnect falls through to `Contribute` and stacks a SECOND signature from
+	// one identity, which is what D24 forbids and what C01 counts on the artifact.
+	return c.persistedFor(inbound)
+}
+
+// persistedFor returns this ceremony's stored contribution if it is genuinely THIS hop's answer to
+// `inbound`, and nil otherwise.
+//
+// # Why it is not simply "read document.pdf"
+//
+// The mirror holds ONE `document.pdf` per ceremony, overwritten at every hop, while the cache is
+// keyed on `sha256(inbound)` — and the field's own comment says why that key: *"keying on the hop
+// alone would hand a reconnect with a different document the wrong signature."* Reading the file
+// back unconditionally would be exactly that, one process boundary out.
+//
+// So the file is returned only if it is demonstrably the continuation of this inbound: **a byte
+// prefix extension**, which is the same test `Initiate` applies to what comes back to it, and sound
+// for the same reason — a co-signature is an incremental append, so a legitimate result is always
+// the inbound plus a trailing update (`internal/sign`, trailing_test.go).
+//
+// It is also attacker-controlled input: `~/nib/ceremonies/` is ordinary files under the user's home,
+// and `ReadMirror`'s own comment already makes that argument about the record. A planted file that
+// is not an extension of the document actually offered is refused here rather than returned to a
+// peer as this machine's signature.
+func (c *ceremonyID) persistedFor(inbound []byte) []byte {
+	_, pdf, err := ceremony.ReadMirror(defaultOutputDir(), c.inv.ID, time.Now())
+	if err != nil || len(pdf) == 0 {
+		return nil
+	}
+	if !bytes.HasPrefix(pdf, inbound) {
+		// Either a different hop's document, or something planted. Not this hop's answer, so a
+		// miss — the fresh exchange then runs, which is the safe outcome.
+		return nil
+	}
+	if len(pdf) == len(inbound) {
+		return nil // no contribution appended: nothing was signed here
+	}
+	return pdf
 }
 
 // Store records THIS hop's co-signed output for `inbound`, so a later reconnect re-delivers it. A
@@ -346,6 +392,18 @@ func (c *ceremonyID) persistContribution(final []byte) error {
 
 // hasSigned reports whether this hop has produced any signature — the receiver's "am I past the
 // gate" signal, since a lost writeback is otherwise indistinguishable from a clean completion.
+//
+// **It reads memory only, and does NOT read through to disk the way `Cached` now does (P08.S02).**
+// The P08.S02 deepdive proposed that it should, on the ground that a restarted party otherwise
+// takes the pre-signing branch and spends a fresh publish and punch budget on a hop already signed.
+// That is true and it is the wrong conclusion: the pre-signing branch is the one that PUBLISHES
+// CANDIDATES, and a party that has just restarted is exactly the party the initiator can no longer
+// find. The post-signing branch only accepts — it assumes the peer already holds this address —
+// which is sound within one process and false across a restart.
+//
+// So a resumed party re-races and is findable, and the re-delivery still happens: the reconnect
+// reaches `Cached`, which reads through, and the cached bytes are returned before consent. The cost
+// is one publish; the alternative is a party nobody can reach.
 func (c *ceremonyID) hasSigned() bool {
 	if c == nil {
 		return false

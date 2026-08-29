@@ -1,8 +1,12 @@
 package server
 
 import (
+	"bytes"
+	"encoding/hex"
 	"encoding/json"
 	"net/http"
+	"nib/internal/sign"
+	"nib/internal/testpdf"
 	"os"
 	"strings"
 	"testing"
@@ -739,5 +743,97 @@ func TestSignedButNotSavedLeavesTheDocumentOpenToBeSaved(t *testing.T) {
 	if !strings.Contains(notice, "save a copy") {
 		t.Error("the notice names no action — leaving Nib open forever is not a remedy, and the " +
 			"document is in a tab precisely so it can be saved somewhere with space")
+	}
+}
+
+// TestACachedContributionSurvivesARestart is P08.S02's C01 mechanism.
+//
+// # Why a memory miss is not a miss
+//
+// `reDelivery` dies with the process, and D24's whole subject is a ceremony that outlives one. A
+// party killed after signing and restarted has its contribution on disk — `Store` put it there
+// before the frame went out — and without the read-through the reconnect falls through to
+// `Contribute` and stacks a SECOND signature from one identity. That is what D24 forbids and what
+// C01 counts on the artifact.
+//
+// # And why it is not simply "read document.pdf back"
+//
+// The mirror holds ONE document per ceremony, overwritten every hop, while the cache is keyed on
+// `sha256(inbound)` — and that key exists because *"keying on the hop alone would hand a reconnect
+// with a different document the wrong signature"*. Returning the file unconditionally would be
+// exactly that defect, one process boundary out. So the file counts only if it is a byte-prefix
+// extension of the inbound actually offered — the same test `Initiate` applies to what comes back
+// to it. This drives both halves: the right document is returned, a different one is not.
+func TestACachedContributionSurvivesARestart(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("HOME", root)
+
+	cert, key, err := sign.GenerateIdentity("Convener")
+	if err != nil {
+		t.Fatal(err)
+	}
+	fpb, err := sign.Fingerprint(cert)
+	if err != nil {
+		t.Fatal(err)
+	}
+	convFP := hex.EncodeToString(fpb)
+	other := strings.Repeat("2b", 32)
+	base, err := testpdf.Text("the lease")
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := ceremony.Convene(base, ceremony.ConveneRequest{
+		Roster: []ceremony.Party{
+			{Fingerprint: convFP, Label: "Convener", Signs: true},
+			{Fingerprint: other, Label: "B", Signs: true},
+		},
+		Intent:        "We agree",
+		Expires:       time.Now().Add(48 * time.Hour),
+		HopBudget:     ceremonyHopBudget(),
+		ConvenerSigns: true,
+	}, cert, key, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// The inbound this hop was offered, and the contribution it produced: an append, which is what
+	// a co-signature is.
+	inbound := out.Document
+	stored := append(append([]byte{}, inbound...), []byte("\n% this hop's appended contribution\n")...)
+	if _, err := ceremony.WriteMirror(defaultOutputDir(), out.Record, stored); err != nil {
+		t.Fatal(err)
+	}
+
+	// A ceremonyID with an EMPTY in-memory cache — which is precisely what a restarted process has.
+	c := &ceremonyID{inv: ceremony.Invitation{ID: out.Record.ID}}
+
+	// Stimulus: memory really is empty, so the hit below comes from disk and not from a map that
+	// was populated by the setup.
+	c.mu.Lock()
+	empty := len(c.reDelivery) == 0
+	c.mu.Unlock()
+	if !empty {
+		t.Fatal("setup: the in-memory cache is not empty, so this test cannot show a disk read")
+	}
+
+	got := c.Cached(inbound)
+	if got == nil {
+		t.Fatal("a restarted party found nothing for the document it had already signed — the " +
+			"reconnect then re-signs, which puts a second block from one identity on the page")
+	}
+	if !bytes.Equal(got, stored) {
+		t.Errorf("the read-through returned %d bytes, want the stored %d", len(got), len(stored))
+	}
+
+	// And a DIFFERENT inbound must miss. The mirror holds one document per ceremony, so a
+	// reconnect carrying other bytes would otherwise be handed this hop's signature over a
+	// document it does not extend.
+	if other := c.Cached([]byte("%PDF-1.7\nsomething else entirely\n")); other != nil {
+		t.Error("a reconnect offering a different document was handed this hop's contribution — " +
+			"that is the defect the sha256(inbound) key exists to prevent, one process boundary out")
+	}
+	// A prefix with nothing appended is not a contribution either.
+	if same := c.Cached(stored); same != nil {
+		t.Error("a document with no contribution appended was returned as a contribution")
 	}
 }
