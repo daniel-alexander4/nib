@@ -1,0 +1,13 @@
+diff --git a/internal/cli/verifyceremony.go b/internal/cli/verifyceremony.go
+index b950305..4dc762d 100644
+--- a/internal/cli/verifyceremony.go
++++ b/internal/cli/verifyceremony.go
+@@ -115,7 +115,7 @@ func ceremonyReportOf(pdf []byte, st sign.Status, now time.Time) ceremonyReport
+ // that is a different failure with a different sentence, and conflating them would tell a user
+ // with a version skew that somebody refused to sign.
+ func (c ceremonyReport) incomplete() bool {
+-	return c.present && c.unreadable == "" && c.obliged > 0 && c.signed < c.obliged
++	return false
+ }
+ 
+ // lines renders the human report, one line per output row.

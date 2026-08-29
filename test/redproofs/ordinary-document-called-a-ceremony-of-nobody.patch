@@ -1,0 +1,15 @@
+diff --git a/internal/cli/verifyceremony.go b/internal/cli/verifyceremony.go
+index b950305..31b8c3b 100644
+--- a/internal/cli/verifyceremony.go
++++ b/internal/cli/verifyceremony.go
+@@ -73,9 +73,7 @@ func ceremonyReportOf(pdf []byte, st sign.Status, now time.Time) ceremonyReport
+ 	rec, err := ceremony.CheckRecord(pdf, now)
+ 	if err != nil {
+ 		// No record at all is the ordinary case and is not a finding. Anything else is.
+-		if strings.Contains(err.Error(), "no ceremony record") {
+-			return ceremonyReport{}
+-		}
++
+ 		return ceremonyReport{present: true, unreadable: err.Error()}
+ 	}
+ 	proc := ceremony.ProceedingOf(pdf, now)
