@@ -62,7 +62,20 @@ Nib_files="$(find test/jsdom -maxdepth 1 -name '*.test.mjs' | wc -l | tr -d ' ')
 # until P07.S05d ran it — nine slices later. The guard worked; nobody asked it. The lesson is
 # not about the number, it is that a tier which "skips cleanly when its dependencies are absent"
 # also skips cleanly when nobody runs it.
-Nib_expect_files=19
+#
+# **THIRD INSTANCE, 2026-08-28, and this time the tier WAS run every slice.** P07.S07c added
+# nineparty.test.mjs (v1.117.220) and P07.S09c added tagskew.test.mjs, leaving this literal at 19
+# while the directory held 21 — so tier 2 exited 1 through four commits, .220 to .226, and every
+# one of those runs was watched. What was watched was `grep -E '^# (tests|pass|fail)'`: the TAP
+# summary, which said `# fail 0` and was TRUE. This guard's failure goes to stderr AFTER that
+# summary, so a reader looking at the totals sees a green suite and a red tier, which is the
+# paragraph above stated in the first person.
+#
+# The three instances share one shape and it is not the literal: **a check whose verdict lives in
+# the exit status, read by someone looking at the output.** `build/redproof.sh` is what caught it
+# this time, because it asserts on the exit status of the whole harness rather than on the lines
+# it printed — which is the only reading that could have caught it.
+Nib_expect_files=21
 if [ "$Nib_files" -ne "$Nib_expect_files" ]; then
   echo "FAIL: expected $Nib_expect_files jsdom test files, found $Nib_files — a test file was added or dropped." >&2
   echo "      If deliberate, update Nib_expect_files in this script." >&2
