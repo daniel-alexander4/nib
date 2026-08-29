@@ -198,8 +198,30 @@ func (a Attestation) reason() string {
 		// intent, so neither can forge one.
 		roster = " [NibRoster:" + strconv.Itoa(a.RosterVersion) + ":" + safeHex(a.RosterHash) + "]"
 	}
-	return fmt.Sprintf("%s Accepts %s [SPKI:%s]%s. %s", attestationTag,
-		safeText(a.AcceptedPeerLabel), safeHex(a.AcceptedPeer), roster, safeText(a.intent()))
+	// **The party's own capacity, in the SIGNED text (C19's second half, added at P07's close).**
+	//
+	// C19 asks for a document "whose blocks render each party's OWN capacity, AND whose signed
+	// `/Reason`s differ in capacity while carrying one identical recital". P07.S07a built the
+	// first half and P07.S07b listed the second as an acceptance bullet and did not build it —
+	// the capacity reached the block, which a reader can see, and never the signed text, which is
+	// what a dispute relies on. The phase-close ledger is what asked.
+	//
+	// It matters because the two halves say different things. A block is a picture: `Contribute`
+	// takes an already-rasterised appearance from its caller and nothing compares it to the
+	// /Reason (this file says so at `Attestation`'s own doc). So a capacity that appears only on
+	// the block is a claim about a party's AUTHORITY that their key never signed — exactly the
+	// asymmetry D20's capacity amendment exists to remove, since capacity is inside the
+	// commitment precisely because "it is what a third party relies on".
+	//
+	// Placed AFTER the recital and before nothing, so the recital stays the verbatim tail C15
+	// asserts, and bracket-stripped like every other user-controlled field.
+	capacity := ""
+	if a.Capacity != "" {
+		capacity = " Capacity: " + safeText(a.Capacity) + "."
+	}
+	return fmt.Sprintf("%s Accepts %s [SPKI:%s]%s. %s%s", attestationTag,
+		safeText(a.AcceptedPeerLabel), safeHex(a.AcceptedPeer), roster,
+		safeText(a.intent()), capacity)
 }
 
 // AppearanceLines is the visible attestation block text, one entry per line — the

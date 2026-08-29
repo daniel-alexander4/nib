@@ -1,14 +1,12 @@
 diff --git a/internal/server/ceremonynet.go b/internal/server/ceremonynet.go
-index e9ec57e..4828256 100644
+index cd2d700..0af962d 100644
 --- a/internal/server/ceremonynet.go
 +++ b/internal/server/ceremonynet.go
-@@ -327,11 +327,6 @@ func (c *ceremonyID) feedCandidates(ctx context.Context, out chan<- candidate, p
+@@ -327,9 +327,6 @@ func (c *ceremonyID) feedCandidates(ctx context.Context, out chan<- candidate, p
  	// `lanFirstBudget` when the browse already FOUND the peer there — see feedCeremonyRace. A
  	// fixed 2 s made the criterion a race against the hop, and the hop won often enough to emit
  	// 105 packets on a nine-party relay.
--	select {
--	case <-time.After(hold):
--	case <-ctx.Done():
+-	if !c.holdDHT(ctx, hold) {
 -		return
 -	}
  	// The DHT's first contact with the network, through its one door. A failure is not fatal — the

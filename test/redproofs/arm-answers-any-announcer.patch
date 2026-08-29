@@ -1,16 +1,16 @@
 diff --git a/internal/server/lan.go b/internal/server/lan.go
-index 4829793..eae1dc8 100644
+index 3283ffe..90fd6e0 100644
 --- a/internal/server/lan.go
 +++ b/internal/server/lan.go
-@@ -745,10 +745,7 @@ func answerLoop(ctx context.Context, b browser, pins []vault.PinnedPeer, now fun
- 		if rerr != nil {
- 			continue // a timeout is the ordinary case; ctx is what ends this loop
+@@ -788,10 +788,7 @@ func answerLoop(ctx context.Context, b browser, pins []vault.PinnedPeer, now fun
+ 		if idle {
+ 			continue // signed: a reconnect needs the listener, not another advertisement
  		}
 -		c, ok := resolve(pins, seen)
 -		if !ok {
 -			continue // not the peer this arm is for — see the amplification note above
 -		}
 +		c, _ := resolve(pins, seen)
- 		if !lastAnswer.IsZero() && now().Sub(lastAnswer) < hopAnnounceWindow {
- 			continue // one answer per window: a re-dial must not stack a second announcer
- 		}
+ 		// **The sighting, reported BEFORE the answer rate limit and not after it (S05e).**
+ 		//
+ 		// The gate below is `hopAnnounceWindow` and exists so a re-dial cannot stack a second
