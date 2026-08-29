@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"errors"
 	"net"
+	"strings"
 	"time"
 
 	"github.com/quic-go/quic-go"
@@ -43,6 +44,63 @@ const alpn2 = "nib/2"
 // sessionALPN is the offer list, most preferred first. One list, set at every config site, so the
 // two transports cannot drift into offering different things (ADR-009).
 var sessionALPN = []string{alpn2, alpn}
+
+// ProtocolSkewError is D32's sentence for the one version skew the ALPN cannot negotiate away
+// (P07.S09c).
+//
+// # What already worked, and what did not
+//
+// The session protocol IS versioned and IS negotiated: `sessionALPN` offers every version this
+// build speaks, most preferred first, so a peer that knows only `nib/1` agrees on `nib/1` rather
+// than failing. That is P07.S03a's whole design and it is why `alpn`'s doc calls the handshake
+// failure "the right outcome" — the alternative, negotiating and failing later inside the
+// exchange, is the confusing one.
+//
+// **What it does not do is produce a SENTENCE.** When the two offer lists are DISJOINT — which
+// needs a future build that has dropped every version this one speaks — the handshake dies with
+// a TLS alert, and the user is shown `tls: no application protocol` or a QUIC CRYPTO_ERROR. D32
+// says a version skew "produces a sentence naming the mismatch, not a parse error", and a raw
+// alert is the parse error one layer down. Worse, it arrives on the connect path where every
+// other failure means the peer is unreachable, so the honest reading of it is about the network
+// and the true cause is that somebody needs to update Nib.
+//
+// A typed error rather than a message, on `ClockSkewError`'s precedent one file over: the server
+// lifts it before D19's classification, because a protocol skew is not a connectivity failure and
+// classifying it as one would name the network for a version difference.
+type ProtocolSkewError struct {
+	// Offered is what this build speaks, so the sentence can say which versions were on the table.
+	Offered []string
+}
+
+func (e *ProtocolSkewError) Error() string {
+	return "the other machine is running a version of Nib whose ceremony protocol this one does " +
+		"not speak (this build offers " + strings.Join(e.Offered, ", ") + "). Update both machines " +
+		"to the same version of Nib and try again."
+}
+
+// asProtocolSkew turns a handshake failure into a ProtocolSkewError when it is an ALPN mismatch,
+// and returns the original error otherwise.
+//
+// **One door for three dial sites** (ADR-009): the TCP dial and the two QUIC dials each return a
+// handshake error, and "an ALPN mismatch is a version skew" is one rule. Written once here rather
+// than pattern-matched at each site, which is how two of them would come to disagree about what
+// counts.
+//
+// **Matched on the alert, not on a message this package composes.** Go's TLS stack fails an
+// ALPN mismatch with `no application protocol` (alert 120) and quic-go surfaces the same alert
+// inside a CRYPTO_ERROR, so the substring is what both have in common. It is a string match on
+// somebody else's error and is therefore checked by a test that drives a real disjoint handshake
+// rather than asserting the constant — if the stdlib rewords it, that test goes red and this
+// stops silently returning the raw alert.
+func asProtocolSkew(err error) error {
+	if err == nil {
+		return nil
+	}
+	if strings.Contains(err.Error(), "no application protocol") {
+		return &ProtocolSkewError{Offered: append([]string(nil), sessionALPN...)}
+	}
+	return err
+}
 
 // quicIdle is how long a QUIC connection may sit with nothing on it before the
 // transport closes it, and quicKeepAlive is why it never gets there during a ceremony.
@@ -136,7 +194,7 @@ func QUICDial(ctx context.Context, addr string, identityCertPEM, identityKeyPEM,
 	qc, err := tr.Dial(ctx, remote, cfg, quicConfig())
 	if err != nil {
 		shutdown(nil)()
-		return nil, err
+		return nil, asProtocolSkew(err)
 	}
 	// The dialing side always speaks first in every one of the four entry points — the
 	// commitment frame in Initiate and SendDocument — so opening the stream here and
@@ -281,7 +339,7 @@ func QUICDialHandshakeOn(ctx context.Context, e *SharedEndpoint, addr string, id
 	defer cancel()
 	qc, err := e.tr.Dial(ctx, remote, cfg, quicConfig())
 	if err != nil {
-		return nil, err // non-owning: nothing of ours to tear down on failure
+		return nil, asProtocolSkew(err) // non-owning: nothing of ours to tear down on failure
 	}
 	fp, err := verifiedPeerFingerprint(qc.ConnectionState().TLS)
 	if err != nil {

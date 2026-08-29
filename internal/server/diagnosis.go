@@ -292,6 +292,26 @@ func (s *Server) writeConnectDiagnosis(w http.ResponseWriter, cer *ceremonyID, e
 		})
 		return
 	}
+	// **A protocol skew is lifted before D19, on ClockSkewError's precedent above (P07.S09c).**
+	//
+	// D19 classifies why a connection could not be made, and every one of its causes is about the
+	// network. A disjoint ALPN is not: both machines are reachable and one of them needs
+	// updating. Classified as a connectivity failure it would arrive as "couldn't establish a
+	// connection", sending a user to their router over a version difference — which is the
+	// accusation-by-misclassification D32 exists to prevent, one layer out from the record and
+	// invitation skews that already have their sentences.
+	var proto *p2p.ProtocolSkewError
+	if errors.As(err, &proto) {
+		writeJSONStatus(w, http.StatusBadGateway, diagnosisResponse{
+			Error:   proto.Error(),
+			Cause:   "protocol-skew",
+			Summary: "The two machines speak different versions of Nib's ceremony protocol.",
+			Detail: proto.Error() + " Nothing is wrong with either machine's network: the " +
+				"connection was made and then refused because the two builds share no protocol " +
+				"version in common.",
+		})
+		return
+	}
 	d := cer.diagnose()
 	if d.cause == causeUndiagnosed {
 		httpError(w, http.StatusBadGateway, connectFailure(err))

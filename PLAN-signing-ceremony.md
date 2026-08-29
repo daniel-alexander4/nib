@@ -5387,10 +5387,13 @@ Acceptance:
 - The report has a **named production reader**: D19's diagnosis, which is where `report()`'s own doc says it was going.
 - A hop that exhausts the budget **drops and reports** and never fails the ceremony (D33's own words), driven at the loop.
 
-#### P07.S09c — The version sentence and skew at four surfaces *(D32; C13)* — **new, 2026-08-28, split out of S09**
+#### P07.S09c — The version sentence and skew at four surfaces *(D32; C13)* — **new, 2026-08-28, split out of S09** *(done 2026-08-28, v1.117.226 — 2 clauses, both met; 3 red proofs. The attestation tag was the worst of the four skew surfaces because it did not fail loudly at all: one signature from a newer build made the whole document report *not one proceeding*, an accusation about the parties caused by an upgrade)*
+- T01 — `ProtocolSkewError`, produced at one door for all three dial sites and lifted by the server before D19. *(done)*
+- T02 — the attestation tag parsed at any version; a newer one publishes `TagVersion` and parses nothing else. *(done — reading the version is not trusting the payload)*
+- T03 — the client reports the skew INSTEAD of the accusation, with both controls. *(done)*
 Acceptance:
 - ~~The **ceremony protocol version** exists and is announced before the first frame~~ **Pinned 2026-08-28 (see S09's split note): the version exists and is negotiated; what is owed is a SENTENCE when two builds' ALPN offer lists are disjoint, rather than a bare handshake error. No pre-gate frame is added.**
-- The fourth number's clause is re-worded to what is observable: `punchBudgetPerSide` bounds **our own emission** and has no external supplier, so "supplied past the bound" names no path. Driven instead as *a hop that exhausts the budget drops and reports, and the report has a named reader* — D33's own "drops and reports; it never fails the ceremony".
+- ~~The fourth number's clause is re-worded to what is observable…~~ **Moved to S09b at the split and built there (v1.117.224) — it is a D33 clause, not a D32 one, and it turned out to be a law figure emitted at 2× rather than an unread counter.**
 - Skew is driven for **four** surfaces, not three: record, invitation, protocol, **and the attestation tag**, whose skew today silently yields `AcceptedPeer=""`, `RosterHash=""` and a verdict of *not one proceeding* — the failure D32 forbids, arriving through the surface D32 excused.
 
 #### P07.S10 — Docs, README, and the phase close *(C10, C11)*
