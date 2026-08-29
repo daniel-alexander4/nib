@@ -2481,6 +2481,82 @@ Exit criteria *(all met 2026-08-19, v1.109.55 — ledger in `code-reviews/P02-ph
 - ✅ The pinned-peer callback demonstrably rejects a non-pinned peer under QUIC, driven red.
 - ✅ ~~`Initiate`, `Receive` and `coSignExchange` are unchanged.~~ **`coSignExchange` is unchanged; `Initiate`, `Receive`, `SendDocument` and `ReceiveDocument` are re-typed off `*tls.Conn` to a stream plus an already-verified fingerprint, and one set of session-logic tests runs green over both transports. (superseded 2026-08-16 — the original criterion was unmeetable: those four are typed to `*tls.Conn` today, see the D7 pin.)**
 
+**PHASE CLOSE — 2026-08-28, v1.117.236. Ledger: 18 met / 1 not met / 3 partly.**
+
+*Required-run gates, enumerated because nothing else walks them and a ledger can be green beside a
+gate that never ran:* **tier 0** build ✓, **tier 1** `go test ./...` ✓, **tier 2** `jsdomtest.sh` ✓
+(exit status, not the TAP totals — see below), **tier 3** `uirepro.sh` ✓ 59 tests, **tier 4**
+`pairrepro.sh -n 4` ✓ — a four-party ceremony COMPLETED as a baton relay over BOTH transports, a
+non-signing convener carrying it through 3 hops, each document a byte prefix of the next, every
+hop's verification string distinct — **tier 6** `ceremonyrepro.sh` ✓ 13/13, **`redproof.sh --all`**
+✓ **178/178** — after 13 stale rows were re-recorded and each re-verified individually. Tier 5 is P03's and winrepro is Dan's; neither is this phase's gate. All measured at
+v1.117.235–.236.
+
+- **C01 ✓ met** — tier 4: 4-party ceremony completed; 3 distinct signers in roster order, one
+  signature each; `proceeding claimed=True`; cross-bound. All four clauses.
+- **C02 ✓ met** — tier 4, non-signing convener; the finished document carries the signers' and none
+  of the convener's.
+- **C03 ⚠ PARTLY** — "all on the page" and "none overlaps the readme body" are met at N=9
+  (`placement_test.go`, and blocks now live on dedicated pages). **"driven by rendering and
+  measuring" is `not exercised` at nine parties**: the rendered differential exists
+  (`blockink.test.mjs`, six stacked blocks, 4660 px of readme prose covered) but on the MANUAL
+  path. The nine-party ceremony render is **`/pending 305`** and needs nine identities in a browser.
+- **C04 ✓ met** — refused, names a new ceremony as the answer, AND states the collected signatures
+  cannot be carried. **The third clause was unbuilt until this close**; the criterion predicted it
+  ("it is the half a builder omits, being the bad news").
+- **C05 ✓ met** — both cases driven separately in Go (`l3_test.go`, two packages) and through the
+  real route with the UI bypassed (tier 6, and tier 4's hop-2 clause).
+- **C06 ⚠ PARTLY** — "not by hand" is met for every criterion: nothing here is verified manually.
+  "driven by the multi-instance harness" is met for the criteria that need a live multi-party
+  ceremony (C01, C02, C05, C07) and **not** for the rest, which are driven by automated tests
+  rather than by `pairrepro`. Read literally the criterion is not met; read against its own gloss —
+  *"verified once, manually, at the phase gate is the shape of check this repo has already been
+  burned by"* — it is. Recorded as partly rather than argued either way.
+- **C07 ✓ met** — tier 4, over the carry route, no signature of the convener's.
+- **C08 ✓ met** — `readme_test.go` / `sigpages_test.go`; the drift guard is green.
+- **C09 ✓ met** — blocks at N=9 (`blockname_test.go`), details panel at N=9
+  (`test/jsdom/nineparty.test.mjs`); the two-party "attests to the other's key" is unreachable
+  above a mutual pair.
+- **C10 ✓ met** — README command table, exit-status paragraph and a worked example checked against
+  the real binary's output.
+- **C11 ✓ met, for the rows this file holds** — 224 rows, 224 dispositioned: 219 `keep-live`, 5
+  `deleted`, 6 retagged to the phase that owns them, 4 corrected. **Seventeen P07 slices have no
+  rows at all** and a pass over the inventory cannot see them; `/pending 297` amended from seven to
+  seventeen with the trade written out.
+- **C12 ✓ met** — all four of D33's numbers driven PAST their bound. **The roster maximum was
+  driven by nothing until this close** — `ErrRosterTooLarge` appeared in no test in the tree.
+- **C13 ✓ met** — a sentence, not a parse error, driven separately for the record, the invitation,
+  the ceremony protocol, **and the attestation tag**, which was the fourth surface and the silent one.
+- **C14 ✓ met** — tier 4 completes; `Matched` per predecessor; the first signer's state now has a
+  surface. Clause 4's roster-member framing holds by construction (`crossBind` takes no roster) and
+  is driven in its absent-peer form (`cosign_test.go`).
+- **C15 ✓ met** — `recital_test.go`: the Confirmer's intent is discarded and `defaultIntent` is
+  unreachable when a record is present.
+- **C16 ✓ met** — `record_test.go`: a `signs:false` convener's completed ceremony reads complete.
+- **C17 ⚠ PARTLY** — (a) and (b) driven and refused by name before consent (S02b); the reconciliation
+  covers **intent** (this phase) and **capacity** (whole-`Party` comparison). **`expires` is not
+  covered and cannot be**: the invitation does not carry it, which is `/pending 247`, deferred on a
+  measured argument this phase re-confirmed.
+- **C18 ✓ met** — driven at five of nine in Go and through `nib verify`, which names the four who
+  have not signed.
+- **C19 ✓ met** — blocks render each party's own capacity AND the signed `/Reason`s differ in
+  capacity while carrying one identical recital. **The signed half was unbuilt until this close.**
+- **C20 ✓ met** — `convene_test.go`, `ErrDeadlineTooTight` at convene.
+- **C21 ✗ NOT MET** — parked, and it is the phase's one open decision. It needs an `Expires` on the
+  invitation that `/pending 247` declined on a measured security argument; P07.S07b confirmed that
+  argument survives, because a field consumed at ARM time cannot be protected by a comparison that
+  only runs once a document arrives. Dan's call: leave it, overrule 247's G2, or amend C21.
+- **C22 ✓ met** — `mirror_durable_test.go` and S02a: written before the response returns, findable
+  by id.
+
+**What the close itself found, because none of it was visible from the slices.** Three criteria
+were NOT met and read as met until asked clause by clause (C04, C12, C19 — all fixed here).
+**Thirteen of 178 red-proof rows had gone stale**, nine of them staled by this phase's own last
+third; one row's "defect" had become correct code and was re-recorded one layer down. **Two
+harnesses were driving two faults at once** — tier 6's L3 clause and tier 4's — both green for
+months while testing something other than what they claimed. And **tier 2 was red for four commits**
+while its TAP totals said `# fail 0`, which its own file had already recorded happening twice.
+
 ~~Slices *(sketch)*: the multi-instance harness, first, driving the HTTP API…~~ **Firmed 2026-08-19 at phase-open. The sketch's seven items become six slices: "the pinned-rejection test ported" and "the session-logic tests parameterised over both" are one piece of work, not two, and splitting them would mean writing the parameterised harness twice.** *(Sketch retained below the slices.)*
 
 #### P02.S01 — The multi-instance harness *(done 2026-08-19, v1.109.49)* *(D26; the phase's first slice by its own amendment)*
@@ -4182,7 +4258,7 @@ Exit criteria:
 
 Slices *(sketch)*: the ceremony panel replacing the tab and its three modals; **the convene-and-invite PANEL, over P07.S02's route** *(re-pointed 2026-08-23 — the server-side convene is P07's; a pin two hundred lines below is not what a builder reading this list will see)*; the connect-and-confirm screen; the roster and position display; **the roster-shaped consent screen (D27); the end-state surfaces (D28); the document freeze and the attachments label (D29);** failure surfaces; docs and README.
 
-### P07 — More than two parties: **the model** **(added 2026-08-18 — D22, D23, D25, D27; amended the same day — D28, D29; built BEFORE P06 — Stage 2 grill; **split 2026-08-18, plan-review: lifecycle and delivery moved to P08**)**
+### P07 — More than two parties: **the model** *(CLOSED 2026-08-28, v1.117.236)* **(added 2026-08-18 — D22, D23, D25, D27; amended the same day — D28, D29; built BEFORE P06 — Stage 2 grill; **split 2026-08-18, plan-review: lifecycle and delivery moved to P08**)**
 Goal: a ceremony of N parties completes as a convener-driven serial ~~relay~~ **baton** (renamed
 2026-08-23 — "relay" is what the out-of-scope list forbids for carrier-grade NAT, and D22's own word
 is baton), ~~survives being interrupted at any hop,~~ **persists every hop before it returns
