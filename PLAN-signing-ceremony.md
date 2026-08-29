@@ -1506,6 +1506,21 @@ which **a delivery round re-run after a mid-round failure leaves exactly one fil
 the existing "the finished document reaches every party" bullet, which a round that delivers twice
 satisfies completely.
 
+**(plan-review pin: "nothing new is invented for it" is false in four places — 2026-08-29, seventh
+pass.)** Measured against the tree, the delivery round needs four things this decision says it does
+not. **(1)** The recipient is not listening: the post-signature window is `connectDeadline`, 300
+seconds, after which the loop returns and disarms (`internal/server/session.go:1329`, `:1300`), while
+P08's C08 says *hours*. **(2)** Nothing can find them: `handleSessionSend` resolves through
+`peerAddresses`, a typed address or a LAN browse and nothing else (`internal/server/lan.go:311`) —
+no DHT, no punch, no ladder. **(3)** The transport asks a human: `SendDocument` and `ReceiveDocument`
+both run `runVerification` (`internal/p2p/session.go:570`, `:608`), so delivering to four parties is
+four attended, vault-unlocked sessions with a spoken identity check for a document they already
+signed. **(4)** The acknowledgement is emitted before the receiver has stored a byte
+(`internal/p2p/session.go:640`, then `saveReceived`, which reports nothing on failure). The re-arm is
+also a **second session per party**, which the TRIPWIRE at `internal/server/session.go:24-37` says may
+not be widened without a fresh security review. The decision is not edited; P08.S05 carries the
+consequences and the amendment is Dan's.
+
 **(holistic pin, 2026-08-18 — the non-signing convener has no code path, and would fail its own
 check.)** This decision's own option-A clause collides with the tree, and it is the only place in
 the whole UX pass that does. Read at the line: `handleSessionInitiate` calls `buildCoSigned`
@@ -1700,6 +1715,18 @@ into "sign it again", which is the one thing a signing product must never ask. N
 one-way transfer path already persists what it accepts (`saveReceived`, `internal/server/session.go:338`);
 the co-signing path is the one that does not.
 
+
+**(plan-review pin: the disk-full clause and `mirrorHop`'s doc comment are opposite rules about one
+write — 2026-08-29, seventh pass.)** This decision says the persist happens before the frame and that
+a failed persist means *"the delivery is not attempted"*. `mirrorHop`, written at P07.S02a, argues
+the reverse in as many words — *"failing the hop over it would discard a real signature to protect a
+copy of it"* (`internal/server/ceremonyid.go:620-627`) — and is best-effort into a `log.Printf`.
+Once P08.S02 makes them one write, both cannot stand. **Neither is edited here**; the spot is marked
+and the choice is Dan's. Two facts the choice needs: `ReDeliverer.Store` returns no error today
+(`internal/p2p/session.go:657-662`), so refusing the delivery is not expressible without widening
+that interface; and the durable write is currently the ONLY copy a non-convener party has, since
+`saveReceived` is not on the co-signing path at all. **The `internal/server/session.go:338` citation
+above is stale** — `saveReceived` is now at `:915`.
 ### D25 — Signature pages are allocated from the roster, six blocks to a page *(settled 2026-08-18 — Dan, option A)*
 
 **Dan's call, option A:** a fresh signature page per **six** blocks, appended in the pre-signing
@@ -1855,6 +1882,20 @@ Two adjacent states also get defined behaviour, because both are new with D24:
   named message and **ends the ceremony rather than accepting the new key**: accepting it would be
   exactly the substitution L1 exists to forbid, arriving through the front door.
 
+
+  **(plan-review pin: three of the four end states have no home, and one is enforced on the wrong
+  machine — 2026-08-29, seventh pass.)** *Declined* and *abandoned* cannot be recorded in the
+  `Record`: every field is inside the convener-signed preimage (`internal/ceremony/record.go:154-197`,
+  `:253-320`) and `ReadMirror` re-verifies on every read, so a field outside the preimage is an
+  unauthenticated byte that `Decode`→`Encode` drops, and a field inside it changes `rosterHash` and
+  invalidates every `[NibRoster:…]` commitment already collected. *Expired* has one enforcement door,
+  `checkCeremonyDeadline`, whose only production caller is `handleSessionInitiate`
+  (`internal/server/session.go:1550`) — the **dialing** side, which in a ceremony is the convener —
+  while the party being asked to sign gates on `Record.Verify`, which deliberately does not refuse an
+  expired ceremony and says so (`internal/ceremony/record.go:456-462`). So whoever convenes owns the
+  only clock check. P08.S04 puts the expired gate at the signer's own door and makes the decline a
+  separately signed termination object; **whether an end state may be recorded at all, and by whom, is
+  a decision and is Dan's.**
 ### D29 — The ceremony's footprint: what it freezes, what it stores, and where *(settled 2026-08-18 — holistic pass)*
 
 D20 gives the ceremony a record and D24 gives it a mirror on disk. Neither says what that does to
@@ -1903,6 +1944,17 @@ the user's document, their vault, or their machine.
   decoy now holding the id it used to have — not the existing resumption bullet, which passes with a
   dangling id because nothing in it opens a second document.
 
+
+  **(plan-review pin: this pin's own identity pair was refuted five days after it was written —
+  2026-08-29, seventh pass.)** P07.S02b measured that `docHash` is a **convene-time** identity and
+  wrote it down three times: *"a receiving party can never pass `CheckDocument`, at any hop —
+  measured, not argued"* (`internal/ceremony/embed.go:186-206`), the same limit made load-bearing at
+  `internal/ceremony/mirror.go:151-163`, and `CheckRecord`'s existence as the split. A visible
+  signature adds a widget annot and `ContentDigest` hashes `/Annots`, so from hop 2 the in-flight
+  document legitimately does not hash to `DocHash` — and hop 2 onward is the resumption case this
+  pin exists for. **The pin is not struck here**; P08.S03 matches on the ceremony id read from the
+  document's own convener-signed record and keeps `docHash` only in the unsigned window, and the
+  supersession of this pin's text is Dan's.
 - **(plan-review pin: the ceremony's document has two homes — 2026-08-18, adopted by Dan.)** The
   mirror holds "the current document bytes" (D24); the same document is open in a tab and may have
   been saved elsewhere by the user. Nothing said which is authoritative on resume. **The mirror is
@@ -5500,187 +5552,256 @@ hold one of those in its head; it could not hold both.
 
 Exit criteria:
 - **C01.** **A hop interrupted after its signature exists re-delivers on resumption and never re-signs; the finished document carries exactly one block per signer. (D24.)** Driven by killing the process between the signature and the write — the case `internal/p2p/session.go:135` discards today.
+
+  **(plan-review pin: the stated observable cannot fail, and the citation is stale — 2026-08-29.)** *Counting blocks* is produced identically by the behaviour this criterion forbids: `NextContributor` matches signature *i* against roster signer *i* positionally and `AdmitContribution` gates every ceremony contribution on it (`internal/p2p/l3.go:245-259`, `:374-381`), so no delivered artifact can carry two blocks from one identity — and if the cache is *lost*, the initiator simply re-runs the hop, a fresh signature is made, and the count is still right. **What discharges this specifically:** the mirror's stored contribution is snapshotted at the kill and the finished artifact's bytes for that party are byte-identical to it, *and* the user's `Confirm` gate is observed firing exactly once across the kill and restart. Block count survives as a weaker second clause, never as the only one. The citation `session.go:135` is now the `Confirmer` interface; the discard is `writeFrame` at `:324` and `rd.Store` at `:826`.
 - **C02.** **The contribution write is atomic: a process killed mid-write leaves the previous state or the complete contribution, never a prefix. (gap #15.)** The re-delivery criterion cannot see this — it never writes twice.
+
+  **(plan-review pin: atomicity has no cheap observation, and the door guard does not reach the new write — 2026-08-29.)** `WriteMirror` already routes both files through `atomicfile.WriteDurable` (`internal/ceremony/mirror.go:88`, `:101`), which is temp → `Sync` → rename → parent-dir `Sync`, so a torn prefix is unreachable at that door by construction and a planted-prefix fixture proves the *detector*, not the writer. `internal/server/atomicroute_test.go:38` scans `internal/server` only — one package of twelve, the shape `goroutines_test.go` was promoted to the repo root to fix. **What discharges this specifically:** the atomic-door guard is promoted to a repo-root `package nib` guard *before* the new write exists, and the red proof is a one-hunk patch swapping the new persist site to `os.WriteFile` — routing is the falsifiable property.
 - **C03.** **A disk-full persist reports "signed but not saved" and does not attempt delivery. (gap #17.)**
+
+  **(plan-review pin: the sentence is truncated, the channel does not exist, and there is no recovery half — 2026-08-29.)** D24's wording is *"signed but not saved — **do not close Nib**"*, and D24 argues that clause is the load-bearing half; a builder implementing the truncated string passes this criterion while the instruction that prevents the loss is gone. The message also has nowhere to be said: the persist runs on the p2p goroutine with no HTTP response, `sessionStatus` carries no failure field (`internal/server/session.go:1032-1043`), the accept loop discards the error into `_` (`:746`), and the front end has **no live region at all** — `toast` sets `textContent` on a bare div and clears it after 2500 ms (`web/app.js:9625-9634`), which a screen reader never announces. **What discharges this specifically:** an exact-string assertion on D24's full sentence; a sticky failure field on `sessionStatus` that outlives the session; and a driven recovery action that writes the in-memory contribution to a user-chosen path — a warning label over an unrescuable state is not a discharge.
 - **C04.** **A ceremony resumed in a fresh process — with other documents opened first, so the id counter has advanced — acts on its own document and refuses a decoy holding the id it used to have. (D29 identity pin.)** The resumption bullet alone passes with a dangling id, because nothing in it opens a second document.
+
+  **(plan-review pin: the decoy is unrepresentable across a process boundary — 2026-08-29.)** `docID` is `{Epoch, Seq}` where `Epoch` is a per-process nonce (`internal/server/server.go:55-78`), and ADR-004 already answers a stale id from a previous process with 409 — *"a mismatched per-process epoch: same fact"*. So a decoy "holding the id it used to have" cannot be built in a fresh process, and the bullet degrades to an assertion about `Seq`, which is not the id. **What discharges this specifically:** the decoy is restated as **a different document carrying the same ceremony id** — the substitution that does survive a restart — refused on the content match rather than on the id.
 - **C05.** **A party who arms and waits through three earlier hops is still armed when the baton arrives. (D16 amendment.)**
+
+  **(plan-review pin: the observable does not exist and the bound is the wrong one — 2026-08-29.)** `sessionStatus` exposes no deadline and no remaining window, so nothing can be asserted through a surface that exists; and a loopback ceremony finishes in seconds, so *"remaining > 0"* is true under the 30-day ceremony bound **and** under the 5-minute manual bound (`sessionAcceptTimeout`, `internal/server/session.go:59`) that the criterion exists to distinguish. The TCP arm path goes through `runSession`, which arms `sessionAcceptTimeout` with no ceremony in the arithmetic (`:693`) — so this is code on one of the two transports, not a no-op. D16's amendment also says the window *"becomes a ceremony-scoped decision rather than a constant"*, and `MaxCeremonyLife` is a constant. **What discharges this specifically:** `armedUntil` is exposed in `sessionStatus` and the assertion is on the **bound's shape** — derived from the record's `Expires` — not on the remainder.
 - **C06.** **Each of D28's end states is driven at the protocol level, not only in the UI: a decline at hop 3 ends the ceremony, and the parties who already signed learn of it. (D28.)**
+
+  **(plan-review pin: "each" is four states and the phase drove one; and the expired gate is on the wrong machine — 2026-08-29.)** *Expired* has exactly one enforcement site in the tree, `checkCeremonyDeadline`, whose only production caller is `handleSessionInitiate` (`internal/server/session.go:1550`) — **the dialing side**, which in a ceremony is the convener. The party being *asked to sign* gates on `checkArrival` → `ceremony.CheckRecord` → `Record.Verify`, and `Verify` deliberately does not refuse an expired ceremony and says so at the line (`internal/ceremony/record.go:456-462`). So whoever convenes owns the only clock check, and a signer can be collected into a proceeding D28 declares over. ADR-009's shape, on the rule whose whole point is a protocol-level end state. **What discharges each state specifically:** *declined* — a contribution at hop 4 refused by name after a hop-3 decline; *expired* — a contribution offered after `Expires` refused **by the signing party's own arrival gate, with the convener bypassed**, routed through the one `checkCeremonyDeadline` door; *abandoned* — the close-out of a ceremony whose convener never returns, which is C11's; *completed* — C08.
 - **C07.** **An identity that no longer matches the roster ends the ceremony with a named message and never pairs on the new key. (D28 — the L1 guard covers it.)**
+
+  **(plan-review pin: name the party, not the key — 2026-08-29.)** P06's first exit criterion forbids a hex fingerprint on the primary flow, and the natural way to write a mismatch message is to print both fingerprints. The tree already has the discipline — *"that peer isn't pinned — pin their fingerprint first"* names the word and never the value (`internal/server/session.go:1122`). **What discharges this specifically:** the message names the party by **roster label and position**, contains no hex, and the vault's pin set is asserted to hold no entry for the new key — the error string alone is not the observation.
 - **C08.** **The finished document reaches every party, including those whose hop completed hours earlier. (D22 delivery round.)**
 - **C09.** **A four-party ceremony's delivery round reaches every party, and their invitation pins are absent afterwards — in that order. (D29 lifecycle pin.)** Neither the delivery bullet nor the pin-scoping bullet can produce this alone; the defect is that both are satisfiable while delivery fails.
-- **C10.** **A delivery round re-run after a mid-round failure leaves exactly one file per party. (D22 pin.)** "The finished document reaches every party" is satisfied completely by a round that delivers twice.
-- **C11.** **A ceremony directory is gone after the ceremony has ended and its document has been delivered or saved. (D29.)**
-- **C12.** **A ceremony whose mirror directory has been deleted by hand degrades that panel entry and leaves every other ceremony and open document working. (gap #19.)**
-- **C13.** **Convening a second ceremony on a document already under a live one is refused, server-side and by name. (gap #28.)** The mutation criterion cannot see it, because convening is not a mutation.
-- **C14.** **An invitation re-issued to one party mid-ceremony completes, with every other party's state untouched. (gap #24.)** The convene criteria only ever issue once.
-- **C15.** **Every criterion in this phase is driven by the multi-instance harness (D26), not by hand.**
-- **C16.** Documentation and README updated in the same phase (STANDARDS docs-parity).
 
-**The `C01…C16` labels are editorial, added 2026-08-29 at the phase-open (`/createcode`), and no
+  **(plan-review pin: the vault's secrets are not in this observation, and shipped code already claims they are removed — 2026-08-29.)** `PruneCeremonySecrets` has exactly one production caller and it is `unconvene`, the convene **rollback** (`internal/server/convene.go:268`). So every ceremony that completes, declines, expires or is abandoned leaves N−1 full-strength invitation secrets in the convener's vault permanently — the value D29 calls the design's first genuinely secret one, and the key to every hop's candidate records. Meanwhile `handleCeremonyInvites` already answers 410 with *"A ceremony's secrets are removed when it ends"* (`internal/server/convene.go:371-373`) — a sentence no code implements. **What discharges this specifically:** the ordered observation also asserts the vault holds **no `CeremonySecret`** for that ceremony afterwards.
+- **C10.** **A delivery round re-run after a mid-round failure leaves exactly one file per party. (D22 pin.)** "The finished document reaches every party" is satisfied completely by a round that delivers twice.
+
+  **(plan-review pin: the acknowledgement is emitted before anything is written — 2026-08-29.)** `ReceiveDocument` sends `ackOK` (`internal/p2p/session.go:640`) and the server persists **afterwards** via `saveReceived`, whose own comment says a write failure *"simply reports nothing"* (`internal/server/session.go:911-925`). Compose that with "a no-op once that party's acknowledgement is recorded" and a party whose disk write fails is recorded as delivered, is never retried, and is never told. **What discharges this specifically:** an injected write failure at party 3 of 4, after which the party is **not** recorded as acknowledged and the re-run delivers to that party and to no other.
+- **C11.** **A ceremony directory is gone after the ceremony has ended and its document has been delivered or saved. (D29.)**
+
+  **(plan-review pin: on three of D28's four end states the prune destroys the only copy of a real signature — 2026-08-29. Five seats found this independently.)** For a non-convener party the mirror is the **sole** durable copy of the document carrying their own signature: `openArrival` calls `mirrorHop` and `addDoc` — a mirror file and an in-memory tab — and `saveReceived` is not on the co-sign path at all, running only under `mode == sessionModeReceive` (`internal/server/session.go:878`, `:904-910`). `RemoveMirror` is an unconditional `os.RemoveAll` (`internal/ceremony/mirror.go:178-184`). *Declined*, *expired* and *abandoned* never reach a delivery round, so nothing is ever delivered **or saved** — and D28 says in terms that those parties *"keep their partial document"* and that the partially-signed document *"remains a valid document"*. **What discharges this specifically:** the prune is a **move, not a delete** — this machine's own signed contribution is written outside `~/nib/ceremonies/` first — and the observation is the file's presence at a named path *after* the prune has run, never the directory's absence alone.
+- **C12.** **A ceremony whose mirror directory has been deleted by hand degrades that panel entry and leaves every other ceremony and open document working. (gap #19.)**
+
+  **(plan-review pin: absence is the easy case; the four that brick the ceremony are the other ones — 2026-08-29.)** `ReadMirror` returns on any `Verify` failure before it ever exposes `Expires` (`internal/ceremony/mirror.go:130-137`), and `Verify`'s first check is exact version equality (`internal/ceremony/record.go:464`) against a `FormatVersion` already at 4 and moved three times. So a Nib update mid-ceremony makes every live ceremony on the machine unlistable, unresumable **and unprunable**, reported in the vocabulary of forgery — while the vault does this properly next door, refusing a newer payload with a plain sentence naming both versions (`internal/vault/vault.go:239-248`). **What discharges this specifically:** four degraded outcomes with four different sentences — absent, unparseable, **version-skewed** (named as a skew per D32, not as a verification failure), and unverifiable — and a version-skewed mirror is still prunable.
+- **C13.** **Convening a second ceremony on a document already under a live one is refused, server-side and by name. (gap #28.)** The mutation criterion cannot see it, because convening is not a mutation.
+
+  **(plan-review pin: the covered direction is the one that already works — 2026-08-29.)** `Convene` refuses on a record being present in the bytes it is handed (`internal/ceremony/convene.go:159-166`), so convening again on the *convened output* is refused. Convening a second ceremony after **re-opening the original file** is not: two live ceremonies, two rosters, one underlying document, which is the case C13's wording actually describes. **What discharges this specifically:** the refusal is driven from the **pre-convene bytes** and keys on document identity against the live mirrors, not on a record being present in the bytes at hand.
+- **C14.** **An invitation re-issued to one party mid-ceremony completes, with every other party's state untouched. (gap #24.)** The convene criteria only ever issue once. *(gap #24 is **D21's** pin, not D29's.)*
+- **C15.** **Every criterion in this phase is driven by the multi-instance harness (D26), not by hand.**
+
+  **(plan-review pin: this is P07's C06 verbatim, and P07 closed it ⚠ PARTLY for the reason that will recur — 2026-08-29.)** P07's ledger records *"Read literally the criterion is not met"*, because criteria that are not live multi-party ceremonies cannot be tier-4 driven. P08 restates it in **stronger** terms with no mechanism to make the outcome different: C02 (a planted prefix), C03 (ENOSPC), C04's absence guard and C11's grace are all structurally outside tier 4 today. The tree reads twelve `NIB_*` variables and not one is a fault knob, and `build/redproof.sh:14-25` is the standing doctrine against adding one — *"a switch whose whole purpose is to break the program is the same gun with a better excuse, and it would ship in the binary users run."* **What discharges this specifically:** C15 carries its own exception list; every criterion names the tier that drives it; a criterion the harness cannot express states its stimulus and its reason **in the acceptance bullet**; and the two capabilities that are pure harness — a `restart <instance>` verb and redproof-shaped fault patches — are built rather than assumed.
+- **C16.** Documentation and README updated in the same phase (STANDARDS docs-parity).
+- **C17.** **`<project-memory>/instruments/ceremony.md` holds a section named for every P08 slice, compared against this phase's build order at the close, and a missing section FAILS. (added 2026-08-29, plan-review.)** P07 carried C11 for the inventory and its close still found seventeen slices with no rows at all, because *an absent row is invisible to a pass over rows* — and `/pending 297`'s own conclusion is that *"a slice that closes without writing its rows should be the thing that fails, and nothing checks it."* A preamble sentence is not a criterion and a phase-close ledger can cite nothing from it, which is why this is C17 rather than a paragraph.
+
+**The `C01…C17` labels are editorial, added 2026-08-29 at the phase-open (`/createcode`), and no
 criterion's text is changed by them.** P07's criteria carry labels and P08's did not, so a ledger
 over this phase had nothing to cite but a paraphrase — which is the drift the acceptance ledger
-exists to catch. The labels are the citation.
+exists to catch. The labels are the citation. **C17 is the one addition**, made at the plan-review
+below rather than editorially.
 
-Slices *(firmed 2026-08-29 at the phase-open, `/createcode`, against the tree at v1.117.236 —
-the sketch was: hop persistence, the atomic write and the disk-full path; resumption in a fresh
-process; the ceremony-scoped arm window; the end-state machine; the delivery round and its
-per-party keying; the prune, the scoped pins and the convene refusal)*:
+Reviewed 2026-08-29 (**plan-review pass, the seventh — the P08 phase-open**, run by `/createcode`'s
+own trigger because P08 is security-, migration- and egress-heavy. Structural gate **passed**;
+sixteen seats — the seven-seat `plan` set, the `crypto`/core and `verification` pack lenses, the PDF
+document-format SME, and five of the six conditional seats this repo declares. The Go SME was not
+seated: its declared remit is `code only`. **The pass found that P08's criteria, written 2026-08-18
+against a design, rest on three premises the tree has since measured false**, and that the seven
+slices firmed hours earlier had inherited all three. Pins written at C01–C07 and C09–C15, D22, D24,
+D28 and D29; **C17 added**; the slice list re-firmed from seven slices to nine. Four items are
+decision-level and are **parked for Dan**, listed in the run's closing batch. Report:
+`<project-memory>/plan-reviews/2026-08-29.md`.)
 
-**The cut, and what moved from the sketch.** The sketch's six items became seven slices along one
-line: **the lifecycle D29 states once — end state → delivery round → close-out.** Three things
-moved. *The ceremony-scoped arm window is no longer its own item*: it was built at P05.S09b and the
-arm already waits `ceremony.MaxCeremonyLife` (`internal/server/session.go:1288`), so what C05 is
-owed is a driver, not a mechanism — it joins the other two between-hop properties in S03. *A
-reader for the mirror became a slice of its own* (S02): nothing in the product lists
-`~/nib/ceremonies/` — `/api/ceremony/invites` reads one record by an id the caller supplies
-(`internal/server/convene.go:332`) and that is the only reader in the tree — so C04's "resumed in a
-fresh process" has no surface to resume through, and C12's "degrades that entry" has no entry.
-*The convene refusal left the close-out item*: it is already built (`ErrAlreadyConvened`,
-`internal/ceremony/convene.go:160`) and shares nothing with the prune but the sketch's comma.
+**The through-line, stated once because every critical is an instance of it.** P08's sixteen criteria
+were written on 2026-08-18 against the design; its slices were firmed on 2026-08-29 against a tree
+that has since measured three of the design's load-bearing premises false.
 
-**A standing constraint on all seven, not a slice: C15.** Every criterion is driven by the
-multi-instance harness — `build/pairrepro.sh -n N` and `build/ceremonyrepro.sh` — and a criterion
-whose only driver is a Go test in one process has not been driven. It is ledgered at the phase
-close, discharged in each slice.
+1. **The ceremony has no mutable local state, and four slices each wrote as if another had built
+   one.** Every field of `Record` is inside the convener-signed preimage and `ReadMirror` re-verifies
+   the signature on every read (`internal/ceremony/record.go:154-197`, `:463-497`;
+   `internal/ceremony/mirror.go:130`), so "mark the record declined" is unbuildable in both
+   directions: outside the preimage it is an unauthenticated field on a root of trust that
+   `Decode`→`Encode` silently drops, and inside it, it changes `rosterHash` and invalidates every
+   `[NibRoster:…]` commitment already collected. The mirror is exactly two files and the plan named
+   no third.
+2. **A party who is not the convener persists nothing at all.** `AddCeremonySecret` has one
+   production caller and it is `handleCeremonyConvene`; `/api/ceremony/accept` stores a pin and
+   throws the invitation away; and the vault states it as a design decision at the line — *"A
+   recipient's invitation travels in the arm request and is never persisted"*
+   (`internal/vault/vault.go:171-181`). Nothing re-arms at startup. So C01, C04, C08 and C09 are
+   unreachable on every machine but the convener's — **and the harness hides it**, because
+   `pairrepro.sh` keeps each invitation in a shell variable and would re-arm a "restarted" party
+   from the harness's own copy. That is ADR-010's *configured past the disagreement* shape, in the
+   one criterion whose subject is surviving a restart.
+3. **`docHash` stopped being a document identity at the first signature, and P07 measured it and
+   wrote it down in three places** — `internal/ceremony/embed.go:186-206` (*"a receiving party can
+   never pass `CheckDocument`, at any hop — measured, not argued"*), `mirror.go:151-163`, and
+   `CheckRecord`'s existence. D29's identity pin adopting `(ceremony id, docHash)` predates that
+   measurement by five days, and the firmed S02 copied the pin without it.
 
-**And each slice's grill writes its seam-inventory rows into
-`<project-memory>/instruments/ceremony.md` as part of the slice**, not at the close. That is
-`/pending 297`'s finding applied forward: seventeen slices of P07 shipped with no rows, and the
-close could not retro-write them.
+A fourth, which is not a stale premise but a live defect the panel surfaced while reading for one:
+**the party being asked to sign never checks the ceremony's deadline.** See C06's pin.
 
-#### P08.S01 — The contribution reaches disk before it reaches the wire *(D24, gaps #15 and #17; C01, C02, C03)*
-Scope: today the hop's signature is cached **in memory only** — `ceremonyID.reDelivery`
-(`internal/server/ceremonyid.go:75`), whose own comment says *"In-memory only — the process-kill
-persistence D24 names is P08's"* — and the disk copy is written by `mirrorHop`
-(`internal/server/ceremonyid.go:628`) from `openArrival`, which runs **after** `p2p.Receive` has
-already written the frame back (`internal/p2p/session.go:322`). So D24's order is inverted at the
-one place it is observable: the bytes reach the peer first and the disk second, best-effort, with a
-log line when the write fails. The in-memory half is correctly ordered — `rd.Store` sits at
-`internal/p2p/session.go:826`, inside `coSignExchange`, before the frame — which is where the
-durable write belongs too. This slice makes the mirror the re-delivery cache: the contribution is
-written durably and atomically at the instant it exists and before the frame; `Cached` reads
-through to disk so a fresh process re-delivers rather than re-signs; and a persist that fails takes
-the delivery with it.
+Slices *(re-firmed 2026-08-29 at the plan-review above — nine, from the seven firmed hours earlier
+at the phase-open. The seven are not listed separately: every one of them survives inside these
+nine, and the changes are recorded as the pins at C01–C15 and in the hand-off.)*
 
-**One tension its grill must settle, named here rather than discovered at the diff review.**
-`mirrorHop`'s own doc comment argues the opposite of C03: *"failing the hop over it would discard a
-real signature to protect a copy of it."* D24 says the delivery is not attempted. They are the same
-write and both cannot stand; the grill decides, and if it decides against D24 that is a decision
-amendment and therefore parked, not absorbed.
+**Two things are built before anything that resumes, because six criteria rest on them and no slice
+owned either:** a machine-local state file, and an invitee that persists its own ceremony. They are
+S01. **A standing constraint on all nine, not a slice: C15 as pinned** — every slice names the tier
+that drives each of its bullets, and a bullet tier 4 cannot express says so and says why. **And
+C17** — each slice writes its seam-inventory section as part of the slice, and the close fails on a
+missing one.
+
+#### P08.S01 — The mirror becomes a ceremony's home *(D24, D29, D32; precondition for C01, C04, C08, C09, C11, C12)*
+Scope: the three absences the plan-review found under everything else. **(a)** A third mirror file,
+`state.json` — unsigned, machine-local, carrying its own layout version — because `Record` cannot
+hold mutable state and `WriteMirror`'s document-then-record ordering is a *first-write* argument
+that does not survive a third file. **(b)** `/api/ceremony/accept` writes the mirror and stores the
+invitee's **own** secret through the existing `AddCeremonySecret` door, ceremony-scoped so the
+close-out prune takes it away — in the vault, never in the mirror, which D29 forbids in terms.
+**(c)** `ReadMirror`'s version skew lifted out of its generic *"does not verify"* wrap into a named
+D32 skew outcome, so a Nib update mid-ceremony does not make every live ceremony unloadable *and*
+unprunable while telling the user the vocabulary of forgery.
 Acceptance:
-- **A hop killed after its signature exists and before the initiator reads it re-delivers the same bytes on resumption and never re-signs** — driven at N=4 by killing party 3's process between the two, restarting it, and counting blocks on the finished document: exactly one per signer, counted on the artifact rather than reported by the sender.
-- **The mirror holds the contribution at the moment the peer could first have it** — asserted by the file existing when the process is killed before `writeFrame`, which is the only observation that separates "persisted before delivering" from "persisted at some point".
-- **A write interrupted mid-flight leaves the previous state or the complete contribution, never a prefix**, with a negative fixture that plants a prefix and shows the check goes red against it — otherwise the check is green because nothing ever tore.
-- **A persist that fails for want of space reports "signed but not saved" in those terms, does not write the frame, and reaches the peer as a named refusal rather than as EOF** — driven with a write that returns `ENOSPC`, and asserting the peer's own sentence, because a refusal the far side renders as a network fault invites the retry a refusal must not invite.
-- Driven through the harness (C15), not through an in-process Go test alone.
+- **A party who accepts an invitation has a ceremony on disk from that moment** — mirror written, secret in the vault, no invitation text retained anywhere — and can re-arm for it with **no invitation in the request**, which is the assertion that stops the harness supplying what the product lacks.
+- **`state.json` carries its own version and is never written by `WriteMirror` from a record**, so a later mirrored hop cannot erase a locally-observed end state; its crash-consistency relation to `record.json` is stated at the line.
+- **A mirror whose record carries a format version this build does not write is reported as a version difference, not as a verification failure, and is still prunable** — driven by planting a bumped version, with the vault's own `checkContentsVersion` sentence as the model.
+- **`pairrepro.sh` gains a `restart <instance>` verb** — pure harness, no product flag, per `redproof.sh`'s standing doctrine — and a run asserts the restarted instance re-armed from its own disk.
+- Tier: 4 and 6 for the accept/re-arm and restart bullets; tier 1 for the version-skew classes, stated as such (C15).
 
-#### P08.S02 — A ceremony is loaded, not remembered *(D24, D29 identity pin, gap #19; C04, C12)*
-Scope: give the mirror a reader. Nothing in the product enumerates `~/nib/ceremonies/`; a restarted
-Nib cannot know it is mid-ceremony, and `hasSigned` (`internal/server/ceremonyid.go:306`) reads the
-in-memory map S01 makes durable. This slice adds the read side: the ceremonies on this machine,
-each with its record, its position and its next action, answered with no network reachable; and a
-resume that re-establishes the **within-process** document pin from `(ceremony id, docHash)` —
-never from a persisted document id, which ADR-001 scopes to one process and which D29's pin says
-would, on the next launch, either name nothing or name a **different** document while every pinning
-check still passed.
-
-**What this slice is not.** The panel is P06's, and P08 does not build it. C12's word is "panel
-entry"; what P08 owes is the answer the panel will render and its behaviour when one ceremony's
-directory is gone. D29's "renders while the vault is locked" is a P06 criterion and is not claimed
-here.
+#### P08.S02 — The contribution reaches disk before it reaches the wire *(D24, gaps #15 and #17; C01, C02, C03)*
+Scope: what the first firming had as S01, corrected on five counts the panel established. The
+in-memory half is already ordered correctly — `rd.Store` sits inside `coSignExchange` before
+`writeFrame` (`internal/p2p/session.go:826`, `:324`) — and the durable half runs *after*, from
+`openArrival`, best-effort, logging into a stderr no user reads. This slice moves it, and: widens
+`ReDeliverer` to `Store(inbound, final) error` / `Cached(inbound) ([]byte, error)`, without which C03
+is unbuildable and a read failure is indistinguishable from a cache miss — which falls through to a
+**second signature from the same identity**, the one thing D24 forbids; keys the durable side on the
+inbound hash beside the bytes, since the mirror holds one `document.pdf` and the cache's own comment
+says keying on the hop alone hands a reconnect the wrong signature; makes `hasSigned` read through
+too, or a resumed process takes the pre-signing branch with a zero `postSignDeadline` and returns
+immediately; writes a `document.sha256` sidecar that `ReadMirror` checks **unconditionally**, since
+its `DocHash` check is switched off from the first signature onward — which is every byte this slice
+persists; and states `mirrorHop`'s fate, because a rule at two doors with opposite failure semantics
+is ADR-009's shape.
 Acceptance:
-- **A ceremony resumed in a fresh process, with other documents opened first so the id counter has advanced, acts on its own document** — matched on `(ceremony id, docHash)` — **and refuses by name a decoy document now holding the id it used to have.** The decoy is the point: without it the check passes against a dangling id.
-- **Nothing persists a document id.** A guard reads the mirror's own bytes and fails if one appears, with a negative fixture that adds one — the rule is an absence, and an absence with no fixture is a green that proves nothing.
-- **A ceremony whose mirror directory has been deleted by hand is reported as unloadable with a named reason, and every other ceremony and every open document keeps working** — driven at three ceremonies with the middle one removed, asserting the other two still load and a document open in a tab is untouched.
-- **A truncated `record.json` reads as damage on this machine and not as a counterparty substitution** — `ErrMirrorDamaged` already draws that line inside `ReadMirror`; this asserts the distinction survives out to the route, which is where a user reads it.
-- Driven through the harness (C15).
+- **The atomic-door guard is promoted to a repo-root `package nib` guard before this slice writes a byte** — `internal/server/atomicroute_test.go` scans one package of twelve, and the new write is in `internal/p2p` or `internal/ceremony`. Red-proved by a one-hunk patch swapping the new site to `os.WriteFile`.
+- **A hop killed after its signature and before the frame re-delivers the SAME BYTES** — the mirror's contribution is snapshotted at the kill and the finished artifact's bytes for that party are byte-identical to it — **and the user's `Confirm` gate fires exactly once** across kill and restart. Block count is asserted too, as the weaker clause, never alone.
+- **A truncated `document.pdf` is refused by the sidecar check whether or not it is signed**, with a negative fixture that truncates at a prior `%%EOF` — which yields a well-formed PDF one revision short, reads as `Valid` with fewer signers, and is the truncation the existing check cannot see.
+- **A persist that fails for want of space reports D24's full sentence — "signed but not saved — do not close Nib" — verbatim, does not write the frame, and reaches an ALPN-v2 peer as a named refusal** with a new append-only code added to `refusalCode`, `errorForCode` and `refusalAck` in one change; **what a v1 peer sees is stated in the bullet** rather than implied away.
+- **The persist has its own budget**: the deadline is re-armed at the point the signature exists, before the write, and the persist becomes a named term in `postConsentDeadline`'s stated composition, walked through `SessionBudget` → `ceremonyHopBudget` → `Convene`'s reservation. The durable write happens **outside** `c.mu`, which `diagnose` takes on the 800 ms status poll.
+- Tier: the kill/restart bullets are tier 4 with S01's verb; the ENOSPC and torn-write bullets are redproof-shaped patches at tier 1 and say so (C15).
 
-#### P08.S03 — Between hops: the arm survives, and an end state becomes a protocol fact *(D16 amendment, D28; C05, C06, C07)*
-Scope: three properties of the gap between hops, together because they are one question — what is
-true of a ceremony while nobody is signing.
-
-*C05 may close with no code.* The arm already waits `ceremony.MaxCeremonyLife`
-(`internal/server/session.go:1288`), by P05.S09b; what is owed is the driver, and a slice that
-closes by measuring an existing property is a success rather than a slice that failed to find work.
-
-*C06 and C07 are unbuilt.* A decline today is local and silent: `declineCeremony`
-(`internal/server/session.go:472`) prunes this machine's ceremony pins and tells nobody, and no
-record is marked. D28 says a decline **ends the whole proceeding** — the record is marked declined,
-the convener learns it on the live channel, and the parties who already signed are told **at
-delivery time**, which is S04's channel and this slice's fact. And an identity that no longer
-matches the roster surfaces today as a generic handshake failure; D28 wants a named message, the
-ceremony ended, and no pin created for the new key — *"accepting it would be exactly the
-substitution L1 exists to forbid, arriving through the front door."*
+#### P08.S03 — A ceremony is loaded, not remembered *(D24, D29 identity pin, D34 gap #19; C04, C12)*
+Scope: give the mirror a reader — and match on something that exists. The resume key is the ceremony
+id read out of the document's **own convener-signed record** (`CheckRecord` / `ProceedingOf`), with
+`docHash` retained only in the unsigned window where it is answerable; a decoy then needs a forged
+`ConvenerSig` rather than a colliding digest. The listing answers from `record.json` and
+`state.json` **only** — measured at this review: `ReadMirror` costs 10 ms at 100 pages, 69 ms at 500
+and 195 ms at 1000, superlinear, on text-only fixtures, so a request-path enumerate of fifty stored
+ceremonies is seconds. The panel is P06's and this slice does not build it; what P08 owes is the
+answer it will render.
 Acceptance:
-- **A party who arms before hop 1 is still armed when the baton arrives at hop 4** — driven at N=4 with every party armed up front, asserting the arm's own remaining window rather than inferring it from the ceremony having completed, because a ceremony that completes quickly proves nothing about a party that waited.
-- **A decline at hop 3 of a four-party ceremony ends the ceremony**: the record on the convener's mirror is marked declined, the convener's route reports a decline and not a network failure, and a subsequent contribution at hop 4 is refused by name.
-- **The declined state is durable and reaches the delivery round** — this slice owes the record and the refusal; S04 owes the telling, and the joint clause is ledgered at S04 so neither slice can close over it.
-- **A peer whose identity no longer matches the roster is refused with a message naming the mismatch, the ceremony ends, and no pin exists for the new key afterwards** — driven by re-enrolling party 3's vault mid-ceremony and asserting the vault's pin set, not the error string alone.
-- Driven through the harness (C15).
+- **A ceremony resumed in a fresh process, with other documents opened first, acts on its own document and refuses by name a DIFFERENT document carrying the same ceremony id** — the decoy C04's pin restates, because the id-collision decoy cannot be built across a process boundary.
+- **Nothing persists a document id**, asserted as a **type** rule over `ceremony.Record`'s field set rather than a byte scan, with a mandatory stimulus assertion that the guard read a real completed ceremony's mirror with both files present — an absence guard over an empty directory is green forever.
+- **Four degraded outcomes, four sentences** — absent, unparseable, version-skewed, unverifiable — driven at three ceremonies with the middle one in each state, asserting the other two still load and an open document is untouched. A truncated `record.json` is a **trust** refusal and a truncated `document.pdf` is **damage**; they are different errors and `ErrMirrorDamaged` covers only the second.
+- **The listing does not open `document.pdf`**, asserted by instrumenting the parse count at fifty stored ceremonies.
+- **A second Nib started while the first holds `~/nib/ceremonies/.lock` lists but does not resume and does not prune, and says why** — there is no lock anywhere in the tree today and P08 turns that from cosmetic into two processes racing one mirror.
+- **A resumed ceremony whose mirror bytes differ from the open tab's reports both and resolves neither** — D29's divergence clause, which had fallen between the first firming's S01 and S02 and is owned here.
+- Tier: 4 and 6 with S01's restart verb; the degradation classes and the type rule are tier 1, stated (C15).
 
-#### P08.S04 — The delivery round *(D22, D22 delivery pin; C08, C10, and C06's telling half)*
-Scope: nothing delivers. The convener finishes holding the only complete document; every other
-party holds the roster prefix as of their own hop, which D28 calls *"not the artifact"*. D22 says
-the round reuses the existing one-way transfer — `SendDocument` / `ReceiveDocument` — dialled by
-the convener party by party, and that *"nothing new is invented for it"*. Its own plan-review pin
-says that sentence is where the round's state went missing: `receivedName`
-(`internal/server/session.go:956`) names a received file `slug-YYYYMMDD-HHMMSS.pdf`, read at the
-line, so a round that fails at party 3 of 4 re-delivers a **second copy** to the two who already
-have it — or silently overwrites, inside the same second. Delivery is keyed by
-`(ceremony id, party)`, is a **no-op** once that party's acknowledgement is recorded, and the
-written filename carries the ceremony id.
+#### P08.S04 — Between hops: the arm, and the end states as protocol facts *(D16 amendment, D28; C05, C06, C07)*
+Scope: three properties of the gap between hops, and one of them is a live defect rather than a gap.
+C05 is **not** a no-code slice: the QUIC arm waits `MaxCeremonyLife` but the TCP arm goes through
+`runSession` on `sessionAcceptTimeout` — five minutes, no ceremony in the arithmetic — and no surface
+exposes a window to assert. The expired end state has one enforcement door and it is on the
+**convener's** side, so a signer can be collected into a proceeding that is over. And the decline
+needs an authenticator: a plain boolean on a local disk is assertable by any local write and
+strippable by the decliner.
 Acceptance:
-- **A four-party ceremony's finished document reaches every party**, including one whose own hop completed and whose process has since restarted — asserted on each party's own disk, never on the convener's report.
-- **A round re-run after a failure injected at party 3 of 4 leaves exactly one file per party** — counted on disk in each party's `~/nib`.
-- **A party who has already acknowledged is not dialled again**, asserted at the dial: the file count alone cannot distinguish "not delivered twice" from "delivered twice over the same name".
-- **The delivered filename carries the ceremony id**, so two ceremonies delivering to one party do not collide on a slug and a second.
-- **A ceremony declined at hop 3 tells the parties who signed at hops 1 and 2, at the delivery round** — D28's own placement, and the clause S03 hands over.
-- Driven through the harness (C15).
+- **`armedUntil` is exposed in `sessionStatus` and the ceremony arm's bound is asserted to be `Expires`-shaped, not `sessionAcceptTimeout`-shaped, on BOTH transports** — the bound, not the remainder, because a loopback ceremony finishes in seconds and a remainder assertion passes under either.
+- **A contribution offered after `Expires` is refused by the SIGNING party's own arrival gate, with the convener bypassed**, routed through the single `checkCeremonyDeadline` door (ADR-009), and the guard asserts the routing rather than the sentence each site prints.
+- **A decline is a separate signed termination object** — the decliner signs `(domain tag, ceremony id, rosterHash, state, time)` through the existing preimage builder — written beside `record.json`, verified on read as the record is, and carried by S05's round. A decline at hop 3 then refuses hop 4 by name and is *checkable* rather than hearsay.
+- **A peer whose identity no longer matches the roster is refused with a message naming the party by roster label and position and containing no hex fingerprint**, the ceremony ends, and the **vault's pin set** is asserted to hold nothing for the new key.
+- Tier: 4 for the arm bound and the decline; tier 1 plus a redproof row for the arrival-gate refusal, stated (C15).
 
-#### P08.S05 — Close-out: end state, then delivery, then the prune *(D29 lifecycle pin; C09, C11)*
+#### P08.S05 — The delivery round *(D22 and its delivery pin; C08, C10, C06's telling half)*
+Scope: D22 says *"nothing new is invented for it"* and the panel found four things that must be.
+**The recipient is not listening**: the post-sign window is `connectDeadline` — 300 seconds — after
+which the loop returns and disarms (`internal/server/session.go:1329`, `:1300`), while C08's word is
+*hours*. **Nothing can find them**: `handleSessionSend` resolves through `peerAddresses`, which is a
+typed address or a LAN browse and nothing else (`internal/server/lan.go:311`) — no DHT, no punch, no
+ladder. **The transport asks a human**: `SendDocument` and `ReceiveDocument` both run
+`runVerification` (`internal/p2p/session.go:570`, `:608`), whose server implementation puts the four
+words on screen and blocks, so delivering to four parties is four attended, vault-unlocked sessions
+with a spoken identity check for a document they already signed. **And the ack means nothing**: it is
+written before the receiver has stored a byte. The re-arm is also a second session per party, which
+the TRIPWIRE at `internal/server/session.go:24-37` says may not be widened without a fresh security
+review — so this slice cites it and states what it widens.
+Acceptance:
+- **A delivery arm**: a ceremony-scoped receive arm, re-established from S01's persisted state at load, accepting only the record's convener, bounded by `Expires` plus S06's grace rather than by `connectDeadline` — and a party idle **past `connectDeadline`**, and a party whose process has restarted, are both reached.
+- **The round finds parties off-LAN** — a second armed rendezvous per party on the same D30 derivation, with its egress enumerated against D34 rather than inherited silently.
+- **The verification gate for the delivery leg is settled in the plan and driven** — it is a document these parties already signed, over a pin and a secret that have not changed.
+- **The acknowledgement means PERSISTED**: the receiver writes durably before the ack, a failed write is not recorded as acknowledged, and a re-run reaches that party **and no other** — driven by injecting the write failure at party 3 of 4.
+- **Exactly one file per party after a re-run**, counted on each party's own disk; the delivered filename is deterministic and carries the ceremony id **and a human half derived from the record's intent**, so the finished lease is distinguishable from Monday's copy by name alone.
+- **The recipient verifies what arrives** — `CheckRecord`, `MatchesRecord`, completeness over the full roster, and a byte-prefix check against **its own persisted contribution**, which is newly possible because S02 stored it and is the only check that catches a substituted prefix. Its blind spots are stated, not implied.
+- **A ceremony declined at hop 3 delivers the signed termination object to the parties who signed at hops 1 and 2**, and the telling states the proceeding is over, who ended it, that their signature stands, and that a re-run starts from the original unsigned file.
+- **`Convene` reserves a delivery term** as well as the hops, so the round is inside the deadline the user set and S06's grace is derived from the same figure rather than hand-chosen.
+- Tier: 4 at N=4, with S01's restart verb (C15).
+
+#### P08.S06 — Close-out: end state, then delivery, then the prune — and nothing is destroyed *(D29 lifecycle pin; C09, C11)*
 Scope: D29 states the lifecycle once — *end state → delivery round → close-out* — and puts the pin
-drop and the mirror prune at **close-out, never at the end state**, because arming refuses an
-unpinned peer and dropping the pins early closes the only channel delivery has. **That defect is
-live in the tree**: `declineCeremony` prunes at the end state (`internal/server/session.go:489`),
-which is precisely the sequence the pin was written against — read at the line, not inferred from
-the pin. The prune must also fire **independently of delivery**: D28's *abandoned* ceremony never
-reaches a delivery round, so `expires` plus a stated grace is the only thing that ever removes its
-directory.
+drop and the prune at close-out. Two corrections the panel forced. The prune **moves, it does not
+delete**: on declined, expired and abandoned there is no delivery round, and the mirror is the only
+place a non-convener's own signed contribution exists. And close-out is **three** stores, not two:
+the vault's per-party secrets are pruned only by the convene *rollback* today, while the product
+already tells the user they go when a ceremony ends.
 Acceptance:
-- **A four-party ceremony's delivery round reaches every party AND THEN their invitation pins are absent** — one observation in that order, so a run that pruned early fails on the delivery rather than on the pins.
-- **The mirror directory is gone once the ceremony has ended and its document has been delivered or saved**, asserted on the filesystem.
-- **A ceremony abandoned before its delivery round has its directory removed after `expires` plus the grace, with no surface touched** — driven on a clock, not on wall time.
-- **The grace is a named constant under D33's law/tunable placement guard** (P07.S09a) and inside `MaxCeremonyLife`; a figure that is bounded by a law and lives in the tunable block by hand-copy is the defect P07.S09b found.
-- **A decline no longer prunes at the end state**, driven by the declined ceremony's delivery round still reaching the parties who signed — which is the observation that fails today.
-- Driven through the harness (C15).
+- **The prune is a move**: this machine's own signed contribution is written outside `~/nib/ceremonies/` first, and the observation is that file's presence at a named path **after** the prune — asserted for a party who signed at hop 2 of an abandoned ceremony.
+- **One close-out door** takes pins, **secrets** and the mirror, reporting the three separately as `unconvene` already does; **C09's ordered observation asserts the vault holds no secret for that ceremony afterwards**, and a pin the user promoted survives.
+- **A ceremony abandoned before its delivery round is closed out after `expires` plus the grace** — evaluated against the record's own `Expires` at startup, at unlock, and as a side effect of S03's listing, never on a wall-clock timer, because every ceremony route is behind `requireUnlocked` and a machine left locked over a weekend prunes nothing while wall time runs.
+- **The grace is a named constant in the tunable block, derived from `ceremony.MaxCeremonyLife` rather than hand-copied** — the `maxCandidatesPerSource` rule, not D33's law/tunable guard, whose `lawFigures` list is a deliberate two-name whitelist that a tunable must not join.
+- **The root is resolved once and refused if it is not absolute** before any `RemoveAll` — `defaultOutputDir` falls back to a relative `"nib"` when `os.UserHomeDir` fails.
+- **A decline no longer prunes at the end state**, driven by the declined ceremony's round still reaching the signers.
+- Tier: 4 for the ordered observation and the abandoned close-out; tier 1 for the root and grace rules (C15).
 
-#### P08.S06 — Two refusals that are already there, driven honestly *(D29 gap #28, gap #24; C13, C14)*
-Scope: both criteria look **met against shipped code**, and this slice's job is to find out rather
-than to assume. `ceremony.Convene` refuses a document that already carries a record
-(`internal/ceremony/convene.go:160`, `ErrAlreadyConvened`) and the route maps it to a status
-(`internal/server/convene.go:292`) — but it refuses on the **presence** of a record, not on the
-ceremony being **live**, which is stricter than C13's wording and must be either argued in the plan
-or narrowed in the code. `/api/ceremony/invites` re-issues from the vault's stored per-party
-secrets (`internal/server/convene.go:322`), so a re-issue hands back the **same** secret and by
-construction leaves every other party untouched — but nothing has ever driven it **mid-ceremony**,
-which is the whole of C14.
-
-Expect this slice to close with little or no code. That is DISPOSE outcome 2, it is common, and it
-is **not** a licence to manufacture a change to justify the coordinate.
+#### P08.S07 — Two refusals that are already there, driven honestly *(D29 gap #28, D21 gap #24; C13, C14)*
+Scope: both look met and this slice finds out. The convene refusal covers the direction that already
+works and misses C13's own — re-opening the **original** file and convening again. The re-issue hands
+back the same stored secret, so a before/after comparison of other parties' state is true by
+construction and proves nothing unless it is shown able to fail.
 Acceptance:
-- **Convening on a document already under a live ceremony is refused server-side by name**, driven through the real route in the harness rather than at the package boundary, because C13's word is "server-side".
-- **The refusal's treatment of an ENDED ceremony is settled and written down** — either it is refused too with the reason stated, or the check learns liveness. An unstated stricter-than-specified behaviour is how a criterion passes while the product does something nobody chose.
-- **An invitation re-issued to one party after hop 1 has completed lets that party's hop complete**, and **every other party's state — pins, secrets, mirror — is identical before and after**, compared rather than asserted absent.
-- Driven through the harness (C15).
+- **Convening from the PRE-CONVENE bytes on a document already under a live ceremony is refused server-side by name**, keyed on document identity against the live mirrors, driven through the real route at tier 6.
+- **The treatment of an ENDED ceremony is settled and written into the plan** — and where the document already carries signatures it stays refused, because removing the record is a structural rewrite that invalidates them.
+- **An invitation re-issued to one party after hop 1 lets that party's hop complete**, and the comparison of every other party's state ships with a **red proof whose patch makes the route regenerate the secret**, so the comparison is demonstrated able to fail.
+- Tier: 6 for both refusals, 4 for the mid-ceremony completion (C15).
 
-#### P08.S07 — Docs, README, and the phase close *(C15, C16)*
-Scope: the docs-parity bullet, and the phase's own close. C15 is a standing constraint on S01–S06
-and is **ledgered** here rather than discharged here — a slice cannot drive criteria that closed
-three slices ago.
+#### P08.S08 — The lifecycle gets a reader *(D34 self-healing, D19's model; new at the plan-review, 2026-08-29)*
+Scope: P08 adds five failure modes — the persist failed, the re-delivery never happened, the resume
+found a damaged mirror, the round stalled at party 3, the prune moved something — and every one of
+them reports today through `log.Printf` to a stderr that a double-clicked launch sends nowhere. The
+tree already knows this and says it once, about the hand-off notice: *"a double-clicked launch has no
+terminal: its stderr goes nowhere a user will look, so a refusal logged here alone is a refusal
+nobody receives"* (`cmd/nib/main.go:271-274`). That reasoning was applied there and to nothing else.
+Without this slice, C11's *"the prune moved something"* is undetectable and unattributable by
+construction, and C03's sentence has no channel.
 Acceptance:
-- **The README and `docs/` describe the lifecycle as it now is**: what persists, what resumes, what is delivered, what is removed, and when — with the end states named as D28 names them.
-- **`nib verify`'s ceremony report names the end state**, extending what P07.S10 built (roster, who was obliged, who signed) with how the proceeding ended.
-- **`CONTRIBUTING.md`'s tier table still describes what the harnesses now do**, since S01–S06 extend them; `verify_test.go` guards that the rows survive, and a row that stopped being true is a guard that stopped meaning anything.
+- **A sticky failure field on `sessionStatus`** that outlives the session and is cleared only by the next arm, carrying cause, summary and recovery — populated on the armed path, where there is no HTTP response to write into.
+- **The "signed but not saved" state offers a recovery action** — the in-memory contribution written to a path the user chooses, through the save-as door that already exists — driven end to end. A warning label over an unrescuable state is not a discharge.
+- **A ceremony-lifecycle event record** — hop persisted, hop re-delivered, ceremony loaded or unloadable, delivery attempted / acknowledged / failed, directory closed out — readable without a terminal, and `saveReceived`'s silent write failure gains a reader in the same change.
+- **The counters live in a package the reader scans cover**, or the gap is recorded: `internal/server` is absent from `observables_test.go`'s package list, so a counter placed there is invisible to every reader scan in the tree.
+- Tier: 3 for the recovery action, 1 for the field and the record (C15).
+
+#### P08.S09 — Docs, README, and the phase close *(C15, C16, C17)*
+Scope: the docs-parity bullet and the phase's own close. C15 and C17 are standing constraints on
+S01–S08 and are **ledgered** here, not discharged here.
+Acceptance:
+- **The README and `docs/` describe the lifecycle as it now is** — what persists, what resumes, what is delivered, what is moved and when — with D28's end states named, and the **limits** stated: the deadline cannot be extended, a party cannot be replaced, ending early means starting again from the unsigned document, and Nib executes one instrument in sequence rather than in counterparts.
+- **The document's own silence is stated**: a Nib PDF does not record how its ceremony ended, and completeness is the only proceeding-level fact it proves about itself. `nib verify` names an end state **only** where a local mirror for that ceremony exists, under a heading that says so, and never prints "completed" from an absent one.
+- **`nib verify` names a valid signature the roster does not account for and exits 2** — `Completeness` iterates the roster and breaks on the first match (`internal/p2p/attestation.go:356-367`), so `signed` can never exceed `obliged` and a duplicate or off-roster signature reads as a clean complete ceremony on both the CLI and the web verdict. The cheapest forensic yield in the phase.
+- **`CONTRIBUTING.md`'s tier table and `verify_test.go`'s ceiling list still describe what the harnesses now do**, including tier 6, which is absent from both today.
+- **Nothing in this phase writes to a document after its last signature**, stated in the scope so the constraint is visible to whoever builds the end-state reporting.
 
 ---
 
