@@ -102,6 +102,32 @@ type Attestation struct {
 // rather than about which program asserted it.
 const attestationTag = "[NibCoSign:1]"
 
+// attestationTagVersion is the number inside that tag, and `attestationTagRE` reads whatever
+// number a reason actually carries (P07.S09c, D32).
+//
+// # The fourth skew surface, and it was the one producing an accusation
+//
+// `Attestations` required the tag VERBATIM before it would read anything. A signature written by
+// a build that had moved to `[NibCoSign:2]` therefore matched nothing: no `AcceptedPeer`, no
+// `RosterHash` — and `markOneProceeding` treats an empty commitment on a VALID signature as
+// disqualifying, so one such signature made the whole document report *"This document was not
+// produced by a single agreed proceeding."*
+//
+// That is D32's forbidden outcome exactly, and it is the same failure the roster token's own
+// version was added to prevent one level down: an accusation about the parties, caused by one of
+// them having updated Nib. The record, the invitation and the session protocol each got a
+// sentence; this surface was excused and is the fourth.
+//
+// **Reading the version does not mean trusting the payload.** A newer tag means this build cannot
+// know what the fields mean, so it parses none of them — the attestation stays empty and
+// `OneProceeding` stays false, which is the fail-closed direction. What changes is that the
+// version is PUBLISHED, so the reader can say "this build cannot read that signature" instead of
+// "these people did not agree".
+const attestationTagVersion = 1
+
+// attestationTagRE matches the tag at any version, so a skew is legible rather than invisible.
+var attestationTagRE = regexp.MustCompile(`\[NibCoSign:([0-9]{1,4})\]`)
+
 // spkiToken matches the machine-readable peer fingerprint embedded in /Reason.
 var spkiToken = regexp.MustCompile(`\[SPKI:([0-9a-fA-F]{64})\]`)
 
@@ -233,6 +259,14 @@ type SignerAttestation struct {
 	// RosterHash is the Ceremony Record commitment this signature carries ("" on an
 	// ordinary two-party co-sign, which has no record).
 	RosterHash string `json:"rosterHash,omitempty"`
+	// TagVersion is the attestation FORMAT version this signature's /Reason declares, 0 when it
+	// carries no Nib attestation tag at all (P07.S09c).
+	//
+	// Published so a reader can tell "this build cannot read that signature" from "these people
+	// did not agree". A value greater than this build's `attestationTagVersion` means the fields
+	// below were deliberately not parsed: the format is one this build does not know, so every
+	// token in it is uninterpreted rather than absent.
+	TagVersion int `json:"tagVersion,omitempty"`
 	// RosterVersion is the record format version that commitment was computed under, 0 when the
 	// signature carries none. Published so a reader can tell a FORMAT SKEW from a disagreement:
 	// two builds at different versions digest the same roster to different hashes, and calling
@@ -324,7 +358,15 @@ func Attestations(st sign.Status, p Proceeding) []SignerAttestation {
 		// The tag is required, not just the token — see attestationTag. safeText strips
 		// brackets from the label and intent this package interpolates, so a co-signer
 		// cannot smuggle either marker through the fields it controls.
-		if strings.Contains(s.Reason, attestationTag) {
+		// The tag at ANY version, so a newer one is legible rather than invisible (P07.S09c).
+		if m := attestationTagRE.FindStringSubmatch(s.Reason); m != nil {
+			if v, err := strconv.Atoi(m[1]); err == nil {
+				sa.TagVersion = v
+			}
+		}
+		// Parsed only at a version this build knows. A newer tag leaves every field empty and
+		// `TagVersion` set, which is what lets the reader say which of the two it is.
+		if sa.TagVersion == attestationTagVersion {
 			if m := spkiToken.FindStringSubmatch(s.Reason); m != nil {
 				sa.AcceptedPeer = m[1]
 			}

@@ -3821,6 +3821,15 @@ async function openSigDetails() {
   augmentSigDetails(rows);
 }
 
+// ATTESTATION_TAG_VERSION is the attestation format version this build can read — the client half
+// of `p2p.attestationTagVersion`. A signature declaring a higher one is reported as unreadable
+// rather than as a party who disagreed (P07.S09c, D32).
+//
+// A literal here and a constant there is two copies of one number, and the guard that keeps them
+// equal is `test/jsdom/tagskew.test.mjs` reading the Go source — the same shape the repo uses for
+// every other cross-language constant, because the alternative is a comment asking nicely.
+const ATTESTATION_TAG_VERSION = 1;
+
 // augmentSigDetails fetches the co-signing attestations and adds, per signer that
 // carries one, what they accept + whether it cross-binds to a real co-signer's
 // key + whether the viewer has pinned them. The parse + cross-binding are done in
@@ -3877,6 +3886,28 @@ async function augmentSigDetails(rows) {
   // Which signatures claim a ceremony. Computed here rather than below, because it now gates
   // the mutual-co-sign sentence as well as the proceeding line.
   const claimed = attested.filter((a) => a.rosterHash);
+  // **A signature this build cannot READ is not a signature that disagrees (P07.S09c, D32).**
+  //
+  // `tagVersion` is the attestation format version the /Reason declares. A newer one means Go
+  // deliberately parsed none of its fields, so the signature arrives with no accepted peer and no
+  // roster commitment — and the "not one proceeding" line below reads exactly that state as a
+  // disagreement. One counterparty on a newer Nib would therefore be told, about a document
+  // everybody signed correctly, that it "was not produced by a single agreed proceeding": an
+  // accusation about the parties, caused by an upgrade.
+  //
+  // Said FIRST and instead, on the same reasoning as the roster-version branch below: where the
+  // reader cannot interpret the evidence, the honest report is that it cannot, not a verdict
+  // drawn from evidence it could not read.
+  const unreadable = atts.filter((a) => a.tagVersion && a.tagVersion > ATTESTATION_TAG_VERSION);
+  if (unreadable.length) {
+    const p = document.createElement('div');
+    p.className = 'sigatt-warn';
+    p.textContent = '⚠ ' + unreadable.length + ' of ' + atts.length + ' signature(s) were made by '
+      + 'a newer version of Nib and this one cannot read them, so it cannot say whether every '
+      + 'party agreed to the same ceremony. This is a version difference, not a disagreement — '
+      + 'update Nib and check again.';
+    els.sigDetailsBody.appendChild(p);
+  }
   // **"each party’s signature attests to the OTHER’s key" is a two-party sentence, and it fired
   // on nine-party ceremonies (P07.S07c, C09).**
   //
@@ -3927,7 +3958,7 @@ async function augmentSigDetails(rows) {
   // `oneProceeding` is false — identical to the disagreement case if read naively. So the
   // discriminator is whether ANY signature claims a ceremony; only then is agreement a
   // question that has been asked.
-  if (claimed.length) {
+  if (claimed.length && !unreadable.length) {
     const p = document.createElement('div');
     if (attested.every((a) => a.oneProceeding)) {
       p.className = 'sigmutual';

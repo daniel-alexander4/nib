@@ -281,7 +281,8 @@ func Dial(ctx context.Context, addr string, identityCertPEM, identityKeyPEM, pin
 	d := &tls.Dialer{NetDialer: &net.Dialer{Timeout: timeout}, Config: cfg}
 	nc, err := d.DialContext(ctx, "tcp", addr)
 	if err != nil {
-		return nil, err
+		// An ALPN mismatch becomes D32's sentence rather than a raw TLS alert (P07.S09c).
+		return nil, asProtocolSkew(err)
 	}
 	conn, ok := nc.(*tls.Conn)
 	if !ok {
