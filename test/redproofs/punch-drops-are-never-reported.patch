@@ -1,0 +1,22 @@
+diff --git a/internal/server/diagnosis.go b/internal/server/diagnosis.go
+index 1a589d4..ceadfe6 100644
+--- a/internal/server/diagnosis.go
++++ b/internal/server/diagnosis.go
+@@ -69,7 +69,7 @@ func (c *ceremonyID) diagnose() diagnosis {
+ 	if c.rz == nil || c.gate == nil {
+ 		// manual/LAN or TCP ceremony — out of D19's scope, but a dropped packet is still a
+ 		// dropped packet and still gets said.
+-		return diagnosis{cause: causeUndiagnosed, detail: report}
++		return diagnosis{cause: causeUndiagnosed}
+ 	}
+ 	// The gate itself is NOT read here: diagnose() also runs on the live-status path, concurrently
+ 	// with the feed that writes the gate, so the record-refused/empty signals are snapshotted into
+@@ -91,7 +91,7 @@ func (c *ceremonyID) diagnose() diagnosis {
+ 	}
+ 	c.mu.Unlock()
+ 	d := classifyD19(in)
+-	d.detail += report
++	_ = report
+ 	return d
+ }
+ 
