@@ -286,19 +286,62 @@ func (c *ceremonyID) Cached(inbound []byte) []byte {
 // Store records THIS hop's co-signed output for `inbound`, so a later reconnect re-delivers it. A
 // Store arriving after close is dropped (the closed-flag pattern setStopNet/setPortMap use), so no
 // signed bytes are stored on a ceremony nothing will tear down.
-func (c *ceremonyID) Store(inbound, final []byte) {
+//
+// **It returns an error and never produces one (P08.S02).** The in-memory record cannot fail; the
+// signature is returned by the interface so the DURABLE half — which `Receive` performs, because it
+// owns the ordering against the frame — has somewhere to be reported from. Keeping both halves on
+// one method would put an fsync inside `c.mu`, which `diagnose` also takes on the 800 ms status
+// poll, stalling `/api/session/status` and `/api/session/disarm` for its duration.
+func (c *ceremonyID) Store(inbound, final []byte) error {
 	if c == nil {
-		return
+		return nil
 	}
 	c.mu.Lock()
-	defer c.mu.Unlock()
 	if c.closed {
-		return
+		c.mu.Unlock()
+		return nil
 	}
 	if c.reDelivery == nil {
 		c.reDelivery = map[string][]byte{}
 	}
 	c.reDelivery[reDeliverKey(inbound)] = final
+	c.mu.Unlock()
+
+	// **The durable half, and it is OUTSIDE the mutex on purpose.** `diagnose` takes `c.mu` and is
+	// reached from `GET /api/session/status`, which the UI polls every 800 ms, and from
+	// `/api/session/disarm`. An fsync of the whole document inside the critical section stalls both
+	// for its duration — and the document can be large. The in-memory record above is what a
+	// reconnect inside this process needs and it is cheap; the disk write is what a reconnect in a
+	// NEW process needs and it is not.
+	//
+	// Its error is returned rather than logged, which is the point of the widened interface: D24's
+	// "signed but not saved" is a sentence the SIGNER has to see, and until this slice the only
+	// channel was a `log.Printf` into a stderr a double-clicked launch sends nowhere.
+	return c.persistContribution(final)
+}
+
+// persistContribution writes this hop's co-signed document to the mirror, durably (D24, P08.S02).
+//
+// It is `mirrorHop`'s work moved to where the ORDERING can be stated: `mirrorHop` runs from
+// `openArrival`, after `p2p.Receive` has already put the document on the wire, so the bytes reached
+// the peer first and the disk second, best-effort. D24 wants the opposite and says why — a crash
+// between signing and delivering must still leave the signature somewhere.
+func (c *ceremonyID) persistContribution(final []byte) error {
+	rec, err := ceremony.Extract(final)
+	if errors.Is(err, ceremony.ErrNoRecord) {
+		// An ordinary two-party co-sign: no ceremony, nothing to mirror, and not a failure. Note
+		// this is also why such a co-sign leaves the receiving machine with an in-memory document
+		// only — a pre-existing gap this slice does not widen and does not close.
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("this hop's document carries a ceremony record that cannot be read: %w", err)
+	}
+	if _, err := ceremony.WriteMirror(defaultOutputDir(), rec, final); err != nil {
+		return fmt.Errorf("ceremony %s could not be written to %s: %w",
+			rec.ID, defaultOutputDir(), err)
+	}
+	return nil
 }
 
 // hasSigned reports whether this hop has produced any signature — the receiver's "am I past the

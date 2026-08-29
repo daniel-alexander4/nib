@@ -301,6 +301,22 @@ func Receive(ch Channel, myCertPEM, myKeyPEM []byte, peerLabel string, c Confirm
 		return nil, fmt.Errorf("receive document: %w", err)
 	}
 	final, err := coSignExchange(myCertPEM, myKeyPEM, peerFP, peerLabel, inbound, c, rd, roster)
+	// **A persist failure is NOT a refusal, and the delivery proceeds (D24 as amended 2026-08-29,
+	// Dan's option A).** `coSignExchange` has produced a real signature the peer consented to and
+	// is owed; what failed is this machine keeping its own copy.
+	//
+	// Withholding the frame was the original clause and it was measured unachievable: `rd.Cached`
+	// is consulted BEFORE the consent gate, so an initiator that gets EOF re-races, reconnects,
+	// hits the cache and is served the document anyway — one reconnect later, with the local write
+	// still un-retried. Dropping the cache instead would make that reconnect RE-SIGN, which is the
+	// second block from one identity D24 forbids two bullets above its own disk-full clause.
+	//
+	// So: send it, and carry the failure out separately so the SIGNER is told. `err` is returned
+	// after the frame, not instead of it.
+	var persistErr error
+	if PersistFailed(err) {
+		persistErr, err = err, nil
+	}
 	if err != nil {
 		// **A refusal reaches the peer as a refusal.** This used to write nothing at all
 		// and close, so the initiator's `readFrame` got EOF and its user was shown
@@ -324,7 +340,10 @@ func Receive(ch Channel, myCertPEM, myKeyPEM []byte, peerLabel string, c Confirm
 	if err := writeFrame(conn, final); err != nil {
 		return nil, fmt.Errorf("send co-signed document: %w", err)
 	}
-	return final, nil
+	// The document is with the peer. If this machine could not keep it, that is now the caller's to
+	// report — and `final` is returned alongside, because the bytes are good and the caller still
+	// wants to open them.
+	return final, persistErr
 }
 
 // ackOK / ackDeclined are the one-byte receipts ReceiveDocument sends and SendDocument
@@ -657,8 +676,17 @@ func ReceiveDocument(ch Channel, a Accepter, myFingerprint []byte, v Verifier) (
 type ReDeliverer interface {
 	// Cached returns a previously co-signed result for `inbound`, or nil for none.
 	Cached(inbound []byte) []byte
-	// Store records the co-signed result for `inbound` so a reconnect re-delivers it.
-	Store(inbound, final []byte)
+	// Store records the co-signed result for `inbound` so a reconnect re-delivers it, and
+	// **reports whether it reached durable storage** (P08.S02).
+	//
+	// The error return is the whole of D24's disk-full clause: without it a failed persist is
+	// unreportable, and `Receive` cannot tell "kept" from "lost" at the one moment the distinction
+	// matters — after the local user's key has been used. It does NOT gate the delivery: D24 as
+	// amended 2026-08-29 (Dan, option A) sends the signature anyway, because withholding it was
+	// measured unachievable — the cache is consulted before the consent gate, so a reconnect
+	// re-delivers regardless — and because the peer's signature is real and withholding it
+	// protects nobody. What the error buys is the SIGNER being told their machine kept no copy.
+	Store(inbound, final []byte) error
 }
 
 func coSignExchange(myCertPEM, myKeyPEM, peerFP []byte, peerLabel string, inbound []byte, c Confirmer, rd ReDeliverer, roster Roster) ([]byte, error) {
@@ -822,10 +850,37 @@ func coSignExchange(myCertPEM, myKeyPEM, peerFP []byte, peerLabel string, inboun
 	}
 	// Cache BEFORE the caller writes it back: a writeback lost in flight must still find the
 	// signature on a reconnect (that is the whole re-delivery case).
+	// **This is D24's "persist before deliver", and it is here because here is BEFORE the frame.**
+	// `Receive` writes the co-signed document at its own next statement but one, so a Store that
+	// reaches disk here is a Store that reached disk before anything went out. The implementation
+	// does the durable half outside its own mutex — see `ceremonyID.Store`.
 	if rd != nil {
-		rd.Store(inbound, final)
+		if err := rd.Store(inbound, final); err != nil {
+			// Not returned: the signature exists and the peer is owed it. The caller reports it.
+			return final, &persistError{err: err}
+		}
 	}
 	return final, nil
+}
+
+// persistError carries "the signature was made and could not be stored" out of coSignExchange
+// WITHOUT making it a refusal (P08.S02, D24 as amended).
+//
+// It is deliberately not one of the wire refusal codes. Nothing is refused: the document goes to the
+// peer exactly as it would have. This exists so `Receive` can write the frame and still tell its
+// caller that this machine kept nothing, which is the one thing the user has to act on.
+type persistError struct{ err error }
+
+func (e *persistError) Error() string {
+	return "signed but not saved — do not close Nib: " + e.err.Error()
+}
+func (e *persistError) Unwrap() error { return e.err }
+
+// PersistFailed reports whether err is a co-signature that was made but not stored. The document
+// reached the peer; this machine did not keep it.
+func PersistFailed(err error) bool {
+	var p *persistError
+	return errors.As(err, &p)
 }
 
 // confirmCoSigned checks the returned document is a genuine mutual co-signature of

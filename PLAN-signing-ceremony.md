@@ -5715,7 +5715,7 @@ Acceptance:
 - **`pairrepro.sh` gains `restart <instance>`** — pure harness, no product flag, per `redproof.sh`'s standing doctrine — and a run asserts the restarted instance re-armed from its own disk. *Met.* Tier 4 `-n 4` PASS, both transports.
 - Tier: 4 and 6 for the accept/re-arm and restart bullets; tier 1 for the store's own rules; stated per C15.
 
-#### P08.S02 — The contribution reaches disk before it reaches the wire *(D24, gaps #15 and #17; C01, C02, C03)*
+#### P08.S02 — The contribution reaches disk before it reaches the wire *(D24 as amended, gaps #15 and #17; C01, C02, C03)* *(**partly done** 2026-08-29, v1.117.252 — the order is inverted and C03 is met; C01's kill-and-restart driver and C02's sidecar remain)*
 Scope: what the first firming had as S01, corrected on five counts the panel established. The
 in-memory half is already ordered correctly — `rd.Store` sits inside `coSignExchange` before
 `writeFrame` (`internal/p2p/session.go:826`, `:324`) — and the durable half runs *after*, from

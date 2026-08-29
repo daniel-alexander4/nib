@@ -3,6 +3,8 @@ package p2p
 import (
 	"bytes"
 	"crypto/sha256"
+	"errors"
+	"strings"
 	"testing"
 )
 
@@ -19,15 +21,26 @@ func (c countingConfirmer) Confirm(SignerAttestation, []byte) (bool, string, []b
 }
 
 // mapReDeliverer is a test cache keyed on sha256(inbound), the same key the server's ceremonyID uses.
-type mapReDeliverer struct{ m map[string][]byte }
+//
+// `fail` makes `Store` report a persist failure, which is P08.S02's disk-full path: the production
+// implementation writes the mirror durably inside `Store`, so an injected error here is the only
+// in-process way to drive D24's "signed but not saved" without a real full disk.
+type mapReDeliverer struct {
+	m    map[string][]byte
+	fail error
+}
 
 func (r *mapReDeliverer) Cached(inbound []byte) []byte {
 	sum := sha256.Sum256(inbound)
 	return r.m[string(sum[:])]
 }
-func (r *mapReDeliverer) Store(inbound, final []byte) {
+func (r *mapReDeliverer) Store(inbound, final []byte) error {
 	sum := sha256.Sum256(inbound)
+	// **Cached even when the durable half fails, exactly as production does.** The signature was
+	// made and the peer is going to receive it, so a reconnect must re-deliver rather than re-sign
+	// — the second block D24 forbids. What failed is only this machine's own copy.
 	r.m[string(sum[:])] = final
+	return r.fail
 }
 
 // TestReDeliveryIsIdempotent — P05.S10 T05, the crux. Co-signing the SAME inbound twice through a
@@ -100,5 +113,78 @@ func TestReDelivererMissRunsAFreshExchange(t *testing.T) {
 	if calls != 2 {
 		t.Errorf("Confirm called %d times for two DISTINCT documents, want 2 — a distinct inbound "+
 			"must be a cache miss that consents and signs fresh, not a re-delivery", calls)
+	}
+}
+
+// TestAFailedPersistStillDeliversAndStillSaysSo — D24 as amended 2026-08-29 (Dan, option A).
+//
+// # Why the delivery proceeds, which is the part that changed
+//
+// D24 originally said the delivery is not attempted. That cannot be achieved by withholding the
+// frame: `rd.Cached` is consulted BEFORE the consent gate, so an initiator that gets EOF re-races,
+// reconnects, hits the cache and is served the document anyway — one reconnect later, with the local
+// write still un-retried. Dropping the cache instead would make that reconnect RE-SIGN, producing
+// the second block from one identity D24 forbids two bullets above its own disk-full clause.
+//
+// So the peer receives the signature they are owed — it is real and it was consented to — and the
+// signer is told their machine kept no copy. This drives both halves of that at once, because
+// either alone is satisfiable by the wrong design: "the document came back" is true of a build that
+// never noticed the failure, and "an error was reported" is true of one that withheld the frame.
+func TestAFailedPersistStillDeliversAndStillSaysSo(t *testing.T) {
+	aCert, aKey := newIdentity(t)
+	bCert, bKey := newIdentity(t)
+	aFP, bFP := fingerprint(t, aCert), fingerprint(t, bCert)
+	inbound := signAsInitiator(t, aCert, aKey, bFP)
+
+	calls := 0
+	conf := countingConfirmer{intent: "I accept", n: &calls}
+
+	// Stimulus: the identical exchange with a WORKING persist returns no error, so the error below
+	// is the injected failure and not something about this fixture.
+	okRD := &mapReDeliverer{m: map[string][]byte{}}
+	if _, err := coSignExchange(bCert, bKey, aFP, "Alice", inbound, conf, okRD, Roster{}); err != nil {
+		t.Fatalf("setup: the same exchange with a working persist failed: %v", err)
+	}
+
+	calls = 0
+	rd := &mapReDeliverer{m: map[string][]byte{}, fail: errors.New("no space left on device")}
+	final, err := coSignExchange(bCert, bKey, aFP, "Alice", inbound, conf, rd, Roster{})
+
+	// **The document exists and is complete.** Withholding it protects nobody: the peer consented,
+	// the signature is real, and they will get it on a reconnect regardless.
+	if final == nil {
+		t.Fatal("a failed persist produced no document — the signature was still made and the " +
+			"peer is still owed it; withholding it only delays delivery by one reconnect")
+	}
+	if n := len(ReadAttestations(final)); n != 2 {
+		t.Fatalf("the delivered document carries %d signers, want 2", n)
+	}
+
+	// **And the failure is carried out, distinguishably.** Not a refusal — nothing was refused.
+	if err == nil {
+		t.Fatal("a failed persist was silent — the signer has used their key and their machine " +
+			"kept nothing, which is the one thing D24 exists to tell them")
+	}
+	if !PersistFailed(err) {
+		t.Errorf("the failure is not recognisable as a persist failure: %v — the caller has to be "+
+			"able to tell it from a refusal, because one means 'save a copy somewhere' and the "+
+			"other means 'this did not happen'", err)
+	}
+	if IsContributionRefusal(err) {
+		t.Error("a failed persist reports as a contribution refusal — nothing was refused, and a " +
+			"caller would render it as the peer having rejected the signature")
+	}
+	if !strings.Contains(err.Error(), "do not close Nib") {
+		t.Errorf("the error does not carry D24's second clause: %q — 'signed but not saved' names "+
+			"the state and 'do not close Nib' is the half that prevents the loss", err)
+	}
+
+	// The cache holds it, so a reconnect re-delivers rather than re-signing.
+	if got := rd.Cached(inbound); got == nil {
+		t.Error("a failed persist left nothing cached — a reconnect would then re-sign, which is " +
+			"the second block from one identity D24 forbids")
+	}
+	if calls != 1 {
+		t.Errorf("Confirm was called %d times, want 1", calls)
 	}
 }
