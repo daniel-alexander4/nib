@@ -60,6 +60,22 @@ func TestANewerAttestationTagIsLegibleAsASkewRatherThanAsSilence(t *testing.T) {
 			got[1].AcceptedPeer, got[1].RosterHash)
 	}
 
+	// **And the newer signature disqualifies the whole document's proceeding verdict**, which is
+	// the fact the client's fixture models and the reason the client needs a sentence at all.
+	// `markOneProceeding` treats an empty commitment on a VALID signature as disqualifying, so
+	// the READABLE signature beside it also reports false: one party's upgrade turns the whole
+	// verdict negative, and without the skew sentence that negative is rendered as "these people
+	// did not agree".
+	//
+	// Asserted here rather than assumed by `test/jsdom/tagskew.test.mjs`, whose fixture sets this
+	// field by hand — a fixture that guessed it the other way would drive a state Go never
+	// produces, which is what the first version of it did.
+	if got[0].OneProceeding {
+		t.Error("a document carrying a signature this build cannot read still reports one " +
+			"proceeding on its readable signatures — a false reassurance about a document with " +
+			"evidence in it nobody read")
+	}
+
 	// A signature with NO tag is the third state and must stay distinct from both.
 	if got[2].TagVersion != 0 {
 		t.Errorf("an ordinary Finalize signature reports TagVersion %d, want 0 — a signature that "+
