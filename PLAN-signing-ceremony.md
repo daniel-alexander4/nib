@@ -5387,7 +5387,7 @@ Acceptance:
 - The report has a **named production reader**: D19's diagnosis, which is where `report()`'s own doc says it was going.
 - A hop that exhausts the budget **drops and reports** and never fails the ceremony (D33's own words), driven at the loop.
 
-#### P07.S09c — The version sentence and skew at four surfaces *(D32; C13)* — **new, 2026-08-28, split out of S09** *(done 2026-08-28, v1.117.226 — 2 clauses, both met; 3 red proofs. The attestation tag was the worst of the four skew surfaces because it did not fail loudly at all: one signature from a newer build made the whole document report *not one proceeding*, an accusation about the parties caused by an upgrade)*
+#### P07.S09c — The version sentence and skew at four surfaces *(D32; C13)* — **new, 2026-08-28, split out of S09** *(done 2026-08-28, v1.117.226–.229 — 2 clauses, both met; 3 red proofs, one of which was rejected on replay because the CLIENT FIXTURE modelled a state Go never produces. The attestation tag was the worst of the four skew surfaces because it did not fail loudly at all: one signature from a newer build made the whole document report *not one proceeding*, an accusation about the parties caused by an upgrade)*
 - T01 — `ProtocolSkewError`, produced at one door for all three dial sites and lifted by the server before D19. *(done)*
 - T02 — the attestation tag parsed at any version; a newer one publishes `TagVersion` and parses nothing else. *(done — reading the version is not trusting the payload)*
 - T03 — the client reports the skew INSTEAD of the accusation, with both controls. *(done)*
