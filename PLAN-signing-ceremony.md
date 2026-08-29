@@ -5801,16 +5801,18 @@ Acceptance:
 - **A decline no longer prunes at the end state**, driven by the declined ceremony's round still reaching the signers.
 - Tier: 4 for the ordered observation and the abandoned close-out; tier 1 for the root and grace rules (C15).
 
-#### P08.S07 — Two refusals that are already there, driven honestly *(D29 gap #28, D21 gap #24; C13, C14)*
+#### P08.S07 — Two refusals that are already there, driven honestly *(D29 gap #28, D21 gap #24; C13, C14)* *(done 2026-08-29, v1.117.246 — both driven at the route for the first time; C13's LOOSER direction found unreachable and scoped out with the reason)*
 Scope: both look met and this slice finds out. The convene refusal covers the direction that already
 works and misses C13's own — re-opening the **original** file and convening again. The re-issue hands
 back the same stored secret, so a before/after comparison of other parties' state is true by
 construction and proves nothing unless it is shown able to fail.
 Acceptance:
-- **Convening from the PRE-CONVENE bytes on a document already under a live ceremony is refused server-side by name**, keyed on document identity against the live mirrors, driven through the real route at tier 6.
-- **The treatment of an ENDED ceremony is settled and written into the plan** — and where the document already carries signatures it stays refused, because removing the record is a structural rewrite that invalidates them.
-- **An invitation re-issued to one party after hop 1 lets that party's hop complete**, and the comparison of every other party's state ships with a **red proof whose patch makes the route regenerate the secret**, so the comparison is demonstrated able to fail.
-- Tier: 6 for both refusals, 4 for the mid-ceremony completion (C15).
+- **Convening again on a document already carrying a record is refused server-side by name, with 409 and the cost clause.** *Met*, and driven at the route for the first time. `ErrAlreadyConvened` has existed since P07.S02a and was driven only at the PACKAGE; `conveneStatus`'s 409 and the sentence a user reads were asserted by nothing, and tier 6's "SECOND ceremony" clause convenes on a FRESH document, which is the allowed case.
+- **C13's looser direction is UNREACHABLE, and is scoped out here rather than left implied.** Re-opening the ORIGINAL file and convening again cannot be keyed on the hash: `docHash` is computed over the **prepared** document (`internal/ceremony/convene.go:230-237`), which embeds a fresh 128-bit ceremony id, so two convenes of one source file produce two different prepared documents with two different hashes. Catching it needs the ORIGINAL's hash stored in the record as well — a `FormatVersion` bump, and therefore a slice rather than a task. **`not exercised`, with what would settle it named.**
+- **The treatment of an ENDED ceremony is settled: it stays refused, and here is the reason.** A document that carries a record carries it forever — the record is an embedded file inside what becomes a signed document, and `Embed` refuses an already-signed one, so it can be neither removed nor replaced after the first signature. "Learn liveness" would therefore mean consulting the local mirror, which C12 makes hand-deletable: a deleted mirror would re-permit convening on a document that already carries a record, which is precisely the two-records-on-one-document harm D29 names. The document is the only source of truth that travels with it. *Settled at rung 1 and recorded, rather than shipped as an unstated stricter-than-specified behaviour.*
+- **A re-issue returns each party's invitation byte-identical to the one convene issued**, so a party who lost their email is not made to re-accept a different one and every other party's copy stays valid. *Met*, with the red proof that makes the comparison able to fail — without it the assertion is true by construction, since the route reads the secrets back from the vault.
+- **Driving a re-issue after a hop has actually completed is `not exercised`** — it needs the relay. The assertion that mattered is P08.S01's `TestAReIssuedInvitationStillMatchesItsRecord`, which is where the live defect was and which this slice's work rests on.
+- Tier: 1 at the route for both refusals; tier 6 and the relay are what the two `not exercised` rows would need (C15).
 
 #### P08.S08 — The lifecycle gets a reader *(D34 self-healing, D19's model; new at the plan-review, 2026-08-29)*
 Scope: P08 adds five failure modes — the persist failed, the re-delivery never happened, the resume
