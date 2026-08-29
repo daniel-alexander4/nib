@@ -1,17 +1,12 @@
 diff --git a/internal/server/cosign.go b/internal/server/cosign.go
-index 0b26a9a..1a71661 100644
+index 0f05ce2..bcd0583 100644
 --- a/internal/server/cosign.go
 +++ b/internal/server/cosign.go
-@@ -253,28 +253,6 @@ func (s *Server) buildCoSigned(w http.ResponseWriter, pdf, cert, key []byte, att
- 	//
- 	// 409 rather than 400: this is a refusal about the STATE of a proceeding, not about a
- 	// malformed request, and the user's action is to wait rather than to correct a field.
+@@ -323,30 +323,6 @@ func (s *Server) buildCoSigned(w http.ResponseWriter, pdf, cert, key []byte, att
+ 		httpError(w, http.StatusInternalServerError, "could not read your own fingerprint")
+ 		return nil, false
+ 	}
 -	if len(roster.Entries) > 0 {
--		myFP, err := sign.Fingerprint(cert)
--		if err != nil {
--			httpError(w, http.StatusInternalServerError, "could not read your own fingerprint")
--			return nil, false
--		}
 -		if err := p2p.AdmitContribution(pdf, roster, hex.EncodeToString(myFP)); err != nil {
 -			httpError(w, http.StatusConflict, err.Error())
 -			return nil, false
@@ -27,6 +22,13 @@ index 0b26a9a..1a71661 100644
 -		//
 -		// The first signer accepts "" — there is nobody before them, and that is C14 as amended.
 -		att.AcceptedPeer = p2p.PredecessorOf(roster, hex.EncodeToString(myFP))
+-		// And it NAMES the ceremony — and, since P07.S07a, this party: their label, their
+-		// capacity and their position in the signing order, through the one door the receiving
+-		// side also uses. `att.Signer` arrives here as the `"Nib User"` constant
+-		// `cosignAttestation` sets for the manual co-sign; inside a ceremony the roster overrides
+-		// it, which is why the constant is left where it is rather than deleted — a document
+-		// co-signed outside a ceremony genuinely has no roster to be named by.
+-		p2p.StampCommitment(&att, roster, hex.EncodeToString(myFP))
 -	}
  	prepared := pdf
  	if sign.Verify(pdf).State == sign.Unsigned {
