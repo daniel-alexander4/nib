@@ -387,3 +387,129 @@ func TestACeremonyArmWaitsForTheCeremonyOnBothTransports(t *testing.T) {
 		t.Errorf("a ceremony arm's window is %s, want about %s", ceremonial, ceremony.MaxCeremonyLife)
 	}
 }
+
+// TestConveningTwiceOnOneDocumentIsRefusedAtTheRoute is P08.S07's C13 half.
+//
+// # What was and was not covered
+//
+// `ErrAlreadyConvened` has been in `internal/ceremony` since P07.S02a and
+// `TestTheAlreadyConvenedRefusalNamesTheAnswerAndItsCost` drives it — at the PACKAGE. C13's word is
+// "server-side", and nothing drove the route: `conveneStatus`'s 409 mapping, and the sentence a user
+// actually reads, were asserted by nothing. Tier 6's "SECOND ceremony" clause convenes on a FRESH
+// document, which is the allowed case.
+//
+// # The direction this does NOT cover, named rather than implied
+//
+// C13 says "a document already under a live one". This drives the convened OUTPUT — the document in
+// the tab, which now carries the record. Re-opening the ORIGINAL file and convening again is not
+// refused, and cannot be keyed on the hash: `docHash` is computed over the PREPARED document
+// (`internal/ceremony/convene.go:230-237`), which embeds a fresh 128-bit ceremony id, so two
+// convenes of one source file produce two different prepared documents with two different hashes.
+// Catching that needs the original's hash stored in the record too, which is a format bump and
+// therefore its own slice. Recorded in the plan.
+func TestConveningTwiceOnOneDocumentIsRefusedAtTheRoute(t *testing.T) {
+	ts, pdfPath := startServer(t)
+	c, csrf := authedClient(t, ts)
+	if code, body := postForCode(t, c, csrf, ts.URL+"/api/open", openRequest{Path: pdfPath}); code != http.StatusOK {
+		t.Fatalf("open: %d %s", code, body)
+	}
+	me := myFingerprint(t, c, ts.URL)
+	req := conveneRequest{
+		Roster: []convenePartyRequest{
+			{Fingerprint: me, Label: "Convener", Signs: true},
+			{Fingerprint: strings.Repeat("2b", 32), Label: "The other party", Signs: true},
+		},
+		Intent:        "We agree to co-sign the lease",
+		Expires:       time.Now().Add(48 * time.Hour).UTC().Format(time.RFC3339),
+		ConvenerSigns: true,
+	}
+	// Stimulus: the first convene SUCCEEDS, so the refusal below is about the second one and not
+	// about a roster the route would have rejected either way.
+	if code, body := postForCode(t, c, csrf, ts.URL+"/api/ceremony/convene", req); code != http.StatusOK {
+		t.Fatalf("setup: the first convene returned %d %s", code, body)
+	}
+
+	code, body := postForCode(t, c, csrf, ts.URL+"/api/ceremony/convene", req)
+	if code != http.StatusConflict {
+		t.Fatalf("convening again on the same document returned %d, want 409 — 409 is the one "+
+			"status that says this is about the DOCUMENT's state rather than a field the "+
+			"convener can correct: %s", code, body)
+	}
+	if !strings.Contains(body, "already part of a ceremony") {
+		t.Errorf("the refusal does not name what is wrong: %q", body)
+	}
+	// C04's own wording: the message must carry the COST, because that is the half a builder omits.
+	if !strings.Contains(body, "cannot be carried") && !strings.Contains(body, "signatures already") {
+		t.Errorf("the refusal does not say that signatures already collected are lost, which C04 "+
+			"asks for separately precisely because it is the bad news: %q", body)
+	}
+}
+
+// TestAnInvitationReIssuedMidCeremonyLeavesEveryoneElseUntouched is P08.S07's C14 half.
+//
+// # Why this needed a red proof to be worth anything
+//
+// The re-issue reads each party's secret back from the vault, so "every other party's state is
+// untouched" is true BY CONSTRUCTION — the comparison would pass against any behaviour, including
+// one that regenerated the secret for the party being re-issued to and thereby broke their
+// invitation. The red proof `reissue-regenerates-the-secret` is what makes the comparison able to
+// fail; without it this test asserts that nothing changed in a function that changes nothing.
+func TestAnInvitationReIssuedMidCeremonyLeavesEveryoneElseUntouched(t *testing.T) {
+	ts, pdfPath := startServer(t)
+	c, csrf := authedClient(t, ts)
+	if code, body := postForCode(t, c, csrf, ts.URL+"/api/open", openRequest{Path: pdfPath}); code != http.StatusOK {
+		t.Fatalf("open: %d %s", code, body)
+	}
+	me := myFingerprint(t, c, ts.URL)
+	partyB, partyC := strings.Repeat("2b", 32), strings.Repeat("3c", 32)
+	code, body := postForCode(t, c, csrf, ts.URL+"/api/ceremony/convene", conveneRequest{
+		Roster: []convenePartyRequest{
+			{Fingerprint: me, Label: "Convener", Signs: true},
+			{Fingerprint: partyB, Label: "B", Signs: true},
+			{Fingerprint: partyC, Label: "C", Signs: true},
+		},
+		Intent:        "We agree to co-sign the lease",
+		Expires:       time.Now().Add(48 * time.Hour).UTC().Format(time.RFC3339),
+		ConvenerSigns: true,
+	})
+	if code != http.StatusOK {
+		t.Fatalf("convene: %d %s", code, body)
+	}
+	var first conveneResponse
+	if err := json.Unmarshal([]byte(body), &first); err != nil {
+		t.Fatal(err)
+	}
+	// Stimulus: there really are two invitations to compare, so "the others are unchanged" is a
+	// claim about a populated set.
+	if len(first.Invites) != 2 {
+		t.Fatalf("setup: convene issued %d invitations, want 2", len(first.Invites))
+	}
+
+	code, body = postForCode(t, c, csrf, ts.URL+"/api/ceremony/invites",
+		ceremonyInvitesRequest{Ceremony: first.Ceremony})
+	if code != http.StatusOK {
+		t.Fatalf("re-issue: %d %s", code, body)
+	}
+	var again conveneResponse
+	if err := json.Unmarshal([]byte(body), &again); err != nil {
+		t.Fatal(err)
+	}
+	byFP := map[string]string{}
+	for _, iv := range again.Invites {
+		byFP[strings.ToLower(iv.Fingerprint)] = iv.Invitation
+	}
+	for _, iv := range first.Invites {
+		got, ok := byFP[strings.ToLower(iv.Fingerprint)]
+		if !ok {
+			t.Errorf("the re-issue dropped %s entirely", iv.Label)
+			continue
+		}
+		// Byte-identical, which is the point: a re-issue hands back the SAME invitation, so a
+		// party who lost their email is not made to re-accept a different one — and every other
+		// party's copy stays valid, which is what "untouched" has to mean.
+		if got != iv.Invitation {
+			t.Errorf("the invitation re-issued to %s differs from the one convene issued — every "+
+				"party who already holds theirs would now be holding a stale one", iv.Label)
+		}
+	}
+}
