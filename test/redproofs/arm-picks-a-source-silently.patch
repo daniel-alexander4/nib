@@ -1,0 +1,14 @@
+diff --git a/internal/server/session.go b/internal/server/session.go
+index 8ede811..5bc0ad9 100644
+--- a/internal/server/session.go
++++ b/internal/server/session.go
+@@ -514,8 +514,7 @@ func (s *Server) declineCeremony(cer *ceremonyID) {
+ // The same reasoning `checkTransport` records for an unknown transport: refuse, never downgrade.
+ func (s *Server) armInvitation(v *vault.Vault, req armRequest) (string, error) {
+ 	if req.Ceremony != "" && req.Invitation != "" {
+-		return "", errors.New("this request names a stored ceremony AND carries an invitation — " +
+-			"send one or the other, because Nib will not choose for you which ceremony you meant")
++		return req.Invitation, nil
+ 	}
+ 	if req.Ceremony == "" {
+ 		return req.Invitation, nil

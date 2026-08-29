@@ -5653,7 +5653,7 @@ that drives each of its bullets, and a bullet tier 4 cannot express says so and 
 C17** — each slice writes its seam-inventory section as part of the slice, and the close fails on a
 missing one.
 
-#### P08.S01 — The mirror becomes a ceremony's home *(D24, D29, D32; precondition for C01, C04, C08, C09, C11, C12)*
+#### P08.S01 — A ceremony survives a restart on every machine *(D21, D24, D29; precondition for C01, C04, C08, C09)* *(done 2026-08-29, v1.117.240 — **re-scoped at its grill**, and the title changed with it: the mirror is NOT where an invitee's state goes)*
 Scope: the three absences the plan-review found under everything else. **(a)** A third mirror file,
 `state.json` — unsigned, machine-local, carrying its own layout version — because `Record` cannot
 hold mutable state and `WriteMirror`'s document-then-record ordering is a *first-write* argument
@@ -5674,12 +5674,24 @@ D29's own harm, delivered by its own fix.
 **(c)** `ReadMirror`'s version skew lifted out of its generic *"does not verify"* wrap into a named
 D32 skew outcome, so a Nib update mid-ceremony does not make every live ceremony unloadable *and*
 unprunable while telling the user the vocabulary of forgery.
+**The grill dropped two of the four parts and added one.** *`state.json` went* — nothing in this
+slice writes mutable state, and the store's home (vault or a third mirror file) is a decision that
+belongs to the first slice that actually needs it, S04's end states or S05's delivery acks, made
+against a real requirement rather than speculatively. Position and next action are derivable from
+`record.json` plus the document's signature count, so S03's listing does not need it either.
+*The mirror's version-skew classification went to S03*, because a named error has **no reader**
+until the loader exists: `handleCeremonyInvites` collapses every `ReadMirror` error into one 404.
+*And the re-issue repair arrived*, because it is not adjacent work — it is the **convener's half of
+this slice's own criterion**. A convener's disk-based re-arm path is that route, and it was emitting
+invitations every recipient refuses.
 Acceptance:
-- **A party who accepts an invitation has a ceremony on disk from that moment** — mirror written, secret in the vault, no invitation text retained anywhere — and can re-arm for it with **no invitation in the request**, which is the assertion that stops the harness supplying what the product lacks.
-- **`state.json` carries its own version and is never written by `WriteMirror` from a record**, so a later mirrored hop cannot erase a locally-observed end state; its crash-consistency relation to `record.json` is stated at the line.
-- **A mirror whose record carries a format version this build does not write is reported as a version difference, not as a verification failure, and is still prunable** — driven by planting a bumped version, with the vault's own `checkContentsVersion` sentence as the model.
-- **`pairrepro.sh` gains a `restart <instance>` verb** — pure harness, no product flag, per `redproof.sh`'s standing doctrine — and a run asserts the restarted instance re-armed from its own disk.
-- Tier: 4 and 6 for the accept/re-arm and restart bullets; tier 1 for the version-skew classes, stated as such (C15).
+- **A party who accepts an invitation can rejoin it after a restart** — the invitation is stored, in the **vault** and never in `~/nib/ceremonies/`, and an arm carrying only a ceremony id succeeds. *Met.* `TestAcceptPersistsTheInvitationSoAReArmNeedsNoPaste`, whose stimulus is an arm naming a ceremony this machine never accepted, so the pass cannot come from a build that ignores the field.
+- **The re-arm request carries NO invitation**, asserted on the marshalled body and not on the arm succeeding — which is true either way. *Met*, in Go and again at tier 4 through real binaries across a real process restart.
+- **Naming two sources for one invitation is refused by name**, both individually valid so a silent pick would have armed. *Met.*
+- **A re-issued invitation still matches the record it was built from**, run through `MatchesRecord` itself rather than by diffing fields. *Met*, and it was RED before this slice: the route omitted `Intent`.
+- **The write ships with its prune**, wired at the two sites that already prune ceremony material. *Met* at the store; **`not exercised` for a ceremony that COMPLETES**, which has no close-out caller in this tree for the convener's secrets either — recorded rather than closed over, and it is P08.S06's.
+- **`pairrepro.sh` gains `restart <instance>`** — pure harness, no product flag, per `redproof.sh`'s standing doctrine — and a run asserts the restarted instance re-armed from its own disk. *Met.* Tier 4 `-n 4` PASS, both transports.
+- Tier: 4 and 6 for the accept/re-arm and restart bullets; tier 1 for the store's own rules; stated per C15.
 
 #### P08.S02 — The contribution reaches disk before it reaches the wire *(D24, gaps #15 and #17; C01, C02, C03)*
 Scope: what the first firming had as S01, corrected on five counts the panel established. The
