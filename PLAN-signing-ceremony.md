@@ -1701,10 +1701,32 @@ says nothing about the write itself. Two failures land on exactly that path:
   either the previous state or the complete contribution and never a prefix — not the re-delivery
   criterion, which never writes twice.
 - **A full disk.** The signature exists and cannot be written, which is this decision's own defect
-  with the mitigation removed. **The signature is held in memory, the delivery is not attempted, and
+  with the mitigation removed. **The signature is held in memory, ~~the delivery is not attempted,~~
+  **the delivery PROCEEDS (amended 2026-08-29 — Dan, option A)**, and
   the failure is reported as "signed but not saved — do not close Nib"** — the only honest sentence
   available, because closing Nib is what destroys it. Reporting it as an ordinary write error invites
   exactly that.
+
+  **(amended 2026-08-29 — Dan, option A, after the P08.S02 deepdive measured the original clause
+  unimplementable.)** "The delivery is not attempted" cannot be achieved by withholding the frame.
+  `rd.Cached` is consulted **before** the consent gate — deliberately, so a reconnect does not re-ask
+  the user (`internal/p2p/session.go:770-774`) — and `rd.Store` runs before the caller writes back
+  (`:825-827`). So the sequence is: sign, cache, persist fails, frame withheld, initiator gets EOF,
+  EOF is transport loss, the glare path **re-races**, and the reconnect hits the cache and returns the
+  document *before it could reach the persist point again*. The peer is served one reconnect later,
+  this machine still has no durable copy, and the failed write is never retried.
+
+  Three shapes existed and each was wrong differently. Withhold-and-keep-the-cache is incoherent: it
+  claims not to deliver, and delivers. Withhold-and-drop-the-cache makes the reconnect **re-sign**,
+  producing the second block from one identity that this very decision forbids two bullets above and
+  that P07's C01 exists to catch. Deliver-and-warn is the only coherent one.
+
+  **So: the peer receives the signature they are owed** — it is real, it was consented to, and
+  withholding it protects nothing — **and the SIGNER is told, in this decision's own words, that
+  their machine kept no copy, with an action that lets them put one somewhere else.** What survives
+  of this bullet is the sentence, not the withholding. `mirrorHop`'s own comment had already reached
+  the same conclusion from the other side: *"failing the hop over it would discard a real signature
+  to protect a copy of it."*
 
 **The defect this exists to close, read at the line:** `p2p.Receive` builds the co-signed document
 and *then* writes it back; if that write fails it returns the error
@@ -5557,7 +5579,7 @@ Exit criteria:
 - **C02.** **The contribution write is atomic: a process killed mid-write leaves the previous state or the complete contribution, never a prefix. (gap #15.)** The re-delivery criterion cannot see this — it never writes twice.
 
   **(plan-review pin: atomicity has no cheap observation, and the door guard does not reach the new write — 2026-08-29.)** `WriteMirror` already routes both files through `atomicfile.WriteDurable` (`internal/ceremony/mirror.go:88`, `:101`), which is temp → `Sync` → rename → parent-dir `Sync`, so a torn prefix is unreachable at that door by construction and a planted-prefix fixture proves the *detector*, not the writer. `internal/server/atomicroute_test.go:38` scans `internal/server` only — one package of twelve, the shape `goroutines_test.go` was promoted to the repo root to fix. **What discharges this specifically:** the atomic-door guard is promoted to a repo-root `package nib` guard *before* the new write exists, and the red proof is a one-hunk patch swapping the new persist site to `os.WriteFile` — routing is the falsifiable property.
-- **C03.** **A disk-full persist reports "signed but not saved" and does not attempt delivery. (gap #17.)**
+- **C03.** **A disk-full persist reports ~~"signed but not saved" and does not attempt delivery~~ "signed but not saved — do not close Nib" VERBATIM, delivers the signature anyway, and offers the signer somewhere else to put a copy. (gap #17; amended 2026-08-29 — Dan, option A, following D24's amendment.)**
 
   **(plan-review pin: the sentence is truncated, the channel does not exist, and there is no recovery half — 2026-08-29.)** D24's wording is *"signed but not saved — **do not close Nib**"*, and D24 argues that clause is the load-bearing half; a builder implementing the truncated string passes this criterion while the instruction that prevents the loss is gone. The message also has nowhere to be said: the persist runs on the p2p goroutine with no HTTP response, `sessionStatus` carries no failure field (`internal/server/session.go:1032-1043`), the accept loop discards the error into `_` (`:746`), and the front end has **no live region at all** — `toast` sets `textContent` on a bare div and clears it after 2500 ms (`web/app.js:9625-9634`), which a screen reader never announces. **What discharges this specifically:** an exact-string assertion on D24's full sentence; a sticky failure field on `sessionStatus` that outlives the session; and a driven recovery action that writes the in-memory contribution to a user-chosen path — a warning label over an unrescuable state is not a discharge.
 - **C04.** **A ceremony resumed in a fresh process — with other documents opened first, so the id counter has advanced — acts on its own document and refuses a decoy holding the id it used to have. (D29 identity pin.)** The resumption bullet alone passes with a dangling id, because nothing in it opens a second document.
@@ -5712,8 +5734,9 @@ Acceptance:
 - **The atomic-door guard is promoted to a repo-root `package nib` guard before this slice writes a byte** — `internal/server/atomicroute_test.go` scans one package of twelve, and the new write is in `internal/p2p` or `internal/ceremony`. Red-proved by a one-hunk patch swapping the new site to `os.WriteFile`.
 - **A hop killed after its signature and before the frame re-delivers the SAME BYTES** — the mirror's contribution is snapshotted at the kill and the finished artifact's bytes for that party are byte-identical to it — **and the user's `Confirm` gate fires exactly once** across kill and restart. Block count is asserted too, as the weaker clause, never alone.
 - **A truncated `document.pdf` is refused by the sidecar check whether or not it is signed**, with a negative fixture that truncates at a prior `%%EOF` — which yields a well-formed PDF one revision short, reads as `Valid` with fewer signers, and is the truncation the existing check cannot see.
-- **A persist that fails for want of space reports D24's full sentence — "signed but not saved — do not close Nib" — verbatim, does not write the frame, and reaches an ALPN-v2 peer as a named refusal** with a new append-only code added to `refusalCode`, `errorForCode` and `refusalAck` in one change; **what a v1 peer sees is stated in the bullet** rather than implied away.
-- **The persist has its own budget**: the deadline is re-armed at the point the signature exists, before the write, and the persist becomes a named term in `postConsentDeadline`'s stated composition, walked through `SessionBudget` → `ceremonyHopBudget` → `Convene`'s reservation. The durable write happens **outside** `c.mu`, which `diagnose` takes on the 800 ms status poll.
+- **A persist that fails for want of space reports D24's full sentence — "signed but not saved — do not close Nib" — VERBATIM, and the frame is written anyway** (D24 as amended 2026-08-29, Dan's option A). The exact-string match is the assertion: C03 quoted only the first half, and the "do not close Nib" clause is the one that prevents the loss, so a build implementing the truncated string would pass a looser check while dropping the part that matters.
+- **Two things this slice no longer needs, and the amendment is why.** *No new wire refusal code* — nothing is refused on the wire, so `refusalCode`/`errorForCode`/`refusalAck` are untouched and the ALPN-v1 question does not arise. (`/pending 315`, the enumeration's missing derived guard, is still real and is still owed; it is simply no longer this slice's.) *And no cache surgery* — the withhold-and-drop-the-cache shape, which would have made a reconnect re-sign, is dead.
+- **The persist sits between `coSignExchange` and the deadline reset, and outside `c.mu`.** Before the reset, so the frame still gets a full fresh `postConsentDeadline`; outside the mutex because `diagnose` takes the same one and the UI polls it every 800 ms, so an fsync inside it stalls `/api/session/status` and `/api/session/disarm`. **The peer's budget is the one that binds and it is NOT widened here** — `remoteDecisionDeadline` is `2*PeerGateWindow + postConsentDeadline`, so two full human gates leave exactly two minutes for the co-signature *and* a write-back of up to `maxFrame`. The persist spends from that. Widening it cascades into `Convene`'s reservation and C20, which is a slice rather than a task; the term is **stated in `postConsentDeadline`'s composition** and the limit is recorded rather than silently absorbed.
 - Tier: the kill/restart bullets are tier 4 with S01's verb; the ENOSPC and torn-write bullets are redproof-shaped patches at tier 1 and say so (C15).
 
 #### P08.S03 — A ceremony is loaded, not remembered *(D24, D29 identity pin, D34 gap #19; C04, C12)* *(**partly done** 2026-08-29, v1.117.243 — C12 met, the listing and its four degradation classes; C04's resume/decoy half NOT built and named below)*
