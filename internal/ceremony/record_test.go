@@ -1138,13 +1138,45 @@ func TestTheMirrorHoldsNoSecret(t *testing.T) {
 		t.Fatal(err)
 	}
 	root := t.TempDir()
-	dir, err := WriteMirror(root, r, nil)
+	// **A mirror WITH a document, and the directory walked rather than one file read (P08.S02,
+	// closing /pending 314).**
+	//
+	// This used to write `nil` for the document and read `record.json` alone — so `document.pdf`
+	// did not exist while the test ran, and a secret in the document, or in any file added later,
+	// passed it. `mirror.go`'s own header calls this "the check that matters" and describes it as
+	// "an absence check over this directory"; it was an absence check over one name. P08.S02 adds
+	// a third file, which is what made the gap actionable.
+	doc, derr := testpdf.Text("the document in flight")
+	if derr != nil {
+		t.Fatal(derr)
+	}
+	dir, err := WriteMirror(root, r, doc)
 	if err != nil {
 		t.Fatal(err)
 	}
-	b, err := os.ReadFile(filepath.Join(dir, "record.json"))
+	var walked int
+	var b []byte
+	ents, err := os.ReadDir(dir)
 	if err != nil {
 		t.Fatal(err)
+	}
+	for _, e := range ents {
+		if e.IsDir() {
+			continue
+		}
+		raw, rerr := os.ReadFile(filepath.Join(dir, e.Name()))
+		if rerr != nil {
+			t.Fatal(rerr)
+		}
+		walked++
+		b = append(b, raw...)
+	}
+	// Stimulus: every file the mirror writes was actually read. A walk that found one file would
+	// pass this check while being the narrow test it replaces.
+	if walked < 3 {
+		t.Fatalf("setup: walked %d file(s) in the mirror, want at least 3 (document, checksum, "+
+			"record) — an absence check that reads fewer files than the directory holds is the "+
+			"defect this test was", walked)
 	}
 	// The stimulus: the file really has content, so "no secret in it" is not true of an
 	// empty file.
