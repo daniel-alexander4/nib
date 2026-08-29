@@ -1069,16 +1069,37 @@ print(next(i['invitation'] for i in d['invites'] if i['fingerprint'].lower()=='$
   [ "$(python3 -c "import json;print(json.load(open('$WORK/accept.json'))['pinned'])" 2>/dev/null)" = "1" ] \
     || fail "accepting the invitation established no pin, so D21's step was not removed"
 
-  # Hop 2: the CONVENER offers instance 3 the document hop 1 produced.
-  hop2code="$(curl -sS -X POST "${URLS[0]}/api/session/initiate" -H "X-CSRF-Token: ${CSRFS[0]}" \
-    -F "pdf=@$WORK/hop1.pdf" -F "appearance=@$WORK/sig.png" \
-    -F "params={\"fingerprint\":\"${FPS[2]}\",\"intent\":\"hop 2\"}" \
-    -F "address=127.0.0.1:${SESSION_PORTS[2]}" -F "transport=tcp" -F "invitation=$inv3" \
+  # **Hop 2 is driven over the CONVENED document, and it used to be driven over an unrelated one
+  # (fixed 2026-08-28, P07's phase close).**
+  #
+  # This offered `hop1.pdf` — the output of the MANUAL two-party exchange above — together with
+  # `inv3`, an invitation for the ceremony convened afterwards. The comment below said so in as
+  # many words: "over a document unrelated to the ceremony convened afterwards". So the request
+  # carried TWO faults at once: a party out of turn, AND an invitation that does not describe this
+  # document at all. L3's not-your-turn happened to be the refusal that fired, and the clause read
+  # as driving L3.
+  #
+  # P07.S07b added the arrival check to the dial door — C17 at the door that never had it — and
+  # its refusal is both earlier and more accurate: *this invitation does not describe the ceremony
+  # in this document*. The clause then went red, correctly, and the fix is the fixture rather than
+  # the check. This is the second harness to hit it today; `build/ceremonyrepro.sh`'s L3 clause had
+  # the same shape and the same cause.
+  #
+  # So: the convened document, offered by a party who is genuinely out of turn. Instance 3 is
+  # THIRD in the signing order and the document carries no signature yet, so the prefix rule says
+  # instance 1 signs first — one fault, named by L3, with the arrival check satisfied.
+  curl -fsS "${URLS[0]}/api/pdf" -o "$WORK/convened.pdf" 2>/dev/null \
+    || fail "could not fetch the convened document for hop 2"
+  [ -s "$WORK/convened.pdf" ] || fail "the convened document is empty"
+  hop2code="$(curl -sS -X POST "${URLS[2]}/api/session/initiate" -H "X-CSRF-Token: ${CSRFS[2]}" \
+    -F "pdf=@$WORK/convened.pdf" -F "appearance=@$WORK/sig.png" \
+    -F "params={\"fingerprint\":\"${FPS[0]}\",\"intent\":\"hop 2\"}" \
+    -F "address=127.0.0.1:${SESSION_PORTS[0]}" -F "transport=tcp" -F "invitation=$inv3" \
     -o "$WORK/hop2.json" -w '%{http_code}')"
   if [ "$hop2code" = "200" ]; then
-    fail "hop 2 SUCCEEDED (HTTP 200) — the carrier signed a second time and the far side took it.
-      If that is now correct, P07.S05's carry route has landed and this whole block should go,
-      along with TestTheRelayCeilingAtFourParties in internal/p2p."
+    fail "hop 2 SUCCEEDED (HTTP 200) — a party THIRD in the signing order contributed to a
+      document carrying no signature at all, so the roster prefix rule is not being enforced
+      at the initiating door."
   fi
   # ── What this probe MEASURES now ─────────────────────────────────────────────
   #
