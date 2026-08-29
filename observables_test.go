@@ -123,7 +123,16 @@ var published = map[string][]string{
 	// honest entry is a reader rather than an exclusion. Found at the slice's diff review,
 	// which noted the sharper half: as parked, DELETING the route would have left this scan
 	// green — the exact failure the file exists to prevent.
-	"ceremony.Convened":        {"internal/server/convene.go"},
+	"ceremony.Convened": {"internal/server/convene.go"},
+	// **`ceremony.Stored` is the listing's row (P08.S03), and its reader is the route.**
+	// Every field is rendered: `ID` and `State` name the entry, `Reason` is the sentence a
+	// degraded one shows, and `Intent`/`Expires`/`Roster` are what a panel draws for a healthy
+	// one. `handleCeremonies` returns the slice verbatim, so the reader is the whole of it.
+	//
+	// Worth recording that this scan is what noticed the type at all: it was added, wired and
+	// tested, and the guard failed the root package on the same commit — which is the shape the
+	// file exists for, arriving on its own subject rather than on a regression.
+	"ceremony.Stored":          {"internal/ceremony/mirror.go", "internal/server/convene.go"},
 	"vault.CeremonySecret":     {"internal/server/convene.go", "internal/vault/vault.go"},
 	"ceremony.CandidateRecord": {"internal/ceremony/candidate.go", "internal/server/ceremonynet.go"},
 	"ceremony.Invitation":      {"internal/ceremony/invitation.go", "internal/server/ceremonyid.go"},

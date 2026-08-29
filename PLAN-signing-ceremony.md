@@ -5716,7 +5716,7 @@ Acceptance:
 - **The persist has its own budget**: the deadline is re-armed at the point the signature exists, before the write, and the persist becomes a named term in `postConsentDeadline`'s stated composition, walked through `SessionBudget` → `ceremonyHopBudget` → `Convene`'s reservation. The durable write happens **outside** `c.mu`, which `diagnose` takes on the 800 ms status poll.
 - Tier: the kill/restart bullets are tier 4 with S01's verb; the ENOSPC and torn-write bullets are redproof-shaped patches at tier 1 and say so (C15).
 
-#### P08.S03 — A ceremony is loaded, not remembered *(D24, D29 identity pin, D34 gap #19; C04, C12)*
+#### P08.S03 — A ceremony is loaded, not remembered *(D24, D29 identity pin, D34 gap #19; C04, C12)* *(**partly done** 2026-08-29, v1.117.243 — C12 met, the listing and its four degradation classes; C04's resume/decoy half NOT built and named below)*
 Scope: give the mirror a reader — and match on something that exists. The resume key is the ceremony
 id read out of the document's **own convener-signed record** (`CheckRecord` / `ProceedingOf`), with
 `docHash` retained only in the unsigned window where it is answerable; a decoy then needs a forged
@@ -5725,14 +5725,26 @@ id read out of the document's **own convener-signed record** (`CheckRecord` / `P
 and 195 ms at 1000, superlinear, on text-only fixtures, so a request-path enumerate of fifty stored
 ceremonies is seconds. The panel is P06's and this slice does not build it; what P08 owes is the
 answer it will render.
+**Two amendments its grill made, both before any code.** *The lock is gone.* The plan asked for an
+exclusive lock on `~/nib/ceremonies/`; there is no locking anywhere in this tree and adding some
+would be a **second** cross-process policy contradicting the one that exists — `cmd/nib/main.go`
+decides deliberately that a launch losing the instance race *"carries on and serves"*, because *"a
+launch that loses twice is better off running than refusing to start"*. The signal is already
+maintained: `instanceToken` is empty exactly when this process is not the recorded instance. One
+mechanism, already tested, and no new file in a directory whose file set other checks assume.
+*And an acceptance bullet cracked:* the listing cannot both answer from `record.json` alone — which
+the measured cost forces — and report a **next action**, because that needs the signature count and
+the count is in the document. The listing answers what the record knows; the count comes when one
+ceremony is opened, which is what a panel does anyway.
 Acceptance:
-- **A ceremony resumed in a fresh process, with other documents opened first, acts on its own document and refuses by name a DIFFERENT document carrying the same ceremony id** — the decoy C04's pin restates, because the id-collision decoy cannot be built across a process boundary.
-- **Nothing persists a document id**, asserted as a **type** rule over `ceremony.Record`'s field set rather than a byte scan, with a mandatory stimulus assertion that the guard read a real completed ceremony's mirror with both files present — an absence guard over an empty directory is green forever.
-- **Four degraded outcomes, four sentences** — absent, unparseable, version-skewed, unverifiable — driven at three ceremonies with the middle one in each state, asserting the other two still load and an open document is untouched. A truncated `record.json` is a **trust** refusal and a truncated `document.pdf` is **damage**; they are different errors and `ErrMirrorDamaged` covers only the second.
-- **The listing does not open `document.pdf`**, asserted by instrumenting the parse count at fifty stored ceremonies.
-- **A second Nib started while the first holds `~/nib/ceremonies/.lock` lists but does not resume and does not prune, and says why** — there is no lock anywhere in the tree today and P08 turns that from cosmetic into two processes racing one mirror.
-- **A resumed ceremony whose mirror bytes differ from the open tab's reports both and resolves neither** — D29's divergence clause, which had fallen between the first firming's S01 and S02 and is owned here.
-- Tier: 4 and 6 with S01's restart verb; the degradation classes and the type rule are tier 1, stated (C15).
+- **One unloadable ceremony never costs another** — driven at two ceremonies with one broken, asserting both are still NAMED and the intact one still loads. *Met* (C12).
+- **Four degraded outcomes with four sentences** — absent, unparseable, **version-skewed**, unverifiable. *Met.* The skew case is the one that mattered: a Nib update moves `FormatVersion`, `Verify` refuses, and every live ceremony would otherwise be reported in the vocabulary of forgery. It now names the cause and the remedy and stays prunable.
+- **The listing does not open `document.pdf`** — driven by planting bytes that are not a PDF at all, so anything that parsed them would fail. *Met.*
+- **A Nib that is not this machine's recorded instance lists but says it must not act.** *Met*, and the fixture is that case by construction.
+- **A ceremony resumed in a fresh process refuses a decoy document carrying the same id**, matched on the ceremony id from the document's own convener-signed record and never on a recomputed `docHash`. **NOT BUILT** — C04 needs a resume route and a second open document, and it is scoped here rather than silently dropped.
+- **Nothing persists a document id**, as a type rule over `ceremony.Record`'s field set. **NOT BUILT**, with C04.
+- **A resumed ceremony whose mirror bytes differ from the open tab's reports both and resolves neither** (D29's divergence clause). **NOT BUILT**, with C04.
+- Tier: 1 for the classes and the listing's own rules; the resume half is tier 4's when it exists (C15).
 
 #### P08.S04 — Between hops: the arm, and the end states as protocol facts *(D16 amendment, D28; C05, C06, C07)*
 Scope: three properties of the gap between hops, and one of them is a live defect rather than a gap.

@@ -439,3 +439,56 @@ func rosterHashHex(rec ceremony.Record) string {
 	}
 	return hex.EncodeToString(h)
 }
+
+// ceremoniesResponse is the listing (P08.S03).
+type ceremoniesResponse struct {
+	Ceremonies []ceremony.Stored `json:"ceremonies"`
+	// Primary is false when another Nib holds this machine's instance record. The listing is
+	// still answered — reading is safe — but this process must not resume or prune, because two
+	// processes racing one mirror is two writers with no lock between them.
+	Primary bool `json:"primary"`
+	// Note is the sentence a non-primary Nib shows instead of an action.
+	Note string `json:"note,omitempty"`
+}
+
+// handleCeremonies lists the ceremonies stored on this machine (P08.S03, C12).
+//
+// # Why it does not open a single document
+//
+// `ReadMirror` runs `sign.Verify` and, on an unsigned document, a full `ContentDigest`. Measured at
+// the P08.S01 deepdive: 10 ms at 100 pages, 69 ms at 500, 195 ms at 1000 — superlinear, on text-only
+// fixtures, and these are contracts with images. Fifty stored ceremonies would be seconds on a
+// request path. `ceremony.ListStored` reads `record.json` and nothing else.
+//
+// The cost of that is stated rather than hidden: this answer carries no signature count and no next
+// action, because both live in the document. The panel opens ONE ceremony to say "2 of 4 signed".
+//
+// # Why there is no lock, and this took a wrong turn first
+//
+// The plan asked for an exclusive lock on `~/nib/ceremonies/`. There is no locking anywhere in this
+// tree, and adding some would be a SECOND cross-process policy contradicting the one that exists:
+// `cmd/nib/main.go` decides, deliberately and with the reasoning at the line, that a launch which
+// loses the instance race *"carries on and serves"* — *"a launch that loses twice is better off
+// running than refusing to start"*.
+//
+// The signal that distinguishes the two is already maintained. `instanceToken` is empty exactly when
+// this process is not the recorded instance, so a non-primary Nib can read and must not act. One
+// mechanism, already tested, and no new file in a directory whose file set other checks assume.
+func (s *Server) handleCeremonies(w http.ResponseWriter, r *http.Request) {
+	list, err := ceremony.ListStored(defaultOutputDir(), time.Now())
+	if err != nil {
+		httpError(w, http.StatusInternalServerError,
+			"the ceremonies folder could not be read: "+err.Error())
+		return
+	}
+	s.mu.Lock()
+	primary := s.instanceToken != ""
+	s.mu.Unlock()
+	out := ceremoniesResponse{Ceremonies: list, Primary: primary}
+	if !primary {
+		out.Note = "another copy of Nib is already running on this machine. This one can show " +
+			"your ceremonies but must not continue or remove them, because both would be " +
+			"writing to the same folder."
+	}
+	writeJSON(w, out)
+}

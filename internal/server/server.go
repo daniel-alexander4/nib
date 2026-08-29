@@ -267,6 +267,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/cosign/sign", s.requireUnlocked(s.handleCosignSign))
 	mux.HandleFunc("POST /api/ceremony/convene", s.requireUnlocked(s.handleCeremonyConvene))
 	mux.HandleFunc("POST /api/ceremony/invites", s.requireUnlocked(s.handleCeremonyInvites))
+	mux.HandleFunc("GET /api/ceremonies", s.requireUnlocked(s.handleCeremonies))
 	mux.HandleFunc("POST /api/ceremony/accept", s.requireUnlocked(s.handleCeremonyAccept))
 	mux.HandleFunc("GET /api/attestations", s.requireUnlocked(s.handleAttestations))
 	mux.HandleFunc("POST /api/session/arm", s.requireUnlocked(s.handleSessionArm))
