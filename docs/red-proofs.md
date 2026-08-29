@@ -2146,3 +2146,38 @@ backslash-escaped quotes inside the expression — a `SyntaxError` before Python
 have printed nothing on the failure it exists for. One commit old, and caught on first use.
 
 `recorded` 131 → 132.
+
+## P08.S01 — a ceremony survives a restart on every machine *(v1.117.240)*
+
+Three rows, tier 1. **One of them proves a defect that was live in shipped code**, and the other two
+prove the slice's own new refusals.
+
+**`invites-omit-the-recital`.** `handleCeremonyInvites` rebuilt each party's invitation from the
+mirror's record plus the vault's stored secret, field by field, and omitted `Intent`. The recital is
+compared by `MatchesRecord` and required by `Contribute`, so **every re-issued invitation parsed,
+armed, and was then refused at the recipient's arrival gate** — after the convener had been told the
+re-issue worked. It survived because the route has exactly one reference in the whole tree, its own
+registration: no test, no harness clause, no caller in the web client. It is nonetheless the only
+production reader of `ReadMirror` and the convener's only disk-based recovery path (D21, gap #24).
+
+The guard runs `MatchesRecord` itself rather than diffing fields. A field-by-field comparison is the
+same shape that produced the defect — a constructor that forgets one field, checked by a test that
+forgets the same one — and running the production comparison means a future field added to the
+commitment fails this row without anyone remembering to extend it.
+
+**`accept-stores-no-invitation`.** The slice's own subject: an invitee that pins the convener and
+keeps nothing has a pin, an identity, and no way to rejoin after a restart. Written as *arm by
+ceremony id succeeds* rather than as "a row appeared in the vault", for `accept-pins-nobody`'s
+reason — a row that does not satisfy the door it was created for satisfies nothing. Its stimulus is
+an arm naming a ceremony this machine never accepted, which must be refused, so the pass cannot come
+from a build that ignores the field.
+
+**`arm-picks-a-source-silently`.** Both a stored ceremony id and a literal invitation are individually
+valid, so an arm given both succeeds either way and the caller cannot learn which was used. Two
+sources for one value with the loser silent is ADR-009's shape; `checkTransport` already records the
+answer for its own case — refuse, never downgrade.
+
+**Nothing staled.** All 23 existing rows whose patches target the files this slice touched were
+replayed and each still goes red against its own defect and prints its `EXPECT`.
+
+`recorded` 178 → 181.

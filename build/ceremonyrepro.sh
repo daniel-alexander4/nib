@@ -167,12 +167,26 @@ for n in A B; do
   fi
   SEEN[$n]=$c
 done
-# Each machine must have been searched. A zero on EITHER side means that side's disk was not read,
-# whatever the total says — which is exactly how this clause passed while blind to the invitee.
-if [ "${SEEN[A]}" -eq 0 ]; then no "secret search" "nothing under A's ~/nib — the convener's disk was not read"
-elif [ "${SEEN[B]}" -eq 0 ]; then no "secret search" "nothing under B's ~/nib — the INVITEE's disk was not read, which is the half this clause was blind to before P08.S01"
-elif [ "$hits" -eq 0 ]; then ok "the invitation secret is in none of the ${SEEN[A]} file(s) on the convener nor the ${SEEN[B]} on the invitee (D29)"
-else no "secret residue" "$hits file(s) carry it"; fi
+# **Each machine's zero is classified, which is the whole repair.** A zero has two meanings and the
+# aggregate could not tell them apart: "this side was not read" (the defect) and "this side has
+# written nothing to ~/nib at all" (structural, and true of the invitee in THIS tier — no hop
+# completes here, so `mirrorHop` never runs on B, and P08.S01 puts B's invitation in the VAULT under
+# $h/.config, which is not this directory and is sealed besides).
+#
+# So B's zero is reported as structural rather than folded into A's count. It stops being structural
+# the moment anything writes to B's ~/nib — a completed hop, a delivered document — and then the
+# count must be non-zero and the search must read it. That is the state this clause is waiting for,
+# and saying so is what keeps a pass from meaning "we looked at the invitee" when we did not.
+if [ "${SEEN[A]}" -eq 0 ]; then
+  no "secret search" "nothing under A's ~/nib — the convener convened, so its disk must have content and was not read"
+elif [ "$hits" -ne 0 ]; then
+  no "secret residue" "$hits file(s) carry it"
+elif [ "${SEEN[B]}" -eq 0 ]; then
+  # Not a failure, and not a silent pass either: the invitee's side is named as unexercised.
+  ok "the secret is in none of the ${SEEN[A]} file(s) under the convener's ~/nib (D29) — the invitee has no ~/nib in this tier (no hop completes, and its invitation is in the sealed vault), so its zero is structural and is NOT evidence"
+else
+  ok "the invitation secret is in none of the ${SEEN[A]} file(s) on the convener nor the ${SEEN[B]} on the invitee (D29)"
+fi
 
 # CLAUSE 6 — a second ceremony sharing B, then A ends the first: B stays pinned.
 code=$(post A /api/open "{\"path\":\"$SP/lease.pdf\"}")

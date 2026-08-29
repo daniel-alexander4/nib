@@ -548,6 +548,15 @@ restart() { # index (1-based) — kill an instance and bring it back on the same
   kill -0 "$pid" 2>/dev/null && { echo "restart: instance $i would not die" >&2; return 1; }
   PIDS[$idx]="$(start "i$i" "${API_PORTS[$idx]}" "${HOMES[$idx]}")"
   wait_up "${URLS[$idx]}" || { echo "restart: instance $i did not come back" >&2; return 1; }
+  # **The CSRF token is per PROCESS, so a restart invalidates the cached one.** Found by running
+  # this clause: the first attempt used the pre-restart token and got a 403, which the assertion
+  # below would have read as "the lookup does not discriminate" — a true failure with the wrong
+  # diagnosis. Refreshing it here keeps the verb honest: what a restart must NOT lose is the
+  # ceremony, and a session token is not part of that.
+  local tok
+  tok="$(csrf "${URLS[$idx]}")"
+  [ -n "$tok" ] || { echo "restart: instance $i returned no CSRF token after coming back" >&2; return 1; }
+  CSRFS[$idx]="$tok"
   return 0
 }
 
@@ -1114,7 +1123,7 @@ print(next(i['invitation'] for i in d['invites'] if i['fingerprint'].lower()=='$
     -d "$(python3 -c "import json;print(json.dumps({'fingerprint':'${FPS[0]}','bind':'127.0.0.1:0','transport':'tcp','ceremony':'$cid'}))")")"
   [ "$rcode" = "200" ] \
     || fail "instance 3 could not re-arm from its own disk after a restart (HTTP $rcode): $(head -c 300 "$WORK/rearm.json")"
-  ok "instance 3 restarted and re-armed with no invitation in the request (D24, P08.S01)"
+  echo "instance 3 restarted and re-armed from its own disk, with no invitation in the request (D24, P08.S01)"
   curl -sS -X POST "${URLS[2]}/api/session/disarm" -H "X-CSRF-Token: ${CSRFS[2]}" -o /dev/null || true
 
   # **Hop 2 is driven over the CONVENED document, and it used to be driven over an unrelated one

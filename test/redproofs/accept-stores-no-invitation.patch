@@ -1,0 +1,13 @@
+diff --git a/internal/server/accept.go b/internal/server/accept.go
+index 14e2131..330cdb4 100644
+--- a/internal/server/accept.go
++++ b/internal/server/accept.go
+@@ -168,7 +168,7 @@ func (s *Server) handleCeremonyAccept(w http.ResponseWriter, r *http.Request) {
+ 	// moment the baton arrives.
+ 	//
+ 	// The TRIMMED text, not `req.Invitation`: what is stored is what `ParseInvitation` accepted.
+-	if err := v.AddCeremonyInvitation(inv.ID, text); err != nil {
++	if err := error(nil); err != nil {
+ 		httpError(w, http.StatusInternalServerError,
+ 			"the invitation was read and its pin saved, but the invitation itself could not be "+
+ 				"stored, so this machine could not rejoin the ceremony after a restart: "+err.Error())
