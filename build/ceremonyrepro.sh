@@ -143,17 +143,35 @@ t='$INV'; body=t.split(':',1)[1].rsplit('.',1)[0]
 pad='='*(-len(body)%4)
 d=json.loads(base64.urlsafe_b64decode(body+pad))
 print(base64.b64decode(d['secret']).hex())")
-hits=0; files=0
-for h in "$A_HOME" "$B_HOME"; do
+# **The count is PER MACHINE, and it used to be aggregate (fixed 2026-08-29, P08.S01).**
+#
+# The stimulus guard was `files -eq 0` summed over both homes, and the `-d` test skipped a home
+# that had no `~/nib` at all. B is the invitee and never convenes, so B never got one: B contributed
+# zero files, the aggregate was satisfied by A alone, and the green line said "on either machine"
+# while having read only the convener's disk. That is the one check in this repo that looks at an
+# invitee's disk, and it could not see it.
+#
+# It matters now because P08.S01 makes an invitee persist for the first time. Its store is the
+# VAULT — sealed, and under $h/.config, not $h/nib — so the correct outcome here is still zero
+# hits; what changed is that a regression putting it in ~/nib would now be visible.
+hits=0
+declare -A SEEN=()
+for n in A B; do
+  eval "h=\$${n}_HOME"
+  c=0
   if [ -d "$h/nib" ]; then
     while IFS= read -r f; do
-      files=$((files+1))
+      c=$((c+1))
       grep -qiF "$SEC" "$f" && { echo "        secret in $f"; hits=$((hits+1)); }
     done < <(find "$h/nib" -type f)
   fi
+  SEEN[$n]=$c
 done
-if [ "$files" -eq 0 ]; then no "secret search" "nothing under ~/nib on either machine — the search read no bytes"
-elif [ "$hits" -eq 0 ]; then ok "the invitation secret is in none of the $files file(s) under ~/nib (D29)"
+# Each machine must have been searched. A zero on EITHER side means that side's disk was not read,
+# whatever the total says — which is exactly how this clause passed while blind to the invitee.
+if [ "${SEEN[A]}" -eq 0 ]; then no "secret search" "nothing under A's ~/nib — the convener's disk was not read"
+elif [ "${SEEN[B]}" -eq 0 ]; then no "secret search" "nothing under B's ~/nib — the INVITEE's disk was not read, which is the half this clause was blind to before P08.S01"
+elif [ "$hits" -eq 0 ]; then ok "the invitation secret is in none of the ${SEEN[A]} file(s) on the convener nor the ${SEEN[B]} on the invitee (D29)"
 else no "secret residue" "$hits file(s) carry it"; fi
 
 # CLAUSE 6 — a second ceremony sharing B, then A ends the first: B stays pinned.

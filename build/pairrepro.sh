@@ -531,6 +531,26 @@ start() { # name port home
   echo $!
 }
 
+restart() { # index (1-based) — kill an instance and bring it back on the same home and port
+  # **P08.S01's verb, and the reason it did not exist is the reason it is needed.** Nothing in this
+  # harness ever stopped an instance mid-run, so nothing had ever read state written by a previous
+  # process — which is precisely the capability D24 requires and which no criterion could observe.
+  #
+  # Same $HOME and same port, because the point is continuity: a restart onto a fresh home would
+  # test a new machine joining, which is a different (and already covered) thing.
+  local i="$1" idx=$(( $1 - 1 )) pid
+  pid="${PIDS[$idx]}"
+  kill "$pid" 2>/dev/null || true
+  # Waited on by kill -0 rather than by `wait`, for the reason the cleanup trap gives: these come
+  # out of a command substitution and are this shell's grandchildren, so `wait` returns instantly
+  # with an error — the degenerate "waited" that proves nothing.
+  for _ in $(seq 1 40); do kill -0 "$pid" 2>/dev/null || break; sleep 0.1; done
+  kill -0 "$pid" 2>/dev/null && { echo "restart: instance $i would not die" >&2; return 1; }
+  PIDS[$idx]="$(start "i$i" "${API_PORTS[$idx]}" "${HOMES[$idx]}")"
+  wait_up "${URLS[$idx]}" || { echo "restart: instance $i did not come back" >&2; return 1; }
+  return 0
+}
+
 wait_up() { # url
   for _ in $(seq 1 60); do
     curl -fsS -o /dev/null "$1/api/status" 2>/dev/null && return 0
@@ -1068,6 +1088,34 @@ print(next(i['invitation'] for i in d['invites'] if i['fingerprint'].lower()=='$
     || fail "instance 3 could not accept its invitation (HTTP $acode): $(head -c 300 "$WORK/accept.json")"
   [ "$(python3 -c "import json;print(json.load(open('$WORK/accept.json'))['pinned'])" 2>/dev/null)" = "1" ] \
     || fail "accepting the invitation established no pin, so D21's step was not removed"
+
+  # ── P08.S01: instance 3 restarts and rejoins from its own disk ──────────────
+  #
+  # The criterion is D24's — a ceremony survives quitting Nib — and before this slice it was false
+  # on every machine but the convener's: `/api/ceremony/accept` pinned the convener and threw the
+  # invitation away, so a restarted party had a pin, an identity, and no way back in.
+  #
+  # **The assertion is that the arm request carries NO invitation.** That distinction is the whole
+  # clause: this harness holds `inv3` in a shell variable, so a re-arm that pasted it again would
+  # pass while the product could not do it — ADR-010's "configured past the disagreement" shape,
+  # which this file has already been burned by once.
+  cid="$(python3 -c "import json;print(json.load(open('$WORK/convene.json'))['ceremony'])" 2>/dev/null)"
+  [ -n "$cid" ] || fail "convene returned no ceremony id"
+  restart 3 || fail "instance 3 did not survive a restart"
+  # Stimulus: a DIFFERENT ceremony id is refused after the restart, so the lookup is live and
+  # discriminating. Without it the pass below is satisfied by a build that ignores the field.
+  rcode="$(curl -sS -X POST "${URLS[2]}/api/session/arm" -H 'Content-Type: application/json' \
+    -H "X-CSRF-Token: ${CSRFS[2]}" -o "$WORK/rearm-bad.json" -w '%{http_code}' \
+    -d "$(python3 -c "import json;print(json.dumps({'fingerprint':'${FPS[0]}','bind':'127.0.0.1:0','transport':'tcp','ceremony':'cc'+'0'*30}))")")"
+  [ "$rcode" = "400" ] \
+    || fail "arming for a ceremony this machine never accepted returned HTTP $rcode, not 400 — the stored-invitation lookup does not discriminate"
+  rcode="$(curl -sS -X POST "${URLS[2]}/api/session/arm" -H 'Content-Type: application/json' \
+    -H "X-CSRF-Token: ${CSRFS[2]}" -o "$WORK/rearm.json" -w '%{http_code}' \
+    -d "$(python3 -c "import json;print(json.dumps({'fingerprint':'${FPS[0]}','bind':'127.0.0.1:0','transport':'tcp','ceremony':'$cid'}))")")"
+  [ "$rcode" = "200" ] \
+    || fail "instance 3 could not re-arm from its own disk after a restart (HTTP $rcode): $(head -c 300 "$WORK/rearm.json")"
+  ok "instance 3 restarted and re-armed with no invitation in the request (D24, P08.S01)"
+  curl -sS -X POST "${URLS[2]}/api/session/disarm" -H "X-CSRF-Token: ${CSRFS[2]}" -o /dev/null || true
 
   # **Hop 2 is driven over the CONVENED document, and it used to be driven over an unrelated one
   # (fixed 2026-08-28, P07's phase close).**
