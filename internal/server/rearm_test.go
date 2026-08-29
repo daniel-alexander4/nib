@@ -307,3 +307,83 @@ func TestTheCeremonyListingSaysWhenThisNibMustNotAct(t *testing.T) {
 		t.Errorf("the note does not say why this Nib must not act: %q", got.Note)
 	}
 }
+
+// TestACeremonyArmWaitsForTheCeremonyOnBothTransports is P08.S04's C05 half.
+//
+// # What was wrong, and why no existing test could see it
+//
+// `runCeremonyReceive` has bounded a ceremony arm by `ceremony.MaxCeremonyLife` since P05.S09b.
+// `runSession` — every TCP arm, ceremony or not — kept `sessionAcceptTimeout`, five minutes, with no
+// ceremony in the arithmetic. So a party third in a roster armed, waited while two earlier hops ran,
+// and was disarmed before the baton reached them. `lan.go` states the thirty-day window as though it
+// were the arm's property generally; it was true of one of the two paths.
+//
+// Nothing could catch it, because the only available observable was "the ceremony completed" — and a
+// loopback relay finishes in seconds, so a five-minute bound and a thirty-day bound produce the same
+// outcome. The fix is to expose the FIGURE: `session.until` is now in the status, and the two bounds
+// are three orders of magnitude apart, so the assertion is on which of them was chosen.
+//
+// **The bound is still a constant and D16's amendment asks for a ceremony-scoped one** — the
+// record's `Expires`. Not buildable here: an arm holds an invitation and the invitation carries no
+// deadline. That is `/pending 247`, and this test asserts the ceiling that exists today.
+func TestACeremonyArmWaitsForTheCeremonyOnBothTransports(t *testing.T) {
+	ts, _ := startServer(t)
+	c, csrf := authedClient(t, ts)
+	me := myFingerprint(t, c, ts.URL)
+	invitation, convenerFP := inviteFor(t, me)
+	if acode, abody := postForCode(t, c, csrf, ts.URL+"/api/ceremony/accept",
+		acceptRequest{Invitation: invitation}); acode != http.StatusOK {
+		t.Fatalf("accept: %d %s", acode, abody)
+	}
+
+	armWindow := func(t *testing.T, req armRequest) time.Duration {
+		t.Helper()
+		if code, body := postForCode(t, c, csrf, ts.URL+"/api/session/arm", req); code != http.StatusOK {
+			t.Fatalf("arm: %d %s", code, body)
+		}
+		res, err := c.Get(ts.URL + "/api/session/status")
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer res.Body.Close()
+		var st sessionStatus
+		if err := json.NewDecoder(res.Body).Decode(&st); err != nil {
+			t.Fatal(err)
+		}
+		if !st.Armed {
+			t.Fatal("the arm reported success and the status says nothing is armed")
+		}
+		if st.Until == nil {
+			t.Fatal("the status carries no arm window, so the bound cannot be checked and the " +
+				"only available assertion is that the ceremony finished — which is true under " +
+				"either bound, because a loopback relay takes seconds")
+		}
+		d := time.Until(*st.Until)
+		if code, body := postForCode(t, c, csrf, ts.URL+"/api/session/disarm", struct{}{}); code != http.StatusOK {
+			t.Fatalf("disarm: %d %s", code, body)
+		}
+		return d
+	}
+
+	// Stimulus: a MANUAL arm on the same transport, so the two figures come from one code path and
+	// differ only by whether a ceremony is carried. Without it a long window could just be this
+	// build's timeout for everything.
+	manual := armWindow(t, armRequest{Fingerprint: convenerFP, Bind: "127.0.0.1:0", Transport: "tcp"})
+	if manual > 2*sessionAcceptTimeout {
+		t.Fatalf("setup: a manual arm's window is %s, which is not the five-minute bound this "+
+			"test contrasts against", manual)
+	}
+
+	ceremonial := armWindow(t, armRequest{
+		Fingerprint: convenerFP, Bind: "127.0.0.1:0", Transport: "tcp", Invitation: invitation,
+	})
+	if ceremonial <= 2*sessionAcceptTimeout {
+		t.Errorf("a TCP CEREMONY arm's window is %s — the same manual bound as a non-ceremony "+
+			"arm (%s). A party third in a roster is then disarmed while the earlier hops run, "+
+			"which is C05 failing on one of the two transports", ceremonial, manual)
+	}
+	// Named against the ceiling that exists rather than a bare "big": the figure is the point.
+	if ceremonial < ceremony.MaxCeremonyLife-time.Hour {
+		t.Errorf("a ceremony arm's window is %s, want about %s", ceremonial, ceremony.MaxCeremonyLife)
+	}
+}
