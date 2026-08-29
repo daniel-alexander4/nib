@@ -1,0 +1,15 @@
+diff --git a/internal/ceremony/mirror.go b/internal/ceremony/mirror.go
+index a098f77..32da16d 100644
+--- a/internal/ceremony/mirror.go
++++ b/internal/ceremony/mirror.go
+@@ -307,7 +307,9 @@ func ListStored(root string, now time.Time) ([]Stored, error) {
+ 		if !e.IsDir() || !idPattern.MatchString(e.Name()) {
+ 			continue
+ 		}
+-		out = append(out, ReadStored(root, e.Name(), now))
++		if st := ReadStored(root, e.Name(), now); st.State == LoadOK {
++			out = append(out, st)
++		}
+ 	}
+ 	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+ 	return out, nil
