@@ -1,0 +1,17 @@
+diff --git a/internal/ceremony/mirror.go b/internal/ceremony/mirror.go
+index a098f77..6ca224e 100644
+--- a/internal/ceremony/mirror.go
++++ b/internal/ceremony/mirror.go
+@@ -253,6 +253,12 @@ func ReadStored(root, id string, now time.Time) Stored {
+ 		s.State, s.Reason = LoadUnparseable, "that is not a ceremony id"
+ 		return s
+ 	}
++	r0, _, merr := ReadMirror(root, id, now)
++	if merr != nil {
++		s.State, s.Reason = LoadUnverifiable, merr.Error()
++		return s
++	}
++	s.Intent, s.Expires, s.Roster = r0.Intent, r0.Expires, r0.Roster
+ 	b, err := os.ReadFile(filepath.Join(dir, "record.json"))
+ 	if err != nil {
+ 		s.State = LoadAbsent

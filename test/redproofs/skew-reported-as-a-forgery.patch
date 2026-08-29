@@ -1,0 +1,17 @@
+diff --git a/internal/ceremony/mirror.go b/internal/ceremony/mirror.go
+index a098f77..c22ab1c 100644
+--- a/internal/ceremony/mirror.go
++++ b/internal/ceremony/mirror.go
+@@ -271,12 +271,6 @@ func ReadStored(root, id string, now time.Time) Stored {
+ 		// **Skew first, and it is the ordering that matters.** `Verify` checks the version before
+ 		// anything else, so every skewed record also fails the checks below it; classifying in the
+ 		// other order would report a newer Nib's ceremony as forged.
+-		if errors.Is(verr, ErrVersion) {
+-			s.State = LoadVersionSkew
+-			s.Reason = "this ceremony was created by a newer version of Nib — update Nib to " +
+-				"open it. It is not damaged."
+-			return s
+-		}
+ 		s.State = LoadUnverifiable
+ 		s.Reason = "this ceremony's record does not verify: " + verr.Error()
+ 		return s

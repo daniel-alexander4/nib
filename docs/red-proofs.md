@@ -2181,3 +2181,31 @@ answer for its own case — refuse, never downgrade.
 replayed and each still goes red against its own defect and prints its `EXPECT`.
 
 `recorded` 178 → 181.
+
+## P08.S03 — the ceremonies on this machine *(v1.117.243)*
+
+Three rows, tier 1.
+
+**`skew-reported-as-a-forgery`.** Drop the `ErrVersion` branch and a record written by a *newer* Nib
+falls through to `LoadUnverifiable` — the user is told their intact ceremony "does not verify".
+`Record.Verify` checks the version first, so every skewed record also fails the checks below it;
+`FormatVersion` has moved three times already and Nib self-updates. Without the branch, updating Nib
+mid-ceremony reports every live ceremony as unverifiable *and* leaves them unprunable, because the
+prune must first establish that a ceremony ended. The guard asserts the class **and** the sentence,
+since the class alone passes with a message that still accuses somebody.
+
+**`an-unloadable-ceremony-vanishes`.** Keep only the entries that loaded and a damaged one
+disappears from the listing rather than appearing as a degraded row — the user's folder then holds a
+ceremony their Nib will not admit exists. The guard is written on the **count** as well as the
+state, because a test checking only the surviving entry passes against a listing that silently
+dropped the other.
+
+**`listing-opens-the-document`**, and its first attempt is worth recording. The mutation called
+`ReadMirror` and **discarded** the result; the document was opened, the outcome was unchanged, and
+`redproof.sh` reported *"the check still PASSED"* — the outcome it exists to distinguish from a real
+red. The test asserts the state, so a call that touches the document and ignores it is invisible to
+it. Re-cut as the realistic regression — `ReadStored` actually *using* `ReadMirror` — which a planted
+non-PDF then makes fail. The lesson is the general one: a stimulus that changes nothing observable is
+not a stimulus, and the harness caught it rather than the reviewer.
+
+`recorded` 181 → 184.
