@@ -2,6 +2,7 @@ package ceremony
 
 import (
 	"errors"
+	"nib/internal/sign"
 	"os"
 	"path/filepath"
 	"strings"
@@ -159,3 +160,80 @@ func TestTheRecordIsTheCommitPoint(t *testing.T) {
 }
 
 var _ = p2p.SessionBudget
+
+// TestASignedMirrorTruncatedAtAPriorRevisionIsCaught — P08.S02's C02, and the window the existing
+// check could never see.
+//
+// `ReadMirror`'s `DocHash` comparison is gated on the document being UNSIGNED, and that gate is
+// correct: `DocHash` is a convene-time identity, a visible signature adds a widget annot, and
+// `ContentDigest` covers `/Annots`, so from the first signature the document legitimately stops
+// hashing to it. The consequence, which that gate's own comment states, is that **from hop 2 onward
+// the mirror is stored with no self-check at all** — and hop 2 onward is every mirror a resumption
+// actually reads.
+//
+// The truncation that matters there is not a random cut. A signed PDF cut at a PRIOR `%%EOF` is a
+// well-formed document one revision short: it parses, `sign.Verify` reports Valid with fewer
+// signers, and every existing check passes it. That is the shape D24 describes as "a partial
+// contribution that reads as *a* contribution".
+func TestASignedMirrorTruncatedAtAPriorRevisionIsCaught(t *testing.T) {
+	cert, key, cfp := identity(t, "Convener")
+	_, _, afp := identity(t, "A")
+	r := draft(t, cfp, afp)
+	if err := r.Sign(cert, key); err != nil {
+		t.Fatal(err)
+	}
+	base, err := testpdf.Text("the document in flight")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// **SIGNED, and that is the whole fixture.** An unsigned document is covered by the `DocHash`
+	// comparison, which would catch the truncation below and prove nothing about the window this
+	// test is for. Signing it switches that comparison off — which is precisely the state every
+	// mirror is in from hop 2 onward, and precisely where nothing checked anything until now.
+	doc, err := sign.SignApproval(base, cert, key, sign.Options{Name: "Convener", Reason: "test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sign.Verify(doc).State == sign.Unsigned {
+		t.Fatal("setup: the fixture is unsigned, so the DocHash check is still live and this test " +
+			"would be exercising it rather than the sidecar")
+	}
+	root := t.TempDir()
+	dir, err := WriteMirror(root, r, doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Stimulus: it reads back cleanly first, so the refusal below is caused by the damage and not
+	// by the fixture.
+	if _, _, rerr := ReadMirror(root, r.ID, time.Now()); rerr != nil {
+		t.Fatalf("setup: the intact mirror does not read back: %v", rerr)
+	}
+
+	// Truncate. The sidecar must catch this whether or not the document is signed — which is the
+	// whole point, since the `DocHash` check is switched off for the signed case.
+	if err := os.WriteFile(filepath.Join(dir, "document.pdf"), doc[:len(doc)-64], 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, _, rerr := ReadMirror(root, r.ID, time.Now())
+	if rerr == nil {
+		t.Fatal("a truncated stored document read back as clean — a resuming party would then " +
+			"hand a partial contribution to a peer, or sign on top of one")
+	}
+	if !errors.Is(rerr, ErrMirrorDamaged) {
+		t.Errorf("the truncation is reported as %v, want ErrMirrorDamaged — this happened on THIS "+
+			"machine's disk, and the alternative sentence accuses a counterparty of substituting "+
+			"a file", rerr)
+	}
+
+	// And a mirror with no sidecar at all still opens: every mirror written before this slice has
+	// none, and refusing them would strand ceremonies in flight the day it ships.
+	if err := os.WriteFile(filepath.Join(dir, "document.pdf"), doc, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(filepath.Join(dir, "document.sha256")); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, rerr := ReadMirror(root, r.ID, time.Now()); rerr != nil {
+		t.Errorf("a mirror written before the sidecar existed is refused: %v", rerr)
+	}
+}

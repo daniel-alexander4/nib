@@ -1,12 +1,15 @@
 package ceremony
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strings"
 	"time"
 
 	"nib/internal/atomicfile"
@@ -99,6 +102,28 @@ func WriteMirror(root string, r Record, pdf []byte) (string, error) {
 	// ships for. The vault survives that because it is AES-GCM sealed; the mirror has no such
 	// fallback, and D29's reasoning for keeping the invitation SECRET out of this directory
 	// is what carries the weight instead.
+	// **The sidecar, and it is the check `DocHash` cannot be (P08.S02, C02).**
+	//
+	// `ReadMirror`'s hash comparison is gated on the document being UNSIGNED, and that limit is
+	// correct and load-bearing: `DocHash` is a convene-time identity, a visible signature adds a
+	// widget annot, and `ContentDigest` covers `/Annots` — so from the first signature the document
+	// legitimately stops hashing to it. The consequence, stated at that gate, is that from hop 2
+	// onward the mirror is stored **with no self-check at all**.
+	//
+	// That is exactly the window C02 is about. Truncating a signed document at a PRIOR `%%EOF`
+	// yields a well-formed PDF one revision short: it parses, `sign.Verify` reports Valid with
+	// fewer signers, and nothing notices. A byte hash of the file as written catches it, and a byte
+	// hash is right here for the reason it is wrong for `DocHash` — this is a local self-check over
+	// one byte stream, not an identity a remote party must recompute through pdfcpu.
+	//
+	// Written BETWEEN the document and the record, so `record.json` is still the commit point.
+	if pdf != nil {
+		sum := sha256.Sum256(pdf)
+		if err := atomicfile.WriteDurable(filepath.Join(dir, "document.sha256"),
+			[]byte(hex.EncodeToString(sum[:])), 0o600); err != nil {
+			return "", err
+		}
+	}
 	if err := atomicfile.WriteDurable(filepath.Join(dir, "record.json"), b, 0o600); err != nil {
 		return "", err
 	}
@@ -161,6 +186,25 @@ func ReadMirror(root, id string, now time.Time) (Record, []byte, error) {
 	// way to disk, before anybody signed. Past that point the mirror is stored without a
 	// self-check, and saying so is better than implying a coverage it has not got — the
 	// per-hop continuity that would replace it is S05's carry route.
+	// **The sidecar check runs UNCONDITIONALLY, signed or not (P08.S02, C02).** It is the half the
+	// `DocHash` comparison below cannot cover, and it covers the case that matters: a mirror
+	// written at hop 2 or later, which is every mirror a resumption actually reads.
+	//
+	// **A missing sidecar is tolerated**, and that is deliberate rather than a hole. Mirrors written
+	// before this slice have none, and refusing them would strand ceremonies that are in flight the
+	// day it ships. It is a damage detector and not an access control: anyone who can truncate the
+	// document can delete the sidecar, and `ReadMirror`'s own distinction — damage on this machine
+	// versus an accusation about a counterparty — is what it serves.
+	if len(pdf) > 0 {
+		if want, rerr := os.ReadFile(filepath.Join(dir, "document.sha256")); rerr == nil {
+			got := sha256.Sum256(pdf)
+			if hex.EncodeToString(got[:]) != strings.TrimSpace(string(want)) {
+				return r, nil, fmt.Errorf("%w: its stored bytes do not match the checksum written "+
+					"beside them, so the copy on this machine was damaged or truncated after it "+
+					"was written", ErrMirrorDamaged)
+			}
+		}
+	}
 	if len(pdf) > 0 && sign.Verify(pdf).State == sign.Unsigned {
 		got, herr := DocumentHash(pdf)
 		if herr != nil {
