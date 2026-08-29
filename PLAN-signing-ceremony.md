@@ -5746,7 +5746,7 @@ Acceptance:
 - **A resumed ceremony whose mirror bytes differ from the open tab's reports both and resolves neither** (D29's divergence clause). **NOT BUILT**, with C04.
 - Tier: 1 for the classes and the listing's own rules; the resume half is tier 4's when it exists (C15).
 
-#### P08.S04 — Between hops: the arm, and the end states as protocol facts *(D16 amendment, D28; C05, C06, C07)*
+#### P08.S04 — Between hops: the arm, and the end states as protocol facts *(D16 amendment, D28; C05, C06, C07)* *(**partly done** 2026-08-29, v1.117.245 — C05's transport parity met and its observable built; C06 PARKED on a decision, C07 not started)*
 Scope: three properties of the gap between hops, and one of them is a live defect rather than a gap.
 C05 is **not** a no-code slice: the QUIC arm waits `MaxCeremonyLife` but the TCP arm goes through
 `runSession` on `sessionAcceptTimeout` — five minutes, no ceremony in the arithmetic — and no surface
@@ -5755,7 +5755,7 @@ exposes a window to assert. The expired end state has one enforcement door and i
 needs an authenticator: a plain boolean on a local disk is assertable by any local write and
 strippable by the decliner.
 Acceptance:
-- **`armedUntil` is exposed in `sessionStatus` and the ceremony arm's bound is asserted to be `Expires`-shaped, not `sessionAcceptTimeout`-shaped, on BOTH transports** — the bound, not the remainder, because a loopback ceremony finishes in seconds and a remainder assertion passes under either.
+- **`armedUntil` is exposed in `sessionStatus` and the ceremony arm's bound is asserted on BOTH transports** — the bound, not the remainder, because a loopback ceremony finishes in seconds and a remainder assertion passes under either. *Met, and it found the defect:* `runCeremonyReceive` has bounded a ceremony arm by `MaxCeremonyLife` since P05.S09b and `runSession` — every TCP arm, ceremony or not — kept the five-minute manual bound, so a party third in a roster was disarmed while the earlier hops ran. Third time this phase that a rule reached one of the two arm paths. **`Expires`-shaped is NOT met and cannot be here**: an arm holds an invitation and the invitation carries no deadline, which is `/pending 247` — so the bound is the same ceiling the other path uses and the refinement waits on that item.
 - **A contribution offered after `Expires` is refused by the SIGNING party's own arrival gate, with the convener bypassed**, routed through the single `checkCeremonyDeadline` door (ADR-009), and the guard asserts the routing rather than the sentence each site prints.
 - **A decline is a separate signed termination object** — the decliner signs `(domain tag, ceremony id, rosterHash, state, time)` through the existing preimage builder — written beside `record.json`, verified on read as the record is, and carried by S05's round. A decline at hop 3 then refuses hop 4 by name and is *checkable* rather than hearsay.
 - **A peer whose identity no longer matches the roster is refused with a message naming the party by roster label and position and containing no hex fingerprint**, the ceremony ends, and the **vault's pin set** is asserted to hold nothing for the new key.

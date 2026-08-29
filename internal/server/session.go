@@ -83,6 +83,15 @@ type session struct {
 	// cerCancel cancels a connect-based ceremony arm's background goroutine (P05.S09), the
 	// analogue of closing the accept listener for a runSession arm. nil for accept arms.
 	cerCancel context.CancelFunc
+	// until is when this arm gives up, as an absolute time; zero when nothing is armed.
+	//
+	// **It exists to be ASSERTED, which is C05's whole difficulty (P08.S04).** The criterion is
+	// that a party who arms and waits through three earlier hops is still armed when the baton
+	// arrives — and nothing exposed a window, so the only available check was "the ceremony
+	// completed", which is true whatever the bound is because a loopback relay finishes in
+	// seconds. A five-minute manual bound and a thirty-day ceremony bound are indistinguishable
+	// from the outcome; they are trivially distinguishable from the figure.
+	until time.Time
 }
 
 // pendingVerify is the spoken verification string waiting on the user (D4, L2).
@@ -128,7 +137,29 @@ func (se *session) arm(ln p2p.Listener, cer *ceremonyID) bool {
 	se.cer = cer
 	se.addr = ln.Addr().String()
 	se.received = nil // a fresh session clears any prior transfer result
+	// **Stamped HERE and not by the arm goroutine.** The first draft set it from `runSession`,
+	// which starts after this handler has already answered — so a status poll landing in that
+	// window saw an armed session with no window, and the race detector found it by being slow
+	// enough to lose that race every time. The door knows whether there is a ceremony, so the
+	// door is where the figure belongs.
+	se.until = time.Now().Add(armWindowFor(cer))
 	return true
+}
+
+// armWindowFor is how long an arm waits, and it is ONE door (ADR-009).
+//
+// A ceremony arm waits for the ceremony; a manual or LAN arm waits `sessionAcceptTimeout`. Both
+// `runSession` and `runCeremonyReceive` compute their own timer from this, and both arm doors stamp
+// `until` from it, so the figure the status reports and the figure the timer fires on cannot drift.
+//
+// **The bound is a constant and D16's amendment asks for the record's `Expires`.** Not available
+// here: an arm holds an invitation and the invitation carries no deadline (`/pending 247`). This is
+// the ceiling until it does.
+func armWindowFor(cer *ceremonyID) time.Duration {
+	if cer != nil {
+		return ceremony.MaxCeremonyLife
+	}
+	return sessionAcceptTimeout
 }
 
 // armCeremony arms a connect-based ceremony session (P05.S09): it holds the ceremony and a cancel
@@ -145,6 +176,7 @@ func (se *session) armCeremony(cer *ceremonyID, addr string, cancel context.Canc
 	se.addr = addr
 	se.cerCancel = cancel
 	se.received = nil
+	se.until = time.Now().Add(armWindowFor(cer))
 	return true
 }
 
@@ -200,6 +232,7 @@ func (se *session) disarmWhen(ok func() bool) {
 	cer := se.cer
 	cancel := se.cerCancel
 	se.ln, se.addr, se.pending, se.verify, se.cer, se.cerCancel = nil, "", nil, nil, nil, nil
+	se.until = time.Time{}
 	se.mu.Unlock()
 	if cancel != nil {
 		cancel() // stop the connect goroutine (S09), the analogue of ln.Close below
@@ -354,6 +387,10 @@ func (se *session) respond(d sessionDecision) bool {
 func (se *session) status() sessionStatus {
 	se.mu.Lock()
 	st := sessionStatus{Armed: se.ln != nil || se.cer != nil, Address: se.addr, Received: se.received}
+	if st.Armed && !se.until.IsZero() {
+		u := se.until
+		st.Until = &u
+	}
 	if se.pending != nil {
 		pv := se.pending.view
 		st.Pending = &pv
@@ -729,12 +766,29 @@ func (s *Server) runSession(ln p2p.Listener, cer *ceremonyID, cert, key []byte, 
 	// restarted correctly — resetting to `sessionAcceptTimeout` after a peer connected
 	// and produced nothing would extend the arm window every time somebody dialled, which
 	// is a window an attacker holds open for free.
-	armedUntil := time.Now().Add(sessionAcceptTimeout)
+	//
+	// **A ceremony arm waits for the ceremony, and this path did not (P08.S04, C05, D16's
+	// amendment).** `runCeremonyReceive` has bounded a ceremony arm by `ceremony.MaxCeremonyLife`
+	// since P05.S09b, and this function — every TCP arm, ceremony or not — kept the five-minute
+	// manual bound. So a party third in a roster armed, waited while two earlier hops ran, and was
+	// disarmed before the baton reached them. `lan.go`'s own comment states the 30-day window as
+	// though it were the arm's property generally; it was true of one of the two paths.
+	//
+	// **Two arm paths living in two functions is the same count S05d and S05e each found**, and
+	// this is the third thing that had to be added to both and reached one.
+	//
+	// The bound is a CONSTANT and D16's amendment asks for a ceremony-scoped one — the record's
+	// `Expires`. That is not buildable here: an arm holds an invitation, and the invitation carries
+	// no deadline. Giving it one is `/pending 247`, whose own grill found the field would be
+	// consumed at arm time while nothing could check it until the document arrives. So the honest
+	// bound today is the same ceiling the other path uses, and the refinement waits on that item.
+	armWindow := armWindowFor(cer)
+	armedUntil := time.Now().Add(armWindow)
 	// postSign is the re-delivery window's deadline, zero until this arm has signed. opened keeps
 	// the co-signed document opening ONCE across re-deliveries. Both mirror runCeremonyReceive.
 	var postSign time.Time
 	opened := false
-	timer := time.AfterFunc(sessionAcceptTimeout, func() {
+	timer := time.AfterFunc(armWindow, func() {
 		defer safe.Recover("arm window expiry")
 		s.sess.disarmIf(ln)
 	})
@@ -1090,6 +1144,9 @@ type sessionStatus struct {
 	// yet, rather than a blank wait (P05.S11). Computed lazily from safe signals; nil for a manual
 	// arm or once a session is in progress.
 	Diagnosis *diagnosisView `json:"diagnosis,omitempty"`
+	// Until is when this arm gives up. Present so the window can be checked rather than inferred
+	// from whether the ceremony happened to finish in time — see session.until.
+	Until *time.Time `json:"until,omitempty"`
 }
 
 // diagnosisView is the arm-side D19 message the status poller carries — plain summary, cause tag,
@@ -1346,7 +1403,7 @@ func (s *Server) runCeremonyReceive(ctx context.Context, cer *ceremonyID, hl *p2
 	//
 	// The TRIPWIRE (see its comment) is honoured as "SIGNS at most once", which the cache enforces:
 	// a re-delivery hands back the same bytes, never a second signature.
-	overallDeadline := time.Now().Add(ceremony.MaxCeremonyLife)
+	overallDeadline := time.Now().Add(armWindowFor(cer))
 	var postSignDeadline time.Time
 	opened := false // the co-signed document opens once, not per re-delivery
 	for {
