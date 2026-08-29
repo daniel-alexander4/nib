@@ -17,7 +17,7 @@ import (
 type Stream interface {
 	io.Reader
 	io.Writer
-	// SetDeadline bounds both directions. The core sets it twice per session: once
+	// SetDeadline bounds both directions. The core sets it three times per session (corrected 2026-08-29: `Initiate` arms three deadlines and `Receive` up to three): once
 	// before anything crosses the wire, and again after consent, so a user's
 	// deliberation cannot spend the budget the signed document's write needs.
 	SetDeadline(t time.Time) error
