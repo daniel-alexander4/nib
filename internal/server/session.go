@@ -24,6 +24,7 @@ import (
 	"nib/internal/pdfops"
 	"nib/internal/safe"
 	"nib/internal/sign"
+	"nib/internal/vault"
 )
 
 // TRIPWIRE: the armed session listener is Nib's only network-reachable surface that
@@ -491,6 +492,44 @@ func (s *Server) declineCeremony(cer *ceremonyID) {
 			"still carries a pin this machine took on only for a ceremony that was refused",
 			cer.inv.ID, err)
 	}
+	// And the stored invitation, which is this side's key material for a ceremony it just refused
+	// (P08.S01). This is the invitee's own path — `declineCeremony` runs from the consent gate, on
+	// the machine that said no — so it is the site where an accepted invitation most obviously
+	// stops being wanted. Reported separately from the pins for `unconvene`'s reason: the two fail
+	// independently and a user can act on each.
+	if _, err := v.PruneCeremonyInvitations(cer.inv.ID); err != nil {
+		log.Printf("declined ceremony %s: could not remove its stored invitation: %v — it carries "+
+			"the ceremony secret and this machine still holds it", cer.inv.ID, err)
+	}
+}
+
+// armInvitation resolves the ONE invitation text an arm acts on (P08.S01).
+//
+// Three inputs, three answers: a stored ceremony id loads the invitation this machine accepted; a
+// literal invitation is used as given; neither is the manual/LAN path, which arms with no ceremony
+// at all and is what `errNoCeremony` downstream expects.
+//
+// **Both is refused.** Not because it is hard to pick one — because picking one makes the other
+// disappear without a word, and the caller who supplied it has no way to learn which the arm used.
+// The same reasoning `checkTransport` records for an unknown transport: refuse, never downgrade.
+func (s *Server) armInvitation(v *vault.Vault, req armRequest) (string, error) {
+	if req.Ceremony != "" && req.Invitation != "" {
+		return "", errors.New("this request names a stored ceremony AND carries an invitation — " +
+			"send one or the other, because Nib will not choose for you which ceremony you meant")
+	}
+	if req.Ceremony == "" {
+		return req.Invitation, nil
+	}
+	text, ok := v.CeremonyInvitationFor(req.Ceremony)
+	if !ok {
+		// Distinguished from a malformed invitation, which is the 400 above: this machine has
+		// simply never accepted one for that ceremony, or its close-out has already removed it.
+		// The id is printed whole, not shortened: it is the caller's own input and the user's
+		// only way to match this refusal against what they sent.
+		return "", fmt.Errorf("this machine holds no invitation for ceremony %s — accept the "+
+			"invitation first, or paste it into this request", req.Ceremony)
+	}
+	return text, nil
 }
 
 // sessionVerifier is the spoken-check bridge: p2p calls it with the four words, on both
@@ -1027,6 +1066,17 @@ type armRequest struct {
 	// says the panel renders "from the local record" — the PDF attachment — not from a
 	// stored invitation, so nothing here needs one at rest.
 	Invitation string `json:"invitation,omitempty"`
+	// Ceremony re-arms from what this machine already holds: the id of a ceremony whose
+	// invitation is in the vault, stored when it was accepted (P08.S01, D24).
+	//
+	// **It is an alternative to `Invitation`, never a companion.** Supplying both is refused
+	// rather than resolved by code order — two sources for one value is the drift this repo keeps
+	// finding, and the loser would be silent. Supplying neither is the manual/LAN path, unchanged.
+	//
+	// It exists because a restart used to lose the ceremony on every machine but the convener's:
+	// the invitation travelled in this request and nowhere else, so a party who closed Nib had a
+	// pin, an identity, and no way to rejoin.
+	Ceremony string `json:"ceremony,omitempty"`
 }
 
 type sessionStatus struct {
@@ -1145,7 +1195,18 @@ func (s *Server) handleSessionArm(w http.ResponseWriter, r *http.Request) {
 	// the caller's mistake and deserves a 400, and resolving it first means a refusal costs
 	// no socket — the same ordering `peerAddresses` uses for a typo'd transport, and the
 	// reason it gives: a 400 the user can act on rather than a 502 about a peer.
-	cer, cerr := ceremonyFor(req.Invitation, cert, key, peerFP)
+	//
+	// **One source for the invitation text, chosen before anything is parsed (P08.S01).** A
+	// request may name a stored ceremony or carry the text, and supplying both is a 400: the
+	// alternative is that one silently wins, and a caller who believed the other was in force
+	// arms for a ceremony they did not name. `invText` is what `ceremonyFor` gets either way, so
+	// there is one parse and one door.
+	invText, terr := s.armInvitation(v, req)
+	if terr != nil {
+		httpError(w, http.StatusBadRequest, terr.Error())
+		return
+	}
+	cer, cerr := ceremonyFor(invText, cert, key, peerFP)
 	if cerr != nil && !errors.Is(cerr, errNoCeremony) {
 		httpError(w, http.StatusBadRequest, cerr.Error())
 		return

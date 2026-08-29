@@ -194,6 +194,31 @@ type CeremonySecret struct {
 	Secret []byte `json:"secret"`
 }
 
+// CeremonyInvitation is an invitee's own invitation, kept so a restarted Nib can re-arm for a
+// ceremony without the user finding the email again (P08.S01, D24).
+//
+// # Why the TEXT and not the parsed struct
+//
+// `ceremonyFor` takes the text and nothing else (`internal/server/ceremonyid.go:657`), so storing
+// it means a re-arm walks the same door a fresh paste walks, through `ParseInvitation`, with every
+// version, checksum and roster-cap check re-run. Storing the parsed `Invitation` instead would mean
+// re-encoding it on the way out — which is the shape that produced a live defect: the re-issue route
+// rebuilds an `Invitation` field by field and forgets `Intent`, so every invitation it emits is
+// refused at the recipient's arrival gate. A stored struct makes every future field a second place
+// to remember. A stored string cannot forget one.
+//
+// # Why the vault and not the mirror
+//
+// The text CONTAINS the invitation secret, and D29 puts key material in the vault rather than in
+// `~/nib/ceremonies/`, which is ordinary files under the user's home. It could not go in the mirror
+// anyway: a mirror needs a Record, and an invitee holds none until the document reaches its hop.
+type CeremonyInvitation struct {
+	// Ceremony is the record's 32-hex id — the same key `CeremonySecret` uses.
+	Ceremony string `json:"ceremony"`
+	// Invitation is the encoded invitation text, exactly as `ParseInvitation` accepted it.
+	Invitation string `json:"invitation"`
+}
+
 // Contents is the decrypted vault payload.
 type Contents struct {
 	// Version is what this build wrote into the PAYLOAD, distinct from the envelope's.
@@ -223,6 +248,13 @@ type Contents struct {
 	// the case predicate again; and a prune over a map-of-maps is a delete plus an
 	// empty-parent sweep, two rules where a slice has one loop.
 	CeremonySecrets []CeremonySecret `json:"ceremonySecrets,omitempty"`
+	// CeremonyInvitations is this machine's own invitations, at most one per ceremony.
+	//
+	// A slice for `CeremonySecrets`' reasons, and keyed by ceremony alone rather than by
+	// (ceremony, party): this holds the invitation THIS machine was given, and a machine is one
+	// party. The convener's side is `CeremonySecrets`, which is keyed by party because a convener
+	// mints one per invitee.
+	CeremonyInvitations []CeremonyInvitation `json:"ceremonyInvitations,omitempty"`
 }
 
 // contentsVersion is what this build writes into Contents, and the highest it will open.
@@ -234,7 +266,12 @@ type Contents struct {
 // D29 exists to prevent — so the version moves and `checkContentsVersion` refuses rather than
 // silently rewriting. Nothing is migrated because there is nothing to migrate: `AddCeremonyPeer`
 // had no production caller before that slice, so no vault carries a scoped pin.
-const contentsVersion = 2
+// **3 as of P08.S01:** `CeremonyInvitations` is new, and an older build would drop the unknown key
+// on its next ordinary save — leaving an invitee that had accepted an invitation unable to re-arm
+// after a restart, with nothing saying why. Same reasoning as 2, one field along. Nothing is
+// migrated: the field is additive and its absence reads as "this machine has accepted nothing",
+// which is true of every vault written before this build.
+const contentsVersion = 3
 
 // checkContentsVersion refuses a payload written by a NEWER Nib, for checkEnvelopeVersion's
 // reason applied one layer in. A zero is a vault written before the field existed and is
@@ -1373,6 +1410,88 @@ func (v *Vault) AddCeremonySecret(ceremony string, fingerprint, secret []byte) e
 		Secret:      append([]byte(nil), secret...),
 	})
 	return v.save()
+}
+
+// AddCeremonyInvitation stores this machine's own invitation for one ceremony and persists.
+//
+// Upsert by ceremony, like AddCeremonySecret: accepting the same invitation twice — which the
+// accept route is deliberately idempotent about — replaces the row rather than growing a second one
+// that nothing would ever find.
+//
+// The text is stored exactly as it was accepted. It is not re-encoded and not normalised: the value
+// that round-trips is the value the parser already said yes to.
+func (v *Vault) AddCeremonyInvitation(ceremony, invitation string) error {
+	if ceremony == "" {
+		// The refusal AddCeremonySecret and PruneCeremonyPeers both make, for the same reason:
+		// a row filed under "" is a row no prune can name.
+		return errors.New("a stored invitation needs a ceremony id")
+	}
+	if invitation == "" {
+		return errors.New("a stored invitation needs an invitation")
+	}
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	for i := range v.contents.CeremonyInvitations {
+		if v.contents.CeremonyInvitations[i].Ceremony == ceremony {
+			v.contents.CeremonyInvitations[i].Invitation = invitation
+			return v.save()
+		}
+	}
+	v.contents.CeremonyInvitations = append(v.contents.CeremonyInvitations,
+		CeremonyInvitation{Ceremony: ceremony, Invitation: invitation})
+	return v.save()
+}
+
+// CeremonyInvitationFor returns this machine's stored invitation for one ceremony.
+func (v *Vault) CeremonyInvitationFor(ceremony string) (string, bool) {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	for _, c := range v.contents.CeremonyInvitations {
+		if c.Ceremony == ceremony {
+			return c.Invitation, true
+		}
+	}
+	return "", false
+}
+
+// PruneCeremonyInvitations removes this machine's stored invitation for one ceremony.
+//
+// It ships in the same change as the write, and that is not a convention — it is the specific harm
+// D29 exists to prevent, arriving through its own fix. An invitation carries the ceremony's secret,
+// so a write with no delete is key material at rest for as long as the vault lives. The two callers
+// are the two sites that already prune ceremony material: the convene rollback, and a decline.
+//
+// **What it does NOT cover, said here rather than discovered:** a ceremony that COMPLETES. There is
+// no close-out caller in this tree for the convener's secrets either — `PruneCeremonySecrets`' only
+// production caller is the rollback — so this makes an invitee symmetric with a convener rather than
+// better than one. The close-out that prunes both is P08.S06's.
+func (v *Vault) PruneCeremonyInvitations(ceremony string) (int, error) {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	if ceremony == "" {
+		return 0, errors.New("prune needs a ceremony id")
+	}
+	var kept []CeremonyInvitation
+	n := 0
+	for _, c := range v.contents.CeremonyInvitations {
+		if c.Ceremony == ceremony {
+			n++
+			continue
+		}
+		kept = append(kept, c)
+	}
+	if n == 0 {
+		return 0, nil // nothing to write, and a save() here would be a disk write per decline
+	}
+	before := v.contents.CeremonyInvitations
+	v.contents.CeremonyInvitations = kept
+	// Restore on a failed save, for PruneCeremonySecrets' reason: the in-memory and on-disk views
+	// of the vault must not disagree about what this machine still holds.
+	if err := v.save(); err != nil {
+		v.contents.CeremonyInvitations = before
+		return 0, err
+	}
+	return n, nil
 }
 
 // PruneCeremonySecrets removes every secret for one ceremony. Returns how many went.

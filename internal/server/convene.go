@@ -269,6 +269,14 @@ func (s *Server) unconvene(v *vault.Vault, root, id string) {
 		log.Printf("convene rollback: could not remove ceremony %s's invitation secrets from "+
 			"the vault: %v — they are key material and this machine still holds them", id, err)
 	}
+	// The invitee-side store too (P08.S01). A convener does not normally hold one, so this is
+	// almost always a no-op — but "almost always" is not a reason for a teardown to reach one of
+	// two stores, and a convener that also accepted an invitation to its own ceremony is exactly
+	// the case nobody would think to test.
+	if _, err := v.PruneCeremonyInvitations(id); err != nil {
+		log.Printf("convene rollback: could not remove ceremony %s's stored invitation from the "+
+			"vault: %v — it carries the ceremony secret and this machine still holds it", id, err)
+	}
 	if err := ceremony.RemoveMirror(root, id); err != nil {
 		log.Printf("convene rollback: could not remove %s: %v — a ceremony directory is left "+
 			"under the output folder for a ceremony that was never convened", id, err)
@@ -373,12 +381,27 @@ func (s *Server) handleCeremonyInvites(w http.ResponseWriter, r *http.Request) {
 				"secrets are removed when it ends.")
 			return
 		}
+		// **`Intent` is REQUIRED and was omitted, which made every re-issue useless (P08.S01).**
+		//
+		// `MatchesRecord` compares the recital — "the invitation's recital is %q and this
+		// document's record says %q … these are two different proceedings however alike they
+		// look" (`internal/ceremony/invitation.go`) — and `Contribute` refuses a ceremony
+		// signature whose attestation carries none (`internal/p2p/cosign.go`, ErrNoCeremonyIntent).
+		// So a re-issued invitation parsed, armed, and was then refused at the recipient's arrival
+		// gate, AFTER the convener had been told the re-issue succeeded. Nobody had hit it because
+		// this route had one reference in the whole tree — its own registration — and no test, no
+		// harness clause and no caller in the web client.
+		//
+		// `Seeds` is still absent and cannot be recovered: the record does not carry them, so a
+		// re-issued invitation has no DHT seed hints. That is a real loss and it is stated rather
+		// than papered over — every other field a recipient CHECKS is here.
 		inv := ceremony.Invitation{
 			Version:             ceremony.InvitationVersion,
 			ID:                  rec.ID,
 			Roster:              rec.Roster,
 			Secret:              secret,
 			ConvenerFingerprint: conv,
+			Intent:              rec.Intent,
 			RosterHash:          rh,
 		}
 		text, eerr := inv.Encode()

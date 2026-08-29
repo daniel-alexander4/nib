@@ -23,13 +23,20 @@ import (
 // refusal at `pinnedLabel`, which is a load-bearing check on two doors; this route leaves both
 // byte-identical, which is what makes the change safe to reason about.
 //
-// # What it does NOT do
+// # What it persists, and what changed (P08.S01)
 //
-// It does not store the invitation, and it does not store its secret. The arm already takes the
-// invitation text on every call (`armRequest.Invitation`), so nothing needs it at rest — and D29
-// is explicit that the secret does not belong in `~/nib/ceremonies/`. Storing it in the vault
-// would be defensible and is not needed by anything, so it is not done: the smallest thing that
-// removes the manual pin is the pin.
+// It stores the invitation **text** in the vault, keyed by ceremony, and pins the convener.
+//
+// It used to store nothing, on the argument that "the arm already takes the invitation text on
+// every call, so nothing needs it at rest". That was true and is no longer: D24 makes a ceremony
+// span quitting Nib, and a party who has accepted an invitation and then restarts has a pin, an
+// identity, and no way to be a party to the ceremony again — `ceremonyFor` starts at
+// `ParseInvitation(text)`, and the rendezvous key, both salts and the channel binding are all HKDF
+// over the secret inside that text. The manual step D21 removed came back one process boundary out.
+//
+// **The vault, never `~/nib/ceremonies/`.** The text contains the secret, and D29 puts key material
+// in the sealed store rather than beside the documents. It could not go in the mirror in any case:
+// `WriteMirror` needs a Record, and an invitee holds none until the document reaches its hop.
 
 type acceptRequest struct {
 	Invitation string `json:"invitation"`
@@ -73,7 +80,8 @@ func (s *Server) handleCeremonyAccept(w http.ResponseWriter, r *http.Request) {
 		httpError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
-	inv, err := ceremony.ParseInvitation(strings.TrimSpace(req.Invitation))
+	text := strings.TrimSpace(req.Invitation)
+	inv, err := ceremony.ParseInvitation(text)
 	if err != nil {
 		// ParseInvitation's four sentences are already written for a person — "that is not a
 		// Nib invitation", "this invitation is damaged", and the two direction-aware version
@@ -149,6 +157,21 @@ func (s *Server) handleCeremonyAccept(w http.ResponseWriter, r *http.Request) {
 		httpError(w, http.StatusInternalServerError,
 			"the invitation was read but its pin could not be saved, so nothing was "+
 				"accepted: "+perr.Error())
+		return
+	}
+	// **The persist FAILS the accept, and that is the whole point of doing it here (P08.S01).**
+	//
+	// The half-state this refuses is a pin with no stored invitation: arming would then get past
+	// `pinnedLabel` — the check the pin exists to satisfy — and fail at `ceremonyFor` with nothing
+	// to parse, on a machine whose user was told the invitation was accepted. A 500 that names both
+	// halves is the honest answer; a logged warning would leave the user to discover it at the
+	// moment the baton arrives.
+	//
+	// The TRIMMED text, not `req.Invitation`: what is stored is what `ParseInvitation` accepted.
+	if err := v.AddCeremonyInvitation(inv.ID, text); err != nil {
+		httpError(w, http.StatusInternalServerError,
+			"the invitation was read and its pin saved, but the invitation itself could not be "+
+				"stored, so this machine could not rejoin the ceremony after a restart: "+err.Error())
 		return
 	}
 
