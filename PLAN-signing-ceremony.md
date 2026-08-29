@@ -5815,7 +5815,7 @@ Acceptance:
 - **Driving a re-issue after a hop has actually completed is `not exercised`** — it needs the relay. The assertion that mattered is P08.S01's `TestAReIssuedInvitationStillMatchesItsRecord`, which is where the live defect was and which this slice's work rests on.
 - Tier: 1 at the route for both refusals; tier 6 and the relay are what the two `not exercised` rows would need (C15).
 
-#### P08.S08 — The lifecycle gets a reader *(D34 self-healing, D19's model; new at the plan-review, 2026-08-29)*
+#### P08.S08 — The lifecycle gets a reader *(D34 self-healing, D19's model; new at the plan-review, 2026-08-29)* *(**partly done** 2026-08-29, v1.117.249 — the surface exists and the two silent paths reach it; the recovery action is C03's and waits on that decision)*
 Scope: P08 adds five failure modes — the persist failed, the re-delivery never happened, the resume
 found a damaged mirror, the round stalled at party 3, the prune moved something — and every one of
 them reports today through `log.Printf` to a stderr that a double-clicked launch sends nowhere. The
@@ -5825,9 +5825,9 @@ nobody receives"* (`cmd/nib/main.go:271-274`). That reasoning was applied there 
 Without this slice, C11's *"the prune moved something"* is undetectable and unattributable by
 construction, and C03's sentence has no channel.
 Acceptance:
-- **A sticky failure field on `sessionStatus`** that outlives the session and is cleared only by the next arm, carrying cause, summary and recovery — populated on the armed path, where there is no HTTP response to write into.
-- **The "signed but not saved" state offers a recovery action** — the in-memory contribution written to a path the user chooses, through the save-as door that already exists — driven end to end. A warning label over an unrescuable state is not a discharge.
-- **A ceremony-lifecycle event record** — hop persisted, hop re-delivered, ceremony loaded or unloadable, delivery attempted / acknowledged / failed, directory closed out — readable without a terminal, and `saveReceived`'s silent write failure gains a reader in the same change.
+- **A sticky failure field on `sessionStatus`** that outlives the session and is cleared only by the next arm. *Met.* Sticky is the load-bearing word: a field cleared on disarm would be worthless because **the disarm is the symptom** — the user looks after the arm has gone quiet, which is exactly when a session-scoped field is already gone. It is cleared by the next ARM instead, because the user trying again is what makes the old reason spent. It carries a stable `what` key so a surface branches on a value rather than matching prose.
+- **The "signed but not saved" state offers a recovery action.** **NOT BUILT — it is C03's, and C03 is parked.** Which sentence that state shows, and whether the delivery happens at all, is the D24 question this phase's S02 waits on; building the action first would be building a remedy for a state whose definition is open.
+- **`saveReceived`'s silent write failure gains a reader**, and `mirrorHop`'s log-only one too. *Met.* These were the two worst: `saveReceived` used a bare `return` with its own doc saying it "simply reports nothing", and it is the one path in the tree that loses a peer's document with no trace **after the sender has already been told it was accepted**. **A full event RECORD is not built** — the single last-failure notice is what the two existing producers needed, and a log of events wants producers that do not exist yet (delivery, close-out). Scoped down deliberately rather than half-built.
 - **The counters live in a package the reader scans cover**, or the gap is recorded: `internal/server` is absent from `observables_test.go`'s package list, so a counter placed there is invisible to every reader scan in the tree.
 - Tier: 3 for the recovery action, 1 for the field and the record (C15).
 

@@ -649,6 +649,15 @@ func (s *Server) mirrorHop(final []byte) {
 		log.Printf("ceremony %s: the completed hop could not be written to the mirror: %v — the "+
 			"signature is on the document either way, but this machine has no copy of it under "+
 			"~/nib/ceremonies", rec.ID, err)
+		// **And now it reaches a surface (P08.S08).** The log line above went to a stderr a
+		// double-clicked launch sends nowhere — `cmd/nib/main.go` makes that exact argument about
+		// its own hand-off notice and it was applied there and nowhere else. This is the failure
+		// where the user most needs to know: they have signed, and this machine kept no copy.
+		s.sess.noteFailure("hop-not-mirrored",
+			"You signed, but this machine could not keep its own copy of the document.",
+			"The signature is on the document the other party received either way. What is "+
+				"missing is this machine's copy under ~/nib/ceremonies, which is what lets Nib "+
+				"continue the ceremony after a restart. Reason: "+err.Error())
 	}
 }
 

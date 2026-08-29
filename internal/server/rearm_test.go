@@ -584,3 +584,100 @@ func TestAnIdentityTheRosterDoesNotNameIsRefusedByName(t *testing.T) {
 		t.Errorf("the refusal carries a fingerprint: %q", body)
 	}
 }
+
+// TestABackgroundFailureReachesTheStatusAndOutlivesTheSession is P08.S08's core.
+//
+// # The gap, and it is the phase's own
+//
+// Every failure on the receiving side happens on a goroutine with no HTTP response to write into.
+// `runSession` discards `serveOneSession`'s error into `_`; `runCeremonyReceive` uses it only for
+// loop control; `mirrorHop` reports into `log.Printf`; `saveReceived` used a bare `return` and its
+// own doc said it "simply reports nothing". Nib ships no log file and no log viewer — and
+// `cmd/nib/main.go` already makes the argument about its own hand-off notice: *"a double-clicked
+// launch has no terminal: its stderr goes nowhere a user will look, so a refusal logged here alone
+// is a refusal nobody receives."* That reasoning was applied there and to nothing else.
+//
+// So P08 adds five failure modes to a product where the arm simply goes quiet. This is the surface
+// they reach.
+//
+// # Why sticky, asserted here rather than argued
+//
+// A notice cleared on disarm would be worthless, because the disarm IS the symptom: the user looks
+// after the session has ended, which is exactly when a session-scoped field is already gone. It is
+// cleared by the next ARM instead — the user trying again is what makes the old reason spent.
+func TestABackgroundFailureReachesTheStatusAndOutlivesTheSession(t *testing.T) {
+	ts, s := startServerWith(t)
+	c, csrf := authedClient(t, ts)
+	me := myFingerprint(t, c, ts.URL)
+	invitation, convenerFP := inviteFor(t, me)
+	if acode, abody := postForCode(t, c, csrf, ts.URL+"/api/ceremony/accept",
+		acceptRequest{Invitation: invitation}); acode != http.StatusOK {
+		t.Fatalf("accept: %d %s", acode, abody)
+	}
+
+	status := func(t *testing.T) sessionStatus {
+		t.Helper()
+		res, err := c.Get(ts.URL + "/api/session/status")
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer res.Body.Close()
+		var st sessionStatus
+		if err := json.NewDecoder(res.Body).Decode(&st); err != nil {
+			t.Fatal(err)
+		}
+		return st
+	}
+
+	// Stimulus: nothing is reported before anything has gone wrong, so the assertion below is
+	// about the failure and not about a field that is always populated.
+	if n := status(t).Notice; n != nil {
+		t.Fatalf("setup: a notice is present before anything failed: %+v", n)
+	}
+
+	arm := func(t *testing.T) {
+		t.Helper()
+		if code, body := postForCode(t, c, csrf, ts.URL+"/api/session/arm", armRequest{
+			Fingerprint: convenerFP, Bind: "127.0.0.1:0", Transport: "tcp", Invitation: invitation,
+		}); code != http.StatusOK {
+			t.Fatalf("arm: %d %s", code, body)
+		}
+	}
+	arm(t)
+	// The failure a background goroutine would record. Driven through the same door those paths
+	// use, because what is under test is the SURFACE — that it exists, survives, and is cleared at
+	// the right moment — not any one producer's ability to detect its own error.
+	s.sess.noteFailure("hop-not-mirrored",
+		"You signed, but this machine could not keep its own copy of the document.",
+		"no space left on device")
+
+	got := status(t)
+	if got.Notice == nil {
+		t.Fatal("a background failure reached no surface at all — which is the state P08 inherits " +
+			"and adds five more failure modes to")
+	}
+	if got.Notice.What != "hop-not-mirrored" {
+		t.Errorf("the notice carries %q, and a surface has to branch on a stable key rather than "+
+			"match prose", got.Notice.What)
+	}
+
+	// **The sticky half**: it survives the disarm, which is when the user actually looks.
+	if code, body := postForCode(t, c, csrf, ts.URL+"/api/session/disarm", struct{}{}); code != http.StatusOK {
+		t.Fatalf("disarm: %d %s", code, body)
+	}
+	after := status(t)
+	if after.Armed {
+		t.Fatal("setup: still armed after disarm, so the survival below proves nothing")
+	}
+	if after.Notice == nil {
+		t.Error("the notice went away with the session — but the disarm IS the symptom, so a " +
+			"user looking at a quiet arm sees no reason for it, which is the whole defect")
+	}
+
+	// And a fresh arm clears it: the user is trying again, so the old reason is spent.
+	arm(t)
+	if n := status(t).Notice; n != nil {
+		t.Errorf("a fresh arm kept the previous failure: %+v — the user would be shown a reason "+
+			"for something that is no longer happening", n)
+	}
+}

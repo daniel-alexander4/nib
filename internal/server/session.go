@@ -83,6 +83,23 @@ type session struct {
 	// cerCancel cancels a connect-based ceremony arm's background goroutine (P05.S09), the
 	// analogue of closing the accept listener for a runSession arm. nil for accept arms.
 	cerCancel context.CancelFunc
+	// notice is the last thing that went wrong in the background, and it OUTLIVES the session
+	// (P08.S08). Cleared only by the next arm.
+	//
+	// # Why it has to be sticky, and why there was nothing here before
+	//
+	// Every failure on the receiving side happens on a goroutine with no HTTP response to write
+	// into. `runSession` discards `serveOneSession`'s error into `_`; `runCeremonyReceive` uses it
+	// only for loop control; `mirrorHop` and `saveReceived` report into `log.Printf` and a bare
+	// `return` respectively. Nib ships no log file and no log viewer, and `cmd/nib/main.go` already
+	// makes the argument about its own hand-off notice: *"a double-clicked launch has no terminal:
+	// its stderr goes nowhere a user will look, so a refusal logged here alone is a refusal nobody
+	// receives."* That reasoning was applied there and to nothing else.
+	//
+	// So the arm simply went quiet, and the user was shown an unarmed session and no reason. A
+	// field cleared on disarm would be no better: the disarm IS the symptom, and a message that
+	// vanishes with it is a message nobody reads.
+	notice *noticeView
 	// until is when this arm gives up, as an absolute time; zero when nothing is armed.
 	//
 	// **It exists to be ASSERTED, which is C05's whole difficulty (P08.S04).** The criterion is
@@ -137,6 +154,7 @@ func (se *session) arm(ln p2p.Listener, cer *ceremonyID) bool {
 	se.cer = cer
 	se.addr = ln.Addr().String()
 	se.received = nil // a fresh session clears any prior transfer result
+	se.notice = nil   // and any prior failure: the user is trying again, so the old reason is spent
 	// **Stamped HERE and not by the arm goroutine.** The first draft set it from `runSession`,
 	// which starts after this handler has already answered — so a status poll landing in that
 	// window saw an armed session with no window, and the race detector found it by being slow
@@ -176,8 +194,19 @@ func (se *session) armCeremony(cer *ceremonyID, addr string, cancel context.Canc
 	se.addr = addr
 	se.cerCancel = cancel
 	se.received = nil
+	se.notice = nil
 	se.until = time.Now().Add(armWindowFor(cer))
 	return true
+}
+
+// noteFailure records something that went wrong where no response could carry it (P08.S08).
+//
+// Last-write-wins rather than a queue: the useful thing is what most recently stopped working, and
+// a list nobody prunes becomes its own problem. `what` is the stable key a surface can branch on.
+func (se *session) noteFailure(what, summary, detail string) {
+	se.mu.Lock()
+	defer se.mu.Unlock()
+	se.notice = &noticeView{What: what, Summary: summary, Detail: detail, At: time.Now()}
 }
 
 func (se *session) setReceived(r *receivedInfo) {
@@ -391,6 +420,9 @@ func (se *session) status() sessionStatus {
 		u := se.until
 		st.Until = &u
 	}
+	// Carried whether or not anything is armed — that is the point of it. The disarm is usually
+	// the symptom, so a notice that went away with the session would be one nobody reads.
+	st.Notice = se.notice
 	if se.pending != nil {
 		pv := se.pending.view
 		st.Pending = &pv
@@ -1008,10 +1040,21 @@ func (s *Server) openArrival(label string, final []byte) {
 func (s *Server) saveReceived(doc, peerFP []byte, peerLabel string) {
 	path := filepath.Join(defaultOutputDir(), receivedSubdir(doc), receivedName(peerLabel, peerFP))
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		s.sess.noteFailure("received-not-saved",
+			"A document arrived and could not be saved.",
+			"Nib could not create the folder it saves incoming documents into. Reason: "+err.Error())
 		return
 	}
 	// A document a PEER sent. Losing it means asking them to send again, and they may be gone.
+	//
+	// **It used to fail in complete silence** — a bare `return`, with this function's own doc
+	// saying "simply reports nothing". That is the one path in the tree that loses a peer's
+	// document with no trace at all, and the peer has already been told it was accepted.
 	if err := atomicfile.WriteDurable(path, doc, 0o600); err != nil {
+		s.sess.noteFailure("received-not-saved",
+			"A document arrived and could not be saved.",
+			"The sender has already been told it was accepted, so they will not send it again. "+
+				"Reason: "+err.Error())
 		return
 	}
 	s.sess.setReceived(&receivedInfo{Path: path, Peer: peerLabel})
@@ -1147,6 +1190,20 @@ type sessionStatus struct {
 	// Until is when this arm gives up. Present so the window can be checked rather than inferred
 	// from whether the ceremony happened to finish in time — see session.until.
 	Until *time.Time `json:"until,omitempty"`
+	// Notice is the last background failure, and it outlives the session — see session.notice.
+	Notice *noticeView `json:"notice,omitempty"`
+}
+
+// noticeView is something that went wrong where no response could carry it (P08.S08).
+//
+// `What` is a stable machine-readable reason, so a surface can key on it without matching prose —
+// the shape P06 will need, and the reason a refusal in this repo carries a code rather than a
+// sentence chosen by somebody else.
+type noticeView struct {
+	What    string    `json:"what"`
+	Summary string    `json:"summary"`
+	Detail  string    `json:"detail,omitempty"`
+	At      time.Time `json:"at"`
 }
 
 // diagnosisView is the arm-side D19 message the status poller carries — plain summary, cause tag,
