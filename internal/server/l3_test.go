@@ -123,6 +123,18 @@ func TestTheManualCoSignPathIsNotGated(t *testing.T) {
 // **Asserted on the ROUTING and on the whole enumeration**, not on one sentence: the failure mode
 // is a class of refusals falling through, so a test naming one of them would go green while eight
 // others still landed in the 502.
+// **What this list is worth, stated rather than left to be assumed (/pending 315, 2026-08-30).**
+// `IsContributionRefusal` is `refusalCode(err) != 0 || errors.Is(err, ErrRefusedUnknown)`, so every
+// sentinel below passes the first loop BY CONSTRUCTION the moment it has a wire code. The loop
+// cannot fail for a listed sentinel and cannot see an unlisted one, so it is not the guard on the
+// enumeration's completeness — `internal/p2p`'s `TestTheRefusalEnumerationIsDerivedFromSource` is,
+// and it derives its population from the const block instead of re-typing it.
+//
+// Kept anyway, and the reason is the SECOND half of this test rather than the first: what is
+// load-bearing here is the routing — that a refusal reaching `writeConnectDiagnosis` is not
+// rendered as a 502 "could not connect" — and that is a `internal/server` fact no p2p guard covers.
+// The list is the stimulus for it, not a completeness claim. Recorded so the next reader does not
+// mistake it for one, which is the whole failure /pending 315 was about.
 func TestARefusalIsNotReportedAsAConnectFailure(t *testing.T) {
 	// Every refusal the wire can carry must be recognised as one.
 	for _, err := range []error{
