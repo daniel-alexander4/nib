@@ -40,6 +40,25 @@ var idPattern = regexp.MustCompile(`^[0-9a-f]{32}$`)
 // ErrBadID is returned for an id that cannot safely name a directory.
 var ErrBadID = errors.New("ceremony id is not 32 hex characters")
 
+// ValidID is the ONE door for the rule above (ADR-009), and it is exported because the rule has
+// callers outside this package — /pending 308.
+//
+// `idPattern` was unexported and reached from `MirrorDir` and `ListStored` alone, so every site
+// that builds a path from a ceremony id had to be inside `internal/ceremony` to be safe. P08.S05
+// puts the id into a delivered filename under `~/nib/`, written from `internal/server`, which
+// could not reach the predicate at all.
+//
+// **What this does NOT claim.** The traversal exposure was already closed: `MirrorDir` refuses
+// before `filepath.Join` is ever reached, at all five path sites, and `TestTheMirrorRefusesAnUnsafeID`
+// drives it. The reason the rule also belongs in `Record.Verify` is ORDERING, not path safety —
+// see the call there.
+func ValidID(id string) error {
+	if !idPattern.MatchString(id) {
+		return fmt.Errorf("%w: %q", ErrBadID, id)
+	}
+	return nil
+}
+
 // ErrMirrorDamaged reports a stored ceremony whose document does not match its own record.
 //
 // Its own sentinel because the alternative sentence is an accusation: without it the
@@ -50,8 +69,8 @@ var ErrMirrorDamaged = errors.New("this ceremony's stored document does not matc
 
 // MirrorDir returns the directory for a ceremony, under root (normally ~/nib).
 func MirrorDir(root, id string) (string, error) {
-	if !idPattern.MatchString(id) {
-		return "", fmt.Errorf("%w: %q", ErrBadID, id)
+	if err := ValidID(id); err != nil {
+		return "", err
 	}
 	return filepath.Join(root, "ceremonies", id), nil
 }
@@ -348,7 +367,7 @@ func ListStored(root string, now time.Time) ([]Stored, error) {
 	}
 	var out []Stored
 	for _, e := range ents {
-		if !e.IsDir() || !idPattern.MatchString(e.Name()) {
+		if !e.IsDir() || ValidID(e.Name()) != nil {
 			continue
 		}
 		out = append(out, ReadStored(root, e.Name(), now))

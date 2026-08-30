@@ -464,6 +464,26 @@ func (r Record) Verify(now time.Time) error {
 	if r.Version != FormatVersion {
 		return fmt.Errorf("%w: %d (this build writes %d)", ErrVersion, r.Version, FormatVersion)
 	}
+	// **The id's SHAPE, and it is here for ordering rather than for path safety** (/pending 308).
+	//
+	// The traversal exposure is already closed: `MirrorDir` refuses a bad id before
+	// `filepath.Join` is reached, at every path site. What it cannot fix is WHEN. Without this
+	// check `checkArrival` → `CheckRecord` → `Verify` passes, `MatchesRecord` passes (a hostile
+	// id equals itself), the user consents, `Contribute` runs, and only then does
+	// `persistContribution` → `WriteMirror` → `MirrorDir` refuse — so the convener holds the
+	// signature and the signer is told "Signed, but not saved". The refusal belongs BEFORE
+	// consent, and this is where the record is first judged.
+	//
+	// Placed after the version check so a future format reads as a skew rather than as a
+	// malformed id, and before the signature check for `IsCanonical`'s stated reason: a
+	// mis-built record should be reported as mis-built rather than accused of forgery.
+	//
+	// It refuses no legitimate record. `Verify` gates on `r.Version != FormatVersion` — exact
+	// equality — and `NewID` (32 lowercase hex, one non-test caller) is the only producer, so no
+	// record any Nib has emitted can fail this.
+	if err := ValidID(r.ID); err != nil {
+		return err
+	}
 	// The roster bound belongs HERE too, not only in ParseInvitation.
 	//
 	// A Record arrives from external input — Extract(pdf) → Decode → Verify — and the
@@ -510,6 +530,21 @@ func (r Record) Verify(now time.Time) error {
 	}
 	if !inRoster {
 		return ErrConvenerNotInRoster
+	}
+	// **The text bounds, and they are here for the reason the roster bound one block up is**
+	// (/pending 308's grill). `checkIntent` and `checkRosterText` had exactly two callers, both
+	// in `Convene` — the CONVENER's own door. So the caps bound the emitter and left every
+	// recipient unbounded, which is the precise mirror of the asymmetry the roster-bound comment
+	// above already describes. Measured before the fix: `Verify` accepted a 5003-rune intent and
+	// 5000-rune labels and capacities.
+	//
+	// It matters more after P08: D25 allocates signature pages from this text's rendered height,
+	// and S05 puts the record's intent into a delivered filename on every party's disk.
+	if err := checkIntent(r.Intent); err != nil {
+		return err
+	}
+	if err := checkRosterText(r.Roster); err != nil {
+		return err
 	}
 	// The ceiling, LAST — after the signature, so a record that fails both is reported as
 	// forged rather than as over-long. A convener who signed a ten-year deadline is a
