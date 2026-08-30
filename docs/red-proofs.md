@@ -2275,3 +2275,24 @@ guard rather than the code under it.
   blindness floor (`== 0`) and the per-code assertions carry the diagnosis.
 
 `recorded` 186 → 189.
+
+## /pending 311 — the two arm doors *(v1.117.259)*
+
+One row, tier 1, and it fires **two** checks that are different halves of the same rule.
+
+**`arm-doors-disagree`.** `arm()` reverts to asking `se.ln != nil`. A connect-based ceremony arm
+sets `se.cer` and leaves `se.ln` nil, so a following manual/TCP arm sees no listener and succeeds,
+overwriting `se.cer` with no `close()` on what it displaced — orphaning that ceremony's rendezvous
+server, shared UDP socket, router port-mapping lease (whose refresh goroutine only `close()` stops),
+in-memory document and invitation secret.
+
+The **behavioural** check catches the orphaning. The **structural** one catches it as ADR-009 —
+`arm` deciding armedness without routing through `armedLocked()` — and it is the half that would
+catch a *fourth* site added later, which comparing three copies for agreement cannot do.
+
+**The predicate-COUNT assertion stays green under this patch, deliberately.** The reverted door
+writes `se.ln != nil`, not the full predicate, so counting copies never sees it. That is precisely
+why the guard asserts routing as well as counting, and it is worth recording: a guard written only
+as "this expression appears once" would have replayed green against the defect it was written for.
+
+`recorded` 189 → 190.
