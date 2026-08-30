@@ -1969,3 +1969,107 @@ func short8(fp string) string {
 	}
 	return fp
 }
+
+// TestASecondArmCannotOrphanALiveCeremony — /pending 311.
+//
+// # The defect
+//
+// `arm()` refused only `if se.ln != nil`; `armCeremony()` refused `if se.ln != nil || se.cer !=
+// nil`. A connect-based ceremony arm goes through the second and leaves `se.ln` nil while setting
+// `se.cer` — so a following manual or TCP arm reached the first, saw no listener, and SUCCEEDED,
+// overwriting `se.cer`. Nothing closed the ceremony it displaced.
+//
+// What that orphans is everything `ceremonyID.close()` is the sole owner of: the rendezvous
+// server, the shared UDP socket and its mux, the router port-mapping lease — whose `startRefresh`
+// goroutine is stopped only by `close()`, so it refreshes a pinhole for the life of the process —
+// the in-memory co-signed document, and the invitation secret. `se.cerCancel` is left pointing at
+// the DISPLACED arm's cancel, so `runCeremonyReceive`'s `defer s.sess.disarmCeremony(cer)` no
+// longer matches and tears nothing down.
+//
+// ADR-009's shape exactly: one rule — "is anything armed" — asked at three sites, two of which
+// agreed. The third was a door. Both doors now call `armedLocked()`, which is the definition
+// `status()` already reported to the user.
+//
+// # Why it is driven at the struct
+//
+// The race is entirely about which fields a door compares. A networked reproduction would add a
+// peer, a handshake and a QUIC transport to test a boolean.
+func TestASecondArmCannotOrphanALiveCeremony(t *testing.T) {
+	var se session
+
+	cerA := &ceremonyID{}
+	cancelled := false
+	if !se.armCeremony(cerA, "127.0.0.1:1", func() { cancelled = true }) {
+		t.Fatal("setup: the ceremony arm was refused, so there is nothing here to orphan")
+	}
+
+	// STIMULUS, and without it this test passes against a door that refuses everything.
+	// `armCeremony` already refused a second ceremony before this fix; if it has stopped, the
+	// refusal below is not the doors agreeing, it is the session being permanently wedged.
+	if se.armCeremony(&ceremonyID{}, "127.0.0.1:2", func() {}) {
+		t.Fatal("setup: a second ceremony arm succeeded — armCeremony's own guard has gone, so " +
+			"this test can no longer tell 'the two doors agree' from 'nothing can ever arm'")
+	}
+
+	if se.arm(&stubListener{}, nil) {
+		t.Error("a manual/TCP arm succeeded while a ceremony arm was live. It overwrote se.cer, " +
+			"so runCeremonyReceive's `defer disarmCeremony(cer)` matches nothing and the " +
+			"ceremony's rendezvous server, shared UDP socket, router port-mapping lease and " +
+			"in-memory invitation secret are never closed — the lease keeps refreshing a " +
+			"pinhole for the life of the process.")
+	}
+
+	// The ceremony that was armed is still the one that is armed.
+	se.mu.Lock()
+	held := se.cer
+	se.mu.Unlock()
+	if held != cerA {
+		t.Errorf("the live ceremony is %p, want the one that armed (%p)", held, cerA)
+	}
+
+	// And this is a refusal, not a wedge: after a disarm the same arm must succeed. A guard that
+	// refuses every arm would satisfy every assertion above.
+	se.disarm()
+	if !cancelled {
+		t.Error("disarm did not run the ceremony arm's cancel")
+	}
+	if !se.arm(&stubListener{}, nil) {
+		t.Error("after disarming, a manual arm was still refused — the widened guard has " +
+			"broken arming rather than sequencing it")
+	}
+	se.disarm()
+}
+
+// TestTheArmedPredicateHasOneImplementation is the ADR-009 half: the rule above is only as good
+// as the number of places that ask it. Eight copies checked for agreement say nothing about a
+// ninth site added without one, so this asserts ROUTING through the door rather than comparing
+// the text of each site.
+func TestTheArmedPredicateHasOneImplementation(t *testing.T) {
+	raw, err := os.ReadFile("session.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Comments stripped: the doc on `armedLocked` itself quotes the predicate, and a scan
+	// satisfied by prose that merely names the expression is how a freeze guard once read its
+	// own explanation as proof of coverage (v1.117.155).
+	code := stripLineComments(string(raw))
+	const pred = "se.ln != nil || se.cer != nil"
+	if n := strings.Count(code, pred); n != 1 {
+		t.Errorf("the armed predicate %q appears %d time(s) in session.go, want exactly 1 (its "+
+			"definition in armedLocked). A second copy is how the two arm doors came to "+
+			"disagree: `arm` asked about the listener alone while `armCeremony` and `status` "+
+			"asked about both, so a ceremony arm was invisible to one of its own doors.", pred, n)
+	}
+	for _, fn := range []string{"arm", "armCeremony", "status"} {
+		i := strings.Index(code, "func (se *session) "+fn+"(")
+		if i < 0 {
+			t.Fatalf("setup: %s not found in session.go — this guard is pinned to a function "+
+				"that no longer exists", fn)
+		}
+		if body := funcBodyFrom(code, i); !strings.Contains(body, "se.armedLocked()") {
+			t.Errorf("%s decides armedness without calling armedLocked(). One rule, one door: a "+
+				"site that re-derives the answer is a second implementation that can drift, "+
+				"which is the defect /pending 311 recorded.", fn)
+		}
+	}
+}
