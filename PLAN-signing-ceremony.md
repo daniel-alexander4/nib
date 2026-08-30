@@ -2588,9 +2588,21 @@ v1.117.235–.236.
   burned by"* — it is. Recorded as partly rather than argued either way.
 - **C07 ✓ met** — tier 4, over the carry route, no signature of the convener's.
 - **C08 ✓ met** — `readme_test.go` / `sigpages_test.go`; the drift guard is green.
-- **C09 ✓ met** — blocks at N=9 (`blockname_test.go`), details panel at N=9
+- **C09 ⚠ partly met** — blocks at N=9 (`blockname_test.go`), details panel at N=9
   (`test/jsdom/nineparty.test.mjs`); the two-party "attests to the other's key" is unreachable
   above a mutual pair.
+
+  **⚠ CORRECTED 2026-08-30 (post-close, `/pending 317`): this is `⚠ partly met`, and the ✓ was
+  measured false.** `blockname_test.go` calls `StampCommitment` **in its own fixture** and then
+  reads `AppearanceLines()` — it proves the function. The production quote routes call
+  `AppearanceLines()` on an attestation nothing stamped: `cosignAttestation`
+  (`internal/server/cosign.go:57-107`) never stamps, and both `/api/cosign/quote` and
+  `/api/session/quote` render its lines. Driven at the route against an 8-signer roster, the block
+  a user SEES is 5 lines and the signature it sits on is 6, and **only the header matches**. This
+  is `rosterfields_test.go:21`'s own named shape — *"a test whose fixture supplies the very thing
+  the production code fails to supply is the vacuous green this repo keeps finding."* The corrected
+  half is scheduled as a P06 slice; leaving a known-false ✓ in a closed ledger is worse than the
+  defect, which is why this is written here rather than only in the backlog.
 - **C10 ✓ met** — README command table, exit-status paragraph and a worked example checked against
   the real binary's output.
 - **C11 ✓ met, for the rows this file holds** — 224 rows, 224 dispositioned: 219 `keep-live`, 5
@@ -2604,8 +2616,20 @@ v1.117.235–.236.
 - **C14 ✓ met** — tier 4 completes; `Matched` per predecessor; the first signer's state now has a
   surface. Clause 4's roster-member framing holds by construction (`crossBind` takes no roster) and
   is driven in its absent-peer form (`cosign_test.go`).
-- **C15 ✓ met** — `recital_test.go`: the Confirmer's intent is discarded and `defaultIntent` is
+- **C15 ⚠ partly met** — `recital_test.go`: the Confirmer's intent is discarded and `defaultIntent` is
   unreachable when a record is present.
+
+  **⚠ CORRECTED 2026-08-30 (post-close, `/pending 317`): this is `⚠ partly met`, and the ✓ was
+  measured false.** `blockname_test.go` calls `StampCommitment` **in its own fixture** and then
+  reads `AppearanceLines()` — it proves the function. The production quote routes call
+  `AppearanceLines()` on an attestation nothing stamped: `cosignAttestation`
+  (`internal/server/cosign.go:57-107`) never stamps, and both `/api/cosign/quote` and
+  `/api/session/quote` render its lines. Driven at the route against an 8-signer roster, the block
+  a user SEES is 5 lines and the signature it sits on is 6, and **only the header matches**. This
+  is `rosterfields_test.go:21`'s own named shape — *"a test whose fixture supplies the very thing
+  the production code fails to supply is the vacuous green this repo keeps finding."* The corrected
+  half is scheduled as a P06 slice; leaving a known-false ✓ in a closed ledger is worse than the
+  defect, which is why this is written here rather than only in the backlog.
 - **C16 ✓ met** — `record_test.go`: a `signs:false` convener's completed ceremony reads complete.
 - **C17 ⚠ PARTLY** — (a) and (b) driven and refused by name before consent (S02b); the reconciliation
   covers **intent** (this phase) and **capacity** (whole-`Party` comparison). **`expires` is not
@@ -2613,8 +2637,20 @@ v1.117.235–.236.
   measured argument this phase re-confirmed.
 - **C18 ✓ met** — driven at five of nine in Go and through `nib verify`, which names the four who
   have not signed.
-- **C19 ✓ met** — blocks render each party's own capacity AND the signed `/Reason`s differ in
+- **C19 ⚠ partly met** — blocks render each party's own capacity AND the signed `/Reason`s differ in
   capacity while carrying one identical recital. **The signed half was unbuilt until this close.**
+
+  **⚠ CORRECTED 2026-08-30 (post-close, `/pending 317`): this is `⚠ partly met`, and the ✓ was
+  measured false.** `blockname_test.go` calls `StampCommitment` **in its own fixture** and then
+  reads `AppearanceLines()` — it proves the function. The production quote routes call
+  `AppearanceLines()` on an attestation nothing stamped: `cosignAttestation`
+  (`internal/server/cosign.go:57-107`) never stamps, and both `/api/cosign/quote` and
+  `/api/session/quote` render its lines. Driven at the route against an 8-signer roster, the block
+  a user SEES is 5 lines and the signature it sits on is 6, and **only the header matches**. This
+  is `rosterfields_test.go:21`'s own named shape — *"a test whose fixture supplies the very thing
+  the production code fails to supply is the vacuous green this repo keeps finding."* The corrected
+  half is scheduled as a P06 slice; leaving a known-false ✓ in a closed ledger is worse than the
+  defect, which is why this is written here rather than only in the backlog.
 - **C20 ✓ met** — `convene_test.go`, `ErrDeadlineTooTight` at convene.
 - **C21 ✗ NOT MET** — parked, and it is the phase's one open decision. It needs an `Expires` on the
   invitation that `/pending 247` declined on a measured security argument; P07.S07b confirmed that

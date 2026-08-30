@@ -159,7 +159,11 @@ func StampCommitment(att *Attestation, r Roster, meFP string) {
 	att.Capacity = order[pos].Capacity
 	// **Falling back to the fingerprint, never to a constant.** An unlabelled party is one the
 	// convener did not name, and the honest block says which key signed rather than inventing a
-	// person. `"Nib User"` on nine blocks is the defect this closes.
+	// person. `"Nib User"` on nine blocks is the defect this closes **in the signature**.
+	//
+	// **It is still open on the PAGE (/pending 317, 2026-08-30).** The quote routes render
+	// `AppearanceLines()` off an attestation that never reached this function, so the visible
+	// block still reads `Signer: Nib User` while the signature beneath it names the party.
 	if lbl := order[pos].Label; lbl != "" {
 		att.Signer = lbl
 	} else {

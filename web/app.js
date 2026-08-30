@@ -954,7 +954,14 @@ async function openCosign() {
 // renderAttestation rasterizes the server-provided lines into a white block sized
 // to the rect's aspect — the signing library stretches the image to fill the
 // rect, so the PNG must match its width:height. The lines come from the server
-// (Go AppearanceLines), never rebuilt here, so the block can't drift from /Reason.
+// (Go AppearanceLines), never rebuilt here.
+//
+// **It CAN drift from /Reason inside a ceremony, and did (/pending 317, corrected 2026-08-30).**
+// The quote's lines come from `cosignAttestation`, which never calls `StampCommitment`, while the
+// signature is built by `coSignExchange`, which does. Measured at the route with an 8-signer
+// roster: the block draws 5 lines and the signature carries 6, and only the header matches.
+// Outside a ceremony the two do agree, because `StampCommitment` early-returns. Fixing it is a
+// P06 slice; this comment states what is true until then.
 async function renderAttestation(lines, rect) {
   const w = rect[2] - rect[0], h = rect[3] - rect[1], scale = 3;
   const cv = document.createElement('canvas');
@@ -1454,7 +1461,8 @@ async function acceptRecv() {
   }
   const intent = els.srvIntent.value;
   // The responder's visible block is placed server-side; the quote gives only the
-  // canonical lines, so the rendered image can't drift from the signed /Reason.
+  // canonical lines. **Inside a ceremony the rendered image DOES drift from the signed /Reason**
+  // — see renderAttestation's header and /pending 317. Outside one they agree.
   let appearance = '';
   const qr = await apiFetch('/api/session/quote', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
