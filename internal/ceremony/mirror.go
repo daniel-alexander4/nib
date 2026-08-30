@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -348,6 +349,18 @@ type Stored struct {
 	State LoadState `json:"state"`
 	// Reason is the sentence for a non-OK state, already written for a person.
 	Reason string `json:"reason,omitempty"`
+	// Ended is the attested end state — "declined" or "completed" — or "" when the proceeding
+	// carries no termination (P08.S04b).
+	//
+	// **A FIELD, not a fifth `LoadState`, and the distinction is the point.** `LoadState`
+	// classifies how the *load* went — absent, unparseable, version-skewed, unverifiable. Whether
+	// the proceeding has ended is a fact about the ceremony, not about reading it, and folding the
+	// two would make "this ended cleanly" indistinguishable from "this would not load".
+	//
+	// **Empty means UNKNOWN, never live.** A convener that ends a proceeding and does not mint an
+	// object is indistinguishable from one still deciding, and this object cannot bind a convener
+	// — so no surface may render absence as "still running".
+	Ended string `json:"ended,omitempty"`
 	// The rest are populated only for LoadOK.
 	Intent  string    `json:"intent,omitempty"`
 	Expires time.Time `json:"expires,omitempty"`
@@ -401,6 +414,20 @@ func ReadStored(root, id string, now time.Time) Stored {
 		return s
 	}
 	s.Intent, s.Expires, s.Roster = r.Intent, r.Expires, r.Roster
+	// **The end state, read only after the record has verified** — `r` is the anchor, and it came
+	// from THIS directory's `record.json`, which is the weaker of the two anchors
+	// `ReadTermination`'s doc names. That is acceptable here and nowhere else: this is a listing,
+	// it renders a word to a user, and it authorises nothing. A gate that REFUSES on a termination
+	// must anchor on the document or the invitation instead, because a planted matching pair
+	// verifies against itself.
+	//
+	// A termination that does not verify leaves `Ended` empty rather than degrading the load: the
+	// ceremony is still perfectly readable, and one planted file must not hide a live proceeding.
+	if t, terr := readTerminationRaw(dir); terr == nil {
+		if t.Verify(r) == nil {
+			s.Ended = t.State
+		}
+	}
 	return s
 }
 
@@ -474,4 +501,91 @@ func refuseDifferentProceeding(dir string, r Record) error {
 			"commitment, so writing here would destroy it", ErrDifferentProceeding)
 	}
 	return nil
+}
+
+// terminationFile is the fourth file in a ceremony directory.
+const terminationFile = "termination.json"
+
+// WriteTermination stores the convener's signed end-state object — P08.S04b.
+//
+// # Its own door, and that is the whole design
+//
+// `WriteMirror`, `ReadMirror` and `refuseDifferentProceeding` are UNCHANGED by this file's
+// existence, and each of those is a deliberate refusal rather than an omission:
+//
+//   - **Not inside `WriteMirror`'s sequence.** /pending 321 was a fourth-file defect in miniature:
+//     a companion written in that sequence, carrying a cross-file invariant against
+//     `document.pdf` — whose bytes change every hop — and checked unconditionally, so a stale one
+//     became a permanent false `ErrMirrorDamaged`. This file binds the RECORD, whose roster
+//     commitment `refuseDifferentProceeding` holds immutable for the ceremony's life, so there is
+//     no per-hop value for it to fall out of step with. That immutability is the load-bearing
+//     reason, not the separate function.
+//   - **`WriteMirror` must not refuse because this exists.** A hop still in flight when the
+//     convener ends the proceeding would then fail its `Store`, and the receive path renders that
+//     as *"Signed, but not saved — do not close Nib"* — telling a user to rescue a document over
+//     what is really a race with a decline.
+//
+// **Write-once.** A second write naming a different state is a contradiction and is reported, never
+// clobbered: two conveners' worth of end state under one id is exactly the substitution
+// /pending 318 exists against, and silently taking the later one would pick the attacker's.
+func WriteTermination(root string, t Termination) error {
+	dir, err := MirrorDir(root, t.Ceremony)
+	if err != nil {
+		return err
+	}
+	if prev, rerr := readTerminationRaw(dir); rerr == nil {
+		if prev.State == t.State && prev.RosterHash == t.RosterHash {
+			return nil // idempotent: the same end state, written again
+		}
+		return fmt.Errorf("%w: it is already recorded as %q and this one says %q",
+			ErrTerminationConflict, prev.State, t.State)
+	}
+	b, err := t.Encode()
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return err
+	}
+	// 0600 for the reason the rest of this directory is: these are the documents of a signing in
+	// progress, under a home directory the default umask would otherwise make world-readable.
+	return atomicfile.WriteDurable(filepath.Join(dir, terminationFile), b, 0o600)
+}
+
+// readTerminationRaw reads and decodes without verifying — the internal half.
+func readTerminationRaw(dir string) (Termination, error) {
+	b, err := os.ReadFile(filepath.Join(dir, terminationFile))
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return Termination{}, ErrNoTermination
+		}
+		return Termination{}, err
+	}
+	return DecodeTermination(b)
+}
+
+// ReadTermination loads and VERIFIES the stored end state against a record.
+//
+// **`rec` must come from the document or the invitation, never from the `record.json` beside it.**
+// A planted pair — a matching record and termination for another proceeding, dropped into this
+// directory — verifies perfectly against itself. Only an anchor the attacker does not control
+// refuses it, and this function cannot tell where its argument came from, so the rule lives at
+// every call site and is driven by its own red proof.
+//
+// Three outcomes, and keeping them apart is the point: `ErrNoTermination` (the ordinary case, and
+// it must never read as damage), `ErrBadTermination` (present and does not verify — a planted file
+// far more likely than a corrupted one), or the object.
+func ReadTermination(root string, rec Record) (Termination, error) {
+	dir, err := MirrorDir(root, rec.ID)
+	if err != nil {
+		return Termination{}, err
+	}
+	t, err := readTerminationRaw(dir)
+	if err != nil {
+		return Termination{}, err
+	}
+	if err := t.Verify(rec); err != nil {
+		return Termination{}, err
+	}
+	return t, nil
 }

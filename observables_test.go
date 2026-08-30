@@ -132,7 +132,16 @@ var published = map[string][]string{
 	// Worth recording that this scan is what noticed the type at all: it was added, wired and
 	// tested, and the guard failed the root package on the same commit — which is the shape the
 	// file exists for, arriving on its own subject rather than on a regression.
-	"ceremony.Stored":          {"internal/ceremony/mirror.go", "internal/server/convene.go"},
+	"ceremony.Stored": {"internal/ceremony/mirror.go", "internal/server/convene.go"},
+	// **`ceremony.Termination` is the convener's signed end state (P08.S04b), and its reader is
+	// `ReadStored`** — which folds it into `Stored.Ended` for the listing route. The object itself
+	// is deliberately NOT rendered anywhere: a surface that showed the signature would invite a
+	// reader to treat its ABSENCE as "still live", and this object cannot bind a convener, so
+	// absence means unknown. What a user sees is the word, through `Stored.Ended`.
+	//
+	// Delivery to other parties is S05's, which is why this is inert today — the strongest
+	// argument for the S04a/S04b cut being where it is.
+	"ceremony.Termination":     {"internal/ceremony/mirror.go"},
 	"vault.CeremonySecret":     {"internal/server/convene.go", "internal/vault/vault.go"},
 	"ceremony.CandidateRecord": {"internal/ceremony/candidate.go", "internal/server/ceremonynet.go"},
 	"ceremony.Invitation":      {"internal/ceremony/invitation.go", "internal/server/ceremonyid.go"},
@@ -197,6 +206,24 @@ var unreadKnown = map[string]string{
 	"rendezvous.Stats.Loaded":        "deliberate — see internal/cli/rendezvous.go's scratch-directory comment",
 	"rendezvous.Stats.Saved":         "deliberate — written by the deferred Close, after the output is printed",
 	"rendezvous.Stats.CacheRejected": "deliberate — always false against a scratch directory",
+
+	// **The termination object's three verification fields, parked visibly (P08.S04b).**
+	//
+	// `Version`, `ConvenerCert` and `Sig` are consumed by `Termination.Verify` — which is in the
+	// DEFINING package, and this scan's own standing rule is that a field consumed by the code
+	// that sets it has no consumer at the far end. That rule is right, and naming
+	// `termination.go` as their reader would be exactly the laundering it exists to catch.
+	//
+	// **Their real far end is another party's machine, and S05 is the slice that puts them there.**
+	// Until the delivery round exists this object never leaves the convener's disk, so the honest
+	// state is: written, verifiable, and read by nobody who did not write it. `State` alone has a
+	// reader today, through `Stored.Ended`.
+	//
+	// Delete these three when S05 delivers a termination and a receiving party verifies one — that
+	// is the moment the fields acquire the consumer they were designed for.
+	"ceremony.Termination.Version":      "no far-end reader until S05 delivers the object; Verify is in the defining package",
+	"ceremony.Termination.ConvenerCert": "no far-end reader until S05 delivers the object; Verify is in the defining package",
+	"ceremony.Termination.Sig":          "no far-end reader until S05 delivers the object; Verify is in the defining package",
 
 	// **Parked HONESTLY rather than passing silently (2026-08-24, P07.S02).** This scan's
 	// declared readers for `ceremony.Party` are `record.go` and `invitation.go` — both inside
