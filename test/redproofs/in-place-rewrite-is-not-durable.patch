@@ -1,0 +1,13 @@
+diff --git a/internal/cli/cli.go b/internal/cli/cli.go
+index d0ede49..88c9f00 100644
+--- a/internal/cli/cli.go
++++ b/internal/cli/cli.go
+@@ -271,7 +271,7 @@ func writeAtomic(path string, data []byte) error {
+ 	// The stat above and the `EvalSymlinks` below stay HERE rather than moving into the door:
+ 	// following a link is right for a path the user named on the command line and wrong for
+ 	// `atomicfile`'s other callers, which write inside `~/nib` and the config dir.
+-	return atomicfile.WriteDurable(path, data, info.Mode().Perm())
++	return atomicfile.Write(path, data, info.Mode().Perm())
+ }
+ 
+ // usageFunc returns a FlagSet usage that prints a one-line synopsis and help,
