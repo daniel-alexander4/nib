@@ -5969,7 +5969,7 @@ Acceptance:
   `expires` at now+48h with no override, and closing that needs a knob ADR-010's lesson governs —
   it must not feed one constant to both sides.
 
-#### P08.S04b — The termination object *(D28, C06's telling half; split from S04 2026-08-30)* *(in progress 2026-08-30)*
+#### P08.S04b — The termination object *(D28, C06's telling half; split from S04 2026-08-30)* *(done 2026-08-30, v1.117.287 — party and When deliberately excluded, so no canonical form is needed; the binding is RosterHash alone)*
 Scope: the signed artifact a decline or a completion leaves behind. ~~the decliner signs~~
 **the CONVENER signs (2026-08-30, Dan — see the dateline)**: under D22's hub the convener is one end
 of every hop and the only party that ever hears a decline, so it is the only shape mintable from

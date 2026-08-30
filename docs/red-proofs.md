@@ -2509,3 +2509,30 @@ now hold it, and they are deliberately in different packages — the arm-populat
 `Receive` lives, the nesting inequality where the hop budget does.
 
 `recorded` 201 → 203.
+
+## P08.S04b — the termination object *(v1.117.285–.287)*
+
+Two rows, tier 1, and the second is the more instructive by some distance.
+
+**`a-termination-state-is-not-signed`.** `state` leaves the preimage. Every other axis stays valid —
+version, convener, roster commitment, signature — so a `completed` object flips to `declined` and
+verifies perfectly. Which of two things happened is the entire content of the artifact.
+
+**`a-termination-binds-no-proceeding`, and it first replayed GREEN.** The `RosterHash` comparison is
+disabled; that one field is the whole binding, committing to the id, DocHash, intent, deadline and
+every roster entry. Removing it should let one convener's decline end any ceremony they are party
+to — and the check did not notice, because **both of its refusal arms used a DIFFERENT convener**,
+so `Verify`'s convener-fingerprint test caught them and the binding was never reached.
+
+**An arm two predicates can satisfy cannot say which one is missing.** That is the second time this
+exact hole was found in one day — the first was /pending 324's exit door, where `refuses()` fired
+through `hasUnrostered()` and hid a missing `disagrees()`. Different file, different author's
+reasoning, same shape. Worth naming as a class: when a guard has several independent reasons to
+refuse, every red proof must be aimed at a case only ONE of them covers.
+
+The arm that fixes it is one convener running two proceedings — which is also the real attack, and
+`invitation_test.go` had already named it: *"Alice carried a lease, Bob carried a deed of sale at a
+different price."* It carries two setup assertions — the conveners match, the commitments differ —
+so it cannot silently decay back into the arms it was added to complement.
+
+`recorded` 203 → 205.
