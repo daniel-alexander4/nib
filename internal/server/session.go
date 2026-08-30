@@ -144,10 +144,29 @@ type sessionDecision struct {
 	appearance []byte
 }
 
+// armedLocked is "is anything armed", and it is ONE predicate (ADR-009). Callers hold se.mu.
+//
+// **It exists because the three sites that asked this question did not agree, and the one that
+// disagreed was a door.** `status()` — the definition the USER sees — has always been
+// `ln != nil || cer != nil`. `armCeremony` matched it. `arm` asked only about `ln`, and a
+// connect-based ceremony arm sets `cer` while leaving `ln` nil: so a manual or TCP arm reached
+// `arm`, saw no listener, and SUCCEEDED, overwriting `se.cer` with no `close()` on the one it
+// displaced. What that orphans is everything `ceremonyID.close()` solely owns — the rendezvous
+// server, the shared UDP socket, the router port-mapping lease and its self-refreshing goroutine,
+// the in-memory co-signed document and the invitation secret — and `se.cerCancel` is left pointing
+// at the displaced arm, so `runCeremonyReceive`'s `defer disarmCeremony(cer)` matches nothing and
+// tears nothing down. The refusal must be atomic with the mutation, so it belongs in the door and
+// not at the route: the 409 is the rendering of this answer, never a second copy of it.
+//
+// Not reachable from any shipped surface TODAY — `armCeremony` needs `transport: "quic"` and
+// neither `web/` nor `cmd/` ever sends one — so this is a latent trap rather than a live user
+// defect, and it goes live the moment anything selects QUIC.
+func (se *session) armedLocked() bool { return se.ln != nil || se.cer != nil }
+
 func (se *session) arm(ln p2p.Listener, cer *ceremonyID) bool {
 	se.mu.Lock()
 	defer se.mu.Unlock()
-	if se.ln != nil {
+	if se.armedLocked() {
 		return false
 	}
 	se.ln = ln
@@ -187,7 +206,7 @@ func armWindowFor(cer *ceremonyID) time.Duration {
 func (se *session) armCeremony(cer *ceremonyID, addr string, cancel context.CancelFunc) bool {
 	se.mu.Lock()
 	defer se.mu.Unlock()
-	if se.ln != nil || se.cer != nil {
+	if se.armedLocked() {
 		return false
 	}
 	se.cer = cer
@@ -415,7 +434,7 @@ func (se *session) respond(d sessionDecision) bool {
 
 func (se *session) status() sessionStatus {
 	se.mu.Lock()
-	st := sessionStatus{Armed: se.ln != nil || se.cer != nil, Address: se.addr, Received: se.received}
+	st := sessionStatus{Armed: se.armedLocked(), Address: se.addr, Received: se.received}
 	if st.Armed && !se.until.IsZero() {
 		u := se.until
 		st.Until = &u
