@@ -1253,3 +1253,23 @@ input.ovl-check { appearance: auto; accent-color: #1a7f37; background: transpare
   color: var(--text); text-align: center; padding: 18px 10px; margin: 6px 0 2px;
   background: var(--surface0); border-radius: 8px; word-spacing: .35em;
 }
+
+/* The sticky session-failure surface (P08.S08). Red rather than yellow, and not a
+   .badge: the armed pill next to it says "something is happening", and this says
+   "something went wrong and it is still wrong". They must not read alike. */
+#sessionNotice {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-right: 8px;
+  padding: 2px 6px 2px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--red);
+  background: color-mix(in srgb, var(--red) 16%, transparent);
+  color: var(--text);
+  font-size: 12px;
+}
+#sessionNoticeDismiss {
+  background: none; border: none; padding: 0 2px; cursor: pointer;
+  color: var(--text); font-size: 12px; line-height: 1;
+}

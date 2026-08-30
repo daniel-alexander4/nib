@@ -148,6 +148,8 @@ const els = {
   authHint: $('authHint'), authPw: $('authPw'), authPwLabel: $('authPwLabel'), migrateRow: $('migrateRow'),
   keyChoice: $('keyChoice'), keySelect: $('keySelect'), keyPath: $('keyPath'),
   createPath: $('createPath'), authWarn: $('authWarn'), armedPill: $('armedPill'),
+  sessionNotice: $('sessionNotice'), sessionNoticeText: $('sessionNoticeText'),
+  sessionNoticeDismiss: $('sessionNoticeDismiss'), sessionNoticeAction: $('sessionNoticeAction'),
   repointRow: $('repointRow'), repointPath: $('repointPath'),
   repointPw: $('repointPw'), repointGo: $('repointGo'),
   introBlock: $('introBlock'),
@@ -1105,6 +1107,41 @@ function reflectArmed(on) {
   if (els.armedPill) els.armedPill.hidden = !on;
 }
 
+// reflectNotice is the READER for sessionStatus.notice — the sticky failure surface P08.S08
+// built and nothing consumed.
+//
+// **It exists because the fields were published and unread, and `published.test.mjs` said so.**
+// A status field with no reader means the user is never told, and here that is the whole point of
+// the field: `noteFailure`'s two producers are "signed but not saved" and "the hop never reached
+// disk", each of which asks the user to do something before they close Nib.
+//
+// Rendered, not toasted, for the reason `noticeView`'s own doc gives: the disarm IS the symptom,
+// so a message that goes away with the session is a message nobody reads. It persists until the
+// user dismisses it or a later session replaces it.
+let noticeShownAt = '';
+function reflectNotice(n) {
+  if (!els.sessionNotice) return;
+  if (!n || !n.summary) return; // never CLEAR on absence — see below
+  // Keyed on the timestamp so a poll every 1.5 s does not re-announce the same sentence to a
+  // screen reader forever, while a genuinely new failure does re-announce.
+  if (n.at === noticeShownAt) return;
+  noticeShownAt = n.at;
+  els.sessionNoticeText.textContent = n.detail ? n.summary + ' — ' + n.detail : n.summary;
+  // `what` is the stable key a surface can branch on — that is its declared purpose, and it
+  // exists so the branch is on a key rather than on the prose of `summary`, which is a sentence
+  // that will be reworded. It selects the RECOVERY ACTION, because a warning over a state the
+  // user cannot act on is a warning that only tells them they have lost something.
+  //
+  // The two "not saved" failures leave the bytes in an open tab, which is exactly what makes the
+  // rescue possible: `signed-not-saved`'s own detail says "The document is open — save a copy
+  // somewhere with space". `hop-not-mirrored` has no local document to offer, so it gets the
+  // sentence and no button rather than a control that would do nothing.
+  const rescuable = n.what === 'signed-not-saved' || n.what === 'received-not-saved';
+  els.sessionNoticeAction.hidden = !rescuable;
+  els.sessionNoticeAction.textContent = rescuable ? 'Save a copy…' : '';
+  els.sessionNotice.hidden = false;
+}
+
 let recvPoll = 0; // token; bump to invalidate any in-flight poll or preview render
 let recvStage = 'arm'; // arm | wait | consent | applying | declining
 let recvMode = 'cosign'; // cosign | receive — receive saves a one-way transfer, no signing
@@ -1256,6 +1293,15 @@ async function pollRecv(token) {
   catch { return; } // 401 is handled by apiFetch; anything else stops this poll
   if (token !== recvPoll) return;
   reflectArmed(!!st.armed); // the server can disarm on its own (a timeout), and then so does this
+  reflectNotice(st.notice);
+  // `until` is when this arm gives up. Read here so the indicator says how long is left rather
+  // than only that something is armed — which is what the field was added for (C05): a five-minute
+  // manual bound and a thirty-day ceremony bound are indistinguishable from the OUTCOME and
+  // trivially distinguishable from the figure.
+  if (els.armedPill && st.armed && st.until) {
+    els.armedPill.title = 'A co-signing session is armed until ' +
+      new Date(st.until).toLocaleString() + ' — click to open it';
+  }
   // The spoken check comes BEFORE the document, so it is checked before `pending`.
   if (st.verify) {
     if (els.verifyModal.hidden) showVerify(st.verify.words);
@@ -1270,10 +1316,23 @@ async function pollRecv(token) {
       // `peer` is who it came from — published for exactly this and never read until
       // the shape scan asked. "Saved <path>" alone is the one fact the user can already
       // see; who sent it is the one they cannot.
-      toast(st.received
-        ? 'Saved ' + st.received.path + (st.received.peer ? ' — from ' + st.received.peer : '')
-        : 'Document received');
-    } else if (recvStage === 'applying') { await openArrivalInNewView(); toast('Co-signed — it opened alongside your document'); }
+      // Same rule as the co-sign branch below: with no `received` AND a recorded failure, the
+      // document was NOT saved, and "Document received" is the wrong sentence for that.
+      if (st.received) {
+        toast('Saved ' + st.received.path + (st.received.peer ? ' — from ' + st.received.peer : ''));
+      } else if (!st.notice) {
+        toast('Document received');
+      }
+    } else if (recvStage === 'applying') {
+      await openArrivalInNewView();
+      // **The success sentence is withheld when the session recorded a failure.** It used to
+      // fire unconditionally: a persist failure sets `rerr = nil` so the delivery proceeds
+      // (D24 as amended), which meant a signer whose machine kept NO copy was told
+      // "Co-signed — it opened alongside your document". The notice beside it said the
+      // opposite, and the toast is the louder of the two. Telling someone it worked is worse
+      // than the silence this surface replaced.
+      if (!st.notice) toast('Co-signed — it opened alongside your document');
+    }
     else if (recvStage === 'wait') toast('Session ended — no peer connected');
     else if (recvStage === 'consent') toast('Session timed out');
     endRecv();
@@ -2738,6 +2797,25 @@ els.repointGo.onclick = () => repointKey();
 // Clicking the indicator reopens the dialog it belongs to — an indicator that only
 // informs leaves the user knowing something is armed and with no way to reach it.
 els.armedPill.onclick = () => { els.sessionRecvModal.hidden = false; };
+els.sessionNoticeDismiss.onclick = () => { els.sessionNotice.hidden = true; };
+// The recovery action. It saves the ACTIVE document, which is the one the arrival opened —
+// `openArrivalInNewView` puts it in its own view and activates it, and the notice is raised on
+// the same poll. Deliberately the ordinary Save-As flow rather than a bespoke route: the bytes
+// are already here, and a second download path for the same document would be a second thing to
+// keep correct.
+els.sessionNoticeAction.onclick = async () => {
+  const d = view && view.docMeta;
+  if (!d || !d.id) { toast('No document is open to save'); return; }
+  // **Both the id and the NAME are captured here, at operation entry** (ADR-001). The first
+  // cut called `exportBase()` after the await, and tier 2's pinning guard went red on it: an
+  // export that names its file when the fetch RESOLVES names it for whatever document is
+  // current then, which for a rescue is the one case where the user has two documents open and
+  // is about to lose one of them.
+  const exportName = exportBase();
+  const res = await apiFetch('/api/pdf?id=' + encodeURIComponent(d.id), { docId: d.id });
+  if (!res.ok) { toast('Could not read the document to save it'); return; }
+  openSaveAs(await res.blob(), (exportName || 'document') + '-cosigned.pdf', 'Save a copy');
+};
 els.closeBtn.onclick = () => closeView();
 els.closeAllBtn.onclick = requestClose;
 

@@ -65,6 +65,20 @@
            is what stops the empty state saying "nothing is happening" while a listener
            is up. Click to reopen the receive dialog. -->
       <button id="armedPill" type="button" hidden title="A co-signing session is armed — click to open it">⏳ waiting for a co-signature</button>
+      <!-- The sticky failure surface (P08.S08, C03). Two things make it what it is.
+           It is PERSISTENT: the failures it carries — "signed but not saved", a hop
+           that never reached disk — outlive the session that produced them, and the
+           disarm IS the symptom, so a message that vanished with the session would be
+           one nobody reads. `toast` cannot carry them: it clears itself after 2500 ms.
+           And it is a LIVE REGION. Before this the front end had none at all, so the
+           one sentence whose whole purpose is to stop a user closing Nib and losing a
+           signature was never announced to a screen reader. role="alert" is the
+           assertive form, which is right here and would be wrong for anything less. -->
+      <span id="sessionNotice" role="alert" hidden>
+        <span id="sessionNoticeText"></span>
+        <button id="sessionNoticeAction" type="button" hidden></button>
+        <button id="sessionNoticeDismiss" type="button" title="Dismiss">✕</button>
+      </span>
       <span id="sigBadge" class="badge badge-none" title="Signature status">no document</span>
       <button id="sigDetailsBtn" class="badge-link" hidden title="Signature details">details</button>
     </div>
