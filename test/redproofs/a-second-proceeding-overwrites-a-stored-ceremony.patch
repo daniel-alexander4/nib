@@ -1,0 +1,29 @@
+diff --git a/internal/ceremony/mirror.go b/internal/ceremony/mirror.go
+index f514320..5867fd7 100644
+--- a/internal/ceremony/mirror.go
++++ b/internal/ceremony/mirror.go
+@@ -452,21 +452,14 @@ var ErrDifferentProceeding = errors.New("another ceremony is already stored unde
+ func refuseDifferentProceeding(dir string, r Record) error {
+ 	b, err := os.ReadFile(filepath.Join(dir, "record.json"))
+ 	if err != nil {
+-		return nil // absent (the ordinary first write), or unreadable — see above
++		return nil
+ 	}
+ 	stored, err := Decode(b)
+-	if err != nil {
+-		return nil // local damage, not a second proceeding
+-	}
+-	want, err := stored.RosterHash()
+ 	if err != nil {
+ 		return nil
+ 	}
+-	got, err := r.RosterHash()
+-	if err != nil {
+-		return err
+-	}
+-	if !bytes.Equal(want, got) {
++	_ = bytes.Equal
++	if stored.ID != r.ID {
+ 		return fmt.Errorf("%w: this id already holds a proceeding with a different roster "+
+ 			"commitment, so writing here would destroy it", ErrDifferentProceeding)
+ 	}
