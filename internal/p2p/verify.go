@@ -215,9 +215,19 @@ var (
 	// That is the man-in-the-middle signal, and it must never be reported as a network
 	// error — "could not connect" invites a retry, which is the worst possible advice
 	// when someone is sitting between you.
+	//
+	// No wire code: DELIBERATE, and it is a security decision rather than an omission. This
+	// gate runs BEFORE a single document byte crosses (`runVerification` in `Receive`), and
+	// its whole subject is that the party on the other end may not be who they claim. Telling
+	// that party *which* check failed hands a man-in-the-middle the one bit they want — whether
+	// the human noticed. The peer gets a closed connection, which is what an attacker would see
+	// from an absent machine, and this side's user gets the sentence.
 	ErrVerificationDeclined = errors.New("the verification words were not confirmed")
 	// ErrVerificationTimedOut: nobody answered. Distinct from declining, because it means
 	// something different to the user and to whoever reads the log.
+	//
+	// No wire code: same gate, same reason as its sibling above — and the pair must stay
+	// indistinguishable on the wire, or the absence of a code becomes the code.
 	ErrVerificationTimedOut = errors.New("nobody confirmed the verification words in time")
 )
 

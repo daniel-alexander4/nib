@@ -126,6 +126,10 @@ func readmeLines() []string {
 
 // ErrReadmeOverflow reports a body that will not fit above the signature blocks
 // stacked on the same page.
+//
+// No wire code: it is raised while COMPOSING this machine's own page, before and
+// independently of any exchange, so it never reaches a refusal frame. A peer told
+// "your readme does not fit" would be told about a layout decision that is not theirs.
 var ErrReadmeOverflow = errors.New("the trust-explainer body does not fit above the signature blocks")
 
 // readmeFloor is the lowest baseline a body line may occupy: the TOP of the
