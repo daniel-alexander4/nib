@@ -2232,3 +2232,46 @@ distinctly, because a non-zero exit is also what a deleted check produces. Same 
 with two of its first three mutations. Re-cut to keep the call and discard its result.
 
 `recorded` 184 → 186.
+
+## /pending 315 — the refusal enumeration, derived *(v1.117.257)*
+
+Three rows, tier 1, all against one new guard — and the guard was written to close a *tidiness*
+finding, then found a live defect on HEAD before it had a red proof of its own.
+
+**`refusal-sentinel-reaches-the-initiator-as-eof`.** The one that reintroduces what was actually
+wrong. `ErrNoSignaturePages` loses its wire code, so `refusalAck` returns `(nil, false)`, `Receive`
+writes no frame, and the initiator's `readFrame` gets EOF — surfaced as *"502 co-signing did not
+complete: receive co-signed document: EOF"*, a network fault inviting the retry a refusal must not
+invite. That is P07.S03a's defect. It had survived in **three** sentinels (`ErrNoSignaturePages`,
+`ErrBlockOffThePage`, `ErrNoCeremonyIntent`), all raised inside `coSignExchange`, because both
+"every code" tests were hand-written literal slices and a slice that lists what it checks cannot
+report what is missing from it. Three assertions fire, which is the sentinel-coverage arm working:
+the code becomes un-emittable, the live round trip stops closing, and the sentinel is named as
+carrying neither a code nor a `// No wire code:` line.
+
+**`refusal-code-renumbered`.** `refusePrefixMismatch` moves 3 → 30. **No other test in the tree can
+see this**, and that is the row's whole justification: a renumber keeps both switches symmetric,
+keeps both literal slices valid, and leaves the package green, while a peer on the shipped build
+reads 3 as this refusal and 30 as something it has no sentinel for. It is caught by the one part of
+the guard that is deliberately **not** derived — a hand-written frozen table, honest precisely
+because these are wire values: a number a future build may change was never a wire value, so the
+table is a record and adding a line to it is the act of freezing.
+
+**`refusal-decode-defines-an-unknown-code`.** A `case 42:` in `errorForCode` with no matching
+constant — a decode-only code, reserved against a meaning no build can produce.
+
+### The guard's own two defects, both found by these rows
+
+Written up because the pattern is the one this ledger keeps recording, and this time it was the new
+guard rather than the code under it.
+
+- **`refusal-decode-defines-an-unknown-code` passed GREEN on its first run.** `caseSubject` returned
+  `""` for anything that was not an identifier, so a bare literal case was invisible to the very
+  check written to catch one. The `*ast.BasicLit` arm exists because of this row.
+- **`refusal-sentinel-reaches-the-initiator-as-eof` went red with the wrong message.** A `len(enc) <
+  12` setup floor fired on the single-case deletion the guard exists to catch and reported *"the
+  switch walker has gone blind"*, masking the three assertions that name the sentinel. A floor that
+  fires on the condition the guard is for is a dead conjunct in front of the real check; it is now a
+  blindness floor (`== 0`) and the per-code assertions carry the diagnosis.
+
+`recorded` 186 → 189.

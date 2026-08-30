@@ -1,0 +1,13 @@
+diff --git a/internal/p2p/session.go b/internal/p2p/session.go
+index 9aa9baa..feca5f9 100644
+--- a/internal/p2p/session.go
++++ b/internal/p2p/session.go
+@@ -494,8 +494,6 @@ func refusalCode(err error) byte {
+ 		return refusePeerDoesNotAccept
+ 	case errors.Is(err, ErrWrongPriorSignerCount):
+ 		return refusePriorSignerCount
+-	case errors.Is(err, ErrNoSignaturePages):
+-		return refuseNoSignaturePages
+ 	case errors.Is(err, ErrBlockOffThePage):
+ 		return refuseBlockOffThePage
+ 	case errors.Is(err, ErrNoCeremonyIntent):
