@@ -125,6 +125,11 @@ const attestationTag = "[NibCoSign:1]"
 // "these people did not agree".
 const attestationTagVersion = 1
 
+// AttestationTagVersion is this build's attestation format number, exported so a VERIFIER outside
+// this package can tell "written by a newer Nib" from "these people disagree" (/pending 324).
+// The web client has drawn that distinction since D32; the CLI could not reach the constant.
+func AttestationTagVersion() int { return attestationTagVersion }
+
 // attestationTagRE matches the tag at any version, so a skew is legible rather than invisible.
 var attestationTagRE = regexp.MustCompile(`\[NibCoSign:([0-9]{1,4})\]`)
 
@@ -281,6 +286,11 @@ type SignerAttestation struct {
 	// RosterHash is the Ceremony Record commitment this signature carries ("" on an
 	// ordinary two-party co-sign, which has no record).
 	RosterHash string `json:"rosterHash,omitempty"`
+	// Unrostered is true when this signature claims the document's ceremony and its signer is on
+	// no roster line (/pending 324). It is the question `Completeness` does not ask: that counts
+	// how many OBLIGED signers signed, and can never exceed the roster, so an extra signature was
+	// invisible to it while the document still read "3 of 3 — ✓ Complete".
+	Unrostered bool `json:"unrostered,omitempty"`
 	// TagVersion is the attestation FORMAT version this signature's /Reason declares, 0 when it
 	// carries no Nib attestation tag at all (P07.S09c).
 	//
@@ -345,6 +355,18 @@ type Proceeding struct {
 	// is not in it, so a completed ceremony they carried renders complete instead of short a
 	// signer — which is C16 asking the verifier not to cry wolf, and C18 asking it to cry at all.
 	Signing []string
+	// Members is EVERY fingerprint on the roster — obliged or not — or nil when the caller has no
+	// record (/pending 324).
+	//
+	// **Separate from `Signing` because `Signing` excludes a `signs:false` convener**, and flagging
+	// that convener as an intruder would be a false statement about a party the record names. It
+	// exists to answer a question `Completeness` deliberately does not: not "how many of the
+	// obliged signed" but "is this signature from someone the roster names at all".
+	//
+	// Empty means nobody is unrostered — fail SAFE, the same three-state discipline
+	// `Commitment` and `obliged == 0` already use: a caller with no record says nothing rather
+	// than accusing everyone.
+	Members []string
 }
 
 // Completeness reports how many of the obliged signers have a VALID signature on this document,
@@ -408,7 +430,44 @@ func Attestations(st sign.Status, p Proceeding) []SignerAttestation {
 	}
 	crossBind(out)
 	markOneProceeding(out, p.Commitment)
+	markUnrostered(out, p.Members)
 	return out
+}
+
+// markUnrostered sets Unrostered on a valid signature that CLAIMS this document's ceremony and
+// whose signer is on no roster line (/pending 324).
+//
+// **Why `Completeness` was the wrong place to fix this.** Its `break` is correct — a party who
+// signs twice counts once — and its contract, *how many of the OBLIGED signers signed*, is true as
+// written. The defect was that nothing asked the other question, so an extra signature carrying a
+// copied roster token was rendered as a legitimate signer while `3 of 3` still read complete.
+// Counting the intruder would make `signed >= obliged` and print ✓ Complete, which is strictly
+// worse; refusing to report completeness at all would let an intruder SUPPRESS an ⚠ Incomplete on a
+// genuinely unfinished ceremony, which is a new attack rather than a fix.
+//
+// **Scoped to signatures carrying the commitment**, and that scope rests on a measured fact: a
+// plain appended co-signature with no token is already caught, because `markOneProceeding` fails
+// closed on it and `oneProceeding` goes false. The hole is precisely the signature that COPIES the
+// token — copying it is what defeats that check — so this is the residue and not a second net.
+// If `markOneProceeding` is ever loosened, the non-claiming population goes dark and this scope
+// must be widened with it.
+func markUnrostered(atts []SignerAttestation, members []string) {
+	if len(members) == 0 {
+		return // no record: say nothing rather than accuse everyone
+	}
+	on := make(map[string]bool, len(members))
+	for _, m := range members {
+		on[strings.ToLower(m)] = true
+	}
+	for i := range atts {
+		a := &atts[i]
+		if !a.Valid || a.RosterHash == "" {
+			continue
+		}
+		if !on[strings.ToLower(a.Fingerprint)] {
+			a.Unrostered = true
+		}
+	}
 }
 
 // crossBind sets Matched on each attestation: an accepted peer counts only if some

@@ -138,13 +138,14 @@ func ProceedingOf(pdf []byte, now time.Time) p2p.Proceeding {
 	}
 	// The OBLIGED signers, in roster order — a `signs:false` convener is not one, which is what
 	// makes C16 fall out of C18's count rather than needing a rule of its own (P07.S05a).
-	var signing []string
+	var signing, members []string
 	for _, party := range r.Roster {
+		members = append(members, party.Fingerprint)
 		if party.Signs {
 			signing = append(signing, party.Fingerprint)
 		}
 	}
-	return p2p.Proceeding{Commitment: hex.EncodeToString(h), Signing: signing}
+	return p2p.Proceeding{Commitment: hex.EncodeToString(h), Signing: signing, Members: members}
 }
 
 // Extract reads the record out of a document.
