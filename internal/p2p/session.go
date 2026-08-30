@@ -393,6 +393,17 @@ const (
 	refuseNotConnectedPeer   = 7
 	refusePeerDoesNotAccept  = 8
 	refusePriorSignerCount   = 9
+	// 10, 11 and 12 close a live gap found by /pending 315's grill (2026-08-30). All three
+	// sentinels are raised INSIDE `coSignExchange` — `ErrNoSignaturePages` and
+	// `ErrBlockOffThePage` from `PlacementFor` (`session.go`, the `place, err :=` line) and
+	// `ErrNoCeremonyIntent` from `Contribute` — so each reached the refusal block below with no
+	// code, `refusalAck` returned `(nil, false)`, nothing was written, and the initiator's
+	// `readFrame` got bare EOF: `502 co-signing did not complete: receive co-signed document:
+	// EOF`. That is the exact defect the `ackRefused` block's own doc records P07.S03a fixing,
+	// surviving in three sentinels nobody enumerated.
+	refuseNoSignaturePages = 10
+	refuseBlockOffThePage  = 11
+	refuseNoCeremonyIntent = 12
 )
 
 // ErrDeclined reports that the receiving user declined a one-way document transfer.
@@ -434,6 +445,10 @@ var (
 	// **D32's shape, and it is the reason this protocol is negotiated at all.** A skew produces
 	// a sentence naming the mismatch — never a verdict about the counterparty. The code is
 	// carried in the message so a bug report says which one.
+	//
+	// No wire code: it is the DECODE fallback and is unencodable by construction — it is what
+	// this build says when it reads a code it has no sentinel for, so a code mapping to it
+	// would mean a build emitting "I do not know what I mean".
 	ErrRefusedUnknown = errors.New("the peer refused this contribution for a reason this version of Nib does not know")
 )
 
@@ -479,6 +494,12 @@ func refusalCode(err error) byte {
 		return refusePeerDoesNotAccept
 	case errors.Is(err, ErrWrongPriorSignerCount):
 		return refusePriorSignerCount
+	case errors.Is(err, ErrNoSignaturePages):
+		return refuseNoSignaturePages
+	case errors.Is(err, ErrBlockOffThePage):
+		return refuseBlockOffThePage
+	case errors.Is(err, ErrNoCeremonyIntent):
+		return refuseNoCeremonyIntent
 	}
 	return 0
 }
@@ -504,6 +525,12 @@ func errorForCode(code byte) error {
 		return ErrPeerDoesNotAcceptYou
 	case refusePriorSignerCount:
 		return ErrWrongPriorSignerCount
+	case refuseNoSignaturePages:
+		return ErrNoSignaturePages
+	case refuseBlockOffThePage:
+		return ErrBlockOffThePage
+	case refuseNoCeremonyIntent:
+		return ErrNoCeremonyIntent
 	}
 	return fmt.Errorf("%w (code %d)", ErrRefusedUnknown, code)
 }
