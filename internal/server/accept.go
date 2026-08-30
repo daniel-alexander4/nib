@@ -167,6 +167,30 @@ func (s *Server) handleCeremonyAccept(w http.ResponseWriter, r *http.Request) {
 	// halves is the honest answer; a logged warning would leave the user to discover it at the
 	// moment the baton arrives.
 	//
+	// **A different proceeding may not take over this ceremony id's slot (/pending 318, door 2).**
+	//
+	// `AddCeremonyInvitation` upserts BY CEREMONY, so accepting an invitation whose id collides
+	// with one already stored replaces it silently. That is worse than the mirror half it pairs
+	// with: `armInvitation` resolves `req.Ceremony` from the vault, so after the swap the panel row
+	// still labelled *ceremony X* arms for the attacker's ceremony Y — the user's "continue" button
+	// points at a different proceeding, against a peer who passes the spoken check because they are
+	// legitimately pinned.
+	//
+	// Same discriminator as `WriteMirror`'s door and for the same reasons: `RosterHash` is what the
+	// convener signed and it covers every axis. It is already required non-empty above, so there is
+	// nothing to fall back on. A stored invitation that no longer parses is treated as absent
+	// rather than as a collision — local damage must not block an honest accept, which is the
+	// asymmetry `refuseDifferentProceeding` argues at the other door.
+	if prev, ok := v.CeremonyInvitationFor(inv.ID); ok {
+		if old, perr := ceremony.ParseInvitation(prev); perr == nil && old.RosterHash != inv.RosterHash {
+			httpError(w, http.StatusConflict,
+				"another ceremony is already stored under this id on this machine, and it is not "+
+					"this one. Accepting would replace it, and the entry you already have would "+
+					"then continue somebody else's proceeding. One of the two has to be convened "+
+					"again.")
+			return
+		}
+	}
 	// The TRIMMED text, not `req.Invitation`: what is stored is what `ParseInvitation` accepted.
 	if err := v.AddCeremonyInvitation(inv.ID, text); err != nil {
 		httpError(w, http.StatusInternalServerError,
