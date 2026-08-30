@@ -1,15 +1,14 @@
 diff --git a/internal/ceremony/convene.go b/internal/ceremony/convene.go
-index 390235d..d6bab93 100644
+index ba754c5..90c78a9 100644
 --- a/internal/ceremony/convene.go
 +++ b/internal/ceremony/convene.go
-@@ -175,9 +175,7 @@ func Convene(pdf []byte, req ConveneRequest, certPEM, keyPEM []byte, now time.Ti
- 	// Refused at CONVENE, on the same reasoning as the recital: this is the last moment the
- 	// convener can retype it, and the alternative is discovering it on a finished document that
- 	// several people have already signed.
--	if err := checkRosterText(roster); err != nil {
--		return Convened{}, err
--	}
-+	_ = checkRosterText
- 
- 	signing := 0
+@@ -359,6 +359,9 @@ const maxIntentInput = 4096
+ // Named per party rather than generically, because the convener's action is to shorten ONE
+ // person's entry and a message that does not say whose sends them to re-read the whole roster.
+ func checkRosterText(roster []Party) error {
++	if true {
++		return nil
++	}
  	for _, p := range roster {
+ 		who := p.Label
+ 		if who == "" {
