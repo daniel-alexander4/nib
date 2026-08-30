@@ -1,0 +1,13 @@
+diff --git a/internal/p2p/session.go b/internal/p2p/session.go
+index 9aa9baa..0ccf9a8 100644
+--- a/internal/p2p/session.go
++++ b/internal/p2p/session.go
+@@ -386,7 +386,7 @@ const (
+ const (
+ 	refuseNotYourTurn        = 1
+ 	refuseNotInRoster        = 2
+-	refusePrefixMismatch     = 3
++	refusePrefixMismatch     = 30
+ 	refusePrefixUnproven     = 4
+ 	refuseProceedingMismatch = 5
+ 	refuseCeremonyComplete   = 6

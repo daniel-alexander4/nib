@@ -1,0 +1,13 @@
+diff --git a/internal/p2p/session.go b/internal/p2p/session.go
+index 9aa9baa..7e956e9 100644
+--- a/internal/p2p/session.go
++++ b/internal/p2p/session.go
+@@ -531,6 +531,8 @@ func errorForCode(code byte) error {
+ 		return ErrBlockOffThePage
+ 	case refuseNoCeremonyIntent:
+ 		return ErrNoCeremonyIntent
++	case 42:
++		return ErrReadmeOverflow
+ 	}
+ 	return fmt.Errorf("%w (code %d)", ErrRefusedUnknown, code)
+ }
