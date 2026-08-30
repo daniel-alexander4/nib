@@ -1826,12 +1826,12 @@ func TestVerifyRefusesAnIDThatCannotNameADirectory(t *testing.T) {
 	}
 
 	for _, id := range []string{
-		"../../../../../../tmp/pwned",     // the traversal MirrorDir already refuses
-		"..",                              // the parent, bare
-		"a/../../etc",                     // traversal with a valid-looking head
-		"",                                // empty: joins to the ceremonies directory itself
+		"../../../../../../tmp/pwned",      // the traversal MirrorDir already refuses
+		"..",                               // the parent, bare
+		"a/../../etc",                      // traversal with a valid-looking head
+		"",                                 // empty: joins to the ceremonies directory itself
 		"0123456789ABCDEF0123456789ABCDEF", // right length and shape, WRONG CASE
-		strings.Repeat("a", 4096),         // long enough to break a path on every OS
+		strings.Repeat("a", 4096),          // long enough to break a path on every OS
 		"id with spaces",
 	} {
 		r := draft(t, cfp, afp)
