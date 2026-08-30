@@ -1,0 +1,12 @@
+diff --git a/internal/ceremony/mirror.go b/internal/ceremony/mirror.go
+index a1adf35..a607dea 100644
+--- a/internal/ceremony/mirror.go
++++ b/internal/ceremony/mirror.go
+@@ -126,7 +126,6 @@ func WriteMirror(root string, r Record, pdf []byte) (string, error) {
+ 		//
+ 		// Best-effort: a sidecar that is already absent is the ordinary case at hop 1, and a remove
+ 		// that fails leaves the old behaviour rather than blocking the write.
+-		_ = os.Remove(filepath.Join(dir, "document.sha256"))
+ 		if err := atomicfile.WriteDurable(filepath.Join(dir, "document.pdf"), pdf, 0o600); err != nil {
+ 			return "", err
+ 		}
