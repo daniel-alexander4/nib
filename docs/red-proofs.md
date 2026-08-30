@@ -2432,3 +2432,48 @@ running by a concurrent browser walk. Re-proved in isolation afterwards. This re
 harness naming the port is what made it legible.
 
 `recorded` stays 195 — four repairs, no new rows.
+
+## The sweep of /pending 320–324 *(v1.117.271–.279)*
+
+Six rows across four items, and three of them exist because a mutation first replayed **green**.
+
+**`stale-sidecar-bricks-the-mirror`** (/pending 321). The sidecar is no longer unlinked before the
+document, so a torn rewrite at hop ≥ 2 leaves a valid document beside the previous hop's checksum
+and `ReadMirror` reports `ErrMirrorDamaged` forever — against the user's own disk, with no repair
+path, on the file that for a non-convener is the sole durable copy of their signature. The torn
+state needs a crash, which this repo refuses to fake in the product, so the probe asks the *other*
+side of the same ordering: make the DOCUMENT write fail while a good sidecar exists and see what the
+sidecar is afterwards. That **discriminates** the two orderings; a mutation reddening both would
+prove only that the test runs.
+
+**`unreadable-record-reads-as-never-signed`** (/pending 320). `persistedFor` collapses every
+`ReadMirror` error to nil again, so "I could not find out whether I signed" becomes "I did not" and
+a second differently-timestamped signature is minted from one identity. Three arms are driven
+separately — absent is a MISS, stored is a HIT, unreadable is UNKNOWN — because the danger of the
+fix is the opposite error: an over-broad "unknown" refuses every FIRST hop, since a machine that has
+never signed has no mirror at all. **That is not hypothetical: it is what the first cut did**, on the
+reasoning that a missing document returns `(record, 0 bytes, nil)` — true of `document.pdf`, false
+of `record.json`. Two ceremony tests caught it. The absent arm is that regression pinned.
+
+**`a-second-proceeding-overwrites-a-stored-ceremony`** (/pending 318). The guard discriminates on the
+id instead of the roster commitment — and since the attack IS a colliding id, it walks through.
+Recorded beside it, without its own row because it is a placement rather than a predicate anyone
+would edit: moving the guard below the writes fires **only** the byte-identity assertion, which is
+what proves the refusal and the surviving bytes are independent facts. The check also carries a
+setup assertion that the legitimate per-hop rewrite still succeeds — every hop rewrites the mirror,
+so a guard refusing that would break the product while passing everything else.
+
+**`an-off-roster-signature-passes-as-complete`**, **`a-version-skew-is-accused-of-disagreeing`** and
+**`disagreement-never-reaches-the-exit-code`** (/pending 324). The middle one is an **anti-proof**:
+it guards against the FIX, not the defect. The naive form of defect 2 — a bare `!oneProc` in the
+exit condition — was measured exiting 2 on a document whose counterparty had merely updated Nib,
+because the CLI never had the web's two D32 discriminators. That would break the README's own
+`nib verify x.pdf && echo intact` over something no party did wrong.
+
+**And the third of those first replayed GREEN**, which is the most useful thing in this batch. Its
+fixture used an off-roster stranger as the second signer, so `refuses()` still fired through
+`hasUnrostered()` and dropping `disagrees()` from the door was invisible. **An arm that two
+predicates can satisfy cannot say which one is missing.** Both signers are now on the roster, the
+check asserts it, and only `disagrees()` can carry the arm.
+
+`recorded` 198 → 201. (Six rows were written across this sweep; three of the earlier ones landed with their own commits, so the count moves by three here.)
