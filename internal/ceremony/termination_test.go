@@ -61,6 +61,40 @@ func TestATerminationBindsExactlyOneProceeding(t *testing.T) {
 		}
 	})
 
+	t.Run("the SAME convener's other ceremony is refused", func(t *testing.T) {
+		// **This is the arm that actually proves the RosterHash binding, and the first cut of this
+		// test did not have it.** The two arms above use a DIFFERENT convener, so `Verify`'s
+		// convener-fingerprint check catches them and the binding is never reached — removing the
+		// RosterHash comparison entirely left the whole test green. An arm two predicates can
+		// satisfy cannot say which one is missing.
+		//
+		// One convener running two proceedings is also the real attack: `invitation_test.go` names
+		// it in those words — "Alice carried a lease, Bob carried a deed of sale at a different
+		// price" — and it is what the commitment exists to separate.
+		_, _, bfp := identity(t, "B")
+		second := draft(t, cfpOf(t, cert), bfp)
+		if err := second.Sign(cert, key); err != nil {
+			t.Fatal(err)
+		}
+		// STIMULUS: same convener, genuinely different proceeding — or this arm is one of the two
+		// above wearing a different name.
+		if convenerFingerprint(string(cert)) != convenerFingerprint(second.ConvenerCert) {
+			t.Fatal("setup: the two ceremonies do not share a convener, so the convener check " +
+				"would catch this and the binding would again go unproven")
+		}
+		h1, _ := rec.RosterHash()
+		h2, _ := second.RosterHash()
+		if bytes.Equal(h1, h2) {
+			t.Fatal("setup: the two ceremonies share a roster commitment, so they are one proceeding")
+		}
+		if err := term.Verify(second); !errors.Is(err, ErrBadTermination) {
+			t.Errorf("one convener's termination ended a DIFFERENT ceremony of theirs (%v). The "+
+				"roster commitment is the only thing separating two proceedings by the same "+
+				"convener, which is the case invitation_test.go names: one carried a lease, the "+
+				"other a deed of sale at a different price.", err)
+		}
+	})
+
 	t.Run("a flipped state is refused", func(t *testing.T) {
 		flipped := term
 		flipped.State = StateCompleted
@@ -278,4 +312,10 @@ func TestTheMirrorsOwnDoorsAreUnchangedByATermination(t *testing.T) {
 	if _, pdf, err := ReadMirror(root, rec.ID, time.Now()); err != nil || len(pdf) == 0 {
 		t.Errorf("ReadMirror broke in the presence of a termination: %v", err)
 	}
+}
+
+// cfpOf is the convener fingerprint for a certificate, as the roster stores it.
+func cfpOf(t *testing.T, certPEM []byte) string {
+	t.Helper()
+	return convenerFingerprint(string(certPEM))
 }
