@@ -692,6 +692,44 @@ func (s *Server) dialerCeremony(text string, cert, key, peerFP []byte) (*ceremon
 	return cer, nil
 }
 
+// recordOutlivesBudget is the ONE deadline rule, with the reservation as a parameter (ADR-009,
+// P08.S04a).
+//
+// **Two callers, two budgets, and the budgets are not a preference.**
+//
+//   - The INITIATOR reserves a whole hop (`ceremonyHopBudget()`, 29m20s), because it is about to
+//     start one and D16's nesting rule says the outer clock must reserve the inner one's worst case.
+//   - The SIGNING party reserves **ZERO** — it refuses only a deadline already past.
+//
+// **Why zero, since a reservation looks safer.** It is not: at the receiver a reservation refuses
+// HONEST hops. The worst-case lag from the convener's dial to the signer's gate is
+// `bootstrapBudget(20s) + connectDeadline(300s) + exchangeDeadline(360s) + the spoken-check gate
+// (300s, which no connection deadline bounds because no I/O happens during it) +
+// exchangeDeadline(360s)` = **22m20s**, against an initiator that admitted the hop at 29m20s. The
+// margin is **7m00s, and that figure IS the tolerable clock skew between two machines with no time
+// sync**. Reserving even eight minutes at this end makes it minus one minute, so a hop the convener
+// correctly admitted is refused at the far end for arithmetic reasons.
+//
+// The arithmetic was got wrong twice before it was re-derived at the line — once by omitting one of
+// `Receive`'s two `exchangeDeadline` arms, once by omitting the spoken gate as well — which is why
+// `TestTheHopBudgetNestsTheReceiversWorstCaseLag` exists to make it falsifiable rather than argued.
+//
+// The cost of zero, stated: the nesting property at the receiver is DELEGATED to the convener. That
+// guard is what makes the delegation checked instead of assumed.
+func recordOutlivesBudget(rec ceremony.Record, now time.Time, budget time.Duration) error {
+	if rec.Expires.After(now.Add(budget)) {
+		return nil
+	}
+	if budget == 0 {
+		return fmt.Errorf("%w: this ceremony ended at %s", p2p.ErrCeremonyEnded,
+			rec.Expires.UTC().Format(time.RFC3339))
+	}
+	return fmt.Errorf("this ceremony ends at %s, which is less than one hop (%s) away — "+
+		"starting a hop now would ask somebody to consent to a signature on a "+
+		"proceeding that has already ended by the time it completes",
+		rec.Expires.UTC().Format(time.RFC3339), budget)
+}
+
 // checkCeremonyDeadline refuses to START a hop that the ceremony cannot outlive.
 //
 // **D16's Stage 6 pin, and it is a nesting rule rather than a comparison.** A hop admitted one
@@ -736,13 +774,7 @@ func checkCeremonyDeadline(pdf []byte, now time.Time) error {
 	// left" is not answerable here. Convene reserves `Hops() × ceremonyHopBudget()` up front,
 	// which is C20's clause; refining this to the remaining hops needs the hop index and is
 	// S05's carry route.
-	if budget := ceremonyHopBudget(); !rec.Expires.After(now.Add(budget)) {
-		return fmt.Errorf("this ceremony ends at %s, which is less than one hop (%s) away — "+
-			"starting a hop now would ask somebody to consent to a signature on a "+
-			"proceeding that has already ended by the time it completes",
-			rec.Expires.UTC().Format(time.RFC3339), budget)
-	}
-	return nil
+	return recordOutlivesBudget(rec, now, ceremonyHopBudget())
 }
 
 // hsResult is a handshaked dial's outcome, carried on connect's dial channel so a total failure

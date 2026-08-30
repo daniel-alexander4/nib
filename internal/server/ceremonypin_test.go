@@ -4,6 +4,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"net/http"
+	"nib/internal/p2p"
 	"os"
 	"regexp"
 	"strings"
@@ -353,5 +354,117 @@ func TestEveryCeremonySessionGetsItsCeremony(t *testing.T) {
 	}
 	if !strings.Contains(rs[1], "cer") {
 		t.Errorf("the runSession call site does not pass the ceremony: %s", rs[0])
+	}
+}
+
+// TestTheArrivalGateRefusesAnEndedProceeding — P08.S04a.
+//
+// # What was wrong
+//
+// The only `Expires`-vs-`now` comparison a signing party ran was `Record.Verify`'s
+// `MaxCeremonyLife` ceiling, which refuses a deadline too far in the FUTURE and never one in the
+// past. The one refusal that existed, `checkCeremonyDeadline`, had a single production caller and
+// it was on the **convener's** side — so whoever convened owned the only clock and a signer could
+// be collected into a proceeding D28 declares over.
+//
+// # The third arm is the one that matters
+//
+// Refusing an expired ceremony is easy; refusing it *without also refusing honest hops* is the
+// whole design. The convener admits a hop when `Expires > t0 + ceremonyHopBudget()` (29m20s), and
+// the signer's gate runs at worst `t0 + 22m20s`. So a hop admitted at the convener's own margin
+// arrives here with as little as **seven minutes** left, and any receiver-side reservation refuses
+// it. Arm 3 pins that: it is what separates this gate from a hop reservation, and no other check
+// in the tree can tell the two apart.
+//
+// The convener is BYPASSED throughout — there is no server and no route here, only the ceremony
+// identity and a document, which is exactly what the acceptance bullet asks for.
+func TestTheArrivalGateRefusesAnEndedProceeding(t *testing.T) {
+	doc, invText := convenedFor(t)
+	inv, err := ceremony.ParseInvitation(invText)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cer := &ceremonyID{inv: inv}
+	rec, err := ceremony.CheckRecord(doc, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	expires := rec.Expires
+
+	// ARM 1 — the control. A live proceeding is admitted, or every refusal below is a gate that
+	// refuses everything.
+	if err := cer.checkArrival(doc, expires.Add(-24*time.Hour)); err != nil {
+		t.Fatalf("a live proceeding was refused (%v)", err)
+	}
+
+	// ARM 2 — the proceeding has ended.
+	err = cer.checkArrival(doc, expires.Add(time.Second))
+	if err == nil {
+		t.Error("a contribution offered AFTER the ceremony's deadline was accepted. The convener " +
+			"holds the only other clock check, so nothing else would have refused it and the " +
+			"signer is collected into a proceeding D28 declares over.")
+	}
+	if !errors.Is(err, p2p.ErrCeremonyEnded) {
+		t.Errorf("the refusal is %v, want p2p.ErrCeremonyEnded — it needs a wire code, or it "+
+			"reaches the initiator as bare EOF and is rendered as a network fault", err)
+	}
+
+	// ARM 3 — an honest hop at the convener's own worst case MUST be admitted.
+	//
+	// The convener admitted this hop when `Expires` was one instant past `t0 + 29m20s`; the signer
+	// reaches this gate at worst `t0 + 22m20s`, leaving 7m00s. A receiver that reserved even eight
+	// minutes would refuse it — which is the error this arm exists to catch, and which no other
+	// assertion here can see.
+	worstCase := expires.Add(-7 * time.Minute).Add(time.Second)
+	if err := cer.checkArrival(doc, worstCase); err != nil {
+		t.Errorf("an honest hop at the convener's worst case was refused (%v). The convener "+
+			"admits at hop budget %s and the worst-case lag to this gate is %s, so a hop arrives "+
+			"here with as little as %s left — reserving anything at this end refuses hops nobody "+
+			"is at fault for.",
+			err, ceremonyHopBudget(),
+			bootstrapBudget+connectDeadline+p2p.ReceiveArrivalLag(),
+			ceremonyHopBudget()-(bootstrapBudget+connectDeadline+p2p.ReceiveArrivalLag()))
+	}
+}
+
+// TestTheArrivalGateRoutesThroughTheDeadlineDoor is T06 — ADR-009's half, and it exists because
+// **no structural guard in this tree reads inside `checkArrival`**.
+//
+// The two scans that look like they might (`TestEveryCeremonyDialRoutesThroughTheDeadlineDoor` and
+// the consent-signers scan) brace-match `handleSessionInitiate` and `Confirm` — `checkArrival`'s
+// two CALLERS — so a check added inside `checkArrival` itself is invisible to every existing
+// guard. The behavioural test above proves the rule holds today; this proves the next edit cannot
+// quietly route around it.
+//
+// It asserts the ROUTING, not the sentence: eight copies of a message checked for agreement say
+// nothing about a ninth site added without one.
+func TestTheArrivalGateRoutesThroughTheDeadlineDoor(t *testing.T) {
+	raw, err := os.ReadFile("ceremonyid.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Comments stripped: `checkArrival`'s own doc names the call it makes, and a scan satisfied by
+	// prose is how a freeze guard once read its own explanation as proof of coverage (v1.117.155).
+	src := stripLineComments(string(raw))
+	i := strings.Index(src, "func (c *ceremonyID) checkArrival(")
+	if i < 0 {
+		t.Fatal("setup: checkArrival not found — this guard is pinned to a function that no " +
+			"longer exists, and would otherwise pass over nothing")
+	}
+	body := funcBodyFrom(src, i)
+	// STIMULUS: the body must be non-trivial, or "it contains the call" is true of an empty string.
+	if len(body) < 100 {
+		t.Fatalf("setup: checkArrival's body read as %d bytes — the brace matcher is not reading "+
+			"the function", len(body))
+	}
+	if !strings.Contains(body, "recordOutlivesBudget(") {
+		t.Error("checkArrival does not route through recordOutlivesBudget. The signing party's own " +
+			"deadline check is the ONE thing standing between a signer and a proceeding that has " +
+			"already ended — the convener's door cannot cover it, because the convener is the " +
+			"party this gate exists to bypass.")
+	}
+	if !strings.Contains(body, "ceremony.CheckRecord(") {
+		t.Error("checkArrival no longer verifies the record it judges — an unverified Expires is " +
+			"a number a stranger chose")
 	}
 }

@@ -633,11 +633,42 @@ func (c *ceremonyID) checkArrival(pdf []byte, now time.Time) error {
 	if err != nil {
 		return fmt.Errorf("this document's ceremony record could not be checked: %w", err)
 	}
+	// **The signing party's OWN deadline check, with the convener bypassed (P08.S04a, D28).**
+	//
+	// Until this line the only `Expires`-vs-`now` comparison a signer ran was `Record.Verify`'s
+	// `MaxCeremonyLife` ceiling — which refuses a deadline too far in the FUTURE and never one in
+	// the past. The one refusal that exists, `checkCeremonyDeadline`, has a single production
+	// caller and it is on the dialing side, so whoever convened owned the only clock and a signer
+	// could be collected into a proceeding D28 declares over.
+	//
+	// **Budget ZERO, and it is load-bearing** — see `recordOutlivesBudget`. Reserving a hop's worth
+	// here refuses honest hops: the convener admits at 29m20s and the worst-case lag to this gate
+	// is 22m20s, so the whole margin is 7m00s and that margin IS the clock-skew tolerance.
+	//
+	// **Placed HERE and not earlier**, which is the other half of the design: this runs downstream
+	// of `rd.Cached`, so a party who already signed can still hand that signature over after the
+	// deadline. A gate above the cache would refuse a re-delivery and destroy a signature already
+	// made — the outcome D24 exists to prevent.
+	if err := recordOutlivesBudget(rec, now, 0); err != nil {
+		return err
+	}
 	// Returned unwrapped: MatchesRecord's sentences already name the axis and the two values,
 	// and a preamble in front of "the invitation commits to ceremony X and this document's
 	// record commits to Y" makes the user read past the diagnosis. Unwrapped also keeps
 	// `errors.Is(err, ceremony.ErrRosterMismatch)` answerable by the caller.
-	return c.inv.MatchesRecord(rec)
+	if err := c.inv.MatchesRecord(rec); err != nil {
+		// **Mapped onto the p2p sentinel so it can carry a wire code (P08.S04a).**
+		// `internal/ceremony` cannot be imported from `internal/p2p`, so the two sentinels are
+		// mirrored rather than aliased and the join is here. Without it this refusal has reached
+		// the initiator as bare EOF since P07 — a 502 with a D19 NETWORK cause, for a peer that
+		// connected and refused. `errors.Is(err, ceremony.ErrRosterMismatch)` still answers, which
+		// `MatchesRecord`'s own doc requires.
+		if errors.Is(err, ceremony.ErrRosterMismatch) {
+			return fmt.Errorf("%w: %w", p2p.ErrRosterMismatch, err)
+		}
+		return err
+	}
+	return nil
 }
 
 // l3Roster is what the L3 gate is handed: the signing order and this proceeding's commitment,

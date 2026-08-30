@@ -64,6 +64,8 @@ func TestTheRefusalEnumerationIsDerivedFromSource(t *testing.T) {
 		"refuseNoSignaturePages":   refuseNoSignaturePages,
 		"refuseBlockOffThePage":    refuseBlockOffThePage,
 		"refuseNoCeremonyIntent":   refuseNoCeremonyIntent,
+		"refuseCeremonyEnded":      refuseCeremonyEnded,
+		"refuseRosterMismatch":     refuseRosterMismatch,
 	}
 	// And the values they are pinned TO, written out separately from the identifiers above. The
 	// two halves are compared below: the map above proves the names still exist, this one proves
@@ -73,6 +75,10 @@ func TestTheRefusalEnumerationIsDerivedFromSource(t *testing.T) {
 		"refusePrefixUnproven": 4, "refuseProceedingMismatch": 5, "refuseCeremonyComplete": 6,
 		"refuseNotConnectedPeer": 7, "refusePeerDoesNotAccept": 8, "refusePriorSignerCount": 9,
 		"refuseNoSignaturePages": 10, "refuseBlockOffThePage": 11, "refuseNoCeremonyIntent": 12,
+		// Frozen 2026-08-30 (P08.S04a). 14 is the older defect of the two: C17's roster mismatch
+		// has reached the initiator as bare EOF since P07, and 13's new gate would otherwise have
+		// shipped over it.
+		"refuseCeremonyEnded": 13, "refuseRosterMismatch": 14,
 	}
 
 	fset := token.NewFileSet()
@@ -111,7 +117,7 @@ func TestTheRefusalEnumerationIsDerivedFromSource(t *testing.T) {
 	// STIMULUS. A scan that read no const block agrees with every assertion below, because
 	// comparing two empty sets always succeeds. The enumeration is append-only, so its size can
 	// never legitimately shrink.
-	if len(codes) < 12 {
+	if len(codes) < 14 {
 		t.Fatalf("setup: found only %d refuse* constants — the const block has been renamed, "+
 			"moved, or this scan is not reading it, and every check below is comparing empty "+
 			"sets", len(codes))
@@ -236,7 +242,7 @@ func TestTheRefusalEnumerationIsDerivedFromSource(t *testing.T) {
 	// its declaration why it does not. The exemption is a line, not a list kept elsewhere, so
 	// the reason sits where the next reader of the sentinel will see it.
 	sentinels := errSentinels(t, src)
-	if len(sentinels) < 19 {
+	if len(sentinels) < 22 {
 		t.Fatalf("setup: found only %d exported Err* sentinels in this package — the var scan is "+
 			"blind and the coverage check below is vacuous", len(sentinels))
 	}
