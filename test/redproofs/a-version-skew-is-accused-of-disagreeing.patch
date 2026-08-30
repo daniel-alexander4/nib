@@ -1,0 +1,13 @@
+diff --git a/internal/cli/verifyceremony.go b/internal/cli/verifyceremony.go
+index b12d924..2f2d951 100644
+--- a/internal/cli/verifyceremony.go
++++ b/internal/cli/verifyceremony.go
+@@ -177,7 +177,7 @@ func (c ceremonyReport) incomplete() bool {
+ // `nib verify contract.pdf && echo "signature intact"` idiom, where a non-zero exit breaks a
+ // script over something no party did wrong. `unreadable == ""` for `incomplete`'s stated reason.
+ func (c ceremonyReport) disagrees() bool {
+-	return c.present && c.unreadable == "" && c.claimed > 0 && c.skew == "" && !c.oneProc
++	return c.present && c.unreadable == "" && !c.oneProc
+ }
+ 
+ // hasUnrostered reports a signature claiming this ceremony from someone the roster does not name.
