@@ -1,6 +1,7 @@
 package ceremony
 
 import (
+	"bytes"
 	"errors"
 	"nib/internal/sign"
 	"os"
@@ -323,5 +324,74 @@ func TestAMirrorWithNoSidecarReadsBackClean(t *testing.T) {
 	}
 	if got.ID != rec.ID || len(pdf) != len(doc) {
 		t.Error("the record or the document did not survive")
+	}
+}
+
+// TestASecondProceedingCannotOverwriteAStoredCeremony — /pending 318.
+//
+// # The attack
+//
+// `ValidID` constrains the id's SHAPE and nothing constrains its VALUE. `NewID`'s 128 random bits
+// are a convention; `Record.ID` is a plain signed field that a convener running its own binary sets
+// freely. So a convener sharing a roster with the victim mints ceremony Y with `Y.ID = X.ID` — 32
+// valid hex, passing every check /pending 308 added — and the victim's hop-time `WriteMirror`
+// overwrites `~/nib/ceremonies/<X.ID>/`.
+//
+// For a non-convener that directory is the SOLE durable copy of the document carrying their own
+// signature: `openArrival` gives an in-memory tab, and `saveReceived` is not on the co-sign path at
+// all. So this destroys a signature they already made, on a ceremony whose convener is someone
+// else — the attacker need only be a co-party, which is how they learn the id.
+//
+// # Two assertions, and the second is not the first wearing a hat
+//
+// The refusal and the byte-identity of what survives are separate facts. A guard that returned the
+// error AFTER writing would satisfy the first and fail the second — and that is not hypothetical
+// since v1.117.271, which unlinks the sidecar before the document write.
+func TestASecondProceedingCannotOverwriteAStoredCeremony(t *testing.T) {
+	root := t.TempDir()
+	recA, docA := convened(t)
+	if _, err := WriteMirror(root, recA, docA); err != nil {
+		t.Fatal(err)
+	}
+
+	// SETUP: rewriting the SAME record must still succeed. Every hop rewrites the mirror, so a
+	// guard that refused this would break the product and still pass every assertion below.
+	if _, err := WriteMirror(root, recA, append(append([]byte{}, docA...), []byte("\n% hop 2\n")...)); err != nil {
+		t.Fatalf("setup: the legitimate per-hop rewrite was refused (%v) — the guard has broken "+
+			"the ordinary path, and the refusal below would prove nothing", err)
+	}
+	stored, err := os.ReadFile(filepath.Join(root, "ceremonies", recA.ID, "document.pdf"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// A DIFFERENT proceeding claiming the same id.
+	recB, docB := convened(t)
+	recB.ID = recA.ID
+	cert, key, _ := identity(t, "Attacker")
+	if err := recB.Sign(cert, key); err != nil {
+		t.Fatal(err)
+	}
+	// SETUP: it must be a genuinely different proceeding, or this drives the same-record path.
+	ha, _ := recA.RosterHash()
+	hb, _ := recB.RosterHash()
+	if bytes.Equal(ha, hb) {
+		t.Fatal("setup: the two records share a roster commitment, so they are one proceeding")
+	}
+
+	if _, err := WriteMirror(root, recB, docB); !errors.Is(err, ErrDifferentProceeding) {
+		t.Errorf("a second proceeding wrote into another ceremony's directory (err=%v). For a "+
+			"non-convener that directory is the only durable copy of the document carrying their "+
+			"own signature, so this destroys a signature they already made.", err)
+	}
+
+	after, err := os.ReadFile(filepath.Join(root, "ceremonies", recA.ID, "document.pdf"))
+	if err != nil {
+		t.Fatalf("the stored document is gone after the refused write: %v", err)
+	}
+	if !bytes.Equal(stored, after) {
+		t.Errorf("the stored document changed under a REFUSED write (%d bytes, was %d) — the "+
+			"guard returned its error after clobbering, which since v1.117.271 also means the "+
+			"sidecar was already unlinked", len(after), len(stored))
 	}
 }

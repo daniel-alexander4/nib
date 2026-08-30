@@ -1,6 +1,7 @@
 package ceremony
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -84,6 +85,29 @@ func MirrorDir(root, id string) (string, error) {
 func WriteMirror(root string, r Record, pdf []byte) (string, error) {
 	dir, err := MirrorDir(root, r.ID)
 	if err != nil {
+		return "", err
+	}
+	// **A different proceeding may not overwrite this one (/pending 318).**
+	//
+	// `ValidID` constrains the id's SHAPE and nothing constrains its VALUE: `NewID`'s 128 random
+	// bits are a convention, and `Record.ID` is a plain signed field a convener running its own
+	// binary sets freely. So a convener who shares a roster with the victim can mint ceremony Y
+	// with `Y.ID = X.ID` — 32 valid hex, passing every check /pending 308 added — and the victim's
+	// hop-time write then overwrites `~/nib/ceremonies/<X.ID>/`. For a non-convener that directory
+	// is the SOLE durable copy of the document carrying their own signature (P08's C11 pin), so it
+	// destroys a signature they already made, on a ceremony whose convener is somebody else.
+	//
+	// `RosterHash` is the discriminator because it is the only candidate that is all three of:
+	// derivable from `record.json` alone, exactly what `ConvenerSig` signs, and covering every
+	// axis — version, convener, id, DocHash, intent, expires and every roster entry. `ConvenerCert`
+	// is shared by two ceremonies of one convener; `DocHash` and `Expires` are single axes inside
+	// RosterHash that two proceedings can share. `MatchesRecord` already owns the sentence for
+	// this comparison, and `TestOneInvitationMatchesExactlyOneRecord` already refuses a convener
+	// running two chains under one id — this is the same rule at the storage door.
+	//
+	// **Placed before MkdirAll and before any write.** Lower down it would return an error with
+	// `document.pdf` already clobbered and, since v1.117.271, the sidecar already unlinked.
+	if err := refuseDifferentProceeding(dir, r); err != nil {
 		return "", err
 	}
 	if err := os.MkdirAll(dir, 0o700); err != nil {
@@ -403,4 +427,48 @@ func ListStored(root string, now time.Time) ([]Stored, error) {
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
 	return out, nil
+}
+
+// ErrDifferentProceeding reports that the directory for this ceremony id already holds a DIFFERENT
+// proceeding's record — two ceremonies sharing one id.
+//
+// Its own sentinel because the caller must not report it as a persist failure: on the receive path
+// a `WriteMirror` error becomes "Signed, but not saved — do not close Nib", and that sentence is
+// false here. Nothing was short of disk, saving a copy elsewhere fixes nothing, and the honest
+// remedy is that one of the two ceremonies has to be convened again.
+var ErrDifferentProceeding = errors.New("another ceremony is already stored under this id, and it " +
+	"is not this one")
+
+// refuseDifferentProceeding compares the stored record, if any, against the one being written.
+//
+// **Local damage must NOT refuse**, and that asymmetry is deliberate. If the stored record will not
+// read or will not decode, the write proceeds: refusing would brick the ceremony with no repair
+// path — C12's whole subject — and an attacker who can corrupt that file already has write access
+// to `~/nib`, which subsumes this bug entirely. The guard exists to stop a SECOND PROCEEDING, not
+// to defend a directory whose contents are already someone else's.
+//
+// The refusal deliberately says nothing about the stored proceeding beyond its existence: printing
+// its intent or roster would turn this into a disclosure oracle for whoever provoked it.
+func refuseDifferentProceeding(dir string, r Record) error {
+	b, err := os.ReadFile(filepath.Join(dir, "record.json"))
+	if err != nil {
+		return nil // absent (the ordinary first write), or unreadable — see above
+	}
+	stored, err := Decode(b)
+	if err != nil {
+		return nil // local damage, not a second proceeding
+	}
+	want, err := stored.RosterHash()
+	if err != nil {
+		return nil
+	}
+	got, err := r.RosterHash()
+	if err != nil {
+		return err
+	}
+	if !bytes.Equal(want, got) {
+		return fmt.Errorf("%w: this id already holds a proceeding with a different roster "+
+			"commitment, so writing here would destroy it", ErrDifferentProceeding)
+	}
+	return nil
 }
