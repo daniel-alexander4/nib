@@ -18,3 +18,7 @@ overlay-*.png
 
 # dev-only front-end test harness (package.json is checked in; its deps are not)
 /node_modules/
+
+# Claude Code local context — never committed
+.claude/
+CLAUDE.md
