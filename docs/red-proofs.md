@@ -2398,3 +2398,37 @@ intact. The vendored writer is correct — this is the regression guard that was
 report.
 
 `recorded` 194 → 195.
+
+## Four stale rows, found by the first `--all` replay since the sweep began *(v1.117.270)*
+
+`./build/redproof.sh --all` reported **190 of 195 re-proved**. Four were stale and one was
+pollution; all four are repaired here, and each staled for a different reason worth separating.
+
+- **`afterfunc-callback-unrecovered` — stale BEFORE this sweep.** Its mutation site moved at
+  v1.117.245 when C05 replaced `sessionAcceptTimeout` with `armWindow` in `runSession`'s arm timer.
+  Nothing noticed because `--all` had not been run since. A row can rot from a change that never
+  touched it.
+- **`durable-write-writes-through` — staled by /pending 316**, which moved `atomicfile`'s temp
+  pattern from `.tmp-*` to `.nib-*.tmp`; the patch quoted the old literal.
+- **`mirror-record-written-first` — staled by P08.S02's third mirror file.** The patch swapped two
+  adjacent writes and `document.sha256` now sits between them. Re-recorded as a positional move
+  rather than a text swap.
+- **`block-line-bound-skips-the-roster` — staled SEMANTICALLY by /pending 308, and this is the one
+  that matters.** The patch removed `checkRosterText`'s call from `Convene`. Once `Record.Verify`
+  gained the same check, that stopped reintroducing the defect — because `Convene` calls
+  `rec.Verify` (`internal/ceremony/convene.go:255`), so **the rule survived its own call site being
+  deleted and the row replayed green against a tree that still enforced it.**
+
+  That is ADR-009 working, visible from outside: one predicate reached from two call sites means
+  deleting one site does not delete the rule. It also relocates the honest mutation — **to the
+  PREDICATE, not to a caller.** A two-file patch removing both callers is what
+  `TestEveryRedProofPatchTouchesOneFile` forbids, for reasons it argues at length, and trying it is
+  how this was worked out.
+
+**The fifth was not stale — it was polluted.** `relay-accumulates-instead-of-replacing` is tier 4
+and the run reported `ports already held: 18542(tcp)`, from a `uirepro.sh --keep` server left
+running by a concurrent browser walk. Re-proved in isolation afterwards. This repo has recorded
+"replayed green while polluted" before; this is the same hazard in the other direction, and the
+harness naming the port is what made it legible.
+
+`recorded` stays 195 — four repairs, no new rows.

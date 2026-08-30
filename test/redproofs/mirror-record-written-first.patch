@@ -1,8 +1,8 @@
 diff --git a/internal/ceremony/mirror.go b/internal/ceremony/mirror.go
-index 0b65c32..034711e 100644
+index f6a3075..f0c696c 100644
 --- a/internal/ceremony/mirror.go
 +++ b/internal/ceremony/mirror.go
-@@ -84,10 +84,8 @@ func WriteMirror(root string, r Record, pdf []byte) (string, error) {
+@@ -107,11 +107,6 @@ func WriteMirror(root string, r Record, pdf []byte) (string, error) {
  	// document first makes the record's presence mean "both are here": the record is the last
  	// thing to land, so a torn write leaves a directory with no record, which ReadMirror
  	// reports as an ordinary miss.
@@ -10,21 +10,19 @@ index 0b65c32..034711e 100644
 -		if err := atomicfile.WriteDurable(filepath.Join(dir, "document.pdf"), pdf, 0o600); err != nil {
 -			return "", err
 -		}
-+	if err := atomicfile.WriteDurable(filepath.Join(dir, "record.json"), b, 0o600); err != nil {
-+		return "", err
- 	}
+-	}
  	// 0600 on both: these are the documents of a signing in progress, and the directory is
  	// under the user's home where the default umask would otherwise make them world-readable
-@@ -98,8 +96,10 @@ func WriteMirror(root string, r Record, pdf []byte) (string, error) {
- 	// ships for. The vault survives that because it is AES-GCM sealed; the mirror has no such
- 	// fallback, and D29's reasoning for keeping the invitation SECRET out of this directory
- 	// is what carries the weight instead.
--	if err := atomicfile.WriteDurable(filepath.Join(dir, "record.json"), b, 0o600); err != nil {
--		return "", err
+ 	// on a shared machine.
+@@ -146,6 +141,11 @@ func WriteMirror(root string, r Record, pdf []byte) (string, error) {
+ 	if err := atomicfile.WriteDurable(filepath.Join(dir, "record.json"), b, 0o600); err != nil {
+ 		return "", err
+ 	}
 +	if pdf != nil {
 +		if err := atomicfile.WriteDurable(filepath.Join(dir, "document.pdf"), pdf, 0o600); err != nil {
 +			return "", err
 +		}
- 	}
++	}
  	return dir, nil
  }
+ 

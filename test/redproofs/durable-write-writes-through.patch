@@ -1,13 +1,13 @@
 diff --git a/internal/atomicfile/atomicfile.go b/internal/atomicfile/atomicfile.go
-index 3169775..9a2cf6b 100644
+index 35f46bf..1a5df3f 100644
 --- a/internal/atomicfile/atomicfile.go
 +++ b/internal/atomicfile/atomicfile.go
-@@ -68,39 +68,5 @@ func Write(path string, data []byte, perm os.FileMode) error {
+@@ -77,39 +77,5 @@ func Write(path string, data []byte, perm os.FileMode) error {
  // perm is applied to the temp file BEFORE the rename, so the file is never briefly readable
  // at the process umask's default under its final name.
  func WriteDurable(path string, data []byte, perm os.FileMode) error {
 -	dir := filepath.Dir(path)
--	tmp, err := os.CreateTemp(dir, ".tmp-*")
+-	tmp, err := os.CreateTemp(dir, ".nib-*.tmp")
 -	if err != nil {
 -		return err
 -	}
