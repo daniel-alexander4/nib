@@ -301,7 +301,23 @@ func TestAllocationFollowsTheSIGNINGCountNotTheRosterLength(t *testing.T) {
 // white, or an /AP stream that positions content outside its own BBox. That half needs pdf.js and
 // is recorded as owed rather than implied.
 func TestABlockIsActuallyDRAWNWhereItWasPlaced(t *testing.T) {
-	const n = 4 // the count at which the old arithmetic first overlapped the readme body (D25)
+	// **A TABLE, and the second row is the whole of /pending 305's Go half.**
+	//
+	// At n=4 there is one signature page and it IS the last page, so `Appearance{Page}` was
+	// exercised at exactly one value for as long as this test has existed — and `blockink`'s own
+	// head argues that a roster "changes only the VALUES of Page and Rect", which is true and had
+	// never been checked at any value but the last. n=9 allocates two signature pages, so the
+	// first block lands on a page that is not the last and the vendored writer's page-index
+	// resolution is finally on the hook.
+	//
+	// The arithmetic minimum is SEVEN signers (`blocksPerPage` = 6), not the nine /pending 305
+	// assumed. n=9 is kept because it is the count the rest of this file drives.
+	for _, n := range []int{4, 9} {
+		t.Run(fmt.Sprintf("n=%d", n), func(t *testing.T) { drawnWherePlaced(t, n) })
+	}
+}
+
+func drawnWherePlaced(t *testing.T, n int) {
 	doc, r := ceremonyFixture(t, n)
 
 	// SETUP: nothing is on the document yet, or "there is a widget" is true of the fixture.
@@ -314,50 +330,81 @@ func TestABlockIsActuallyDRAWNWhereItWasPlaced(t *testing.T) {
 			"cannot show that the contribution drew one", len(before))
 	}
 
-	first := SigningOrder(r)[0]
-	place, err := PlacementFor(doc, r, first.Fingerprint)
-	if err != nil {
-		t.Fatal(err)
-	}
-	signer := l3Identity(t, "Party 0")
-	// A real appearance: 1x1 opaque PNG is enough — the question is whether an /AP stream reaches
-	// the page at the placed rect, not what the picture shows.
-	signed, err := Contribute(doc, []byte(signer.cert), []byte(signer.key),
-		Attestation{Signer: "Party 0", When: time.Now()}, onePixelPNG(), place)
-	if err != nil {
-		t.Fatalf("contributing with an appearance failed: %v", err)
+	// **EVERY party signs, not just the first.** Signing one party only ever exercises the first
+	// block's page, which at both counts is the first allocated signature page; the block that
+	// reaches a *middle* page is a later one.
+	signed := doc
+	placed := make([]Placement, 0, n)
+	for i, party := range SigningOrder(r) {
+		place, perr := PlacementFor(signed, r, party.Fingerprint)
+		if perr != nil {
+			t.Fatalf("placing party %d: %v", i, perr)
+		}
+		placed = append(placed, place)
+		signer := l3Identity(t, fmt.Sprintf("Signer %d", i))
+		// A real appearance: 1x1 opaque PNG is enough — the question is whether an /AP stream
+		// reaches the page at the placed rect, not what the picture shows.
+		next, cerr := Contribute(signed, []byte(signer.cert), []byte(signer.key),
+			Attestation{Signer: fmt.Sprintf("Party %d", i), When: time.Now()}, onePixelPNG(), place)
+		if cerr != nil {
+			t.Fatalf("contributing with an appearance failed at party %d: %v", i, cerr)
+		}
+		signed = next
 	}
 
 	got, err := pdfops.SignatureWidgets(signed)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(got) != 1 {
-		t.Fatalf("the signed document carries %d signature widget(s), want 1 — the block was "+
+	if len(got) != n {
+		t.Fatalf("the signed document carries %d signature widget(s), want %d — a block was "+
 			"placed by arithmetic and never drawn, which every other test here would call a pass",
-			len(got))
+			len(got), n)
 	}
-	w := got[0]
-	if w.Page != place.Page {
-		t.Errorf("the block was drawn on page %d and placed on page %d", w.Page, place.Page)
-	}
-	for i := range w.Rect {
-		if diff := w.Rect[i] - place.Rect[i]; diff > 0.5 || diff < -0.5 {
-			t.Errorf("the drawn rect is %v and the placement said %v: what the document carries "+
-				"is not what was computed", w.Rect, place.Rect)
-			break
+
+	total, _ := pdfops.PageCount(signed)
+	// **THE STIMULUS for the whole point of the table.** At n=9 at least one block must land on a
+	// page that is not the last, or this row is a second copy of the n=4 row and the page index
+	// is still exercised at one value. It is asserted rather than assumed because
+	// `SignaturePagesFor` is arithmetic that can change.
+	if n > blocksPerPage {
+		middle := false
+		for _, p := range placed {
+			if p.Page != total {
+				middle = true
+				break
+			}
+		}
+		if !middle {
+			t.Fatalf("setup: every one of %d blocks was placed on the last page (%d) — this row "+
+				"exists to exercise a page index that is NOT the last, and it does not", n, total)
 		}
 	}
-	if !w.HasAP {
-		t.Error("the widget carries no appearance stream: it has a rectangle and draws nothing, " +
-			"so the block is blank on the page while every geometric check calls it placed")
+
+	for i, w := range got {
+		place := placed[i]
+		if w.Page != place.Page {
+			t.Errorf("party %d's block was drawn on page %d and placed on page %d (of %d)",
+				i, w.Page, place.Page, total)
+		}
+		for j := range w.Rect {
+			if diff := w.Rect[j] - place.Rect[j]; diff > 0.5 || diff < -0.5 {
+				t.Errorf("party %d's drawn rect is %v and the placement said %v: what the "+
+					"document carries is not what was computed", i, w.Rect, place.Rect)
+				break
+			}
+		}
+		if !w.HasAP {
+			t.Errorf("party %d's widget carries no appearance stream: it has a rectangle and "+
+				"draws nothing, so the block is blank on the page while every geometric check "+
+				"calls it placed", i)
+		}
 	}
 
 	// **The differential half, and the fix makes it structural rather than a raster question.**
 	// D25's overlap was blocks painted over the readme's prose. Blocks now live on dedicated
 	// signature pages, so "no readme ink under a block" is not a scan any more — it is that no
 	// block is on that page at all. The readme is the page before the ceremony page.
-	total, _ := pdfops.PageCount(signed)
 	readme := total - SignaturePagesFor(n) - 1
 	for _, w := range got {
 		if w.Page == readme {
