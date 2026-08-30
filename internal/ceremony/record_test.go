@@ -1790,3 +1790,136 @@ func TestCompletenessSaysNothingWithoutARoster(t *testing.T) {
 			"document Nib has ever signed", signed, obliged)
 	}
 }
+
+// TestVerifyRefusesAnIDThatCannotNameADirectory — /pending 308.
+//
+// # What this is NOT about
+//
+// It is not path traversal. `MirrorDir` refuses a bad id before `filepath.Join` is reached, at
+// every one of the five path sites, and `TestTheMirrorRefusesAnUnsafeID` drives that. Measured on
+// the tree before this check existed: `Verify` ACCEPTED every string below, and every one of them
+// was then refused at the mirror.
+//
+// # What it IS about: when the refusal lands
+//
+// Without a shape check in `Verify` the sequence is: `checkArrival` → `CheckRecord` → `Verify`
+// (passes) → `MatchesRecord` (passes, because a hostile id equals itself) → the user consents →
+// `Contribute` signs → `persistContribution` → `WriteMirror` → `MirrorDir` **refuses**. The
+// convener now holds a real signature and the signer is shown "Signed, but not saved — do not
+// close Nib." for a ceremony that was never storable in the first place.
+//
+// A pinned peer is exactly who can do this: pinning authenticates WHO, not what they send, and a
+// convener signs its own record, so both halves of every comparison are theirs.
+func TestVerifyRefusesAnIDThatCannotNameADirectory(t *testing.T) {
+	cert, key, cfp := identity(t, "Convener")
+	_, _, afp := identity(t, "A")
+	now := time.Date(2026, 8, 30, 12, 0, 0, 0, time.UTC)
+
+	// POSITIVE CONTROL FIRST, and it is not decoration: if a signed record with a well-formed id
+	// does not verify, every refusal below is this fixture failing rather than the check working.
+	good := draft(t, cfp, afp)
+	if err := good.Sign(cert, key); err != nil {
+		t.Fatal(err)
+	}
+	if err := good.Verify(now); err != nil {
+		t.Fatalf("setup: a record with an id from NewID does not verify: %v", err)
+	}
+
+	for _, id := range []string{
+		"../../../../../../tmp/pwned",     // the traversal MirrorDir already refuses
+		"..",                              // the parent, bare
+		"a/../../etc",                     // traversal with a valid-looking head
+		"",                                // empty: joins to the ceremonies directory itself
+		"0123456789ABCDEF0123456789ABCDEF", // right length and shape, WRONG CASE
+		strings.Repeat("a", 4096),         // long enough to break a path on every OS
+		"id with spaces",
+	} {
+		r := draft(t, cfp, afp)
+		r.ID = id
+		if err := r.Sign(cert, key); err != nil {
+			t.Fatal(err)
+		}
+		// The signature is VALID over the hostile id — that is the point. The convener signs its
+		// own record, so nothing about the signature can catch this.
+		if err := r.Verify(now); !errors.Is(err, ErrBadID) {
+			t.Errorf("Verify(%q) = %v, want ErrBadID.\nThe record is signed and every other check "+
+				"passes, so this reaches MatchesRecord, then the user's consent, then Contribute "+
+				"— and is refused only at WriteMirror, after a real signature exists. The signer "+
+				"is left holding \"Signed, but not saved\" for a ceremony that was never "+
+				"storable.", id, err)
+		}
+	}
+}
+
+// TestVerifyBoundsTheTextEveryRecipientMustRender — /pending 308's grill found this and it is the
+// larger half of the item.
+//
+// `checkIntent` and `checkRosterText` had exactly two callers, both inside `Convene` — the
+// CONVENER's own door. So the caps bound the party who types the text and left unbounded every
+// party who RECEIVES it, which is the precise mirror of the asymmetry `Verify`'s own roster-bound
+// comment already describes ("a cap enforced only on the pasted-invitation path binds the
+// recipients and leaves the emitter unbounded").
+//
+// Measured before the fix: a 5003-rune intent and 5000-rune labels and capacities all verified.
+// D25 allocates signature pages from this text's rendered height, and P08.S05 puts the record's
+// intent into a delivered filename on every party's disk.
+func TestVerifyBoundsTheTextEveryRecipientMustRender(t *testing.T) {
+	cert, key, cfp := identity(t, "Convener")
+	_, _, afp := identity(t, "A")
+	now := time.Date(2026, 8, 30, 12, 0, 0, 0, time.UTC)
+	long := strings.Repeat("x", 5000)
+
+	for _, tc := range []struct {
+		name string
+		mut  func(*Record)
+	}{
+		{"intent", func(r *Record) { r.Intent = long }},
+		{"label", func(r *Record) { r.Roster[1].Label = long }},
+		{"capacity", func(r *Record) { r.Roster[1].Capacity = long }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := draft(t, cfp, afp)
+			tc.mut(&r)
+			if err := r.Sign(cert, key); err != nil {
+				t.Fatal(err)
+			}
+			if err := r.Verify(now); !errors.Is(err, ErrIntentTooLong) {
+				t.Errorf("a signed record whose %s is %d runes verifies (%v). Convene refuses "+
+					"this at the convener's keyboard and nothing refused it at the recipient's, "+
+					"so the cap bound the one party who could already see the text.",
+					tc.name, len([]rune(long)), err)
+			}
+		})
+	}
+}
+
+// TestTheCeremonyIDPredicateHasOneDoor is ADR-009's half. Exporting `ValidID` is only worth
+// anything if it is the one door; a second copy of `^[0-9a-f]{32}$` is how a predicate comes to
+// have three implementations that disagree.
+func TestTheCeremonyIDPredicateHasOneDoor(t *testing.T) {
+	ents, err := os.ReadDir(".")
+	if err != nil {
+		t.Fatal(err)
+	}
+	scanned, defs := 0, 0
+	for _, e := range ents {
+		n := e.Name()
+		if !strings.HasSuffix(n, ".go") || strings.HasSuffix(n, "_test.go") {
+			continue
+		}
+		raw, rerr := os.ReadFile(n)
+		if rerr != nil {
+			t.Fatal(rerr)
+		}
+		scanned++
+		defs += strings.Count(string(raw), `[0-9a-f]{32}`)
+	}
+	if scanned < 5 {
+		t.Fatalf("setup: scanned %d file(s) — this guard is not reading internal/ceremony", scanned)
+	}
+	if defs != 1 {
+		t.Errorf("the ceremony-id pattern appears %d time(s) in internal/ceremony, want exactly 1 "+
+			"(idPattern, behind ValidID). A second copy is a second implementation of a rule that "+
+			"decides whether attacker-supplied bytes may name a directory.", defs)
+	}
+}
