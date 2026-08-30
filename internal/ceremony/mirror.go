@@ -41,13 +41,16 @@ var idPattern = regexp.MustCompile(`^[0-9a-f]{32}$`)
 // ErrBadID is returned for an id that cannot safely name a directory.
 var ErrBadID = errors.New("ceremony id is not 32 hex characters")
 
-// ValidID is the ONE door for the rule above (ADR-009), and it is exported because the rule has
-// callers outside this package — /pending 308.
+// ValidID is the ONE door for the rule above (ADR-009) — /pending 308.
 //
-// `idPattern` was unexported and reached from `MirrorDir` and `ListStored` alone, so every site
-// that builds a path from a ceremony id had to be inside `internal/ceremony` to be safe. P08.S05
-// puts the id into a delivered filename under `~/nib/`, written from `internal/server`, which
-// could not reach the predicate at all.
+// **It is exported for a caller P08.S05 will have and does not have yet, and saying so is the
+// point.** `idPattern` is unexported and reached from `MirrorDir` and `ListStored`, so every site
+// that builds a path from a ceremony id must be inside `internal/ceremony` to be safe; S05 puts
+// the id into a delivered filename under `~/nib/`, written from `internal/server`. Until that
+// lands, a named search (`grep -rn 'ceremony.ValidID' --include=*.go .`) returns **no caller
+// outside this package** — corrected 2026-08-30, because the first draft of this comment wrote a
+// scheduled need in the present tense, which is the same thing as a doc comment that has gone
+// stale, arriving pre-stale.
 //
 // **What this does NOT claim.** The traversal exposure was already closed: `MirrorDir` refuses
 // before `filepath.Join` is ever reached, at all five path sites, and `TestTheMirrorRefusesAnUnsafeID`
