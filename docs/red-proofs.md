@@ -2296,3 +2296,56 @@ why the guard asserts routing as well as counting, and it is worth recording: a 
 as "this expression appears once" would have replayed green against the defect it was written for.
 
 `recorded` 189 → 190.
+
+## /pending 316 — the two second atomic-write implementations *(v1.117.261)*
+
+Two rows, tier 1. The guard promotion at v1.117.251 could not produce either of them, and warning 4
+of P08's external plan-review says why: `atomicdoor_test.go`'s only error condition is
+`os.Rename` reached from outside the door, so a write that simply becomes non-atomic introduces no
+rename to find and leaves it green. Deleting the two exemptions proves nothing on its own.
+
+**`node-cache-shares-one-temp-name`, and it is a measured corruption channel rather than a style
+deviation.** `writeNodes` goes back to `os.WriteFile` into a fixed `dht-nodes.tmp` plus
+`os.Rename`. Writer B opens the fixed name before A renames it, so both hold a descriptor on the
+same inode; after A's rename that inode IS the published cache and B's truncate-and-write lands on
+the live file — defeating the rename's atomicity and `writeNodes`' own *"do NOT truncate a good
+cache"* rule twenty lines above. Reachable because `nodeCacheDir` is one path per config dir and
+three sites open a `rendezvous.Server` against it, one per ceremony, each saving on `Close()`, plus
+the second Nib this repo deliberately permits. **Measured with the defect applied: 211 of 600 writes
+failed and 22 of 20001 reads saw a cache that was neither writer's file.** The check asserts the
+CACHE rather than the error, because a failed write costs one cold start and a torn cache is silent
+— and at an unlucky length parses into node addresses assembled from the wrong offsets, which
+`cacheMagic`'s own doc works out.
+
+*Its patch also drops the `atomicfile` import.* Without that the package fails to COMPILE, which is
+red for the wrong reason — the shape P07.S09a hit twice and P08.S07 hit again.
+
+**`in-place-rewrite-is-not-durable`.** `writeAtomic` reaches for `atomicfile.Write` instead of
+`WriteDurable` — the weaker of two same-shaped functions one letter apart, which is verbatim the
+mistake `internal/atomicfile`'s package doc records paying for once already when `handleVaultImport`
+called the rename-only twin to replace `vault.nib`. `-w` renames over the user's only copy, so a
+crash in the writeback window leaves a truncated PDF where the original was, after `nib: rewritten`
+has printed. Asserted structurally, and the guard states its own ceiling: fsync is not observable
+from inside the process, so what is checkable is which door the package reaches for — which is the
+thing that regressed. It cannot see a `Sync()` deleted inside `atomicfile`; that is the door's own
+contract.
+
+`recorded` 190 → 192.
+
+## Tier 2's own row — /pending 315's sweep found the suite red *(v1.117.262)*
+
+No patch, and the reason is the strongest form a red proof takes: **`published.test.mjs` was red
+against HEAD**, and had been since v1.117.243. `sessionStatus.until` and `noticeView.{what,summary,
+at}` were published with no declared reader, which for a status field means the user is never told —
+the whole of what C03 exists for. Five commits landed on the red suite, four of them this sweep's,
+because the sweep took tiers 0 and 1 for a baseline and not tier 2.
+
+Recorded here rather than as a replayable row because reintroducing it is a one-line deletion from
+the reader, and the ledger's value in this case is the *process* finding: the guard was not stale,
+it was correct and unread, and the totals line is what hides that.
+
+**And tier 2 then went red on the fix**, which is the part worth keeping: the rescue action called
+`exportBase()` after an await, so it would have named the saved file for whatever document was
+current when the fetch resolved — in precisely the case where the user has two documents open and
+is about to lose one. `pinning.test.mjs` requires the literal `const exportName = exportBase();`
+capture idiom, not merely an early evaluation, and it was right to.
