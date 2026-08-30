@@ -5969,7 +5969,7 @@ Acceptance:
   `expires` at now+48h with no override, and closing that needs a knob ADR-010's lesson governs —
   it must not feed one constant to both sides.
 
-#### P08.S04b — The termination object *(D28, C06's telling half; split from S04 2026-08-30)*
+#### P08.S04b — The termination object *(D28, C06's telling half; split from S04 2026-08-30)* *(in progress 2026-08-30)*
 Scope: the signed artifact a decline or a completion leaves behind. ~~the decliner signs~~
 **the CONVENER signs (2026-08-30, Dan — see the dateline)**: under D22's hub the convener is one end
 of every hop and the only party that ever hears a decline, so it is the only shape mintable from
@@ -5998,7 +5998,20 @@ Acceptance:
   a stale in-flight `Store` cannot print "Signed, but not saved" for a name collision.
 - It is verified against the record from the **document/invitation** path, never the `record.json`
   sitting beside it — an anchor a naive cross-ceremony test passes.
-- Tier: 1. Delivery is S05's.
+Tasks:
+- **T01** — `internal/ceremony/termination.go`: the type, the domain tag, its own version constant
+  (not `FormatVersion` — D32), the five-chunk preimage, `Sign`, `Verify(rec)`.
+- **T02** — `WriteTermination` / `ReadTermination` in `mirror.go`, **their own door**:
+  `ReadMirror`, `WriteMirror` and `refuseDifferentProceeding` are unchanged, so a stale in-flight
+  `Store` cannot print "Signed, but not saved" for what is really a name collision. Write-once;
+  absence tolerated; present-and-unverifiable is its own state and never `ErrMirrorDamaged`.
+- **T03** — a test asserting the preimage has **no malleable axis**, which is what earns the
+  absence of `Canonical`/`IsCanonical`: every chunk is fixed-width, a derived lowercase hex
+  fingerprint, raw bytes, or a closed literal.
+- **T04** — `Stored` gains the end state (a field, **not** a fifth `LoadState` — that classifies
+  the *load*, not the proceeding), so `/api/ceremonies` can report it.
+- Tier: 1. Delivery is S05's, and **the object is inert until then** — which is what made the
+  S04a/S04b cut the right one.
 
 #### P08.S05 — The delivery round *(D22 and its delivery pin; C08, C10, C06's telling half)*
 Scope: D22 says *"nothing new is invented for it"* and the panel found four things that must be.
