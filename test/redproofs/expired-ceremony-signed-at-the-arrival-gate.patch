@@ -1,0 +1,14 @@
+diff --git a/internal/server/ceremonyid.go b/internal/server/ceremonyid.go
+index 157a69d..d248a63 100644
+--- a/internal/server/ceremonyid.go
++++ b/internal/server/ceremonyid.go
+@@ -649,9 +649,6 @@ func (c *ceremonyID) checkArrival(pdf []byte, now time.Time) error {
+ 	// of `rd.Cached`, so a party who already signed can still hand that signature over after the
+ 	// deadline. A gate above the cache would refuse a re-delivery and destroy a signature already
+ 	// made — the outcome D24 exists to prevent.
+-	if err := recordOutlivesBudget(rec, now, 0); err != nil {
+-		return err
+-	}
+ 	// Returned unwrapped: MatchesRecord's sentences already name the axis and the two values,
+ 	// and a preamble in front of "the invitation commits to ceremony X and this document's
+ 	// record commits to Y" makes the user read past the diagnosis. Unwrapped also keeps

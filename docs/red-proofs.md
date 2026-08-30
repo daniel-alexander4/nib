@@ -2477,3 +2477,35 @@ predicates can satisfy cannot say which one is missing.** Both signers are now o
 check asserts it, and only `disagrees()` can carry the arm.
 
 `recorded` 198 → 201. (Six rows were written across this sweep; three of the earlier ones landed with their own commits, so the count moves by three here.)
+
+## P08.S04a — the signing party's own clock *(v1.117.282–.283)*
+
+Two rows, tier 1, and the second is the one the slice is really about.
+
+**`expired-ceremony-signed-at-the-arrival-gate`.** The signer's deadline check is removed. Nothing
+else on that path compares `Expires` to `now` — `Record.Verify`'s only clock is a *future* ceiling,
+and the one refusal that exists has a single production caller on the **convener's** side. So the
+signer is collected into a proceeding D28 declares over, and the party who convened holds the only
+clock that could have said so.
+
+**`arrival-gate-reserves-a-whole-hop` — the discriminating one, and the reason the check has three
+arms rather than two.** The gate stays present and still refuses expired ceremonies; only its budget
+moves, 0 → `ceremonyHopBudget()`. The "expired is refused" arm therefore stays **green**, and only
+the honest-worst-case arm goes red. **Nothing else in the tree can tell "budget too large" from
+"feature absent."**
+
+It is not a hypothetical defect: it is the deepdive's own recommendation, made falsifiable. The
+convener admits a hop when `Expires > t0 + 29m20s`; the signer's gate runs at worst `t0 + 22m20s`.
+So a legitimately admitted hop arrives with as little as **7m00s** left, and any reservation at that
+end refuses it with neither party at fault. **The margin IS the clock-skew tolerance between two
+machines with no time sync** — spending it costs the whole thing, and at the proposed 8 minutes the
+tolerance is minus one.
+
+**The arithmetic behind both was wrong twice before it was re-derived at the line** — once counting
+one of `Receive`'s two pre-gate `exchangeDeadline` arms and dropping the spoken-check gate entirely,
+once restoring the gate and miscounting the arms as three. `Receive` arms **four** deadlines, two
+before the gate. Neither error was visible to any test because the number lived in prose; two guards
+now hold it, and they are deliberately in different packages — the arm-population scan where
+`Receive` lives, the nesting inequality where the hop budget does.
+
+`recorded` 201 → 203.
