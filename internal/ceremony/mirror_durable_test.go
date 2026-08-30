@@ -237,3 +237,91 @@ func TestASignedMirrorTruncatedAtAPriorRevisionIsCaught(t *testing.T) {
 		t.Errorf("a mirror written before the sidecar existed is refused: %v", rerr)
 	}
 }
+
+// TestAFailedRewriteLeavesNoChecksumForADocumentItDidNotWrite — /pending 321.
+//
+// # The defect
+//
+// `WriteMirror`'s document-then-record ordering is a FIRST-WRITE argument, and P08.S01's scope said
+// so before S02 added the third file: at hop 2 or later `record.json` and `document.sha256` both
+// already exist. A crash between the document and the sidecar leaves a complete, valid document
+// beside the PREVIOUS hop's checksum, and `ReadMirror`'s unconditional sidecar check then reports
+// `ErrMirrorDamaged` forever — a false accusation against the user's own disk, with no repair path.
+//
+// # Why the probe is shaped this way
+//
+// The torn state itself needs a crash, and this repo refuses a fault knob in the product
+// (`build/redproof.sh` argues it: "a switch whose whole purpose is to break the program is the same
+// gun with a better excuse"). So the observable is the OTHER side of the same ordering: make the
+// DOCUMENT write fail while a good sidecar exists, and ask what the sidecar is afterwards.
+//
+// That question **discriminates the two orderings**, which is the whole point:
+//   - document-first (the defect): the document write fails before the sidecar is touched, so the
+//     old checksum survives — a checksum for bytes this mirror may no longer hold.
+//   - unlink-first (the fix): the sidecar is gone before the document is attempted, so a failed
+//     write leaves no checksum at all, which ReadMirror tolerates by design.
+//
+// A probe that merely broke both orderings would prove the test runs, not that the fix works.
+func TestAFailedRewriteLeavesNoChecksumForADocumentItDidNotWrite(t *testing.T) {
+	root := t.TempDir()
+	rec, doc := convened(t)
+
+	dir, err := WriteMirror(root, rec, doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// SETUP: hop 1 really did leave a readable sidecar, or "it is gone afterwards" is vacuously
+	// true and this test says nothing about ordering.
+	side := filepath.Join(dir, "document.sha256")
+	before, err := os.ReadFile(side)
+	if err != nil || len(before) == 0 {
+		t.Fatalf("setup: no sidecar after the first write (%v) — nothing here can be stranded", err)
+	}
+
+	// Make the DOCUMENT write fail: a non-empty directory cannot be removed and cannot be renamed
+	// over. Nothing touches the sidecar.
+	docPath := filepath.Join(dir, "document.pdf")
+	if err := os.Remove(docPath); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(docPath, "occupied"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	// SETUP: the write must genuinely be impossible, or the assertion below is about nothing.
+	if err := os.WriteFile(docPath, []byte("x"), 0o600); err == nil {
+		t.Fatal("setup: document.pdf is writable, so this test cannot make the second write fail")
+	}
+
+	if _, werr := WriteMirror(root, rec, doc); werr == nil {
+		t.Fatal("WriteMirror reported success with document.pdf unwritable")
+	}
+
+	if _, serr := os.Stat(side); serr == nil {
+		t.Errorf("a checksum survived a failed document write. The sidecar is removed BEFORE the " +
+			"document precisely so a torn rewrite leaves 'no sidecar' — which ReadMirror tolerates " +
+			"— rather than 'a document beside the previous hop's checksum', which it reports as " +
+			"ErrMirrorDamaged permanently, against the user's own disk, with no repair path.")
+	}
+}
+
+// TestAMirrorWithNoSidecarReadsBackClean is the other half: the torn state the ordering above
+// produces must actually be benign, or the fix trades a permanent false accusation for a different
+// permanent failure. `ReadMirror` says a missing sidecar is tolerated; this drives it.
+func TestAMirrorWithNoSidecarReadsBackClean(t *testing.T) {
+	root := t.TempDir()
+	rec, doc := convened(t)
+	dir, err := WriteMirror(root, rec, doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(filepath.Join(dir, "document.sha256")); err != nil {
+		t.Fatal(err)
+	}
+	got, pdf, err := ReadMirror(root, rec.ID, mirrorNow)
+	if err != nil {
+		t.Fatalf("a mirror with no sidecar must read back cleanly — the ordering fix relies on it: %v", err)
+	}
+	if got.ID != rec.ID || len(pdf) != len(doc) {
+		t.Error("the record or the document did not survive")
+	}
+}

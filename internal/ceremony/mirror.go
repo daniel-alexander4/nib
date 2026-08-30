@@ -108,6 +108,25 @@ func WriteMirror(root string, r Record, pdf []byte) (string, error) {
 	// thing to land, so a torn write leaves a directory with no record, which ReadMirror
 	// reports as an ordinary miss.
 	if pdf != nil {
+		// **The sidecar is UNLINKED BEFORE the document is written (/pending 321).**
+		//
+		// The document-then-record ordering below is a FIRST-WRITE argument — P08.S01's own scope
+		// said so in advance: *"WriteMirror's document-then-record ordering is a first-write
+		// argument that does not survive a third file"*. S02 then added the third file and the
+		// warning did not travel. At hop 2 or later `record.json` and `document.sha256` both
+		// already exist, so a crash between the document and the sidecar leaves a COMPLETE, VALID
+		// document beside the PREVIOUS hop's checksum — and `ReadMirror`'s unconditional sidecar
+		// check then reports `ErrMirrorDamaged` permanently, which is a false accusation against
+		// the user's own disk with no repair path.
+		//
+		// Removing it first makes the torn state "no sidecar", which `ReadMirror` already tolerates
+		// by design and says so at the line: mirrors written before S02 have none, and it is a
+		// damage detector rather than an access control. So the window costs the detector for one
+		// document and never the document.
+		//
+		// Best-effort: a sidecar that is already absent is the ordinary case at hop 1, and a remove
+		// that fails leaves the old behaviour rather than blocking the write.
+		_ = os.Remove(filepath.Join(dir, "document.sha256"))
 		if err := atomicfile.WriteDurable(filepath.Join(dir, "document.pdf"), pdf, 0o600); err != nil {
 			return "", err
 		}
