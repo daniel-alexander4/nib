@@ -1,0 +1,14 @@
+diff --git a/internal/ceremony/record.go b/internal/ceremony/record.go
+index d31158d..dd3dc49 100644
+--- a/internal/ceremony/record.go
++++ b/internal/ceremony/record.go
+@@ -481,9 +481,6 @@ func (r Record) Verify(now time.Time) error {
+ 	// It refuses no legitimate record. `Verify` gates on `r.Version != FormatVersion` — exact
+ 	// equality — and `NewID` (32 lowercase hex, one non-test caller) is the only producer, so no
+ 	// record any Nib has emitted can fail this.
+-	if err := ValidID(r.ID); err != nil {
+-		return err
+-	}
+ 	// The roster bound belongs HERE too, not only in ParseInvitation.
+ 	//
+ 	// A Record arrives from external input — Extract(pdf) → Decode → Verify — and the

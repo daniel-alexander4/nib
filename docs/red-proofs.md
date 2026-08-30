@@ -2349,3 +2349,26 @@ it was correct and unread, and the totals line is what hides that.
 current when the fetch resolved — in precisely the case where the user has two documents open and
 is about to lose one. `pinning.test.mjs` requires the literal `const exportName = exportBase();`
 capture idiom, not merely an early evaluation, and it was right to.
+
+## /pending 308 — the record's id and text, judged before consent *(v1.117.264)*
+
+Two rows, tier 1, and the first is filed against a reason the item did not give.
+
+**`record-verify-ignores-the-id-shape`.** The item said "path traversal behind a pinned but hostile
+convener". The grill refuted that: `MirrorDir` refuses a bad id before `filepath.Join` is reached,
+at all five path sites, and `TestTheMirrorRefusesAnUnsafeID` has driven it since P07. What the
+patch actually reintroduces is an ORDERING defect — the record passes `Verify`, passes
+`MatchesRecord` (a hostile id equals itself), reaches the user's consent, is **signed**, and is
+refused only at `WriteMirror`. The convener then holds a real signature and the signer is shown
+*"Signed, but not saved — do not close Nib."* for a ceremony that was never storable. Worth writing
+down: the exposure was closed and the item was still real, for a different reason than it claimed.
+
+**`record-verify-bounds-only-the-convener`, which the item did not contain at all and is the larger
+half.** `checkIntent` and `checkRosterText` had exactly two callers, both inside `Convene` — the
+convener's own door. So the caps bound the party who TYPES the recital, the labels and the
+capacities, and left every recipient unbounded. That is the exact mirror of the asymmetry
+`Verify`'s own roster-bound comment describes one block above, running the other way, and it went
+unnoticed because the emitter is the only party any test had played. Measured with the defect
+applied: a 5000-rune intent, label and capacity all verify.
+
+`recorded` 192 → 194.
