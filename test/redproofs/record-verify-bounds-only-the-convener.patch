@@ -1,0 +1,17 @@
+diff --git a/internal/ceremony/record.go b/internal/ceremony/record.go
+index d31158d..053ea99 100644
+--- a/internal/ceremony/record.go
++++ b/internal/ceremony/record.go
+@@ -540,12 +540,6 @@ func (r Record) Verify(now time.Time) error {
+ 	//
+ 	// It matters more after P08: D25 allocates signature pages from this text's rendered height,
+ 	// and S05 puts the record's intent into a delivered filename on every party's disk.
+-	if err := checkIntent(r.Intent); err != nil {
+-		return err
+-	}
+-	if err := checkRosterText(r.Roster); err != nil {
+-		return err
+-	}
+ 	// The ceiling, LAST — after the signature, so a record that fails both is reported as
+ 	// forged rather than as over-long. A convener who signed a ten-year deadline is a
+ 	// misconfiguration; one who did not sign at all is an attacker, and the second sentence
