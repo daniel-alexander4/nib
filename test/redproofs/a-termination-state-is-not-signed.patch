@@ -1,0 +1,12 @@
+diff --git a/internal/ceremony/termination.go b/internal/ceremony/termination.go
+index ea81ae8..4b43e87 100644
+--- a/internal/ceremony/termination.go
++++ b/internal/ceremony/termination.go
+@@ -119,7 +119,6 @@ func (t Termination) preimage() ([]byte, error) {
+ 	// RAW bytes, not the hex string — `rosterPreimage` makes the same choice for the same reason:
+ 	// a hex rendering has an upper-case twin and the raw bytes do not.
+ 	p.add(raw)
+-	p.addString(t.State)
+ 	return p.bytes(), nil
+ }
+ 
