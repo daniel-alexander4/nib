@@ -73,6 +73,12 @@ const PUBLISHED = [
   { type: 'recentEntry', readers: ['web/app.js'] },
   { type: 'sessionStatus', readers: ['web/app.js'] },
   { type: 'receivedInfo', readers: ['web/app.js'] },
+  // The sticky session-failure surface (P08.S08, C03). It sat in NEITHER table from v1.117.243
+  // until v1.117.262 — so tier 2 was red for five commits and this scan was the thing saying so.
+  // All three fields have a reader now: `summary`/`at` render the sentence and key its
+  // re-announcement, and `what` selects the recovery action, which is the half that makes it a
+  // surface rather than a label over an unrescuable state.
+  { type: 'noticeView', readers: ['web/app.js'] },
   { type: 'pendingView', readers: ['web/app.js'] },
   // Who has already signed the arriving document (P07.S07c, D27 item 3). Rendered by
   // `renderConsentSigners`, which draws a row per signer and marks an invalid one rather than
@@ -174,6 +180,15 @@ const EXCLUDED = {
   // else is on the roster, and in what capacity. Delete these two with the convene pair.
   acceptResponse: 'P07.S02b ships the route before P06 builds its panel; no client reader yet',
   acceptedParty: 'P07.S02b ships the route before P06 builds its panel; no client reader yet',
+  // Same parking again, one phase later (P08.S03, v1.117.243). `GET /api/ceremonies` is the
+  // listing of ceremonies on this machine and its four degradation classes; the screen that
+  // renders them is P06's panel. Parked here rather than given `web/app.js` as a reader for the
+  // reason the convene pair states: naming a reader that does not read is the false green this
+  // scan exists to prevent. Delete it with the four above when P06 lands.
+  //
+  // It is ALSO the shape /pending 297 is about — a slice that shipped a published shape and no
+  // inventory row — so its entry here is currently the only record that anything owes it a reader.
+  ceremoniesResponse: 'P08.S03 ships the listing before P06 builds its panel; no client reader yet',
 };
 
 // ── Published, and NOT read ──────────────────────────────────────────────────
