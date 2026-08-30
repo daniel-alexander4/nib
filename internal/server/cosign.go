@@ -19,7 +19,9 @@ import (
 // Co-signing (Track A): two endpoints implement one user action. The visible
 // attestation block must be rendered to an image in the browser (there is no
 // server-side text renderer), yet its text and placement have to come from Go so
-// the on-page block can't drift from the signed /Reason. So /quote hands the
+// the on-page block can't drift from the signed /Reason — **which is false inside a ceremony
+// and was never true there (/pending 317, corrected 2026-08-30): this function does not stamp,
+// and the signing path does.** So /quote hands the
 // client the exact lines and rectangle to render, and /sign signs from the same
 // inputs — the client never re-derives the attestation, only rasterizes it.
 
