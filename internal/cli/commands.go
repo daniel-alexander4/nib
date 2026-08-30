@@ -997,7 +997,12 @@ func cmdVerify(args []string) int {
 		// That is the same divergence `AddedAfter` was added to this condition to close, recorded
 		// three paragraphs down: "the CLI was the one surface where the machine-readable channel
 		// disagreed with the human one". The help text moves with it.
-		if st.State != sign.Valid || st.AddedAfter || cer.incomplete() {
+		// `cer.refuses()` and not `cer.incomplete()` (/pending 324). Incompleteness was the only
+		// ceremony fact that reached the exit code, so a document whose signatures named DIFFERENT
+		// ceremonies, and one carrying a signature from outside the roster, each printed exactly
+		// that in the text output and exited 0 — under the README's own
+		// `nib verify contract.pdf && echo "signature intact"` idiom. One door, three predicates.
+		if st.State != sign.Valid || st.AddedAfter || cer.refuses() {
 			// AddedAfter too, and it is the case that mattered.
 			//
 			// `sign.Verify` reports State=Valid with AddedAfter=true for a document

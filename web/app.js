@@ -3951,7 +3951,19 @@ async function augmentSigDetails(rows) {
     what.textContent = a.reason.replace(/\[SPKI:([0-9a-fA-F]{64})\]/, (_, h) => '[' + groupFingerprint(h.slice(0, 8)) + '…]');
     box.appendChild(what);
     const verdict = document.createElement('div');
-    if (!a.acceptedPeer && a.rosterHash) {
+    if (a.unrostered) {
+      // **/pending 324. The worst rendering this panel had, because it was AFFIRMATIVE.**
+      //
+      // A signature carrying a copy of the document's roster token, from an identity the roster
+      // does not name, took the `!acceptedPeer && rosterHash` branch below and was drawn as
+      // `✓ First signer` — a green tick on an intruder, on the row a reader is most likely to be
+      // checking. `Completeness` could not see it either: it counts how many of the OBLIGED
+      // signed and can never exceed the roster, so the summary still read "3 of 3 ✓ Complete"
+      // over a four-signature document.
+      verdict.className = 'sigatt-bad';
+      verdict.textContent = '⚠ Not on this ceremony\u2019s roster — this signature claims the '
+        + 'ceremony and its signer is not one of the parties the record names.';
+    } else if (!a.acceptedPeer && a.rosterHash) {
       // C14's own words, given a surface for the first time. This is not a failure to match —
       // it is the correct and expected state of the party who signed first, and rendering it as
       // "not a confirmed co-signer" would accuse the one signature that cannot be anything else.
@@ -3972,6 +3984,9 @@ async function augmentSigDetails(rows) {
   // Which signatures claim a ceremony. Computed here rather than below, because it now gates
   // the mutual-co-sign sentence as well as the proceeding line.
   const claimed = attested.filter((a) => a.rosterHash);
+  // Unrostered signatures are counted OUT of the party count below: the chain sentence said
+  // "4 parties" on a three-party roster, which is the same false statement the row made.
+  const unrostered = attested.filter((a) => a.unrostered);
   // **A signature this build cannot READ is not a signature that disagrees (P07.S09c, D32).**
   //
   // `tagVersion` is the attestation format version the /Reason declares. A newer one means Go
@@ -4021,13 +4036,24 @@ async function augmentSigDetails(rows) {
     m.className = 'sigmutual';
     m.textContent = '✓ Mutually co-signed — each party’s signature attests to the other’s key.';
     els.sigDetailsBody.appendChild(m);
-  } else if (attested.length >= 2 &&
+  } else if (attested.length >= 2 && unrostered.length === 0 &&
       attested.every((a) => a.matched || (!a.acceptedPeer && a.rosterHash))) {
     const m = document.createElement('div');
     m.className = 'sigmutual';
     m.textContent = '✓ Every signature after the first attests to the party before it — ' +
       attested.length + ' parties, each one bound to the one ahead of them.';
     els.sigDetailsBody.appendChild(m);
+  }
+  // **The unrostered summary, and it sits ABOVE the completeness line deliberately** (/pending 324).
+  // "3 of 3 ✓ Complete" is TRUE of the obliged signers and says nothing about a fourth signature
+  // from outside the roster; a reader who sees the tick first has already stopped reading.
+  if (unrostered.length > 0) {
+    const u = document.createElement('div');
+    u.className = 'sigatt-bad';
+    u.textContent = '⚠ ' + unrostered.length + ' signature(s) claim this ceremony from '
+      + 'identities its roster does not name. The count below is of the obliged parties only, '
+      + 'so it can read complete while this document carries a signature nobody agreed to.';
+    els.sigDetailsBody.appendChild(u);
   }
   // Whether they all signed the SAME proceeding, which "mutually co-signed" above does
   // not answer and used to be left unsaid.
@@ -4101,9 +4127,15 @@ async function augmentSigDetails(rows) {
   const signedCount = Number(body.signed || 0);
   if (obliged > 0) {
     const p = document.createElement('div');
-    if (signedCount >= obliged) {
+    if (signedCount >= obliged && unrostered.length === 0) {
       p.className = 'sigmutual';
       p.textContent = '✓ Complete — all ' + obliged + ' obliged signer(s) of this ceremony have signed.';
+    } else if (signedCount >= obliged) {
+      // Obliged-complete, but carrying a signature from off the roster: the tick would be read
+      // as a verdict on the whole document, and it is not one.
+      p.className = 'sigatt-warn';
+      p.textContent = '⚠ All ' + obliged + ' obliged signer(s) have signed, but this document also '
+        + 'carries a signature from outside the roster — see above.';
     } else {
       p.className = 'sigatt-warn';
       p.textContent = '⚠ Incomplete — ' + signedCount + ' of ' + obliged + ' obliged signer(s) '
