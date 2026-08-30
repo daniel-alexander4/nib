@@ -5617,6 +5617,20 @@ Exit criteria:
 - **C16.** Documentation and README updated in the same phase (STANDARDS docs-parity).
 - **C17.** **`<project-memory>/instruments/ceremony.md` holds a section named for every P08 slice, compared against this phase's build order at the close, and a missing section FAILS. (added 2026-08-29, plan-review.)** P07 carried C11 for the inventory and its close still found seventeen slices with no rows at all, because *an absent row is invisible to a pass over rows* — and `/pending 297`'s own conclusion is that *"a slice that closes without writing its rows should be the thing that fails, and nothing checks it."* A preamble sentence is not a criterion and a phase-close ledger can cite nothing from it, which is why this is C17 rather than a paragraph.
 
+  **(enforcement point moved to the SLICE, 2026-08-30, `/pending 322`.)** C17 was written on
+  2026-08-29 and by the end of that day four of the five slices that shipped had breached it, with
+  nothing failing — because its only enforcement point was S09, the last slice. A criterion whose
+  only enforcement point is the phase close is not a criterion during the phase; it is a debt that
+  discovers itself when it is most expensive to pay. The gate is now
+  `~/.claude/tools/inventorycheck --phase=<PHASE> <PLAN.md> <project-memory>/instruments/<phase>.md`,
+  run by `/createcode`'s **slice close** and blocking it on a non-zero exit. It fails on a shipped
+  slice with no section AND on a section whose status marker contradicts the plan's — the second
+  arm found P08.S01's inventory still saying *in progress* against a plan that says *done*.
+  It is a script rather than a test because the inventory lives in the project memory directory and
+  the plan lives in the repo, and no repo-side guard can read across that boundary. **The five
+  slices that shipped before the gate are DECLARED** under the inventory's `## Known gaps`, where
+  they report as warnings rather than silently passing; their backfill is `/pending 332`.
+
 **The `C01…C17` labels are editorial, added 2026-08-29 at the phase-open (`/createcode`), and no
 criterion's text is changed by them.** P07's criteria carry labels and P08's did not, so a ledger
 over this phase had nothing to cite but a paraphrase — which is the drift the acceptance ledger
