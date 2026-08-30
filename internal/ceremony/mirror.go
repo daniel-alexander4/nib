@@ -337,9 +337,19 @@ func ReadStored(root, id string, now time.Time) Stored {
 	}
 	b, err := os.ReadFile(filepath.Join(dir, "record.json"))
 	if err != nil {
-		s.State = LoadAbsent
-		s.Reason = "this ceremony has no record on this machine — its folder may have been " +
-			"removed, or it was interrupted before anything was written"
+		// **An unreadable record is NOT an absent one (/pending 320).** Every read error used to
+		// land on LoadAbsent, so a permission problem or an I/O fault was reported to the user as
+		// "its folder may have been removed" — advice that sends them looking for something that
+		// is right there. The two want opposite remedies, and the sentence for absence is the one
+		// that reads as reassuring.
+		if os.IsNotExist(err) {
+			s.State = LoadAbsent
+			s.Reason = "this ceremony has no record on this machine — its folder may have been " +
+				"removed, or it was interrupted before anything was written"
+			return s
+		}
+		s.State = LoadUnparseable
+		s.Reason = "this ceremony's record is on this machine and could not be read: " + err.Error()
 		return s
 	}
 	r, err := Decode(b)

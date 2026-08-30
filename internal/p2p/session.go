@@ -406,6 +406,17 @@ const (
 	refuseNoCeremonyIntent = 12
 )
 
+// ErrCannotReadOwnRecord reports that this machine could not determine whether it had already
+// signed the document being offered (/pending 320).
+//
+// It is a LOCAL fault and not a refusal of the peer, which is why it has no wire code: the peer did
+// nothing wrong, and a refusal frame would name them for this machine's disk. They see the
+// connection end, which is what they would see from a machine that was not there.
+//
+// No wire code: a local-storage fault, not a protocol refusal — see above.
+var ErrCannotReadOwnRecord = errors.New("this machine could not read its own record of this " +
+	"ceremony, so it cannot tell whether it has already signed this document")
+
 // ErrDeclined reports that the receiving user declined a one-way document transfer.
 var ErrDeclined = errors.New("document transfer declined")
 
@@ -701,8 +712,22 @@ func ReceiveDocument(ch Channel, a Accepter, myFingerprint []byte, v Verifier) (
 // The implementation is the server's per-hop cache; nil disables it (the manual/LAN path, which
 // has no ceremony hop to key on).
 type ReDeliverer interface {
-	// Cached returns a previously co-signed result for `inbound`, or nil for none.
-	Cached(inbound []byte) []byte
+	// Cached returns a previously co-signed result for `inbound`.
+	//
+	// **Three outcomes, not two, and the third is why this returns an error (/pending 320).**
+	//   (nil, nil)   — a genuine MISS. This hop has not signed that document, and that is KNOWN.
+	//                  The caller proceeds to consent and signs fresh.
+	//   (bytes, nil) — a hit. Re-deliver; do not ask the user again.
+	//   (nil, err)   — UNKNOWN. The store could not be read, or what it held is damaged. Whether
+	//                  this identity has already signed cannot be answered.
+	//
+	// Collapsing the third into the first is what the widening exists to stop: "I could not find
+	// out" became "I did not sign", the caller fell through to `Confirm`, and a second
+	// differently-timestamped signature was minted from one identity — the thing D24 forbids and
+	// C01 counts on the artifact. Signing on an unknown is the failure; refusing is cheap, because
+	// a store that cannot be read cannot be written either, so the alternative is reaching the same
+	// error one moment later with the user's key already used.
+	Cached(inbound []byte) ([]byte, error)
 	// Store records the co-signed result for `inbound` so a reconnect re-delivers it, and
 	// **reports whether it reached durable storage** (P08.S02).
 	//
@@ -823,7 +848,14 @@ func coSignExchange(myCertPEM, myKeyPEM, peerFP []byte, peerLabel string, inboun
 	// user already consented to sign THIS document; re-delivering the cached result must not ask
 	// them again. A miss falls through to the fresh exchange.
 	if rd != nil {
-		if cached := rd.Cached(inbound); cached != nil {
+		cached, cerr := rd.Cached(inbound)
+		if cerr != nil {
+			// **Refused BEFORE consent, and that placement is the whole value.** The question this
+			// answers is "have I already signed this?", and an unreadable store cannot answer it.
+			// Asking the user to sign anyway is how one identity ends up on a document twice.
+			return nil, fmt.Errorf("%w: %v", ErrCannotReadOwnRecord, cerr)
+		}
+		if cached != nil {
 			return cached, nil
 		}
 	}

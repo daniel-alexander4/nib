@@ -8,6 +8,7 @@ import (
 	"nib/internal/sign"
 	"nib/internal/testpdf"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -816,7 +817,10 @@ func TestACachedContributionSurvivesARestart(t *testing.T) {
 		t.Fatal("setup: the in-memory cache is not empty, so this test cannot show a disk read")
 	}
 
-	got := c.Cached(inbound)
+	got, cerr := c.Cached(inbound)
+	if cerr != nil {
+		t.Fatalf("a readable mirror reported UNKNOWN: %v", cerr)
+	}
 	if got == nil {
 		t.Fatal("a restarted party found nothing for the document it had already signed — the " +
 			"reconnect then re-signs, which puts a second block from one identity on the page")
@@ -828,12 +832,111 @@ func TestACachedContributionSurvivesARestart(t *testing.T) {
 	// And a DIFFERENT inbound must miss. The mirror holds one document per ceremony, so a
 	// reconnect carrying other bytes would otherwise be handed this hop's signature over a
 	// document it does not extend.
-	if other := c.Cached([]byte("%PDF-1.7\nsomething else entirely\n")); other != nil {
+	if other, _ := c.Cached([]byte("%PDF-1.7\nsomething else entirely\n")); other != nil {
 		t.Error("a reconnect offering a different document was handed this hop's contribution — " +
 			"that is the defect the sha256(inbound) key exists to prevent, one process boundary out")
 	}
 	// A prefix with nothing appended is not a contribution either.
-	if same := c.Cached(stored); same != nil {
+	if same, _ := c.Cached(stored); same != nil {
 		t.Error("a document with no contribution appended was returned as a contribution")
 	}
+}
+
+// TestAnUnreadableStoredContributionIsUnknownAndNotAMiss — /pending 320.
+//
+// # The defect
+//
+// `persistedFor` collapsed every `ReadMirror` outcome to nil, so a read failure, an I/O fault, a
+// damaged mirror and a version skew gave the same answer as "this hop has not signed". The caller
+// then fell through to `Confirm` and minted a second, differently-timestamped signature from one
+// identity — what D24 forbids and what C01 counts on the artifact.
+//
+// # Three outcomes, driven separately, and the third control is the one that earns its place
+//
+// An over-broad "unknown" refuses every FIRST hop, because a machine that has never signed has no
+// mirror at all. That is not hypothetical: it is exactly what the first cut of this fix did — it
+// returned every `ReadMirror` error as UNKNOWN on the reasoning that a missing document comes back
+// as `(record, 0 bytes, nil)`, which is true of `document.pdf` and false of `record.json`. Two
+// ceremony tests went red. The absent case below is that regression, pinned.
+func TestAnUnreadableStoredContributionIsUnknownAndNotAMiss(t *testing.T) {
+	rec, inbound, stored := ceremonyOnDisk(t)
+	c := &ceremonyID{inv: ceremony.Invitation{ID: rec.ID}}
+
+	// A HIT: the ordinary restart-and-reconnect path.
+	got, err := c.persistedFor(inbound)
+	if err != nil {
+		t.Fatalf("a readable mirror reported UNKNOWN: %v", err)
+	}
+	if !bytes.Equal(got, stored) {
+		t.Fatalf("the read-through returned %d bytes, want the stored %d", len(got), len(stored))
+	}
+
+	// A MISS: a ceremony this machine has never written anything for. Absent is knowable.
+	fresh := &ceremonyID{inv: ceremony.Invitation{ID: strings.Repeat("a", 32)}}
+	if got, err := fresh.persistedFor(inbound); err != nil || got != nil {
+		t.Errorf("a machine that has never signed reported (%d bytes, %v) — every first hop would "+
+			"refuse itself, which is what the first cut of this fix did", len(got), err)
+	}
+
+	// UNKNOWN: the record is there and cannot be read.
+	dir, derr := ceremony.MirrorDir(defaultOutputDir(), rec.ID)
+	if derr != nil {
+		t.Fatal(derr)
+	}
+	rj := filepath.Join(dir, "record.json")
+	if err := os.Chmod(rj, 0o000); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chmod(rj, 0o600)
+	// SETUP: the read must genuinely be impossible, or this drives the HIT path and passes for the
+	// wrong reason. Root ignores the mode, so skip rather than record a false green.
+	if _, rerr := os.ReadFile(rj); rerr == nil {
+		t.Skip("record.json is still readable (running as root?) — this case cannot be driven")
+	}
+	got, err = c.persistedFor(inbound)
+	if err == nil {
+		t.Error("an unreadable record reported a MISS. The caller then asks the user to sign a " +
+			"document this identity may already have signed, and a second differently-timestamped " +
+			"block from one identity goes on the page — which is what D24 forbids.")
+	}
+	if got != nil {
+		t.Error("bytes were returned alongside the failure")
+	}
+}
+
+// ceremonyOnDisk convenes a two-party ceremony and writes this hop's contribution to the mirror,
+// returning the record, the inbound it answers and the stored bytes.
+func ceremonyOnDisk(t *testing.T) (ceremony.Record, []byte, []byte) {
+	t.Helper()
+	cert, key, err := sign.GenerateIdentity("Convener")
+	if err != nil {
+		t.Fatal(err)
+	}
+	fpb, err := sign.Fingerprint(cert)
+	if err != nil {
+		t.Fatal(err)
+	}
+	base, err := testpdf.Text("the lease")
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := ceremony.Convene(base, ceremony.ConveneRequest{
+		Roster: []ceremony.Party{
+			{Fingerprint: hex.EncodeToString(fpb), Label: "Convener", Signs: true},
+			{Fingerprint: strings.Repeat("2b", 32), Label: "B", Signs: true},
+		},
+		Intent:        "We agree",
+		Expires:       time.Now().Add(48 * time.Hour),
+		HopBudget:     ceremonyHopBudget(),
+		ConvenerSigns: true,
+	}, cert, key, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	inbound := out.Document
+	stored := append(append([]byte{}, inbound...), []byte("\n% this hop's appended contribution\n")...)
+	if _, err := ceremony.WriteMirror(defaultOutputDir(), out.Record, stored); err != nil {
+		t.Fatal(err)
+	}
+	return out.Record, inbound, stored
 }

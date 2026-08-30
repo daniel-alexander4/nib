@@ -28,11 +28,18 @@ func (c countingConfirmer) Confirm(SignerAttestation, []byte) (bool, string, []b
 type mapReDeliverer struct {
 	m    map[string][]byte
 	fail error
+	// readErr makes `Cached` report UNKNOWN rather than a miss — /pending 320's case. The
+	// production implementation returns it when the mirror cannot be read or is damaged, and
+	// without a way to drive it here the p2p-side branch is exercised by nothing.
+	readErr error
 }
 
-func (r *mapReDeliverer) Cached(inbound []byte) []byte {
+func (r *mapReDeliverer) Cached(inbound []byte) ([]byte, error) {
+	if r.readErr != nil {
+		return nil, r.readErr
+	}
 	sum := sha256.Sum256(inbound)
-	return r.m[string(sum[:])]
+	return r.m[string(sum[:])], nil
 }
 func (r *mapReDeliverer) Store(inbound, final []byte) error {
 	sum := sha256.Sum256(inbound)
@@ -180,7 +187,7 @@ func TestAFailedPersistStillDeliversAndStillSaysSo(t *testing.T) {
 	}
 
 	// The cache holds it, so a reconnect re-delivers rather than re-signing.
-	if got := rd.Cached(inbound); got == nil {
+	if got, _ := rd.Cached(inbound); got == nil {
 		t.Error("a failed persist left nothing cached — a reconnect would then re-sign, which is " +
 			"the second block from one identity D24 forbids")
 	}

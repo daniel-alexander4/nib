@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io/fs"
 	"log"
 	"path/filepath"
 	"strings"
@@ -272,19 +273,19 @@ func reDeliverKey(inbound []byte) string {
 // Cached returns THIS hop's previously co-signed output for `inbound`, or nil if this hop has not
 // signed that document (a cache miss runs the fresh exchange). Nil after close, so a re-delivery
 // races a teardown to a clean miss rather than a signature off a dead ceremony.
-func (c *ceremonyID) Cached(inbound []byte) []byte {
+func (c *ceremonyID) Cached(inbound []byte) ([]byte, error) {
 	if c == nil {
-		return nil
+		return nil, nil
 	}
 	c.mu.Lock()
 	if c.closed {
 		c.mu.Unlock()
-		return nil
+		return nil, nil
 	}
 	hit := c.reDelivery[reDeliverKey(inbound)]
 	c.mu.Unlock()
 	if hit != nil {
-		return hit
+		return hit, nil
 	}
 	// **A miss in memory is not a miss (P08.S02, C01).** The map dies with the process, and D24's
 	// whole subject is a ceremony that outlives one. A party killed after signing and restarted has
@@ -313,20 +314,40 @@ func (c *ceremonyID) Cached(inbound []byte) []byte {
 // and `ReadMirror`'s own comment already makes that argument about the record. A planted file that
 // is not an extension of the document actually offered is refused here rather than returned to a
 // peer as this machine's signature.
-func (c *ceremonyID) persistedFor(inbound []byte) []byte {
+func (c *ceremonyID) persistedFor(inbound []byte) ([]byte, error) {
 	_, pdf, err := ceremony.ReadMirror(defaultOutputDir(), c.inv.ID, time.Now())
-	if err != nil || len(pdf) == 0 {
-		return nil
+	if err != nil {
+		// **NOT-EXIST IS A MISS, and getting this wrong broke two ceremony tests.** The first cut
+		// of this branch returned every error as UNKNOWN, on the reasoning that "`ReadMirror`
+		// returns a missing document as `(record, 0 bytes, nil)`". That is true of a missing
+		// `document.pdf` and false of a missing `record.json`, which is the ordinary case: the
+		// FIRST hop on a machine has no mirror at all, so every fresh ceremony began by refusing
+		// itself. The distinction the caller needs is not "did a call fail" but "is the answer
+		// knowable", and an absent store answers cleanly: this hop has not signed.
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil, nil
+		}
+		// **Everything else is UNKNOWN, not a miss (/pending 320).** This used to collapse to nil:
+		// a permission problem, an I/O fault, a damaged mirror and a version skew were one branch
+		// with a genuine absence, so "I could not find out whether I signed" was reported as "I did
+		// not sign" — and the caller signed again. A skew is the sharpest of them: it means this
+		// build cannot read a contribution it may well have written itself.
+		return nil, err
+	}
+	if len(pdf) == 0 {
+		return nil, nil // nothing stored for this ceremony yet: a real miss
 	}
 	if !bytes.HasPrefix(pdf, inbound) {
 		// Either a different hop's document, or something planted. Not this hop's answer, so a
-		// miss — the fresh exchange then runs, which is the safe outcome.
-		return nil
+		// miss — the fresh exchange then runs, which is the safe outcome. **A miss and not an
+		// error, deliberately**: this says "what is stored is not an answer to THIS question",
+		// which is knowledge, where the branch above says the question could not be asked.
+		return nil, nil
 	}
 	if len(pdf) == len(inbound) {
-		return nil // no contribution appended: nothing was signed here
+		return nil, nil // no contribution appended: nothing was signed here
 	}
-	return pdf
+	return pdf, nil
 }
 
 // Store records THIS hop's co-signed output for `inbound`, so a later reconnect re-delivers it. A
