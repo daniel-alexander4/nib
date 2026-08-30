@@ -141,6 +141,29 @@ the untouched-items enumeration, and the UX pin's own closing sentence, which re
 day later — because D22's hub is precisely what breaks the attestation channel binding. What is
 genuinely untouched is now stated positively, so the amendment reads as a correction rather than as
 D2 being in doubt.)
+Amended 2026-08-30 (**the four decision-level items the seventh plan-review parked, settled by Dan
+through `/discuss` — two rounds, eight decisions.** The external pass owed by `/pending 307` ran
+first, cold against a sealed brief; its verdict was that **four P08 criteria that read as met were
+not**, and its through-line is one sentence: *a criterion whose only enforcement point is the phase
+close is not a criterion during the phase.* Two of its criticals were fixed inside the review's own
+sweep (the sticky failure surface had no reader, and tier 2 had been red since the first P08 slice);
+eight became `/pending` 319–326, five of which shipped.
+**What is settled here, all four on Dan's call and none of them striking a decision:**
+**C12/D29** — the ceremonies listing moves off `requireUnlocked` and *locked* becomes a fifth
+degradation class, because the vault lock protects nothing there: the mirror is unsealed by D29's
+own design. **C11/D28/S06** — the end state gets a small **unattested local receipt** that survives
+the prune, reopening only S06's prune of the three decisions that composed to make an end state
+unrecordable; `Embed` and D28 are untouched. **S04/C06** — the termination object is **convener-
+signed and transmitted**, a second artifact rather than the same one, because an unattested claim
+about a proceeding arriving over the wire is a denial-of-service on a live ceremony; D28 stands
+unstruck, since the end state was never a `Record` field. **D33/S05** — the delivery arm's DHT cost
+is bounded, ADR-011 having appeared nowhere in P08. **C17's enforcement point moved to the slice**
+(v1.117.272, `/pending 322`) with a gate that can see an absent row, which the phase-close pass
+structurally cannot.
+**The asymmetry written down rather than glossed:** only *declined* and *completed* can be attested,
+because *expired* and *abandoned* have no convener to sign them — those two are derived locally and
+identically by every machine from the record's own `Expires` plus S06's grace. A reader who assumes
+all four are attested builds the wrong verifier.)
 SME packs: **crypto (core tier)** — `go.mod` declares `filippo.io/age`,
 `golang.org/x/crypto`, `edwards25519`, `hpke`, `go-pkcs12`, `digitorus/pdfsign`
 (inferred, trigger 1); the consensus tier does not fire — ~~two~~ **N (2026-08-18)** sequential
@@ -5627,6 +5650,29 @@ Exit criteria:
 - **C06.** **Each of D28's end states is driven at the protocol level, not only in the UI: a decline at hop 3 ends the ceremony, and the parties who already signed learn of it. (D28.)**
 
   **(plan-review pin: "each" is four states and the phase drove one; and the expired gate is on the wrong machine — 2026-08-29.)** *Expired* has exactly one enforcement site in the tree, `checkCeremonyDeadline`, whose only production caller is `handleSessionInitiate` (`internal/server/session.go:1550`) — **the dialing side**, which in a ceremony is the convener. The party being *asked to sign* gates on `checkArrival` → `ceremony.CheckRecord` → `Record.Verify`, and `Verify` deliberately does not refuse an expired ceremony and says so at the line (`internal/ceremony/record.go:456-462`). So whoever convenes owns the only clock check, and a signer can be collected into a proceeding D28 declares over. ADR-009's shape, on the rule whose whole point is a protocol-level end state. **What discharges each state specifically:** *declined* — a contribution at hop 4 refused by name after a hop-3 decline; *expired* — a contribution offered after `Expires` refused **by the signing party's own arrival gate, with the convener bypassed**, routed through the one `checkCeremonyDeadline` door; *abandoned* — the close-out of a ceremony whose convener never returns, which is C11's; *completed* — C08.
+
+  **(settled 2026-08-30, Dan, `/pending 323` — the termination object is convener-signed and
+  transmitted, and D28 is not struck.)** D28's parked question was *may an end state be recorded,
+  and by whom?*, and its finding was that every `Record` field sits inside the convener-signed
+  commitment so *"mark it declined"* has no home. That finding stands and needs no amendment,
+  because **the end state was never a `Record` field** — S04 already posits a separate object.
+
+  **It must be attested, and that is what settles the shape.** C06 requires the parties who already
+  signed to *learn of it*. Learning is a delivery, and an unattested claim about a proceeding
+  arriving over the wire and believed is a denial-of-service on a live ceremony: a hostile roster
+  member tells the hop-1 and hop-2 signers the proceeding is dead and they stop. That is the class
+  L1 and D32 exist against. **The convener signs it** — the same authority that signed the record —
+  so a decline is reported *to* the convener, who ends the proceeding and signs that it ended.
+
+  **Two artifacts, not one.** The local receipt (C11's, above) records what a machine believes; this
+  signed object is the evidence that justifies believing it. On the convener's own machine they
+  coincide.
+
+  **The asymmetry, written down rather than glossed: only two of the four states can be attested.**
+  *Declined* and *completed* have a convener to sign them. *Expired* and *abandoned* do not —
+  abandoned means the convener never came back — so for those the receipt is all there is, derived
+  from the record's own `Expires` plus S06's grace, which every machine evaluates independently and
+  identically. A reader who assumes all four are attested will build the wrong verifier.
 - **C07.** **An identity that no longer matches the roster ends the ceremony with a named message and never pairs on the new key. (D28 — the L1 guard covers it.)**
 
   **(plan-review pin: name the party, not the key — 2026-08-29.)** P06's first exit criterion forbids a hex fingerprint on the primary flow, and the natural way to write a mismatch message is to print both fingerprints. The tree already has the discipline — *"that peer isn't pinned — pin their fingerprint first"* names the word and never the value (`internal/server/session.go:1122`). **What discharges this specifically:** the message names the party by **roster label and position**, contains no hex, and the vault's pin set is asserted to hold no entry for the new key — the error string alone is not the observation.
@@ -5640,9 +5686,37 @@ Exit criteria:
 - **C11.** **A ceremony directory is gone after the ceremony has ended and its document has been delivered or saved. (D29.)**
 
   **(plan-review pin: on three of D28's four end states the prune destroys the only copy of a real signature — 2026-08-29. Five seats found this independently.)** For a non-convener party the mirror is the **sole** durable copy of the document carrying their own signature: `openArrival` calls `mirrorHop` and `addDoc` — a mirror file and an in-memory tab — and `saveReceived` is not on the co-sign path at all, running only under `mode == sessionModeReceive` (`internal/server/session.go:878`, `:904-910`). `RemoveMirror` is an unconditional `os.RemoveAll` (`internal/ceremony/mirror.go:178-184`). *Declined*, *expired* and *abandoned* never reach a delivery round, so nothing is ever delivered **or saved** — and D28 says in terms that those parties *"keep their partial document"* and that the partially-signed document *"remains a valid document"*. **What discharges this specifically:** the prune is a **move, not a delete** — this machine's own signed contribution is written outside `~/nib/ceremonies/` first — and the observation is the file's presence at a named path *after* the prune has run, never the directory's absence alone.
+
+  **(settled 2026-08-30, Dan, `/pending 325` — the end state gets a local receipt, and only S06's
+  prune reopens.)** Three decisions composed to make an end state unrecordable anywhere: `Embed`
+  refuses an already-signed document, so it cannot go in the PDF; D28's pin puts every `Record`
+  field inside the convener-signed commitment, so it cannot go there; and this prune `RemoveAll`s
+  whatever S04 wrote beside `record.json`. S09's *"names an end state only where a local mirror
+  exists"* therefore evaluated to **never**, on every machine, for all four states.
+
+  **Of the three, only this one reopens.** The first is a PDF-format fact. The second would put a
+  forgeable field on the one artifact whose value is that every field is attested. This prune is
+  unbuilt and is *already* being amended to a move rather than a delete, so what changes is one
+  clause of what survives: **the contribution plus a small end-state receipt**, written outside
+  `~/nib/ceremonies/`. It is **local bookkeeping and not an attestation** — unsigned, and it must
+  not present itself as proof. The proof of what happened is the document, which D28 already
+  establishes: a declined party *"keeps their partial document"* and it *"remains a valid
+  document"*. The receipt is navigation.
 - **C12.** **A ceremony whose mirror directory has been deleted by hand degrades that panel entry and leaves every other ceremony and open document working. (gap #19.)**
 
   **(plan-review pin: absence is the easy case; the four that brick the ceremony are the other ones — 2026-08-29.)** `ReadMirror` returns on any `Verify` failure before it ever exposes `Expires` (`internal/ceremony/mirror.go:130-137`), and `Verify`'s first check is exact version equality (`internal/ceremony/record.go:464`) against a `FormatVersion` already at 4 and moved three times. So a Nib update mid-ceremony makes every live ceremony on the machine unlistable, unresumable **and unprunable**, reported in the vocabulary of forgery — while the vault does this properly next door, refusing a newer payload with a plain sentence naming both versions (`internal/vault/vault.go:239-248`). **What discharges this specifically:** four degraded outcomes with four different sentences — absent, unparseable, **version-skewed** (named as a skew per D32, not as a verification failure), and unverifiable — and a version-skewed mirror is still prunable.
+
+  **(settled 2026-08-30, Dan, `/pending 319` — a FIFTH class, and the route moves.)** The four
+  classes were built behind `s.requireUnlocked(s.handleCeremonies)`, so C12 was met only on an
+  unlocked machine — and D29 forbids exactly that in terms: *"The panel renders while the vault is
+  locked… A resumption screen that demands a password to tell you whose turn it is has
+  misunderstood what it is for."* **The lock protects nothing here**, which is what settles it: the
+  listing is derived from the mirror, which D29 itself establishes as ordinary unsealed files under
+  the user's home, so anyone with filesystem access already reads every label in it. `/api/ceremonies`
+  moves off `requireUnlocked`; everything mirror-derived renders while locked; any field that
+  genuinely needs the vault says *"unlock to see"* in place rather than 401-ing the page. That is
+  also D34's *"the third state… it must say which"*, which the four classes did not carry. **D29 is
+  not amended** — the implementation was wrong, not the decision.
 - **C13.** **Convening a second ceremony on a document already under a live one is refused, server-side and by name. (gap #28.)** The mutation criterion cannot see it, because convening is not a mutation.
 
   **(plan-review pin: the covered direction is the one that already works — 2026-08-29.)** `Convene` refuses on a record being present in the bytes it is handed (`internal/ceremony/convene.go:159-166`), so convening again on the *convened output* is refused. Convening a second ceremony after **re-opening the original file** is not: two live ceremonies, two rosters, one underlying document, which is the case C13's wording actually describes. **What discharges this specifically:** the refusal is driven from the **pre-convene bytes** and keys on document identity against the live mirrors, not on a record being present in the bytes at hand.
@@ -5859,6 +5933,22 @@ Acceptance:
 - **The recipient verifies what arrives** — `CheckRecord`, `MatchesRecord`, completeness over the full roster, and a byte-prefix check against **its own persisted contribution**, which is newly possible because S02 stored it and is the only check that catches a substituted prefix. Its blind spots are stated, not implied.
 - **A ceremony declined at hop 3 delivers the signed termination object to the parties who signed at hops 1 and 2**, and the telling states the proceeding is over, who ended it, that their signature stands, and that a re-run starts from the original unsigned file.
 - **`Convene` reserves a delivery term** as well as the hops, so the round is inside the deadline the user set and S06's grace is derived from the same figure rather than hand-chosen.
+- **The arm's egress is BOUNDED, and ADR-011 binds it (added 2026-08-30, `/pending 326`).**
+  `republishEvery() = candidateLife()/2` and `candidateLife()` is 480 s, so a waiting party
+  publishes to the DHT **every 240 s for the life of the arm** — which this slice bounds by
+  `Expires` plus grace, i.e. up to 30 days per party. ADR-011's hold does not save it: `holdDHT`
+  renews on sightings from the LAN answerer, which is gated on `!cer.hasSigned()`, and a delivery
+  arm is exactly the state that gate excludes. **`ADR-011` appears nowhere in P08's section**, and
+  D33's packet law is per *hop* while a delivery leg is not a hop, so at N=9 the round's punch
+  budget is undefined. P03's exit criterion reached **0 off-link packets** four phases late; this is
+  the shape that undoes it. The slice states the delivery round's egress budget, derives it from
+  D33 rather than inheriting it silently, and drives the figure.
+- **Compose this with a `Cached` hit and the loop never returns (same pin).** A hit returns early
+  from `coSignExchange` without calling `Store`, so `c.reDelivery` stays empty, `hasSigned()` is
+  permanently false after a restart-and-re-delivery, `postSignDeadline` is never armed, and the arm
+  runs to the 30-day bound publishing throughout. The plan costs this as *"one publish"*; it is
+  ~360 a day. **An unmeasured cost claim, which this repo's own law forbids** — the figure above is
+  arithmetic over constants read at the line, and the slice measures it rather than repeating it.
 - Tier: 4 at N=4, with S01's restart verb (C15).
 
 #### P08.S06 — Close-out: end state, then delivery, then the prune — and nothing is destroyed *(D29 lifecycle pin; C09, C11)*
