@@ -1,0 +1,16 @@
+diff --git a/internal/sign/identity.go b/internal/sign/identity.go
+index 66301a5..d16d173 100644
+--- a/internal/sign/identity.go
++++ b/internal/sign/identity.go
+@@ -168,6 +168,11 @@ func SignApproval(pdfBytes, certPEM, keyPEM []byte, opts Options) ([]byte, error
+ 		if page < 1 {
+ 			page = 1
+ 		}
++		if rd, rerr := dpdf.NewReader(bytes.NewReader(pdfBytes), int64(len(pdfBytes))); rerr == nil {
++			if n := rd.NumPage(); n > 0 {
++				page = n
++			}
++		}
+ 		data.Appearance = sign.Appearance{
+ 			Visible:     true,
+ 			Page:        uint32(page),

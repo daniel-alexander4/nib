@@ -2372,3 +2372,29 @@ unnoticed because the emitter is the only party any test had played. Measured wi
 applied: a 5000-rune intent, label and capacity all verify.
 
 `recorded` 192 → 194.
+
+## /pending 305 — a block on a page that is not the last *(v1.117.267)*
+
+One row, tier 1, and it is here for what it discriminates rather than for what it catches.
+
+**`block-drawn-on-the-last-page-not-the-placed-one`.** `SignApproval` resolves the appearance to the
+document's LAST page instead of the one the placement named. It **passes at n=4** — where the single
+allocated signature page IS the last page, so the two answers coincide — and **fails only at n=9**,
+where two signature pages exist and the first block belongs on a page that is not the last.
+
+That asymmetry is the whole value. `TestABlockIsActuallyDRAWNWhereItWasPlaced` had `const n = 4` for
+its whole life, so `Appearance{Page}` was exercised at exactly one value, and `blockink`'s own head
+argues a roster *"changes only the VALUES of Page and Rect"* — true, and never checked at any value
+but the last. A mutation reddening both rows would only prove the test runs; this one proves the new
+row catches something the old could not.
+
+**Two earlier mutations were tried and rejected**, and they are worth recording because "it went
+red" is not the standard: forcing page 1 fails both rows, and a byte-counting page estimate was
+simply wrong about how many pages there were. The proof has to go red *in the case being added*.
+
+The measurement behind the row: placed == drawn at both counts, every widget carrying `/AP`, and the
+middle signature page surviving six incremental rewrites with its `/Resources` and `/Contents`
+intact. The vendored writer is correct — this is the regression guard that was missing, not a bug
+report.
+
+`recorded` 194 → 195.
