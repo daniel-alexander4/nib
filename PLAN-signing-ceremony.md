@@ -5911,7 +5911,7 @@ Acceptance:
 - **"Never pairs on the new key" holds structurally rather than by a check**, and is recorded as that: nothing pins from anywhere but the roster (`pinCeremonyRoster`), so a key the roster does not name has no door to be pinned through. *Met by construction, stated rather than asserted.*
 - Tier: 4 for the arm bound and the decline; tier 1 plus a redproof row for the arrival-gate refusal, stated (C15).
 
-#### P08.S04a — The arrival gate refuses a proceeding that has ended *(D28, C06's expiry half; split from S04 2026-08-30 at its grill)* *(in progress 2026-08-30)*
+#### P08.S04a — The arrival gate refuses a proceeding that has ended *(D28, C06's expiry half; split from S04 2026-08-30 at its grill)* *(done 2026-08-30, v1.117.283 — budget ZERO after the arithmetic was re-derived at the line; wire codes 13 and 14, the second closing an older bare-EOF that predates this slice)*
 Scope: S04 left two bullets unbuilt and they are **two slices, cut on risk class** — this one is
 reversible and touches no format; S04b writes a one-way on-disk artifact. They share only
 `checkArrival` as a consumption site, and S04b is inert until S05 delivers it (the strongest
