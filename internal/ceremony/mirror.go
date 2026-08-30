@@ -228,7 +228,7 @@ func ReadMirror(root, id string, now time.Time) (Record, []byte, error) {
 // D29's close-out prune is P08.S06's, and this function is what it will call.
 //
 // `os.RemoveAll`, so it takes whatever else is in the directory with it — including any leftover
-// `.tmp-*` from an interrupted `atomicfile` write, which nothing else sweeps.
+// `.nib-*.tmp` from an interrupted `atomicfile` write, which nothing else sweeps.
 func RemoveMirror(root, id string) error {
 	dir, err := MirrorDir(root, id)
 	if err != nil {

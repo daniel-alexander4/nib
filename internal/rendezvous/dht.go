@@ -42,6 +42,7 @@ import (
 	"golang.org/x/time/rate"
 
 	"nib/internal/addrscope"
+	"nib/internal/atomicfile"
 )
 
 // bootstrapFile is where the cached node list lives.
@@ -862,11 +863,21 @@ func writeNodes(dir string, nodes []krpc.NodeInfo) (uint64, error) {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return 0, err
 	}
-	tmp := filepath.Join(dir, bootstrapFile+".tmp")
-	if err := os.WriteFile(tmp, buf, 0o600); err != nil {
-		return 0, err
-	}
-	if err := os.Rename(tmp, filepath.Join(dir, bootstrapFile)); err != nil {
+	// **`Write`, not `WriteDurable`, and through the door rather than beside it** (/pending 316).
+	//
+	// Not durable: this cache is a bootstrap accelerator, and losing it costs one cold start —
+	// which the shipped seed list and `loadNodes`' own tolerance already treat as ordinary. It is
+	// re-derivable output, which is exactly the line `atomicfile`'s contract draws.
+	//
+	// **The fixed temp name it replaces was not a style deviation, it was a corruption channel.**
+	// `nodeCacheDir` is one path per config dir and three sites open a `rendezvous.Server`
+	// against it — one per ceremony — each saving on `Close()`, plus the second Nib this repo
+	// deliberately permits. Two writers on one fixed `dht-nodes.tmp`: writer B opens it before A
+	// renames it, so after A's rename B's descriptor points at the PUBLISHED cache and B's
+	// truncate-and-write goes straight through it. The rename's atomicity is defeated and so is
+	// this function's own "do NOT truncate a good cache" rule twenty lines up. `os.CreateTemp`
+	// inside the door removes it: every writer gets its own name.
+	if err := atomicfile.Write(filepath.Join(dir, bootstrapFile), buf, 0o600); err != nil {
 		return 0, err
 	}
 	return n, nil

@@ -41,14 +41,11 @@ func TestEveryHandRolledAtomicWriteIsDeclared(t *testing.T) {
 	declared := map[string]string{
 		// The door itself. Its whole job is this idiom.
 		"internal/atomicfile/atomicfile.go": "the door",
-		// **Two second implementations, recorded as findings rather than blessed.** Both predate
-		// this guard and both are exactly what `atomicroute_test.go`'s doc describes; they are
-		// listed so the guard can go green on today's tree while naming them, and `/pending 316`
-		// is where their removal is tracked. Listing them is the honest state — deleting the
-		// entries without fixing the code would make this guard red for work nobody scheduled,
-		// and leaving them undeclared would make it blind, which is how they survived.
-		"internal/cli/cli.go":        "PRE-EXISTING second implementation (/pending 316)",
-		"internal/rendezvous/dht.go": "PRE-EXISTING second implementation (/pending 316)",
+		// **The map held two more until v1.117.261 and now holds none.** `internal/cli/cli.go`'s
+		// `writeAtomic` and `internal/rendezvous/dht.go`'s node-cache write were the two
+		// second implementations this guard was promoted to find; /pending 316 removed them.
+		// Both now call the door. The empty state is the point: an exemption is a claim somebody
+		// made deliberately, and the fewer of them there are the more the guard means.
 	}
 
 	fset := token.NewFileSet()
@@ -127,6 +124,20 @@ func TestEveryHandRolledAtomicWriteIsDeclared(t *testing.T) {
 	if doorUsers == 0 {
 		t.Fatal("no file in the repo calls internal/atomicfile — either the door was renamed or " +
 			"this scan is not seeing call expressions, and its clean result above means nothing")
+	}
+	// **A MOVING FLOOR, and it is the only thing that guards the direction this can actually
+	// regress** (/pending 316). Everything above catches a site that renames WITHOUT the door.
+	// Nothing above catches a site that quietly stops using the door at all — deleting the write,
+	// or swapping it for a bare `os.WriteFile`, leaves this guard perfectly green. So the count is
+	// pinned the way `verify_test.go` pins the red-proof count: it may rise, and a fall is a
+	// question rather than a pass. Raise it in the same commit as a new door user.
+	const doorFloor = 8
+	if doorUsers < doorFloor {
+		t.Errorf("%d file(s) reach internal/atomicfile and this floor says at least %d. A site "+
+			"that stopped calling the door is invisible to every other check here — they all "+
+			"look for a rename that bypasses it, and a write that simply became non-atomic has "+
+			"no rename to find. If a caller was legitimately removed, lower this figure in the "+
+			"same commit and say which one.", doorUsers, doorFloor)
 	}
 	// And the renamers floor: the declared exemptions really do rename, so a scan that stopped
 	// recognising `os.Rename` would be caught here rather than reporting a clean tree.

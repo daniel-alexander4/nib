@@ -35,9 +35,18 @@ import (
 //
 // perm is applied to the temp file BEFORE the rename, for the same reason as below: the file is
 // never briefly readable at the process umask's default under its final name.
+//
+// **The temp pattern is `.nib-*.tmp` and the extension is load-bearing** (/pending 316). It came
+// from `internal/cli`'s hand-rolled twin when that twin was folded in here, and it is kept for
+// both halves of the name: `.nib-` gives a stranded temp its provenance — a user finding
+// `.nib-2891.tmp` in their Documents folder can tell who left it — and the `.tmp` SUFFIX is what
+// keeps `filepath.Ext` off `.pdf`, which is how the CLI's watcher tells an input from an
+// in-flight write. A dotfile prefix alone was enough for every scanner in this repo (checked:
+// `watch.go`'s `.pdf` filter, `saveas.go`'s dot-skip, `ListStored`'s id filter), but nothing
+// outside this repo was ever asked.
 func Write(path string, data []byte, perm os.FileMode) error {
 	dir := filepath.Dir(path)
-	tmp, err := os.CreateTemp(dir, ".tmp-*")
+	tmp, err := os.CreateTemp(dir, ".nib-*.tmp")
 	if err != nil {
 		return err
 	}
@@ -69,7 +78,7 @@ func Write(path string, data []byte, perm os.FileMode) error {
 // at the process umask's default under its final name.
 func WriteDurable(path string, data []byte, perm os.FileMode) error {
 	dir := filepath.Dir(path)
-	tmp, err := os.CreateTemp(dir, ".tmp-*")
+	tmp, err := os.CreateTemp(dir, ".nib-*.tmp")
 	if err != nil {
 		return err
 	}
