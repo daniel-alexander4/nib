@@ -1,0 +1,30 @@
+diff --git a/internal/server/ceremonyid.go b/internal/server/ceremonyid.go
+index 1e7dede..e3a4d2e 100644
+--- a/internal/server/ceremonyid.go
++++ b/internal/server/ceremonyid.go
+@@ -7,7 +7,6 @@ import (
+ 	"encoding/hex"
+ 	"errors"
+ 	"fmt"
+-	"io/fs"
+ 	"log"
+ 	"path/filepath"
+ 	"strings"
+@@ -324,15 +323,8 @@ func (c *ceremonyID) persistedFor(inbound []byte) ([]byte, error) {
+ 		// FIRST hop on a machine has no mirror at all, so every fresh ceremony began by refusing
+ 		// itself. The distinction the caller needs is not "did a call fail" but "is the answer
+ 		// knowable", and an absent store answers cleanly: this hop has not signed.
+-		if errors.Is(err, fs.ErrNotExist) {
+-			return nil, nil
+-		}
+-		// **Everything else is UNKNOWN, not a miss (/pending 320).** This used to collapse to nil:
+-		// a permission problem, an I/O fault, a damaged mirror and a version skew were one branch
+-		// with a genuine absence, so "I could not find out whether I signed" was reported as "I did
+-		// not sign" — and the caller signed again. A skew is the sharpest of them: it means this
+-		// build cannot read a contribution it may well have written itself.
+-		return nil, err
++		return nil, nil // HEAD's collapse, restored
++
+ 	}
+ 	if len(pdf) == 0 {
+ 		return nil, nil // nothing stored for this ceremony yet: a real miss
