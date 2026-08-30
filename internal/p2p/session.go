@@ -120,6 +120,28 @@ func MaxRemoteDecisionWait() time.Duration { return remoteDecisionDeadline }
 // TestSessionBudgetCountsEveryDeadlineInitiateArms holds this in step with the code: it scans
 // Initiate for SetDeadline calls and fails if the count moves, so a fourth arm cannot be added
 // without this sum being read.
+// ReceiveArrivalLag is the worst-case wall time from a peer's connection reaching `Receive` to the
+// signing party's arrival gate — the two `exchangeDeadline` arms before the gate, plus the spoken
+// check's human window (P08.S04a).
+//
+// **GUARD-ONLY. Nothing in production calls this, and that is deliberate.** It exists so
+// `internal/server` can assert its hop budget nests this without re-deriving `Receive`'s arm count
+// — a copy of that count over there is exactly the duplicate derivation `SessionBudget`'s own doc
+// grades critical.
+//
+// **`Receive` arms FOUR deadlines and only these TWO are before the gate.** The other two are
+// `postConsentDeadline`, armed after consent to write the frame. Both a deepdive and its grill
+// miscounted this — one said two arms, the other three — which is why
+// `TestReceiveArmsTheDeadlinesThisLagCountsOn` asserts the population instead of trusting a
+// remembered number.
+//
+// The human window is `PeerGateWindow` and **no connection deadline bounds it**, because no I/O
+// happens while a person is reading four words on a screen. That is the term both miscounts
+// dropped.
+func ReceiveArrivalLag() time.Duration {
+	return 2*exchangeDeadline + PeerGateWindow
+}
+
 func SessionBudget() time.Duration {
 	return 2*exchangeDeadline + remoteDecisionDeadline
 }
@@ -404,7 +426,30 @@ const (
 	refuseNoSignaturePages = 10
 	refuseBlockOffThePage  = 11
 	refuseNoCeremonyIntent = 12
+	// 13 and 14 close the arrival gate's two refusals (P08.S04a). Both were reaching the
+	// initiator as bare EOF — 14 is the OLDER instance, C17's roster mismatch, which has bare-
+	// EOF'd since P07: shipping 13 alone would put a new guard over an untouched older case of
+	// the same defect.
+	refuseCeremonyEnded  = 13
+	refuseRosterMismatch = 14
 )
+
+// ErrCeremonyEnded reports that the proceeding this document belongs to is over — its deadline has
+// passed (P08.S04a, D28's *expired* state).
+//
+// **Raised by the SIGNING party's own gate, with the convener bypassed.** Until this existed the
+// only deadline check in the tree ran on the dialing side, so whoever convened owned the only clock
+// and a signer could be collected into a proceeding D28 declares over.
+var ErrCeremonyEnded = errors.New("this ceremony's deadline has passed, so the proceeding is over")
+
+// ErrRosterMismatch is the arrival gate's OTHER refusal, re-exported here so it can carry a wire
+// code (P08.S04a).
+//
+// `internal/ceremony` owns the sentence and cannot be imported from this package, so the sentinel
+// is mirrored rather than aliased and `checkArrival`'s caller maps one to the other. Without a code
+// this refusal has reached the initiator as bare EOF since P07 — rendered as a 502 with a D19
+// NETWORK cause, for a peer that connected and refused.
+var ErrRosterMismatch = errors.New("this document's ceremony record is not the one this invitation commits to")
 
 // ErrCannotReadOwnRecord reports that this machine could not determine whether it had already
 // signed the document being offered (/pending 320).
@@ -511,6 +556,10 @@ func refusalCode(err error) byte {
 		return refuseBlockOffThePage
 	case errors.Is(err, ErrNoCeremonyIntent):
 		return refuseNoCeremonyIntent
+	case errors.Is(err, ErrCeremonyEnded):
+		return refuseCeremonyEnded
+	case errors.Is(err, ErrRosterMismatch):
+		return refuseRosterMismatch
 	}
 	return 0
 }
@@ -542,6 +591,10 @@ func errorForCode(code byte) error {
 		return ErrBlockOffThePage
 	case refuseNoCeremonyIntent:
 		return ErrNoCeremonyIntent
+	case refuseCeremonyEnded:
+		return ErrCeremonyEnded
+	case refuseRosterMismatch:
+		return ErrRosterMismatch
 	}
 	return fmt.Errorf("%w (code %d)", ErrRefusedUnknown, code)
 }

@@ -5911,6 +5911,95 @@ Acceptance:
 - **"Never pairs on the new key" holds structurally rather than by a check**, and is recorded as that: nothing pins from anywhere but the roster (`pinCeremonyRoster`), so a key the roster does not name has no door to be pinned through. *Met by construction, stated rather than asserted.*
 - Tier: 4 for the arm bound and the decline; tier 1 plus a redproof row for the arrival-gate refusal, stated (C15).
 
+#### P08.S04a — The arrival gate refuses a proceeding that has ended *(D28, C06's expiry half; split from S04 2026-08-30 at its grill)* *(in progress 2026-08-30)*
+Scope: S04 left two bullets unbuilt and they are **two slices, cut on risk class** — this one is
+reversible and touches no format; S04b writes a one-way on-disk artifact. They share only
+`checkArrival` as a consumption site, and S04b is inert until S05 delivers it (the strongest
+argument for the cut).
+
+**The finding that shaped it: nothing on a SIGNING party's path refuses an expired ceremony.**
+`internal/ceremony/record.go:553` is the only `Expires`-vs-`now` comparison a signer reaches, and it
+is a **future** ceiling (`Expires.After(now + MaxCeremonyLife)`) — it refuses a deadline too far
+ahead and never one in the past. The one deadline refusal that exists, `checkCeremonyDeadline`, has
+a single production caller and it is on the **convener's** side. *(Scoped precisely at the commit
+gate: `internal/ceremony/convene.go:213` also compares a ceremony `Expires` to `now`, but it is the
+CONVENER's own door at convene time asking a different question — whether the deadline covers every
+hop — and no signer reaches it. The first draft of this paragraph said "the only one in the tree",
+which the grep refutes.)*
+
+**The budget is ZERO, and the arithmetic is the slice's hardest part.** The receiver must refuse
+only `!rec.Expires.After(now)` — which is what the bullet says. Reserving a hop's worth at the
+receiver refuses honest hops: `ceremonyHopBudget()` is `20s + 300s + SessionBudget()` = **29m20s**,
+while the worst-case lag from the convener's dial to the signer's gate is
+`20s + 300s + 360s + 300s + 360s` = **22m20s** — two `exchangeDeadline` arms in `Receive` **plus**
+the spoken-check gate, which no connection deadline bounds because no I/O happens during it. The
+margin is **7m00s and that figure IS the tolerable clock skew**; an 8-minute reservation makes it
+minus one minute. *(Both the deepdive and its grill got this arithmetic wrong in different
+directions before it was re-derived at the line; the guard in T05 is what makes it falsifiable.)*
+
+Tasks:
+- **T01** — split `recordOutlivesBudget(rec, now, budget)` out of `checkCeremonyDeadline`; the
+  initiator's door keeps its signature, its caller and `ceremonyHopBudget()`.
+- **T02** — `p2p.ErrCeremonyEnded` + refusal code 13, **and `ceremony.ErrRosterMismatch`'s missing
+  code 14 folded in**: C17's existing arrival refusal reaches the initiator as bare EOF today, and
+  shipping the new guard over the older instance of the same defect is not a fix.
+- **T03** — `p2p.ReceiveArrivalLag()`, **guard-only and never called from production**, because a
+  copy of `Receive`'s arm count in `internal/server` is the duplicate derivation `SessionBudget`'s
+  own doc grades critical. With it, a scan asserting `Receive`'s deadline arms — it has **four**,
+  and only the **two** before the gate enter the lag.
+- **T04** — `checkArrival` calls the rule with budget 0 on the record it already holds (zero added
+  parses), and `Confirm` calls `noteFailure` so the protected party gets a sentence.
+- **T05** — the nesting guard:
+  `bootstrapBudget + connectDeadline + ReceiveArrivalLag() ≤ ceremonyHopBudget()`, with the surplus
+  printed as the declared clock-skew tolerance.
+- **T06** — a routing guard over `checkArrival`'s own body. Neither existing structural scan reads
+  inside it (both brace-match only its two callers), so a check added there is invisible to every
+  guard in the tree today.
+- **T07** — the behavioural test, convener bypassed, three arms: live admitted, expired refused,
+  and **an honest hop at the convener's worst case** (`Expires = t0+29m20s+ε`, `now = t0+22m20s`)
+  admitted.
+Acceptance:
+- A record whose `Expires` is past is refused by `checkArrival` **with the convener bypassed**.
+- The honest worst-case hop is **admitted** — the clause that separates this from a hop reservation.
+- The refusal reaches the initiator as a **named** refusal rather than EOF.
+- The nesting inequality holds and a guard fails if either side moves, with the surplus printed.
+- `rd.Cached` re-delivery of an already-made signature still succeeds **after** `Expires` — the gate
+  sits downstream of the cache, so a party who signed can always hand that signature over.
+- Tier: 1 plus red-proof rows (C15). **Tier 4 cannot reach this**: `pairrepro.sh` hard-codes
+  `expires` at now+48h with no override, and closing that needs a knob ADR-010's lesson governs —
+  it must not feed one constant to both sides.
+
+#### P08.S04b — The termination object *(D28, C06's telling half; split from S04 2026-08-30)*
+Scope: the signed artifact a decline or a completion leaves behind. ~~the decliner signs~~
+**the CONVENER signs (2026-08-30, Dan — see the dateline)**: under D22's hub the convener is one end
+of every hop and the only party that ever hears a decline, so it is the only shape mintable from
+what a machine observes.
+
+**Two fields are deliberately NOT in it, and that is the grill's finding.** `party` is out because a
+convener-signed *"X declined"* is a **framing attack** — mintable before that hop even runs, naming
+an innocent decliner non-repudiably. `When` is out because it is convener-chosen and unverifiable,
+and letting it drive S06's grace would hand a convener control of when other machines prune;
+retention starts from C11's **local** receipt's observed-at time. With both gone every surviving
+axis is fixed-width or a closed literal, so the object needs **no `Canonical`/`IsCanonical`** — the
+two malleabilities that machinery exists for were exactly those two fields.
+
+**What it buys, stated honestly: earliness, not enforcement.** It **cannot bind the convener**, who
+can simply not mint one and is also the sole courier. Every consumer must read absence as *unknown*,
+never *live* — which is why S04a's expiry rule must not depend on it. What it does buy is an honest
+convener ending a proceeding at every party promptly instead of leaving them to derive *abandoned*
+at `Expires` + grace, and non-repudiable evidence of who ended it.
+Acceptance:
+- The preimage binds a domain tag, its own version, the convener fingerprint, the **raw** roster
+  hash and the state — and `RosterHash` alone defeats cross-ceremony and same-id replay, because
+  it already binds `ID`, `DocHash`, `Intent` and `Expires`.
+- **Write-once**: a second write with the same roster hash and a different state is reported, never
+  clobbered. Absence tolerated; present-and-unverifiable is its own state and never `ErrMirrorDamaged`.
+- It has its **own door** — `ReadMirror`, `WriteMirror` and `refuseDifferentProceeding` unchanged, so
+  a stale in-flight `Store` cannot print "Signed, but not saved" for a name collision.
+- It is verified against the record from the **document/invitation** path, never the `record.json`
+  sitting beside it — an anchor a naive cross-ceremony test passes.
+- Tier: 1. Delivery is S05's.
+
 #### P08.S05 — The delivery round *(D22 and its delivery pin; C08, C10, C06's telling half)*
 Scope: D22 says *"nothing new is invented for it"* and the panel found four things that must be.
 **The recipient is not listening**: the post-sign window is `connectDeadline` — 300 seconds — after
