@@ -392,7 +392,10 @@ supported — they'd require cgo, and Nib ships as one pure-Go static binary.)
 Every PDF you open also shows a **signature badge**: untampered, modified, or
 unsigned. Click **details** for the full picture — every signer (not just the
 first), and whether each signing time is backed by an independent timestamp
-authority or merely stated by the signer.
+authority or merely stated by the signer. The badge describes the copy Nib
+opened — so if the file changes on disk afterwards (another program, or `nib …
+-w` in a terminal), Nib says so in a banner and offers to reload it, and Save
+asks before replacing the changed file with what you have open.
 
 ### Timestamp with OpenTimestamps — prove *when*
 **Timestamp (OpenTimestamps)** creates a small `.ots` proof that anchors your

@@ -10,7 +10,6 @@ import (
 
 	"nib/internal/instance"
 	"nib/internal/pdfops"
-	"nib/internal/sign"
 )
 
 // handoffRequest is what a second launch sends: a path, and nothing else (D20's third
@@ -126,7 +125,7 @@ func (s *Server) openHandedOff(path string) error {
 	if !pdfops.LooksLikePDF(data) {
 		return errHandoff("that file isn't a PDF")
 	}
-	if _, err := s.addDocCapped(&document{path: path, data: data, sig: sign.Verify(data)}); err != nil {
+	if _, err := s.addDocCapped(newPathDoc(path, data)); err != nil {
 		return err
 	}
 	return nil

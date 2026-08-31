@@ -75,7 +75,7 @@ Nib_files="$(find test/jsdom -maxdepth 1 -name '*.test.mjs' | wc -l | tr -d ' ')
 # the exit status, read by someone looking at the output.** `build/redproof.sh` is what caught it
 # this time, because it asserts on the exit status of the whole harness rather than on the lines
 # it printed — which is the only reading that could have caught it.
-Nib_expect_files=21
+Nib_expect_files=22
 if [ "$Nib_files" -ne "$Nib_expect_files" ]; then
   echo "FAIL: expected $Nib_expect_files jsdom test files, found $Nib_files — a test file was added or dropped." >&2
   echo "      If deliberate, update Nib_expect_files in this script." >&2

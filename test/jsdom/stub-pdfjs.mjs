@@ -93,6 +93,13 @@ export function getDocument() {
   if (cfg === null) {
     return { promise: Promise.resolve(null), destroy: async () => {} };
   }
+  // `fail: true` drives the render-failure half of the stale banner, which has two
+  // call sites in the app and, until /pending 333, no jsdom coverage at all — the
+  // banner's behaviour was reachable only from tier 3. Opt-in, so every existing
+  // caller is unaffected.
+  if (cfg.fail) {
+    return { promise: Promise.reject(new Error('stub: render failed')), destroy: async () => {} };
+  }
   const doc = {
     numPages: cfg.numPages,
     loadingTask: task,
