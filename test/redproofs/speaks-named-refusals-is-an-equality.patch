@@ -1,11 +1,19 @@
 --- a/internal/p2p/channel.go
 +++ b/internal/p2p/channel.go
-@@ -93,7 +93,7 @@
- // The asymmetry is what made it worth fixing before the bump rather than with it — the ALPN
- // **set** is pinned hard (a test fails on `len(sessionALPN) != 2`), so the list cannot change
- // without a deliberate edit, while the capability predicate could rot in place beside it.
--func (c Channel) SpeaksNamedRefusals() bool { return protoRank(c.Proto) >= protoRank(alpn2) }
-+func (c Channel) SpeaksNamedRefusals() bool { return c.Proto == alpn2 }
+@@ -111,15 +111,7 @@
+ 	// drove this out removed `alpn2` from the list and a peer negotiating `alpn` still passed,
+ 	// because it ranks 1 against a threshold of 0. A capability whose own version is not offered
+ 	// is a capability nobody has.
+-	floor := protoRank(alpn2)
+-	if floor == 0 {
+-		return false
+-	}
+-	r := protoRank(c.Proto)
+-	if r == 0 {
+-		return false // not one of ours: an older peer, or a future one this build cannot rank
+-	}
+-	return r >= floor
++	return c.Proto == alpn2
+ }
  
  // errChannelIncomplete reports a Channel missing a field the core cannot proceed without.
- var errChannelIncomplete = errors.New("incomplete channel")

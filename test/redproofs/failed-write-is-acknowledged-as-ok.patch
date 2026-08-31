@@ -1,9 +1,9 @@
 --- a/internal/server/session.go
 +++ b/internal/server/session.go
-@@ -740,9 +740,7 @@
- 		// This is the ordering `coSignExchange` already uses for `rd.Store`: persist before
- 		// deliver, at the door that runs before the frame. It needed no new interface, because
- 		// `Accept` already holds all three of `saveReceived`'s arguments.
+@@ -749,9 +749,7 @@
+ 		// `incoming/alice-20260831-110425.pdf`. So `ackOK` attests that THESE bytes reached the
+ 		// disk, and not that an earlier document still exists. P08.S05d's deterministic filename
+ 		// is what closes it.
 -		if err := sa.s.saveReceived(doc, peerFP, sa.label); err != nil {
 -			return false, err // → ackNotStored, never ackDeclined: the user said yes
 -		}
