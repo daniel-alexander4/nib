@@ -2579,3 +2579,65 @@ in front — had no coverage at all. And in tier 3 the harness's own dialog hand
 declines an overwrite was quietly accepting it, and reported the file as overwritten.
 
 `recorded` 205 → 209.
+
+## P08.S05a — the receipt stops lying (v1.117.290)
+
+Five rows: two on the wire, two on the ordering, one that crosses a process boundary. They split
+that way because the ordering can be right while nobody believes it, and the wire can be right
+while the write never happens.
+
+`received-write-runs-after-the-ack` is the defect **as shipped**: `saveReceived` ran from
+`serveOneSession`, *after* `ReceiveDocument` had already written `ackOK`, best-effort and
+returning nothing. A party whose disk failed was recorded as delivered, never retried and never
+told — and the function's own doc comment said the sender *"will not send it again"*. The row
+asserts **routing** rather than comparing the text of each site (ADR-009), because the failure it
+prevents is a *new* call site added without the ordering, and a test that checked the two known
+sites for agreement would say nothing about a third.
+
+`failed-write-is-acknowledged-as-ok` is the behavioural half, and it is a separate row because the
+write can be in the right place and still not be believed: `Accept` swallows the error, `ackOK`
+goes out anyway. Its fixture makes `~/nib` a **file** so `MkdirAll` refuses deterministically —
+a chmod-based fixture is a no-op for root and on Windows, which is the shape `ocrfonts_test.go`
+already pays for.
+
+`not-stored-is-encoded-as-a-decline` guards the wire word. Without its own byte, a disk failure
+reaches the sender either as nothing (an EOF read as a transport fault) or as `ackDeclined` —
+a false statement about a person who said yes, which is exactly the collapse `ackTimedOut` was
+added to undo one gate earlier.
+
+`speaks-named-refusals-is-an-equality` is `/pending 338` and it is the only **latent** row of the
+five: `SpeaksNamedRefusals` was `c.Proto == alpn2`, so a third ALPN would negotiate fine and then
+be denied the capability it introduced. The reason it is worth a row rather than a comment is what
+the existing guard would have done with it — `TestAnOlderPeerGetsTheBehaviourItExpects` enumerates
+protocols that must **not** speak, and every one of them is older, so a newer version failing the
+predicate reads to that test as correct. The ALPN *set* is pinned hard; the capability predicate
+was pinned by nothing.
+
+`transfer-lands-nothing-on-the-receiver` is tier 6, and it exists because **the transfer route had
+no harness coverage above tier 1 at all**. `/api/session/send` and the armed `mode:"receive"` path
+were driven only inside one process, sharing one vault and one identity, so *"the document reaches
+the other machine and lands on its disk"* was asserted by nothing that crosses a process boundary.
+With the receiver's write forced to fail, the sender learns it over both transports, through two
+real binaries. **The first draft of this paragraph claimed the sentence quoted from the wire was
+"the message the user actually sees", and it was not** — `ErrNotStored` fell through to a 502 that
+the browser toasted as *"could not send: …"*, the same sentence a dead peer produces, which is the
+mirror of the defect the byte was added to fix. The slice review caught it; `sendResult` now
+carries `notStored` and the UI has its own sentence.
+
+Two further rows came from the slice's own **review**, and both are the same lesson pointing in
+opposite directions.
+
+`named-refusals-granted-to-an-unknown-protocol` is the fail-OPEN the floor introduced. Turning the
+equality into `rank >= protoRank(alpn2)` looks strictly safer and is not: the threshold is looked
+up in the same list, so with `alpn2` absent it ranks 0 and admits **everyone**, sending two-byte
+refusals to `nib/1` peers. Guarding only the *peer* was not enough either — the test that drove it
+out removed `alpn2` and a peer negotiating `alpn` still passed, ranking 1 against a threshold of 0.
+
+`not-stored-reported-as-could-not-send` is the mirror of the defect the byte was added to fix.
+`ackNotStored` stops a disk failure being reported as a decline; without its own field at the HTTP
+boundary it is reported as *"could not send"* instead — the sentence a dead peer produces. Same
+collapse, other direction, one layer up. `sendResult`'s own comment said *"four outcomes, because
+the server publishes three booleans and reading fewer than all of them reports one of the others"*,
+and the slice made that five and four while leaving the comment at three.
+
+`recorded` 209 → 216.

@@ -1,0 +1,13 @@
+--- a/internal/server/session.go
++++ b/internal/server/session.go
+@@ -2150,10 +2150,6 @@
+ 			writeJSON(w, sendResult{Sent: false, TimedOut: true})
+ 			return
+ 		}
+-		if errors.Is(err, p2p.ErrNotStored) {
+-			writeJSON(w, sendResult{Sent: false, NotStored: true})
+-			return
+-		}
+ 		httpError(w, http.StatusBadGateway, "send did not complete: "+err.Error())
+ 		return
+ 	}

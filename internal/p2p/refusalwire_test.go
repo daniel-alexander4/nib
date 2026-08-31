@@ -256,6 +256,13 @@ func TestAnOlderPeerGetsTheBehaviourItExpects(t *testing.T) {
 			frame, ok)
 	}
 
+	// **This loop enumerates protocols that must NOT speak, and that is exactly how it could
+	// bless a regression (P08.S05a, /pending 338).** While `SpeaksNamedRefusals` was an equality
+	// against alpn2, a NEWER protocol also failed it — and would have landed in this list's
+	// verdict as correct, because everything here is older. The predicate is a floor now, and
+	// `TestSpeaksNamedRefusalsIsAFloorNotAnEquality` drives the newer direction this cannot see.
+	// Named here rather than left implicit: a guard whose blind spot is undocumented is one the
+	// next reader trusts further than it deserves.
 	for _, proto := range []string{alpn, "", "h2"} {
 		ch := Channel{Proto: proto}
 		if ch.SpeaksNamedRefusals() {

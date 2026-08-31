@@ -90,8 +90,9 @@ type session struct {
 	//
 	// Every failure on the receiving side happens on a goroutine with no HTTP response to write
 	// into. `runSession` discards `serveOneSession`'s error into `_`; `runCeremonyReceive` uses it
-	// only for loop control; `mirrorHop` and `saveReceived` report into `log.Printf` and a bare
-	// `return` respectively. Nib ships no log file and no log viewer, and `cmd/nib/main.go` already
+	// only for loop control; `mirrorHop` reports into `log.Printf`, and `saveReceived` used a bare
+	// `return` until P08.S05a moved it in front of the acknowledgement and gave it an error the
+	// SENDER also learns. Nib ships no log file and no log viewer, and `cmd/nib/main.go` already
 	// makes the argument about its own hand-off notice: *"a double-clicked launch has no terminal:
 	// its stderr goes nowhere a user will look, so a refusal logged here alone is a refusal nobody
 	// receives."* That reasoning was applied there and to nothing else.
@@ -726,7 +727,32 @@ func (sa sessionAccepter) Accept(peerFP, doc []byte) (bool, error) {
 	defer sa.s.sess.clearPendingIf(req)
 	select {
 	case d := <-ch:
-		return d.accept, nil
+		if !d.accept {
+			return false, nil
+		}
+		// **The durable write happens HERE, before the acknowledgement (P08.S05a, C10).**
+		//
+		// `ReceiveDocument` writes `ackOK` after this returns, so a write performed here is a
+		// write the sender's receipt actually attests to. It used to run afterwards, from
+		// `serveOneSession`, best-effort and returning nothing — so a party whose disk failed was
+		// recorded as delivered, never retried and never told, and `saveReceived`'s own comment
+		// said the sender "will not send it again".
+		//
+		// This is the ordering `coSignExchange` already uses for `rd.Store`: persist before
+		// deliver, at the door that runs before the frame. It needed no new interface, because
+		// `Accept` already holds all three of `saveReceived`'s arguments.
+		//
+		// **What the receipt still does NOT promise, stated rather than implied (/pending 342).**
+		// `receivedName` stamps a one-second timestamp and the write renames over whatever is
+		// there, so two documents from one peer inside the same second collide and the second
+		// destroys the first — measured, both legs of `ceremonyrepro.sh` at
+		// `incoming/alice-20260831-110425.pdf`. So `ackOK` attests that THESE bytes reached the
+		// disk, and not that an earlier document still exists. P08.S05d's deterministic filename
+		// is what closes it.
+		if err := sa.s.saveReceived(doc, peerFP, sa.label); err != nil {
+			return false, err // → ackNotStored, never ackDeclined: the user said yes
+		}
+		return true, nil
 	case <-time.After(sessionConsentTimeout):
 		return false, p2p.ErrConsentTimedOut // see sessionConfirmer.Confirm
 	}
@@ -1015,11 +1041,14 @@ func (s *Server) serveOneSession(anchor consentAnchor, cer *ceremonyID, conn *p2
 	var saw reached
 	ch := conn.Channel
 	if mode == sessionModeReceive {
-		doc, derr := p2p.ReceiveDocument(ch, sessionAccepter{s: s, label: label, saw: &saw, anchor: anchor}, myFP, sessionVerifier{s, &saw})
-		if derr != nil {
+		// **The save is NOT here any more (P08.S05a), and the returned bytes are therefore
+		// discarded.** It ran here, after `ReceiveDocument` had already written `ackOK`, so the
+		// receipt meant "a human clicked accept" and never "the bytes are on disk". It now runs
+		// inside `sessionAccepter.Accept`, the last thing before the frame — see that method, and
+		// `TestTheReceivedWriteHasOneDoor` for the guard that keeps it the only site.
+		if _, derr := p2p.ReceiveDocument(ch, sessionAccepter{s: s, label: label, saw: &saw, anchor: anchor}, myFP, sessionVerifier{s, &saw}); derr != nil {
 			return saw.v.Load(), nil, derr
 		}
-		s.saveReceived(doc, ch.PeerFP, label)
 		return true, nil, nil // a transfer saves itself; no co-signed document to open
 	}
 	var rd p2p.ReDeliverer
@@ -1075,15 +1104,21 @@ func (s *Server) openArrival(label string, final []byte) {
 
 // saveReceived writes an accepted one-way transfer under ~/nib, routed by what the
 // document is: a flagged PDF (awaiting the user's signature) lands in to-sign/, an
-// already-signed one in signed/, anything else in incoming/. Best-effort — a write
-// failure leaves the user's other documents untouched and simply reports nothing.
-func (s *Server) saveReceived(doc, peerFP []byte, peerLabel string) {
+// already-signed one in signed/, anything else in incoming/.
+//
+// **It returns its outcome, and its one caller is `sessionAccepter.Accept` (P08.S05a).** It used
+// to be best-effort with the doc comment "a write failure leaves the user's other documents
+// untouched and simply reports nothing" — and it ran AFTER the peer had been sent `ackOK`, which
+// is the one path in the tree that loses a peer's document with no trace after the sender has
+// been told it was accepted. The error now reaches the wire as `ackNotStored`, so "accepted" and
+// "kept" stop being the same claim.
+func (s *Server) saveReceived(doc, peerFP []byte, peerLabel string) error {
 	path := filepath.Join(defaultOutputDir(), receivedSubdir(doc), receivedName(peerLabel, peerFP))
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		s.sess.noteFailure("received-not-saved",
 			"A document arrived and could not be saved.",
 			"Nib could not create the folder it saves incoming documents into. Reason: "+err.Error())
-		return
+		return fmt.Errorf("%w: %v", p2p.ErrNotStored, err)
 	}
 	// A document a PEER sent. Losing it means asking them to send again, and they may be gone.
 	//
@@ -1093,11 +1128,12 @@ func (s *Server) saveReceived(doc, peerFP []byte, peerLabel string) {
 	if err := atomicfile.WriteDurable(path, doc, 0o600); err != nil {
 		s.sess.noteFailure("received-not-saved",
 			"A document arrived and could not be saved.",
-			"The sender has already been told it was accepted, so they will not send it again. "+
-				"Reason: "+err.Error())
-		return
+			"The sender is told it was not saved. Arm again and ask them to resend — the failed "+
+				"write spends this arm, so nothing can reach you until you do. Reason: "+err.Error())
+		return fmt.Errorf("%w: %v", p2p.ErrNotStored, err)
 	}
 	s.sess.setReceived(&receivedInfo{Path: path, Peer: peerLabel})
+	return nil
 }
 
 // receivedSubdir picks the ~/nib subdirectory for a received document from its own
@@ -2040,6 +2076,15 @@ type sendResult struct {
 	// different fact about a person and the user watching this send can act on it —
 	// ring them, wait, try later — where a decline is final.
 	TimedOut bool `json:"timedOut,omitempty"`
+	// NotStored is "they accepted it and their machine could not keep it" (P08.S05a).
+	//
+	// **A fourth boolean, because collapsing it is the mirror of the defect this slice fixed.**
+	// The wire gained `ackNotStored` so a disk failure would stop being reported as the receiving
+	// user declining; falling through to `httpError` here would report it as *"could not send"* —
+	// the sentence a dead peer produces — which is the same false statement pointing the other
+	// way. The transport worked, the peer is fine, a human said yes, and the right next action
+	// (resend) differs from the right action for an unreachable peer.
+	NotStored bool `json:"notStored,omitempty"`
 }
 
 // handleSessionSend runs the dialing side of a one-way transfer: it dials the chosen
@@ -2104,6 +2149,10 @@ func (s *Server) handleSessionSend(w http.ResponseWriter, r *http.Request) {
 		}
 		if errors.Is(err, p2p.ErrConsentTimedOut) {
 			writeJSON(w, sendResult{Sent: false, TimedOut: true})
+			return
+		}
+		if errors.Is(err, p2p.ErrNotStored) {
+			writeJSON(w, sendResult{Sent: false, NotStored: true})
 			return
 		}
 		httpError(w, http.StatusBadGateway, "send did not complete: "+err.Error())

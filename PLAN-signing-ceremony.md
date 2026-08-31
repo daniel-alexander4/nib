@@ -6013,19 +6013,52 @@ Tasks:
 - Tier: 1. Delivery is S05's, and **the object is inert until then** — which is what made the
   S04a/S04b cut the right one.
 
-#### P08.S05 — The delivery round *(D22 and its delivery pin; C08, C10, C06's telling half)*
-Scope: D22 says *"nothing new is invented for it"* and the panel found four things that must be.
-**The recipient is not listening**: the post-sign window is `connectDeadline` — 300 seconds — after
-which the loop returns and disarms (`internal/server/session.go:1329`, `:1300`), while C08's word is
-*hours*. **Nothing can find them**: `handleSessionSend` resolves through `peerAddresses`, which is a
-typed address or a LAN browse and nothing else (`internal/server/lan.go:311`) — no DHT, no punch, no
-ladder. **The transport asks a human**: `SendDocument` and `ReceiveDocument` both run
-`runVerification` (`internal/p2p/session.go:570`, `:608`), whose server implementation puts the four
-words on screen and blocks, so delivering to four parties is four attended, vault-unlocked sessions
-with a spoken identity check for a document they already signed. **And the ack means nothing**: it is
-written before the receiver has stored a byte. The re-arm is also a second session per party, which
-the TRIPWIRE at `internal/server/session.go:24-37` says may not be widened without a fresh security
-review — so this slice cites it and states what it widens.
+#### P08.S05 — The delivery round *(D22 and its delivery pin; C08, C10, C06's telling half)* — **SPLIT 2026-08-31 at its grill into S05a · S05b · S05c · S05d · S05e**
+The nine acceptance bullets below are retained verbatim as the split's source; each is now owned by
+one of the five slices that follow, and none is discharged at this coordinate. **The split's reason
+is not size but that each bullet carries its own structural change** — an arm registry and a keyed
+spoken-check gate, an off-LAN delivery rendezvous, an unattended verification gate,
+ack-means-persisted, a per-party ack store P08.S01 deferred *to this slice*, a deterministic
+delivered filename, recipient-side verification, termination delivery, a `Convene` deadline term,
+and a measured egress budget.
+
+**Three corrections the grill made to this slice's own text, recorded here rather than edited into
+the bullets, because the bullets are the split's source:**
+
+**(1) `state.json` does not exist, and S05 owns the decision.** The first bullet says the arm is
+*"re-established from S01's persisted state at load"*. Named search
+(`grep -rn "state.json|stateFile|mirrorState" --include=*.go .`) returns nothing: P08.S01's grill
+dropped it, and S01's own text assigns the store's home to *"S04's end states or **S05's delivery
+acks**"*. The per-party ack store is therefore this slice's to design, not to inherit.
+
+**(2) A TCP ceremony arm has no DHT tier at all, so *"the round finds parties off-LAN"* is
+unbuildable for TCP.** Measured 2026-08-31: `openRendezvous` returns at
+`internal/server/ceremonyid.go:537-540` for any non-QUIC transport, **before** it sets `c.end`/`c.rz`
+at `:560`; a QUIC *ceremony* arm never reaches `startArmedRendezvous` because `handleSessionArm`
+returns at `internal/server/session.go:1408`; and that function's sole call site is `session.go:1438`.
+So its guard at `ceremonynet.go:409-411` always fires and its whole body — LAN window, `inbound`
+check, `feedCandidates`, `punchLoop`, the publish — **never runs**. This is `/pending 248`, filed at
+the P05 close and now measured. Caveat 7 forbids the obvious repair (the probe and the session must
+share a socket; a TCP listener cannot share a UDP one). **Taken at rung 2 and reversible by Dan:** a
+TCP ceremony is link-local-or-typed-address only, stated as a limit, and the vestigial path is
+removed. S05b carries it.
+
+**(3) D35 already declares the clock-skew budget, and it is ±5 minutes — not the 7m00s two comments
+claim.** `recordOutlivesBudget`'s derivation (`internal/server/ceremonynet.go:695-716`) and
+`checkArrival`'s zero-budget justification (`internal/server/ceremonyid.go:635-651`) both assert
+*"that margin IS the tolerable clock skew"*. It is a **residual**, not a budget, and it is 2 minutes
+looser than what the handshake enforces: `transportSkew = 5m` / `transportTTL = 15m`
+(`internal/p2p/transport.go:41,45`), both sides verify each other's leaf, so D35's own words are
+*"the pair's usable budget is the tighter direction: ±5 minutes"*. At δ ≥ 5m there is no connection
+and `checkArrival` never runs, so the 7m gate is not reachable by skew alone. Neither site cites D35.
+**And the arm's skew is not handshake-bounded at all** — when an arm decides to close there is no
+channel — which makes the arm's requirement strictly stronger than `checkArrival`'s and is why the
+arm's bound is S05c's problem rather than a constant anyone can copy.
+
+**The nine bullets, retained verbatim as the split's source.** Each is now owned by one of
+the five slices below and none is discharged at this coordinate; the owner is named in
+square brackets after the bullet's first clause where it is not obvious from the slice titles.
+
 Acceptance:
 - **A delivery arm**: a ceremony-scoped receive arm, re-established from S01's persisted state at load, accepting only the record's convener, bounded by `Expires` plus S06's grace rather than by `connectDeadline` — and a party idle **past `connectDeadline`**, and a party whose process has restarted, are both reached.
 - **The round finds parties off-LAN** — a second armed rendezvous per party on the same D30 derivation, with its egress enumerated against D34 rather than inherited silently.
@@ -6052,6 +6085,90 @@ Acceptance:
   ~360 a day. **An unmeasured cost claim, which this repo's own law forbids** — the figure above is
   arithmetic over constants read at the line, and the slice measures it rather than repeating it.
 - Tier: 4 at N=4, with S01's restart verb (C15).
+
+#### P08.S05a — The receipt stops lying: the write lands before the ack *(D24's ordering, C10's pin)* — **new, 2026-08-31, split out of S05** *(done 2026-08-31, v1.117.290 — 5 clauses, all met; 8 red proofs, 7 registered. **Its own review found the fix's mirror image twice**: the capability floor was fail-OPEN where the equality it replaced was fail-closed, and `ErrNotStored` was destroyed at the HTTP boundary and toasted as *"could not send"* — the sentence a dead peer produces, which is the same false statement the new byte was added to stop, one layer up. And the new tier-6 clause found a live defect on its first honest run: two documents from one peer inside a second collide and the second silently overwrites the first (/pending 342), which is P08.S05d's to close.)*
+Scope: C10's pin says `ReceiveDocument` sends `ackOK` (`internal/p2p/session.go:750`) and the server
+persists **afterwards** via `saveReceived`, whose own comment says a write failure *"simply reports
+nothing"* — so a party whose disk write fails is recorded as delivered, never retried, never told.
+The fix needs **no new interface and no wire-format bump**, which is what makes it the first slice:
+`sessionAccepter.Accept` (`internal/server/session.go:718-731`) already holds all three of
+`saveReceived`'s arguments, and `ackOK` is written *after* `Accept` returns. Moving the durable write
+inside `Accept` puts this path on the ordering `coSignExchange` already uses for `rd.Store`
+(`internal/p2p/session.go:963-970` — *"persist before deliver, and it is here because here is BEFORE
+the frame"*). A failed write must not be reported as `ackDeclined`, which is a false statement about
+the human's decision.
+Acceptance:
+- **A receiver whose durable write fails does not send `ackOK`**, and the sender is told *accepted but not stored* rather than *declined*, driven by injecting a write failure at the door. Tier 1.
+- **The write is ordered before the frame at ONE door**, asserted structurally by routing rather than by the text each site prints (ADR-009) — the guard fails if a second site persists outside it. Tier 1.
+- **An older peer receiving the new receipt gets a message that is vague but never an accusation** — `refusalFor`'s one-byte `default` (`internal/p2p/session.go:645-656`) yields *"unexpected receipt from peer"* at `:702`, not the *"returned document is not the one sent this session"* tampering verdict D32 forbids. No ALPN gate is needed **because** of that default, and the reason is asserted rather than assumed. Tier 1.
+- **`SpeaksNamedRefusals` becomes a floor rather than an exact equality** (`internal/p2p/channel.go:71`, `/pending 338`), and the guard that enumerates non-speakers (`internal/p2p/refusalwire_test.go:259-270`) can no longer bless a newer protocol falling into that class. Done here because this slice is the first to reason about receipt compatibility; it is a precondition for any later `alpn3`, never a companion to one. Tier 1, red proof.
+- **The one-way transfer still completes end to end on both transports**, so the reordering did not break the path it protects. Tier 6.
+- Tier: 1 for every rule; tier 6 for the end-to-end clause (C15).
+Tasks:
+- T01 — `SpeaksNamedRefusals` becomes a floor over the negotiated ALPN, and `refusalwire_test.go`'s non-speaker enumeration is rewritten so a newer protocol cannot fall into it (`/pending 338`).
+- T02 — a one-byte `ackNotStored` receipt plus its decode arm, with the older-peer path asserted to yield *"unexpected receipt from peer"* rather than a tampering verdict.
+- T03 — `saveReceived` moves inside `sessionAccepter.Accept`, returning its outcome, so the durable write precedes `ackOK`.
+- T04 — the structural guard that the persist routes through that one door (ADR-009), with a second site made to fail it.
+- T05 — the one-way transfer driven end to end on both transports (tier 6).
+
+#### P08.S05b — `Convene` reserves a delivery term, and the TCP limit is stated *(D16, D22; C10's grace, `/pending 248`)* — **new, 2026-08-31, split out of S05**
+Scope: S05's eighth bullet and S06's grace both need one figure, and neither can be hand-chosen.
+`Convene` today reserves `hops × HopBudget` (`internal/ceremony/convene.go:212-217`) and reserves
+nothing for the round that follows. Plus S05's correction (2) above: the dead TCP rendezvous path
+goes, and the limit it implies is written down rather than left as code that cannot run.
+Acceptance:
+- **`Convene`'s reservation gains a delivery term**, derived from figures already in the tree rather than chosen — `bootstrapBudget + connectDeadline + postConsentDeadline` = 20s + 300s + 120s = **7m20s**, carrying **no `PeerGateWindow`** because a delivery leg runs no `Confirmer`. Tier 1.
+- **The term is added at `convene.go:213` only**, never folded into `ceremonyHopBudget()` — which would redden `ceremonydeadline_test.go:99` and `convene_test.go:24` (both literal 29m20s) and, worse, leave `ceremonypin_test.go:418`'s hard-coded 7m green while it silently stopped being the real margin. Asserted. Tier 1.
+- **`WarnSittingCeiling`'s sentence is recomputed from the same figure** (`convene.go:289-296` recomputes `hops × HopBudget` independently today), so the warning cannot disagree with what the door reserved. Tier 1, red proof — the existing test asserts the warning CODE, not the number, so this drift is invisible without one.
+- **The dead arm-rendezvous path is removed and the TCP-ceremony limit is stated in the docs** — a TCP ceremony reaches its peer on the link or at a typed address, never through the DHT, because caveat 7 requires the probe and the session to share a socket. Tier 1 for the removal; the limit is a docs clause.
+- Tier: 1 throughout; nothing here needs a live peer (C15).
+
+#### P08.S05c — The arm becomes addressable, and the spoken check gets a key *(D22; C05, C08; the TRIPWIRE)* — **new, 2026-08-31, split out of S05**
+Scope: the structural slice, and the grill's hardest finding. A delivery arm cannot avoid `s.sess`
+the way `handleSessionInitiate` avoids it — that listener is `defer hl.Close()`
+(`internal/server/session.go:1868`), request-scoped, with a human at the keyboard, and the comment
+above it states the opposite rule about this exact construct. `s.sess` is the machine's single answer
+to *what is armed*: `noteFailure` and `setReceived` (`session.go:225-235`) are a delivery arm's only
+failure and success channels and **both arm doors clear them** (`:176`, `:216`). Three further
+collisions are keyed by ceremony id rather than by socket — the punch budget
+(`internal/server/punch.go:102-117`), the BEP-44 publish target, and the mirror's single
+`document.pdf`.
+Acceptance:
+- **Two arms coexist, keyed**, and arming for an unrelated ceremony no longer erases a live delivery arm's notice or received record — driven by arming both and asserting each keeps its own. Tier 1.
+- **`armedLocked` becomes a COLLISION predicate rather than "is anything armed"**, still through one door (ADR-009); `TestASecondArmCannotOrphanALiveCeremony` is re-expressed from *"must fail"* to its own stated harm, *"must not overwrite"*. Tier 1.
+- **The spoken-check slot carries an arm key**, so a second arm's gate cannot be refused with `errVerifyBusy` after `saw.mark()` has already spent it (`session.go:638` runs before `:641` discovers the slot is taken). Tier 1, red proof.
+- **The arm's own bound is decided and justified against D35 rather than copied** — see S05's correction (3): the arm's skew is not handshake-bounded, so its bound may not be derived from the 7m residual. The chosen figure names what it tolerates. Tier 1.
+- **The TRIPWIRE is cited and what it widens is stated** (`session.go:30-57`): *"what arms it"* — a listener re-established at load rather than by an explicit vault-unlocked `/api/session/arm` — and *"how long it stays open"*. *"Which peers it accepts"* is NOT widened, and saying which of the three moved is the point. Docs clause plus the citation at the site.
+- Tier: 1 for the keying and the guards; tier 4 for two live arms on one machine (C15).
+
+#### P08.S05d — The round itself: found off-LAN, unattended, named on disk *(D22, D30, D34; C08, C10)* — **new, 2026-08-31, split out of S05**
+Scope: the delivery leg. The rendezvous is derived at **its own hop index** — `RecordKey(hop)` and
+`RecordSalt(hop, fp)` are already hop-parameterised (`internal/ceremony/invitation.go:543`, `:565`),
+so a delivery leg sharing the hop's index would publish at the same BEP-44 target and, in
+`RecordSalt`'s own words, *"the higher-seq write silently clobbered the other"*. The delivered file
+goes **outside** `~/nib/ceremonies/`, which is also what stops it colliding with the mirror's single
+`document.pdf` and making `persistedFor` return a finished N-party document as a hop's re-delivery.
+Acceptance:
+- **The round reaches a party off-LAN**, over a second armed rendezvous at its own hop index, with its egress enumerated against D34 rather than inherited. Tier 4.
+- **The verification gate for the delivery leg is unattended, and settled in the plan** — the leg is a document these parties already signed, over a pin and a secret that have not changed. Implemented by passing a non-interactive `Verifier` at the two delivery call sites, **never** by a bypass inside `internal/p2p`: `runVerification` fails closed on nil (`internal/p2p/verify.go:239-244`) and `deadlines_test.go:122-126` fatals unless exactly five entry points call it. Tier 1 + tier 4.
+- **The delivered filename is deterministic** and carries the ceremony id and a human half derived from the record's intent, so the finished lease is distinguishable from Monday's copy by name alone. It does not reuse `receivedName` (`session.go:1132-1138`), which reads `time.Now()` inside the builder at second granularity and collides within one second. Tier 1.
+- **The recipient verifies what arrives** — `CheckRecord`, `MatchesRecord`, completeness over the full roster, and a byte-prefix check against its own persisted contribution. Its blind spots are stated, not implied. Tier 1.
+- **A re-run after a mid-round failure reaches that party and no other, leaving exactly one file per party**, driven by injecting the write failure at party 3 of 4 — which is only meaningful because S05a made the ack mean persisted. Tier 4.
+- Tier: 4 for the round, 1 for the naming and verification rules (C15).
+
+#### P08.S05e — The end state is delivered, and the round's egress is bounded *(D28, D33, D34, ADR-011; C06's telling half)* — **new, 2026-08-31, split out of S05**
+Scope: wiring P08.S04b's termination object, which is built, verified and has **zero production
+callers** (`SignTermination`, `WriteTermination`, `ReadTermination`), and bounding what the round
+emits. ADR-011 appears nowhere else in P08's section, and D33's packet law is per *hop* while a
+delivery leg is not a hop — but the budget is in fact keyed per **ceremony**
+(`punchBudgetFor(c.inv.ID)`, `internal/server/punch.go:102-117`) and never resets (`:72-73`), so the
+risk is the hops **starving** the delivery legs, not an unbounded round.
+Acceptance:
+- **A ceremony declined at hop 3 delivers the signed termination object to the parties who signed at hops 1 and 2**, and the telling states the proceeding is over, who ended it, that their signature stands, and that a re-run starts from the original unsigned file. Tier 4.
+- **The round's egress budget is derived from D33 and DRIVEN, not asserted** — the figure is measured, per this repo's own law that a claim containing a number is measured or declared unmeasured. Tier 4, with `pairrepro.sh`'s off-link counter.
+- **The delivery legs cannot be starved by the hops**, or the sharing is stated as a limit with the arithmetic — `punchBudgetPerSide = 3000` is one D33 LAW figure per machine per ceremony across every hop. Tier 1 for the arithmetic, tier 4 for the N=9 case.
+- **ADR-011's hold is re-examined for a delivery arm**, whose renewal is gated on `!cer.hasSigned()` (`internal/server/session.go:801`, `:1480` → `lan.go:777`, `:788-790`) — exactly the state a delivery arm is in. Tier 4, against P03's zero-packet criterion.
+- Tier: 4 for every clause but the budget arithmetic (C15).
 
 #### P08.S06 — Close-out: end state, then delivery, then the prune — and nothing is destroyed *(D29 lifecycle pin; C09, C11)*
 Scope: D29 states the lifecycle once — *end state → delivery round → close-out* — and puts the pin

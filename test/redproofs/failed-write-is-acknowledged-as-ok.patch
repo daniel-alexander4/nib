@@ -1,0 +1,13 @@
+--- a/internal/server/session.go
++++ b/internal/server/session.go
+@@ -740,9 +740,7 @@
+ 		// This is the ordering `coSignExchange` already uses for `rd.Store`: persist before
+ 		// deliver, at the door that runs before the frame. It needed no new interface, because
+ 		// `Accept` already holds all three of `saveReceived`'s arguments.
+-		if err := sa.s.saveReceived(doc, peerFP, sa.label); err != nil {
+-			return false, err // → ackNotStored, never ackDeclined: the user said yes
+-		}
++		_ = sa.s.saveReceived(doc, peerFP, sa.label)
+ 		return true, nil
+ 	case <-time.After(sessionConsentTimeout):
+ 		return false, p2p.ErrConsentTimedOut // see sessionConfirmer.Confirm

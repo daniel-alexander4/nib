@@ -35,6 +35,10 @@ REPO="$PWD"
 
 command -v curl >/dev/null 2>&1 || { echo "SKIP: curl is not installed"; exit 0; }
 command -v python3 >/dev/null 2>&1 || { echo "SKIP: python3 is not installed"; exit 0; }
+# The transfer clause hashes both legs' documents. Undeclared, this SKIPS cleanly on a host
+# without it (macOS ships `shasum -a 256`); undeclared and unchecked, both `$(sha256sum …)` expand
+# to empty, compare equal, and the clause FAILS with a false reason — which is worse than skipping.
+command -v sha256sum >/dev/null 2>&1 || { echo "SKIP: sha256sum is not installed"; exit 0; }
 
 WORK="$(mktemp -d)"
 trap 'kill ${A_PID:-0} ${B_PID:-0} 2>/dev/null; wait 2>/dev/null; rm -rf "$WORK"' EXIT
@@ -243,6 +247,114 @@ sys.stdout.buffer.write(base64.b64decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAA
     ok "L3 refuses a contribution out of roster order, by name, through the real route"
   else
     no "L3 out-of-turn refusal" "$code $(cat "$SP/resp.json")"
+  fi
+fi
+
+# CLAUSE 9 — a one-way transfer completes, and the receipt means PERSISTED (P08.S05a, C10).
+#
+# **The transfer route had no harness coverage above tier 1 at all.** `/api/session/send` and the
+# armed `mode:"receive"` path were driven only inside one process, sharing one vault and one
+# identity — so "the document reaches the other machine and lands on its disk" was asserted by
+# nothing that crosses a process boundary. This clause is why the reordering in P08.S05a is
+# checkable end to end: the write now happens inside `sessionAccepter.Accept`, BEFORE
+# `ReceiveDocument` sends `ackOK`, so a green send is a claim about the receiver's disk.
+#
+# Both ends must confirm the spoken check, and the SENDER's request blocks while it waits — so
+# the confirmations go out concurrently, which is the same shape the UI needs.
+transfer_leg() { # $1 = transport
+  local tr="$1" code arm_code words_a words_b i before
+  # **A DELTA, not a total, and the second leg is why.** `find … | wc -l` is satisfied by the
+  # FIRST leg's file, so a total would report the quic leg green on the strength of the tcp one —
+  # the shape `pairrepro.sh` already names for its own document count.
+  before=$(find "$B_HOME/nib" -type f -name '*.pdf' 2>/dev/null | wc -l)
+  arm_code=$(post B /api/session/arm "{\"fingerprint\":\"$A_FP\",\"bind\":\"127.0.0.1:0\",\"mode\":\"receive\",\"transport\":\"$tr\"}")
+  if [ "$arm_code" != 200 ]; then no "[$tr] B could not arm to receive" "$arm_code $(cat "$SP/resp.json")"; return; fi
+  local addr; addr=$(jq_ "d['address']")
+  if [ -z "$addr" ]; then no "[$tr] B armed and reported no address" "nothing to dial"; return; fi
+
+  # The send, in the background: its response does not return until both gates have answered.
+  # **`-b` only, never `-c`.** curl rewrites the jar it is given with `-c` when it exits, and the
+  # foreground polls below read `$SP/A.jar` every 100 ms for up to 20 s. A read landing on a
+  # truncated jar sends no session cookie, gets a 401, and the clause reports "the spoken check
+  # never appeared" — a false reason for a real race.
+  ( curl -s -o "$SP/send.$tr.json" -w '%{http_code}' -b "$SP/A.jar" \
+      -X POST "$A_BASE/api/session/send" -H "X-CSRF-Token: $A_CSRF" -H "Origin: $A_BASE" \
+      -F "pdf=@$SP/send-$tr.pdf" -F "fingerprint=$B_FP" -F "address=$addr" -F "transport=$tr" \
+      > "$SP/send.$tr.code" ) &
+  local send_pid=$!
+
+  # Both spoken checks, confirmed as they appear. They must AGREE — a transfer whose two ends
+  # derived different words is L2 failing, and the equality is the only thing that shows it.
+  words_a=""; words_b=""
+  for i in $(seq 1 200); do
+    [ -z "$words_a" ] && words_a=$(get A /api/session/status | python3 -c "import json,sys;d=json.load(sys.stdin);print((d.get('verify') or {}).get('words',''))" 2>/dev/null)
+    [ -z "$words_b" ] && words_b=$(get B /api/session/status | python3 -c "import json,sys;d=json.load(sys.stdin);print((d.get('verify') or {}).get('words',''))" 2>/dev/null)
+    [ -n "$words_a" ] && [ -n "$words_b" ] && break
+    sleep 0.1
+  done
+  # **Every exit disarms B.** Killing the curl does not stop the transfer — A's handler is not
+  # watching the request context — so an early return leaves B in-session, the NEXT leg's arm
+  # returns 409, and one root cause prints as two FAIL lines of which the second is misleading.
+  bail() { kill $send_pid 2>/dev/null; wait $send_pid 2>/dev/null
+           post B /api/session/disarm '{}' >/dev/null 2>&1 || true; no "$1" "$2"; }
+  if [ -z "$words_a" ] || [ -z "$words_b" ]; then
+    bail "[$tr] the spoken check never appeared on both ends" "A='$words_a' B='$words_b'"; return
+  fi
+  if [ "$words_a" != "$words_b" ]; then
+    bail "[$tr] the two ends derived DIFFERENT verification strings" "A='$words_a' B='$words_b'"; return
+  fi
+  post A /api/session/verify '{"confirmed":true}' >/dev/null
+  post B /api/session/verify '{"confirmed":true}' >/dev/null
+
+  # B's consent gate, then accept.
+  for i in $(seq 1 200); do
+    get B /api/session/status | grep -q '"pending"' && break
+    sleep 0.1
+  done
+  post B /api/session/respond '{"accept":true}' >/dev/null
+  wait $send_pid 2>/dev/null
+  code=$(cat "$SP/send.$tr.code" 2>/dev/null)
+  # Disarm regardless of outcome: a leg that failed with B still armed makes the NEXT leg's arm
+  # return 409 and report as a different failure than the one that happened.
+  post B /api/session/disarm '{}' >/dev/null 2>&1 || true
+
+  if [ "$code" != 200 ] || ! grep -q '"sent":true' "$SP/send.$tr.json" 2>/dev/null; then
+    no "[$tr] the transfer did not complete" "$code $(head -c 200 "$SP/send.$tr.json" 2>/dev/null)"; return
+  fi
+  # **The assertion that makes the receipt mean something: THIS leg's bytes are on B's DISK.**
+  # `sent:true` is produced by `ackOK`, and since P08.S05a that byte is written only after the
+  # durable write has returned. Asserting the file is what turns "the peer said yes" into "the
+  # peer kept it" — and it is the one thing a single-process test cannot claim.
+  #
+  # **Content, not a count, and the count is what found the reason.** A `-gt $before` delta
+  # reported the second leg RED: both legs land in the same second, `receivedName` stamps
+  # `<slug>-<YYYYmmdd-HHMMSS>.pdf`, and the second write silently OVERWROTE the first — measured,
+  # both legs at `incoming/alice-20260831-110425.pdf`. That is a live data-loss defect
+  # (/pending 342) and it belongs to P08.S05d's deterministic-filename bullet, not here. Hashing
+  # this leg's own document is correct either way and still fails if nothing was written at all.
+  local want; want=$(sha256sum "$SP/send-$tr.pdf" | cut -d' ' -f1)
+  if find "$B_HOME/nib" -type f -name '*.pdf' -exec sha256sum {} + 2>/dev/null | cut -d' ' -f1 | grep -qx "$want"; then
+    ok "[$tr] a one-way transfer completed and THIS leg's bytes are on the RECEIVER's disk"
+  else
+    no "[$tr] the sender was told it was accepted and this leg's bytes are not on the receiver's disk" \
+       "this is exactly the loss C10 names: ackOK sent before the write. before=$before"
+  fi
+}
+
+# Stimulus first: B's ~/nib must hold no PDF before either leg, or "a file appeared" is true of
+# a run that transferred nothing.
+if [ "$(find "$B_HOME/nib" -type f -name '*.pdf' 2>/dev/null | wc -l)" -ne 0 ]; then
+  no "transfer setup" "B already holds a PDF under ~/nib, so the landing check below is vacuous"
+else
+  go run build/genpdf.go "$SP/send-tcp.pdf" "the tcp transfer" >/dev/null 2>&1
+  go run build/genpdf.go "$SP/send-quic.pdf" "the quic transfer" >/dev/null 2>&1
+  if [ ! -s "$SP/send-tcp.pdf" ] || [ ! -s "$SP/send-quic.pdf" ]; then
+    no "transfer setup" "could not build the per-leg fixture PDFs"
+  elif [ "$(sha256sum "$SP/send-tcp.pdf" | cut -d' ' -f1)" = "$(sha256sum "$SP/send-quic.pdf" | cut -d' ' -f1)" ]; then
+    no "transfer setup" "the two legs' documents hash the same, so the content check cannot tell them apart"
+  else
+    transfer_leg tcp
+    transfer_leg quic
   fi
 fi
 
