@@ -207,10 +207,45 @@ test('--overlay0 does NOT meet AA there — which is why the messages moved off 
   // messages were `--overlay0`. If overlay0 ever became readable this test fails and
   // someone gets to delete it; while it does not, this records what the move bought and
   // stops the previous test reading as "a token we happened to pick is fine".
+  // **Three grounds, not one, and the widening is /pending 330's other half.** This
+  // checked --crust alone, so it was silent about the two places --overlay0 was still
+  // carrying text: `.menucap` on --surface0 (2.57 dark / 1.69 light) and `#empty` on
+  // --base (3.36 / 2.30). A counter-assertion that names one ground reads as though the
+  // token were only ever used there, and the next use goes to whichever ground it does
+  // not read — which is exactly what happened. The grounds are discovered from the ones
+  // the token is actually used against, so a fourth needs adding here deliberately.
+  //
+  // **The added grounds are load-bearing, and which one carries the check FLIPS with the
+  // theme** — measured, because the reasoning goes the wrong way if you do it in your
+  // head. A mid-grey contrasts most with whichever ground is furthest from it in
+  // luminance, and the darkest ground is `--crust` in the dark theme but the LIGHTEST is
+  // `--base` in the light one: overlay0 measures crust 3.84 / surface0 2.57 / base 3.36
+  // dark, and crust 1.97 / surface0 1.69 / base 2.30 light. So `crust` dominates in dark
+  // and `base` in light, and a crust-only check is blind in the light theme — proven by
+  // setting the light token to #646464, which clears AA on --base at 5.23 while --crust
+  // stays at 4.47 and says nothing.
   for (const t of THEMES) {
     const p = palette(t.selector);
-    const c = contrast(p.overlay0, p.crust);
-    assert.ok(c < 4.5,
-      `--overlay0 in the ${t.name} theme is now ${c.toFixed(2)}:1 on --crust, which is AA-compliant — the premise of moving the empty-state messages to --subtext1 no longer holds, and this file should say so`);
+    for (const ground of ['crust', 'surface0', 'base']) {
+      const c = contrast(p.overlay0, p[ground]);
+      assert.ok(c < 4.5,
+        `--overlay0 in the ${t.name} theme is now ${c.toFixed(2)}:1 on --${ground}, which is AA-compliant — the premise of moving the empty-state messages to --subtext1 no longer holds, and this file should say so`);
+    }
   }
+});
+
+test('nothing puts text in --overlay0, on any ground', () => {
+  // The counter-assertion above says the token is unreadable; it does NOT say nothing
+  // uses it, and those are different facts. /pending 330 found two live `color:` usages
+  // sitting under a guard that had asserted the token's unreadability for four months —
+  // the arithmetic was right and nothing checked the CONSUMERS. This is the half that
+  // fails when someone reaches for it again.
+  //
+  // `color:` only. --overlay0 remains legitimate for non-text (the .ovl-dropdown border
+  // at style.css:987), which WCAG judges at 3:1 under 1.4.11 rather than 4.5 under 1.4.3.
+  const offenders = CSS.split('\n')
+    .map((line, i) => [i + 1, line])
+    .filter(([, line]) => /color:\s*var\(--overlay0\)/.test(line));
+  assert.deepEqual(offenders, [],
+    `--overlay0 carries text at style.css:${offenders.map(([n]) => n).join(', ')} — it measures below AA on every ground this file checks, so text in it is unreadable in at least one theme`);
 });
