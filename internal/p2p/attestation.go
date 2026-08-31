@@ -599,6 +599,48 @@ func CapacityFitsBlock(capacity string) bool { return blockLineFits("Capacity: "
 // LabelFitsBlock bounds the party label a block renders as `Signer: <label>`.
 func LabelFitsBlock(label string) bool { return blockLineFits("Signer: ", label) }
 
+// AcceptsFitsBlock bounds the PINNED-PEER label, which a two-party block renders as
+// `Accepts: <label>  [<short fingerprint>]` (/pending 286).
+//
+// **The fourth site of a rule that had three.** Intent, Capacity and Signer were all
+// bounded through the door below and this line was not, so `POST /api/peers/pin` accepted
+// a label bounded only by the route's 64 KiB body limit — and the block then clipped it
+// silently, because the canvas draws with no `maxWidth` and nothing wraps. That is the
+// ordinary two-party co-sign path, which is the product's most-used signing flow.
+//
+// It needs its own pair rather than reusing LabelFitsBlock because this line is the only
+// one with a SUFFIX: the short fingerprint is rendered after the label and is part of the
+// width, so bounding the label alone would pass a label that then pushes the fingerprint
+// off the block. The fingerprint is fixed-width per peer, not per label, which is why it
+// is pinned during the bisection rather than bisected over.
+func AcceptsFitsBlock(label, hexFP string) bool {
+	return blockLineFits("Accepts: ", label+acceptsSuffix(hexFP))
+}
+
+// MaxAcceptsRunes is the bisection for that line — the number a refusal quotes so the user
+// knows how much to cut. Same monotonicity and the same O(log n) argument MaxIntentRunes
+// makes above, and for the same reason: this is a request path with a 64 KiB body limit,
+// so a linear walk would be quadratic work reachable without malice.
+func MaxAcceptsRunes(label, hexFP string) int {
+	suffix := acceptsSuffix(hexFP)
+	rs := []rune(label)
+	lo, hi := 0, len(rs)
+	for lo < hi {
+		mid := (lo + hi + 1) / 2
+		if blockLineFits("Accepts: ", string(rs[:mid])+suffix) {
+			lo = mid
+		} else {
+			hi = mid - 1
+		}
+	}
+	return lo
+}
+
+// acceptsSuffix is the rendered tail, kept in ONE place so the bound and the line it
+// bounds cannot drift: AppearanceLines formats `Accepts: %s  [%s]`, and a bound computed
+// against a different spelling of that would be a number about a line nobody renders.
+func acceptsSuffix(hexFP string) string { return "  [" + shortFingerprint(hexFP) + "]" }
+
 // blockLineFits is the one measurement: does `prefix+value` render in full on one block line.
 func blockLineFits(prefix, value string) bool {
 	return mdpdf.CoreWidth(prefix+value, readmeFont, blockTextPt) <= blockTextWidth()
