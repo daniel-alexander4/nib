@@ -64,7 +64,11 @@ func TestEveryDetachedGoroutineIsRecovered(t *testing.T) {
 		}
 		if d.IsDir() {
 			switch d.Name() {
-			case ".git", "node_modules", "web", "docs", "test":
+			// `.claude` holds git WORKTREES a second session creates inside this repo (the
+			// rule in CLAUDE.md), each a full copy of the tree. It is gitignored, so it is not
+			// source — and walking it DOUBLES every census this guard takes. Because the floors
+			// below are lower bounds, that direction passes silently, which is the worse one.
+			case ".git", ".claude", "node_modules", "web", "docs", "test":
 				return fs.SkipDir
 			}
 			return nil

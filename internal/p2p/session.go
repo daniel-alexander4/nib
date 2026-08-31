@@ -146,6 +146,48 @@ func SessionBudget() time.Duration {
 	return 2*exchangeDeadline + remoteDecisionDeadline
 }
 
+// DeliveryLegBudget is the worst-case wall-clock ONE delivery leg can consume — the sum of the
+// deadlines `SendDocument` arms (P08.S05b).
+//
+// # Why it is its own function when it equals SessionBudget today
+//
+// It is a rule about a DIFFERENT function. `SessionBudget` sums what `Initiate` arms;
+// this sums what `SendDocument` arms, and the two are equal only because both currently arm
+// `exchangeDeadline`, `exchangeDeadline`, `remoteDecisionDeadline`. Writing
+// `return SessionBudget()` would tie a claim about the transfer path to a count taken over the
+// co-sign path, so a change to either would silently move the other — the duplicate-derivation
+// shape `SessionBudget`'s own doc grades critical, one level up.
+//
+// **They are expected to diverge, and the divergence is scheduled — but it is NOT free.** P08.S05d
+// makes the delivery leg unattended on both gates: a non-interactive `Verifier` *and* a
+// non-interactive `Accepter`. That drops the RECEIVER's cost to `2*exchangeDeadline +
+// postConsentDeadline` (14m) — and it does **not** on its own drop this function, because the third
+// arm is on the SENDER's connection: `SendDocument` calls `SetDeadline(remoteDecisionDeadline)`
+// unconditionally before its `readFrameMax`, whatever the far side's gates do. Shrinking this
+// number without also shrinking that arm would reserve less than the code arms, which is the exact
+// defect this function was added to correct. S05d owes both edits or neither, and
+// `TestDeliveryLegBudgetIsNotSmallerThanTheLegCanSpend`'s literal pin is what makes the omission
+// visible rather than silent.
+//
+// # Why it is NOT smaller today
+//
+// `SendDocument` runs no local human gate, and that removes **expected latency**, not **armed
+// budget**: the third arm is willing to sit on `readFrameMax` for `remoteDecisionDeadline` whatever the
+// verifier does, and `ReceiveDocument`'s `Accepter` is still a five-minute human gate on the
+// production path. `internal/server`'s nesting rule is that the outer clock reserves the inner
+// one's worst case rather than merely exceeding it, and reserving less than the code is willing to
+// spend is the defect `checkCeremonyDeadline` shipped once already.
+//
+// The three arms, in order — `TestDeliveryLegBudgetCountsEveryDeadlineSendDocumentArms` holds this
+// in step with the code the way `SessionBudget`'s guard does for `Initiate`:
+//
+//	exchangeDeadline        the spoken verification gate
+//	exchangeDeadline        re-armed, covering a write of up to 128 MiB
+//	remoteDecisionDeadline  the read that waits on the peer's gates
+func DeliveryLegBudget() time.Duration {
+	return 2*exchangeDeadline + remoteDecisionDeadline
+}
+
 // Confirmer is the receiving side's consent gate. Shown the connected peer's
 // attestation (their identity, accepted-peer, and intent, read from the document
 // they signed) and the document itself, it returns whether to co-sign, this user's

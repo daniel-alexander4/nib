@@ -2641,3 +2641,35 @@ the server publishes three booleans and reading fewer than all of them reports o
 and the slice made that five and four while leaving the comment at three.
 
 `recorded` 209 → 216.
+
+## P08.S05b — Convene reserves a delivery term (v1.117.292)
+
+Four rows, and the slice needed every one of them because **nothing else in the tree can see this
+change**. The nearest convene fixture sits twenty hours from the reservation boundary, and the only
+`ErrDeadlineTooTight` case uses half a hop budget — refused with the delivery term and refused
+without it. The whole slice could have been reverted with every pre-existing assertion still green.
+
+`delivery-round-is-not-reserved` is the defect **as shipped**: `Convene` reserved `hops × HopBudget`
+and nothing for the round that follows the last hop, so a ceremony could be admitted whose own
+document could not be delivered inside the deadline the user set. The row's boundary is the arm that
+carries the slice — enough for the hops and one second more must now be refused.
+
+`delivery-budget-defaults-to-zero` exists because **a mutation found a hole the first cut shipped
+with**. Deleting the zero-refusal guard for `DeliveryBudget` left the entire suite green: every
+fixture supplies a budget, so nothing asked what happens when a caller does not. A two-arm rule
+covered on one arm, and a duration whose zero means "everything fits" is the rule switched off.
+
+`delivery-refusal-folds-both-terms-into-one` and `sitting-warning-folds-the-round-into-attention`
+guard the two sentences a convener actually reads. Folding the delivery reservation into a single
+"N hops need X" total makes both of them arithmetically false — X stops being hop time, and a reader
+who multiplies the warning's own two figures no longer arrives at the total it prints.
+
+**A note on how these rows were made honest**, because the first cut of two of them was not. Every
+fixture in the tree sets `DeliveryBudget == HopBudget`, so a reservation reading the *wrong field*
+passed all four rows — `hops × HopBudget` and `hops × DeliveryBudget` are the same number. The
+slice's own review caught it. The three affected tests now set the delivery budget to **half** the
+hop budget, which is also the direction P08.S05d moves in, and the wrong-field mutation kills two of
+them. A red proof over fixtures that cannot distinguish the two values is a red proof of the wrong
+thing.
+
+`recorded` 216 → 220.

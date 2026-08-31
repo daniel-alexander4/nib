@@ -53,8 +53,42 @@ type ConveneRequest struct {
 	// A zero is REFUSED rather than defaulted: an injectable duration whose zero value means
 	// "everything fits" would make C20's guard pass with the rule switched off.
 	HopBudget time.Duration
+	// DeliveryBudget is the worst-case wall-clock ONE leg of the delivery round can consume
+	// (P08.S05b, D22's delivery pin).
+	//
+	// **A parameter for HopBudget's reason, and the reason is precise rather than approximate**:
+	// two of its three terms — `bootstrapBudget` and `connectDeadline` — are UNEXPORTED constants
+	// in `internal/server`'s clocks.go, so no other package can read them at any price. The third,
+	// `p2p.DeliveryLegBudget()`, this package could reach (it already imports `internal/p2p`), and
+	// saying otherwise would be the loose claim a commit gate is for: what makes the figure
+	// uncomputable here is the server half alone. `server.ceremonyDeliveryLegBudget()` is the one
+	// place that can see all three, and it fills this in.
+	//
+	// **A SEPARATE figure from HopBudget even though they are equal today.** They are equal only
+	// because the transfer path and the co-sign path currently arm the same deadlines; P08.S05d is
+	// scheduled to shrink this one by making both of the delivery leg's gates non-interactive. Two
+	// names is what lets the reservation follow that change, and what lets the refusal below say
+	// which half of the time a convener is short of.
+	//
+	// A zero is REFUSED rather than defaulted, for HopBudget's reason and one more: a second
+	// duration field that silently defaults to zero is the shape this repo has already been bitten
+	// by once, where a newly added config field was missed at one of its call sites and nothing
+	// failed.
+	DeliveryBudget time.Duration
 	// ConvenerSigns is used only when the convener is not already in Roster.
 	ConvenerSigns bool
+}
+
+// plural renders a count with its noun, so a two-party ceremony does not read "1 hops".
+//
+// The refusal and the sitting warning are two of the few sentences in this product a solicitor
+// reads once and acts on, and "1 hops need about 29m20s" is the COMMON case — the ordinary
+// ceremony has two parties and therefore one hop.
+func plural(n int, noun string) string {
+	if n == 1 {
+		return "1 " + noun
+	}
+	return fmt.Sprintf("%d %ss", n, noun)
 }
 
 // Invite is one party's invitation, ready to hand over.
@@ -139,10 +173,17 @@ var (
 	ErrNoIntent = errors.New("a ceremony needs a recital saying what the parties are agreeing to")
 	// ErrIntentTooLong: longer than a signature block renders verbatim.
 	ErrIntentTooLong = errors.New("that recital is longer than a signature block can show in full")
-	// ErrDeadlineTooTight: the deadline does not admit every hop (C20).
-	ErrDeadlineTooTight = errors.New("that deadline does not leave time for every party to sign")
+	// ErrDeadlineTooTight: the deadline does not admit every hop AND the delivery round that
+	// follows it (C20, widened at P08.S05b).
+	//
+	// **The wording gained its second clause because the refusal is no longer only about
+	// signing.** A deadline that fits every hop with room to spare is now refused when the round
+	// does not fit, and a sentinel saying signing does not fit would name the wrong half.
+	ErrDeadlineTooTight = errors.New("that deadline does not leave time for every party to sign and receive the finished document")
 	// ErrNoHopBudget: the caller did not supply one. See ConveneRequest.HopBudget.
 	ErrNoHopBudget = errors.New("convene was called without a hop budget")
+	// ErrNoDeliveryBudget: likewise for the round. See ConveneRequest.DeliveryBudget.
+	ErrNoDeliveryBudget = errors.New("convene was called without a delivery budget")
 )
 
 // Convene runs the whole pre-signing pass and returns the convened document, its record and
@@ -154,6 +195,9 @@ var (
 func Convene(pdf []byte, req ConveneRequest, certPEM, keyPEM []byte, now time.Time) (Convened, error) {
 	if req.HopBudget <= 0 {
 		return Convened{}, ErrNoHopBudget
+	}
+	if req.DeliveryBudget <= 0 {
+		return Convened{}, ErrNoDeliveryBudget
 	}
 	// The already-convened check FIRST, before anything structural, so the refusal names the
 	// ceremony rather than the attachment layer.
@@ -209,10 +253,28 @@ func Convene(pdf []byte, req ConveneRequest, certPEM, keyPEM []byte, now time.Ti
 	// C20, at CONVENE rather than at hop 3. The reservation is every hop, not one: a deadline
 	// that admits the first hop and not the last is a ceremony that strands a document
 	// carrying real signatures, and the convener is the only person who can still fix it.
+	//
+	// **The round is reserved too, and it is `hops` LEGS rather than one (P08.S05b).** D22's
+	// delivery pin puts the finished document in every party's hands, so the round costs about a
+	// leg per party — reserving one term for it under-reserves by `hops-1` legs, which at nine
+	// parties is most of four hours against a round the arm is bounded by `Expires` to complete
+	// inside.
+	//
+	// **`hops` over-reserves by one leg, deliberately.** The LAST signer already holds the finished
+	// document at the end of its own hop, so only `hops-1` legs carry new bytes. Reserving the
+	// extra one is the safe direction — the cost is minutes on a deadline measured in hours, and
+	// the alternative is a figure that has to be re-derived every time D22's topology moves.
+	//
+	// The two terms are kept SEPARATE in the sentence rather than summed into one figure. A
+	// convener who is refused has to choose a new deadline, and "N hops need X" where X silently
+	// includes non-hop time is an arithmetic lie at the one string they reason from.
 	hops := len(roster) - 1
-	if need := time.Duration(hops) * req.HopBudget; !req.Expires.After(now.Add(need)) {
-		return Convened{}, fmt.Errorf("%w: %d hops need about %s and this ceremony ends at %s, "+
-			"which is %s away", ErrDeadlineTooTight, hops, need,
+	signTime := time.Duration(hops) * req.HopBudget
+	deliverTime := time.Duration(hops) * req.DeliveryBudget
+	if need := signTime + deliverTime; !req.Expires.After(now.Add(need)) {
+		return Convened{}, fmt.Errorf("%w: %s need about %s to sign and about %s to deliver "+
+			"afterwards — %s in all — and this ceremony ends at %s, which is %s away",
+			ErrDeadlineTooTight, plural(hops, "hop"), signTime, deliverTime, need,
 			req.Expires.UTC().Format(time.RFC3339), req.Expires.Sub(now).Truncate(time.Minute))
 	}
 
@@ -289,10 +351,18 @@ func Convene(pdf []byte, req ConveneRequest, certPEM, keyPEM []byte, now time.Ti
 	if len(roster) > SittingCeiling {
 		warnings = append(warnings, Warning{
 			Code: WarnSittingCeiling,
+			// **The attention figure stays `hops × HopBudget` and the round is a SEPARATE clause
+			// (P08.S05b).** Folding the delivery reservation into this total would break the
+			// sentence's own arithmetic — a reader multiplying the two numbers it gives them would
+			// get a different answer than the total it prints — and it would miscategorise the
+			// round, whose subject is machine time on legs the convener does not sit through,
+			// as "the convener's attention".
 			Text: fmt.Sprintf("This ceremony has %d parties. Each hop needs both people present "+
-				"and can take up to %s, so %d hops is roughly %s of the convener's attention — "+
-				"more than one sitting for most people.",
-				len(roster), req.HopBudget, hops, time.Duration(hops)*req.HopBudget),
+				"and can take up to %s, so %s is roughly %s of the convener's attention — "+
+				"more than one sitting for most people. Delivering the finished document "+
+				"afterwards reserves a further %s.",
+				len(roster), req.HopBudget, plural(hops, "hop"), time.Duration(hops)*req.HopBudget,
+				time.Duration(hops)*req.DeliveryBudget),
 		})
 	}
 	return Convened{Record: rec, Document: doc, Invites: invites, Warnings: warnings}, nil

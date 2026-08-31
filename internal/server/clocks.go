@@ -195,3 +195,30 @@ const (
 func ceremonyHopBudget() time.Duration {
 	return bootstrapBudget + connectDeadline + p2p.SessionBudget()
 }
+
+// ceremonyDeliveryLegBudget is the worst-case wall-clock ONE leg of the delivery round can
+// consume, and it is the same three terms as a hop for the same reason (P08.S05b).
+//
+//	bootstrapBudget           20s   the DHT table is warm before anybody dials
+//	connectDeadline          300s   the race to reach the party
+//	p2p.DeliveryLegBudget()   24m   what SendDocument actually arms
+//	                        -------
+//	                         29m20s
+//
+// **Equal to `ceremonyHopBudget()` today, and separate anyway.** The two are equal because the
+// transfer path and the co-sign path arm the same deadlines; they are different rules about
+// different functions, and P08.S05d is scheduled to shrink the p2p half of this one by making both
+// of the leg's gates non-interactive. A caller that reserved `ceremonyHopBudget()` for a delivery
+// leg would be restating a rule it cannot see, which is the shape `p2p.SessionBudget`'s own doc
+// grades critical.
+//
+// **Why it is not the 7m20s the slice was firmed with.** That figure was
+// `bootstrapBudget + connectDeadline + postConsentDeadline`, on the reasoning that a delivery leg
+// runs no `Confirmer` so it carries none of the consent budget. A non-interactive verifier removes
+// the local WAIT and removes nothing from any deadline the code ARMS — and `ReceiveDocument`'s
+// `Accepter` is still a five-minute human gate on the production path. It was short by 22 minutes
+// per leg, against a rule this package already states: the outer clock reserves the inner one's
+// worst case rather than merely exceeding it.
+func ceremonyDeliveryLegBudget() time.Duration {
+	return bootstrapBudget + connectDeadline + p2p.DeliveryLegBudget()
+}

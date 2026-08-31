@@ -58,7 +58,14 @@ func TestEveryHandRolledAtomicWriteIsDeclared(t *testing.T) {
 		}
 		if d.IsDir() {
 			switch d.Name() {
-			case ".git", "node_modules", "web", "docs", "test":
+			// `.claude` holds git WORKTREES a second session creates inside this repo (the
+			// rule in CLAUDE.md), each a full copy of the tree. It is gitignored, so it is not
+			// source. **Here it fails LOUDLY rather than silently** — the copy's
+			// `internal/atomicfile/atomicfile.go` keys under a `.claude/...` path that is absent
+			// from `declared`, so the rename branch below reports another session's file as an
+			// undeclared door. (The sibling census guard in goroutines_test.go has the opposite
+			// failure: its floors are lower bounds, so a doubled tree passes.)
+			case ".git", ".claude", "node_modules", "web", "docs", "test":
 				return fs.SkipDir
 			}
 			return nil

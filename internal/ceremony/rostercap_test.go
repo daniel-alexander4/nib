@@ -43,11 +43,12 @@ func TestARosterPastTheCapIsRefusedAtConvene(t *testing.T) {
 	mk := func(n int) ConveneRequest {
 		t.Helper()
 		r := ConveneRequest{
-			Intent:        "We agree to co-sign the lease",
-			Expires:       now.Add(30 * 24 * time.Hour),
-			HopBudget:     hopBudget,
-			ConvenerSigns: true,
-			Roster:        []Party{{Fingerprint: cfp, Label: "Convener", Signs: true}},
+			Intent:         "We agree to co-sign the lease",
+			Expires:        now.Add(30 * 24 * time.Hour),
+			HopBudget:      hopBudget,
+			DeliveryBudget: hopBudget,
+			ConvenerSigns:  true,
+			Roster:         []Party{{Fingerprint: cfp, Label: "Convener", Signs: true}},
 		}
 		// n TOTAL parties, the convener included — `canonicalRoster` counts what it returns.
 		for i := 1; i < n; i++ {
@@ -62,7 +63,8 @@ func TestARosterPastTheCapIsRefusedAtConvene(t *testing.T) {
 	// proves nothing about enforcement.
 	//
 	// The deadline is the maximum, because `checkRosterText`'s sibling C20 check reserves one hop
-	// budget per hop: 31 hops at 30 minutes needs more than a day, and a fixture that tripped THAT
+	// budget per hop — and since P08.S05b a DELIVERY budget per hop as well, so the figure below is
+	// the sum of both: 31 hops at 30 minutes needs more than a day, and a fixture that tripped THAT
 	// bound would report the wrong refusal.
 	if _, err := Convene(base, mk(MaxRoster), cert, key, now); err != nil {
 		t.Fatalf("a roster of exactly %d parties was refused: %v — this test cannot show a cap "+

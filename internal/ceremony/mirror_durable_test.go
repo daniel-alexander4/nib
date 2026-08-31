@@ -31,11 +31,12 @@ func convened(t *testing.T) (Record, []byte) {
 		t.Fatal(err)
 	}
 	got, err := Convene(base, ConveneRequest{
-		Roster:        []Party{{Fingerprint: cfp, Label: "Convener", Signs: true}, {Fingerprint: afp, Label: "A", Signs: true}},
-		Intent:        "We agree to co-sign the lease",
-		Expires:       time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC),
-		HopBudget:     29*time.Minute + 20*time.Second,
-		ConvenerSigns: true,
+		Roster:         []Party{{Fingerprint: cfp, Label: "Convener", Signs: true}, {Fingerprint: afp, Label: "A", Signs: true}},
+		Intent:         "We agree to co-sign the lease",
+		Expires:        time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC),
+		HopBudget:      29*time.Minute + 20*time.Second,
+		DeliveryBudget: 29*time.Minute + 20*time.Second,
+		ConvenerSigns:  true,
 	}, cert, key, time.Date(2026, 8, 24, 0, 0, 0, 0, time.UTC))
 	if err != nil {
 		t.Fatal(err)

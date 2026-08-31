@@ -771,9 +771,16 @@ func checkCeremonyDeadline(pdf []byte, now time.Time) error {
 	//
 	// Still ONE hop rather than every REMAINING hop: this function is handed a document and a
 	// clock and does not know the local party's position in the roster, so "how many hops are
-	// left" is not answerable here. Convene reserves `Hops() × ceremonyHopBudget()` up front,
-	// which is C20's clause; refining this to the remaining hops needs the hop index and is
-	// S05's carry route.
+	// left" is not answerable here. Convene reserves the whole ceremony up front — which is C20's
+	// clause — so a document that reached this gate was admitted against a deadline covering every
+	// hop; refining this to the remaining hops needs the hop index and is S05's carry route.
+	//
+	// **What Convene reserves is no longer `hops × ceremonyHopBudget()` (P08.S05b).** It is now
+	// `hops × (hopBudget + deliveryBudget)`, because the delivery round costs a leg per party and
+	// had nothing reserved for it. That makes the up-front reservation strictly larger, so the
+	// one-hop reservation here remains sound — but the sentence above used to name the old figure,
+	// and a justification that cites a number the code no longer uses is the doc-vs-code shape this
+	// repo keeps finding.
 	return recordOutlivesBudget(rec, now, ceremonyHopBudget())
 }
 

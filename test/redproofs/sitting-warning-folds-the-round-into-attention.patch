@@ -1,0 +1,13 @@
+--- a/internal/ceremony/convene.go
++++ b/internal/ceremony/convene.go
+@@ -335,8 +335,8 @@
+ 				"and can take up to %s, so %d hops is roughly %s of the convener's attention — "+
+ 				"more than one sitting for most people. Delivering the finished document "+
+ 				"afterwards reserves a further %s.",
+-				len(roster), req.HopBudget, hops, time.Duration(hops)*req.HopBudget,
+-				time.Duration(hops)*req.DeliveryBudget),
++				len(roster), req.HopBudget, hops, time.Duration(hops)*(req.HopBudget+req.DeliveryBudget),
++				time.Duration(0)),
+ 		})
+ 	}
+ 	return Convened{Record: rec, Document: doc, Invites: invites, Warnings: warnings}, nil

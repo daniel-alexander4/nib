@@ -118,11 +118,12 @@ func (s *Server) handleCeremonyConvene(w http.ResponseWriter, r *http.Request) {
 
 	before := s.docBytes(doc)
 	out, err := ceremony.Convene(before, ceremony.ConveneRequest{
-		Roster:        roster,
-		Intent:        req.Intent,
-		Expires:       expires,
-		HopBudget:     ceremonyHopBudget(),
-		ConvenerSigns: req.ConvenerSigns,
+		Roster:         roster,
+		Intent:         req.Intent,
+		Expires:        expires,
+		HopBudget:      ceremonyHopBudget(),
+		DeliveryBudget: ceremonyDeliveryLegBudget(),
+		ConvenerSigns:  req.ConvenerSigns,
 	}, cert, key, time.Now())
 	if err != nil {
 		httpError(w, conveneStatus(err), err.Error())
@@ -300,9 +301,13 @@ func conveneStatus(err error) int {
 	if errors.Is(err, ceremony.ErrAlreadyConvened) {
 		return http.StatusConflict
 	}
-	if errors.Is(err, ceremony.ErrNoHopBudget) {
+	if errors.Is(err, ceremony.ErrNoHopBudget) || errors.Is(err, ceremony.ErrNoDeliveryBudget) {
 		// The caller did not supply one, and the caller is this package. A user cannot cause
 		// it and cannot fix it.
+		//
+		// **Both budgets, not just the hop one (P08.S05b).** The delivery budget arrived as a
+		// second required parameter and its sentinel fell through to 400 — telling a user their
+		// request was bad about a field no request carries and no user can set.
 		return http.StatusInternalServerError
 	}
 	return http.StatusBadRequest

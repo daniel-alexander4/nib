@@ -39,10 +39,11 @@ func inviteFor(t *testing.T, otherFP string) (invitation, convenerFP string) {
 			{Fingerprint: convenerFP, Label: "Convener", Signs: true},
 			{Fingerprint: otherFP, Label: "The other party", Capacity: "as Director", Signs: true},
 		},
-		Intent:        "We agree to co-sign the lease",
-		Expires:       time.Now().Add(48 * time.Hour),
-		HopBudget:     ceremonyHopBudget(),
-		ConvenerSigns: true,
+		Intent:         "We agree to co-sign the lease",
+		Expires:        time.Now().Add(48 * time.Hour),
+		HopBudget:      ceremonyHopBudget(),
+		DeliveryBudget: ceremonyDeliveryLegBudget(),
+		ConvenerSigns:  true,
 	}, cert, key, time.Now())
 	if err != nil {
 		t.Fatal(err)

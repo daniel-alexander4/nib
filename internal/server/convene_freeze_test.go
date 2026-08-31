@@ -36,10 +36,11 @@ func convenedBytes(t *testing.T) []byte {
 			{Fingerprint: hex.EncodeToString(fp), Label: "Convener", Signs: true},
 			{Fingerprint: strings.Repeat("11", 32), Label: "A", Signs: true},
 		},
-		Intent:        "We agree to co-sign the lease",
-		Expires:       time.Now().Add(48 * time.Hour),
-		HopBudget:     ceremonyHopBudget(),
-		ConvenerSigns: true,
+		Intent:         "We agree to co-sign the lease",
+		Expires:        time.Now().Add(48 * time.Hour),
+		HopBudget:      ceremonyHopBudget(),
+		DeliveryBudget: ceremonyDeliveryLegBudget(),
+		ConvenerSigns:  true,
 	}, cert, key, time.Now())
 	if cerr != nil {
 		t.Fatal(cerr)
