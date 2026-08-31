@@ -381,10 +381,19 @@
       <div id="tabstrip" role="tablist" aria-label="Open documents" hidden></div>
       <div id="viewerWrap">
       <!-- "What you are looking at is not what the server holds." Raised when a render
-           fails after the document's metadata has already been replaced — see markStale. -->
-      <div id="staleBanner" hidden>
+           fails after the document's metadata has already been replaced — see markStale.
+           It carries a SECOND condition (/pending 333): the file on disk no longer holds
+           what Nib opened. Two conditions, one element, because the collision rule with
+           #signBanner is a single `.stacked` offset and there is no third `top:` value —
+           a third floating banner would need one. paintStale decides which is showing.
+           role=status + aria-live=polite: the banner appears without a user action, so a
+           screen-reader user was told nothing at all about either condition. Polite, not
+           alert — assertive is reserved for #sessionNotice's "you are about to lose a
+           signature", and spending it here would devalue that. -->
+      <div id="staleBanner" role="status" aria-live="polite" hidden>
         <span id="staleMsg"></span>
         <button id="staleRetry" class="primary">Try again</button>
+        <button id="staleReload" class="primary" hidden>Reload from disk</button>
       </div>
       <div id="signBanner" hidden>
         <span id="signMsg"></span>

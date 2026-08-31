@@ -191,6 +191,7 @@ const els = {
   fzPreviewMark: $('fzPreviewMark'),
   pnStamped: $('pnStamped'), fzStamped: $('fzStamped'),
   staleBanner: $('staleBanner'), staleMsg: $('staleMsg'), staleRetry: $('staleRetry'),
+  staleReload: $('staleReload'),
   profileModal: $('profileModal'), profileText: $('profileText'),
   profileCancel: $('profileCancel'), profileSave: $('profileSave'),
   saveAsModal: $('saveAsModal'), saveAsTitle: $('saveAsTitle'), saveAsName: $('saveAsName'),
@@ -1817,6 +1818,13 @@ function newView() {
     // would be worse: it loses the user's document because a re-render failed. So the view
     // keeps both and says which is which.
     stale: '',
+
+    // The file this document was opened from now holds something else — a DIFFERENT
+    // condition from `stale` above, and kept apart from it rather than folded in.
+    // `stale` says the pixels disagree with the server; this says the server disagrees
+    // with the disk. They have different causes, different remedies and different
+    // buttons, and one string could only carry whichever was written last.
+    diskChanged: false,
     outlineItems: [],
     originalName: '', // basename of the opened file, for default export names
 
@@ -2444,12 +2452,68 @@ function markStale(target, why) {
 // never its caller's target: a background load that failed must not put its banner over
 // the document the user is reading. Called from repaintForActiveView too, so switching
 // tabs shows each document's own answer.
+// DISK_CHANGED is the whole message, and every clause of it is chosen for being true in
+// every case it can fire (/pending 333):
+//
+//   - No attribution. Not "another program", not "someone else" — it may well have been
+//     the user's own `nib … -w` in a terminal. Nib cannot know which, and naming a
+//     culprit it cannot identify is the false-statement shape this repo keeps finding.
+//   - Not "newer". mtime can go backwards, and restoring a backup over the file makes
+//     "newer" false while "changed" stays true.
+//   - The second sentence is the one that matters: it names what saving would cost,
+//     while the user is reading the banner rather than after the dialog she dismissed.
+//   - No jargon. She has one machine and no IT, and must never be asked to reason about
+//     a cache or an in-memory copy to understand her own document.
+const DISK_CHANGED = 'This file has changed on disk since Nib opened it. You are still looking at the copy Nib opened, and saving would replace the changed file with it.';
+
 function paintStale() {
-  els.staleBanner.hidden = !view.stale;
-  els.staleMsg.textContent = view.stale || '';
+  // A render failure OUTRANKS a disk change: a document that cannot be displayed at all
+  // is the more urgent fact, and it is also the one the retry button belongs to.
+  const failed = !!view.stale;
+  const changed = !failed && !!view.diskChanged;
+  els.staleBanner.hidden = !failed && !changed;
+  els.staleMsg.textContent = failed ? view.stale : (changed ? DISK_CHANGED : '');
+  // The two conditions do not share a button. Retry re-runs the same fetch, which for a
+  // disk change would re-render the SAME in-memory bytes and then clear the banner on
+  // success — the warning would vanish while the file was still different, at exactly
+  // the moment before the user saves. A green lie is worse than no button.
+  els.staleRetry.hidden = !failed;
+  els.staleReload.hidden = !changed;
   // Both banners occupy the same spot over the document. When both are up, drop this one
   // below the signing one rather than letting z-order decide which fact goes unread.
   els.staleBanner.classList.toggle('stacked', !!view.signTotal);
+}
+
+// recheckDisk re-asks the server whether the ACTIVE document's file still matches.
+//
+// **The check has to run on return-to-foreground, and that is not a refinement.** The
+// file changes while Nib is in the background by construction — the user is in a
+// terminal running `nib … -w`, or in another application — so a check that only runs
+// when a document loads tells her nothing until her next operation. In the case this
+// was filed for (/pending 333) her next operation would have been the Save that
+// destroyed the newer file.
+//
+// Event-driven, not polled: there is no timer here and none is wanted. The app's only
+// interval work is the co-sign session poll, and a second recurring request against
+// every open document to answer a question whose answer is almost always "no" would be
+// a poll added to a local-first app for a background condition.
+async function recheckDisk() {
+  const target = view;
+  const d = target.docMeta;
+  if (!d || !d.id || !d.canSave) return; // a path-less document has no file to differ from
+  let meta;
+  try {
+    const res = await apiFetch('/api/doc', { docId: d.id });
+    if (!res.ok) return; // a 409 is already handled by apiFetch's reconcile hook
+    meta = await res.json();
+  } catch { return; } // the server is unreachable; the banner is not the place to say so
+  if (!meta || meta.error || meta.id !== d.id) return;
+  // The view may have been switched, closed or reloaded while the request was in
+  // flight. Assigning then would put one document's answer onto another — the same
+  // pinning rule the operation paths follow, applied to a background refresh.
+  if (target.docMeta !== d) return;
+  target.diskChanged = !!meta.diskChanged;
+  if (target === view) paintStale();
 }
 
 async function setDocumentFromServer(meta, target = view) {
@@ -2528,6 +2592,11 @@ async function setDocumentFromServer(meta, target = view) {
   // the window in between is exactly when the user is looking.
   if (gen !== target.docGen) return; // a newer load superseded this one
   target.stale = ''; // this render IS the document `docMeta` names
+  // Recorded on the TARGET, not painted directly, for the reason the block above gives:
+  // a background load must not put its banner over the document the user is reading.
+  // paintStale reads the active view, and repaintForActiveView brings it forward when
+  // the user switches to this tab.
+  target.diskChanged = !!meta.diskChanged;
   paintStale();
 
   const old = target.pdfDocument;
@@ -3788,12 +3857,30 @@ async function save() {
       downloadBlob(new Blob([bytes], { type: 'application/pdf' }), 'document.pdf');
       return;
     }
-    const res = await apiFetch('/api/save', {
+    let res = await apiFetch('/api/save', {
       method: 'POST',
       headers: { 'Content-Type': 'application/pdf' },
       body: bytes,
       docId: doc.id,
     });
+    // 412: the file changed on disk since Nib opened it. Asked HERE, on the server's
+    // answer, rather than pre-flight on the banner's flag — the flag is a snapshot from
+    // the last time the client asked, and the file can move after it. The server checks
+    // immediately before the write, so its refusal is the one worth acting on.
+    //
+    // Overwriting is offered rather than imposed or forbidden: the newer file may be
+    // hers and unwanted, or it may be the only copy of something else. Only she knows,
+    // so the dialog names both halves and the default on Cancel is to touch nothing.
+    if (res.status === 412) {
+      const name = doc.name || 'This file';
+      if (!confirm(name + ' has changed on disk since Nib opened it. Overwrite it with the copy you have open? The changes on disk will be lost.')) return;
+      res = await apiFetch('/api/save?overwrite=1', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/pdf' },
+        body: bytes,
+        docId: doc.id,
+      });
+    }
     if (!res.ok) { toast(await errText(res, 'save failed')); return; }
     const meta = await res.json();
 
@@ -9429,6 +9516,43 @@ function shapePNG(wPts, hPts, pill) {
 // transient, and without this the only way back to the document the server holds is to
 // close the tab and open the file again.
 els.staleRetry.onclick = () => { if (view.docMeta) setDocumentFromServer(view.docMeta, view); };
+
+// Reload from disk is the escape hatch /pending 333 was really asking for: the item's
+// own words were "a hard reload didn't update it", and it could not, because a browser
+// reload re-fetches from the same in-memory copy the server has held since open.
+//
+// It goes through /api/open rather than a new reload route, deliberately. That path
+// already re-reads the file, and already carries the size cap, the LooksLikePDF gate
+// and the document cap — a refresh route would be a second, less-checked way to install
+// a document, which is the mistake openHandedOff's own comment names. The cost is that
+// the document gets a NEW id, which is honest: the bytes are different, so it is a
+// different document, and pinning it as the same one would be the lie.
+//
+// Open BEFORE close, never the other way round. If the open is refused — the document
+// cap is the reachable case — the user keeps the tab she has instead of losing it to a
+// failure, and the toast tells her why.
+els.staleReload.onclick = async () => {
+  const target = view;
+  const d = target.docMeta;
+  if (!d || !d.path) return;
+  if (hasUnsavedWork(target) && !confirm('Reload ' + (d.name || 'this document') + ' from disk? Your unsaved changes to it will be lost.')) return;
+  const before = views.length;
+  await openPath(d.path);
+  // Only close the stale view if a new one actually arrived. openPath toasts its own
+  // refusal, so a failed reload needs nothing further said about it here.
+  if (views.length <= before) return;
+  // closeView asks about unsaved work too, and the question above already asked it — in
+  // wording that names the reload rather than a close. Cleared HERE rather than before
+  // the open, so a REFUSED reload leaves the document still marked unsaved and its next
+  // close still warns.
+  target.dirty = false;
+  closeView(target);
+};
+
+// The file changes while Nib is in the background, so the answer is re-asked when the
+// user comes back to it. See recheckDisk.
+document.addEventListener('visibilitychange', () => { if (!document.hidden) recheckDisk(); });
+window.addEventListener('focus', () => { recheckDisk(); });
 els.saveBtn.onclick = save;
 
 // Page navigation + zoom: the toolbar buttons and the keyboard shortcuts share

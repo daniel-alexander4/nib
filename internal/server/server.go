@@ -143,6 +143,13 @@ type document struct {
 	// that happened to the document, and it is cleared only by a barrier or a
 	// fresh history.
 	historyEvicted bool
+
+	// disk is what the file at `path` looked like when this document last agreed with
+	// it — nil for a path-less document, which has no file to disagree with. Written
+	// under s.mu like every other field here, and read only through diskSnapshot:
+	// unlike `path` it is NOT write-once (handleSave re-records it), so the unlocked
+	// reads `path` gets away with would be a real race on this one. See diskstate.go.
+	disk *diskState
 }
 
 // Server holds the embedded UI, the auth session, and the current document.
@@ -437,6 +444,19 @@ type docResponse struct {
 	// so a document that has never been evicted serializes exactly as before.
 	HistoryEvicted bool `json:"historyEvicted,omitempty"`
 
+	// DiskChanged says the file this document was opened from now holds something else,
+	// so what the user is looking at is no longer what is on disk (/pending 333).
+	//
+	// It has to be a FIELD rather than a refusal, and that is forced rather than chosen.
+	// The resolution doors could refuse — but their error is already spoken for: a 409
+	// means "the server no longer holds this document" and the client answers it by
+	// dropping the tab. Staleness travelling that way would close the user's document
+	// instead of warning them about it, which is the exact opposite of the feature.
+	//
+	// Omitted while false, so a document whose file has not moved serializes exactly as
+	// it did before — the same argument HistoryEvicted makes above.
+	DiskChanged bool `json:"diskChanged,omitempty"`
+
 	// InCeremony says this document belongs to a signing ceremony this process is part of,
 	// so the client can offer the signature-details surface on a document with NO signatures.
 	//
@@ -491,7 +511,7 @@ func (s *Server) handleOpen(w http.ResponseWriter, r *http.Request) {
 	// registry while the client re-pointed only the ACTIVE view — so with an arrival
 	// open, an Open left the second view rendering a document the server no longer
 	// held, every pinned request against it a 409 with the pages still on screen.
-	installed, err := s.addDocCapped(&document{path: path, data: data, sig: sign.Verify(data)})
+	installed, err := s.addDocCapped(newPathDoc(path, data))
 	if err != nil {
 		httpError(w, http.StatusConflict, err.Error())
 		return
@@ -734,6 +754,31 @@ func (s *Server) handleSave(w http.ResponseWriter, r *http.Request) {
 		httpError(w, http.StatusConflict, err.Error())
 		return
 	}
+	// **Refused before the write, because after it there is nothing left to refuse.**
+	//
+	// This route overwrites the user's original in place, and until /pending 333 it did
+	// so with no precondition at all: it never read the current file, never compared,
+	// never asked. So a document whose file had changed underneath — a `nib … -w` in
+	// another terminal, an editor, a sync client — was saved straight over the newer
+	// bytes, silently, and answered 200. The stale render the item was filed for is the
+	// symptom; this is what it costs.
+	//
+	// 412 rather than this package's usual 409, and the difference is load-bearing: the
+	// client hooks 409 to reconcile against the server, because 409 has always meant
+	// "that document is no longer held". This document IS still held — its file moved —
+	// so answering 409 would fire a reconcile and could switch the user's active tab
+	// while they are reading a refusal about the one they were saving. ADR-008's "one
+	// code for one refusal" is about the same refusal reaching several doors; this is a
+	// different refusal, and a precondition failure is what HTTP already calls it.
+	// `?overwrite=1` is the user having been told and having chosen anyway. A refusal with
+	// no way past it is not the safe option here: the edits live in the browser, so a hard
+	// block would strand the user's unsaved work behind the very warning meant to protect
+	// it. The default is refuse; the override is explicit, per-request, and never sticky.
+	if r.URL.Query().Get("overwrite") != "1" && diskChanged(doc.path, s.diskOf(doc)) {
+		httpError(w, http.StatusPreconditionFailed,
+			"this file has changed on disk since Nib opened it, so saving would replace the changed file with the copy you have open")
+		return
+	}
 	// **The user's ORIGINAL, overwritten in place** — the strongest only-copy case in the tree.
 	if err := atomicfile.WriteDurable(doc.path, data, 0o600); err != nil {
 		httpError(w, http.StatusInternalServerError, "could not write file")
@@ -753,6 +798,12 @@ func (s *Server) handleSave(w http.ResponseWriter, r *http.Request) {
 	}
 	doc.data = data
 	doc.sig = sig
+	// Re-stamp the baseline against the file this save just wrote. **Not optional**:
+	// WriteDurable renames into place, so the inode and the mtime both change on every
+	// save Nib performs. Without this the document reports "changed on disk" from the
+	// moment the user first saves it — armed forever, against Nib's own write, and the
+	// banner becomes the thing the user learns to ignore.
+	recordDisk(doc)
 	s.mu.Unlock()
 	writeJSON(w, s.docResponse(doc))
 }
@@ -1238,7 +1289,14 @@ func (s *Server) docResponse(doc *document) docResponse {
 	// mutating doc.data in place would silently reintroduce the race.
 	data := doc.data
 	cached, fresh := doc.flags, sameBytes(doc.flagsFor, data)
+	// Snapshotted here with everything else and compared AFTER the unlock, for the
+	// reason the paragraph above gives about FlagsJSON: diskChanged stats the file and
+	// may read it, and a syscall under the server mutex serializes every route behind
+	// it — which on a network mount is a hung request becoming a hung process.
+	path, recorded := doc.path, doc.disk
 	s.mu.Unlock()
+
+	resp.DiskChanged = diskChanged(path, recorded)
 
 	// Surface embedded signing placeholders so the recipient's UI can rebuild
 	// them on open (the read half of the flag round-trip; the write half is
