@@ -1,0 +1,12 @@
+diff --git a/internal/server/server.go b/internal/server/server.go
+index e87f97f..c0f808d 100644
+--- a/internal/server/server.go
++++ b/internal/server/server.go
+@@ -803,7 +803,6 @@ func (s *Server) handleSave(w http.ResponseWriter, r *http.Request) {
+ 	// save Nib performs. Without this the document reports "changed on disk" from the
+ 	// moment the user first saves it — armed forever, against Nib's own write, and the
+ 	// banner becomes the thing the user learns to ignore.
+-	recordDisk(doc)
+ 	s.mu.Unlock()
+ 	writeJSON(w, s.docResponse(doc))
+ }

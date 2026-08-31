@@ -1,0 +1,18 @@
+diff --git a/internal/server/diskstate.go b/internal/server/diskstate.go
+index 72ae758..c6c75d4 100644
+--- a/internal/server/diskstate.go
++++ b/internal/server/diskstate.go
+@@ -132,12 +132,5 @@ func diskChanged(path string, rec *diskState) bool {
+ 		fresh.ModTime().Equal(rec.info.ModTime()) {
+ 		return false
+ 	}
+-	if fresh.Size() != rec.info.Size() {
+-		return true
+-	}
+-	onDisk, err := os.ReadFile(path)
+-	if err != nil {
+-		return false
+-	}
+-	return sha256.Sum256(onDisk) != rec.sum
++	return true
+ }

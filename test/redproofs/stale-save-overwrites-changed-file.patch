@@ -1,0 +1,26 @@
+diff --git a/internal/server/server.go b/internal/server/server.go
+index e87f97f..a5f496f 100644
+--- a/internal/server/server.go
++++ b/internal/server/server.go
+@@ -774,16 +774,16 @@ func (s *Server) handleSave(w http.ResponseWriter, r *http.Request) {
+ 	// no way past it is not the safe option here: the edits live in the browser, so a hard
+ 	// block would strand the user's unsaved work behind the very warning meant to protect
+ 	// it. The default is refuse; the override is explicit, per-request, and never sticky.
+-	if r.URL.Query().Get("overwrite") != "1" && diskChanged(doc.path, s.diskOf(doc)) {
+-		httpError(w, http.StatusPreconditionFailed,
+-			"this file has changed on disk since Nib opened it, so saving would replace the changed file with the copy you have open")
+-		return
+-	}
+ 	// **The user's ORIGINAL, overwritten in place** — the strongest only-copy case in the tree.
+ 	if err := atomicfile.WriteDurable(doc.path, data, 0o600); err != nil {
+ 		httpError(w, http.StatusInternalServerError, "could not write file")
+ 		return
+ 	}
++	if r.URL.Query().Get("overwrite") != "1" && diskChanged(doc.path, s.diskOf(doc)) {
++		httpError(w, http.StatusPreconditionFailed,
++			"this file has changed on disk since Nib opened it, so saving would replace the changed file with the copy you have open")
++		return
++	}
+ 
+ 	sig := sign.Verify(data)
+ 	s.mu.Lock()
