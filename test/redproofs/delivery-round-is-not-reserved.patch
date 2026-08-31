@@ -1,11 +1,11 @@
 --- a/internal/ceremony/convene.go
 +++ b/internal/ceremony/convene.go
-@@ -245,7 +245,7 @@
+@@ -271,7 +271,7 @@
  	hops := len(roster) - 1
  	signTime := time.Duration(hops) * req.HopBudget
  	deliverTime := time.Duration(hops) * req.DeliveryBudget
 -	if need := signTime + deliverTime; !req.Expires.After(now.Add(need)) {
 +	if need := signTime; !req.Expires.After(now.Add(need)) {
- 		return Convened{}, fmt.Errorf("%w: %d hops need about %s to sign and about %s to deliver "+
+ 		return Convened{}, fmt.Errorf("%w: %s need about %s to sign and about %s to deliver "+
  			"afterwards — %s in all — and this ceremony ends at %s, which is %s away",
- 			ErrDeadlineTooTight, hops, signTime, deliverTime, need,
+ 			ErrDeadlineTooTight, plural(hops, "hop"), signTime, deliverTime, need,
