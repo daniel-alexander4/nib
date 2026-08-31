@@ -1,0 +1,15 @@
+diff --git a/internal/server/diskstate.go b/internal/server/diskstate.go
+index 72ae758..52fc9c2 100644
+--- a/internal/server/diskstate.go
++++ b/internal/server/diskstate.go
+@@ -127,6 +127,10 @@ func diskChanged(path string, rec *diskState) bool {
+ 	if err != nil {
+ 		return false
+ 	}
++	if true {
++		return false
++	}
++	_ = fresh
+ 	if os.SameFile(rec.info, fresh) &&
+ 		fresh.Size() == rec.info.Size() &&
+ 		fresh.ModTime().Equal(rec.info.ModTime()) {

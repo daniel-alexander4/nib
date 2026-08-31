@@ -2536,3 +2536,46 @@ different price."* It carries two setup assertions — the conveners match, the 
 so it cannot silently decay back into the arms it was added to complement.
 
 `recorded` 203 → 205.
+
+## /pending 333 — the file changed on disk (v1.117.289)
+
+Four rows for one defect, because it has four independent ways to be wrong and three of them
+stay green while the other is broken.
+
+`disk-change-goes-unreported` is the defect **as shipped**: a `document` recorded `path` and
+`data` and nothing describing the file — no size, no mtime, no hash — so the bytes read at open
+were served forever and a browser reload re-fetched the same copy. Measured on the reporter's
+machine before the fix: `nib` opened the file at 11:03:17, the file was rewritten at 11:04:03,
+and the stale copy was still being served twenty hours later.
+
+`stale-save-overwrites-changed-file` is the one that matters, and it is a **placement** row
+rather than a detection row. Its patch does not break the detector; it moves the refusal to
+after `atomicfile.WriteDurable`. The route still answers 412 and the banner still appears, and
+the user's file is already gone. **A status-only assertion cannot tell those two apart** — both
+spellings return 412 — so the check reads the bytes on disk. This is the general shape worth
+carrying: where a guard protects a destructive act, the assertion has to be on the thing being
+protected, never on the guard's own report.
+
+`save-never-rerecords-its-own-write` is the row nobody writes. `WriteDurable` renames into
+place, so the inode and mtime both change on every save Nib performs; omit the re-stamp and the
+document reports "changed on disk" against Nib's own write, forever, and every save after the
+first is refused. **Every other row here stays green under that patch** — the feature would have
+shipped permanently armed, which trains the user to ignore the banner and costs more than the
+bug it warns about.
+
+`mtime-touch-reported-as-a-change` guards the direction a detector is never tested in. Its
+patch makes `diskChanged` answer on identity, size and mtime without comparing content, so a
+bare `touch` or a byte-identical rewrite reports as changed. The failure is a **false
+statement** — "This file has changed on disk" is untrue of identical bytes — and a detector
+that answers too eagerly puts a banner over every document, which is the same outcome as no
+banner at all.
+
+**Two findings came from the mutation pass rather than from review**, and both are about the
+probe rather than the code. A mutation labelled "the field is ignored" turned out to reach only
+one of that line's **two** writers, and the survivor exposed a real hole: the background
+re-check — the function that handles the reported scenario, a file rewritten while Nib is not
+in front — had no coverage at all. And in tier 3 the harness's own dialog handler defaults to
+**accept**, so a locally registered `page.once` lost the race: the test written to prove Save
+declines an overwrite was quietly accepting it, and reported the file as overwritten.
+
+`recorded` 205 → 209.
