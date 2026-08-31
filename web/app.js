@@ -3036,7 +3036,16 @@ async function openPath(path) {
   // ("too many documents open (limit 8) — close one first"). A generic fallback here
   // would tell a user at the cap that opening failed and not why.
   if (!res.ok) return toast(await errText(res, 'could not open file'));
-  await installOpened(await res.json());
+  const meta = await res.json();
+  await installOpened(meta);
+  // Two tabs on one file is legitimate and deliberate — the server argues that exemption
+  // at its own door — but it was SILENT: the user got two identically named tabs and
+  // nothing said why (/pending 339). They then meet the consequence later, as a refusal
+  // on the second save they have no way to connect to a tab opened a minute earlier, so
+  // the sentence is spent naming that consequence rather than the bare fact.
+  if (meta.sameFileOpen) {
+    toast('That file is already open in another tab — these are two separate copies, and saving one will refuse to overwrite the other');
+  }
 }
 
 async function uploadFile(file) {
@@ -5775,7 +5784,20 @@ els.saveAsGo.onclick = async () => {
   form.append('dir', dir);
   form.append('name', name);
   form.append('data', saveAsBlob, name);
-  const res = await apiFetch('/api/write', { method: 'POST', body: form });
+  let res = await apiFetch('/api/write', { method: 'POST', body: form });
+  // 412: something is already at that name (/pending 340). Asked here, on the server's
+  // answer, rather than pre-flighted from the folder listing — the dialog does not show
+  // the folder's existing PDFs at all, so the client has nothing to pre-flight against,
+  // and the file can appear between a listing and the write in any case.
+  //
+  // Offered rather than imposed: replacing is often exactly what the user means on a
+  // re-export. The wording names what is lost, and Cancel leaves the dialog open with the
+  // name still typed so they can change it.
+  if (res.status === 412) {
+    if (!confirm(name + ' already exists in that folder. Replace it? The file there now will be lost.')) return;
+    form.append('overwrite', '1');
+    res = await apiFetch('/api/write', { method: 'POST', body: form });
+  }
   if (!res.ok) { toast(await errText(res, 'could not save')); return; }
   const meta = await res.json();
   els.saveAsModal.hidden = true;

@@ -457,6 +457,18 @@ type docResponse struct {
 	// it did before — the same argument HistoryEvicted makes above.
 	DiskChanged bool `json:"diskChanged,omitempty"`
 
+	// SameFileOpen says this open landed on a path ANOTHER view already holds, so the
+	// user now has two independent working copies of one file (/pending 339).
+	//
+	// Reported rather than refused: handleOpen's exemption from D16 is deliberate and
+	// argued at that door. What was missing is that the user was given two identically
+	// named tabs with nothing to distinguish them and no account of why — and the two
+	// copies then disagree the moment either is saved, which they meet as a refusal they
+	// have no way to connect to the second tab they opened a minute earlier.
+	//
+	// Omitted while false, so an ordinary open serializes exactly as before.
+	SameFileOpen bool `json:"sameFileOpen,omitempty"`
+
 	// InCeremony says this document belongs to a signing ceremony this process is part of,
 	// so the client can offer the signature-details surface on a document with NO signatures.
 	//
@@ -511,13 +523,32 @@ func (s *Server) handleOpen(w http.ResponseWriter, r *http.Request) {
 	// registry while the client re-pointed only the ACTIVE view — so with an arrival
 	// open, an Open left the second view rendering a document the server no longer
 	// held, every pinned request against it a 409 with the pages still on screen.
+	//
+	// **And it adds even when the path is ALREADY OPEN — a deliberate exemption from D16,
+	// named here because it was not** (/pending 339, ADR-009). `handoff.go` states the
+	// rule this door departs from: "a path already open is activated, not opened twice.
+	// Two tabs on one path are two independent working copies of the same file, and
+	// whichever saves last silently discards the other's work." That is right for a
+	// hand-off, which is the OS telling Nib about a file, and wrong here, where an
+	// explicit Open is the user asking for a second copy — `web/app.js` says the same in
+	// openOrActivate, which de-duplicates only the `?open=` restore.
+	//
+	// It is also load-bearing for ADR-005: the count cap is driven by opening one fixture
+	// path eight times, so de-duplicating here would make that criterion untestable.
+	//
+	// What was missing was not the check but the SIGNAL — the user got two identically
+	// named tabs and nothing said why. `dup` is read BEFORE the install, or docForPath
+	// finds the document this call just added and every open reports true.
+	dup := s.docForPath(path) != nil
 	installed, err := s.addDocCapped(newPathDoc(path, data))
 	if err != nil {
 		httpError(w, http.StatusConflict, err.Error())
 		return
 	}
 	_ = vaultFrom(r).AddRecent(path) // best-effort; failure to record is non-fatal
-	writeJSON(w, s.docResponse(installed))
+	resp := s.docResponse(installed)
+	resp.SameFileOpen = dup
+	writeJSON(w, resp)
 }
 
 // handleUpload accepts a PDF posted from the browser file-picker. Such a
