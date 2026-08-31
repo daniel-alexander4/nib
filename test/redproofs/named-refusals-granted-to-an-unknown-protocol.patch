@@ -1,0 +1,12 @@
+--- a/internal/p2p/channel.go
++++ b/internal/p2p/channel.go
+@@ -112,9 +112,6 @@
+ 	// because it ranks 1 against a threshold of 0. A capability whose own version is not offered
+ 	// is a capability nobody has.
+ 	floor := protoRank(alpn2)
+-	if floor == 0 {
+-		return false
+-	}
+ 	r := protoRank(c.Proto)
+ 	if r == 0 {
+ 		return false // not one of ours: an older peer, or a future one this build cannot rank

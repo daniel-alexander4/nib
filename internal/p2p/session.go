@@ -401,6 +401,23 @@ const (
 	// document is never two bytes, and every PDF begins `%PDF-` — 0x25, not 4. `TestARefusalFrame
 	// CannotBeMistakenForADocument` drives both.
 	ackRefused = 4
+	// ackNotStored is "the human accepted it and this machine could not keep it" (P08.S05a).
+	//
+	// **It exists because `ackDeclined` would be a false statement about a person.** Until this
+	// slice the receiver wrote `ackOK` BEFORE the durable write and the write happened afterwards,
+	// best-effort, so a party whose disk failed was recorded as delivered, never retried and never
+	// told. Moving the write in front of the frame creates a third outcome the wire had no byte
+	// for, and reusing `ackDeclined` for it is exactly the collapse `ackTimedOut` was added to
+	// undo one gate earlier: the sender would show the user "they refused your document" about
+	// someone who accepted it.
+	//
+	// **One byte, deliberately, and that is what makes it safe to send unconditionally.** A named
+	// refusal is two bytes and `SendDocument` reads its receipt with `readFrameMax(conn, 1)`, so a
+	// two-byte frame on this path fails as `declared frame too large` before it can be decoded. A
+	// one-byte code an older peer does not recognise falls to `refusalFor`'s `default`, which
+	// yields "unexpected receipt from peer" — uninformative, but not an accusation, and D32's rule
+	// is that a version difference must not be reported as tampering.
+	ackNotStored = 5
 )
 
 // Refusal codes. **Append only, and never renumber**: a code is a wire value, and a build that
@@ -464,6 +481,17 @@ var ErrCannotReadOwnRecord = errors.New("this machine could not read its own rec
 
 // ErrDeclined reports that the receiving user declined a one-way document transfer.
 var ErrDeclined = errors.New("document transfer declined")
+
+// ErrNotStored reports that the receiving side accepted the document and could not write it
+// durably, so the transfer did NOT succeed even though a human said yes (P08.S05a).
+//
+// Distinct from `ErrDeclined` because it means something different to the user and to whoever
+// retries: a decline is final and a failed write is worth attempting again. It is the transfer
+// path's analogue of `persistError` on the co-sign path, and it differs in the one way that
+// matters — a co-signature that cannot be stored is still DELIVERED, because the peer needs it
+// and the signer keeps the document open; a transfer that cannot be stored has nowhere else
+// to be, so the sender must learn the truth rather than a success.
+var ErrNotStored = errors.New("the receiving side accepted the document but could not save it")
 
 // ErrCoSignDeclined reports that the receiving user declined a CO-SIGNATURE.
 //
@@ -612,6 +640,11 @@ func refusalAck(err error, named bool) ([]byte, bool) {
 		return []byte{ackTimedOut}, true
 	case errors.Is(err, ErrDeclined), errors.Is(err, ErrCoSignDeclined):
 		return []byte{ackDeclined}, true
+	case errors.Is(err, ErrNotStored):
+		// Unconditional, NOT gated on `named`: this is one byte, so it cannot trip
+		// `SendDocument`'s one-byte receipt cap the way a named refusal would, and an older
+		// peer decodes it as "unexpected receipt" rather than as tampering. See ackNotStored.
+		return []byte{ackNotStored}, true
 	}
 	// **Only to a peer that can read it (P07.S03a).** `named` is the negotiated-ALPN answer, and
 	// withholding the frame from an older peer is not a downgrade: that peer's behaviour is
@@ -651,6 +684,15 @@ func refusalFor(frame []byte, coSign bool) (error, bool) {
 			return ErrCoSignDeclined, true
 		}
 		return ErrDeclined, true
+	case ackNotStored:
+		// **Never on the co-sign path**, which cannot legitimately produce it: a co-signature that
+		// cannot be stored is still DELIVERED (`persistError` sets the error aside and the frame
+		// goes out), so byte 5 reaching `Initiate` is a hostile or buggy peer selecting a sentence
+		// that is false about this product's own contract. It falls to the default instead.
+		if coSign {
+			return nil, false
+		}
+		return ErrNotStored, true
 	default:
 		return nil, false
 	}

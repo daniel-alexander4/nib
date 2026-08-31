@@ -65,10 +65,62 @@ type Channel struct {
 	Proto string
 }
 
+// protoRank orders a negotiated ALPN against the ones this build offers: higher is newer, and
+// **0 means "not one of ours"** — an empty string, or something a future peer offers that this
+// build has never heard of. It reads `sessionALPN` rather than a second list, so a version added
+// there is ranked without touching this function (ADR-009).
+func protoRank(proto string) int {
+	for i, a := range sessionALPN {
+		if a == proto {
+			// **sessionALPN is most-preferred first, so the first entry is the newest — and that
+			// is an invariant of the LIST, not of this function.** A version APPENDED rather than
+			// prepended ranks below `alpn2` and is denied the capability it introduced, which is
+			// the defect this ranking exists to fix, returning by the back door. The neighbouring
+			// refusal-code block says "append only, never renumber" and that instinct is exactly
+			// wrong here, so `TestTheOfferListIsOrderedNewestFirst` pins the ordering rather than
+			// leaving it to this comment.
+			return len(sessionALPN) - i
+		}
+	}
+	return 0
+}
+
 // SpeaksNamedRefusals reports whether the peer negotiated a session protocol that can read a
 // named refusal frame. False for every peer that predates it, which is why nothing may be
 // WITHHELD on this basis — only added.
-func (c Channel) SpeaksNamedRefusals() bool { return c.Proto == alpn2 }
+//
+// **A FLOOR, not an equality, and the equality was a latent defect (P08.S05a, /pending 338).**
+// This read `c.Proto == alpn2`. A third version added to `sessionALPN` would negotiate fine and
+// then report FALSE here — denying named refusals to the NEWEST peers, in the one direction
+// nothing checks. The guard that should have caught it would have blessed it instead: the
+// non-speaker table enumerates `{alpn, "", "h2"}` and asserts each does not speak, so a newer
+// protocol falling into that class reads as correct.
+//
+// The asymmetry is what made it worth fixing before the bump rather than with it — the ALPN
+// **set** is pinned hard (a test fails on `len(sessionALPN) != 2`), so the list cannot change
+// without a deliberate edit, while the capability predicate could rot in place beside it.
+// **And it fails CLOSED on an unknown protocol, which the first cut of this did not.** The floor
+// is looked up in the same list, so if `alpn2` ever leaves `sessionALPN` — retired, renamed, or an
+// emptied list — `protoRank(alpn2)` is 0 and `rank >= 0` is true for EVERY peer, including one
+// negotiating nothing. That would send two-byte named refusals to a `nib/1` peer, which decodes
+// them as a document mismatch and prints a tampering verdict produced by a version skew: the exact
+// D32 violation the `named` gate exists to prevent. The equality this replaced degraded the other
+// way — to "nobody speaks" — so the floor had to be given the same direction explicitly.
+func (c Channel) SpeaksNamedRefusals() bool {
+	// The THRESHOLD is checked first, and guarding only the peer was not enough — the test that
+	// drove this out removed `alpn2` from the list and a peer negotiating `alpn` still passed,
+	// because it ranks 1 against a threshold of 0. A capability whose own version is not offered
+	// is a capability nobody has.
+	floor := protoRank(alpn2)
+	if floor == 0 {
+		return false
+	}
+	r := protoRank(c.Proto)
+	if r == 0 {
+		return false // not one of ours: an older peer, or a future one this build cannot rank
+	}
+	return r >= floor
+}
 
 // errChannelIncomplete reports a Channel missing a field the core cannot proceed without.
 var errChannelIncomplete = errors.New("incomplete channel")

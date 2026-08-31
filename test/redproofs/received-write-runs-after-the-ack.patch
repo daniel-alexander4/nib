@@ -1,0 +1,25 @@
+--- a/internal/server/session.go
++++ b/internal/server/session.go
+@@ -740,9 +740,6 @@
+ 		// This is the ordering `coSignExchange` already uses for `rd.Store`: persist before
+ 		// deliver, at the door that runs before the frame. It needed no new interface, because
+ 		// `Accept` already holds all three of `saveReceived`'s arguments.
+-		if err := sa.s.saveReceived(doc, peerFP, sa.label); err != nil {
+-			return false, err // → ackNotStored, never ackDeclined: the user said yes
+-		}
+ 		return true, nil
+ 	case <-time.After(sessionConsentTimeout):
+ 		return false, p2p.ErrConsentTimedOut // see sessionConfirmer.Confirm
+@@ -1037,9 +1034,11 @@
+ 		// receipt meant "a human clicked accept" and never "the bytes are on disk". It now runs
+ 		// inside `sessionAccepter.Accept`, the last thing before the frame — see that method, and
+ 		// `TestTheReceivedWriteHasOneDoor` for the guard that keeps it the only site.
+-		if _, derr := p2p.ReceiveDocument(ch, sessionAccepter{s: s, label: label, saw: &saw, anchor: anchor}, myFP, sessionVerifier{s, &saw}); derr != nil {
++		doc, derr := p2p.ReceiveDocument(ch, sessionAccepter{s: s, label: label, saw: &saw, anchor: anchor}, myFP, sessionVerifier{s, &saw})
++		if derr != nil {
+ 			return saw.v.Load(), nil, derr
+ 		}
++		_ = s.saveReceived(doc, ch.PeerFP, label)
+ 		return true, nil, nil // a transfer saves itself; no co-signed document to open
+ 	}
+ 	var rd p2p.ReDeliverer

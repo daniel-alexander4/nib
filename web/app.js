@@ -1692,15 +1692,19 @@ async function sendToPeer() {
     }
     if (!res.ok) { toast(await errText(res, 'could not send')); return; }
     const r = await res.json();
-    // Four outcomes, because the server publishes three booleans and reading fewer than
-    // all of them reports one of the others. It reported "Sent" for a transfer that
-    // neither completed nor was declined; then `timedOut` was added because the server
-    // had been calling an unanswered request a decline, and reading only `declined`
-    // would have gone on telling the user a person refused when nobody was there.
+    // FIVE outcomes, because the server publishes four booleans and reading fewer than all of
+    // them reports one of the others. It reported "Sent" for a transfer that neither completed
+    // nor was declined; then `timedOut` was added because the server had been calling an
+    // unanswered request a decline, and reading only `declined` would have gone on telling the
+    // user a person refused when nobody was there. `notStored` is the same lesson a third time
+    // (P08.S05a): the peer accepted it and their disk failed, which is neither a decline nor a
+    // transport fault, and the action it calls for — ask them to arm again and resend — is not
+    // the action either of those calls for.
     toast(r.declined ? 'The peer declined the document'
       : r.timedOut ? 'Nobody answered on the other machine — the document was not kept'
-        : r.sent ? 'Sent — the peer has the document'
-          : 'The peer did not take the document');
+        : r.notStored ? 'They accepted it, but their machine could not save it — ask them to try again'
+          : r.sent ? 'Sent — the peer has the document'
+            : 'The peer did not take the document');
     els.sessionSendModal.hidden = true;
   } catch (e) {
     toast('could not send: ' + e.message);

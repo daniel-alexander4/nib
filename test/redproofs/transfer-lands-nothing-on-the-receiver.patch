@@ -1,0 +1,11 @@
+--- a/internal/server/session.go
++++ b/internal/server/session.go
+@@ -1123,7 +1123,7 @@
+ 		return fmt.Errorf("%w: %v", p2p.ErrNotStored, err)
+ 	}
+ 	s.sess.setReceived(&receivedInfo{Path: path, Peer: peerLabel})
+-	return nil
++	return fmt.Errorf("%w: RED PROOF", p2p.ErrNotStored)
+ }
+ 
+ // receivedSubdir picks the ~/nib subdirectory for a received document from its own

@@ -1,0 +1,11 @@
+--- a/internal/p2p/session.go
++++ b/internal/p2p/session.go
+@@ -640,7 +640,7 @@
+ 		return []byte{ackTimedOut}, true
+ 	case errors.Is(err, ErrDeclined), errors.Is(err, ErrCoSignDeclined):
+ 		return []byte{ackDeclined}, true
+-	case errors.Is(err, ErrNotStored):
++	case false && errors.Is(err, ErrNotStored):
+ 		// Unconditional, NOT gated on `named`: this is one byte, so it cannot trip
+ 		// `SendDocument`'s one-byte receipt cap the way a named refusal would, and an older
+ 		// peer decodes it as "unexpected receipt" rather than as tampering. See ackNotStored.

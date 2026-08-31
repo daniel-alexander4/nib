@@ -271,6 +271,10 @@ func TestARefusalTellsThePeerWHICHRefusalItWas(t *testing.T) {
 		{"co-sign unanswered", true, confirmer{err: ErrConsentTimedOut}, accepterFake{}, ErrConsentTimedOut},
 		{"transfer declined", false, confirmer{}, accepterFake{accept: false}, ErrDeclined},
 		{"transfer unanswered", false, confirmer{}, accepterFake{err: ErrConsentTimedOut}, ErrConsentTimedOut},
+		// P08.S05a: accepted by the human, refused by the disk. The third outcome, and it must
+		// reach the sender as ITS OWN sentinel — reporting it as `ErrDeclined` would be the same
+		// false statement about a person that `ackTimedOut` was added to stop one gate earlier.
+		{"transfer accepted but not stored", false, confirmer{}, accepterFake{err: ErrNotStored}, ErrNotStored},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
