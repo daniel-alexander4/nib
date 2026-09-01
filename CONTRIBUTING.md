@@ -57,6 +57,13 @@ invitation carried. The addresses are an **input** rather than a lookup because 
 never resolve a name on the bootstrap path, and a live seed test is the one place tempted
 to. Without the variable that one test skips and the rest of the harness is unchanged.
 
+**A stale row is caught at tier 1 and costs nothing.** `TestEveryRedProofStillApplies` dry-runs
+every recorded patch against the working tree, so an edit that moves the code out from under a row
+fails immediately rather than at the next full replay. It is the cheap half of `--all` and only that
+half: it proves a patch still APPLIES, never that the check still goes red for it. Measured — 0.24 s
+against 24 minutes, for the failure that accounted for six of the seven found by the first full
+replay in months (/pending 348).
+
 And `./build/redproof.sh <name>` replays a recorded red proof: it exports HEAD to a throwaway
 tree, applies the row's defect as a patch, runs the named check and asserts it FAILS **with its
 own assertion's token** — not merely that something exited non-zero, which is also what a

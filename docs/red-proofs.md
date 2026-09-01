@@ -2887,3 +2887,47 @@ The second is about the gate. Nothing runs `--all` routinely, and `verify_test.g
 names that blind spot in its own comment — it can see a row that DISAPPEARS and not one that no
 longer re-proves. So a row goes stale silently the moment an unrelated slice touches its file, and
 five did without anybody hearing.
+
+## /pending 348 — six stale rows re-recorded, and the cheap half of `--all` becomes a gate *(v1.117.306)*
+
+The six rows the full replay found stale are re-recorded, **one at a time, each re-derived from what
+its check asserts** rather than regenerated. No production code changed; only the six patches did.
+What staled each is worth keeping, because no two were the same:
+
+- **`re-delivery-re-signs`** — /pending 320 gave `Cached` an error return, so the old patch's
+  10-line removal no longer matched. Re-recorded MINIMALLY: the cache is consulted and its answer
+  discarded. Deleting the whole block would also have driven the unreadable-store branch, which has
+  its own live row (`unreadable-record-reads-as-never-signed`) — two faults in one patch.
+- **`hop-starts-inside-its-own-budget`** — the inline comparison moved into the shared
+  `recordOutlivesBudget`. Re-recorded at `checkCeremonyDeadline`'s own CALL SITE (budget → 0), which
+  is "compared against `now` alone" exactly; the helper is shared with `checkArrival`, which passes 0
+  deliberately and must not move.
+- **`save-route-escapes-the-ceremony-freeze`** — /pending 341 wrapped the freeze in a byte-identity
+  test. Re-recorded to delete the CALL and keep the prose, which is this row's own second purpose:
+  `handleSave` names both commit doors only inside a comment, so if the guard ever stops stripping
+  comments this row goes green and says so.
+- **`label-never-overrides-the-constant`** — pure comment drift. The code is byte-identical; a
+  `/pending 317` paragraph was inserted into the patch's context.
+- **`mirror-record-written-first`** — /pending 321 put the sidecar unlink inside the `pdf != nil`
+  block. Re-recorded by hoisting the `record.json` write instead, leaving that unlink alone.
+- **`refusal-decode-defines-an-unknown-code`** — two codes (13, 14) were appended to `errorForCode`
+  after the row was written.
+
+**Four of the six were staled by a change that did not alter the behaviour under test at all** —
+a comment, a moved helper, a wrapped condition, an appended case. That is the argument for the gate.
+
+**`TestEveryRedProofStillApplies` is that gate**, and it is deliberately only the cheap half.
+`redproof.sh`'s header separates the two failures — the patch did not apply, versus the patch applied
+and the check still passed — and this one sees only the first. **Measured: 0.24 s against 24 minutes,
+for the failure that accounted for six of the seven.** A gate nobody runs catches nothing, which is
+what the previous arrangement demonstrated over several weeks. `--all` stays the sweep's job for the
+second failure, which no cheap check can reach.
+
+It reads the WORKING TREE rather than an export of HEAD, and that is where it is stricter than the
+harness: it fails on the edit that stales the row, before the commit, when the fix is a context
+refresh rather than archaeology.
+
+`unrelated-edit-stales-a-red-proof` is its row, and the defect is one comment line — because that is
+literally how `label-never-overrides-the-constant` died.
+
+`recorded` 234 → 235.

@@ -1,15 +1,15 @@
 diff --git a/internal/server/server.go b/internal/server/server.go
-index 05ec85d..b0ea547 100644
+index 362ac2a..04c07b1 100644
 --- a/internal/server/server.go
 +++ b/internal/server/server.go
-@@ -729,10 +729,6 @@ func (s *Server) handleSave(w http.ResponseWriter, r *http.Request) {
- 	// Before the write, on the same reasoning as the registry check above: a save on a
- 	// convened document must not reach the disk at all, because the file on disk is the copy
- 	// every other party was invited to sign.
--	if err := ceremonyFreeze(s.docBytes(doc)); err != nil {
--		httpError(w, http.StatusConflict, err.Error())
--		return
--	}
- 	// **The user's ORIGINAL, overwritten in place** — the strongest only-copy case in the tree.
- 	if err := atomicfile.WriteDurable(doc.path, data, 0o600); err != nil {
- 		httpError(w, http.StatusInternalServerError, "could not write file")
+@@ -803,10 +803,6 @@ func (s *Server) handleSave(w http.ResponseWriter, r *http.Request) {
+ 	// freeze itself performs one line down, so a concurrent change makes the two disagree and the
+ 	// freeze wins, which is the safe direction.
+ 	if !bytes.Equal(data, s.docBytes(doc)) {
+-		if err := ceremonyFreeze(s.docBytes(doc)); err != nil {
+-			httpError(w, http.StatusConflict, err.Error())
+-			return
+-		}
+ 	}
+ 	// **Refused before the write, because after it there is nothing left to refuse.**
+ 	//
