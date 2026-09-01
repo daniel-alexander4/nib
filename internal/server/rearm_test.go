@@ -380,17 +380,101 @@ func TestACeremonyArmWaitsForTheCeremonyOnBothTransports(t *testing.T) {
 			"test contrasts against", manual)
 	}
 
-	ceremonial := armWindow(t, armRequest{
-		Fingerprint: convenerFP, Bind: "127.0.0.1:0", Transport: "tcp", Invitation: invitation,
-	})
-	if ceremonial <= 2*sessionAcceptTimeout {
-		t.Errorf("a TCP CEREMONY arm's window is %s — the same manual bound as a non-ceremony "+
-			"arm (%s). A party third in a roster is then disarmed while the earlier hops run, "+
-			"which is C05 failing on one of the two transports", ceremonial, manual)
+	// **BOTH transports, and until /pending 344 this drove `tcp` twice.** The name promised two
+	// doors and the body sent `Transport: "tcp"` for both arms, so the QUIC door was never
+	// entered — while P08.S04's acceptance says the figure is "asserted on BOTH transports". They
+	// are genuinely different doors, not one function with a parameter: a TCP ceremony arm opens
+	// an accept listener and stamps `until` in `session.arm`, and a QUIC one hands the single
+	// handshaked listener to the racing coordinator and stamps it in `session.armCeremony`
+	// (`handleSessionArm`'s `cer != nil && req.Transport == transportQUIC` branch). A figure
+	// asserted at one of two doors is the shape this repo keeps finding.
+	for _, transport := range []string{"tcp", "quic"} {
+		ceremonial := armWindow(t, armRequest{
+			Fingerprint: convenerFP, Bind: "127.0.0.1:0", Transport: transport,
+			Invitation: invitation,
+		})
+		if ceremonial <= 2*sessionAcceptTimeout {
+			t.Errorf("a %s CEREMONY arm's window is %s — the same manual bound as a non-ceremony "+
+				"arm (%s). A party third in a roster is then disarmed while the earlier hops run, "+
+				"which is C05 failing on one of the two transports", transport, ceremonial, manual)
+		}
+		// Named against the ceiling that exists rather than a bare "big": the figure is the point.
+		if ceremonial < ceremony.MaxCeremonyLife-time.Hour {
+			t.Errorf("a %s ceremony arm's window is %s, want about %s",
+				transport, ceremonial, ceremony.MaxCeremonyLife)
+		}
 	}
-	// Named against the ceiling that exists rather than a bare "big": the figure is the point.
-	if ceremonial < ceremony.MaxCeremonyLife-time.Hour {
-		t.Errorf("a ceremony arm's window is %s, want about %s", ceremonial, ceremony.MaxCeremonyLife)
+}
+
+// TestEveryArmTakesItsWindowFromOneDoor is ADR-009's half of the test above, and the reason that
+// test's two arms are not the whole story.
+//
+// `armWindowFor` is declared ONE door in its own comment — "both arm doors stamp `until` from it,
+// so the figure the status reports and the figure the timer fires on cannot drift". Nothing
+// asserted it. Named search at /pending 344: `grep -rn 'armWindowFor' --include=*.go .` returned
+// six production sites and **zero** test sites, so neither the behaviour on QUIC nor the routing
+// that would make driving both unnecessary was checked anywhere.
+//
+// It asserts ROUTING and a POPULATION, not text. Comparing the two known doors for agreement says
+// nothing about a third added later — which is exactly how this repo acquired two arm paths in the
+// first place ("two arm paths living in two functions is the same count S05d and S05e each found").
+// So every assignment to `until` in the package is enumerated and each must come from the door.
+func TestEveryArmTakesItsWindowFromOneDoor(t *testing.T) {
+	src, err := os.ReadFile("session.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	code := stripLineComments(string(src))
+
+	// THE POPULATION. Every write of the reported window, found rather than listed.
+	var stamps []string
+	for _, line := range strings.Split(code, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if !strings.Contains(trimmed, ".until = ") {
+			continue
+		}
+		stamps = append(stamps, trimmed)
+	}
+	// A floor, or a scan that matches nothing reports every door compliant.
+	if len(stamps) < 3 {
+		t.Fatalf("found %d assignment(s) to `until` in session.go; the arm doors and the disarm "+
+			"clear are at least three, so this scan is looking for a spelling that no longer "+
+			"appears and its clean result would mean nothing", len(stamps))
+	}
+	for _, s := range stamps {
+		// The disarm clears it to the zero time; that is not a window and has no door.
+		if strings.Contains(s, "time.Time{}") {
+			continue
+		}
+		if !strings.Contains(s, "armWindowFor(") {
+			t.Errorf("an arm stamps its window without going through the door: %q. "+
+				"`armWindowFor` is where a ceremony arm's %s ceiling and a manual arm's %s "+
+				"bound are chosen, and a site computing its own is how a party third in a "+
+				"roster gets disarmed while the earlier hops run — C05, at whichever door "+
+				"nobody drove", s, ceremony.MaxCeremonyLife, sessionAcceptTimeout)
+		}
+	}
+
+	// AND THE TIMERS. `until` is what the STATUS reports; a loop that fires on a figure of its own
+	// makes the panel's countdown a fiction — the drift `armWindowFor`'s own comment forbids.
+	for _, fn := range []string{
+		"func (s *Server) runSession(",
+		"func (s *Server) runCeremonyReceive(",
+	} {
+		i := strings.Index(code, fn)
+		if i < 0 {
+			t.Fatalf("cannot find %s — this guard is pinned to a function that no longer exists "+
+				"under that name, so its clean result says nothing", fn)
+		}
+		body := funcBodyFrom(code, i)
+		if body == "" {
+			t.Fatalf("%s: the brace matcher read an empty body", fn)
+		}
+		if !strings.Contains(body, "armWindowFor(") {
+			t.Errorf("%s computes its own arm deadline instead of taking it from armWindowFor. "+
+				"The status would then report one figure and the timer fire on another, which "+
+				"is the drift the door exists to make impossible", fn)
+		}
 	}
 }
 
