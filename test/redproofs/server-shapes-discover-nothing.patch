@@ -1,0 +1,13 @@
+diff --git a/observables_test.go b/observables_test.go
+index 9fecdbd..b5278f0 100644
+--- a/observables_test.go
++++ b/observables_test.go
+@@ -545,7 +545,7 @@ func discoverObservables(t *testing.T) map[string]observable {
+ 					}
+ 					// See jsonPublishedPackages: where a shape leaves as JSON, being unexported
+ 					// is the normal case rather than a sign it stays home.
+-					if !d.Name.IsExported() && !jsonPublishedPackages[pkg] {
++					if !d.Name.IsExported() {
+ 						return true
+ 					}
+ 					var fields []string

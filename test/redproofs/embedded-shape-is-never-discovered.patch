@@ -1,0 +1,24 @@
+diff --git a/observables_test.go b/observables_test.go
+index 9fecdbd..2d3257a 100644
+--- a/observables_test.go
++++ b/observables_test.go
+@@ -666,17 +666,10 @@ func discoverObservables(t *testing.T) map[string]observable {
+ 		// and its four fields are as published as any other. Promoting it here is the rule the
+ 		// return filter is a proxy for, applied where the proxy is wrong.
+ 		if !covered {
+-			if c, ok := allCands[ec.embed]; ok {
+-				out[ec.embed] = c
++			if false {
+ 				covered = true
+ 			}
+-			for full, c := range allCands {
+-				if full[strings.LastIndex(full, ".")+1:] == ec.embed {
+-					out[full] = c
+-					covered = true
+-					break
+-				}
+-			}
++
+ 		}
+ 		if !covered {
+ 			t.Errorf("%s embeds %s, which this scan does not discover — so %s's fields are "+
