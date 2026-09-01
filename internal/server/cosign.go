@@ -26,7 +26,7 @@ import (
 // inputs — the client never re-derives the attestation, only rasterizes it.
 
 // maxIntentLen was a silent 200-rune clamp on the manual co-sign path (/pending 286). It is gone:
-// the bound that matters is `p2p.IntentFitsBlock`, which measures the rendered WIDTH against the
+// the bound that matters is `p2p.BlockFits`, which measures the rendered BLOCK against the
 // block's geometry rather than counting runes, and refuses. See buildAttestation.
 
 // cosignParams are the attestation inputs shared by /quote and /sign.
@@ -74,20 +74,12 @@ func (s *Server) cosignAttestation(w http.ResponseWriter, v *vault.Vault, p cosi
 	// refuse-not-clamp: `ErrReadmeOverflow` is the precedent, and P07.S08's finding that pdfcpu
 	// CLAMPS overflow is what made its own instrument blind.
 	//
-	// **And 200 runes was the wrong bound anyway, because count is not width.** `IntentFitsBlock`
+	// **And 200 runes was the wrong bound anyway, because count is not width.** `BlockFits`
 	// measures the rendered string against the block's real geometry — "MMMM" and "iiii" differ by
 	// nearly 3x at these metrics — so a rune count is wrong for capitals and wasteful for lower
 	// case. The convene door has refused on that measurement since P07.S02a; this is the MANUAL
 	// co-sign path, which was never routed through it. One rule, one door (ADR-009).
 	intent := p.Intent
-	if !p2p.IntentFitsBlock(intent) {
-		httpError(w, http.StatusBadRequest, fmt.Sprintf(
-			"that intent is %d characters and about %d fit. The signature block carries it in "+
-				"full, so Nib refuses an intent it would have to cut rather than showing a "+
-				"shortened one above your signature.",
-			len([]rune(intent)), p2p.MaxIntentRunes(intent)))
-		return p2p.Attestation{}, false
-	}
 	// The client may name the time, but not an arbitrary one: `when` is signed into the
 	// attestation, so an unbounded value lets a caller mint a co-signature dated years
 	// back or forward and have Nib's own key vouch for it. Bounded to a day either side
@@ -100,13 +92,29 @@ func (s *Server) cosignAttestation(w http.ResponseWriter, v *vault.Vault, p cosi
 			}
 		}
 	}
-	return p2p.Attestation{
+	att := p2p.Attestation{
 		Signer:            "Nib User",
 		AcceptedPeer:      hex.EncodeToString(fp),
 		AcceptedPeerLabel: label,
 		Intent:            intent,
 		When:              when,
-	}, true
+	}
+	// **The JOINT height rule, asked of the WHOLE block (/pending 286).** This was
+	// a one-field, one-line ceiling — and block lines wrap now, so the
+	// recital, the signer's name and the pinned peer's label compete for one vertical budget. The
+	// manual path can ask the joint question because everything in its block is known here: the
+	// peer was resolved above and the signer is this build's own constant.
+	if !p2p.BlockFits(att) {
+		lines, limit, worst, fits := p2p.BlockOverflow(att)
+		httpError(w, http.StatusBadRequest, fmt.Sprintf(
+			"this signature block needs %d lines and %d is the limit, so it would render too "+
+				"small to read. The longest part is %s, and about %d characters of it fit "+
+				"alongside the rest. Nib refuses a block it would have to shrink past "+
+				"legibility rather than putting one nobody can read above your signature.",
+			lines, limit, worst, fits))
+		return p2p.Attestation{}, false
+	}
+	return att, true
 }
 
 // pinnedLabel returns the label the given fingerprint is pinned under, and whether

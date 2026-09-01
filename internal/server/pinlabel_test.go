@@ -24,10 +24,12 @@ import (
 // flow — quietly producing a document whose block says something other than what the user
 // typed.
 //
-// The wrapping half of the item is deliberately NOT here: changing AppearanceLines from
-// "one entry per line" to "wrap and recompute" retroactively loosens three shipped
-// refusals and changes what every existing block renders as. That is a design change and
-// stays filed.
+// **The wrapping half SHIPPED at /pending 286 (2026-09-01) and this note's second claim was
+// measured FALSE.** It said wrapping "changes what every existing block renders as"; it does not.
+// The client caps text at 9pt, so a block at or under six lines is pixel-identical and everything
+// wider than one line was refused outright and rendered nothing at all. What wrapping changed is
+// what is ADMITTED, and the per-field ceilings this file's bound belonged to are gone — replaced
+// by one joint budget over the block's height.
 
 const testFP = "aabbccddeeff00112233445566778899aabbccddeeff00112233445566778899"
 
@@ -96,19 +98,28 @@ func TestAnOrdinaryPinLabelIsStillAccepted(t *testing.T) {
 // Bounding the label alone would pass one that then pushes the fingerprint off the block,
 // and the fingerprint is the half that identifies the counterparty.
 func TestTheBoundCountsTheFingerprintBesideTheLabel(t *testing.T) {
-	max := p2p.MaxAcceptsRunes(strings.Repeat("M", 400), testFP)
+	max := p2p.MaxAcceptsLabelRunes(strings.Repeat("M", 400), testFP)
 	if max <= 0 {
-		t.Fatalf("MaxAcceptsRunes returned %d — no label of any length would fit, so the refusal is unusable", max)
+		t.Fatalf("MaxAcceptsLabelRunes returned %d — no label of any length would fit, so the refusal is unusable", max)
 	}
-	if !p2p.AcceptsFitsBlock(strings.Repeat("M", max), testFP) {
+	if !p2p.AcceptsLabelFits(strings.Repeat("M", max), testFP) {
 		t.Errorf("the quoted maximum of %d M's does not itself fit — the number in the refusal is wrong, and a user who cuts to it is refused again", max)
 	}
-	if p2p.AcceptsFitsBlock(strings.Repeat("M", max+1), testFP) {
+	if p2p.AcceptsLabelFits(strings.Repeat("M", max+1), testFP) {
 		t.Errorf("one rune past the quoted maximum of %d still fits — the bound is not tight, so it is not the number to quote", max)
 	}
-	// And it is genuinely tighter than the label-only rule, which is the reason this pair
-	// exists at all rather than reusing LabelFitsBlock.
-	if lbl := p2p.MaxLabelRunes(strings.Repeat("M", 400)); max >= lbl {
-		t.Errorf("Accepts allows %d runes and Signer allows %d — Accepts renders a fingerprint after the label, so it must allow FEWER; if it does not, the suffix is not in the measurement", max, lbl)
+	// **The suffix is still in the measurement, and this is how that is checked now (/pending 286).**
+	// It used to compare against `MaxLabelRunes` — the label-only rule — which is gone with the
+	// other per-field ceilings. The same property holds against the line itself: dropping the
+	// fingerprint from the string must admit strictly MORE runes, or the suffix is not being
+	// measured and a label that pushes the fingerprint off the block would pass.
+	bare := 0
+	for n := 1; n <= 400; n++ {
+		if len(strings.Repeat("M", n)) > 0 && p2p.AcceptsLabelFits(strings.Repeat("M", n), "") {
+			bare = n
+		}
+	}
+	if bare <= max {
+		t.Errorf("with a fingerprint %d M's fit and without one %d do — the suffix must cost room, so a bound that does not shrink is not measuring the rendered line", max, bare)
 	}
 }

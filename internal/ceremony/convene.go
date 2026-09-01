@@ -229,7 +229,7 @@ func Convene(pdf []byte, req ConveneRequest, certPEM, keyPEM []byte, now time.Ti
 	// Until this slice a party's `Label` and `Capacity` were carried, committed and never
 	// rendered, so their width could not matter. Now a block says `Signer: <label>` and
 	// `Capacity: <capacity>`, drawn by the same `ctx.fillText` with no `maxWidth` that
-	// `IntentFitsBlock` exists to protect the recital from — two more silent clippings, of which
+	// the block bound exists to protect the recital from — two more silent clippings, of which
 	// capacity is the worse: it is a claim about a party's AUTHORITY, it is inside the signed
 	// commitment, and half of it on the page is a document that says something other than what
 	// the parties agreed.
@@ -238,6 +238,10 @@ func Convene(pdf []byte, req ConveneRequest, certPEM, keyPEM []byte, now time.Ti
 	// convener can retype it, and the alternative is discovering it on a finished document that
 	// several people have already signed.
 	if err := checkRosterText(roster); err != nil {
+		return Convened{}, err
+	}
+	// The JOINT height rule, once both halves are known — see checkBlocksFit.
+	if err := checkBlocksFit(roster, req.Intent); err != nil {
 		return Convened{}, err
 	}
 
@@ -417,10 +421,10 @@ func canonicalRoster(req ConveneRequest, convFP string) ([]Party, error) {
 
 // maxIntentInput bounds what checkIntent will even MEASURE.
 //
-// The block's real ceiling is far below this — see p2p.IntentFitsBlock — so this is not the
+// The block's real ceiling is far below this — see p2p.BlockFits — so this is not the
 // product rule, it is the bound that keeps unbounded input away from the width code at all.
 // The route's body limit is 1 MiB; without a cheap bound here, every rejected megabyte is
-// measured before it is refused. Belt and braces alongside MaxIntentRunes's bisection: a
+// measured before it is refused. Belt and braces alongside BlockOverflow's bisection: a
 // cheap constant refusal beats a fast measurement of something absurd.
 const maxIntentInput = 4096
 
@@ -438,21 +442,12 @@ func checkRosterText(roster []Party) error {
 			return fmt.Errorf("%w: %s's label is %d characters, and a label is a name rather "+
 				"than a document", ErrIntentTooLong, who, n)
 		}
-		if !p2p.LabelFitsBlock(p.Label) {
-			return fmt.Errorf("%w: %s's label is %d characters and about %d fit. Every signature "+
-				"block names its party in full, so Nib refuses a label it would have to cut",
-				ErrIntentTooLong, who, len([]rune(p.Label)), p2p.MaxLabelRunes(p.Label))
-		}
+
 		if n := len([]rune(p.Capacity)); n > maxIntentInput {
 			return fmt.Errorf("%w: %s's capacity is %d characters, and a capacity is a phrase "+
 				"rather than a document", ErrIntentTooLong, who, n)
 		}
-		if !p2p.CapacityFitsBlock(p.Capacity) {
-			return fmt.Errorf("%w: %s's capacity is %d characters and about %d fit. A capacity is "+
-				"a claim about that party's authority and their block carries it in full, so Nib "+
-				"refuses one it would have to cut",
-				ErrIntentTooLong, who, len([]rune(p.Capacity)), p2p.MaxCapacityRunes(p.Capacity))
-		}
+
 	}
 	return nil
 }
@@ -465,11 +460,66 @@ func checkIntent(intent string) error {
 		return fmt.Errorf("%w: it is %d characters, and a recital is a sentence rather than a "+
 			"document", ErrIntentTooLong, n)
 	}
-	if !p2p.IntentFitsBlock(intent) {
-		return fmt.Errorf("%w: it is %d characters and about %d fit. Every signature block "+
-			"carries the recital in full, so Nib refuses a recital it would have to cut rather "+
-			"than showing a shortened one above somebody's signature",
-			ErrIntentTooLong, len([]rune(intent)), p2p.MaxIntentRunes(intent))
+	return nil
+}
+
+// checkBlocksFit is the block-height rule, and it is JOINT (/pending 286).
+//
+// # Why it replaced three separate width checks
+//
+// Until block lines wrapped, the recital, each party's label and each party's capacity had one
+// ceiling each — "does this render on ONE line" — and the three were independent. A line may now
+// wrap over as many lines as it needs, up to `maxBlockLines`, so they are not: a recital that fits
+// beside a short capacity does not fit beside a long one. Asking the question per field is how two
+// separately-legal values combine into a block nobody can read.
+//
+// # Per SIGNING party, and only those
+//
+// A non-signing party has no block, so its label and capacity render nowhere and cannot overflow
+// one. Their absurd-input bounds still apply in `checkRosterText` above — this is about geometry.
+//
+// # The position is not the point
+//
+// `Position` and `RosterSize` here select the ceremony branch of `AppearanceLines` (the
+// `Party k of n` line) rather than describing any real party's place. That line's WIDTH does not
+// vary with either number at any roster this repo admits — "Party 1 of 2" and "Party 99 of 99" are
+// both a fraction of the block — so the count is unaffected, and computing the true signing order
+// here would be a second implementation of `SigningOrder`'s rule (ADR-009).
+func checkBlocksFit(roster []Party, intent string) error {
+	signing := 0
+	for _, p := range roster {
+		if p.Signs {
+			signing++
+		}
+	}
+	for _, p := range roster {
+		if !p.Signs {
+			continue
+		}
+		who := p.Label
+		if who == "" {
+			who = short(p.Fingerprint)
+		}
+		// The label falls back to the short fingerprint exactly as `StampCommitment` does, so this
+		// measures the block that will actually be drawn rather than an idealised one.
+		signer := p.Label
+		if signer == "" {
+			signer = short(p.Fingerprint)
+		}
+		att := p2p.Attestation{
+			Signer: signer, Capacity: p.Capacity, Intent: intent,
+			Position: 1, RosterSize: signing,
+		}
+		if p2p.BlockFits(att) {
+			continue
+		}
+		lines, limit, worst, fits := p2p.BlockOverflow(att)
+		return fmt.Errorf("%w: %s's signature block needs %d lines and %d is the limit, so it "+
+			"would render too small to read. The longest part is %s, and about %d characters of "+
+			"it fit alongside the rest. Every block carries the recital, the party's name and "+
+			"their capacity in full, so Nib refuses a block it would have to shrink past "+
+			"legibility rather than producing one nobody can read",
+			ErrIntentTooLong, who, lines, limit, worst, fits)
 	}
 	return nil
 }

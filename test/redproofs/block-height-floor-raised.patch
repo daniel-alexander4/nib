@@ -1,0 +1,13 @@
+diff --git a/internal/p2p/attestation.go b/internal/p2p/attestation.go
+index e2678bc..bf5e963 100644
+--- a/internal/p2p/attestation.go
++++ b/internal/p2p/attestation.go
+@@ -287,7 +287,7 @@ func (a Attestation) AppearanceLines() []string {
+ // **Existing documents are unaffected**: a block at or under six lines renders pixel-identical,
+ // because the 9pt cap absorbs the difference. What changes is only what is ADMITTED — a recital
+ // that needed two lines was refused outright before this and rendered nothing at all.
+-const maxBlockLines = 8
++const maxBlockLines = 20
+ 
+ // wrapBlockLine renders `prefix+value` across as many block lines as it needs.
+ //

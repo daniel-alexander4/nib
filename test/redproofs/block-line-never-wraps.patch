@@ -1,0 +1,13 @@
+diff --git a/internal/p2p/attestation.go b/internal/p2p/attestation.go
+index e2678bc..9155183 100644
+--- a/internal/p2p/attestation.go
++++ b/internal/p2p/attestation.go
+@@ -303,7 +303,7 @@ const maxBlockLines = 8
+ // consumes at least one rune per iteration even when a single glyph does not fit.
+ func wrapBlockLine(prefix, value string) []string {
+ 	full := prefix + value
+-	if blockLineFits(prefix, value) {
++	if true {
+ 		return []string{full}
+ 	}
+ 	var out []string

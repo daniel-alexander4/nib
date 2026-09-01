@@ -1,0 +1,13 @@
+diff --git a/internal/p2p/attestation.go b/internal/p2p/attestation.go
+index e2678bc..cf860e2 100644
+--- a/internal/p2p/attestation.go
++++ b/internal/p2p/attestation.go
+@@ -342,7 +342,7 @@ func longestPrefixThatFits(s string) int {
+ 	// a smaller font for every other line. Below the floor the break is not worth its cost and the
+ 	// hard break is better.
+ 	if lo < len(rs) {
+-		for i := lo; i*2 >= lo; i-- {
++		for i := lo; i > 0; i-- {
+ 			if rs[i-1] == ' ' {
+ 				return len(string(rs[:i]))
+ 			}

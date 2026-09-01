@@ -246,7 +246,7 @@ func TestAConvenedDocumentReportsItsObligedSignersBeforeAnyoneHasSigned(t *testi
 // sentence cut mid-word above somebody's signature.
 //
 // **200 runes was the wrong bound as well as the wrong behaviour, because count is not width.**
-// `IntentFitsBlock` measures the rendered string against the block's real geometry — "MMMM" and
+// `BlockFits` measures the rendered block against its real geometry — "MMMM" and
 // "iiii" differ by nearly 3x at these metrics — which is why the ceremony's convene door has
 // refused on that measurement since P07.S02a. This is the manual path being routed through the same
 // door (ADR-009), not a second bound beside it.
@@ -272,14 +272,19 @@ func TestTheManualCoSignRefusesAnIntentItWouldHaveToCut(t *testing.T) {
 		jsonBody(openRequest{Path: pdfPath}))
 	resp.Body.Close()
 
-	// Wide, and UNDER the old 200-rune clamp — see the note above.
-	long := strings.Repeat("MW", 60) // 120 runes, and far wider than a block line
+	// **Wide enough that no amount of WRAPPING saves it (/pending 286).** It used to be enough to
+	// exceed one line; block lines wrap now, so the fixture must exceed the whole block's height.
+	// Still under the old 200-rune clamp, which is the other thing this test pins — see the note
+	// above.
+	long := strings.Repeat("MW", 90) // 180 runes, past the block's height however it wraps
 	if n := len([]rune(long)); n >= 200 {
 		t.Fatalf("setup: the fixture is %d runes, so the OLD clamp would have refused it too and "+
 			"this test would pass without the measured check", n)
 	}
-	if p2p.IntentFitsBlock(long) {
-		t.Fatalf("setup: the fixture fits a block, so there is nothing here to refuse")
+	if p2p.BlockFits(p2p.Attestation{Signer: "Nib User", AcceptedPeer: fp, Intent: long}) {
+		t.Fatalf("setup: the fixture renders in %d lines and the block admits that, so there is "+
+			"nothing here to refuse",
+			p2p.BlockLineCount(p2p.Attestation{Signer: "Nib User", AcceptedPeer: fp, Intent: long}))
 	}
 
 	resp2 := write(t, c, csrf, http.MethodPost, ts.URL+"/api/cosign/quote", "application/json",

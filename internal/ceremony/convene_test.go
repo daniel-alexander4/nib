@@ -151,8 +151,12 @@ func TestConveneRefusesEachThingByName(t *testing.T) {
 			r.Roster = append(r.Roster, r.Roster[1])
 		}},
 		{"an empty intent", ErrNoIntent, func(r *ConveneRequest) { r.Intent = "   " }},
+		// **Lengthened at /pending 286: four repeats now WRAP and fit.** Block lines are no
+		// longer one-per-field, so a recital that once overflowed a single line is admitted —
+		// which is the feature. What must still be refused is one that overflows the whole
+		// block's height however it wraps.
 		{"an over-long recital", ErrIntentTooLong, func(r *ConveneRequest) {
-			r.Intent = strings.Repeat("We agree to grant a lease of Flat 3 Acacia Avenue ", 4)
+			r.Intent = strings.Repeat("We agree to grant a lease of Flat 3 Acacia Avenue ", 12)
 		}},
 		{"a deadline that cannot fit every hop", ErrDeadlineTooTight, func(r *ConveneRequest) {
 			r.Expires = now.Add(hopBudget / 2)

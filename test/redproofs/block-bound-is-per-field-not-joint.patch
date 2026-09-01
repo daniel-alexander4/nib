@@ -1,0 +1,13 @@
+diff --git a/internal/ceremony/convene.go b/internal/ceremony/convene.go
+index c8ca6cf..c69315f 100644
+--- a/internal/ceremony/convene.go
++++ b/internal/ceremony/convene.go
+@@ -507,7 +507,7 @@ func checkBlocksFit(roster []Party, intent string) error {
+ 			signer = short(p.Fingerprint)
+ 		}
+ 		att := p2p.Attestation{
+-			Signer: signer, Capacity: p.Capacity, Intent: intent,
++			Signer: signer, Capacity: p.Capacity,
+ 			Position: 1, RosterSize: signing,
+ 		}
+ 		if p2p.BlockFits(att) {

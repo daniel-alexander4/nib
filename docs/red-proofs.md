@@ -2931,3 +2931,46 @@ refresh rather than archaeology.
 literally how `label-never-overrides-the-constant` died.
 
 `recorded` 234 → 235.
+
+## /pending 286 — a block line wraps, and the four ceilings become one budget *(v1.117.307)*
+
+Four rows, tier 1. The item sat open from P07.S07 because the one number it needed was not
+derivable from code: **how small may text be on a signed legal instrument.** Dan set the floor on
+2026-09-01 at 8 lines, which is 6.65pt on a 280x84pt block, and everything else followed from it.
+
+**What changed.** `AppearanceLines` emitted one entry per field and nothing wrapped, so the recital,
+the party's label, their capacity and the pinned peer's label each had a ONE-LINE ceiling. A recital
+of ordinary length for a lease was refused outright — and the alternative that refusal protected
+against was `ctx.fillText` with no `maxWidth` clipping it at the canvas edge. Lines wrap now, bounded
+by the block's height.
+
+**The four ceilings became one joint budget, and that is the substantive part.** Once lines wrap the
+fields compete for one vertical space: a recital that fits beside a short capacity does not fit
+beside a long one. So the question can only be asked of a whole block, per signing party.
+`block-bound-is-per-field-not-joint` is the discriminating row — the bound still exists, still
+refuses an over-long capacity, still names the party, and the only assertion that fails is the one
+about two values that each fit ALONE. That property could not be stated before this change.
+
+`block-height-floor-raised` guards the number itself, and it asserts the PROPERTY rather than
+restating the constant: at 20 lines a block renders at 2.66pt, and a test comparing the constant to
+itself would pass. `block-line-never-wraps` is the feature half — with it applied every block is
+exactly what it was before.
+
+**`unbreakable-token-wastes-a-line` records a real bug the tests found during the build.** A greedy
+"break at the last space" finds the space after the PREFIX on a long unbroken token, so
+`Signer: ZZZZ…` broke after `Signer:` and spent a whole line on seven characters. On a block whose
+height IS the legibility budget, a wasted line is a smaller font for every other line — a
+cosmetic-looking wrap choice spending the thing the floor exists to protect. Fixed with a half-line
+floor on the word-boundary preference.
+
+**Compatibility is asserted, not argued**: `TestAShortBlockIsUnchangedByWrapping` pins an ordinary
+manual block line-for-line, because the item's case rested on the measurement that anything at or
+under six lines renders identically.
+
+**One existing row had to grow.** `record-verify-bounds-only-the-convener` removes the text caps
+from `Record.Verify` to show they bind the convener and nobody else; `checkBlocksFit` is now a third
+such cap, so removing only the original two left the height rule refusing a 5000-rune intent on its
+own and the check stayed green. A row whose defect the code has grown past has to grow with it or
+quietly stop being a proof.
+
+`recorded` 235 → 239.
