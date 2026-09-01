@@ -1157,16 +1157,15 @@ func (s *Server) openArrival(label string, final []byte) {
 	// signed document a counterparty has already done the work to produce, and a peer who has
 	// signed cannot close a tab and try again the way a user opening a ninth file can.
 	//
-	// **Its stated premise is now PARTLY FALSE and the exemption is worth re-deciding.** That
-	// argument rests on "the session path installs it and nothing writes it to disk", which was
-	// true when it was written and is not true of a CEREMONY arrival: P08.S02 moved the durable
-	// write inside `ceremonyID.Store`, before the frame, so those bytes do have another home and
-	// `PersistFailed` above is the branch for when they do not. A two-party co-sign arrival still
-	// has none. So the exemption is unarguable for one class of arrival and arguable for the
-	// other, and ADR-008's "the byte cap binds every door that grows a document" points the other
-	// way for the class that is now persisted. Left as it stands rather than narrowed here,
-	// because the wrong call destroys signed documents and the right one is a decision, not a
-	// refactor.
+	// **RESOLVED 2026-08-31, and the premise this comment used to rest on was never the
+	// load-bearing one (/pending 337).** It said the bytes have "no other home", which P08.S02
+	// made untrue for a ceremony arrival — the mirror is written before the frame — while
+	// remaining true for a two-party co-sign. What actually holds, for both classes, is that this
+	// door cannot be pumped: the guard above is `final != nil && !opened`, so an arm admits at
+	// most ONE document and only after the user accepted it at the consent gate. Every increment
+	// is a deliberate arm plus a deliberate consent, which is more work than opening a file, not
+	// less. The residual — count is unbounded through this door for a user who never closes a tab
+	// — is accepted and written out at `addDocCapped`.
 	s.addDoc(&document{name: arrivalDocName(label), data: final, sig: sign.Verify(final)})
 }
 

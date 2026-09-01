@@ -1045,9 +1045,32 @@ var ErrTooManyBytes = errors.New("the open documents would exceed " + strconv.It
 // **The cap lives here and not in addDoc, and that distinction is the whole point.**
 // addDoc's other callers are arrivals (D10) — a completed co-signature, whose bytes
 // exist because a counterparty already did the work. Refusing an arrival at the cap
-// does not decline a request; it DESTROYS a signed document that has no other home,
-// since the session path installs it and nothing writes it to disk. A user opening a
-// ninth file can close one and try again; a peer who has already signed cannot.
+// does not decline a request; it DESTROYS work already done. A user opening a ninth
+// file can close one and try again; a peer who has already signed cannot.
+//
+// **The two reasons that actually carry this, restated 2026-08-31 because the one that used to
+// be here is now half false (/pending 337).** The old wording was "a signed document that has
+// no other home, since the session path installs it and nothing writes it to disk". That was
+// true when written and P08.S02 made it untrue for a CEREMONY arrival: `ceremonyID.Store`
+// writes the mirror before the frame, so those bytes do have another home. A two-party co-sign
+// arrival still has none (`persistContribution` early-returns on ErrNoRecord and says so). An
+// exemption resting on a premise that holds for one of two classes is an exemption waiting to
+// be deleted by whoever notices, so here is what does hold, for both:
+//
+//  1. **The door cannot be pumped.** Both `openArrival` call sites are guarded by
+//     `final != nil && !opened`: `final` is non-nil only after `serveOneSession` returned a
+//     co-signed document, which requires the user to have accepted at the consent gate, and
+//     `opened` admits at most ONE document per arm. So every increment costs a deliberate arm
+//     plus a deliberate consent. This is not a route a peer can drive.
+//  2. **The refusal lands at the worst possible moment.** The user has just signed. Declining
+//     to show them the result to protect a memory ceiling trades a certain loss now against a
+//     contingent one later.
+//
+// **The residual, stated rather than left implicit.** Count is therefore unbounded through this
+// door: a user who arms, consents and never closes a tab can hold more than `maxOpenDocs` and
+// more than `maxOpenBytes`. That is accepted, visibly — the tabs are on screen — and it is the
+// price of (2). ADR-008's "the byte cap binds every door that grows a document" is read here as
+// binding every door a REQUEST reaches, which is the five routes below.
 //
 // **The test and the append happen under one lock hold**, for the reason
 // commitMutation's contract comment gives one layer down: a caller that checked the

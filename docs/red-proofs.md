@@ -2788,3 +2788,43 @@ hop-plus-delivery reservation (P08.S05b). `convenedExpiring` therefore convenes 
 hours ago, which is possible only because `Convene` takes `now` as an argument.
 
 `recorded` 226 → 230.
+
+## /pending 337 + 286 — an exemption resting on a premise that had stopped applying *(v1.117.303)*
+
+Two rows, tier 1, both about **337**, and the item resolved without a behaviour change.
+
+`openArrival` takes the UNCAPPED door, past both of ADR-005's bounds. The exemption was named at the
+site at v1.117.298 per ADR-009, and the reason given was that the bytes have *"no other home, since
+the session path installs it and nothing writes it to disk"*. **P08.S02 made that half false** —
+`ceremonyID.Store` writes a ceremony arrival's mirror before the frame — while it stayed true for a
+two-party co-sign, whose `persistContribution` early-returns on `ErrNoRecord`. An exemption holding
+for one of its two classes is one waiting to be deleted by whoever notices.
+
+**What actually carries it was never written down, and it is structural.** Both `openArrival` call
+sites are guarded by `final != nil && !opened`: `final` is non-nil only after `serveOneSession`
+returned a co-signed document, which requires the user to have accepted at the consent gate, and
+`opened` admits at most ONE document per arm. So the door cannot be pumped — every increment costs a
+deliberate arm plus a deliberate consent, which is more work than opening a file, not less. That is
+why the exemption stands, and it is why capping was **not** built: the refusal would land on a
+document the user had just signed, to bound a growth path only they can drive.
+
+`an-arm-installs-more-than-one-arrival` asserts that clause. Nothing else in the tree fails under it
+— re-delivery is idempotent, so the second install is the same bytes and every behavioural assertion
+still holds; only how many times it lands changes. `arrival-exemption-stops-being-named` is the
+ADR-009 half, and it goes red for a *comment* on purpose: an exemption nobody can find is
+indistinguishable from an oversight, and this item exists because the naming that was there had gone
+quietly stale.
+
+**The residual is recorded rather than hidden**: count is unbounded through this door for a user who
+arms, consents and never closes a tab. Accepted, visibly — the tabs are on screen.
+
+**286 got no rows and no code, and its two premises were corrected in place.** Measured: the block is
+280×84pt and the client sizes text at `min(lineH*0.7, 9pt)`, so the cap binds through 6 lines — 7 is
+7.60pt, 8 is 6.65pt, 10 is 5.32pt, 12 is 4.43pt. So wrapping would **not** "change what every
+existing block renders as": anything at or under 6 lines is pixel-identical, and everything wider
+than one line is refused today and renders nothing. And the real obstacle is not that the bounds
+cannot see the block — every call site can — it is that the constraint becomes **joint**: four
+fields competing for one vertical budget, so `convene` must refuse a combination and say which field
+to cut. That sentence is the design. The dangling `S07` citation the entry named is removed.
+
+`recorded` 230 → 232.

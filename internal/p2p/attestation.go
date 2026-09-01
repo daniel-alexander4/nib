@@ -574,10 +574,27 @@ func blockTextWidth() float64 {
 // # The limit this bound exposes, stated rather than hidden
 //
 // It is ONE line, because AppearanceLines emits one entry per line and nothing wraps the
-// recital across several. That makes the ceiling tight for a real recital. Widening it is
-// **S07's** — the slice that owns rendering into blocks — and the fix there is to wrap the
-// recital over however many lines it needs, at which point this bound is recomputed from the
-// same geometry rather than raised by hand.
+// recital across several. That makes the ceiling tight for a real recital.
+//
+// **The slice this used to name is CLOSED and did not do it (/pending 286).** P07.S07 shipped as
+// S07a/b/c and every bound above is its work; wrapping was not, and no remaining coordinate
+// schedules it — S09 and S10 are closed and P06 is the ceremony SURFACE, not the block renderer.
+// Pointing at S07 here was a dangling citation of exactly the kind this file warns about
+// elsewhere, so it is removed rather than repaired into a different guess.
+//
+// **What the fix costs, measured 2026-08-31 rather than estimated.** The block is 280x84pt and the
+// client sizes text at `min(lineH*0.7, 9pt)`, so the 9pt cap binds through 6 lines and only then
+// starts shrinking: 7 lines is 7.60pt, 8 is 6.65pt, 10 is 5.32pt, 12 is 4.43pt. Two consequences,
+// and both cut against how this comment used to read. Wrapping does **not** change what existing
+// blocks render as — anything at or under 6 lines is pixel-identical, and everything wider than one
+// line is refused today and so renders nothing at all. And the ceiling does not vanish, it MOVES:
+// from a per-line width to a total-lines budget with a legibility floor, which is a number somebody
+// has to choose.
+//
+// **The real obstacle is that the constraint becomes JOINT.** Each of the four bounds can be
+// answered today from its own string. Once lines wrap, the recital, the capacity, the label and the
+// Accepts line compete for one vertical budget, so `convene` must refuse a COMBINATION and tell the
+// user which field to cut — and that sentence is the design, not the wrapping.
 func IntentFitsBlock(intent string) bool { return blockLineFits("Intent: ", intent) }
 
 // CapacityFitsBlock and LabelFitsBlock are the same rule for the other two user-supplied strings
