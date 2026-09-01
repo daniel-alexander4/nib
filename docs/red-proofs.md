@@ -2828,3 +2828,34 @@ fields competing for one vertical budget, so `convene` must refuse a combination
 to cut. That sentence is the design. The dangling `S07` citation the entry named is removed.
 
 `recorded` 230 → 232.
+
+## /pending 341 — a convened document brought into line with its own file *(v1.117.304)*
+
+Two rows, tier 1, in opposite directions — which is what makes this a narrowing of the freeze rather
+than a hole in it.
+
+The state: the commit doors mutate memory only, so a convened document's bytes reach disk at exactly
+one place, `~/nib/ceremonies/<id>/document.pdf`. The file in the user's own matter folder stays the
+PRE-CEREMONY draft forever — unsigned, carrying no record — and `nib verify` on that file reports
+"unsigned" about a document under a live ceremony. Saving to fix that answered 409 **even with no
+divergence at all**.
+
+**The exemption is byte-identity, and it is the refusal's own sentence read literally.**
+`ceremonyFreeze` says Nib "will not write DIFFERENT bytes over it". Bytes equal to the document under
+ceremony are definitionally not different, and writing them cannot change what any party was invited
+to sign. Nothing else the freeze protects moves: the two mutation doors never reach this branch,
+because they change the document by construction.
+
+**It is reachable rather than decorative, and that measurement is what the item turned on.** An
+earlier reading of this path assumed `/api/save` always receives pdf.js `saveDocument()` output,
+which re-serialises and would never compare equal — making the exemption a dead branch and the whole
+option worthless. That is wrong: `bakedBytes` calls `getData()`, the RAW loaded bytes, whenever
+`annotationStorage` is empty, and only `saveDocument()` when there are real edits. So the exemption
+fires exactly in the case the user means by pressing Save on a document they have not touched, and
+cannot fire once they have edited it.
+
+`convened-save-refuses-its-own-bytes` restores the shipped defect. `convened-save-accepts-any-bytes`
+inverts the condition so the freeze never runs on that route at all — a test that only checked the
+exemption would pass against it, which is why both rows exist.
+
+`recorded` 232 → 234.

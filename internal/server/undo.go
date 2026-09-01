@@ -525,6 +525,11 @@ func ceremonyFreeze(docBytes []byte) error {
 	// leaves them with a document they cannot save and no account of where the real one went.
 	// The path is the documented layout rather than a resolved root: `MirrorDir` needs the
 	// vault root, which this function does not have and should not take for one sentence.
+	// **"different bytes" is now literal, and `handleSave` reads it that way (/pending 341).** A
+	// save carrying bytes equal to the document under ceremony is exempted at that route, because
+	// bytes that are not different cannot change what any party was invited to sign — and without
+	// the exemption a convened document could never be brought into line with its own file. The
+	// two MUTATION doors never reach that branch; they change the document by construction.
 	return fmt.Errorf("%w: it belongs to ceremony %s, and the other parties were invited to "+
 		"sign this exact document — so Nib will not write different bytes over it. The "+
 		"ceremony's own copy is at ~/nib/ceremonies/%s/document.pdf", ErrCeremonyFrozen, rec.ID, rec.ID)
