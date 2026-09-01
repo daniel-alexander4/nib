@@ -788,10 +788,11 @@ func TestACachedContributionSurvivesARestart(t *testing.T) {
 			{Fingerprint: convFP, Label: "Convener", Signs: true},
 			{Fingerprint: other, Label: "B", Signs: true},
 		},
-		Intent:        "We agree",
-		Expires:       time.Now().Add(48 * time.Hour),
-		HopBudget:     ceremonyHopBudget(),
-		ConvenerSigns: true,
+		Intent:         "We agree",
+		Expires:        time.Now().Add(48 * time.Hour),
+		HopBudget:      ceremonyHopBudget(),
+		DeliveryBudget: ceremonyDeliveryLegBudget(),
+		ConvenerSigns:  true,
 	}, cert, key, time.Now())
 	if err != nil {
 		t.Fatal(err)
@@ -925,10 +926,11 @@ func ceremonyOnDisk(t *testing.T) (ceremony.Record, []byte, []byte) {
 			{Fingerprint: hex.EncodeToString(fpb), Label: "Convener", Signs: true},
 			{Fingerprint: strings.Repeat("2b", 32), Label: "B", Signs: true},
 		},
-		Intent:        "We agree",
-		Expires:       time.Now().Add(48 * time.Hour),
-		HopBudget:     ceremonyHopBudget(),
-		ConvenerSigns: true,
+		Intent:         "We agree",
+		Expires:        time.Now().Add(48 * time.Hour),
+		HopBudget:      ceremonyHopBudget(),
+		DeliveryBudget: ceremonyDeliveryLegBudget(),
+		ConvenerSigns:  true,
 	}, cert, key, time.Now())
 	if err != nil {
 		t.Fatal(err)

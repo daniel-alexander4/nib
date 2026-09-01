@@ -58,6 +58,75 @@ func TestSessionBudgetCountsEveryDeadlineInitiateArms(t *testing.T) {
 	}
 }
 
+// TestDeliveryLegBudgetCountsEveryDeadlineSendDocumentArms is the same guard for the other
+// function, and it is separate ON PURPOSE (P08.S05b).
+//
+// `DeliveryLegBudget` equals `SessionBudget` today only because `SendDocument` and `Initiate`
+// happen to arm the same three deadlines. Sharing one guard would tie a claim about the transfer
+// path to a count taken over the co-sign path, so a fourth arm added to either would be graded
+// against the other's number — which is the duplicate derivation `SessionBudget`'s own doc grades
+// critical, one level up. Two functions, two scans, and they are expected to diverge at P08.S05d.
+func TestDeliveryLegBudgetCountsEveryDeadlineSendDocumentArms(t *testing.T) {
+	src, err := os.ReadFile("session.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := funcBody(t, string(src), "func SendDocument(")
+	arms := regexp.MustCompile(`SetDeadline\(`).FindAllString(body, -1)
+	if len(arms) == 0 {
+		t.Fatal("no SetDeadline call found in SendDocument — this scan is not reading the " +
+			"function it names, so its count means nothing")
+	}
+	const want = 3
+	if len(arms) != want {
+		t.Errorf("SendDocument arms %d deadlines and DeliveryLegBudget adds up %d. A delivery term "+
+			"smaller than what the leg can actually spend means Convene admits a ceremony whose "+
+			"round cannot finish inside the deadline the user set.", len(arms), want)
+	}
+}
+
+// TestDeliveryLegBudgetIsNotSmallerThanTheLegCanSpend — the arithmetic half.
+//
+// The figure this replaced was `bootstrapBudget + connectDeadline + postConsentDeadline`, on the
+// reasoning that a delivery leg runs no local human gate. That confused expected latency with
+// armed budget: `SendDocument` arms `remoteDecisionDeadline` regardless of the verifier, and
+// `ReceiveDocument`'s Accepter is a live human gate on the production path. It was short by 22
+// minutes per leg.
+func TestDeliveryLegBudgetIsNotSmallerThanTheLegCanSpend(t *testing.T) {
+	if got, want := DeliveryLegBudget(), 2*exchangeDeadline+remoteDecisionDeadline; got != want {
+		t.Errorf("DeliveryLegBudget() = %s, want %s (the three arms SendDocument takes)", got, want)
+	}
+	// **The refuted figure, named by its own arithmetic so a shrink has to argue past it.** The
+	// slice was firmed at `bootstrapBudget + connectDeadline + postConsentDeadline`; the p2p half
+	// of that is `postConsentDeadline` alone, and the first cut of this assertion compared against
+	// it — `24m > 2m`, true of almost any value, which is no assertion at all. What actually
+	// distinguishes the refuted figure from the real one is the two `exchangeDeadline` arms and
+	// `remoteDecisionDeadline`, so those are what it names.
+	if refuted := postConsentDeadline; DeliveryLegBudget() == refuted {
+		t.Errorf("DeliveryLegBudget() = %s — the refuted figure's p2p half. SendDocument arms two "+
+			"exchangeDeadlines and a remoteDecisionDeadline whatever the verifier does.", refuted)
+	}
+	// A literal pin, as SessionBudget has. Without one, the first assertion is a restatement of the
+	// implementation and a change to exchangeDeadline moves function and test together.
+	if got, want := DeliveryLegBudget(), 24*time.Minute; got != want {
+		t.Errorf("DeliveryLegBudget() = %s, want %s. Change this literal deliberately, with the "+
+			"reservation it feeds — internal/server's ceremonyDeliveryLegBudget and Convene's "+
+			"DeliveryBudget — and not as a consequence of moving a constant.", got, want)
+	}
+	// And it must dominate the post-consent write, which is the term the refuted figure kept.
+	if DeliveryLegBudget() <= remoteDecisionDeadline {
+		t.Errorf("DeliveryLegBudget() = %s does not exceed remoteDecisionDeadline (%s); the leg's "+
+			"cost is that arm PLUS two exchange windows", DeliveryLegBudget(), remoteDecisionDeadline)
+	}
+	// It must cover what the RECEIVER can spend, or the sender gives up while the peer is still
+	// within its own budget — `ReceiveDocument` arms exchangeDeadline twice then postConsentDeadline.
+	if recv := 2*exchangeDeadline + postConsentDeadline; DeliveryLegBudget() < recv {
+		t.Errorf("DeliveryLegBudget() = %s but the receiver can spend %s; the sender would give up "+
+			"first and report a transport failure for a peer that was still working",
+			DeliveryLegBudget(), recv)
+	}
+}
+
 // funcBody returns the source of the function whose signature starts with prefix, from its
 // opening brace to the matching close.
 func funcBody(t *testing.T, src, prefix string) string {

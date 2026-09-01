@@ -65,11 +65,12 @@ func convenedFixture(t *testing.T, dir string, n, signedBy int) string {
 		t.Fatal(err)
 	}
 	got, err := ceremony.Convene(base, ceremony.ConveneRequest{
-		Intent:        "We agree to be bound by the lease of 14 Elm Row",
-		Expires:       now.Add(96 * time.Hour),
-		HopBudget:     30 * time.Minute,
-		ConvenerSigns: true,
-		Roster:        roster,
+		Intent:         "We agree to be bound by the lease of 14 Elm Row",
+		Expires:        now.Add(96 * time.Hour),
+		HopBudget:      30 * time.Minute,
+		DeliveryBudget: 30 * time.Minute,
+		ConvenerSigns:  true,
+		Roster:         roster,
 	}, ps[0].cert, ps[0].key, now)
 	if err != nil {
 		t.Fatal(err)
@@ -465,11 +466,12 @@ func twoPartyCeremony(t *testing.T, dir string, now time.Time) (string, []ceremo
 		t.Fatal(err)
 	}
 	got, err := ceremony.Convene(base, ceremony.ConveneRequest{
-		Intent:        "We agree to be bound by the lease of 14 Elm Row",
-		Expires:       now.Add(96 * time.Hour),
-		HopBudget:     30 * time.Minute,
-		ConvenerSigns: true,
-		Roster:        roster,
+		Intent:         "We agree to be bound by the lease of 14 Elm Row",
+		Expires:        now.Add(96 * time.Hour),
+		HopBudget:      30 * time.Minute,
+		DeliveryBudget: 30 * time.Minute,
+		ConvenerSigns:  true,
+		Roster:         roster,
 	}, ps[0].cert, ps[0].key, now)
 	if err != nil {
 		t.Fatal(err)

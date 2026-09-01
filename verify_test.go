@@ -74,6 +74,15 @@ func TestVerifyContractIsTrue(t *testing.T) {
 		var gated []string
 		funcStart := regexp.MustCompile(`(?m)^func (Test\w+)\(`)
 		err := filepath.Walk(".", func(path string, info os.FileInfo, werr error) error {
+			// **Skip `.claude`, which holds a second session's git worktrees.** CLAUDE.md tells a
+			// concurrent session to build in a worktree, and this repo's live at
+			// `.claude/worktrees/<name>` — a complete second copy of the tree, gitignored and
+			// therefore not source. Without this the walk finds every gated test twice, once at a
+			// path no harness runs, and reports the duplicate as an unexecuted test. Found the
+			// first time two sessions worked this repo at once.
+			if werr == nil && info.IsDir() && (info.Name() == ".claude" || info.Name() == ".git") {
+				return filepath.SkipDir
+			}
 			if werr != nil || info.IsDir() || !strings.HasSuffix(path, "_test.go") || path == "verify_test.go" {
 				return nil
 			}
@@ -276,7 +285,7 @@ func TestVerifyContractIsTrue(t *testing.T) {
 		// an edit that does not HAVE to happen is an edit that does not happen. So the
 		// count is bounded on both sides now. It still fails when a row disappears, and it
 		// fails when the set outgrows it, naming the number to write.
-		const recorded = 216
+		const recorded = 220
 		if len(rows) < recorded {
 			t.Errorf("test/redproofs holds %d replayable row(s), want at least %d; "+
 				"build/redproof.sh reports no error on an empty directory, so a row that "+
@@ -518,11 +527,36 @@ func TestPackageDeclaresABrowser(t *testing.T) {
 // than the recurring question of whether it matters.
 //
 // Reports every offender rather than the first, so one run fixes the set.
+// gofmtCmd lists the source gofmt should check, EXCLUDING dot-directories.
+//
+// `gofmt -l .` walks into `.claude/worktrees/<name>` — another session's git worktree, a full
+// second copy of this tree (CLAUDE.md's rule for two sessions on one repo). cmd/gofmt skips
+// dot-prefixed FILES, not dot-prefixed DIRECTORIES, so today it is only clean by luck: a
+// concurrent session with an unformatted buffer on disk reddens this test in THIS tree, naming a
+// path nobody here owns. The three repo walks this file's siblings do were fixed the same way.
+func gofmtCmd() *exec.Cmd {
+	args := []string{"-l"}
+	ents, err := os.ReadDir(".")
+	if err != nil {
+		return exec.Command("gofmt", "-l", ".")
+	}
+	for _, e := range ents {
+		n := e.Name()
+		if strings.HasPrefix(n, ".") {
+			continue
+		}
+		if e.IsDir() || strings.HasSuffix(n, ".go") {
+			args = append(args, n)
+		}
+	}
+	return exec.Command("gofmt", args...)
+}
+
 func TestSourceIsFormatted(t *testing.T) {
 	if _, err := exec.LookPath("gofmt"); err != nil {
 		t.Skip("gofmt not on PATH (a toolchain-less environment); formatting is unchecked here")
 	}
-	out, err := exec.Command("gofmt", "-l", ".").Output()
+	out, err := gofmtCmd().Output()
 	if err != nil {
 		t.Fatalf("gofmt -l: %v", err)
 	}

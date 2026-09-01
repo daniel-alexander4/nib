@@ -1939,8 +1939,9 @@ func convenedTwoParty(t *testing.T, cCert, cKey []byte, cFP, otherFP string) (do
 		Expires: time.Now().Add(48 * time.Hour),
 		// A generous hop budget: these tests are about the channel, and a deadline refusal
 		// here would fail them for a reason that has nothing to do with what they assert.
-		HopBudget:     time.Hour,
-		ConvenerSigns: true,
+		HopBudget:      time.Hour,
+		DeliveryBudget: time.Hour,
+		ConvenerSigns:  true,
 	}, cCert, cKey, time.Now())
 	if err != nil {
 		t.Fatal(err)

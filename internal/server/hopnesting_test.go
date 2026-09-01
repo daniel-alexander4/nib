@@ -12,7 +12,8 @@ import (
 //
 // P08.S04a's receiver-side deadline check reserves NOTHING: `checkArrival` refuses only a deadline
 // already past. That is only safe if the convener's own admission rule already implies it — the
-// convener admits a hop when `Expires > t0 + ceremonyHopBudget()`, and the signer's gate runs at
+// convener admits a hop when `Expires > t0 + ceremonyHopBudget()` — unchanged by P08.S05b, whose
+// delivery term is reserved at Convene and only makes the up-front deadline larger. The signer's gate runs at
 // worst `t0 + ReceiveArrivalLag() + bootstrap + connect`. If that sum ever exceeds the hop budget,
 // a hop the convener CORRECTLY admitted is refused at the far end, for arithmetic reasons, with no
 // party at fault.

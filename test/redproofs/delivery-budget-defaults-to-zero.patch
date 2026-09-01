@@ -1,0 +1,12 @@
+--- a/internal/ceremony/convene.go
++++ b/internal/ceremony/convene.go
+@@ -176,9 +176,6 @@
+ 	if req.HopBudget <= 0 {
+ 		return Convened{}, ErrNoHopBudget
+ 	}
+-	if req.DeliveryBudget <= 0 {
+-		return Convened{}, ErrNoDeliveryBudget
+-	}
+ 	// The already-convened check FIRST, before anything structural, so the refusal names the
+ 	// ceremony rather than the attachment layer.
+ 	if _, err := Extract(pdf); !errors.Is(err, ErrNoRecord) {

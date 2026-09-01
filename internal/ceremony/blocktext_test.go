@@ -31,10 +31,11 @@ import (
 func blockTextReq(t *testing.T, cfp, afp, label, capacity string) ConveneRequest {
 	t.Helper()
 	return ConveneRequest{
-		Intent:        "We agree to co-sign the lease",
-		Expires:       time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC),
-		HopBudget:     hopBudget,
-		ConvenerSigns: true,
+		Intent:         "We agree to co-sign the lease",
+		Expires:        time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC),
+		HopBudget:      hopBudget,
+		DeliveryBudget: hopBudget,
+		ConvenerSigns:  true,
 		Roster: []Party{
 			{Fingerprint: cfp, Label: "Convener", Signs: true},
 			{Fingerprint: afp, Label: label, Capacity: capacity, Signs: true},

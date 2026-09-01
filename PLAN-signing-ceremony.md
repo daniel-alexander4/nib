@@ -6039,9 +6039,21 @@ returns at `internal/server/session.go:1408`; and that function's sole call site
 So its guard at `ceremonynet.go:409-411` always fires and its whole body — LAN window, `inbound`
 check, `feedCandidates`, `punchLoop`, the publish — **never runs**. This is `/pending 248`, filed at
 the P05 close and now measured. Caveat 7 forbids the obvious repair (the probe and the session must
-share a socket; a TCP listener cannot share a UDP one). **Taken at rung 2 and reversible by Dan:** a
-TCP ceremony is link-local-or-typed-address only, stated as a limit, and the vestigial path is
-removed. S05b carries it.
+share a socket; a TCP listener cannot share a UDP one).
+
+**Refined 2026-08-31 at S05b's pre-grill trace, because the first statement of this was too broad.**
+It is an **asymmetry, not an absence**: the DIAL side always has a rendezvous — `dialerCeremony`
+opens its endpoint and `rendezvous.Open` with no transport branch, and a TCP ceremony dial reaches
+`raceWithRendezvous` at `internal/server/session.go:1988` with `cer.rz != nil`, so its ceremony
+branch and the DHT are **live**. Only the ARM side lacks one. So a TCP ceremony can dial out over
+the DHT and can never be **found** over it, which is what makes it link-local-or-typed-address only
+in practice. `/pending 248` listed that branch among its dead code; it is not, and removing it on
+that basis would have deleted the TCP dial path.
+
+**Taken at rung 2 and reversible by Dan:** a TCP ceremony is link-local-or-typed-address only,
+stated as a limit, and the genuinely vestigial code is removed — `startArmedRendezvous`, the
+`inbound` flag whose only reader is inside it, and `openRendezvous`'s unreachable QUIC branch.
+S05b carries it.
 
 **(3) D35 already declares the clock-skew budget, and it is ±5 minutes — not the 7m00s two comments
 claim.** `recordOutlivesBudget`'s derivation (`internal/server/ceremonynet.go:695-716`) and
@@ -6111,16 +6123,50 @@ Tasks:
 - T04 — the structural guard that the persist routes through that one door (ADR-009), with a second site made to fail it.
 - T05 — the one-way transfer driven end to end on both transports (tier 6).
 
-#### P08.S05b — `Convene` reserves a delivery term, and the TCP limit is stated *(D16, D22; C10's grace, `/pending 248`)* — **new, 2026-08-31, split out of S05**
+#### P08.S05b — `Convene` reserves a delivery term *(D16, D22; C10's grace)* — **new, 2026-08-31, split out of S05; RE-CUT at its own grill the same day** *(done 2026-08-31, v1.117.292 — 6 clauses, all met; 5 red proofs, 4 registered. **The grill overturned the figure by 22 minutes a leg**: `SendDocument` arms `SessionBudget()` exactly, so a delivery leg costs a whole hop budget and "no `Confirmer`" removes expected latency rather than armed budget. Two vacuous greens were then found and closed — deleting the `DeliveryBudget` zero-guard left the ENTIRE suite green, and every fixture set `DeliveryBudget == HopBudget` so a reservation reading the wrong field passed all four rows. The commit gate caught a third: a doc claim that `internal/ceremony` cannot compute the figure, when it can read the p2p third of it.)*
 Scope: S05's eighth bullet and S06's grace both need one figure, and neither can be hand-chosen.
 `Convene` today reserves `hops × HopBudget` (`internal/ceremony/convene.go:212-217`) and reserves
-nothing for the round that follows. Plus S05's correction (2) above: the dead TCP rendezvous path
-goes, and the limit it implies is written down rather than left as code that cannot run.
+nothing for the round that follows.
+
+**The grill overturned the figure, the shape and the count, and the TCP-limit half moved to S05f.**
+The firming proposed `bootstrapBudget + connectDeadline + postConsentDeadline` = 7m20s, once. All
+three parts were wrong:
+
+**(1) A delivery leg costs a WHOLE hop budget — 29m20s, not 7m20s.** `SendDocument` arms
+`exchangeDeadline`, re-arms it for the write, then arms `remoteDecisionDeadline` — the three
+arms `TestDeliveryLegBudgetCountsEveryDeadlineSendDocumentArms` counts: 6m + 6m + 12m = **24m = `p2p.SessionBudget()` exactly**, which
+makes the leg budget-identical to `Initiate`'s. *"No `Confirmer`, so no consent budget"* confused
+**expected latency** with **armed budget** — a non-interactive verifier removes the local wait and
+removes nothing from any deadline the code arms, and `ceremonynet.go:735-739` states the rule it
+broke: *"the outer clock must reserve the inner one's worst case, not merely be larger."* Reserving
+less than what the code is willing to spend is the defect `checkCeremonyDeadline` already shipped
+once and had to fix.
+
+**(1b) And the receiving side still has a human gate.** `ReceiveDocument` calls `a.Accept`
+whose only production implementation (`sessionAccepter.Accept`) blocks on `sessionConsentTimeout` — 5
+minutes. S05d's bullet promises a non-interactive **`Verifier`**
+and says nothing about the **`Accepter`**; until it does, the leg is attended and the full budget is
+the honest reservation. **S05d's acceptance is amended below to name both gates.**
+
+**(2) The round is `hops` legs, not one.** One term under-reserves by `(hops-1)` legs — at N=9 that
+is 3h47m20s against a round the arm is bounded by `Expires` to complete inside.
+
+**(3) The formula could not be written.** `postConsentDeadline` is unexported
+(`p2p/session.go:66`) with no accessor, and the expressible workaround —
+`MaxRemoteDecisionWait() - 2*PeerGateWindow` — re-derives `remoteDecisionDeadline`'s internals from
+outside the package, which is verbatim what `ExchangeBudget`'s own doc forbids (`session.go:47-51`).
+
+**(4) It belongs in the signature, not in `internal/ceremony`.** `HopBudget`'s doc says why
+(`convene.go:44-55`): the figure sums terms from two packages `internal/ceremony` cannot import, and
+*"both panels that produced a per-hop figure did so without checking which package could arrive at
+it, and both got a different number."* The delivery term sums the same packages.
+
 Acceptance:
-- **`Convene`'s reservation gains a delivery term**, derived from figures already in the tree rather than chosen — `bootstrapBudget + connectDeadline + postConsentDeadline` = 20s + 300s + 120s = **7m20s**, carrying **no `PeerGateWindow`** because a delivery leg runs no `Confirmer`. Tier 1.
-- **The term is added at `convene.go:213` only**, never folded into `ceremonyHopBudget()` — which would redden `ceremonydeadline_test.go:99` and `convene_test.go:24` (both literal 29m20s) and, worse, leave `ceremonypin_test.go:418`'s hard-coded 7m green while it silently stopped being the real margin. Asserted. Tier 1.
-- **`WarnSittingCeiling`'s sentence is recomputed from the same figure** (`convene.go:289-296` recomputes `hops × HopBudget` independently today), so the warning cannot disagree with what the door reserved. Tier 1, red proof — the existing test asserts the warning CODE, not the number, so this drift is invisible without one.
-- **The dead arm-rendezvous path is removed and the TCP-ceremony limit is stated in the docs** — a TCP ceremony reaches its peer on the link or at a typed address, never through the DHT, because caveat 7 requires the probe and the session to share a socket. Tier 1 for the removal; the limit is a docs clause.
+- **`p2p.DeliveryLegBudget()` is exported from where the arms are**, never re-derived by subtraction outside the package. Tier 1, with a guard that it equals what `SendDocument` actually arms.
+- **`Convene`'s reservation becomes `hops × (HopBudget + DeliveryBudget)`**, with `DeliveryBudget` a second **zero-refused** parameter carrying its own sentinel — the shape `ErrNoHopBudget` already sets, and for its stated reason: an injectable duration whose zero means "everything fits" is the rule switched off. Tier 1.
+- **Both user-facing sentences name the two terms separately** — the refusal at `convene.go:214-216` as well as `WarnSittingCeiling` (`:288-297`). Folding the term into `need` makes the refusal say *"N hops need X"* where X is not hop time, at the one string a convener reasons from to choose a new deadline; and it makes the warning's own arithmetic false, since `hops × HopBudget` would no longer equal the total it prints. Tier 1, asserted on the numbers and not only the code.
+- **A two-arm boundary test at ±1s of the new reservation.** Nothing in the tree is within 20 hours of the boundary and the only `ErrDeadlineTooTight` fixture (`convene_test.go:157`) refuses identically with and without the change — **without this the slice ships vacuously green**, which is the one thing its own grill says it must not do. Tier 1, red-proved.
+- **`ceremonynet.go:772-776` is amended** — it justifies `checkCeremonyDeadline` reserving one hop by citing what `Convene` reserves, and that sentence goes stale the moment the term lands. Tier 1 (a comment, checked by reading).
 - Tier: 1 throughout; nothing here needs a live peer (C15).
 
 #### P08.S05c — The arm becomes addressable, and the spoken check gets a key *(D22; C05, C08; the TRIPWIRE)* — **new, 2026-08-31, split out of S05**
@@ -6150,7 +6196,8 @@ goes **outside** `~/nib/ceremonies/`, which is also what stops it colliding with
 `document.pdf` and making `persistedFor` return a finished N-party document as a hop's re-delivery.
 Acceptance:
 - **The round reaches a party off-LAN**, over a second armed rendezvous at its own hop index, with its egress enumerated against D34 rather than inherited. Tier 4.
-- **The verification gate for the delivery leg is unattended, and settled in the plan** — the leg is a document these parties already signed, over a pin and a secret that have not changed. Implemented by passing a non-interactive `Verifier` at the two delivery call sites, **never** by a bypass inside `internal/p2p`: `runVerification` fails closed on nil (`internal/p2p/verify.go:239-244`) and `deadlines_test.go:122-126` fatals unless exactly five entry points call it. Tier 1 + tier 4.
+- **BOTH gates on the delivery leg are unattended, and that is settled here rather than implied (amended 2026-08-31 at S05b's grill).** The leg is a document these parties already signed, over a pin and a secret that have not changed. Implemented by passing a non-interactive `Verifier` **and** a non-interactive `Accepter` at the two delivery call sites, **never** by a bypass inside `internal/p2p`: `runVerification` fails closed on nil (`internal/p2p/verify.go:239-244`) and `deadlines_test.go:122-126` fatals unless exactly five entry points call it. **The original bullet named only the `Verifier`**, and `ReceiveDocument` calls `a.Accept`, whose production implementation blocks 5 minutes on a human — so "unattended" was false on its face and S05b had to reserve a full attended budget because of it. Tier 1 + tier 4.
+- **Shrinking `DeliveryLegBudget()` is this slice's to earn.** Once both gates are unattended the leg costs `2×exchangeDeadline + postConsentDeadline` = 14m rather than `SessionBudget()`'s 24m, and S05b's reservation follows automatically because it is derived from a named function rather than a literal. Reserving the smaller figure **before** this slice lands would reserve less than the code spends. Tier 1.
 - **The delivered filename is deterministic** and carries the ceremony id and a human half derived from the record's intent, so the finished lease is distinguishable from Monday's copy by name alone. It does not reuse `receivedName` (`session.go:1132-1138`), which reads `time.Now()` inside the builder at second granularity and collides within one second. Tier 1.
 - **The recipient verifies what arrives** — `CheckRecord`, `MatchesRecord`, completeness over the full roster, and a byte-prefix check against its own persisted contribution. Its blind spots are stated, not implied. Tier 1.
 - **A re-run after a mid-round failure reaches that party and no other, leaving exactly one file per party**, driven by injecting the write failure at party 3 of 4 — which is only meaningful because S05a made the ack mean persisted. Tier 4.
@@ -6169,6 +6216,29 @@ Acceptance:
 - **The delivery legs cannot be starved by the hops**, or the sharing is stated as a limit with the arithmetic — `punchBudgetPerSide = 3000` is one D33 LAW figure per machine per ceremony across every hop. Tier 1 for the arithmetic, tier 4 for the N=9 case.
 - **ADR-011's hold is re-examined for a delivery arm**, whose renewal is gated on `!cer.hasSigned()` (`internal/server/session.go:801`, `:1480` → `lan.go:777`, `:788-790`) — exactly the state a delivery arm is in. Tier 4, against P03's zero-packet criterion.
 - Tier: 4 for every clause but the budget arithmetic (C15).
+
+#### P08.S05f — The dead arm-rendezvous path removed, and the TCP-ceremony limit stated *(`/pending 248`, caveat 7, ADR-011)* — **new, 2026-08-31, split out of S05b at its grill**
+Scope: the removal half of S05b's original scope, cut out because it shares nothing with the
+arithmetic and carries a nine-item checklist of its own. **Sequenced immediately after S05b**;
+S05d's *"finds parties off-LAN"* bullet cites the limit this slice writes down.
+
+**What is genuinely dead, measured 2026-08-31:** `startArmedRendezvous`
+(`internal/server/ceremonynet.go:408-455`) — its guard always fires, because `openRendezvous`
+returns for any non-QUIC transport before setting `c.rz` (`ceremonyid.go:537-540`) and a QUIC
+ceremony arm never reaches it (`session.go:1443`); the `inbound *atomic.Bool` threaded through
+`runSession`, whose only reader is inside that function; and `openRendezvous`'s QUIC branch.
+
+**What is NOT dead, and `/pending 248` was wrong about it:** `raceWithRendezvous`'s ceremony branch
+is **live** — `dialerCeremony` opens its endpoint and `rendezvous.Open` unconditionally, and a TCP
+ceremony dial reaches it at `session.go:1988` with `cer.rz != nil`. Removing it on that entry's
+say-so would have deleted the TCP dial side's whole DHT path.
+Acceptance:
+- **The three dead items go, and `setStopNet`/`stopNet`/`close()`'s cancel arm go with them** — `startArmedRendezvous` is `setStopNet`'s only caller, so the field is permanently nil afterwards. `ceremonyid.go`'s mutex doc justifies the lock **entirely** by that race and must be rewritten to name the fields that actually contend (`portMap`, `reDelivery`, `self`, `punch`), or the mutex is left defended by a race with no writer. Tier 1.
+- **Three test sites are repointed to `setupSharedEndpoint` + `QUICListenOn` in the same commit** — `sharedsocket_test.go:47`, `:155` and `lazybootstrap_test.go:171`. They construct their subject only through the branch being deleted, and `:47` is `TestTheDHTAndTheArmedListenerShareOneSocket`, **the only executable evidence of caveat 7's probe-and-session property in the tree**. Tier 1.
+- **Two red-proof rows survive the removal**: `shared-socket-not-demultiplexed` (whose EXPECT token would stop printing once its test dies at a setup fatal) and `bootstrap-has-a-second-door` (whose patch inserts a line *inside* the deleted function and must be re-sited to another `Bootstrap` caller). Both re-proved after the change. Tier 1.
+- **The goroutine census floor moves 33 → 32** (`goroutines_test.go:185`) — the removal deletes three `go` statements and the floor is a lower bound the removal pushes through. Moving it in the same commit is the rule; discovering it afterwards is the drift the floor exists to catch.
+- **The TCP-ceremony limit is written down where a reader will find it** — a TCP ceremony reaches its peer on the link or at a typed address and can never be **found** over the DHT, because `openRendezvous` gives the arm side no rendezvous and caveat 7 forbids giving it one on a separate socket. It is an **asymmetry**: the dial side has a DHT. The prose currently carrying that reasoning lives inside the functions being deleted and must move rather than go, and **ADR-011 is amended rather than edited** — it names `startArmedRendezvous` as one of three eager-bootstrap sites and is the record of a shipped decision.
+- Tier: 1 throughout; the removal is invisible to tiers 3, 4 and 6 by construction, which is what "dead" means and is stated rather than left as a silent absence (C15).
 
 #### P08.S06 — Close-out: end state, then delivery, then the prune — and nothing is destroyed *(D29 lifecycle pin; C09, C11)*
 Scope: D29 states the lifecycle once — *end state → delivery round → close-out* — and puts the pin

@@ -272,10 +272,11 @@ func convenedFor(t *testing.T) (doc []byte, invitation string) {
 			{Fingerprint: hex.EncodeToString(fpb), Label: "Convener", Signs: true},
 			{Fingerprint: other, Label: "A", Signs: true},
 		},
-		Intent:        "We agree to co-sign the lease",
-		Expires:       time.Now().Add(48 * time.Hour),
-		HopBudget:     ceremonyHopBudget(),
-		ConvenerSigns: true,
+		Intent:         "We agree to co-sign the lease",
+		Expires:        time.Now().Add(48 * time.Hour),
+		HopBudget:      ceremonyHopBudget(),
+		DeliveryBudget: ceremonyDeliveryLegBudget(),
+		ConvenerSigns:  true,
 	}, cert, key, time.Now())
 	if err != nil {
 		t.Fatal(err)
@@ -370,7 +371,9 @@ func TestEveryCeremonySessionGetsItsCeremony(t *testing.T) {
 // # The third arm is the one that matters
 //
 // Refusing an expired ceremony is easy; refusing it *without also refusing honest hops* is the
-// whole design. The convener admits a hop when `Expires > t0 + ceremonyHopBudget()` (29m20s), and
+// whole design. The convener admits a HOP when `Expires > t0 + ceremonyHopBudget()` (29m20s) — the
+// per-hop rule this arithmetic is about; since P08.S05b `Convene` additionally reserves a delivery
+// leg per hop up front, which only widens the admission and leaves the margin below unchanged. And
 // the signer's gate runs at worst `t0 + 22m20s`. So a hop admitted at the convener's own margin
 // arrives here with as little as **seven minutes** left, and any receiver-side reservation refuses
 // it. Arm 3 pins that: it is what separates this gate from a hop reservation, and no other check
