@@ -2673,3 +2673,47 @@ them. A red proof over fixtures that cannot distinguish the two values is a red 
 thing.
 
 `recorded` 216 → 220.
+
+## /pending 343 — P08.S02's central property gets a runtime reader *(v1.117.300)*
+
+Four rows, tier 1. The slice they belong to shipped without any: **`P08.S02` had zero red-proof
+rows** (every `S02` row in this directory is *P07*.S02), and its property — the contribution reaches
+disk before it reaches the wire — was held by one source scan.
+
+**Three named searches established the gap rather than asserting it.** `grep -rn '\.Store('
+--include=*_test.go internal/` returned a single hit and it was a `sync/atomic` in
+`internal/rendezvous`; `grep -rn 'nib/ceremonies\|ceremonies/' build/*.sh` returned nothing, so no
+harness on any machine inspects the mirror; and the existing failure test injects at a test double
+(`mapReDeliverer.fail`), driving `coSignExchange`'s handling and never the production error path.
+
+`store-never-reaches-disk`, `store-swallows-the-persist-failure` and
+`failed-persist-drops-the-redelivery-cache` are the three arms of the new server-side test, and each
+is red on its own — the third is the one that would have been easy to get wrong in the safe-looking
+direction, since not caching what you could not store is a second signature from one identity.
+
+**`contribution-stored-after-the-frame` is the row the source scan cannot be.** It restores the
+pre-S02 ordering and leaves `Store` itself untouched, so `l3_test.go` still finds
+`persistContribution(` in its body and still reports green. The document is identical, both
+signatures verify, and the cache is populated. Only the ORDER moved — and an order is visible only
+from the far side of the wire, which is why the reader is a real two-transport exchange with the
+store held open while the initiator is asked whether it has anything yet.
+
+`recorded` 220 → 224.
+
+**A fifth arm was probed and is deliberately NOT a replayable row.** The tier-4 clause added in the
+same change (`pairrepro.sh`: the receiving instance's `~/nib/ceremonies/<id>/document.pdf` is
+byte-identical to the document that hop produced) was driven red three ways against a preserved work
+dir — no mirror directory at all, a mirror holding no `document.pdf`, and a mirror holding *another
+hop's* document — and green against the real one. It is not mechanised here because a tier-4 row
+costs a full two-transport four-party run per replay, and `--all` is already a minutes-long job. The
+probe is recorded rather than the row, which is what "not every row is mechanised" means in
+`CONTRIBUTING.md`.
+
+**That clause also found tier 4 red, at HEAD, for an unrelated reason.** `pairrepro.sh -n 4`
+completed its QUIC relay and then failed with `instance 2 could not arm before hop 1 (HTTP 409): a
+session is already armed` — deterministically, because a party that has signed holds a 300 s
+re-delivery window (`connectDeadline`) and the harness never disarmed between transports. So the
+**TCP arm of the N-party relay had not been running at all**, on a harness whose contract line says
+"over BOTH transports" — the same shape as /pending 344 one level up, found the same day. Fixed by
+disarming every party at the end of each transport's relay; both transports now run, and the new
+mirror clause fires on all six hops.

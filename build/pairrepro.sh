@@ -982,6 +982,55 @@ print(f"[{t}] the attestations route answers from the cached status: {len(ats)} 
       f"cross-bound, proceeding claimed={wantproc}")
 PYATT
 
+  # ── The receiver's own durable copy, on disk (/pending 343) ──────────────────
+  #
+  # **No harness on any machine had ever inspected `~/nib/ceremonies/`.** Named search, before this
+  # clause existed: `grep -rn 'nib/ceremonies\|ceremonies/' build/*.sh` returned nothing. So P08.S02's
+  # property — a hop's contribution reaches DISK, on the machine that signed it, before it reaches
+  # the wire — was observed at tier 1 and by nothing above it.
+  #
+  # It is asserted from the RECEIVER's filesystem rather than from any route, because a route is the
+  # in-memory document answering a question about the file. `$out` is what that instance reports it
+  # produced; the mirror must be those bytes.
+  #
+  # **Matched by CONTENT, not by counting directories.** The two transports run against the same
+  # homes, so instance $ti holds one ceremony directory per transport run by design — a count would
+  # be right on the first run and wrong on the second, which is the shape this file keeps refusing.
+  if [ "$wantproc" = "1" ]; then
+    python3 - "${HOMES[$((ti-1))]}/home/nib/ceremonies" "$out" "$transport" "$ti" <<'PYMIRROR' || exit 1
+import hashlib, os, sys
+root, out, t, ti = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
+want = open(out, "rb").read()
+if not os.path.isdir(root):
+    print(f"FAIL: [{t}] instance {ti} signed a ceremony hop and has no {root} at all. The only "
+          f"durable copy of the document carrying its own signature does not exist, so a crash "
+          f"or a restart loses it — which is what D24 and P08.S02 exist to prevent.",
+          file=sys.stderr)
+    sys.exit(1)
+found = []
+for d in sorted(os.listdir(root)):
+    p = os.path.join(root, d, "document.pdf")
+    if os.path.isfile(p):
+        found.append((d, open(p, "rb").read()))
+if not found:
+    print(f"FAIL: [{t}] {root} exists and holds no document.pdf under any ceremony id "
+          f"(subdirectories: {sorted(os.listdir(root))})", file=sys.stderr)
+    sys.exit(1)
+for d, b in found:
+    if b == want:
+        print(f"[{t}] instance {ti} kept its own copy: {d}/document.pdf, "
+              f"{len(b)} bytes, identical to the document it produced")
+        sys.exit(0)
+print(f"FAIL: [{t}] instance {ti} holds {len(found)} mirrored ceremony document(s) and NONE is "
+      f"the {len(want)}-byte document this hop produced "
+      f"(sha256 {hashlib.sha256(want).hexdigest()[:16]}); on disk: "
+      + ", ".join(f"{d}={len(b)}B/{hashlib.sha256(b).hexdigest()[:16]}" for d, b in found)
+      + ". The mirror is stale or belongs to another hop, so the durable record of this "
+        "signature is not this signature.", file=sys.stderr)
+sys.exit(1)
+PYMIRROR
+  fi
+
   # H25 — elapsed, PRINTED and never thresholded.
   #
   # A four-second run and a four-minute run both pass, and the second is one hop from
@@ -1405,6 +1454,29 @@ if got != signing:
     sys.exit(1)
 print(f"[{t}] {len(got)} distinct signers, in roster order, one signature each")
 PYSET
+
+    # ── Every party disarms before the next transport's relay ────────────────────
+    #
+    # **Without this the SECOND transport's relay could not arm at all, and had not been running.**
+    # Measured 2026-08-31: a `-n 4` run completed all three QUIC hops and then failed at
+    # `instance 2 could not arm before hop 1 (HTTP 409): a session is already armed` — so the whole
+    # TCP arm of the N-party relay was unreachable, on a harness whose own contract line says it
+    # runs "over BOTH transports". The same shape as /pending 344 one level up.
+    #
+    # **It is the product behaving correctly, not a bug being papered over.** A party that has
+    # signed holds a re-delivery window of `connectDeadline` (300s, `clocks.go:53`) so a writeback
+    # lost in flight can be re-served without re-signing — D24/D18, and `runCeremonyReceive` arms
+    # it at the first signature. The QUIC relay finishes in seconds, well inside that window, so
+    # the collision is DETERMINISTIC rather than flaky: every party is still legitimately armed.
+    #
+    # A real second ceremony on one machine within five minutes hits the same 409, and the user's
+    # answer is the same as this one — disarm first. That the harness has to say so is the honest
+    # cost of a window that exists to protect a signature.
+    local d
+    for d in $(seq 2 "$N"); do
+      curl -sS -X POST "${URLS[$((d-1))]}/api/session/disarm" \
+        -H "X-CSRF-Token: ${CSRFS[$((d-1))]}" -o /dev/null || true
+    done
 
     RELAY_FINAL="$prev"
   }

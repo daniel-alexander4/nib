@@ -1,0 +1,14 @@
+diff --git a/internal/server/ceremonyid.go b/internal/server/ceremonyid.go
+index 157a69d..f82447a 100644
+--- a/internal/server/ceremonyid.go
++++ b/internal/server/ceremonyid.go
+@@ -384,7 +384,8 @@ func (c *ceremonyID) Store(inbound, final []byte) error {
+ 	// Its error is returned rather than logged, which is the point of the widened interface: D24's
+ 	// "signed but not saved" is a sentence the SIGNER has to see, and until this slice the only
+ 	// channel was a `log.Printf` into a stderr a double-clicked launch sends nowhere.
+-	return c.persistContribution(final)
++	_ = c.persistContribution(final)
++	return nil
+ }
+ 
+ // persistContribution writes this hop's co-signed document to the mirror, durably (D24, P08.S02).

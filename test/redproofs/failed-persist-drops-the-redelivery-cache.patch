@@ -1,0 +1,16 @@
+diff --git a/internal/server/ceremonyid.go b/internal/server/ceremonyid.go
+index 157a69d..114ecd4 100644
+--- a/internal/server/ceremonyid.go
++++ b/internal/server/ceremonyid.go
+@@ -371,6 +371,11 @@ func (c *ceremonyID) Store(inbound, final []byte) error {
+ 	if c.reDelivery == nil {
+ 		c.reDelivery = map[string][]byte{}
+ 	}
++	c.mu.Unlock()
++	if err := c.persistContribution(final); err != nil {
++		return err
++	}
++	c.mu.Lock()
+ 	c.reDelivery[reDeliverKey(inbound)] = final
+ 	c.mu.Unlock()
+ 
