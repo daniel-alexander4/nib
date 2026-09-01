@@ -54,6 +54,7 @@ import (
 // opposite reason.
 var observablePackages = []string{
 	"internal/ceremony",
+	"internal/server",
 	"internal/discovery",
 	"internal/instance",
 	"internal/ots",
@@ -63,6 +64,49 @@ var observablePackages = []string{
 	"internal/sign",
 	"internal/udpmux",
 	"internal/vault",
+}
+
+// jsonPublishedPackages are the packages whose shapes leave as JSON rather than as Go types, and
+// for which the "exported" test is therefore the WRONG proxy (/pending 347).
+//
+// # Why the proxy fails exactly here
+//
+// Everywhere else, "an exported struct returned by an exported function" is a good stand-in for
+// "this shape leaves its package" — the only way another package can see it is through the type
+// system. `internal/server` is the one package where that is false: its shapes are serialised by
+// `writeJSON` straight to the browser, so nothing needs to import them and **they are all
+// unexported**. The package has exactly ONE exported struct in the whole tree — `Server` itself,
+// which carries no json tags.
+//
+// **That made this the one package the scan could not see into, and it is the one that publishes
+// the most.** Measured 2026-09-01: 54 unexported json-tagged structs, 186 fields, including every
+// shape the web client reads — `sessionStatus`, `pendingView`, `docResponse`, `statusResponse`,
+// `noticeView`. Adding the package to the list above WITHOUT this relaxation passes green and
+// discovers nothing, which is worse than the gap: a package in the list reads as covered.
+//
+// Three things relax for these packages, each because the export rule is standing in for something
+// that is not true here: the TYPE may be unexported, an unexported FIELD is skipped rather than
+// disqualifying the whole shape (an unexported field cannot be serialised, so it is not published
+// and its presence says nothing), and the shape need not be RETURNED by an exported function
+// (nothing returns these; `writeJSON` consumes them in place).
+var jsonPublishedPackages = map[string]bool{"internal/server": true}
+
+// jsonShapeReaders is the reader set for every shape from a jsonPublishedPackage, declared ONCE
+// rather than as one `published` entry per shape.
+//
+// Fifty-four near-identical entries all naming the web client would be bookkeeping that drifts, and
+// the assertion that matters is per-FIELD anyway — "does the client mention this field" — which is
+// unchanged. The CLI is included because several server shapes are consumed there instead.
+//
+// **Request shapes are covered by the same rule and that is deliberate.** For a request type the
+// client WRITES the field rather than reading it, and the check — does the reader source mention
+// `.field` or `.jsonTag` — answers both directions. A request field nothing sets is as much a
+// field nobody was ever told about as a response field nothing reads.
+var jsonShapeReaders = []string{
+	"web/app.js",
+	"internal/cli/commands.go",
+	"internal/cli/rendezvous.go",
+	"internal/cli/discover.go",
 }
 
 // published names each discovered shape's readers: files that must mention every one of its
@@ -85,6 +129,11 @@ var published = map[string][]string{
 	// is exactly the shape this scan exists to find". So every field is parked in `unreadKnown`
 	// beneath, where it stays visible instead of passing.
 	"pdfops.SignatureWidget": {"internal/pdfops/attachments.go"},
+	// **Discovered only from 2026-09-01, by being EMBEDDED (/pending 347).** `WatermarkStyle` is
+	// exported and json-tagged and is only ever a parameter — `StampWatermark(pdf, text, st)` —
+	// so the "returned by an exported function" filter had never admitted it, and its four fields
+	// reached the wire inside `server.watermarkParam` with nothing checking they were consumed.
+	"pdfops.WatermarkStyle": {"web/app.js"},
 	// **`discovery.Seen` is back, and the reason it was removed dissolved on being measured
 	// (/pending 284, 2026-08-27).** It was named here and had **never been discovered**: `Seen`
 	// embeds `Announcement`, and `discoverObservables` treated an embed as "fields this scan
@@ -172,6 +221,41 @@ var excluded = map[string]string{}
 // Deleting an entry is how one gets fixed; a NEW unread field cannot be parked without
 // somebody writing a line, which is the intended cost.
 var unreadKnown = map[string]string{
+	// ── internal/server, entered the day the scan could first see it (/pending 347) ──────────
+	//
+	// **Eleven of these are one fact, not eleven**: P06 has not built the ceremony surface. Named
+	// search, 2026-09-01: `/api/ceremony/convene`, `/api/ceremony/accept` and the ceremonies list
+	// route have **zero** references in `web/app.js`. So every field on a convene or accept shape
+	// is unread because there is no client flow to read or set it — which is a schedule fact about
+	// P06, not a field somebody forgot. They are parked BY NAME rather than covered by a blanket
+	// exclusion, so that when P06 lands, each one fails here until its surface actually uses it.
+	//
+	// That is the whole point of parking them individually: a wildcard would go green the moment
+	// the routes were called at all, whether or not the fields reached a user.
+	"server.acceptedParty.Capacity":        "P06: no accept surface — /api/ceremony/accept has zero references in web/app.js",
+	"server.acceptedParty.Convener":        "P06: no accept surface",
+	"server.acceptedParty.Signs":           "P06: no accept surface",
+	"server.ceremoniesResponse.Ceremonies": "P06: the ceremonies list has no surface (P08.S03 built the route; nothing calls it)",
+	"server.ceremoniesResponse.Primary":    "P06: the ceremonies list has no surface",
+	"server.conveneInvite.Signs":           "P06: no convene surface — /api/ceremony/convene has zero references in web/app.js",
+	"server.convenePartyRequest.Capacity":  "P06: no convene surface, so nothing SETS this request field",
+	"server.convenePartyRequest.Signs":     "P06: no convene surface, so nothing SETS this request field",
+	"server.conveneRequest.ConvenerSigns":  "P06: no convene surface, so nothing SETS this request field",
+	"server.conveneResponse.Invites":       "P06: no convene surface",
+	"server.conveneResponse.Warnings":      "P06: no convene surface — and this is the one to wire FIRST when it lands: it carries the sitting warning P08.S05b computes, which is the only place a convener is told their deadline is tight",
+	"server.lanHeardResponse.WindowMs":     "/pending 23: the discovery counters have a reader and no user-facing surface shows them. Same gap, same item.",
+
+	// **TWO are real and are filed rather than parked**, because parking a defect is how one gets
+	// forgotten: `sessionStatus.Diagnosis` (/pending 349) and `updateResponse.Managed`
+	// (/pending 350). They are entered here so the scan is green on a tree where they are known
+	// and tracked — remove the entry when the item closes, which is what makes the item's close
+	// visible to this file.
+	"server.sessionStatus.Diagnosis": "/pending 349: published for the waiting UI and read by nothing — the blank wait its own doc says it exists to prevent",
+	"server.diagnosisView.Cause":     "/pending 349: the same defect one level in — the D19 cause reaches no surface",
+	"server.diagnosisResponse.Cause": "/pending 349: the same defect on the standalone diagnosis route",
+	"server.lanHeardResponse.Heard":  "/pending 23: with WindowMs above — the discovery counters have a reader and no user-facing surface shows them",
+	"server.updateResponse.Managed":  "/pending 350: published and consumed only server-side, by assetURL, before it is written out",
+
 	// **`pdfops.SignatureWidget`, P07.S06, and it is entered here the day it is written.**
 	//
 	// `SignatureWidgets` is the positive control D25's placement clause asks for: it answers "was
@@ -251,6 +335,31 @@ func TestEveryPublishedObservableHasANamedReader(t *testing.T) {
 			"nothing.", len(shapes), len(observablePackages))
 	}
 
+	// **A PER-PACKAGE floor for the JSON-published packages, and it exists because the obvious
+	// fix to /pending 347 was a vacuous green.** Adding `internal/server` to `observablePackages`
+	// and changing nothing else makes this test pass while discovering **zero** shapes from it —
+	// the package is unexported throughout, so the export test drops every one. A package in the
+	// list then reads as covered, to this scan, to the graduation pass that dispositions its rows,
+	// and to the next person who greps the list. That is worse than the gap it was meant to close.
+	//
+	// The global floor above cannot see it: 33 shapes from ten other packages clears "at least
+	// twenty" comfortably. Only a floor that names the package can.
+	for pkg := range jsonPublishedPackages {
+		short := pkg[strings.LastIndex(pkg, "/")+1:]
+		n := 0
+		for name := range shapes {
+			if strings.HasPrefix(name, short+".") {
+				n++
+			}
+		}
+		if n < 20 {
+			t.Fatalf("discovered %d shape(s) from %s, which publishes dozens of JSON bodies to "+
+				"the web client. A JSON-publishing package in the list that discovers nothing "+
+				"READS AS COVERED and is worse than leaving it out — see jsonPublishedPackages.",
+				n, pkg)
+		}
+	}
+
 	readerCache := map[string]string{}
 	readerSrc := func(t *testing.T, p string) string {
 		if s, ok := readerCache[p]; ok {
@@ -275,6 +384,9 @@ func TestEveryPublishedObservableHasANamedReader(t *testing.T) {
 			continue
 		}
 		readers, ok := published[name]
+		if !ok && strings.HasPrefix(name, "server.") {
+			readers, ok = jsonShapeReaders, true
+		}
 		if !ok {
 			// **The half that closes a CLASS rather than an instance.** A shape nobody
 			// entered is invisible to a walk over entries — the P05 lesson, and the reason
@@ -297,6 +409,26 @@ func TestEveryPublishedObservableHasANamedReader(t *testing.T) {
 					break
 				}
 				if jt := sh.tag[f]; jt != "" && strings.Contains(src, "."+jt) {
+					found = true
+					break
+				}
+				// **A JavaScript reader is also matched on the BARE tag, and the reason is the
+				// language rather than laxity (/pending 347).** `.field` is how a RESPONSE is
+				// consumed, but a REQUEST is built as an object literal, and the client writes
+				// them as `{ angle: n }` or with shorthand `{ fingerprint, intent }` — neither of
+				// which contains `.angle` or `.intent` anywhere. Held to the strict form, the
+				// scan reported every request field unread while the client set all of them.
+				//
+				// **Keyed on the READER's language, not on the shape's package**, which is the
+				// second cut at this: the first asked whether the shape came from the JSON-
+				// publishing package, and `pdfops.WatermarkStyle` — which reaches the client
+				// inside a server shape — was a false finding under it. What decides the idiom is
+				// the file doing the reading.
+				//
+				// This stays within what the scan claims for itself one comment up: it proves a
+				// NAME is mentioned in a named file, and a green means "no field is obviously
+				// orphaned" rather than "correctly consumed".
+				if jt := sh.tag[f]; jt != "" && strings.HasSuffix(r, ".js") && mentionsWord(src, jt) {
 					found = true
 					break
 				}
@@ -374,6 +506,11 @@ type observable struct {
 func discoverObservables(t *testing.T) map[string]observable {
 	t.Helper()
 	out := map[string]observable{}
+	type embedCheck struct{ owner, embed string }
+	var embedChecks []embedCheck
+	// Every candidate, including those the "returned by an exported function" filter drops — see
+	// the promotion in the deferred pass below.
+	allCands := map[string]observable{}
 	for _, pkg := range observablePackages {
 		files, err := filepath.Glob(filepath.Join(pkg, "*.go"))
 		if err != nil {
@@ -403,7 +540,12 @@ func discoverObservables(t *testing.T) map[string]observable {
 				switch d := n.(type) {
 				case *ast.TypeSpec:
 					st, ok := d.Type.(*ast.StructType)
-					if !ok || !d.Name.IsExported() || st.Fields == nil {
+					if !ok || st.Fields == nil {
+						return true
+					}
+					// See jsonPublishedPackages: where a shape leaves as JSON, being unexported
+					// is the normal case rather than a sign it stays home.
+					if !d.Name.IsExported() && !jsonPublishedPackages[pkg] {
 						return true
 					}
 					var fields []string
@@ -441,12 +583,22 @@ func discoverObservables(t *testing.T) map[string]observable {
 								if jt != "" && jt != "-" {
 									tags[nm.Name] = jt
 								}
-							} else {
+							} else if !jsonPublishedPackages[pkg] {
+								// An unexported field cannot be serialised, so in a
+								// JSON-publishing package it is not published and its presence
+								// says nothing about the shape. Elsewhere it means the scan
+								// cannot see the whole shape, which is a reason to skip it.
 								unexported = true
 							}
 						}
 					}
-					if len(fields) > 0 && !unexported {
+					// In a JSON-publishing package the json TAG is the evidence of publication:
+					// an unexported struct with no tags is an internal record, not an observable.
+					keep := len(fields) > 0 && !unexported
+					if jsonPublishedPackages[pkg] {
+						keep = len(tags) > 0
+					}
+					if keep {
 						cands[d.Name.Name] = cand{file: f, fields: fields, tag: tags, embeds: embeds}
 					}
 				case *ast.FuncDecl:
@@ -463,7 +615,12 @@ func discoverObservables(t *testing.T) map[string]observable {
 			})
 		}
 		for name, c := range cands {
-			if !returned[name] {
+			allCands[short+"."+name] = observable{file: c.file, fields: c.fields, tag: c.tag}
+		}
+		for name, c := range cands {
+			// Nothing RETURNS a JSON-published shape — `writeJSON` consumes it in place — so the
+			// return test would drop every one of them and report the package as clean.
+			if !returned[name] && !jsonPublishedPackages[pkg] {
 				continue
 			}
 			// **An embed is fine when the embedded type is ITSELF covered, and a finding when it
@@ -475,24 +632,80 @@ func discoverObservables(t *testing.T) map[string]observable {
 			// shape that vanishes from the scan takes its coverage with it and looks exactly like
 			// a shape that was never published. So an embed whose type is not discovered is
 			// reported BY NAME rather than dropped quietly.
-			missing := ""
+			// **The embed check is DEFERRED to after every package, and the reason is a real
+			// miss (/pending 347).** It used to ask whether the embedded type was discovered in
+			// THIS package, which is the wrong question for a cross-package embed:
+			// `server.attestationView` embeds `p2p.SignerAttestation` and
+			// `server.watermarkParam` embeds `pdfops.WatermarkStyle`, both of which are
+			// discovered — under their own package's key. Asked per package, both read as
+			// "covered by nothing" and the scan reported two false findings the moment
+			// `internal/server` entered it. Asked once at the end, against everything discovered,
+			// it answers what it means to.
 			for _, e := range c.embeds {
-				if _, known := cands[e]; !known {
-					missing = e
-					break
-				}
-			}
-			if missing != "" {
-				t.Errorf("%s.%s embeds %s, which this scan does not discover — so %s's fields are "+
-					"covered by nothing and the shape would once have been dropped whole, which "+
-					"reads identically to a shape that publishes nothing. Give %s an entry, or "+
-					"record here why it cannot have one.", short, name, missing, missing, missing)
-				continue
+				embedChecks = append(embedChecks, embedCheck{owner: short + "." + name, embed: e})
 			}
 			out[short+"."+name] = observable{file: c.file, fields: c.fields, tag: c.tag}
 		}
 	}
+	// The deferred embed validation — see the comment at the append above. An embed whose type is
+	// discovered ANYWHERE is covered by that shape's own entry; one discovered nowhere is reported
+	// by name rather than dropped quietly, because a shape that vanishes takes its coverage with
+	// it and reads identically to a shape that publishes nothing.
+	for _, ec := range embedChecks {
+		covered := false
+		for full := range out {
+			if full[strings.LastIndex(full, ".")+1:] == ec.embed {
+				covered = true
+				break
+			}
+		}
+		// **A type EMBEDDED by a published shape is itself published, whatever the return
+		// filter says (/pending 347).** `pdfops.WatermarkStyle` is exported and json-tagged and
+		// is only ever a PARAMETER — `StampWatermark(pdf, text, st)` — so "returned by an
+		// exported function" drops it. It still reaches the wire, inside `server.watermarkParam`,
+		// and its four fields are as published as any other. Promoting it here is the rule the
+		// return filter is a proxy for, applied where the proxy is wrong.
+		if !covered {
+			if c, ok := allCands[ec.embed]; ok {
+				out[ec.embed] = c
+				covered = true
+			}
+			for full, c := range allCands {
+				if full[strings.LastIndex(full, ".")+1:] == ec.embed {
+					out[full] = c
+					covered = true
+					break
+				}
+			}
+		}
+		if !covered {
+			t.Errorf("%s embeds %s, which this scan does not discover — so %s's fields are "+
+				"covered by nothing. Give %s an entry, or record here why it cannot have one.",
+				ec.owner, ec.embed, ec.embed, ec.embed)
+		}
+	}
 	return out
+}
+
+// mentionsWord reports whether src contains tok as a whole identifier, so `id` does not match
+// inside `docId` and `lines` does not match inside `linesUsed`.
+func mentionsWord(src, tok string) bool {
+	isWord := func(b byte) bool {
+		return b == '_' || b == '$' || (b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z') || (b >= '0' && b <= '9')
+	}
+	for i := 0; ; {
+		j := strings.Index(src[i:], tok)
+		if j < 0 {
+			return false
+		}
+		j += i
+		before := j == 0 || !isWord(src[j-1])
+		after := j+len(tok) >= len(src) || !isWord(src[j+len(tok)])
+		if before && after {
+			return true
+		}
+		i = j + 1
+	}
 }
 
 // embedName is the bare type name of an embedded field — `Announcement`, `p2p.Channel`'s

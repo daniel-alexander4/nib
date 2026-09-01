@@ -2974,3 +2974,48 @@ own and the check stayed green. A row whose defect the code has grown past has t
 quietly stop being a proof.
 
 `recorded` 235 → 239.
+
+## /pending 347 — the reader scan learns to see the package that publishes most *(v1.117.308)*
+
+Two rows, tier 1. The scan covered ten packages and **not `internal/server`**, which is the one that
+publishes the most JSON to the web client — and the entry's own warning was that the obvious fix
+would be a vacuous green.
+
+**It was.** Adding the package to `observablePackages` and changing nothing else passes while
+discovering **zero** shapes from it: `discoverObservables` requires an exported type, and
+`internal/server` has exactly one exported struct in the tree (`Server`, no json tags) against 54
+unexported json-tagged ones. `server-shapes-discover-nothing` is that state, and the global floor
+cannot catch it — 33 shapes from the other ten packages clears "at least twenty" comfortably — so
+the fix carries a floor that names the package.
+
+**Three relaxations, each because the export rule is a proxy for something untrue here**: the type
+may be unexported, an unexported FIELD is skipped rather than disqualifying the shape (it cannot be
+serialised, so it is not published), and the shape need not be RETURNED by an exported function —
+nothing returns these, `writeJSON` consumes them in place.
+
+**The reader match had to change too, and the first cut of that was wrong.** `.field` is how a Go
+reader consumes a response; a JavaScript reader builds a REQUEST as an object literal, often with
+shorthand — `JSON.stringify({ fingerprint, intent })` contains no `.intent` anywhere. Held to the
+strict form the scan called every request field unread. The first fix keyed the relaxation on the
+shape's PACKAGE and produced a false finding on `pdfops.WatermarkStyle`, which reaches the client
+inside a server shape; it is keyed on the READER's language instead, which is what actually decides
+the idiom.
+
+**`embedded-shape-is-never-discovered` records a shape that had been invisible for the life of this
+scan.** `pdfops.WatermarkStyle` is exported and json-tagged and is only ever a parameter, so the
+return test never admitted it — while its four fields reach the browser inside `server.watermarkParam`.
+Embedding into a published shape IS publication. The cross-package embed check was wrong in the same
+area and is now deferred until every package is discovered, because it was asking whether an embedded
+type was discovered *in the same package* and reporting two false findings when the answer was
+"yes, under its own key".
+
+**What the extension found, which is the point of having built it.** 56 shapes across 10 packages →
+**88 across 11**. Fourteen fields published with no reader: eleven are one fact — P06 has not built
+the ceremony surface, so `/api/ceremony/convene`, `/api/ceremony/accept` and the ceremonies list have
+zero references in `web/app.js` — and they are parked BY NAME rather than by a wildcard, so each one
+fails again when P06 lands without using it. Three are real and filed: `/pending 349` (the D19
+diagnosis, published for a waiting UI that never reads it — the blank wait its own doc says it
+prevents) and `/pending 350` (`updateResponse.Managed`, consumed by the handler before it is written
+out).
+
+`recorded` 239 → 241.
