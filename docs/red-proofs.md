@@ -3063,3 +3063,16 @@ the matcher is deliberately loose and a loose matcher is safe in the direction t
 and unsafe in this one — unscoped it flagged three, and two were correct as they stood.
 
 `recorded` 241 → 245.
+
+**One of the four was recorded INVALID and caught on its first replay**, which is the thing this
+harness is for. `fixed-park-is-never-noticed`'s patch was written as
+`if true || !strings.Contains(why, "/pending")`, meaning `continue` for every entry — so it did not
+unscope the arm, it **disabled** it, and a disabled arm reports nothing and the check passes. The
+row said "still goes red against its own defect" and the replay answered `ok  nib  0.071s`, which is
+`redproof.sh`'s second failure mode: *the patch applied and the check still PASSED*. Re-recorded as
+`if false && …`, which leaves the arm running over every entry, and it now flags the two design
+parks the scoping exists to spare.
+
+The lesson is narrow and worth keeping: **a mutation that turns a guard OFF is not the same as one
+that makes the guard WRONG**, and only the second proves anything. The first is indistinguishable
+from deleting the check, which is the case `EXPECT` was added to catch and which caught this.

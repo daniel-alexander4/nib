@@ -1,5 +1,5 @@
 diff --git a/observables_test.go b/observables_test.go
-index 9a96189..2aecdf2 100644
+index 9a96189..265e1e9 100644
 --- a/observables_test.go
 +++ b/observables_test.go
 @@ -489,7 +489,7 @@ func TestEveryPublishedObservableHasANamedReader(t *testing.T) {
@@ -7,7 +7,7 @@ index 9a96189..2aecdf2 100644
  			// "not obviously orphaned", which under-reports) and unsafe in this one, where a
  			// false match tells you to delete a legitimate entry.
 -			if !strings.Contains(why, "/pending") {
-+			if true || !strings.Contains(why, "/pending") {
++			if false && !strings.Contains(why, "/pending") {
  				continue
  			}
  			dot := strings.LastIndex(k, ".")
