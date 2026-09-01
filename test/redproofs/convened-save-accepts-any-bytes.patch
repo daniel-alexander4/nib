@@ -1,0 +1,13 @@
+diff --git a/internal/server/server.go b/internal/server/server.go
+index 362ac2a..9b56fcf 100644
+--- a/internal/server/server.go
++++ b/internal/server/server.go
+@@ -802,7 +802,7 @@ func (s *Server) handleSave(w http.ResponseWriter, r *http.Request) {
+ 	// Compared against `docBytes` under no lock deliberately: `docBytes` is the same read the
+ 	// freeze itself performs one line down, so a concurrent change makes the two disagree and the
+ 	// freeze wins, which is the safe direction.
+-	if !bytes.Equal(data, s.docBytes(doc)) {
++	if _ = bytes.Equal(data, s.docBytes(doc)); false {
+ 		if err := ceremonyFreeze(s.docBytes(doc)); err != nil {
+ 			httpError(w, http.StatusConflict, err.Error())
+ 			return

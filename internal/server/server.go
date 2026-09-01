@@ -9,6 +9,7 @@
 package server
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"io"
@@ -781,9 +782,31 @@ func (s *Server) handleSave(w http.ResponseWriter, r *http.Request) {
 	// Before the write, on the same reasoning as the registry check above: a save on a
 	// convened document must not reach the disk at all, because the file on disk is the copy
 	// every other party was invited to sign.
-	if err := ceremonyFreeze(s.docBytes(doc)); err != nil {
-		httpError(w, http.StatusConflict, err.Error())
-		return
+	//
+	// **A byte-identical save is EXEMPT, and the exemption is implied by the refusal's own
+	// sentence (/pending 341).** The freeze says Nib "will not write different bytes over it";
+	// bytes equal to the document under ceremony are definitionally not different, and writing
+	// them cannot change what any party was invited to sign. Without this, a convened document
+	// could never be brought into line with its own file: the commit doors mutate memory only, so
+	// the convened bytes reach disk at exactly one place — the mirror — and the file in the
+	// user's own matter folder stays the pre-ceremony draft forever, unsigned and carrying no
+	// record, with `nib verify` reporting "unsigned" about a document under a live ceremony.
+	//
+	// **It is reachable rather than decorative, which is the measurement this turns on.** The
+	// client's `bakedBytes` calls pdf.js `getData()` — the raw loaded bytes — when
+	// `annotationStorage` is empty, and only `saveDocument()` (which re-serialises, and would
+	// never compare equal) when there are real edits. So the exemption fires exactly in the case
+	// the user means by pressing Save on a document they have not touched, and cannot fire once
+	// they have edited it.
+	//
+	// Compared against `docBytes` under no lock deliberately: `docBytes` is the same read the
+	// freeze itself performs one line down, so a concurrent change makes the two disagree and the
+	// freeze wins, which is the safe direction.
+	if !bytes.Equal(data, s.docBytes(doc)) {
+		if err := ceremonyFreeze(s.docBytes(doc)); err != nil {
+			httpError(w, http.StatusConflict, err.Error())
+			return
+		}
 	}
 	// **Refused before the write, because after it there is nothing left to refuse.**
 	//
