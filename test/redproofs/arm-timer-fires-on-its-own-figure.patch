@@ -1,0 +1,13 @@
+diff --git a/internal/server/session.go b/internal/server/session.go
+index 5797e13..7cc8278 100644
+--- a/internal/server/session.go
++++ b/internal/server/session.go
+@@ -1552,7 +1552,7 @@ func (s *Server) runCeremonyReceive(ctx context.Context, cer *ceremonyID, hl *p2
+ 	//
+ 	// The TRIPWIRE (see its comment) is honoured as "SIGNS at most once", which the cache enforces:
+ 	// a re-delivery hands back the same bytes, never a second signature.
+-	overallDeadline := time.Now().Add(armWindowFor(cer))
++	overallDeadline := time.Now().Add(sessionAcceptTimeout)
+ 	var postSignDeadline time.Time
+ 	opened := false // the co-signed document opens once, not per re-delivery
+ 	for {

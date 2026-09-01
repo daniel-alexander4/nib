@@ -2717,3 +2717,35 @@ re-delivery window (`connectDeadline`) and the harness never disarmed between tr
 "over BOTH transports" — the same shape as /pending 344 one level up, found the same day. Fixed by
 disarming every party at the end of each transport's relay; both transports now run, and the new
 mirror clause fires on all six hops.
+
+## /pending 344 — a test named "OnBothTransports" that drove one twice *(v1.117.301)*
+
+Two rows, tier 1, and the pair is deliberate: one catches the defect the item names, the other
+catches what a behavioural assertion structurally cannot see.
+
+`TestACeremonyArmWaitsForTheCeremonyOnBothTransports` sent `Transport: "tcp"` for **both** of its
+arms. The QUIC door it is named for was never entered, and P08.S04's acceptance says the figure is
+"asserted on BOTH transports" — so a criterion read as met on evidence covering one. They are
+genuinely different doors: a TCP ceremony arm opens an accept listener and stamps `until` in
+`session.arm`; a QUIC one hands the single handshaked listener to the racing coordinator and stamps
+it in `session.armCeremony`.
+
+**`quic-arm-window-is-the-manual-bound` is the defect made visible.** Only `armCeremony` stops
+asking `armWindowFor`, so a party armed over TCP still waits for the ceremony and one armed over
+QUIC is disarmed after five minutes. **Measured: with this patch applied, the version of that test
+at v1.117.300 passes green.** That is the whole content of the item — not that the test was weak,
+but that it was blind to one of the two things its name claims.
+
+**`arm-timer-fires-on-its-own-figure` is the discriminating one.** `runCeremonyReceive`'s deadline
+stops coming from the door while both arm doors still stamp `until` correctly, so the status reports
+30 days, the panel counts down from 30 days, and the loop gives up after five minutes. Every
+assertion about the *reported* figure stays green — the reported figure is right; nothing fires on
+it. Only the routing guard sees it, which is why the item's second half was a routing assertion and
+not a third transport.
+
+The routing guard enumerates every `until` assignment in the file rather than checking the two known
+doors for agreement, because two sites agreeing says nothing about a third — and this package
+acquired its second arm path exactly that way ("two arm paths living in two functions is the same
+count S05d and S05e each found").
+
+`recorded` 224 → 226.
