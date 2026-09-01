@@ -174,6 +174,35 @@ func (s *Server) handleWriteFile(w http.ResponseWriter, r *http.Request) {
 		httpError(w, http.StatusBadRequest, "could not read data")
 		return
 	}
+	// **The last silent door** (/pending 340). This route wrote to `target` with no
+	// existence check at all: typing the name of a file that is already there replaced it,
+	// answered 200, and toasted "Saved to <path>". A signed original was one filename
+	// collision away from gone, and the Save dialog does not list the folder's existing
+	// PDFs, so the collision is unseeable rather than merely unconfirmed.
+	//
+	// It is also the door /pending 333's precondition does not cover, and that gap is not
+	// theoretical: a Save-As onto an OPEN document's own path walks past handleSave's 412
+	// and past ceremonyFreeze, because this route never resolves a document at all.
+	//
+	// 412 and an explicit override, the same shape and the same reasoning as handleSave:
+	// 409 means "the server no longer holds this document" and the client hooks it to
+	// reconcile, which would switch the user's tab under a refusal about a file.
+	//
+	// Placed BEFORE MkdirAll so a refusal leaves no folder behind, and after
+	// containedJoin so an escaping name still gets its 400 first.
+	//
+	// **ceremonyFreeze is deliberately NOT added here**, though it is equally absent. It
+	// takes a DOCUMENT's bytes and refuses because editing would break other parties'
+	// copies; this route carries no document and writes posted export bytes to a
+	// destination the user named. Freezing it would refuse "put the convened copy
+	// somewhere" — the one action /pending 341 says the user currently has no way to
+	// perform.
+	if r.FormValue("overwrite") != "1" {
+		if _, serr := os.Stat(target); serr == nil {
+			httpError(w, http.StatusPreconditionFailed, name+" already exists in that folder")
+			return
+		}
+	}
 	if err := os.MkdirAll(dir, 0o755); err != nil { // containment guarantees Dir(target) == dir
 		httpError(w, http.StatusInternalServerError, "could not create folder")
 		return
