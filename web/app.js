@@ -8000,15 +8000,51 @@ els.openDir.onchange = () => openBrowse(els.openDir.value.trim());
 // another is open, click a command (or click-outside / Escape) to close. Inputs
 // inside a dropdown don't close it. The Recent menu refreshes its list on open.
 let openMenu = null;
+// **Focus goes back to the trigger, or it goes to `<body>`** (/pending 327). Removing
+// `.open` puts the focused item into a `display: none` subtree, and the browser then
+// drops focus to the document — SC 2.4.3, and measured three ways (Export, ⚙, and Save-as
+// via click-outside). The dialog focus-restore code below already names this exact harm
+// in its own comment and calls it "relocated"; it had a door for dialogs and none for
+// menus, which is ADR-009's shape.
+//
+// **Read BEFORE the class comes off**, which is what makes this simpler than the dialog
+// case. That one runs in a MutationObserver a microtask later, by which time a real
+// browser has already blurred to `<body>` and `activeElement` always answers "not inside"
+// — so it has to consult the focus trail instead. Here the check is synchronous and
+// `activeElement` is still true.
+//
+// The `held` test is also what keeps this from STEALING focus. A dropdown item's own
+// onclick fires before the menubar's delegated handler, so a command that opens a dialog
+// and focuses a field synchronously has already moved focus out by the time this runs —
+// `held` is false and nothing is touched. For the dialogs that focus a microtask later,
+// `held` is true, the trigger takes focus, and the dialog's opener-restore then resolves
+// to that trigger: connected and laid out, which is precisely what the relocated harm was.
 function closeMenu() {
-  if (openMenu) { openMenu.classList.remove('open'); openMenu = null; }
+  if (!openMenu) return;
+  const held = openMenu.contains(document.activeElement);
+  const trigger = openMenu.querySelector('.menutop');
+  openMenu.classList.remove('open');
+  trigger?.setAttribute('aria-expanded', 'false');
+  openMenu = null;
+  if (held) trigger?.focus();
 }
 function showMenu(menu) {
   if (openMenu === menu) return;
   closeMenu();
   menu.classList.add('open');
+  menu.querySelector('.menutop')?.setAttribute('aria-expanded', 'true');
   openMenu = menu;
   if (menu.querySelector('.recentSlot')) refreshRecent();
+}
+
+// Stamped at boot from the live DOM rather than written into index.html — the same
+// argument the dialog block below makes: menu five is then covered by existing, not by
+// its author remembering. There were zero `aria-haspopup` and zero `aria-expanded` in the
+// front end, so a screen-reader user was told neither that a control opens a menu nor
+// whether it is currently open.
+for (const t of document.querySelectorAll('.menu > .menutop')) {
+  t.setAttribute('aria-haspopup', 'true');
+  t.setAttribute('aria-expanded', String(t.parentElement.classList.contains('open')));
 }
 function onBarClick(e) {
   const top = e.target.closest('.menutop');
@@ -8051,6 +8087,76 @@ document.addEventListener('keydown', (e) => {
   if (dismiss) dismiss.click();
   else top.hidden = true; // a dialog with no cancel control: hide it rather than trap the user
 });
+
+// --- tab semantics -------------------------------------------------------------
+// /pending 329. Four tab-like surfaces, one rule, and it reached one of them — and that
+// one announced a widget it had not built.
+//
+// The mode tabs, the sidebar tabs and Collaborate's Originate/Receive toggle carried NO
+// role, no aria-selected and no aria-current: the active one differed by two greys and a
+// 2px underline, which is colour alone (WCAG 1.4.1) and invisible to a reader. The
+// document strip did claim `role="tablist"` correctly — and gave EVERY tab `tabIndex = 0`
+// while binding no arrow key, so it promised arrow navigation and did not implement it.
+// The strip's own comment states the principle it then broke: "a tablist whose tabs
+// control nothing is ARIA that announces a widget and then cannot describe it — worse
+// than plain buttons, because the promise is louder."
+//
+// **Manual activation, not automatic** (APG allows either). Arrows move focus; Enter or
+// Space selects. Automatic activation would be defensible for the three cheap surfaces
+// and is WRONG for the strip, where selecting rebuilds the strip and destroys the very
+// element holding focus — so one behaviour across all four beats a rule with an exception
+// nobody remembers.
+//
+// **Roving tabindex**, which is the half that makes a tablist one Tab stop instead of N:
+// the selected tab is 0 and the rest are -1. That is also the specific thing the strip
+// had backwards.
+//
+// The active tab is read from the `.active` class every one of these four already
+// maintains, and re-read through a MutationObserver rather than by calling a refresh from
+// each activation site — same argument the dialog block below makes for enumerating from
+// the live DOM: the strip is rebuilt wholesale on every open and close, and a refresh
+// wired per call site is one the next call site will not have.
+function wireTablist(container, tabSelector) {
+  if (!container) return;
+  container.setAttribute('role', 'tablist');
+  const tabs = () => [...container.querySelectorAll(tabSelector)];
+  const sync = () => {
+    for (const t of tabs()) {
+      const on = t.classList.contains('active');
+      t.setAttribute('role', 'tab');
+      t.setAttribute('aria-selected', String(on));
+      t.tabIndex = on ? 0 : -1;
+    }
+    // Nothing selected yet (the strip before its first activation) would leave every tab
+    // at -1 and the whole widget unreachable by keyboard — worse than the defect being
+    // fixed. The first tab takes the stop in that case.
+    const list = tabs();
+    if (list.length && !list.some((t) => t.tabIndex === 0)) list[0].tabIndex = 0;
+  };
+  container.addEventListener('keydown', (e) => {
+    if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(e.key)) return;
+    const list = tabs().filter((t) => !t.hidden && !t.disabled);
+    const cur = list.indexOf(document.activeElement.closest(tabSelector));
+    if (cur === -1 || !list.length) return;
+    e.preventDefault();
+    const next = e.key === 'Home' ? 0
+      : e.key === 'End' ? list.length - 1
+      : e.key === 'ArrowLeft' ? (cur - 1 + list.length) % list.length
+      : (cur + 1) % list.length;
+    list[next].tabIndex = 0;
+    list[cur].tabIndex = -1;
+    list[next].focus();
+  });
+  new MutationObserver(sync).observe(container, {
+    subtree: true, childList: true, attributes: true, attributeFilter: ['class'],
+  });
+  sync();
+}
+
+wireTablist(document.querySelector('.modetabs'), '.modetab');
+wireTablist(document.querySelector('.sidebar .tabs') || document.querySelector('nav.tabs'), '.tab');
+wireTablist(document.querySelector('.roletoggle'), '.roleopt');
+wireTablist(document.getElementById('tabstrip'), '.tab');
 
 // --- dialog semantics and focus -----------------------------------------------
 // Every `body > div[id$="Modal"]` is a modal dialog and none of them said so: 38
