@@ -1030,7 +1030,10 @@ input.ovl-check { appearance: auto; accent-color: #1a7f37; background: transpare
   display: flex;
   align-items: center;
   justify-content: center;
-  color: var(--overlay0);
+  /* --subtext1, not --overlay0 (/pending 330): overlay0 measures 3.36:1 dark and 2.30:1
+     light on --base, and this is the FIRST sentence a user sees on first run. Same move,
+     same reason, as the four messages the theme guard's counter-assertion records. */
+  color: var(--subtext1);
   pointer-events: none;
 }
 #viewerWrap.has-doc #empty { display: none; }
@@ -1050,10 +1053,19 @@ input.ovl-check { appearance: auto; accent-color: #1a7f37; background: transpare
   display: none;
   flex-direction: column;
   gap: 4px;
+  /* Export renders 575px tall and ran top:112 → bottom:688 against a 620px viewport, so
+     its last items were unreachable — no scroll, because the default here was
+     `overflow-y: visible; max-height: none` (/pending 331). Bounded to the space actually
+     below the menu bar rather than to a guessed pixel count, so it holds on a short
+     window and does not cap the short menus at all. Applied to every .dropdown, not to
+     #exportMenu: Export is merely the first to outgrow the viewport, and a rule written
+     for the one menu that broke is the next menu's identical bug. */
+  max-height: calc(100vh - 120px);
+  overflow-y: auto;
 }
 .menu.open .dropdown { display: flex; }
 .dropdown button.active { background: var(--surface1); box-shadow: inset 2px 0 0 var(--blue); }
-.menucap { font-size: 11px; color: var(--overlay0); padding: 5px 8px 1px; text-transform: uppercase; letter-spacing: 0.5px; }
+.menucap { font-size: 11px; color: var(--subtext1); padding: 5px 8px 1px; text-transform: uppercase; letter-spacing: 0.5px; }
 .recentSlot { display: flex; flex-direction: column; gap: 4px; }
 .dropdown .menuitem.idle input[type="search"] { width: 200px; }
 .dropdown button, .dropdown .menuitem {

@@ -7430,7 +7430,16 @@ els.signCompleteBtn.onclick = () => {
 // Certify (cryptographic signing/timestamp/co-sign), File, and View stay available —
 // they are part of, or orthogonal to, signing the document.
 const EDITING_TOOLS = [
+  // **The same five omissions as DOC_REQUIRED, and here they cost more** (/pending 331,
+  // found while fixing that list rather than filed with it). These five draw CONTENT onto
+  // the page, so signing mode has to switch them off with the rest — and it did not.
+  // Locking the marks toasts "the document is in signing mode and can no longer be
+  // edited" while Border, Note, Dropdown, Radio and Shapes stayed armable, which makes
+  // that sentence false. Named search for any other door that disables them:
+  // `grep -nE 'borderBtn|noteBtn|dropdownBtn|radioBtn|shapeBtn' web/app.js | grep -i disabled`
+  // returned nothing, so these two lists are the only gates they have.
   'textToolBtn', 'highlightToolBtn', 'drawToolBtn', 'detectBtn',
+  'borderBtn', 'noteBtn', 'dropdownBtn', 'radioBtn', 'shapeBtn',
   'editTextBtn', 'removeOriginalsBtn', 'autofillBtn',
   'redactBtn', 'redactTextBtn', 'applyRedactBtn', 'scanBtn',
 ];
@@ -8869,7 +8878,13 @@ const DOC_REQUIRED = [
   'saveFlatBtn', 'saveEditableBtn', 'saveFillableBtn', 'printBtn',
   'exportZipBtn', 'exportPngBtn', 'exportFormJsonBtn', 'exportFormCsvBtn', 'exportFormXfdfBtn', 'exportTableXlsxBtn', 'exportTableCsvBtn', 'exportTableOdsBtn', 'exportBookmarkSplitBtn',
   'exportPageSplitBtn', 'pdfaBtn',
+  // The whole drawing row, not the first three of it (/pending 331). Border, Note,
+  // Dropdown, Radio and Shapes sit beside Text/Highlight/Draw in the Edit tab and were
+  // never added here, so they stayed clickable on a clean vault with nothing open —
+  // arming a tool that then has no page to act on. They carry no `data-mode` either, so
+  // the toolbar's data-mode sweep below did not reach them as it reaches the first three.
   'textToolBtn', 'highlightToolBtn', 'drawToolBtn',
+  'borderBtn', 'noteBtn', 'dropdownBtn', 'radioBtn', 'shapeBtn',
   'detectBtn', 'editTextBtn', 'removeOriginalsBtn', 'ocrBtn', 'ocrLang', 'ocrQuality', 'autofillBtn', 'splitBtn',
   'splitBoxBtn', 'applyBoxSplitBtn', 'rotateLeftBtn', 'rotateRightBtn',
   'extractBtn', 'insertBlankBtn', 'duplicatePageBtn', 'insertPdfBtn', 'pageNumBtn', 'pageLabelsBtn', 'nupBtn', 'normalizeBtn', 'cropBtn',
@@ -9872,6 +9887,17 @@ function toast(msg) {
   if (!toastEl) {
     toastEl = document.createElement('div');
     toastEl.id = 'toast';
+    // The result of essentially every command in the app arrives here — 210 call sites —
+    // and until /pending 328 none of it was announced: the node carried no role and no
+    // live region, so a screen-reader user got silence for "Saved", "Key removed" and
+    // every failure. WCAG SC 4.1.3.
+    //
+    // POLITE, not assertive. #sessionNotice is the app's one role="alert" and it is spent
+    // on "you are about to lose a signature"; making 210 ordinary command results
+    // assertive would interrupt the user constantly and devalue the one notice that
+    // should. Set once, at creation, because the element is created once and reused.
+    toastEl.setAttribute('role', 'status');
+    toastEl.setAttribute('aria-live', 'polite');
     document.body.appendChild(toastEl);
   }
   toastEl.textContent = msg;
