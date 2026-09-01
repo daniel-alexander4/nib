@@ -1,17 +1,12 @@
 diff --git a/internal/p2p/l3.go b/internal/p2p/l3.go
-index 464caec..27a9ee5 100644
+index 464caec..5715629 100644
 --- a/internal/p2p/l3.go
 +++ b/internal/p2p/l3.go
-@@ -164,11 +164,7 @@ func StampCommitment(att *Attestation, r Roster, meFP string) {
+@@ -164,6 +164,7 @@ func StampCommitment(att *Attestation, r Roster, meFP string) {
  	// **It is still open on the PAGE (/pending 317, 2026-08-30).** The quote routes render
  	// `AppearanceLines()` off an attestation that never reached this function, so the visible
  	// block still reads `Signer: Nib User` while the signature beneath it names the party.
--	if lbl := order[pos].Label; lbl != "" {
--		att.Signer = lbl
--	} else {
--		att.Signer = shortFingerprint(order[pos].Fingerprint)
--	}
-+	_ = order
- }
- 
- var (
++	// An ordinary comment, added by a slice with no idea a red proof reads these lines.
+ 	if lbl := order[pos].Label; lbl != "" {
+ 		att.Signer = lbl
+ 	} else {

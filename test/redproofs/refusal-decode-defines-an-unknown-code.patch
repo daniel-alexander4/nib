@@ -1,11 +1,11 @@
 diff --git a/internal/p2p/session.go b/internal/p2p/session.go
-index 9aa9baa..7e956e9 100644
+index 83c7bc7..e725d8d 100644
 --- a/internal/p2p/session.go
 +++ b/internal/p2p/session.go
-@@ -531,6 +531,8 @@ func errorForCode(code byte) error {
- 		return ErrBlockOffThePage
- 	case refuseNoCeremonyIntent:
- 		return ErrNoCeremonyIntent
+@@ -665,6 +665,8 @@ func errorForCode(code byte) error {
+ 		return ErrCeremonyEnded
+ 	case refuseRosterMismatch:
+ 		return ErrRosterMismatch
 +	case 42:
 +		return ErrReadmeOverflow
  	}

@@ -1,28 +1,24 @@
 diff --git a/internal/ceremony/mirror.go b/internal/ceremony/mirror.go
-index f6a3075..f0c696c 100644
+index 64eaa10..77f157d 100644
 --- a/internal/ceremony/mirror.go
 +++ b/internal/ceremony/mirror.go
-@@ -107,11 +107,6 @@ func WriteMirror(root string, r Record, pdf []byte) (string, error) {
- 	// document first makes the record's presence mean "both are here": the record is the last
- 	// thing to land, so a torn write leaves a directory with no record, which ReadMirror
- 	// reports as an ordinary miss.
--	if pdf != nil {
--		if err := atomicfile.WriteDurable(filepath.Join(dir, "document.pdf"), pdf, 0o600); err != nil {
--			return "", err
--		}
--	}
- 	// 0600 on both: these are the documents of a signing in progress, and the directory is
- 	// under the user's home where the default umask would otherwise make them world-readable
- 	// on a shared machine.
-@@ -146,6 +141,11 @@ func WriteMirror(root string, r Record, pdf []byte) (string, error) {
- 	if err := atomicfile.WriteDurable(filepath.Join(dir, "record.json"), b, 0o600); err != nil {
- 		return "", err
- 	}
-+	if pdf != nil {
-+		if err := atomicfile.WriteDurable(filepath.Join(dir, "document.pdf"), pdf, 0o600); err != nil {
+@@ -154,6 +154,9 @@ func WriteMirror(root string, r Record, pdf []byte) (string, error) {
+ 		//
+ 		// Best-effort: a sidecar that is already absent is the ordinary case at hop 1, and a remove
+ 		// that fails leaves the old behaviour rather than blocking the write.
++		if err := atomicfile.WriteDurable(filepath.Join(dir, "record.json"), b, 0o600); err != nil {
 +			return "", err
 +		}
-+	}
+ 		_ = os.Remove(filepath.Join(dir, "document.sha256"))
+ 		if err := atomicfile.WriteDurable(filepath.Join(dir, "document.pdf"), pdf, 0o600); err != nil {
+ 			return "", err
+@@ -190,9 +193,6 @@ func WriteMirror(root string, r Record, pdf []byte) (string, error) {
+ 			return "", err
+ 		}
+ 	}
+-	if err := atomicfile.WriteDurable(filepath.Join(dir, "record.json"), b, 0o600); err != nil {
+-		return "", err
+-	}
  	return dir, nil
  }
  

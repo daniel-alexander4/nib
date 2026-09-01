@@ -1,17 +1,13 @@
 diff --git a/internal/server/ceremonynet.go b/internal/server/ceremonynet.go
-index 3d67b57..3f0bc88 100644
+index 86819e8..5a00e38 100644
 --- a/internal/server/ceremonynet.go
 +++ b/internal/server/ceremonynet.go
-@@ -688,12 +688,6 @@ func checkCeremonyDeadline(pdf []byte, now time.Time) error {
- 	// left" is not answerable here. Convene reserves `Hops() × ceremonyHopBudget()` up front,
- 	// which is C20's clause; refining this to the remaining hops needs the hop index and is
- 	// S05's carry route.
--	if budget := ceremonyHopBudget(); !rec.Expires.After(now.Add(budget)) {
--		return fmt.Errorf("this ceremony ends at %s, which is less than one hop (%s) away — "+
--			"starting a hop now would ask somebody to consent to a signature on a "+
--			"proceeding that has already ended by the time it completes",
--			rec.Expires.UTC().Format(time.RFC3339), budget)
--	}
- 	return nil
+@@ -781,7 +781,7 @@ func checkCeremonyDeadline(pdf []byte, now time.Time) error {
+ 	// one-hop reservation here remains sound — but the sentence above used to name the old figure,
+ 	// and a justification that cites a number the code no longer uses is the doc-vs-code shape this
+ 	// repo keeps finding.
+-	return recordOutlivesBudget(rec, now, ceremonyHopBudget())
++	return recordOutlivesBudget(rec, now, 0)
  }
  
+ // hsResult is a handshaked dial's outcome, carried on connect's dial channel so a total failure
