@@ -2859,3 +2859,31 @@ inverts the condition so the freeze never runs on that route at all — a test t
 exemption would pass against it, which is why both rows exist.
 
 `recorded` 232 → 234.
+
+## The full replay, run *(2026-08-31, sweep 22)*
+
+`./build/redproof.sh --all` over all 234 rows — the first full replay since v1.117.156, ~24 minutes.
+**227 re-proved. Seven did not**, and the useful half is which:
+
+**One was caused by that sweep and re-recorded the same hour.**
+`consent-gate-skips-the-arrival-check` patches `sessionConfirmer.Confirm`, and /pending 345 added a
+line inside the patch's own hunk. Re-recorded against the new body and re-proved green.
+
+**Six were already stale before the sweep began**, and that is a measurement rather than an
+assumption: each patch was dry-run against an export of `762e66d`, the pre-sweep HEAD, and six failed
+there too. They are filed as `/pending 348` with their files and checks. **Every one of their named
+checks still exists and still passes** — so this is not six deleted guards, it is six recorded
+defects the code has moved out from under, and only one (`mirror-record-written-first`) was already
+known to this ledger.
+
+**Two lessons worth keeping.**
+
+The first is about guessing. Two of the seven were assumed to be the sweep's doing on the reasonable
+grounds that it had edited `session.go` and `server.go`; the dry-run against the old tree said one
+was and `save-route-escapes-the-ceremony-freeze` was not. Attribution here is one command, and it is
+the difference between fixing a regression and adopting somebody else's.
+
+The second is about the gate. Nothing runs `--all` routinely, and `verify_test.go`'s count guard
+names that blind spot in its own comment — it can see a row that DISAPPEARS and not one that no
+longer re-proves. So a row goes stale silently the moment an unrelated slice touches its file, and
+five did without anybody hearing.
