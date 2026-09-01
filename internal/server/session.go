@@ -1099,6 +1099,22 @@ func (s *Server) openArrival(label string, final []byte) {
 	//
 	// `mirrorHop` survives for the INITIATING side (`handleSessionInitiate`), where there is no
 	// `ReDeliverer` and the response is the ordering C22 names.
+	// **addDoc, not addDocCapped, and the exemption is deliberate** (/pending 337, ADR-009's
+	// "a deliberate exemption is named at the site"). The argument is written out in full at
+	// addDocCapped: refusing an arrival at the cap does not decline a request, it destroys a
+	// signed document a counterparty has already done the work to produce, and a peer who has
+	// signed cannot close a tab and try again the way a user opening a ninth file can.
+	//
+	// **Its stated premise is now PARTLY FALSE and the exemption is worth re-deciding.** That
+	// argument rests on "the session path installs it and nothing writes it to disk", which was
+	// true when it was written and is not true of a CEREMONY arrival: P08.S02 moved the durable
+	// write inside `ceremonyID.Store`, before the frame, so those bytes do have another home and
+	// `PersistFailed` above is the branch for when they do not. A two-party co-sign arrival still
+	// has none. So the exemption is unarguable for one class of arrival and arguable for the
+	// other, and ADR-008's "the byte cap binds every door that grows a document" points the other
+	// way for the class that is now persisted. Left as it stands rather than narrowed here,
+	// because the wrong call destroys signed documents and the right one is a decision, not a
+	// refactor.
 	s.addDoc(&document{name: arrivalDocName(label), data: final, sig: sign.Verify(final)})
 }
 
