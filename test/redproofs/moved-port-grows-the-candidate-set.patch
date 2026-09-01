@@ -1,0 +1,14 @@
+diff --git a/internal/ceremony/gate.go b/internal/ceremony/gate.go
+index 806e9ea..73c6b7f 100644
+--- a/internal/ceremony/gate.go
++++ b/internal/ceremony/gate.go
+@@ -314,7 +314,8 @@ func (g *CandidateGate) Accept(sealed []byte, now time.Time) error {
+ 		// moves ports to displace its own working candidate is denying itself the connection.
+ 		if i, ok := g.heldOnSameHost(a); ok {
+ 			g.seen[a] = true
+-			g.addrs[i] = a
++			_ = i
++			g.addrs = append(g.addrs, a)
+ 			g.stats.MovedPort++
+ 			continue
+ 		}

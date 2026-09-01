@@ -1,0 +1,13 @@
+diff --git a/internal/ceremony/gate.go b/internal/ceremony/gate.go
+index 806e9ea..f067a20 100644
+--- a/internal/ceremony/gate.go
++++ b/internal/ceremony/gate.go
+@@ -365,7 +365,7 @@ func (g *CandidateGate) Accept(sealed []byte, now time.Time) error {
+ // should not have to reconstruct the upstream guard to know that.
+ func (g *CandidateGate) heldOnSameHost(a Endpoint) (int, bool) {
+ 	for i, h := range g.addrs {
+-		if h.Transport == a.Transport && h.Addr.Addr() == a.Addr.Addr() && h.Addr.Port() != a.Addr.Port() {
++		if h.Addr.Addr() == a.Addr.Addr() && h.Addr.Port() != a.Addr.Port() {
+ 			return i, true
+ 		}
+ 	}

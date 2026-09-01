@@ -1,0 +1,16 @@
+diff --git a/internal/ceremony/gate.go b/internal/ceremony/gate.go
+index 806e9ea..a378c3e 100644
+--- a/internal/ceremony/gate.go
++++ b/internal/ceremony/gate.go
+@@ -312,9 +312,9 @@ func (g *CandidateGate) Accept(sealed []byte, now time.Time) error {
+ 		// REPLACE rather than admit-without-charging, so `addrs` stays bounded by MaxCandidates
+ 		// and one (host, transport) has one port — which is what a party actually has. A peer that
+ 		// moves ports to displace its own working candidate is denying itself the connection.
+-		if i, ok := g.heldOnSameHost(a); ok {
++		if i, ok := g.heldOnSameHost(a); ok && false {
+ 			g.seen[a] = true
+-			g.addrs[i] = a
++			_ = i
+ 			g.stats.MovedPort++
+ 			continue
+ 		}

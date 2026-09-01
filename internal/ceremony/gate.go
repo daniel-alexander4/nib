@@ -62,6 +62,17 @@ type CandidateStats struct {
 	// victim, which is the worst case the cap does not otherwise bound. No honest
 	// publisher emits one, so non-zero here is a modified peer.
 	DroppedDuplicate uint64
+	// MovedPort is a candidate that names a HOST already held, on the same transport, at a
+	// different port — so it REPLACED the held one instead of being refused at the cap
+	// (/pending 20). It is the D15 mapping refresh arriving: `portMapper` asks for the same
+	// external port and the router may hand back a different one, and each republish re-reads
+	// the mapper's current endpoints, so the moved address arrives here on the next cycle.
+	//
+	// Counted separately from `Accepted` because it is the one admission that does not grow the
+	// set, and from `Reoffered` because the address is genuinely new. A non-zero value on a
+	// network with stable NAT is worth a second look; a non-zero value behind a carrier NAT is
+	// ordinary.
+	MovedPort uint64
 	// Reoffered is a candidate we have already SEEN in an earlier record — held, or refused
 	// for fullness. The map is `seen`, not `held`, and this is the bucket that difference
 	// buys: a re-served over-cap address is the same phenomenon as a re-served held one, and
@@ -281,6 +292,32 @@ func (g *CandidateGate) Accept(sealed []byte, now time.Time) error {
 			continue
 		}
 		inThisRecord[a] = true
+		// **A moved PORT on a host already held replaces it, and is not charged the cap
+		// (/pending 20).**
+		//
+		// D15 refreshes a port mapping while armed and a refreshed mapping can be a NEW external
+		// port. Before this, a peer whose candidates were already admitted could not get its live
+		// address in: `addrs` is append-only, the cap is on total distinct addresses, and the race
+		// spent the rest of its budget dialling an endpoint that had expired — reporting D19 cause
+		// 4 for a peer that was reachable throughout.
+		//
+		// **Neither bound this gate holds is weakened, and that is why this is not the eviction
+		// the block below refuses.** That refusal is about DISTINCT VICTIMS — "sixteen distinct
+		// victims over its life" — and a port move is the same host, so the victim count does not
+		// move. Packet VOLUME is bounded elsewhere and independently: `punchBudget` is per (hop,
+		// side) and its own doc says it "deliberately does NOT reset on candidate churn — a
+		// refreshed S07 mapping is a new candidate spending the SAME 3,000 faster, which is
+		// correct". So replacing costs no extra victim and no extra packet.
+		//
+		// REPLACE rather than admit-without-charging, so `addrs` stays bounded by MaxCandidates
+		// and one (host, transport) has one port — which is what a party actually has. A peer that
+		// moves ports to displace its own working candidate is denying itself the connection.
+		if i, ok := g.heldOnSameHost(a); ok {
+			g.seen[a] = true
+			g.addrs[i] = a
+			g.stats.MovedPort++
+			continue
+		}
 		if len(g.addrs) >= MaxCandidates {
 			// The cap is on the TOTAL distinct addresses admitted over the race, not on
 			// the live set, and it is deliberately not an eviction policy. Evicting to
@@ -311,6 +348,28 @@ func (g *CandidateGate) Accept(sealed []byte, now time.Time) error {
 		g.stats.Accepted++
 	}
 	return nil
+}
+
+// heldOnSameHost finds a held candidate with the same IP and transport as `a` but a different
+// port — the D15 mapping-refresh shape — and returns its index.
+//
+// Matched on (IP, transport) rather than IP alone because a party can legitimately hold one address
+// per transport on one host, and those are two places to dial rather than one that moved —
+// `TestOneHostOnTwoTransportsIsTwoCandidates`, which exists because a mutation pass found that
+// dropping the transport term left this whole package green.
+//
+// **The port-differs term is unreachable defence, and that is stated rather than claimed as
+// coverage.** An identical endpoint is caught upstream by `g.seen[a]` (or `inThisRecord`) and
+// counted as a re-offer, so it never arrives here; removing this term is a mutation nothing goes
+// red for. It is kept because the contract is "the same host at a DIFFERENT port", and a reader
+// should not have to reconstruct the upstream guard to know that.
+func (g *CandidateGate) heldOnSameHost(a Endpoint) (int, bool) {
+	for i, h := range g.addrs {
+		if h.Transport == a.Transport && h.Addr.Addr() == a.Addr.Addr() && h.Addr.Port() != a.Addr.Port() {
+			return i, true
+		}
+	}
+	return 0, false
 }
 
 // Candidates is the race set, in arrival order.

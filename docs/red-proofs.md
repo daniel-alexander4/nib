@@ -3076,3 +3076,40 @@ parks the scoping exists to spare.
 The lesson is narrow and worth keeping: **a mutation that turns a guard OFF is not the same as one
 that makes the guard WRONG**, and only the second proves anything. The first is indistinguishable
 from deleting the check, which is the case `EXPECT` was added to catch and which caught this.
+
+## /pending 20 — the flood cap gets room for D15's mapping refresh *(v1.117.312)*
+
+Three rows, tier 1. The item sat for four sweeps on a blocker that was wrong: *"it adds a security
+constant to a DoS bound, which DISPOSE puts on Dan's side"*. It adds no constant.
+
+**What the grill found.** `CandidateGate` refuses eviction in as many words, and its stated reason is
+DISTINCT VICTIMS — *"evicting to make room would keep the set at eight while letting the race punch
+at sixteen distinct victims over its life"*. A refreshed NAT mapping is the **same host** at a new
+port, so replacing costs no victim. And packet VOLUME is bounded separately and independently:
+`punchBudget` is per (hop, side) and its own doc says it *"deliberately does NOT reset on candidate
+churn — a refreshed S07 mapping is a new candidate spending the SAME 3,000 faster, which is
+correct"*. Both bounds hold exactly, so the fix is a replacement keyed on (IP, transport) and there
+is no number for anybody to choose.
+
+**The publish half was not a blocker either**, which two earlier passes had assumed. `publishWhenSlow`
+says *"each republish re-reads the mapper's CURRENT endpoints"* — the moved address arrives at the
+peer on the next cycle. The gate was the only thing in the way, and that comment names the item.
+
+`moved-port-refused-at-a-full-gate` is the shipped defect. `moved-port-grows-the-candidate-set` is
+the one that keeps the fix honest: the move is admitted, so every assertion about the refreshed
+mapping getting in stays green, and only a length assertion sees the set pass the cap.
+
+**`one-host-two-transports-folded-together` is a hole the mutation pass found twice.** Dropping the
+transport term from `heldOnSameHost` left the entire package green, because every endpoint here is
+built through `ep()`, which is TCP-only. The arm added to close that then put both transports on the
+**same port**, where the port-differs term shielded the transport term — so the new test was green
+under the mutation it was written for. Two transports on one host are two sockets and therefore two
+ports; that is both the realistic shape and the only fixture that exercises the rule.
+
+**One term is recorded as unreachable rather than claimed as covered.** The `port != port` clause
+cannot be reached — an identical endpoint is caught upstream by `seen` and counted as a re-offer —
+so removing it is a mutation nothing goes red for. It stays, with that written at the function,
+because the contract is "the same host at a DIFFERENT port" and a reader should not have to
+reconstruct the upstream guard to know it.
+
+`recorded` 245 → 248.
