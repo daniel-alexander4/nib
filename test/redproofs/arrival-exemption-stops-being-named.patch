@@ -1,0 +1,13 @@
+diff --git a/internal/server/session.go b/internal/server/session.go
+index a3c9f5d..318fffd 100644
+--- a/internal/server/session.go
++++ b/internal/server/session.go
+@@ -1151,7 +1151,7 @@ func (s *Server) openArrival(label string, final []byte) {
+ 	//
+ 	// `mirrorHop` survives for the INITIATING side (`handleSessionInitiate`), where there is no
+ 	// `ReDeliverer` and the response is the ordering C22 names.
+-	// **addDoc, not addDocCapped, and the exemption is deliberate** (/pending 337, ADR-009's
++	// **the exemption is deliberate** (/pending 337, ADR-009's
+ 	// "a deliberate exemption is named at the site"). The argument is written out in full at
+ 	// addDocCapped: refusing an arrival at the cap does not decline a request, it destroys a
+ 	// signed document a counterparty has already done the work to produce, and a peer who has
