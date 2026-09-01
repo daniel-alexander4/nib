@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"encoding/binary"
 	"errors"
+	"net/netip"
 	"strings"
 	"testing"
 	"time"
@@ -828,5 +829,204 @@ func TestAnOverCapAddressIsCountedOncePerAddressNotOncePerFetch(t *testing.T) {
 	// The attack indicator stayed silent: a repeat across records is not a repeat within one.
 	if st.DroppedDuplicate != 0 {
 		t.Errorf("DroppedDuplicate = %d on honest re-serves — the attack signal fired on the ordinary path", st.DroppedDuplicate)
+	}
+}
+
+// sealAddrs makes a valid record from A carrying exactly the endpoints given — the shape
+// `sealN` cannot express, because a moved port is a specific address rather than the n-th of a
+// run.
+func sealAddrs(t *testing.T, inv Invitation, certA, keyA []byte, fpA string, addrs []Endpoint) []byte {
+	t.Helper()
+	c := CandidateRecord{CeremonyID: inv.ID, Hop: testHop,
+		Expires: time.Now().Add(10 * time.Minute), Addrs: addrs}
+	if err := c.Sign(certA, keyA); err != nil {
+		t.Fatal(err)
+	}
+	rk, err := inv.RecordKey(testHop)
+	if err != nil {
+		t.Fatal(err)
+	}
+	salt, err := inv.RecordSalt(testHop, fpA)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sealed, err := c.Seal(rk, salt, testHop)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return sealed
+}
+
+// TestAMovedPortReplacesItsHostRatherThanBeingRefused is /pending 20.
+//
+// # What was wrong
+//
+// D15 refreshes a port mapping while armed, and `portMapper` asks for the SAME external port —
+// the router may hand back a different one. Each republish re-reads the mapper's current
+// endpoints, so the moved address does arrive. It arrived at a FULL gate: `addrs` is append-only,
+// the cap is on total distinct addresses admitted over the race, and there was no room. The race
+// then spent the rest of its budget dialling an endpoint that had expired and reported D19 cause 4
+// — "couldn't connect" — for a peer that was reachable throughout.
+//
+// # Why this is not the eviction the cap refuses
+//
+// The gate refuses eviction in as many words, and its reason is DISTINCT VICTIMS: "evicting to
+// make room would keep the set at eight while letting the race punch at sixteen distinct victims
+// over its life". A moved port is the SAME host, so the victim count does not move — the third arm
+// below is that claim, asserted rather than argued. Packet volume is bounded separately and
+// independently by `punchBudget`, which is per (hop, side) and whose own doc says it "deliberately
+// does NOT reset on candidate churn".
+//
+// So neither bound is weakened, which is why this needed no new constant — the reason the item sat
+// for four sweeps believing it did.
+func TestAMovedPortReplacesItsHostRatherThanBeingRefused(t *testing.T) {
+	g, inv, certA, keyA, fpA := gateFor(t)
+
+	// Fill the gate to the cap with eight distinct hosts, one of which we will move.
+	var full []Endpoint
+	for i := 0; i < MaxCandidates; i++ {
+		full = append(full, ep("93.184.216."+itoa(10+i)+":34154"))
+	}
+	if err := g.Accept(sealAddrs(t, inv, certA, keyA, fpA, full), time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if n := len(g.Candidates()); n != MaxCandidates {
+		t.Fatalf("setup: the gate holds %d candidates, want the cap of %d — it is not full, so "+
+			"nothing below is about a full gate", n, MaxCandidates)
+	}
+
+	// SETUP, and it is the arm that makes the rest mean anything: a NEW HOST is still refused.
+	// Without it, "the moved port got in" is equally true of a gate whose cap stopped working.
+	if err := g.Accept(sealAddrs(t, inv, certA, keyA, fpA,
+		[]Endpoint{ep("93.184.217.7:34154")}), time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if n := len(g.Candidates()); n != MaxCandidates {
+		t.Fatalf("a NINTH DISTINCT HOST was admitted (%d held). The cap bounds distinct victims "+
+			"and this change must not touch it — a gate that lets any address in past the cap "+
+			"is the amplification the cap exists to bound", n)
+	}
+	if g.Stats().DroppedOverCap == 0 {
+		t.Error("the ninth host was refused and nothing counted it")
+	}
+
+	// THE MOVE: the same host and transport, a different port.
+	moved := ep("93.184.216.13:41999")
+	if err := g.Accept(sealAddrs(t, inv, certA, keyA, fpA, []Endpoint{moved}), time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	held := g.Candidates()
+
+	if len(held) != MaxCandidates {
+		t.Errorf("after a port move the gate holds %d candidates, want %d — a move must REPLACE, "+
+			"not grow the set, or the cap stops bounding anything", len(held), MaxCandidates)
+	}
+	var hasNew, hasOld bool
+	for _, h := range held {
+		if h == moved {
+			hasNew = true
+		}
+		if h == ep("93.184.216.13:34154") {
+			hasOld = true
+		}
+	}
+	if !hasNew {
+		t.Error("the peer's refreshed mapping was refused at a full gate. This is /pending 20: " +
+			"the race then dials an endpoint that has expired for the rest of its budget and " +
+			"reports D19 cause 4 for a peer that was reachable throughout.")
+	}
+	if hasOld {
+		t.Error("the moved port was admitted and the DEAD one kept — the set now holds two ports " +
+			"for one host, so the move cost a slot the cap needed")
+	}
+	if g.Stats().MovedPort != 1 {
+		t.Errorf("MovedPort = %d, want 1 — the one admission that does not grow the set is "+
+			"unobservable, so nothing can tell a moving NAT from a stable one",
+			g.Stats().MovedPort)
+	}
+
+	// THE BOUND THIS CHANGE MUST NOT WEAKEN, asserted directly: distinct HOSTS never exceeds the
+	// cap, however many ports move.
+	hosts := map[string]bool{}
+	for _, h := range held {
+		hosts[h.Addr.Addr().String()] = true
+	}
+	if len(hosts) > MaxCandidates {
+		t.Errorf("the gate holds %d distinct hosts against a cap of %d — the victim count is what "+
+			"this cap bounds, and it has risen", len(hosts), MaxCandidates)
+	}
+}
+
+// TestAMovedPortIsNotADuplicateAndNotAReoffer keeps the three counters separable.
+//
+// `DroppedDuplicate` is an ATTACK SIGNAL — "no honest publisher emits one, so non-zero here is a
+// modified peer" — and `Reoffered` is the noise bucket that keeps it one. A port move is neither:
+// the address is genuinely new, and it is admitted. Folding it into either would put ordinary
+// carrier-NAT behaviour into a bucket somebody reads as hostile.
+func TestAMovedPortIsNotADuplicateAndNotAReoffer(t *testing.T) {
+	g, inv, certA, keyA, fpA := gateFor(t)
+	first := ep("93.184.216.10:34154")
+	if err := g.Accept(sealAddrs(t, inv, certA, keyA, fpA, []Endpoint{first}), time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	before := g.Stats()
+	if err := g.Accept(sealAddrs(t, inv, certA, keyA, fpA,
+		[]Endpoint{ep("93.184.216.10:41999")}), time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	after := g.Stats()
+
+	if after.MovedPort != before.MovedPort+1 {
+		t.Errorf("a port move below the cap did not count as a move (%d -> %d)",
+			before.MovedPort, after.MovedPort)
+	}
+	if after.DroppedDuplicate != before.DroppedDuplicate {
+		t.Error("a moved port counted as a DUPLICATE. That counter is an attack signal — " +
+			"\"no honest publisher emits one\" — and a refreshed NAT mapping is the most " +
+			"ordinary thing on the network")
+	}
+	if after.Reoffered != before.Reoffered {
+		t.Error("a moved port counted as a re-offer; the address is new, not re-served")
+	}
+	if after.Accepted != before.Accepted {
+		t.Error("a moved port counted as an ordinary Accept — it is the one admission that does " +
+			"not grow the set, and folding it in makes the set size unreconstructable from stats")
+	}
+}
+
+// TestOneHostOnTwoTransportsIsTwoCandidates is the second arm of the match rule, and it exists
+// because a mutation pass found the first arm alone did not cover it.
+//
+// A party can hold one address per TRANSPORT on one host — a TCP listener and a QUIC endpoint on
+// the same IP are two places to dial, not one that moved. Matching on IP and port alone folds them
+// together, so the second silently REPLACES the first and the race loses a transport it was given.
+//
+// Every other fixture in this file builds endpoints through `ep()`, which is TCP-only, so nothing
+// here could see it: dropping the transport check from `heldOnSameHost` left the whole file green.
+// That is the coverage hole this arm closes.
+func TestOneHostOnTwoTransportsIsTwoCandidates(t *testing.T) {
+	g, inv, certA, keyA, fpA := gateFor(t)
+	// **Different PORTS, and that is the whole fixture.** A first cut put both transports on one
+	// port, and the port-differs term in `heldOnSameHost` then shielded the transport term — so
+	// dropping the transport check left this test green and it proved nothing. Found by mutation.
+	// It is also the realistic shape: a TCP listener and a QUIC endpoint are two sockets.
+	tcp := Endpoint{Addr: netip.MustParseAddrPort("93.184.216.10:34154"), Transport: TransportTCP}
+	quic := Endpoint{Addr: netip.MustParseAddrPort("93.184.216.10:41000"), Transport: TransportQUIC}
+
+	if err := g.Accept(sealAddrs(t, inv, certA, keyA, fpA, []Endpoint{tcp}), time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if err := g.Accept(sealAddrs(t, inv, certA, keyA, fpA, []Endpoint{quic}), time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	held := g.Candidates()
+	if len(held) != 2 {
+		t.Fatalf("one host on two transports left %d candidate(s), want 2 — the second replaced "+
+			"the first, so the race lost a transport the peer offered", len(held))
+	}
+	if g.Stats().MovedPort != 0 {
+		t.Errorf("a second TRANSPORT on one host counted as a moved port (%d). A move is the same "+
+			"host and the same transport at a new port; two transports are two places to dial",
+			g.Stats().MovedPort)
 	}
 }
