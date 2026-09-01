@@ -121,10 +121,15 @@ func (s *Server) handlePeersPin(w http.ResponseWriter, r *http.Request) {
 	// The fingerprint is part of the measurement: this line renders as
 	// `Accepts: <label>  [<short fingerprint>]`, so a label bounded on its own would pass
 	// one that pushes the fingerprint off the block.
-	if !p2p.AcceptsFitsBlock(label, hex.EncodeToString(fp)) {
+	// **Bounded against this line's SHARE of the block, not against one line (/pending 286).**
+	// Block lines wrap now, so the question is no longer "does it fit on a line" but "does it fit
+	// in the space this line can claim" — and it is asked here rather than jointly because at pin
+	// time there is no recital yet. A label admitted here can still be refused at co-sign time by
+	// `BlockFits` when the intent beside it is long; see AcceptsLabelFits.
+	if !p2p.AcceptsLabelFits(label, hex.EncodeToString(fp)) {
 		httpError(w, http.StatusBadRequest, fmt.Sprintf(
 			"that label is too long for the signature block: %d characters, and it renders alongside the fingerprint, so at most %d fit",
-			len([]rune(label)), p2p.MaxAcceptsRunes(label, hex.EncodeToString(fp))))
+			len([]rune(label)), p2p.MaxAcceptsLabelRunes(label, hex.EncodeToString(fp))))
 		return
 	}
 	if err := v.AddPinnedPeer(fp, label); err != nil {

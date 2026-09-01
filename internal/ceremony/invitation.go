@@ -145,7 +145,7 @@ type Invitation struct {
 	// # Why the invitation carries it at all, when the record already does
 	//
 	// `internal/p2p` applies the signature and cannot import `internal/ceremony` (the cycle runs
-	// the other way — `convene.go` calls `p2p.IntentFitsBlock`), so it cannot read the record. It
+	// the other way — `convene.go` calls `p2p.BlockFits`), so it cannot read the record. It
 	// is handed a `p2p.Roster`, and `l3Roster` builds that from the INVITATION and never from the
 	// document — which is `ceremonyid.go`'s own stated S03 rule: the gate reads "the record the
 	// party verified at arm time", because a gate reading the document's own record answers its

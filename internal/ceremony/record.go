@@ -546,6 +546,12 @@ func (r Record) Verify(now time.Time) error {
 	if err := checkRosterText(r.Roster); err != nil {
 		return err
 	}
+	// The JOINT height rule (/pending 286): a record whose blocks cannot be drawn legibly is one
+	// this build would render past the floor, and Verify is where a record arriving from ANOTHER
+	// machine is judged.
+	if err := checkBlocksFit(r.Roster, r.Intent); err != nil {
+		return err
+	}
 	// The ceiling, LAST — after the signature, so a record that fails both is reported as
 	// forged rather than as over-long. A convener who signed a ten-year deadline is a
 	// misconfiguration; one who did not sign at all is an attacker, and the second sentence

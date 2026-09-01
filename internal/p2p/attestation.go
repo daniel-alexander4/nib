@@ -250,22 +250,182 @@ func (a Attestation) reason() string {
 // The capacity line is present only when the party has one — an empty capacity renders nothing,
 // so a ceremony that needs no capacities does not look misconfigured (D20's amendment).
 func (a Attestation) AppearanceLines() []string {
-	out := []string{
-		"Nib co-signing attestation",
-		fmt.Sprintf("Signer: %s", a.Signer),
-	}
+	out := []string{"Nib co-signing attestation"}
+	out = append(out, wrapBlockLine("Signer: ", a.Signer)...)
 	if a.Capacity != "" {
-		out = append(out, fmt.Sprintf("Capacity: %s", a.Capacity))
+		out = append(out, wrapBlockLine("Capacity: ", a.Capacity)...)
 	}
 	if a.RosterSize > 0 {
 		out = append(out, fmt.Sprintf("Party %d of %d", a.Position, a.RosterSize))
 	} else {
-		out = append(out, fmt.Sprintf("Accepts: %s  [%s]", a.AcceptedPeerLabel, shortFingerprint(a.AcceptedPeer)))
+		out = append(out, wrapBlockLine("Accepts: ", a.AcceptedPeerLabel+acceptsSuffix(a.AcceptedPeer))...)
 	}
-	return append(out,
-		fmt.Sprintf("Intent: %s", a.intent()),
-		fmt.Sprintf("Time: %s", a.When.UTC().Format("2006-01-02 15:04 MST")),
-	)
+	out = append(out, wrapBlockLine("Intent: ", a.intent())...)
+	return append(out, fmt.Sprintf("Time: %s", a.When.UTC().Format("2006-01-02 15:04 MST")))
+}
+
+// maxBlockLines is how many lines a signature block may render, and it is a LEGIBILITY floor
+// expressed as a line count (/pending 286, Dan 2026-09-01).
+//
+// # Why a line count is the same thing as a font size here
+//
+// The block is 280x84pt and the client sizes text at `min(lineH*0.7, 9pt)` with
+// `lineH = (height - 2*pad) / len(lines)` (`web/app.js`, renderAttestation). So the 9pt cap binds
+// through six lines and the count IS the size after that — measured, not estimated:
+//
+//	<=6 lines  9.00-8.87pt   what blocks render at today
+//	 7 lines   7.60pt        ordinary fine print
+//	 8 lines   6.65pt        small fine print  <- the floor
+//	10 lines   5.32pt        hard to read
+//	12 lines   4.43pt        not legible in print
+//
+// **Eight is Dan's call and it is the one number here that is not derivable from the code.** Every
+// other question this bound raises has a correctness answer; how small text may be on a signed
+// legal instrument does not, and the repo seats a legal-documents practitioner and a forensic
+// document examiner for exactly this class of question. Recorded rather than re-derived.
+//
+// **Existing documents are unaffected**: a block at or under six lines renders pixel-identical,
+// because the 9pt cap absorbs the difference. What changes is only what is ADMITTED — a recital
+// that needed two lines was refused outright before this and rendered nothing at all.
+const maxBlockLines = 8
+
+// wrapBlockLine renders `prefix+value` across as many block lines as it needs.
+//
+// Greedy on spaces, measured with the same `CoreWidth` the bounds use, so a wrap and a bound can
+// never disagree about what fits. Continuation lines are NOT indented: an indent costs width on
+// every line after the first, and the prefix already marks where a field begins.
+//
+// **A single word wider than the line is HARD-BROKEN rather than allowed to overflow**, which is
+// the case a greedy wrapper silently gets wrong — an unbroken 400-character token has no space to
+// break at, and a wrapper that only splits on spaces emits one line that the canvas then clips at
+// its edge. That is the exact silent truncation this whole bound exists to prevent, reintroduced
+// inside the thing meant to fix it. The rune-at-a-time fallback also guarantees termination: it
+// consumes at least one rune per iteration even when a single glyph does not fit.
+func wrapBlockLine(prefix, value string) []string {
+	full := prefix + value
+	if blockLineFits(prefix, value) {
+		return []string{full}
+	}
+	var out []string
+	rest := full
+	for rest != "" {
+		cut := longestPrefixThatFits(rest)
+		out = append(out, strings.TrimRight(rest[:cut], " "))
+		rest = strings.TrimLeft(rest[cut:], " ")
+	}
+	return out
+}
+
+// longestPrefixThatFits returns the byte length of the longest prefix of s that renders on one
+// block line, preferring to end at a space. It always returns at least one rune, so callers
+// terminate.
+func longestPrefixThatFits(s string) int {
+	rs := []rune(s)
+	// Bisection on rune count: `CoreWidth` is monotone in a prefix, the same property
+	// the deleted `MaxIntentRunes` relied on, and a linear walk here is the denial of service that
+	// function's own comment records at 77 seconds for 50,000 runes.
+	lo, hi := 1, len(rs)
+	for lo < hi {
+		mid := (lo + hi + 1) / 2
+		if mdpdf.CoreWidth(string(rs[:mid]), readmeFont, blockTextPt) <= blockTextWidth() {
+			lo = mid
+		} else {
+			hi = mid - 1
+		}
+	}
+	// Prefer a word boundary — but only one that keeps most of the line.
+	//
+	// **The half-line floor is not tidiness, it is the case that made this wrong.** A greedy
+	// "break at the last space" finds the space after the PREFIX on a long unbroken token, so
+	// `Signer: ZZZZ…` broke after `Signer:` and spent a whole line on seven characters before
+	// hard-breaking the rest. On a block whose height is the legibility budget, a wasted line is
+	// a smaller font for every other line. Below the floor the break is not worth its cost and the
+	// hard break is better.
+	if lo < len(rs) {
+		for i := lo; i*2 >= lo; i-- {
+			if rs[i-1] == ' ' {
+				return len(string(rs[:i]))
+			}
+		}
+	}
+	return len(string(rs[:lo]))
+}
+
+// BlockLineCount is how many lines this attestation's block will occupy once wrapped. It is
+// `len(AppearanceLines())` and exists so callers read the rule from the renderer rather than
+// counting fields themselves — ADR-009, one door.
+func BlockLineCount(a Attestation) int { return len(a.AppearanceLines()) }
+
+// BlockFits reports whether an attestation's block renders within `maxBlockLines`.
+//
+// **It is the JOINT bound, and that is what changed at /pending 286.** Before wrapping, each
+// user-supplied string had its own one-line ceiling and the four were independent. Once a line may
+// wrap, the recital, the capacity, the label and the Accepts line compete for ONE vertical budget:
+// a recital that fits beside a short capacity does not fit beside a long one. So the question can
+// only be asked of a whole block, and asking it per field is how two separately-legal values
+// combine into a block nobody can read.
+func BlockFits(a Attestation) bool { return BlockLineCount(a) <= maxBlockLines }
+
+// BlockOverflow describes a block that does not fit, for a refusal that tells the user what to do.
+//
+// It names the WORST field — the one taking the most lines — because "shorten something" is not an
+// instruction. Ties go to the recital, which is the field a convener can most readily rewrite and
+// the one shared by every party's block.
+//
+// **And it still quotes a number to cut to, which a joint bound might have been expected to lose.**
+// "About N characters fit" is ill-defined for the block as a whole once the fields compete, but it
+// is exactly defined for ONE field with the others held as they are — which is the question the
+// user actually has, since they are about to edit one box. `fits` is that number, bisected.
+func BlockOverflow(a Attestation) (lines, limit int, worst string, fits int) {
+	lines, limit = BlockLineCount(a), maxBlockLines
+	type field struct {
+		name string
+		n    int
+		get  func(Attestation) string
+		set  func(*Attestation, string)
+	}
+	fields := []field{
+		{"the recital", len(wrapBlockLine("Intent: ", a.intent())),
+			func(x Attestation) string { return x.Intent },
+			func(x *Attestation, v string) { x.Intent = v }},
+		{"the signer's label", len(wrapBlockLine("Signer: ", a.Signer)),
+			func(x Attestation) string { return x.Signer },
+			func(x *Attestation, v string) { x.Signer = v }},
+	}
+	if a.Capacity != "" {
+		fields = append(fields, field{"the capacity", len(wrapBlockLine("Capacity: ", a.Capacity)),
+			func(x Attestation) string { return x.Capacity },
+			func(x *Attestation, v string) { x.Capacity = v }})
+	}
+	if a.RosterSize == 0 {
+		fields = append(fields, field{"the peer label",
+			len(wrapBlockLine("Accepts: ", a.AcceptedPeerLabel+acceptsSuffix(a.AcceptedPeer))),
+			func(x Attestation) string { return x.AcceptedPeerLabel },
+			func(x *Attestation, v string) { x.AcceptedPeerLabel = v }})
+	}
+	pick := fields[0]
+	for _, f := range fields[1:] {
+		if f.n > pick.n {
+			pick = f
+		}
+	}
+	// Bisection rather than a walk, for the reason the per-field bounds recorded before they were
+	// replaced: the linear version was a denial of service on a request path, measured at 77
+	// seconds for 50,000 runes. Truncating a prefix is monotone — a shorter value never needs more
+	// lines — so the bisection is exact.
+	rs := []rune(pick.get(a))
+	lo, hi := 0, len(rs)
+	for lo < hi {
+		mid := (lo + hi + 1) / 2
+		probe := a
+		pick.set(&probe, string(rs[:mid]))
+		if BlockFits(probe) {
+			lo = mid
+		} else {
+			hi = mid - 1
+		}
+	}
+	return lines, limit, pick.name, lo
 }
 
 // SignerAttestation is one verified signer's attestation, read back from the
@@ -556,95 +716,45 @@ func blockTextWidth() float64 {
 	return (r[2] - r[0]) - 2*4
 }
 
-// IntentFitsBlock reports whether a recital renders in full on a signature block.
+// AcceptsLabelFits bounds the PINNED-PEER label, which a two-party block renders as
+// `Accepts: <label>  [<short fingerprint>]`, against the SHARE of the block that line can claim.
 //
-// # Why this is a REFUSAL and not a clamp
+// # Why this one keeps a per-field bound when the others lost theirs (/pending 286)
 //
-// `internal/server`'s cosignAttestation silently truncates the intent at 200 runes, and the
-// client's `ctx.fillText` takes no maxWidth, so anything wider than the block is silently
-// clipped at the canvas edge. Two independent silent truncations of one string — and under
-// C15 that string is the ceremony's recital, committed inside RosterHash and required to
-// appear *verbatim* on every block. A recital that renders cut in half is a document that
-// says something other than what everyone signed.
+// Everything else that reaches a block is bounded jointly by `BlockFits`, because once lines wrap
+// the fields compete for one vertical budget. This line cannot be: it is bounded at PIN time, and
+// at pin time there is no intent — the user is naming a peer, and the recital they will later type
+// does not exist yet. A joint check needs the whole block and the whole block is not knowable here.
 //
-// This repo's law is refuse-not-clamp (ErrReadmeOverflow is the precedent, and S08's finding
-// that pdfcpu CLAMPS overflow is what made its own instrument blind), so the convene door
-// refuses and the convener retypes rather than discovering it on the finished document.
+// So the bound is the line's WORST-CASE SHARE, derived from `maxBlockLines` rather than chosen: a
+// manual block spends 2 lines on fixed text (the header and `Time:`) and at least 1 each on
+// `Signer:` and `Intent:`, leaving 4 for this one. A label admitted here can therefore still be
+// refused later by `BlockFits` when the recital beside it is long — which is correct and is the
+// same two-stage shape convene already has, an early refusal where the user is typing and an
+// authoritative one where the whole block is known.
 //
-// # The limit this bound exposes, stated rather than hidden
-//
-// It is ONE line, because AppearanceLines emits one entry per line and nothing wraps the
-// recital across several. That makes the ceiling tight for a real recital.
-//
-// **The slice this used to name is CLOSED and did not do it (/pending 286).** P07.S07 shipped as
-// S07a/b/c and every bound above is its work; wrapping was not, and no remaining coordinate
-// schedules it — S09 and S10 are closed and P06 is the ceremony SURFACE, not the block renderer.
-// Pointing at S07 here was a dangling citation of exactly the kind this file warns about
-// elsewhere, so it is removed rather than repaired into a different guess.
-//
-// **What the fix costs, measured 2026-08-31 rather than estimated.** The block is 280x84pt and the
-// client sizes text at `min(lineH*0.7, 9pt)`, so the 9pt cap binds through 6 lines and only then
-// starts shrinking: 7 lines is 7.60pt, 8 is 6.65pt, 10 is 5.32pt, 12 is 4.43pt. Two consequences,
-// and both cut against how this comment used to read. Wrapping does **not** change what existing
-// blocks render as — anything at or under 6 lines is pixel-identical, and everything wider than one
-// line is refused today and so renders nothing at all. And the ceiling does not vanish, it MOVES:
-// from a per-line width to a total-lines budget with a legibility floor, which is a number somebody
-// has to choose.
-//
-// **The real obstacle is that the constraint becomes JOINT.** Each of the four bounds can be
-// answered today from its own string. Once lines wrap, the recital, the capacity, the label and the
-// Accepts line compete for one vertical budget, so `convene` must refuse a COMBINATION and tell the
-// user which field to cut — and that sentence is the design, not the wrapping.
-func IntentFitsBlock(intent string) bool { return blockLineFits("Intent: ", intent) }
-
-// CapacityFitsBlock and LabelFitsBlock are the same rule for the other two user-supplied strings
-// that reach a block — and they exist because P07.S07a is what PUT them there.
-//
-// **Before this slice the rule had one field and one door; the slice gave it three fields.** A
-// capacity and a label are convener-supplied, unbounded, and rendered by the same `ctx.fillText`
-// with no `maxWidth` — so each was a second and third silent clipping of exactly the kind
-// `IntentFitsBlock`'s own comment calls a defect. Capacity is the worse of the two: it is a claim
-// about a party's AUTHORITY ("as attorney under a power of attorney dated 3 June"), it is inside
-// the signed commitment, and half of it on the page is a document that says something other than
-// what the parties agreed.
-//
-// One measurement behind all three (ADR-009), because "a block line must fit" is one rule. Three
-// copies of `CoreWidth(...) <= blockTextWidth()` differing only in their prefix is how the prefix
-// and the geometry drift apart.
-func CapacityFitsBlock(capacity string) bool { return blockLineFits("Capacity: ", capacity) }
-
-// LabelFitsBlock bounds the party label a block renders as `Signer: <label>`.
-func LabelFitsBlock(label string) bool { return blockLineFits("Signer: ", label) }
-
-// AcceptsFitsBlock bounds the PINNED-PEER label, which a two-party block renders as
-// `Accepts: <label>  [<short fingerprint>]` (/pending 286).
-//
-// **The fourth site of a rule that had three.** Intent, Capacity and Signer were all
-// bounded through the door below and this line was not, so `POST /api/peers/pin` accepted
-// a label bounded only by the route's 64 KiB body limit — and the block then clipped it
-// silently, because the canvas draws with no `maxWidth` and nothing wraps. That is the
-// ordinary two-party co-sign path, which is the product's most-used signing flow.
-//
-// It needs its own pair rather than reusing LabelFitsBlock because this line is the only
-// one with a SUFFIX: the short fingerprint is rendered after the label and is part of the
-// width, so bounding the label alone would pass a label that then pushes the fingerprint
-// off the block. The fingerprint is fixed-width per peer, not per label, which is why it
-// is pinned during the bisection rather than bisected over.
-func AcceptsFitsBlock(label, hexFP string) bool {
-	return blockLineFits("Accepts: ", label+acceptsSuffix(hexFP))
+// The fingerprint is part of the measurement because the suffix is rendered with the label: a
+// bound on the label alone passes one that pushes the fingerprint off the block.
+func AcceptsLabelFits(label, hexFP string) bool {
+	return len(wrapBlockLine("Accepts: ", label+acceptsSuffix(hexFP))) <= maxAcceptsShare
 }
 
-// MaxAcceptsRunes is the bisection for that line — the number a refusal quotes so the user
-// knows how much to cut. Same monotonicity and the same O(log n) argument MaxIntentRunes
-// makes above, and for the same reason: this is a request path with a 64 KiB body limit,
-// so a linear walk would be quadratic work reachable without malice.
-func MaxAcceptsRunes(label, hexFP string) int {
-	suffix := acceptsSuffix(hexFP)
+// maxAcceptsShare is that derivation, written once so the refusal and the bound cannot disagree.
+const maxAcceptsShare = maxBlockLines - 2 /* header + Time */ - 1 /* Signer */ - 1 /* Intent */
+
+// MaxAcceptsLabelRunes is the longest label that fits in that share — the number a refusal quotes
+// so the user knows how much to cut.
+//
+// Bisection, not a linear walk, for the reason the deleted `MaxIntentRunes` recorded: the linear
+// version was a denial of service, measured at 77 seconds for 50,000 runes on a request path with
+// a 64 KiB body limit. The predicate is monotone in the label's length — a prefix of a fitting
+// label fits — so the bisection is exact rather than an approximation.
+func MaxAcceptsLabelRunes(label, hexFP string) int {
 	rs := []rune(label)
 	lo, hi := 0, len(rs)
 	for lo < hi {
 		mid := (lo + hi + 1) / 2
-		if blockLineFits("Accepts: ", string(rs[:mid])+suffix) {
+		if AcceptsLabelFits(string(rs[:mid]), hexFP) {
 			lo = mid
 		} else {
 			hi = mid - 1
@@ -661,46 +771,4 @@ func acceptsSuffix(hexFP string) string { return "  [" + shortFingerprint(hexFP)
 // blockLineFits is the one measurement: does `prefix+value` render in full on one block line.
 func blockLineFits(prefix, value string) bool {
 	return mdpdf.CoreWidth(prefix+value, readmeFont, blockTextPt) <= blockTextWidth()
-}
-
-// MaxIntentRunes is the longest recital that fits, measured rather than asserted — the
-// number a refusal quotes so a convener knows how much to cut.
-//
-// Measured rather than a fixed character count, because count is not width: "MMMM" and
-// "iiii" differ by nearly 3x at these metrics, so any constant is wrong for capitals or
-// wasteful for lower case.
-//
-// **Binary search, and the linear version was a denial of service.** The first draft walked
-// n down one rune at a time, calling IntentFitsBlock — a full CoreWidth over the prefix — at
-// every step. Measured on the shipped metrics: 24ms at 1,000 runes, 2.45s at 10,000, and
-// **77 seconds at 50,000**. The convene route's body limit is 1 MiB, so a convener pasting a
-// clause out of the contract into the recital field could hang one core for hours with no
-// response ever written. Quadratic work on a request path is reachable without malice, which
-// is what made it a defect rather than a slow path.
-//
-// The predicate is monotone in n — a prefix of a fitting string fits — so a bisection is
-// exact, not an approximation, and it is O(log n) calls.
-func MaxIntentRunes(intent string) int { return maxRunesOnLine("Intent: ", intent) }
-
-// MaxCapacityRunes and MaxLabelRunes are the same bisection for the two fields P07.S07a added to
-// the block. Same door, same monotonicity argument, same O(log n) cost — and the quadratic
-// version's denial of service is one this slice would otherwise have reintroduced twice, on a
-// route whose body limit is 1 MiB.
-func MaxCapacityRunes(capacity string) int { return maxRunesOnLine("Capacity: ", capacity) }
-
-// MaxLabelRunes is the same for a party label.
-func MaxLabelRunes(label string) int { return maxRunesOnLine("Signer: ", label) }
-
-func maxRunesOnLine(prefix, value string) int {
-	rs := []rune(value)
-	lo, hi := 0, len(rs) // lo always fits, hi is not yet known to
-	for lo < hi {
-		mid := (lo + hi + 1) / 2
-		if blockLineFits(prefix, string(rs[:mid])) {
-			lo = mid
-		} else {
-			hi = mid - 1
-		}
-	}
-	return lo
 }
