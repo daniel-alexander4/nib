@@ -30,8 +30,25 @@ type updateResponse struct {
 	Available   bool   `json:"updateAvailable"`
 	URL         string `json:"url,omitempty"`         // release page
 	DownloadURL string `json:"downloadUrl,omitempty"` // asset matching this OS/arch, if present
-	Managed     bool   `json:"managed"`               // installed under a system path — the asset is a .deb, not a raw binary
 }
+
+// **`Managed` was a FIELD here and is now a local (/pending 350, 2026-09-01).**
+//
+// It said whether Nib is installed under a system path — a dpkg install, so the asset is a .deb
+// rather than a raw binary — and it was consumed by `assetURL` **inside this handler, before the
+// response was written**, then serialised anyway. Named search: `managed` appears nowhere in
+// `web/app.js` or `internal/cli/`.
+//
+// So the client was handed the INPUT to a choice the server had already made. The output it
+// actually uses is `downloadUrl`, which was picked using this value; a second copy of the input
+// tells it nothing it can act on, and the file extension is right there in the URL for a client
+// that ever wants to say "this is a .deb".
+//
+// Found by the reader scan the first pass it could see this package (/pending 347), and it was in
+// `test/jsdom/published.test.mjs`'s known-unread list before that with the reasoning already
+// written out: *"a field consumed by the code that sets it has no consumer at the far end, which
+// is the whole property here."* Deleting rather than surfacing follows this repo's own precedent —
+// a reader scan has deleted two published-and-unread fields before.
 
 func (s *Server) handleUpdateCheck(w http.ResponseWriter, r *http.Request) {
 	rel, err := latestRelease()
@@ -39,7 +56,8 @@ func (s *Server) handleUpdateCheck(w http.ResponseWriter, r *http.Request) {
 		httpError(w, http.StatusBadGateway, "could not reach the update server")
 		return
 	}
-	resp := updateResponse{Current: s.version, Managed: managedInstall()}
+	resp := updateResponse{Current: s.version}
+	managed := managedInstall()
 	if rel != nil {
 		resp.Latest = strings.TrimPrefix(rel.Tag, "v")
 		// Through httpOnly too. Its own doc names BOTH fields the client navigates to —
@@ -51,7 +69,7 @@ func (s *Server) handleUpdateCheck(w http.ResponseWriter, r *http.Request) {
 		resp.URL = httpOnly(rel.URL)
 		resp.Available = versionLess(resp.Current, resp.Latest)
 		if resp.Available {
-			resp.DownloadURL = assetURL(runtime.GOOS, runtime.GOARCH, resp.Managed, rel.Assets)
+			resp.DownloadURL = assetURL(runtime.GOOS, runtime.GOARCH, managed, rel.Assets)
 		}
 	}
 	writeJSON(w, resp)

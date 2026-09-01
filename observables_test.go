@@ -245,16 +245,32 @@ var unreadKnown = map[string]string{
 	"server.conveneResponse.Warnings":      "P06: no convene surface — and this is the one to wire FIRST when it lands: it carries the sitting warning P08.S05b computes, which is the only place a convener is told their deadline is tight",
 	"server.lanHeardResponse.WindowMs":     "/pending 23: the discovery counters have a reader and no user-facing surface shows them. Same gap, same item.",
 
-	// **TWO are real and are filed rather than parked**, because parking a defect is how one gets
-	// forgotten: `sessionStatus.Diagnosis` (/pending 349) and `updateResponse.Managed`
-	// (/pending 350). They are entered here so the scan is green on a tree where they are known
-	// and tracked — remove the entry when the item closes, which is what makes the item's close
-	// visible to this file.
-	"server.sessionStatus.Diagnosis": "/pending 349: published for the waiting UI and read by nothing — the blank wait its own doc says it exists to prevent",
-	"server.diagnosisView.Cause":     "/pending 349: the same defect one level in — the D19 cause reaches no surface",
-	"server.diagnosisResponse.Cause": "/pending 349: the same defect on the standalone diagnosis route",
-	"server.lanHeardResponse.Heard":  "/pending 23: with WindowMs above — the discovery counters have a reader and no user-facing surface shows them",
-	"server.updateResponse.Managed":  "/pending 350: published and consumed only server-side, by assetURL, before it is written out",
+	// **Two were real, were filed rather than parked, and are now CLOSED** — /pending 349 (the D19
+	// diagnosis gained a reader) and /pending 350 (the field was deleted). Both entries are gone
+	// from this map, which is what an item's close is supposed to look like here; the two arms
+	// below are what make leaving one behind a failure rather than a quiet lie.
+	// **`sessionStatus.Diagnosis` and `diagnosisView.Cause` were here and are GONE — read since
+	// /pending 349 (v1.117.309).** `reflectDiagnosis` renders the summary in the wait view, puts
+	// the detail behind a disclosure per D19's presentation pin, and branches on the cause for
+	// tone. The entries are removed rather than reworded, which is what makes an item's close
+	// visible to this file — and the arm below is what makes leaving them a failure.
+	// **`diagnosisResponse.Cause` is NOT parked, and the reason is a stated limit of this scan.**
+	// It is a different shape from `diagnosisView` and carries an identically named field with an
+	// identical tag, and this scan proves only that "a NAME is mentioned in a named file" — so
+	// `d.cause` in `reflectDiagnosis`, which reads the arm-side view, satisfies both. A park here
+	// could never be enforced and would sit forever looking like coverage.
+	//
+	// The honest state, recorded where it can be acted on rather than in a map this scan cannot
+	// police: the standalone route is not called from the client at all (`grep -c "api/diagnos"
+	// web/app.js` returns 0), while its own doc says "a client (and P06's ceremony panel) reads"
+	// it. That is P06's surface, and it is /pending 268's neighbourhood rather than a field defect.
+	"server.lanHeardResponse.Heard": "/pending 23: with WindowMs above — the discovery counters have a reader and no user-facing surface shows them",
+	// **`updateResponse.Managed` was parked here and the FIELD is gone (/pending 350,
+	// v1.117.309)** — consumed by `assetURL` inside its own handler before the response was
+	// written, and read by nothing at the far end. It is a local now, so there is nothing on the
+	// wire to read. Its removal from this map was not optional: the arm below refuses a park for a
+	// field that no longer exists, because such an entry is a hole waiting for the next field of
+	// that name — and that arm is what caught this one.
 
 	// **`pdfops.SignatureWidget`, P07.S06, and it is entered here the day it is written.**
 	//
@@ -320,6 +336,13 @@ var unreadKnown = map[string]string{
 	// as a green. Deleting this line is what P07.S07 does when a signature block renders it
 	// (C19). The same limitation applies to `Record`/`Invitation` and is stated in the
 	// package doc below rather than repeated per field.
+	// **Reason corrected 2026-09-01: its own deletion condition HAS been met, and the entry stays
+	// anyway.** It said "Deleting this line is what P07.S07 does when a signature block renders
+	// it (C19)" — and P07.S07 shipped, `AppearanceLines` emits `Capacity: <capacity>`, and
+	// /pending 286 now bounds it. What has not changed is the thing this map actually asserts:
+	// the renderer is `internal/p2p`, which is not a declared reader of `ceremony.Party`, so no
+	// reader named here consumes the field. The entry is accurate about that and the old sentence
+	// was not.
 	"ceremony.Party.Capacity": "published and committed at P07.S02; the block renderer that " +
 		"displays it is P07.S07 (C19). Delete this line then.",
 }
@@ -438,6 +461,65 @@ func TestEveryPublishedObservableHasANamedReader(t *testing.T) {
 					"A produced-and-never-consumed field is not a nit — the whole point of "+
 					"publishing it is that somebody is told.", name, f, sh.file, readers)
 			}
+		}
+	}
+
+	// **An entry that has since been FIXED must be deleted, and until /pending 349 nothing said
+	// so.** `test/jsdom/published.test.mjs` has had this arm since it was written — it is what
+	// told this sweep that `sessionStatus.diagnosis` had gained a reader — and the Go side, which
+	// is the scan that covers `internal/server` at all, had only the missing-field arm below.
+	//
+	// The two failures are opposite and both matter. A park for a field that no longer EXISTS
+	// silently covers the next field given that name; a park for a field that is now READ makes
+	// the list stop describing anything, and quietly re-parks the field the day somebody deletes
+	// its reader. The second is how a closed item's fix becomes invisible.
+	{
+		var fixed []string
+		for k, why := range unreadKnown {
+			// **Scoped to parks that name a tracked item, and the scope is the honest one.** A
+			// park saying "/pending N keeps this unread" is a CLAIM ABOUT A DEFECT, and when the
+			// item closes the entry has to go or the list stops describing anything. A park
+			// saying "no product surface reports where a block landed" is a JUDGEMENT, and this
+			// arm cannot adjudicate it: the matcher is deliberately loose — it accepts a bare
+			// word in a JavaScript reader, and it accepts a mention in the shape's own defining
+			// package — so run over design parks it reports fixes that are not fixes. Measured on
+			// first run: three flagged, and two were `pdfops.SignatureWidget.Page` and
+			// `ceremony.Party.Capacity`, both correct as they stand.
+			//
+			// A loose matcher is safe in the direction the main loop uses it (a false match means
+			// "not obviously orphaned", which under-reports) and unsafe in this one, where a
+			// false match tells you to delete a legitimate entry.
+			if !strings.Contains(why, "/pending") {
+				continue
+			}
+			dot := strings.LastIndex(k, ".")
+			if dot < 0 {
+				continue
+			}
+			sh, ok := shapes[k[:dot]]
+			if !ok {
+				continue
+			}
+			f := k[dot+1:]
+			readers, ok := published[k[:dot]]
+			if !ok && strings.HasPrefix(k, "server.") {
+				readers = jsonShapeReaders
+			}
+			for _, r := range readers {
+				src := readerSrc(t, r)
+				if strings.Contains(src, "."+f) ||
+					(sh.tag[f] != "" && strings.Contains(src, "."+sh.tag[f])) ||
+					(sh.tag[f] != "" && strings.HasSuffix(r, ".js") && mentionsWord(src, sh.tag[f])) {
+					fixed = append(fixed, k)
+					break
+				}
+			}
+		}
+		sort.Strings(fixed)
+		if len(fixed) > 0 {
+			t.Errorf("these are parked in unreadKnown and now HAVE a reader — delete their "+
+				"entries, or the list stops describing anything and silently re-parks each "+
+				"field the day its reader is removed: %v", fixed)
 		}
 	}
 

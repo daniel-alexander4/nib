@@ -3019,3 +3019,47 @@ prevents) and `/pending 350` (`updateResponse.Managed`, consumed by the handler 
 out).
 
 `recorded` 239 → 241.
+
+## /pending 349 + 350 — the two unread fields the extended scan found, dispositioned *(v1.117.309)*
+
+Four rows. Both items came out of `/pending 347`'s first pass over `internal/server`, and they close
+in opposite directions: one field gained the reader it was built for, the other lost its place on
+the wire.
+
+**349 — the D19 diagnosis.** `sessionStatus.diagnosis` has been computed since P05.S11 and its own
+doc states the purpose: *"so the polling UI shows why nothing has connected yet, rather than a blank
+wait"*. Nothing read it. `reflectDiagnosis` now renders the summary in the wait view, puts the
+technical detail behind a disclosure — D19's presentation pin, stated at `diagnosisResponse` — and
+branches on `cause` for tone, because "the other person hasn't opened their side yet" is the
+ordinary early state of every ceremony arm and dressing it as a fault teaches the user to ignore the
+line that will one day say the rendezvous is unreachable. `role="status"`, never `alert`: assertive
+is reserved for the signature-loss notice, and a line that updates every 1.5 s while somebody waits
+is the last place to spend it.
+
+`diagnosis-outlives-its-reason` is the discriminating row of that pair. The sentence appears, the
+disclosure works, every assertion about presentation passes — and the line never goes away, because
+the reader took `reflectNotice`'s never-clear rule by analogy. **The analogy is the defect**: a
+notice is a sticky record of something that already failed, a diagnosis is live state, and a live
+explanation left up after its condition passes is worse than none.
+
+**A note on how it stayed unread for so long.** It was parked in
+`test/jsdom/published.test.mjs`'s known-unread list with the reason *"rendered by P06 (the ceremony
+panel), unbuilt"* — and that reason was **wrong rather than stale**. The surface the field's own doc
+names, "the polling UI", has existed since P05.S11, the slice that added the field. Nothing was
+waiting on P06. A plausible phase to blame is what kept anyone from looking.
+
+**350 — `updateResponse.Managed`.** Consumed by `assetURL` inside its own handler, before the
+response is written, and read by nothing at the far end. It is a local now. The JS scan had this one
+parked too, with the argument already written out — *"a field consumed by the code that sets it has
+no consumer at the far end, which is the whole property here"* — sitting as a park rather than as a
+fix. `update-republishes-the-managed-flag` is also the proof that the Go scan now covers this
+package: before /pending 347, re-adding a published-and-unread field to `internal/server` failed
+nothing on the Go side.
+
+**`fixed-park-is-never-noticed` closes the gap that let both sit.** The Go scan had only the
+missing-field arm; the JS one has had the was-it-fixed arm since it was written, and it is what told
+this sweep that `diagnosis` had gained a reader. Scoped to `/pending`-referencing entries, because
+the matcher is deliberately loose and a loose matcher is safe in the direction the main loop uses it
+and unsafe in this one — unscoped it flagged three, and two were correct as they stood.
+
+`recorded` 241 → 245.

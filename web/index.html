@@ -1359,6 +1359,22 @@
       <div id="srvWait" hidden>
         <p>Listening on <strong id="srvWaitAddr"></strong> for <strong id="srvWaitPeer"></strong>…</p>
         <p class="libhint">Keep this open. The session ends on its own if no one connects within a few minutes.</p>
+        <!-- WHY nothing has connected yet (/pending 349). The server has computed this since
+             P05.S11 and published it as `status.diagnosis`; nothing read it, so a waiting user
+             got the blank wait the field's own doc says it exists to prevent.
+
+             `role="status"` and not `alert`: assertive is reserved for #sessionNotice's "you are
+             about to lose a signature" (see #staleBanner's note), and a line that updates every
+             1.5 s while somebody waits is the last place to spend it.
+
+             Summary visible, detail behind a disclosure — D19's presentation pin, stated at
+             `diagnosisResponse`: "a plain-language summary first and a technical detail behind a
+             disclosure". -->
+        <p id="srvWaitWhy" class="libhint" role="status" aria-live="polite" hidden></p>
+        <details id="srvWaitWhyMore" hidden>
+          <summary class="libhint">Technical detail</summary>
+          <p id="srvWaitWhyDetail" class="libhint"></p>
+        </details>
         <div class="sigbtns">
           <span class="grow"></span>
           <button id="srvDisarm">Stop waiting</button>

@@ -1,0 +1,14 @@
+diff --git a/web/app.js b/web/app.js
+index a5c1590..33948ec 100644
+--- a/web/app.js
++++ b/web/app.js
+@@ -1183,9 +1183,6 @@ let diagnosisShownFor = '';
+ function reflectDiagnosis(d) {
+   if (!els.srvWaitWhy) return;
+   if (!d || !d.summary) {
+-    els.srvWaitWhy.hidden = true;
+-    els.srvWaitWhyMore.hidden = true;
+-    diagnosisShownFor = '';
+     return;
+   }
+   // Keyed on the rendered text, because this polls every 1.5 s and `aria-live` would otherwise
