@@ -1,0 +1,13 @@
+diff --git a/internal/server/session.go b/internal/server/session.go
+index 61035ec..5f7b756 100644
+--- a/internal/server/session.go
++++ b/internal/server/session.go
+@@ -262,7 +262,7 @@ func (se *session) noteArrivalRefusal(err error) {
+ 	if err == nil {
+ 		return
+ 	}
+-	if errors.Is(err, p2p.ErrCeremonyEnded) {
++	if true {
+ 		se.noteFailure("ceremony-ended",
+ 			"The proceeding you are waiting for has ended, so this machine refused the document.",
+ 			"A party tried to hand you a document for a ceremony whose deadline has passed, and "+

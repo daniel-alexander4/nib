@@ -1120,8 +1120,11 @@ function reflectArmed(on) {
 //
 // **It exists because the fields were published and unread, and `published.test.mjs` said so.**
 // A status field with no reader means the user is never told, and here that is the whole point of
-// the field: `noteFailure`'s two producers are "signed but not saved" and "the hop never reached
-// disk", each of which asks the user to do something before they close Nib.
+// the field. **The producer list was "two" and is now five** (/pending 345/346): "signed but not
+// saved", "received but not saved", "the hop never reached disk", "the proceeding has ended" and
+// "this arrival was refused". The first three ask the user to do something before they close Nib;
+// the last two tell them why a ceremony they are armed for is not progressing, which is the other
+// thing a sticky notice is for — a background arm has no response to say it in.
 //
 // Rendered, not toasted, for the reason `noticeView`'s own doc gives: the disarm IS the symptom,
 // so a message that goes away with the session is a message nobody reads. It persists until the

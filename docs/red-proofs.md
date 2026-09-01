@@ -2749,3 +2749,42 @@ acquired its second arm path exactly that way ("two arm paths living in two func
 count S05d and S05e each found").
 
 `recorded` 224 → 226.
+
+## /pending 345 + 346 — the two failure notices nothing produced, and one nothing observed *(v1.117.302)*
+
+Four rows, tier 1, from two items that turned out to be the same shape one door apart: a
+`noteFailure` kind whose PRODUCER was never driven.
+
+**345 was an inventory row claiming a kind that did not exist.** P08.S04a's seam inventory carries
+`notice.what == "ceremony-ended"`; a named search returned nothing, and only three kinds were built.
+The row was **right and the kind was owed** — its own zero-meaning says so: *"the peer is told and
+the local user is not"*. `checkArrival` has two callers, and only one of them can answer a user.
+`handleSessionInitiate` is an HTTP handler and returns 409; `sessionConfirmer.Confirm` runs on the
+receiving side in a background arm goroutine with no response to write into. S04a gave the refusal a
+named wire code, so from that slice onward the peer got a diagnosis and the local user got silence
+while going on waiting for a proceeding their own machine had refused.
+
+`refused-arrival-tells-nobody-locally` restores that state exactly, and every existing refusal test
+stays green because the peer's half is untouched. `every-refusal-reads-as-ceremony-ended` is the
+discriminating one: a notice IS produced, at the right moment, with a sentence — the wrong sentence.
+The two kinds are two ACTIONS, so collapsing them tells a party whose counterparty pasted the wrong
+document that their ceremony is finished.
+
+**346 was the mirror image: a kind that existed and whose producer nothing drove.** Of the three,
+`hop-not-mirrored` is the one where the user has SIGNED and kept nothing — the state D24 exists to
+prevent. Its surface test called `noteFailure` directly and `l3_test.go` drove `mirrorHop`'s success
+path only, so the notice was asserted about a call the product might never make. Its sibling
+`received-not-saved` got a real producer-side reader at P08.S05a; this one did not.
+
+`hop-not-mirrored-only-logs` puts it back to a `log.Printf` into a stderr a double-clicked launch
+sends nowhere. `ordinary-cosign-raises-the-mirror-notice` guards the other direction and is the
+worse failure: a sticky warning on every ordinary co-sign trains the user to dismiss the one that
+means something.
+
+**A fixture measurement worth keeping.** Driving the ended case needs a record that has genuinely
+expired, and `Expires: time.Now().Add(-time.Minute)` is REFUSED — not by the clock you would expect.
+`Record.Verify`'s only comparison is a future ceiling, so it says nothing; `Convene` refuses on its
+hop-plus-delivery reservation (P08.S05b). `convenedExpiring` therefore convenes at a `now` three
+hours ago, which is possible only because `Convene` takes `now` as an argument.
+
+`recorded` 226 → 230.
