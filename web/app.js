@@ -139,6 +139,8 @@ const els = {
   srvSelfFp: $('srvSelfFp'), srvSelfName: $('srvSelfName'), srvSelfCopy: $('srvSelfCopy'),
   srvCancel: $('srvCancel'), srvArmGo: $('srvArmGo'),
   srvWaitAddr: $('srvWaitAddr'), srvWaitPeer: $('srvWaitPeer'), srvDisarm: $('srvDisarm'),
+  srvWaitWhy: $('srvWaitWhy'), srvWaitWhyMore: $('srvWaitWhyMore'),
+  srvWaitWhyDetail: $('srvWaitWhyDetail'),
   srvPeerLabel: $('srvPeerLabel'), srvPeerFp: $('srvPeerFp'), srvPeerCopy: $('srvPeerCopy'),
   srvReasonCap: $('srvReasonCap'), srvPeerReason: $('srvPeerReason'), srvPreview: $('srvPreview'),
   srvSigners: $('srvSigners'),
@@ -1153,6 +1155,54 @@ function reflectNotice(n) {
   els.sessionNotice.hidden = false;
 }
 
+// reflectDiagnosis is the READER for sessionStatus.diagnosis — D19's live "why has nobody
+// connected yet", computed since P05.S11 and consumed by nothing until /pending 349.
+//
+// **The field states its own purpose and the gap was exactly that sentence**: "so the polling UI
+// shows why nothing has connected yet, RATHER THAN A BLANK WAIT". A named search found `diagnosis`
+// in this file once, inside a comment. So the user watching an arm got the blank wait for the whole
+// life of the feature — `reflectNotice`'s shape (published at P08.S08, read thirteen versions
+// later), one layer over.
+//
+// # It CLEARS on absence, where reflectNotice deliberately does not
+//
+// A notice is a STICKY record of something that already failed; clearing it on a poll that happens
+// not to carry one would erase a failure the user has not read. A diagnosis is LIVE STATE — the
+// answer to "why is nothing happening *now*" — so when the server stops sending one, the reason has
+// stopped applying and leaving the old sentence on screen would be a stale explanation of a
+// condition that has passed. Opposite fields, opposite rules; the difference is why this is not
+// folded into reflectNotice.
+//
+// # `cause` selects the TONE, and that is what it is for
+//
+// It is the machine key, and printing it would put `peer-not-started` in front of somebody. What it
+// decides is whether this reads as a PROBLEM: "the other side hasn't started" is the ordinary state
+// of a ceremony arm whose counterparty is still reading their email, and dressing it as a fault
+// teaches the user to ignore the line that will one day say the rendezvous is unreachable.
+let diagnosisShownFor = '';
+function reflectDiagnosis(d) {
+  if (!els.srvWaitWhy) return;
+  if (!d || !d.summary) {
+    els.srvWaitWhy.hidden = true;
+    els.srvWaitWhyMore.hidden = true;
+    diagnosisShownFor = '';
+    return;
+  }
+  // Keyed on the rendered text, because this polls every 1.5 s and `aria-live` would otherwise
+  // re-announce an unchanged sentence to a screen reader forever. `reflectNotice` keys on a
+  // timestamp; a diagnosis carries none, and the text is what the user would notice changing.
+  const key = d.cause + '\u0000' + d.summary + '\u0000' + (d.detail || '');
+  if (key === diagnosisShownFor) return;
+  diagnosisShownFor = key;
+  els.srvWaitWhy.textContent = d.summary;
+  // Benign while waiting: a counterparty who has not started yet is the expected early state of
+  // every ceremony arm, not a fault.
+  els.srvWaitWhy.dataset.cause = d.cause || '';
+  els.srvWaitWhyDetail.textContent = d.detail || '';
+  els.srvWaitWhyMore.hidden = !d.detail;
+  els.srvWaitWhy.hidden = false;
+}
+
 let recvPoll = 0; // token; bump to invalidate any in-flight poll or preview render
 let recvStage = 'arm'; // arm | wait | consent | applying | declining
 let recvMode = 'cosign'; // cosign | receive — receive saves a one-way transfer, no signing
@@ -1305,6 +1355,7 @@ async function pollRecv(token) {
   if (token !== recvPoll) return;
   reflectArmed(!!st.armed); // the server can disarm on its own (a timeout), and then so does this
   reflectNotice(st.notice);
+  reflectDiagnosis(st.diagnosis);
   // `until` is when this arm gives up. Read here so the indicator says how long is left rather
   // than only that something is armed — which is what the field was added for (C05): a five-minute
   // manual bound and a thirty-day ceremony bound are indistinguishable from the OUTCOME and

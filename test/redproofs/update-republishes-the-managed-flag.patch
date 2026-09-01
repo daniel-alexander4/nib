@@ -1,0 +1,12 @@
+diff --git a/internal/server/update.go b/internal/server/update.go
+index 39340e6..eb93774 100644
+--- a/internal/server/update.go
++++ b/internal/server/update.go
+@@ -30,6 +30,7 @@ type updateResponse struct {
+ 	Available   bool   `json:"updateAvailable"`
+ 	URL         string `json:"url,omitempty"`         // release page
+ 	DownloadURL string `json:"downloadUrl,omitempty"` // asset matching this OS/arch, if present
++	Managed     bool   `json:"managed"`
+ }
+ 
+ // **`Managed` was a FIELD here and is now a local (/pending 350, 2026-09-01).**

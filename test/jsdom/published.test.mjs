@@ -199,11 +199,18 @@ const EXCLUDED = {
 // one gets fixed; a NEW unread field cannot be parked here without someone writing a
 // line, which is the intended cost.
 const UNREAD_KNOWN = {
-  'updateResponse.managed': 'read in Go by assetURL (internal/server/update.go) BEFORE serialization, to pick a .deb over a raw binary. It is on the wire for no client that wants it. Not counted as read: a field consumed by the code that sets it has no consumer at the far end, which is the whole property here.',
+  // **`updateResponse.managed` was here and the FIELD is gone (/pending 350, v1.117.309).** This
+  // entry had the argument already written — "a field consumed by the code that sets it has no
+  // consumer at the far end, which is the whole property here" — and it sat as a park rather than
+  // as a fix. It is now a local in the handler, so there is nothing on the wire to read.
   'imageMeta.mime': 'the image library lists id/name/builtin and the client shows an <img src="/api/images/{id}">, which needs no mime. Informational in a listing API; harmless, and named so it is a decision rather than an oversight.',
-  // sessionStatus.diagnosis stays HERE rather than in deferredFields: it is a single field on a
-  // shape the client does render, which is exactly what this list is for.
-  'sessionStatus.diagnosis': 'P05.S11 arm-side D19 diagnosis; rendered by P06 (the ceremony panel), unbuilt.',
+  // **`sessionStatus.diagnosis` was here and is GONE — read since /pending 349 (v1.117.309).**
+  //
+  // Its entry read "rendered by P06 (the ceremony panel), unbuilt", and that reason was wrong
+  // rather than merely stale: the surface the field's own doc names — "the polling UI" — has
+  // existed since P05.S11, which is the slice that added the field. Nothing was waiting on P06;
+  // the reader was simply never written, and a plausible phase to blame is what kept anyone from
+  // noticing for as long as it did.
 };
 
 // ── The scan ─────────────────────────────────────────────────────────────────
