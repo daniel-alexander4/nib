@@ -4,10 +4,12 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"strings"
 
+	"nib/internal/p2p"
 	"nib/internal/pairing"
 	"nib/internal/sign"
 	"nib/internal/vault"
@@ -108,7 +110,24 @@ func (s *Server) handlePeersPin(w http.ResponseWriter, r *http.Request) {
 		httpError(w, http.StatusBadRequest, "not a valid fingerprint (expected 64 hex characters)")
 		return
 	}
-	if err := v.AddPinnedPeer(fp, strings.TrimSpace(req.Label)); err != nil {
+	label := strings.TrimSpace(req.Label)
+	// **The rule's fourth site** (/pending 286). Intent, Capacity and Signer are all
+	// bounded by p2p's one block-width door; this label was not, so the only limit on it
+	// was the 64 KiB body read above — and the signature block then clipped it silently,
+	// because the canvas draws each line with no maxWidth and nothing wraps. Refused here,
+	// at the door where the user typed it, rather than discovered at signing time on a
+	// block that is already in the document.
+	//
+	// The fingerprint is part of the measurement: this line renders as
+	// `Accepts: <label>  [<short fingerprint>]`, so a label bounded on its own would pass
+	// one that pushes the fingerprint off the block.
+	if !p2p.AcceptsFitsBlock(label, hex.EncodeToString(fp)) {
+		httpError(w, http.StatusBadRequest, fmt.Sprintf(
+			"that label is too long for the signature block: %d characters, and it renders alongside the fingerprint, so at most %d fit",
+			len([]rune(label)), p2p.MaxAcceptsRunes(label, hex.EncodeToString(fp))))
+		return
+	}
+	if err := v.AddPinnedPeer(fp, label); err != nil {
 		httpError(w, http.StatusInternalServerError, "could not pin peer")
 		return
 	}
