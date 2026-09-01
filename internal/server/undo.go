@@ -513,7 +513,19 @@ func ceremonyFreeze(docBytes []byte) error {
 		// attachment would strand a user with no way out — D34's self-healing rule.
 		return nil
 	}
-	return fmt.Errorf("%w: it belongs to ceremony %s, and editing it now would change the "+
-		"document every other party was invited to sign. Their copies would stop matching "+
-		"this one", ErrCeremonyFrozen, rec.ID)
+	// **The refusal describes the RULE, not one caller's act** (/pending 341). It used to say
+	// "editing it now would change the document every other party was invited to sign" — true
+	// at the two mutation doors and FALSE at the third caller, handleSave, where the user
+	// pressed Save and edited nothing. A refusal that misnames what the user just did reads as
+	// a bug in Nib rather than a rule about the ceremony.
+	//
+	// **And it now says where the document IS.** The commit doors mutate memory only, so a
+	// convened document's bytes reach disk at exactly one place — the mirror — and the file in
+	// the user's own folder stays the pre-ceremony draft. Refusing without naming the mirror
+	// leaves them with a document they cannot save and no account of where the real one went.
+	// The path is the documented layout rather than a resolved root: `MirrorDir` needs the
+	// vault root, which this function does not have and should not take for one sentence.
+	return fmt.Errorf("%w: it belongs to ceremony %s, and the other parties were invited to "+
+		"sign this exact document — so Nib will not write different bytes over it. The "+
+		"ceremony's own copy is at ~/nib/ceremonies/%s/document.pdf", ErrCeremonyFrozen, rec.ID, rec.ID)
 }
