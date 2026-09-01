@@ -229,6 +229,53 @@ func (se *session) noteFailure(what, summary, detail string) {
 	se.notice = &noticeView{What: what, Summary: summary, Detail: detail, At: time.Now()}
 }
 
+// noteArrivalRefusal tells the user on THIS machine that an arrival was refused at the gate
+// (/pending 345, P08.S04a's inventory row P5).
+//
+// # Why a refusal needs a notice at all
+//
+// `checkArrival` has two callers and they are not alike. `handleSessionInitiate` is an HTTP
+// handler: it answers 409 and its user reads the refusal. `sessionConfirmer.Confirm` runs on the
+// RECEIVING side, inside a background arm goroutine with no response to write into — so since
+// P08.S04a gave the refusal a named wire code, the PEER has been told and the local user has not.
+// S04a's own seam inventory carries that as a row, with the zero-meaning stated in as many words:
+// *"the peer is told and the local user is not"*. The row named a `noteFailure` kind
+// `"ceremony-ended"` that a named search found nowhere in the tree; this is that kind, owed rather
+// than mistaken.
+//
+// # Two kinds, and the split is behavioural
+//
+// `ceremony-ended` means the PROCEEDING is over: the user is waiting for something that cannot
+// happen, and the useful thing to tell them is to stop. Every other refusal is about THIS arrival —
+// the wrong document, an unreadable record, a roster that does not match — and the proceeding they
+// are armed for is still running, so the arm is worth holding. `what` exists to be branched on, and
+// that is the branch; splitting further would mint keys nothing distinguishes.
+//
+// # It does NOT disarm, deliberately
+//
+// An ended ceremony leaves the arm running out its window, which is dead weight. Disarming on this
+// signal was declined: the comparison is against THIS machine's clock, and a clock that is fast —
+// or corrected by NTP mid-arm — would end a live ceremony on the strength of the one reading that
+// is wrong. Telling the user costs nothing if the clock is wrong; disarming costs them the
+// ceremony. The notice names the deadline so they can see which it was.
+func (se *session) noteArrivalRefusal(err error) {
+	if err == nil {
+		return
+	}
+	if errors.Is(err, p2p.ErrCeremonyEnded) {
+		se.noteFailure("ceremony-ended",
+			"The proceeding you are waiting for has ended, so this machine refused the document.",
+			"A party tried to hand you a document for a ceremony whose deadline has passed, and "+
+				"nothing was signed. If the deadline is wrong, check this machine's clock — the "+
+				"comparison is against it. Reason: "+err.Error())
+		return
+	}
+	se.noteFailure("arrival-refused",
+		"A document arrived for this ceremony and was refused, so nothing was signed.",
+		"You are still armed and the proceeding is not over; what arrived is not the document "+
+			"this invitation describes. Reason: "+err.Error())
+}
+
 func (se *session) setReceived(r *receivedInfo) {
 	se.mu.Lock()
 	se.received = r
@@ -512,6 +559,11 @@ func (sc sessionConfirmer) Confirm(peer p2p.SignerAttestation, doc []byte) (bool
 	// arm. The load-bearing half is the ordering against `setPending` above.
 	if sc.cer != nil {
 		if err := sc.cer.checkArrival(doc, time.Now()); err != nil {
+			// **The local half of the refusal (/pending 345).** The error below reaches the PEER
+			// as a named wire code; this arm has no response to write into, so without this line
+			// the user on this machine sees nothing and goes on waiting for a proceeding their
+			// own build has just declared over.
+			sc.s.sess.noteArrivalRefusal(err)
 			return false, "", nil, err
 		}
 	}

@@ -254,6 +254,26 @@ func TestTheArrivalCheckRefusesADocumentTheInvitationDoesNotDescribe(t *testing.
 // the counterparty's invitation — the two artifacts that are supposed to agree.
 func convenedFor(t *testing.T) (doc []byte, invitation string) {
 	t.Helper()
+	return convenedExpiring(t, 48*time.Hour)
+}
+
+// convenedExpiring is convenedFor with the deadline as a parameter, so a test can hand the arrival
+// gate a proceeding that is genuinely OVER (/pending 345).
+//
+// **It convenes in the PAST rather than convening an expired ceremony, and the difference is a
+// measurement.** The obvious shape — `Expires: time.Now().Add(-time.Minute)` — is REFUSED, and not
+// by the clock you would expect: `Record.Verify`'s only comparison is a future ceiling
+// (`Expires.After(now + MaxCeremonyLife)`), so nothing there objects, but `Convene` reserves a hop
+// budget and a delivery round and answers *"1 hop need about 29m20s to sign and about 29m20s to
+// deliver afterwards — 58m40s in all"* (P08.S05b). So the ceremony is convened at a `now` three
+// hours ago, where that reservation is satisfied, and its deadline still lands wherever `in` puts
+// it relative to the real clock. `Convene` taking `now` as an argument is what makes this possible
+// at all.
+func convenedExpiring(t *testing.T, in time.Duration) (doc []byte, invitation string) {
+	t.Helper()
+	// Far enough back that the hop-plus-delivery reservation is satisfied for any `in` a test is
+	// likely to want, and well inside MaxCeremonyLife so the future ceiling is untouched.
+	convenedAt := time.Now().Add(-3 * time.Hour)
 	cert, key, err := sign.GenerateIdentity("Convener")
 	if err != nil {
 		t.Fatal(err)
@@ -273,11 +293,11 @@ func convenedFor(t *testing.T) (doc []byte, invitation string) {
 			{Fingerprint: other, Label: "A", Signs: true},
 		},
 		Intent:         "We agree to co-sign the lease",
-		Expires:        time.Now().Add(48 * time.Hour),
+		Expires:        time.Now().Add(in),
 		HopBudget:      ceremonyHopBudget(),
 		DeliveryBudget: ceremonyDeliveryLegBudget(),
 		ConvenerSigns:  true,
-	}, cert, key, time.Now())
+	}, cert, key, convenedAt)
 	if err != nil {
 		t.Fatal(err)
 	}

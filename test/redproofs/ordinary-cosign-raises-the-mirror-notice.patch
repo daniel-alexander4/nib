@@ -1,0 +1,14 @@
+diff --git a/internal/server/ceremonyid.go b/internal/server/ceremonyid.go
+index 157a69d..07ca0b0 100644
+--- a/internal/server/ceremonyid.go
++++ b/internal/server/ceremonyid.go
+@@ -791,7 +791,8 @@ func (s *Server) mirrorHop(final []byte) {
+ 	}
+ 	rec, err := ceremony.Extract(final)
+ 	if errors.Is(err, ceremony.ErrNoRecord) {
+-		return // an ordinary co-sign: no ceremony, nothing to mirror
++		s.sess.noteFailure("hop-not-mirrored", "You signed, but this machine could not keep its own copy of the document.", "nothing under ~/nib/ceremonies")
++		return
+ 	}
+ 	if err != nil {
+ 		log.Printf("a completed hop carries a ceremony record that cannot be read, so nothing "+
