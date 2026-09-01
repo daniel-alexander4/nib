@@ -1,0 +1,29 @@
+diff --git a/internal/p2p/session.go b/internal/p2p/session.go
+index 83c7bc7..683bb61 100644
+--- a/internal/p2p/session.go
++++ b/internal/p2p/session.go
+@@ -404,6 +404,11 @@ func Receive(ch Channel, myCertPEM, myKeyPEM []byte, peerLabel string, c Confirm
+ 	if err := writeFrame(conn, final); err != nil {
+ 		return nil, fmt.Errorf("send co-signed document: %w", err)
+ 	}
++	if rd != nil {
++		if serr := rd.Store(inbound, final); serr != nil {
++			persistErr = &persistError{err: serr}
++		}
++	}
+ 	// The document is with the peer. If this machine could not keep it, that is now the caller's to
+ 	// report — and `final` is returned alongside, because the bytes are good and the caller still
+ 	// wants to open them.
+@@ -1050,12 +1055,6 @@ func coSignExchange(myCertPEM, myKeyPEM, peerFP []byte, peerLabel string, inboun
+ 	// `Receive` writes the co-signed document at its own next statement but one, so a Store that
+ 	// reaches disk here is a Store that reached disk before anything went out. The implementation
+ 	// does the durable half outside its own mutex — see `ceremonyID.Store`.
+-	if rd != nil {
+-		if err := rd.Store(inbound, final); err != nil {
+-			// Not returned: the signature exists and the peer is owed it. The caller reports it.
+-			return final, &persistError{err: err}
+-		}
+-	}
+ 	return final, nil
+ }
+ 
