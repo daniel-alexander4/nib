@@ -1,11 +1,9 @@
-diff --git a/internal/p2p/session.go b/internal/p2p/session.go
-index 83c7bc7..e725d8d 100644
 --- a/internal/p2p/session.go
 +++ b/internal/p2p/session.go
-@@ -665,6 +665,8 @@ func errorForCode(code byte) error {
- 		return ErrCeremonyEnded
- 	case refuseRosterMismatch:
+@@ -701,6 +701,8 @@
  		return ErrRosterMismatch
+ 	case refuseDocumentSubstituted:
+ 		return ErrDocumentSubstituted
 +	case 42:
 +		return ErrReadmeOverflow
  	}

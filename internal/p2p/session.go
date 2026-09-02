@@ -507,6 +507,13 @@ const (
 	// the same defect.
 	refuseCeremonyEnded  = 13
 	refuseRosterMismatch = 14
+
+	// 15 is the arrival gate's THIRD refusal (P08.S03, C04): the document does not hash to the
+	// record it carries. It is minted with the check rather than after it, because the check's
+	// whole subject is a sender that skipped its own copy of the gate — so this refusal crosses
+	// the wire exactly on the attacker's path and nowhere else, and a codeless refusal there is a
+	// bare EOF rendered as a 502 with a D19 NETWORK cause, inviting the retry a refusal must not.
+	refuseDocumentSubstituted = 15
 )
 
 // ErrCeremonyEnded reports that the proceeding this document belongs to is over — its deadline has
@@ -525,6 +532,15 @@ var ErrCeremonyEnded = errors.New("this ceremony's deadline has passed, so the p
 // this refusal has reached the initiator as bare EOF since P07 — rendered as a 502 with a D19
 // NETWORK cause, for a peer that connected and refused.
 var ErrRosterMismatch = errors.New("this document's ceremony record is not the one this invitation commits to")
+
+// ErrDocumentSubstituted reports a document that carries a valid ceremony record it does not match:
+// the record verifies, the roster commitment is right, and the BYTES are somebody else's.
+//
+// **Its own sentinel and not a shade of ErrRosterMismatch**, because the two want opposite actions.
+// A roster mismatch says the invitation is for a different proceeding — check which ceremony you
+// meant. This says the proceeding is right and the document is not, which is a substitution and
+// wants nobody retrying anything until the two parties have compared what they are looking at.
+var ErrDocumentSubstituted = errors.New("this document does not match the ceremony record it carries")
 
 // ErrCannotReadOwnRecord reports that this machine could not determine whether it had already
 // signed the document being offered (/pending 320).
@@ -646,6 +662,8 @@ func refusalCode(err error) byte {
 		return refuseCeremonyEnded
 	case errors.Is(err, ErrRosterMismatch):
 		return refuseRosterMismatch
+	case errors.Is(err, ErrDocumentSubstituted):
+		return refuseDocumentSubstituted
 	}
 	return 0
 }
@@ -681,6 +699,8 @@ func errorForCode(code byte) error {
 		return ErrCeremonyEnded
 	case refuseRosterMismatch:
 		return ErrRosterMismatch
+	case refuseDocumentSubstituted:
+		return ErrDocumentSubstituted
 	}
 	return fmt.Errorf("%w (code %d)", ErrRefusedUnknown, code)
 }

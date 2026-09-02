@@ -52,20 +52,21 @@ func TestTheRefusalEnumerationIsDerivedFromSource(t *testing.T) {
 	// of silently emptying its population — the failure `listenercore_test.go` guards against with
 	// its discriminator.
 	wirePin := map[string]int{
-		"refuseNotYourTurn":        refuseNotYourTurn,
-		"refuseNotInRoster":        refuseNotInRoster,
-		"refusePrefixMismatch":     refusePrefixMismatch,
-		"refusePrefixUnproven":     refusePrefixUnproven,
-		"refuseProceedingMismatch": refuseProceedingMismatch,
-		"refuseCeremonyComplete":   refuseCeremonyComplete,
-		"refuseNotConnectedPeer":   refuseNotConnectedPeer,
-		"refusePeerDoesNotAccept":  refusePeerDoesNotAccept,
-		"refusePriorSignerCount":   refusePriorSignerCount,
-		"refuseNoSignaturePages":   refuseNoSignaturePages,
-		"refuseBlockOffThePage":    refuseBlockOffThePage,
-		"refuseNoCeremonyIntent":   refuseNoCeremonyIntent,
-		"refuseCeremonyEnded":      refuseCeremonyEnded,
-		"refuseRosterMismatch":     refuseRosterMismatch,
+		"refuseNotYourTurn":         refuseNotYourTurn,
+		"refuseNotInRoster":         refuseNotInRoster,
+		"refusePrefixMismatch":      refusePrefixMismatch,
+		"refusePrefixUnproven":      refusePrefixUnproven,
+		"refuseProceedingMismatch":  refuseProceedingMismatch,
+		"refuseCeremonyComplete":    refuseCeremonyComplete,
+		"refuseNotConnectedPeer":    refuseNotConnectedPeer,
+		"refusePeerDoesNotAccept":   refusePeerDoesNotAccept,
+		"refusePriorSignerCount":    refusePriorSignerCount,
+		"refuseNoSignaturePages":    refuseNoSignaturePages,
+		"refuseBlockOffThePage":     refuseBlockOffThePage,
+		"refuseNoCeremonyIntent":    refuseNoCeremonyIntent,
+		"refuseCeremonyEnded":       refuseCeremonyEnded,
+		"refuseRosterMismatch":      refuseRosterMismatch,
+		"refuseDocumentSubstituted": refuseDocumentSubstituted,
 	}
 	// And the values they are pinned TO, written out separately from the identifiers above. The
 	// two halves are compared below: the map above proves the names still exist, this one proves
@@ -79,6 +80,12 @@ func TestTheRefusalEnumerationIsDerivedFromSource(t *testing.T) {
 		// has reached the initiator as bare EOF since P07, and 13's new gate would otherwise have
 		// shipped over it.
 		"refuseCeremonyEnded": 13, "refuseRosterMismatch": 14,
+		// Frozen 2026-09-02 (P08.S03, C04). The arrival gate's third refusal: the document does
+		// not hash to the ceremony record it carries. Minted with the check because the check's
+		// subject is a sender that skipped its own copy of the gate — so this refusal crosses the
+		// wire only on that path, and a codeless one there is the bare EOF 13 and 14 were minted
+		// to close, on the newest instance of the same defect.
+		"refuseDocumentSubstituted": 15,
 	}
 
 	fset := token.NewFileSet()

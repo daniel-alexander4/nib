@@ -1,0 +1,11 @@
+--- a/internal/p2p/session.go
++++ b/internal/p2p/session.go
+@@ -662,8 +662,6 @@
+ 		return refuseCeremonyEnded
+ 	case errors.Is(err, ErrRosterMismatch):
+ 		return refuseRosterMismatch
+-	case errors.Is(err, ErrDocumentSubstituted):
+-		return refuseDocumentSubstituted
+ 	}
+ 	return 0
+ }
