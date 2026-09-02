@@ -979,3 +979,97 @@ func TestAnEndStateIsCheckedAgainstTheInvitationNotTheFileBesideIt(t *testing.T)
 			"reached a sentence rather than a disk")
 	}
 }
+
+// TestEveryArmWatchesTheLinkThroughOneDoor — ADR-009 over the rule P08.S05h found copied twice
+// and then copied a third time.
+//
+// An arm that announces on the link and answers seekers is doing ONE thing, and the second half
+// is the one callers forget: without `answerHopSeekers` nothing sets `cer.watchingLink`, so
+// `holdDHT` takes its `ns == 0` arm and publishes to the public DHT after a flat `browseWindow`.
+// That is P03's exit criterion broken, and it is exactly what a nine-party `--lan` run measured
+// at **78 off-link packets** when the delivery arm was wired by copying the announce and omitting
+// the answer.
+//
+// `runSession`'s own comment already recorded the shape one arm earlier — *"a slice wired only
+// where the machinery already existed would have fixed QUIC and left TCP, with nothing failing to
+// say so"* — so this guard is the sentence with a caller.
+//
+// **It checks ROUTING, not text.** Counting how many sites spell the pair correctly says nothing
+// about a fourth site added without one; what it asserts is that `answerHopSeekers` has exactly
+// one caller and that it is `watchLink`.
+func TestEveryArmWatchesTheLinkThroughOneDoor(t *testing.T) {
+	var callers []string
+	roots := []string{"lan.go", "session.go", "delivery.go", "ceremonynet.go", "ceremonyid.go", "auth.go"}
+	for _, f := range roots {
+		src, err := os.ReadFile(f)
+		if err != nil {
+			t.Fatalf("cannot read %s: %v", f, err)
+		}
+		code := stripLineComments(string(src))
+		for _, line := range strings.Split(code, "\n") {
+			if strings.Contains(line, "answerHopSeekers(") && !strings.Contains(line, "func (s *Server) answerHopSeekers(") {
+				callers = append(callers, f+": "+strings.TrimSpace(line))
+			}
+		}
+	}
+	// STIMULUS: the name really appears in the files scanned, so "exactly one caller" is a fact
+	// about routing and not about a scan that read nothing.
+	if len(callers) == 0 {
+		t.Fatal("no call to answerHopSeekers found anywhere in the scanned files — this guard is " +
+			"reading the wrong thing and its clean result would mean nothing")
+	}
+	if len(callers) != 1 {
+		t.Errorf("answerHopSeekers has %d callers, want exactly 1 (watchLink). An arm wired "+
+			"directly gets the announce and can silently miss the ANSWER, which is what feeds "+
+			"cer.watchingLink — and an arm that never records a watch publishes to the public "+
+			"DHT after two seconds. Callers: %v", len(callers), callers)
+	}
+	if len(callers) == 1 && !strings.Contains(callers[0], "lan.go") {
+		t.Errorf("answerHopSeekers' one caller is %q, not watchLink in lan.go", callers[0])
+	}
+
+	// And every arm reaches it: three call sites, one per arm path (TCP, QUIC ceremony, delivery).
+	var doors int
+	for _, f := range roots {
+		src, _ := os.ReadFile(f)
+		doors += strings.Count(stripLineComments(string(src)), "s.watchLink(")
+	}
+	if doors < 3 {
+		t.Errorf("watchLink has %d call sites, want at least 3 — the TCP arm, the QUIC ceremony "+
+			"arm and the delivery arm. A missing one is an arm with no link tier, which is the "+
+			"defect this door exists to make impossible to reintroduce by copying.", doors)
+	}
+
+	// **And the door's own second half fires.** `linkhold_test.go` drives `holdDHT` and
+	// `watchingLink` directly, and `answerloop`'s tests drive the policy — but nothing asserted
+	// that `answerHopSeekers` CALLS `watching` at all. Probed: stubbing that call out leaves the
+	// entire package green, while it is the one thing standing between a delivery arm and a
+	// public-DHT publish two seconds after it opens.
+	//
+	// A source scan because the call sits after a real multicast socket opens, which is tier 4's
+	// shape; what tier 1 can hold is that it is there and that it precedes the loop, since a watch
+	// recorded after the loop is a watch recorded when the loop has already ended.
+	src, err := os.ReadFile("lan.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	code := stripLineComments(string(src))
+	i := strings.Index(code, "func (s *Server) answerHopSeekers(")
+	if i < 0 {
+		t.Fatal("cannot find answerHopSeekers")
+	}
+	body := funcBodyFrom(code, i)
+	w, loop := strings.Index(body, "watching("), strings.Index(body, "answerLoop(")
+	if w < 0 {
+		t.Error("answerHopSeekers never records that it is watching the link. `holdDHT` then reads " +
+			"zero for both timestamps, takes its ns == 0 arm, and every arm publishes to the " +
+			"public DHT after a flat browseWindow — P03's exit criterion, broken silently.")
+	}
+	if loop < 0 {
+		t.Fatal("answerHopSeekers no longer runs answerLoop, so this ordering check has no subject")
+	}
+	if w > loop {
+		t.Error("answerHopSeekers records the watch AFTER answerLoop, which only returns when the " +
+			"arm is over — so the hold it exists to feed has already lapsed")
+	}
+}

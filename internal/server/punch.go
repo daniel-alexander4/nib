@@ -4,6 +4,7 @@ import (
 	"context"
 	"net"
 	"net/netip"
+	"strconv"
 	"sync"
 	"time"
 
@@ -31,6 +32,15 @@ const (
 	// cap is hard and trims the tail of the last candidate's retries by design (D33's own words),
 	// so this is authoritative and 390/candidate is the derived, not-enforced figure. Exceeding
 	// it drops and reports; it never fails the ceremony.
+	//
+	// **HOP is the unit, and until P08.S05h the counter was keyed by CEREMONY.** D33 says so by
+	// amendment rather than by original wording — *"Total punch budget = 3,000 packets per
+	// ~~ceremony~~ HOP"* — and it gives the reason the struck form was struck: *"a per-ceremony
+	// budget was exhausted inside the first hop … in a 31-hop ceremony hops 2–31 would get zero
+	// packets."* The code implemented the struck form, so every hop after the first drew on what
+	// hop 1 had already spent, and so did every delivery leg. Two guards already sat on the
+	// neighbouring axes — both loops of one hop share a budget, two ceremonies do not — and
+	// neither could see this one, which is why the third now exists beside them.
 	punchBudgetPerSide = 3000
 )
 
@@ -58,15 +68,25 @@ func punchInterval(elapsed time.Duration) time.Duration {
 // nothing: each got its own 3,000, so a side emitted **6,000 against D33's law figure of 3,000**,
 // silently, with two comments asserting otherwise.
 //
-// So the budget is keyed by the ceremony's own id and held by the Server, which is the only thing
-// on this machine that outlives both `ceremonyID`s. A side is a machine in a proceeding; that is
-// what `(hop, side)` names.
+// So the budget is keyed by `(ceremony id, hop)` and held by the Server, which is the only thing
+// on this machine that outlives both `ceremonyID`s.
+//
+// **That sentence used to end "a side is a machine in a proceeding; that is what `(hop, side)`
+// names", and the conflation in it is how the hop axis stayed invisible for two phases**: a
+// proceeding is a CEREMONY, so a key naming the proceeding names the ceremony and not the hop,
+// while the sentence claimed it named `(hop, side)`. A side is a machine in a HOP.
 type punchBudget struct {
 	mu      sync.Mutex
 	spent   int
 	dropped int
 }
 
+// **No harness run charges this budget, and that is stated rather than left to be discovered.**
+// Only `sourceDHT` candidates are teed to the punch loop — `feedCeremonyRace`'s merge sends the
+// fixed `cands` to `in` alone — and `ipv4Target` then requires an IPv4 address. Every candidate at
+// tier 4 is LAN or typed, so the cap, the drop and the report are exercised at tier 1 and nowhere
+// else. A tier-4 clause over this counter could only ever report pass.
+//
 // spend reserves one packet if the budget allows, returning false (and counting a drop) when the
 // cap is reached. **Checked BEFORE the send** (grill CONFIRMED-4 sharpening) so the 8th candidate
 // cannot overshoot 3,000. It deliberately does NOT reset on candidate churn: a refreshed S07
@@ -94,24 +114,39 @@ func (b *punchBudget) report() (spent, dropped int) {
 	return b.spent, b.dropped
 }
 
-// punchBudgetFor returns the one budget this machine spends on that ceremony, creating it on
-// first use. Both punch loops of one hop reach the same counter through it.
+// punchBudgetFor returns the one budget this machine spends on that (ceremony, HOP), creating it
+// on first use. Both punch loops of one hop reach the same counter through it; two hops of one
+// ceremony reach different ones, which is D33's unit.
+//
+// **Keyed on the pair, and the hop half is what P08.S05h added.** Keying on the ceremony alone
+// implemented the form D33 struck, and the failure is silent by construction because dropping over
+// the cap is the designed behaviour: hop 2 of a nine-party ceremony simply punched less, then not
+// at all, and nothing anywhere said the ceiling had been reached for the proceeding rather than
+// for the hop. `hopScoped(c, cer.hop)` filters the candidate stream by hop eight lines from where
+// the budget was taken by ceremony, so the right unit was already in the file beside the wrong one.
 //
 // An empty id is a punch outside any ceremony — no proceeding to share a budget within, so it
 // gets its own rather than joining a process-wide pool that would let unrelated work starve it.
-func (s *Server) punchBudgetFor(id string) *punchBudget {
+func (s *Server) punchBudgetFor(id string, hop int) *punchBudget {
 	if id == "" {
 		return &punchBudget{}
 	}
+	// **Injective on `(id, hop)` whatever `id` contains**, which is the property that matters and
+	// is stronger than the one this comment first gave. It said a ceremony id is 32 hex characters
+	// so "#" cannot occur in it — true of an id the product minted, and `ParseInvitation` does not
+	// run `ValidID`, so an id reaching here is not guaranteed to be either. The real argument needs
+	// no assumption about `id`: `strconv.Itoa` emits only digits and `-`, so a "#" in the composed
+	// key can only be the separator, and equal keys force equal hops and then equal ids.
+	key := id + "#" + strconv.Itoa(hop)
 	s.punchMu.Lock()
 	defer s.punchMu.Unlock()
 	if s.punchBudgets == nil {
 		s.punchBudgets = map[string]*punchBudget{}
 	}
-	b, ok := s.punchBudgets[id]
+	b, ok := s.punchBudgets[key]
 	if !ok {
 		b = &punchBudget{}
-		s.punchBudgets[id] = b
+		s.punchBudgets[key] = b
 	}
 	return b
 }

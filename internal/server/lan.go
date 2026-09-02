@@ -696,7 +696,12 @@ func (s *Server) answerHopSeekers(ctx context.Context, cert []byte, ln announcea
 	// The watch has begun. Recorded AFTER the socket opens and the pins are known, because an arm
 	// that could not open a socket is not watching the link and must not hold the DHT tier on a
 	// silence it was never in a position to hear (S05e).
-	if sighted != nil {
+	// **Guarded on `watching`, which is the thing being called.** It read `if sighted != nil`,
+	// so a caller passing one and not the other either panicked or silently recorded no watch —
+	// and a watch never recorded is `holdDHT` taking its `ns == 0` arm, which is the whole defect
+	// P08.S05h removed. Both current callers pass both; this slice added the second one, which is
+	// how the trap surfaced.
+	if watching != nil {
 		watching(time.Now())
 	}
 
@@ -730,6 +735,50 @@ func (s *Server) answerHopSeekers(ctx context.Context, cert []byte, ln announcea
 		answering = ann
 		return true
 	})
+}
+
+// watchLink wires ONE arm into the link tier, and it is the door for that rule (ADR-009).
+//
+// Two halves that are always wanted together and were written out three times before this existed:
+//
+//   - **announce**, so a peer browsing this link finds the arm without the DHT. `startAnnouncing`
+//     decides whether the bound address may be announced at all — a loopback bind announces
+//     nothing — so the decision stays in one place rather than at each caller.
+//   - **answer seekers**, so the arm is still findable after that announcement expires AND so
+//     `cer.watchingLink`/`cer.noteLinkSighting` are fed. That second effect is the one callers
+//     forget: without it `holdDHT` takes its `ns == 0` arm and publishes to the public DHT after a
+//     flat `browseWindow`, which is P03's exit criterion broken.
+//
+// **The count is why this is a function.** `runSession`'s TCP arm carries a comment saying
+// *"two arm paths living in two functions is the same count S05d found one day earlier … a slice
+// wired only where the machinery already existed would have fixed QUIC and left TCP, with nothing
+// failing to say so"* — and P08.S05h then added a THIRD arm, the delivery one, by copying rather
+// than by calling. The comment predicted the defect and the copy walked into it.
+//
+// Returns the announcer so a caller that must close it EARLY can: the QUIC ceremony arm drops it
+// at the first signature. Callers with nothing to close simply defer it. nil when nothing was
+// announced, which is never fatal — a host with no usable interface still races the DHT and its
+// own accept.
+//
+// `cer == nil` is the manual/LAN arm: there is no proceeding to be found FOR and no hold to renew,
+// so it announces and answers nobody. `wanted` reports whether the arm still wants to be found;
+// nil means "for as long as it is open", which is right for a one-shot arm whose goroutine
+// returning is itself the stop condition.
+func (s *Server) watchLink(ctx context.Context, cer *ceremonyID, ln announceable, cert, peerFP []byte,
+	wanted func() bool) *lanAnnouncer {
+
+	var ann *lanAnnouncer
+	if a, err := startAnnouncing(cert, ln, lanAnnounceWindow); err == nil {
+		ann = a
+	}
+	if cer == nil || len(peerFP) == 0 {
+		return ann
+	}
+	go func() {
+		defer safe.Recover("hop seeker answers")
+		s.answerHopSeekers(ctx, cert, ln, peerFP, wanted, cer.noteLinkSighting, cer.watchingLink)
+	}()
+	return ann
 }
 
 // answerLoop is answerHopSeekers' POLICY, separated from its socket so it can be driven.

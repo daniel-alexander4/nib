@@ -6407,16 +6407,72 @@ Tasks:
 - T04 — tier 4: a ceremony declined at hop 3 reaches the parties who signed at hops 1 and 2. *(done — and it was not harness-only. The clause had been passing its 409 check on the words-TIMEOUT arm, so no person had ever refused anything in it; it now drives the spoken check on both ends through `assert_spoken_check`, the one door it shares with `ceremony()`, and matches the refusal's own sentence rather than a status code five different failures produce.)*
 - T05 — the round does not walk the party that ENDED the proceeding *(added 2026-09-02 from live verification, not from the grill)*. Its machine prunes this ceremony's stored invitation when it declines and it holds no mirror to check an attestation against, so the leg cannot succeed at either end; walking it cost the full 300 s `connectDeadline` per round. A convener-local `ended-by` marker written beside the attestation, write-once, and a skip reported honestly rather than as a delivery. *(done — 360 s → 6 s, and the two kinds of `Skipped` are told apart by `Delivered`, which the field's own doc claimed and nothing checked.)*
 
-#### P08.S05h — The round's egress, measured *(D33, D34, ADR-011)* — **new, 2026-09-01, split out of S05e at its deepdive**
+#### P08.S05h — The round's egress, measured *(D33, D34, ADR-011)* — **new, 2026-09-01, split out of S05e at its deepdive** *(done 2026-09-02, v1.117.323 — 9 clauses: 8 met, 1 DECLARED UNREACHABLE with its reason, 0 `not exercised`. **The slice was scoped as measurement and the instrument it asked for already existed and was RED.** `--lan -n 9` emitted **78 packets destined off the link** against a criterion of zero — and exactly 78 at v1.117.320 too, so the regression arrived with P08's delivery arm rather than with the slice that found it. The plan had recorded P03's exit criterion green since v1.117.207 and nothing had run the shape since. **Counting publishes found nothing**: in a namespace with no reachable DHT nothing is ever published, and the packets are the BOOTSTRAP the publish path performs on its way — a stack trace on `ensureBootstrapped` named the caller in one line. **The plan's stated cause was one indirection off**: `holdDHT` renews on `linkSeenAt`, not on `hasSigned`, and the delivery arm's real problem was that nothing on its path called the answerer at all — a delivery leg had no LAN tier at EITHER end. Now **0 packets**, over a window that also covers the end-state round, which used to run outside it entirely. **D33's unit was wrong in the code, and the decision had already said so.** `punchBudgetFor` keyed the LAW figure per ceremony — the form D33 struck by amendment, whose own text says hops 2–31 would get zero packets. Two guards sat on the neighbouring axes and neither checked the hop one. **The review then found the fix had made a third copy of a rule the code it copied already had a comment about** — *"a slice wired only where the machinery already existed would have fixed QUIC and left TCP, with nothing failing to say so"* — so `watchLink` is now the one door and a guard asserts it. That guard immediately found the half nothing had ever tested: stubbing out `watching()` left the ENTIRE package green. 24 review findings, all dispositioned, none deferred; 2 red proofs added and 3 re-recorded; `/pending 355` filed, 312 and 326 amended. Tier 4 green at N=2, 3, 4, 9 and `--lan -n 9`.)*
 Scope: the measurement half of S05e, cut out because every clause is a long `--lan` run and none
 shares code with the termination object. **Sequenced after S05e**; ADR-011's hold and D33's packet
 law are the subject, and S05e's deepdive already settled that a delivery arm's hold never renews
 (its gate is `!cer.hasSigned()`, which a delivery arm fails by definition).
 Acceptance:
 - **The round's egress budget is derived from D33 and DRIVEN, not asserted** — the figure is measured, per this repo's own law that a claim containing a number is measured or declared unmeasured. Tier 4, with `pairrepro.sh`'s off-link counter.
-- **The delivery legs cannot be starved by the hops**, or the sharing is stated as a limit with the arithmetic — `punchBudgetPerSide = 3000` is one D33 LAW figure per machine per ceremony across every hop. Tier 1 for the arithmetic, tier 4 for the N=9 case.
+- **The delivery legs cannot be starved by the hops**, or the sharing is stated as a limit with the arithmetic — `punchBudgetPerSide = 3000` is one D33 LAW figure per machine per ceremony across every hop. Tier 1 for the arithmetic, ~~tier 4 for the N=9 case~~ **and the tier-4 half is UNREACHABLE, declared rather than driven (amended 2026-09-02 at this slice's grill)**: only `sourceDHT` candidates are teed to the punch loop — `feedCeremonyRace`'s merge sends the fixed `cands` to `in` alone (`ceremonynet.go:574-596`) — and `ipv4Target` then requires an IPv4 address. Every candidate in every harness run is LAN or typed, so **no packet is ever charged to this budget at tier 4**, and "tier 4 for the N=9 case" would have been a green over a path that cannot execute. The exhaustion is a unit-level property and it is asserted as one.
 - **ADR-011's hold is re-examined for a delivery arm**, whose renewal is gated on `!cer.hasSigned()` — exactly the state a delivery arm is in. Tier 4, against P03's zero-packet criterion.
 - Tier: 4 for every clause but the budget arithmetic (C15).
+
+**GRILL 2026-09-02, at S05e's close. Every clause re-measured at the line; clause 3 is already RED
+and clause 1 is half-overturned.**
+
+- **(a) P03's exit criterion is BROKEN at nine parties, measured, and it is not this slice's to
+  find — it is this slice's to fix.** `./build/pairrepro.sh --lan -n 9` emits **78 off-link
+  packets** against a baseline the criterion says must be zero, and it emits exactly 78 at
+  **v1.117.320 as well**, so the regression arrived with P08's delivery arm rather than with S05e.
+  The plan has recorded this criterion as green since P07.S05e (v1.117.207) and nothing has run the
+  shape since; `--lan -n 4` and `-n 9` are the only runs that can see it, and neither is in any
+  slice's verification but this one's. **The figure is the measurement clause 1 asks for, and it
+  already exists** — which half-overturns clause 1: the round's egress is ALREADY driven, because
+  `relay()` contains the delivery round and the LAN branch asserts the counter after both relays.
+  What is missing is not a driver but a fix, plus one extension: `decline_round` runs AFTER that
+  assertion, so the END-STATE round's egress is measured by nothing.
+- **(b) The cause is structural and the plan's own statement of it is one indirection off.** The
+  slice text says the hold's renewal "is gated on `!cer.hasSigned()`". It is not: `holdDHT`
+  (`ceremonyid.go:184-213`) renews on `linkSeenAt`, and `hasSigned` gates the ANSWERER
+  (`lan.go:777-788`), whose `if idle { continue }` sits before `resolve` and before `sighted(…)`.
+  The delivery arm's problem is one step earlier and worse: **nothing on the delivery path calls the
+  answerer at all.** `armForDelivery` never reaches `answerHopSeekers` or `startAnnouncing`, so
+  `linkSeenAt` and `linkWatchAt` are both zero, `holdDHT` takes its `ns == 0` arm at `:202-203` and
+  returns immediately after one flat `browseWindow`, and `delivery.go:396`'s
+  `publishWhenSlow(armCtx, cer, transportQUIC, browseWindow)` publishes and then republishes every
+  `candidateLife()/2` for the whole arm window. At N=9 that is eight arms doing it. **A delivery leg
+  has no LAN tier at either end** — the dial side does no browse either — so the fix is not a
+  renewal that never fires, it is the tier itself.
+- **(c) Clause 2 is CONFIRMED and WIDER than its own text.** It frames the risk as the hops starving
+  the delivery legs. The real finding is that `punchBudgetFor(c.inv.ID)` (`ceremonyid.go:711`) keys
+  D33's LAW figure **per ceremony** — which is the form D33 explicitly STRUCK: *"Total punch budget
+  = 3,000 packets per ~~ceremony~~ HOP"*, amended because *"a per-ceremony budget was exhausted
+  inside the first hop … in a 31-hop ceremony hops 2–31 would get zero packets."* So it is not only
+  the delivery legs that are starved; it is every hop after the first, and the code implements the
+  struck-through decision. **Two guards already exist on the neighbouring axes and neither checks
+  this one**: `punch-budget-per-ceremonyid-not-per-side` pins that both loops of one hop share a
+  budget, and `punch-budget-shared-across-every-ceremony` pins that two ceremonies do not — and that
+  second row's own text says *"D33's unit is per HOP"* while guarding a process-wide counter rather
+  than a per-ceremony one. The unit is one indirection away in both directions and nothing sat on
+  the hop axis. `hopScoped(c, cer.hop)` (`ceremonynet.go:581`) filters the candidate stream by hop
+  eight lines from where the budget is taken by ceremony, so the code already carries the right unit
+  beside the wrong one. Keying by `(inv.ID, hop)` also gives every delivery leg its own budget for
+  free, because `deliveryCeremony` already builds a distinct `hop` from `deliveryHop`.
+- **(d) Clause 2's tier-4 half is NOT REACHABLE and must be declared, not driven.** Only
+  `sourceDHT` candidates are teed to the punch loop (`ceremonynet.go:574-596`: the fixed `cands` go
+  to `in` alone), and `ipv4Target` then requires an IPv4 address. At tier 4 every candidate is LAN
+  or typed, so **no packet is ever charged to the budget in any harness run** — the counter is
+  structurally unreachable there, and "tier 4 for the N=9 case" would be a green over a path that
+  never executes. The arithmetic is tier 1 and the exhaustion is a unit-level property; the tier-4
+  claim is withdrawn and stated as unreachable with the reason.
+
+Tasks:
+- T01 — D33's budget is keyed by `(ceremony, hop)`, not by ceremony; a guard on the HOP axis beside the two that already sit on the path and ceremony axes; the constant's own doc reconciled with `punchBudget`'s, which already says "keyed by the ceremony's own id". Delivery legs get their own budget for free from `deliveryHop`.
+- T02 — a delivery leg gains the LAN tier at BOTH ends, which is what makes ADR-011's hold renewable for it: the arm answers hop seekers as a hop arm does, and the dial browses the link before it reaches the DHT. Without both halves the arm has no evidence to hold on.
+- T03 — tier 4: `--lan -n 9` back to the baseline, and the END-STATE round inside the measured window rather than after it.
+- T04 — clause 2's tier-4 half declared unreachable with its reason (only `sourceDHT` candidates are teed to the punch), so the arithmetic is tier 1 and nothing claims a run that cannot execute.
+- T05 — **the link-tier wiring gets ONE door (ADR-009), added at the slice's review and not in the grilled plan.** T02 said the delivery arm should answer seekers *"as a hop arm does"*, and the way it was built was by copying the hop arm's six lines — making a THIRD copy of a rule `runSession`'s own comment had already flagged at two (*"a slice wired only where the machinery already existed would have fixed QUIC and left TCP, with nothing failing to say so"*). `watchLink` is the door; all three arms call it; a guard asserts `answerHopSeekers` has exactly one caller and that the watch it records precedes the loop it feeds. *(done — and the guard found that stubbing out `watching()` left the ENTIRE package green, which is the half of the rule nothing had ever tested.)*
 
 #### P08.S05f — The dead arm-rendezvous path removed, and the TCP-ceremony limit stated *(`/pending 248`, caveat 7, ADR-011)* — **new, 2026-08-31, split out of S05b at its grill** *(done 2026-09-01, v1.117.313 — 6 clauses, all met; `/pending 248` closed. The grill widened the removal: `openRendezvous` goes ENTIRELY, not just its QUIC branch, because what remained was a pure passthrough to `listenPeer` under a name that no longer described it. **The prose this slice had to MOVE was not attached to the function it described** — a doc block with no blank line before the next function's comment binds to that function, so the TCP-limit paragraph was Go-attached to `setupSharedEndpoint` and `openRendezvous` was undocumented. The commit gate then parsed for that shape and found a SECOND instance in the same file: `publishCandidates`'s doc had been sitting on `publishableEndpoints`. Nothing here had ever checked, so the count was unknown rather than zero. The gate also refuted two of my own claims — *"the only door to a ceremony's shared socket"* (two production sites call `NewSharedEndpoint`) and an unmeasured promise about what a TCP dial reaches when the far end is QUIC-armed, which is now declared undriven instead of asserted. Census measured at 35 `go` statements, not the 33 the guard's own message named; 32 after, probed red at 31.)*
 Scope: the removal half of S05b's original scope, cut out because it shares nothing with the

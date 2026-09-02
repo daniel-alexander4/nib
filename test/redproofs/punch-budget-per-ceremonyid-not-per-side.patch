@@ -1,12 +1,10 @@
-diff --git a/internal/server/ceremonyid.go b/internal/server/ceremonyid.go
-index 754b2b2..64556a0 100644
 --- a/internal/server/ceremonyid.go
 +++ b/internal/server/ceremonyid.go
-@@ -567,7 +567,7 @@ func (c *ceremonyID) punchBudget(s *Server) *punchBudget {
+@@ -712,7 +712,7 @@
  	if c == nil {
  		return &punchBudget{}
  	}
--	b := s.punchBudgetFor(c.inv.ID)
+-	b := s.punchBudgetFor(c.inv.ID, c.hop)
 +	b := &punchBudget{}
  	c.mu.Lock()
  	c.punch = b

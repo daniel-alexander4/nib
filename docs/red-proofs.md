@@ -3214,3 +3214,57 @@ file must not be rewritten was hard-coded to instance 2, so at N=3 the witness I
 N=3 passes for the first time.
 
 `recorded` 248 → 253.
+
+## P08.S05h — D33's unit, and the tier a delivery leg never had *(v1.117.323)*
+
+Two new rows and three re-recorded ones. The slice was scoped as *measurement* — "the round's
+egress budget is derived from D33 and DRIVEN, not asserted" — and the measurement it asked for
+already existed and was **red**.
+
+**`--lan -n 9` emits 78 packets destined off the link**, against a criterion that says zero. It
+emits exactly 78 at v1.117.320 as well, so the regression arrived with P08's delivery arm rather
+than with the slice that found it, and the plan has recorded P03's exit criterion as green since
+v1.117.207. Nothing had run the shape in between: `--lan -n 9` is the only run that can see it and
+it belongs to no slice's verification but this one's.
+
+**Counting publishes found nothing, and that is the part worth keeping.** The first probe
+instrumented `publishCandidates` and reported zero on every instance — because in a namespace with
+no reachable DHT nothing is ever published. The packets are the **bootstrap** the publish path
+performs on its way there, and a stack trace on `ensureBootstrapped` named the caller in one line:
+`armForDelivery` → `publishWhenSlow` → `publishCandidates` → the bootstrap, two per party per
+transport. A metric one step away from the mechanism reads as evidence of absence.
+
+`delivery-arm-has-no-link-tier` is the shipped defect. `armForDelivery`'s own doc claimed
+*"everything about the tier ladder is reused rather than rebuilt"* and tier 1 was missing at both
+ends — the arm neither announced nor answered, so `cer.watchingLink` was never set and `holdDHT`
+took its `ns == 0` arm; and the dial browsed nothing, so `feedCeremonyRace` never saw a
+`sourceLAN` candidate and held the DHT for two seconds instead of thirty.
+
+**What renews the hold is the convener's own announcements, and that was measured rather than
+assumed.** A delivery arm never hears a browse — `browsePeers` is a pure listener and emits
+nothing — so the natural worry was that the zero rested on each arm being spent inside
+`lanFirstBudget`. Probed: 76, 54, 40 and 20 sightings on the four delivery hop indices of a
+nine-party run. The convener announces while it dials the remaining hops, `resolve` matches those
+to each arm's expected peer, and the renewal is real. The limit that survives is stated at the
+site: once the hops finish the convener goes quiet, so an arm whose round runs a day later
+publishes after 30 s — which is correct, because the parties are no longer demonstrably in one room.
+
+`budget-keyed-by-ceremony-not-hop` is the other shipped defect, and it is a decision the plan had
+already made. D33 reads *"3,000 packets per ~~ceremony~~ HOP"* and the code implemented the struck
+form. Two guards sat on the neighbouring axes — both loops of one hop share a budget, two ceremonies
+do not — and the unit is one indirection from each; the second row's own text says *"D33's unit is
+per HOP"* while guarding a process-wide counter. `hopScoped(c, cer.hop)` filters the candidate
+stream by hop eight lines from where the budget was taken by ceremony, so the right unit was already
+in the file beside the wrong one.
+
+**Its first mutation was a red for the wrong reason.** Dropping the hop term left `strconv` unused
+and the package failed to compile, which `redproof.sh` cannot distinguish from a test doing its job
+by reading exit status alone. Re-recorded as `strconv.Itoa(0*hop)`, which compiles and is wrong.
+
+**One probe is deliberately NOT a row.** Deleting the dial-side browse does not produce a packet
+count at all — the round then has no candidate for any party and every leg runs out its 300 s
+connect deadline, so a nine-party run takes forty minutes to fail. It was killed at ten. A row whose
+PROVE cannot terminate is worse than the prose, so the property is recorded here and guarded by the
+green run's own delivery assertions instead.
+
+`recorded` 253 → 258.
