@@ -1867,6 +1867,239 @@ print("decline: instance %s was told all four things C06 names" % who)
 PYTELL
   done
   echo "decline: both parties who signed were told the proceeding ended (C06)"
+  DECLINED_CID="$dcid"
+}
+
+# ── P08 C09 + C11: close-out — the round reaches every party, THEN the folder moves ──────────
+#
+# **It runs on `decline_round`'s ceremony and only after it**, which is the ordering C09 is about:
+# *"a delivery round reaches every party, and their invitation pins are absent afterwards — in that
+# order."* `decline_round` has just asserted the telling arrived at both parties who signed, so
+# every assertion below is downstream of a round that demonstrably completed. Reversed, a close-out
+# that ran first would look identical on disk and would have destroyed the mirror the round needed.
+#
+# **Why the DECLINED ceremony and not a completed one.** C11 asks that the directory be gone *"after
+# the ceremony has ended and its document has been delivered or saved"*, and the declined path is
+# the one where the close-out's whole argument is load-bearing: there is no finished document, so
+# `~/nib/ceremonies/<id>/document.pdf` on a signer's machine is the ONLY place that party's own
+# signature exists. A completed ceremony would pass this clause with a prune that deleted.
+#
+# **The grace is not waited for and must not be.** `closeOutGrace` is three days; a harness that
+# slept for it would not be a harness. What is driven is the path that needs no grace: a signer
+# holding a verified termination is finished by construction, because on the declined path the
+# termination IS the delivery. That asymmetry is a defect this clause FOUND — the first cut asked
+# `alreadyDelivered`, a stat on the finished document's path, for both end states, so every declined
+# signer held its folder and its pins for the full three days. It was invisible at tier 1 until a
+# test was written for the state, and invisible by reading because the function looked symmetric.
+#
+# **What this clause cannot see, stated rather than left implied**: the pins. `GET /api/peers`
+# publishes a fingerprint and a label and NOT `PinnedPeer.Ceremonies`, so the scope drop C09's
+# second half names has no tier-4 observable; and these instances pin each other across the two
+# relay ceremonies as well, so a pin surviving is the correct outcome anyway. The store teardown is
+# asserted at tier 1 by `TestTheCloseOutDoorReachesEveryCeremonyScopedStore`, over all three stores
+# and over a user pin that must survive. Recorded here so the split is a decision and not a gap.
+close_out_round() {
+  if [ "$N" -lt 4 ]; then
+    echo "close-out: skipped — it runs on decline_round's ceremony and that needs four parties"
+    return 0
+  fi
+  [ -n "${DECLINED_CID:-}" ] || fail "close-out: decline_round left no ceremony id, so this clause has nothing to assert about"
+  local id="$DECLINED_CID" i root live ended code
+  # SETUP: the two signers really do hold a contribution in the LIVE set right now. Without this
+  # the assertions below compare one absence against another — a close-out that never ran and a
+  # ceremony that was never mirrored are the same empty directory.
+  for i in 2 3; do
+    root="${HOMES[$((i-1))]}/home/nib"
+    [ -f "$root/ceremonies/$id/document.pdf" ]       || fail "close-out setup: instance $i holds no contribution for the declined ceremony at $root/ceremonies/$id/document.pdf — every assertion below would then be asserting nothing. This party SIGNED; if this is genuinely absent, the defect is upstream of the close-out."
+    cp "$root/ceremonies/$id/document.pdf" "$WORK/closeout.before.$i.pdf"
+  done
+
+  # **The sweep is driven by the listing route, which is one of its two triggers** (the other is
+  # unlock, and these instances have been unlocked since before the ceremony existed — a trigger
+  # that already fired cannot be driven). Asserting through the route rather than the filesystem
+  # alone is deliberate: it is the surface a user reaches, and a sweep wired to nothing would leave
+  # the filesystem assertions below green forever on the unlock path of a fresh process.
+  for i in 1 2 3 4; do
+    code="$(curl -sS "${URLS[$((i-1))]}/api/ceremonies" -o "$WORK/closeout.list.$i.json" -w '%{http_code}')"
+    [ "$code" = "200" ] || fail "close-out: instance $i's ceremonies listing failed (HTTP $code)"
+  done
+
+  for i in 2 3; do
+    root="${HOMES[$((i-1))]}/home/nib"
+    live="$root/ceremonies/$id"
+    ended="$root/ended/$id"
+    [ ! -d "$live" ]       || fail "close-out: instance $i still has the declined ceremony in the LIVE set at $live. It has been told the proceeding is over and it holds a verified termination — on the declined path that termination IS the delivery, so nothing further is coming and the folder is being held against a document that will never be sent."
+    [ -f "$ended/document.pdf" ]       || fail "close-out: instance $i's own signed contribution is GONE. C11 says the ceremony directory goes; P08.S06 says the prune MOVES, because on every machine but the convener's this file is the only place that party's signature exists and a declined ceremony has no delivery round to have carried it anywhere. Expected it at $ended/document.pdf"
+    cmp -s "$WORK/closeout.before.$i.pdf" "$ended/document.pdf"       || fail "close-out: instance $i's preserved contribution is not the bytes it held before the close-out — a move that changes the bytes is not a move"
+    [ -f "$ended/record.json" ]       || fail "close-out: instance $i's record did not travel with its document, so the preserved contribution is an orphan PDF nothing can check against the ceremony it belongs to"
+    python3 - "$ended/receipt.json" "$i" <<'PYRCPT' || exit 1
+import json, sys
+try:
+    r = json.load(open(sys.argv[1]))
+except Exception as e:
+    print("FAIL: close-out: instance %s has no readable local receipt (%s). The receipt is what "
+          "the retention clock reads and what tells the user WHEN this machine decided the "
+          "proceeding had ended — `Termination` deliberately carries no `When`, because a "
+          "convener-chosen timestamp driving other machines' retention hands the convener control "
+          "of when they prune." % (sys.argv[2], e), file=sys.stderr)
+    sys.exit(1)
+if r.get("state") != "declined":
+    print("FAIL: close-out: instance %s's receipt says %r, want 'declined'. This machine received "
+          "and VERIFIED a signed termination; recording anything else — in particular the derived "
+          "'abandoned' the grace path produces — replaces an attested fact with a guess."
+          % (sys.argv[2], r.get("state")), file=sys.stderr)
+    sys.exit(1)
+if not r.get("observed_at"):
+    print("FAIL: close-out: instance %s's receipt has no observed_at, so the retention clock this "
+          "artifact exists to start has no zero." % sys.argv[2], file=sys.stderr)
+    sys.exit(1)
+PYRCPT
+  done
+
+  # The route's own two halves: gone from the live list, present in `ended`. A user whose ceremony
+  # finished must not simply watch it vanish — the preserved contribution is at a path, and a
+  # listing that named neither would preserve it in secret.
+  for i in 2 3; do
+    python3 - "$WORK/closeout.list.$i.json" "$i" "$id" <<'PYLIST' || exit 1
+import json, sys
+d = json.load(open(sys.argv[1])); who, cid = sys.argv[2], sys.argv[3]
+live = [c for c in (d.get("ceremonies") or []) if c.get("id") == cid]
+if live:
+    print("FAIL: close-out: instance %s's listing still shows the declined ceremony as live: %r"
+          % (who, live[0].get("state")), file=sys.stderr)
+    sys.exit(1)
+PYLIST
+    # Read AFTER the sweep, because the response captured above was the one that TRIGGERED it —
+    # the close-out runs before `ListStored` in the handler, but `ended` is only populated once
+    # the move has happened, and on the triggering call the move is what that same request did.
+    code="$(curl -sS "${URLS[$((i-1))]}/api/ceremonies" -o "$WORK/closeout.list2.$i.json" -w '%{http_code}')"
+    [ "$code" = "200" ] || fail "close-out: instance $i's second listing failed (HTTP $code)"
+    python3 - "$WORK/closeout.list2.$i.json" "$i" "$id" <<'PYENDED' || exit 1
+import json, sys
+d = json.load(open(sys.argv[1])); who, cid = sys.argv[2], sys.argv[3]
+ended = [c for c in (d.get("ended") or []) if c.get("ceremony") == cid]
+if not ended:
+    print("FAIL: close-out: instance %s's listing does not mention the closed-out ceremony at all. "
+          "Its signed contribution was deliberately PRESERVED and the user has no way to learn "
+          "where it went — a receipt no surface shows preserves it in secret." % who,
+          file=sys.stderr)
+    sys.exit(1)
+if ended[0].get("state") != "declined":
+    print("FAIL: close-out: instance %s's ended entry says %r, want 'declined'"
+          % (who, ended[0].get("state")), file=sys.stderr)
+    sys.exit(1)
+PYENDED
+  done
+
+  # The decliner closed out at the moment it refused, with no sweep and no round to wait for:
+  # `runDeliveryRound` skips the party that ended the proceeding by name, so D29's middle step is
+  # empty on that one machine. Asserted separately because it reaches the same door by a different
+  # path, and because the old shape pruned two of four stores right here.
+  root="${HOMES[3]}/home/nib"
+  [ ! -d "$root/ceremonies/$id" ]     || fail "close-out: the party that DECLINED still holds the ceremony in its live set at $root/ceremonies/$id — it refused, there is no round coming for it, and D29's step between the end state and the close-out is empty on this machine"
+  [ -f "$root/ended/$id/receipt.json" ]     || fail "close-out: the decliner has no local receipt at $root/ended/$id/receipt.json. It never mirrored this ceremony — it refused at its consent gate, which returns before the document is stored — so there was nothing to MOVE, and the receipt is then the only record that this machine ever refused. A close-out with nothing to preserve still happened."
+  python3 -c "
+import json,sys
+r=json.load(open('$root/ended/$id/receipt.json'))
+if r.get('state')!='declined':
+    print('FAIL: close-out: the decliner recorded %r, want declined'%r.get('state'),file=sys.stderr); sys.exit(1)
+" || exit 1
+
+  # ── C11's CENTRAL case: a COMPLETED ceremony, whose round delivered a document and no
+  # attestation ───────────────────────────────────────────────────────────────────────────────
+  #
+  # *"A ceremony directory is gone after the ceremony has ended and its document has been delivered
+  # or saved."* The declined path above is the one where preserving the contribution matters; this
+  # is the one C11 is literally about, and it is a DIFFERENT code path — `runDeliveryRound` sends
+  # the finished document rather than the termination, so a signer never receives a `completed`
+  # attestation and `Stored.Ended` stays empty on its machine forever.
+  #
+  # **This clause exists because the first cut had no branch for it.** The only remaining exit was
+  # the three-day grace, which would then have recorded a ceremony that finished exactly as
+  # intended as `abandoned` — a durable local lie. It was invisible at tier 1 and found HERE, by
+  # this run's own leftovers: two relay ceremonies whose finished documents were already in
+  # `~/nib/signed/` were still sitting in `~/nib/ceremonies/` with nothing able to move them.
+  #
+  # It grades only instances that HAVE a delivered document, and says so when one does not — a
+  # clause that silently passes on a machine the case never reached is the vacuous green this
+  # harness has produced twice before.
+  for i in 2 3 4; do
+    root="${HOMES[$((i-1))]}/home/nib"
+    python3 - "$root" "$i" <<'PYLIVE' || exit 1
+import json, os, sys, glob
+root, who = sys.argv[1], sys.argv[2]
+
+# **Keyed per CEREMONY, not per count**, and the first cut was per count. `deliveredName` is
+# `<intent-slug>-<ceremony id>.pdf`, so "was this ceremony's document delivered here" is answerable
+# by id — and comparing a COUNT of live folders against a COUNT of delivered files conflates two
+# different ceremonies and reports the wrong one.
+#
+# It found a real thing while being wrong, which is worth recording: this harness injects C10's
+# write failure with `rm -rf ~/nib/signed`, taking the whole DIRECTORY. That destroys the EARLIER
+# transport's delivered document as collateral — the injection is broader than the "write failure at
+# party 3 of 4" it describes — so the victim legitimately ends the run holding a live ceremony whose
+# copy it once had. The product is right and the count check was measuring the harness.
+def delivered_ids(root):
+    out = set()
+    for f in glob.glob(os.path.join(root, "signed", "*.pdf")):
+        stem = os.path.basename(f)[:-4]
+        out.add(stem.rsplit("-", 1)[-1])
+    return out
+
+live = [os.path.basename(d) for d in glob.glob(os.path.join(root, "ceremonies", "*"))
+        if os.path.isdir(d)]
+have = delivered_ids(root)
+stuck = sorted(set(live) & have)
+if stuck:
+    print("FAIL: close-out: instance %s still holds ceremony %s in the LIVE set while its own "
+          "finished document sits in ~/nib/signed/. C11 says the directory is gone once the "
+          "document has been delivered; with no branch for a completed ceremony the only exit left "
+          "is the three-day grace, which then records a proceeding that finished exactly as "
+          "intended as 'abandoned'." % (who, ", ".join(stuck)), file=sys.stderr)
+    sys.exit(1)
+
+ended = {}
+for d in glob.glob(os.path.join(root, "ended", "*")):
+    if not os.path.isdir(d):
+        continue
+    try:
+        ended[os.path.basename(d)] = json.load(
+            open(os.path.join(d, "receipt.json"))).get("state")
+    except Exception:
+        ended[os.path.basename(d)] = None
+
+# Every delivered document belongs to a ceremony that is closed out AND recorded `completed`.
+# Both halves: the first is C11, the second is that the state is not a guess.
+missing = sorted(have - set(ended))
+if missing:
+    print("FAIL: close-out: instance %s holds the finished document for %s and has not closed it "
+          "out at all — it is in neither the live set nor the ended one, which means the sweep "
+          "cannot see it." % (who, ", ".join(missing)), file=sys.stderr)
+    sys.exit(1)
+wrong = sorted(c for c in have if ended.get(c) != "completed")
+if wrong:
+    print("FAIL: close-out: instance %s holds the finished document for %s but recorded it as %r "
+          "rather than 'completed'. A ceremony that finished exactly as intended, written down as "
+          "abandoned, is a durable local lie — and 'abandoned' is what the grace path produces "
+          "when no branch recognises a delivered document."
+          % (who, ", ".join(wrong), [ended.get(c) for c in wrong]), file=sys.stderr)
+    sys.exit(1)
+if not have:
+    print("close-out: instance %s holds no delivered document, so C11's completed case is not "
+          "exercised on it" % who)
+else:
+    print("close-out: instance %s — %d delivered document(s), each one's ceremony out of the live "
+          "set and recorded 'completed'; %d folder(s) closed out in all"
+          % (who, len(have), len(ended)))
+PYLIVE
+  done
+
+  echo "close-out: the declined ceremony left the live set on all three parties AFTER the round"
+  echo "           reached them (C09's order); both signers' own contributions are preserved at"
+  echo "           ~/nib/ended/<id>/document.pdf, byte-identical, with their records and a local"
+  echo "           receipt reading 'declined'; the decliner, which had nothing to move, still has"
+  echo "           its receipt; and every COMPLETED relay ceremony whose document was delivered is"
+  echo "           out of the live set and recorded as completed (C11)"
 }
 
 # ── N >= 3: the expected red, and why it is here ─────────────────────────────
@@ -2634,6 +2867,7 @@ PYWORDS
     && fail "the two relays returned BYTE-IDENTICAL final documents — one re-read the other's result"
 
   decline_round
+  close_out_round
   interrupted_hop
   decoy_document
 

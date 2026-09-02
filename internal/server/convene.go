@@ -266,28 +266,20 @@ func (s *Server) handleCeremonyConvene(w http.ResponseWriter, r *http.Request) {
 // document never committed — one they can neither see nor cancel. A log line is the only
 // channel left, and it names both halves separately because they fail independently.
 func (s *Server) unconvene(v *vault.Vault, root, id string) {
-	if _, err := v.PruneCeremonySecrets(id); err != nil {
-		log.Printf("convene rollback: could not remove ceremony %s's invitation secrets from "+
-			"the vault: %v — they are key material and this machine still holds them", id, err)
-	}
-	// The invitee-side store too (P08.S01). A convener does not normally hold one, so this is
-	// almost always a no-op — but "almost always" is not a reason for a teardown to reach one of
-	// two stores, and a convener that also accepted an invitation to its own ceremony is exactly
-	// the case nobody would think to test.
-	if _, err := v.PruneCeremonyInvitations(id); err != nil {
-		log.Printf("convene rollback: could not remove ceremony %s's stored invitation from the "+
-			"vault: %v — it carries the ceremony secret and this machine still holds it", id, err)
-	}
+	// **The three vault stores go through the same door the close-out uses** (ADR-009, P08.S06).
+	// They were three separate `Prune*` calls with three hand-written log lines here, and a
+	// fourth store added later would have had to be remembered in two places — which is how
+	// P08.S01 found this function reaching one of two invitation stores in the first place.
+	_ = closeOutStores(v, id, "convene rollback")
+	// **The mirror is NOT in that door, and it is the reason it is not.** A rollback DELETES: a
+	// convene whose commit failed never produced a contribution, so there is nothing to preserve
+	// and leaving the directory behind would put a ceremony that was never convened in front of
+	// the listing. A close-out MOVES, because on every machine but the convener's the mirror is
+	// the only place that party's own signature exists. One door with a verb parameter would be
+	// two behaviours wearing one name.
 	if err := ceremony.RemoveMirror(root, id); err != nil {
 		log.Printf("convene rollback: could not remove %s: %v — a ceremony directory is left "+
 			"under the output folder for a ceremony that was never convened", id, err)
-	}
-	// The pins, third, and reported for the same reason as the other two: a convener left
-	// holding ceremony-scoped pins for a ceremony that never existed has no way to see them as
-	// such — the peer list shows a peer, and only the prune knows it was provisional.
-	if _, err := v.PruneCeremonyPeers(id); err != nil {
-		log.Printf("convene rollback: could not remove ceremony %s's peer pins: %v — the peer "+
-			"list carries pins for a ceremony that was never convened", id, err)
 	}
 }
 
@@ -438,6 +430,14 @@ type ceremoniesResponse struct {
 	Primary bool `json:"primary"`
 	// Note is the sentence a non-primary Nib shows instead of an action.
 	Note string `json:"note,omitempty"`
+	// Ended is what this machine has closed out (P08.S06), newest first.
+	//
+	// **Carried in the same response as the live ones because the pair is the answer.** A user
+	// asking "what ceremonies do I have" after one finishes gets an empty `Ceremonies` and no
+	// explanation, and the signed contribution the close-out deliberately preserved is at a path
+	// nothing named. Two routes would make the second one optional, which is how the preserved
+	// copy becomes a file nobody knows exists.
+	Ended []ceremony.Receipt `json:"ended,omitempty"`
 }
 
 // handleCeremonies lists the ceremonies stored on this machine (P08.S03, C12).
@@ -464,6 +464,20 @@ type ceremoniesResponse struct {
 // this process is not the recorded instance, so a non-primary Nib can read and must not act. One
 // mechanism, already tested, and no new file in a directory whose file set other checks assume.
 func (s *Server) handleCeremonies(w http.ResponseWriter, r *http.Request) {
+	// **The sweep runs BEFORE the listing is read, so what the user sees is post-close-out**
+	// (P08.S06's third trigger). Synchronous and not on a goroutine: a sweep racing the
+	// `ListStored` below would show the user a ceremony it is in the middle of moving, and the
+	// route's whole job is to say what is on disk. It is the same function the unlock hook calls
+	// — ADR-009, one rule and every site calls it — and it returns immediately when this Nib is
+	// not the primary one or the vault is shut, which is what makes an unconditional call here
+	// correct rather than merely convenient.
+	//
+	// **Why the listing is a trigger at all**: the other one is unlock, and a machine that stays
+	// unlocked for a fortnight would otherwise never sweep. This route is what a user opens to
+	// look at their ceremonies, which is the moment the answer needs to be current.
+	if v := s.unlockedVault(); v != nil {
+		s.closeOutEnded(v, time.Now())
+	}
 	list, err := ceremony.ListStored(defaultOutputDir(), time.Now())
 	if err != nil {
 		httpError(w, http.StatusInternalServerError,
@@ -473,7 +487,10 @@ func (s *Server) handleCeremonies(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
 	primary := s.instanceToken != ""
 	s.mu.Unlock()
-	out := ceremoniesResponse{Ceremonies: list, Primary: primary}
+	// Best-effort: a ceremonies folder that reads and an `ended/` that does not is still a
+	// listing worth answering, and the live half is the one a user is acting on.
+	ended, _ := ceremony.ListEnded(defaultOutputDir())
+	out := ceremoniesResponse{Ceremonies: list, Primary: primary, Ended: ended}
 	if !primary {
 		out.Note = "another copy of Nib is already running on this machine. This one can show " +
 			"your ceremonies but must not continue or remove them, because both would be " +

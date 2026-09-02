@@ -1,0 +1,11 @@
+--- a/internal/server/clocks.go
++++ b/internal/server/clocks.go
+@@ -181,7 +181,7 @@
+ 	// at `connectDeadline` each — plus the machine being off. Three days covers a long weekend,
+ 	// which is the outage the sweep's own trigger rule is written around: every ceremony route
+ 	// is behind `requireUnlocked`, so a machine left locked prunes nothing while wall time runs.
+-	closeOutGrace = ceremony.MaxCeremonyLife / 10
++	closeOutGrace = 72 * time.Hour
+ )
+ 
+ // ceremonyHopBudget is the worst-case wall-clock ONE ceremony hop can consume: bootstrap,

@@ -6570,7 +6570,7 @@ Tasks:
 - T06 — both red-proof rows re-sited and re-proved; `docs/red-proofs.md` updated.
 - T07 — ADR-011 amended (not edited) with the site's removal; the TCP-ceremony asymmetry written down.
 
-#### P08.S06 — Close-out: end state, then delivery, then the prune — and nothing is destroyed *(D29 lifecycle pin; C09, C11)*
+#### P08.S06 — Close-out: end state, then delivery, then the prune — and nothing is destroyed *(D29 lifecycle pin; C09, C11)* *(**done** 2026-09-02, v1.117.330 — 7 clauses: 6 met, 1 substituted with its reason. C09 and C11 both green at tier 4. **The prune is one `os.Rename`** — the mirror holds no key material by D29's own design, so `~/nib/ceremonies/<id>/` becomes `~/nib/ended/<id>/` and the signed contribution, its record and the termination all survive, while the vault teardown beside it still deletes. **The deepdive corrected the scope before a line was written**: it said three stores and it is FOUR, *"at startup"* is unreachable behind `requireUnlocked`, and there is no promote door in the vault at all. **Tier 4 then found two defects tier 1 could not** — `roundIsFinished` asked after the finished document on the DECLINED path, where the round sends a termination, so every declined signer would have held its pins for the full three-day grace; and `WriteReceipt` had no directory on the one machine that never mirrored the ceremony, leaving the decliner with no record it had refused. **And C11's central case had no branch at all**, shown by the run's own leftovers: two relay ceremonies whose documents were already delivered were still in the live set, and the only exit left was the grace, which would have written `abandoned` over a proceeding that finished exactly as intended. 11 mutations probed, **one came back green** — on a fix, not a feature — and now has its assertion. 5 red proofs registered, floor 261 → 266. `/pending` 360, 361, 362 filed.)*
 Scope: D29 states the lifecycle once — *end state → delivery round → close-out* — and puts the pin
 drop and the prune at close-out. Two corrections the panel forced. The prune **moves, it does not
 delete**: on declined, expired and abandoned there is no delivery round, and the mirror is the only
@@ -6585,6 +6585,103 @@ Acceptance:
 - **The root is resolved once and refused if it is not absolute** before any `RemoveAll` — `defaultOutputDir` falls back to a relative `"nib"` when `os.UserHomeDir` fails.
 - **A decline no longer prunes at the end state**, driven by the declined ceremony's round still reaching the signers.
 - Tier: 4 for the ordered observation and the abandoned close-out; tier 1 for the root and grace rules (C15).
+
+**Deepdive, 2026-09-02 — six findings, three of which re-cut the slice before a line was written.**
+
+- **The scope's store count is WRONG, and the count is what the door does.** It says close-out is
+  *"three stores, not two"*. `unconvene` (`internal/server/convene.go:268`) takes **four**:
+  `PruneCeremonySecrets`, `PruneCeremonyInvitations`, `PruneCeremonyPeers`, `RemoveMirror`. The
+  invitee-side invitation store is the fourth, added by P08.S01 with its own reason — *"'almost
+  always' is not a reason for a teardown to reach one of two stores"*. Built to the stated three, the
+  close-out leaves the ceremony secret on disk: the exact defect S01 fixed one door over.
+- **`RemoveMirror`'s doc comment invites the data loss the first bullet forbids.** `mirror.go:288`
+  says *"D29's close-out prune is P08.S06's, and this function is what it will call"*, and it is an
+  `os.RemoveAll`.
+- **C11's local receipt is cited by code that has no implementation.** `termination.go:102` —
+  *"Retention starts from the local receipt's observed-at time."* Search:
+  `grep -rn "eceipt" --include=*.go internal/` returns 20 hits, every one a **wire** ack or a
+  comment. No type, no file, no writer; the grace clock has no source today.
+- **One trigger hook exists, not three.** `rearmDeliveries` has ONE production caller
+  (`auth.go:129`, the unlock path) and is gated on `deliveryRearm` because a `Server` built in a
+  test isolates `configDir` and **not** `$HOME` — an ungated sweep read the developer's real
+  ceremonies. A sweep that DELETES carries that hazard with worse consequences. *"At startup"* is
+  unreachable regardless: every ceremony route is behind `requireUnlocked`, which this slice's own
+  bullet says.
+- **"A pin the user promoted survives" is already true and the word is wrong.**
+  `PruneCeremonyPeers` skips `len(p.Ceremonies) == 0` and its comment calls that one-way promotion;
+  `grep -rn "Promote|promoted|Provisional" --include=*.go internal/vault/` finds no promote door. A
+  pin becomes a user pin by being created unscoped. The clause needs an assertion, not code.
+- **24 production sites call `defaultOutputDir()`**, which returns a relative `"nib"` when
+  `os.UserHomeDir()` fails. Per ADR-009 the absoluteness refusal goes at the ONE destructive door,
+  not at the resolver — guarding one `RemoveAll` is not worth a 24-site signature change.
+
+**The shape that produces: the prune is one `os.Rename`.** Not a copy-then-delete. The mirror holds
+no key material by D29's own design (*"the mirror is unsealed"*), so moving
+`~/nib/ceremonies/<id>/` to `~/nib/ended/<id>/` preserves the signed contribution, the record that
+makes it verifiable and the termination — atomically, on one filesystem — while the vault teardown
+still deletes. `ListStored` reads only `~/nib/ceremonies`, so a moved ceremony leaves the listing by
+construction rather than by a filter.
+
+Tasks:
+- **T01** — `ceremony.CloseOutMirror(root, id)`: the move. Refuses a non-absolute `root` **before**
+  any destructive call (the one door, ADR-009), refuses an id `ValidID` rejects, `os.Rename` into
+  `<root>/ended/<id>`, and refuses rather than clobbers an existing destination.
+- **T02** — the local receipt (C11, D28): `ceremony.WriteReceipt` / `ReadReceipt`, a small
+  **unattested** JSON — `{ceremony, state, observedAt}` — written into the moved directory and
+  read by the grace clock. Unattested is the point: it records what THIS machine observed and
+  when, which is the axis `Termination` deliberately excludes because a convener-chosen `When`
+  would hand a convener control of when other machines prune.
+- **T03** — `closeOutCeremony(v, root, id)` in `internal/server`: the ONE close-out door, taking
+  **four** stores and reporting each separately as `unconvene` does. `unconvene` stays its own
+  function — a convene rollback has no document to keep — but both take the same four-store helper.
+- **T04** — `closeOutGrace` in the tunable block, derived from `ceremony.MaxCeremonyLife` rather
+  than hand-copied (the `maxCandidatesPerSource` rule, **not** D33's law/tunable guard, whose
+  `lawFigures` list is a deliberate two-name whitelist).
+- **T05** — the sweep: `closeOutEnded(v)`, evaluated against each record's own `Expires` plus the
+  grace, called from the unlock hook beside `rearmDeliveries` under the **same** gate, and as a
+  side effect of the listing route. Never on a wall-clock timer.
+- **T06** — `declineCeremony` stops pruning at the end state, so the lifecycle is
+  end state → delivery round → close-out on the decliner's machine too.
+- **T07** — tier 4: the ordered observation (round reaches every party, THEN the pins are gone) and
+  the abandoned close-out (a party who signed at hop 2 still has its contribution at a named path
+  after the prune).
+
+**What the build changed, and every one of these is a correction to this slice's own plan.**
+
+- **T07's shape.** The plan asked for *"the abandoned close-out"* at tier 4 and that is not drivable:
+  `closeOutGrace` is three days and a harness that slept for it would not be a harness. What IS
+  drivable is the path that needs no grace — a signer holding a verified termination — so the clause
+  runs on `decline_round`'s ceremony, after it, which is also exactly C09's ordering. The abandoned
+  path keeps its tier-1 coverage and the substitution is stated rather than silent.
+- **The ordered observation's pin half has no tier-4 observable.** `peersPayload` publishes
+  `Fingerprint`, `Name` and `Label` and drops `PinnedPeer.Ceremonies`, so C09's *"their invitation
+  pins are absent afterwards"* is graded at tier 1 only — and these instances pin one another across
+  several ceremonies, so a pin surviving is the correct outcome regardless. Inventory row S06-10.
+- **`declineCeremony` closes out IMMEDIATELY** rather than deferring to the sweep. For the decliner
+  there is no round to wait for — `runDeliveryRound` skips the party that ended the proceeding by
+  name — so D29's middle step is empty on that one machine, and waiting would hold the pins until the
+  deadline plus the grace for a ceremony the user has already refused.
+- **Two defects tier 4 found that tier 1 could not, both in code written the same day.**
+  `roundIsFinished` asked `alreadyDelivered` — a stat on the FINISHED DOCUMENT's path — for both end
+  states, but a declined ceremony delivers the *termination*, so every declined signer would have
+  held its folder and its pins for the full three days. And `WriteReceipt` had no directory to write
+  into on the one machine that never mirrored the ceremony, leaving the decliner with no record it
+  had ever refused. Both were logged rather than silent; both looked symmetric on the page.
+- **C11's central case had no branch at all**, and the run's own leftovers showed it: two relay
+  ceremonies whose finished documents were already in `~/nib/signed/` were still in
+  `~/nib/ceremonies/`. A completed ceremony delivers a document and not an attestation, so a signer
+  never receives a `completed` termination and `Stored.Ended` stays empty forever — leaving the grace
+  as the only exit, which would have recorded a proceeding that finished exactly as intended as
+  `abandoned`. That is a durable local lie and it is now a branch of its own.
+- **One mutation came back GREEN**, on the `MkdirAll` fix above: eleven were probed and that is the
+  one with no tier-1 assertion behind it. It has one now. It came back green on a *fix* rather than
+  on a feature, which is the harder case to remember to probe.
+- **`saveDelivered` and `alreadyDelivered` were two spellings of one path** and are now one door.
+  Harmless until this slice, which MOVES a directory on the strength of that stat.
+- Parked, all three Dan's or filed: `/pending 360` (the sweep reads every stored ceremony's document,
+  on a request path — `CLAUDE.md`'s hot-path rule), `/pending 361` (nothing ever removes a closed-out
+  ceremony; deleting a user's own signed contribution is a bigger act than this slice), `/pending 362`
+  (the primary-instance gate has no fixture).
 
 #### P08.S07 — Two refusals that are already there, driven honestly *(D29 gap #28, D21 gap #24; C13, C14)* *(done 2026-08-29, v1.117.246 — both driven at the route for the first time; C13's LOOSER direction found unreachable and scoped out with the reason)*
 Scope: both look met and this slice finds out. The convene refusal covers the direction that already

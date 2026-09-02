@@ -1,0 +1,12 @@
+--- a/internal/server/closeout.go
++++ b/internal/server/closeout.go
+@@ -196,9 +196,6 @@
+ // that did not verify is how a live ceremony disappears because one file was damaged. P08.S03
+ // built those four classes for exactly this decision and they all mean "leave it".
+ func closeOutReason(st ceremony.Stored, rec ceremony.Record, me string, now time.Time) (string, bool) {
+-	if st.State != ceremony.LoadOK {
+-		return "", false
+-	}
+ 	past := !st.Expires.IsZero() && now.After(st.Expires.Add(closeOutGrace))
+ 	if st.Ended != "" {
+ 		if roundIsFinished(rec, me) || past {

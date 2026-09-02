@@ -1,0 +1,17 @@
+--- a/internal/ceremony/closeout.go
++++ b/internal/ceremony/closeout.go
+@@ -192,14 +192,6 @@
+ 	if err != nil {
+ 		return err
+ 	}
+-	if prev, rerr := ReadReceipt(root, id); rerr == nil {
+-		if prev.State == r.State {
+-			return nil
+-		}
+-		return fmt.Errorf("%w: this ceremony is already recorded locally as %q and cannot also "+
+-			"be recorded as %q — the first thing this machine observed is the one that stands",
+-			ErrReceiptConflict, prev.State, r.State)
+-	}
+ 	b, merr := json.MarshalIndent(r, "", "  ")
+ 	if merr != nil {
+ 		return merr

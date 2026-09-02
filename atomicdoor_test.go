@@ -44,8 +44,20 @@ func TestEveryHandRolledAtomicWriteIsDeclared(t *testing.T) {
 		// **The map held two more until v1.117.261 and now holds none.** `internal/cli/cli.go`'s
 		// `writeAtomic` and `internal/rendezvous/dht.go`'s node-cache write were the two
 		// second implementations this guard was promoted to find; /pending 316 removed them.
-		// Both now call the door. The empty state is the point: an exemption is a claim somebody
+		// Both now call the door. The empty state was the point: an exemption is a claim somebody
 		// made deliberately, and the fewer of them there are the more the guard means.
+		//
+		// **One entry since v1.117.330, and it is a different KIND of rename.** This guard's own
+		// message names what it is hunting — *"a temp-file-plus-rename here is a second
+		// implementation of the rule internal/atomicfile owns"* — and `CloseOutMirror` is not
+		// that. It writes no file and produces no temp: it relocates a whole DIRECTORY, the live
+		// ceremony folder to `ended/`, in one syscall. `atomicfile` has no directory door and
+		// should not grow one to absorb this; its contract is bytes-to-a-path, and a
+		// write-to-temp-then-rename of a directory tree is not a cheaper or safer way to do what
+		// `os.Rename` already does atomically.
+		//
+		// Recorded rather than routed, which is the choice this map exists to make visible.
+		"internal/ceremony/closeout.go": "renames a DIRECTORY, not a file — no temp, no bytes",
 	}
 
 	fset := token.NewFileSet()

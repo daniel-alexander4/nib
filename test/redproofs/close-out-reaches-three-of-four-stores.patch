@@ -1,0 +1,13 @@
+--- a/internal/server/closeout.go
++++ b/internal/server/closeout.go
+@@ -54,10 +54,6 @@
+ 		note(err, "could not remove its invitation secrets from the vault — they are key "+
+ 			"material and this machine still holds them")
+ 	}
+-	if _, err := v.PruneCeremonyInvitations(id); err != nil {
+-		note(err, "could not remove its stored invitation — it carries the ceremony secret "+
+-			"and this machine still holds it")
+-	}
+ 	if _, err := v.PruneCeremonyPeers(id); err != nil {
+ 		note(err, "could not remove its peer pins — the peer list still carries pins this "+
+ 			"machine took on only for this ceremony")
