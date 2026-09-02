@@ -1087,6 +1087,239 @@ PYMIRROR
 CONSENT_ANSWER='{"accept":true,"intent":"I accept"}'
 
 
+# ── P08 C01: a hop INTERRUPTED after its signature exists, and what it must not do ───────────
+#
+# **The criterion is D24's and its driver did not exist**, which is `/pending 323`(d): *"a hop
+# interrupted after its signature exists re-delivers on resumption and never re-signs; the
+# finished document carries exactly one block per signer."* P08.S02 built the mechanism and its
+# marker says only the driver was left — *"it needs a fault seam this repo has deliberately
+# refused in the product."*
+#
+# **It needs no fault seam, and that claim is what kept this unbuilt for two phases.** The window
+# is externally observable and externally widenable:
+#
+#   * `coSignExchange` calls `rd.Store` — which writes the mirror DURABLY — and returns; its
+#     caller writes the frame afterwards (`internal/p2p/session.go:1105`, then `:420`). So the
+#     window is the whole document transfer, and its opening is announced on disk by the party.
+#   * A kill is a `kill`. Nothing in the product has to cooperate and nothing has to be built to
+#     make it fail, which is what a "fault seam" would have meant.
+#   * The window's WIDTH is a function of the document, so this clause makes a large one. On the
+#     stock 7 KB fixture the frame write is microseconds and the race is unwinnable; at a few MB
+#     it is tens of milliseconds, which a polling kill hits.
+#
+# `Cached`'s own doc already names this clause as its reason — *"A party killed after signing and
+# restarted has its contribution on disk … which is what D24 forbids and what C01 counts on the
+# artifact."* That sentence was true and unobserved.
+interrupted_hop() {
+  local transport="quic"
+  if [ "$N" -lt 2 ]; then
+    echo "interrupt: skipped — needs a convener and one signer"
+    return 0
+  fi
+  echo "interrupt: convening a 2-party ceremony over a LARGE document, to be killed mid-frame…"
+
+  # **A large fixture, because the window IS the transfer.** Built by the product from Markdown
+  # like every other fixture here, so it stays readable in review rather than being a blob.
+  #
+  # 20,000 clauses ≈ 4.9 MB, measured — and the count is a measurement rather than a guess: 1,200
+  # clauses came out at 294 KB, because prose in a PDF compresses well, and at that size the
+  # frame write was too fast for the kill to land inside it. The floor below is what turns a
+  # fixture that quietly shrank back into a red rather than a clause that drives nothing.
+  python3 -c "
+out = open('$WORK/big.md', 'w')
+out.write('# Master services agreement\n\n')
+for i in range(20000):
+    out.write('## Clause %d\n\n' % i)
+    out.write(('The parties agree to the terms set out in this clause, which is numbered %d and '
+               'exists so that this document is large enough for its transfer to take a '
+               'measurable amount of time. ' % i) * 6)
+    out.write('\n\n')
+out.close()
+"
+  "$WORK/nib" office "$WORK/big.md" -o "$WORK/big.pdf" >/dev/null 2>&1 \
+    || fail "interrupt: could not build the large fixture PDF"
+  local bigsz; bigsz="$(stat -c %s "$WORK/big.pdf")"
+  # STIMULUS: the fixture really is large. At the stock size the kill cannot land inside the
+  # window at all, and this clause would report a pass having driven nothing.
+  [ "$bigsz" -ge 3000000 ] \
+    || fail "interrupt: the fixture is only $bigsz bytes — the frame write is then too fast for the
+      kill to land inside it, and every assertion below would be about a hop that completed"
+  echo "interrupt: fixture is $bigsz bytes"
+
+  local roster expires code icid inv iaddr docid mirror
+  roster="$(python3 -c "
+import json
+print(json.dumps({'fingerprint':'${FPS[0]}','label':'p1','signs':False})+','+
+      json.dumps({'fingerprint':'${FPS[1]}','label':'p2','signs':True}))")"
+  expires="$(python3 -c "
+import datetime;print((datetime.datetime.now(datetime.timezone.utc)+datetime.timedelta(hours=6)).strftime('%Y-%m-%dT%H:%M:%SZ'))")"
+  python3 - "${URLS[0]}" "${CSRFS[0]}" <<'PYCLOSE' || exit 1
+import json, sys, urllib.request
+base, csrf = sys.argv[1], sys.argv[2]
+d = json.load(urllib.request.urlopen(base + "/api/docs")).get("docs") or []
+if d:
+    req = urllib.request.Request(base + "/api/close", method="POST",
+                                 data=json.dumps({"id": d[0]["id"]}).encode(),
+                                 headers={"Content-Type": "application/json", "X-CSRF-Token": csrf,
+                                          "X-Nib-Doc": d[0]["id"]})
+    urllib.request.urlopen(req).read()
+PYCLOSE
+  code="$(curl -sS -X POST "${URLS[0]}/api/open" -H 'Content-Type: application/json' \
+    -H "X-CSRF-Token: ${CSRFS[0]}" -d "{\"path\":\"$WORK/big.pdf\"}" -o /dev/null -w '%{http_code}')"
+  [ "$code" = "200" ] || fail "interrupt: the convener could not open the large document (HTTP $code)"
+  code="$(curl -sS -X POST "${URLS[0]}/api/ceremony/convene" -H 'Content-Type: application/json' \
+    -H "X-CSRF-Token: ${CSRFS[0]}" \
+    -d "{\"roster\":[$roster],\"intent\":\"We agree\",\"expires\":\"$expires\",\"convenerSigns\":false}" \
+    -o "$WORK/int.convene.json" -w '%{http_code}')"
+  [ "$code" = "200" ] || fail "interrupt: convene failed (HTTP $code): $(head -c 300 "$WORK/int.convene.json")"
+  icid="$(python3 -c "import json;print(json.load(open('$WORK/int.convene.json'))['ceremony'])")"
+  inv="$(python3 -c "
+import json
+d=json.load(open('$WORK/int.convene.json'))
+print(next(x['invitation'] for x in d['invites'] if x['fingerprint'].lower()=='${FPS[1]}'.lower()))")"
+  code="$(curl -sS -X POST "${URLS[1]}/api/ceremony/accept" -H 'Content-Type: application/json' \
+    -H "X-CSRF-Token: ${CSRFS[1]}" -d "$(python3 -c "import json;print(json.dumps({'invitation':'$inv'}))")" \
+    -o /dev/null -w '%{http_code}')"
+  [ "$code" = "200" ] || fail "interrupt: instance 2 could not accept (HTTP $code)"
+
+  docid="$(python3 -c "import json;print(json.load(open('$WORK/int.convene.json')).get('document',{}).get('id',''))")"
+  curl -fsS "${URLS[0]}/api/pdf?doc=$docid" -o "$WORK/int.hop0.pdf" \
+    || fail "interrupt: could not fetch the convened document"
+  # **The COMMIT POINT, which is `record.json` and not `document.pdf`.** `WriteMirror` writes the
+  # document first and the record last, and says why in as many words: *"the record is the last
+  # thing to land, so a torn write leaves a directory with no record, which ReadMirror reports as
+  # an ordinary miss."* The first cut of this clause killed on `document.pdf` appearing — one file
+  # BEFORE the commit — and the resumed party then re-signed. That looked like C01 being violated
+  # and was the probe firing too early: an uncommitted contribution is one the design says to
+  # re-sign. "After its signature exists" means after the mirror commits it.
+  mirror="${HOMES[1]}/home/nib/ceremonies/$icid/record.json"
+  local mirrordoc="${HOMES[1]}/home/nib/ceremonies/$icid/document.pdf"
+  rm -f "$mirror" "$mirrordoc"
+
+  # ── Attempt 1: sign, then die between the durable write and the frame ──────────────────────
+  code="$(curl -sS -X POST "${URLS[1]}/api/session/arm" -H 'Content-Type: application/json' \
+    -H "X-CSRF-Token: ${CSRFS[1]}" \
+    -d "{\"fingerprint\":\"${FPS[0]}\",\"bind\":\"$CEREMONY_HOST:0\",\"mode\":\"cosign\",\"transport\":\"$transport\",\"invitation\":\"$inv\"}" \
+    -o "$WORK/int.arm.json" -w '%{http_code}')"
+  [ "$code" = "200" ] || fail "interrupt: instance 2 could not arm (HTTP $code)"
+  iaddr="$(python3 -c "import json;print(json.load(open('$WORK/int.arm.json')).get('address',''))")"
+
+  rm -f "$WORK/int.words_a" "$WORK/int.words_b" "$WORK/int.gate1" "$WORK/int.gate2"
+  watch_verify "${URLS[0]}" "${CSRFS[0]}" "$WORK/int.words_a" &
+  local w1=$!
+  watch_verify "${URLS[1]}" "${CSRFS[1]}" "$WORK/int.words_b" &
+  local w2=$!
+  ( for _ in $(seq 1 480); do
+      if [ -n "$(curl -fsS "${URLS[1]}/api/session/status" 2>/dev/null | jget pending.fingerprint)" ]; then
+        : > "$WORK/int.gate1"
+        curl -fsS -X POST "${URLS[1]}/api/session/respond" -H 'Content-Type: application/json' \
+          -H "X-CSRF-Token: ${CSRFS[1]}" -d '{"accept":true,"intent":"I accept"}' >/dev/null 2>&1
+        exit 0
+      fi
+      sleep 0.25
+    done ) &
+  local wc=$!
+  # **The killer.** It watches for the party's own announcement that the durable write has
+  # landed — the mirror document appearing — and kills that instant. No product cooperation, and
+  # a tight loop because the window is a transfer, not a timer.
+  ( while [ ! -s "$mirror" ]; do sleep 0.002; done
+    kill -9 "${PIDS[1]}" 2>/dev/null ) &
+  local wk=$!
+
+  code="$(curl -sS -X POST "${URLS[0]}/api/session/initiate" -H "X-CSRF-Token: ${CSRFS[0]}" \
+    -F "pdf=@$WORK/int.hop0.pdf" -F "appearance=@$WORK/sig.png" \
+    -F "params={\"fingerprint\":\"${FPS[1]}\",\"intent\":\"hop 1\"}" \
+    -F "address=$CEREMONY_HOST:${iaddr##*:}" -F "transport=$transport" -F "invitation=$inv" \
+    -o "$WORK/int.hop1.json" -w '%{http_code}')"
+  wait "$w1" 2>/dev/null; wait "$w2" 2>/dev/null; wait "$wc" 2>/dev/null; wait "$wk" 2>/dev/null
+
+  # STIMULUS, and it is the whole clause: the party really signed, and really died before the
+  # initiator had the result. Either half missing means this drove something else entirely.
+  [ -f "$WORK/int.gate1" ] \
+    || fail "interrupt: the signing party was never shown a consent gate, so it never signed and
+      there is no signature for the kill to have interrupted"
+  [ -s "$mirror" ] && [ -s "$mirrordoc" ] \
+    || fail "interrupt: the party's contribution was not COMMITTED to the mirror, so the kill
+      landed before the record — the commit point — rather than inside the window between it and
+      the frame. An uncommitted contribution is one the design says to re-sign."
+  [ "$code" != "200" ] \
+    || fail "interrupt: hop 1 SUCCEEDED (HTTP 200) — the kill landed after the frame had gone, so
+      nothing was interrupted and every assertion below would be about a completed hop. The window
+      is the transfer; a larger fixture widens it."
+  echo "interrupt: the party signed, persisted, and died before the frame (initiate returned $code)"
+
+  cp "$mirrordoc" "$WORK/int.snapshot.pdf" || fail "interrupt: could not snapshot the stored contribution"
+
+  # ── Attempt 2: it comes back, and must NOT sign again ──────────────────────────────────────
+  restart 2 || fail "interrupt: instance 2 did not come back"
+  code="$(curl -sS -X POST "${URLS[1]}/api/session/arm" -H 'Content-Type: application/json' \
+    -H "X-CSRF-Token: ${CSRFS[1]}" \
+    -d "{\"fingerprint\":\"${FPS[0]}\",\"bind\":\"$CEREMONY_HOST:0\",\"mode\":\"cosign\",\"transport\":\"$transport\",\"ceremony\":\"$icid\"}" \
+    -o "$WORK/int.arm2.json" -w '%{http_code}')"
+  [ "$code" = "200" ] \
+    || fail "interrupt: instance 2 could not re-arm from its STORED invitation (HTTP $code): $(head -c 300 "$WORK/int.arm2.json").
+      P08.S01 is what makes a restarted party able to rejoin without being handed the invitation again."
+  iaddr="$(python3 -c "import json;print(json.load(open('$WORK/int.arm2.json')).get('address',''))")"
+
+  rm -f "$WORK/int.words_c" "$WORK/int.words_d"
+  watch_verify "${URLS[0]}" "${CSRFS[0]}" "$WORK/int.words_c" &
+  local w3=$!
+  watch_verify "${URLS[1]}" "${CSRFS[1]}" "$WORK/int.words_d" &
+  local w4=$!
+  # A watcher that RECORDS rather than answers: a consent gate on the resumption means the party
+  # is signing a second time, which is what C01 forbids. It must not answer it — answering would
+  # let the run complete and hide the defect behind a green hop.
+  ( for _ in $(seq 1 120); do
+      if [ -n "$(curl -fsS "${URLS[1]}/api/session/status" 2>/dev/null | jget pending.fingerprint)" ]; then
+        : > "$WORK/int.gate2"; exit 0
+      fi
+      sleep 0.25
+    done ) &
+  local wc2=$!
+
+  # **The CONVENER names the invitation on both attempts, and the party names the ceremony.**
+  # They are not interchangeable: a party stores the invitation it accepted (P08.S01) and can
+  # re-arm from the ceremony id alone, while the convener holds no invitation for its OWN ceremony
+  # — it ISSUES them, per-party, which is what P08.S05g's round discovered. Passing `ceremony=` here
+  # was this clause's first cut, and it did not fail cleanly: the ceremony did not resolve, so
+  # `carries()` was false, and the NON-SIGNING convener silently applied its own signature. The far
+  # end then refused with a prefix mismatch naming a signer nobody expected. See /pending 356.
+  code="$(curl -sS -X POST "${URLS[0]}/api/session/initiate" -H "X-CSRF-Token: ${CSRFS[0]}" \
+    -F "pdf=@$WORK/int.hop0.pdf" -F "appearance=@$WORK/sig.png" \
+    -F "params={\"fingerprint\":\"${FPS[1]}\",\"intent\":\"hop 1\"}" \
+    -F "address=$CEREMONY_HOST:${iaddr##*:}" -F "transport=$transport" -F "invitation=$inv" \
+    -o "$WORK/int.hop1b.json" -w '%{http_code}')"
+  wait "$w3" 2>/dev/null; wait "$w4" 2>/dev/null; kill "$wc2" 2>/dev/null; wait "$wc2" 2>/dev/null
+
+  # **The gate check comes FIRST, and the order is the diagnosis.** A party that re-signs shows a
+  # consent gate this watcher deliberately does not answer, so the initiate then waits out
+  # `sessionConsentTimeout` and returns a timeout — and checking the code first would report five
+  # minutes of silence rather than the second signature that caused it. Measured: with the disk
+  # read-through removed, the code check named a consent timeout and said nothing about why.
+  [ ! -f "$WORK/int.gate2" ] \
+    || fail "interrupt: the resumed hop asked the party to sign AGAIN. Its contribution was already
+      committed to the mirror, so this is a SECOND signature from one identity — D24 forbids it and
+      C01 counts it on the artifact. Cached's read-through is what should have returned before
+      Confirm, and this clause is what says whether it did."
+  [ "$code" = "200" ] \
+    || fail "interrupt: the resumed hop returned HTTP $code: $(head -c 300 "$WORK/int.hop1b.json").
+      The party holds its signature on disk; a resumption that cannot complete means the
+      re-delivery read-through did not fire."
+
+  # And the artifact carries THAT signature, byte for byte — not a fresh one that happens to
+  # verify. A re-signature produces a different document that passes every count.
+  local fdoc
+  fdoc="$(curl -fsS "${URLS[0]}/api/docs" | jget activeId)"
+  curl -fsS "${URLS[0]}/api/pdf?doc=$fdoc" -o "$WORK/int.finished.pdf" \
+    || fail "interrupt: could not fetch the finished document"
+  cmp -s "$WORK/int.snapshot.pdf" "$WORK/int.finished.pdf" \
+    || fail "interrupt: the finished document is NOT byte-identical to the contribution the party
+      had already stored before it died. It re-signed, and the artifact carries the new signature —
+      which counts correctly and is a different document, which is why the criterion asks for bytes."
+  echo "interrupt: the hop resumed from disk, the party did not sign twice, and the artifact is the"
+  echo "           contribution it had stored before the kill, byte for byte (C01)"
+}
+
 # ── P08.S05e: a ceremony DECLINED at hop 3, and the parties who signed are told ──────────────
 #
 # C06's telling half. Everything above drives ceremonies that COMPLETE; this is the only sequence
@@ -2210,6 +2443,7 @@ PYWORDS
     && fail "the two relays returned BYTE-IDENTICAL final documents — one re-read the other's result"
 
   decline_round
+  interrupted_hop
 
   # ── P03's exit criterion, over EVERYTHING this run emitted ───────────────────
   #
