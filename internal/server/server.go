@@ -22,6 +22,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	"nib/internal/instance"
 	"nib/internal/pdfops"
@@ -158,7 +159,10 @@ type Server struct {
 	web       fs.FS
 	legal     fs.FS  // LICENSE + THIRD-PARTY-NOTICES.md, served read-only for the About dialog
 	configDir string // where the vault lives (os.UserConfigDir()/nib)
-	version   string // running build version, reported by the update check and the About dialog
+	// deliveryRearm is set by `EnableDeliveryRearm`, which only a real Nib process calls. See
+	// that method: constructing a Server must not put a socket on the network.
+	deliveryRearm atomic.Bool
+	version       string // running build version, reported by the update check and the About dialog
 
 	setupMu sync.Mutex // serializes first-run vault setup so AutoSetup runs once
 
@@ -277,6 +281,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/ceremony/invites", s.requireUnlocked(s.handleCeremonyInvites))
 	mux.HandleFunc("GET /api/ceremonies", s.requireUnlocked(s.handleCeremonies))
 	mux.HandleFunc("POST /api/ceremony/accept", s.requireUnlocked(s.handleCeremonyAccept))
+	mux.HandleFunc("POST /api/ceremony/deliver", s.requireUnlocked(s.handleCeremonyDeliver))
 	mux.HandleFunc("GET /api/attestations", s.requireUnlocked(s.handleAttestations))
 	mux.HandleFunc("POST /api/session/arm", s.requireUnlocked(s.handleSessionArm))
 	mux.HandleFunc("POST /api/session/disarm", s.requireUnlocked(s.handleSessionDisarm))

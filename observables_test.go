@@ -244,6 +244,8 @@ var unreadKnown = map[string]string{
 	"server.conveneResponse.Invites":       "P06: no convene surface",
 	"server.conveneResponse.Warnings":      "P06: no convene surface — and this is the one to wire FIRST when it lands: it carries the sitting warning P08.S05b computes, which is the only place a convener is told their deadline is tight",
 	"server.lanHeardResponse.WindowMs":     "/pending 23: the discovery counters have a reader and no user-facing surface shows them. Same gap, same item.",
+	"server.deliveryOutcome.Delivered":     "P06 / /pending 353: no delivery surface — POST /api/ceremony/deliver has zero references in web/app.js, and the CLI is offline tools with no HTTP client. This is the per-party result of a round, and it is the field to wire FIRST: without it a convener is told a round \"failed\" that reached three of four.",
+	"server.deliveryOutcome.Skipped":       "P06 / /pending 353: same surface. It is what distinguishes a re-run that correctly skipped an acknowledged party from one that silently did nothing.",
 
 	// **Two were real, were filed rather than parked, and are now CLOSED** — /pending 349 (the D19
 	// diagnosis gained a reader) and /pending 350 (the field was deleted). Both entries are gone

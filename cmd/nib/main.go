@@ -153,6 +153,10 @@ func run() int {
 	s := server.New(nib.WebFS(), nib.LegalFS(), vault.DefaultDir(), version)
 	s.SetInstanceToken(probeToken)
 	s.SetHandoffSecret(handoffSecret)
+	// This is a real Nib process, so an unlock may re-establish a delivery arm (P08.S05g).
+	// Twin of the DisarmSession call below: both are lifetime facts the binary owns and a
+	// constructed Server must not assume.
+	s.EnableDeliveryRearm()
 	srv := &http.Server{Handler: s.Handler()}
 	// A serve failure signals the main goroutine instead of exiting from here.
 	// log.Fatalf calls os.Exit, which skips every deferred function AND the explicit
