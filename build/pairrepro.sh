@@ -687,6 +687,165 @@ watch_verify() { # url csrf outfile
 #
 # `local` is dynamically scoped in bash, so the subshells and helpers below see these bindings
 # rather than the globals. That is what lets the body stay unchanged.
+# CONSENT_ANSWER is what the receiving party's watcher posts to /api/session/respond. It defaults
+# to acceptance, so every existing call site is unchanged; P08.S05e sets it to a decline for exactly
+# one hop, which is the only way to drive an END STATE — a decline is a person refusing, and no
+# other input to this system produces one.
+CONSENT_ANSWER='{"accept":true,"intent":"I accept"}'
+
+declare -A DINV=() DADDR=()
+
+# ── P08.S05e: a ceremony DECLINED at hop 3, and the parties who signed are told ──────────────
+#
+# C06's telling half. Everything above drives ceremonies that COMPLETE; this is the only sequence
+# in the tree that produces an end state, because an end state comes from a person refusing and no
+# other input to this system makes one.
+#
+# **A fresh ceremony, not the relay's.** The relay's is complete, and a completed proceeding cannot
+# be declined — so this convenes its own, signs two hops, and refuses the third. The parties who
+# signed at hops 1 and 2 are then owed the four things C06 names, and the assertion is that they
+# were TOLD: the telling lands on their sticky notice, which is the only channel a delivery arm has.
+decline_round() {
+  local transport="quic"
+  echo "decline: convening a fresh $N-party ceremony to end at hop 3…"
+  local roster expires code dcid inv i
+  roster="$(python3 -c "
+import json,sys
+fps=sys.argv[1:]
+print(','.join(json.dumps({'fingerprint':f,'label':'p%d'%(n+1),'signs':n>0}) for n,f in enumerate(fps)))" "${FPS[@]}")"
+  expires="$(python3 -c "
+import datetime;print((datetime.datetime.now(datetime.timezone.utc)+datetime.timedelta(hours=6)).strftime('%Y-%m-%dT%H:%M:%SZ'))")"
+  # **Close what the relays left open first.** The convener accumulates a document per hop per
+  # transport plus the delivery rounds', and ADR-005's cap is 8 — the harness's own relay comment
+  # records hitting it at N=4. This runs after two full relays, so it is over the cap by
+  # construction rather than by accident.
+  python3 - "${URLS[0]}" "${CSRFS[0]}" <<'PYCLOSE' || fail "decline: could not close the convener's documents"
+import json, sys, urllib.request
+base, csrf = sys.argv[1], sys.argv[2]
+docs = json.load(urllib.request.urlopen(base + "/api/docs")).get("docs") or []
+for d in docs:
+    req = urllib.request.Request(base + "/api/close", method="POST",
+                                 data=json.dumps({"id": d["id"]}).encode(),
+                                 headers={"Content-Type": "application/json", "X-CSRF-Token": csrf,
+                                          "X-Nib-Doc": d["id"]})
+    try:
+        urllib.request.urlopen(req).read()
+    except Exception as e:
+        print("close %s: %s" % (d["id"][:8], e), file=sys.stderr)
+print("decline: closed %d document(s) the relays left open" % len(docs))
+PYCLOSE
+  code="$(curl -sS -X POST "${URLS[0]}/api/open" -H 'Content-Type: application/json' \
+    -H "X-CSRF-Token: ${CSRFS[0]}" -d "{\"path\":\"$WORK/doc.pdf\"}" \
+    -o "$WORK/decline.open.json" -w '%{http_code}')"
+  [ "$code" = "200" ] \
+    || fail "decline: the convener could not open a document to convene over (HTTP $code): $(head -c 300 "$WORK/decline.open.json")"
+  code="$(curl -sS -X POST "${URLS[0]}/api/ceremony/convene" -H 'Content-Type: application/json' \
+    -H "X-CSRF-Token: ${CSRFS[0]}" \
+    -d "{\"roster\":[$roster],\"intent\":\"We agree\",\"expires\":\"$expires\",\"convenerSigns\":false}" \
+    -o "$WORK/decline.convene.json" -w '%{http_code}')"
+  [ "$code" = "200" ] || fail "decline: convene failed (HTTP $code): $(head -c 300 "$WORK/decline.convene.json")"
+  dcid="$(python3 -c "import json;print(json.load(open('$WORK/decline.convene.json'))['ceremony'])")"
+  [ -n "$dcid" ] || fail "decline: convene returned no ceremony id"
+
+  for i in $(seq 2 "$N"); do
+    inv="$(python3 -c "
+import json
+d=json.load(open('$WORK/decline.convene.json'))
+print(next(x['invitation'] for x in d['invites'] if x['fingerprint'].lower()=='${FPS[$((i-1))]}'.lower()))")"
+    [ -n "$inv" ] || fail "decline: no invitation for instance $i"
+    DINV[$i]="$inv"
+    code="$(curl -sS -X POST "${URLS[$((i-1))]}/api/ceremony/accept" -H 'Content-Type: application/json' \
+      -H "X-CSRF-Token: ${CSRFS[$((i-1))]}" -d "$(python3 -c "import json;print(json.dumps({'invitation':'$inv'}))")" \
+      -o /dev/null -w '%{http_code}')"
+    [ "$code" = "200" ] || fail "decline: instance $i could not accept (HTTP $code)"
+  done
+
+  # Hops 1 and 2 SIGN. Their parties are the ones the telling is owed to.
+  local docid prev
+  docid="$(python3 -c "import json;print(json.load(open('$WORK/decline.convene.json')).get('document',{}).get('id',''))")"
+  curl -fsS "${URLS[0]}/api/pdf?doc=$docid" -o "$WORK/decline.hop0.pdf" \
+    || fail "decline: could not fetch the convened document"
+  prev="$WORK/decline.hop0.pdf"
+  for i in 2 3; do
+    code="$(curl -sS -X POST "${URLS[$((i-1))]}/api/session/arm" -H 'Content-Type: application/json' \
+      -H "X-CSRF-Token: ${CSRFS[$((i-1))]}" \
+      -d "{\"fingerprint\":\"${FPS[0]}\",\"bind\":\"$CEREMONY_HOST:0\",\"mode\":\"cosign\",\"transport\":\"$transport\",\"invitation\":\"${DINV[$i]}\"}" \
+      -o "$WORK/decline.arm.$i.json" -w '%{http_code}')"
+    [ "$code" = "200" ] || fail "decline: instance $i could not arm (HTTP $code)"
+    DADDR[$i]="$(python3 -c "import json;print(json.load(open('$WORK/decline.arm.$i.json')).get('address',''))")"
+    # want = the HOP number: the convener does not sign, so hop k carries exactly k signatures.
+    ceremony "$transport" "${DADDR[$i]##*:}" "$WORK/decline.hop$((i-1)).pdf" 1 "$i" "$prev" "$((i-1))" 1 "${DINV[$i]}" "${DADDR[$i]}"
+    prev="$WORK/decline.hop$((i-1)).pdf"
+  done
+  echo "decline: hops 1 and 2 signed; party 4 will now refuse"
+
+  # Hop 3 REFUSES. Driven with the same watcher the successful hops use, answering the other way —
+  # so the refusal is a person saying no through the real consent route, not an injected error.
+  code="$(curl -sS -X POST "${URLS[3]}/api/session/arm" -H 'Content-Type: application/json' \
+    -H "X-CSRF-Token: ${CSRFS[3]}" \
+    -d "{\"fingerprint\":\"${FPS[0]}\",\"bind\":\"$CEREMONY_HOST:0\",\"mode\":\"cosign\",\"transport\":\"$transport\",\"invitation\":\"${DINV[4]}\"}" \
+    -o "$WORK/decline.arm.4.json" -w '%{http_code}')"
+  [ "$code" = "200" ] || fail "decline: instance 4 could not arm (HTTP $code)"
+  DADDR[4]="$(python3 -c "import json;print(json.load(open('$WORK/decline.arm.4.json')).get('address',''))")"
+  (
+    for _ in $(seq 1 240); do
+      if [ -n "$(curl -fsS "${URLS[3]}/api/session/status" 2>/dev/null | jget pending.fingerprint)" ]; then
+        curl -fsS -X POST "${URLS[3]}/api/session/respond" -H 'Content-Type: application/json' \
+          -H "X-CSRF-Token: ${CSRFS[3]}" -d '{"accept":false}' >/dev/null 2>&1
+        exit 0
+      fi
+      sleep 0.25
+    done
+  ) &
+  local dw=$!
+  code="$(curl -sS -X POST "${URLS[0]}/api/session/initiate" -H "X-CSRF-Token: ${CSRFS[0]}" \
+    -F "pdf=@$prev" -F "appearance=@$WORK/sig.png" \
+    -F "params={\"fingerprint\":\"${FPS[3]}\",\"intent\":\"hop 3\"}" \
+    -F "address=$CEREMONY_HOST:${DADDR[4]##*:}" -F "transport=$transport" -F "invitation=${DINV[4]}" \
+    -o "$WORK/decline.hop3.json" -w '%{http_code}')"
+  wait "$dw" 2>/dev/null || true
+  [ "$code" = "409" ] \
+    || fail "decline: hop 3 returned HTTP $code, want 409 — the party refused, and a refusal that
+      does not reach the convener as a refusal cannot end a proceeding: $(head -c 300 "$WORK/decline.hop3.json")"
+
+  # **The convener ATTESTED it.** Before P08.S05e nothing did: `SignTermination` and
+  # `WriteTermination` had zero production callers, so a declined proceeding was a sentence shown to
+  # one person and no record anywhere.
+  [ -f "${HOMES[0]}/home/nib/ceremonies/$dcid/termination.json" ] \
+    || fail "decline: the convener wrote no termination for a proceeding it just saw declined —
+      the parties who signed at hops 1 and 2 have no way to learn it is over."
+  echo "decline: the convener attested the end state (D28)"
+
+  # And the round TELLS the parties who signed. Their notice is the only channel a delivery arm has.
+  local daddrs="{}"
+  for i in 2 3; do
+    curl -sS -X POST "${URLS[$((i-1))]}/api/session/disarm" -H "X-CSRF-Token: ${CSRFS[$((i-1))]}" -o /dev/null || true
+    local a
+    a="$(curl -fsS "${URLS[$((i-1))]}/api/session/status" | jget address 2>/dev/null || true)"
+    [ -n "$a" ] || fail "decline: instance $i has no delivery arm, so it cannot be told"
+    daddrs="$(python3 -c "
+import json,sys
+d=json.loads(sys.argv[1]); d[sys.argv[2]]='$CEREMONY_HOST:'+sys.argv[3].rsplit(':',1)[1]; print(json.dumps(d))" "$daddrs" "${FPS[$((i-1))]}" "$a")"
+  done
+  code="$(curl -sS -X POST "${URLS[0]}/api/ceremony/deliver" -H 'Content-Type: application/json' \
+    -H "X-CSRF-Token: ${CSRFS[0]}" \
+    -d "$(python3 -c "
+import json,sys;print(json.dumps({'ceremony':sys.argv[1],'addresses':json.loads(sys.argv[2])}))" "$dcid" "$daddrs")" \
+    -o "$WORK/decline.deliver.json" -w '%{http_code}')"
+  [ "$code" = "200" ] || fail "decline: the end-state round returned HTTP $code: $(head -c 300 "$WORK/decline.deliver.json")"
+
+  for i in 2 3; do
+    local what
+    what="$(curl -fsS "${URLS[$((i-1))]}/api/session/status" | jget notice.what 2>/dev/null || true)"
+    [ "$what" = "ceremony-declined" ] \
+      || fail "decline: instance $i's notice is '$what', want 'ceremony-declined'. This party SIGNED
+      and holds a signed document; without the telling it believes the proceeding is still
+      travelling and has no way to learn otherwise — which is exactly C06's telling half."
+  done
+  echo "decline: both parties who signed were told the proceeding ended (C06)"
+}
+
+
 ceremony() { # transport port outfile from to [indoc] [want_sigs] [want_proceeding] [invitation]
   local transport="$1" port="$2" out="$3"
   local fi="$4" ti="$5"
@@ -831,7 +990,7 @@ ceremony() { # transport port outfile from to [indoc] [want_sigs] [want_proceedi
     for _ in $(seq 1 240); do
       if [ -n "$(curl -fsS "$B/api/session/status" 2>/dev/null | jget pending.fingerprint)" ]; then
         curl -fsS -X POST "$B/api/session/respond" -H 'Content-Type: application/json' \
-          -H "X-CSRF-Token: $CSRF_B" -d '{"accept":true,"intent":"I accept"}' >/dev/null 2>&1
+          -H "X-CSRF-Token: $CSRF_B" -d "$CONSENT_ANSWER" >/dev/null 2>&1
         exit 0
       fi
       sleep 0.25
@@ -1783,6 +1942,8 @@ PYWORDS
   # The two relays really produced different documents, or one of them re-read the other's.
   cmp -s "$FINAL_QUIC" "$FINAL_TCP" \
     && fail "the two relays returned BYTE-IDENTICAL final documents — one re-read the other's result"
+
+  decline_round
 
   echo "PASS: $N instances, and a $N-party ceremony COMPLETED as a baton relay over BOTH"
   echo "      transports (${ELAPSED_TOTAL}s of hops): a non-signing convener carried it through"

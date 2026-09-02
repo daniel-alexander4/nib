@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"encoding/json"
 	"go/ast"
 	"go/parser"
 	"go/token"
@@ -218,6 +219,88 @@ func TestTheDeliveryArmsWindowIsEnforcedAndNotJustReported(t *testing.T) {
 			"in status, so it LOOKS enforced from every surface that reports it; without a timer " +
 			"the arm lives until the process exits and the TRIPWIRE's 'how long it stays open' " +
 			"describes a bound the code does not keep.")
+	}
+}
+
+// TestATerminationIsToldNotSaved — P08.S05e's routing, and the shape test that decides it.
+//
+// A delivery round carries a finished DOCUMENT when a ceremony completed and a signed TERMINATION
+// when it was declined — same walk, same rendezvous, same acknowledgement markers. The receiving
+// side tells them apart by shape rather than by a discriminator byte, because the payload already
+// answers the question and adding one would be a format change for nothing.
+//
+// **The direction that matters is the false positive.** A document misread as a termination is
+// never saved, so the party loses the document they signed; the assertions below therefore lead
+// with a real PDF and require it NOT to be taken for an attestation.
+func TestATerminationIsToldNotSaved(t *testing.T) {
+	// A PDF must never read as a termination — the losing direction.
+	if _, ok := asTermination([]byte("%PDF-1.4\n1 0 obj\n")); ok {
+		t.Error("a PDF was read as a termination object. The receiving side then TELLS instead of " +
+			"SAVING, and the party loses the finished document they signed.")
+	}
+	// Nor must arbitrary JSON that is not one.
+	for _, bad := range [][]byte{
+		[]byte(`{}`),
+		[]byte(`{"ceremony":"a"}`),                    // no state, no signature
+		[]byte(`{"state":"declined","sig":"x"}`),      // no ceremony
+		[]byte(`{"ceremony":"a","state":"declined"}`), // unsigned
+	} {
+		if _, ok := asTermination(bad); ok {
+			t.Errorf("%s was read as a termination; an unsigned or partial object must not be, "+
+				"or a peer can end a proceeding by sending a JSON literal", bad)
+		}
+	}
+	// STIMULUS: a well-formed one IS recognised. Without this every assertion above is satisfied
+	// by a function that always says no, and the declined path would silently never fire.
+	good := ceremony.Termination{
+		Version: 1, Ceremony: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		RosterHash: "bb", State: ceremony.StateDeclined, ConvenerCert: "cc", Sig: "dd",
+	}
+	b, err := json.Marshal(good)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, ok := asTermination(b)
+	if !ok {
+		t.Fatal("a well-formed termination was not recognised, so the declined path is dead")
+	}
+	if got.State != ceremony.StateDeclined || got.Ceremony != good.Ceremony {
+		t.Errorf("the recognised termination lost its fields: %+v", got)
+	}
+}
+
+// TestTheEndStateTellingSaysAllFourThings — C06's telling half, asserted clause by clause.
+//
+// The criterion names four things a party who already signed is owed: that it is over, who ended
+// it, that their signature STANDS, and that a re-run starts from the original unsigned file. They
+// are asserted separately because a summary that covers three of four reads as complete — and the
+// third is the one a person actually needs, since they are holding a signed document and do not
+// know what it is now worth.
+func TestTheEndStateTellingSaysAllFourThings(t *testing.T) {
+	srv := &Server{}
+	srv.tellEndState(&ceremonyID{}, ceremony.Termination{State: ceremony.StateDeclined})
+
+	st := srv.sess.status()
+	if st.Notice == nil {
+		t.Fatal("a declined proceeding told the party nothing at all — a delivery arm has no " +
+			"response to write into, so the sticky notice is the only channel there is")
+	}
+	body := st.Notice.Summary + " " + st.Notice.Detail
+	for _, c := range []struct{ name, want string }{
+		{"it is over", "over"},
+		{"who ended it", "convener"},
+		{"their signature stands", "signature stands"},
+		{"a re-run starts from the original unsigned file", "ORIGINAL unsigned file"},
+	} {
+		if !strings.Contains(body, c.want) {
+			t.Errorf("the telling does not say %s (looked for %q). C06 names four things and a "+
+				"telling that covers three reads as complete.", c.name, c.want)
+		}
+	}
+	// And the kind is branchable: a surface has to distinguish declined from completed without
+	// parsing prose.
+	if st.Notice.What != "ceremony-declined" {
+		t.Errorf("the notice kind is %q, so a surface cannot branch on it", st.Notice.What)
 	}
 }
 

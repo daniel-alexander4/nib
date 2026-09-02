@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -109,8 +110,15 @@ func (s *Server) deliverOneLeg(ch p2p.Channel, cer *ceremonyID, myFP []byte, pdf
 	}
 	var kept []byte
 	doc, err := p2p.ReceiveDocument(ch, autoAccepter{
-		verify: func(d []byte) error { return s.checkDelivered(cer, d) },
+		verify: func(d []byte) error { return s.checkDeliveredPayload(cer, d) },
 		save: func(d []byte) error {
+			// A termination is TOLD, not saved: there is no document, and a file nobody asked
+			// for is not what a party whose ceremony was declined needs to find in ~/nib.
+			if t, ok := asTermination(d); ok {
+				s.tellEndState(cer, t)
+				kept = d
+				return nil
+			}
 			path, serr := s.saveDelivered(cer, d)
 			if serr != nil {
 				return serr
@@ -567,6 +575,19 @@ func (s *Server) runDeliveryRound(ctx context.Context, v *vault.Vault, rec cerem
 		return nil, errors.New("only the convener delivers a finished document: this machine is " +
 			"a party to this ceremony, not the one that convened it")
 	}
+	// **What the round carries depends on how the proceeding ENDED (P08.S05e, C06).** A completed
+	// ceremony delivers the finished document; a declined one delivers the convener's signed
+	// termination, because there is no finished document and the parties who already signed are
+	// otherwise left believing it is still travelling. Same walk, same per-party rendezvous, same
+	// acknowledgement markers — a second round would have duplicated all three.
+	payload := pdf
+	if t, terr := ceremony.ReadTermination(defaultOutputDir(), rec); terr == nil && t.State == ceremony.StateDeclined {
+		b, merr := json.Marshal(t)
+		if merr != nil {
+			return nil, merr
+		}
+		payload = b
+	}
 	out := make([]deliveryOutcome, 0, len(rec.Roster))
 	for _, party := range rec.Roster {
 		if strings.EqualFold(party.Fingerprint, me) {
@@ -589,7 +610,7 @@ func (s *Server) runDeliveryRound(ctx context.Context, v *vault.Vault, rec cerem
 			out = append(out, res)
 			continue
 		}
-		if err := s.deliverToParty(ctx, inv, party.Fingerprint, addrs[strings.ToLower(party.Fingerprint)], cert, key, myFP, pdf); err != nil {
+		if err := s.deliverToParty(ctx, inv, party.Fingerprint, addrs[strings.ToLower(party.Fingerprint)], cert, key, myFP, payload); err != nil {
 			res.Reason = err.Error()
 			out = append(out, res)
 			continue // one party's failure does not end the round; the re-run reaches them
@@ -810,4 +831,129 @@ func (s *Server) armDeliveryAfterHop(final []byte) {
 			"You have signed, and this machine could not open the connection that receives the "+
 				"finished document. The convener can re-run delivery. Reason: "+aerr.Error())
 	}
+}
+
+// endCeremony records that a proceeding is over, attested by the convener (P08.S05e, D28, C06).
+//
+// # Why the convener, and why that is a stated limit rather than a design goal
+//
+// Only the convener can mint one: `SignTermination` binds the roster hash with the convener's key,
+// and under D22's hub only the convener learns that a hop declined — it holds the channel to
+// everyone. **So the producer and the courier are the same machine, and P08.S04b's deepdive already
+// recorded what that costs:** *"a convener-signed termination object cannot bind the convener — it
+// is also the sole courier."* A convener that never mints one is indistinguishable from a ceremony
+// still in progress, which is why `Stored.Ended` reads empty as UNKNOWN and never as live.
+//
+// That limit is inherited from S04b rather than introduced here, and it is restated at the site
+// because a limitation recorded only in a deepdive file is one the next reader will not find.
+//
+// Best-effort, and quiet: this runs while an HTTP handler is on its way to telling the user their
+// counterparty declined, and a failure to write the attestation must not replace that sentence
+// with a storage error. The ceremony is over either way; what is lost is the ability to TELL the
+// other parties, which the round reports on its own next run.
+func (s *Server) endCeremony(cer *ceremonyID, state string) {
+	if cer == nil {
+		return
+	}
+	v := s.unlockedVault()
+	if v == nil {
+		return
+	}
+	rec, _, err := ceremony.ReadMirror(defaultOutputDir(), cer.inv.ID, time.Now())
+	if err != nil {
+		return // no verified record here: nothing to bind an attestation to
+	}
+	cert, key, err := identity(v)
+	if err != nil {
+		return
+	}
+	myFP, err := sign.Fingerprint(cert)
+	if err != nil || !strings.EqualFold(hex.EncodeToString(myFP), convenerFingerprintOf(rec)) {
+		return // only the convener attests an end state
+	}
+	t, terr := ceremony.SignTermination(rec, state, cert, key)
+	if terr != nil {
+		return
+	}
+	if werr := ceremony.WriteTermination(defaultOutputDir(), t); werr != nil {
+		s.sess.noteFailure(armInteractive, "end-state-not-recorded",
+			"This proceeding has ended, but Nib could not record that.",
+			"The other parties cannot be told it is over until this machine can write the "+
+				"attestation. Reason: "+werr.Error())
+	}
+}
+
+// asTermination reports whether these bytes are a termination object rather than a document.
+//
+// **Shape, not a flag.** A PDF starts `%PDF-`; a termination is JSON with a version and a state.
+// Adding a discriminator byte to the wire would be a format change for a question the payload
+// already answers, and the two cannot be confused: `json.Unmarshal` refuses a PDF outright.
+func asTermination(b []byte) (ceremony.Termination, bool) {
+	var t ceremony.Termination
+	if err := json.Unmarshal(b, &t); err != nil {
+		return ceremony.Termination{}, false
+	}
+	if t.Ceremony == "" || t.State == "" || t.Sig == "" {
+		return ceremony.Termination{}, false
+	}
+	return t, true
+}
+
+// checkDeliveredPayload routes an arrival to the gate its SHAPE calls for.
+//
+// A termination is verified by `ReadTermination`'s own rules against this party's record — the
+// convener's signature over the roster hash — not by `checkDelivered`, whose completeness and
+// byte-prefix clauses are about a finished document and would refuse an attestation outright.
+func (s *Server) checkDeliveredPayload(cer *ceremonyID, d []byte) error {
+	t, ok := asTermination(d)
+	if !ok {
+		return s.checkDelivered(cer, d)
+	}
+	if cer == nil {
+		return errors.New("an end-state attestation arrived for no ceremony")
+	}
+	rec, _, err := ceremony.ReadMirror(defaultOutputDir(), cer.inv.ID, time.Now())
+	if err != nil {
+		return fmt.Errorf("this machine cannot check that end state against its own record: %w", err)
+	}
+	// **Verified against OUR record, never against the object's own claims.** The roster hash is
+	// what refuses a substitution, and it commits to the ceremony id as well — so an attestation
+	// minted for a different proceeding cannot be replayed into this one.
+	if verr := t.Verify(rec); verr != nil {
+		return fmt.Errorf("that end state does not verify against this ceremony: %w", verr)
+	}
+	if werr := ceremony.WriteTermination(defaultOutputDir(), t); werr != nil {
+		return fmt.Errorf("%w: %v", p2p.ErrNotStored, werr)
+	}
+	return nil
+}
+
+// tellEndState is C06's telling half: what a party who already signed is owed when the proceeding
+// they signed into has ended.
+//
+// **Four things, and the criterion names all four** — so they are written as four sentences rather
+// than one summary, because a party reading this has a signed document on their disk and needs to
+// know what it is now worth:
+//
+//  1. it is over;
+//  2. who ended it — the convener, who is the only party that can attest an end state;
+//  3. their signature STANDS — nothing about a decline unmakes a signature already given;
+//  4. a re-run starts from the original unsigned file, not from what they hold.
+//
+// It goes to the sticky notice because a delivery arm has no response to write into and no surface
+// of its own (/pending 353) — `noticeView`'s own doc makes that argument, and this is the case it
+// most obviously covers: the disarm IS the symptom, and a message that vanished with it would be
+// one nobody reads.
+func (s *Server) tellEndState(cer *ceremonyID, t ceremony.Termination) {
+	what := "ceremony-declined"
+	summary := "The proceeding you signed has been declined, so it is over."
+	if t.State == ceremony.StateCompleted {
+		what, summary = "ceremony-completed", "The proceeding you signed has completed."
+	}
+	s.sess.noteFailure(armDelivery, what, summary,
+		"The convener ended this proceeding and attested to it — they are the only party who can. "+
+			"Your signature stands: nothing about this unmakes a signature you have already given, "+
+			"and the copy on your disk is still a valid record of what you signed. If these parties "+
+			"want to try again it starts from the ORIGINAL unsigned file, not from anything you "+
+			"hold now — a new proceeding, with a new record and a new set of signatures.")
 }

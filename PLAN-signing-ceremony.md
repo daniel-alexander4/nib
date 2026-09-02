@@ -6365,7 +6365,7 @@ Tasks:
 - T04 — `POST /api/ceremony/deliver`: the convener walks the roster, skipping parties already acknowledged, and records each acknowledgement durably (findings (b), (e)). *(done — per-party invitations minted from the convener's own secrets, through one door now shared with `/api/ceremony/invites`.)*
 - T05 — tier 4 at N=4: the round reaches every party, a re-run after an injected failure at party 3 reaches that party and no other, and both sides' egress is enumerated. *(done for C08 and C10 on BOTH transports, after six live runs each finding a different real defect. The EGRESS half is `not exercised` — see the marker.)*
 
-#### P08.S05e — The end state is delivered, and the round's egress is bounded *(D28, D33, D34, ADR-011; C06's telling half)* — **new, 2026-08-31, split out of S05**
+#### P08.S05e — The end state gets a producer and a courier *(D28, D34; C06's telling half)* — **new, 2026-08-31, split out of S05; SPLIT AGAIN 2026-09-01 at its deepdive** *(in progress)*
 Scope: wiring P08.S04b's termination object, which is built, verified and has **zero production
 callers** (`SignTermination`, `WriteTermination`, `ReadTermination`), and bounding what the round
 emits. ADR-011 appears nowhere else in P08's section, and D33's packet law is per *hop* while a
@@ -6374,9 +6374,47 @@ delivery leg is not a hop — but the budget is in fact keyed per **ceremony**
 risk is the hops **starving** the delivery legs, not an unbounded round.
 Acceptance:
 - **A ceremony declined at hop 3 delivers the signed termination object to the parties who signed at hops 1 and 2**, and the telling states the proceeding is over, who ended it, that their signature stands, and that a re-run starts from the original unsigned file. Tier 4.
+- Tier: 1 for the mint and the telling; tier 4 for the decline reaching earlier signers. The EGRESS clauses are **S05h**'s (C15).
+
+**Deepdive, 2026-09-01 — run inline; four findings, and the first two decide the slice.**
+- **(a) The termination object has no PRODUCER, not merely no delivery.** `SignTermination`,
+  `WriteTermination` and `ReadTermination` have zero production callers — a named search over
+  `internal/` outside `internal/ceremony` returns only their own definitions. Nothing anywhere
+  decides *"this proceeding has ended"*. `declineCeremony` runs on the **declining party's** machine
+  (inside `sessionConfirmer.Confirm`, `session.go:847`) and prunes that machine's pins and stored
+  invitation; the convener learns of the decline only as an error returned from its `Initiate`, and
+  does nothing with it. So this slice builds the decision, not just the courier.
+- **(b) Producer and courier are the same machine, and S04b already said that is a limit.** Only
+  the convener can mint one — `SignTermination` binds `RosterHash` with the convener's key — and
+  under D22's hub only the convener learns a hop declined. S04b's deepdive recorded that *"a
+  convener-signed termination object cannot bind the convener — it is also the sole courier"*. That
+  limit is inherited, not introduced, and it is restated at the mint rather than left in a deepdive
+  file nobody reads.
+- **(c) The round can carry it, and a second round would duplicate three things.** S05g's
+  `runDeliveryRound` already walks the roster over per-party rendezvous, records per-party
+  acknowledgement and skips what it has delivered. A termination is the same walk with a different
+  payload; a separate round would copy the walk, the markers and the arm.
+- **(d) ADR-011's hold never renews for a delivery arm** — `holdDHT` renews on sightings of the
+  expected peer and that renewal is gated on `!cer.hasSigned()`, which is exactly the state a
+  delivery arm is in. So a delivery arm pays `base` once and never renews. **That is S05h's to
+  measure**, and it is recorded here because the deepdive settled it and the next slice should not
+  re-derive it.
+
+Tasks:
+- T01 — the convener mints and writes the termination when a hop returns a decline (finding (a)), with S04b's binding limit restated at the site (finding (b)). *(done)*
+- T02 — the round carries a termination as well as a document (finding (c)), reusing the walk, the markers and the arm rather than copying them. *(done — routed by SHAPE, and the losing direction is a document misread as an attestation, which is what the test leads with.)*
+- T03 — the telling: the four things C06 requires a party to be told — it is over, who ended it, their signature stands, a re-run starts from the original unsigned file. *(done — four clauses asserted separately, each mutation-proved; a telling that covers three reads as complete.)*
+- T04 — tier 4: a ceremony declined at hop 3 reaches the parties who signed at hops 1 and 2. *(**OUTSTANDING** — harness only; see the marker.)*
+
+#### P08.S05h — The round's egress, measured *(D33, D34, ADR-011)* — **new, 2026-09-01, split out of S05e at its deepdive**
+Scope: the measurement half of S05e, cut out because every clause is a long `--lan` run and none
+shares code with the termination object. **Sequenced after S05e**; ADR-011's hold and D33's packet
+law are the subject, and S05e's deepdive already settled that a delivery arm's hold never renews
+(its gate is `!cer.hasSigned()`, which a delivery arm fails by definition).
+Acceptance:
 - **The round's egress budget is derived from D33 and DRIVEN, not asserted** — the figure is measured, per this repo's own law that a claim containing a number is measured or declared unmeasured. Tier 4, with `pairrepro.sh`'s off-link counter.
 - **The delivery legs cannot be starved by the hops**, or the sharing is stated as a limit with the arithmetic — `punchBudgetPerSide = 3000` is one D33 LAW figure per machine per ceremony across every hop. Tier 1 for the arithmetic, tier 4 for the N=9 case.
-- **ADR-011's hold is re-examined for a delivery arm**, whose renewal is gated on `!cer.hasSigned()` (`internal/server/session.go:801`, `:1480` → `lan.go:777`, `:788-790`) — exactly the state a delivery arm is in. Tier 4, against P03's zero-packet criterion.
+- **ADR-011's hold is re-examined for a delivery arm**, whose renewal is gated on `!cer.hasSigned()` — exactly the state a delivery arm is in. Tier 4, against P03's zero-packet criterion.
 - Tier: 4 for every clause but the budget arithmetic (C15).
 
 #### P08.S05f — The dead arm-rendezvous path removed, and the TCP-ceremony limit stated *(`/pending 248`, caveat 7, ADR-011)* — **new, 2026-08-31, split out of S05b at its grill** *(done 2026-09-01, v1.117.313 — 6 clauses, all met; `/pending 248` closed. The grill widened the removal: `openRendezvous` goes ENTIRELY, not just its QUIC branch, because what remained was a pure passthrough to `listenPeer` under a name that no longer described it. **The prose this slice had to MOVE was not attached to the function it described** — a doc block with no blank line before the next function's comment binds to that function, so the TCP-limit paragraph was Go-attached to `setupSharedEndpoint` and `openRendezvous` was undocumented. The commit gate then parsed for that shape and found a SECOND instance in the same file: `publishCandidates`'s doc had been sitting on `publishableEndpoints`. Nothing here had ever checked, so the count was unknown rather than zero. The gate also refuted two of my own claims — *"the only door to a ceremony's shared socket"* (two production sites call `NewSharedEndpoint`) and an unmeasured promise about what a TCP dial reaches when the far end is QUIC-armed, which is now declared undriven instead of asserted. Census measured at 35 `go` statements, not the 33 the guard's own message named; 32 after, probed red at 31.)*

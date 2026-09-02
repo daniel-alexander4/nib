@@ -2367,6 +2367,14 @@ func (s *Server) handleSessionInitiate(w http.ResponseWriter, r *http.Request) {
 		// now rather than as the EOF a silent close used to produce, so they are reported
 		// as what happened rather than as a failed request the user should retry.
 		if errors.Is(err, p2p.ErrCoSignDeclined) {
+			// **The proceeding has ENDED, and until P08.S05e nothing recorded that (D28, C06).**
+			// `declineCeremony` runs on the DECLINING party's machine and prunes its own pins; the
+			// convener learned of the decline only here, as an error it turned into a sentence for
+			// one person. Everybody who already signed was left with a document they believe is
+			// still travelling. `ceremony.SignTermination` and `WriteTermination` had zero
+			// production callers for exactly that reason — the object existed and nothing ever
+			// decided a ceremony was over.
+			s.endCeremony(cer, ceremony.StateDeclined)
 			httpError(w, http.StatusConflict, "the other party declined to co-sign this document")
 			return
 		}
