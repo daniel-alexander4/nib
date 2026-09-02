@@ -1,0 +1,11 @@
+--- a/internal/server/delivery.go
++++ b/internal/server/delivery.go
+@@ -1014,7 +1014,7 @@
+ 	// nowhere, and this failure has a user-visible consequence — the round spends its connect
+ 	// deadline on a party it cannot reach, once per re-run, and says nothing about why.
+ 	if state == ceremony.StateDeclined && cer.peer != "" {
+-		if merr := markEndedBy(rec.ID, cer.peer); merr != nil {
++		if merr := error(nil); merr != nil {
+ 			s.sess.noteFailure(armInteractive, "ender-not-recorded",
+ 				"This proceeding has ended, and Nib could not record which party ended it.",
+ 				"Delivering the end state will still reach everyone who signed, but it will also "+

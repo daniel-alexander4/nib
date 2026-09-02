@@ -118,6 +118,20 @@ const PUBLISHED = [
   // precisely so a non-client reader is expressible.
   { type: 'lanHeard', readers: ['build/pairrepro.sh'] },
   { type: 'lanHeardResponse', readers: ['build/pairrepro.sh'] },
+
+  // `/api/ceremony/deliver`'s per-party report (P08.S05g), whose reader is the tier-4 harness
+  // for the same reason `lanHeard`'s is: the round is a route a convener triggers and P06 builds
+  // the panel that would show it. `decline_round` grades every one of the five fields — two
+  // parties delivered, and the party that ended the proceeding named rather than silently absent.
+  //
+  // **This shape shipped in NEITHER table at v1.117.320, so tier 2 was red at that commit and the
+  // slice closed over it** — the fifth time this scan has caught a shape entered nowhere, and the
+  // second time it was red across a slice close. Entered in PUBLISHED rather than EXCLUDED
+  // because it IS published and it DOES have a reader.
+  //
+  // It does not close `/pending 353`, which is about the round having no reader *in the product*:
+  // a harness assertion is evidence for this scan and not a surface a convener can look at.
+  { type: 'deliveryOutcome', readers: ['build/pairrepro.sh'] },
 ];
 
 // ── The exclusions ───────────────────────────────────────────────────────────

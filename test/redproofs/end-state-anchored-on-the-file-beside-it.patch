@@ -1,0 +1,12 @@
+--- a/internal/server/delivery.go
++++ b/internal/server/delivery.go
+@@ -1071,9 +1071,6 @@
+ 	//
+ 	// `cer.inv` is the anchor a planted file cannot control, and it is the same one the sibling
+ 	// gate uses (`checkDelivered`, one function up). ADR-009: one rule, and both doors take it.
+-	if merr := cer.inv.MatchesRecord(rec); merr != nil {
+-		return merr // unwrapped: the sentence already names the axis
+-	}
+ 	// **Verified against OUR record, never against the object's own claims.** The roster hash is
+ 	// what refuses a substitution, and it commits to the ceremony id as well — so an attestation
+ 	// minted for a different proceeding cannot be replayed into this one.

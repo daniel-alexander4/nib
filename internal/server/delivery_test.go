@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"encoding/hex"
 	"encoding/json"
 	"go/ast"
 	"go/parser"
@@ -13,6 +14,7 @@ import (
 	"time"
 
 	"nib/internal/ceremony"
+	"nib/internal/sign"
 )
 
 // TestTheUnattendedGatesHaveOneDoor — P08.S05d's clause 2, and the reason it is a guard and not a
@@ -617,3 +619,363 @@ var errRefuse = &refuseErr{}
 type refuseErr struct{}
 
 func (*refuseErr) Error() string { return "refused for the test" }
+
+// TestTheEnderIsRecordedOncePerCeremony — P08.S05e's marker, and the defect
+// this slice introduced by routing a decline through the round at all.
+//
+// **Named for what it checks, not for the rule it serves.** It never constructs a round; the walk's
+// decision is its sibling's, and a name claiming otherwise is the over-claim this repo grades as a
+// finding against the test.
+//
+// **The leg is impossible at BOTH ends, which is why skipping it is not an optimisation.**
+// `declineCeremony` prunes this ceremony's stored invitation on the refusing machine, so it can
+// never arm a delivery rendezvous for the proceeding again; and a party that refused at its
+// consent gate never wrote a mirror, so `checkDeliveredPayload`'s `ReadMirror` would refuse the
+// attestation even if one arrived. Measured at tier 4 on 2026-09-02: the round spent the whole
+// 300 s `connectDeadline` on that party and reported `tried 0 address(es)` — on that round and on
+// every re-run of it.
+//
+// Driven at the marker rather than through a round, because a round dials: what is under test is
+// the WALK's decision, and `runDeliveryRound` reaches the network for any party it does not skip.
+func TestTheEnderIsRecordedOncePerCeremony(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	const id = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	// **Hex LETTERS, not digits.** The first draft used "11"+"22"… and its case clause was
+	// vacuous: `strings.ToUpper` of an all-digit fingerprint is the same string, so removing the
+	// fold under test left it green. Found by the mutation, not by reading it.
+	decliner := "3c" + strings.Repeat("4d", 31)
+
+	// STIMULUS: nothing is recorded before anything is written, so "the signer is not the ender"
+	// below is not true of a reader that always answers "".
+	if got := endedBy(id); got != "" {
+		t.Fatalf("setup: a proceeding nobody ended reports %q as its ender", got)
+	}
+	if err := markEndedBy(id, decliner); err != nil {
+		t.Fatalf("markEndedBy: %v", err)
+	}
+	if got := endedBy(id); got != decliner {
+		t.Errorf("the party that ended the proceeding did not survive being written: got %q, want %q — "+
+			"the round then walks them and spends its whole connect deadline reaching nobody", got, decliner)
+	}
+	// **There is deliberately no "does it name a different party?" clause here.** `endedByPath`
+	// keys on the ceremony id ALONE, so `endedBy` has no per-party dimension to bleed across and
+	// such a check cannot fail — it was copied from the delivered-marker test above, where the
+	// path DOES include the party and the same clause has real bite. The property it was reaching
+	// for lives at the walk and is asserted there.
+	// **Write-once, first ender wins**, which is `ceremony.WriteTermination`'s rule. Nothing on
+	// the arrival path refuses a hop because a proceeding has already ended, so a convener can
+	// collect a SECOND decline; overwriting would move the marker to the newer decliner and the
+	// round would go back to walking the first one for the full connect deadline.
+	second := "7a" + strings.Repeat("8b", 31)
+	if err := markEndedBy(id, second); err == nil {
+		t.Error("a second, different party was recorded as having ended the same proceeding — a " +
+			"proceeding ends once, and moving the marker restores the impossible leg this rule " +
+			"exists to remove, now naming the wrong party in the round's report")
+	}
+	if got := endedBy(id); got != decliner {
+		t.Errorf("the recorded ender moved to %q after a second decline; want the first, %q", got, decliner)
+	}
+	// Idempotent for the SAME party, case-insensitively: recording one decline twice is what a
+	// retry does, and it must not read as a conflict.
+	if err := markEndedBy(id, strings.ToUpper(decliner)); err != nil {
+		t.Errorf("re-recording the same ender in a different case was refused as a conflict: %v", err)
+	}
+	// **There is no case-fold assertion on `endedBy` itself, deliberately.** Its one consumer
+	// compares with `strings.EqualFold`, so a fold at the read changes no production behaviour —
+	// asserting it here would pin a property nothing depends on and call that coverage. The
+	// case rule is real and it lives at the walk, where its sibling test drives it.
+	// And a proceeding that ended by COMPLETING has no ender, so its round walks every party.
+	const other = "cccccccccccccccccccccccccccccccc"
+	if got := endedBy(other); got != "" {
+		t.Errorf("a different ceremony reports %q as its ender — the marker is not per-ceremony, "+
+			"so one declined proceeding would silence a leg of another", got)
+	}
+}
+
+// TestTheRoundReportsTheEnderSkippedRatherThanDialling — the rule at the WALK, which the marker
+// test above cannot see.
+//
+// Its sibling drives `markEndedBy`/`endedBy` and would stay green with the skip clause deleted
+// from `runDeliveryRound` entirely. This one drives the decision.
+//
+// **The roster carries THREE parties, and each one is load-bearing.** A two-party roster (the
+// convener plus the ender) cannot tell "skip the ender" from "skip everybody": weakening the
+// clause to a bare `if ender != ""` left that shape green, which is the worst outcome the rule
+// has — the round would skip the parties C06's telling is owed to and report success. So:
+//
+//   - the ENDER, whose leg is impossible at both ends and must be skipped with a reason;
+//   - a SIGNER who did not end it, who must NOT be skipped — the discriminator;
+//   - a party ALREADY ACKNOWLEDGED, which is the other kind of skip, and the pair is what
+//     `deliveryOutcome.Skipped`'s doc claims `Delivered` distinguishes. Two shapes sharing one
+//     field is a claim, and nothing checked it.
+//
+// **The ender's roster entry is UPPERCASE hex.** `endedBy` returns lowercase, so with both sides
+// lowercase the walk's `strings.EqualFold` could be `==` and this test would not notice. A roster
+// fingerprint is not normalised anywhere on the record path, so the mixed case is realistic and
+// not a contrivance.
+//
+// The context carries a deadline so a regression is a failed assertion rather than a hung test.
+// **It is not what keeps this test fast, and an earlier comment here claimed it was.** The fixture
+// vault holds no `CeremonySecret` for these parties, so an unskipped leg stops at
+// `convenerInvitationFor` and never reaches a dial — which is also why the signer's expected
+// outcome below is a secret-miss reason and not a connect failure.
+func TestTheRoundReportsTheEnderSkippedRatherThanDialling(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	s, v := unlockedServer(t)
+	cert, _, err := identity(v)
+	if err != nil {
+		t.Fatalf("setup: no identity, so this machine cannot be the convener: %v", err)
+	}
+	fp, err := sign.Fingerprint(cert)
+	if err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+	me := hex.EncodeToString(fp)
+	decliner := "3c" + strings.Repeat("4d", 31) // letters, per the sibling test's note
+	signer := "1a" + strings.Repeat("2b", 31)
+	acked := "5e" + strings.Repeat("6f", 31)
+	const id = "dddddddddddddddddddddddddddddddd"
+	rec := ceremony.Record{
+		ID:           id,
+		ConvenerCert: string(cert),
+		Roster: []ceremony.Party{
+			{Fingerprint: me, Label: "convener", Signs: false},
+			{Fingerprint: strings.ToUpper(decliner), Label: "ender", Signs: true},
+			{Fingerprint: signer, Label: "signer", Signs: true},
+			{Fingerprint: acked, Label: "acked", Signs: true},
+		},
+	}
+	// STIMULUS: this machine really is the convener of this record, or the round would refuse for
+	// a reason that has nothing to do with the ender.
+	if !strings.EqualFold(convenerFingerprintOf(rec), me) {
+		t.Fatal("setup: the record does not name this machine as convener, so the round would " +
+			"refuse for a reason that has nothing to do with the ender")
+	}
+	if err := markEndedBy(id, decliner); err != nil {
+		t.Fatalf("markEndedBy: %v", err)
+	}
+	if err := markDelivered(id, acked); err != nil {
+		t.Fatalf("markDelivered: %v", err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	out, rerr := s.runDeliveryRound(ctx, v, rec, []byte("%PDF-1.4\n"), nil)
+	if rerr != nil {
+		t.Fatalf("the round refused outright: %v", rerr)
+	}
+	if len(out) != 3 {
+		t.Fatalf("the round reported %d outcomes for a roster of the convener plus three parties, want 3", len(out))
+	}
+	by := map[string]deliveryOutcome{}
+	for _, o := range out {
+		by[strings.ToLower(o.Fingerprint)] = o
+	}
+
+	ender, ok := by[decliner]
+	if !ok {
+		t.Fatalf("the round's report names no outcome for the party that ended the proceeding; it reported %v", out)
+	}
+	if ender.Delivered {
+		t.Error("the round reports the party that ended the proceeding as DELIVERED — that " +
+			"machine pruned this ceremony's invitation when it declined and holds no mirror to " +
+			"check an attestation against, so nothing could have arrived")
+	}
+	if !ender.Skipped {
+		t.Errorf("the round did not skip the party that ended the proceeding; it reported %q. "+
+			"The leg is impossible at both ends, so attempting it spends the whole connectDeadline "+
+			"(300 s) on this round and on every re-run of it.", ender.Reason)
+	}
+	if !strings.Contains(ender.Reason, "ended the proceeding") {
+		t.Errorf("the skip's reason is %q, which does not say why the party was not reached — a "+
+			"user reading a round's report cannot tell an impossible leg from a failed one", ender.Reason)
+	}
+
+	// **The discriminator.** Skipping the ender must not skip everyone: this party signed and is
+	// owed the telling, so the round has to ATTEMPT their leg. Without this clause a walk that
+	// skips every party whenever anyone ended the proceeding passes every assertion above —
+	// measured, by weakening the clause to `if ender != ""`.
+	sig, ok := by[signer]
+	if !ok {
+		t.Fatalf("the round's report names no outcome for a party who SIGNED; it reported %v", out)
+	}
+	if sig.Skipped {
+		t.Errorf("the round skipped a party who signed and did not end the proceeding, reporting "+
+			"%q — C06's telling is owed to exactly these parties, and a round that skips them "+
+			"reports success having delivered to nobody", sig.Reason)
+	}
+	if strings.Contains(sig.Reason, "ended the proceeding") {
+		t.Errorf("a party who did NOT end the proceeding is reported as though they had: %q", sig.Reason)
+	}
+	if sig.Reason == "" {
+		t.Error("a party the round attempted and did not reach carries no reason at all, so the " +
+			"convener cannot tell an attempted leg from one that was never tried")
+	}
+
+	// **The OTHER kind of skip, and the claim that they are distinguishable.**
+	// `deliveryOutcome.Skipped`'s doc says `Delivered` is what tells them apart; nothing checked
+	// it until this clause, and two shapes silently sharing one field is how a re-run's report
+	// starts meaning something different from what its reader believes.
+	ack, ok := by[acked]
+	if !ok {
+		t.Fatalf("the round's report names no outcome for the already-acknowledged party; it reported %v", out)
+	}
+	if !ack.Skipped || !ack.Delivered {
+		t.Errorf("an already-acknowledged party is reported skipped=%v delivered=%v, want both true — "+
+			"a re-run must skip it AND still report it delivered, or C10's 'exactly one file per "+
+			"party' reads as a failure on every re-run", ack.Skipped, ack.Delivered)
+	}
+	if ack.Delivered == ender.Delivered {
+		t.Error("the two kinds of skip are indistinguishable: an acknowledged party and the party " +
+			"that ended the proceeding report the same Delivered value, which is the field " +
+			"deliveryOutcome.Skipped's own doc says tells them apart")
+	}
+}
+
+// TestTheDeclineBranchRecordsWhoEndedIt — the wiring the two tests above cannot see.
+//
+// They drive `markEndedBy`/`endedBy` and the walk's use of them. Neither reaches the one site that
+// WRITES the marker in production: `endCeremony`, called from `handleSessionInitiate`'s
+// `ErrCoSignDeclined` arm. With that call deleted the marker is never written, `endedBy` returns
+// "" forever, the walk skips nobody, and every test above stays green — the round goes back to
+// spending 300 s on a party it cannot reach and nothing at tier 1 says so.
+//
+// A source scan rather than a driven test, for the reason `ceremonypin_test.go` gives at the same
+// shape: reaching this branch needs a peer that declines over a real session, which is tier 4's
+// job. What tier 1 can pin is that the route exists and sits on the DECLINE arm specifically — a
+// marker written on every ended proceeding would silence the telling for a COMPLETED one, where
+// every party is still reachable and still owed their copy.
+func TestTheDeclineBranchRecordsWhoEndedIt(t *testing.T) {
+	src, err := os.ReadFile("delivery.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	code := stripLineComments(string(src))
+	i := strings.Index(code, "func (s *Server) endCeremony(")
+	if i < 0 {
+		t.Fatal("cannot find endCeremony — this guard is reading the wrong thing")
+	}
+	body := funcBodyFrom(code, i)
+	if body == "" {
+		t.Fatal("could not brace-match endCeremony's body")
+	}
+	// STIMULUS: the name really appears in this file, so "not found in the body" below is a fact
+	// about placement and not about spelling.
+	if !strings.Contains(code, "func markEndedBy(") {
+		t.Fatal("markEndedBy is not defined in this file, so the scan below looks for a name that " +
+			"could not appear and its clean result would mean nothing")
+	}
+	if !strings.Contains(body, "markEndedBy(") {
+		t.Error("endCeremony does not record WHICH party ended the proceeding. The delivery round " +
+			"then walks the party that declined, whose machine pruned this ceremony's invitation " +
+			"and holds no mirror — a leg that cannot succeed, costing the full connectDeadline " +
+			"(300 s) on that round and on every re-run of it.")
+	}
+	// And it is on the DECLINE arm, not on every end state. A completed ceremony's parties are all
+	// still reachable and all still owed their copy; a marker written there would skip one.
+	if !strings.Contains(body, "ceremony.StateDeclined") {
+		t.Error("endCeremony records the ender without discriminating on the end state — a " +
+			"COMPLETED proceeding would then skip a party who is reachable and owed their document")
+	}
+	// The caller: a decline reaches endCeremony at all. Without this the function could be as
+	// correct as it likes and never run.
+	sess, err := os.ReadFile("session.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	scode := stripLineComments(string(sess))
+	at := strings.Index(scode, "ErrCoSignDeclined)")
+	if at < 0 {
+		t.Fatal("session.go no longer tests for ErrCoSignDeclined, so this guard cannot find the " +
+			"branch it exists to pin")
+	}
+	// Bounded to the arm rather than the file: an endCeremony call anywhere in session.go would
+	// satisfy an unscoped search, including one on a path that has nothing to do with a decline.
+	arm := scode[at:]
+	if n := strings.Index(arm, "\n\t\t}"); n > 0 {
+		arm = arm[:n]
+	}
+	if !strings.Contains(arm, "endCeremony(") {
+		t.Error("the ErrCoSignDeclined arm does not end the ceremony, so nothing anywhere decides " +
+			"that a declined proceeding is over — which is the state this slice exists to produce")
+	}
+}
+
+// TestAnEndStateIsCheckedAgainstTheInvitationNotTheFileBesideIt — P08.S05e, and the rule this
+// slice's first cut of `checkDeliveredPayload` broke.
+//
+// `ReadTermination`'s doc states it: *"`rec` must come from the document or the invitation, never
+// from the `record.json` beside it. A planted pair — a matching record and termination for another
+// proceeding, dropped into this directory — verifies perfectly against itself."* `LoadState` takes
+// the weaker anchor deliberately and says why it may: it renders a word and authorises nothing. A
+// gate that REFUSES may not.
+//
+// `checkDeliveredPayload` is such a gate, and it was verifying an arriving attestation against the
+// `record.json` sitting in the very directory it was about to write into. The consequence is
+// durable and silent: a false `Ended` makes `rearmDeliveries` skip the ceremony forever
+// (`st.Ended != ""`), so the party never receives its real copy and nothing tells them why.
+//
+// Driven at the ROUTING rather than with a forged pair, for the same reason the sibling structural
+// guards give: minting a convener-signed termination for a second proceeding needs a second
+// identity and a second record, which is tier 4's shape. What tier 1 can hold is that the gate
+// takes the invitation anchor at all — the property whose absence was the defect.
+func TestAnEndStateIsCheckedAgainstTheInvitationNotTheFileBesideIt(t *testing.T) {
+	src, err := os.ReadFile("delivery.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	code := stripLineComments(string(src))
+	i := strings.Index(code, "func (s *Server) checkDeliveredPayload(")
+	if i < 0 {
+		t.Fatal("cannot find checkDeliveredPayload — this guard is reading the wrong thing")
+	}
+	body := funcBodyFrom(code, i)
+	if body == "" {
+		t.Fatal("could not brace-match checkDeliveredPayload's body")
+	}
+	// STIMULUS: the anchor's name really appears in this file, so "not found in the body" is a
+	// fact about this gate and not about spelling. Its sibling `checkDelivered` uses it.
+	if !strings.Contains(code, "MatchesRecord(") {
+		t.Fatal("MatchesRecord appears nowhere in delivery.go, so the scan below looks for a name " +
+			"that could not appear and its clean result would mean nothing")
+	}
+	bind := strings.Index(body, "MatchesRecord(")
+	if bind < 0 {
+		t.Fatal("checkDeliveredPayload does not bind the record to the invitation before " +
+			"anchoring an end state on it. A matching record-and-termination pair planted in " +
+			"~/nib/ceremonies/<id>/ verifies against itself, and the false Ended it writes makes " +
+			"rearmDeliveries skip this ceremony forever — the party never gets their real copy.")
+	}
+	// And it binds BEFORE it verifies, or the anchor is checked after the thing it anchors.
+	verify := strings.Index(body, ".Verify(")
+	if verify < 0 {
+		t.Fatal("checkDeliveredPayload no longer verifies the end state at all")
+	}
+	if bind > verify {
+		t.Error("checkDeliveredPayload verifies the end state BEFORE binding the record to the " +
+			"invitation, so the planted pair is checked against itself first and the binding is " +
+			"a second opinion on a question already answered")
+	}
+	// **And the gate does NOT write.** `autoAccepter` splits the two: `verify` is "the recipient's
+	// own check of what arrived", `save` is where "the caller can persist it before the ack". The
+	// first cut did both here, which is a check that mutates disk and one that
+	// `TestTheDeliveryAcceptGateChecksBeforeItSaves` cannot see past. Asserted as an ABSENCE with
+	// its own stimulus below, because an absence is the half a scan gets wrong.
+	if strings.Contains(body, "WriteTermination(") {
+		t.Error("checkDeliveredPayload stores the end state as well as checking it. Its own gate " +
+			"documents verify as the check and save as the persist, and the ordering guard that " +
+			"exists to keep those apart cannot see a write that happens inside the check.")
+	}
+	// Where the write actually is: the save arm of the delivery accepter, beside the document arm
+	// that persists there too. Without this the absence above is satisfied by deleting the write.
+	i = strings.Index(code, "func (s *Server) deliverOneLeg(")
+	if i < 0 {
+		t.Fatal("cannot find deliverOneLeg")
+	}
+	leg := funcBodyFrom(code, i)
+	if !strings.Contains(leg, "WriteTermination(") {
+		t.Error("nothing on the delivery leg stores an arriving end state, so a party is TOLD the " +
+			"proceeding ended and keeps no attestation of it — and `ackOK` then means the bytes " +
+			"reached a sentence rather than a disk")
+	}
+}

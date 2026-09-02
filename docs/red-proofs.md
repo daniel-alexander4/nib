@@ -3143,3 +3143,74 @@ because the contract is "the same host at a DIFFERENT port" and a reader should 
 reconstruct the upstream guard to know it.
 
 `recorded` 245 → 248.
+
+## P08.S05e — the end state gets a producer, and the harness stops passing on the wrong 409 *(v1.117.322)*
+
+Five rows, tier 1. The slice's remaining task was filed as harness-only and **the harness was not the
+defect** — it was the thing that had been hiding one.
+
+**The clause was green on a failure.** `decline_round` asserted that hop 3 returns 409, and it did:
+`/api/session/initiate` answers 409 for **five** different things, and four of them mean nobody
+refused anything. No watcher answered the spoken check, so both ends sat on the words,
+`ErrVerificationTimedOut` fired, and the run read the resulting 409 as a person saying no — then
+failed one line later on a termination that was never written because no decline ever happened.
+Reading the response body is what settled it: `{"error":"the safety words went unconfirmed on the
+other side in time, so nothing was signed"}`. The clause now drives the spoken check on both ends and
+matches the refusal's own sentence. Probed three ways: watchers removed (the state at HEAD), party 4
+accepting instead, and — the one that proves the body match earns its place — words confirmed on both
+ends with the consent gate never answered, where the words assertion passes and only the body match
+fires.
+
+**Then the real decline exposed the slice's own defect, and it cost 300 seconds.** The round walked
+the party that had just declined. That machine's `declineCeremony` prunes this ceremony's stored
+invitation, so it has nothing left to arm a delivery rendezvous with, and a party that refuses at its
+consent gate returns from `coSignExchange` 48 lines before `rd.Store`, so it holds no mirror for the
+arrival gate to check an attestation against. The leg cannot succeed at either end. Measured:
+`tried 0 address(es), none answered as the pinned peer: context deadline exceeded`, once per round
+and once per re-run. The clause runs in **6 s** now instead of 360.
+
+`ender-skip-catches-every-party` is the row that keeps the fix from becoming the worse bug. The walk
+test was first written with a two-party roster — the convener plus the ender — where "skip the ender"
+and "skip everybody" produce identical output, so weakening the guard to `if ender != ""` left it
+green. That mutation is the round reporting success having delivered to nobody, which is C06's
+telling half silenced by the change meant to make it cheap. Three parties now: the ender, a signer
+who did not end it, and one an earlier run already acknowledged.
+
+`end-state-anchored-on-the-file-beside-it` is the review's find and the one with teeth.
+`checkDeliveredPayload` is a gate that REFUSES, and it verified an arriving attestation against the
+`record.json` sitting in the directory it was about to write into — the anchor `ReadTermination`'s
+own doc forbids by name, and `LoadState` restates the rule exactly where it deliberately takes the
+weaker one: *"a gate that REFUSES on a termination must anchor on the document or the invitation
+instead, because a planted matching pair verifies against itself."* The consequence is durable and
+silent: a false `Ended` makes `rearmDeliveries` skip the ceremony forever, so the party never gets
+their real copy. It binds through `cer.inv.MatchesRecord` now — the same anchor the sibling gate one
+function up already used, which is what makes this an ADR-009 finding rather than a missing idea.
+
+**Two rows exist because a claim in a doc comment was checked.** `deliveryOutcome.Skipped`'s own
+text said `Delivered` distinguishes its two meanings and nothing asserted it
+(`acknowledged-skip-stops-reporting-delivered`); `markEndedBy` overwrote unconditionally while its
+companion `ceremony.WriteTermination` is deliberately write-once, and nothing on the arrival path
+refuses a hop because a proceeding has ended — so a second decline was reachable and would move the
+marker to the newer decliner while the round went back to walking the first
+(`ender-marker-moves-on-a-second-decline`).
+
+**Two mutations are recorded as unreachable rather than covered.** `endedBy`'s `if rerr != nil`
+branch changes nothing observable — a nil read yields `""` either way. And an earlier cut folded case
+at BOTH the read and the write, which made each unfalsifiable: either alone gives the same answer, so
+removing one left every test green. One fold was deleted rather than both being claimed as covered,
+and the case rule is now held where production actually depends on it, at the walk's `EqualFold`.
+
+**A vacuous fixture, found by the mutation and not by reading it.** The case clause used
+`"11"+"22"…` as a fingerprint, and `strings.ToUpper` of an all-digit string is the identity — so the
+fold under test could be deleted with the clause still green. Hex letters now.
+
+**Two tiers were RED at HEAD and this slice closed both.** Tier 2 since v1.117.320:
+`deliveryOutcome` was in neither the `PUBLISHED` nor the `EXCLUDED` table of the reader scan, so
+S05g closed over a red tier — the fifth shape that scan has caught entered nowhere, and the second
+time it was red across a slice close. Tier 4 at N=3 since the same commit: S05g's recovery clause
+picks its injected victim dynamically (`victim=3`, or `2` when `N<4`) while the witness party whose
+file must not be rewritten was hard-coded to instance 2, so at N=3 the witness IS the victim, whose
+`signed/` directory the injection had just wiped. Only N=2/4/9 are ever run, so nothing had asked.
+N=3 passes for the first time.
+
+`recorded` 248 → 253.
