@@ -19,6 +19,15 @@
 #
 # With the answerer restored the count is 102 rather than 78, because the reading now also covers
 # the end-state round, which used to run outside the measured window entirely.
-TIER="tier 4 --lan — nine real binaries in a namespace"
-PROVE="./build/pairrepro.sh --lan -n 9"
+# **The mutation removes the ANSWER half only, and that choice is the row.** Removing the whole
+# `watchLink` call — announce included — does not fail fast on egress: under `--lan` the arm's
+# announcement is the only thing the round can discover, so every leg then burns the 300 s connect
+# deadline and a nine-party run hangs for forty minutes instead of going red. Measured, and killed
+# at thirty-two. What this row names is the answerer, so that is what it takes away: the arm stays
+# findable, the round completes, and the egress assertion fires on a hold that never renewed.
+#
+# `-n 4` rather than `-n 9`: three delivery arms are enough to put the counter off its baseline,
+# and the row has to be cheap enough that somebody actually replays it.
+TIER="tier 4 --lan — four real binaries in a namespace"
+PROVE="./build/pairrepro.sh --lan -n 4"
 EXPECT="packets destined off the link"
