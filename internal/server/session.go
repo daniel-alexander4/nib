@@ -688,7 +688,6 @@ type sessionVerifier struct {
 var errVerifyBusy = errors.New("another co-signing session is already waiting for the spoken check — finish or cancel that one first")
 
 func (sv sessionVerifier) ConfirmVerification(words string) (bool, error) {
-	sv.saw.mark() // the spoken check is about to go on screen
 	ch := make(chan bool, 1)
 	pv := &pendingVerify{words: words, resp: ch}
 	if !sv.s.sess.setVerify(pv) {
@@ -697,6 +696,18 @@ func (sv sessionVerifier) ConfirmVerification(words string) (bool, error) {
 		// never saw, and waiting would hang until a five-minute timeout with nothing shown.
 		return false, errVerifyBusy
 	}
+	// **`mark` goes AFTER the slot is won, and the order is the whole of it (P08.S05c).** It used
+	// to be this function's first statement, so a gate refused with `errVerifyBusy` had already
+	// spent the arm — and `reached`'s own doc says what the mark means: *"a connection put
+	// something in front of the local user"*. Nothing was put in front of anyone. The refused
+	// session then reported its arm as consumed, so a second arm on this machine could not retry
+	// what it had never been shown, which is the state P08.S05d's delivery round arrives into.
+	//
+	// **The slice's own bullet asked for an arm KEY on the slot, and that is not the fix.**
+	// `setVerify` admits exactly one gate at a time, so there is never a second gate for a key to
+	// disambiguate and `respondVerify` cannot route an answer to the wrong one. The defect was the
+	// ordering; recorded here so a later reader does not re-add the key looking for it.
+	sv.saw.mark() // the spoken check is on screen
 	defer sv.s.sess.clearVerifyIf(pv)
 	select {
 	case ok := <-ch:

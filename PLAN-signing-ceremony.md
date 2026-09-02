@@ -6169,7 +6169,7 @@ Acceptance:
 - **`ceremonynet.go:772-776` is amended** — it justifies `checkCeremonyDeadline` reserving one hop by citing what `Convene` reserves, and that sentence goes stale the moment the term lands. Tier 1 (a comment, checked by reading).
 - Tier: 1 throughout; nothing here needs a live peer (C15).
 
-#### P08.S05c — The arm becomes addressable, and the spoken check gets a key *(D22; C05, C08; the TRIPWIRE)* — **new, 2026-08-31, split out of S05**
+#### P08.S05c — The arm becomes addressable, and the spoken check gets a key *(D22; C05, C08; the TRIPWIRE)* — **new, 2026-08-31, split out of S05** *(in progress)*
 Scope: the structural slice, and the grill's hardest finding. A delivery arm cannot avoid `s.sess`
 the way `handleSessionInitiate` avoids it — that listener is `defer hl.Close()`
 (`internal/server/session.go:1868`), request-scoped, with a human at the keyboard, and the comment
@@ -6186,6 +6186,45 @@ Acceptance:
 - **The arm's own bound is decided and justified against D35 rather than copied** — see S05's correction (3): the arm's skew is not handshake-bounded, so its bound may not be derived from the 7m residual. The chosen figure names what it tolerates. Tier 1.
 - **The TRIPWIRE is cited and what it widens is stated** (`session.go:30-57`): *"what arms it"* — a listener re-established at load rather than by an explicit vault-unlocked `/api/session/arm` — and *"how long it stays open"*. *"Which peers it accepts"* is NOT widened, and saying which of the three moved is the point. Docs clause plus the citation at the site.
 - Tier: 1 for the keying and the guards; tier 4 for two live arms on one machine (C15).
+**Grill, 2026-09-01 — four findings, two of which change the slice's design. No blocking questions.**
+- **(a) Clause 2 names ONE predicate where the tree needs TWO, and the one-door guard is what hides
+  it.** `armedLocked()` has three callers, not two: `arm` (`session.go:170`), `armCeremony` (`:210`)
+  — and **`status()` (`:485`)**, which is `sessionStatus.Armed`, which `web/app.js:1117` renders as
+  the user's armed pill. The structural guard (`session_test.go:2070`) asserts the two *doors* route
+  through it and is blind to the third caller. So *"`armedLocked` becomes a COLLISION predicate
+  rather than 'is anything armed'"* silently re-points the pill at a question the user did not ask:
+  a background delivery arm would either light *you are armed* or, worse, a live interactive arm
+  would stop lighting it. **The two questions separate:** `collidesLocked(kind)` for the doors and
+  `armedLocked()` — kept as *is anything armed* — for `status()`. Both stay single-door; the guard
+  gains the third site so it can no longer be satisfied while a caller drifts.
+- **(b) Two named SLOTS, not a keyed map.** The plan says *"keyed"*, and a map treats the two arms
+  as homogeneous when they are not: one is interactive, vault-unlocked, and the thing `status()`
+  reports; the other is unattended, ceremony-scoped and background. A machine can hold at most one
+  of each — the delivery round is sequential legs in which the convener DIALS and the recipient
+  arms, so no machine ever needs two delivery arms. Two slots make `status()` answerable without a
+  policy ("the interactive slot is what the user sees"), and make the collision predicate fall out
+  rather than being imposed. Rung 1: fewer moving parts, same property.
+- **(c) Clause 3 names a mechanism for a defect whose cause is ORDERING.** `sv.saw.mark()` runs at
+  `session.go:691` and `setVerify` refuses at `:694-698`, so a gate refused with `errVerifyBusy` has
+  already spent the arm it was never shown for. An arm KEY on the slot is not what fixes that —
+  moving the mark after the successful `setVerify` is. And a key buys nothing else here: `setVerify`
+  admits exactly one gate at a time, so there is never a second gate for a key to disambiguate, and
+  `respondVerify` cannot route an answer to the wrong one. Built as the ordering fix, with the
+  reasoning recorded so a later reader does not re-add the key.
+- **(d) The bound (clause 4) is decided here: `Expires` + S06's grace, floored at the interactive
+  window, NOT derived from a skew figure.** S05's correction (3) rules out the 7m residual, and D35's
+  ±5m is the *handshake's* tolerance, which an arm deciding to close is not subject to — there is no
+  channel at that moment. So the arm's bound is not a skew question at all: it is *how long this
+  proceeding can still need me*, which the record already states. What it tolerates is named at the
+  site: a peer clock up to the ceremony's own `Expires` slack ahead of ours.
+Tasks:
+- T01 — `session` gains a second, named delivery-arm slot; per-arm state (`ln`/`cer`/`cerCancel`/`until`/`addr`) moves onto an `arm` value, machine-wide state (`notice`, `received`, `pending`, `verify`) stays on `session`.
+- T02 — `collidesLocked(kind)` for the two doors and `armedLocked()` kept for `status()`; the structural guard gains `status()` as a third required site (finding (a)).
+- T03 — `TestASecondArmCannotOrphanALiveCeremony` re-expressed from *"must fail"* to *"must not overwrite"*, plus a test that an unrelated arm leaves a live delivery arm's notice and received record intact.
+- T04 — `saw.mark()` moves after a successful `setVerify` (finding (c)), red-proved. *(done 2026-09-01, v1.117.314 — and `errVerifyBusy` turned out to have **no test of any kind**: the incumbent-wins rule shipped with its reasoning in a doc comment and nothing exercising it, which is how one line sat in front of it unnoticed. Row `verify-busy-spends-the-arm`, floor 248 → 249.)*
+- T05 — the delivery arm's bound from `Expires` + grace, floored at the interactive window, with what it tolerates named (finding (d)).
+- T06 — the TRIPWIRE cites this slice and states which of its three containments moved (*what arms it* and *how long it stays open*; NOT *which peers it accepts*).
+- T07 — tier 4: two live arms on one machine.
 
 #### P08.S05d — The round itself: found off-LAN, unattended, named on disk *(D22, D30, D34; C08, C10)* — **new, 2026-08-31, split out of S05**
 Scope: the delivery leg. The rendezvous is derived at **its own hop index** — `RecordKey(hop)` and

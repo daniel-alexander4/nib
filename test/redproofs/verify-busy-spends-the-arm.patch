@@ -1,0 +1,10 @@
+--- a/internal/server/session.go
++++ b/internal/server/session.go
+@@ -688,6 +688,7 @@
+ var errVerifyBusy = errors.New("another co-signing session is already waiting for the spoken check — finish or cancel that one first")
+ 
+ func (sv sessionVerifier) ConfirmVerification(words string) (bool, error) {
++	sv.saw.mark()
+ 	ch := make(chan bool, 1)
+ 	pv := &pendingVerify{words: words, resp: ch}
+ 	if !sv.s.sess.setVerify(pv) {
