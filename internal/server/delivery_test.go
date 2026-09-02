@@ -211,9 +211,9 @@ func TestOnlyTheConvenerRunsARound(t *testing.T) {
 	s, v := unlockedServer(t)
 
 	// A roster whose convener is somebody else entirely.
-	inv := ceremony.Invitation{
-		ID:                  "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-		ConvenerFingerprint: "99" + strings.Repeat("88", 31),
+	rec := ceremony.Record{
+		ID:     "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		Roster: []ceremony.Party{{Fingerprint: "99" + strings.Repeat("88", 31), Signs: false}},
 	}
 	// STIMULUS: this server really can load an identity, so the refusal below is about the ROLE
 	// and not about a machine that cannot say who it is. The first draft asked `unlockedVault()`
@@ -225,14 +225,14 @@ func TestOnlyTheConvenerRunsARound(t *testing.T) {
 	if _, _, err := identity(v); err != nil {
 		t.Fatalf("setup: this server cannot load an identity (%v), so a refusal proves nothing", err)
 	}
-	if _, err := s.runDeliveryRound(context.Background(), v, inv, []byte("%PDF-1.4\n")); err == nil {
+	if _, err := s.runDeliveryRound(context.Background(), v, rec, []byte("%PDF-1.4\n"), nil); err == nil {
 		t.Error("a machine that is NOT the convener ran a delivery round — it would dial parties " +
 			"it holds no pin for, at a rendezvous it shares with nobody")
 	}
 
 	// And the nil-vault case says so instead of panicking: this runs where a recovered panic
 	// reaches nobody.
-	if _, err := s.runDeliveryRound(context.Background(), nil, inv, []byte("%PDF-1.4\n")); err == nil {
+	if _, err := s.runDeliveryRound(context.Background(), nil, rec, []byte("%PDF-1.4\n"), nil); err == nil {
 		t.Error("a round with no vault open returned no error")
 	}
 }

@@ -530,7 +530,7 @@ type deliveryOutcome struct {
 // recipient cannot accumulate copies. C10's harder half is that a re-run must reach the party that
 // FAILED and skip the ones that succeeded — otherwise a crash mid-round re-delivers to everyone.
 // That needs the acknowledgement recorded durably, which is `markDelivered`.
-func (s *Server) runDeliveryRound(ctx context.Context, v *vault.Vault, inv ceremony.Invitation, pdf []byte) ([]deliveryOutcome, error) {
+func (s *Server) runDeliveryRound(ctx context.Context, v *vault.Vault, rec ceremony.Record, pdf []byte, addrs map[string]string) ([]deliveryOutcome, error) {
 	// Nil-guarded for `rearmDeliveries`'s reason, and one more: the convener check below NEEDS the
 	// identity to know who this machine is, so it cannot precede the load. Without this guard the
 	// honest refusal *"you are not the convener"* is reached only by a machine that could already
@@ -547,27 +547,39 @@ func (s *Server) runDeliveryRound(ctx context.Context, v *vault.Vault, inv cerem
 		return nil, err
 	}
 	me := hex.EncodeToString(myFP)
-	if !strings.EqualFold(me, inv.ConvenerFingerprint) {
+	conv := convenerFingerprintOf(rec)
+	if !strings.EqualFold(me, conv) {
 		return nil, errors.New("only the convener delivers a finished document: this machine is " +
 			"a party to this ceremony, not the one that convened it")
 	}
-	out := make([]deliveryOutcome, 0, len(inv.Roster))
-	for _, party := range inv.Roster {
+	out := make([]deliveryOutcome, 0, len(rec.Roster))
+	for _, party := range rec.Roster {
 		if strings.EqualFold(party.Fingerprint, me) {
 			continue // the convener already holds it
 		}
 		res := deliveryOutcome{Fingerprint: party.Fingerprint, Label: party.Label}
-		if wasDelivered(inv.ID, party.Fingerprint) {
+		if wasDelivered(rec.ID, party.Fingerprint) {
 			res.Delivered, res.Skipped = true, true
 			out = append(out, res)
 			continue
 		}
-		if err := s.deliverToParty(ctx, inv, party.Fingerprint, cert, key, myFP, pdf); err != nil {
+		// **A per-party invitation, minted here rather than read from the vault.** The convener
+		// holds no invitation for its own ceremony — it ISSUES them — and each party's carries a
+		// DIFFERENT secret, which is what makes their rendezvous targets distinct. The live tier-4
+		// run found this: the round asked `CeremonyInvitationFor` and got a 409 saying this machine
+		// holds no invitation, which was true and would have been true forever.
+		inv, ierr := convenerInvitationFor(v, rec, party)
+		if ierr != nil {
+			res.Reason = ierr.Error()
+			out = append(out, res)
+			continue
+		}
+		if err := s.deliverToParty(ctx, inv, party.Fingerprint, addrs[strings.ToLower(party.Fingerprint)], cert, key, myFP, pdf); err != nil {
 			res.Reason = err.Error()
 			out = append(out, res)
 			continue // one party's failure does not end the round; the re-run reaches them
 		}
-		if err := markDelivered(inv.ID, party.Fingerprint); err != nil {
+		if err := markDelivered(rec.ID, party.Fingerprint); err != nil {
 			// **Delivered but not RECORDED, and the honest report is not "delivered".** A re-run
 			// will deliver to them again, which the deterministic filename makes harmless — the
 			// alternative, reporting success on an unrecorded leg, makes C10's "exactly one file
@@ -584,7 +596,7 @@ func (s *Server) runDeliveryRound(ctx context.Context, v *vault.Vault, inv cerem
 
 // deliverToParty runs one leg: derive the delivery rendezvous, race the tiers to reach the party,
 // and hand over the document through the unattended gates.
-func (s *Server) deliverToParty(ctx context.Context, inv ceremony.Invitation, partyFP string, cert, key, myFP, pdf []byte) error {
+func (s *Server) deliverToParty(ctx context.Context, inv ceremony.Invitation, partyFP, addr string, cert, key, myFP, pdf []byte) error {
 	peerFP, err := hex.DecodeString(partyFP)
 	if err != nil || len(peerFP) != sha256.Size {
 		return errors.New("that party's fingerprint is not a fingerprint")
@@ -597,7 +609,26 @@ func (s *Server) deliverToParty(ctx context.Context, inv ceremony.Invitation, pa
 	if err := cer.setupSharedEndpoint("0.0.0.0:0", s.configDir); err != nil {
 		return err
 	}
-	conn, err := s.raceWithRendezvous(cer, nil, cert, key, peerFP, partyLabel(inv, partyFP), partyLabel(inv, partyFP))
+	// **An optional typed address, and it is the same escape hatch `/api/session/initiate` has.**
+	// Discovery for a delivery leg is the rendezvous at this party's own index — that is the
+	// production path and what clause 1 is about. A caller that already knows where the party
+	// listens may say so, and tier 4 needs that: `pairrepro.sh` gives its instances no DHT and no
+	// multicast, so nothing there can resolve a rendezvous at all.
+	//
+	// **The harness OBSERVES the address rather than being told it** — it reads each party's own
+	// `/api/session/status`, which reports the delivery arm's bound address. That distinction is
+	// ADR-010's lesson: a harness handed a constant on both sides proves nothing, and one reading
+	// what the product actually bound is making an observation.
+	var cands []candidate
+	if addr != "" {
+		// `Source` is NOT optional: the per-source cap accounts an unset one to the zero value,
+		// so one tier spends another's share and the drop report names the wrong tier as the
+		// flooder. `TestEveryCandidateProducerNamesItsSource` caught this literal, which is what
+		// that guard is for — a producer added later, not the ones anybody remembered to list.
+		cands = []candidate{{Fingerprint: peerFP, Addr: addr, Transport: transportQUIC,
+			Label: partyLabel(inv, partyFP), Source: sourceTyped}}
+	}
+	conn, err := s.raceWithRendezvous(cer, cands, cert, key, peerFP, partyLabel(inv, partyFP), partyLabel(inv, partyFP))
 	if err != nil {
 		return err
 	}
@@ -626,6 +657,9 @@ func (s *Server) handleCeremonyDeliver(w http.ResponseWriter, r *http.Request) {
 	v := vaultFrom(r)
 	var req struct {
 		Ceremony string `json:"ceremony"`
+		// Addresses is an optional hint per party fingerprint, for a caller that already knows
+		// where a party listens. Production discovery is the rendezvous; see deliverToParty.
+		Addresses map[string]string `json:"addresses,omitempty"`
 	}
 	if err := readJSON(r, &req); err != nil {
 		httpError(w, http.StatusBadRequest, "invalid request body")
@@ -645,17 +679,6 @@ func (s *Server) handleCeremonyDeliver(w http.ResponseWriter, r *http.Request) {
 			"document, so there is nothing to deliver")
 		return
 	}
-	text, ok := v.CeremonyInvitationFor(req.Ceremony)
-	if !ok {
-		httpError(w, http.StatusConflict, "this machine holds no invitation for that ceremony, so "+
-			"it cannot derive where its parties listen")
-		return
-	}
-	inv, ierr := ceremony.ParseInvitation(text)
-	if ierr != nil {
-		httpError(w, http.StatusConflict, "that ceremony's stored invitation could not be read: "+ierr.Error())
-		return
-	}
 	// **The document is verified before it is sent, not only when it arrives.** `checkDelivered` is
 	// the recipient's gate; running the same completeness test here means a convener does not spend
 	// a round handing out a document that every recipient will refuse.
@@ -663,7 +686,11 @@ func (s *Server) handleCeremonyDeliver(w http.ResponseWriter, r *http.Request) {
 		httpError(w, http.StatusConflict, "that ceremony's record carries no roster")
 		return
 	}
-	outcomes, rerr := s.runDeliveryRound(r.Context(), v, inv, pdf)
+	addrs := make(map[string]string, len(req.Addresses))
+	for k, val := range req.Addresses {
+		addrs[strings.ToLower(k)] = val
+	}
+	outcomes, rerr := s.runDeliveryRound(r.Context(), v, rec, pdf, addrs)
 	if rerr != nil {
 		httpError(w, http.StatusConflict, rerr.Error())
 		return
@@ -672,4 +699,96 @@ func (s *Server) handleCeremonyDeliver(w http.ResponseWriter, r *http.Request) {
 		Ceremony string            `json:"ceremony"`
 		Parties  []deliveryOutcome `json:"parties"`
 	}{Ceremony: req.Ceremony, Parties: outcomes})
+}
+
+// convenerInvitationFor re-mints one party's invitation from the record and the convener's own
+// stored secret — the ONE door for that (ADR-009).
+//
+// **The convener holds no invitation for its own ceremony**, because it issues them; what it holds
+// is a `CeremonySecret` per party, and each party's is different. That is what makes their
+// rendezvous targets distinct, and it is why a round cannot be driven from one shared invitation.
+// `/api/ceremony/invites` has always done this; P08.S05g's live run needed the same thing and the
+// logic is extracted here rather than written twice, which is the duplicate derivation this repo
+// keeps paying for.
+//
+// `Seeds` is absent and cannot be recovered — the record does not carry them — so a re-minted
+// invitation has no DHT seed hints. Stated rather than papered over, exactly as the invites route
+// states it; every other field a recipient CHECKS is present.
+func convenerInvitationFor(v *vault.Vault, rec ceremony.Record, party ceremony.Party) (ceremony.Invitation, error) {
+	conv := convenerFingerprintOf(rec)
+	if conv == "" {
+		return ceremony.Invitation{}, errors.New("that ceremony's record does not name a convener")
+	}
+	rh := rosterHashHex(rec)
+	if rh == "" {
+		return ceremony.Invitation{}, errors.New("that ceremony's record will not re-hash")
+	}
+	fp, err := hex.DecodeString(party.Fingerprint)
+	if err != nil {
+		return ceremony.Invitation{}, errors.New("that ceremony's record names a party Nib cannot read")
+	}
+	secret, ok := v.CeremonySecret(rec.ID, fp)
+	if !ok {
+		return ceremony.Invitation{}, errors.New("Nib no longer holds the invitation secret for " +
+			party.Fingerprint[:12] + ", so it cannot reach them. A ceremony's secrets are removed when it ends.")
+	}
+	return ceremony.Invitation{
+		Version:             ceremony.InvitationVersion,
+		ID:                  rec.ID,
+		Roster:              rec.Roster,
+		Secret:              secret,
+		ConvenerFingerprint: conv,
+		Intent:              rec.Intent,
+		RosterHash:          rh,
+	}, nil
+}
+
+// armDeliveryAfterHop opens this party's delivery arm the moment its hop is mirrored.
+//
+// **The unlock hook is not enough, and the live run proved it rather than a review.** A party arms
+// for delivery at unlock — which covers the machine that RESTARTS between signing and delivery, and
+// covers nothing else. In an ordinary ceremony every instance unlocked long before the ceremony
+// existed, so when the round ran nobody was listening: the convener raced candidates to
+// `connectDeadline` for each party in turn and the harness timed out. Two triggers, one arm: this
+// one for the party that just signed, `rearmDeliveries` for the one that came back.
+//
+// The convener is skipped — it delivers rather than waits — and so is a ceremony whose copy is
+// already on disk, for `alreadyDelivered`'s reason.
+func (s *Server) armDeliveryAfterHop(rec ceremony.Record) {
+	if !s.deliveryRearm.Load() {
+		return // not a real Nib process: see EnableDeliveryRearm
+	}
+	v := s.unlockedVault()
+	if v == nil {
+		return
+	}
+	cert, key, err := identity(v)
+	if err != nil {
+		return
+	}
+	myFP, err := sign.Fingerprint(cert)
+	if err != nil {
+		return
+	}
+	me := hex.EncodeToString(myFP)
+	if strings.EqualFold(me, convenerFingerprintOf(rec)) {
+		return
+	}
+	if alreadyDelivered(rec) {
+		return
+	}
+	text, ok := v.CeremonyInvitationFor(rec.ID)
+	if !ok {
+		return // no invitation, so no secret, so no rendezvous to arm at
+	}
+	inv, ierr := ceremony.ParseInvitation(text)
+	if ierr != nil {
+		return
+	}
+	if aerr := s.armForDelivery(context.Background(), inv, cert, key, me); aerr != nil {
+		s.sess.noteFailure(armDelivery, "delivery-arm-failed",
+			"Nib could not listen for your copy of the signed document.",
+			"You have signed, and this machine could not open the connection that receives the "+
+				"finished document. The convener can re-run delivery. Reason: "+aerr.Error())
+	}
 }

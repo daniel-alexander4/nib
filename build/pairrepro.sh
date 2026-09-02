@@ -1274,9 +1274,13 @@ print(next(i['invitation'] for i in d['invites'] if i['fingerprint'].lower()=='$
       || fail "[$transport] convening $N parties failed (HTTP $code): $(head -c 300 "$WORK/relay.convene.$transport.json")"
 
     # The convened document is the baton's first state: it carries the record, and NO signatures.
-    local docid
+    local docid rel_cid
     docid="$(python3 -c "
 import json;print(json.load(open('$WORK/relay.convene.$transport.json')).get('document',{}).get('id',''))" 2>/dev/null)"
+    # The ceremony id, for the delivery round below (P08.S05g).
+    rel_cid="$(python3 -c "
+import json;print(json.load(open('$WORK/relay.convene.$transport.json')).get('ceremony',''))" 2>/dev/null)"
+    [ -n "$rel_cid" ] || fail "[$transport] convene returned no ceremony id, so the delivery round has nothing to name"
     [ -n "$docid" ] || docid="$(curl -fsS "${URLS[0]}/api/docs" | jget activeId)"
     curl -fsS "${URLS[0]}/api/pdf?doc=$docid" -o "$WORK/relay.$transport.hop0.pdf" \
       || fail "[$transport] could not fetch the convened document"
@@ -1454,6 +1458,116 @@ if got != signing:
     sys.exit(1)
 print(f"[{t}] {len(got)} distinct signers, in roster order, one signature each")
 PYSET
+
+    # ── The DELIVERY ROUND (P08.S05g; C08, C10) ──────────────────────────────────
+    #
+    # Everything above proves the document was BUILT. This proves it was DELIVERED — which is a
+    # different fact and, until this slice, one no harness had ever asked. C08 is "the finished
+    # document reaches every party, including those whose hop completed hours earlier": in a baton
+    # relay only the LAST party ever sees the finished file, and every earlier one holds a document
+    # missing every signature added after theirs.
+    #
+    # **Driven at the convener's route, because the round is a route** (S05g's rung-2 decision):
+    # `POST /api/ceremony/deliver`. That also makes C10's re-run literally a second POST rather
+    # than something this harness has to simulate.
+    #
+    # **The evidence is on each RECIPIENT's disk, never the convener's report.** Asking the sender
+    # whether it delivered is asking the thing under test — the same rule this file already applies
+    # to signature counts ("read from B's side, because asking A whether A signed is asking the
+    # thing under test").
+    #
+    # **Each party's delivery address is OBSERVED, not configured.** These instances have no DHT
+    # and no multicast — every hop above is driven by a typed `address=` — so nothing here can
+    # resolve a rendezvous, and the round's off-LAN discovery is a live-network property this tier
+    # cannot reach (said again in the acceptance ledger rather than implied). What IS drivable is
+    # the round itself, and the address for it comes from each party's own `/api/session/status`:
+    # the product bound it, and the harness reads what it bound. A harness handed the same constant
+    # on both sides proves nothing — ADR-010's lesson, which this file has been burned by once.
+    local addrs="{}" fpx adx
+    for i in $(seq 2 "$N"); do
+      # The PORT is what is observed; the host is loopback because that is where these instances
+      # are. A delivery arm binds `0.0.0.0:0` and reports `0.0.0.0:<port>` — a bind, not a dialable
+      # address — and dialling it verbatim is how the first run of this clause hung.
+      adx="$(curl -fsS "${URLS[$((i - 1))]}/api/session/status" | jget address 2>/dev/null || true)"
+      [ -n "$adx" ] && adx="127.0.0.1:${adx##*:}"
+      [ -n "$adx" ] \
+        || fail "[$transport] instance $i reports no armed address after signing — it never armed
+      for delivery, so the round has nobody to reach. P08.S05g arms the delivery slot when a hop is
+      mirrored; a blank here means that trigger did not fire."
+      fpx="${FPS[$((i - 1))]}"
+      addrs="$(python3 -c "
+import json,sys
+d=json.loads('''$addrs'''); d['$fpx']='$adx'; print(json.dumps(d))")"
+    done
+    echo "[$transport] delivering the finished document to $((N - 1)) parties…"
+    dcode="$(curl -sS -X POST "${URLS[0]}/api/ceremony/deliver" -H 'Content-Type: application/json' \
+      -H "X-CSRF-Token: ${CSRFS[0]}" \
+      -d "$(python3 -c "
+import json;print(json.dumps({'ceremony':'$rel_cid','addresses':json.loads('''$addrs''')}))")" \
+      -o "$WORK/deliver.$transport.json" -w '%{http_code}')"
+    [ "$dcode" = "200" ] \
+      || fail "[$transport] the delivery round returned HTTP $dcode: $(head -c 400 "$WORK/deliver.$transport.json")"
+
+    # Per party, on their own disk. `signed/` is where S05d routes a delivered document, and the
+    # name is deterministic — which is what makes "exactly one file per party" checkable at all.
+    local delivered_ok=0 i
+    for i in $(seq 2 "$N"); do
+      local n_files
+      n_files="$(find "${HOMES[$((i - 1))]}/nib/signed" -maxdepth 1 -name "*-$rel_cid.pdf" 2>/dev/null | wc -l)"
+      [ "$n_files" = "1" ] \
+        || fail "[$transport] instance $i holds $n_files copies of ceremony $rel_cid under
+      ~/nib/signed, want exactly 1. C08 says the finished document reaches EVERY party, and C10
+      says a round leaves exactly one file each — 0 means this party never got the document it
+      signed, and >1 means the deterministic filename S05d built is not deterministic."
+      delivered_ok=$((delivered_ok + 1))
+    done
+    # STIMULUS: the loop ran. Without this, "every party has exactly one" is true of a loop that
+    # checked nobody — the vacuous green this file has been burned by before.
+    [ "$delivered_ok" = "$((N - 1))" ] \
+      || fail "[$transport] the delivery check ran over $delivered_ok parties, not $((N - 1))"
+    echo "[$transport] every party holds exactly one copy of the finished document (C08)"
+
+    # ── C10: a RE-RUN skips what it already delivered ────────────────────────────
+    #
+    # The re-run must reach a party that failed and skip the ones that succeeded. With every party
+    # already acknowledged, a correct re-run skips ALL of them — and that is the observable: the
+    # route reports `skipped` per party, and no recipient's file count changes.
+    #
+    # **Asserting the file count alone would pass on a round that re-delivered everything**, since
+    # the deterministic name overwrites. So the skip is read from the report AND the disk is read to
+    # confirm the overwrite did not multiply.
+    dcode="$(curl -sS -X POST "${URLS[0]}/api/ceremony/deliver" -H 'Content-Type: application/json' \
+      -H "X-CSRF-Token: ${CSRFS[0]}" \
+      -d "$(python3 -c "
+import json;print(json.dumps({'ceremony':'$rel_cid','addresses':json.loads('''$addrs''')}))")" \
+      -o "$WORK/deliver2.$transport.json" -w '%{http_code}')"
+    [ "$dcode" = "200" ] || fail "[$transport] the delivery re-run returned HTTP $dcode"
+    python3 - "$WORK/deliver2.$transport.json" "$transport" "$((N - 1))" <<'PYSKIP' || exit 1
+import json, sys
+path, t, want = sys.argv[1], sys.argv[2], int(sys.argv[3])
+parties = json.load(open(path)).get("parties") or []
+if len(parties) != want:
+    print(f"FAIL: [{t}] the re-run reported {len(parties)} parties, want {want}", file=sys.stderr)
+    sys.exit(1)
+notskipped = [p for p in parties if not p.get("skipped")]
+if notskipped:
+    print(f"FAIL: [{t}] a re-run over a fully delivered ceremony did NOT skip "
+          f"{[p.get('fingerprint','')[:12] for p in notskipped]}. C10's whole point is that a "
+          f"re-run reaches the party that failed and no other; one that re-delivers to everybody "
+          f"is 'satisfied completely by a round that delivers twice', which the criterion names "
+          f"as the defect.", file=sys.stderr)
+    sys.exit(1)
+if not all(p.get("delivered") for p in parties):
+    print(f"FAIL: [{t}] a skipped party is not reported as delivered, so the report cannot tell "
+          f"'already had it' from 'nothing happened'", file=sys.stderr)
+    sys.exit(1)
+print(f"[{t}] the re-run skipped all {len(parties)} already-delivered parties (C10)")
+PYSKIP
+    for i in $(seq 2 "$N"); do
+      n_files="$(find "${HOMES[$((i - 1))]}/nib/signed" -maxdepth 1 -name "*-$rel_cid.pdf" 2>/dev/null | wc -l)"
+      [ "$n_files" = "1" ] \
+        || fail "[$transport] after the re-run instance $i holds $n_files copies, want 1"
+    done
 
     # ── Every party disarms before the next transport's relay ────────────────────
     #

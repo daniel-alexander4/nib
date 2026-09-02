@@ -794,7 +794,19 @@ func (s *Server) mirrorHop(final []byte) {
 			"The signature is on the document the other party received either way. What is "+
 				"missing is this machine's copy under ~/nib/ceremonies, which is what lets Nib "+
 				"continue the ceremony after a restart. Reason: "+err.Error())
+		return
 	}
+	// **This party has signed, so from here it is waiting to be DELIVERED to (P08.S05g).**
+	//
+	// The unlock hook (`rearmDeliveries`) covers the party that RESTARTS between signing and
+	// delivery. It does not cover the ordinary case, and the live tier-4 run is what made that
+	// obvious: every instance had unlocked long before the ceremony existed, so when the round ran
+	// nobody was listening and the convener raced candidates to `connectDeadline` for each party in
+	// turn. A round nobody can receive is not a round.
+	//
+	// Best-effort and quiet on failure: a party that cannot arm is reached by the convener's
+	// re-run, and there is no response here to write a reason into.
+	s.armDeliveryAfterHop(rec)
 }
 
 // errNoCeremony reports an arm with no invitation — not an error, the ordinary case.
