@@ -1,11 +1,11 @@
 --- a/internal/server/session.go
 +++ b/internal/server/session.go
-@@ -262,7 +262,7 @@
- func (se *session) armIn(a *arm) bool {
+@@ -275,7 +275,7 @@
+ 	a.until = time.Now().Add(armWindowFor(a.kind, a.cer))
  	se.mu.Lock()
  	defer se.mu.Unlock()
 -	if se.collidesLocked(a.kind) {
-+	if se.arms[armDelivery] != nil {
++	if a.ln == nil && se.collidesLocked(a.kind) {
  		return false
  	}
- 	// **Stamped HERE and not by the arm goroutine.** The first draft set it from `runSession`,
+ 	se.arms[a.kind] = a
