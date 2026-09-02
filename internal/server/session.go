@@ -1237,7 +1237,7 @@ func (s *Server) runSession(ln p2p.Listener, cer *ceremonyID, cert, key []byte, 
 			// cost an arm that outlives its session — P05.S01's whole point is that the arm is
 			// one-shot. Before signing there is nothing to re-deliver, and `served` is then a
 			// decline or a consent timeout, which are decisions rather than losses.
-			if cer == nil || !cer.hasSigned() {
+			if cer == nil || (!cer.hasSigned() && !cer.servedReDelivery()) {
 				return // the arm is spent on a session, which is what it is for
 			}
 			if postSign.IsZero() {
@@ -1953,7 +1953,12 @@ func (s *Server) runCeremonyReceive(ctx context.Context, cer *ceremonyID, hl *p2
 		}
 		switch {
 		case xerr == nil:
-			if !cer.hasSigned() {
+			// **`servedReDelivery` is the second half, and without it a restart closed this window
+			// (/pending 334).** `hasSigned` means "this process signed", which a restart makes
+			// false by design — so a party that came back and answered from its STORED
+			// contribution took this branch and disarmed, and a second lost writeback then met a
+			// closed listener. The two are different facts and both keep the window open.
+			if !cer.hasSigned() && !cer.servedReDelivery() {
 				return // a clean completion that produced no signature (not the co-sign path) — done
 			}
 			// Signed and delivered cleanly, but a clean writeFrame does not prove the initiator read

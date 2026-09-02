@@ -42,6 +42,19 @@ type ceremonyID struct {
 	// signed by the identity, not by the ceremony, and the publish path needs both.
 	certPEM, keyPEM []byte
 
+	// reServed records that this hop answered a re-delivery from its STORED contribution
+	// (/pending 334). It is NOT `hasSigned` and must not be folded into it: `hasSigned` means
+	// "this process signed", which a restart legitimately makes false, and every consumer of it
+	// depends on that meaning — the pre-signing branch is the one that PUBLISHES CANDIDATES, and
+	// a restarted party is exactly the party the initiator can no longer find.
+	//
+	// An atomic rather than a field under `mu`, deliberately. `Cached` sets it after file I/O, and
+	// re-taking `mu` there to write a map is the shape the P08.S05 grill refused: `close()` nils
+	// `reDelivery`, so a write-back racing it would RESURRECT the map after close while
+	// `hasSigned()` does not check `closed` — two readers of one field permanently disagreeing.
+	// A bool nothing clears has no such race, and needs no clearing: the arm is going away.
+	reServed atomic.Bool
+
 	// punch is D33's per-(hop, side) packet budget, shared with the OTHER ceremonyID this machine
 	// holds for the same ceremony (P07.S09b). Set by punchBudget() below; read by diagnose() so
 	// the drops reach D19's sentence. Guarded by mu, like every other field diagnose() reads.
@@ -306,7 +319,23 @@ func (c *ceremonyID) Cached(inbound []byte) ([]byte, error) {
 	// its contribution on disk — `Store` put it there before the frame went out — and without this
 	// read-through the reconnect falls through to `Contribute` and stacks a SECOND signature from
 	// one identity, which is what D24 forbids and what C01 counts on the artifact.
-	return c.persistedFor(inbound)
+	hit, err := c.persistedFor(inbound)
+	if hit != nil {
+		// **The signal /pending 334 asked for, and it is set HERE rather than derived later.**
+		// A disk hit is the only way a hop answers without signing in this process, so this is
+		// the one place that knows a re-delivery was served. Without it the clean-completion
+		// branch reads `!hasSigned()` — true across a restart — and tears the arm down, so a
+		// SECOND lost writeback meets a closed listener and the party is unreachable for the rest
+		// of the ceremony.
+		c.reServed.Store(true)
+	}
+	return hit, err
+}
+
+// servedReDelivery reports whether this hop answered from its stored contribution rather than by
+// signing in this process. See `reServed`.
+func (c *ceremonyID) servedReDelivery() bool {
+	return c != nil && c.reServed.Load()
 }
 
 // persistedFor returns this ceremony's stored contribution if it is genuinely THIS hop's answer to
