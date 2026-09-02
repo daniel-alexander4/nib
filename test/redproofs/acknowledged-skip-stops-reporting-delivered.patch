@@ -1,0 +1,11 @@
+--- a/internal/server/delivery.go
++++ b/internal/server/delivery.go
+@@ -714,7 +714,7 @@
+ 			continue
+ 		}
+ 		if wasDelivered(rec.ID, party.Fingerprint) {
+-			res.Delivered, res.Skipped = true, true
++			res.Skipped = true
+ 			out = append(out, res)
+ 			continue
+ 		}

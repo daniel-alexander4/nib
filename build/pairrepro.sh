@@ -653,6 +653,31 @@ open(sys.argv[1], "wb").write(base64.b64decode(
 PYPNG
 [ -s "$WORK/sig.png" ] || fail "could not write the appearance PNG"
 
+# assert_spoken_check grades L2's stimulus for ONE hop, and it is the one door for that rule.
+#
+# **It exists because the rule had two doors and they drifted the day the second was written.**
+# `decline_round` copied this sequence and dropped two of its clauses: the "initiate never got off
+# the ground" guard — whose absence reports a 502 connect failure as *"nobody was shown the
+# verification words"*, blaming L2 for something that never reached it, the exact misdiagnosis
+# `ceremony()` records having measured and fixed — and the four-word shape check, without which two
+# ends both returning one malformed word are equal and pass.
+#
+# `want` is the HTTP code that means the hop got as far as a person: 200 for a hop that completes,
+# 409 for one a person refuses. Everything else is the same question either way.
+assert_spoken_check() { # label words_a words_b code want body
+  local label="$1" wa="$2" wb="$3" code="$4" want="$5" body="$6"
+  # This fires FIRST by design — stimulus before grading — so without this arm a hop that never
+  # reached the spoken check is reported as a spoken-check failure.
+  if [ -z "$wa" ] && [ "$code" != "$want" ]; then
+    fail "[$label] initiate returned HTTP $code before any spoken check: $body"
+  fi
+  [ -n "$wa" ] || fail "[$label] the initiating instance was never shown the verification words — the hop reached the document exchange without the spoken check (L2). HTTP $code: $body"
+  [ -n "$wb" ] || fail "[$label] the receiving instance was never shown the verification words. HTTP $code: $body"
+  [ "$(echo "$wa" | wc -w)" = 4 ] || fail "[$label] the verification string is not four words: $wa"
+  # The property only two instances can see.
+  [ "$wa" = "$wb" ] || fail "[$label] the two instances derived DIFFERENT verification words — one saw '$wa' and the other '$wb'. Two people comparing these would read a mismatch as an attack."
+}
+
 # watch_verify polls one instance for the spoken check and confirms it. Both
 # parties are blocked waiting for it, so it has to run beside the request rather
 # than inside it.
@@ -687,163 +712,6 @@ watch_verify() { # url csrf outfile
 #
 # `local` is dynamically scoped in bash, so the subshells and helpers below see these bindings
 # rather than the globals. That is what lets the body stay unchanged.
-# CONSENT_ANSWER is what the receiving party's watcher posts to /api/session/respond. It defaults
-# to acceptance, so every existing call site is unchanged; P08.S05e sets it to a decline for exactly
-# one hop, which is the only way to drive an END STATE — a decline is a person refusing, and no
-# other input to this system produces one.
-CONSENT_ANSWER='{"accept":true,"intent":"I accept"}'
-
-declare -A DINV=() DADDR=()
-
-# ── P08.S05e: a ceremony DECLINED at hop 3, and the parties who signed are told ──────────────
-#
-# C06's telling half. Everything above drives ceremonies that COMPLETE; this is the only sequence
-# in the tree that produces an end state, because an end state comes from a person refusing and no
-# other input to this system makes one.
-#
-# **A fresh ceremony, not the relay's.** The relay's is complete, and a completed proceeding cannot
-# be declined — so this convenes its own, signs two hops, and refuses the third. The parties who
-# signed at hops 1 and 2 are then owed the four things C06 names, and the assertion is that they
-# were TOLD: the telling lands on their sticky notice, which is the only channel a delivery arm has.
-decline_round() {
-  local transport="quic"
-  echo "decline: convening a fresh $N-party ceremony to end at hop 3…"
-  local roster expires code dcid inv i
-  roster="$(python3 -c "
-import json,sys
-fps=sys.argv[1:]
-print(','.join(json.dumps({'fingerprint':f,'label':'p%d'%(n+1),'signs':n>0}) for n,f in enumerate(fps)))" "${FPS[@]}")"
-  expires="$(python3 -c "
-import datetime;print((datetime.datetime.now(datetime.timezone.utc)+datetime.timedelta(hours=6)).strftime('%Y-%m-%dT%H:%M:%SZ'))")"
-  # **Close what the relays left open first.** The convener accumulates a document per hop per
-  # transport plus the delivery rounds', and ADR-005's cap is 8 — the harness's own relay comment
-  # records hitting it at N=4. This runs after two full relays, so it is over the cap by
-  # construction rather than by accident.
-  python3 - "${URLS[0]}" "${CSRFS[0]}" <<'PYCLOSE' || fail "decline: could not close the convener's documents"
-import json, sys, urllib.request
-base, csrf = sys.argv[1], sys.argv[2]
-docs = json.load(urllib.request.urlopen(base + "/api/docs")).get("docs") or []
-for d in docs:
-    req = urllib.request.Request(base + "/api/close", method="POST",
-                                 data=json.dumps({"id": d["id"]}).encode(),
-                                 headers={"Content-Type": "application/json", "X-CSRF-Token": csrf,
-                                          "X-Nib-Doc": d["id"]})
-    try:
-        urllib.request.urlopen(req).read()
-    except Exception as e:
-        print("close %s: %s" % (d["id"][:8], e), file=sys.stderr)
-print("decline: closed %d document(s) the relays left open" % len(docs))
-PYCLOSE
-  code="$(curl -sS -X POST "${URLS[0]}/api/open" -H 'Content-Type: application/json' \
-    -H "X-CSRF-Token: ${CSRFS[0]}" -d "{\"path\":\"$WORK/doc.pdf\"}" \
-    -o "$WORK/decline.open.json" -w '%{http_code}')"
-  [ "$code" = "200" ] \
-    || fail "decline: the convener could not open a document to convene over (HTTP $code): $(head -c 300 "$WORK/decline.open.json")"
-  code="$(curl -sS -X POST "${URLS[0]}/api/ceremony/convene" -H 'Content-Type: application/json' \
-    -H "X-CSRF-Token: ${CSRFS[0]}" \
-    -d "{\"roster\":[$roster],\"intent\":\"We agree\",\"expires\":\"$expires\",\"convenerSigns\":false}" \
-    -o "$WORK/decline.convene.json" -w '%{http_code}')"
-  [ "$code" = "200" ] || fail "decline: convene failed (HTTP $code): $(head -c 300 "$WORK/decline.convene.json")"
-  dcid="$(python3 -c "import json;print(json.load(open('$WORK/decline.convene.json'))['ceremony'])")"
-  [ -n "$dcid" ] || fail "decline: convene returned no ceremony id"
-
-  for i in $(seq 2 "$N"); do
-    inv="$(python3 -c "
-import json
-d=json.load(open('$WORK/decline.convene.json'))
-print(next(x['invitation'] for x in d['invites'] if x['fingerprint'].lower()=='${FPS[$((i-1))]}'.lower()))")"
-    [ -n "$inv" ] || fail "decline: no invitation for instance $i"
-    DINV[$i]="$inv"
-    code="$(curl -sS -X POST "${URLS[$((i-1))]}/api/ceremony/accept" -H 'Content-Type: application/json' \
-      -H "X-CSRF-Token: ${CSRFS[$((i-1))]}" -d "$(python3 -c "import json;print(json.dumps({'invitation':'$inv'}))")" \
-      -o /dev/null -w '%{http_code}')"
-    [ "$code" = "200" ] || fail "decline: instance $i could not accept (HTTP $code)"
-  done
-
-  # Hops 1 and 2 SIGN. Their parties are the ones the telling is owed to.
-  local docid prev
-  docid="$(python3 -c "import json;print(json.load(open('$WORK/decline.convene.json')).get('document',{}).get('id',''))")"
-  curl -fsS "${URLS[0]}/api/pdf?doc=$docid" -o "$WORK/decline.hop0.pdf" \
-    || fail "decline: could not fetch the convened document"
-  prev="$WORK/decline.hop0.pdf"
-  for i in 2 3; do
-    code="$(curl -sS -X POST "${URLS[$((i-1))]}/api/session/arm" -H 'Content-Type: application/json' \
-      -H "X-CSRF-Token: ${CSRFS[$((i-1))]}" \
-      -d "{\"fingerprint\":\"${FPS[0]}\",\"bind\":\"$CEREMONY_HOST:0\",\"mode\":\"cosign\",\"transport\":\"$transport\",\"invitation\":\"${DINV[$i]}\"}" \
-      -o "$WORK/decline.arm.$i.json" -w '%{http_code}')"
-    [ "$code" = "200" ] || fail "decline: instance $i could not arm (HTTP $code)"
-    DADDR[$i]="$(python3 -c "import json;print(json.load(open('$WORK/decline.arm.$i.json')).get('address',''))")"
-    # want = the HOP number: the convener does not sign, so hop k carries exactly k signatures.
-    ceremony "$transport" "${DADDR[$i]##*:}" "$WORK/decline.hop$((i-1)).pdf" 1 "$i" "$prev" "$((i-1))" 1 "${DINV[$i]}" "${DADDR[$i]}"
-    prev="$WORK/decline.hop$((i-1)).pdf"
-  done
-  echo "decline: hops 1 and 2 signed; party 4 will now refuse"
-
-  # Hop 3 REFUSES. Driven with the same watcher the successful hops use, answering the other way —
-  # so the refusal is a person saying no through the real consent route, not an injected error.
-  code="$(curl -sS -X POST "${URLS[3]}/api/session/arm" -H 'Content-Type: application/json' \
-    -H "X-CSRF-Token: ${CSRFS[3]}" \
-    -d "{\"fingerprint\":\"${FPS[0]}\",\"bind\":\"$CEREMONY_HOST:0\",\"mode\":\"cosign\",\"transport\":\"$transport\",\"invitation\":\"${DINV[4]}\"}" \
-    -o "$WORK/decline.arm.4.json" -w '%{http_code}')"
-  [ "$code" = "200" ] || fail "decline: instance 4 could not arm (HTTP $code)"
-  DADDR[4]="$(python3 -c "import json;print(json.load(open('$WORK/decline.arm.4.json')).get('address',''))")"
-  (
-    for _ in $(seq 1 240); do
-      if [ -n "$(curl -fsS "${URLS[3]}/api/session/status" 2>/dev/null | jget pending.fingerprint)" ]; then
-        curl -fsS -X POST "${URLS[3]}/api/session/respond" -H 'Content-Type: application/json' \
-          -H "X-CSRF-Token: ${CSRFS[3]}" -d '{"accept":false}' >/dev/null 2>&1
-        exit 0
-      fi
-      sleep 0.25
-    done
-  ) &
-  local dw=$!
-  code="$(curl -sS -X POST "${URLS[0]}/api/session/initiate" -H "X-CSRF-Token: ${CSRFS[0]}" \
-    -F "pdf=@$prev" -F "appearance=@$WORK/sig.png" \
-    -F "params={\"fingerprint\":\"${FPS[3]}\",\"intent\":\"hop 3\"}" \
-    -F "address=$CEREMONY_HOST:${DADDR[4]##*:}" -F "transport=$transport" -F "invitation=${DINV[4]}" \
-    -o "$WORK/decline.hop3.json" -w '%{http_code}')"
-  wait "$dw" 2>/dev/null || true
-  [ "$code" = "409" ] \
-    || fail "decline: hop 3 returned HTTP $code, want 409 — the party refused, and a refusal that
-      does not reach the convener as a refusal cannot end a proceeding: $(head -c 300 "$WORK/decline.hop3.json")"
-
-  # **The convener ATTESTED it.** Before P08.S05e nothing did: `SignTermination` and
-  # `WriteTermination` had zero production callers, so a declined proceeding was a sentence shown to
-  # one person and no record anywhere.
-  [ -f "${HOMES[0]}/home/nib/ceremonies/$dcid/termination.json" ] \
-    || fail "decline: the convener wrote no termination for a proceeding it just saw declined —
-      the parties who signed at hops 1 and 2 have no way to learn it is over."
-  echo "decline: the convener attested the end state (D28)"
-
-  # And the round TELLS the parties who signed. Their notice is the only channel a delivery arm has.
-  local daddrs="{}"
-  for i in 2 3; do
-    curl -sS -X POST "${URLS[$((i-1))]}/api/session/disarm" -H "X-CSRF-Token: ${CSRFS[$((i-1))]}" -o /dev/null || true
-    local a
-    a="$(curl -fsS "${URLS[$((i-1))]}/api/session/status" | jget address 2>/dev/null || true)"
-    [ -n "$a" ] || fail "decline: instance $i has no delivery arm, so it cannot be told"
-    daddrs="$(python3 -c "
-import json,sys
-d=json.loads(sys.argv[1]); d[sys.argv[2]]='$CEREMONY_HOST:'+sys.argv[3].rsplit(':',1)[1]; print(json.dumps(d))" "$daddrs" "${FPS[$((i-1))]}" "$a")"
-  done
-  code="$(curl -sS -X POST "${URLS[0]}/api/ceremony/deliver" -H 'Content-Type: application/json' \
-    -H "X-CSRF-Token: ${CSRFS[0]}" \
-    -d "$(python3 -c "
-import json,sys;print(json.dumps({'ceremony':sys.argv[1],'addresses':json.loads(sys.argv[2])}))" "$dcid" "$daddrs")" \
-    -o "$WORK/decline.deliver.json" -w '%{http_code}')"
-  [ "$code" = "200" ] || fail "decline: the end-state round returned HTTP $code: $(head -c 300 "$WORK/decline.deliver.json")"
-
-  for i in 2 3; do
-    local what
-    what="$(curl -fsS "${URLS[$((i-1))]}/api/session/status" | jget notice.what 2>/dev/null || true)"
-    [ "$what" = "ceremony-declined" ] \
-      || fail "decline: instance $i's notice is '$what', want 'ceremony-declined'. This party SIGNED
-      and holds a signed document; without the telling it believes the proceeding is still
-      travelling and has no way to learn otherwise — which is exactly C06's telling half."
-  done
-  echo "decline: both parties who signed were told the proceeding ended (C06)"
-}
 
 
 ceremony() { # transport port outfile from to [indoc] [want_sigs] [want_proceeding] [invitation]
@@ -1017,21 +885,11 @@ ceremony() { # transport port outfile from to [indoc] [want_sigs] [want_proceedi
   words_a="$(cat "$WORK/words_a" 2>/dev/null || true)"
   words_b="$(cat "$WORK/words_b" 2>/dev/null || true)"
 
-  # The stimulus, asserted before anything is graded: the spoken check really
-  # happened on BOTH sides. Without this, a ceremony that completed because the
-  # gate never fired would pass every assertion below.
-  # If the initiate never got off the ground, say THAT — the words check fires first by
-  # design (stimulus before grading), and without this it reports a missing spoken check
-  # for a ceremony that never reached one. Probed: with the armed side's announcer
-  # disabled, this used to blame L2 for what was actually "peer not found on the link".
-  if [ -z "$words_a" ] && [ "$code" != "200" ]; then
-    fail "[$transport] initiate returned HTTP $code before any spoken check: $(head -c 300 "$init_out" 2>/dev/null)"
-  fi
-  [ -n "$words_a" ] || fail "[$transport] instance A was never shown the verification words — the ceremony reached the document exchange without the spoken check (L2)"
-  [ -n "$words_b" ] || fail "[$transport] instance B was never shown the verification words"
-  [ "$(echo "$words_a" | wc -w)" = 4 ] || fail "[$transport] A's verification string is not four words: $words_a"
-  # The property only two instances can see.
-  [ "$words_a" = "$words_b" ] || fail "[$transport] the two instances derived DIFFERENT verification words — A saw '$words_a' and B saw '$words_b'. Two people comparing these would read a mismatch as an attack."
+  # The stimulus, asserted before anything is graded: the spoken check really happened on BOTH
+  # sides. Without this, a ceremony that completed because the gate never fired would pass every
+  # assertion below. Through `assert_spoken_check`, which `decline_round` also calls — the clauses
+  # here were copied once and two of them were lost in the copy.
+  assert_spoken_check "$transport" "$words_a" "$words_b" "$code" 200 "$(head -c 300 "$init_out" 2>/dev/null)"
 
   [ "$code" = "200" ] || { cat "$init_out" >&2; cat "${HOMES[1]}/nib.log" >&2; link_report "$fi" "$ti" "$transport"; fail "[$transport] initiate returned HTTP $code"; }
 
@@ -1201,6 +1059,387 @@ PYMIRROR
   echo "[$transport] hop took $((t1 - t0))s (arm ceiling is $((5 * 60))s while arms are manual)"
   ELAPSED_TOTAL=$((ELAPSED_TOTAL + t1 - t0))
   WORDS="$words_a"
+}
+
+# ── P08.S05e: a ceremony DECLINED at hop 3, and the parties who signed are told ──────────────
+#
+# **Placed BELOW `ceremony()` rather than above it.** It used to sit between `ceremony()`'s doc
+# block and `ceremony()` itself, so ~350 lines separated that prose from the function it
+# describes and a reader arriving at it met this one instead — the misattached-doc shape P08.S05f
+# found twice in Go and `/pending 352` counts eighteen of. Shell has no compiler to bind a
+# comment, which makes placement the only thing that does.
+#
+# It CALLS `ceremony()` for the two hops that sign and hand-rolls only the hop that refuses.
+# The hand-roll is not duplication left standing: `ceremony()` grades a COMPLETED hop — the
+# signature count, the fetched document, the attestations route — and a declined hop produces
+# none of those, so driving one through it would mean gating half its body on a flag. What the
+# two genuinely share is the spoken check, and that lives in `assert_spoken_check` below,
+# called by both.
+# CONSENT_ANSWER is what `ceremony()`'s watcher posts to /api/session/respond.
+#
+# **It is acceptance and nothing overrides it, which is a narrower thing than it was written to be.**
+# The first cut of P08.S05e added it as the hook by which `decline_round` would drive its refusal
+# through `ceremony()` — and then hand-rolled the refusal anyway, leaving a parameterisation with
+# one value and no second caller. It stays a variable because the sentence above is where the
+# reason lives: `ceremony()` grades a hop that COMPLETES — the signature count, the fetched
+# document, the attestations route — so answering "no" through it would gate half its body on a
+# flag rather than reuse it.
+CONSENT_ANSWER='{"accept":true,"intent":"I accept"}'
+
+
+# ── P08.S05e: a ceremony DECLINED at hop 3, and the parties who signed are told ──────────────
+#
+# C06's telling half. Everything above drives ceremonies that COMPLETE; this is the only sequence
+# in the tree that produces an end state, because an end state comes from a person refusing and no
+# other input to this system makes one.
+#
+# **A fresh ceremony, not the relay's.** The relay's is complete, and a completed proceeding cannot
+# be declined — so this convenes its own, signs two hops, and refuses the third. The parties who
+# signed at hops 1 and 2 are then owed the four things C06 names, and the assertion is that they
+# were TOLD: the telling lands on their sticky notice, which is the only channel a delivery arm has.
+decline_round() {
+  local transport="quic"
+  # Per call, not global: nothing calls this twice today, and a second call inheriting the first's
+  # invitations and addresses would arm against a ceremony that had ended.
+  local -A DINV=() DADDR=()
+  # **It drives FOUR parties and says so, rather than indexing off the end of the roster.** Its
+  # shape is fixed by the criterion — hops 1 and 2 sign, hop 3 refuses, and the two who signed are
+  # the ones owed the telling — so it reads `URLS[3]`/`FPS[3]` directly. At N=3 that index is
+  # unbound and `set -u` aborts the whole run with a bash error instead of a sentence; at N=9 the
+  # five parties who never armed are still roster parties, and the round dials each for the full
+  # 300 s connect deadline before failing on a count. Both are refusals this states rather than
+  # discovers.
+  if [ "$N" -lt 4 ]; then
+    echo "decline: skipped — it drives exactly four parties and this run has $N (C06's telling half needs two signers, a refuser and a convener)"
+    return 0
+  fi
+  echo "decline: convening a 4-party decline inside this $N-instance run…"
+  local roster expires code dcid inv i
+  # The first FOUR instances only. At N>4 the rest are not on this ceremony's roster at all, so
+  # the round has nobody extra to walk and no 300 s leg to spend on a party that never armed.
+  roster="$(python3 -c "
+import json,sys
+fps=sys.argv[1:5]
+print(','.join(json.dumps({'fingerprint':f,'label':'p%d'%(n+1),'signs':n>0}) for n,f in enumerate(fps)))" "${FPS[@]}")"
+  expires="$(python3 -c "
+import datetime;print((datetime.datetime.now(datetime.timezone.utc)+datetime.timedelta(hours=6)).strftime('%Y-%m-%dT%H:%M:%SZ'))")"
+  # **Close what the relays left open first.** The convener accumulates a document per hop per
+  # transport plus the delivery rounds', and ADR-005's cap is 8 — the harness's own relay comment
+  # records hitting it at N=4. This runs after two full relays, so it is over the cap by
+  # construction rather than by accident.
+  # **`/api/close` is a CLOSE ALL**, and this loop used to close per document and swallow what
+  # came back. `handleClose` calls `setDoc(nil)`, which clears the whole registry — its own doc
+  # says so and says P06 owns per-document close — so the second call in a loop legitimately 409s
+  # with "that document is no longer open". A per-call check therefore fails on correct behaviour;
+  # what is worth grading is the OUTCOME, which is what the cap cares about.
+  python3 - "${URLS[0]}" "${CSRFS[0]}" <<'PYCLOSE' || exit 1
+import json, sys, urllib.request
+base, csrf = sys.argv[1], sys.argv[2]
+
+def docs():
+    return json.load(urllib.request.urlopen(base + "/api/docs")).get("docs") or []
+
+open_docs = docs()
+if open_docs:
+    d = open_docs[0]
+    req = urllib.request.Request(base + "/api/close", method="POST",
+                                 data=json.dumps({"id": d["id"]}).encode(),
+                                 headers={"Content-Type": "application/json", "X-CSRF-Token": csrf,
+                                          "X-Nib-Doc": d["id"]})
+    try:
+        urllib.request.urlopen(req).read()
+    except Exception as e:
+        print("FAIL: decline: /api/close was refused (%s), so the convener is still holding "
+              "documents against ADR-005's cap of 8 and the open below will 409 about "
+              "something else" % e, file=sys.stderr)
+        sys.exit(1)
+left = docs()
+if left:
+    print("FAIL: decline: %d document(s) are still open after a close that clears the whole "
+          "registry — the convener accumulated one per hop per transport plus the delivery "
+          "rounds', and ADR-005 refuses the ninth" % len(left), file=sys.stderr)
+    sys.exit(1)
+print("decline: closed %d document(s) the relays left open" % len(open_docs))
+PYCLOSE
+  code="$(curl -sS -X POST "${URLS[0]}/api/open" -H 'Content-Type: application/json' \
+    -H "X-CSRF-Token: ${CSRFS[0]}" -d "{\"path\":\"$WORK/doc.pdf\"}" \
+    -o "$WORK/decline.open.json" -w '%{http_code}')"
+  [ "$code" = "200" ] \
+    || fail "decline: the convener could not open a document to convene over (HTTP $code): $(head -c 300 "$WORK/decline.open.json")"
+  code="$(curl -sS -X POST "${URLS[0]}/api/ceremony/convene" -H 'Content-Type: application/json' \
+    -H "X-CSRF-Token: ${CSRFS[0]}" \
+    -d "{\"roster\":[$roster],\"intent\":\"We agree\",\"expires\":\"$expires\",\"convenerSigns\":false}" \
+    -o "$WORK/decline.convene.json" -w '%{http_code}')"
+  [ "$code" = "200" ] || fail "decline: convene failed (HTTP $code): $(head -c 300 "$WORK/decline.convene.json")"
+  dcid="$(python3 -c "import json;print(json.load(open('$WORK/decline.convene.json'))['ceremony'])")"
+  [ -n "$dcid" ] || fail "decline: convene returned no ceremony id"
+
+  for i in 2 3 4; do
+    inv="$(python3 -c "
+import json
+d=json.load(open('$WORK/decline.convene.json'))
+print(next(x['invitation'] for x in d['invites'] if x['fingerprint'].lower()=='${FPS[$((i-1))]}'.lower()))")"
+    [ -n "$inv" ] || fail "decline: no invitation for instance $i"
+    DINV[$i]="$inv"
+    code="$(curl -sS -X POST "${URLS[$((i-1))]}/api/ceremony/accept" -H 'Content-Type: application/json' \
+      -H "X-CSRF-Token: ${CSRFS[$((i-1))]}" -d "$(python3 -c "import json;print(json.dumps({'invitation':'$inv'}))")" \
+      -o /dev/null -w '%{http_code}')"
+    [ "$code" = "200" ] || fail "decline: instance $i could not accept (HTTP $code)"
+  done
+
+  # Hops 1 and 2 SIGN. Their parties are the ones the telling is owed to.
+  local docid prev
+  docid="$(python3 -c "import json;print(json.load(open('$WORK/decline.convene.json')).get('document',{}).get('id',''))")"
+  curl -fsS "${URLS[0]}/api/pdf?doc=$docid" -o "$WORK/decline.hop0.pdf" \
+    || fail "decline: could not fetch the convened document"
+  prev="$WORK/decline.hop0.pdf"
+  for i in 2 3; do
+    code="$(curl -sS -X POST "${URLS[$((i-1))]}/api/session/arm" -H 'Content-Type: application/json' \
+      -H "X-CSRF-Token: ${CSRFS[$((i-1))]}" \
+      -d "{\"fingerprint\":\"${FPS[0]}\",\"bind\":\"$CEREMONY_HOST:0\",\"mode\":\"cosign\",\"transport\":\"$transport\",\"invitation\":\"${DINV[$i]}\"}" \
+      -o "$WORK/decline.arm.$i.json" -w '%{http_code}')"
+    [ "$code" = "200" ] || fail "decline: instance $i could not arm (HTTP $code)"
+    DADDR[$i]="$(python3 -c "import json;print(json.load(open('$WORK/decline.arm.$i.json')).get('address',''))")"
+    # want = the HOP number: the convener does not sign, so hop k carries exactly k signatures.
+    ceremony "$transport" "${DADDR[$i]##*:}" "$WORK/decline.hop$((i-1)).pdf" 1 "$i" "$prev" "$((i-1))" 1 "${DINV[$i]}" "${DADDR[$i]}"
+    prev="$WORK/decline.hop$((i-1)).pdf"
+  done
+  echo "decline: hops 1 and 2 signed; party 4 will now refuse"
+
+  # Hop 3 REFUSES. Driven with the same watcher the successful hops use, answering the other way —
+  # so the refusal is a person saying no through the real consent route, not an injected error.
+  code="$(curl -sS -X POST "${URLS[3]}/api/session/arm" -H 'Content-Type: application/json' \
+    -H "X-CSRF-Token: ${CSRFS[3]}" \
+    -d "{\"fingerprint\":\"${FPS[0]}\",\"bind\":\"$CEREMONY_HOST:0\",\"mode\":\"cosign\",\"transport\":\"$transport\",\"invitation\":\"${DINV[4]}\"}" \
+    -o "$WORK/decline.arm.4.json" -w '%{http_code}')"
+  [ "$code" = "200" ] || fail "decline: instance 4 could not arm (HTTP $code)"
+  DADDR[4]="$(python3 -c "import json;print(json.load(open('$WORK/decline.arm.4.json')).get('address',''))")"
+
+  # **The spoken check comes BEFORE the consent gate, so a decline that is never asked for is
+  # never given.** Both ends block on the words — the convener inside its own `/initiate` request
+  # and party 4 inside its session goroutine — exactly as `ceremony()` describes, so the
+  # confirmations have to arrive on separate requests from watchers started here. Measured
+  # 2026-09-02: without them the hop sat until `ErrVerificationTimedOut` fired and `/initiate`
+  # answered 409 for THAT, which the code-only assertion below used to accept as the refusal.
+  rm -f "$WORK/decline.words_a" "$WORK/decline.words_4"
+  watch_verify "${URLS[0]}" "${CSRFS[0]}" "$WORK/decline.words_a" &
+  local dva=$!
+  watch_verify "${URLS[3]}" "${CSRFS[3]}" "$WORK/decline.words_4" &
+  local dv4=$!
+  (
+    for _ in $(seq 1 240); do
+      if [ -n "$(curl -fsS "${URLS[3]}/api/session/status" 2>/dev/null | jget pending.fingerprint)" ]; then
+        curl -fsS -X POST "${URLS[3]}/api/session/respond" -H 'Content-Type: application/json' \
+          -H "X-CSRF-Token: ${CSRFS[3]}" -d '{"accept":false}' >/dev/null 2>&1
+        exit 0
+      fi
+      sleep 0.25
+    done
+  ) &
+  local dw=$!
+  code="$(curl -sS -X POST "${URLS[0]}/api/session/initiate" -H "X-CSRF-Token: ${CSRFS[0]}" \
+    -F "pdf=@$prev" -F "appearance=@$WORK/sig.png" \
+    -F "params={\"fingerprint\":\"${FPS[3]}\",\"intent\":\"hop 3\"}" \
+    -F "address=$CEREMONY_HOST:${DADDR[4]##*:}" -F "transport=$transport" -F "invitation=${DINV[4]}" \
+    -o "$WORK/decline.hop3.json" -w '%{http_code}')"
+  wait "$dva" 2>/dev/null; wait "$dv4" 2>/dev/null; wait "$dw" 2>/dev/null || true
+
+  # The stimulus, asserted before the refusal is graded — the house rule this harness applies to
+  # every hop. A decline is a person answering the consent gate, and nothing reaches that gate
+  # until both ends have confirmed the words; so a run where the words never appeared did not
+  # drive a refusal, whatever it returned.
+  local dwa dw4 dbody
+  dwa="$(cat "$WORK/decline.words_a" 2>/dev/null || true)"
+  dw4="$(cat "$WORK/decline.words_4" 2>/dev/null || true)"
+  dbody="$(head -c 300 "$WORK/decline.hop3.json" 2>/dev/null || true)"
+  # The same door `ceremony()` uses. A decline reaches the consent gate only THROUGH the spoken
+  # check, so a hop where the words never appeared did not drive a refusal, whatever it returned —
+  # and 409 is the code that means this hop got as far as a person.
+  assert_spoken_check "decline hop 3" "$dwa" "$dw4" "$code" 409 "$dbody"
+
+  [ "$code" = "409" ] \
+    || fail "decline: hop 3 returned HTTP $code, want 409 — the party refused, and a refusal that
+      does not reach the convener as a refusal cannot end a proceeding: $dbody"
+  # **And 409 for the RIGHT reason.** `/api/session/initiate` answers 409 for five different
+  # things — a decline, an unanswered consent request, a words MISMATCH, a words TIMEOUT, and a
+  # contribution refusal (`internal/server/session.go:2369-2418`). Four of them are failures in
+  # which nobody ever refused, so the bare code is satisfied by a hop that never got a person's
+  # answer at all. Measured: this clause passed on the words-timeout arm before the watchers
+  # above existed, and the run then failed one line down for a defect that was not there.
+  case "$dbody" in
+    *"declined to co-sign"*) : ;;
+    *) fail "decline: hop 3 returned 409, but not for a decline — the body reads $dbody. A person
+      answering 'no' is the only input that produces an end state, so a 409 from any other arm of
+      this route means the sequence below is grading a proceeding nobody ended." ;;
+  esac
+
+  # **The convener ATTESTED it.** Before P08.S05e nothing did: `SignTermination` and
+  # `WriteTermination` had zero production callers, so a declined proceeding was a sentence shown to
+  # one person and no record anywhere.
+  # **The file's CONTENT, not its existence.** `[ -f ]` passes on an empty file, on one carrying
+  # `StateCompleted`, and on one with no signature — and the comment above says "attested", which
+  # is a claim about all three. It also checks the marker the round reads to decide whom NOT to
+  # walk, since the two are written together and a termination without it restores the 300 s leg.
+  python3 - "${HOMES[0]}/home/nib/ceremonies/$dcid" "${FPS[3]}" <<'PYTERM' || exit 1
+import json, os, sys
+d = sys.argv[1]
+tp = os.path.join(d, "termination.json")
+if not os.path.exists(tp):
+    print("FAIL: decline: the convener wrote no termination for a proceeding it just saw declined "
+          "— the parties who signed at hops 1 and 2 have no way to learn it is over",
+          file=sys.stderr)
+    sys.exit(1)
+t = json.load(open(tp))
+if t.get("state") != "declined":
+    print("FAIL: decline: the attestation records state=%r, want 'declined' — a proceeding a party "
+          "refused is being attested as something else" % t.get("state"), file=sys.stderr)
+    sys.exit(1)
+for k in ("ceremony", "sig"):
+    if not t.get(k):
+        print("FAIL: decline: the attestation carries no %s, so it is a file rather than something "
+              "a recipient can check" % k, file=sys.stderr)
+        sys.exit(1)
+ep = os.path.join(d, "ended-by")
+if not os.path.exists(ep):
+    print("FAIL: decline: the convener attested the end state but recorded nobody as having ended "
+          "it — the round then walks the party that refused and spends its whole connect deadline "
+          "reaching a machine that pruned this ceremony when it declined", file=sys.stderr)
+    sys.exit(1)
+ender = open(ep).read().strip().lower()
+if ender != sys.argv[2].lower():
+    print("FAIL: decline: the recorded ender is %r; the party that refused was %r. The round would "
+          "skip the wrong party — silencing a telling that is owed and walking a leg that cannot "
+          "succeed." % (ender[:12], sys.argv[2][:12]), file=sys.stderr)
+    sys.exit(1)
+print("decline: the convener attested state=declined and recorded who ended it (D28)")
+PYTERM
+
+  # And the round TELLS the parties who signed. Their notice is the only channel a delivery arm has.
+  local daddrs="{}"
+  for i in 2 3; do
+    # **The disarm's status is checked.** It drops the INTERACTIVE arm so that `status()` falls
+    # through to the delivery slot, and the address read below is what that fall-through returns.
+    # Swallowed, a failed disarm hands back the interactive arm's port and the round dials a
+    # listener that is not the delivery rendezvous — under a red that says "no delivery arm",
+    # which is not what happened.
+    local dcode
+    dcode="$(curl -sS -X POST "${URLS[$((i-1))]}/api/session/disarm" -H "X-CSRF-Token: ${CSRFS[$((i-1))]}" -o /dev/null -w '%{http_code}')"
+    [ "$dcode" = "200" ] \
+      || fail "decline: instance $i would not drop its interactive arm (HTTP $dcode), so the address read below would be that arm's and not the delivery rendezvous"
+    local a
+    a="$(curl -fsS "${URLS[$((i-1))]}/api/session/status" | jget address 2>/dev/null || true)"
+    [ -n "$a" ] || fail "decline: instance $i has no delivery arm, so it cannot be told"
+    daddrs="$(python3 -c "
+import json,sys
+d=json.loads(sys.argv[1]); d[sys.argv[2]]='$CEREMONY_HOST:'+sys.argv[3].rsplit(':',1)[1]; print(json.dumps(d))" "$daddrs" "${FPS[$((i-1))]}" "$a")"
+  done
+  code="$(curl -sS -X POST "${URLS[0]}/api/ceremony/deliver" -H 'Content-Type: application/json' \
+    -H "X-CSRF-Token: ${CSRFS[0]}" \
+    -d "$(python3 -c "
+import json,sys;print(json.dumps({'ceremony':sys.argv[1],'addresses':json.loads(sys.argv[2])}))" "$dcid" "$daddrs")" \
+    -o "$WORK/decline.deliver.json" -w '%{http_code}')"
+  [ "$code" = "200" ] || fail "decline: the end-state round returned HTTP $code: $(head -c 300 "$WORK/decline.deliver.json")"
+
+  # **The round's own per-party report, graded.** It is the only thing outside the product that
+  # reads the round's outcome (/pending 353), and it is where the shape of a DECLINED round is
+  # visible: the party that refused is still a roster party, so the walk reaches it — and its own
+  # machine pruned the ceremony's stored invitation when it declined, so it can never arm a
+  # delivery rendezvous for this proceeding again.
+  python3 - "$WORK/decline.deliver.json" "${FPS[1]}" "${FPS[2]}" "${FPS[3]}" <<'PYDEL' || exit 1
+import json, sys
+report = json.load(open(sys.argv[1]))
+want_delivered = [f.lower() for f in sys.argv[2:4]]
+decliner = sys.argv[4].lower()
+rows = report.get("parties", [])
+parties = {p["fingerprint"].lower(): p for p in rows}
+# Counted on the ROWS, not on the dict they key into: two outcomes for one party collapse in a
+# dict and read as a correct count, which is the shape that hides a party walked twice.
+if len(rows) != len(parties):
+    print("FAIL: the round reported %d rows for %d distinct parties — a party appears twice, so "
+          "one leg ran more than once and the report cannot say which outcome is that party's"
+          % (len(rows), len(parties)), file=sys.stderr)
+    sys.exit(1)
+if len(rows) != 3:
+    print("FAIL: the round reported %d parties, want 3 — the convener is skipped as holding it "
+          "already, and every other roster party is walked" % len(rows), file=sys.stderr)
+    sys.exit(1)
+for fp in want_delivered:
+    p = parties.get(fp)
+    if p is None:
+        print("FAIL: the round's report names no outcome for %s, a party that SIGNED" % fp[:12],
+              file=sys.stderr)
+        sys.exit(1)
+    if not p.get("delivered"):
+        print("FAIL: the round reports %s (%s) as not delivered: %r. This party signed, so the "
+              "telling is what C06 owes it." % (p.get("label"), fp[:12], p.get("reason")),
+              file=sys.stderr)
+        sys.exit(1)
+d = parties.get(decliner)
+if d is None:
+    print("FAIL: the round's report names no outcome for the party that DECLINED — it is still a "
+          "roster party and a walk that silently omits one cannot be reconciled", file=sys.stderr)
+    sys.exit(1)
+if d.get("delivered"):
+    print("FAIL: the round reports the party that declined as delivered. That machine pruned this "
+          "ceremony's stored invitation when it refused and holds no mirror to verify an "
+          "attestation against, so a leg that reports success there is reporting it about nothing.",
+          file=sys.stderr)
+    sys.exit(1)
+# **`skipped` specifically, and the reason matched — not "some verdict was reported".**
+# A leg that was WALKED and merely failed also carries a reason (`res.Reason = err.Error()`), so a
+# predicate of "reason or skipped" is satisfied identically by the 300 s dial this rule exists to
+# remove. Delete the skip from production and the loose form stays green.
+if not d.get("skipped"):
+    print("FAIL: the party that declined is reported skipped=%r reason=%r — the round WALKED a leg "
+          "that cannot succeed, which costs the whole connect deadline (300 s) on this round and "
+          "on every re-run of it" % (d.get("skipped"), d.get("reason")), file=sys.stderr)
+    sys.exit(1)
+if "ended the proceeding" not in (d.get("reason") or ""):
+    print("FAIL: the skipped party's reason is %r, which does not say they ended the proceeding. "
+          "A skip that reads like a failure is one a convener will re-run forever."
+          % d.get("reason"), file=sys.stderr)
+    sys.exit(1)
+print("decline: the round delivered 2 tellings and SKIPPED the party that refused (%s)"
+      % d.get("reason"))
+PYDEL
+
+  # **C06 names FOUR things, and a tag is none of them.** The header above says the parties "are
+  # owed the four things C06 names, and the assertion is that they were TOLD" — while the check
+  # graded only the opaque `what`. A telling that covers three of four reads as complete from a
+  # tag, which is the shape the tier-1 clause for this was written against and the tier-4 one had
+  # dropped. The wording is the product's; what is asserted is that each of the four IS said.
+  for i in 2 3; do
+    curl -fsS "${URLS[$((i-1))]}/api/session/status" -o "$WORK/decline.notice.$i.json" \
+      || fail "decline: instance $i's status could not be read, so nothing can be said about what it was told"
+    python3 - "$WORK/decline.notice.$i.json" "$i" <<'PYTELL' || exit 1
+import json, sys
+st = json.load(open(sys.argv[1]))
+who = sys.argv[2]
+n = st.get("notice") or {}
+if n.get("what") != "ceremony-declined":
+    print("FAIL: decline: instance %s's notice is %r, want 'ceremony-declined'. This party SIGNED "
+          "and holds a signed document; without the telling it believes the proceeding is still "
+          "travelling and has no way to learn otherwise." % (who, n.get("what")), file=sys.stderr)
+    sys.exit(1)
+text = ((n.get("summary") or "") + " " + (n.get("detail") or "")).lower()
+# One clause per thing C06 requires a party to be told, asserted separately: a telling that
+# covers three of four is not a telling, and a single joined match cannot tell which is missing.
+owed = [
+    ("that it is over",                    ["over", "declined"]),
+    ("who ended it",                       ["convener"]),
+    ("that their signature stands",        ["signature stands", "your signature"]),
+    ("that a re-run starts from the original unsigned file", ["original unsigned", "new proceeding"]),
+]
+missing = [name for name, alts in owed if not any(a in text for a in alts)]
+if missing:
+    print("FAIL: decline: instance %s was told the proceeding ended but not %s. C06 names four "
+          "things a party who has already signed is owed, and the telling said: %r"
+          % (who, " or ".join(missing), text[:300]), file=sys.stderr)
+    sys.exit(1)
+print("decline: instance %s was told all four things C06 names" % who)
+PYTELL
+  done
+  echo "decline: both parties who signed were told the proceeding ended (C06)"
 }
 
 # ── N >= 3: the expected red, and why it is here ─────────────────────────────
@@ -1683,9 +1922,17 @@ print(json.dumps({'ceremony': sys.argv[1], 'addresses': json.loads(sys.argv[2])}
     # party already HAS the document and its one-shot arm is spent — so the recovery run had nobody
     # to reach and hung. The two failures are not interchangeable, and only this one leaves the
     # party both unacknowledged and still listening.
-    local victim vfp vsigned before_mtime after_mtime
+    local victim vfp vsigned before_mtime after_mtime witness
     victim=3
     [ "$N" -ge 4 ] || victim=2
+    # **The witness is a party that is neither the convener nor the victim, chosen rather than
+    # assumed.** It was hard-coded to instance 2 while the victim moves with N — so at N=3, where
+    # the victim IS instance 2, the witness was the party whose signed/ directory had just been
+    # wiped, and the run failed on its own setup with "no witness file on instance 2". Measured
+    # 2026-09-02 against the committed harness at v1.117.320: red at N=3, and only N=2/4/9 are
+    # ever run, so nothing had asked.
+    witness=2
+    [ "$victim" != "2" ] || witness=3
     vfp="$(printf '%s' "${FPS[$((victim - 1))]}" | tr 'A-Z' 'a-z')"
     vsigned="${HOMES[$((victim - 1))]}/home/nib/signed"
     rm -rf "$vsigned" && : > "$vsigned" \
@@ -1761,8 +2008,8 @@ PYFAIL
     # A witness on a party that already succeeded: its file must not be rewritten. mtime is the
     # only thing that can see it, because the deterministic filename makes a re-delivery
     # byte-identical to what is already there.
-    before_mtime="$(find "${HOMES[1]}/home/nib/signed" -name "*-$rel_cid.pdf" -printf '%T@\n' 2>/dev/null | head -1)"
-    [ -n "$before_mtime" ] || fail "[$transport] no witness file on instance 2 before the recovery run"
+    before_mtime="$(find "${HOMES[$((witness - 1))]}/home/nib/signed" -name "*-$rel_cid.pdf" -printf '%T@\n' 2>/dev/null | head -1)"
+    [ -n "$before_mtime" ] || fail "[$transport] no witness file on instance $witness before the recovery run"
 
     dcode="$(curl -sS -X POST "${URLS[0]}/api/ceremony/deliver" -H 'Content-Type: application/json' \
       -H "X-CSRF-Token: ${CSRFS[0]}" -d "$DELIVER_BODY" \
@@ -1793,7 +2040,7 @@ PYONE
     n_files="$(find "$vsigned" -maxdepth 1 -name "*-$rel_cid.pdf" 2>/dev/null | wc -l)"
     [ "$n_files" = "1" ] \
       || fail "[$transport] after the recovery run the repaired party holds $n_files copies, want 1"
-    after_mtime="$(find "${HOMES[1]}/home/nib/signed" -name "*-$rel_cid.pdf" -printf '%T@\n' 2>/dev/null | head -1)"
+    after_mtime="$(find "${HOMES[$((witness - 1))]}/home/nib/signed" -name "*-$rel_cid.pdf" -printf '%T@\n' 2>/dev/null | head -1)"
     [ "$before_mtime" = "$after_mtime" ] \
       || fail "[$transport] the recovery run REWROTE an already-acknowledged party's file.
       The deterministic filename hides that from any count or content check, so mtime is the only

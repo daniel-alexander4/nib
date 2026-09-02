@@ -1,0 +1,11 @@
+--- a/internal/server/delivery.go
++++ b/internal/server/delivery.go
+@@ -705,7 +705,7 @@
+ 			continue // the convener already holds it
+ 		}
+ 		res := deliveryOutcome{Fingerprint: party.Fingerprint, Label: party.Label}
+-		if ender != "" && strings.EqualFold(party.Fingerprint, ender) {
++		if ender != "" {
+ 			res.Skipped = true
+ 			res.Reason = "this party ended the proceeding, so Nib did not try to reach them: " +
+ 				"declining removes this ceremony's invitation from their machine and they hold " +

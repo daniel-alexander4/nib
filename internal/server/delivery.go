@@ -112,9 +112,20 @@ func (s *Server) deliverOneLeg(ch p2p.Channel, cer *ceremonyID, myFP []byte, pdf
 	doc, err := p2p.ReceiveDocument(ch, autoAccepter{
 		verify: func(d []byte) error { return s.checkDeliveredPayload(cer, d) },
 		save: func(d []byte) error {
-			// A termination is TOLD, not saved: there is no document, and a file nobody asked
-			// for is not what a party whose ceremony was declined needs to find in ~/nib.
+			// A termination is TOLD rather than left in `~/nib` as a document — there is none —
+			// but the attestation itself IS persisted, in the same breath and for the same reason
+			// the document is: `ackOK` must mean the bytes reached disk. `ErrNotStored` is the
+			// wire's word for a write that failed after consent, and it is what the sender needs
+			// in order to try again rather than record a delivery that did not happen.
+			//
+			// The payload is decoded twice on this path — once by `verify` to route and check it,
+			// once here to store and tell. Cheap (it is a few hundred bytes of JSON) and the
+			// alternative is threading a decoded value through a `func([]byte) error` callback
+			// pair, which would give the gate a second shape to be wired wrongly.
 			if t, ok := asTermination(d); ok {
+				if werr := ceremony.WriteTermination(defaultOutputDir(), t); werr != nil {
+					return fmt.Errorf("%w: %v", p2p.ErrNotStored, werr)
+				}
 				s.tellEndState(cer, t)
 				kept = d
 				return nil
@@ -519,14 +530,85 @@ func wasDelivered(id, partyFP string) bool {
 	return serr == nil
 }
 
+// endedByPath names the convener's own record of WHICH party ended a proceeding.
+//
+// **Separate from the termination object on purpose.** P08.S04b excluded the party and the time
+// from the attestation deliberately — the binding is the roster hash alone, so no canonical form
+// is needed — and that decision is not reopened here. This is convener-local bookkeeping about a
+// round, in the same mirror directory and with the same durability as the `delivered/` markers,
+// and nothing signs it because nothing outside this machine reads it.
+func endedByPath(id string) (string, error) {
+	dir, err := ceremony.MirrorDir(defaultOutputDir(), id)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, "ended-by"), nil
+}
+
+// markEndedBy records the party that ended a proceeding. **Write-once, first ender wins**, which
+// is `ceremony.WriteTermination`'s rule and is here for the same reason.
+//
+// Nothing on the arrival path refuses a hop because a proceeding has already ended — the deadline
+// gate reads `Expires`, not an end state — so a convener CAN drive another hop after a decline and
+// collect a second one. Overwriting would then move the marker to the newer decliner, and the
+// round would skip them and walk the FIRST one: the impossible leg, restored, with its 300 s cost
+// intact and the report naming the wrong party. A proceeding ends once, at the first refusal.
+func markEndedBy(id, partyFP string) error {
+	path, err := endedByPath(id)
+	if err != nil {
+		return err
+	}
+	if prior := endedBy(id); prior != "" {
+		if strings.EqualFold(prior, partyFP) {
+			return nil // idempotent: the same decline recorded twice
+		}
+		return fmt.Errorf("this proceeding is already recorded as ended by %s, so it cannot also "+
+			"be ended by %s — an end state is reached once", prior[:12], partyFP[:12])
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return err
+	}
+	return atomicfile.WriteDurable(path, []byte(partyFP+"\n"), 0o600)
+}
+
+// endedBy reports the party that ended this proceeding as recorded, or "" when none is.
+//
+// **No case fold, because BOTH consumers compare with `EqualFold`** — the walk's skip and
+// `markEndedBy`'s write-once check — and a normalisation nothing depends on is dead weight held
+// up by a test. An earlier cut folded at both the read and the
+// write, which made each unfalsifiable — either alone gives the same answer, so removing one left
+// every test green. Dropping both and leaving the comparison to fold is the shape with no
+// redundant half to rot.
+//
+// **`""` is not only "nobody ended it".** It also covers an unreadable marker and a `MirrorDir`
+// that refuses the id. Both fail in the safe direction — the round walks the party as it did
+// before this rule existed — but the two are not the same fact, and a caller that needs to tell
+// them apart must not read this function's answer as the first one.
+func endedBy(id string) string {
+	path, err := endedByPath(id)
+	if err != nil {
+		return ""
+	}
+	b, rerr := os.ReadFile(path)
+	if rerr != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(b))
+}
+
 // deliveryOutcome is one party's result in a round, reported to the caller so a re-run is a
 // decision the user makes rather than a retry loop nobody can see.
 type deliveryOutcome struct {
 	Fingerprint string `json:"fingerprint"`
 	Label       string `json:"label,omitempty"`
 	Delivered   bool   `json:"delivered"`
-	Skipped     bool   `json:"skipped,omitempty"` // already acknowledged by an earlier run
-	Reason      string `json:"reason,omitempty"`
+	// Skipped means the round did not attempt this leg, for one of TWO reasons, and **`Delivered`
+	// is what distinguishes them** — the already-acknowledged branch carries no `Reason` at all,
+	// so a consumer branching on that gets "". True: the party already acknowledged an earlier
+	// run, and this round did not need to repeat it. False: the party ENDED the proceeding, and
+	// `Reason` says so.
+	Skipped bool   `json:"skipped,omitempty"`
+	Reason  string `json:"reason,omitempty"`
 }
 
 // runDeliveryRound walks the roster and delivers the finished document to every party that has not
@@ -581,19 +663,57 @@ func (s *Server) runDeliveryRound(ctx context.Context, v *vault.Vault, rec cerem
 	// otherwise left believing it is still travelling. Same walk, same per-party rendezvous, same
 	// acknowledgement markers — a second round would have duplicated all three.
 	payload := pdf
-	if t, terr := ceremony.ReadTermination(defaultOutputDir(), rec); terr == nil && t.State == ceremony.StateDeclined {
+	t, terr := ceremony.ReadTermination(defaultOutputDir(), rec)
+	switch {
+	case terr == nil && t.State == ceremony.StateDeclined:
 		b, merr := json.Marshal(t)
 		if merr != nil {
 			return nil, merr
 		}
 		payload = b
+	case terr == nil:
+		// A completed ceremony: the finished document is the payload, as it always was.
+	case errors.Is(terr, ceremony.ErrNoTermination):
+		// The ordinary case — the proceeding has not ended — and it must never read as damage.
+	default:
+		// **`ErrBadTermination` is a planted file far more likely than a corrupted one**, in
+		// `ReadTermination`'s own words, and swallowing it here shipped the partially-signed
+		// mirror document to every party instead of the attestation. Recipients refuse it at
+		// `checkDelivered`'s completeness clause, so nothing bad lands — the user simply gets N
+		// failures whose reasons never mention the end state that could not be read. A round that
+		// cannot tell what it is carrying does not start.
+		return nil, fmt.Errorf("this ceremony's end state is present and does not check out, so "+
+			"this machine will not start a round without knowing what it is delivering: %w", terr)
 	}
+	// **The party that ENDED the proceeding is not walked, and that is not an optimisation.**
+	// Declining runs `declineCeremony` on the refusing machine, which prunes this ceremony's
+	// stored invitation, so that machine has nothing left to arm a delivery rendezvous with; and
+	// a party that refuses at its consent gate returns from `coSignExchange` before `rd.Store`,
+	// so it holds no mirror for `checkDeliveredPayload` to check an attestation against. Walking
+	// it cost the full `connectDeadline` — measured at tier 4 on 2026-09-02 as 300 s, reported as
+	// `tried 0 address(es), none answered as the pinned peer: context deadline exceeded` — on
+	// that round and on every re-run of it.
+	//
+	// **Stated as the ordinary case rather than as "impossible", because neither half is
+	// absolute.** `declineCeremony` is best-effort: it returns early on a locked vault and only
+	// logs when the prune fails, so an invitation can survive a decline and `rearmDeliveries`
+	// would read it back. The skip is therefore the right default and not a proof — and a party
+	// wrongly skipped loses nothing they can act on, since they are the one who refused.
+	ender := endedBy(rec.ID)
 	out := make([]deliveryOutcome, 0, len(rec.Roster))
 	for _, party := range rec.Roster {
 		if strings.EqualFold(party.Fingerprint, me) {
 			continue // the convener already holds it
 		}
 		res := deliveryOutcome{Fingerprint: party.Fingerprint, Label: party.Label}
+		if ender != "" && strings.EqualFold(party.Fingerprint, ender) {
+			res.Skipped = true
+			res.Reason = "this party ended the proceeding, so Nib did not try to reach them: " +
+				"declining removes this ceremony's invitation from their machine and they hold " +
+				"no record to check an attestation against. They already know it is over."
+			out = append(out, res)
+			continue
+		}
 		if wasDelivered(rec.ID, party.Fingerprint) {
 			res.Delivered, res.Skipped = true, true
 			out = append(out, res)
@@ -715,9 +835,11 @@ func (s *Server) handleCeremonyDeliver(w http.ResponseWriter, r *http.Request) {
 			"document, so there is nothing to deliver")
 		return
 	}
-	// **The document is verified before it is sent, not only when it arrives.** `checkDelivered` is
-	// the recipient's gate; running the same completeness test here means a convener does not spend
-	// a round handing out a document that every recipient will refuse.
+	// **The roster is checked before a round starts, and the claim that used to stand here was
+	// bigger than the code.** It said the document is verified against `checkDelivered`'s
+	// completeness test before it is sent; no completeness test runs here, and since P08.S05e the
+	// round may not send the document at all — a declined proceeding carries the convener's
+	// attestation instead. What this genuinely refuses is a round with nobody to walk.
 	if len(rec.Roster) == 0 {
 		httpError(w, http.StatusConflict, "that ceremony's record carries no roster")
 		return
@@ -880,6 +1002,26 @@ func (s *Server) endCeremony(cer *ceremonyID, state string) {
 			"This proceeding has ended, but Nib could not record that.",
 			"The other parties cannot be told it is over until this machine can write the "+
 				"attestation. Reason: "+werr.Error())
+		return
+	}
+	// **And WHO ended it, so the round does not spend its connect deadline on them.**
+	//
+	// **After the attestation and only on its success**, because the marker is about a round that
+	// carries a termination, and without one there is no such round: the skip would suppress a
+	// leg for a delivery that has nothing to deliver.
+	//
+	// Reported through `noteFailure` rather than `log.Printf` for the reason `mirrorHop` gives at
+	// its own best-effort write: a log line goes to a stderr that a double-clicked launch sends
+	// nowhere, and this failure has a user-visible consequence — the round spends its connect
+	// deadline on a party it cannot reach, once per re-run, and says nothing about why.
+	if state == ceremony.StateDeclined && cer.peer != "" {
+		if merr := markEndedBy(rec.ID, cer.peer); merr != nil {
+			s.sess.noteFailure(armInteractive, "ender-not-recorded",
+				"This proceeding has ended, and Nib could not record which party ended it.",
+				"Delivering the end state will still reach everyone who signed, but it will also "+
+					"spend several minutes trying to reach the party who refused, on this round "+
+					"and on every re-run. Reason: "+merr.Error())
+		}
 	}
 }
 
@@ -916,15 +1058,35 @@ func (s *Server) checkDeliveredPayload(cer *ceremonyID, d []byte) error {
 	if err != nil {
 		return fmt.Errorf("this machine cannot check that end state against its own record: %w", err)
 	}
+	// **The record is bound to the INVITATION before it anchors anything, and the first cut of
+	// this gate skipped that.** `ReadTermination`'s own doc states the rule — *"`rec` must come
+	// from the document or the invitation, never from the `record.json` beside it"* — and
+	// `LoadState` restates it where it deliberately takes the weaker anchor: *"a gate that
+	// REFUSES on a termination must anchor on the document or the invitation instead, because a
+	// planted matching pair verifies against itself."* This is a refusing gate, and it was
+	// verifying a termination against the `record.json` sitting in the same directory. A matching
+	// record-and-termination pair dropped into `~/nib/ceremonies/<id>/` would have verified
+	// perfectly against itself and written a durable false end state, which `rearmDeliveries`
+	// then reads as `st.Ended != ""` and skips the ceremony forever — so the party never receives
+	// its real copy.
+	//
+	// `cer.inv` is the anchor a planted file cannot control, and it is the same one the sibling
+	// gate uses (`checkDelivered`, one function up). ADR-009: one rule, and both doors take it.
+	if merr := cer.inv.MatchesRecord(rec); merr != nil {
+		return merr // unwrapped: the sentence already names the axis
+	}
 	// **Verified against OUR record, never against the object's own claims.** The roster hash is
 	// what refuses a substitution, and it commits to the ceremony id as well — so an attestation
 	// minted for a different proceeding cannot be replayed into this one.
 	if verr := t.Verify(rec); verr != nil {
 		return fmt.Errorf("that end state does not verify against this ceremony: %w", verr)
 	}
-	if werr := ceremony.WriteTermination(defaultOutputDir(), t); werr != nil {
-		return fmt.Errorf("%w: %v", p2p.ErrNotStored, werr)
-	}
+	// **Checked here, WRITTEN in `save` — the two halves of `autoAccepter`'s own contract.** Its
+	// `verify` is *"the recipient's own check of what arrived"* and its `save` is where *"the
+	// caller can persist it before the ack"*, and the first cut of this gate did both here. The
+	// ordering property survived either way, since verify runs before save runs before the
+	// acknowledgement; what did not survive was the split the type documents, and a check that
+	// also mutates disk is one `TestTheDeliveryAcceptGateChecksBeforeItSaves` cannot see past.
 	return nil
 }
 
@@ -945,13 +1107,26 @@ func (s *Server) checkDeliveredPayload(cer *ceremonyID, d []byte) error {
 // most obviously covers: the disarm IS the symptom, and a message that vanished with it would be
 // one nobody reads.
 func (s *Server) tellEndState(cer *ceremonyID, t ceremony.Termination) {
+	// **Item 2 is per-state, and one shared sentence got it wrong.** The first cut said *"The
+	// convener ended this proceeding"* for both states — but in the only state reachable today
+	// the convener did NOT end it, a party refused, and telling a signer the wrong party ended
+	// their proceeding is the item C06 asks for stated backwards. The convener ATTESTS the end
+	// state in both; who reached it differs.
+	//
+	// Neither sentence names the party who refused, and that is S04b's decision showing through
+	// rather than an omission: the termination binds the roster hash alone, deliberately, so the
+	// convener cannot prove who declined and an unprovable accusation would name an innocent.
 	what := "ceremony-declined"
 	summary := "The proceeding you signed has been declined, so it is over."
+	ended := "One of the parties refused, and the convener attested that the proceeding is over — " +
+		"they are the only party who can attest an end state. "
 	if t.State == ceremony.StateCompleted {
 		what, summary = "ceremony-completed", "The proceeding you signed has completed."
+		ended = "Every party has now signed, and the convener attested that the proceeding is " +
+			"complete — they are the only party who can attest an end state. "
 	}
 	s.sess.noteFailure(armDelivery, what, summary,
-		"The convener ended this proceeding and attested to it — they are the only party who can. "+
+		ended+
 			"Your signature stands: nothing about this unmakes a signature you have already given, "+
 			"and the copy on your disk is still a valid record of what you signed. If these parties "+
 			"want to try again it starts from the ORIGINAL unsigned file, not from anything you "+

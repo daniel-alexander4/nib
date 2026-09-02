@@ -1,0 +1,16 @@
+--- a/internal/server/delivery.go
++++ b/internal/server/delivery.go
+@@ -558,13 +558,6 @@
+ 	if err != nil {
+ 		return err
+ 	}
+-	if prior := endedBy(id); prior != "" {
+-		if strings.EqualFold(prior, partyFP) {
+-			return nil // idempotent: the same decline recorded twice
+-		}
+-		return fmt.Errorf("this proceeding is already recorded as ended by %s, so it cannot also "+
+-			"be ended by %s — an end state is reached once", prior[:12], partyFP[:12])
+-	}
+ 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+ 		return err
+ 	}
