@@ -10,6 +10,6 @@
 -				"missing is this machine's copy under ~/nib/ceremonies, which is what lets Nib "+
 -				"continue the ceremony after a restart. Reason: "+err.Error())
 +		_ = err
+ 		return
  	}
- }
- 
+ 	// **This party has signed, so from here it is waiting to be DELIVERED to (P08.S05g).**
