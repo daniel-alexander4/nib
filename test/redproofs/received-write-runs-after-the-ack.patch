@@ -1,16 +1,16 @@
 --- a/internal/server/session.go
 +++ b/internal/server/session.go
-@@ -749,9 +749,6 @@
+@@ -1018,9 +1018,6 @@
  		// `incoming/alice-20260831-110425.pdf`. So `ackOK` attests that THESE bytes reached the
  		// disk, and not that an earlier document still exists. P08.S05d's deterministic filename
  		// is what closes it.
--		if err := sa.s.saveReceived(doc, peerFP, sa.label); err != nil {
+-		if err := sa.s.saveReceived(sa.anchor.kind, doc, peerFP, sa.label); err != nil {
 -			return false, err // → ackNotStored, never ackDeclined: the user said yes
 -		}
  		return true, nil
  	case <-time.After(sessionConsentTimeout):
  		return false, p2p.ErrConsentTimedOut // see sessionConfirmer.Confirm
-@@ -1046,9 +1043,11 @@
+@@ -1308,9 +1305,11 @@
  		// receipt meant "a human clicked accept" and never "the bytes are on disk". It now runs
  		// inside `sessionAccepter.Accept`, the last thing before the frame — see that method, and
  		// `TestTheReceivedWriteHasOneDoor` for the guard that keeps it the only site.
@@ -19,7 +19,7 @@
 +		if derr != nil {
  			return saw.v.Load(), nil, derr
  		}
-+		_ = s.saveReceived(doc, ch.PeerFP, label)
++		_ = s.saveReceived(anchor.kind, doc, ch.PeerFP, label)
  		return true, nil, nil // a transfer saves itself; no co-signed document to open
  	}
  	var rd p2p.ReDeliverer

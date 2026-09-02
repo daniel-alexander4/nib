@@ -1,13 +1,11 @@
-diff --git a/internal/server/session.go b/internal/server/session.go
-index 5797e13..461b3ad 100644
 --- a/internal/server/session.go
 +++ b/internal/server/session.go
-@@ -215,7 +215,7 @@ func (se *session) armCeremony(cer *ceremonyID, addr string, cancel context.Canc
- 	se.cerCancel = cancel
- 	se.received = nil
- 	se.notice = nil
--	se.until = time.Now().Add(armWindowFor(cer))
-+	se.until = time.Now().Add(sessionAcceptTimeout)
- 	return true
+@@ -332,7 +332,7 @@
+ 		return deliveryWindowFor(cer)
+ 	}
+ 	if cer != nil {
+-		return ceremony.MaxCeremonyLife
++		return sessionAcceptTimeout
+ 	}
+ 	return sessionAcceptTimeout
  }
- 

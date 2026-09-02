@@ -1,13 +1,13 @@
 --- a/internal/server/session.go
 +++ b/internal/server/session.go
-@@ -749,9 +749,7 @@
+@@ -1018,9 +1018,7 @@
  		// `incoming/alice-20260831-110425.pdf`. So `ackOK` attests that THESE bytes reached the
  		// disk, and not that an earlier document still exists. P08.S05d's deterministic filename
  		// is what closes it.
--		if err := sa.s.saveReceived(doc, peerFP, sa.label); err != nil {
+-		if err := sa.s.saveReceived(sa.anchor.kind, doc, peerFP, sa.label); err != nil {
 -			return false, err // → ackNotStored, never ackDeclined: the user said yes
 -		}
-+		_ = sa.s.saveReceived(doc, peerFP, sa.label)
++		_ = sa.s.saveReceived(sa.anchor.kind, doc, peerFP, sa.label)
  		return true, nil
  	case <-time.After(sessionConsentTimeout):
  		return false, p2p.ErrConsentTimedOut // see sessionConfirmer.Confirm

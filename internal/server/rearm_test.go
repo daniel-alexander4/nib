@@ -436,10 +436,17 @@ func TestEveryArmTakesItsWindowFromOneDoor(t *testing.T) {
 		stamps = append(stamps, trimmed)
 	}
 	// A floor, or a scan that matches nothing reports every door compliant.
-	if len(stamps) < 3 {
-		t.Fatalf("found %d assignment(s) to `until` in session.go; the arm doors and the disarm "+
-			"clear are at least three, so this scan is looking for a spelling that no longer "+
-			"appears and its clean result would mean nothing", len(stamps))
+	//
+	// **It was 3 and is now 1, and the drop is the point (P08.S05c).** The two arm doors each
+	// stamped their own window and the disarm cleared a third; the doors now route through
+	// `armIn`, which stamps once, and the teardown drops the whole `arm` value rather than
+	// zeroing a field. So the population this scan can find is genuinely one — and one is still
+	// a real stimulus, because the failure it guards against is a NEW door stamping `until`
+	// itself, which would push the count up and be caught by the loop below.
+	if len(stamps) < 1 {
+		t.Fatalf("found %d assignment(s) to `until` in session.go; `armIn` stamps one, so this "+
+			"scan is looking for a spelling that no longer appears and its clean result would "+
+			"mean nothing", len(stamps))
 	}
 	for _, s := range stamps {
 		// The disarm clears it to the zero time; that is not a window and has no door.
@@ -737,7 +744,7 @@ func TestABackgroundFailureReachesTheStatusAndOutlivesTheSession(t *testing.T) {
 	// The failure a background goroutine would record. Driven through the same door those paths
 	// use, because what is under test is the SURFACE — that it exists, survives, and is cleared at
 	// the right moment — not any one producer's ability to detect its own error.
-	s.sess.noteFailure("hop-not-mirrored",
+	s.sess.noteFailure(armInteractive, "hop-not-mirrored",
 		"You signed, but this machine could not keep its own copy of the document.",
 		"no space left on device")
 

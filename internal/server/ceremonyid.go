@@ -787,7 +787,9 @@ func (s *Server) mirrorHop(final []byte) {
 		// double-clicked launch sends nowhere — `cmd/nib/main.go` makes that exact argument about
 		// its own hand-off notice and it was applied there and nowhere else. This is the failure
 		// where the user most needs to know: they have signed, and this machine kept no copy.
-		s.sess.noteFailure("hop-not-mirrored",
+		// armInteractive: `mirrorHop` runs on a hop the user is signing, which is the arm a
+		// person opened. The delivery round persists through its own path (P08.S05d).
+		s.sess.noteFailure(armInteractive, "hop-not-mirrored",
 			"You signed, but this machine could not keep its own copy of the document.",
 			"The signature is on the document the other party received either way. What is "+
 				"missing is this machine's copy under ~/nib/ceremonies, which is what lets Nib "+

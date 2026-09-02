@@ -962,7 +962,7 @@ func TestDisarmDoesNotCloseALaterSession(t *testing.T) {
 	se.disarmIf(lnA)
 
 	se.mu.Lock()
-	armed := se.ln
+	armed := se.arms[armInteractive].ln
 	se.mu.Unlock()
 	if armed != lnB {
 		t.Errorf("after the previous session's teardown fired, the armed listener is %v, want the second session's. The user armed a new session and a predecessor closed it — they wait for a peer that can no longer reach them.", armed)
@@ -971,9 +971,9 @@ func TestDisarmDoesNotCloseALaterSession(t *testing.T) {
 	// And the unconditional form still works, because Cancel and shutdown mean exactly it.
 	se.disarm()
 	se.mu.Lock()
-	armed = se.ln
+	stillArmed := se.armedLocked()
 	se.mu.Unlock()
-	if armed != nil {
+	if stillArmed {
 		t.Error("an explicit disarm left the session armed")
 	}
 }
@@ -2047,8 +2047,15 @@ func short8(fp string) string {
 // longer matches and tears nothing down.
 //
 // ADR-009's shape exactly: one rule — "is anything armed" — asked at three sites, two of which
-// agreed. The third was a door. Both doors now call `armedLocked()`, which is the definition
-// `status()` already reported to the user.
+// agreed. The third was a door. Every door now routes through `armIn`, which asks one predicate.
+//
+// # Re-expressed at P08.S05c from "must fail" to the harm it stands for
+//
+// The test used to lead with *a second arm must be REFUSED*, and that is no longer the rule: with
+// two slots a delivery arm arming beside a live interactive one is correct and is the point of
+// the slice. What was never correct is the OVERWRITE — displacing a live arm's ceremony so
+// nothing tears it down. So the assertion is the harm itself, and the refusal is checked as the
+// mechanism that prevents it rather than as the property.
 //
 // # Why it is driven at the struct
 //
@@ -2071,20 +2078,31 @@ func TestASecondArmCannotOrphanALiveCeremony(t *testing.T) {
 			"this test can no longer tell 'the two doors agree' from 'nothing can ever arm'")
 	}
 
-	if se.arm(&stubListener{}, nil) {
-		t.Error("a manual/TCP arm succeeded while a ceremony arm was live. It overwrote se.cer, " +
-			"so runCeremonyReceive's `defer disarmCeremony(cer)` matches nothing and the " +
-			"ceremony's rendezvous server, shared UDP socket, router port-mapping lease and " +
-			"in-memory invitation secret are never closed — the lease keeps refreshing a " +
-			"pinhole for the life of the process.")
-	}
+	admitted := se.arm(&stubListener{}, nil)
 
-	// The ceremony that was armed is still the one that is armed.
+	// **THE HARM, asserted first and on its own terms.** Whatever the door answered, the live
+	// ceremony must still be the one that armed. An overwrite here orphans everything
+	// `ceremonyID.close()` solely owns — the rendezvous server, the shared UDP socket and its
+	// mux, the router port-mapping lease whose refresh goroutine only `close()` stops, the
+	// in-memory co-signed document and the invitation secret — and leaves `cerCancel` pointing at
+	// the DISPLACED arm, so `runCeremonyReceive`'s `defer disarmCeremony(cer)` matches nothing.
 	se.mu.Lock()
-	held := se.cer
+	live := se.arms[armInteractive]
 	se.mu.Unlock()
-	if held != cerA {
-		t.Errorf("the live ceremony is %p, want the one that armed (%p)", held, cerA)
+	if live == nil || live.cer != cerA {
+		t.Errorf("the live interactive arm holds %+v, want the ceremony that armed (%p). A "+
+			"second arm displaced it, and nothing closes what it displaced.", live, cerA)
+	}
+	if cancelled {
+		t.Error("the displaced ceremony's cancel ran while its arm was still supposed to be " +
+			"live — the arm was torn down by a door that should not have touched it")
+	}
+	// And the mechanism: refusing is HOW the harm above is prevented, so it is checked, but as
+	// the means rather than as the rule. A door that admitted the second arm without overwriting
+	// would fail the assertion above, which is the one that matters.
+	if admitted {
+		t.Error("a manual/TCP arm was admitted into the interactive slot while a ceremony arm " +
+			"was live; the slot is single-occupancy and the collision predicate must refuse it")
 	}
 
 	// And this is a refusal, not a wedge: after a disarm the same arm must succeed. A guard that
@@ -2100,10 +2118,193 @@ func TestASecondArmCannotOrphanALiveCeremony(t *testing.T) {
 	se.disarm()
 }
 
+// TestTheDeliverySlotIsArmableBesideAnInteractiveArm — P08.S05c's first acceptance clause.
+//
+// A delivery arm and the arm a person opened are different lifecycles on one machine: the user
+// may be waiting to receive a document while the convener is still delivering a finished one from
+// a ceremony they signed yesterday. Before this slice `s.sess` held exactly one, so the second
+// could only arrive by displacing the first.
+//
+// It is driven at the struct for `TestASecondArmCannotOrphanALiveCeremony`'s reason: what is
+// under test is which slot a door writes, and a networked reproduction would add a peer, a
+// handshake and a QUIC transport to test an index.
+func TestTheDeliverySlotIsArmableBesideAnInteractiveArm(t *testing.T) {
+	var se session
+
+	lnA := &stubListener{}
+	if !se.arm(lnA, nil) {
+		t.Fatal("setup: the interactive arm was refused with nothing armed")
+	}
+	// STIMULUS: the interactive slot is genuinely occupied. Without it "the delivery arm was
+	// admitted" is true of a session where nothing was armed in the first place.
+	se.mu.Lock()
+	occupied := se.arms[armInteractive] != nil
+	se.mu.Unlock()
+	if !occupied {
+		t.Fatal("setup: the interactive slot is empty after a successful arm, so this test is " +
+			"not exercising coexistence at all")
+	}
+
+	cerD := &ceremonyID{}
+	if !se.armDeliveryForCeremony(cerD, "127.0.0.1:9", func() {}) {
+		t.Fatal("a delivery arm was refused while the user had an interactive arm open. That is " +
+			"the single-slot behaviour this slice removes: the delivery round would have to " +
+			"displace whatever the user was doing, or not run.")
+	}
+
+	// Both slots, each holding its own. Asserted separately: a session that stored the delivery
+	// arm over the interactive one would satisfy "the delivery arm is armed" on its own.
+	se.mu.Lock()
+	iv, dv := se.arms[armInteractive], se.arms[armDelivery]
+	se.mu.Unlock()
+	if iv == nil || iv.ln != lnA {
+		t.Errorf("the interactive slot holds %+v after a delivery arm; the delivery arm "+
+			"displaced the user's own session", iv)
+	}
+	if dv == nil || dv.cer != cerD {
+		t.Errorf("the delivery slot holds %+v, want the ceremony it armed for (%p)", dv, cerD)
+	}
+
+	// A SECOND delivery arm is still refused — the slot is single-occupancy per kind, and this is
+	// what stops "two arms coexist" from meaning "arms never collide".
+	if se.armDeliveryForCeremony(&ceremonyID{}, "127.0.0.1:10", func() {}) {
+		t.Error("a second delivery arm was admitted, overwriting the first — the collision " +
+			"predicate is not being asked per slot")
+	}
+}
+
+// TestAnUnconditionalDisarmTearsDownEverySlot — P08.S05c's own review found this one.
+//
+// `disarm()` is the unconditional form and its two callers are the user pressing Cancel and
+// process shutdown; both mean *all of it*. The first draft of the two-slot teardown walked the
+// slots and `break`ed on the first match, so a delivery arm survived a shutdown — orphaning
+// exactly what `ceremonyID.close()` is the sole owner of: the rendezvous server, the shared UDP
+// socket and its mux, and the router port-mapping lease whose refresh goroutine only `close()`
+// stops, so it keeps punching a pinhole for the life of the process.
+//
+// **The doc comment on that draft asserted the opposite** — *"disarm()'s unconditional form still
+// means every slot"* — which is why the test says so in code. A property stated only in prose is
+// one nothing checks.
+func TestAnUnconditionalDisarmTearsDownEverySlot(t *testing.T) {
+	var se session
+
+	if !se.arm(&stubListener{}, nil) {
+		t.Fatal("setup: the interactive arm was refused with nothing armed")
+	}
+	deliveryCancelled := false
+	if !se.armDeliveryForCeremony(&ceremonyID{}, "127.0.0.1:9", func() { deliveryCancelled = true }) {
+		t.Fatal("setup: the delivery arm was refused, so there is no second slot to leave behind")
+	}
+	// STIMULUS: both slots are really occupied. Without it "nothing is armed afterwards" is true
+	// of a session that never had two arms in it.
+	se.mu.Lock()
+	both := se.arms[armInteractive] != nil && se.arms[armDelivery] != nil
+	se.mu.Unlock()
+	if !both {
+		t.Fatal("setup: the two slots are not both occupied, so a teardown that skips one " +
+			"cannot be distinguished from one that has nothing to skip")
+	}
+
+	se.disarm()
+
+	// Asserted per slot, not through `armedLocked()`: one boolean cannot say WHICH slot survived,
+	// and the delivery slot is the one the draft left behind.
+	se.mu.Lock()
+	iv, dv := se.arms[armInteractive], se.arms[armDelivery]
+	se.mu.Unlock()
+	if iv != nil {
+		t.Errorf("an unconditional disarm left the interactive slot armed (%+v)", iv)
+	}
+	if dv != nil {
+		t.Errorf("an unconditional disarm left the DELIVERY slot armed (%+v). At shutdown that "+
+			"orphans the ceremony's rendezvous server, its shared UDP socket and its router "+
+			"port-mapping lease, whose refresh goroutine only ceremonyID.close() stops.", dv)
+	}
+	if !deliveryCancelled {
+		t.Error("the delivery arm's cancel never ran, so its background goroutine outlives the " +
+			"session that owned it")
+	}
+}
+
+// TestAnUnrelatedArmDoesNotEraseADeliveryArmsNoticeOrReceipt — P08.S05c's first clause, second half.
+//
+// **The sticky fields are a delivery arm's ONLY channels.** It runs on a background goroutine with
+// no HTTP response to write into, so `notice` is how a failure reaches the person and `received`
+// is how a success does — that is P08.S08's whole argument, and `noticeView`'s own doc says a
+// field cleared on disarm would be no better because "the disarm IS the symptom".
+//
+// Both arm doors cleared both fields outright: *"a fresh session clears any prior transfer
+// result"* and *"the user is trying again, so the old reason is spent"*. Right for one arm, and
+// wrong the moment there are two — the user arming for an unrelated ceremony silently erased the
+// delivery round's only report of what happened.
+//
+// The fields stay machine-wide, because the SURFACE is: one user, one screen, one notice. It is
+// the CLEARING that becomes scoped, which is why each field carries the kind that wrote it.
+func TestAnUnrelatedArmDoesNotEraseADeliveryArmsNoticeOrReceipt(t *testing.T) {
+	var se session
+
+	se.noteFailure(armDelivery, "received-not-saved",
+		"A document arrived and could not be saved.", "no space left on device")
+	se.setReceived(armDelivery, &receivedInfo{Path: "/tmp/delivered.pdf", Peer: "the convener"})
+
+	// STIMULUS: both fields are really set, or "they survived" is true of two nils.
+	if st := se.status(); st.Notice == nil || st.Received == nil {
+		t.Fatalf("setup: the delivery arm's notice/received did not land (notice=%v received=%v)",
+			st.Notice, st.Received)
+	}
+
+	// The user now arms for something else entirely.
+	if !se.arm(&stubListener{}, nil) {
+		t.Fatal("setup: the interactive arm was refused, so nothing has been given the chance " +
+			"to erase anything")
+	}
+
+	st := se.status()
+	if st.Notice == nil {
+		t.Error("arming an unrelated session erased the delivery arm's notice. That notice is " +
+			"the only way a background round can tell the user it failed — it has no response " +
+			"to write into — so erasing it loses the report entirely.")
+	}
+	if st.Received == nil {
+		t.Error("arming an unrelated session erased the delivery arm's received record, which " +
+			"is the only evidence the user has that the document arrived and where it went")
+	}
+
+	// And the scoping is not a blanket refusal to clear: the interactive arm's OWN prior state
+	// still goes when it re-arms, which is the behaviour the original clearing existed for.
+	se.disarm()
+	se.noteFailure(armInteractive, "signed-not-saved", "You signed, but it was not saved.", "disk")
+	if st := se.status(); st.Notice == nil || st.Notice.What != "signed-not-saved" {
+		t.Fatalf("setup: the interactive notice did not replace the delivery one (%+v)", st.Notice)
+	}
+	if !se.arm(&stubListener{}, nil) {
+		t.Fatal("setup: the interactive re-arm was refused")
+	}
+	if st := se.status(); st.Notice != nil {
+		t.Errorf("re-arming did not clear the interactive arm's own stale notice (%+v) — the "+
+			"scoping has become a blanket refusal to clear, and the user is shown a reason "+
+			"that belongs to a session they have already retried", st.Notice)
+	}
+}
+
 // TestTheArmedPredicateHasOneImplementation is the ADR-009 half: the rule above is only as good
 // as the number of places that ask it. Eight copies checked for agreement say nothing about a
 // ninth site added without one, so this asserts ROUTING through the door rather than comparing
 // the text of each site.
+//
+// # It now guards TWO predicates, because P08.S05c split one that was doing two jobs
+//
+// With two arm slots there are two different questions and they have different right answers:
+//
+//   - `armedLocked()` — *is this machine listening at all*. `status()` asks it, and the answer is
+//     `sessionStatus.Armed`, which the client renders as the user's armed pill.
+//   - `collidesLocked(kind)` — *would arming this slot displace a live arm*. Only the installer
+//     asks it.
+//
+// The slice's own bullet said to make `armedLocked` the collision predicate. Doing that would
+// have re-pointed the pill: a machine holding a live delivery arm — genuinely listening, on its
+// one network-reachable surface — would have reported itself unarmed. So each predicate keeps one
+// definition and one door, and this guard enumerates the doors rather than listing them.
 func TestTheArmedPredicateHasOneImplementation(t *testing.T) {
 	raw, err := os.ReadFile("session.go")
 	if err != nil {
@@ -2113,23 +2314,73 @@ func TestTheArmedPredicateHasOneImplementation(t *testing.T) {
 	// satisfied by prose that merely names the expression is how a freeze guard once read its
 	// own explanation as proof of coverage (v1.117.155).
 	code := stripLineComments(string(raw))
-	const pred = "se.ln != nil || se.cer != nil"
-	if n := strings.Count(code, pred); n != 1 {
-		t.Errorf("the armed predicate %q appears %d time(s) in session.go, want exactly 1 (its "+
-			"definition in armedLocked). A second copy is how the two arm doors came to "+
-			"disagree: `arm` asked about the listener alone while `armCeremony` and `status` "+
-			"asked about both, so a ceremony arm was invisible to one of its own doors.", pred, n)
+
+	// ── The slot test, defined once ────────────────────────────────────────────────────────
+	// Both predicates ask whether a slot is occupied; the expression `se.arms[` reading a slot
+	// must not spread beyond the two definitions plus the installer's store and the teardown's
+	// scan, or the drift this guard exists for has simply moved down a level.
+	const slot = "se.arms["
+	if n := strings.Count(code, slot); n < 2 {
+		t.Fatalf("the slot expression %q appears %d time(s) in session.go; the two predicates "+
+			"alone are two, so this scan is looking for a spelling that no longer appears and "+
+			"a clean result from it would mean nothing", slot, n)
 	}
-	for _, fn := range []string{"arm", "armCeremony", "status"} {
+
+	// ── THE POPULATION: every arm door, found rather than listed ───────────────────────────
+	// A door is a `func (se *session) arm...(...) bool`. Listing the doors is the mistake this
+	// package has already made twice — "two arm paths living in two functions is the same count
+	// S05d and S05e each found" — so they are enumerated from the source.
+	var doors []string
+	for _, line := range strings.Split(code, "\n") {
+		t9 := strings.TrimSpace(line)
+		if !strings.HasPrefix(t9, "func (se *session) arm") || !strings.HasSuffix(t9, ") bool {") {
+			continue
+		}
+		name := t9[len("func (se *session) "):]
+		name = name[:strings.Index(name, "(")]
+		if name == "armIn" { // the door itself, checked separately below
+			continue
+		}
+		// A PREDICATE takes no arguments and answers a question; a DOOR takes the arm's material
+		// and installs it. Discriminated structurally rather than by a name list, because a list
+		// is the thing this guard exists to avoid: `armedLocked()` is bool and starts with "arm".
+		if strings.Contains(t9, "() bool {") {
+			continue
+		}
+		doors = append(doors, name)
+	}
+	// STIMULUS: the scan really found doors. Without this, "every door routes correctly" is true
+	// of a scan that found none — the vacuous green this repo keeps finding in its own guards.
+	if len(doors) < 2 {
+		t.Fatalf("found %d arm door(s) in session.go (%v); there are at least the interactive "+
+			"listener and ceremony doors, so this scan is not seeing them", len(doors), doors)
+	}
+	for _, fn := range doors {
 		i := strings.Index(code, "func (se *session) "+fn+"(")
+		if body := funcBodyFrom(code, i); !strings.Contains(body, "se.armIn(") {
+			t.Errorf("%s installs an arm without going through se.armIn(). One rule, one door: a "+
+				"site that stores into se.arms itself skips the collision check and the scoped "+
+				"clearing of the sticky fields, which is the defect /pending 311 recorded one "+
+				"shape earlier.", fn)
+		}
+	}
+
+	// ── And each predicate is asked by the site that owns its question ─────────────────────
+	for _, c := range []struct{ fn, must, why string }{
+		{"armIn", "se.collidesLocked(", "the installer must ask whether the SLOT is taken, not " +
+			"whether anything is armed — the latter refuses a delivery arm because the user has " +
+			"one open, which is the whole thing this slice removes"},
+		{"status", "se.armedLocked()", "the status field is the user's armed pill and must ask " +
+			"whether this machine is listening AT ALL; asking the collision question there " +
+			"reports a machine with a live delivery arm as unarmed"},
+	} {
+		i := strings.Index(code, "func (se *session) "+c.fn+"(")
 		if i < 0 {
 			t.Fatalf("setup: %s not found in session.go — this guard is pinned to a function "+
-				"that no longer exists", fn)
+				"that no longer exists", c.fn)
 		}
-		if body := funcBodyFrom(code, i); !strings.Contains(body, "se.armedLocked()") {
-			t.Errorf("%s decides armedness without calling armedLocked(). One rule, one door: a "+
-				"site that re-derives the answer is a second implementation that can drift, "+
-				"which is the defect /pending 311 recorded.", fn)
+		if body := funcBodyFrom(code, i); !strings.Contains(body, c.must) {
+			t.Errorf("%s does not call %s. %s", c.fn, c.must, c.why)
 		}
 	}
 }

@@ -1,11 +1,9 @@
-diff --git a/internal/server/session.go b/internal/server/session.go
-index a3c9f5d..f8424d1 100644
 --- a/internal/server/session.go
 +++ b/internal/server/session.go
-@@ -966,7 +966,8 @@ func (s *Server) runSession(ln p2p.Listener, cer *ceremonyID, cert, key []byte,
- 			inbound.Store(true)
+@@ -1176,7 +1176,8 @@
  		}
- 		served, final, _ := s.serveOneSession(consentAnchor{ln: ln}, cer, conn, cert, key, label, mode, myFP)
+ 		timer.Stop()
+ 		served, final, _ := s.serveOneSession(consentAnchor{ln: ln, kind: armInteractive}, cer, conn, cert, key, label, mode, myFP)
 -		if final != nil && !opened {
 +		_ = opened
 +		if final != nil {
