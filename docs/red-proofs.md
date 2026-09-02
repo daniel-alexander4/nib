@@ -3286,3 +3286,64 @@ Re-targeted at `-n 4` as well — three delivery arms move the counter, and a ro
 to replay is a row nobody replays.
 
 `recorded` 253 → 258.
+
+## P08.S03 / C04 — the arrival gate learns to look at the bytes *(v1.117.328)*
+
+Three rows, tier 1. The slice closes C04's decoy clause, and everything sharp about it came from
+reading what the tree already said rather than from the change itself.
+
+**The gate never compared the document to anything.** `checkArrival` asked three questions — is
+there a record and does it verify, has the deadline passed, does the roster commitment match the
+invitation — and every one of them passes for a DIFFERENT document carrying the same valid record.
+So a convener able to present two documents under one ceremony id had each party signing something
+different while all of them claimed one proceeding, which is the substitution D29's identity pin
+exists to refuse.
+
+`DocHash` was written for exactly this: *"Every party agrees to the same bytes and a resumed hop can
+prove it."* The only thing that compared it against a document was `CheckDocument`, and
+`git grep CheckDocument( 4fbd279 -- '*.go'` outside tests and comments returns **nothing** —
+recorded at P07.S02b as "unusable by any receiver" and left there.
+
+**The window is narrow, measured, and the reason the second row exists.** `ContentDigest` covers
+each page's `/Annots`, a visible signature adds a widget annot, and the production path signs
+visibly, so from the first signature onward an honest document does not hash to its record. The
+first cut of the test could not see that: both fixtures were unsigned, so making the anchor
+unconditional left the whole test green. The signed arm then had to be built twice — an INVISIBLE
+signature does not move the digest either, so the first version of that arm was vacuous in the same
+way and needed an appearance image.
+
+`substituted-refusal-loses-its-wire-code` is the review's find and the sharpest of the three. The
+refusal was a bare `fmt.Errorf` with no sentinel, so `refusalCode` returned 0, nothing was written,
+and the initiator saw `EOF` — a 502 with a D19 NETWORK cause, inviting the retry a refusal must
+never invite. **And the codeless path is the threat-model path**: on an honest send the sender's own
+copy of the gate refuses first, so this crosses the wire only when the sender skipped its gate,
+which is the attacker. It also escaped `refusalenum_test.go`, which enumerates `internal/p2p`
+sentinels and cannot see a bare error raised in `internal/ceremony`. Code 15 is frozen.
+
+**Three claims in this slice's own new prose were wrong and the review caught all three.** That
+`DocHash` had *"no reader on the signing path"* — it has one, `rosterPreimage` digests it, so
+`MatchesRecord` covers it transitively; the defensible claim is "no reader that compares it against
+the bytes". That the anchor could sit above `MatchesRecord` — it must sit below, or a document that
+is both from another ceremony and content-mismatched loses the older refusal's wire code. And that
+*"outside this window the signature chain IS the anchor"* — `DocumentHash`'s own doc records that
+byte-prefix plus `AddedAfter == false` *"was measured at this slice's grill to PASS on a document
+whose first page had been blacked out by the last signer"*, and nothing on the signing path reads
+`AddedAfter` at all. `/pending 358` carries what that leaves open.
+
+**And the guard shipped four commits earlier caught the author TWICE in this one slice.**
+`HasSignatureBlob` was inserted between `signatureBlobPresent`'s doc block and its function, and
+then `ShortHash` between `DocumentHash`'s and its own — both gluing two docs into one, both
+`/pending 352`'s exact defect, both found by `/pending 352`'s own guard on its first outings. The
+shape is not carelessness about comments: it is that adding an exported wrapper ABOVE the thing it
+wraps reads as the natural order and puts the new function between an existing doc and its subject
+every time. Worth knowing before writing the third one.
+
+**The cost was measured, not estimated, and it is parked.** `CheckDocument` on the 4.4 MB fixture
+costs 13.8 s; `DocumentHash` alone 8.7 s; `CheckRecord` — which `checkArrival` has already run —
+4.8 s. The first cut used `CheckDocument` and paid the 4.8 s twice. What remains is on a request
+path, which this repo's `CLAUDE.md` reserves for Dan, so it ships in its cheapest correct form with
+the trade filed as `/pending 359`. It was already visible: the harness's spoken-check budget was
+30 s, ~28 s of it went to the two sides' digests, and the run began failing with a timeout that was
+really a cost.
+
+`recorded` 258 → 261.

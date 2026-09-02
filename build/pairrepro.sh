@@ -682,8 +682,13 @@ assert_spoken_check() { # label words_a words_b code want body
 # parties are blocked waiting for it, so it has to run beside the request rather
 # than inside it.
 watch_verify() { # url csrf outfile
+  # **240 x 0.25 s = 60 s, raised from 30 (P08.S03).** The content anchor added a measured 8.7 s
+  # per side on a 4.4 MB document, and `interrupted_hop` uses one deliberately — so the words
+  # arrived after the old budget had expired and the run failed with a spoken-check timeout that
+  # was really a cost. A budget that is a function of document size is the wrong shape; a ceiling
+  # far above any honest hop is the right one, and a timeout here still fails loudly.
   local url="$1" tok="$2" out="$3"
-  for _ in $(seq 1 120); do
+  for _ in $(seq 1 240); do
     local w
     w="$(curl -fsS "$url/api/session/status" 2>/dev/null | jget verify.words)"
     if [ -n "$w" ]; then
@@ -1087,6 +1092,152 @@ PYMIRROR
 CONSENT_ANSWER='{"accept":true,"intent":"I accept"}'
 
 
+# ── P08.S03 / C04: a DECOY document carrying a real ceremony's record ────────────────────────
+#
+# The plan-review pin restated C04's decoy, and the restatement is what makes it drivable: *"the
+# decoy is a different document carrying the same ceremony id — the substitution that does survive
+# a restart — refused on the content match rather than on the id."*
+#
+# Every check the arrival gate ran before this slice passes for such a document. The record is the
+# real one, so its convener signature verifies; the deadline is the real one; the roster hash is
+# the real one. Only the bytes differ, and nothing looked at them. `DocHash` exists for exactly
+# this — *"every party agrees to the same bytes"* — and had no reader on the signing path.
+decoy_document() {
+  local transport="quic"
+  if [ "$N" -lt 2 ]; then
+    echo "decoy: skipped — needs a convener and one signer"
+    return 0
+  fi
+  echo "decoy: convening, then offering party 2 a DIFFERENT document carrying the same record…"
+  local roster expires code inv daddr
+
+  printf '# Lease agreement\n\nBoth parties agree to the terms above.\n' > "$WORK/decoy.orig.md"
+  printf '# Lease agreement\n\nThe tenant agrees to pay double, and to waive every remedy.\n' > "$WORK/decoy.other.md"
+  "$WORK/nib" office "$WORK/decoy.other.md" -o "$WORK/decoy.other.pdf" >/dev/null 2>&1 \
+    || fail "decoy: could not build the substitute document"
+
+  roster="$(python3 -c "
+import json
+print(json.dumps({'fingerprint':'${FPS[0]}','label':'p1','signs':False})+','+
+      json.dumps({'fingerprint':'${FPS[1]}','label':'p2','signs':True}))")"
+  expires="$(python3 -c "
+import datetime;print((datetime.datetime.now(datetime.timezone.utc)+datetime.timedelta(hours=6)).strftime('%Y-%m-%dT%H:%M:%SZ'))")"
+  python3 - "${URLS[0]}" "${CSRFS[0]}" <<'PYCLOSE' || exit 1
+import json, sys, urllib.request
+base, csrf = sys.argv[1], sys.argv[2]
+d = json.load(urllib.request.urlopen(base + "/api/docs")).get("docs") or []
+if d:
+    req = urllib.request.Request(base + "/api/close", method="POST",
+                                 data=json.dumps({"id": d[0]["id"]}).encode(),
+                                 headers={"Content-Type": "application/json", "X-CSRF-Token": csrf,
+                                          "X-Nib-Doc": d[0]["id"]})
+    urllib.request.urlopen(req).read()
+PYCLOSE
+  code="$(curl -sS -X POST "${URLS[0]}/api/open" -H 'Content-Type: application/json' \
+    -H "X-CSRF-Token: ${CSRFS[0]}" -d "{\"path\":\"$WORK/doc.pdf\"}" -o /dev/null -w '%{http_code}')"
+  [ "$code" = "200" ] || fail "decoy: the convener could not open the document (HTTP $code)"
+  code="$(curl -sS -X POST "${URLS[0]}/api/ceremony/convene" -H 'Content-Type: application/json' \
+    -H "X-CSRF-Token: ${CSRFS[0]}" \
+    -d "{\"roster\":[$roster],\"intent\":\"We agree\",\"expires\":\"$expires\",\"convenerSigns\":false}" \
+    -o "$WORK/decoy.convene.json" -w '%{http_code}')"
+  [ "$code" = "200" ] || fail "decoy: convene failed (HTTP $code): $(head -c 300 "$WORK/decoy.convene.json")"
+  inv="$(python3 -c "
+import json
+d=json.load(open('$WORK/decoy.convene.json'))
+print(next(x['invitation'] for x in d['invites'] if x['fingerprint'].lower()=='${FPS[1]}'.lower()))")"
+  code="$(curl -sS -X POST "${URLS[1]}/api/ceremony/accept" -H 'Content-Type: application/json' \
+    -H "X-CSRF-Token: ${CSRFS[1]}" -d "$(python3 -c "import json;print(json.dumps({'invitation':'$inv'}))")" \
+    -o /dev/null -w '%{http_code}')"
+  [ "$code" = "200" ] || fail "decoy: instance 2 could not accept (HTTP $code)"
+
+  # The convened document, and the DECOY: the substitute carrying this ceremony's real record.
+  # `nib ceremony graft` is not a thing and must not become one — the decoy is built the way an
+  # attacker would, by lifting the record attachment off the genuine article.
+  # **`doc`, not `document`, and the assertion is what stops that mattering silently.** All four
+  # readers of this field in this file had it wrong: `conveneResponse.Doc` is `json:"doc"`, so the
+  # id was always "" and `GET /api/pdf?doc=` fell through to `docFor`'s compatibility default —
+  # whatever document that instance happens to have active. It fetched the right bytes only
+  # because `commitBarrier` makes the convened document active, which is the UNPINNED path ADR-004
+  # exists to refuse, working by coincidence.
+  local realdoc; realdoc="$(python3 -c "import json;print(json.load(open('$WORK/decoy.convene.json')).get('doc',{}).get('id',''))")"
+  [ -n "$realdoc" ] \
+    || fail "decoy: convene returned no document id — a blank one makes /api/pdf serve whatever is
+      active instead, which is the unpinned fallback and would fetch the right bytes by accident"
+  curl -fsS "${URLS[0]}/api/pdf?doc=$realdoc" -o "$WORK/decoy.real.pdf" \
+    || fail "decoy: could not fetch the convened document"
+  "$WORK/nib" attachments "$WORK/decoy.real.pdf" --extract nib-ceremony.json -o "$WORK/decoy.record.json" >/dev/null 2>&1 \
+    || fail "decoy: could not lift the ceremony record out of the convened document"
+  [ -s "$WORK/decoy.record.json" ] || fail "decoy: the extracted record is empty"
+  "$WORK/nib" attachments "$WORK/decoy.other.pdf" --add "$WORK/decoy.record.json" --name nib-ceremony.json -o "$WORK/decoy.pdf" >/dev/null 2>&1 \
+    || fail "decoy: could not attach the record to the substitute document"
+  # STIMULUS: the decoy really is a DIFFERENT document carrying the SAME record. Without both
+  # halves the refusal below could be about a malformed file rather than about a substitution.
+  cmp -s "$WORK/decoy.real.pdf" "$WORK/decoy.pdf" \
+    && fail "decoy: the substitute is byte-identical to the genuine document, so nothing was substituted"
+  "$WORK/nib" attachments "$WORK/decoy.pdf" --extract nib-ceremony.json -o "$WORK/decoy.check.json" >/dev/null 2>&1 \
+    || fail "decoy: the substitute carries no ceremony record, so the gate would refuse it for the wrong reason"
+  cmp -s "$WORK/decoy.record.json" "$WORK/decoy.check.json" \
+    || fail "decoy: the substitute's record is not the genuine one, so a refusal says nothing about C04"
+
+  code="$(curl -sS -X POST "${URLS[1]}/api/session/arm" -H 'Content-Type: application/json' \
+    -H "X-CSRF-Token: ${CSRFS[1]}" \
+    -d "{\"fingerprint\":\"${FPS[0]}\",\"bind\":\"$CEREMONY_HOST:0\",\"mode\":\"cosign\",\"transport\":\"$transport\",\"invitation\":\"$inv\"}" \
+    -o "$WORK/decoy.arm.json" -w '%{http_code}')"
+  [ "$code" = "200" ] || fail "decoy: instance 2 could not arm (HTTP $code)"
+  daddr="$(python3 -c "import json;print(json.load(open('$WORK/decoy.arm.json')).get('address',''))")"
+
+  rm -f "$WORK/decoy.words_a" "$WORK/decoy.words_b" "$WORK/decoy.gate"
+  watch_verify "${URLS[0]}" "${CSRFS[0]}" "$WORK/decoy.words_a" &
+  local d1=$!
+  watch_verify "${URLS[1]}" "${CSRFS[1]}" "$WORK/decoy.words_b" &
+  local d2=$!
+  # Records rather than answers. A consent gate here means the party was ASKED to sign the
+  # substitute, which is the outcome C04 forbids — answering it would let the run complete and
+  # hide the defect behind a signature.
+  ( for _ in $(seq 1 120); do
+      if [ -n "$(curl -fsS "${URLS[1]}/api/session/status" 2>/dev/null | jget pending.fingerprint)" ]; then
+        : > "$WORK/decoy.gate"; exit 0
+      fi
+      sleep 0.25
+    done ) &
+  local d3=$!
+
+  code="$(curl -sS -X POST "${URLS[0]}/api/session/initiate" -H "X-CSRF-Token: ${CSRFS[0]}" \
+    -F "pdf=@$WORK/decoy.pdf" -F "appearance=@$WORK/sig.png" \
+    -F "params={\"fingerprint\":\"${FPS[1]}\",\"intent\":\"hop 1\"}" \
+    -F "address=$CEREMONY_HOST:${daddr##*:}" -F "transport=$transport" -F "invitation=$inv" \
+    -o "$WORK/decoy.hop.json" -w '%{http_code}')"
+  wait "$d1" 2>/dev/null; wait "$d2" 2>/dev/null; kill "$d3" 2>/dev/null; wait "$d3" 2>/dev/null
+
+  # **What this measures, stated because it is narrower than it looks.** `handleSessionInitiate`
+  # runs `checkArrival` on the SENDER's own machine before it dials, so on the green path the 409
+  # comes from instance 1 and instance 2 is never contacted. This clause therefore drives the
+  # sender's copy of the gate; the RECEIVING copy is reached only by a sender that skipped its
+  # own, which is the attacker and needs a modified binary this harness will not build.
+  #
+  # The gate assertion below is still load-bearing and not vacuous: the two copies are one
+  # function, so removing the check removes it from both, the dial proceeds, and party 2 IS asked.
+  # Probed exactly that way — it is the first thing that fires.
+  [ ! -f "$WORK/decoy.gate" ] \
+    || fail "decoy: party 2 was ASKED TO SIGN a different document carrying this ceremony's record.
+      The record is genuine, so its convener signature verifies, the deadline is real and the roster
+      hash matches — every check the gate runs except the one over the BYTES. C04's identity pin is
+      what this breaks, and DocHash is what refuses it."
+  [ "$code" != "200" ] \
+    || fail "decoy: hop 1 SUCCEEDED over a substituted document (HTTP 200)."
+  case "$(head -c 400 "$WORK/decoy.hop.json")" in
+    *"not the same document"*) : ;;
+    *) fail "decoy: the substitute was refused as $(head -c 200 "$WORK/decoy.hop.json"), which does not
+      say the BYTES are wrong. A user reading that cannot tell a substituted document from a stale
+      invitation, and the two want opposite actions." ;;
+  esac
+  # **Disarm before returning.** `interrupted_hop` does the same and for the same reason: under
+  # `--lan` the off-link counter is read after every clause, and an arm left open goes on
+  # publishing into the window that reading covers.
+  curl -sS -X POST "${URLS[1]}/api/session/disarm" -H "X-CSRF-Token: ${CSRFS[1]}" -o /dev/null || true
+  echo "decoy: a different document carrying this ceremony's record was refused on its bytes (C04)"
+}
+
 # ── P08 C01: a hop INTERRUPTED after its signature exists, and what it must not do ───────────
 #
 # **The criterion is D24's and its driver did not exist**, which is `/pending 323`(d): *"a hop
@@ -1182,7 +1333,7 @@ print(next(x['invitation'] for x in d['invites'] if x['fingerprint'].lower()=='$
     -o /dev/null -w '%{http_code}')"
   [ "$code" = "200" ] || fail "interrupt: instance 2 could not accept (HTTP $code)"
 
-  docid="$(python3 -c "import json;print(json.load(open('$WORK/int.convene.json')).get('document',{}).get('id',''))")"
+  docid="$(python3 -c "import json;print(json.load(open('$WORK/int.convene.json')).get('doc',{}).get('id',''))")"
   curl -fsS "${URLS[0]}/api/pdf?doc=$docid" -o "$WORK/int.hop0.pdf" \
     || fail "interrupt: could not fetch the convened document"
   # **The COMMIT POINT, which is `record.json` and not `document.pdf`.** `WriteMirror` writes the
@@ -1222,8 +1373,16 @@ print(next(x['invitation'] for x in d['invites'] if x['fingerprint'].lower()=='$
   # **The killer.** It watches for the party's own announcement that the durable write has
   # landed — the mirror document appearing — and kills that instant. No product cooperation, and
   # a tight loop because the window is a transfer, not a timer.
-  ( while [ ! -s "$mirror" ]; do sleep 0.002; done
-    kill -9 "${PIDS[1]}" 2>/dev/null ) &
+  # **BOUNDED, because an unbounded wait here hangs the whole run.** The first cut looped
+  # `while [ ! -s "$mirror" ]` with no ceiling, so when the hop failed before committing anything —
+  # measured: a spoken-check timeout, after the content anchor added 8.7 s to each side — the
+  # killer span forever and `wait` never returned. A harness that can hang is worse than one that
+  # fails: the assertions below say exactly what did not happen, and they cannot run until this
+  # returns. 120 s at 2 ms, which is far past any honest commit on this fixture.
+  ( for _ in $(seq 1 60000); do
+      [ -s "$mirror" ] && { kill -9 "${PIDS[1]}" 2>/dev/null; exit 0; }
+      sleep 0.002
+    done ) &
   local wk=$!
 
   code="$(curl -sS -X POST "${URLS[0]}/api/session/initiate" -H "X-CSRF-Token: ${CSRFS[0]}" \
@@ -1342,6 +1501,11 @@ print(next(x['invitation'] for x in d['invites'] if x['fingerprint'].lower()=='$
       The party disarmed the moment its first re-delivery succeeded — it answered from disk, so
       hasSigned() is false across the restart by design, and a branch reading that alone closes the
       window. That window exists for exactly this second lost writeback. /pending 334."
+  # **Disarm, because this clause's own success leaves an arm open.** /pending 334's fix keeps the
+  # window up after a disk-served re-delivery — which is the point, and is asserted two lines
+  # above — so without this the next clause's `/api/session/arm` gets a 409 from a slot this one
+  # deliberately left full. Found by running them in sequence.
+  curl -sS -X POST "${URLS[1]}/api/session/disarm" -H "X-CSRF-Token: ${CSRFS[1]}" -o /dev/null || true
   echo "interrupt: the hop resumed from disk, the party did not sign twice, the artifact is the"
   echo "           contribution it had stored before the kill byte for byte (C01), and the arm is"
   echo "           still open for a re-delivery (/pending 334)"
@@ -1449,7 +1613,7 @@ print(next(x['invitation'] for x in d['invites'] if x['fingerprint'].lower()=='$
 
   # Hops 1 and 2 SIGN. Their parties are the ones the telling is owed to.
   local docid prev
-  docid="$(python3 -c "import json;print(json.load(open('$WORK/decline.convene.json')).get('document',{}).get('id',''))")"
+  docid="$(python3 -c "import json;print(json.load(open('$WORK/decline.convene.json')).get('doc',{}).get('id',''))")"
   curl -fsS "${URLS[0]}/api/pdf?doc=$docid" -o "$WORK/decline.hop0.pdf" \
     || fail "decline: could not fetch the convened document"
   prev="$WORK/decline.hop0.pdf"
@@ -1937,7 +2101,7 @@ print(next(i['invitation'] for i in d['invites'] if i['fingerprint'].lower()=='$
     # The convened document is the baton's first state: it carries the record, and NO signatures.
     local docid rel_cid
     docid="$(python3 -c "
-import json;print(json.load(open('$WORK/relay.convene.$transport.json')).get('document',{}).get('id',''))" 2>/dev/null)"
+import json;print(json.load(open('$WORK/relay.convene.$transport.json')).get('doc',{}).get('id',''))" 2>/dev/null)"
     # The ceremony id, for the delivery round below (P08.S05g).
     rel_cid="$(python3 -c "
 import json;print(json.load(open('$WORK/relay.convene.$transport.json')).get('ceremony',''))" 2>/dev/null)"
@@ -2471,6 +2635,7 @@ PYWORDS
 
   decline_round
   interrupted_hop
+  decoy_document
 
   # ── P03's exit criterion, over EVERYTHING this run emitted ───────────────────
   #

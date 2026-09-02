@@ -145,6 +145,19 @@ func addedAfterVerdict(trailing, sawSignature bool, err error, librarySawSigners
 	return trailing || err != nil
 }
 
+// HasSignatureBlob reports whether the PDF carries a signature field with contents, independently
+// of whether any library can PARSE those contents.
+//
+// **Exported because `Verify`'s `Unsigned` is not the same question, and a caller that needs the
+// stricter one was silently getting the looser (P08.S03).** `Verify` downgrades to `Unsigned`
+// whenever `verify.Verify` returns an error — the cross-check below is reached only on the
+// `err == nil` path — so a document whose signature blob is present but which that library cannot
+// parse reads as unsigned. That is the right answer for "is there a valid signature"; it is the
+// WRONG answer for "may I compare this document's content digest against a convene-time hash",
+// where treating a signed document as unsigned produces a tampering accusation for a library
+// divergence.
+func HasSignatureBlob(pdf []byte) bool { return signatureBlobPresent(pdf) }
+
 // signatureBlobPresent reports whether the document has an AcroForm signature
 // field carrying a non-empty /Contents — i.e. a real PKCS#7 blob the verifier
 // should have been able to parse. It's the discriminator between a genuinely

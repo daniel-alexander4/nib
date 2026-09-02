@@ -623,13 +623,20 @@ func (c *ceremonyID) close() {
 // invitation's commitment against the record's and so binds this invitation to exactly ONE
 // record, covering every axis the preimage covers.
 //
-// **`CheckDocument`'s hash comparison is NOT asked, and that is measured rather than
-// conceded.** The document a counterparty is handed always carries at least the sender's
-// co-signature; that signature is visible on every production path; `ContentDigest` hashes
-// `/Annots`. Measured at this slice: the hop-1 receiver's copy verifies, its record extracts and
-// verifies, and `CheckDocument` answers *"these are not the same document"* — accusing an honest
-// convener of tampering. A gate that asked it would refuse every honest ceremony at hop 1, which
-// is the whole product. See `ceremony.CheckRecord`.
+// **`CheckDocument`'s hash comparison IS asked, and only where it is answerable (P08.S03, C04).**
+//
+// It used to say the comparison was not asked at all, and the measurement behind that is still
+// true of the case it measured: a document a counterparty is handed usually carries at least the
+// sender's co-signature, that signature is visible on every production path, `ContentDigest`
+// hashes `/Annots`, and an UNCONDITIONAL comparison therefore answers *"these are not the same
+// document"* about an honest hop — accusing a convener of tampering.
+//
+// What that reasoning missed is the arrival with NO signature on it at all: the first signing
+// party of a ceremony whose convener carries rather than signs. There the digest is comparable and
+// it is the only content anchor that party has, and without it a different document carrying the
+// same valid record was admitted. So the comparison runs when there is no signature blob, and is
+// skipped the moment there is one. See the call site at the bottom of `checkArrival`, and
+// `ceremony.CheckRecord` for the split.
 //
 // # Why it is here and not in the confirmer
 //
@@ -677,6 +684,79 @@ func (c *ceremonyID) checkArrival(pdf []byte, now time.Time) error {
 			return fmt.Errorf("%w: %w", p2p.ErrRosterMismatch, err)
 		}
 		return err
+	}
+	// **The document is anchored to its own record, in the one window where that is answerable
+	// (P08.S03, C04's decoy clause).**
+	//
+	// Everything above this line passes for a DIFFERENT document carrying the same valid record:
+	// `CheckRecord` asks whether a record is there and verifies, `recordOutlivesBudget` asks about
+	// the clock, and `MatchesRecord` binds the invitation to the roster commitment — none of them
+	// compares the BYTES. So a convener able to present two documents under one ceremony id had
+	// each party signing something different while all of them claimed one proceeding, which is
+	// the substitution D29's identity pin exists to refuse and what `DocHash` was written for:
+	// *"Every party agrees to the same bytes and a resumed hop can prove it."*
+	//
+	// **`DocHash` had no reader that compared it against the document's bytes.** It is read on the
+	// signing path — `rosterPreimage` digests it, so `MatchesRecord` covers it transitively — but
+	// that proves two parties hold the same RECORD, never that the record describes the document
+	// in hand. The only byte comparison lived in `CheckDocument`, which had zero production
+	// callers. This is its first.
+	//
+	// **LAST, after the older gates, because it is the newest one.** `AdmitContribution` states
+	// the same precedence for itself — a new gate yields to the invariants it joins — and the
+	// order is not cosmetic: a document that is both from another ceremony AND content-mismatched
+	// must be refused as the roster mismatch, which carries a wire code, rather than as a content
+	// mismatch, which is the more specific-sounding and less actionable of the two.
+	//
+	// **Gated on `HasSignatureBlob` and not on `Verify(...).State == Unsigned`**, which is a
+	// different question. `Verify` downgrades to `Unsigned` on any parse error from its library,
+	// so a signed document that library cannot read would take this branch and be refused as
+	// tampered — a false accusation for a library divergence. What this needs is "no signature at
+	// all", which is what the blob check answers.
+	//
+	// **The window is narrow and the limit is measured rather than chosen.** `ContentDigest`
+	// covers each page's `/Annots`, a visible signature adds a widget annot, and the production
+	// path signs visibly — so from the first signature onward a document in flight legitimately
+	// does not hash to its record, and an unconditional check here would refuse every honest hop
+	// from 2 on. `ReadMirror` states the same limit for the same reason and takes the same shape.
+	//
+	// **What it does NOT close is recorded rather than implied.** `DocumentHash`'s own doc says
+	// later parties get *"a byte-prefix relationship rather than a recomputable commitment"*, and
+	// that the mechanism intended to replace it — byte prefix plus `AddedAfter == false` — *"was
+	// measured at this slice's grill to PASS on a document whose first page had been blacked out
+	// by the last signer"*. Nothing on the signing path reads `AddedAfter` at all. So from the
+	// first signature onward a party still has no content anchor, and `/pending 358` carries it.
+	//
+	// **MEASURED, and it is why this is `DocumentHash` and not `CheckDocument`.** On a 4.4 MB
+	// document: `CheckDocument` 13.8 s, `DocumentHash` alone 8.7 s, `CheckRecord` alone 4.8 s — and
+	// `CheckRecord` has already run at the top of this function, so `CheckDocument` re-verified the
+	// convener signature for nothing. Comparing the digest against the `rec` already in hand is the
+	// same check for one parse.
+	//
+	// **8.7 s is still a lot and it is on a request path**, which `CLAUDE.md` reserves for Dan.
+	// It is bounded — the unsigned window is hop 1 only, so once per ceremony per side, and it
+	// scales with the document — and it is parked rather than assumed: see `/pending 359`.
+	if !sign.HasSignatureBlob(pdf) {
+		got, herr := ceremony.DocumentHash(pdf)
+		switch {
+		case herr != nil:
+			// Named, because `DocumentHash` fails on an unreadable page and that reaches a user at
+			// an arrival gate as a bare `page 3 is unreadable`. `ReadMirror` wraps the identical
+			// case for the same reason.
+			return fmt.Errorf("%w: this document's content could not be hashed, so it cannot be "+
+				"checked against the record it carries: %v", p2p.ErrDocumentSubstituted, herr)
+		case got != rec.DocHash:
+			derr := fmt.Errorf("the document does not match the ceremony record: it hashes to %s "+
+				"and the record was written for %s — these are not the same document",
+				ceremony.ShortHash(got), ceremony.ShortHash(rec.DocHash))
+			// **Wrapped onto a p2p sentinel so it can carry a wire code**, exactly as the roster
+			// mismatch above is and for the same reason. Without it `refusalCode` returns 0,
+			// nothing is written, and the initiator sees a bare EOF rendered as a 502 with a D19
+			// NETWORK cause — inviting the retry a refusal must never invite. And this refusal
+			// crosses the wire precisely when the sender skipped its own copy of this gate, which
+			// is the attacker case this check exists for.
+			return fmt.Errorf("%w: %w", p2p.ErrDocumentSubstituted, derr)
+		}
 	}
 	return nil
 }

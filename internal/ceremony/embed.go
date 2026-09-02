@@ -46,6 +46,11 @@ var ErrNoRecord = errors.New("document carries no ceremony record")
 // never comparable — nobody has done anything wrong, and the fix is an update.
 var ErrDigestVersion = errors.New("this ceremony's document hash was computed under a different version of Nib")
 
+// ShortHash renders a digest for a human sentence — the same abbreviation `CheckDocument` and
+// `ReadMirror` already use, exported so a caller outside this package can produce the identical
+// sentence rather than a second spelling of it.
+func ShortHash(h string) string { return short(h) }
+
 // DocumentHash is the value a record's DocHash field holds, and the one a later party
 // recomputes to check it.
 //
@@ -190,7 +195,12 @@ func CheckDocument(pdf []byte, now time.Time) (Record, error) {
 //
 // # Why this split exists (P07.S02b)
 //
-// **A receiving party can never pass `CheckDocument`, at any hop — measured, not argued.** The
+// **A receiving party can never pass `CheckDocument` on an arrival that carries a signature —
+// measured, not argued.** It said "at any hop" until P08.S03, and the exception is the case C04
+// turned on: the first signing party of a ceremony whose convener CARRIES receives a document with
+// no signature on it, and there the comparison is both answerable and the only content anchor that
+// party has. `internal/server`'s arrival gate now asks it exactly there. The measurement below is
+// unchanged and is why it is asked nowhere else. The
 // document handed to a counterparty always carries at least the sender's co-signature, that
 // signature is VISIBLE on every production path (`buildCoSigned` supplies appearance bytes), a
 // visible signature adds a widget annotation, and `ContentDigest` hashes `/Annots`. Measured at
@@ -205,7 +215,8 @@ func CheckDocument(pdf []byte, now time.Time) (Record, error) {
 // above says so in those words; this function is that sentence made callable.
 //
 // `CheckDocument` keeps the hash comparison and keeps its callers — the convener checking their
-// own bytes, and the tests that measure the boundary.
+// own bytes, the arrival gate on a signature-free arrival (P08.S03, its first production caller
+// outside the convener), and the tests that measure the boundary.
 func CheckRecord(pdf []byte, now time.Time) (Record, error) {
 	r, err := Extract(pdf)
 	if err != nil {

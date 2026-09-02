@@ -1,0 +1,11 @@
+--- a/internal/server/ceremonyid.go
++++ b/internal/server/ceremonyid.go
+@@ -736,7 +736,7 @@
+ 	// **8.7 s is still a lot and it is on a request path**, which `CLAUDE.md` reserves for Dan.
+ 	// It is bounded — the unsigned window is hop 1 only, so once per ceremony per side, and it
+ 	// scales with the document — and it is parked rather than assumed: see `/pending 359`.
+-	if !sign.HasSignatureBlob(pdf) {
++	if true {
+ 		got, herr := ceremony.DocumentHash(pdf)
+ 		switch {
+ 		case herr != nil:

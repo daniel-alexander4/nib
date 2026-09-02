@@ -5865,7 +5865,7 @@ Acceptance:
 - **The persist sits between `coSignExchange` and the deadline reset, and outside `c.mu`.** Before the reset, so the frame still gets a full fresh `postConsentDeadline`; outside the mutex because `diagnose` takes the same one and the UI polls it every 800 ms, so an fsync inside it stalls `/api/session/status` and `/api/session/disarm`. **The peer's budget is the one that binds and it is NOT widened here** — `remoteDecisionDeadline` is `2*PeerGateWindow + postConsentDeadline`, so two full human gates leave exactly two minutes for the co-signature *and* a write-back of up to `maxFrame`. The persist spends from that. Widening it cascades into `Convene`'s reservation and C20, which is a slice rather than a task; the term is **stated in `postConsentDeadline`'s composition** and the limit is recorded rather than silently absorbed.
 - Tier: the kill/restart bullets are tier 4 with S01's verb; the ENOSPC and torn-write bullets are redproof-shaped patches at tier 1 and say so (C15).
 
-#### P08.S03 — A ceremony is loaded, not remembered *(D24, D29 identity pin, D34 gap #19; C04, C12)* *(**partly done** 2026-08-29, v1.117.243 — C12 met, the listing and its four degradation classes; C04's resume/decoy half NOT built and named below)*
+#### P08.S03 — A ceremony is loaded, not remembered *(D24, D29 identity pin, D34 gap #19; C04, C12)* *(**done** in two parts — first 2026-08-29, v1.117.243: C12 met, the listing and its four degradation classes, with C04's resume/decoy half NOT built and named below)* *(C04's half **done** 2026-09-02, v1.117.328 — the decoy clause and the type rule met; the divergence bullet re-pointed to P06, which builds the open tab it compares against. **The gate never looked at the bytes**: `checkArrival` asked whether a record was present and verified, whether the deadline had passed and whether the roster commitment matched — all three pass for a DIFFERENT document carrying the same valid record. `DocHash` was written for exactly this and the only thing comparing it against a document was `CheckDocument`, which had ZERO production callers. It has one now, in the window where the digest is answerable — measured: `ContentDigest` covers `/Annots`, a visible signature adds a widget annot, so an unconditional check refuses every honest hop from 2 on. **The review corrected three claims in this slice's own prose**: `DocHash` does have a signing-path reader (`rosterPreimage` digests it, so `MatchesRecord` covers it transitively — just not against the bytes); the anchor must run BELOW `MatchesRecord` or a doubly-wrong document loses the older refusal's wire code; and *"outside this window the signature chain is the anchor"* is false — `DocumentHash`'s own doc records byte-prefix plus `AddedAfter` measured PASSING on a document whose first page had been blacked out, and nothing on the signing path reads `AddedAfter`. `/pending 358` carries the residue. **The refusal had no wire code** and reached the initiator as bare EOF — the defect codes 13/14 were minted to close, on the path that only an attacker takes; code 15 is frozen. **And `/pending 352`'s guard, four commits old, caught the author** gluing two doc blocks together in `internal/sign`. 3 red proofs registered; tier 4 gains a decoy clause.)*
 Scope: give the mirror a reader — and match on something that exists. The resume key is the ceremony
 id read out of the document's **own convener-signed record** (`CheckRecord` / `ProceedingOf`), with
 `docHash` retained only in the unsigned window where it is answerable; a decoy then needs a forged
@@ -5894,6 +5894,48 @@ Acceptance:
 - **Nothing persists a document id**, as a type rule over `ceremony.Record`'s field set. **NOT BUILT**, with C04.
 - **A resumed ceremony whose mirror bytes differ from the open tab's reports both and resolves neither** (D29's divergence clause). **NOT BUILT**, with C04.
 - Tier: 1 for the classes and the listing's own rules; the resume half is tier 4's when it exists (C15).
+
+**GRILL 2026-09-02, resuming C04's half. The decoy is refusable in exactly one window, and the
+function that refuses it has no callers.**
+
+- **(a) `checkArrival` never compares the document's CONTENT to anything.** It runs
+  `CheckRecord` (is there a record, does the convener signature verify), `recordOutlivesBudget`
+  (the deadline) and `inv.MatchesRecord` (the roster commitment) — and all three pass for a
+  DIFFERENT document carrying the same valid record, because the record is identical and
+  `MatchesRecord` is about the roster hash rather than the bytes. That is the restated decoy the
+  plan-review pin asks for, unrefused.
+- **(b) `DocHash` exists for exactly this and has no reader on the signing path.** Its own doc:
+  *"Every party agrees to the same bytes and a resumed hop can prove it."* Every non-test reader is
+  in `mirror.go` (the mirror's self-check) and `embed.go` (`CheckDocument`) — and **`CheckDocument`
+  has zero production callers**, which `MEMORY.md` already recorded at P07.S02b as *"unusable by
+  any receiver"*.
+- **(c) The window is narrow, and the reason is MEASURED rather than argued.** `ContentDigest`
+  covers each page's `/Annots`, a visible signature adds a widget annot, and the production path
+  signs visibly — so from the first signature onward a document in flight legitimately does not
+  hash to its record. `CheckRecord`'s own doc states the consequence: a receiving party can never
+  pass `CheckDocument` at any hop *that carries a signature*. What it does not say is that the
+  first signer of a ceremony whose convener does not sign receives an UNSIGNED document — and
+  there the check is both answerable and the only content anchor that party has.
+- **(d) Outside that window the signature chain is the anchor — for hops 2 and later, and NOT for
+  hop 1 under a SIGNING convener. Corrected 2026-09-02 by testing the claim rather than restating
+  it.** At hop k the arriving document carries hops 1..k-1's signatures over its actual bytes, so a
+  decoy needs those parties' keys. That argument fails at hop 1 when `convenerSigns` is true: the
+  only signature on the document is the convener's, the convener holds its own key, and the
+  convener is precisely the party a substitution attack comes from. The first signing party after a
+  signing convener therefore still has no content anchor — the `Invitation` carries no `DocHash`
+  (`internal/ceremony/invitation.go:130-230`), so that party has nothing out of band to compare
+  against. **Filed as `/pending 358`**; closing it means putting `DocHash` in the invitation, which
+  is a format change and therefore not this slice's to take.
+- **(e) Bullet 3 (D29's divergence clause) is NOT this slice's and is re-pointed.** *"A resumed
+  ceremony whose mirror bytes differ from the open tab's"* needs an open tab — a document the user
+  has open in a panel — and P06 builds the panel. The mirror-vs-RECORD divergence already has its
+  detector (`ErrMirrorDamaged` plus S02's sidecar); mirror-vs-OPEN-DOCUMENT has no second party to
+  compare against until there is a surface holding one.
+
+Tasks:
+- T01 — the arrival gate anchors the document to its record in the window where that is answerable: an UNSIGNED arrival must hash to the record's `DocHash`, refused by name when it does not. This gives `DocHash` its first reader on the signing path and `CheckDocument` its first production caller.
+- T02 — the type rule: `ceremony.Record` persists no document id. A guard over its field set, because ADR-004's `docID` is `{Epoch, Seq}` with a per-process nonce and a persisted one would be a dangling reference by construction.
+- T03 — tier 4: a decoy document carrying a real ceremony's record, offered to the first signer, refused by name.
 
 #### P08.S04 — Between hops: the arm, and the end states as protocol facts *(D16 amendment, D28; C05, C06, C07)* *(**partly done** 2026-08-29, v1.117.248 — C05's transport parity and C07 both met; C06 PARKED on a decision)*
 Scope: three properties of the gap between hops, and one of them is a live defect rather than a gap.

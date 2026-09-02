@@ -1,11 +1,13 @@
 package server
 
 import (
+	"encoding/base64"
 	"encoding/hex"
 	"errors"
 	"net/http"
 	"nib/internal/p2p"
 	"os"
+	"reflect"
 	"regexp"
 	"strings"
 	"testing"
@@ -490,4 +492,215 @@ func TestTheArrivalGateRoutesThroughTheDeadlineDoor(t *testing.T) {
 		t.Error("checkArrival no longer verifies the record it judges — an unverified Expires is " +
 			"a number a stranger chose")
 	}
+}
+
+// TestAnUnsignedArrivalIsAnchoredToItsOwnRecord — P08.S03, C04's decoy clause.
+//
+// Everything else `checkArrival` runs passes for a DIFFERENT document carrying the same valid
+// record: `CheckRecord` asks whether a record is present and verifies, `recordOutlivesBudget` asks
+// about the clock, `MatchesRecord` binds the invitation to the roster commitment. None looks at the
+// bytes. A convener able to present two documents under one ceremony id therefore had each party
+// signing something different while all of them claimed one proceeding.
+//
+// `DocHash` exists for exactly this — *"Every party agrees to the same bytes and a resumed hop can
+// prove it"* — and had no reader on the signing path: its only non-test readers were the mirror's
+// self-check and `CheckDocument`, which had zero production callers.
+func TestAnUnsignedArrivalIsAnchoredToItsOwnRecord(t *testing.T) {
+	cert, key, err := sign.GenerateIdentity("Convener")
+	if err != nil {
+		t.Fatal(err)
+	}
+	fpb, err := sign.Fingerprint(cert)
+	if err != nil {
+		t.Fatal(err)
+	}
+	convFP := hex.EncodeToString(fpb)
+	signer := strings.Repeat("2b", 32)
+	base, err := testpdf.Text("the lease")
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := ceremony.Convene(base, ceremony.ConveneRequest{
+		Roster: []ceremony.Party{
+			{Fingerprint: convFP, Label: "Convener", Signs: false},
+			{Fingerprint: signer, Label: "B", Signs: true},
+		},
+		Intent:         "We agree",
+		Expires:        time.Now().Add(48 * time.Hour),
+		HopBudget:      ceremonyHopBudget(),
+		DeliveryBudget: ceremonyDeliveryLegBudget(),
+	}, cert, key, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	cer := &ceremonyID{}
+	cer.inv = ceremony.Invitation{
+		Version:             ceremony.InvitationVersion,
+		ID:                  out.Record.ID,
+		Roster:              out.Record.Roster,
+		ConvenerFingerprint: convFP,
+		Intent:              out.Record.Intent,
+		RosterHash:          rosterHashHex(out.Record),
+	}
+	now := time.Now()
+
+	// STIMULUS: the genuine document passes. Without this, "the decoy is refused" is true of a
+	// gate that refuses everything, which is the vacuous green in its most convenient form.
+	if err := cer.checkArrival(out.Document, now); err != nil {
+		t.Fatalf("the convened document was refused by its own ceremony's gate: %v", err)
+	}
+	// And it really is unsigned, so the branch under test is the one that ran. A signed fixture
+	// would take the other arm and this whole test would assert nothing.
+	if st := sign.Verify(out.Document).State; st != sign.Unsigned {
+		t.Fatalf("setup: the convened document is %v, not unsigned — the anchor branch is skipped "+
+			"and the refusal below would be some other gate's", st)
+	}
+
+	// THE DECOY: a different document carrying this ceremony's record, byte for byte. The record
+	// verifies, the roster hash matches, the deadline is fine — only the bytes differ.
+	other, err := testpdf.Text("a different lease, on worse terms")
+	if err != nil {
+		t.Fatal(err)
+	}
+	decoy, err := ceremony.Embed(other, out.Record)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The decoy really does carry a record that passes the checks this gate ran BEFORE the anchor.
+	rec, rerr := ceremony.CheckRecord(decoy, now)
+	if rerr != nil {
+		t.Fatalf("setup: the decoy's record does not even check out (%v), so a refusal below would "+
+			"be about the record rather than about the bytes", rerr)
+	}
+	if err := cer.inv.MatchesRecord(rec); err != nil {
+		t.Fatalf("setup: the decoy's record does not match the invitation (%v) — the same, and the "+
+			"refusal would come from a gate that was already closed", err)
+	}
+
+	err = cer.checkArrival(decoy, now)
+	if err == nil {
+		t.Fatal("the gate ADMITTED a different document carrying this ceremony's record. Every " +
+			"other check it runs — the record's own signature, the deadline, the roster " +
+			"commitment — passes for it, because none of them looks at the bytes. A convener " +
+			"presenting two documents under one ceremony id then has each party signing " +
+			"something different while all of them claim one proceeding, which is the " +
+			"substitution D29's identity pin exists to refuse.")
+	}
+	if !strings.Contains(err.Error(), "not the same document") {
+		t.Errorf("the decoy was refused as %q, which does not say the bytes are wrong — a user "+
+			"reading it cannot tell a substituted document from a stale invitation", err)
+	}
+
+	// **The other arm, and it is the one a fix here breaks (probed: without it, making the anchor
+	// unconditional left this whole test green).** `ContentDigest` covers each page's `/Annots`
+	// and a visible signature adds a widget annot, so from the first signature onward an honest
+	// document legitimately does NOT hash to its record. An unconditional anchor would refuse
+	// every hop from 2 on — which is the resumption case the ceremony exists for — so the gate
+	// must let a SIGNED arrival past this check and lean on the signature chain instead.
+	place, perr := p2p.NextPlacement(out.Document)
+	if perr != nil {
+		t.Fatal(perr)
+	}
+	sCert, sKey, serr := sign.GenerateIdentity("B")
+	if serr != nil {
+		t.Fatal(serr)
+	}
+	// **Appearance bytes, because an INVISIBLE signature does not move the digest.** Probed: with
+	// `nil` here the contributed document still hashed to its record, so this arm could not tell a
+	// conditional anchor from an unconditional one. The measured claim is specifically about a
+	// VISIBLE signature adding a widget annot — and the production path signs visibly, which is
+	// what makes the limit real rather than theoretical.
+	signed, cerr := p2p.Contribute(out.Document, sCert, sKey,
+		p2p.Attestation{Signer: "B", When: now}, onePixelPNG(t), place)
+	if cerr != nil {
+		t.Fatal(cerr)
+	}
+	// STIMULUS: the fixture really is signed, and it really does hash to something else — so a
+	// pass below is the guard being conditional rather than the digest happening to agree.
+	if st := sign.Verify(signed).State; st == sign.Unsigned {
+		t.Fatal("setup: the contributed document still reads as unsigned, so this arm exercises " +
+			"the same branch as the one above")
+	}
+	if _, derr := ceremony.CheckDocument(signed, now); derr == nil {
+		t.Fatal("setup: the signed document still hashes to its record, so an unconditional anchor " +
+			"would pass it and this arm could not tell the two shapes apart")
+	}
+	// **A hard failure on ANY error, not just the content one.** This read
+	// `err != nil && strings.Contains(...)` and so tolerated every other refusal — a future change
+	// that made this arm fail on the deadline or the roster would have left it green while its own
+	// message claimed the gate "must let a SIGNED arrival past". Nothing in the fixture justifies
+	// any error here.
+	if err := cer.checkArrival(signed, now); err != nil {
+		t.Errorf("the gate refused a SIGNED arrival: %v. A visible signature changes the content "+
+			"digest by design, so an unconditional anchor refuses every honest hop from 2 on — "+
+			"the resumption case the mirror and the ceremony both exist for.", err)
+	}
+}
+
+// TestTheCeremonyRecordPersistsNoDocumentID — P08.S03, C04's type rule.
+//
+// ADR-004 makes a document id `{Epoch, Seq}` where `Epoch` is a per-process nonce, so a persisted
+// one is a dangling reference by construction: the process that minted it is gone, and the same
+// `Seq` in a new process names a different document. The record is the ceremony's founding artifact
+// and outlives every process that reads it, so the rule is that it carries no such field at all —
+// a type rule rather than a check, because a check can be forgotten at a new call site and a field
+// that does not exist cannot be written.
+//
+// `DocHash` is NOT one: it is a content digest, answerable by anyone holding the bytes, and it is
+// the anchor C04's decoy clause turns on.
+func TestTheCeremonyRecordPersistsNoDocumentID(t *testing.T) {
+	rt := reflect.TypeOf(ceremony.Record{})
+	// STIMULUS: the type really has fields, so "none of them is a document id" is a fact about the
+	// record rather than about a reflection call that found nothing.
+	if rt.NumField() < 5 {
+		t.Fatalf("ceremony.Record has %d field(s) — this guard is reading the wrong type", rt.NumField())
+	}
+	// **A WHITELIST, not a banned-name list, and the difference is the whole rule.** A ban is
+	// satisfiable by any synonym — `Origin`, `SourceDoc`, `Handle`, `Sequence` all mean the same
+	// thing and pass — so it tests spelling rather than the type. A whitelist fails when ANY field
+	// is added, which is the property: somebody has to look at a new field on the ceremony's
+	// founding artifact and say out loud that it is not a per-process handle.
+	permitted := map[string]bool{
+		"Version": true, "ID": true, "DocHash": true, "DigestVersion": true,
+		"Intent": true, "Expires": true, "Roster": true,
+		"ConvenerCert": true, "ConvenerSig": true,
+	}
+	for i := 0; i < rt.NumField(); i++ {
+		f := rt.Field(i)
+		if !permitted[f.Name] {
+			t.Errorf("ceremony.Record has grown the field %q (json %q), which this rule has not "+
+				"seen. The record is the ceremony's founding artifact and outlives every process "+
+				"that reads it, so it must carry no per-process handle: ADR-004 makes a docID "+
+				"{Epoch, Seq} with a per-process nonce, and a persisted one is a dangling "+
+				"reference the moment the process that minted it exits. If the new field is not "+
+				"one, add it here deliberately.", f.Name, f.Tag.Get("json"))
+		}
+	}
+	// And the same rule one level down: a per-party handle on `Party` is invisible to a pass over
+	// `Record`'s own fields, and `Roster []Party` carries it into the same artifact.
+	pt := reflect.TypeOf(ceremony.Party{})
+	permittedParty := map[string]bool{
+		"Fingerprint": true, "Label": true, "Signs": true, "Capacity": true,
+	}
+	for i := 0; i < pt.NumField(); i++ {
+		f := pt.Field(i)
+		if !permittedParty[f.Name] {
+			t.Errorf("ceremony.Party has grown the field %q (json %q) — the roster is inside the "+
+				"record and persists with it, so the same rule applies one level down.",
+				f.Name, f.Tag.Get("json"))
+		}
+	}
+}
+
+// onePixelPNG is the smallest appearance a visible signature can carry. Bytes rather than a file,
+// because it is scaffolding and not content — the same choice `pairrepro.sh` makes for its own.
+func onePixelPNG(t *testing.T) []byte {
+	t.Helper()
+	b, err := base64.StdEncoding.DecodeString(
+		"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return b
 }
