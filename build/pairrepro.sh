@@ -1316,8 +1316,35 @@ print(next(x['invitation'] for x in d['invites'] if x['fingerprint'].lower()=='$
     || fail "interrupt: the finished document is NOT byte-identical to the contribution the party
       had already stored before it died. It re-signed, and the artifact carries the new signature —
       which counts correctly and is a different document, which is why the criterion asks for bytes."
-  echo "interrupt: the hop resumed from disk, the party did not sign twice, and the artifact is the"
-  echo "           contribution it had stored before the kill, byte for byte (C01)"
+  # **And the arm is still up (/pending 334).** A party that answered from its STORED contribution
+  # has `hasSigned()` false — a restart empties the in-memory cache by design — and both
+  # clean-completion branches used to read that alone and return, so the arm tore down at the
+  # moment it succeeded. The re-delivery window exists for a SECOND lost writeback, which would
+  # then have met a closed listener. This is the end-to-end half of `servedReDelivery`.
+  # **Driven as a SECOND re-delivery, not read off `armed`.** The first cut asserted
+  # `status.armed`, and that is vacuous here: this party also holds a DELIVERY arm (S05g arms one
+  # when a hop is mirrored), so `armed` is true whether or not the interactive window survived.
+  # Probed — removing the fix left that assertion green. What the window is FOR is a second lost
+  # writeback, so the clause drives one: the same hop, a third time, at the same address.
+  rm -f "$WORK/int.words_e" "$WORK/int.words_f"
+  watch_verify "${URLS[0]}" "${CSRFS[0]}" "$WORK/int.words_e" &
+  local w5=$!
+  watch_verify "${URLS[1]}" "${CSRFS[1]}" "$WORK/int.words_f" &
+  local w6=$!
+  code="$(curl -sS -X POST "${URLS[0]}/api/session/initiate" -H "X-CSRF-Token: ${CSRFS[0]}" \
+    -F "pdf=@$WORK/int.hop0.pdf" -F "appearance=@$WORK/sig.png" \
+    -F "params={\"fingerprint\":\"${FPS[1]}\",\"intent\":\"hop 1\"}" \
+    -F "address=$CEREMONY_HOST:${iaddr##*:}" -F "transport=$transport" -F "invitation=$inv" \
+    -o "$WORK/int.hop1c.json" -w '%{http_code}')"
+  wait "$w5" 2>/dev/null; wait "$w6" 2>/dev/null
+  [ "$code" = "200" ] \
+    || fail "interrupt: a SECOND re-delivery to the resumed party returned HTTP $code: $(head -c 200 "$WORK/int.hop1c.json").
+      The party disarmed the moment its first re-delivery succeeded — it answered from disk, so
+      hasSigned() is false across the restart by design, and a branch reading that alone closes the
+      window. That window exists for exactly this second lost writeback. /pending 334."
+  echo "interrupt: the hop resumed from disk, the party did not sign twice, the artifact is the"
+  echo "           contribution it had stored before the kill byte for byte (C01), and the arm is"
+  echo "           still open for a re-delivery (/pending 334)"
 }
 
 # ── P08.S05e: a ceremony DECLINED at hop 3, and the parties who signed are told ──────────────

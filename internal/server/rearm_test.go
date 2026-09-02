@@ -1033,3 +1033,122 @@ func ceremonyOnDisk(t *testing.T) (ceremony.Record, []byte, []byte) {
 	}
 	return out.Record, inbound, stored
 }
+
+// TestADiskServedReDeliveryKeepsTheWindowOpen — /pending 334, and the narrow residue its own grill
+// left after refuting the diagnosis it was filed with.
+//
+// `hasSigned()` means "this process signed", and a restart makes it false BY DESIGN: the
+// pre-signing branch is the one that publishes candidates, and a party that has just restarted is
+// exactly the party the initiator can no longer find. So it must not be redefined — which the
+// P08.S02 deepdive proposed and this package's own comment refused, in as many words.
+//
+// What survived is that both clean-completion branches read `!hasSigned()` and return. Across a
+// restart, a party that answered from its STORED contribution therefore tore its arm down at the
+// moment it succeeded — and a SECOND lost writeback, which is the exact condition the re-delivery
+// window exists for, then met a closed listener.
+//
+// This asserts the two facts are SEPARATE and that the second one is set: after a disk-served
+// re-delivery `hasSigned()` is still false, and `servedReDelivery()` is true.
+func TestADiskServedReDeliveryKeepsTheWindowOpen(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	cert, key, err := sign.GenerateIdentity("Convener")
+	if err != nil {
+		t.Fatal(err)
+	}
+	fpb, err := sign.Fingerprint(cert)
+	if err != nil {
+		t.Fatal(err)
+	}
+	base, err := testpdf.Text("the lease")
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := ceremony.Convene(base, ceremony.ConveneRequest{
+		Roster: []ceremony.Party{
+			{Fingerprint: hex.EncodeToString(fpb), Label: "Convener", Signs: true},
+			{Fingerprint: strings.Repeat("2b", 32), Label: "B", Signs: true},
+		},
+		Intent:         "We agree",
+		Expires:        time.Now().Add(48 * time.Hour),
+		HopBudget:      ceremonyHopBudget(),
+		DeliveryBudget: ceremonyDeliveryLegBudget(),
+		ConvenerSigns:  true,
+	}, cert, key, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	inbound := out.Document
+	final := append(append([]byte{}, inbound...), []byte("\n% this hop's appended contribution\n")...)
+
+	cer := &ceremonyID{}
+	cer.inv.ID = out.Record.ID
+
+	// The mirror as a RESTARTED party finds it: written by the process that died, with nothing in
+	// memory. Going through Store would populate `reDelivery` and make this test about the
+	// in-process path, which is the one that already worked.
+	if _, err := ceremony.WriteMirror(defaultOutputDir(), out.Record, final); err != nil {
+		t.Fatalf("setup: could not write the mirror: %v", err)
+	}
+
+	// STIMULUS: nothing is in memory, so a hit below can only have come from disk — and neither
+	// fact is set before the read. Without this the assertions are true of a fresh object.
+	if cer.hasSigned() {
+		t.Fatal("setup: hasSigned() is already true with an empty in-memory cache")
+	}
+	if cer.servedReDelivery() {
+		t.Fatal("setup: servedReDelivery() is already true before anything was served")
+	}
+
+	got, err := cer.Cached(inbound)
+	if err != nil {
+		t.Fatalf("Cached: %v", err)
+	}
+	if !bytes.Equal(got, final) {
+		t.Fatalf("the disk read-through returned %d bytes, want the stored contribution's %d",
+			len(got), len(final))
+	}
+
+	// The two facts, and they must not collapse into one.
+	if cer.hasSigned() {
+		t.Error("hasSigned() became true after a DISK-served re-delivery. It means \"this process " +
+			"signed\", and every consumer depends on that: the pre-signing branch is the one that " +
+			"publishes candidates, and a restarted party is exactly the party the initiator can no " +
+			"longer find. Flipping it here is the fix this item was filed with and its grill refused.")
+	}
+	if !cer.servedReDelivery() {
+		t.Error("servedReDelivery() is false after the disk read-through answered. Both clean-" +
+			"completion branches then read !hasSigned() and return, so a restarted party tears its " +
+			"arm down at the moment it succeeds — and the second lost writeback the window exists " +
+			"for meets a closed listener.")
+	}
+}
+
+// TestBothCleanCompletionBranchesConsultTheReDeliverySignal — the twin half, because the flag being
+// SET is worth nothing if a branch does not read it.
+//
+// There are two, in two functions — `runSession`'s TCP arm and `runCeremonyReceive`'s QUIC one —
+// and this package has been burned by exactly that count before: the bootstrap's "two eager sites"
+// were three, and `answerHopSeekers` reached one arm and not the other. A source scan, because
+// reaching either branch needs a real session.
+func TestBothCleanCompletionBranchesConsultTheReDeliverySignal(t *testing.T) {
+	src, err := os.ReadFile("session.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	code := stripLineComments(string(src))
+	signed := strings.Count(code, "hasSigned()")
+	served := strings.Count(code, "servedReDelivery()")
+	// STIMULUS: both names really occur, so a zero below is a fact about the pairing rather than
+	// about a scan that read the wrong file.
+	if signed == 0 {
+		t.Fatal("session.go contains no hasSigned() call at all — this guard is reading the wrong file")
+	}
+	if served < 2 {
+		t.Errorf("servedReDelivery() is consulted at %d site(s), want at least 2 — the clean-"+
+			"completion branch exists in BOTH runSession and runCeremonyReceive, and a fix wired "+
+			"only where it was noticed leaves the other transport tearing the arm down across a "+
+			"restart with nothing failing to say so.", served)
+	}
+}
