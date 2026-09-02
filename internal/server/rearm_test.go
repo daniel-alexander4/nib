@@ -1152,3 +1152,43 @@ func TestBothCleanCompletionBranchesConsultTheReDeliverySignal(t *testing.T) {
 			"restart with nothing failing to say so.", served)
 	}
 }
+
+// TestBothFeedDriversQuiesceTheirFeedBeforeReturning — /pending 355, and it is ADR-009's shape over
+// a lifecycle rule rather than a validation one.
+//
+// `feedCeremonyRace` hands back a `*sync.WaitGroup` because its goroutines outlive the call:
+// `feedCandidates` writes the ceremony's candidate gate, which is NOT concurrent-safe, and the
+// publish goroutine touches `cer.rz` and `cer.end`. `connect` cancels and JOINS it, and says why.
+// `raceWithRendezvous` discarded it — `in, _ :=` — so its callers' `defer cer.close()` could tear
+// down the endpoint under a live publish, which `close()`'s own doc says can take the process down.
+//
+// **A source scan, because the race needs a real DHT feed to lose.** What tier 1 can hold is that
+// neither driver drops the handle: a `_` in that position is the whole defect, and it is invisible
+// to every test that does not happen to lose the race.
+func TestBothFeedDriversQuiesceTheirFeedBeforeReturning(t *testing.T) {
+	src, err := os.ReadFile("ceremonynet.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	code := stripLineComments(string(src))
+
+	calls := strings.Count(code, "s.feedCeremonyRace(")
+	// STIMULUS: the name really occurs, so the counts below are facts about the drivers rather
+	// than about a scan reading the wrong file.
+	if calls < 2 {
+		t.Fatalf("found %d call(s) to feedCeremonyRace, want at least 2 — this guard is reading "+
+			"the wrong file, and a clean result from a scan that found nothing means nothing", calls)
+	}
+	if n := strings.Count(code, ", _ := s.feedCeremonyRace("); n != 0 {
+		t.Errorf("%d driver(s) DISCARD feedCeremonyRace's WaitGroup. Its goroutines outlive the "+
+			"call — feedCandidates writes the candidate gate, which is not concurrent-safe, and "+
+			"the publish goroutine touches cer.rz and cer.end — so a caller that returns into "+
+			"`defer cer.close()` can tear the endpoint down underneath a live publish.", n)
+	}
+	waits := strings.Count(code, "Wait()")
+	if waits < calls {
+		t.Errorf("feedCeremonyRace has %d driver(s) and ceremonynet.go contains %d Wait() call(s); "+
+			"each driver must cancel AND join before it returns, which is the rule connect states "+
+			"and raceWithRendezvous did not follow", calls, waits)
+	}
+}

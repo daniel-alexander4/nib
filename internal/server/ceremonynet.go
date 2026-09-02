@@ -508,11 +508,25 @@ func (s *Server) raceWithRendezvous(cer *ceremonyID, cands []candidate, cert, ke
 		}) // no ceremony: fresh sockets
 	}
 
-	in, _ := s.feedCeremonyRace(ctx, cer, cands, peerFP, label, name)
+	// **The feed is cancelled AND JOINED before this returns (/pending 355).** It used to discard
+	// the WaitGroup — `in, _ :=` — where `connect`, the sibling that drives the same feed, cancels
+	// and waits, and says why: `feedCandidates` calls `cer.gate.Accept`, which is not
+	// concurrent-safe, so the writer must be quiesced before anything else touches the gate.
+	//
+	// Here the hazard is a step worse than a gate race, because both callers own the ceremony's
+	// lifetime and end it on return. `deliverToParty`'s `defer cer.close()` fires the moment this
+	// function returns, and `close()`'s own doc says tearing down `rz`/`end` under a live publish
+	// can take the process with it — so the discarded WaitGroup was the difference between a
+	// bounded wait and a use-after-close. One rule, both doors.
+	feedCtx, feedCancel := context.WithCancel(ctx)
+	in, feedWG := s.feedCeremonyRace(feedCtx, cer, cands, peerFP, label, name)
 	// The ceremony QUIC dial goes out the shared endpoint (S08, caveat 7).
-	return raceCandidates(ctx, in, func(ctx context.Context, c candidate) (*p2p.Conn, error) {
+	conn, err := raceCandidates(ctx, in, func(ctx context.Context, c candidate) (*p2p.Conn, error) {
 		return dialPeerWithin(ctx, c.Transport, c.Addr, cert, key, peerFP, lanDialTimeout, cer.end)
 	})
+	feedCancel()
+	feedWG.Wait()
+	return conn, err
 }
 
 // feedCeremonyRace builds the ceremony's candidate stream on the caller's ctx: the fixed
