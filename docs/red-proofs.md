@@ -1003,6 +1003,14 @@ address family. The UDP probe beside it proved the socket was *reachable*, never
 *shared* — and the test's own comment said the probe was there to stop exactly this, so the
 awareness was present and aimed one step short.
 
+**A row added at P08.S05c (2026-09-01, v1.117.314): `verify-busy-spends-the-arm`.**
+`sv.saw.mark()` as `ConfirmVerification`'s first statement, ahead of the `setVerify` that discovers
+the seat is taken — so a gate refused with `errVerifyBusy` reported its arm spent for a check it
+never displayed. It earns a row because the defect moves in the direction that *looks* defensive:
+marking early reads as caution, and the whole property is that it is not. **`errVerifyBusy` had no
+test of any kind before this slice** — the incumbent-wins rule shipped with its reasoning in a doc
+comment and nothing exercising it, which is why one line could sit in front of it unnoticed.
+
 **Two rows were RE-SITED at P08.S05f (2026-09-01, v1.117.313), and neither defect changed.**
 `bootstrap-has-a-second-door` inserted its second `Bootstrap` caller inside `startArmedRendezvous`,
 which that slice deleted as dead; it now inserts into `publishCandidates`, one of the two DHT verbs

@@ -1317,6 +1317,65 @@ func TestASecondSpokenCheckCannotDisplaceTheOneOnScreen(t *testing.T) {
 	s.sess.clearVerifyIf(second)
 }
 
+// TestARefusedSpokenCheckDoesNotSpendTheArm — P08.S05c, and the whole of it is an ORDER.
+//
+// `ConfirmVerification` opened with `sv.saw.mark()` and only then asked `setVerify` for the slot,
+// so a gate refused with `errVerifyBusy` had already spent the arm it was never shown for.
+// `reached`'s own doc says what the mark means — *"a connection put something in front of the local
+// user"* — and in the refused case nothing was put in front of anyone: the goroutine returns an
+// error, `serveOneSession` reads `saw.v.Load()` as *this connection reached someone*, and the arm
+// is consumed by a session that displayed nothing.
+//
+// **It matters now because S05c makes two arms coexist.** With one arm the refusal could only come
+// from the user's own second gate; with a delivery arm beside an interactive one, a background
+// session can lose the seat and silently burn an arm nobody watched.
+//
+// **`errVerifyBusy` had no test of any kind before this** — the incumbent-wins rule shipped with
+// its reasoning in a doc comment and nothing exercising it. The refusal is asserted here by
+// identity, not by message text.
+func TestARefusedSpokenCheckDoesNotSpendTheArm(t *testing.T) {
+	_, s := startServerWith(t)
+
+	// The incumbent holds the seat. Parked directly rather than through a session, because the
+	// subject is what the SECOND caller does when the seat is taken.
+	first := &pendingVerify{words: "one two three four", resp: make(chan bool, 1)}
+	if !s.sess.setVerify(first) {
+		t.Fatal("setup: the first gate was refused with nothing pending")
+	}
+	t.Cleanup(func() { s.sess.clearVerifyIf(first) })
+	// STIMULUS: the seat is genuinely occupied. Without this the refusal below is indistinguishable
+	// from a setVerify that refuses everything, and the arm would go unspent for the wrong reason.
+	if pending := s.sess.currentVerify(); pending != first {
+		t.Fatalf("setup: the parked gate is not the first one (%+v)", pending)
+	}
+
+	var saw reached
+	// STIMULUS: the flag starts false, or "still false" below is true of a mark that never ran.
+	if saw.v.Load() {
+		t.Fatal("setup: the arm was already marked before any gate was attempted")
+	}
+
+	ok, err := sessionVerifier{s, &saw}.ConfirmVerification("five six seven eight")
+	if !errors.Is(err, errVerifyBusy) {
+		t.Fatalf("a second gate with the seat taken must be refused with errVerifyBusy, got ok=%v err=%v", ok, err)
+	}
+	if ok {
+		t.Error("a refused gate reported the words CONFIRMED, which is the fail-open direction")
+	}
+
+	// The assertion. Two separate conditions, deliberately not folded: the arm must be unspent,
+	// AND the incumbent must still hold the seat. A fix that cleared the seat on refusal would
+	// satisfy the first and break the second.
+	if saw.v.Load() {
+		t.Error("a spoken check refused with errVerifyBusy SPENT the arm — nothing was put in " +
+			"front of the user, so `reached` must stay false and the session must be able to " +
+			"retry rather than reporting itself already used")
+	}
+	if pending := s.sess.currentVerify(); pending != first {
+		t.Errorf("the refused gate disturbed the incumbent (%+v); the seat must be untouched", pending)
+	}
+}
+
 // TestTheSessionBudgetsCoverBothPeerGates — the coupling asserted from the side that can see both.
 //
 // `internal/p2p` sizes its remote-decision budget from `p2p.PeerGateWindow`, and this package
