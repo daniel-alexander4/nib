@@ -48,25 +48,29 @@ type ceremonyID struct {
 	punch *punchBudget
 
 	// end is the ONE socket the DHT and the armed listener share, and rz is the rendezvous
-	// server on its DHT view. Both nil on the TCP transport — see openRendezvous.
+	// server on its DHT view. Both nil on the TCP transport: only `setupSharedEndpoint` and
+	// `dialerCeremony` set them, and `handleSessionArm` reaches the first for a QUIC ceremony
+	// only. See the TCP-ceremony limit stated at that route's plain-listener door.
 	end *p2p.SharedEndpoint
 	rz  *rendezvous.Server
-	// mu guards stopNet and portMap, both written by the armed background goroutine and read by
-	// close() on the teardown goroutine. **stopNet was a live data race before S07** (grill C5):
-	// written at `startArmedRendezvous`'s third statement, read by close(), with no lock and
-	// nothing but a tight window keeping -race quiet.
+	// mu guards every field a background goroutine writes and another goroutine reads:
+	// `punch`, `portMap`, `closed`, `reDelivery`, `self`, `mapUnroutable` and `mapRefused`.
+	//
+	// **The doc used to justify the lock ENTIRELY by `stopNet`** — *"written at
+	// `startArmedRendezvous`'s third statement, read by close(), with no lock and nothing but a
+	// tight window keeping -race quiet"* — and P08.S05f deleted both that field and that
+	// function. Rewritten rather than trimmed, because a mutex whose stated reason no longer
+	// has a writer reads as a lock nobody needs, and the contention it actually carries is
+	// real: `setPortMap` and `setSelf` run on the publish path while `close()` and
+	// `diagnose()` read on others.
 	mu sync.Mutex
-	// stopNet cancels the arm's background rendezvous work — bootstrap, the LAN wait, the
-	// publish. Set by startArmedRendezvous and called by close, so the goroutine ends with
-	// the session rather than outliving it. Guarded by mu.
-	stopNet context.CancelFunc
 	// portMap is the router port-mapping lease for this arm (S07): obtained at publish,
 	// refreshed while armed, deleted by close(). nil when the tier obtained nothing. Guarded
 	// by mu.
 	portMap *portMapper
-	// closed guards the narrow window where close() runs BEFORE the arm goroutine has stored
-	// stopNet/portMap (diff-grill #4): a setter arriving after close acts immediately rather
-	// than storing state nothing will ever tear down.
+	// closed guards the narrow window where close() runs BEFORE the publish path has stored
+	// portMap (diff-grill #4): a setter arriving after close acts immediately rather than
+	// storing state nothing will ever tear down.
 	closed bool
 	// reDelivery caches THIS hop's co-signed output so a reconnect after the signature but before
 	// the initiator read it re-delivers the SAME bytes instead of signing again (P05.S10, D18/D24).
@@ -146,6 +150,22 @@ func (c *ceremonyID) noteLinkSighting(at time.Time) {
 // holdDHT blocks until this ceremony may reach the public DHT, and reports whether it may at all
 // (false means the ceremony ended first).
 //
+// # Why there is a hold at all (criterion 10's 2026-08-21 amendment)
+//
+// D8 races every tier at once, and for the DIAL that is right. For the PUBLISH it is a pure cost
+// in the case D8's own "why LAN first" calls the most common: two people in the same office,
+// where the LAN tier was always going to win. Publishing anyway hands ~8 storing nodes and dozens
+// of traversal nodes both parties' office IP, their permanent SPKI, and — the part that is worse
+// than the IP — a target only these two ever touch, so a node holding it can see that one other
+// specific address came looking. For a small practice, who is signing with whom is frequently the
+// privileged fact.
+//
+// **This paragraph was the only copy of that argument in the tree, and it lived inside
+// `startArmedRendezvous`, which P08.S05f deleted as dead.** `publishLoop` states the RULE the
+// suppression enforces; this states why anyone would want it. Moved rather than dropped: the
+// wait is a privacy decision, and a wait with no recorded reason is the first thing a later
+// slice tunes away.
+//
 // **Why a renewable hold rather than a duration.** S05d gave the DIAL side a decisive answer —
 // `peerAddresses` browses before the race, so a LAN candidate is the link having already answered.
 // The arm has no such one-shot answer: it is waiting, and in a relay it may wait through seven
@@ -222,6 +242,12 @@ func waitCtx(ctx context.Context, d time.Duration) bool {
 // ceremony object at all: the run that was supposed to prove the criterion was the one shape that
 // could not reach the defect.
 //
+// **Two of those three sites remain (P08.S05f).** `startArmedRendezvous` was deleted as dead —
+// its own guard could never be false, because the TCP arm reached it with no rendezvous open and
+// the QUIC arm never reached it at all. The count above is kept in the past tense it was written
+// in: it is the record of what was measured, and this door's rule does not depend on how many
+// sites it replaced.
+//
 // Lazy alone would not have been enough, and that is the other half of the fix. `publishLoop`
 // already waits `browseWindow` before its first publish and says why; `feedCandidates` did not
 // wait before its first Fetch. So a bootstrap deferred to first use, with an unwindowed fetch
@@ -250,18 +276,6 @@ func (c *ceremonyID) ensureBootstrapped(ctx context.Context) error {
 		c.bootstrapDone.Store(true)
 	})
 	return c.bootstrapErr
-}
-
-// setStopNet and setPortMap store the two shared fields under the lock.
-func (c *ceremonyID) setStopNet(cancel context.CancelFunc) {
-	c.mu.Lock()
-	if c.closed {
-		c.mu.Unlock()
-		cancel() // close() already ran; do not store a canceller nothing will call
-		return
-	}
-	c.stopNet = cancel
-	c.mu.Unlock()
 }
 
 // reDeliverKey hashes the inbound document — the idempotency key for re-delivery (P05.S10).
@@ -506,19 +520,20 @@ func (c *ceremonyID) setPortMap(pm *portMapper) {
 // directory is 0700 and is where the vault already lives.
 func nodeCacheDir(configDir string) string { return filepath.Join(configDir, "dht-nodes") }
 
-// openRendezvous gives this ceremony a socket the DHT and the listener share, and returns the
-// listener built on it.
-//
-// **QUIC only, and the limit is structural rather than an omission.** A TCP listener is a
-// `net.Listener` over a different IP protocol, and a NAT keeps separate mapping tables per
-// protocol — which is exactly why D15 requires both UDP and TCP to be mapped when both are
-// offered. So on TCP the listener binds its own socket and this returns no endpoint: the
-// ceremony still runs, and caveat 7's clause is simply not satisfied for that transport.
-// Stated here rather than discovered at S06, the slice that first asks a router for a mapping.
 // setupSharedEndpoint opens the ceremony's shared QUIC socket and its rendezvous WITHOUT a
 // listener (P05.S09): the symmetric-racing coordinator owns the single handshaked listener, and a
-// transport permits only one. It is openRendezvous's QUIC branch minus the QUICListenOn — the arm
-// and the dialer now set the endpoint up the same way, and connect arms the listener on top.
+// transport permits only one. `connect` arms the listener on top, so the arm and the dialer set
+// the endpoint up the same way.
+//
+// **It is the ARM side's only door to a ceremony's shared socket, and that is new (P08.S05f).**
+// There used to be a second — `openRendezvous`, whose QUIC branch did this plus `QUICListenOn` —
+// and it was unreachable: `handleSessionArm` takes the shared-endpoint path for every QUIC
+// ceremony and only ever reached `openRendezvous` on TCP, where it returned before opening
+// anything. It is deleted rather than left as an alternative spelling of this function (ADR-009).
+//
+// The DIAL side is NOT this door: `dialerCeremony` opens its own endpoint inline with the same
+// three calls. Said rather than implied, because "the only door" would otherwise read as
+// repo-wide and be false at the first grep — two production sites call `NewSharedEndpoint`.
 func (c *ceremonyID) setupSharedEndpoint(bind, configDir string) error {
 	end, err := p2p.NewSharedEndpoint(bind)
 	if err != nil {
@@ -533,34 +548,6 @@ func (c *ceremonyID) setupSharedEndpoint(bind, configDir string) error {
 	return nil
 }
 
-func (c *ceremonyID) openRendezvous(transport, bind, configDir string, cert, key, peerFP []byte) (p2p.Listener, error) {
-	if transport != transportQUIC {
-		ln, err := listenPeer(transport, bind, cert, key, peerFP)
-		return ln, err
-	}
-	end, err := p2p.NewSharedEndpoint(bind)
-	if err != nil {
-		return nil, err
-	}
-	rz, err := rendezvous.Open(end.DHT(), nodeCacheDir(configDir))
-	if err != nil {
-		end.Close()
-		return nil, err
-	}
-	ln, err := p2p.QUICListenOn(end, cert, key, peerFP)
-	if err != nil {
-		// Teardown order matters even on the failure path: the rendezvous server first,
-		// then the socket. Closing the mux while the DHT still reads its view makes that
-		// read return net.ErrClosed, which anacrolix/dht turns into a panic on a goroutine
-		// nothing of ours is on.
-		rz.Close()
-		end.Close()
-		return nil, err
-	}
-	c.end, c.rz = end, rz
-	return ln, nil
-}
-
 // close tears the ceremony's network down IN ORDER, and the order is the whole of it.
 //
 // rendezvous first, then the socket. Three of the six plausible orderings panic the process:
@@ -572,7 +559,6 @@ func (c *ceremonyID) close() {
 	}
 	c.mu.Lock()
 	c.closed = true
-	stop := c.stopNet
 	mapper := c.portMap
 	// Drop the signed outputs with the ceremony. **The parenthetical this line used to carry —
 	// "D6: no signed bytes at rest" — was false of the system and is corrected here (2026-08-29,
@@ -583,14 +569,9 @@ func (c *ceremonyID) close() {
 	// question, and that prune has no caller yet (see `ceremony.RemoveMirror`).
 	c.reDelivery = nil
 	c.mu.Unlock()
-	if stop != nil {
-		// Cancel the background work FIRST, so Close's own join has something finite to
-		// wait for rather than a publish still holding its 45 s budget.
-		stop()
-	}
 	// The mapping is released before the sockets close. Its delete opens its OWN socket to the
 	// gateway (portmap.Client.Unmap dials fresh) on a FRESH context (grill C2), so it neither
-	// needs c.end nor is cancelled by the stop() above; it joins the refresh goroutine first so
+	// needs c.end nor rides any ctx this function cancels; it joins the refresh goroutine first so
 	// nothing re-creates the mapping after the delete (grill C3).
 	if mapper != nil {
 		mapper.close()

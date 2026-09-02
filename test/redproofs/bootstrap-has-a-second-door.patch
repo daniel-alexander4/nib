@@ -1,12 +1,10 @@
-diff --git a/internal/server/ceremonynet.go b/internal/server/ceremonynet.go
-index e9ec57e..26063f4 100644
 --- a/internal/server/ceremonynet.go
 +++ b/internal/server/ceremonynet.go
-@@ -423,6 +423,7 @@ func (s *Server) startArmedRendezvous(cer *ceremonyID, transport string, inbound
- 		// are untouched, D19 cause 2 exists to say so to the user, and S11 renders it. It
- 		// is now reported by the publish that needed it rather than by returning here.
- 
-+		_ = cer.rz.Bootstrap(ctx)
- 		// The LAN window. A peer that reaches this listener inside it makes the publish
- 		// unnecessary, and `reached` is already the thing that records "a connection put
- 		// something in front of the local user".
+@@ -152,6 +152,7 @@
+ 	// The DHT's first contact with the network, through its one door (S05d). ProbeSelf below is
+ 	// itself off-link traffic, so this is not merely "warm the table first" — both callers reach
+ 	// here only after the LAN window, and a ceremony the link answered never arrives at all.
++	_ = c.rz.Bootstrap(armCtx)
+ 	if berr := c.ensureBootstrapped(armCtx); berr != nil {
+ 		return fmt.Errorf("could not reach the rendezvous network: %w", berr)
+ 	}

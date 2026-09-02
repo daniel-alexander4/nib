@@ -1003,6 +1003,15 @@ address family. The UDP probe beside it proved the socket was *reachable*, never
 *shared* — and the test's own comment said the probe was there to stop exactly this, so the
 awareness was present and aimed one step short.
 
+**Two rows were RE-SITED at P08.S05f (2026-09-01, v1.117.313), and neither defect changed.**
+`bootstrap-has-a-second-door` inserted its second `Bootstrap` caller inside `startArmedRendezvous`,
+which that slice deleted as dead; it now inserts into `publishCandidates`, one of the two DHT verbs
+the door actually serves — a stronger site, because the old one was in a function nothing could
+execute. `shared-socket-not-demultiplexed` keeps its patch (it is in `internal/udpmux`, untouched)
+but its PROVE test had its setup repointed from the deleted `openRendezvous` to
+`setupSharedEndpoint` + `QUICListenOn`; re-proved after the change, because a test that dies at a
+setup fatal stops printing the EXPECT token and the row silently stops meaning anything.
+
 **No red proof is recorded for the vacuity itself, deliberately.** A vacuous assertion cannot be
 proved vacuous by making it fail; it is proved by reading the three lines above, and that is the
 honest form of the claim. What IS red-proved is the replacement: the defect that breaks sharing

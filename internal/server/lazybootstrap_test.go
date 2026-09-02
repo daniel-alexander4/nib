@@ -10,6 +10,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"nib/internal/p2p"
 )
 
 // P07.S05d — the DHT's first contact with the network is LAZY, and it has ONE door.
@@ -168,8 +170,14 @@ func armedCeremony(t *testing.T) (*ceremonyID, []byte) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ln, err := cer.openRendezvous(transportQUIC, "127.0.0.1:0", t.TempDir(), lnCert, lnKey, peerFP)
+	// P08.S05f: `openRendezvous` is gone — it was the second door to a ceremony's shared socket
+	// and its QUIC branch was unreachable in production. This is what `handleSessionArm` does.
+	if err := cer.setupSharedEndpoint("127.0.0.1:0", t.TempDir()); err != nil {
+		t.Fatal(err)
+	}
+	ln, err := p2p.QUICListenOn(cer.end, lnCert, lnKey, peerFP)
 	if err != nil {
+		cer.close()
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { ln.Close(); cer.close() })

@@ -44,8 +44,14 @@ func TestTheDHTAndTheArmedListenerShareOneSocket(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	ln, err := cer.openRendezvous(transportQUIC, "127.0.0.1:0", t.TempDir(), lnCert, lnKey, peerFP)
+	// P08.S05f: `openRendezvous` is gone — it was the second door to a ceremony's shared socket
+	// and its QUIC branch was unreachable in production. This is what `handleSessionArm` does.
+	if err := cer.setupSharedEndpoint("127.0.0.1:0", t.TempDir()); err != nil {
+		t.Fatal(err)
+	}
+	ln, err := p2p.QUICListenOn(cer.end, lnCert, lnKey, peerFP)
 	if err != nil {
+		cer.close()
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { ln.Close(); cer.close() })
@@ -152,8 +158,12 @@ func TestTheCeremonyTeardownOrderDoesNotPanicTheProcess(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		ln, err := cer.openRendezvous(transportQUIC, "127.0.0.1:0", t.TempDir(), lnCert, lnKey, peerFP)
+		if err := cer.setupSharedEndpoint("127.0.0.1:0", t.TempDir()); err != nil {
+			t.Fatal(err)
+		}
+		ln, err := p2p.QUICListenOn(cer.end, lnCert, lnKey, peerFP)
 		if err != nil {
+			cer.close()
 			t.Fatal(err)
 		}
 		// SETUP, once: the DHT is genuinely attached, or this loop tears down nothing.
