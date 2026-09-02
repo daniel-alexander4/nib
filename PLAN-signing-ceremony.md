@@ -6217,7 +6217,7 @@ Acceptance:
 - **ADR-011's hold is re-examined for a delivery arm**, whose renewal is gated on `!cer.hasSigned()` (`internal/server/session.go:801`, `:1480` → `lan.go:777`, `:788-790`) — exactly the state a delivery arm is in. Tier 4, against P03's zero-packet criterion.
 - Tier: 4 for every clause but the budget arithmetic (C15).
 
-#### P08.S05f — The dead arm-rendezvous path removed, and the TCP-ceremony limit stated *(`/pending 248`, caveat 7, ADR-011)* — **new, 2026-08-31, split out of S05b at its grill**
+#### P08.S05f — The dead arm-rendezvous path removed, and the TCP-ceremony limit stated *(`/pending 248`, caveat 7, ADR-011)* — **new, 2026-08-31, split out of S05b at its grill** *(done 2026-09-01, v1.117.313 — 6 clauses, all met; `/pending 248` closed. The grill widened the removal: `openRendezvous` goes ENTIRELY, not just its QUIC branch, because what remained was a pure passthrough to `listenPeer` under a name that no longer described it. **The prose this slice had to MOVE was not attached to the function it described** — a doc block with no blank line before the next function's comment binds to that function, so the TCP-limit paragraph was Go-attached to `setupSharedEndpoint` and `openRendezvous` was undocumented. The commit gate then parsed for that shape and found a SECOND instance in the same file: `publishCandidates`'s doc had been sitting on `publishableEndpoints`. Nothing here had ever checked, so the count was unknown rather than zero. The gate also refuted two of my own claims — *"the only door to a ceremony's shared socket"* (two production sites call `NewSharedEndpoint`) and an unmeasured promise about what a TCP dial reaches when the far end is QUIC-armed, which is now declared undriven instead of asserted. Census measured at 35 `go` statements, not the 33 the guard's own message named; 32 after, probed red at 31.)*
 Scope: the removal half of S05b's original scope, cut out because it shares nothing with the
 arithmetic and carries a nine-item checklist of its own. **Sequenced immediately after S05b**;
 S05d's *"finds parties off-LAN"* bullet cites the limit this slice writes down.
@@ -6239,6 +6239,37 @@ Acceptance:
 - **The goroutine census floor moves 33 → 32** (`goroutines_test.go:185`) — the removal deletes three `go` statements and the floor is a lower bound the removal pushes through. Moving it in the same commit is the rule; discovering it afterwards is the drift the floor exists to catch.
 - **The TCP-ceremony limit is written down where a reader will find it** — a TCP ceremony reaches its peer on the link or at a typed address and can never be **found** over the DHT, because `openRendezvous` gives the arm side no rendezvous and caveat 7 forbids giving it one on a separate socket. It is an **asymmetry**: the dial side has a DHT. The prose currently carrying that reasoning lives inside the functions being deleted and must move rather than go, and **ADR-011 is amended rather than edited** — it names `startArmedRendezvous` as one of three eager-bootstrap sites and is the record of a shipped decision.
 - Tier: 1 throughout; the removal is invisible to tiers 3, 4 and 6 by construction, which is what "dead" means and is stated rather than left as a silent absence (C15).
+**Grill, 2026-09-01 — every scope claim re-measured at the line; three amendments, no blocking questions.**
+Confirmed: `startArmedRendezvous`'s guard (`cer == nil || cer.rz == nil`) can never be false — its
+one caller (`session.go:1541`) is reached only when NOT (`cer != nil && transport == QUIC`), so `cer`
+is nil or `openRendezvous` returned at its non-QUIC arm before setting `c.rz`. The three writers of
+`c.rz` are `setupSharedEndpoint`, `openRendezvous`'s QUIC branch and `dialerCeremony` — the last on a
+DIFFERENT `ceremonyID`, built by its own `ceremonyFor`, so it cannot arm this one. Amendments:
+- **(a) `openRendezvous` goes ENTIRELY, not just its QUIC branch.** With that branch removed it is a
+  pure passthrough to `listenPeer` with an unused receiver and an unused `configDir`, under a name
+  that would then be a lie. Its call site's `if cer != nil / else` has two identical arms and
+  collapses to one `listenPeer` call, behaviour-identical.
+- **(b) A defect the plan did not name: that prose is not attached to the function it describes.**
+  `ceremonyid.go:509-517` — the TCP-limit paragraph this slice must MOVE — has no blank line before
+  `setupSharedEndpoint`'s own comment, so Go binds the whole block to `setupSharedEndpoint` and
+  `openRendezvous` is undocumented. A reader of the shared-endpoint helper currently gets a paragraph
+  about a limit of a function two below. It makes the clause more necessary, not less.
+- **(c) The census figure, measured rather than read.** 35 `go` statements today (29 literal, 6
+  callee), not the 33 the guard's message names; 32 after the removal (28 / 4). Floor 33 -> 32 is
+  right and both of the guard's resolution arms survive. `inbound` becomes write-only and goes with
+  them; the two AST guards pinning `runSession`'s signature (`ceremonypin_test.go:367`,
+  `rearm_test.go:461`) match a prefix that stops before that parameter, so neither breaks.
+- Searched for other readers of the removed names — `grep -rn` over every `.go` in the tree for
+  `startArmedRendezvous`, `openRendezvous`, `setStopNet`, `stopNet`: no guard, scan or fixture names
+  them beyond the sites listed above, and the only non-Go references are `docs/adr/011` and this plan.
+Tasks:
+- T01 — `startArmedRendezvous` deleted, with `inbound` unthreaded from `runSession` and `handleSessionArm`.
+- T02 — `setStopNet`, the `stopNet` field and `close()`'s cancel arm deleted; the `mu` doc rewritten to name the fields that actually contend, and `portmapper_test.go:254`'s comment with it.
+- T03 — `openRendezvous` deleted (amendment (a)); its call site collapsed to `listenPeer`; the TCP-limit prose moved to that door and re-attached (amendment (b)).
+- T04 — the three test sites repointed to `setupSharedEndpoint` + `QUICListenOn`.
+- T05 — the goroutine census floor 33 -> 32 with its version restamped.
+- T06 — both red-proof rows re-sited and re-proved; `docs/red-proofs.md` updated.
+- T07 — ADR-011 amended (not edited) with the site's removal; the TCP-ceremony asymmetry written down.
 
 #### P08.S06 — Close-out: end state, then delivery, then the prune — and nothing is destroyed *(D29 lifecycle pin; C09, C11)*
 Scope: D29 states the lifecycle once — *end state → delivery round → close-out* — and puts the pin

@@ -153,3 +153,27 @@ thirty-day arm.
 - `./build/pairrepro.sh --lan -n 9` — the criterion itself. **Green at P07.S05e**: 16 hops, two
   transports, counter at baseline, confirmed twice. The harness now says a non-zero count is a
   regression rather than a known remainder.
+
+## Amendment — 2026-09-01, v1.117.313 (P08.S05f)
+
+**One of the three eager-bootstrap sites named in *Why* above no longer exists.**
+`startArmedRendezvous` — cited there as the TCP arm's site, beside `runCeremonyReceive` for
+QUIC — was deleted as dead code. Its own guard (`cer == nil || cer.rz == nil`) could never be
+false: the only caller is reached solely when the arm is NOT a QUIC ceremony, and on that branch
+`openRendezvous` returned before opening a rendezvous, so `cer.rz` was always nil. It had been
+unreachable since P05.S09 gave QUIC ceremonies the shared-endpoint path.
+
+**The decision is unchanged and is not edited.** The measurement, the reasoning and the
+three-site count are the record of what shipped on 2026-08-27 and stay as written. What changes
+is the population the one-door rule governs: **two production sites, not three.** Recorded as an
+amendment because the ADR names a function a reader can no longer find, and a citation that
+resolves to nothing reads as the ADR being stale rather than as the site being gone.
+
+Two consequences worth stating rather than leaving to be rediscovered:
+
+- **`TestTheDHTBootstrapHasExactlyOneDoor` is untouched and still asserts routing**, which is
+  exactly why the removal cost it nothing — it counts callers of `Bootstrap`, and deleting a
+  non-caller changes no count. Its red proof did have to move: the recorded defect inserted its
+  second caller *inside* the deleted function, and now inserts it into `publishCandidates`.
+- **A TCP ceremony arm now has no rendezvous at all**, which was already true in behaviour and is
+  now true in the code. That limit is stated at `handleSessionArm`'s plain-listener door.

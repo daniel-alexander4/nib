@@ -186,8 +186,8 @@ func TestEveryDetachedGoroutineIsRecovered(t *testing.T) {
 	// STIMULUS, four directions. Each one is a way this guard goes quietly blind: a walk that
 	// found nothing, a repo that stopped using goroutines, and either resolution arm carried
 	// forever without ever running — wrong the day somebody relies on it.
-	if goStmts < 33 {
-		t.Errorf("found only %d `go` statements repo-wide; the census at v1.117.113 was 33, "+
+	if goStmts < 32 {
+		t.Errorf("found only %d `go` statements repo-wide; the census at v1.117.313 was 32, "+
 			"so this walk is not seeing the whole tree", goStmts)
 	}
 	if afterFuncs < 2 {

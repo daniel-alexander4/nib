@@ -251,7 +251,7 @@ func TestCeremonyCloseDeletesTheMapping(t *testing.T) {
 	pm := newPortMapper(f, portmap.UDP, 40404)
 	pm.obtain(context.Background())
 
-	cer := &ceremonyID{} // rz and end nil: close() then does stopNet (nil) + mapper.close()
+	cer := &ceremonyID{} // rz and end nil: close() then does mapper.close() and nothing else
 	cer.setPortMap(pm)
 	cer.close()
 

@@ -819,10 +819,6 @@ func arrivalDocName(peerLabel string) string {
 	return "co-signed with " + peerLabel + ".pdf"
 }
 
-// inbound, when non-nil, is set the first time this listener ACCEPTS a connection. It is the
-// arm's own answer to "did the local network reach me", which is what the DHT publish waits on
-// — see startArmedRendezvous. Per-arm, unlike `reached`, which is per connection and asks a
-// different question (did anything get in front of the user).
 // runSession accepts one pinned peer and, depending on the armed mode, either
 // co-signs with the user's consent (making the result the open document) or accepts a
 // one-way document transfer and saves it under ~/nib. It always disarms on exit — one
@@ -832,7 +828,7 @@ func arrivalDocName(peerLabel string) string {
 // than left behind (P07.S02b):** `handleSessionArm` stored it on the session — `s.sess.arm(ln,
 // cer)` — and then started this goroutine without it, so every TCP ceremony hop ran as though it
 // were a manual transfer. See serveOneSession's own note for what depended on that.
-func (s *Server) runSession(ln p2p.Listener, cer *ceremonyID, cert, key []byte, label, mode string, inbound *atomic.Bool) {
+func (s *Server) runSession(ln p2p.Listener, cer *ceremonyID, cert, key []byte, label, mode string) {
 	// This goroutine handles a pinned peer's inbound document; a panic in the p2p or
 	// sign code must not crash the desktop process. The defers below (disarm, Close)
 	// still run as the stack unwinds.
@@ -962,9 +958,6 @@ func (s *Server) runSession(ln p2p.Listener, cer *ceremonyID, cert, key []byte, 
 			continue
 		}
 		timer.Stop()
-		if inbound != nil {
-			inbound.Store(true)
-		}
 		served, final, _ := s.serveOneSession(consentAnchor{ln: ln}, cer, conn, cert, key, label, mode, myFP)
 		if final != nil && !opened {
 			s.openArrival(label, final) // once: a re-delivery re-sends the SAME idempotent result
@@ -1472,9 +1465,9 @@ func (s *Server) handleSessionArm(w http.ResponseWriter, r *http.Request) {
 	// P05.S09: a QUIC ceremony arm both LISTENS and DIALS over the one shared endpoint, joined by
 	// the glare — so a peer we reach by dialing is co-signed here, not only one that dials us. The
 	// coordinator owns the single handshaked listener (a transport permits one), so this path does
-	// not open its own accept listener and does not start startArmedRendezvous: connect's feed does
-	// the same bootstrap-fed publish, punch and port-mapping. TCP ceremonies and the non-ceremony
-	// arm keep the runSession path below.
+	// not open its own accept listener: connect's feed does the bootstrap-fed publish, punch and
+	// port-mapping. TCP ceremonies and the non-ceremony arm keep the runSession path below —
+	// which, since P08.S05f, is a plain listener and nothing else. See the limit stated there.
 	if cer != nil && req.Transport == transportQUIC {
 		// An optional typed peer address makes this arm DIAL as well as accept (the receive role
 		// reaching out) — nil otherwise, and connect races only the DHT and its accept.
@@ -1510,16 +1503,34 @@ func (s *Server) handleSessionArm(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// With a ceremony, the listener is opened on a socket the DHT SHARES (caveat 7): a NAT
-	// mapping is a function of the internal IP:port, so the socket the probe measures and the
-	// socket the session answers on must be the same one. Without a ceremony this is
-	// `listenPeer` exactly as before.
-	var ln p2p.Listener
-	if cer != nil {
-		ln, err = cer.openRendezvous(req.Transport, bind, s.configDir, cert, key, peerFP)
-	} else {
-		ln, err = listenPeer(req.Transport, bind, cert, key, peerFP)
-	}
+	// Everything that reaches here binds a plain listener of its own — the manual/LAN arm, and
+	// a ceremony armed over TCP.
+	//
+	// # The TCP-ceremony limit, stated here because this is the door that creates it (P08.S05f)
+	//
+	// **A ceremony armed over TCP can be REACHED but never FOUND.** Its peer must arrive on the
+	// local link or at an address the user typed; nothing publishes where this arm is, because
+	// this arm has no rendezvous to publish through. Caveat 7 is why, and the limit is
+	// structural rather than an omission: a NAT keeps separate mapping tables per IP protocol —
+	// which is exactly why D15 requires both UDP and TCP to be mapped when both are offered — so
+	// a TCP listener cannot share the UDP socket the DHT speaks on, and caveat 7 forbids giving
+	// the DHT a socket of its own. The QUIC arm above shares one socket for both and so can
+	// publish.
+	//
+	// **It is an ASYMMETRY between the two sides, not a transport-wide gap.** The DIAL side has a
+	// rendezvous on either transport — `dialerCeremony` opens a shared endpoint unconditionally,
+	// and `raceWithRendezvous`'s ceremony branch is live for a TCP dial (`cer.rz != nil` there) —
+	// so a TCP dial can still LOOK for its peer. Only the arm is blind, and it is blind by not
+	// publishing rather than by not looking.
+	//
+	// What that asymmetry then produces on the wire is deliberately NOT asserted here: a
+	// published record carries its own transport (ADR-010) and the dial races candidates on the
+	// transport each one names, so whether a TCP-configured dial reaches a QUIC-armed peer is a
+	// question about the candidate, not about this door, and it has not been driven.
+	//
+	// This prose used to live inside `openRendezvous`, which P08.S05f deleted; it is moved rather
+	// than dropped, because the limit outlives the function that happened to hold the sentence.
+	ln, err := listenPeer(req.Transport, bind, cert, key, peerFP)
 	if errors.Is(err, errUnknownTransport) {
 		httpError(w, http.StatusBadRequest, err.Error())
 		return
@@ -1534,20 +1545,20 @@ func (s *Server) handleSessionArm(w http.ResponseWriter, r *http.Request) {
 		httpError(w, http.StatusConflict, "a session is already armed")
 		return
 	}
-	var inbound atomic.Bool
-	go s.runSession(ln, cer, cert, key, label, req.Mode, &inbound)
-	// Warm the DHT and, unless the local network answers first, publish where we can be
-	// reached. Started after the arm so a refused arm leaves no background work behind.
-	s.startArmedRendezvous(cer, req.Transport, &inbound)
+	go s.runSession(ln, cer, cert, key, label, req.Mode)
 	writeJSON(w, s.sess.status())
 }
 
 // runCeremonyReceive is the arm side of a symmetric-racing ceremony (P05.S09): it LISTENS and
 // DIALS over the one shared endpoint through the connect coordinator, promotes the surviving
-// channel as the RECEIVER, and runs the exchange on it. It replaces runSession + startArmedRendezvous
-// for a QUIC ceremony arm — connect's feed does the same bootstrap-fed publish, punch and
-// port-mapping — and reaches the consent gate through the ceremony anchor (T05), because a receive
-// role that won by DIALING has no listener to key on.
+// channel as the RECEIVER, and runs the exchange on it. It replaces runSession for a QUIC ceremony
+// arm — connect's feed does the bootstrap-fed publish, punch and port-mapping — and reaches the
+// consent gate through the ceremony anchor (T05), because a receive role that won by DIALING has
+// no listener to key on.
+//
+// **It is now the ONLY arm path that publishes.** Its TCP counterpart was `startArmedRendezvous`,
+// which P08.S05f deleted as unreachable; a TCP ceremony arm therefore has no rendezvous at all,
+// which is the limit `handleSessionArm` states at the listener it opens instead.
 func (s *Server) runCeremonyReceive(ctx context.Context, cer *ceremonyID, hl *p2p.HandshakeListener, cands []candidate, cert, key []byte, label, mode string, peerFP []byte) {
 	defer safe.Recover("ceremony receive")
 	defer hl.Close()

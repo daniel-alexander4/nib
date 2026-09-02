@@ -7,7 +7,6 @@ import (
 	"net"
 	"net/netip"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"nib/internal/addrscope"
@@ -112,13 +111,6 @@ func candidateLife() time.Duration {
 	return connectDeadline + 2*rendezvousPublishBudget + candidateSkewAllowance
 }
 
-// publishCandidates advertises where this armed session can be reached.
-//
-// **What it publishes is what the probe OBSERVED, never what the socket is bound to.** The
-// bind is `0.0.0.0:0` on the LAN path and a private address everywhere else; the only address
-// a peer on the far side of a NAT can use is the one strangers saw us from — which is the
-// whole reason the probe and the session must share a socket (caveat 7), and why this is the
-// slice where that started to matter.
 // publishableEndpoints turns the probe's observations into the endpoints a record carries.
 //
 // **BOTH families, not the better of the two (P05.S05, D8 tier 2).**
@@ -146,6 +138,20 @@ func publishableEndpoints(self rendezvous.SelfAddress, transport string) []cerem
 	return out
 }
 
+// publishCandidates advertises where this armed session can be reached.
+//
+// **What it publishes is what the probe OBSERVED, never what the socket is bound to.** The
+// bind is `0.0.0.0:0` on the LAN path and a private address everywhere else; the only address
+// a peer on the far side of a NAT can use is the one strangers saw us from — which is the
+// whole reason the probe and the session must share a socket (caveat 7), and why this is the
+// slice where that started to matter.
+//
+// **This comment was attached to `publishableEndpoints`, two functions up, until P08.S05f's
+// commit gate parsed for it.** A doc block with no blank line before the next function's own
+// comment binds to that function, so a reader of the endpoint helper got a paragraph about the
+// publish and the publish had no doc at all. It is the second instance of that defect found in
+// one slice — `openRendezvous`'s was the first — which is why the check is now a parse rather
+// than a reading.
 func (c *ceremonyID) publishCandidates(armCtx context.Context, transport string) error {
 	if c == nil || c.rz == nil {
 		return errNoCeremony
@@ -383,75 +389,6 @@ func (c *ceremonyID) feedCandidates(ctx context.Context, out chan<- candidate, p
 			return
 		}
 	}
-}
-
-// startArmedRendezvous warms the DHT and, if the LAN does not answer first, publishes.
-//
-// # Why the publish WAITS (criterion 10's 2026-08-21 amendment)
-//
-// D8 races every tier at once, and for the DIAL that is right. For the PUBLISH it is a pure
-// cost in the case D8's own "why LAN first" calls the most common: two people in the same
-// office, where the LAN tier was always going to win. Publishing anyway hands ~8 storing nodes
-// and dozens of traversal nodes both parties' office IP, their permanent SPKI, and — the part
-// that is worse than the IP — a target only these two ever touch, so a node holding it can see
-// that one other specific address came looking. For a small practice, who is signing with whom
-// is frequently the privileged fact.
-//
-// **The signal is this arm's OWN listener, not another tier's gathering**, which is what makes
-// it implementable and what keeps criterion 11 intact. The publishing side is the arm, and the
-// arm ANNOUNCES rather than browses — it has no browse result to wait on. What it does have is
-// an inbound socket: if a peer reaches it within the LAN window, the ceremony is local and
-// nothing needs publishing.
-//
-// The cost is one-sided and bounded: about `browseWindow` added to the remote path, against a
-// 300 s connect deadline, and nothing published at all in the local one.
-func (s *Server) startArmedRendezvous(cer *ceremonyID, transport string, inbound *atomic.Bool) {
-	if cer == nil || cer.rz == nil {
-		return
-	}
-	go func() {
-		defer safe.Recover("armed rendezvous")
-		ctx, cancel := context.WithCancel(context.Background())
-		defer cancel()
-		cer.setStopNet(cancel) // under the lock (grill C5)
-
-		// No bootstrap here. It is LAZY, behind the LAN window below, through
-		// cer.ensureBootstrapped — which is what makes a LAN ceremony emit nothing (S05d).
-		// A bootstrap failure is not fatal to the ceremony either: the LAN and manual tiers
-		// are untouched, D19 cause 2 exists to say so to the user, and S11 renders it. It
-		// is now reported by the publish that needed it rather than by returning here.
-
-		// The LAN window. A peer that reaches this listener inside it makes the publish
-		// unnecessary, and `reached` is already the thing that records "a connection put
-		// something in front of the local user".
-		select {
-		case <-time.After(browseWindow):
-		case <-ctx.Done():
-			return
-		}
-		if inbound != nil && inbound.Load() {
-			return // the local network answered; nothing leaves this machine
-		}
-		// S08b: the arm PUNCHES too — symmetric-send (D17). It fetches the peer's published
-		// tier-4 address (through the gate) and opens THIS listener's NAT toward it, so the
-		// peer's QUIC Initial can land. Concurrent with the publish below and bound to the arm
-		// ctx, so it runs for the whole ceremony and stops at teardown.
-		punchCh := make(chan candidate, maxRaceCandidates)
-		go cer.feedCandidates(ctx, punchCh, nil, "", "", browseWindow, rendezvousInterval)
-		go punchLoop(ctx, cer.end.Punch, cer.punchBudget(s), punchCh, punchInterval)
-
-		// The ARM ctx, not a publish-budget child: the port-mapping REFRESH lives as long as the
-		// arm, and binding it to the 45 s publish budget would kill it mid-race (grill C4).
-		// publishCandidates bounds its own DHT publish internally; ProbeSelf and Publish each
-		// self-cap.
-		_ = cer.publishCandidates(ctx, transport)
-
-		// **Keep the goroutine alive until teardown.** Its `defer cancel()` fires on return, and
-		// the fetch+punch above are bound to `ctx` — returning after the publish would cancel
-		// them the instant they started, the S07-C4 shape. stopNet (called by close()) is what
-		// ends the ceremony; wait for it.
-		<-ctx.Done()
-	}()
 }
 
 // hasLANCandidate reports whether the browse found the peer on the local link.
