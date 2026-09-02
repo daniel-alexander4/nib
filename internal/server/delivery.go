@@ -388,9 +388,70 @@ func (s *Server) armForDelivery(ctx context.Context, inv ceremony.Invitation, ce
 			ln.Close()
 		})
 		defer timer.Stop()
+		// ── The LINK tier, which this arm did not have (P08.S05h) ────────────────────────
+		//
+		// **`armForDelivery`'s own doc claimed "everything about the tier ladder is reused rather
+		// than rebuilt", and tier 1 was missing at both ends of a delivery leg.** Measured: a
+		// nine-party `--lan` relay emitted **78 packets destined off the link** against P03's
+		// exit criterion of zero, and a stack trace on `ensureBootstrapped` named this goroutine —
+		// `armForDelivery` → `publishWhenSlow` → `publishCandidates` → the DHT bootstrap, two per
+		// party per transport. Nothing was published; the packets are the bootstrap the publish
+		// path performs on its way, which is why counting publishes alone found nothing.
+		//
+		// The two halves are one fix and neither works alone, which is ADR-011's own framing of
+		// the same seam one layer up:
+		//
+		//   * **announce**, so a convener browsing this link finds this arm without the DHT;
+		//   * **answer seekers**, so `cer.watchingLink` is set and `holdDHT` stops taking its
+		//     `ns == 0` arm — the one that returns immediately after a flat `browseWindow`. With
+		//     it set, the hold becomes `lanFirstBudget` measured from the watch, renewed by every
+		//     resolved sighting of the convener, exactly as a hop arm's is.
+		//
+		// **On THIS path the answer itself is incidental and the sighting is the point**, which is
+		// worth saying because the two arrive together and only one is wanted. A hop arm's answer
+		// lands inside a peer's browse: the hop dial announces itself before it browses, so the
+		// arm's reply is heard. A delivery dial does neither — `browsePeers` is a pure listener,
+		// and the dial has no handshake listener to announce an address for, so announcing one
+		// would be a statement about a socket nothing accepts on. The sightings therefore come
+		// from the convener's HOP announcements, and the answers they provoke are heard by nobody
+		// who is looking. They cost link multicast and nothing off it. **The two cannot be
+		// separated**: `answerLoop` skips `resolve` and `sighted` together when a caller reports
+		// itself idle, so suppressing the answer suppresses the evidence with it.
+		//
+		// **`wanted` is nil on purpose, and it is the one place this differs from a hop arm.**
+		// There it is `!cer.hasSigned()` — "a peer that reaches us now can only be re-delivering,
+		// and it already has the address". A delivery arm has no such state: it is one-shot and
+		// spent by the leg that succeeds, so the goroutine returning IS the stop condition and a
+		// predicate would be a second one that could disagree with it.
+		//
+		// Neither half is fatal. A host with no usable interface announces nothing, never sets
+		// `watchingLink`, and falls through to the publish below — which is the correct answer for
+		// a machine that cannot be found on a link it is not on.
+		//
+		// **What renews the hold is the CONVENER's own announcements, and that is measured rather
+		// than assumed.** A delivery arm never hears a browse — `browsePeers` is a pure listener
+		// and emits nothing — so the sightings come from the convener announcing while it dials
+		// the remaining hops, which `resolve` matches to this arm's expected peer. Probed on a
+		// nine-party `--lan` run: 76, 54, 40 and 20 sightings on the four delivery hop indices,
+		// so the renewal is real and the zero is not a race against `lanFirstBudget`.
+		//
+		// **The stated limit: once the hops finish, the convener goes quiet.** An arm whose round
+		// is run a day later hears nothing for 30 s and publishes — which is right, because the
+		// parties are no longer demonstrably in the same room, and being findable off-LAN is then
+		// the only way the round reaches them at all.
+		if ann := s.watchLink(armCtx, cer, quicEndpointAnnounce{ln.Addr()}, cert, peerFP, nil); ann != nil {
+			defer ann.Close()
+		}
 		// The publish is what makes the arm findable off-LAN, and it holds the link's window
 		// first exactly as every other publish does (ADR-011) — a delivery round on one office
 		// network must emit nothing either.
+		//
+		// **It races the answerer above for `watchingLink`, and the race is wide and one-sided.**
+		// `holdDHT` waits `browseWindow` (2 s) before reading, and the answerer sets the flag as
+		// soon as its socket opens; losing the race costs one early publish, never a wrong one.
+		// Pre-setting the flag here would close it and is refused: a host whose socket never opens
+		// would then claim to be watching a link it is not on, and hold the DHT for 30 s on
+		// evidence that does not exist.
 		go func() {
 			defer safe.Recover("delivery publish")
 			publishWhenSlow(armCtx, cer, transportQUIC, browseWindow)
@@ -730,7 +791,7 @@ func (s *Server) runDeliveryRound(ctx context.Context, v *vault.Vault, rec cerem
 			out = append(out, res)
 			continue
 		}
-		if err := s.deliverToParty(ctx, inv, party.Fingerprint, addrs[strings.ToLower(party.Fingerprint)], cert, key, myFP, payload); err != nil {
+		if err := s.deliverToParty(ctx, v, inv, party.Fingerprint, addrs[strings.ToLower(party.Fingerprint)], cert, key, myFP, payload); err != nil {
 			res.Reason = err.Error()
 			out = append(out, res)
 			continue // one party's failure does not end the round; the re-run reaches them
@@ -752,7 +813,7 @@ func (s *Server) runDeliveryRound(ctx context.Context, v *vault.Vault, rec cerem
 
 // deliverToParty runs one leg: derive the delivery rendezvous, race the tiers to reach the party,
 // and hand over the document through the unattended gates.
-func (s *Server) deliverToParty(ctx context.Context, inv ceremony.Invitation, partyFP, addr string, cert, key, myFP, pdf []byte) error {
+func (s *Server) deliverToParty(ctx context.Context, v *vault.Vault, inv ceremony.Invitation, partyFP, addr string, cert, key, myFP, pdf []byte) error {
 	peerFP, err := hex.DecodeString(partyFP)
 	if err != nil || len(peerFP) != sha256.Size {
 		return errors.New("that party's fingerprint is not a fingerprint")
@@ -776,13 +837,34 @@ func (s *Server) deliverToParty(ctx context.Context, inv ceremony.Invitation, pa
 	// ADR-010's lesson: a harness handed a constant on both sides proves nothing, and one reading
 	// what the product actually bound is making an observation.
 	var cands []candidate
-	if addr != "" {
+	switch {
+	case addr != "":
 		// `Source` is NOT optional: the per-source cap accounts an unset one to the zero value,
 		// so one tier spends another's share and the drop report names the wrong tier as the
 		// flooder. `TestEveryCandidateProducerNamesItsSource` caught this literal, which is what
 		// that guard is for — a producer added later, not the ones anybody remembered to list.
 		cands = []candidate{{Fingerprint: peerFP, Addr: addr, Transport: transportQUIC,
 			Label: partyLabel(inv, partyFP), Source: sourceTyped}}
+	default:
+		// **The link, BEFORE the DHT (P08.S05h).** `feedCeremonyRace` decides how long to hold the
+		// DHT tier from whether `cands` already contains a `sourceLAN` entry, and its comment says
+		// why in as many words: *"`peerAddresses` browses BEFORE this runs, so a LAN candidate in
+		// `cands` is the link having answered — not a guess about whether it will."* That held of
+		// BOTH callers it had when it was written — `connect`'s `cands` come from `peerAddresses`
+		// too — and a delivery leg is the third, which browsed nothing. So every delivery dial took
+		// the 2 s `browseWindow` hold rather than the 30 s `lanFirstBudget` one, and a same-room
+		// round reached for the DHT on a timer.
+		//
+		// Best-effort and never fatal: a browse that fails leaves `cands` empty, which is exactly
+		// the state this leg was already in, and the rendezvous still races.
+		// **The round's own pinned vault, threaded down rather than re-fetched.** `auth.go` states
+		// the contract: a protected handler uses the vault pinned to its request, "so it stays
+		// non-nil even if a concurrent vault import nils `s.vault` mid-request". `runDeliveryRound`
+		// already holds and nil-checks that one; reaching for `s.unlockedVault()` here would be a
+		// second door onto the same fact, with a nil branch the first door has already excluded.
+		if found, ferr := findPeerOnLAN(v, peerFP); ferr == nil {
+			cands = found
+		}
 	}
 	conn, err := s.raceWithRendezvous(cer, cands, cert, key, peerFP, partyLabel(inv, partyFP), partyLabel(inv, partyFP))
 	if err != nil {

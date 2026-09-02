@@ -1,12 +1,11 @@
 --- a/internal/server/punch.go
 +++ b/internal/server/punch.go
-@@ -137,7 +137,8 @@
+@@ -137,7 +137,7 @@
  	// run `ValidID`, so an id reaching here is not guaranteed to be either. The real argument needs
  	// no assumption about `id`: `strconv.Itoa` emits only digits and `-`, so a "#" in the composed
  	// key can only be the separator, and equal keys force equal hops and then equal ids.
 -	key := id + "#" + strconv.Itoa(hop)
-+	key := ""
-+	_, _ = id, hop
++	key := id + "#" + strconv.Itoa(0*hop)
  	s.punchMu.Lock()
  	defer s.punchMu.Unlock()
  	if s.punchBudgets == nil {

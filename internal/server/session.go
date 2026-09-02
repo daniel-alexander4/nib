@@ -1102,11 +1102,6 @@ func (s *Server) runSession(ln p2p.Listener, cer *ceremonyID, cert, key []byte, 
 	// The LISTENER, not its port: whether this session may be announced at all is a fact
 	// about the address it bound, and `startAnnouncing` is the door that decides it
 	// (ADR-009). A loopback bind announces nothing.
-	var armAnnouncer *lanAnnouncer
-	if ann, err := startAnnouncing(cert, ln, lanAnnounceWindow); err == nil {
-		armAnnouncer = ann
-		defer ann.Close()
-	}
 	// **The TCP arm answers hop seekers too, and reports the sighting (P07.S05e T02).**
 	//
 	// `runCeremonyReceive` has done this since S05c, and this path never did — so a TCP ceremony
@@ -1117,19 +1112,22 @@ func (s *Server) runSession(ln p2p.Listener, cer *ceremonyID, cert, key []byte, 
 	// **Two arm paths living in two functions is the same count S05d found one day earlier** for
 	// the bootstrap: the plan named two eager sites and there were three, because these two arms
 	// are not one function. A slice wired only where the machinery already existed would have
-	// fixed QUIC and left TCP, with nothing failing to say so.
+	// fixed QUIC and left TCP, with nothing failing to say so. **P08.S05h then added a third arm
+	// by copying these lines**, which is what turned the observation into `watchLink` — the door
+	// all three now call.
 	//
 	// Bound to this goroutine rather than to the process: the arm ends, the answering ends.
+	var armFP []byte
 	if cer != nil {
-		if fp, derr := hex.DecodeString(cer.peer); derr == nil && len(fp) > 0 {
-			hctx, hcancel := context.WithCancel(context.Background())
-			defer hcancel()
-			go func() {
-				defer safe.Recover("hop seeker answers")
-				s.answerHopSeekers(hctx, cert, ln, fp,
-					func() bool { return !cer.hasSigned() }, cer.noteLinkSighting, cer.watchingLink)
-			}()
+		if fp, derr := hex.DecodeString(cer.peer); derr == nil {
+			armFP = fp
 		}
+	}
+	hctx, hcancel := context.WithCancel(context.Background())
+	defer hcancel()
+	armAnnouncer := s.watchLink(hctx, cer, ln, cert, armFP, func() bool { return !cer.hasSigned() })
+	if armAnnouncer != nil {
+		defer armAnnouncer.Close()
 	}
 	// This user's own fingerprint, for the verification string — it binds both identities,
 	// and this goroutine holds the cert rather than the fingerprint.
@@ -1861,24 +1859,14 @@ func (s *Server) runCeremonyReceive(ctx context.Context, cer *ceremonyID, hl *p2
 	// and is forced onto the DHT — the privacy leak the LAN-window suppression exists to avoid — or
 	// cannot connect at all where the DHT is unreachable. It never fails the arm; a host with no
 	// usable interface still races over the DHT and the accept.
-	var armAnnouncer *lanAnnouncer
-	if ann, aerr := startAnnouncing(cert, quicEndpointAnnounce{hl.Addr()}, lanAnnounceWindow); aerr == nil {
-		armAnnouncer = ann
-		defer ann.Close()
+	// Through `watchLink`, the one door (ADR-009). Both halves are the same rule and were three
+	// copies until P08.S05h; the announcer comes back because this arm alone closes it early, at
+	// the first signature.
+	armAnnouncer := s.watchLink(ctx, cer, quicEndpointAnnounce{hl.Addr()}, cert, peerFP,
+		func() bool { return !cer.hasSigned() })
+	if armAnnouncer != nil {
+		defer armAnnouncer.Close()
 	}
-	// **And after that window closes, this arm can still be FOUND (P07.S05c, T02).** The
-	// announcement above is five minutes; the arm is ceremony-scoped and may be thirty days, so
-	// from the fourth party onward a same-room ceremony would silently run over the public DHT.
-	// This listens — which costs nothing — and answers the one peer it is armed for when that peer
-	// announces itself at the start of its hop. See `answerHopSeekers` for why it is one
-	// fingerprint and not every pinned one.
-	go func() {
-		defer safe.Recover("hop seeker answers")
-		// `cer.hasSigned` is the "still worth finding" test: once this hop has signed, a peer that
-		// reaches us can only be re-delivering, and it already has the address (/pending 300).
-		s.answerHopSeekers(ctx, cert, quicEndpointAnnounce{hl.Addr()}, peerFP,
-			func() bool { return !cer.hasSigned() }, cer.noteLinkSighting, cer.watchingLink)
-	}()
 	// **No bootstrap here (S05d).** The QUIC arm used to warm the DHT before anyone knew whether
 	// the link would answer, which is off-link traffic on every hop of every ceremony carrying an
 	// invitation. connect's feed and publish now reach it through `cer.ensureBootstrapped` after

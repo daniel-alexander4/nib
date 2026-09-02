@@ -1329,6 +1329,9 @@ PYTERM
     local a
     a="$(curl -fsS "${URLS[$((i-1))]}/api/session/status" | jget address 2>/dev/null || true)"
     [ -n "$a" ] || fail "decline: instance $i has no delivery arm, so it cannot be told"
+    # Observed for the assertion, sent only off the link — the relay's rounds make the same
+    # distinction and for the same reason (S05h). On the link the convener must FIND them.
+    [ "$LAN" != "1" ] || continue
     daddrs="$(python3 -c "
 import json,sys
 d=json.loads(sys.argv[1]); d[sys.argv[2]]='$CEREMONY_HOST:'+sys.argv[3].rsplit(':',1)[1]; print(json.dumps(d))" "$daddrs" "${FPS[$((i-1))]}" "$a")"
@@ -1877,8 +1880,15 @@ PYSET
     # **Each party's delivery address is OBSERVED, not configured.** These instances have no DHT
     # and no multicast — every hop above is driven by a typed `address=` — so nothing here can
     # resolve a rendezvous, and the round's off-LAN discovery is a live-network property this tier
-    # cannot reach (said again in the acceptance ledger rather than implied). What IS drivable is
-    # the round itself, and the address for it comes from each party's own `/api/session/status`:
+    # cannot reach (said again in the acceptance ledger rather than implied).
+    #
+    # **All three clauses are true of the PLAIN mode and false of `--lan` (P08.S05h).** That mode
+    # re-execs into a namespace built so multicast works, hops are driven with no address at all,
+    # and since S05h the round there resolves each party over the link and nothing else. The
+    # address below is read in both modes and sent only in this one; see the block that sends it.
+    #
+    # What IS drivable in the plain mode is the round itself, and the address for it comes from
+    # each party's own `/api/session/status`:
     # the product bound it, and the harness reads what it bound. A harness handed the same constant
     # on both sides proves nothing — ADR-010's lesson, which this file has been burned by once.
     local addrs="{}" fpx adx
@@ -1901,9 +1911,18 @@ PYSET
       for delivery, so the round has nobody to reach. P08.S05g arms the delivery slot when a hop is
       mirrored; a blank here means that trigger did not fire."
       fpx="${FPS[$((i - 1))]}"
-      addrs="$(python3 -c "
+      # **Read for the assertion, SENT only off the link (P08.S05h).** The address is what
+      # proves the party armed for delivery at all, so it is still observed and still asserted
+      # above. Handing it to the round is the crutch ADR-010 names: under `--lan` the point is
+      # that the convener finds the party the way a convener on one office network does — over
+      # the link — and a round given the answer proves nothing about the tier S05h added. Off
+      # the link this namespace-free mode has no multicast and no DHT, so the typed address is
+      # the only thing that can carry it and it is sent.
+      if [ "$mode" != "lan" ]; then
+        addrs="$(python3 -c "
 import json,sys
 d=json.loads('''$addrs'''); d['$fpx']='$adx'; print(json.dumps(d))")"
+      fi
     done
     local DELIVER_BODY
     DELIVER_BODY="$(python3 -c "
@@ -2109,7 +2128,6 @@ PYONE
     WORDS_RELAY_QUIC=( "${RELAY_WORDS[@]}" ); FINAL_QUIC="$RELAY_FINAL"
     relay tcp lan
     WORDS_RELAY_TCP=( "${RELAY_WORDS[@]}" ); FINAL_TCP="$RELAY_FINAL"
-    after="$(offlink_packets)"
     # **GREEN since P07.S05e (v1.117.207), and this is the criterion it took four phases to reach.**
     #
     # P03's exit criterion is *"a LAN ceremony completes with NO outbound internet traffic"*, and it
@@ -2130,9 +2148,10 @@ PYONE
     # the bootstrap has an AST guard asserting it has exactly one door, and the arm's half does
     # not. Probe per instance before assuming otherwise — a stack trace on `ensureBootstrapped` is
     # what found the arm in the first place, and `link_report` above says what each end hears.
-    [ "$after" = "$baseline" ] \
-      || fail "a $N-party LAN relay emitted $((after - baseline)) packets destined off the link — P03's exit criterion says a LAN ceremony completes with NO outbound internet traffic, and this went to ZERO at P07.S05e over 16 hops and two transports. This is a REGRESSION, not a known remainder. Probe per instance: a stack trace on ensureBootstrapped names the caller, and link_report says what each end hears."
-    echo "[lan] $(( (N - 1) * 2 )) hops over two transports, and nothing left the link"
+    # **The reading is taken AFTER `decline_round`, not here (P08.S05h).** The end-state round is a
+    # delivery round with a different payload — the same arms, the same rendezvous, the same
+    # publish — and it ran entirely OUTSIDE this window, so its egress was measured by nothing at
+    # all. Deferring the reading is what puts it inside; see the assertion below the decline.
   else
     relay quic
     WORDS_RELAY_QUIC=( "${RELAY_WORDS[@]}" ); FINAL_QUIC="$RELAY_FINAL"
@@ -2191,6 +2210,18 @@ PYWORDS
     && fail "the two relays returned BYTE-IDENTICAL final documents — one re-read the other's result"
 
   decline_round
+
+  # ── P03's exit criterion, over EVERYTHING this run emitted ───────────────────
+  #
+  # Read here rather than after the relays, so the delivery rounds AND the end-state round are
+  # both inside the measured window. Before S05h the reading was taken before `decline_round` ran,
+  # so a whole round — arms, rendezvous, publish and all — emitted into a window nobody read.
+  if [ "$LAN" = "1" ]; then
+    after="$(offlink_packets)"
+    [ "$after" = "$baseline" ] \
+      || fail "a $N-party LAN run emitted $((after - baseline)) packets destined off the link — P03's exit criterion says a LAN ceremony completes with NO outbound internet traffic, and this went to ZERO at P07.S05e over 16 hops and two transports. This is a REGRESSION, not a known remainder. Probe per instance: a stack trace on ensureBootstrapped names the caller, and link_report says what each end hears."
+    echo "[lan] $(( (N - 1) * 2 )) hops, FOUR delivery rounds (each relay runs one and re-runs it after the injected failure) and an end-state round over two transports, and nothing left the link"
+  fi
 
   echo "PASS: $N instances, and a $N-party ceremony COMPLETED as a baton relay over BOTH"
   echo "      transports (${ELAPSED_TOTAL}s of hops): a non-signing convener carried it through"

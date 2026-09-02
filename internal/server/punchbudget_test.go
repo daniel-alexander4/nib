@@ -105,7 +105,7 @@ func TestTwoCeremoniesDoNotShareABudget(t *testing.T) {
 // punch in the process, and the first one to exhaust it silences the rest.
 func TestAPunchOutsideACeremonyGetsItsOwnBudget(t *testing.T) {
 	s := &Server{}
-	if a, b := s.punchBudgetFor(""), s.punchBudgetFor(""); a == b {
+	if a, b := s.punchBudgetFor("", 1), s.punchBudgetFor("", 1); a == b {
 		t.Error("two punches outside any ceremony share one budget, so the first to exhaust it " +
 			"silences every later one for the life of the process")
 	}
@@ -126,7 +126,7 @@ func TestThePunchBudgetRegistryIsConcurrencySafe(t *testing.T) {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
-			got[i] = s.punchBudgetFor("same-ceremony")
+			got[i] = s.punchBudgetFor("same-ceremony", 1)
 		}(i)
 	}
 	wg.Wait()
@@ -179,4 +179,72 @@ func TestAnExhaustedBudgetReachesTheDiagnosis(t *testing.T) {
 func diagnoseDetail(t *testing.T, c *ceremonyID) string {
 	t.Helper()
 	return c.diagnose().detail
+}
+
+// TestTwoHopsOfOneCeremonyDoNotShareABudget — the axis the two guards above could not see, and the
+// one D33 was AMENDED to protect (P08.S05h).
+//
+// Its siblings pin the other two: both loops of one hop share a budget, and two ceremonies do not.
+// Between them sits the unit D33 actually names, and the shipped code was on the wrong side of it —
+// `punchBudgetFor(c.inv.ID)`, keyed by ceremony, so hop 2 of a proceeding spent whatever hop 1 had
+// left. D33's own text is a strike-through: *"Total punch budget = 3,000 packets per ~~ceremony~~
+// HOP"*, amended because *"a per-ceremony budget was exhausted inside the first hop … in a 31-hop
+// ceremony hops 2–31 would get zero packets."*
+//
+// **The failure is silent by construction**, which is why nothing observable caught it for two
+// phases: dropping over the cap is the designed behaviour, so a starved hop punches less, then not
+// at all, and reports drops that look exactly like a hop that legitimately exhausted its own share.
+// The neighbouring row's own text already said "D33's unit is per HOP" while guarding a different
+// axis entirely.
+func TestTwoHopsOfOneCeremonyDoNotShareABudget(t *testing.T) {
+	s := &Server{}
+	const id = "ceremony-abc"
+
+	hop1 := &ceremonyID{hop: 1}
+	hop1.inv.ID = id
+	hop2 := &ceremonyID{hop: 2}
+	hop2.inv.ID = id
+
+	a := hop1.punchBudget(s)
+	b := hop2.punchBudget(s)
+
+	// SETUP: same ceremony, genuinely different hops — or "they do not share" is a fact about two
+	// ceremonies and this test is its sibling wearing a different name.
+	if hop1.inv.ID != hop2.inv.ID {
+		t.Fatal("setup: the two ceremonyIDs are for different ceremonies")
+	}
+	if hop1.hop == hop2.hop {
+		t.Fatal("setup: the two ceremonyIDs are for the same hop")
+	}
+	if a == nil || b == nil {
+		t.Fatal("setup: a punch path was handed a nil budget")
+	}
+	if a == b {
+		t.Fatal("two HOPS of one ceremony hold the SAME packet budget. D33's unit is the hop and " +
+			"it says why the per-ceremony form was struck: the first hop exhausts it and every " +
+			"later hop gets nothing. Under D6's pin an attacker supplies the candidates, which " +
+			"is why this figure is law rather than tuning.")
+	}
+
+	// And the separation is what the identity check stands for: exhausting hop 1's whole ceiling
+	// must leave hop 2 with its own. Without this, two distinct-but-empty budgets pass the check
+	// above while any shared counter underneath would too.
+	for i := 0; i < punchBudgetPerSide; i++ {
+		if !a.spend() {
+			t.Fatalf("hop 1's budget refused packet %d of its own ceiling %d", i, punchBudgetPerSide)
+		}
+	}
+	if !b.spend() {
+		t.Error("exhausting hop 1's budget refused a packet to hop 2 — which is the starvation " +
+			"D33's amendment names, and at nine parties it is seven hops that never punch")
+	}
+
+	// A delivery leg is a hop by this key, which is what gives the round its own budget without a
+	// second mechanism: `deliveryCeremony` builds a distinct `hop` from `deliveryHop`.
+	leg := &ceremonyID{hop: 40}
+	leg.inv.ID = id
+	if l := leg.punchBudget(s); l == a || l == b {
+		t.Error("a delivery leg shares a budget with a ceremony hop, so the hops can starve the " +
+			"round that delivers what they signed")
+	}
 }

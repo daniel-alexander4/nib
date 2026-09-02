@@ -170,10 +170,18 @@ type Server struct {
 	vault *vault.Vault // unlocked vault, nil until the SSH key unlocks it
 	csrf  string       // per-process CSRF token, issued when the vault unlocks
 
-	// punchMu guards punchBudgets: D33's per-(hop, side) packet counters, keyed by ceremony id
-	// (P07.S09b). Held here because a "side" is this MACHINE in a proceeding, and the two
-	// `ceremonyID`s that punch for one hop — the armed one and the dialing one — do not outlive
-	// each other. Before this each built its own and a side emitted twice the law figure.
+	// punchMu guards punchBudgets: D33's per-(hop, side) packet counters, keyed by
+	// **`(ceremony id, hop)`** (P07.S09b; re-keyed P08.S05h). Held here because a "side" is this
+	// MACHINE in a HOP, and the two `ceremonyID`s that punch for one hop — the armed one and the
+	// dialing one — do not outlive each other. Before this each built its own and a side emitted
+	// twice the law figure.
+	//
+	// **This sentence read "keyed by ceremony id … a side is this MACHINE in a proceeding" until
+	// P08.S05h, and both halves were wrong together.** A proceeding is a ceremony, so a key naming
+	// the proceeding cannot name the hop — while D33 says the unit IS the hop, by amendment, and
+	// gives the reason: a per-ceremony budget is exhausted inside the first hop. The field
+	// declaration is the first place a reader looks, which is why the correction lands here and
+	// not only at `punchBudgetFor`.
 	punchMu      sync.Mutex
 	punchBudgets map[string]*punchBudget
 
