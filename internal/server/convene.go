@@ -379,35 +379,19 @@ func (s *Server) handleCeremonyInvites(w http.ResponseWriter, r *http.Request) {
 				"that ceremony's record names a party Nib cannot read")
 			return
 		}
-		secret, ok := v.CeremonySecret(rec.ID, fp)
-		if !ok {
-			httpError(w, http.StatusGone, "Nib no longer holds the invitation secret for "+
-				"one of that ceremony's parties, so it cannot be re-issued. A ceremony's "+
-				"secrets are removed when it ends.")
+		// **One door for minting a party's invitation from the convener's own secret (ADR-009).**
+		// This route held the only copy until P08.S05g needed the same thing for the delivery round —
+		// per-party, because each party's secret differs and that is what makes their rendezvous
+		// targets distinct. Two copies of that would drift exactly the way `Intent` already did here:
+		// omitted once, and every re-issued invitation was refused at the recipient's arrival gate.
+		//
+		// `Seeds` is still absent and cannot be recovered — the record does not carry them — so a
+		// re-issued invitation has no DHT seed hints. Stated rather than papered over; every other
+		// field a recipient CHECKS is present.
+		inv, ierr := convenerInvitationFor(v, rec, p)
+		if ierr != nil {
+			httpError(w, http.StatusGone, ierr.Error())
 			return
-		}
-		// **`Intent` is REQUIRED and was omitted, which made every re-issue useless (P08.S01).**
-		//
-		// `MatchesRecord` compares the recital — "the invitation's recital is %q and this
-		// document's record says %q … these are two different proceedings however alike they
-		// look" (`internal/ceremony/invitation.go`) — and `Contribute` refuses a ceremony
-		// signature whose attestation carries none (`internal/p2p/cosign.go`, ErrNoCeremonyIntent).
-		// So a re-issued invitation parsed, armed, and was then refused at the recipient's arrival
-		// gate, AFTER the convener had been told the re-issue succeeded. Nobody had hit it because
-		// this route had one reference in the whole tree — its own registration — and no test, no
-		// harness clause and no caller in the web client.
-		//
-		// `Seeds` is still absent and cannot be recovered: the record does not carry them, so a
-		// re-issued invitation has no DHT seed hints. That is a real loss and it is stated rather
-		// than papered over — every other field a recipient CHECKS is here.
-		inv := ceremony.Invitation{
-			Version:             ceremony.InvitationVersion,
-			ID:                  rec.ID,
-			Roster:              rec.Roster,
-			Secret:              secret,
-			ConvenerFingerprint: conv,
-			Intent:              rec.Intent,
-			RosterHash:          rh,
 		}
 		text, eerr := inv.Encode()
 		if eerr != nil {

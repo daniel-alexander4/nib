@@ -6304,7 +6304,7 @@ Tasks:
 - T05 — `checkDelivered`, the delivery arrival's OWN gate (finding (g)): `CheckRecord` and `MatchesRecord` as `checkArrival` has them, roster completeness, and a byte-prefix against this party's own contribution — but NO deadline refusal, and both doors say why they differ. Blind spots stated, not implied. *(done — the review caught it calling `persistedFor(nil)`, which works only by an identity in that function's miss rules; it reads the mirror directly now.)*
 
 
-#### P08.S05g — The delivery ROUND: driven, found off-LAN, and re-runnable *(D22, D30, D34; C08, C10)* — **new, 2026-09-01, split out of S05d at its deepdive** *(in progress)*
+#### P08.S05g — The delivery ROUND: driven, found off-LAN, and re-runnable *(D22, D30, D34; C08, C10)* — **new, 2026-09-01, split out of S05d at its deepdive** *(done 2026-09-01, v1.117.320 — 2 clauses met, 1 partly, 1 NOT EXERCISED. **Six live tier-4 runs, and every failure was a different real defect** — none was visible in the diff: the convener holds no invitation for its own ceremony (it ISSUES them, per-party secrets); nothing armed for delivery in the ordinary case; that trigger was then put on the INITIATOR's side, which under D22's hub is the convener; `/api/session/disarm` tore down the delivery arm, a defect **S05c introduced** by making Cancel and shutdown one verb; and the arm's window was reported by `status()` while nothing fired on it. **The off-LAN half of clause 1 is NOT EXERCISED and is not reachable at tier 4 at any effort** — `pairrepro.sh` gives its instances no DHT and no multicast, so the round is driven there over an address the harness OBSERVES from each party's own status rather than one it is handed. C08 and C10 are green on both transports, including an injected write failure at party 3 of 4 and a recovery run that reaches exactly that party and rewrites nobody else's file. **A vacuous green in this slice's own test was found by its own mutation**: the unreadable-record assertion was exercising the nil path.)*
 Scope: the round that drives S05d's leg. **Sequenced after S05d and before S05e**, which bounds
 this round's egress. The rendezvous is derived at **its own hop index** — `RecordKey(hop)` and
 `RecordSalt(hop, fp)` are hop-parameterised and validate nothing
@@ -6359,11 +6359,11 @@ Acceptance:
   which is the residue D29's prune exists to stop, arriving through a new door. The delivered file's
   deterministic name is the check: it exists, so this party has its copy.
 Tasks:
-- T01 — `deliveryHop(inv, fp)` and a delivery `ceremonyID`, derived on both sides with no format change (finding (d)).
-- T02 — the recipient's delivery arm: shared endpoint + rendezvous at that index, S05c's slot, one `deliverOneLeg` receive.
-- T03 — the load/unlock hook at `adoptVault` (finding (c)), skipping ceremonies already delivered (finding (f)).
-- T04 — `POST /api/ceremony/deliver`: the convener walks the roster, skipping parties already acknowledged, and records each acknowledgement durably (findings (b), (e)).
-- T05 — tier 4 at N=4: the round reaches every party, a re-run after an injected failure at party 3 reaches that party and no other, and both sides' egress is enumerated.
+- T01 — `deliveryHop(inv, fp)` and a delivery `ceremonyID`, derived on both sides with no format change (finding (d)). *(done)*
+- T02 — the recipient's delivery arm: shared endpoint + rendezvous at that index, S05c's slot, one `deliverOneLeg` receive. *(done — and its window is ENFORCED, not merely stamped and reported; the review found nothing fired on it.)*
+- T03 — the load/unlock hook at `adoptVault` (finding (c)), skipping ceremonies already delivered (finding (f)). *(done — and a SECOND trigger was needed: the unlock hook covers only the party that restarts, so an arm is also established when a hop is mirrored. `/pending 323`(a) closed.)*
+- T04 — `POST /api/ceremony/deliver`: the convener walks the roster, skipping parties already acknowledged, and records each acknowledgement durably (findings (b), (e)). *(done — per-party invitations minted from the convener's own secrets, through one door now shared with `/api/ceremony/invites`.)*
+- T05 — tier 4 at N=4: the round reaches every party, a re-run after an injected failure at party 3 reaches that party and no other, and both sides' egress is enumerated. *(done for C08 and C10 on BOTH transports, after six live runs each finding a different real defect. The EGRESS half is `not exercised` — see the marker.)*
 
 #### P08.S05e — The end state is delivered, and the round's egress is bounded *(D28, D33, D34, ADR-011; C06's telling half)* — **new, 2026-08-31, split out of S05**
 Scope: wiring P08.S04b's termination object, which is built, verified and has **zero production

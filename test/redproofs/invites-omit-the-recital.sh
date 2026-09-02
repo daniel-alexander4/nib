@@ -14,6 +14,11 @@
 # The guard runs `MatchesRecord` itself rather than diffing fields, deliberately: a field-by-field
 # comparison is the same shape that produced the defect — a constructor that forgets one field,
 # checked by a test that forgets the same one.
+#
+# **RE-SITED at P08.S05g (2026-09-01).** The mint moved: `/api/ceremony/invites` and the delivery
+# round both build a party's invitation from the record plus the convener's own secret, so that
+# logic is one door (`convenerInvitationFor`) and the defect is expressed there. Same omission,
+# same test, one function over — and now it is reachable from both callers rather than one.
 TIER="tier 1 — go test"
 PROVE="go test ./internal/server/ -run TestAReIssuedInvitationStillMatchesItsRecord -count=1"
 EXPECT="is refused against the record it was built from"
