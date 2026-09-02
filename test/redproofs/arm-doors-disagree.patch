@@ -1,13 +1,11 @@
-diff --git a/internal/server/session.go b/internal/server/session.go
-index 4b27257..b07f088 100644
 --- a/internal/server/session.go
 +++ b/internal/server/session.go
-@@ -166,7 +166,7 @@ func (se *session) armedLocked() bool { return se.ln != nil || se.cer != nil }
- func (se *session) arm(ln p2p.Listener, cer *ceremonyID) bool {
+@@ -262,7 +262,7 @@
+ func (se *session) armIn(a *arm) bool {
  	se.mu.Lock()
  	defer se.mu.Unlock()
--	if se.armedLocked() {
-+	if se.ln != nil {
+-	if se.collidesLocked(a.kind) {
++	if se.arms[armDelivery] != nil {
  		return false
  	}
- 	se.ln = ln
+ 	// **Stamped HERE and not by the arm goroutine.** The first draft set it from `runSession`,

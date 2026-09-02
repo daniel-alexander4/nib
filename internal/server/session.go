@@ -55,6 +55,33 @@ import (
 // So a discovery datagram is untrusted input to a parser and nothing more — and it is
 // treated as internet-facing, because Go binds a multicast listener to the WILDCARD
 // and it therefore accepts ordinary unicast from anywhere (ADR-007).
+//
+// **Amended by P08.S05c: the machine can now hold TWO of these listeners, and exactly two of
+// the three containments above move.** The delivery arm (`armDelivery`) is a second armed
+// session beside the one a person opened, so the paragraph's own list is answered item by item
+// rather than in general — which is the point, because "we widened the tripwire" is not a
+// reviewable statement and "which of the three" is.
+//
+//   - **"what arms it" — WIDENED.** The first sentence of that list said *"opened only by an
+//     explicit, vault-unlocked /api/session/arm"*, and a delivery arm is not that: it is opened
+//     by the delivery round on behalf of a ceremony this machine has already signed at. It is
+//     still not opened by a stranger — nothing on the network can cause one, and the ceremony it
+//     serves is one this party consented to and holds a mirror for — but it is no longer a human
+//     pressing a button, and that is a real change to who decides.
+//   - **"how long it stays open" — WIDENED, and bounded rather than left open.** An interactive
+//     ceremony arm takes `MaxCeremonyLife` because an invitation carries no deadline
+//     (`/pending 247`); the delivery arm takes what remains of its record's `Expires` plus one
+//     hop budget of grace, read back through `ceremony.ReadMirror`, which verifies. So the second
+//     listener's life is bounded by a SIGNED deadline rather than by a ceiling — a tighter rule
+//     than the arm it sits beside, on the arm that no human is watching. See `armWindowFor`.
+//   - **"which peers it accepts" — NOT widened, and this is the one that matters.** A delivery
+//     arm accepts exactly what any arm accepts: the one pinned peer, through pinned-peer mTLS in
+//     `internal/p2p/transport.go`. It signs nothing — the delivery round moves a document that is
+//     already finished — so the "signs only with explicit per-document user consent" clause is
+//     not relaxed either; it is unreachable on this path.
+//
+// The fresh security review the paragraph demands is `PLAN-signing-ceremony.md`'s P08 section and
+// this slice's grill, in the same way P03.S02's was its egress enumeration.
 
 const (
 	sessionAcceptTimeout = 5 * time.Minute // auto-disarm if no peer connects
@@ -70,19 +97,25 @@ const (
 // one-way document transfer (the peer's doc is consented and saved to ~/nib). All
 // state is guarded by mu; it is independent of the Server's document lock.
 type session struct {
-	mu       sync.Mutex
-	ln       p2p.Listener   // non-nil while armed
-	addr     string         // bound address, reported in status
+	mu sync.Mutex
+	// arms holds this machine's armed sessions, one slot per kind (P08.S05c). Everything that
+	// belongs to ONE arm and dies with it lives on the `arm` value; everything the machine has
+	// exactly one of — because there is one user looking at one screen — stays below.
+	arms     [armKinds]*arm
 	pending  *pendingReq    // set while a received request awaits the user's consent
 	verify   *pendingVerify // set while the spoken check awaits the user's confirmation
 	received *receivedInfo  // last accepted transfer, read by the poller after disarm
-	// cer is the ceremony identity this arm carries, or nil for the manual/LAN path.
-	// Set by arm and cleared by disarmIf with everything else: it holds the invitation
-	// secret, and a secret that outlives the session it belongs to is residue.
-	cer *ceremonyID
-	// cerCancel cancels a connect-based ceremony arm's background goroutine (P05.S09), the
-	// analogue of closing the accept listener for a runSession arm. nil for accept arms.
-	cerCancel context.CancelFunc
+	// receivedBy and noticeBy name the arm that produced the two sticky fields, so an arm door
+	// clears only what ITS OWN slot last left behind (P08.S05c).
+	//
+	// **Both doors used to clear both fields outright** — *"a fresh session clears any prior
+	// transfer result"* and *"the user is trying again, so the old reason is spent"* — which is
+	// right for one arm and wrong the moment there are two: arming for an unrelated ceremony
+	// erased a live delivery arm's only failure and success channels, and a delivery arm has no
+	// response to say either in. The fields stay machine-wide because the SURFACE is (one user,
+	// one notice); it is the clearing that becomes scoped.
+	receivedBy armKind
+	noticeBy   armKind
 	// notice is the last thing that went wrong in the background, and it OUTLIVES the session
 	// (P08.S08). Cleared only by the next arm.
 	//
@@ -101,7 +134,46 @@ type session struct {
 	// field cleared on disarm would be no better: the disarm IS the symptom, and a message that
 	// vanishes with it is a message nobody reads.
 	notice *noticeView
-	// until is when this arm gives up, as an absolute time; zero when nothing is armed.
+}
+
+// armKind names which of the session's two slots an arm occupies (P08.S05c).
+//
+// **Two named slots rather than a keyed map, and the slice's own bullet said "keyed".** A map
+// treats the two arms as homogeneous and they are not: the interactive arm is opened by an
+// explicit vault-unlocked `/api/session/arm` and is what `status()` reports to the person at the
+// keyboard; the delivery arm is unattended, ceremony-scoped and background. A machine needs at
+// most one of each — the delivery round is sequential legs in which the convener DIALS and each
+// recipient arms — so a map would buy generality nothing asks for while making `status()`
+// unanswerable without a policy about which entry the user is shown.
+type armKind int
+
+const (
+	armInteractive armKind = iota // /api/session/arm — the arm a person opened
+	armDelivery                   // the delivery round's unattended arm (P08.S05d)
+	armKinds
+)
+
+func (k armKind) String() string {
+	if k == armDelivery {
+		return "delivery"
+	}
+	return "interactive"
+}
+
+// arm is one armed session's own state — the fields that belong to THIS arm and are torn down
+// with it. Split off the session at P08.S05c so two can coexist.
+type arm struct {
+	kind armKind
+	ln   p2p.Listener // non-nil for an accept arm; nil for a connect-based ceremony arm
+	addr string       // bound address, reported in status
+	// cer is the ceremony identity this arm carries, or nil for the manual/LAN path. Cleared on
+	// teardown with everything else: it holds the invitation secret, and a secret that outlives
+	// the session it belongs to is residue.
+	cer *ceremonyID
+	// cerCancel cancels a connect-based ceremony arm's background goroutine (P05.S09), the
+	// analogue of closing the accept listener for a runSession arm. nil for accept arms.
+	cerCancel context.CancelFunc
+	// until is when this arm gives up, as an absolute time.
 	//
 	// **It exists to be ASSERTED, which is C05's whole difficulty (P08.S04).** The criterion is
 	// that a party who arms and waits through three earlier hops is still armed when the baton
@@ -162,42 +234,144 @@ type sessionDecision struct {
 // Not reachable from any shipped surface TODAY — `armCeremony` needs `transport: "quic"` and
 // neither `web/` nor `cmd/` ever sends one — so this is a latent trap rather than a live user
 // defect, and it goes live the moment anything selects QUIC.
-func (se *session) armedLocked() bool { return se.ln != nil || se.cer != nil }
-
-func (se *session) arm(ln p2p.Listener, cer *ceremonyID) bool {
-	se.mu.Lock()
-	defer se.mu.Unlock()
-	if se.armedLocked() {
-		return false
+func (se *session) armedLocked() bool {
+	for _, a := range se.arms {
+		if a != nil {
+			return true
+		}
 	}
-	se.ln = ln
-	se.cer = cer
-	se.addr = ln.Addr().String()
-	se.received = nil // a fresh session clears any prior transfer result
-	se.notice = nil   // and any prior failure: the user is trying again, so the old reason is spent
+	return false
+}
+
+// collidesLocked reports whether arming `kind` would displace a live arm — the question the two
+// DOORS ask, and it is NOT the question above (P08.S05c).
+//
+// **The slice's own bullet said to make `armedLocked` the collision predicate, and that is
+// unsafe.** `armedLocked` has three callers, not the two the structural guard checks: both doors
+// — and `status()`, where it IS `sessionStatus.Armed`, which the client renders as the user's
+// armed pill. Re-pointing one predicate at "would a new arm collide" silently re-points that pill
+// at a question the user never asked: with a delivery arm live, a machine that is genuinely
+// listening would report itself unarmed. So the two questions get two functions, each still with
+// one door, and the guard now requires all three sites rather than the two it could see.
+func (se *session) collidesLocked(kind armKind) bool { return se.arms[kind] != nil }
+
+// armIn is the ONE mutator that installs an arm (ADR-009). Both doors route through it, and so
+// will the delivery round's (P08.S05d).
+//
+// The two sticky fields are cleared only where THIS kind produced them — see `noticeBy`.
+func (se *session) armIn(a *arm) bool {
 	// **Stamped HERE and not by the arm goroutine.** The first draft set it from `runSession`,
 	// which starts after this handler has already answered — so a status poll landing in that
 	// window saw an armed session with no window, and the race detector found it by being slow
 	// enough to lose that race every time. The door knows whether there is a ceremony, so the
 	// door is where the figure belongs.
-	se.until = time.Now().Add(armWindowFor(cer))
+	//
+	// **And BEFORE the lock, which matters now that it is not a constant (P08.S05c's review).**
+	// `armWindowFor` used to pick between two `time.Duration` literals; the delivery arm's bound
+	// reads a record off disk and verifies a signature over it, and `ReadMirror` also reads the
+	// mirrored `document.pdf`, which can be the 128 MiB ceiling. Under `se.mu` that would block
+	// every `status()` poll — the client polls it — on a disk read whose size the user chose.
+	// Computing it first costs nothing and keeps the lock's hold constant-time.
+	a.until = time.Now().Add(armWindowFor(a.kind, a.cer))
+	se.mu.Lock()
+	defer se.mu.Unlock()
+	if se.collidesLocked(a.kind) {
+		return false
+	}
+	se.arms[a.kind] = a
+	if se.receivedBy == a.kind {
+		se.received = nil // a fresh session clears THIS slot's prior transfer result
+	}
+	if se.noticeBy == a.kind {
+		se.notice = nil // and its own prior failure: the user is trying again on this arm
+	}
 	return true
+}
+
+func (se *session) arm(ln p2p.Listener, cer *ceremonyID) bool {
+	return se.armIn(&arm{kind: armInteractive, ln: ln, cer: cer, addr: ln.Addr().String()})
+}
+
+// armDeliveryForCeremony arms the delivery slot, beside whatever the user has open (P08.S05c).
+//
+// **Built here and called by P08.S05d, which is the round itself.** The structural half is this
+// slice's — the second slot, the collision predicate, the scoped clearing of the sticky fields —
+// and the round that uses it is the next. A door with no production caller is stated rather than
+// left to be discovered: `TestTheDeliverySlotIsArmableBesideAnInteractiveArm` is its only caller
+// today, and the slice says so in its own acceptance ledger rather than reporting a clause met.
+func (se *session) armDeliveryForCeremony(cer *ceremonyID, addr string, cancel context.CancelFunc) bool {
+	return se.armIn(&arm{kind: armDelivery, cer: cer, addr: addr, cerCancel: cancel})
 }
 
 // armWindowFor is how long an arm waits, and it is ONE door (ADR-009).
 //
 // A ceremony arm waits for the ceremony; a manual or LAN arm waits `sessionAcceptTimeout`. Both
-// `runSession` and `runCeremonyReceive` compute their own timer from this, and both arm doors stamp
-// `until` from it, so the figure the status reports and the figure the timer fires on cannot drift.
+// `runSession` and `runCeremonyReceive` compute their own timer from this, and every arm door
+// stamps `until` from it, so the figure the status reports and the figure the timer fires on
+// cannot drift.
 //
-// **The bound is a constant and D16's amendment asks for the record's `Expires`.** Not available
-// here: an arm holds an invitation and the invitation carries no deadline (`/pending 247`). This is
-// the ceiling until it does.
-func armWindowFor(cer *ceremonyID) time.Duration {
+// **The interactive bound is a constant and D16's amendment asks for the record's `Expires`.** Not
+// available on that path: an interactive arm holds an INVITATION, and an invitation carries no
+// deadline (`/pending 247`). `MaxCeremonyLife` is the ceiling until it does.
+//
+// # The delivery arm's bound, decided here (P08.S05c)
+//
+// **It is not a skew figure, and the slice's own bullet pointed at one.** S05's correction (3)
+// rules out the 7m00s residual two comments call "the tolerable clock skew", and D35's ±5m is the
+// HANDSHAKE's tolerance — `transportSkew`, enforced because both sides verify each other's leaf.
+// An arm deciding to close is not subject to it: there is no channel at that moment and no peer
+// certificate to compare against. So the question is not *how wrong may our clocks be* but *how
+// long can this proceeding still need me*, and the record already answers that.
+//
+// **And this arm can reach the record, where the interactive arm cannot.** The delivery round
+// arms a party that has ALREADY SIGNED at its own hop, so `mirrorHop` has written its
+// `record.json` (P08.S02 made that write the commit point). `deliveryWindowFor` reads it back
+// through `ceremony.ReadMirror`, which verifies before returning — so an expired or unverifiable
+// record yields no window rather than a long one, which is the safe direction.
+//
+// **What it tolerates, named rather than implied:** a peer whose clock runs ahead of ours by up
+// to `deliveryGrace`. Past that the arm closes while the convener still believes the round is
+// open, and the round's own retry is what recovers it — an over-long arm is the worse failure,
+// because it holds the machine's one network-reachable surface open (the TRIPWIRE) for a
+// proceeding that has ended.
+func armWindowFor(kind armKind, cer *ceremonyID) time.Duration {
+	if kind == armDelivery {
+		return deliveryWindowFor(cer)
+	}
 	if cer != nil {
 		return ceremony.MaxCeremonyLife
 	}
 	return sessionAcceptTimeout
+}
+
+// deliveryGrace is how long past a ceremony's own `Expires` a delivery arm stays open.
+//
+// It is S06's close-out grace seen from the receiving side: the convener may start the round at
+// the deadline, and every leg after that is time the recipient must still be listening for. Sized
+// as one hop budget, because a leg costs what a hop costs (P08.S05b measured exactly that) — not
+// as a clock-skew allowance, which is the figure this deliberately is not.
+func deliveryGrace() time.Duration { return ceremonyHopBudget() }
+
+// deliveryWindowFor is the delivery arm's bound: what remains of the ceremony, plus the grace,
+// floored at the interactive window so a round starting near the deadline still gets a session.
+//
+// A ceremony whose record cannot be read is given the floor and nothing more. That is the
+// conservative direction and it is deliberate: the alternative — defaulting to
+// `MaxCeremonyLife` — would hold the listener open for thirty days on exactly the input that
+// tells us least.
+func deliveryWindowFor(cer *ceremonyID) time.Duration {
+	if cer == nil {
+		return sessionAcceptTimeout
+	}
+	rec, _, err := ceremony.ReadMirror(defaultOutputDir(), cer.inv.ID, time.Now())
+	if err != nil {
+		return sessionAcceptTimeout
+	}
+	d := time.Until(rec.Expires) + deliveryGrace()
+	if d < sessionAcceptTimeout {
+		return sessionAcceptTimeout
+	}
+	return d
 }
 
 // armCeremony arms a connect-based ceremony session (P05.S09): it holds the ceremony and a cancel
@@ -205,28 +379,18 @@ func armWindowFor(cer *ceremonyID) time.Duration {
 // coordinator owns the single (handshaked) listener and a transport permits only one. addr is the
 // shared endpoint's address, reported in status; cancel stops the connect goroutine at disarm.
 func (se *session) armCeremony(cer *ceremonyID, addr string, cancel context.CancelFunc) bool {
-	se.mu.Lock()
-	defer se.mu.Unlock()
-	if se.armedLocked() {
-		return false
-	}
-	se.cer = cer
-	se.addr = addr
-	se.cerCancel = cancel
-	se.received = nil
-	se.notice = nil
-	se.until = time.Now().Add(armWindowFor(cer))
-	return true
+	return se.armIn(&arm{kind: armInteractive, cer: cer, addr: addr, cerCancel: cancel})
 }
 
 // noteFailure records something that went wrong where no response could carry it (P08.S08).
 //
 // Last-write-wins rather than a queue: the useful thing is what most recently stopped working, and
 // a list nobody prunes becomes its own problem. `what` is the stable key a surface can branch on.
-func (se *session) noteFailure(what, summary, detail string) {
+func (se *session) noteFailure(by armKind, what, summary, detail string) {
 	se.mu.Lock()
 	defer se.mu.Unlock()
 	se.notice = &noticeView{What: what, Summary: summary, Detail: detail, At: time.Now()}
+	se.noticeBy = by
 }
 
 // noteArrivalRefusal tells the user on THIS machine that an arrival was refused at the gate
@@ -258,27 +422,28 @@ func (se *session) noteFailure(what, summary, detail string) {
 // or corrected by NTP mid-arm — would end a live ceremony on the strength of the one reading that
 // is wrong. Telling the user costs nothing if the clock is wrong; disarming costs them the
 // ceremony. The notice names the deadline so they can see which it was.
-func (se *session) noteArrivalRefusal(err error) {
+func (se *session) noteArrivalRefusal(by armKind, err error) {
 	if err == nil {
 		return
 	}
 	if errors.Is(err, p2p.ErrCeremonyEnded) {
-		se.noteFailure("ceremony-ended",
+		se.noteFailure(by, "ceremony-ended",
 			"The proceeding you are waiting for has ended, so this machine refused the document.",
 			"A party tried to hand you a document for a ceremony whose deadline has passed, and "+
 				"nothing was signed. If the deadline is wrong, check this machine's clock — the "+
 				"comparison is against it. Reason: "+err.Error())
 		return
 	}
-	se.noteFailure("arrival-refused",
+	se.noteFailure(by, "arrival-refused",
 		"A document arrived for this ceremony and was refused, so nothing was signed.",
 		"You are still armed and the proceeding is not over; what arrived is not the document "+
 			"this invitation describes. Reason: "+err.Error())
 }
 
-func (se *session) setReceived(r *receivedInfo) {
+func (se *session) setReceived(by armKind, r *receivedInfo) {
 	se.mu.Lock()
 	se.received = r
+	se.receivedBy = by
 	se.mu.Unlock()
 }
 
@@ -305,7 +470,7 @@ func (se *session) disarm() { se.disarmIf(nil) }
 // counter is a second truth that has to be incremented in exactly the right place to stay
 // equal to the first.
 func (se *session) disarmIf(ln p2p.Listener) {
-	se.disarmWhen(func() bool { return ln == nil || se.ln == ln })
+	se.disarmWhen(func(a *arm) bool { return ln == nil || a.ln == ln })
 }
 
 // disarmCeremony tears a connect-based arm down only if `cer` is still the armed ceremony — the
@@ -313,38 +478,66 @@ func (se *session) disarmIf(ln p2p.Listener) {
 // stops a stale connect goroutine, finishing after a cancel-and-rearm, from disarming the session
 // that replaced it.
 func (se *session) disarmCeremony(cer *ceremonyID) {
-	se.disarmWhen(func() bool { return cer != nil && se.cer == cer })
+	se.disarmWhen(func(a *arm) bool { return cer != nil && a.cer == cer })
 }
 
 // disarmWhen is the shared teardown: it captures and clears the armed state under the lock only if
 // the guard holds, then closes the listener and ceremony and releases any parked gate outside it.
-func (se *session) disarmWhen(ok func() bool) {
+//
+// **The guard now takes the arm it is judging (P08.S05c).** It used to close over `se.ln`/`se.cer`
+// and answer about "the" armed session; with two slots there is no such thing, so it is asked once
+// per occupied slot and EVERY match is torn down.
+//
+// **Every, not the first — the first draft stopped at one and its own comment claimed otherwise.**
+// `disarm()` passes a guard that matches everything, and its two callers are the user pressing
+// Cancel and process shutdown; both mean *all of it*. Breaking after one left a delivery arm armed
+// through shutdown, orphaning exactly what `ceremonyID.close()` solely owns — the rendezvous
+// server, the shared UDP socket, the port-mapping lease whose refresh goroutine only `close()`
+// stops. That is the same harm `TestASecondArmCannotOrphanALiveCeremony` exists for, reintroduced
+// through the teardown instead of the door. Found by this slice's own review.
+func (se *session) disarmWhen(ok func(*arm) bool) {
 	se.mu.Lock()
-	if !ok() {
+	var hits []*arm
+	for k, a := range se.arms {
+		if a != nil && ok(a) {
+			hits = append(hits, a)
+			se.arms[k] = nil
+		}
+	}
+	if len(hits) == 0 {
 		se.mu.Unlock()
 		return // a later session is armed; this one is already over
 	}
-	cur, p, pv := se.ln, se.pending, se.verify
-	cer := se.cer
-	cancel := se.cerCancel
-	se.ln, se.addr, se.pending, se.verify, se.cer, se.cerCancel = nil, "", nil, nil, nil, nil
-	se.until = time.Time{}
+	// **The two gates are machine-wide, so they are released only when NOTHING is left armed.**
+	// One user, one screen, one gate — but a parked gate belongs to whichever arm put it there,
+	// and with a slot still occupied this teardown cannot know it is not that one's. Declining it
+	// would abandon a live session's consent while the user is looking at it, which is the exact
+	// hazard `clearPendingIf`'s identity guard exists for. With one arm this is unchanged: the
+	// teardown always empties the session, so the gates always release.
+	var p *pendingReq
+	var pv *pendingVerify
+	if !se.armedLocked() {
+		p, pv = se.pending, se.verify
+		se.pending, se.verify = nil, nil
+	}
 	se.mu.Unlock()
-	if cancel != nil {
-		cancel() // stop the connect goroutine (S09), the analogue of ln.Close below
+	for _, hit := range hits {
+		if hit.cerCancel != nil {
+			hit.cerCancel() // stop the connect goroutine (S09), the analogue of ln.Close below
+		}
+		if hit.ln != nil {
+			hit.ln.Close()
+		}
+		// **The ceremony's network comes down AFTER the listener and in its own order**, and
+		// the ordering is not a style preference. `cer.close()` shuts the rendezvous server
+		// before the socket; the reverse makes the DHT's read return net.ErrClosed, which
+		// anacrolix/dht turns into `panic(err)` on a goroutine nothing of ours is on — process
+		// death, at shutdown, on the path a user reaches by pressing Cancel or quitting.
+		//
+		// It also releases the invitation secret with the session it belonged to. A secret that
+		// outlives its ceremony is residue.
+		hit.cer.close()
 	}
-	if cur != nil {
-		cur.Close()
-	}
-	// **The ceremony's network comes down AFTER the listener and in its own order**, and
-	// the ordering is not a style preference. `cer.close()` shuts the rendezvous server
-	// before the socket; the reverse makes the DHT's read return net.ErrClosed, which
-	// anacrolix/dht turns into `panic(err)` on a goroutine nothing of ours is on — process
-	// death, at shutdown, on the path a user reaches by pressing Cancel or quitting.
-	//
-	// It also releases the invitation secret with the session it belonged to. A secret that
-	// outlives its ceremony is residue.
-	cer.close()
 	if p != nil {
 		select {
 		case p.resp <- sessionDecision{accept: false}:
@@ -370,6 +563,10 @@ func (se *session) disarmWhen(ok func() bool) {
 type consentAnchor struct {
 	ln  p2p.Listener
 	cer *ceremonyID
+	// kind is the slot this session's arm occupies, carried so the sticky notice and received
+	// fields can be attributed to it (P08.S05c). The anchor already names the armed operation, so
+	// it is the one thing on this path that always knows.
+	kind armKind
 }
 
 // current reports whether this anchor still names the armed session. Called under se.mu. It is the
@@ -377,10 +574,21 @@ type consentAnchor struct {
 // se.ln) is the NEW operation, so an anchor naming the old one is refused — which is the whole
 // point of the check (see setPending).
 func (a consentAnchor) current(se *session) bool {
-	if a.cer != nil {
-		return se.cer != nil && se.cer == a.cer
+	for _, s := range se.arms {
+		if s == nil {
+			continue
+		}
+		if a.cer != nil {
+			if s.cer == a.cer {
+				return true
+			}
+			continue
+		}
+		if s.ln != nil && s.ln == a.ln {
+			return true
+		}
 	}
-	return se.ln != nil && se.ln == a.ln
+	return false
 }
 
 // setPending parks a consent request, and refuses if its anchor no longer names the armed session.
@@ -482,10 +690,26 @@ func (se *session) respond(d sessionDecision) bool {
 
 func (se *session) status() sessionStatus {
 	se.mu.Lock()
-	st := sessionStatus{Armed: se.armedLocked(), Address: se.addr, Received: se.received}
-	if st.Armed && !se.until.IsZero() {
-		u := se.until
-		st.Until = &u
+	// **`armedLocked`, deliberately, and NOT the collision predicate beside it (P08.S05c).** This
+	// field is the user's armed pill, and the honest answer to it is *is this machine listening* —
+	// which a delivery arm makes true just as an interactive one does. It is the machine's one
+	// network-reachable surface either way (the TRIPWIRE), so reporting unarmed while a delivery
+	// arm holds it open would be a false statement about reachability.
+	//
+	// **The DETAILS describe the interactive arm when there is one**, because that is the arm the
+	// person at the keyboard opened and the only one they can act on; the delivery arm answers
+	// only when it is the sole occupant, so `Armed` is never true beside an empty address.
+	shown := se.arms[armInteractive]
+	if shown == nil {
+		shown = se.arms[armDelivery]
+	}
+	st := sessionStatus{Armed: se.armedLocked(), Received: se.received}
+	if shown != nil {
+		st.Address = shown.addr
+		if !shown.until.IsZero() {
+			u := shown.until
+			st.Until = &u
+		}
 	}
 	// Carried whether or not anything is armed — that is the point of it. The disarm is usually
 	// the symptom, so a notice that went away with the session would be one nobody reads.
@@ -497,7 +721,10 @@ func (se *session) status() sessionStatus {
 	if se.verify != nil {
 		st.Verify = &verifyView{Words: se.verify.words}
 	}
-	cer := se.cer
+	var cer *ceremonyID
+	if shown != nil {
+		cer = shown.cer
+	}
 	inSession := se.pending != nil || se.verify != nil
 	se.mu.Unlock()
 
@@ -563,7 +790,7 @@ func (sc sessionConfirmer) Confirm(peer p2p.SignerAttestation, doc []byte) (bool
 			// as a named wire code; this arm has no response to write into, so without this line
 			// the user on this machine sees nothing and goes on waiting for a proceeding their
 			// own build has just declared over.
-			sc.s.sess.noteArrivalRefusal(err)
+			sc.s.sess.noteArrivalRefusal(sc.anchor.kind, err)
 			return false, "", nil, err
 		}
 	}
@@ -812,7 +1039,7 @@ func (sa sessionAccepter) Accept(peerFP, doc []byte) (bool, error) {
 		// `incoming/alice-20260831-110425.pdf`. So `ackOK` attests that THESE bytes reached the
 		// disk, and not that an earlier document still exists. P08.S05d's deterministic filename
 		// is what closes it.
-		if err := sa.s.saveReceived(doc, peerFP, sa.label); err != nil {
+		if err := sa.s.saveReceived(sa.anchor.kind, doc, peerFP, sa.label); err != nil {
 			return false, err // → ackNotStored, never ackDeclined: the user said yes
 		}
 		return true, nil
@@ -918,7 +1145,7 @@ func (s *Server) runSession(ln p2p.Listener, cer *ceremonyID, cert, key []byte, 
 	// no deadline. Giving it one is `/pending 247`, whose own grill found the field would be
 	// consumed at arm time while nothing could check it until the document arrives. So the honest
 	// bound today is the same ceiling the other path uses, and the refinement waits on that item.
-	armWindow := armWindowFor(cer)
+	armWindow := armWindowFor(armInteractive, cer)
 	armedUntil := time.Now().Add(armWindow)
 	// postSign is the re-delivery window's deadline, zero until this arm has signed. opened keeps
 	// the co-signed document opening ONCE across re-deliveries. Both mirror runCeremonyReceive.
@@ -969,7 +1196,7 @@ func (s *Server) runSession(ln p2p.Listener, cer *ceremonyID, cert, key []byte, 
 			continue
 		}
 		timer.Stop()
-		served, final, _ := s.serveOneSession(consentAnchor{ln: ln}, cer, conn, cert, key, label, mode, myFP)
+		served, final, _ := s.serveOneSession(consentAnchor{ln: ln, kind: armInteractive}, cer, conn, cert, key, label, mode, myFP)
 		if final != nil && !opened {
 			s.openArrival(label, final) // once: a re-delivery re-sends the SAME idempotent result
 			opened = true
@@ -1052,8 +1279,8 @@ func (s *Server) runSession(ln p2p.Listener, cer *ceremonyID, cert, key []byte, 
 // cer is the ceremony this session belongs to, or nil outside one.
 //
 // **Explicit, rather than read off `anchor.cer` (P07.S02b).** The anchor carries a ceremony only
-// on the QUIC coordinator path (`consentAnchor{cer: cer}`); the accept loop builds
-// `consentAnchor{ln: ln}` and a TCP ceremony hop therefore arrived here with no ceremony at all,
+// on the QUIC coordinator path (`consentAnchor{cer: cer, kind: armInteractive}`); the accept loop builds
+// `consentAnchor{ln: ln, kind: armInteractive}` and a TCP ceremony hop therefore arrived here with no ceremony at all,
 // although the arm had stored one. Two things depended on that nil and were wrong for it — the
 // re-deliverer below, and P07.S02b's C17 gate.
 //
@@ -1128,7 +1355,7 @@ func (s *Server) serveOneSession(anchor consentAnchor, cer *ceremonyID, conn *p2
 	// D24's sentence VERBATIM, both halves. The criterion quoted only "signed but not saved", and
 	// the clause that prevents the loss is the second one: closing Nib is what destroys it.
 	if p2p.PersistFailed(rerr) {
-		s.sess.noteFailure("signed-not-saved",
+		s.sess.noteFailure(anchor.kind, "signed-not-saved",
 			"Signed, but not saved — do not close Nib.",
 			"The other party has your signature; it is on their copy of the document either way. "+
 				"What failed is this machine keeping its own copy, so closing Nib now would lose "+
@@ -1183,10 +1410,10 @@ func (s *Server) openArrival(label string, final []byte) {
 // is the one path in the tree that loses a peer's document with no trace after the sender has
 // been told it was accepted. The error now reaches the wire as `ackNotStored`, so "accepted" and
 // "kept" stop being the same claim.
-func (s *Server) saveReceived(doc, peerFP []byte, peerLabel string) error {
+func (s *Server) saveReceived(by armKind, doc, peerFP []byte, peerLabel string) error {
 	path := filepath.Join(defaultOutputDir(), receivedSubdir(doc), receivedName(peerLabel, peerFP))
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		s.sess.noteFailure("received-not-saved",
+		s.sess.noteFailure(by, "received-not-saved",
 			"A document arrived and could not be saved.",
 			"Nib could not create the folder it saves incoming documents into. Reason: "+err.Error())
 		return fmt.Errorf("%w: %v", p2p.ErrNotStored, err)
@@ -1197,13 +1424,13 @@ func (s *Server) saveReceived(doc, peerFP []byte, peerLabel string) error {
 	// saying "simply reports nothing". That is the one path in the tree that loses a peer's
 	// document with no trace at all, and the peer has already been told it was accepted.
 	if err := atomicfile.WriteDurable(path, doc, 0o600); err != nil {
-		s.sess.noteFailure("received-not-saved",
+		s.sess.noteFailure(by, "received-not-saved",
 			"A document arrived and could not be saved.",
 			"The sender is told it was not saved. Arm again and ask them to resend — the failed "+
 				"write spends this arm, so nothing can reach you until you do. Reason: "+err.Error())
 		return fmt.Errorf("%w: %v", p2p.ErrNotStored, err)
 	}
-	s.sess.setReceived(&receivedInfo{Path: path, Peer: peerLabel})
+	s.sess.setReceived(by, &receivedInfo{Path: path, Peer: peerLabel})
 	return nil
 }
 
@@ -1625,7 +1852,7 @@ func (s *Server) runCeremonyReceive(ctx context.Context, cer *ceremonyID, hl *p2
 	//
 	// The TRIPWIRE (see its comment) is honoured as "SIGNS at most once", which the cache enforces:
 	// a re-delivery hands back the same bytes, never a second signature.
-	overallDeadline := time.Now().Add(armWindowFor(cer))
+	overallDeadline := time.Now().Add(armWindowFor(armInteractive, cer))
 	var postSignDeadline time.Time
 	opened := false // the co-signed document opens once, not per re-delivery
 	for {
@@ -1660,7 +1887,7 @@ func (s *Server) runCeremonyReceive(ctx context.Context, cer *ceremonyID, hl *p2
 				return // the baton never arrived, or the ceremony deadline passed
 			}
 		}
-		_, final, xerr := s.serveOneSession(consentAnchor{cer: cer}, cer, conn, cert, key, label, mode, myFP)
+		_, final, xerr := s.serveOneSession(consentAnchor{cer: cer, kind: armInteractive}, cer, conn, cert, key, label, mode, myFP)
 		if final != nil && !opened {
 			s.openArrival(label, final) // once: a re-delivery re-sends the SAME idempotent result
 			opened = true

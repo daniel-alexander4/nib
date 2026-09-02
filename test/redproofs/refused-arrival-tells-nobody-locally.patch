@@ -1,12 +1,10 @@
-diff --git a/internal/server/session.go b/internal/server/session.go
-index 61035ec..b8e4475 100644
 --- a/internal/server/session.go
 +++ b/internal/server/session.go
-@@ -563,7 +563,6 @@ func (sc sessionConfirmer) Confirm(peer p2p.SignerAttestation, doc []byte) (bool
+@@ -769,7 +769,6 @@
  			// as a named wire code; this arm has no response to write into, so without this line
  			// the user on this machine sees nothing and goes on waiting for a proceeding their
  			// own build has just declared over.
--			sc.s.sess.noteArrivalRefusal(err)
+-			sc.s.sess.noteArrivalRefusal(sc.anchor.kind, err)
  			return false, "", nil, err
  		}
  	}

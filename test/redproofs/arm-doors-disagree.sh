@@ -14,6 +14,17 @@
 # Note the predicate-COUNT assertion deliberately stays green here: the reverted door writes
 # `se.ln != nil`, not the full predicate, so counting copies never sees it. That is why the guard
 # asserts routing as well as counting.
+#
+# **RE-RECORDED at P08.S05c (2026-09-01).** The original defect narrowed ONE door's predicate
+# (`arm` asked `se.ln != nil` while `armCeremony` asked about both fields). There is now one
+# installer, `armIn`, so doors can no longer disagree with each other — they can only disagree
+# with the SLOT they are about to write. The re-recorded defect is that: `armIn` checks the
+# delivery slot while writing the interactive one, so a second interactive arm is admitted and
+# overwrites a live ceremony. Same harm, same test, one door further down.
+#
+# EXPECT moved with the test's own re-expression, from "must fail" to the harm it stands for:
+# a second arm being ADMITTED is no longer wrong in general (a delivery arm beside an
+# interactive one is the point of the slice), and displacing a live one always is.
 TIER="tier 1 — go test"
 PROVE="go test ./internal/server/ -run 'TestASecondArmCannotOrphanALiveCeremony|TestTheArmedPredicateHasOneImplementation' -count=1"
-EXPECT="a manual/TCP arm succeeded while a ceremony arm was live"
+EXPECT="A second arm displaced it"
