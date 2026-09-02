@@ -3257,9 +3257,19 @@ per HOP"* while guarding a process-wide counter. `hopScoped(c, cer.hop)` filters
 stream by hop eight lines from where the budget was taken by ceremony, so the right unit was already
 in the file beside the wrong one.
 
-**Its first mutation was a red for the wrong reason.** Dropping the hop term left `strconv` unused
-and the package failed to compile, which `redproof.sh` cannot distinguish from a test doing its job
-by reading exit status alone. Re-recorded as `strconv.Itoa(0*hop)`, which compiles and is wrong.
+**Its first mutation was a red for the wrong reason, and so was its neighbour's — the second time
+after writing this paragraph.** Dropping the hop term left `strconv` unused and the package failed
+to compile; re-recorded as `strconv.Itoa(0*hop)`, which compiles and is wrong. Then
+`punch-budget-shared-across-every-ceremony` was re-recorded as `key := ""` with `_, _ = id, hop`,
+which leaves `strconv` unused in exactly the same way — and `redproof.sh` caught it by name:
+*"went red, but not for its own reason … a non-zero exit alone is also what a DELETED or
+uncompilable check produces."* Re-recorded again as `key := strconv.Itoa(0)`, one entry for every
+ceremony, which is what the row names.
+
+**The lesson is narrower than "be careful with imports".** A mutation is only a proof if the tree
+still builds, and the failure mode is asymmetric: a build failure looks like a pass to any harness
+reading exit status, so a row recorded that way claims coverage it never had. `EXPECT` is what
+separates the two, and it is the reason it exists.
 
 **One probe is deliberately NOT a row.** Deleting the dial-side browse does not produce a packet
 count at all — the round then has no candidate for any party and every leg runs out its 300 s
