@@ -199,18 +199,23 @@ func ceremonyHopBudget() time.Duration {
 // ceremonyDeliveryLegBudget is the worst-case wall-clock ONE leg of the delivery round can
 // consume, and it is the same three terms as a hop for the same reason (P08.S05b).
 //
-//	bootstrapBudget           20s   the DHT table is warm before anybody dials
-//	connectDeadline          300s   the race to reach the party
-//	p2p.DeliveryLegBudget()   24m   what SendDocument actually arms
-//	                        -------
-//	                         29m20s
+//	bootstrapBudget                              20s   the DHT table is warm before anybody dials
+//	connectDeadline                             300s   the race to reach the party
+//	p2p.DeliveryLegBudget(PeerGatesUnattended)   14m   what SendDocument arms on this leg
+//	                                          -------
+//	                                           19m20s
 //
-// **Equal to `ceremonyHopBudget()` today, and separate anyway.** The two are equal because the
-// transfer path and the co-sign path arm the same deadlines; they are different rules about
-// different functions, and P08.S05d is scheduled to shrink the p2p half of this one by making both
-// of the leg's gates non-interactive. A caller that reserved `ceremonyHopBudget()` for a delivery
-// leg would be restating a rule it cannot see, which is the shape `p2p.SessionBudget`'s own doc
+// **It was equal to `ceremonyHopBudget()` and is no longer, which is why it was kept separate.**
+// The two matched only because the transfer path and the co-sign path armed the same three
+// deadlines; they are different rules about different functions, and P08.S05d shrank the p2p half
+// of this one by making both of the leg's gates non-interactive — 29m20s to 19m20s. A caller that
+// had reserved `ceremonyHopBudget()` for a delivery leg would now be over-reserving by ten minutes
+// a leg while restating a rule it cannot see, which is the shape `p2p.SessionBudget`'s own doc
 // grades critical.
+//
+// **The gates are named at the call, not assumed.** `PeerGatesUnattended` is a claim about the far
+// side, and it is true here because the round arms that side itself (S05g). Passing it where the
+// receiver is a person would reserve ten minutes less than the leg can spend.
 //
 // **Why it is not the 7m20s the slice was firmed with.** That figure was
 // `bootstrapBudget + connectDeadline + postConsentDeadline`, on the reasoning that a delivery leg
@@ -220,5 +225,5 @@ func ceremonyHopBudget() time.Duration {
 // per leg, against a rule this package already states: the outer clock reserves the inner one's
 // worst case rather than merely exceeding it.
 func ceremonyDeliveryLegBudget() time.Duration {
-	return bootstrapBudget + connectDeadline + p2p.DeliveryLegBudget()
+	return bootstrapBudget + connectDeadline + p2p.DeliveryLegBudget(p2p.PeerGatesUnattended)
 }

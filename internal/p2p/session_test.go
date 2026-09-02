@@ -316,7 +316,7 @@ func TestARefusalTellsThePeerWHICHRefusalItWas(t *testing.T) {
 				if tc.coSign {
 					_, got = Initiate(conn.Channel, signAsInitiator(t, aCert, aKey, bFP), aFP, okVerifier{}, Roster{})
 				} else {
-					got = SendDocument(conn.Channel, []byte("%PDF-1.4\nhello"), aFP, okVerifier{})
+					got = SendDocument(conn.Channel, []byte("%PDF-1.4\nhello"), aFP, okVerifier{}, PeerGatesHuman)
 				}
 				if !errors.Is(got, tc.want) {
 					t.Errorf("the SENDING side saw %v; want %v. This is what the user is told "+
