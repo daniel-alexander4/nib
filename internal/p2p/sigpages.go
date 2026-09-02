@@ -45,6 +45,10 @@ func (c CeremonyID) String() string { return hex.EncodeToString(c[:]) }
 // correct. TestSixIsBelowTheGeometricCeiling holds the two facts together.
 const blocksPerPage = 6
 
+// SignaturePagesFor is signaturePages, exported so a caller can assert against the rule
+// rather than restating it. A test that hard-codes the divisor is a second copy of D25.
+func SignaturePagesFor(signers int) int { return signaturePages(signers) }
+
 // signaturePages is how many dedicated signature pages a ceremony of n signers needs.
 //
 // **No special case at small n, and dropping the one I first wrote is the point.** The first
@@ -57,10 +61,6 @@ const blocksPerPage = 6
 //
 // What the special case would have cost: a block's page would depend on its index under two
 // different rules, and S06 has to place blocks against whatever this returns.
-// SignaturePagesFor is signaturePages, exported so a caller can assert against the rule
-// rather than restating it. A test that hard-codes the divisor is a second copy of D25.
-func SignaturePagesFor(signers int) int { return signaturePages(signers) }
-
 func signaturePages(signers int) int {
 	return (signers + blocksPerPage - 1) / blocksPerPage
 }

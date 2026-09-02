@@ -350,7 +350,7 @@ func (l *tlsListener) Addr() net.Addr { return l.ln.Addr() }
 
 func (l *tlsListener) Transport() string { return TransportTCP }
 
-// loop accepts until Close, or until an accept error it cannot continue past.
+// acceptLoop accepts until Close, or until an accept error it cannot continue past.
 //
 // **`ready` is never closed, and that is the fix.** It used to be `defer close(l.ready)`,
 // while handshake goroutines were still selecting on a send into it — up to handshakeTimeout

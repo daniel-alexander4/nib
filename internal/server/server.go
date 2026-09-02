@@ -1075,6 +1075,14 @@ var ErrTooManyOpen = errors.New("too many documents open (limit " + strconv.Itoa
 // and a single message covering both would tell half of them the wrong thing.
 var ErrTooManyBytes = errors.New("the open documents would exceed " + strconv.Itoa(maxOpenBytes>>20) + " MiB — close a large one first")
 
+// docBudget is the aggregate open-document ceiling in force. See maxDocBytes.
+func (s *Server) docBudget() int {
+	if s.maxDocBytes > 0 {
+		return s.maxDocBytes
+	}
+	return maxOpenBytes
+}
+
 // addDocCapped is addDoc for the five USER-initiated install routes: open, open-url,
 // upload, combine, office. It refuses at maxOpenDocs.
 //
@@ -1113,14 +1121,6 @@ var ErrTooManyBytes = errors.New("the open documents would exceed " + strconv.It
 // count first would leave a window for a concurrent open to land in between, and two
 // requests passing the check at seven both reach nine. One user with two browser
 // panes is enough, which is exactly how the /api/doc race was reproduced.
-// docBudget is the aggregate open-document ceiling in force. See maxDocBytes.
-func (s *Server) docBudget() int {
-	if s.maxDocBytes > 0 {
-		return s.maxDocBytes
-	}
-	return maxOpenBytes
-}
-
 func (s *Server) addDocCapped(doc *document) (*document, error) {
 	if doc == nil {
 		return nil, nil

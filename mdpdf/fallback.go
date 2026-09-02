@@ -127,10 +127,6 @@ func registerMetrics(name string) error {
 	return nil
 }
 
-// installedFallback reports whether pdfcpu already holds this face on disk. The .gob is
-// named for the PostScript name, which is what Font.Name carries. Existence and
-// non-emptiness rather than an integrity check: the .gob holds an unexported pdfcpu
-// struct, so nothing outside that package can decode one to verify it.
 // safeFontName reports whether a font name may be used as a path component.
 //
 // mdpdf documents itself as a root package other projects import, so `Font.Name` is API
@@ -159,6 +155,10 @@ func safeFontName(name string) bool {
 	return true
 }
 
+// installedFallback reports whether pdfcpu already holds this face on disk. The .gob is
+// named for the PostScript name, which is what Font.Name carries. Existence and
+// non-emptiness rather than an integrity check: the .gob holds an unexported pdfcpu
+// struct, so nothing outside that package can decode one to verify it.
 func installedFallback(name string) bool {
 	if !safeFontName(name) {
 		return false

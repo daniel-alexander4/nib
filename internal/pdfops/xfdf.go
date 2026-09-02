@@ -122,9 +122,6 @@ func FillFormXFDF(pdf, data []byte) ([]byte, error) {
 	return fillFromValues(pdf, skelJSON, values, xfdfChecked)
 }
 
-// parseXFDF reads an XFDF document into a flat map of fully-qualified field name →
-// value(s). encoding/xml resolves no external entities and does no recursive
-// entity expansion, so XFDF is safe to parse; we additionally cap the input size.
 // xfdfCharset decodes an XFDF that declares an encoding other than UTF-8.
 //
 // **Without one, `encoding/xml` refuses the document outright** — "xml: encoding declared but
@@ -144,6 +141,9 @@ func xfdfCharset(label string, input io.Reader) (io.Reader, error) {
 	return enc.NewDecoder().Reader(input), nil
 }
 
+// parseXFDF reads an XFDF document into a flat map of fully-qualified field name →
+// value(s). encoding/xml resolves no external entities and does no recursive
+// entity expansion, so XFDF is safe to parse; we additionally cap the input size.
 func parseXFDF(data []byte) (map[string][]string, error) {
 	if len(data) > maxXFDFBytes {
 		return nil, fmt.Errorf("XFDF too large")

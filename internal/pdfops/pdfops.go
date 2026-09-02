@@ -135,7 +135,8 @@ func Collect(pdf []byte, order []string) ([]byte, error) {
 	return carryLang(pdf, out.Bytes())
 }
 
-// carryDocumentState copies the page-INDEPENDENT catalog entries from src onto dst.
+// carryLang copies the catalog's /Lang across a page operation, and NOT the rest of the
+// catalog's page-independent state — the sections below are why.
 //
 // # What was lost, measured rather than assumed
 //
@@ -166,7 +167,6 @@ func Collect(pdf []byte, order []string) ([]byte, error) {
 //
 // So: /Lang, /Metadata (XMP) and the embedded-files name tree, all of which mean the same
 // thing whatever order the pages are in.
-// carryLang copies the catalog's /Lang across a page operation.
 //
 // # /Lang only, and the attachments deliberately NOT
 //

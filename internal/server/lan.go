@@ -301,7 +301,7 @@ func portOf(ln interface{ Addr() net.Addr }) int {
 	return 0
 }
 
-// peerAddress returns the address to dial, browsing the link when none was supplied.
+// peerAddresses returns the addresses to dial, browsing the link when none was supplied.
 //
 // It writes the HTTP error itself and reports ok=false, matching the shape of the other
 // helpers on these routes. The distinction it preserves is worth stating: "you did not

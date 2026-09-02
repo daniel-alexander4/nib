@@ -34,9 +34,6 @@ func (s *Server) handleRecent(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, recent)
 }
 
-// handleOpenURL loads a PDF fetched from a URL (server-side, avoiding browser
-// CORS). A URL-sourced document has no local path, so it saves as a copy rather
-// than overwriting in place.
 // urlDocName is the display name for a document fetched by URL: the last path segment, or a
 // plain fallback when the URL has none (a bare host, or a path ending in a slash).
 func urlDocName(raw string) string {
@@ -51,6 +48,9 @@ func urlDocName(raw string) string {
 	return base
 }
 
+// handleOpenURL loads a PDF fetched from a URL (server-side, avoiding browser
+// CORS). A URL-sourced document has no local path, so it saves as a copy rather
+// than overwriting in place.
 func (s *Server) handleOpenURL(w http.ResponseWriter, r *http.Request) {
 	var req struct{ URL string }
 	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<16)).Decode(&req); err != nil {
