@@ -59,7 +59,7 @@ func TestAnIncompleteChannelIsRefusedByEveryEntryPoint(t *testing.T) {
 			return err
 		},
 		"SendDocument": func(ch Channel) error {
-			return SendDocument(ch, pdf, fp, okVerifier{})
+			return SendDocument(ch, pdf, fp, okVerifier{}, PeerGatesHuman)
 		},
 		"ReceiveDocument": func(ch Channel) error {
 			_, err := ReceiveDocument(ch, nil, fp, okVerifier{})

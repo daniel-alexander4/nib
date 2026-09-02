@@ -6226,7 +6226,7 @@ Tasks:
 - T06 — the TRIPWIRE cites this slice and states which of its three containments moved (*what arms it* and *how long it stays open*; NOT *which peers it accepts*). *(done — answered item by item, because "we widened the tripwire" is not a reviewable statement.)*
 - T07 — tier 4: two live arms on one machine. *(**NOT EXERCISED**, and the reason is structural: `armDeliveryForCeremony` has no production caller until S05d wires the round, so no tier-4 run can put two arms on one machine. Named search pasted at the commit gate. The slice's own point — the second slot, the split predicate, the scoped clearing, the bound — is exercised at tier 1.)*
 
-#### P08.S05d — The round itself: found off-LAN, unattended, named on disk *(D22, D30, D34; C08, C10)* — **new, 2026-08-31, split out of S05**
+#### P08.S05d — The delivery LEG: unattended on both gates, and what it leaves on disk *(D22, D30; C08, C10)* — **new, 2026-08-31, split out of S05; SPLIT AGAIN 2026-09-01 at its deepdive** *(done 2026-09-01, v1.117.317 — 5 clauses, all met. **The deepdive found there was no round at all** — a named search returned zero production hits — so what was filed as one slice was a subsystem plus its tier-4 drive; the round is now S05g. The grill then found `checkArrival` is the WRONG gate for a delivery arrival: its deadline arm exists to stop a party being collected into a proceeding that has ENDED, and a delivery is the opposite case, so reusing it would have refused exactly the documents the round exists to deliver. **A comment I wrote about a guard broke that guard** — it regexed `SetDeadline(` over source text, and the explanation of why the third arm is a variable counted as a fourth arm; it is the mirror of v1.117.155's finding and is counted from the AST now. The review found `checkDelivered` misusing `persistedFor(nil)`, which works only by an identity in that function's miss rules, and `/pending 342` about to be left filed against the closing coordinate while its own clause cited the defect by name — closed here, mutation-proved, re-run at the tier that measured it. The commit gate found a THIRD misfiled doc comment, and the repo-wide scan it prompted found **18**, filed as `/pending 352`.)*
 Scope: the delivery leg. The rendezvous is derived at **its own hop index** — `RecordKey(hop)` and
 `RecordSalt(hop, fp)` are already hop-parameterised (`internal/ceremony/invitation.go:543`, `:565`),
 so a delivery leg sharing the hop's index would publish at the same BEP-44 target and, in
@@ -6240,7 +6240,83 @@ Acceptance:
 - **The delivered filename is deterministic** and carries the ceremony id and a human half derived from the record's intent, so the finished lease is distinguishable from Monday's copy by name alone. It does not reuse `receivedName` (`session.go:1132-1138`), which reads `time.Now()` inside the builder at second granularity and collides within one second. Tier 1.
 - **The recipient verifies what arrives** — `CheckRecord`, `MatchesRecord`, completeness over the full roster, and a byte-prefix check against its own persisted contribution. Its blind spots are stated, not implied. Tier 1.
 - **A re-run after a mid-round failure reaches that party and no other, leaving exactly one file per party**, driven by injecting the write failure at party 3 of 4 — which is only meaningful because S05a made the ack mean persisted. Tier 4.
-- Tier: 4 for the round, 1 for the naming and verification rules (C15).
+- Tier: 1 throughout; the round that drives it end to end is **S05g**.
+
+**Deepdive, 2026-09-01 — run inline rather than fanned out; four findings, and the first resizes
+the slice.**
+- **(a) There is no round, and no part of one.** Named search over `internal/` for
+  `deliveryRound|runDelivery|deliverTo|DeliverDocument`: **zero production hits**. So S05d as
+  written was not a slice, it was a subsystem plus its own tier-4 drive — a convener-side driver,
+  a recipient arm, a rendezvous scheme, a filename rule, a verification rule, a budget change and a
+  fault-injected N=4 run. **SPLIT** on the tier boundary, which is also the seam P07 and P08 have
+  split on five times before (a protocol half, and a half that asserts what the protocol renders):
+  this slice is the LEG, and **S05g** is the ROUND. Sequencing is unchanged for everything after —
+  S05e's egress work still follows the round.
+- **(b) The budget shrink needs a change to `SendDocument`, not just to the gates.**
+  `DeliveryLegBudget()`'s own doc already says *"S05d owes both edits or neither"* and it is right:
+  `SendDocument` arms `remoteDecisionDeadline` (12m) **unconditionally** at
+  `internal/p2p/session.go:774`, before its `readFrameMax`, whatever the far side's gates do. So
+  `2*exchangeDeadline + postConsentDeadline` = 14m is reachable only if the SENDER also learns the
+  leg is unattended — which `SendDocument` cannot infer, because it is shared with the interactive
+  transfer path. That is a signature or variant change, not a constant edit, and it is why the
+  shrink is a task of its own rather than a line.
+- **(c) The non-interactive gates must be UNREACHABLE from an interactive arm, and nothing says so
+  yet.** `runVerification` fails closed on nil (`internal/p2p/verify.go:239-244`) precisely so a
+  forgotten gate cannot silently open; an auto-confirming `Verifier` is the thing that rule exists
+  to prevent, made legitimate by scope alone. The scope is real — S05c gave the delivery arm its own
+  door — but *"only the delivery path uses it"* is a claim of absence and needs a guard, not a
+  comment. Added as a task.
+- **(d) `RecordKey(hop)` takes any int and validates nothing** (`internal/ceremony/invitation.go:543`),
+  so a delivery leg's own index is derivable today with no format change: both ends know the roster
+  and their own position. `RecordSalt` is keyed per party as well, so two legs never collide. That
+  is **S05g's** to use; recorded here because the deepdive settled it and the next slice should not
+  re-derive it.
+
+**Grill, 2026-09-01 — three findings; the third changes what T05 builds.**
+- **(e) The auto-gates need a DOOR in this slice, or T02's guard is vacuous by construction.** The
+  guard asserts the non-interactive `Verifier`/`Accepter` are unreachable from an interactive arm —
+  but the delivery call site is S05g's, so a guard written against "the delivery path" would today
+  be asserting a property of zero production sites, which is the vacuous green this repo keeps
+  finding in its own guards. So the slice builds `deliverOneLeg` as well: one function that runs an
+  unattended send or receive, the auto-gates' only production references, and the thing the guard
+  asserts routing through. S05g then calls it per party instead of assembling a leg itself.
+- **(f) The spoken check is redundant on this leg for a stronger reason than the plan gives.** The
+  bullet says *"a pin and a secret that have not changed"*. What actually makes it sound is that
+  **these same two parties already completed a spoken check on this pin** — D22 is a hub, so every
+  delivery leg is convener↔party and every party ran `runVerification` against the convener at its
+  own hop. Auto-confirming re-asks a question already answered between the same two identities,
+  rather than skipping one that was never asked. Written at the site, because the weaker argument
+  would also license auto-confirming a leg between two parties who never met.
+- **(g) `checkArrival` is the WRONG gate for a delivery arrival, and reusing it would refuse the
+  round's whole point.** It already composes three of T05's four checks (`CheckRecord`,
+  `MatchesRecord`, plus `recordOutlivesBudget`) behind a one-door guard — but its deadline arm
+  exists to stop a party *being collected into a proceeding that has ended*, and a delivery is the
+  exact opposite case: the proceeding has ended, correctly, and this is its result. S05b reserved
+  grace so the round may run at or past `Expires`, so calling `checkArrival` here would refuse
+  precisely the documents the round exists to deliver. A delivery arrival is a **different rule**
+  and gets its own door under ADR-009, with the difference named at both sites so neither is later
+  "unified" with the other.
+Tasks:
+- T01 — a non-interactive `Verifier` and `Accepter`, plus `deliverOneLeg`, their only production caller (finding (e)); each states why auto-confirming is sound on this leg and only on it (finding (f)). *(done)*
+- T02 — the structural guard that neither is reachable from an interactive arm (finding (c)), with a second call site made to fail it. *(done — mutation-proved; row `unattended-gates-escape-their-door`.)*
+- T03 — `SendDocument` learns the leg is unattended, so its third arm drops from `remoteDecisionDeadline` to `postConsentDeadline` (finding (b)); `DeliveryLegBudget()` follows, and its literal pin moves with it. *(done — 24m → 14m on the unattended arm, 24m unchanged on the attended one, with a discriminator asserting they DIFFER. **A comment I wrote about the arm-count guard broke it**: it regexed `SetDeadline(` over source text and read the explanation as a fourth arm. Counted from the AST now.)*
+- T04 — the deterministic delivered filename: ceremony id plus a human half from the record's intent, outside `~/nib/ceremonies/`, not reusing `receivedName`. *(done — and `/pending 342` CLOSED with it: leaving `receivedName` destroying documents while shipping its fixed sibling is not a defensible reading of this clause.)*
+- T05 — `checkDelivered`, the delivery arrival's OWN gate (finding (g)): `CheckRecord` and `MatchesRecord` as `checkArrival` has them, roster completeness, and a byte-prefix against this party's own contribution — but NO deadline refusal, and both doors say why they differ. Blind spots stated, not implied. *(done — the review caught it calling `persistedFor(nil)`, which works only by an identity in that function's miss rules; it reads the mirror directly now.)*
+
+
+#### P08.S05g — The delivery ROUND: driven, found off-LAN, and re-runnable *(D22, D30, D34; C08, C10)* — **new, 2026-09-01, split out of S05d at its deepdive**
+Scope: the round that drives S05d's leg. **Sequenced after S05d and before S05e**, which bounds
+this round's egress. The rendezvous is derived at **its own hop index** — `RecordKey(hop)` and
+`RecordSalt(hop, fp)` are hop-parameterised and validate nothing
+(`internal/ceremony/invitation.go:543`, `:565`), so an index past the roster is derivable by both
+ends with no format change; a leg sharing the hop's index would publish at the same BEP-44 target
+and, in `RecordSalt`'s own words, *"the higher-seq write silently clobbered the other"*.
+Acceptance:
+- **The round reaches a party off-LAN**, over a second armed rendezvous at its own hop index, with its egress enumerated against D34 rather than inherited. Tier 4.
+- **The recipient's arm is S05c's delivery slot**, so the round coexists with whatever the user has open — which is what turns S05c's one `not exercised` clause green. Tier 4.
+- **The delivery arm is re-established at load or unlock, and this slice builds the hook** (`/pending 323`(a)). Named search over `internal/` for `re-?arm|resumeCeremon|restoreArm|atStartup|onStart` finds none, and `Server.New` starts nothing ceremony-related — so today a party who restarts is unreachable by the round for the rest of the ceremony. S06's third bullet already assumes *"at startup, at unlock"* exists; nothing builds it. Tier 1 for the hook, tier 4 for a restarted party being reached.
+- **A re-run after a mid-round failure reaches that party and no other, leaving exactly one file per party**, driven by injecting the write failure at party 3 of 4 — which is only meaningful because S05a made the ack mean persisted. Tier 4.
+- Tier: 4 throughout; the leg's rules are S05d's (C15).
 
 #### P08.S05e — The end state is delivered, and the round's egress is bounded *(D28, D33, D34, ADR-011; C06's telling half)* — **new, 2026-08-31, split out of S05**
 Scope: wiring P08.S04b's termination object, which is built, verified and has **zero production

@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
@@ -1411,7 +1412,7 @@ func (s *Server) openArrival(label string, final []byte) {
 // been told it was accepted. The error now reaches the wire as `ackNotStored`, so "accepted" and
 // "kept" stop being the same claim.
 func (s *Server) saveReceived(by armKind, doc, peerFP []byte, peerLabel string) error {
-	path := filepath.Join(defaultOutputDir(), receivedSubdir(doc), receivedName(peerLabel, peerFP))
+	path := filepath.Join(defaultOutputDir(), receivedSubdir(doc), receivedName(peerLabel, peerFP, doc))
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		s.sess.noteFailure(by, "received-not-saved",
 			"A document arrived and could not be saved.",
@@ -1463,12 +1464,32 @@ func transferReason(doc []byte) string {
 // wire carries no original filename, so the sender's label and the arrival time
 // identify it. labelSlug falls back to a short fingerprint when the label is empty
 // or unprintable.
-func receivedName(peerLabel string, peerFP []byte) string {
+//
+// # The document's own digest, added at P08.S05d (/pending 342)
+//
+// **The name used to be `<slug>-<YYYYmmdd-HHMMSS>.pdf`, and it destroyed documents.** The clock is
+// read INSIDE the builder at one-second granularity, so two documents from one peer inside a
+// second produced one filename — and `saveReceived` writes with `atomicfile.WriteDurable`, which
+// renames over whatever is there. The second arrival silently destroyed the first, after the
+// sender had already been told `ackOK`. Measured, not argued: `ceremonyrepro.sh`'s two transfer
+// legs run back to back and both landed at `incoming/alice-20260831-110425.pdf`.
+//
+// The digest closes it in the direction that also makes a RE-SEND idempotent: two different
+// documents can no longer share a name however fast they arrive, and the same document re-sent
+// overwrites itself with identical bytes instead of accumulating copies. Eight hex characters —
+// 32 bits — is not a collision claim about arbitrary documents; it is about the handful a peer
+// sends in one session, where the birthday bound is remote and the failure mode is the benign one
+// (a re-send overwriting itself).
+//
+// The timestamp stays, because it is what a person scans a directory by; it is no longer what
+// makes the name unique.
+func receivedName(peerLabel string, peerFP, doc []byte) string {
 	slug := labelSlug(peerLabel)
 	if slug == "" {
 		slug = hex.EncodeToString(peerFP)[:8]
 	}
-	return slug + "-" + time.Now().Format("20060102-150405") + ".pdf"
+	sum := sha256.Sum256(doc)
+	return slug + "-" + time.Now().Format("20060102-150405") + "-" + hex.EncodeToString(sum[:4]) + ".pdf"
 }
 
 // labelSlug reduces a peer label to lowercase alphanumerics-and-dashes for a filename.
@@ -2458,7 +2479,7 @@ func (s *Server) handleSessionSend(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer conn.Close()
-	if err := p2p.SendDocument(conn.Channel, pdfBytes, myFP, sessionVerifier{s, nil}); err != nil {
+	if err := p2p.SendDocument(conn.Channel, pdfBytes, myFP, sessionVerifier{s, nil}, p2p.PeerGatesHuman); err != nil {
 		if errors.Is(err, p2p.ErrDeclined) {
 			writeJSON(w, sendResult{Sent: false, Declined: true})
 			return

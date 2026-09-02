@@ -487,7 +487,7 @@ func TestL2NoDocumentBytesCrossBeforeBothConfirmations(t *testing.T) {
 			return e
 		}},
 		{"SendDocument", func(t *testing.T, _ bool, conn *Conn, myFP, _ []byte, v Verifier) error {
-			return SendDocument(conn.Channel, pdf, myFP, v)
+			return SendDocument(conn.Channel, pdf, myFP, v, PeerGatesHuman)
 		}},
 	} {
 		t.Run(tc.name+" (dialing side)", func(t *testing.T) {
@@ -600,7 +600,7 @@ func TestL2CoversEveryDocumentCarryingEntryPoint(t *testing.T) {
 		// Carry joined at P07.S05: a carrier moves a whole document across the wire without
 		// contributing a signature, so it takes the same gate for the same reason.
 		"func Carry(ch Channel, pdf, myFingerprint []byte, v Verifier, roster Roster)",
-		"func SendDocument(ch Channel, pdf []byte, myFingerprint []byte, v Verifier)",
+		"func SendDocument(ch Channel, pdf []byte, myFingerprint []byte, v Verifier, g PeerGates)",
 		"func ReceiveDocument(ch Channel, a Accepter, myFingerprint []byte, v Verifier)",
 	}
 	for _, sig := range want {

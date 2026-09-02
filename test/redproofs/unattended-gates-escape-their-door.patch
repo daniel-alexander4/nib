@@ -1,0 +1,10 @@
+--- a/internal/server/session.go
++++ b/internal/server/session.go
+@@ -1804,6 +1804,7 @@
+ 		httpError(w, http.StatusConflict, "a session is already armed")
+ 		return
+ 	}
++	_ = autoVerifier{}
+ 	go s.runSession(ln, cer, cert, key, label, req.Mode)
+ 	writeJSON(w, s.sess.status())
+ }

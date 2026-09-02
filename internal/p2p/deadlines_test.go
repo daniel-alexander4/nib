@@ -171,12 +171,27 @@ func TestADialingSideOutwaitsBothOfThePeersGates(t *testing.T) {
 			continue
 		}
 		body := string(src[fset.Position(fn.Body.Pos()).Offset:fset.Position(fn.Body.End()).Offset])
-		want[fn.Name.Name] = strings.Contains(body, "remoteDecisionDeadline")
+		// **`remoteDecisionFor` counts, and that is not a loosening (P08.S05d).** `SendDocument`
+		// no longer names the constant: it asks a door which figure this leg's far side warrants,
+		// and the door returns `remoteDecisionDeadline` for `PeerGatesHuman` — asserted below by
+		// arithmetic rather than assumed here, so a door that stopped returning it fails even
+		// though this text still matches.
+		want[fn.Name.Name] = strings.Contains(body, "remoteDecisionDeadline") ||
+			strings.Contains(body, "remoteDecisionFor(")
 	}
 	for name, armed := range want {
 		if !armed {
 			t.Errorf("%s never arms remoteDecisionDeadline — its read waits on two of the "+
 				"peer's human gates under a budget sized for one", name)
 		}
+	}
+	// THE ARITHMETIC HALF, and it is what makes accepting the door above safe. A structural match
+	// on a function name says nothing about what the function returns; this says that for a peer
+	// with human gates the figure is unchanged, so the property this guard has always asserted —
+	// a read that waits on two of the peer's gates outlasts them — still holds on that path.
+	if got, want := remoteDecisionFor(PeerGatesHuman), remoteDecisionDeadline; got != want {
+		t.Errorf("remoteDecisionFor(PeerGatesHuman) = %s, want %s. The door has changed what an "+
+			"ATTENDED leg waits for, so SendDocument's read can now expire while the peer is "+
+			"still at their prompt.", got, want)
 	}
 }

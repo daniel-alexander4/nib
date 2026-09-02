@@ -120,6 +120,7 @@ func MaxRemoteDecisionWait() time.Duration { return remoteDecisionDeadline }
 // TestSessionBudgetCountsEveryDeadlineInitiateArms holds this in step with the code: it scans
 // Initiate for SetDeadline calls and fails if the count moves, so a fourth arm cannot be added
 // without this sum being read.
+
 // ReceiveArrivalLag is the worst-case wall time from a peer's connection reaching `Receive` to the
 // signing party's arrival gate — the two `exchangeDeadline` arms before the gate, plus the spoken
 // check's human window (P08.S04a).
@@ -142,6 +143,12 @@ func ReceiveArrivalLag() time.Duration {
 	return 2*exchangeDeadline + PeerGateWindow
 }
 
+// SessionBudget's own documentation is the block above `ReceiveArrivalLag`, and until P08.S05d's
+// commit gate parsed for it, Go bound that block to `ReceiveArrivalLag` — no blank line separated
+// the two — so this function had no doc at all and the lag helper carried a paragraph about a
+// different sum. **Third instance of that defect found in two days**, after two in
+// `internal/server` at P08.S05f; nothing in this repo checks for it, so the count is unknown
+// rather than zero.
 func SessionBudget() time.Duration {
 	return 2*exchangeDeadline + remoteDecisionDeadline
 }
@@ -183,9 +190,18 @@ func SessionBudget() time.Duration {
 //
 //	exchangeDeadline        the spoken verification gate
 //	exchangeDeadline        re-armed, covering a write of up to 128 MiB
-//	remoteDecisionDeadline  the read that waits on the peer's gates
-func DeliveryLegBudget() time.Duration {
-	return 2*exchangeDeadline + remoteDecisionDeadline
+//	remoteDecisionFor(g)    the read that waits on the peer's gates
+//
+// # Shrunk at P08.S05d, and BOTH edits landed
+//
+// The doc above warned that dropping this number without also dropping `SendDocument`'s third arm
+// would reserve less than the code arms — *"S05d owes both edits or neither"*. Both are here: the
+// arm is `remoteDecisionFor(g)`, this reads the same door, and a delivery leg is
+// `2*exchangeDeadline + postConsentDeadline` = 14m rather than 24m. An ordinary transfer is
+// unchanged at 24m, which is why this function takes the gates rather than assuming them: a
+// budget that assumed "unattended" would under-reserve every interactive send.
+func DeliveryLegBudget(g PeerGates) time.Duration {
+	return 2*exchangeDeadline + remoteDecisionFor(g)
 }
 
 // Confirmer is the receiving side's consent gate. Shown the connected peer's
@@ -753,7 +769,36 @@ type Accepter interface {
 // signed and nothing comes back — the pinned-mTLS channel is a plain authenticated
 // courier, used to hand a flagged PDF to a peer for signing or to return the signed
 // result. The pin is enforced by the TLS config, exactly as in Initiate.
-func SendDocument(ch Channel, pdf []byte, myFingerprint []byte, v Verifier) error {
+// PeerGates says whether the far side of a transfer runs human gates on it.
+//
+// **It describes the RECEIVER, and the sender cannot infer it (P08.S05d).** `SendDocument`'s third
+// deadline waits on the peer's spoken-check remainder and their `Accepter`; how long that can take
+// is a fact about the peer's build and how it was armed, not about anything visible here. The
+// delivery round knows because it armed the far side itself, so it says so — and every other caller
+// gets `PeerGatesHuman`, which is the pre-existing behaviour and the safe default if this were ever
+// zero-valued by accident.
+type PeerGates int
+
+const (
+	PeerGatesHuman      PeerGates = iota // the receiver blocks on a person: the ordinary transfer
+	PeerGatesUnattended                  // the receiver auto-accepts: a delivery leg (P08.S05d)
+)
+
+// remoteDecisionFor is the third arm's figure, and it is ONE door (ADR-009).
+//
+// An unattended receiver still owes the spoken-check remainder's write and its own post-consent
+// work, but it owes no human wait — so the arm drops from `remoteDecisionDeadline`
+// (2*PeerGateWindow + postConsentDeadline) to `postConsentDeadline` alone. `DeliveryLegBudget`
+// reads the same door, so the number the round reserves and the number the code arms cannot
+// diverge; that divergence is the defect `DeliveryLegBudget` was added to correct.
+func remoteDecisionFor(g PeerGates) time.Duration {
+	if g == PeerGatesUnattended {
+		return postConsentDeadline
+	}
+	return remoteDecisionDeadline
+}
+
+func SendDocument(ch Channel, pdf []byte, myFingerprint []byte, v Verifier, g PeerGates) error {
 	if err := ch.check(); err != nil {
 		return err
 	}
@@ -771,8 +816,14 @@ func SendDocument(ch Channel, pdf []byte, myFingerprint []byte, v Verifier) erro
 		return fmt.Errorf("send document: %w", err)
 	}
 	// Same shape as Initiate's: the receipt comes after the peer's spoken gate remainder
-	// AND their Accept consent.
-	_ = conn.SetDeadline(time.Now().Add(remoteDecisionDeadline))
+	// AND their Accept consent — unless the caller says the far side has neither (P08.S05d).
+	//
+	// **Computed into a variable and armed ONCE**, deliberately: `TestDeliveryLegBudgetCounts
+	// EveryDeadlineSendDocumentArms` counts `SetDeadline(` calls in this function against
+	// `DeliveryLegBudget`'s three terms, and a branch with an arm in each side would make that
+	// count four while the leg still spends three. The guard would then be measuring the source's
+	// shape rather than the budget's arithmetic.
+	_ = conn.SetDeadline(time.Now().Add(remoteDecisionFor(g)))
 	ack, err := readFrameMax(conn, 1)
 	if err != nil {
 		return fmt.Errorf("await receipt: %w", err)

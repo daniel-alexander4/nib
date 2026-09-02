@@ -1,0 +1,12 @@
+--- a/internal/server/session.go
++++ b/internal/server/session.go
+@@ -1489,7 +1489,8 @@
+ 		slug = hex.EncodeToString(peerFP)[:8]
+ 	}
+ 	sum := sha256.Sum256(doc)
+-	return slug + "-" + time.Now().Format("20060102-150405") + "-" + hex.EncodeToString(sum[:4]) + ".pdf"
++	_ = sum
++	return slug + "-" + time.Now().Format("20060102-150405") + ".pdf"
+ }
+ 
+ // labelSlug reduces a peer label to lowercase alphanumerics-and-dashes for a filename.

@@ -572,7 +572,7 @@ func TestSessionReceiveTransfer(t *testing.T) {
 			return
 		}
 		defer conn.Close()
-		errc <- p2p.SendDocument(conn.Channel, flagged, aFPBytes, okVerifier{})
+		errc <- p2p.SendDocument(conn.Channel, flagged, aFPBytes, okVerifier{}, p2p.PeerGatesHuman)
 	}()
 
 	waitPending(t, c, ts.URL, aFP)
@@ -646,7 +646,7 @@ func TestSessionReceiveTransferDecline(t *testing.T) {
 			return
 		}
 		defer conn.Close()
-		errc <- p2p.SendDocument(conn.Channel, base, aFPBytes, okVerifier{})
+		errc <- p2p.SendDocument(conn.Channel, base, aFPBytes, okVerifier{}, p2p.PeerGatesHuman)
 	}()
 
 	waitPending(t, c, ts.URL, aFP)

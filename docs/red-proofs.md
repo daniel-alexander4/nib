@@ -1003,6 +1003,19 @@ address family. The UDP probe beside it proved the socket was *reachable*, never
 *shared* — and the test's own comment said the probe was there to stop exactly this, so the
 awareness was present and aimed one step short.
 
+**Two rows added at P08.S05d (2026-09-01, v1.117.317).**
+`received-name-collides-within-a-second` reintroduces `/pending 342` — a received document's name
+built from a peer label and a one-second timestamp alone, so two documents from one peer inside a
+second share a path and `atomicfile.WriteDurable` renames the second over the first, after the
+sender has been told `ackOK`. It is the rare row whose original was **measured** rather than
+argued, and the probe output is in its spec. Recording it also produced a "did not compile" run —
+deleting the digest left `crypto/sha256` unused — which is the outcome `redproof.sh` names
+separately from a real red; the patch keeps the digest computed and drops it from the name.
+`unattended-gates-escape-their-door` puts the delivery leg's auto-confirming `Verifier` in front of
+an interactive arm. That is the gate `runVerification`'s nil check exists to make impossible, made
+legitimate by scope alone — so the scope is the entire safety argument and it is asserted by
+routing, not by comparing the sites anyone remembered to list.
+
 **A row added at P08.S05c (2026-09-01, v1.117.314): `verify-busy-spends-the-arm`.**
 `sv.saw.mark()` as `ConfirmVerification`'s first statement, ahead of the `setVerify` that discovers
 the seat is taken — so a gate refused with `errVerifyBusy` reported its arm spent for a check it

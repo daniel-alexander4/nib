@@ -1,6 +1,9 @@
 package p2p
 
 import (
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"os"
 	"regexp"
 	"strings"
@@ -71,59 +74,124 @@ func TestDeliveryLegBudgetCountsEveryDeadlineSendDocumentArms(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	body := funcBody(t, string(src), "func SendDocument(")
-	arms := regexp.MustCompile(`SetDeadline\(`).FindAllString(body, -1)
-	if len(arms) == 0 {
+	// **Counted from the AST, not from the source text (P08.S05d).** It used to regex
+	// `SetDeadline\(` over the function's bytes, and the first comment written ABOUT this guard —
+	// inside `SendDocument`, naming the call it counts — pushed the count from 3 to 4 and failed
+	// it. A scan a comment can satisfy is a scan a comment can also break, and this repo has the
+	// mirror of that on record: *"a scan satisfied by prose that merely names the expression is
+	// how a freeze guard once read its own explanation as proof of coverage"* (v1.117.155). Here
+	// it read an explanation as an ARM. Same defect, opposite sign.
+	fset := token.NewFileSet()
+	f, perr := parser.ParseFile(fset, "session.go", src, 0)
+	if perr != nil {
+		t.Fatal(perr)
+	}
+	arms := 0
+	var seen bool
+	for _, d := range f.Decls {
+		fn, ok := d.(*ast.FuncDecl)
+		if !ok || fn.Name.Name != "SendDocument" || fn.Body == nil {
+			continue
+		}
+		seen = true
+		ast.Inspect(fn.Body, func(n ast.Node) bool {
+			call, ok := n.(*ast.CallExpr)
+			if !ok {
+				return true
+			}
+			if sel, ok := call.Fun.(*ast.SelectorExpr); ok && sel.Sel.Name == "SetDeadline" {
+				arms++
+			}
+			return true
+		})
+	}
+	// STIMULUS, two directions: the function was found, and it really arms something. Either
+	// missing makes "the count is 3" true of a scan that read nothing.
+	if !seen {
+		t.Fatal("SendDocument not found in session.go — this guard is pinned to a function that " +
+			"no longer exists under that name")
+	}
+	if arms == 0 {
 		t.Fatal("no SetDeadline call found in SendDocument — this scan is not reading the " +
 			"function it names, so its count means nothing")
 	}
 	const want = 3
-	if len(arms) != want {
+	if arms != want {
 		t.Errorf("SendDocument arms %d deadlines and DeliveryLegBudget adds up %d. A delivery term "+
 			"smaller than what the leg can actually spend means Convene admits a ceremony whose "+
-			"round cannot finish inside the deadline the user set.", len(arms), want)
+			"round cannot finish inside the deadline the user set.", arms, want)
+	}
+	// **And the third arm goes through the door, whichever figure it picks (P08.S05d).** The count
+	// above cannot see that `remoteDecisionFor` is what chooses between 12m and 2m; a site
+	// inlining either constant would keep the count at 3 and put the budget and the arm back on
+	// two separate derivations, which is the defect DeliveryLegBudget was written to close.
+	body := funcBody(t, string(src), "func SendDocument(")
+	if !strings.Contains(stripComments(body), "remoteDecisionFor(") {
+		t.Error("SendDocument's third arm does not call remoteDecisionFor — the budget and the " +
+			"deadline are then derived separately and can diverge silently")
 	}
 }
 
-// TestDeliveryLegBudgetIsNotSmallerThanTheLegCanSpend — the arithmetic half.
+// TestDeliveryLegBudgetIsNotSmallerThanTheLegCanSpend — the arithmetic half, now over BOTH arms.
 //
 // The figure this replaced was `bootstrapBudget + connectDeadline + postConsentDeadline`, on the
 // reasoning that a delivery leg runs no local human gate. That confused expected latency with
-// armed budget: `SendDocument` arms `remoteDecisionDeadline` regardless of the verifier, and
-// `ReceiveDocument`'s Accepter is a live human gate on the production path. It was short by 22
+// armed budget: `SendDocument` armed `remoteDecisionDeadline` regardless of the verifier, and
+// `ReceiveDocument`'s Accepter was a live human gate on the production path. It was short by 22
 // minutes per leg.
+//
+// # P08.S05d earned the shrink, and this guard is what makes it earned rather than asserted
+//
+// The refuted figure and the shrunk one are NOT the same number and that is the whole point. The
+// refuted one dropped the third arm to `postConsentDeadline` while `SendDocument` still armed
+// `remoteDecisionDeadline` — a budget smaller than the code spends. The shrunk one drops the ARM
+// too, through `remoteDecisionFor`, so the two move together by construction. So this asserts both
+// arms of `PeerGates` against their own arithmetic, and asserts they DIFFER: a `remoteDecisionFor`
+// that ignored its argument would satisfy either arm alone.
 func TestDeliveryLegBudgetIsNotSmallerThanTheLegCanSpend(t *testing.T) {
-	if got, want := DeliveryLegBudget(), 2*exchangeDeadline+remoteDecisionDeadline; got != want {
-		t.Errorf("DeliveryLegBudget() = %s, want %s (the three arms SendDocument takes)", got, want)
+	// ── The interactive arm is unchanged, and that is half the property ──────────────────────
+	if got, want := DeliveryLegBudget(PeerGatesHuman), 2*exchangeDeadline+remoteDecisionDeadline; got != want {
+		t.Errorf("DeliveryLegBudget(PeerGatesHuman) = %s, want %s (the three arms SendDocument "+
+			"takes when a person is on the far side)", got, want)
 	}
+	if got, want := DeliveryLegBudget(PeerGatesHuman), 24*time.Minute; got != want {
+		t.Errorf("DeliveryLegBudget(PeerGatesHuman) = %s, want %s. Change this literal "+
+			"deliberately, not as a consequence of moving a constant.", got, want)
+	}
+
+	// ── The unattended arm, which is what the round reserves ─────────────────────────────────
+	if got, want := DeliveryLegBudget(PeerGatesUnattended), 2*exchangeDeadline+postConsentDeadline; got != want {
+		t.Errorf("DeliveryLegBudget(PeerGatesUnattended) = %s, want %s", got, want)
+	}
+	if got, want := DeliveryLegBudget(PeerGatesUnattended), 14*time.Minute; got != want {
+		t.Errorf("DeliveryLegBudget(PeerGatesUnattended) = %s, want %s. Change this literal "+
+			"deliberately, with the reservation it feeds — internal/server's "+
+			"ceremonyDeliveryLegBudget and Convene's DeliveryBudget.", got, want)
+	}
+
+	// ── THE DISCRIMINATOR. Without it a remoteDecisionFor that ignored its argument would pass
+	// whichever arm happened to match, and the two literals above would be two spellings of one
+	// number. This is the assertion the refuted figure could not have made.
+	if DeliveryLegBudget(PeerGatesHuman) == DeliveryLegBudget(PeerGatesUnattended) {
+		t.Error("both PeerGates arms budget the same, so remoteDecisionFor is not reading its " +
+			"argument — an interactive send would then reserve the unattended figure, ten " +
+			"minutes less than it can spend")
+	}
+	if DeliveryLegBudget(PeerGatesUnattended) >= DeliveryLegBudget(PeerGatesHuman) {
+		t.Error("the unattended leg budgets at least as much as the attended one, which inverts " +
+			"the reason for the distinction")
+	}
+
 	// **The refuted figure, named by its own arithmetic so a shrink has to argue past it.** The
 	// slice was firmed at `bootstrapBudget + connectDeadline + postConsentDeadline`; the p2p half
-	// of that is `postConsentDeadline` alone, and the first cut of this assertion compared against
-	// it — `24m > 2m`, true of almost any value, which is no assertion at all. What actually
-	// distinguishes the refuted figure from the real one is the two `exchangeDeadline` arms and
-	// `remoteDecisionDeadline`, so those are what it names.
-	if refuted := postConsentDeadline; DeliveryLegBudget() == refuted {
-		t.Errorf("DeliveryLegBudget() = %s — the refuted figure's p2p half. SendDocument arms two "+
-			"exchangeDeadlines and a remoteDecisionDeadline whatever the verifier does.", refuted)
-	}
-	// A literal pin, as SessionBudget has. Without one, the first assertion is a restatement of the
-	// implementation and a change to exchangeDeadline moves function and test together.
-	if got, want := DeliveryLegBudget(), 24*time.Minute; got != want {
-		t.Errorf("DeliveryLegBudget() = %s, want %s. Change this literal deliberately, with the "+
-			"reservation it feeds — internal/server's ceremonyDeliveryLegBudget and Convene's "+
-			"DeliveryBudget — and not as a consequence of moving a constant.", got, want)
-	}
-	// And it must dominate the post-consent write, which is the term the refuted figure kept.
-	if DeliveryLegBudget() <= remoteDecisionDeadline {
-		t.Errorf("DeliveryLegBudget() = %s does not exceed remoteDecisionDeadline (%s); the leg's "+
-			"cost is that arm PLUS two exchange windows", DeliveryLegBudget(), remoteDecisionDeadline)
-	}
-	// It must cover what the RECEIVER can spend, or the sender gives up while the peer is still
-	// within its own budget — `ReceiveDocument` arms exchangeDeadline twice then postConsentDeadline.
-	if recv := 2*exchangeDeadline + postConsentDeadline; DeliveryLegBudget() < recv {
-		t.Errorf("DeliveryLegBudget() = %s but the receiver can spend %s; the sender would give up "+
-			"first and report a transport failure for a peer that was still working",
-			DeliveryLegBudget(), recv)
+	// of that is `postConsentDeadline` ALONE — not the 14m below it, which keeps both
+	// `exchangeDeadline` arms. Naming it separately is what stops "we shrank it" from being read
+	// as "the refuted figure was right after all".
+	for _, g := range []PeerGates{PeerGatesHuman, PeerGatesUnattended} {
+		if refuted := postConsentDeadline; DeliveryLegBudget(g) == refuted {
+			t.Errorf("DeliveryLegBudget(%v) = %s — the refuted figure's p2p half. SendDocument "+
+				"arms two exchangeDeadlines whatever the far side's gates do.", g, refuted)
+		}
 	}
 }
 
@@ -154,4 +222,32 @@ func funcBody(t *testing.T, src, prefix string) string {
 	}
 	t.Fatalf("unbalanced braces after %q", prefix)
 	return ""
+}
+
+// stripComments removes // and /* */ comments so a scan cannot be satisfied — or broken — by prose
+// that merely names the expression it looks for. P08.S05d added it after a comment written ABOUT
+// the arm count changed the count.
+func stripComments(src string) string {
+	var b strings.Builder
+	for i := 0; i < len(src); {
+		if strings.HasPrefix(src[i:], "//") {
+			j := strings.IndexByte(src[i:], '\n')
+			if j < 0 {
+				break
+			}
+			i += j
+			continue
+		}
+		if strings.HasPrefix(src[i:], "/*") {
+			j := strings.Index(src[i+2:], "*/")
+			if j < 0 {
+				break
+			}
+			i += 2 + j + 2
+			continue
+		}
+		b.WriteByte(src[i])
+		i++
+	}
+	return b.String()
 }
