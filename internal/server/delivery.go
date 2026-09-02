@@ -350,10 +350,25 @@ func (s *Server) armForDelivery(ctx context.Context, inv ceremony.Invitation, ce
 		cer.close()
 		return errors.New("a delivery arm is already open on this machine")
 	}
+	// **The window is ENFORCED, not merely reported (this slice's own review).** `armIn` stamps
+	// `until` from `armWindowFor(armDelivery, cer)` — what remains of the record's `Expires` plus a
+	// hop budget of grace — and `status()` shows it. Nothing fired on it: the first cut of this arm
+	// looped on `Accept` until something else disarmed it, so a delivery arm lived until the
+	// process exited and the TRIPWIRE's *"how long it stays open"* paragraph described a bound the
+	// code did not keep. `runSession` has had a timer on its own window since P05; this is the same
+	// rule for the second slot.
+	window := armWindowFor(armDelivery, cer)
 	go func() {
 		defer safe.Recover("delivery arm")
 		defer s.sess.disarmCeremony(cer)
 		defer ln.Close()
+		timer := time.AfterFunc(window, func() {
+			defer safe.Recover("delivery arm expiry")
+			// Closing the listener is what ends the Accept below — the same mechanism
+			// `runSession`'s deadline uses, rather than a second cancellation path.
+			ln.Close()
+		})
+		defer timer.Stop()
 		// The publish is what makes the arm findable off-LAN, and it holds the link's window
 		// first exactly as every other publish does (ADR-011) — a delivery round on one office
 		// network must emit nothing either.
@@ -754,7 +769,11 @@ func convenerInvitationFor(v *vault.Vault, rec ceremony.Record, party ceremony.P
 //
 // The convener is skipped — it delivers rather than waits — and so is a ceremony whose copy is
 // already on disk, for `alreadyDelivered`'s reason.
-func (s *Server) armDeliveryAfterHop(rec ceremony.Record) {
+func (s *Server) armDeliveryAfterHop(final []byte) {
+	rec, rerr := ceremony.Extract(final)
+	if rerr != nil {
+		return // an ordinary two-party co-sign carries no record: nothing to be delivered
+	}
 	if !s.deliveryRearm.Load() {
 		return // not a real Nib process: see EnableDeliveryRearm
 	}

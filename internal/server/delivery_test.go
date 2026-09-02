@@ -6,6 +6,7 @@ import (
 	"go/parser"
 	"go/token"
 	"io/fs"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -147,6 +148,125 @@ func TestADeliveredNameIsDeterministicAndDoesNotCollideWithinASecond(t *testing.
 	empty := ceremony.Record{ID: a.ID}
 	if got := deliveredName(empty); !strings.HasPrefix(got, "ceremony-") {
 		t.Errorf("a record with no intent produced %q; it must still name a file", got)
+	}
+}
+
+// TestTheDeliveryArmsWindowIsEnforcedAndNotJustReported — this slice's own review found it.
+//
+// `armIn` stamps `until` from `armWindowFor(armDelivery, cer)` and `status()` shows it, so the
+// window LOOKED enforced from every surface that reports it. Nothing fired on it: the arm looped
+// on `Accept` until something else disarmed it, so a delivery arm lived until the process exited
+// and the TRIPWIRE's *"how long it stays open"* paragraph described a bound the code did not keep.
+//
+// **Asserted through `armWindowFor`, not through the arm goroutine**, because the property is that
+// the reported figure and the enforced one are the SAME figure — which is exactly what
+// `runSession`'s equivalent guard asserts, and exactly what "reported but not enforced" breaks.
+// A test that armed and waited would take the window's length to fail.
+func TestTheDeliveryArmsWindowIsEnforcedAndNotJustReported(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+
+	// STIMULUS: the two kinds really produce different windows, or "the delivery arm uses its own"
+	// is true of a function that ignores its argument.
+	interactive := armWindowFor(armInteractive, nil)
+	delivery := armWindowFor(armDelivery, nil)
+	if interactive != sessionAcceptTimeout {
+		t.Fatalf("setup: a manual interactive arm's window is %s, want %s", interactive, sessionAcceptTimeout)
+	}
+	if delivery <= 0 {
+		t.Fatalf("a delivery arm's window is %s — a non-positive window closes the listener "+
+			"immediately and the round can never reach this party", delivery)
+	}
+
+	if delivery != sessionAcceptTimeout {
+		t.Errorf("with no ceremony the delivery window is %s, want the interactive floor %s",
+			delivery, sessionAcceptTimeout)
+	}
+
+	// ── The UNREADABLE-RECORD branch, which is a different path from the nil one ─────────────
+	//
+	// **The first cut of this test asserted the floor using `armWindowFor(armDelivery, nil)` and
+	// called that the unreadable-record case.** It is not: `deliveryWindowFor` returns the floor
+	// for a nil ceremony BEFORE it ever reads a mirror, so a mutation making the read's failure
+	// path return `MaxCeremonyLife` left this test green. Found by the mutation pass, which is
+	// what it is for. A real ceremonyID with no mirror on disk is what exercises the branch.
+	unreadable := &ceremonyID{inv: ceremony.Invitation{ID: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}
+	got := armWindowFor(armDelivery, unreadable)
+	if got != sessionAcceptTimeout {
+		t.Errorf("a delivery arm whose record cannot be read got a %s window, want the "+
+			"interactive floor %s. Defaulting LONG on the input that tells us least holds this "+
+			"machine's one network-reachable surface open for a proceeding nothing can confirm "+
+			"is live.", got, sessionAcceptTimeout)
+	}
+	if got >= ceremony.MaxCeremonyLife {
+		t.Errorf("an unreadable record yielded %s, at or beyond MaxCeremonyLife", got)
+	}
+
+	// And the source is one door: the arm goroutine must take its expiry from `armWindowFor`
+	// rather than computing a second figure, or the status reports one number and the listener
+	// closes on another — the drift that door exists to make impossible.
+	src, err := os.ReadFile("delivery.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := string(src)
+	if !strings.Contains(body, "window := armWindowFor(armDelivery, cer)") {
+		t.Error("armForDelivery does not take its window from armWindowFor — the figure status " +
+			"reports and the figure the listener closes on can then diverge silently")
+	}
+	if !strings.Contains(body, "time.AfterFunc(window,") {
+		t.Error("nothing fires on the delivery arm's window. It is stamped on the arm and shown " +
+			"in status, so it LOOKS enforced from every surface that reports it; without a timer " +
+			"the arm lives until the process exits and the TRIPWIRE's 'how long it stays open' " +
+			"describes a bound the code does not keep.")
+	}
+}
+
+// TestCancelDoesNotTearDownTheDeliveryArm — a defect P08.S05c introduced and P08.S05g's live run
+// surfaced.
+//
+// `/api/session/disarm` is a person pressing Cancel on the co-signing session THEY opened.
+// `DisarmSession` is the process exiting. S05c made `disarm()` empty every slot — right for the
+// second, and for the first it silently stopped a party receiving their own copy of a document
+// they had already signed. Nothing tells them: a delivery arm has no surface yet (/pending 353).
+//
+// Both directions are asserted. Cancel must spare the delivery arm, and shutdown must still take
+// it — a fix that simply stopped tearing anything down would satisfy the first and reintroduce the
+// orphaned-ceremony leak `TestAnUnconditionalDisarmTearsDownEverySlot` exists for.
+func TestCancelDoesNotTearDownTheDeliveryArm(t *testing.T) {
+	var se session
+	if !se.arm(&stubListener{}, nil) {
+		t.Fatal("setup: the interactive arm was refused")
+	}
+	delivery := &ceremonyID{}
+	if !se.armDeliveryForCeremony(delivery, "127.0.0.1:9", func() {}) {
+		t.Fatal("setup: the delivery arm was refused, so there is nothing for Cancel to spare")
+	}
+
+	se.disarmKind(armInteractive)
+
+	se.mu.Lock()
+	iv, dv := se.arms[armInteractive], se.arms[armDelivery]
+	se.mu.Unlock()
+	if iv != nil {
+		t.Error("Cancel did not tear down the interactive arm it was pressed on")
+	}
+	if dv == nil {
+		t.Fatal("Cancel tore down the DELIVERY arm. The user cancelled the co-signing session " +
+			"they opened; they did not ask to stop receiving their copy of a document they have " +
+			"already signed, and nothing would have told them it had stopped.")
+	}
+	if dv.cer != delivery {
+		t.Errorf("the delivery slot holds %+v, not the ceremony it armed for", dv)
+	}
+
+	// STIMULUS and the other direction: shutdown still takes everything. Without this, a fix that
+	// disarmed nothing at all would pass every assertion above.
+	se.disarm()
+	se.mu.Lock()
+	stillArmed := se.armedLocked()
+	se.mu.Unlock()
+	if stillArmed {
+		t.Error("shutdown left something armed — the orphaned-ceremony leak is back")
 	}
 }
 

@@ -1485,9 +1485,17 @@ PYSET
     # on both sides proves nothing — ADR-010's lesson, which this file has been burned by once.
     local addrs="{}" fpx adx
     for i in $(seq 2 "$N"); do
+      # **Cancel the co-signing session first, and that is what a person does too.** A party that
+      # has signed stays interactively armed for the re-delivery window (`connectDeadline`), and
+      # `status.address` reports the INTERACTIVE arm when both slots are full — so without this the
+      # convener dialled the co-sign listener with a delivery frame and the round hung. Cancel
+      # tears down that slot ALONE since P08.S05g; before it, this line would have taken the
+      # delivery arm with it and the round would have had nobody to reach for a different reason.
+      curl -sS -X POST "${URLS[$((i - 1))]}/api/session/disarm" \
+        -H "X-CSRF-Token: ${CSRFS[$((i - 1))]}" -o /dev/null || true
       # The PORT is what is observed; the host is loopback because that is where these instances
       # are. A delivery arm binds `0.0.0.0:0` and reports `0.0.0.0:<port>` — a bind, not a dialable
-      # address — and dialling it verbatim is how the first run of this clause hung.
+      # address — and dialling it verbatim is how an earlier run of this clause hung.
       adx="$(curl -fsS "${URLS[$((i - 1))]}/api/session/status" | jget address 2>/dev/null || true)"
       [ -n "$adx" ] && adx="127.0.0.1:${adx##*:}"
       [ -n "$adx" ] \
@@ -1499,11 +1507,39 @@ PYSET
 import json,sys
 d=json.loads('''$addrs'''); d['$fpx']='$adx'; print(json.dumps(d))")"
     done
+    local DELIVER_BODY
+    DELIVER_BODY="$(python3 -c "
+import json,sys
+print(json.dumps({'ceremony': sys.argv[1], 'addresses': json.loads(sys.argv[2])}))" "$rel_cid" "$addrs")"
+
+    # ── C10's injected failure, applied BEFORE the first round ───────────────────
+    #
+    # *"An injected write failure at party 3 of 4, after which the party is NOT recorded as
+    # acknowledged and the re-run delivers to that party and to no other."* The write is made to
+    # fail by taking away the party's `~/nib/signed` directory — the save then returns
+    # `ErrNotStored`, which since P08.S05a is what stops an acknowledgement being a lie.
+    #
+    # **It has to be a write failure at the PARTY, and the first cut of this clause removed the
+    # convener's marker instead.** That models a crash between delivering and recording, where the
+    # party already HAS the document and its one-shot arm is spent — so the recovery run had nobody
+    # to reach and hung. The two failures are not interchangeable, and only this one leaves the
+    # party both unacknowledged and still listening.
+    local victim vfp vsigned before_mtime after_mtime
+    victim=3
+    [ "$N" -ge 4 ] || victim=2
+    vfp="$(printf '%s' "${FPS[$((victim - 1))]}" | tr 'A-Z' 'a-z')"
+    vsigned="${HOMES[$((victim - 1))]}/home/nib/signed"
+    rm -rf "$vsigned" && : > "$vsigned" \
+      || fail "[$transport] could not block party $victim's signed/ directory"
+    # STIMULUS: the block is really in place. A regular file where a directory must be makes
+    # MkdirAll fail; without this the "failed" party below could simply have succeeded.
+    [ -f "$vsigned" ] \
+      || fail "[$transport] party $victim's signed/ is not blocked, so no write failure is injected"
+
     echo "[$transport] delivering the finished document to $((N - 1)) parties…"
     dcode="$(curl -sS -X POST "${URLS[0]}/api/ceremony/deliver" -H 'Content-Type: application/json' \
       -H "X-CSRF-Token: ${CSRFS[0]}" \
-      -d "$(python3 -c "
-import json;print(json.dumps({'ceremony':'$rel_cid','addresses':json.loads('''$addrs''')}))")" \
+      -d "$DELIVER_BODY" \
       -o "$WORK/deliver.$transport.json" -w '%{http_code}')"
     [ "$dcode" = "200" ] \
       || fail "[$transport] the delivery round returned HTTP $dcode: $(head -c 400 "$WORK/deliver.$transport.json")"
@@ -1512,11 +1548,13 @@ import json;print(json.dumps({'ceremony':'$rel_cid','addresses':json.loads('''$a
     # name is deterministic — which is what makes "exactly one file per party" checkable at all.
     local delivered_ok=0 i
     for i in $(seq 2 "$N"); do
-      local n_files
-      n_files="$(find "${HOMES[$((i - 1))]}/nib/signed" -maxdepth 1 -name "*-$rel_cid.pdf" 2>/dev/null | wc -l)"
-      [ "$n_files" = "1" ] \
+      local n_files want_files=1
+      # The injected party has no directory to hold anything, by construction.
+      [ "$i" = "$victim" ] && want_files=0
+      n_files="$(find "${HOMES[$((i - 1))]}/home/nib/signed" -maxdepth 1 -name "*-$rel_cid.pdf" 2>/dev/null | wc -l)"
+      [ "$n_files" = "$want_files" ] \
         || fail "[$transport] instance $i holds $n_files copies of ceremony $rel_cid under
-      ~/nib/signed, want exactly 1. C08 says the finished document reaches EVERY party, and C10
+      ~/nib/signed, want exactly $want_files. C08 says the finished document reaches EVERY party, and C10
       says a round leaves exactly one file each — 0 means this party never got the document it
       signed, and >1 means the deterministic filename S05d built is not deterministic."
       delivered_ok=$((delivered_ok + 1))
@@ -1527,47 +1565,82 @@ import json;print(json.dumps({'ceremony':'$rel_cid','addresses':json.loads('''$a
       || fail "[$transport] the delivery check ran over $delivered_ok parties, not $((N - 1))"
     echo "[$transport] every party holds exactly one copy of the finished document (C08)"
 
-    # ── C10: a RE-RUN skips what it already delivered ────────────────────────────
-    #
-    # The re-run must reach a party that failed and skip the ones that succeeded. With every party
-    # already acknowledged, a correct re-run skips ALL of them — and that is the observable: the
-    # route reports `skipped` per party, and no recipient's file count changes.
-    #
-    # **Asserting the file count alone would pass on a round that re-delivered everything**, since
-    # the deterministic name overwrites. So the skip is read from the report AND the disk is read to
-    # confirm the overwrite did not multiply.
-    dcode="$(curl -sS -X POST "${URLS[0]}/api/ceremony/deliver" -H 'Content-Type: application/json' \
-      -H "X-CSRF-Token: ${CSRFS[0]}" \
-      -d "$(python3 -c "
-import json;print(json.dumps({'ceremony':'$rel_cid','addresses':json.loads('''$addrs''')}))")" \
-      -o "$WORK/deliver2.$transport.json" -w '%{http_code}')"
-    [ "$dcode" = "200" ] || fail "[$transport] the delivery re-run returned HTTP $dcode"
-    python3 - "$WORK/deliver2.$transport.json" "$transport" "$((N - 1))" <<'PYSKIP' || exit 1
+
+    # The convener must NOT have recorded the party whose write failed — that is the whole of
+    # C10's first half, and P08.S05a's ack-means-persisted is what makes it observable at all.
+    [ ! -e "${HOMES[0]}/home/nib/ceremonies/$rel_cid/delivered/$vfp" ] \
+      || fail "[$transport] the convener recorded party $victim as delivered although its write
+      FAILED. An acknowledgement that outruns the disk is the false receipt P08.S05a removed one
+      layer down, and it makes C10's re-run skip the one party that needs reaching."
+    python3 - "$WORK/deliver.$transport.json" "$transport" "$vfp" <<'PYFAIL' || exit 1
 import json, sys
-path, t, want = sys.argv[1], sys.argv[2], int(sys.argv[3])
+path, t, victim = sys.argv[1], sys.argv[2], sys.argv[3]
 parties = json.load(open(path)).get("parties") or []
-if len(parties) != want:
-    print(f"FAIL: [{t}] the re-run reported {len(parties)} parties, want {want}", file=sys.stderr)
+bad = [p for p in parties if p.get("fingerprint", "").lower() == victim]
+if len(bad) != 1:
+    print(f"FAIL: [{t}] the round did not report the injected party at all", file=sys.stderr)
     sys.exit(1)
-notskipped = [p for p in parties if not p.get("skipped")]
-if notskipped:
-    print(f"FAIL: [{t}] a re-run over a fully delivered ceremony did NOT skip "
-          f"{[p.get('fingerprint','')[:12] for p in notskipped]}. C10's whole point is that a "
-          f"re-run reaches the party that failed and no other; one that re-delivers to everybody "
-          f"is 'satisfied completely by a round that delivers twice', which the criterion names "
-          f"as the defect.", file=sys.stderr)
+if bad[0].get("delivered"):
+    print(f"FAIL: [{t}] the party whose write failed is reported DELIVERED", file=sys.stderr)
+    sys.exit(1)
+if not bad[0].get("reason"):
+    print(f"FAIL: [{t}] the failed party carries no reason, so the convener is told a party is "
+          f"missing and nothing about why", file=sys.stderr)
+    sys.exit(1)
+others = [p for p in parties if p.get("fingerprint", "").lower() != victim]
+if not all(p.get("delivered") for p in others):
+    print(f"FAIL: [{t}] one party's write failure stopped the round reaching the others — a round "
+          f"must not end on the first failure, or one bad disk denies everybody their copy",
+          file=sys.stderr)
+    sys.exit(1)
+print(f"[{t}] the party whose write failed is unrecorded and named; the others were reached")
+PYFAIL
+
+    # ── The RECOVERY run: the party is repaired, and the re-run reaches it and no other ──
+    rm -f "$vsigned" && mkdir -p "$vsigned" \
+      || fail "[$transport] could not repair party $victim's signed/ directory"
+    # A witness on a party that already succeeded: its file must not be rewritten. mtime is the
+    # only thing that can see it, because the deterministic filename makes a re-delivery
+    # byte-identical to what is already there.
+    before_mtime="$(find "${HOMES[1]}/home/nib/signed" -name "*-$rel_cid.pdf" -printf '%T@\n' 2>/dev/null | head -1)"
+    [ -n "$before_mtime" ] || fail "[$transport] no witness file on instance 2 before the recovery run"
+
+    dcode="$(curl -sS -X POST "${URLS[0]}/api/ceremony/deliver" -H 'Content-Type: application/json' \
+      -H "X-CSRF-Token: ${CSRFS[0]}" -d "$DELIVER_BODY" \
+      -o "$WORK/deliver3.$transport.json" -w '%{http_code}')"
+    [ "$dcode" = "200" ] || fail "[$transport] the recovery re-run returned HTTP $dcode: $(head -c 300 "$WORK/deliver3.$transport.json")"
+
+    python3 - "$WORK/deliver3.$transport.json" "$transport" "$vfp" <<'PYONE' || exit 1
+import json, sys
+path, t, victim = sys.argv[1], sys.argv[2], sys.argv[3]
+parties = json.load(open(path)).get("parties") or []
+redelivered = [p for p in parties if not p.get("skipped")]
+if len(redelivered) != 1:
+    print(f"FAIL: [{t}] the recovery re-run delivered to {len(redelivered)} parties, want exactly "
+          f"1. C10 is explicit that a re-run reaches the party that failed AND NO OTHER — a round "
+          f"that re-delivers to everybody is 'satisfied completely by a round that delivers "
+          f"twice', which the criterion names as the defect it exists to catch.", file=sys.stderr)
+    sys.exit(1)
+if redelivered[0].get("fingerprint", "").lower() != victim:
+    print(f"FAIL: [{t}] the re-run delivered to {redelivered[0].get('fingerprint','')[:12]}, want "
+          f"the party whose write failed ({victim[:12]})", file=sys.stderr)
     sys.exit(1)
 if not all(p.get("delivered") for p in parties):
-    print(f"FAIL: [{t}] a skipped party is not reported as delivered, so the report cannot tell "
-          f"'already had it' from 'nothing happened'", file=sys.stderr)
+    print(f"FAIL: [{t}] a party is not reported delivered after the recovery run", file=sys.stderr)
     sys.exit(1)
-print(f"[{t}] the re-run skipped all {len(parties)} already-delivered parties (C10)")
-PYSKIP
-    for i in $(seq 2 "$N"); do
-      n_files="$(find "${HOMES[$((i - 1))]}/nib/signed" -maxdepth 1 -name "*-$rel_cid.pdf" 2>/dev/null | wc -l)"
-      [ "$n_files" = "1" ] \
-        || fail "[$transport] after the re-run instance $i holds $n_files copies, want 1"
-    done
+print(f"[{t}] the recovery re-run reached exactly the party whose write had failed (C10)")
+PYONE
+
+    n_files="$(find "$vsigned" -maxdepth 1 -name "*-$rel_cid.pdf" 2>/dev/null | wc -l)"
+    [ "$n_files" = "1" ] \
+      || fail "[$transport] after the recovery run the repaired party holds $n_files copies, want 1"
+    after_mtime="$(find "${HOMES[1]}/home/nib/signed" -name "*-$rel_cid.pdf" -printf '%T@\n' 2>/dev/null | head -1)"
+    [ "$before_mtime" = "$after_mtime" ] \
+      || fail "[$transport] the recovery run REWROTE an already-acknowledged party's file.
+      The deterministic filename hides that from any count or content check, so mtime is the only
+      thing that can see 'skipped' rather than 'delivered again' — and re-delivering to a party
+      that already has it is what C10 forbids."
+    echo "[$transport] exactly one file per party, and no already-delivered party was rewritten (C10)"
 
     # ── Every party disarms before the next transport's relay ────────────────────
     #

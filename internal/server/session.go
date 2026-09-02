@@ -455,6 +455,22 @@ func (se *session) setReceived(by armKind, r *receivedInfo) {
 // disarmIf.
 func (se *session) disarm() { se.disarmIf(nil) }
 
+// disarmKind tears down ONE slot, and it is what the user's Cancel means (P08.S05g).
+//
+// **`disarm()` is shutdown's verb, not Cancel's, and conflating them was a real defect.** Since
+// P08.S05c `disarm()` empties every slot — correct for `DisarmSession`, which runs as the process
+// exits. `/api/session/disarm` is a person pressing Cancel on the co-signing session they opened,
+// and routing that to the same function silently tore down the DELIVERY arm beside it: a party who
+// had already signed stopped listening for their own copy of the finished document, having asked
+// for nothing of the kind. Nothing told them, because a delivery arm has no surface of its own yet.
+//
+// Found while diagnosing why the tier-4 round could not reach anybody — the harness disarms
+// between hops — which is the second time this slice's live run has surfaced something no reading
+// of the diff had.
+func (se *session) disarmKind(kind armKind) {
+	se.disarmWhen(func(a *arm) bool { return a.kind == kind })
+}
+
 // disarmIf closes the session only if `ln` is still the armed listener; nil means
 // unconditional.
 //
@@ -1369,6 +1385,17 @@ func (s *Server) serveOneSession(anchor consentAnchor, cer *ceremonyID, conn *p2
 	// The co-signed document is RETURNED, not opened here: under P05.S10's re-delivery loop this
 	// function runs again on every reconnect, and opening on each would stack duplicate tabs of one
 	// idempotent result (diff-grill). The caller opens it exactly once.
+	// **This machine has just signed a ceremony hop, so from here it waits to be DELIVERED to
+	// (P08.S05g).** One door: every hop's receiving side returns here, TCP and QUIC alike, and the
+	// receiving side is exactly the party that waits — under D22's hub the convener initiates
+	// every hop and delivers rather than receives.
+	//
+	// The unlock hook (`rearmDeliveries`) covers the party that RESTARTS between signing and
+	// delivery, and nothing else. Without this one, in an ordinary ceremony every instance
+	// unlocked long before the ceremony existed, so when the round ran nobody was listening and
+	// the convener raced candidates to `connectDeadline` per party — which is what the tier-4 run
+	// measured, twice, before this call existed in the right place.
+	s.armDeliveryAfterHop(final)
 	return true, final, nil
 }
 
@@ -1952,7 +1979,8 @@ func (s *Server) runCeremonyReceive(ctx context.Context, cer *ceremonyID, hl *p2
 }
 
 func (s *Server) handleSessionDisarm(w http.ResponseWriter, r *http.Request) {
-	s.sess.disarm()
+	// The INTERACTIVE slot only: this is Cancel, not shutdown. See disarmKind.
+	s.sess.disarmKind(armInteractive)
 	writeJSON(w, s.sess.status())
 }
 

@@ -1,12 +1,10 @@
-diff --git a/internal/server/convene.go b/internal/server/convene.go
-index 504f58c..cdfb3fa 100644
---- a/internal/server/convene.go
-+++ b/internal/server/convene.go
-@@ -401,7 +401,6 @@ func (s *Server) handleCeremonyInvites(w http.ResponseWriter, r *http.Request) {
- 			Roster:              rec.Roster,
- 			Secret:              secret,
- 			ConvenerFingerprint: conv,
--			Intent:              rec.Intent,
- 			RosterHash:          rh,
- 		}
- 		text, eerr := inv.Encode()
+--- a/internal/server/delivery.go
++++ b/internal/server/delivery.go
+@@ -753,7 +753,6 @@
+ 		Roster:              rec.Roster,
+ 		Secret:              secret,
+ 		ConvenerFingerprint: conv,
+-		Intent:              rec.Intent,
+ 		RosterHash:          rh,
+ 	}, nil
+ }
