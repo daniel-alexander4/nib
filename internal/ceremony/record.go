@@ -231,12 +231,6 @@ func (r Record) RosterHash() ([]byte, error) {
 	return rosterDigest(r)
 }
 
-// rosterPreimage is the exact byte string RosterHash digests.
-//
-// Split out at P04.S03 so the preimage can be ASSERTED rather than merely described. The
-// domain tag added there was covered by nothing — deleting it left the whole repo green —
-// because a function that returns only a digest gives a test nothing to look at. See
-// preimage.go.
 // convenerFingerprint is the hex SPKI fingerprint of the record's convener certificate,
 // or "" when there is none (an unsigned draft).
 func convenerFingerprint(certPEM string) string {
@@ -250,6 +244,12 @@ func convenerFingerprint(certPEM string) string {
 	return hex.EncodeToString(fp)
 }
 
+// rosterPreimage is the exact byte string RosterHash digests.
+//
+// Split out at P04.S03 so the preimage can be ASSERTED rather than merely described. The
+// domain tag added there was covered by nothing — deleting it left the whole repo green —
+// because a function that returns only a digest gives a test nothing to look at. See
+// preimage.go.
 func rosterPreimage(r Record) ([]byte, error) {
 	var p preimageBuilder
 	// The domain tag, FIRST (P04.S03).
@@ -578,8 +578,6 @@ func (r Record) Convener() (Party, bool) {
 	return Party{}, false
 }
 
-// MarshalJSON / UnmarshalJSON are the plain encoding; the signature covers the roster hash
-// rather than these bytes, so a re-encode is safe.
 // Hop returns the hop index joining two parties, and it is the ONLY definition of a hop
 // number in this project.
 //

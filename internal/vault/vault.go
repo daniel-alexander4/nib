@@ -1174,15 +1174,6 @@ func (v *Vault) Save() error {
 // envelopeVersion is what this build writes, and the highest it will open.
 const envelopeVersion = 2
 
-// checkEnvelopeVersion refuses a vault written by a NEWER Nib.
-//
-// Every gate here was `env.Version < 2` — a floor with no ceiling. A vault carrying
-// Version 3 sailed through, was decrypted as v2, and `save()` then unconditionally rewrote
-// `envelope{Version: 2, …}` — silently downgrading the file and dropping every envelope
-// field this build does not know, because encoding/json discards unknown keys. That is
-// reached by an ordinary user: a downgrade, a second machine, or a vault synced through a
-// shared folder between two versions. The vault holds the only copy of the signing
-// identity, so a silent lossy rewrite of it is the worst shape this package has.
 // decodeContents parses a decrypted payload and refuses one written by a newer Nib.
 //
 // **One door, because the rule had four call sites and would have had four copies.** The
@@ -1200,6 +1191,15 @@ func decodeContents(plain []byte) (Contents, error) {
 	return c, nil
 }
 
+// checkEnvelopeVersion refuses a vault written by a NEWER Nib.
+//
+// Every gate here was `env.Version < 2` — a floor with no ceiling. A vault carrying
+// Version 3 sailed through, was decrypted as v2, and `save()` then unconditionally rewrote
+// `envelope{Version: 2, …}` — silently downgrading the file and dropping every envelope
+// field this build does not know, because encoding/json discards unknown keys. That is
+// reached by an ordinary user: a downgrade, a second machine, or a vault synced through a
+// shared folder between two versions. The vault holds the only copy of the signing
+// identity, so a silent lossy rewrite of it is the worst shape this package has.
 func checkEnvelopeVersion(v int) error {
 	if v > envelopeVersion {
 		return fmt.Errorf("this vault was written by a newer version of Nib (format %d, "+
@@ -1305,11 +1305,6 @@ func newGCM(key []byte) (cipher.AEAD, error) {
 	return cipher.NewGCM(block)
 }
 
-// writeFileAtomic writes via a temp file + fsync + rename (+ parent-dir fsync)
-// so an interrupted write can't corrupt the vault — the syncs make the rename
-// durable, not merely atomic: without them a crash right after the rename can
-// leave a stale or truncated file on disk. The vault holds keys; it gets the
-// full-durability treatment.
 // WriteFileAtomicDurable is writeFileAtomic, exported for the one caller outside this
 // package that writes a VAULT (handleVaultImport). Anything that is NOT a vault should call
 // internal/atomicfile directly and choose its own mode.

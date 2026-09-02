@@ -75,18 +75,19 @@ func punchInterval(elapsed time.Duration) time.Duration {
 // names", and the conflation in it is how the hop axis stayed invisible for two phases**: a
 // proceeding is a CEREMONY, so a key naming the proceeding names the ceremony and not the hop,
 // while the sentence claimed it named `(hop, side)`. A side is a machine in a HOP.
+//
+// **No harness run charges this budget, and that is stated rather than left to be
+// discovered.** Only `sourceDHT` candidates are teed to the punch loop —
+// `feedCeremonyRace`'s merge sends the fixed `cands` to `in` alone — and `ipv4Target` then
+// requires an IPv4 address. Every candidate at tier 4 is LAN or typed, so the cap, the drop
+// and the report are exercised at tier 1 and nowhere else. A tier-4 clause over this
+// counter could only ever report pass.
 type punchBudget struct {
 	mu      sync.Mutex
 	spent   int
 	dropped int
 }
 
-// **No harness run charges this budget, and that is stated rather than left to be discovered.**
-// Only `sourceDHT` candidates are teed to the punch loop — `feedCeremonyRace`'s merge sends the
-// fixed `cands` to `in` alone — and `ipv4Target` then requires an IPv4 address. Every candidate at
-// tier 4 is LAN or typed, so the cap, the drop and the report are exercised at tier 1 and nowhere
-// else. A tier-4 clause over this counter could only ever report pass.
-//
 // spend reserves one packet if the budget allows, returning false (and counting a drop) when the
 // cap is reached. **Checked BEFORE the send** (grill CONFIRMED-4 sharpening) so the 8th candidate
 // cannot overshoot 3,000. It deliberately does NOT reset on candidate churn: a refreshed S07

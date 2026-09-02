@@ -445,7 +445,7 @@ func (l *quicListener) Addr() net.Addr { return l.mux.LocalAddr() }
 
 func (l *quicListener) Transport() string { return TransportQUIC }
 
-// loop accepts connections and hands each to its own stream-accepter.
+// acceptLoop accepts connections and hands each to its own stream-accepter.
 func (l *quicListener) acceptLoop() {
 	for {
 		// Deliberately unbounded, and it is the opposite of what it looks like.

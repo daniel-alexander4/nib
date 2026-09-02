@@ -154,12 +154,6 @@ func (a Attestation) intent() string {
 	return a.Intent
 }
 
-// safeText strips the square brackets out of user-supplied text. The /Reason
-// carries the accepted peer as a [SPKI:<hex>] token that ReadAttestations parses
-// with the FIRST match; the label is interpolated before that token, so without
-// this a crafted label (or intent) could inject a second [SPKI:...] that wins the
-// parse and misrepresents which peer was accepted. Removing brackets makes the
-// real token the only one that can appear.
 // safeHex is safeText's counterpart for the two fields that must be bare hex.
 //
 // reason() applied safeText to the label and the intent and interpolated AcceptedPeer and
@@ -181,6 +175,12 @@ func safeHex(s string) string {
 	return s
 }
 
+// safeText strips the square brackets out of user-supplied text. The /Reason
+// carries the accepted peer as a [SPKI:<hex>] token that ReadAttestations parses
+// with the FIRST match; the label is interpolated before that token, so without
+// this a crafted label (or intent) could inject a second [SPKI:...] that wins the
+// parse and misrepresents which peer was accepted. Removing brackets makes the
+// real token the only one that can appear.
 func safeText(s string) string {
 	return strings.NewReplacer("[", "", "]", "").Replace(s)
 }

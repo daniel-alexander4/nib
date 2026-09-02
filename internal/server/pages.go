@@ -10,10 +10,6 @@ import (
 	"nib/internal/pdfops"
 )
 
-// handlePages applies a structural page operation (rotate, delete, reorder,
-// append) to the posted document and makes the result the current document.
-// The client posts its saved bytes (edits already baked) since these ops
-// restructure the PDF in ways pdf.js cannot do client-side.
 // carryAttachments re-adds the source's embedded files after a REARRANGEMENT.
 //
 // Only delete and reorder: those produce the same document with its pages moved, and the
@@ -38,6 +34,10 @@ func carryAttachments(src, dst []byte, err error) ([]byte, error) {
 	return out, nil
 }
 
+// handlePages applies a structural page operation (rotate, delete, reorder,
+// append) to the posted document and makes the result the current document.
+// The client posts its saved bytes (edits already baked) since these ops
+// restructure the PDF in ways pdf.js cannot do client-side.
 func (s *Server) handlePages(w http.ResponseWriter, r *http.Request) {
 	// **Refuse a request addressed to a document this server no longer holds BEFORE reading the
 	// body.** Without this the handler parses up to maxPDFBytes and runs the whole PDF operation
