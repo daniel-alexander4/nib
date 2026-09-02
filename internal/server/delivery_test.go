@@ -1,12 +1,14 @@
 package server
 
 import (
+	"context"
 	"go/ast"
 	"go/parser"
 	"go/token"
 	"io/fs"
 	"strings"
 	"testing"
+	"time"
 
 	"nib/internal/ceremony"
 )
@@ -145,6 +147,161 @@ func TestADeliveredNameIsDeterministicAndDoesNotCollideWithinASecond(t *testing.
 	empty := ceremony.Record{ID: a.ID}
 	if got := deliveredName(empty); !strings.HasPrefix(got, "ceremony-") {
 		t.Errorf("a record with no intent produced %q; it must still name a file", got)
+	}
+}
+
+// TestADeliveryMarkerIsPerPartyAndSurvivesARerun — C10's harder half.
+//
+// *"A delivery round re-run after a mid-round failure leaves exactly one file per party."* S05d's
+// deterministic filename covers the RECIPIENT: a second delivery overwrites itself. What that does
+// not cover is the convener — a re-run must reach the party that FAILED and skip the ones that
+// succeeded, or a crash mid-round re-delivers to everyone.
+//
+// **Per party, not one file listing them.** Two legs of one round finish in either order, and a
+// shared file makes the second write clobber the first — the same shape `RecordSalt` refuses for
+// two parties sharing one BEP-44 target.
+func TestADeliveryMarkerIsPerPartyAndSurvivesARerun(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	const id = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	a := "11" + strings.Repeat("22", 31)
+	b := "33" + strings.Repeat("44", 31)
+
+	// STIMULUS: nothing is recorded before anything is written. Without this, "b is not recorded"
+	// below is true of a checker that always says no.
+	if wasDelivered(id, a) || wasDelivered(id, b) {
+		t.Fatal("setup: a marker exists before anything was delivered")
+	}
+	if err := markDelivered(id, a); err != nil {
+		t.Fatalf("markDelivered: %v", err)
+	}
+	if !wasDelivered(id, a) {
+		t.Error("a party's acknowledgement did not survive being written — a re-run then delivers " +
+			"to them again, and C10's 'exactly one file per party' rests on a write nothing checked")
+	}
+	// **The discriminator.** One party recorded must not record the other, or a mid-round failure
+	// at party 3 of 4 marks all four and the re-run reaches nobody.
+	if wasDelivered(id, b) {
+		t.Error("recording one party's delivery recorded another's; a re-run would skip the party " +
+			"that failed, which is the exact case C10 names")
+	}
+	// Case-insensitively, because a fingerprint is hex and both cases name one party. Two markers
+	// for one party would make a re-run deliver twice.
+	if !wasDelivered(id, strings.ToUpper(a)) {
+		t.Error("the marker is case-sensitive, so the same party in a different case reads as " +
+			"undelivered and the round delivers to them twice")
+	}
+	// Idempotent: recording twice is what a re-run of a successful leg does.
+	if err := markDelivered(id, a); err != nil {
+		t.Errorf("re-recording a delivered party failed: %v", err)
+	}
+}
+
+// TestOnlyTheConvenerRunsARound — the round's one refusal, and it is about identity not permission.
+//
+// D22 makes the convener the hub: it is the only party holding a channel to everyone. A party
+// running a round would be dialling peers it has no pin for and no rendezvous with.
+//
+// **The refusal cannot precede the identity load, and the first draft of this test assumed it
+// could.** Knowing whether this machine is the convener requires knowing which machine it is, so
+// the order is forced. What the draft did find is that the function panicked on a nil vault rather
+// than saying so — a detached caller would have seen a recovered panic and no reason.
+func TestOnlyTheConvenerRunsARound(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	s, v := unlockedServer(t)
+
+	// A roster whose convener is somebody else entirely.
+	inv := ceremony.Invitation{
+		ID:                  "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		ConvenerFingerprint: "99" + strings.Repeat("88", 31),
+	}
+	// STIMULUS: this server really can load an identity, so the refusal below is about the ROLE
+	// and not about a machine that cannot say who it is. The first draft asked `unlockedVault()`
+	// without unlocking and got nil, which `identity` dereferences — so the "refusal" it observed
+	// would have been a panic in the test's own setup.
+	if v == nil {
+		t.Fatal("setup: the vault did not unlock, so a refusal below says nothing about the role")
+	}
+	if _, _, err := identity(v); err != nil {
+		t.Fatalf("setup: this server cannot load an identity (%v), so a refusal proves nothing", err)
+	}
+	if _, err := s.runDeliveryRound(context.Background(), v, inv, []byte("%PDF-1.4\n")); err == nil {
+		t.Error("a machine that is NOT the convener ran a delivery round — it would dial parties " +
+			"it holds no pin for, at a rendezvous it shares with nobody")
+	}
+
+	// And the nil-vault case says so instead of panicking: this runs where a recovered panic
+	// reaches nobody.
+	if _, err := s.runDeliveryRound(context.Background(), nil, inv, []byte("%PDF-1.4\n")); err == nil {
+		t.Error("a round with no vault open returned no error")
+	}
+}
+
+// TestTheDeliveryRearmIsAProcessConcernAndOffByDefault — P08.S05g, and it is a defect this slice
+// introduced and then had to gate.
+//
+// **The measured failure:** the re-arm sweep hung off `adoptVault` reads `~/nib/ceremonies` and
+// opens a socket whose DHT node cache lands under `configDir`. A `Server` constructed in a test
+// isolates `configDir` and NOT `$HOME`, so the sweep read the developer's real ceremonies and wrote
+// into a `t.TempDir()` that was being torn down — *"TempDir RemoveAll cleanup: directory not
+// empty"*, in five unrelated tests that never mention delivery.
+//
+// So arming is a **process** concern, the twin of `DisarmSession`: constructing a `Server` must not
+// put a socket on the network. The flag defaults OFF, which is the direction this repo learned the
+// hard way — `toolbarStyle` shipped a flag whose default did something surprising.
+//
+// This asserts both halves. The default-off half is what stops the tree regressing to the measured
+// failure; the enable half is what stops the gate becoming a switch nothing ever turns on.
+func TestTheDeliveryRearmIsAProcessConcernAndOffByDefault(t *testing.T) {
+	var s Server
+	if s.deliveryRearm.Load() {
+		t.Error("a freshly constructed Server would re-arm on unlock. Constructing a Server puts " +
+			"a socket on the network then, which is what wrote a DHT cache into five unrelated " +
+			"tests' temp directories.")
+	}
+	s.EnableDeliveryRearm()
+	// STIMULUS: the enable actually flips it. Without this the assertion above is satisfied by a
+	// flag nothing can ever set, which is a gate with no caller.
+	if !s.deliveryRearm.Load() {
+		t.Error("EnableDeliveryRearm did not enable it, so a real Nib process never re-arms and " +
+			"a party who restarts is unreachable for the rest of the ceremony")
+	}
+}
+
+// TestTheRearmSweepSkipsWhatItMust — the three refusals, driven with an isolated HOME.
+//
+// The sweep must not arm for: a ceremony this machine has already received (or every unlock holds
+// a listener open for proceedings finished months ago — D29's residue through a new door), a
+// proceeding that has ended, or one where this machine is the CONVENER (which delivers rather than
+// waiting to be delivered to).
+//
+// Driven at the sweep rather than at its parts, because the defect this guards is the sweep
+// arming when it should not — a fact about the composition, not about any one predicate.
+func TestTheRearmSweepSkipsWhatItMust(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	// STIMULUS: with an isolated HOME there are no stored ceremonies at all, so the sweep has
+	// nothing to arm and must return without touching the network. Without this line the sweep
+	// reads the developer's real ~/nib, which is exactly the defect that made this gate necessary.
+	if got, err := ceremony.ListStored(defaultOutputDir(), time.Now()); err != nil || len(got) != 0 {
+		t.Fatalf("setup: an isolated HOME still lists %d stored ceremon(ies) (err=%v) — this test "+
+			"is reading a real directory and proves nothing", len(got), err)
+	}
+
+	s := &Server{configDir: t.TempDir()}
+	s.EnableDeliveryRearm()
+	// It must return, not panic and not block, with no vault: the sweep runs on a goroutine with
+	// no response to write into, so anything other than a quiet return is invisible in production.
+	done := make(chan struct{})
+	go func() { defer close(done); s.rearmDeliveries(nil) }()
+	select {
+	case <-done:
+	case <-time.After(10 * time.Second):
+		t.Fatal("rearmDeliveries did not return on a machine with no ceremonies — it runs at " +
+			"every unlock, so a hang here is a hang on the unlock path")
+	}
+	if s.sess.armedLocked() {
+		t.Error("the sweep armed something on a machine with no stored ceremonies at all")
 	}
 }
 

@@ -6304,7 +6304,7 @@ Tasks:
 - T05 — `checkDelivered`, the delivery arrival's OWN gate (finding (g)): `CheckRecord` and `MatchesRecord` as `checkArrival` has them, roster completeness, and a byte-prefix against this party's own contribution — but NO deadline refusal, and both doors say why they differ. Blind spots stated, not implied. *(done — the review caught it calling `persistedFor(nil)`, which works only by an identity in that function's miss rules; it reads the mirror directly now.)*
 
 
-#### P08.S05g — The delivery ROUND: driven, found off-LAN, and re-runnable *(D22, D30, D34; C08, C10)* — **new, 2026-09-01, split out of S05d at its deepdive**
+#### P08.S05g — The delivery ROUND: driven, found off-LAN, and re-runnable *(D22, D30, D34; C08, C10)* — **new, 2026-09-01, split out of S05d at its deepdive** *(in progress)*
 Scope: the round that drives S05d's leg. **Sequenced after S05d and before S05e**, which bounds
 this round's egress. The rendezvous is derived at **its own hop index** — `RecordKey(hop)` and
 `RecordSalt(hop, fp)` are hop-parameterised and validate nothing
@@ -6317,6 +6317,53 @@ Acceptance:
 - **The delivery arm is re-established at load or unlock, and this slice builds the hook** (`/pending 323`(a)). Named search over `internal/` for `re-?arm|resumeCeremon|restoreArm|atStartup|onStart` finds none, and `Server.New` starts nothing ceremony-related — so today a party who restarts is unreachable by the round for the rest of the ceremony. S06's third bullet already assumes *"at startup, at unlock"* exists; nothing builds it. Tier 1 for the hook, tier 4 for a restarted party being reached.
 - **A re-run after a mid-round failure reaches that party and no other, leaving exactly one file per party**, driven by injecting the write failure at party 3 of 4 — which is only meaningful because S05a made the ack mean persisted. Tier 4.
 - Tier: 4 throughout; the leg's rules are S05d's (C15).
+
+**Deepdive, 2026-09-01 — run inline; the first finding decides the slice's shape.**
+- **(a) THE RELAY IS HARNESS-DRIVEN. There is no convener-side hop loop anywhere in the product.**
+  `pairrepro.sh` hand-drives every hop with `/api/session/initiate`, arming each party in turn, and
+  its own comments say so (*"the N>=3 block had to hand-roll each hop with raw curl"*). No
+  production function walks a roster. So a "round" the convener runs **autonomously in the
+  background** would be the product's first self-directed multi-step network flow — a shape it has
+  never had, with its own retry policy, running unattended for up to the ceremony's life.
+- **(b) The criteria never say who drives it, and one of them says it is triggerable.** C08 is
+  *"the finished document reaches every party"*; C10 is *"a delivery round **re-run** after a
+  mid-round failure leaves exactly one file per party"*. A re-run is something somebody runs.
+  **Decision, taken at rung 2 of `~/.claude/ASK.md` and named as an assumption Dan can reverse: the
+  round is a ROUTE the convener triggers (`POST /api/ceremony/deliver`), not a background
+  orchestrator.** It is the minimum that satisfies both criteria; it makes C10's re-run literally a
+  second POST rather than bookkeeping inside a daemon; it is drivable at tier 4 exactly as every
+  hop already is; and it does not commit the product to autonomous orchestration, which is a
+  product-shape decision belonging with P06's surface rather than one smuggled in under a delivery
+  slice. **The RECIPIENT half stays autonomous** — arming a listener at unlock is what clause 3
+  asks for and what the product already does for every other arm.
+- **(c) `adoptVault` is the one door for "the vault just opened", and it says so.** Its own comment
+  records that these four lines were written twice and that P07.S02 hangs the pending-open drain
+  off this moment, warning that *"a second copy would mean a hand-off queued against a locked
+  instance opens when the user unlocks through one route and silently never opens through the
+  other"*. Clause 3's hook goes there and nowhere else.
+- **(d) The delivery rendezvous needs no new derivation.** `feedCandidates` and `publishCandidates`
+  already key everything off `c.hop`, and `RecordKey`/`RecordSalt`/`HopSeed` validate nothing — so a
+  delivery arm is an ordinary `ceremonyID` whose `hop` is `len(roster) + partyIndex`. Both ends
+  derive it from what they already hold. No format change, no new wire field.
+
+**Grill — two findings.**
+- **(e) A re-run must be idempotent at the CONVENER, not only at the recipient.** S05d made the
+  delivered filename deterministic, so a second delivery to the same party overwrites itself — that
+  covers the recipient. C10 asks for *"exactly one file per party"* after a re-run, and the
+  interesting half is that the re-run must **skip parties already acknowledged** and reach the one
+  that failed. That needs the convener to record per-party acknowledgement durably, or a re-run
+  after a crash re-delivers to everyone. Recorded beside the mirror, which is where this ceremony's
+  other durable state already lives.
+- **(f) The recipient must not arm for a ceremony it has already received.** Otherwise every unlock
+  re-arms every finished ceremony forever, holding listeners open for proceedings that are done —
+  which is the residue D29's prune exists to stop, arriving through a new door. The delivered file's
+  deterministic name is the check: it exists, so this party has its copy.
+Tasks:
+- T01 — `deliveryHop(inv, fp)` and a delivery `ceremonyID`, derived on both sides with no format change (finding (d)).
+- T02 — the recipient's delivery arm: shared endpoint + rendezvous at that index, S05c's slot, one `deliverOneLeg` receive.
+- T03 — the load/unlock hook at `adoptVault` (finding (c)), skipping ceremonies already delivered (finding (f)).
+- T04 — `POST /api/ceremony/deliver`: the convener walks the roster, skipping parties already acknowledged, and records each acknowledgement durably (findings (b), (e)).
+- T05 — tier 4 at N=4: the round reaches every party, a re-run after an injected failure at party 3 reaches that party and no other, and both sides' egress is enumerated.
 
 #### P08.S05e — The end state is delivered, and the round's egress is bounded *(D28, D33, D34, ADR-011; C06's telling half)* — **new, 2026-08-31, split out of S05**
 Scope: wiring P08.S04b's termination object, which is built, verified and has **zero production

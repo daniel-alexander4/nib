@@ -16,6 +16,7 @@ import (
 	"strings"
 
 	"nib/internal/pdfops"
+	"nib/internal/safe"
 	"nib/internal/sshkey"
 	"nib/internal/vault"
 
@@ -103,6 +104,31 @@ func (s *Server) adoptVault(v *vault.Vault) {
 	s.mu.Unlock()
 	if fresh {
 		s.drainPendingOpens()
+		// **And the delivery re-arm (P08.S05g, `/pending 323`(a)).** A party who restarts between
+		// signing and delivery had no way back onto the network for the rest of the ceremony: the
+		// arm that receives their copy lived only as long as the process that made it, and a named
+		// search over `internal/` for `re-?arm|resumeCeremon|restoreArm|atStartup|onStart` found no
+		// load- or unlock-time hook anywhere. It goes HERE for the reason the paragraph above
+		// gives about the drain — this is the one moment the vault becomes available, and a second
+		// copy would re-arm on one unlock route and silently never on the other.
+		//
+		// On its own goroutine: it reads `~/nib/ceremonies` and opens a socket, and `adoptVault`
+		// is called from request handlers.
+		//
+		// **Gated on the PROCESS having asked for it, exactly as `DisarmSession` is a process
+		// concern the binary calls.** The sweep reads `~/nib/ceremonies` and opens a socket whose
+		// node cache lands under `configDir`; a `Server` value constructed in a test isolates
+		// `configDir` and NOT `$HOME`, so an ungated sweep read the developer's real ceremonies
+		// and wrote a DHT cache into a `t.TempDir()` being torn down — measured as
+		// *"TempDir RemoveAll cleanup: directory not empty"* across five unrelated tests. Arming
+		// a network listener is not something constructing a `Server` should do; it is something
+		// running Nib does, and `cmd/nib` says so.
+		if s.deliveryRearm.Load() {
+			go func() {
+				defer safe.Recover("delivery re-arm")
+				s.rearmDeliveries(v)
+			}()
+		}
 	}
 }
 
