@@ -1,13 +1,14 @@
---- a/internal/server/delivery.go
-+++ b/internal/server/delivery.go
-@@ -439,9 +439,7 @@
- 		// is run a day later hears nothing for 30 s and publishes — which is right, because the
- 		// parties are no longer demonstrably in the same room, and being findable off-LAN is then
- 		// the only way the round reaches them at all.
--		if ann := s.watchLink(armCtx, cer, quicEndpointAnnounce{ln.Addr()}, cert, peerFP, nil); ann != nil {
--			defer ann.Close()
--		}
-+		_ = peerFP
- 		// The publish is what makes the arm findable off-LAN, and it holds the link's window
- 		// first exactly as every other publish does (ADR-011) — a delivery round on one office
- 		// network must emit nothing either.
+--- a/internal/server/lan.go
++++ b/internal/server/lan.go
+@@ -774,10 +774,7 @@
+ 	if cer == nil || len(peerFP) == 0 {
+ 		return ann
+ 	}
+-	go func() {
+-		defer safe.Recover("hop seeker answers")
+-		s.answerHopSeekers(ctx, cert, ln, peerFP, wanted, cer.noteLinkSighting, cer.watchingLink)
+-	}()
++	_ = wanted
+ 	return ann
+ }
+ 

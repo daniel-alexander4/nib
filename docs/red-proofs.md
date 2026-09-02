@@ -3271,10 +3271,18 @@ still builds, and the failure mode is asymmetric: a build failure looks like a p
 reading exit status, so a row recorded that way claims coverage it never had. `EXPECT` is what
 separates the two, and it is the reason it exists.
 
-**One probe is deliberately NOT a row.** Deleting the dial-side browse does not produce a packet
-count at all — the round then has no candidate for any party and every leg runs out its 300 s
-connect deadline, so a nine-party run takes forty minutes to fail. It was killed at ten. A row whose
-PROVE cannot terminate is worse than the prose, so the property is recorded here and guarded by the
-green run's own delivery assertions instead.
+**One probe is deliberately NOT a row, and the same trap then caught a row that WAS registered.**
+Deleting the dial-side browse produces no packet count at all — the round has no candidate for any
+party and every leg runs out its 300 s connect deadline, so a nine-party run takes forty minutes to
+fail. Killed at ten. A row whose PROVE cannot terminate is worse than the prose.
+
+`delivery-arm-has-no-link-tier` was then recorded with a mutation that removed the WHOLE
+`watchLink` call — announce included — and it hit exactly that: under `--lan` the arm's announcement
+is the only thing the round can discover, so the replay hung in the same place and was killed at
+thirty-two minutes. **Having written the paragraph above, the row beneath it walked into the same
+hole.** Re-recorded to take away the ANSWER half alone, which is what the row names anyway: the arm
+stays findable, the round completes, and the egress assertion fires on a hold that never renewed.
+Re-targeted at `-n 4` as well — three delivery arms move the counter, and a row nobody can afford
+to replay is a row nobody replays.
 
 `recorded` 253 → 258.
