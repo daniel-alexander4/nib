@@ -4389,7 +4389,221 @@ Exit criteria:
 - **The ceremony record is labelled in the attachments panel for what it is, and cannot be removed while the ceremony is live. (added 2026-08-18, D29.)**
 - **A party's in-progress copy is labelled as in-progress and never as the finished document. (added 2026-08-18, D28.)**
 
-Slices *(sketch)*: the ceremony panel replacing the tab and its three modals; **the convene-and-invite PANEL, over P07.S02's route** *(re-pointed 2026-08-23 — the server-side convene is P07's; a pin two hundred lines below is not what a builder reading this list will see)*; the connect-and-confirm screen; the roster and position display; **the roster-shaped consent screen (D27); the end-state surfaces (D28); the document freeze and the attachments label (D29);** **the quote routes build the attestation the signing path signs (`/pending 317`, added 2026-09-01)** *(the block a party sees disagrees with the signature beneath it in five of six lines: `cosignAttestation` never calls `StampCommitment`, so a quote is structurally incapable of returning Capacity or `Party k of n`. Grilled three times to the same verdict — one door, the server builds the attestation once and the signing path uses that one, with `When` pinned at quote time, which needs `p2p.Confirmer` to carry the time back. It is P06's because the block only becomes user-reachable when P06 ships, and it re-opens P07's C09/C15/C19, corrected to `⚠ partly met` at v1.117.275)*; failure surfaces; docs and README.
+**Slices FIRMED 2026-09-02 at the phase open**, against the tree as it now stands. The sketch below
+is preserved under the list because it is what the criteria were written against.
+
+**Three facts from the survey that shaped the cut**, each checked at the line rather than assumed:
+
+- **The client has ZERO ceremony readers.** `grep -n "api/ceremon" web/app.js` returns nothing. Four
+  routes ship (`convene`, `invites`, `ceremonies`, `accept`, plus `deliver`) and every published
+  shape among them is parked in `test/jsdom/published.test.mjs` with the same words — *"P07.S02a
+  ships the route before P06 builds its panel; no client reader yet"*. This phase builds the client
+  half from nothing, and those exclusions are its completion test.
+- **All five ceremony routes are behind `requireUnlocked`** (`server.go:288-292`), and **six of this
+  phase's criteria require the panel to render with the vault LOCKED.** The plan already says the
+  move is owed — *"C12/D29 — the ceremonies listing moves off `requireUnlocked` and locked becomes a
+  fifth degradation class, because the vault lock protects nothing there: the mirror is unsealed by
+  D29's own design"* — and P08.S03 shipped the listing behind the gate anyway. That is a
+  precondition, not a detail, so it is slice one.
+- **The Collaborate surface today is a toolbar tab**: a role toggle (`Originate`/`Receive`) and eight
+  buttons that open modals. The sidebar has four panels. The goal says *"a sidebar panel rather than
+  a tab of modals"*, so the phase adds a fifth panel and the tab's ceremony half retires into it.
+
+Ten slices, in dependency order:
+
+- **P06.S01 — The listing leaves the lock, and `locked` becomes a fifth load class.** Server-side and
+  small, and it gates six criteria. `GET /api/ceremonies` off `requireUnlocked`; `LoadLocked` joins
+  P08.S03's four classes; the close-out sweep and every other vault-needing side effect skip cleanly
+  rather than erroring. **The one slice in this phase with a real security surface** — it moves a
+  route off the authentication gate — so it takes the hardest grill and states exactly what a locked
+  reader may see: the record is unsealed by D29's design, and nothing that is not already in it.
+- **P06.S02 — The ceremony panel: roster, position and next action, read-only.** The fifth sidebar
+  panel, rendering from `GET /api/ceremonies` alone. Carries three criteria: it renders with the
+  vault locked, it survives a quit and reopen **with no network reachable**, and a corrupt record
+  degrades that one entry while every other ceremony and open document keeps working. No actions.
+- **P06.S03 — The next action is computed by ONE function, shared with the server's L3 check.** The
+  replacement for the struck role-conflict criterion, in its own words: *"the panel's enabled action
+  is computed from the record by the same function the server's L3 check uses — driven by a fixture
+  whose UI position and record position disagree, which must show the record's."* ADR-009 across a
+  language boundary, which no rule in this repo has had to cross before; the shape is the slice.
+- **P06.S04 — Convene and invite.** The panel over P07.S02's route. **No address field and no hex
+  fingerprint on the primary flow**, and the screen states in those terms that the invitation is a
+  channel secret and not a signing credential.
+- **P06.S05 — The armed screen.** Per-tier connect progress for the whole connect deadline, never a
+  blank spinner; the router-opening disclosure naming the port, and saying so when no mapping was
+  obtained; the DHT disclosure beside it in one plain sentence; and **only the ceremony deadline in
+  human units** — neither the connect nor the exchange deadline appears as a countdown.
+- **P06.S06 — The quote routes build the attestation the signing path signs** (`/pending 317`).
+  Server-side, and placed BEFORE the consent screen because that screen renders what a quote
+  returns. `cosignAttestation` never calls `StampCommitment`, so a quote is structurally incapable
+  of returning `Capacity` or `Party k of n` and the block a party sees disagrees with the signature
+  beneath it in five of six lines. One door: the server builds the attestation once and the signing
+  path uses that one, with `When` pinned at quote time — which needs `p2p.Confirmer` to carry the
+  time back. Re-opens P07's C09/C15/C19, corrected to `⚠ partly met` at v1.117.275.
+- **P06.S07 — The roster-shaped consent screen (D27).** Every party who has already signed, not one,
+  driven with a three-signature document because a two-party fixture cannot tell a roster from a
+  single peer. The vault is asked for its password **here**, at the moment of signing, and not at
+  the moment of looking.
+- **P06.S08 — The end states and the failure surfaces.** D28's four (completed, declined, expired,
+  abandoned) and D19's four network causes: **eight distinct outcomes, driven separately**, plain
+  language first with the technical detail behind a disclosure. A screen that folds *"they declined"*
+  into *"couldn't establish a connection"* fails this. The advanced fallback is reachable here and
+  never on the default path.
+- **P06.S09 — The freeze, the attachments label, and the in-progress label.** The three things a
+  document says about itself while a ceremony is live (D29, D28): a mutating operation is refused
+  and names the ceremony — **driven through a real edit, never asserted on a flag**; the ceremony
+  record is labelled in the attachments panel for what it is and cannot be removed while the
+  ceremony is live; a party's in-progress copy is labelled in-progress and never as the finished
+  document.
+- **P06.S10 — Docs, README, and the phase close.** The README's ceremony section loses its *"the
+  interface for this is not built yet"* paragraph, which P08.S09 wrote precisely so this slice would
+  have something to delete.
+
+**Plan-review trigger: FIRED, and run single-threaded.** The phase moves a route off the
+authentication gate (S01) and its surfaces carry invitation secrets and identity fingerprints, which
+is the security limb of the trigger. It was run as a reading pass rather than as an agent panel, and
+what it changed is above: S01 exists as its own slice, first, *because* of it — the lock move was
+sketched as part of the panel and is a security change that must not ride inside a UI slice.
+
+**The sketch this replaces**, preserved because the criteria were written against it: the ceremony panel replacing the tab and its three modals; **the convene-and-invite PANEL, over P07.S02's route** *(re-pointed 2026-08-23 — the server-side convene is P07's; a pin two hundred lines below is not what a builder reading this list will see)*; the connect-and-confirm screen; the roster and position display; **the roster-shaped consent screen (D27); the end-state surfaces (D28); the document freeze and the attachments label (D29);** **the quote routes build the attestation the signing path signs (`/pending 317`, added 2026-09-01)** *(the block a party sees disagrees with the signature beneath it in five of six lines: `cosignAttestation` never calls `StampCommitment`, so a quote is structurally incapable of returning Capacity or `Party k of n`. Grilled three times to the same verdict — one door, the server builds the attestation once and the signing path uses that one, with `When` pinned at quote time, which needs `p2p.Confirmer` to carry the time back. It is P06's because the block only becomes user-reachable when P06 ships, and it re-opens P07's C09/C15/C19, corrected to `⚠ partly met` at v1.117.275)*; failure surfaces; docs and README.
+
+#### P06.S01 — The listing leaves the lock, and `locked` becomes a fifth load class *(D29, C12; precondition for six criteria)*
+Scope: `GET /api/ceremonies` comes off `requireUnlocked`. The plan has owed this since 2026-08-18
+— *"the ceremonies listing moves off `requireUnlocked` and locked becomes a fifth degradation class,
+because the vault lock protects nothing there: the mirror is unsealed by D29's own design"* — and
+P08.S03 shipped it behind the gate anyway, so six of this phase's criteria are currently
+unbuildable. **The one slice here with a real security surface**, and it is first so that a UI slice
+never carries an authentication change inside it.
+Acceptance:
+- **The route answers with the vault locked**, and what it returns is exactly what an unlocked
+  reader gets minus anything the lock actually protects — stated field by field against
+  `ceremony.Stored`, not asserted as a whole. The mirror is unsealed by design; the invitation
+  secret is in the vault and appears in no field of this response, which P08.S01 already asserts
+  from the other side.
+- **`LoadLocked` is a fifth class beside P08.S03's four**, with its own sentence, and it is what a
+  reader gets for the parts that genuinely need the vault rather than a silent omission or a zero.
+- **Every vault-needing side effect of the route skips cleanly rather than erroring** — the
+  close-out sweep is the one that exists (`closeOutEnded` already returns on a nil vault), and the
+  guard asserts the routing rather than the behaviour of the one caller, because a second side
+  effect added later must not have to rediscover this.
+- **The CSRF and origin posture is unchanged and stated.** `requireUnlocked` skips both for GET
+  already (`auth.go:120`), so this route's exposure does not change with the lock — but that is a
+  fact worth writing down here rather than leaving for a reader to re-derive, since it is the
+  obvious place to assume the opposite.
+- Tier: 1 for the class and the field-by-field comparison; 6 for the route answered by a real
+  process with a locked vault (C15).
+
+#### P06.S02 — The ceremony panel: roster, position and next action, read-only *(D24, D29; C12's client half)*
+Scope: the fifth sidebar panel, rendering from `GET /api/ceremonies` alone. No actions — this slice
+is the reading surface and the three criteria that are about reading. **The client has zero ceremony
+readers today**, so the parked exclusions in `test/jsdom/published.test.mjs` and
+`observables_test.go` are this slice's completion test: they are deleted, not amended.
+Acceptance:
+- **The panel renders roster, position and next action with the vault locked**, and asks for the
+  password at the moment of signing rather than the moment of looking (D29). The looking half is
+  here; the signing half is S07's.
+- **It survives Nib being quit and reopened with no network reachable** (D24) — driven with the
+  network down, because a resumption screen that silently needs the DHT is the failure the criterion
+  exists to catch.
+- **A corrupt or unreadable record degrades that one entry** and leaves every other ceremony and
+  open document working, driven with a truncated record (D34, self-healing). The server half is
+  P08.S03's four classes and tier 6's CLAUSE 11; this is the client half of the same rule.
+- **No hex fingerprint appears** — parties are named, and an identity is shown as its six-word name.
+- Tier: 2 for the rendering and the degradation, 3 for the panel in a real browser.
+
+#### P06.S03 — The next action is computed by ONE function, shared with the server's L3 check *(D17 amendment, D23; ADR-009)*
+Scope: the replacement for the struck role-conflict criterion, in its own words — *"no screen in the
+ceremony offers a role choice, and the panel's enabled action is computed from the record by the
+same function the server's L3 check uses — driven by a fixture whose UI position and record position
+disagree, which must show the record's."*
+**This is ADR-009 across a language boundary and no rule in this repo has had to cross one before**,
+so the SHAPE is the slice: two implementations that agree today are the thing ADR-009 exists to
+refuse, and a JS copy of a Go predicate is exactly that.
+Acceptance:
+- **The disagreement fixture is the assertion**: a record whose roster position contradicts what the
+  UI would otherwise show, and the record wins. A fixture where the two agree cannot tell a shared
+  rule from two rules.
+- **One door, named, with the crossing mechanism stated** — whether the server computes and the
+  client renders, or the rule is generated into both. Either is defensible; what is not is two
+  hand-written copies plus a comment saying they agree, which is `NominalBlockRect`'s defect and
+  this repo's standing example of what it costs.
+- **The guard asserts routing through the door**, not the text each site prints (ADR-009).
+- Tier: 1 for the door, 2 for the rendering, and a red proof for the disagreement fixture.
+
+#### P06.S04 — Convene and invite *(D21, D22; the no-address and no-fingerprint criteria)*
+Scope: the panel over P07.S02's convene route, and the invitation surface.
+Acceptance:
+- **The primary flow contains no address field and no hex fingerprint.**
+- **The screen states that the invitation is a channel secret and not a signing credential, in those
+  terms** (D21) — a user who forwards one should know what they did and did not give away.
+- The advanced fallback (a typed address) is reachable and never on the default path.
+- Tier: 2 and 3; 6 for a convene driven between two processes through the panel's own request shape.
+
+#### P06.S05 — The armed screen *(D15, D16 amendment, D34)*
+Scope: what a party sees while waiting.
+Acceptance:
+- **Per-tier progress for the whole connect deadline, never a blank spinner** (D16).
+- **The router opening is disclosed with its port, and its ABSENCE is disclosed too** (D15) — when
+  no mapping was obtained the screen says so rather than staying silent.
+- **The DHT is disclosed beside it in one plain sentence** (D34, STANDARDS §9).
+- **Only the ceremony deadline is shown in human units** — neither the connect deadline nor the
+  exchange deadline appears as a countdown (D16 amendment).
+- Tier: 2 and 3; the no-mapping arm needs a fixture where the mapper returns nothing, which is the
+  arm most likely to ship unexercised.
+
+#### P06.S06 — The quote routes build the attestation the signing path signs *(`/pending 317`; re-opens P07 C09, C15, C19)*
+Scope: server-side, and placed BEFORE the consent screen because that screen renders what a quote
+returns. The block a party sees disagrees with the signature beneath it in five of six lines:
+`cosignAttestation` never calls `StampCommitment`, so a quote is structurally incapable of returning
+`Capacity` or `Party k of n`. Grilled three times to the same verdict.
+Acceptance:
+- **One door**: the server builds the attestation once and the signing path uses that one.
+- **`When` is pinned at quote time**, which needs `p2p.Confirmer` to carry the time back.
+- **The five drifting lines are asserted equal** between what a quote returns and what the signature
+  covers, per line rather than as a whole — the count is the finding and a whole-object comparison
+  cannot say which line moved.
+- P07's C09/C15/C19 are re-ledgered from `⚠ partly met` at the close.
+- Tier: 1 for the door and the per-line equality; 4 for a quote and a signature on the same hop.
+
+#### P06.S07 — The roster-shaped consent screen *(D27, D29)*
+Scope: the screen a party sees before signing.
+Acceptance:
+- **Every party who has already signed is shown, not one** (D27) — driven with a
+  three-signature document, because a two-party fixture cannot tell a roster from a single peer.
+- **The vault password is asked for HERE**, at the moment of signing, and not at the moment of
+  looking (D29) — the other half of S02's criterion.
+- Tier: 2 and 3, with the three-signature fixture; 4 for the consent gate reached over a real hop.
+
+#### P06.S08 — The end states and the failure surfaces *(D19, D28)*
+Scope: eight distinct outcomes.
+Acceptance:
+- **Each of D28's four end states produces its own message** — completed, declined, expired,
+  abandoned — **distinct from each other and from D19's four network causes.** Eight, driven
+  separately; a screen that folds *"they declined"* into *"couldn't establish a connection"* fails.
+- **Plain language first, technical detail behind a disclosure** (D19, amended 2026-08-16).
+- Tier: 2 for the eight, driven one at a time; 4 for the declined state arriving over the wire, which
+  P08 already delivers.
+
+#### P06.S09 — The freeze, the attachments label, and the in-progress label *(D28, D29)*
+Scope: the three things a document says about itself while a ceremony is live.
+Acceptance:
+- **A document under a live ceremony refuses mutating operations and names the ceremony**, driven
+  **through a real edit and not asserted on a flag** (D29). The server-side freeze exists at three
+  sites; this is its surface and its honest driver.
+- **The ceremony record is labelled in the attachments panel for what it is and cannot be removed
+  while the ceremony is live** (D29).
+- **A party's in-progress copy is labelled in-progress and never as the finished document** (D28).
+- Tier: 2 and 3 for the refusal through a real edit; 1 for the attachment rule at its door.
+
+#### P06.S10 — Docs, README, and the phase close *(docs-parity; the phase's own close)*
+Scope: the phase close.
+Acceptance:
+- **The README's ceremony section loses its *"the interface for this is not built yet"* paragraph**,
+  which P08.S09 wrote so that this slice would have something to delete — and gains the flow as it
+  actually is.
+- Documentation and README updated in the same phase (STANDARDS docs-parity).
+- The phase's acceptance ledger over every criterion, split on `and`, and the graduation pass over
+  `instruments/ceremony.md`'s P06 rows.
 
 ### P07 — More than two parties: **the model** *(CLOSED 2026-08-28, v1.117.236)* **(added 2026-08-18 — D22, D23, D25, D27; amended the same day — D28, D29; built BEFORE P06 — Stage 2 grill; **split 2026-08-18, plan-review: lifecycle and delivery moved to P08**)**
 Goal: a ceremony of N parties completes as a convener-driven serial ~~relay~~ **baton** (renamed
