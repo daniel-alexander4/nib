@@ -153,18 +153,29 @@ func (s *Server) handleCeremonyAccept(w http.ResponseWriter, r *http.Request) {
 	// the convener at one end, so this party can never be on a hop with anybody else; pinning
 	// the rest of the roster would pin up to thirty peers it can never dial. See
 	// pinCeremonyRoster.
-	// **Which party this machine is, recorded while the vault is open (P06.S02).** `me` is right
-	// here and was thrown away; a reader without a vault cannot work it out, because it needs
-	// `identity(v)`. Best-effort on purpose: a ceremony whose marker failed to write is readable,
-	// resumable and signable exactly as before, and refusing an accept over a label would trade
-	// the whole ceremony for it. The panel says "we do not know which of these is you" until the
-	// next write, which is the honest sentence for an absent marker.
-	if merr := ceremony.WriteMe(defaultOutputDir(), inv.ID, me); merr != nil {
-		log.Printf("accepted ceremony %s: could not record which party this machine is: %v — the "+
-			"ceremony works, but the panel cannot show your position in it", inv.ID, merr)
-	}
 	n, perr := pinCeremonyRoster(v, inv.ID, []ceremony.Party{convener}, me)
 	if perr != nil {
+		// **"Nothing was accepted" has to be TRUE, and it was not (/pending 364).**
+		//
+		// Every vault mutator writes `v.contents` and then calls `save()`, so a failed save
+		// leaves the change standing in memory for the life of the process. Measured at this
+		// door with an unwritable vault directory: the accept answered 500 *"nothing was
+		// accepted"*, the convener was pinned in memory with this ceremony's scope, and
+		// `POST /api/session/arm` against them then returned **200**. The machine had accepted
+		// the invitation — it would dial and trust that peer — while its user had been told it
+		// had not, and a restart would silently take it away again.
+		//
+		// Pruning is the compensation and not a rollback: it drops this ceremony's scopes and
+		// leaves a pin the user made themselves, which is `PruneCeremonyPeers`' whole design
+		// (D29, one-way promotion). Its own save fails too — the disk is still gone — and that
+		// does not matter, because memory is the state the arm door reads and memory is what
+		// this corrects. The error is logged rather than returned: the caller is already being
+		// told the accept failed, and a second sentence about a prune they never asked for
+		// would bury the one that matters.
+		if _, prerr := v.PruneCeremonyPeers(inv.ID); prerr != nil {
+			log.Printf("accept %s: the pin could not be saved and the compensating prune also "+
+				"failed: %v", inv.ID, prerr)
+		}
 		httpError(w, http.StatusInternalServerError,
 			"the invitation was read but its pin could not be saved, so nothing was "+
 				"accepted: "+perr.Error())
@@ -208,6 +219,26 @@ func (s *Server) handleCeremonyAccept(w http.ResponseWriter, r *http.Request) {
 			"the invitation was read and its pin saved, but the invitation itself could not be "+
 				"stored, so this machine could not rejoin the ceremony after a restart: "+err.Error())
 		return
+	}
+
+	// **Which party this machine is, recorded while the vault is open (P06.S02).** `me` is right
+	// here and was thrown away; a reader without a vault cannot work it out, because it needs
+	// `identity(v)`. Best-effort on purpose: a ceremony whose marker failed to write is readable,
+	// resumable and signable exactly as before, and refusing an accept over a label would trade
+	// the whole ceremony for it. The panel says "we do not know which of these is you" until the
+	// next write, which is the honest sentence for an absent marker.
+	//
+	// **It runs LAST, after both writes, and that ordering is the fix for a ghost row
+	// (/pending 364).** `WriteMe` calls `MkdirAll`, and `ListStored` lists every well-named
+	// directory under `~/nib/ceremonies/` — it does not require a record. So writing the marker
+	// first meant a *failed* accept left a folder behind, and the panel P06 had just shipped
+	// listed it: measured, `state:"absent"`, reason *"this ceremony has no record on this
+	// machine — its folder may have been removed, or it was interrupted before anything was
+	// written"*. That sentence blames a removal or an interruption for a ceremony the same user
+	// had just been told was never accepted.
+	if merr := ceremony.WriteMe(defaultOutputDir(), inv.ID, me); merr != nil {
+		log.Printf("accepted ceremony %s: could not record which party this machine is: %v — the "+
+			"ceremony works, but the panel cannot show your position in it", inv.ID, merr)
 	}
 
 	roster := make([]acceptedParty, 0, len(inv.Roster))
