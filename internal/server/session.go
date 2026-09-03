@@ -870,21 +870,29 @@ func (s *Server) declineCeremony(cer *ceremonyID) {
 	}
 	v := s.unlockedVault()
 	if v == nil {
-		return // locked mid-session; the pins are in a vault nothing can write to right now
+		return // locked mid-session; the sweep at the next unlock reaches this ceremony
 	}
-	if _, err := v.PruneCeremonyPeers(cer.inv.ID); err != nil {
-		log.Printf("declined ceremony %s: could not remove its peer pins: %v — the peer list "+
-			"still carries a pin this machine took on only for a ceremony that was refused",
-			cer.inv.ID, err)
-	}
-	// And the stored invitation, which is this side's key material for a ceremony it just refused
-	// (P08.S01). This is the invitee's own path — `declineCeremony` runs from the consent gate, on
-	// the machine that said no — so it is the site where an accepted invitation most obviously
-	// stops being wanted. Reported separately from the pins for `unconvene`'s reason: the two fail
-	// independently and a user can act on each.
-	if _, err := v.PruneCeremonyInvitations(cer.inv.ID); err != nil {
-		log.Printf("declined ceremony %s: could not remove its stored invitation: %v — it carries "+
-			"the ceremony secret and this machine still holds it", cer.inv.ID, err)
+	// **This used to prune two of the four stores, here, at the end state. P08.S06 routes it
+	// through the close-out door instead** — and the change is a routing change, not a deferral.
+	//
+	// D29 states the lifecycle once — end state → delivery round → close-out — and puts the pin
+	// drop and the store teardown at the LAST step. The old shape ran two of them at the FIRST,
+	// which cost three things. It reached the peer pins and the stored invitation and not the
+	// invitation SECRETS, so a teardown reached two of three vault stores — `unconvene`'s
+	// P08.S01 finding, one door over. It deleted this machine's ceremony directory from under a
+	// party who may already hold a mirror, where the close-out moves it and the signed
+	// contribution survives at a path the user can be told about. And it left no local record of
+	// WHY the ceremony ended, so this machine's own sweep would later reach the same ceremony
+	// through the grace and label a decline `abandoned`.
+	//
+	// **Immediate rather than left to the sweep, because for the decliner there is no round to
+	// wait for.** `runDeliveryRound` skips the party that ended the proceeding by name, so the
+	// D29 step between the end state and the close-out is empty on this machine and only on this
+	// machine. Waiting would mean holding the pins until the deadline plus the grace for a
+	// ceremony this user has already refused.
+	if err := s.closeOutCeremony(v, cer.inv.ID, ceremony.StateDeclined, time.Now()); err != nil {
+		log.Printf("declined ceremony %s: %v — this machine may still hold pins, the ceremony "+
+			"secret, or the ceremony folder for a proceeding it refused", cer.inv.ID, err)
 	}
 }
 

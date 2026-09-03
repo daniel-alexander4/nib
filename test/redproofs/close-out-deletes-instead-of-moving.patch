@@ -1,0 +1,11 @@
+--- a/internal/ceremony/closeout.go
++++ b/internal/ceremony/closeout.go
+@@ -115,7 +115,7 @@
+ 	if merr := os.MkdirAll(filepath.Dir(dst), 0o700); merr != nil {
+ 		return merr
+ 	}
+-	return os.Rename(src, dst)
++	return os.RemoveAll(src)
+ }
+ 
+ // A Receipt is what this machine observed about how a ceremony ended, and when.

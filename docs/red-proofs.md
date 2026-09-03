@@ -3347,3 +3347,42 @@ the trade filed as `/pending 359`. It was already visible: the harness's spoken-
 really a cost.
 
 `recorded` 258 → 261.
+
+## P08.S06 — close-out: the prune moves (v1.117.330)
+
+| Defect reintroduced | Check that fired | What it said |
+| --- | --- | --- |
+| `close-out-deletes-instead-of-moving` — `os.Rename` becomes `os.RemoveAll`, which is what `RemoveMirror`'s own doc invites | `TestTheCloseOutPrunePreservesThisMachinesOwnContribution`, tier 1 | "this machine's own signed contribution is GONE after the close-out … the user's signature destroyed by their own software's tidying" |
+| `close-out-reaches-three-of-four-stores` — the invitee-side invitation store drops out | `TestTheCloseOutDoorReachesEveryCeremonyScopedStore`, tier 1 | "the stored invitation survived the close-out — it carries the ceremony secret, and this is the store P08.S01 found a teardown missing one door over" |
+| `receipt-lets-a-derived-state-overwrite-an-attested-one` — the write-once check drops out | `TestTheReceiptKeepsTheFirstThingThisMachineObserved`, tier 1 | "a derived 'abandoned' overwrote an attested 'declined'" |
+| `close-out-runs-on-a-ceremony-whose-record-did-not-verify` — the load-class guard drops out | `TestAnUnreadableCeremonyIsNeverClosedOut`, tier 1 | "a ceremony classified unparseable was closed out — its record did not verify, so its deadline is not a fact" |
+| `the-grace-is-hand-copied-from-the-ceremony-ceiling` — the derivation becomes `72 * time.Hour` | `TestTheGraceIsDerivedFromTheCeremonyCeilingAndNotHandCopied`, tier 1 | "closeOutGrace's identifiers are \"time.Hour\" and none is ceremony.MaxCeremonyLife" |
+
+**Eleven mutations were probed and ten went red; five are registered.** The eleventh is below. The four not registered
+are the ones whose patch is a second spelling of a registered row — the absolute-root check moved
+below the rename, the destination overwrite, and `roundIsFinished` pinned to each of `true` and
+`false`. That last pair is worth naming even unregistered: **both directions had to be probed.** A
+test that only checks the held case passes against a `roundIsFinished` that never returns true,
+which holds every ceremony open forever — the failure that wears safety's face, and the one a
+close-out test is most likely to ship with.
+
+**Two guards caught this slice's own new code and neither was a false positive.**
+`TestEveryHandRolledAtomicWriteIsDeclared` fired on `CloseOutMirror`'s `os.Rename` — correctly, and
+the honest answer was the map's first exemption since v1.117.261, because this renames a
+**directory** and writes no bytes, which is not the temp-file-plus-rename that guard hunts. Then
+`TestEveryPublishedObservableHasANamedReader` fired **twice**: first on `ceremony.Receipt` having no
+reader at all, and again on `Receipt.State` after a reader was added that never named that field.
+Both were real. The first produced `ListEnded` and the `ended` half of the ceremonies route — a
+receipt no surface shows preserves the contribution in secret. The second produced the write-once
+rule, which is a correctness property nobody had asked for: `State` had been set by one function and
+read by none, which is `CheckDocument`'s defect exactly, on a four-day-old type.
+
+`recorded` 261 → 266.
+
+**And the grace proof failed its first replay for a reason that was not the test.** `redproof.sh`
+reported *"went red, but not for its own reason"* — the row's `EXPECT` was written as a grep
+alternation, `does not reference\|none is ceremony.MaxCeremonyLife`, and the harness matches the
+expectation literally. So the check went red, said exactly what it was supposed to say, and the row
+was still refused. That is the harness doing precisely its job: **a non-zero exit alone is also what
+a deleted or uncompilable check produces**, and it will not accept one as proof. Worth recording
+because the failure looked like a stale patch and was a typo in the assertion about the assertion.

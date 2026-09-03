@@ -162,6 +162,26 @@ const (
 	// `MaxCeremonyLife` instead of `connectDeadline`, so the same constant that gives a dozen
 	// polls in a 300 s race gives hundreds of thousands over thirty days.
 	candidateFetchEvery = 5 * time.Second
+
+	// closeOutGrace is how long a ceremony's directory stays live past its own deadline before
+	// the sweep concludes nothing more is coming and closes it out (D29, P08.S06).
+	//
+	// **DERIVED from `ceremony.MaxCeremonyLife`, not a hand-copied duration.** This is the
+	// `maxCandidatesPerSource` rule above, for the same reason: a literal here plus a comment
+	// saying it agrees with the ceiling is not a mechanism, and if the ceiling moves this
+	// silently stays behind — closing out ceremonies the record still considers live.
+	//
+	// **It is a tunable and NOT one of D33's law figures.** That guard's `lawFigures` list is a
+	// deliberate two-name whitelist and this must not join it: a law figure is one a peer relies
+	// on, and nothing on the wire depends on how long this machine keeps a directory.
+	//
+	// A tenth, which is 3 days against the 30-day ceiling. What the grace has to cover is the
+	// delivery round starting AFTER the deadline — the convener's own arm runs to
+	// `MaxCeremonyLife` and a round that begins at the last moment still has to walk N parties
+	// at `connectDeadline` each — plus the machine being off. Three days covers a long weekend,
+	// which is the outage the sweep's own trigger rule is written around: every ceremony route
+	// is behind `requireUnlocked`, so a machine left locked prunes nothing while wall time runs.
+	closeOutGrace = ceremony.MaxCeremonyLife / 10
 )
 
 // ceremonyHopBudget is the worst-case wall-clock ONE ceremony hop can consume: bootstrap,

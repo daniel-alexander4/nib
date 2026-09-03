@@ -182,6 +182,17 @@ var published = map[string][]string{
 	// tested, and the guard failed the root package on the same commit — which is the shape the
 	// file exists for, arriving on its own subject rather than on a regression.
 	"ceremony.Stored": {"internal/ceremony/mirror.go", "internal/server/convene.go"},
+	// **`ceremony.Receipt` is the close-out's local record (P08.S06), and its reader is the same
+	// route.** All three fields are rendered: `Ceremony` identifies the entry, `State` is the word
+	// a user reads, and `ObservedAt` is what the list is ordered by and the date shown against it.
+	// `handleCeremonies` carries `ListEnded`'s slice verbatim in `ceremoniesResponse.Ended`.
+	//
+	// **This scan is what turned the type into something with a reader.** It was first written
+	// with a `ReadReceipt` that nothing called — `CheckDocument`'s defect exactly, a door built
+	// and wired to nothing — and the guard failed the root package on the commit that added it.
+	// The honest fix was a reader and not an exclusion: the receipt exists so a user can find the
+	// contribution the prune preserved, and a receipt no surface shows preserves it in secret.
+	"ceremony.Receipt": {"internal/ceremony/closeout.go", "internal/server/convene.go"},
 	// **`ceremony.Termination` is the convener's signed end state (P08.S04b), and its reader is
 	// `ReadStored`** — which folds it into `Stored.Ended` for the listing route. The object itself
 	// is deliberately NOT rendered anywhere: a surface that showed the signature would invite a

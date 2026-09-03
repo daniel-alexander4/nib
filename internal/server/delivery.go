@@ -261,7 +261,13 @@ func (s *Server) saveDelivered(cer *ceremonyID, pdf []byte) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("%w: %v", p2p.ErrNotStored, err)
 	}
-	path := filepath.Join(defaultOutputDir(), "signed", deliveredName(rec))
+	// **Through `deliveredPathFor`, which is the one door for this path (ADR-009).** The two were
+	// separate `filepath.Join(defaultOutputDir(), "signed", deliveredName(rec))` expressions —
+	// this writer and `alreadyDelivered`'s reader — and P08.S06 made the disagreement expensive:
+	// `closeOutReason` now MOVES a ceremony directory on the strength of that stat, so a writer
+	// and a reader drifting apart would leave a delivered ceremony live forever, or move one whose
+	// document had not arrived. Noticed while tracing who writes the path this slice reads.
+	path := deliveredPathFor(rec)
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return "", fmt.Errorf("%w: %v", p2p.ErrNotStored, err)
 	}
@@ -747,8 +753,10 @@ func (s *Server) runDeliveryRound(ctx context.Context, v *vault.Vault, rec cerem
 			"this machine will not start a round without knowing what it is delivering: %w", terr)
 	}
 	// **The party that ENDED the proceeding is not walked, and that is not an optimisation.**
-	// Declining runs `declineCeremony` on the refusing machine, which prunes this ceremony's
-	// stored invitation, so that machine has nothing left to arm a delivery rendezvous with; and
+	// Declining runs `declineCeremony` on the refusing machine, which since P08.S06 routes
+	// straight to `closeOutCeremony` — moving the folder out of the live set and dropping the
+	// pins, the secrets and the stored invitation — so that machine has nothing left to arm a
+	// delivery rendezvous with; and
 	// a party that refuses at its consent gate returns from `coSignExchange` before `rd.Store`,
 	// so it holds no mirror for `checkDeliveredPayload` to check an attestation against. Walking
 	// it cost the full `connectDeadline` — measured at tier 4 on 2026-09-02 as 300 s, reported as
@@ -757,7 +765,7 @@ func (s *Server) runDeliveryRound(ctx context.Context, v *vault.Vault, rec cerem
 	//
 	// **Stated as the ordinary case rather than as "impossible", because neither half is
 	// absolute.** `declineCeremony` is best-effort: it returns early on a locked vault and only
-	// logs when the prune fails, so an invitation can survive a decline and `rearmDeliveries`
+	// logs when the close-out fails, so an invitation can survive a decline and `rearmDeliveries`
 	// would read it back. The skip is therefore the right default and not a proof — and a party
 	// wrongly skipped loses nothing they can act on, since they are the one who refused.
 	ender := endedBy(rec.ID)

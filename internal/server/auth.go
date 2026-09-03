@@ -14,6 +14,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"nib/internal/pdfops"
 	"nib/internal/safe"
@@ -126,6 +127,14 @@ func (s *Server) adoptVault(v *vault.Vault) {
 		if s.deliveryRearm.Load() {
 			go func() {
 				defer safe.Recover("delivery re-arm")
+				// **Close-out runs BEFORE the re-arm, on the same goroutine.** They read the
+				// same listing and reach opposite conclusions about the same ceremony — one
+				// arms a rendezvous for it, the other moves its directory out from under that
+				// arm — so running them concurrently is a race whose loser is whichever
+				// finishes second. Sequenced, the sweep removes the ended ceremonies first and
+				// the re-arm never sees them. Under the same gate for the same reason: both
+				// read `~/nib/ceremonies`, which a `Server` built in a test does not isolate.
+				s.closeOutEnded(v, time.Now())
 				s.rearmDeliveries(v)
 			}()
 		}
