@@ -1,0 +1,15 @@
+--- a/internal/server/delivery.go
++++ b/internal/server/delivery.go
+@@ -799,12 +799,6 @@
+ 		// remaining party, and there is nothing to learn from a leg whose result nobody will read.
+ 		// Recorded rather than dropped, so the outcome list stays one row per party for a caller
+ 		// that IS still there, which is every other way this context ends.
+-		if cerr := ctx.Err(); cerr != nil {
+-			res.Reason = "the request that started this round ended before this party was " +
+-				"reached, so Nib did not try: " + cerr.Error()
+-			out = append(out, res)
+-			continue
+-		}
+ 		inv, ierr := convenerInvitationFor(v, rec, party)
+ 		if ierr != nil {
+ 			res.Reason = ierr.Error()

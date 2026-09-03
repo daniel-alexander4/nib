@@ -1,0 +1,12 @@
+--- a/internal/server/ceremonynet.go
++++ b/internal/server/ceremonynet.go
+@@ -505,7 +505,8 @@
+ 
+ 	// The caller owns the deadline and the cancel. Cancelling on return is what stops the
+ 	// feed goroutine — P05.S03's leak was this shape with the arm missing.
+-	ctx, cancel := context.WithTimeout(parent, connectDeadline)
++	_ = parent
++	ctx, cancel := context.WithTimeout(context.Background(), connectDeadline)
+ 	defer cancel()
+ 
+ 	if cer == nil || cer.rz == nil {

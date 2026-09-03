@@ -71,11 +71,18 @@ Nib_files="$(find test/jsdom -maxdepth 1 -name '*.test.mjs' | wc -l | tr -d ' ')
 # summary, so a reader looking at the totals sees a green suite and a red tier, which is the
 # paragraph above stated in the first person.
 #
-# The three instances share one shape and it is not the literal: **a check whose verdict lives in
-# the exit status, read by someone looking at the output.** `build/redproof.sh` is what caught it
-# this time, because it asserts on the exit status of the whole harness rather than on the lines
-# it printed — which is the only reading that could have caught it.
-Nib_expect_files=26
+# **FOURTH INSTANCE, 2026-09-03, and this one ran for SIX slices.** P06.S02 added
+# ceremonypanel.test.mjs and P06.S05 added armprogress.test.mjs, both in one day, and this literal
+# stayed at 26 while the directory held 28 — so tier 2 exited 1 from v1.117.335 through .342 and
+# every one of those slices reported it green. It was found at `/pending 366`, by a sweep that
+# needed a 27th file and was told the directory held 29.
+#
+# The four instances share one shape and it is not the literal: **a check whose verdict lives in
+# the exit status, read by someone looking at the output.** `build/redproof.sh` is what caught the
+# third, because it asserts on the exit status of the whole harness rather than on the lines it
+# printed — which is the only reading that could have caught any of them. The fourth was caught by
+# a person needing the number, which is luck, not a check.
+Nib_expect_files=29
 if [ "$Nib_files" -ne "$Nib_expect_files" ]; then
   echo "FAIL: expected $Nib_expect_files jsdom test files, found $Nib_files — a test file was added or dropped." >&2
   echo "      If deliberate, update Nib_expect_files in this script." >&2

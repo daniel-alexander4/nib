@@ -286,6 +286,58 @@ if not d.get("heard"): print("    (heard nothing)")' >&2 || echo "    (could not
   done
 }
 
+# unfinished_clause runs one clause that deliberately leaves a proceeding unfinished, recording the
+# off-link packets it emitted into UNFINISHED_USED and UNFINISHED_ARMS (/pending 363).
+#
+# **Why these two clauses get a budget instead of a zero.** ADR-011's hold is `lanFirstBudget` of
+# link silence, not forever: an arm that hears nothing pays one budget and publishes, because a
+# genuinely remote peer has to be reachable. `interrupted_hop` kills a party mid-frame and
+# `decoy_document` has a hop refused, so each leaves arms that are parties still waiting — and
+# reaching the DHT is what a waiting party is supposed to do. Demanding zero here would demand the
+# product abandon anyone it cannot find on the link.
+#
+# **Why the budget is over the PAIR and the per-clause counts are diagnosis only. Measured, and it
+# is the reason this is not written the obvious way.** Three `--lan -n 4` runs on 2026-09-03 split
+# the same six packets differently: `interrupted_hop` 6 / `decoy_document` 0, then 0 / 6, then
+# 0 / 6. The total is stable and the attribution is not, because a hold started in one clause
+# elapses in whichever clause happens to be running thirty seconds later. **So P08.S09's reading of
+# "all six from `decoy_document`" was an artifact of a cumulative counter, and a per-clause
+# ASSERTION would be a flake that blames whichever clause the timer landed in.** The counts are
+# printed because they are worth seeing; the ceiling is over their sum.
+#
+# **The per-arm figure is MEASURED, not derived, and the derivation that looked obvious is wrong.**
+# `armForDelivery`'s doc says these packets are "the DHT bootstrap, two per party per transport",
+# which predicts 4 for one arm. The pair leaves three arms waiting and emits **6** — so the
+# bootstrap's own retries are in the number and the tidy product is not the whole of it. The
+# allowance is 4 per arm, twice the measured 2, which is the side of the range that separates "an
+# arm waited and published" from the 78 packets a missing link tier produced at nine parties.
+#
+# $1 arms this clause leaves waiting, $2.. the command to run.
+UNFINISHED_USED=0
+UNFINISHED_ARMS=0
+LAN_UNFINISHED_PER_ARM=${LAN_UNFINISHED_PER_ARM:-4}
+unfinished_clause() {
+  local arms="$1"; shift
+  local what="$1"
+  local before after used
+  before="$(offlink_packets)"
+  "$@"
+  after="$(offlink_packets)"
+  used=$(( after - before ))
+  UNFINISHED_USED=$(( UNFINISHED_USED + used ))
+  UNFINISHED_ARMS=$(( UNFINISHED_ARMS + arms ))
+  echo "[lan] $what left $arms arm(s) waiting; $used off-link packet(s) landed in this clause (attribution between the two is timing-dependent — see unfinished_clause)"
+}
+
+# unfinished_total asserts the budget the pair of unfinished clauses shares. See unfinished_clause
+# for why the ceiling is not per clause.
+unfinished_total() {
+  local ceiling=$(( LAN_UNFINISHED_PER_ARM * UNFINISHED_ARMS ))
+  [ "$UNFINISHED_USED" -le "$ceiling" ] \
+    || fail "the clauses that leave a proceeding unfinished emitted $UNFINISHED_USED packets off the link, over a budget of $ceiling for the $UNFINISHED_ARMS arm(s) they leave waiting ($LAN_UNFINISHED_PER_ARM per arm, twice the 2 measured on 2026-09-03). An arm still waiting is MEANT to reach the DHT after lanFirstBudget, so this is not zero by design; what it must not do is scale with anything but the arms left open. A stack trace on ensureBootstrapped names the caller."
+  echo "[lan] the two unfinished clauses left $UNFINISHED_ARMS arm(s) waiting and emitted $UNFINISHED_USED off-link packet(s), budget $ceiling"
+}
+
 # Reads the off-link packet counter the namespace installed.
 offlink_packets() {
   # The SUM across both family rules. Reading only the first was the IPv6 blind spot.
@@ -2999,8 +3051,20 @@ PYWORDS
   # BELOW the reading, on purpose, and never move them above it without moving the reading too.
   # See the block above: an arm left waiting is *meant* to reach the DHT after `lanFirstBudget` of
   # silence, so these two emit off-link packets under `--lan` and are right to.
-  interrupted_hop
-  decoy_document
+  #
+  # **Each gets its own budget, because "right to" is not "any number" (/pending 363).** Moving the
+  # whole-run reading above these two clauses restored an honest zero for everything that finishes
+  # and left these two measured by NOTHING — a real eager caller reachable only through an
+  # interrupted or refused hop would go unseen, where before it was merely drowned in noise. A
+  # per-clause count is the instrument the single cumulative counter could not be.
+  if [ "$LAN" = "1" ]; then
+    unfinished_clause 1 interrupted_hop
+    unfinished_clause 2 decoy_document
+    unfinished_total
+  else
+    interrupted_hop
+    decoy_document
+  fi
 
   echo "PASS: $N instances, and a $N-party ceremony COMPLETED as a baton relay over BOTH"
   echo "      transports (${ELAPSED_TOTAL}s of hops): a non-signing convener carried it through"

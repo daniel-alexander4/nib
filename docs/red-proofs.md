@@ -3414,6 +3414,15 @@ hears nothing pays one budget and publishes, because a genuinely remote peer has
 parties still waiting. The reading moved above them and they are pinned below it; `/pending 363`
 carries what that costs.
 
+> **CORRECTED 2026-09-03 at `/pending 363`, and the correction is about this paragraph's evidence,
+> not its conclusion.** *"`decoy_document` **10**"* above was read off a CUMULATIVE counter at each
+> clause boundary, and that is not an attribution. Measured per clause across three `--lan -n 4`
+> runs the same six packets split **6 / 0**, then **0 / 6**, then **0 / 6** — a hold started in one
+> clause elapses in whichever clause is running thirty seconds later. So the six belong to the
+> *pair*, no single clause caused them, and the budget built at 363 is over the pair for exactly
+> that reason. The conclusion — the product is right and these arms are meant to publish — is
+> unchanged and is what the per-clause reading confirms.
+
 **The four commits are the lesson, not the six packets.** `decoy_document` arrived at v1.117.328
 with no `--lan` run, and `CONTRIBUTING.md`'s tier-4b row still announced the harness as *"currently
 RED against shipped code"* for a defect fixed four phases earlier — so a reader who ran it had been
@@ -3621,3 +3630,69 @@ freshly enrolled identity, settings) to fix a trust grant, trading a narrow bug 
 `WriteMe` block that moved. The defect it expresses is unchanged.
 
 `recorded` 274 → 276.
+
+## /pending 363 and 366 — the egress budget, and the pill's sentence (v1.117.345)
+
+| Defect reintroduced | Check that fired | What it said |
+| --- | --- | --- |
+| `the-armed-pill-states-a-date-it-does-not-explain` — the old wording restored | `armedbound.test.mjs`, tier 2 | "the title states a date without saying what it bounds" |
+| `the-armed-pill-loses-its-figure` — the date deleted, the sentence kept | the same file, tier 2 | "the title carries no date … the fix for the wording must not remove it" |
+
+**366's second row is the failure the FIX could introduce**, which is why it is recorded beside the
+first. The date on that pill is C05's and is the entire reason a five-minute manual bound and a
+thirty-day ceremony bound are distinguishable; a wording fix that deleted it would trade one
+ambiguity for the one it replaced. Both assertions are over PROSE and are worth exactly that: they
+catch the wording being reverted or dropped, and cannot tell whether a reader understands it. That
+ceiling is stated in the test file rather than dressed up.
+
+**363 has no row, and the absence is argued rather than left.** Its assertion is a tier-4 namespace
+run — ten minutes per replay — and the product-side defect the budget catches is the one
+`delivery-arm-has-no-link-tier` already names. What is new is the WINDOW, not the defect. It was
+probed by hand instead: with the allowance forced to 1 the run failed by name (*"decoy_document
+emitted 6 packets off the link, over a budget of 2 for the 2 arm(s) it leaves waiting"*), and the
+clean run reported `3 arm(s) waiting … 6 off-link packet(s), budget 12` with the run-wide zero
+untouched.
+
+**And a per-clause ASSERTION would have been a flake, which is the finding 363 actually produced.**
+Four `--lan -n 4` runs split the same six packets `interrupted_hop`/`decoy_document` as **6/0, 0/6,
+0/6, 0/6** — a hold started in one clause elapses in whichever clause is running thirty seconds
+later. P08.S09's *"all six from `decoy_document`"* was an artifact of reading a cumulative counter at
+clause boundaries; no single clause caused them. The budget is over the pair and the per-clause
+counts print as diagnosis. That section is corrected in place above.
+
+**Tier 2 had been RED for six slices and every one of them reported it green — the FOURTH instance
+of the shape `jsdomtest.sh` documents three times in its own comment.** P06.S02 added
+`ceremonypanel.test.mjs` and P06.S05 added `armprogress.test.mjs`, both on 2026-09-03, and
+`Nib_expect_files` stayed at 26 against a directory of 28. So the harness exited 1 from v1.117.335
+through .342 while `# fail 0` was true and printed above the failure. **It was found because this
+sweep needed a 27th file and was told there were 29** — by a person needing the number, which is
+luck and not a check. The literal is 29 and the comment carries the fourth instance.
+
+`recorded` 276 → 278.
+
+## /pending 355 — the delivery round stops when its caller does (v1.117.345)
+
+| Defect reintroduced | Check that fired | What it said |
+| --- | --- | --- |
+| `the-delivery-race-ignores-its-caller` — `raceWithRendezvous` back on `context.Background()` | `TestARoundStopsWhenTheRequestThatStartedItGoesAway`, tier 1 | "the round was still running 45 s after the context that started it was cancelled" |
+| `the-round-walks-into-a-dead-leg` — the loop's ctx short-circuit removed | the same test, tier 1 | "It walked into the leg anyway — minting an invitation and entering a race whose result nobody will read" |
+
+**The two rows fail differently and that is why there are two.** In one the context is alive when
+the round starts and dies inside the first leg, so the loop's own guard cannot be what ends it —
+that row is red on the CLOCK, at the test's 45 s ceiling against a 2 s green, and it is the only
+shape that reaches the race. In the other the context is dead at the top of the loop, and the round
+used to mint the party's invitation and enter a race it knew was over, reporting *"tried 0
+address(es), none answered as the pinned peer: context canceled"* — a sentence about dialling, from
+a round that never dialled. **Deleting the guard leaves the first case green**, which is the whole
+argument for the second row.
+
+**The policy is per-caller and deliberately asymmetric.** The delivery round passes the request's
+context, because nobody is waiting and every party it misses is reached by the re-run. A ceremony
+HOP keeps `context.Background()`: a closing browser tab must not abandon a hop the far party may
+already have consented to and signed. The reasoning is at the parameter, not at either call site,
+because the difference between them *is* that parameter. The item left this open as a product
+judgment; it was taken on the item's own reasoning rather than parked, and it is one line to
+reverse.
+
+`recorded` 278 → 280.
+

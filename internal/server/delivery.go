@@ -793,6 +793,18 @@ func (s *Server) runDeliveryRound(ctx context.Context, v *vault.Vault, rec cerem
 		// DIFFERENT secret, which is what makes their rendezvous targets distinct. The live tier-4
 		// run found this: the round asked `CeremonyInvitationFor` and got a 409 saying this machine
 		// holds no invitation, which was true and would have been true forever.
+		// **The round stops when the caller goes away, and it did not (/pending 355).** The ctx
+		// now reaches the race (see raceWithRendezvous), so a leg started after a disconnect fails
+		// fast rather than burning `connectDeadline` — but "fast" is still one round trip per
+		// remaining party, and there is nothing to learn from a leg whose result nobody will read.
+		// Recorded rather than dropped, so the outcome list stays one row per party for a caller
+		// that IS still there, which is every other way this context ends.
+		if cerr := ctx.Err(); cerr != nil {
+			res.Reason = "the request that started this round ended before this party was " +
+				"reached, so Nib did not try: " + cerr.Error()
+			out = append(out, res)
+			continue
+		}
 		inv, ierr := convenerInvitationFor(v, rec, party)
 		if ierr != nil {
 			res.Reason = ierr.Error()
@@ -874,7 +886,7 @@ func (s *Server) deliverToParty(ctx context.Context, v *vault.Vault, inv ceremon
 			cands = found
 		}
 	}
-	conn, err := s.raceWithRendezvous(cer, cands, cert, key, peerFP, partyLabel(inv, partyFP), partyLabel(inv, partyFP))
+	conn, err := s.raceWithRendezvous(ctx, cer, cands, cert, key, peerFP, partyLabel(inv, partyFP), partyLabel(inv, partyFP))
 	if err != nil {
 		return err
 	}
