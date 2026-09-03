@@ -10429,3 +10429,293 @@ async function ceremonyNextLine(id) {
   }
   return p;
 }
+
+// --- Convene and accept (P06.S04) -------------------------------------------
+//
+// **The roster is picked, never typed, and that is the criterion rather than a preference.** P06
+// says the primary flow contains no hex fingerprint, and a fingerprint is hex — so a convener
+// chooses from the peers this machine has already pinned, shown by the six-word pairing name every
+// other peer control in the product uses. A party who is not pinned yet is pinned first, through
+// Identity & peers, which is where D21's read-it-aloud comparison already happens.
+//
+// **Nothing here is a modal.** The phase's goal is "convene, invite, connect, review, sign, deliver
+// as a sidebar panel rather than a tab of modals", and these are two forms inside that panel.
+
+// cerEls resolves the panel's controls once per call rather than caching them, because the panel's
+// markup is static and a cached reference would survive a document swap that replaced it.
+function cerEls() {
+  return {
+    convene: document.getElementById('ceremonyConveneForm'),
+    accept: document.getElementById('ceremonyAcceptForm'),
+    result: document.getElementById('ceremonyResult'),
+    pick: document.getElementById('cerPeerPick'),
+  };
+}
+
+// showCeremonyForm reveals one of the two forms and hides the other.
+//
+// Exclusive because they are two answers to one question — "am I starting this or joining it" —
+// and a screen showing both invites a user to fill in the wrong one.
+function showCeremonyForm(which) {
+  const e = cerEls();
+  if (!e.convene || !e.accept) return;
+  e.convene.hidden = which !== 'convene';
+  e.accept.hidden = which !== 'accept';
+  // **Cleared when a form OPENS, never when one closes**, and the difference is a defect a test
+  // caught. Both submit paths render their result and then call this with `null` to put the form
+  // away — so clearing on close wiped the invitations in the same tick they were drawn, and the
+  // screen went blank on success. Clearing on open is what the wipe was actually for: starting a
+  // second ceremony should not leave the first one's invitations above the form.
+  if (which && e.result) e.result.textContent = '';
+}
+
+// loadPeerPicker fills the roster chooser from the peers this machine has pinned.
+//
+// **The six-word name is the label and the hex is the value**, carried in a data attribute the user
+// never sees. That is the whole no-hex criterion in one line: the fingerprint has to reach the
+// server, and it does not have to reach the screen.
+async function loadPeerPicker() {
+  const e = cerEls();
+  if (!e.pick) return;
+  e.pick.textContent = '';
+  let peers = [];
+  try {
+    const res = await apiFetch('/api/peers', { unpinned: true });
+    if (res.ok) peers = (await res.json()).peers || [];
+  } catch (err) { /* rendered as the empty case below */ }
+  if (!peers.length) {
+    const p = document.createElement('p');
+    p.className = 'libhint';
+    p.textContent = 'You have not paired with anyone yet.';
+    e.pick.appendChild(p);
+    return;
+  }
+  for (const peer of peers) {
+    const row = document.createElement('div');
+    row.className = 'cerpeerrow';
+    const box = document.createElement('input');
+    box.type = 'checkbox';
+    box.className = 'cerpeerbox';
+    // The fingerprint travels here and is never rendered as text.
+    box.dataset.fingerprint = peer.fingerprint || '';
+    row.appendChild(box);
+    const who = document.createElement('span');
+    who.className = 'cerpeername';
+    who.textContent = peer.label || peer.name || 'a paired peer';
+    row.appendChild(who);
+    const cap = document.createElement('input');
+    cap.type = 'text';
+    cap.className = 'cerpeercap';
+    cap.placeholder = 'capacity (optional)';
+    cap.maxLength = 120;
+    row.appendChild(cap);
+    e.pick.appendChild(row);
+  }
+}
+
+// conveneFromPanel posts the roster the user picked.
+async function conveneFromPanel() {
+  const err = document.getElementById('cerConveneError');
+  const say = (m) => { if (err) { err.textContent = m; err.hidden = !m; } };
+  say('');
+  const roster = [];
+  for (const row of document.querySelectorAll('#cerPeerPick .cerpeerrow')) {
+    const box = row.querySelector('.cerpeerbox');
+    if (!box || !box.checked) continue;
+    roster.push({
+      fingerprint: box.dataset.fingerprint || '',
+      label: row.querySelector('.cerpeername')?.textContent || '',
+      capacity: row.querySelector('.cerpeercap')?.value || '',
+      signs: true,
+    });
+  }
+  if (!roster.length) { say('Choose at least one other person to sign.'); return; }
+  const expires = document.getElementById('cerExpires')?.value || '';
+  if (!expires) { say('Set the date this ceremony stays open until.'); return; }
+  const body = {
+    roster,
+    intent: document.getElementById('cerIntent')?.value || '',
+    // **An absolute instant, because the API takes one.** `conveneRequest.Expires`'s own doc says
+    // why it is not a count of days: a real transaction has a date, and a convener asked "how many
+    // days?" guesses. `datetime-local` yields local wall time with no zone, so it is converted here
+    // rather than sent as typed — sending it raw would be off by the user's offset.
+    expires: new Date(expires).toISOString(),
+    convenerSigns: !!document.getElementById('cerISign')?.checked,
+  };
+  try {
+    const res = await apiFetch('/api/ceremony/convene', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) { say(await errText(res, 'this ceremony could not be convened')); return; }
+    renderInvitations(await res.json());
+    showCeremonyForm(null);
+    loadCeremonyPanel();
+  } catch (e) {
+    say('this ceremony could not be convened');
+  }
+}
+
+// renderInvitations shows one invitation per party, with what an invitation IS.
+//
+// **D21's sentence, in D21's terms, and the criterion asks for those terms.** Its own words: *"What
+// an intercepted invitation gets its holder: the rendezvous, and nothing beyond it. The pin is the
+// fingerprint in the roster and they do not hold the private key, so they are refused at the
+// handshake. The invitation is a channel secret, never a signing credential."* A user who forwards
+// one should know what they did and did not give away, so the screen says it beside the thing
+// itself rather than in help nobody opens.
+function renderInvitations(d) {
+  const e = cerEls();
+  if (!e.result) return;
+  e.result.textContent = '';
+  const head = document.createElement('p');
+  head.className = 'cerok';
+  head.textContent = `Convened. Send each person their own invitation — they are not interchangeable.`;
+  e.result.appendChild(head);
+
+  const warn = document.createElement('p');
+  warn.className = 'libhint cersecret';
+  warn.textContent = 'An invitation is a channel secret, not a signing credential. It lets its '
+    + 'holder find this ceremony and nothing more: signing needs the private key of a party the '
+    + 'roster names, so anyone else is refused at the handshake.';
+  e.result.appendChild(warn);
+
+  for (const inv of (d.invites || [])) {
+    const row = document.createElement('div');
+    row.className = 'cerinvite';
+    const who = document.createElement('span');
+    who.className = 'cerwho';
+    // The name, never the fingerprint — the payload carries both and only one belongs on screen.
+    who.textContent = inv.label || inv.name || 'a party';
+    row.appendChild(who);
+    const text = document.createElement('textarea');
+    text.className = 'cerinvitetext';
+    text.rows = 2;
+    text.readOnly = true;
+    text.value = inv.invitation || '';
+    row.appendChild(text);
+    const copy = document.createElement('button');
+    copy.type = 'button';
+    copy.className = 'cercopy';
+    copy.textContent = 'Copy';
+    copy.addEventListener('click', () => {
+      text.select();
+      try { document.execCommand('copy'); } catch (err) { /* selection is the fallback */ }
+    });
+    row.appendChild(copy);
+    if (inv.signs === false) {
+      const n = document.createElement('span');
+      n.className = 'cerrole';
+      n.textContent = 'does not sign';
+      row.appendChild(n);
+    }
+    e.result.appendChild(row);
+  }
+  // **A warning is BOUND to the control that caused it, which is what its `code` is for.**
+  // `conveneResponse.Warnings`' own doc says they are *"machine-tagged so a panel can bind one to
+  // the control that caused it rather than re-parsing English"* — so the code selects the control
+  // and the text is what the user reads. There is one code today (`sitting-ceiling`, D22's ~8) and
+  // the map is what makes the second one a one-line addition rather than a rewrite; an unknown
+  // code still shows its text, because a warning nobody renders is a soft refusal nobody hears.
+  const WARN_CONTROL = { 'sitting-ceiling': 'cerPeerPick' };
+  for (const wmsg of (d.warnings || [])) {
+    const p = document.createElement('p');
+    p.className = 'cerwarn';
+    p.textContent = wmsg.text || '';
+    if (!p.textContent) continue;
+    const target = document.getElementById(WARN_CONTROL[wmsg.code] || '');
+    if (target && target.parentNode) {
+      p.dataset.warn = wmsg.code;
+      target.parentNode.insertBefore(p, target.nextSibling);
+    } else {
+      e.result.appendChild(p);
+    }
+  }
+}
+
+// acceptFromPanel pastes an invitation in and shows what the user has joined.
+async function acceptFromPanel() {
+  const err = document.getElementById('cerAcceptError');
+  const say = (m) => { if (err) { err.textContent = m; err.hidden = !m; } };
+  say('');
+  const text = document.getElementById('cerInviteText')?.value?.trim() || '';
+  if (!text) { say('Paste the invitation you were sent.'); return; }
+  try {
+    const res = await apiFetch('/api/ceremony/accept', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ invitation: text }),
+    });
+    if (!res.ok) { say(await errText(res, 'this invitation could not be accepted')); return; }
+    renderAccepted(await res.json());
+    showCeremonyForm(null);
+    loadCeremonyPanel();
+  } catch (e) {
+    say('this invitation could not be accepted');
+  }
+}
+
+// renderAccepted shows the roster the invitee has just joined.
+//
+// **`self` and `convener` are read rather than re-derived.** The server marks both — its own doc
+// says they are "the two entries a reader needs to find without re-deriving them" — and a client
+// that worked them out from fingerprints would be a second derivation of a fact already sent, in
+// the one place the criterion forbids fingerprints from appearing at all.
+function renderAccepted(d) {
+  const e = cerEls();
+  if (!e.result) return;
+  e.result.textContent = '';
+  const head = document.createElement('p');
+  head.className = 'cerok';
+  head.textContent = `Joined. ${d.signing || 0} of ${(d.roster || []).length} parties sign this document.`;
+  e.result.appendChild(head);
+  for (const p of (d.roster || [])) {
+    const row = document.createElement('div');
+    row.className = 'cerparty';
+    if (p.self) row.classList.add('cerme');
+    const who = document.createElement('span');
+    who.className = 'cerwho';
+    who.textContent = p.label || p.name || 'a party';
+    row.appendChild(who);
+    const role = document.createElement('span');
+    role.className = 'cerrole';
+    const bits = [];
+    if (p.capacity) bits.push(p.capacity);
+    bits.push(p.signs === false ? 'does not sign' : 'signs');
+    if (p.convener) bits.push('convened this');
+    role.textContent = bits.join(' · ');
+    row.appendChild(role);
+    if (p.self) {
+      const tag = document.createElement('span');
+      tag.className = 'certag';
+      tag.textContent = 'you';
+      row.appendChild(tag);
+    }
+    e.result.appendChild(row);
+  }
+  if (d.pinned) {
+    const p = document.createElement('p');
+    p.className = 'libhint';
+    p.textContent = d.pinned === 1
+      ? 'The convener is now a pinned peer, so no fingerprint has to be typed again.'
+      : `${d.pinned} parties are now pinned peers.`;
+    e.result.appendChild(p);
+  }
+}
+
+document.getElementById('ceremonyConveneBtn')?.addEventListener('click', () => {
+  showCeremonyForm('convene');
+  loadPeerPicker();
+});
+document.getElementById('ceremonyAcceptBtn')?.addEventListener('click', () => showCeremonyForm('accept'));
+document.getElementById('cerConveneCancel')?.addEventListener('click', () => showCeremonyForm(null));
+document.getElementById('cerAcceptCancel')?.addEventListener('click', () => showCeremonyForm(null));
+document.getElementById('ceremonyConveneForm')?.addEventListener('submit', (ev) => {
+  ev.preventDefault();
+  conveneFromPanel();
+});
+document.getElementById('ceremonyAcceptForm')?.addEventListener('submit', (ev) => {
+  ev.preventDefault();
+  acceptFromPanel();
+});

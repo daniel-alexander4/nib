@@ -104,3 +104,44 @@ test('the row for this machine is visibly distinguished, not just classed', asyn
 test('the panel logged no console errors', async () => {
   assert.deepEqual(consoleErrors, [], `console errors: ${consoleErrors.join('; ')}`);
 });
+
+// ── P06.S04: convene, in a real browser ──────────────────────────────────────────────────────
+//
+// Tier 2 proves the request shape and the sentences. What jsdom cannot prove, because it has no
+// layout, is that the form is REACHABLE and its controls are DISPLAYED — a form added to the panel
+// but never revealed, or a picker rendered into a container with no height, is invisible there and
+// green.
+test('the convene form opens from the panel and offers a pinned peer to choose', async () => {
+  await page.click('.modetab[data-tab="collaborate"]');
+  await page.click('.tabs .tab[data-panel="ceremony"]');
+
+  // SETUP: the form starts hidden, or "it is visible after the click" is true of a form that is
+  // always visible and the click proves nothing.
+  assert.equal(await page.locator('#ceremonyConveneForm').isVisible(), false,
+    'the convene form is showing before anything was clicked');
+
+  await page.click('#ceremonyConveneBtn');
+  assert.equal(await page.locator('#ceremonyConveneForm').isVisible(), true,
+    'the convene form does not open');
+  assert.equal(await page.locator('#ceremonyAcceptForm').isVisible(), false,
+    'both forms are showing at once — they are two answers to one question, and a screen ' +
+    'offering both invites a user to fill in the wrong one');
+
+  // The picker is displayed, not merely present.
+  const pick = page.locator('#cerPeerPick');
+  assert.equal(await pick.isVisible(), true, 'the peer picker is not displayed');
+
+  // **No hex anywhere the user can see**, asserted over the form's rendered text rather than its
+  // markup — which is the only place this can be asked, since the fingerprint IS in the markup by
+  // design, carried in a data attribute so it reaches the server without reaching the screen.
+  const shown = await page.locator('#ceremonyConveneForm').innerText();
+  assert.doesNotMatch(shown, /[0-9a-f]{32}/i,
+    `the convene form displays a hex string: ${JSON.stringify(shown.slice(0, 200))}. The phase's ` +
+    'criterion is that the primary flow contains no hex fingerprint');
+
+  // And the way out is present and is not a hex box: pairing happens under Identity & peers,
+  // which is where the read-it-aloud comparison and the Copy buttons already are.
+  assert.match(shown, /Identity & peers/,
+    'a convener whose counterparty is not yet pinned is offered no way forward. The advanced ' +
+    'path is reachable and off the default flow, not absent');
+});

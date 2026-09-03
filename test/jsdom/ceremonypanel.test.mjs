@@ -56,6 +56,15 @@ const { document: doc, settle } = await boot({
   routes: {
     '/api/ceremonies': () => listing,
     '/api/ceremony/next': () => nextAnswer,
+    '/api/peers': () => peers,
+    '/api/ceremony/convene': (opts) => { convenePosted = JSON.parse((opts && opts.body) || '{}'); return convened; },
+    '/api/ceremony/accept': () => ({
+      ceremony: '4'.repeat(32), pinned: 1, signing: 2,
+      roster: [
+        { fingerprint: PEER_FP, label: 'Bob Landlord', name: 'oak river amber quiet stone gate', signs: true, convener: true },
+        { fingerprint: 'ee'.repeat(32), label: 'Alice Tenant', capacity: 'as attorney-in-fact', signs: true, self: true },
+      ],
+    }),
   },
 });
 
@@ -196,4 +205,112 @@ test('a finished ceremony says so rather than reporting a failure', async () => 
   } finally {
     nextAnswer = defaultNext;
   }
+});
+
+// ── P06.S04: convene and accept, with no hex anywhere on the primary flow ────────────────────
+//
+// **The no-hex criterion is what shapes this whole surface.** A convener must name each party and a
+// fingerprint is hex, so the roster is PICKED from the peers this machine has already pinned rather
+// than typed. The fingerprint still has to reach the server — it just never reaches the screen.
+const PEER_FP = 'cc'.repeat(32);
+const peers = { fingerprint: 'dd'.repeat(32), name: 'my six word name here now', peers: [
+  { fingerprint: PEER_FP, name: 'oak river amber quiet stone gate', label: 'Bob Landlord' },
+] };
+let convened = {
+  ceremony: '4'.repeat(32), intent: 'We agree', expires: '2026-10-01T12:00:00Z',
+  invites: [{ fingerprint: PEER_FP, label: 'Bob Landlord', name: 'oak river amber quiet stone gate',
+    signs: true, invitation: 'nib-invite-v1:AAAA' }],
+  warnings: [],
+};
+let convenePosted = null;
+
+test('the convene form picks a roster from pinned peers and shows no hex', async () => {
+  await showPanel();
+  doc.getElementById('ceremonyConveneBtn').click();
+  await settle();
+  const pick = doc.getElementById('cerPeerPick');
+  assert.ok(pick, 'there is no peer picker');
+  assert.match(pick.textContent, /Bob Landlord/, 'the pinned peer is not offered');
+  assert.doesNotMatch(pick.textContent, new RegExp(PEER_FP.slice(0, 16)),
+    'the picker renders a hex fingerprint. The criterion is that the primary flow contains none — ' +
+    'the fingerprint travels in a data attribute so it reaches the server without reaching the user');
+  // And it is CARRIED, not dropped: a picker that showed no hex by simply losing it would convene
+  // a roster of nobody.
+  const box = pick.querySelector('.cerpeerbox');
+  assert.equal(box.dataset.fingerprint, PEER_FP,
+    'the picker does not carry the fingerprint at all, so nothing could be convened');
+});
+
+test('the invitations screen says what an invitation is, in D21\'s terms', async () => {
+  await showPanel();
+  doc.getElementById('ceremonyConveneBtn').click();
+  await settle();
+  doc.querySelector('.cerpeerbox').checked = true;
+  doc.getElementById('cerIntent').value = 'We agree to the lease';
+  doc.getElementById('cerExpires').value = '2026-10-01T12:00';
+  doc.getElementById('ceremonyConveneForm').dispatchEvent(new doc.defaultView.Event('submit', { cancelable: true }));
+  await settle();
+
+  const out = doc.getElementById('ceremonyResult');
+  assert.match(out.textContent, /channel secret/,
+    'the screen does not say the invitation is a channel secret. D21 says P06 "says so on screen", ' +
+    'and the criterion asks for those terms');
+  assert.match(out.textContent, /not a signing credential/,
+    'the screen does not say what an invitation is NOT, which is the half a user who forwards one needs');
+  // **Read from the field, not from the container's text.** The invitation lives in a read-only
+  // `<textarea>` so it can be selected and copied, and a textarea's `value` is not part of its
+  // parent's `textContent` — asserting on the container would fail against a screen that is
+  // working. It is also why the no-hex assertion below is still meaningful: nothing about the
+  // invitation is in the page's text flow.
+  const field = out.querySelector('.cerinvitetext');
+  assert.ok(field, 'there is no field to copy the invitation from');
+  assert.match(field.value, /nib-invite-v1:AAAA/, 'the invitation itself is not shown');
+  assert.doesNotMatch(out.textContent, new RegExp(PEER_FP.slice(0, 16)),
+    'the invitations screen renders a hex fingerprint — the payload carries one per invite and it ' +
+    'does not belong on screen');
+  // The request actually sent: the roster carries the fingerprint and the deadline is absolute.
+  assert.ok(convenePosted, 'no convene request was sent');
+  assert.equal(convenePosted.roster[0].fingerprint, PEER_FP);
+  assert.match(convenePosted.expires, /Z$/,
+    'the deadline was sent as local wall time. `datetime-local` has no zone, so sending it as ' +
+    'typed is off by the user\'s offset — a ceremony that closes at the wrong hour');
+});
+
+test('a warning is bound to the control that caused it, by its code', async () => {
+  const saved = convened;
+  convened = { ...convened, warnings: [{ code: 'sitting-ceiling', text: 'This ceremony has 9 parties.' }] };
+  try {
+    await showPanel();
+    doc.getElementById('ceremonyConveneBtn').click();
+    await settle();
+    doc.querySelector('.cerpeerbox').checked = true;
+    doc.getElementById('cerExpires').value = '2026-10-01T12:00';
+    doc.getElementById('ceremonyConveneForm').dispatchEvent(new doc.defaultView.Event('submit', { cancelable: true }));
+    await settle();
+    const warn = doc.querySelector('.cerwarn[data-warn="sitting-ceiling"]');
+    assert.ok(warn, 'the warning was not bound to a control by its code. `Warnings` are ' +
+      '"machine-tagged so a panel can bind one to the control that caused it rather than ' +
+      're-parsing English" — printing the text alone throws the tag away');
+    assert.match(warn.textContent, /9 parties/, 'the warning text is not rendered');
+  } finally {
+    convened = saved;
+  }
+});
+
+test('accepting an invitation shows the roster with you and the convener marked', async () => {
+  await showPanel();
+  doc.getElementById('ceremonyAcceptBtn').click();
+  await settle();
+  doc.getElementById('cerInviteText').value = 'nib-invite-v1:AAAA';
+  doc.getElementById('ceremonyAcceptForm').dispatchEvent(new doc.defaultView.Event('submit', { cancelable: true }));
+  await settle();
+  const out = doc.getElementById('ceremonyResult');
+  assert.match(out.textContent, /Alice Tenant/, 'the roster is not shown');
+  assert.match(out.textContent, /convened this/,
+    'the convener is not marked. The server marks it — "the two entries a reader needs to find ' +
+    'without re-deriving them" — and a client working it out from fingerprints would be a second ' +
+    'derivation in the one place hex is forbidden');
+  assert.equal(out.querySelectorAll('.cerme').length, 1, 'the invitee is not marked as themselves');
+  assert.doesNotMatch(out.textContent, new RegExp(PEER_FP.slice(0, 16)),
+    'the accepted roster renders a hex fingerprint');
 });

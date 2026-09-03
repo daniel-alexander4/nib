@@ -4653,7 +4653,7 @@ Tasks:
 - **T04** — the guard that the answer comes from the shared door: routing asserted, not the sentence
   each site prints (ADR-009).
 
-#### P06.S04 — Convene and invite *(D21, D22; the no-address and no-fingerprint criteria)*
+#### P06.S04 — Convene and invite *(D21, D22; the no-address and no-fingerprint criteria)* *(**done** 2026-09-03, v1.117.337 — 3 clauses met. **The no-hex criterion decided the shape.** A convener must name each party and a fingerprint is hex, so the roster is PICKED from the peers this machine has already pinned, shown by the six-word name the product already uses, with the fingerprint in a `data-` attribute: it reaches the server without reaching the screen. A party not yet pinned is pinned first through Identity & peers — which is where D21's read-it-aloud comparison and the Copy buttons already are, and is what makes the advanced path reachable-and-not-default rather than a hex box smuggled onto this surface. **All four parked exclusions come out of `published.test.mjs`**, joining `ceremoniesResponse` from S02 — the mechanism redeemed end to end across five slices. **A test found a defect reading would not**: `showCeremonyForm(null)` cleared the result it had just rendered, so a successful convene showed a blank panel — cleared on OPEN now, which is what the wipe was for. **`Warning.code` was unread** and its own doc says warnings are machine-tagged *"so a panel can bind one to the control that caused it"*, so it binds. **The deadline was going to be sent as local wall time**, which `datetime-local` yields and `conveneRequest.Expires` is not. **And tier 6 has sent a capacity since its convene clause was written with nothing ever checking it arrived** — a field signed into the roster commitment and unread across the one boundary that matters; the round-trip is asserted now. The parking's claim of a Go-side twin was CORRECTED rather than repeated: both named types already had readers.)*
 Scope: the panel over P07.S02's convene route, and the invitation surface.
 Acceptance:
 - **The primary flow contains no address field and no hex fingerprint.**
@@ -4661,6 +4661,43 @@ Acceptance:
   terms** (D21) — a user who forwards one should know what they did and did not give away.
 - The advanced fallback (a typed address) is reachable and never on the default path.
 - Tier: 2 and 3; 6 for a convene driven between two processes through the panel's own request shape.
+
+**Deepdive, 2026-09-03 — the no-hex criterion decides the whole shape.**
+
+- **A convener must name each party, and a fingerprint is hex.** The criterion says the primary flow
+  contains none, so the roster cannot be typed — it is **picked from the peers this machine has
+  already pinned**. `/api/peers` returns `{fingerprint, name, label}` per peer, `name` being the
+  six-word pairing name the rest of the product already labels every peer control with, and the
+  client reads that route in eight places today. So the picker needs no new server surface.
+- **That also puts the out-of-band comparison where it belongs.** D21's ritual is that the
+  fingerprint is read aloud once, before anybody signs; Identity & peers is where that happens and
+  it already has a Copy button per fingerprint. A party who is not yet pinned is not convened
+  around — the convener pins them first, which is the existing flow. **That is what makes the
+  advanced fallback reachable-but-not-default**: it is a link to the surface that already exists,
+  not a hex box smuggled onto this one.
+- **`conveneInvite` carries BOTH a hex fingerprint and the invitation text**, so the response cannot
+  be rendered field-for-field. The panel shows the party's NAME and the invitation; the fingerprint
+  in that payload is not displayed. This is the first shape in the phase where reading every field
+  and showing every field come apart, and the published-shape scan will ask about it.
+- **D21's sentence is quoted rather than paraphrased.** Its own words: *"What an intercepted
+  invitation gets its holder: the rendezvous, and nothing beyond it. The pin is the fingerprint in
+  the roster and they do not hold the private key, so they are refused at the handshake. The
+  invitation is a channel secret, never a signing credential."* The criterion says *"in those
+  terms"*, so the screen says channel secret and signing credential.
+- **No deepdive was needed on the route itself**: this slice calls `POST /api/ceremony/convene` and
+  changes nothing server-side. `handleCeremonyConvene` and `handleCeremonyInvites` keep their
+  `requireUnlocked` gate — convening WRITES and returns channel secrets, so unlike the listing it
+  belongs behind the vault, and `handleCeremonyInvites`' own doc already records why it is a POST.
+
+Tasks:
+- **T01** — the convene form in the ceremony panel: recital, deadline, whether I sign, and a roster
+  built from the pinned peers, each with an optional capacity and a signs toggle.
+- **T02** — the invitations screen: one per party, named and copyable, under D21's sentence in D21's
+  terms.
+- **T03** — the four parked exclusions (`conveneResponse`, `conveneInvite`, `acceptResponse`,
+  `acceptedParty`) come out of `published.test.mjs`, which is this slice's completion test.
+- **T04** — the no-hex and no-address guards, driven at tier 2 and tier 3 against the real values in
+  the fixture rather than against a shape.
 
 #### P06.S05 — The armed screen *(D15, D16 amendment, D34)*
 Scope: what a party sees while waiting.

@@ -133,6 +133,24 @@ c=[p for p in d['roster'] if p['convener']]
 sys.exit(0 if len(c)==1 and c[0]['name'] and c[0]['fingerprint'].lower()=='$A_FP'.lower() else 1)" \
     && ok "the convener is named with a six-word name derived from their fingerprint" \
     || no "convener naming" "$(cat "$SP/resp.json")"
+  # **The capacity A typed reaches B, and P06.S04 is why this is asserted now.** The convene body
+  # has carried `"capacity":"as Director"` since this clause was written and nothing ever checked it
+  # arrived — a field sent, signed into the roster commitment, and unread across the one boundary
+  # that matters. The panel renders it on both sides now (P06.S02's roster, P06.S04's accepted
+  # roster), and "as Director" is the difference between a person signing and a person signing FOR
+  # somebody, which is a different agreement.
+  python3 -c "
+import json,sys;d=json.load(open('$SP/resp.json'))
+b=[p for p in d['roster'] if p['fingerprint'].lower()=='$B_FP'.lower()]
+if len(b)!=1:
+    print('FAIL: the accepting party is not on the roster it just accepted', file=sys.stderr); sys.exit(1)
+if b[0].get('capacity') != 'as Director':
+    print('FAIL: capacity crossed as %r, want %r. A roster that carries the name and drops the '
+          'capacity describes a different agreement from the one the signature covers.'
+          % (b[0].get('capacity'), 'as Director'), file=sys.stderr)
+    sys.exit(1)
+" && ok "the capacity the convener typed reaches the accepting party (P06.S04)" \
+    || no "capacity round-trip" "$(cat "$SP/resp.json")"
 else no "accept" "$code $(cat "$SP/resp.json")"; fi
 
 # CLAUSE 4 — the arm now succeeds.
