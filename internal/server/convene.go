@@ -475,9 +475,12 @@ func (s *Server) handleCeremonies(w http.ResponseWriter, r *http.Request) {
 	// **Why the listing is a trigger at all**: the other one is unlock, and a machine that stays
 	// unlocked for a fortnight would otherwise never sweep. This route is what a user opens to
 	// look at their ceremonies, which is the moment the answer needs to be current.
-	if v := s.unlockedVault(); v != nil {
-		s.closeOutEnded(v, time.Now())
-	}
+	// **Unconditional, and the nil check lives in the door (ADR-009, P06.S01).** This read the
+	// vault and skipped on nil, which is a second implementation of a rule `closeOutEnded` already
+	// holds — and a mutation removing THIS guard left the whole suite green, which is what proved
+	// the door was the load-bearing one. Removing both goes red. Two guards for one rule is the
+	// shape ADR-009 was written after finding six of.
+	s.closeOutEnded(s.unlockedVault(), time.Now())
 	list, err := ceremony.ListStored(defaultOutputDir(), time.Now())
 	if err != nil {
 		httpError(w, http.StatusInternalServerError,
