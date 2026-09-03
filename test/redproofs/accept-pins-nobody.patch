@@ -1,13 +1,13 @@
 --- a/internal/server/accept.go
 +++ b/internal/server/accept.go
-@@ -163,7 +163,9 @@
- 		log.Printf("accepted ceremony %s: could not record which party this machine is: %v — the "+
- 			"ceremony works, but the panel cannot show your position in it", inv.ID, merr)
- 	}
+@@ -153,7 +153,9 @@
+ 	// the convener at one end, so this party can never be on a hop with anybody else; pinning
+ 	// the rest of the roster would pin up to thirty peers it can never dial. See
+ 	// pinCeremonyRoster.
 -	n, perr := pinCeremonyRoster(v, inv.ID, []ceremony.Party{convener}, me)
 +	n, perr := 0, error(nil)
 +	_ = convener
 +	_ = v
  	if perr != nil {
- 		httpError(w, http.StatusInternalServerError,
- 			"the invitation was read but its pin could not be saved, so nothing was "+
+ 		// **"Nothing was accepted" has to be TRUE, and it was not (/pending 364).**
+ 		//

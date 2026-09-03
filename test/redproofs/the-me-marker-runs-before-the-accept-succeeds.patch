@@ -1,0 +1,24 @@
+--- a/internal/server/accept.go
++++ b/internal/server/accept.go
+@@ -153,6 +153,10 @@
+ 	// the convener at one end, so this party can never be on a hop with anybody else; pinning
+ 	// the rest of the roster would pin up to thirty peers it can never dial. See
+ 	// pinCeremonyRoster.
++	if merr := ceremony.WriteMe(defaultOutputDir(), inv.ID, me); merr != nil {
++		log.Printf("accepted ceremony %s: could not record which party this machine is: %v — the "+
++			"ceremony works, but the panel cannot show your position in it", inv.ID, merr)
++	}
+ 	n, perr := pinCeremonyRoster(v, inv.ID, []ceremony.Party{convener}, me)
+ 	if perr != nil {
+ 		// **"Nothing was accepted" has to be TRUE, and it was not (/pending 364).**
+@@ -236,10 +240,6 @@
+ 	// machine — its folder may have been removed, or it was interrupted before anything was
+ 	// written"*. That sentence blames a removal or an interruption for a ceremony the same user
+ 	// had just been told was never accepted.
+-	if merr := ceremony.WriteMe(defaultOutputDir(), inv.ID, me); merr != nil {
+-		log.Printf("accepted ceremony %s: could not record which party this machine is: %v — the "+
+-			"ceremony works, but the panel cannot show your position in it", inv.ID, merr)
+-	}
+ 
+ 	roster := make([]acceptedParty, 0, len(inv.Roster))
+ 	signing := 0

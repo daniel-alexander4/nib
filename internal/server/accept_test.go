@@ -381,3 +381,102 @@ func TestConveningPinsItsRosterAndKeepsTheSecretOutOfTheMirror(t *testing.T) {
 	}
 	t.Logf("searched %d file(s) under %s for %d spellings of 2 secrets", walked, root, len(needles))
 }
+
+// TestAnAcceptThatCouldNotSaveLeavesNothingBehind — /pending 364, and it is NOT the test that
+// item's inventory row imagined.
+//
+// **Row S01-5 named `TestAFailedPersistFailsTheAccept`, a driver for `AddCeremonyInvitation`
+// failing after the pin succeeded. That branch cannot be reached from a filesystem failure and
+// this is why:** both doors go through the one `Vault.save()`, and the pin runs first, so an
+// unwritable vault always fails at the pin. Measured — the 500 names the pin, never the
+// invitation. The branch is correct code that only a real disk dying mid-request can enter, and
+// no test in this tree can produce that without an injection seam the vault does not have.
+//
+// **What IS reachable is the mirror image of the half-state the row described, and it was live.**
+// Every vault mutator writes `v.contents` and then saves, so a failed save leaves the change
+// standing in memory. So the accept answered *"nothing was accepted"* while the convener was
+// pinned for the life of the process — and `WriteMe` ran before either write, leaving a folder
+// the ceremonies panel listed. Both are asserted below, both went red before the fix.
+func TestAnAcceptThatCouldNotSaveLeavesNothingBehind(t *testing.T) {
+	ts, srv := startServerWith(t)
+	c, csrf := authedClient(t, ts)
+	me := myFingerprint(t, c, ts.URL)
+	invitation, convenerFP := inviteFor(t, me)
+
+	// SETUP: this invitation is good and this door works. Without it every assertion below is
+	// satisfied by an accept that failed for some entirely different reason — a refusal at the
+	// parse, a fingerprint mismatch — and the test would report a clean failure path over a
+	// request that never reached the vault at all.
+	if code, body := postForCode(t, c, csrf, ts.URL+"/api/ceremony/accept",
+		acceptRequest{Invitation: invitation}); code != http.StatusOK {
+		t.Fatalf("setup: the accept failed with a WRITABLE vault (%d %s) — this test is about "+
+			"what a failed save leaves behind and it never got as far as saving", code, body)
+	}
+
+	// A second server, so the failure is the only difference between the two runs.
+	ts2, srv2 := startServerWith(t)
+	c2, csrf2 := authedClient(t, ts2)
+	me2 := myFingerprint(t, c2, ts2.URL)
+	invitation2, convenerFP2 := inviteFor(t, me2)
+	_ = srv
+	_ = convenerFP
+
+	// STIMULUS: the vault directory becomes unwritable, so `save()` fails. `writeFileAtomic`
+	// creates its temp file in this directory, which is why the mode on the directory is what
+	// bites rather than the mode on the vault file.
+	if err := os.Chmod(srv2.configDir, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(srv2.configDir, 0o700) })
+
+	code, body := postForCode(t, c2, csrf2, ts2.URL+"/api/ceremony/accept",
+		acceptRequest{Invitation: invitation2})
+	if code != http.StatusInternalServerError {
+		t.Fatalf("setup: the accept returned %d %q with an unwritable vault, want 500 — the "+
+			"save did not fail, so nothing below is being tested", code, body)
+	}
+	if !strings.Contains(body, "nothing was accepted") {
+		t.Errorf("the refusal does not say nothing was accepted: %s", body)
+	}
+
+	// 1. No trust grant. `handleSessionArm` refuses an unpinned peer by name, and that refusal
+	//    is the door the pin exists to satisfy — so this asks the question the way
+	//    TestAcceptingAnInvitationRemovesTheManualPin asks its own, at the door rather than at
+	//    the pin list. Before the fix this returned 200: the machine would dial and trust a peer
+	//    its user had been told it had not accepted.
+	acode, abody := postForCode(t, c2, csrf2, ts2.URL+"/api/session/arm",
+		armRequest{Fingerprint: convenerFP2, Bind: "127.0.0.1:0", Transport: "tcp", Invitation: invitation2})
+	if acode == http.StatusOK {
+		postForCode(t, c2, csrf2, ts2.URL+"/api/session/disarm", struct{}{})
+		t.Errorf("after an accept that answered 500 %q, arming against the convener SUCCEEDED — "+
+			"the pin survived in memory, so this machine accepted the invitation and told its "+
+			"user it had not", body)
+	} else if !strings.Contains(abody, "isn't pinned") {
+		t.Errorf("arming failed for the wrong reason (%d %q); this assertion is only about the "+
+			"pin and a different refusal would satisfy it vacuously", acode, abody)
+	}
+
+	// 2. No ghost row. `ListStored` lists every well-named directory under ~/nib/ceremonies and
+	//    does not require a record, so a marker written before the accept succeeded put a
+	//    ceremony in the panel that reported `state:"absent"` — blaming a removed folder or an
+	//    interruption for a proceeding the user had just been told was never accepted.
+	resp, err := c2.Get(ts2.URL + "/api/ceremonies")
+	if err != nil {
+		t.Fatal(err)
+	}
+	listing, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if id := idFromInvitation(t, invitation2); strings.Contains(string(listing), id) {
+		t.Errorf("the ceremonies listing carries %s after an accept that failed: %s", id, listing)
+	}
+}
+
+// idFromInvitation returns the ceremony id an invitation names.
+func idFromInvitation(t *testing.T, invitation string) string {
+	t.Helper()
+	inv, err := ceremony.ParseInvitation(invitation)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return inv.ID
+}

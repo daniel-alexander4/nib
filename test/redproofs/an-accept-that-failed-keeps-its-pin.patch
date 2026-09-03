@@ -1,0 +1,13 @@
+--- a/internal/server/accept.go
++++ b/internal/server/accept.go
+@@ -172,10 +172,6 @@
+ 		// this corrects. The error is logged rather than returned: the caller is already being
+ 		// told the accept failed, and a second sentence about a prune they never asked for
+ 		// would bury the one that matters.
+-		if _, prerr := v.PruneCeremonyPeers(inv.ID); prerr != nil {
+-			log.Printf("accept %s: the pin could not be saved and the compensating prune also "+
+-				"failed: %v", inv.ID, prerr)
+-		}
+ 		httpError(w, http.StatusInternalServerError,
+ 			"the invitation was read but its pin could not be saved, so nothing was "+
+ 				"accepted: "+perr.Error())

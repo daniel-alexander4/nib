@@ -3585,3 +3585,39 @@ behind `requireUnlocked` that has nothing to do with ceremonies. Red, by name: t
 special-cased to the one route that produced it.
 
 `recorded` 273 → 274.
+
+## /pending 364 — an accept that could not save leaves nothing behind (v1.117.344)
+
+| Defect reintroduced | Check that fired | What it said |
+| --- | --- | --- |
+| `an-accept-that-failed-keeps-its-pin` — the compensating prune removed | `TestAnAcceptThatCouldNotSaveLeavesNothingBehind`, tier 1 | "after an accept that answered 500 …, arming against the convener SUCCEEDED — the pin survived in memory, so this machine accepted the invitation and told its user it had not" |
+| `the-me-marker-runs-before-the-accept-succeeds` — `WriteMe` moved back above the two vault writes | `TestAnAcceptThatCouldNotSaveLeavesNothingBehind`, tier 1 | "the ceremonies listing carries e8ab… after an accept that failed: … state:\"absent\" … its folder may have been removed, or it was interrupted before anything was written" |
+
+**The test the inventory row asked for could not be written, and finding out why is the result.**
+Row S01-5 named `TestAFailedPersistFailsTheAccept` — a driver for `AddCeremonyInvitation` failing
+after the pin succeeded. Both doors go through the one `Vault.save()` and the pin runs first, so an
+unwritable vault **always** fails at the pin: measured, the 500 names the pin and never the
+invitation. That branch is correct code no test in this tree can enter without an injection seam
+the vault does not have, and saying so is worth more than a test that pretends otherwise.
+
+**What is reachable is the mirror image of the half-state the row described, and it was live.**
+Every vault mutator writes `v.contents` and then saves, so a failed save leaves the change standing
+in memory. The accept answered *"nothing was accepted"*, the convener stayed pinned for the life of
+the process, and `POST /api/session/arm` against them returned **200** — the machine had accepted
+the invitation and told its user it had not. A restart would then take it away again.
+
+**And a second residue, in the panel P06 had just shipped.** `WriteMe` ran before either write, and
+`ListStored` lists every well-named directory without requiring a record, so a failed accept left a
+ghost row reading *"its folder may have been removed, or it was interrupted"* — blaming a removal
+for a ceremony the same user had just been told was never accepted. The fix is an ordering: the
+marker is written last, after both writes have succeeded.
+
+**The prune is a compensation, not a rollback**, and its own save fails too. That is fine and is the
+point: memory is the state the arm door reads, and memory is what it corrects. Rolling the *vault*
+back on a save failure was considered and rejected — it would discard the user's in-memory work (a
+freshly enrolled identity, settings) to fix a trust grant, trading a narrow bug for data loss.
+
+**`accept-pins-nobody` staled and was re-recorded**, on context lines only: its hunk quoted the
+`WriteMe` block that moved. The defect it expresses is unchanged.
+
+`recorded` 274 → 276.
