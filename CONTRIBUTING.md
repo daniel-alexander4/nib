@@ -18,10 +18,11 @@ for things it never looked at.
 | 2 | `./build/jsdomtest.sh` | the front end's logic and DOM behaviour, in jsdom |
 | 3 | `./build/uirepro.sh` | the whole app: the real binary, in a real browser |
 | 4 | `./build/pairrepro.sh` | a ceremony between TWO real binaries, two vaults, two identities — over BOTH transports |
-| 4b | `./build/pairrepro.sh --lan` (or `--lan -n 4`) | the same ceremony with **no address typed anywhere**, in a namespace, asserting nothing left the link. With `-n` it is an N-party baton relay on the link — and that run is **currently RED against shipped code**: a ceremony carrying an invitation bootstraps the public DHT unconditionally, so P03's no-outbound-traffic criterion is false for it (`/pending 299`). The two-party form has no invitation and passes |
+| 4b | `./build/pairrepro.sh --lan` (or `--lan -n 4`) | the same ceremony with **no address typed anywhere**, in a namespace, asserting nothing left the link. With `-n` it is an N-party baton relay on the link, and it measures **zero** off-link packets over both transports across the relays, the delivery rounds, the end-state round and the close-out. It did not always: 120 packets, then 9, then 0 (ADR-011). **This row said "currently RED against shipped code" until 2026-09-02, four phases after that was fixed** — and in the meantime a real red went unnoticed for four commits, because a reader who ran it had been told to expect one. A harness whose contract says it fails is a harness nobody reads the output of |
 | 4c | `./build/pairrepro.sh --v6` | the same ceremony over **IPv6 loopback** (`[::1]`) on both transports, with the v6 bind asserted so a v4 fallback cannot pass for it — P05.S05's hermetic half of criterion 1 |
 | 4d | `./build/pairrepro.sh -n 4` (or `-n 9`) | **an N-party ceremony COMPLETED as a baton relay**, over both transports: N homes, N vaults, N distinct identities, a non-signing convener carrying the document through N−1 hops, every party armed once before hop 1 and never re-armed, each hop's document containing the previous one as a byte prefix, every hop's verification string distinct, and the finished document signed by the roster's signing parties in order — one signature each. The model's old ceiling (a signing party cannot take a second turn) is still asserted alongside it |
 | 5 | `./build/mcastrepro.sh` | link-local discovery between two processes, in a network namespace of its own |
+| 6 | `./build/ceremonyrepro.sh` | a ceremony between two real **processes** over real HTTP: two homes, two vaults, two signing identities, and the invitation crossing between them as text |
 
 **Tier 0 builds for the host only, and that is a hole tier 1 now covers.**
 `internal/discovery` once called `syscall.SetsockoptInt` with an `int` file descriptor —
@@ -173,6 +174,28 @@ address on the same host.
 MTU and firewalls are invisible — and those are exactly what the connection
 ladder exists to survive. What it delegates upward is the two-machine run, which
 stays a `VERIFY` item on the pending list.
+
+**Tier 6 — `./build/ceremonyrepro.sh`** (ceiling written in `build/ceremonyrepro.sh`)
+Sees: the ceremony routes driven between **two processes** that hold different keys —
+A convenes, B accepts, and the invitation crosses as text. That is the property a
+single-process Go test assumes rather than checks: `httptest` gives every party one
+vault, one identity and one registry, so "the invitation one binary produces is the
+invitation the other binary accepts" cannot be asked there at all. It also covers the
+refusals that need two identities to be meaningful — an arm before accepting (the step
+D21 removes), a contribution out of roster order — and asserts the invitation secret is
+in none of the convener's `~/nib` files (D29).
+**Cannot see: a hop completing.** B never signs here; the L3 clause asserts B is
+REFUSED for trying. Driving a hop through needs a rendezvous and a second armed
+listener, which is tier 4. And two processes on one machine are not two machines: one
+loopback, one clock, one filesystem, one kernel, so it says nothing about NAT or the
+DHT. → **tier 4**
+
+**Its number is not its rank.** Tier 6 is cheaper and narrower than tiers 4 and 5 —
+one machine, no namespace — and the numbers are the order the harnesses were built,
+not an order of strength. It exists because P07.S02a live-verified the convene route
+with a script in a session scratchpad, the scratchpad was wiped, and the product's only
+ceremony-creating surface was then exercised by nothing committed. **A verification that
+lives outside the repo is one that has already been lost once.**
 
 That chain is the point. A gap named and delegated is a decision; a gap nobody
 wrote down is discovered later by a user.

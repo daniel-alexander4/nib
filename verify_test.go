@@ -199,6 +199,15 @@ func TestVerifyContractIsTrue(t *testing.T) {
 		{"build/winrepro.sh", "What this harness CANNOT discharge"},
 		{"build/mcastrepro.sh", "Where it still stops"},
 		{"build/dhtlive.sh", "What this harness CANNOT discharge"},
+		// **Tier 6, added at P08.S09 — it was in none of the three places.** The harness has
+		// existed and been green since P07.S02b and appeared in neither the contract's table, nor
+		// the row list below, nor here; so it could have been deleted outright with every tier
+		// green and the contract silent. Its ceiling heading is "Where it stops" rather than the
+		// "Where it still stops" its siblings use, and it is matched as written rather than
+		// normalised: the guard's job is to find the words a reader is sent to, not to prefer a
+		// house style over what the file says.
+		{"build/ceremonyrepro.sh", "Where it stops"},
+		{"CONTRIBUTING.md", "Cannot see: a hop completing"},
 	} {
 		body := contract
 		if c.file != "CONTRIBUTING.md" {
@@ -238,6 +247,7 @@ func TestVerifyContractIsTrue(t *testing.T) {
 		{"4c", "`./build/pairrepro.sh --v6`"},
 		{"4d", "`./build/pairrepro.sh -n 4`"},
 		{"5", "`./build/mcastrepro.sh`"},
+		{"6", "`./build/ceremonyrepro.sh`"},
 	} {
 		want := "| " + row.tier + " | " + row.cmd
 		if !strings.Contains(contract, want) {
@@ -285,7 +295,7 @@ func TestVerifyContractIsTrue(t *testing.T) {
 		// an edit that does not HAVE to happen is an edit that does not happen. So the
 		// count is bounded on both sides now. It still fails when a row disappears, and it
 		// fails when the set outgrows it, naming the number to write.
-		const recorded = 266
+		const recorded = 268
 		if len(rows) < recorded {
 			t.Errorf("test/redproofs holds %d replayable row(s), want at least %d; "+
 				"build/redproof.sh reports no error on an empty directory, so a row that "+

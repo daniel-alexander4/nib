@@ -457,6 +457,87 @@ If the receiver is behind **CGNAT** (common on mobile and some ISPs), port-forwa
 won't work — use the VPN path. The security model doesn't depend on *how* you reach
 each other: the pinned-key handshake holds over any transport.
 
+### Sign with several people — a ceremony
+
+Co-signing above is two people. When a document needs **three or more** signatures — a
+lease with a guarantor, a deed with witnesses, a resolution with a board — Nib runs it as
+a **ceremony**: one named proceeding, one roster, one document, passed from party to party
+in roster order until everyone has signed.
+
+> **The interface for this is not built yet.** The engine is finished and tested, and the
+> panel that will drive it is not. Today a ceremony is convened through Nib's local HTTP
+> API (`POST /api/ceremony/convene` on `127.0.0.1`), which is a developer's surface and not
+> a user's. Everything below describes what the software does; the buttons are still coming.
+> If you are here to sign a document with one other person, use **Co-sign with a peer**
+> above, which is complete and has an interface.
+
+**How it runs.** One party **convenes**: they choose the document, write a short recital of
+what is being agreed, list the roster by key fingerprint, and set a deadline. Nib produces
+one **invitation per party** — each different, each carrying that party's own secret — and
+the convener sends them out however they like. Each party **accepts** their invitation,
+which pins the convener's identity and nothing else: everyone talks to the convener, not to
+each other, so a nine-party ceremony is nine pinned relationships and not thirty-six.
+
+Then the document travels. The convener passes it to the first signing party, who reviews
+it and signs; it comes back; it goes out to the second; and so on. **One instrument, in
+sequence.** Every hop is a mutually-authenticated encrypted connection to a party whose key
+the invitation named, and every signature is checked against the ceremony's own record
+before the next hop starts — including the document's own bytes, so a party cannot be handed
+a different document under the same proceeding.
+
+When the last signature lands, the convener runs a **delivery round**: every party gets the
+finished document, and the convener keeps trying until each one has it or the deadline
+passes.
+
+**Four ways a ceremony ends**, and Nib distinguishes them because they call for different
+actions:
+
+- **Completed** — everyone obliged has signed and the finished document has been delivered.
+- **Declined** — someone refused. The convener attests to that with their own signature and
+  delivers *the attestation* to everyone who had already signed, so nobody is left believing
+  the document is still travelling. **Their signatures still stand**; a decline does not
+  unmake a signature already given.
+- **Expired** — the deadline passed. Any party's own Nib refuses a contribution after it,
+  with no need to ask the convener.
+- **Abandoned** — nothing was ever heard. This one is a conclusion your own machine draws,
+  not something anybody attests, because the party who would attest is the one that stopped
+  answering.
+
+**What it will not do, and these are limits rather than missing features:**
+
+- **The deadline cannot be extended.** It is inside what every party signed. Moving it would
+  mean a different proceeding, so a ceremony that runs out of time is convened again.
+- **A party cannot be replaced.** The roster is signed too. Swapping a signer after the fact
+  is exactly the substitution the identity pinning exists to refuse.
+- **Ending early means starting again from the unsigned document.** There is no way to
+  reopen a proceeding that has ended, and the signatures on a partly-signed document cannot
+  be carried into a new one — a signature is over *that* document in *that* proceeding.
+- **Nib executes one instrument in sequence, not in counterparts.** Practitioners often
+  circulate an identical document to everyone at once and staple the signature pages
+  together; Nib does not do that. One document goes round one time.
+
+**What is kept, and where.** Each party's Nib keeps a folder under `~/nib/ceremonies/` while
+a ceremony is live: the record, and the document as they last held it. That folder is what
+lets Nib pick up where it left off after a restart. **The invitation's secret is never
+written there** — it lives in your vault, sealed to your SSH key.
+
+When a ceremony ends and its delivery round has finished, the folder is **moved, not
+deleted**, to `~/nib/ended/`. That matters more than it sounds: on every machine but the
+convener's, that folder holds the only copy of *your own* signature on a proceeding that was
+declined or abandoned, and nothing has carried it anywhere else. Nib also leaves a small
+note beside it saying how the ceremony ended and when your machine decided so. Nothing ever
+removes what was moved — that is your file, and deleting it is your decision.
+
+**What the document itself proves — and what it does not.** A finished Nib PDF proves that
+its signatures are intact, that they all commit to the same proceeding, and which of the
+roster's obliged parties have signed. It does **not** record how the ceremony ended, and it
+cannot: nothing may be written into a PDF after its last signature without breaking that
+signature, and two of the four end states are conclusions nobody can sign. So when
+`nib verify` tells you a ceremony was declined, it is reading your own machine's records and
+it says so, under a heading of its own. **Run the same file on a machine that was not part
+of the proceeding and that line is simply absent** — which is the honest answer, and the
+reason it is separated from everything the document says about itself.
+
 ### Open a document
 **Open…** (File tab, or Ctrl+O) takes a typed path or URL, or browses your
 filesystem. Browsing opens the file *by path*, so it can be saved back in place

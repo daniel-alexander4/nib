@@ -1,0 +1,12 @@
+--- a/internal/server/convene.go
++++ b/internal/server/convene.go
+@@ -290,9 +290,6 @@
+ // document is already part of a ceremony — and C04's whole point is that the answer to that
+ // is a different action, not a corrected field.
+ func conveneStatus(err error) int {
+-	if errors.Is(err, ceremony.ErrAlreadyConvened) {
+-		return http.StatusConflict
+-	}
+ 	if errors.Is(err, ceremony.ErrNoHopBudget) || errors.Is(err, ceremony.ErrNoDeliveryBudget) {
+ 		// The caller did not supply one, and the caller is this package. A user cannot cause
+ 		// it and cannot fix it.

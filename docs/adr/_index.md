@@ -79,3 +79,9 @@ home today.
   browse result rather than a timer, and the ARM holds on evidence — a sighting of its own expected
   peer, which `answerLoop` already resolved. 120 off-link packets → 9 → 0; the two-party run that
   was supposed to prove the criterion was the one shape that could not reach the defect
+- [ADR-012: The close-out moves a ceremony's folder](012-the-close-out-moves.md) — a ceremony that
+  has ended is renamed into `~/nib/ended/`, never deleted, because on every machine but the
+  convener's the mirror holds the only copy of that party's own signature and a declined or
+  abandoned ceremony has no delivery round to have carried it anywhere. The vault stores still go,
+  through one door taking four of them; `RemoveMirror` stays the ROLLBACK's verb and keeps its one
+  caller; nothing removes what was moved, which is a decision (`/pending 361`) and not an oversight

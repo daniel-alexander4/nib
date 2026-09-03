@@ -6712,7 +6712,7 @@ Acceptance:
 - **The counters live in a package the reader scans cover**, or the gap is recorded: `internal/server` is absent from `observables_test.go`'s package list, so a counter placed there is invisible to every reader scan in the tree.
 - Tier: 3 for the recovery action, 1 for the field and the record (C15).
 
-#### P08.S09 — Docs, README, and the phase close *(C15, C16, C17)*
+#### P08.S09 — Docs, README, and the phase close *(C15, C16, C17)* *(**done** 2026-09-02, v1.117.331 — 5 bullets: 4 met, 1 met by `/pending 324` before the slice began. **C16 met**: the README gains the phase's first user-facing description of the feature, and says in its second paragraph that the INTERFACE does not exist yet — the only surface is `POST /api/ceremony/convene`, and a README describing buttons that are not there would be docs-parity met backwards. ADR-012 records the close-out's move. **C17 met, after fixing the tool**, which then blocked this slice's own close for having no inventory section — the guard doing exactly what C17 was written for, on its author. **C15 is NOT met for four criteria** (C02, C06's expired and abandoned halves, C07, C14) and was fixed for two: C12 and C13 got tier-6 clauses, each probed red. **And the phase close ran `--lan -n 4`, which had been RED for four commits** — 6 off-link packets against P03's zero, all six from `decoy_document`, this plan's own clause from v1.117.328, added without a `--lan` run. The product was right: an arm that hears nothing pays one `lanFirstBudget` and publishes, because a remote peer has to be reachable. The reading moved above the two clauses that leave a proceeding unfinished; `/pending 363` carries the cost. **The contract had said this harness was 'currently RED against shipped code' since four phases before**, for a defect long fixed — so a reader who ran it had been told to expect the red. Ledger: `ledgers/2026-09-02-p08-acceptance.md`.)*
 Scope: the docs-parity bullet and the phase's own close. C15 and C17 are standing constraints on
 S01–S08 and are **ledgered** here, not discharged here.
 Acceptance:
@@ -6721,6 +6721,39 @@ Acceptance:
 - **`nib verify` names a valid signature the roster does not account for and exits 2** — `Completeness` iterates the roster and breaks on the first match (`internal/p2p/attestation.go:356-367`), so `signed` can never exceed `obliged` and a duplicate or off-roster signature reads as a clean complete ceremony on both the CLI and the web verdict. The cheapest forensic yield in the phase.
 - **`CONTRIBUTING.md`'s tier table and `verify_test.go`'s ceiling list still describe what the harnesses now do**, including tier 6, which is absent from both today.
 - **Nothing in this phase writes to a document after its last signature**, stated in the scope so the constraint is visible to whoever builds the end-state reporting.
+
+**Grill, 2026-09-02 — one bullet is already shipped and one line of the contract is stale.**
+
+- **The third bullet is MET, by `/pending 324`, and its own line reference is stale.** It cites
+  `Completeness` at `attestation.go:356-367`; the function is at `:538`. More to the point, the
+  defect it names was fixed: `Proceeding.Members`, `markUnrostered` and `SignerAttestation.Unrostered`
+  ship, and `ceremonyReport.refuses()` — *"the ONE door between a ceremony verdict and the exit
+  code (ADR-009)"* — folds `hasUnrostered()` in beside `incomplete()` and `disagrees()`, reaching
+  `commands.go:1005`. The bullet's **duplicate** half was answered rather than built, and the
+  argument is at `markUnrostered`'s own doc: `Completeness`'s `break` is correct, *"a party who
+  signs twice counts once"*, and counting an intruder would make `signed >= obliged` and print
+  ✓ Complete, which is strictly worse. Ledgered, not rebuilt.
+- **The contract's own tier-4b row is stale in the direction that matters.** It says the `--lan -n`
+  run is *"currently RED against shipped code"* on `/pending 299`. ADR-011 records that closing:
+  120 off-link packets → 9 → **0**, green at nine parties over both transports, at P07.S05e. A
+  contract that tells a fresh clone one of its own harnesses is expected to fail is worse than one
+  that omits it — the reader stops trusting the red.
+- **Tier 6 is absent from three places, not one.** `build/ceremonyrepro.sh` exists, is green (15
+  clauses), and appears in neither `CONTRIBUTING.md`'s tier table nor `verify_test.go`'s row list
+  nor its ceiling list. The bullet says "including tier 6, which is absent from both today" and it
+  is absent from a third: nothing holds its ceiling in place either.
+
+Tasks:
+- **T01** — tier 6 into `CONTRIBUTING.md`'s table and prose (what it sees, what it cannot), and into
+  **both** of `verify_test.go`'s lists — the tier row and the ceiling — with each probed red.
+- **T02** — the tier-4b row corrected, against a **measured** `--lan -n 4` rather than against
+  ADR-011's sentence.
+- **T03** — `nib verify` names the end state where a local record exists, under a heading that says
+  the source is **this machine and not the document**, and never prints one from an absent record.
+  The bullet's *"only"* is a constraint and its *"under a heading that says so"* is a mandate.
+- **T04** — README and `docs/`: the lifecycle as it now is, D28's end states, the four limits, and
+  the document's own silence.
+- **T05** — the phase-close acceptance ledger over C01–C17, every clause, split on `and`.
 
 ---
 

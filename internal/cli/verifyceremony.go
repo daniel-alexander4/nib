@@ -2,6 +2,8 @@ package cli
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -63,6 +65,10 @@ type ceremonyReport struct {
 	// unrostered names the signers who claim this ceremony and are on no roster line. NAMED and
 	// not counted, per this package's own rule: the reader's next action is about a person.
 	unrostered []string
+	// endState and endSource are what THIS MACHINE knows about how the proceeding ended, and are
+	// empty on any machine that was not party to it. See `localEnd` — they are deliberately not
+	// facts about the document.
+	endState, endSource string
 }
 
 type ceremonyParty struct {
@@ -88,6 +94,17 @@ type ceremonyReportJSON struct {
 	Skew string `json:"skew,omitempty"`
 	// Unrostered names signers who claim this ceremony and are on no roster line (/pending 324).
 	Unrostered []string `json:"unrostered,omitempty"`
+	// LocalEnd is how the proceeding ended ACCORDING TO THIS MACHINE, absent when it holds no
+	// record (P08.S09). **Nested under its own key rather than flattened beside `complete`**, so a
+	// script cannot read it as a property of the document: the two are different kinds of claim
+	// and the same file yields no `localEnd` at all on a machine that was not party to it.
+	LocalEnd *localEndJSON `json:"localEnd,omitempty"`
+}
+
+// localEndJSON carries the end state and, always beside it, where it came from.
+type localEndJSON struct {
+	State  string `json:"state"`
+	Source string `json:"source"`
 }
 
 // ceremonyReportOf builds the report for one document.
@@ -111,6 +128,7 @@ func ceremonyReportOf(pdf []byte, st sign.Status, now time.Time) ceremonyReport 
 		obliged: obliged,
 		signed:  signed,
 	}
+	out.endState, out.endSource = localEnd(rec)
 	// One proceeding is a property of the whole document: every valid signature committing to the
 	// record this document carries. `Attestations` has already computed it per signature.
 	out.oneProc = len(atts) > 0
@@ -240,6 +258,23 @@ func (c ceremonyReport) lines() []string {
 		}
 		out = append(out, fmt.Sprintf("%s %-28s %s", mark, name, role))
 	}
+	// **The end state goes LAST and under a heading that disclaims the document.** Everything
+	// above is derived from the bytes in hand; this is read from this machine's disk, and on
+	// another machine the same file produces none of it. Printed inline with the rest, a reader
+	// deciding whether to rely on the document would take it for something the document says.
+	//
+	// The source is on its own line and is never omitted, because "declined" is worth acting on
+	// and "who says so" is what decides how much. A signed termination and this machine's own
+	// note are both useful and are not the same evidence.
+	if c.endState != "" {
+		out = append(out,
+			"",
+			"how this ceremony ended — from THIS MACHINE's records, not from the document:",
+			"  "+c.endState,
+			"  ("+c.endSource+")",
+			"  The document itself does not record how its proceeding ended; a Nib PDF proves",
+			"  only that its signatures are intact and who among the roster has signed.")
+	}
 	return out
 }
 
@@ -258,6 +293,9 @@ func (c ceremonyReport) json() *ceremonyReportJSON {
 		Skew:          c.skew,
 		Unrostered:    c.unrostered,
 	}
+	if c.endState != "" {
+		out.LocalEnd = &localEndJSON{State: c.endState, Source: c.endSource}
+	}
 	for _, p := range c.parties {
 		if p.signs && !p.didSign {
 			name := p.label
@@ -275,4 +313,56 @@ func short12(s string) string {
 		return s
 	}
 	return s[:12] + "…"
+}
+
+// ── The end state, which the DOCUMENT does not carry (P08.S09, D28) ──────────────────────────
+
+// nibDir is where this machine keeps its ceremony records.
+//
+// The CLI's own copy of `internal/server`'s `defaultOutputDir`, and it is a copy because
+// `internal/cli` does not import `internal/server` and should not start for one path join.
+// **Unlike the server's, it returns an error rather than a relative fallback**: the server's
+// callers mostly write a document and a wrong directory is a misplaced file, while every use here
+// is a read whose failure must be reported as "this machine has no record" and never as an end
+// state.
+func nibDir() (string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(home, "nib"), nil
+}
+
+// localEnd is what THIS MACHINE knows about how a ceremony ended.
+//
+// **The document does not carry this and never will.** D25 forbids a structural write after a
+// signature, so nothing can be added to a finished PDF to say how its proceeding ended; and D28's
+// four end states include two — expired and abandoned — that nobody can sign, because the party who
+// would attest to them is precisely the one that stopped answering. So completeness is the only
+// proceeding-level fact a Nib PDF proves about itself, and everything below is read from the disk
+// of whoever is running `nib verify`.
+//
+// **Which is exactly why it is reported under its own heading.** A line saying "declined" beside
+// lines derived from the document's own bytes invites a reader — and a reader here is often the
+// person deciding whether to rely on the document — to treat it as something the document says. It
+// is not. On another machine the same file produces no such line at all.
+//
+// Two sources, in this order, and the order is their standing. A `Termination` is the convener's
+// SIGNED statement and is verified against the record from the document in hand — never against
+// the `record.json` beside it, which a planted pair would satisfy against itself. A `Receipt` is
+// this machine's own unattested note, and it is the only artifact that can carry `expired` or
+// `abandoned`. Both are absent on a machine that was not party to the ceremony, which is the
+// ordinary case and reports nothing.
+func localEnd(rec ceremony.Record) (state, source string) {
+	root, err := nibDir()
+	if err != nil {
+		return "", ""
+	}
+	if t, terr := ceremony.ReadTermination(root, rec); terr == nil {
+		return t.State, "signed by the convener and checked against this document's own record"
+	}
+	if r, rerr := ceremony.ReadReceipt(root, rec.ID); rerr == nil {
+		return r.State, "this machine's own note, made when it saw the proceeding end — not signed"
+	}
+	return "", ""
 }
