@@ -6,6 +6,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 )
 
 // countingConfirmer accepts and counts how many times consent was asked — a re-delivery must ask
@@ -15,9 +16,9 @@ type countingConfirmer struct {
 	n      *int
 }
 
-func (c countingConfirmer) Confirm(SignerAttestation, []byte) (bool, string, []byte, error) {
+func (c countingConfirmer) Confirm(SignerAttestation, []byte) (bool, string, []byte, time.Time, error) {
 	*c.n++
-	return true, c.intent, nil, nil
+	return true, c.intent, nil, time.Time{}, nil
 }
 
 // mapReDeliverer is a test cache keyed on sha256(inbound), the same key the server's ceremonyID uses.

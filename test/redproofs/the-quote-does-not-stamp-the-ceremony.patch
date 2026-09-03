@@ -1,0 +1,11 @@
+--- a/internal/server/cosign.go
++++ b/internal/server/cosign.go
+@@ -115,7 +115,7 @@
+ 	// the same as stamping once.
+ 	if cert, _, ierr := identity(v); ierr == nil {
+ 		if myFP, ferr := sign.Fingerprint(cert); ferr == nil {
+-			p2p.StampCommitment(&att, roster, hex.EncodeToString(myFP))
++			_, _ = roster, myFP
+ 		}
+ 	}
+ 	// **The JOINT height rule, asked of the WHOLE block (/pending 286) — and asked AFTER the

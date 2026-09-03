@@ -1,6 +1,6 @@
 --- a/internal/server/session.go
 +++ b/internal/server/session.go
-@@ -784,16 +784,6 @@
+@@ -840,16 +840,6 @@
  	// stays correct if a path ever reaches `Confirm` without a spoken check first: a document the
  	// gate refused was shown to nobody, and nothing that shows nobody anything should spend an
  	// arm. The load-bearing half is the ordering against `setPending` above.
@@ -11,7 +11,7 @@
 -			// the user on this machine sees nothing and goes on waiting for a proceeding their
 -			// own build has just declared over.
 -			sc.s.sess.noteArrivalRefusal(sc.anchor.kind, err)
--			return false, "", nil, err
+-			return false, "", nil, time.Time{}, err
 -		}
 -	}
  	sc.saw.mark() // the consent request is about to go on screen

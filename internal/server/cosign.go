@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 
 	"nib/internal/ceremony"
@@ -56,7 +57,7 @@ type cosignQuote struct {
 // server's own clock. See the use in cosignAttestation.
 const maxWhenSkew = 24 * time.Hour
 
-func (s *Server) cosignAttestation(w http.ResponseWriter, v *vault.Vault, p cosignParams) (p2p.Attestation, bool) {
+func (s *Server) cosignAttestation(w http.ResponseWriter, v *vault.Vault, p cosignParams, roster p2p.Roster) (p2p.Attestation, bool) {
 	fp, err := parseFingerprint(p.Fingerprint)
 	if err != nil {
 		httpError(w, http.StatusBadRequest, "not a valid fingerprint")
@@ -99,7 +100,32 @@ func (s *Server) cosignAttestation(w http.ResponseWriter, v *vault.Vault, p cosi
 		Intent:            intent,
 		When:              when,
 	}
-	// **The JOINT height rule, asked of the WHOLE block (/pending 286).** This was
+	// **Stamped HERE, so the quote is the block that will be signed (P06.S06, /pending 317).**
+	//
+	// `StampCommitment` overwrites six fields inside a ceremony — the roster hash and its version,
+	// the recital (the RECORD's, and *"whatever the caller put here is discarded"*), the position,
+	// the roster size and the capacity — plus the signer's label. It was called at both signing
+	// points and at neither quote, so the block a party read before consenting disagreed with the
+	// signature beneath it in every one of them.
+	//
+	// **A no-op outside a ceremony**, where `roster.Commitment` is empty: it returns before
+	// touching anything, which is why the manual co-sign path passes the zero Roster and keeps the
+	// `"Nib User"` constant this function sets above. `buildCoSigned` and `coSignExchange` still
+	// call it on their own path; it is a pure function of `(roster, meFP)` and stamping twice is
+	// the same as stamping once.
+	if cert, _, ierr := identity(v); ierr == nil {
+		if myFP, ferr := sign.Fingerprint(cert); ferr == nil {
+			p2p.StampCommitment(&att, roster, hex.EncodeToString(myFP))
+		}
+	}
+	// **The JOINT height rule, asked of the WHOLE block (/pending 286) — and asked AFTER the
+	// stamp, which is the other half of this slice.** A stamped block carries a capacity and a
+	// "Party k of n" line that an unstamped one does not, so it is TALLER: a ceremony block could
+	// pass this check at the quote and overflow the page at the signature. `ErrBlockOffThePage` is
+	// what that becomes, and P07.S08 records that pdfcpu CLAMPS overflow silently, which is how an
+	// instrument built to see it was made blind. The fit has to be asked of the block that will
+	// actually exist.
+	//
 	// a one-field, one-line ceiling — and block lines wrap now, so the
 	// recital, the signer's name and the pinned peer's label compete for one vertical budget. The
 	// manual path can ask the joint question because everything in its block is known here: the
@@ -231,7 +257,18 @@ func (s *Server) handleCosignQuote(w http.ResponseWriter, r *http.Request) {
 	if p.When == "" {
 		p.When = time.Now().UTC().Format(time.RFC3339)
 	}
-	att, ok := s.cosignAttestation(w, v, p)
+	// **The zero Roster, and the reason is a gap rather than a decision (P06.S06).** This route
+	// serves the manual co-sign AND the live-initiate flow, and neither sends an invitation today:
+	// `web/app.js` posts `{fingerprint, intent}` here and appends no `invitation` to the initiate
+	// form either, so `handleSessionInitiate` builds the zero Roster too. The initiator's quote
+	// and its signature therefore AGREE — both unstamped — which is why `/pending 317`'s defect is
+	// the responder's block and not this one.
+	//
+	// **The day the client sends an invitation on this path, this line must send it too.** The
+	// door is `invitationRoster`, already used by `handleSessionInitiate` for the CLI and harness
+	// callers that do send one. Adding the parameter here now would be a field no client fills,
+	// which is the shape this repo's reader scans exist to refuse.
+	att, ok := s.cosignAttestation(w, v, p, p2p.Roster{})
 	if !ok {
 		return
 	}
@@ -286,7 +323,9 @@ func (s *Server) handleCosignSign(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	att, ok := s.cosignAttestation(w, v, p)
+	// The manual co-sign route has no ceremony, so the zero Roster — the same value it passes to
+	// `buildCoSigned` twenty lines down, and for the same reason.
+	att, ok := s.cosignAttestation(w, v, p, p2p.Roster{})
 	if !ok {
 		return
 	}
@@ -393,4 +432,26 @@ func (s *Server) buildCoSigned(w http.ResponseWriter, pdf, cert, key []byte, att
 		return nil, false
 	}
 	return signed, true
+}
+
+// invitationRoster builds the L3 roster an invitation describes, or the zero Roster.
+//
+// **Text in, roster out, and nothing else happens.** The initiating path reaches its roster through
+// `dialerCeremony`, which opens a rendezvous and arms a listener — correct there and absurd for a
+// quote, which is a question about what a block will say. `ParseInvitation` is the same reader that
+// path uses, and `l3RosterFrom` is the one conversion both take.
+//
+// **An unparseable or absent invitation yields the zero Roster rather than an error**, and that is
+// deliberate: `StampCommitment` treats it as "no ceremony" and leaves the manual co-sign block
+// exactly as it was. A quote is not the place to refuse a bad invitation — `/api/session/initiate`
+// parses the same text and answers for it, with the arm and the pins in front of it.
+func invitationRoster(text string) p2p.Roster {
+	if strings.TrimSpace(text) == "" {
+		return p2p.Roster{}
+	}
+	inv, err := ceremony.ParseInvitation(text)
+	if err != nil {
+		return p2p.Roster{}
+	}
+	return l3RosterFrom(inv.Roster, inv.RosterHash, inv.Intent)
 }

@@ -149,7 +149,7 @@ func TestARefusedArrivalTellsTheLocalUser(t *testing.T) {
 		// The gate reads the wall clock, so an expired ceremony is expressed by expiring the
 		// RECORD rather than by moving `now` — which is what a real signer's clock would see.
 		sc := sessionConfirmer{s: s, saw: &reached{}, anchor: consentAnchor{ln: ln}, cer: cer}
-		_, _, _, cerr := sc.Confirm(p2p.SignerAttestation{}, d)
+		_, _, _, _, cerr := sc.Confirm(p2p.SignerAttestation{}, d)
 		return s, cerr
 	}
 
@@ -175,7 +175,7 @@ func TestARefusedArrivalTellsTheLocalUser(t *testing.T) {
 		}
 	}()
 	okSC := sessionConfirmer{s: okServer, saw: &reached{}, anchor: consentAnchor{ln: okLn}, cer: okCer}
-	okAccepted, _, _, _ := okSC.Confirm(p2p.SignerAttestation{}, doc)
+	okAccepted, _, _, _, _ := okSC.Confirm(p2p.SignerAttestation{}, doc)
 	if okAccepted {
 		t.Fatal("setup: the control accepted, so the decline path this fixture depends on did " +
 			"not run and the call did not return for the reason assumed")
@@ -201,7 +201,7 @@ func TestARefusedArrivalTellsTheLocalUser(t *testing.T) {
 	t.Cleanup(endedServer.sess.disarm)
 	endedSC := sessionConfirmer{s: endedServer, saw: &reached{},
 		anchor: consentAnchor{ln: endedLn}, cer: endedCer}
-	_, _, _, endedErr := endedSC.Confirm(p2p.SignerAttestation{}, expired)
+	_, _, _, _, endedErr := endedSC.Confirm(p2p.SignerAttestation{}, expired)
 	if endedErr == nil {
 		t.Fatal("setup: an arrival for a ceremony that ended a minute ago was admitted, so " +
 			"there is no refusal for the notice to be about")

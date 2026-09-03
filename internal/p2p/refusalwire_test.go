@@ -840,7 +840,7 @@ func TestTheConsentGateIsGivenTheRightSignature(t *testing.T) {
 // recordingConfirmer accepts and remembers what it was shown.
 type recordingConfirmer struct{ seen SignerAttestation }
 
-func (c *recordingConfirmer) Confirm(peer SignerAttestation, _ []byte) (bool, string, []byte, error) {
+func (c *recordingConfirmer) Confirm(peer SignerAttestation, _ []byte) (bool, string, []byte, time.Time, error) {
 	c.seen = peer
-	return true, "I accept", nil, nil
+	return true, "I accept", nil, time.Time{}, nil
 }

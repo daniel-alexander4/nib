@@ -1517,9 +1517,15 @@ async function acceptRecv() {
     return; // pollRecv detects the disarm and reports where it landed
   }
   const intent = els.srvIntent.value;
-  // The responder's visible block is placed server-side; the quote gives only the
-  // canonical lines. **Inside a ceremony the rendered image DOES drift from the signed /Reason**
-  // — see renderAttestation's header and /pending 317. Outside one they agree.
+  // The responder's visible block is placed server-side; the quote gives only the canonical lines.
+  //
+  // **The drift is closed (P06.S06, /pending 317).** This comment used to say the rendered image
+  // DOES drift from the signed /Reason inside a ceremony, and it did: the quote never applied
+  // `StampCommitment`, so the six fields a roster overwrites — the recital, the signer's label,
+  // the capacity, the position, the roster size and its hash — were absent from the block the
+  // party read and present in the signature underneath it. The quote stamps now, and it pins the
+  // TIME, which is echoed below so the signature carries the moment the party was asked rather
+  // than the moment the bytes were signed.
   let appearance = '';
   const qr = await apiFetch('/api/session/quote', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -1536,7 +1542,10 @@ async function acceptRecv() {
   appearance = await blobToBase64(await renderAttestation(q.lines, q.rect));
   const res = await apiFetch('/api/session/respond', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ accept: true, intent, appearance }),
+    // `when` is the quote's pinned time, echoed so the signature carries the block the party
+    // actually consented to. The server bounds it by the same `maxWhenSkew` the initiating side
+    // has always applied, and drops it out of range rather than refusing.
+    body: JSON.stringify({ accept: true, intent, appearance, when: q.when }),
   });
   if (!res.ok) {
     els.srvAccept.disabled = false; els.srvDecline.disabled = false;

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 )
 
 // P07.S07b: inside a ceremony the recital is the RECORD's, and the party's own answer is
@@ -26,8 +27,8 @@ import (
 // screen's intent box.
 type intentConfirmer struct{ intent string }
 
-func (c intentConfirmer) Confirm(SignerAttestation, []byte) (bool, string, []byte, error) {
-	return true, c.intent, nil, nil
+func (c intentConfirmer) Confirm(SignerAttestation, []byte) (bool, string, []byte, time.Time, error) {
+	return true, c.intent, nil, time.Time{}, nil
 }
 
 const recital = "We agree to be bound by the lease of 14 Elm Row"
