@@ -2868,20 +2868,54 @@ PYWORDS
 
   decline_round
   close_out_round
-  interrupted_hop
-  decoy_document
 
-  # ── P03's exit criterion, over EVERYTHING this run emitted ───────────────────
+  # ── P03's exit criterion, over every PROCEEDING THAT REACHED A CONCLUSION ─────
   #
-  # Read here rather than after the relays, so the delivery rounds AND the end-state round are
-  # both inside the measured window. Before S05h the reading was taken before `decline_round` ran,
-  # so a whole round — arms, rendezvous, publish and all — emitted into a window nobody read.
+  # Read after `close_out_round` and before the two clauses below it, and the placement is the
+  # whole assertion — it has moved twice and both moves were forced by measurement.
+  #
+  # **S05h moved it later**, past `decline_round`: the end-state round is a delivery round with a
+  # different payload — the same arms, the same rendezvous, the same publish — and it ran entirely
+  # outside the window, so its egress was measured by nothing at all.
+  #
+  # **P08.S09 moved it earlier again, past `interrupted_hop` and `decoy_document`.** Those two
+  # deliberately leave a proceeding UNFINISHED — one kills a party mid-frame and resumes it, the
+  # other offers a substitute that is refused — and a party left waiting on a ceremony that never
+  # concludes is *supposed* to reach the DHT once the link goes quiet. ADR-011's hold is
+  # `lanFirstBudget` of silence, not forever: an arm that hears nothing pays one budget and
+  # publishes, because a genuinely remote peer has to be reachable. Counting that as a criterion
+  # failure would make the harness demand the product abandon anyone it cannot find on the link.
+  #
+  # **Measured, not reasoned.** Per-clause counts on a 4-party LAN run at v1.117.331, baseline 4:
+  # decline_round 4, close_out_round 4, interrupted_hop 4, decoy_document **10**. All six packets
+  # came from the last clause, in two ceremonies' delivery arms, named by a stack trace on
+  # `ensureBootstrapped`: `armForDelivery` → `publishWhenSlow` → `publishLoop` →
+  # `publishCandidates`.
+  #
+  # **It was red for four commits and nothing noticed, which is the part worth keeping.**
+  # `decoy_document` arrived at v1.117.328 without a `--lan` run, and `CONTRIBUTING.md`'s tier-4b
+  # row still said this run was "currently RED against shipped code" for a defect fixed four
+  # phases earlier — so a reader who did run it had been told to expect the red. That is ADR-011's
+  # own recorded lesson ("the only `--lan` run was the two-party one, so the run that existed to
+  # prove P03's criterion was the one shape that could not reach the defect") repeating one clause
+  # over.
+  #
+  # **A regression here is most likely a hold that stopped renewing**, not a new eager caller: the
+  # bootstrap has an AST guard asserting it has exactly one door and the arm's half does not.
   if [ "$LAN" = "1" ]; then
     after="$(offlink_packets)"
     [ "$after" = "$baseline" ] \
-      || fail "a $N-party LAN run emitted $((after - baseline)) packets destined off the link — P03's exit criterion says a LAN ceremony completes with NO outbound internet traffic, and this went to ZERO at P07.S05e over 16 hops and two transports. This is a REGRESSION, not a known remainder. Probe per instance: a stack trace on ensureBootstrapped names the caller, and link_report says what each end hears."
-    echo "[lan] $(( (N - 1) * 2 )) hops, FOUR delivery rounds (each relay runs one and re-runs it after the injected failure) and an end-state round over two transports, and nothing left the link"
+      || fail "a $N-party LAN run emitted $((after - baseline)) packets destined off the link — P03's exit criterion says a LAN ceremony completes with NO outbound internet traffic, and this went to ZERO at P07.S05e over 16 hops and two transports. This is a REGRESSION, not a known remainder. Probe per instance: a stack trace on ensureBootstrapped names the caller, and link_report says what each end hears. Bisect by clause first — an off-link count per clause is four lines of `date` and `offlink_packets` around each call, and it is what attributed the P08.S09 red to a single one."
+    echo "[lan] $(( (N - 1) * 2 )) hops, FOUR delivery rounds (each relay runs one and re-runs it after the injected failure), an end-state round over two transports and a close-out on three parties, and nothing left the link"
   fi
+
+  # ── The two clauses that deliberately leave a proceeding unfinished ───────────
+  #
+  # BELOW the reading, on purpose, and never move them above it without moving the reading too.
+  # See the block above: an arm left waiting is *meant* to reach the DHT after `lanFirstBudget` of
+  # silence, so these two emit off-link packets under `--lan` and are right to.
+  interrupted_hop
+  decoy_document
 
   echo "PASS: $N instances, and a $N-party ceremony COMPLETED as a baton relay over BOTH"
   echo "      transports (${ELAPSED_TOTAL}s of hops): a non-signing convener carried it through"

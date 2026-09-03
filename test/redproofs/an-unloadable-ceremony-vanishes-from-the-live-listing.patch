@@ -1,0 +1,15 @@
+--- a/internal/ceremony/mirror.go
++++ b/internal/ceremony/mirror.go
+@@ -453,7 +453,11 @@
+ 		if !e.IsDir() || ValidID(e.Name()) != nil {
+ 			continue
+ 		}
+-		out = append(out, ReadStored(root, e.Name(), now))
++		st := ReadStored(root, e.Name(), now)
++		if st.State != LoadOK {
++			continue
++		}
++		out = append(out, st)
+ 	}
+ 	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+ 	return out, nil

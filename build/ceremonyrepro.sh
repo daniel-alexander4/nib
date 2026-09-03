@@ -358,6 +358,107 @@ else
   fi
 fi
 
+# ── CLAUSE 10 — C13: a second ceremony on a document ALREADY under a live one is refused ────
+#
+# **C15 says every criterion in this phase is driven by the multi-instance harness, and this one
+# was not.** `TestConveningTwiceOnOneDocumentIsRefusedAtTheRoute` drives it inside one process,
+# where the convener, the vault, the identity and the document registry are all the same object.
+# The refusal is about a document's STATE across convene calls, and a single-process test shares
+# that state by construction rather than establishing it — which is the same gap this whole tier
+# exists to close for the invitation.
+#
+# **Distinct from CLAUSE 6, which is the case that must NOT be refused.** That one convenes a
+# second ceremony with the same COUNTERPARTY, on a freshly opened document, and it succeeds. This
+# one re-convenes on the document that is already under a ceremony. Two convenes, opposite
+# answers, and only the pair says the refusal is about the document rather than about the peer.
+code=$(post A /api/open "{\"path\":\"$SP/lease.pdf\"}")
+if [ "$code" != 200 ]; then
+  no "C13 setup" "A could not open the document again ($code)"
+else
+  FIRST=$(post A /api/ceremony/convene "{\"roster\":[{\"fingerprint\":\"$A_FP\",\"label\":\"Alice\",\"signs\":true},{\"fingerprint\":\"$B_FP\",\"label\":\"Bob\",\"signs\":true}],\"intent\":\"A third matter\",\"expires\":\"$EXP\",\"convenerSigns\":true}")
+  if [ "$FIRST" != 200 ]; then
+    no "C13 setup" "the first convene on this document failed ($FIRST), so a refusal below would be refusing the wrong thing"
+  else
+    code=$(post A /api/ceremony/convene "{\"roster\":[{\"fingerprint\":\"$A_FP\",\"label\":\"Alice\",\"signs\":true},{\"fingerprint\":\"$B_FP\",\"label\":\"Bob\",\"signs\":true}],\"intent\":\"A fourth matter\",\"expires\":\"$EXP\",\"convenerSigns\":true}")
+    body="$(cat "$SP/resp.json" 2>/dev/null)"
+    # 409 and not 400, because C13's own point is that this is not a corrected field: the answer
+    # is a different ACTION. And the sentence is graded, not just the code — "409" alone is what
+    # a user gets from three unrelated refusals on this route.
+    if [ "$code" != 409 ]; then
+      no "C13 second convene" "HTTP $code, want 409 — a document already under a live ceremony was convened again. $body"
+    elif ! printf '%s' "$body" | grep -qi "already"; then
+      no "C13 sentence" "409 with a body that does not say the document is already in a ceremony: $body"
+    else
+      ok "a second ceremony on a document already under a live one is refused 409, by name (C13)"
+    fi
+  fi
+fi
+
+# ── CLAUSE 11 — C12: a ceremony folder deleted BY HAND degrades that entry and costs no other ──
+#
+# **Also driven only at tier 1 until now** (`TestOneUnloadableCeremonyDoesNotCostTheOthers`, in
+# `internal/ceremony`), which builds the directories itself. Here they are directories a real Nib
+# wrote, being damaged under a real Nib that is still running and will answer the route about
+# them — which is the case C12 is written for: a user tidying `~/nib` by hand.
+#
+# **Damaged rather than removed.** Removing the whole folder is the ABSENT case and it leaves
+# nothing to degrade; C12's entry says "deleted by hand", and the state that produces a degraded
+# ENTRY rather than a vanished one is a folder whose `record.json` is gone or unreadable. The
+# distinction matters because a listing that silently drops the entry passes a removal test and
+# fails this one — and a ceremony that vanishes from the list is one whose only remedy is finding
+# and deleting the folder by hand, which is where the user already is.
+listing() { curl -fsS -c "$SP/A.jar" -b "$SP/A.jar" "$A_BASE/api/ceremonies" -o "$1"; }
+if ! listing "$SP/cer.before.json"; then
+  no "C12 setup" "the ceremonies listing could not be read before the damage"
+else
+  before="$(python3 -c "
+import json,sys
+d=json.load(open('$SP/cer.before.json'))
+print(len([c for c in d.get('ceremonies') or [] if c.get('state')=='ok']))")"
+  # STIMULUS: at least two healthy entries, or "the others still work" is a claim about nobody.
+  if [ "${before:-0}" -lt 2 ]; then
+    no "C12 setup" "only ${before:-0} healthy ceremony/ies are listed; C12 needs two so that 'every other ceremony still works' is about something"
+  else
+    victim="$(python3 -c "
+import json
+d=json.load(open('$SP/cer.before.json'))
+print([c for c in d.get('ceremonies') or [] if c.get('state')=='ok'][0]['id'])")"
+    rm -f "$A_HOME/nib/ceremonies/$victim/record.json"
+    if ! listing "$SP/cer.after.json"; then
+      no "C12" "the ceremonies listing FAILED after one folder was damaged — one bad entry cost the whole route, which is exactly what C12 forbids"
+    else
+      python3 - "$SP/cer.after.json" "$victim" "$before" <<'PYC12' && ok "a ceremony folder damaged by hand degrades ONLY its own entry (C12)" || no "C12" "$(head -c 400 "$SP/cer.after.json")"
+import json, sys
+d = json.load(open(sys.argv[1]))
+victim, before = sys.argv[2], int(sys.argv[3])
+cers = d.get("ceremonies") or []
+me = [c for c in cers if c.get("id") == victim]
+if not me:
+    print("FAIL: the damaged ceremony VANISHED from the listing rather than degrading. A "
+          "ceremony Nib will not admit exists is one whose only remedy is finding and deleting "
+          "the folder by hand — which is where the user already is.", file=sys.stderr)
+    sys.exit(1)
+if me[0].get("state") == "ok":
+    print("FAIL: the damaged ceremony still reports state 'ok' — its record.json is gone and "
+          "the listing did not notice, so a user is told a bricked ceremony is fine.",
+          file=sys.stderr)
+    sys.exit(1)
+if not (me[0].get("reason") or "").strip():
+    print("FAIL: the damaged entry carries no reason. The class alone is a word; the sentence is "
+          "what tells the user whether this is damage, a forgery, or a Nib that is out of date.",
+          file=sys.stderr)
+    sys.exit(1)
+others = [c for c in cers if c.get("id") != victim and c.get("state") == "ok"]
+if len(others) < before - 1:
+    print("FAIL: %d healthy ceremony/ies remain and %d are owed — damaging one entry cost "
+          "another, which is the failure C12 is written against."
+          % (len(others), before - 1), file=sys.stderr)
+    sys.exit(1)
+PYC12
+    fi
+  fi
+fi
+
 echo
 echo "PASS=$PASS FAIL=$FAIL"
 [ "$FAIL" -eq 0 ]

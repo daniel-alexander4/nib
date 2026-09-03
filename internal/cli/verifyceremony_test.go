@@ -506,3 +506,101 @@ func twoPartyCeremony(t *testing.T, dir string, now time.Time) (string, []ceremo
 	}
 	return path, ps, ceremonyDoc324{doc: doc, intent: got.Record.Intent}
 }
+
+// TestVerifyNamesTheEndStateOnlyFromThisMachinesOwnRecords is P08.S09's silence bullet.
+//
+// **The document does not carry how its ceremony ended and never will.** D25 forbids a structural
+// write after a signature, and two of D28's four end states — expired and abandoned — are
+// conclusions nobody can sign, because the party who would attest is the one that stopped
+// answering. So completeness is the only proceeding-level fact a Nib PDF proves about itself, and
+// an end state can only ever be read off the disk of whoever runs `nib verify`.
+//
+// **Three arms, and the first is the one that matters most.** With no local record the report says
+// NOTHING about how the ceremony ended — it must never print "completed" from an absent record,
+// which is the failure mode of every "no news is good news" default. With one, it says so under a
+// heading that disclaims the document. And the JSON nests it under its own key rather than beside
+// `complete`, so a script cannot read it as a property of the file.
+func TestVerifyNamesTheEndStateOnlyFromThisMachinesOwnRecords(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	path := convenedFixture(t, t.TempDir(), 3, 3)
+	now := time.Date(2026, 8, 24, 0, 0, 0, 0, time.UTC)
+
+	// ── Arm 1: no local record at all, which is every machine that was not party to it.
+	c := reportOf(t, path, now)
+	// SETUP: this really is a readable ceremony, or the silence below is the silence of a document
+	// with no record and proves nothing about the end-state path.
+	if !c.present || c.id == "" {
+		t.Fatalf("setup: the fixture carries no readable ceremony (present=%v id=%q), so an "+
+			"absent end state below would be absent for the wrong reason", c.present, c.id)
+	}
+	if c.endState != "" {
+		t.Errorf("`nib verify` reported end state %q on a machine holding no record for this "+
+			"ceremony. An end state invented from an absent record is the worst line this "+
+			"command can print: it is the one a reader will act on", c.endState)
+	}
+	for _, line := range c.lines() {
+		if strings.Contains(strings.ToLower(line), "how this ceremony ended") {
+			t.Errorf("the report carries the end-state heading with nothing to put under it:\n%s",
+				strings.Join(c.lines(), "\n"))
+		}
+	}
+	if j := c.json(); j != nil && j.LocalEnd != nil {
+		t.Errorf("the JSON carries localEnd %+v with no local record", j.LocalEnd)
+	}
+
+	// ── Arm 2: this machine holds its own note. Written through the product's own door.
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec, err := ceremony.CheckRecord(b, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := filepath.Join(home, "nib")
+	if err := ceremony.WriteReceipt(root, rec.ID, ceremony.Receipt{
+		Ceremony: rec.ID, State: ceremony.StateDeclined, ObservedAt: now,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	c = reportOf(t, path, now)
+	if c.endState != ceremony.StateDeclined {
+		t.Fatalf("with a local receipt reading %q, the report says %q",
+			ceremony.StateDeclined, c.endState)
+	}
+	if c.endSource == "" {
+		t.Error("the end state has no source. 'declined' is worth acting on and WHO SAYS SO is " +
+			"what decides how much — a signed termination and this machine's own note are both " +
+			"useful and are not the same evidence")
+	}
+	text := strings.Join(c.lines(), "\n")
+	if !strings.Contains(text, "THIS MACHINE") {
+		t.Errorf("the end state is printed without a heading disclaiming the document. Every "+
+			"other line in this report is derived from the bytes in hand; a reader deciding "+
+			"whether to rely on the document will take this for something the document says, "+
+			"and on another machine the same file produces no such line at all:\n%s", text)
+	}
+	if !strings.Contains(text, "does not record how its proceeding ended") {
+		t.Errorf("the report does not state the document's own silence:\n%s", text)
+	}
+	j := c.json()
+	if j == nil || j.LocalEnd == nil || j.LocalEnd.State != ceremony.StateDeclined {
+		t.Fatalf("the JSON does not carry localEnd: %+v", j)
+	}
+	if j.LocalEnd.Source == "" {
+		t.Error("the JSON's localEnd carries no source, so a script gets the claim without its " +
+			"standing")
+	}
+
+	// ── Arm 3: the end state does not touch the exit-code door. A declined ceremony that every
+	// obliged party signed is still a complete, untampered document, and `refuses()` is about what
+	// the DOCUMENT shows. Folding a local note into it would make `nib verify` exit differently on
+	// two machines for one file.
+	if c.refuses() {
+		t.Error("a locally-recorded 'declined' made refuses() fire on a document that is " +
+			"complete and untampered. The exit code is about the document; making it depend on " +
+			"this machine's own notes means one file verifies differently on two machines")
+	}
+}

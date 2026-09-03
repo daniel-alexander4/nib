@@ -3386,3 +3386,38 @@ expectation literally. So the check went red, said exactly what it was supposed 
 was still refused. That is the harness doing precisely its job: **a non-zero exit alone is also what
 a deleted or uncompilable check produces**, and it will not accept one as proof. Worth recording
 because the failure looked like a stale patch and was a typo in the assertion about the assertion.
+
+## P08.S09 — the phase close: two criteria that were driven by hand (v1.117.331)
+
+| Defect reintroduced | Check that fired | What it said |
+| --- | --- | --- |
+| `a-second-ceremony-on-one-document-is-admitted` — the 409 mapping dropped | `./build/ceremonyrepro.sh` CLAUSE 10, tier 6 | "C13 second convene … a document already under a live ceremony was convened again" |
+| `an-unloadable-ceremony-vanishes-from-the-live-listing` — `ListStored` filters to `LoadOK` | `./build/ceremonyrepro.sh` CLAUSE 11, tier 6 | "the damaged ceremony VANISHED from the listing rather than degrading … a ceremony Nib will not admit exists is one whose only remedy is finding and deleting the folder by hand" |
+
+**Both rows exist because C15 was not met, and the ledger is what found it.** *"Every criterion in
+this phase is driven by the multi-instance harness, not by hand"* — and C12 and C13 were driven only
+inside one process, where the convener, the vault, the identity and the document registry are the
+same object. Four criteria still are (C02, C06's expired and abandoned halves, C07, C14); those need
+instruments that do not exist, and they are recorded in the phase ledger rather than rounded up.
+
+`recorded` 266 → 268.
+
+**And the phase close ran `--lan -n 4`, which had been RED for four commits.** Six off-link packets
+against P03's zero. The cause was named by a stack trace on `ensureBootstrapped` —
+`armForDelivery` → `publishWhenSlow` → `publishLoop` → `publishCandidates` — and attributed to a
+single clause by counting packets at each clause boundary: `decline_round` 4, `close_out_round` 4,
+`interrupted_hop` 4, `decoy_document` **10**, against a baseline of 4.
+
+**The product was right.** ADR-011's hold is `lanFirstBudget` of *silence*, not forever: an arm that
+hears nothing pays one budget and publishes, because a genuinely remote peer has to be reachable.
+`interrupted_hop` and `decoy_document` deliberately leave a proceeding unfinished, so their arms are
+parties still waiting. The reading moved above them and they are pinned below it; `/pending 363`
+carries what that costs.
+
+**The four commits are the lesson, not the six packets.** `decoy_document` arrived at v1.117.328
+with no `--lan` run, and `CONTRIBUTING.md`'s tier-4b row still announced the harness as *"currently
+RED against shipped code"* for a defect fixed four phases earlier — so a reader who ran it had been
+told to expect the red. **A harness whose contract says it fails is a harness nobody reads the
+output of.** ADR-011's own text records this exact shape one clause over: *"the only `--lan` run was
+the two-party one, so the run that existed to prove P03's criterion was the one shape that could not
+reach the defect."*
