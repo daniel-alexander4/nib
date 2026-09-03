@@ -1332,3 +1332,12 @@ input.ovl-check { appearance: auto; accent-color: #1a7f37; background: transpare
   color: var(--subtext1);
   padding: 1px 0;
 }
+.cernext { margin-top: 8px; }
+.cernextbtn {
+  font-size: 11px;
+  padding: 2px 8px;
+}
+.cernextline { font-size: 11px; color: var(--subtext1); margin: 4px 0 0; }
+/* Your turn is the one line in this panel a user must act on, so it is the one line that is
+   emphasised. Colour is not the only channel: the sentence itself says "It is your turn to sign". */
+.cernextline.certurn { color: var(--green); font-weight: 600; }

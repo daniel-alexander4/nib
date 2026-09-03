@@ -65,6 +65,10 @@ const PUBLISHED = [
   // The ceremonies listing and its rows (P06.S02). It left EXCLUDED when the panel started reading
   // it, which is what an exclusion is for: a promise that somebody will, redeemed.
   { type: 'ceremoniesResponse', readers: ['web/app.js'] },
+  // Whose turn it is (P06.S03). The panel renders every branch of its three states, and `meKnown`
+  // beside `isMe` because a machine that does not know its position must not be told it is
+  // somebody else's turn.
+  { type: 'ceremonyNextResponse', readers: ['web/app.js'] },
   { type: 'peer', readers: ['web/app.js'] },
   { type: 'listDirResponse', readers: ['web/app.js'] },
   { type: 'dirEntry', readers: ['web/app.js'] },

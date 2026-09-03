@@ -10275,6 +10275,31 @@ function ceremonyCard(c) {
   if (roster.length) {
     card.appendChild(ceremonyRoster(roster, c.me));
   }
+
+  // **Whose turn it is, fetched when the user opens this card and not before (P06.S03).**
+  // `/api/ceremony/next` opens the DOCUMENT to answer, which is the cost `ListStored` was designed
+  // around never paying — measured at P08.S03 as 10/69/195 ms for 100/500/1000 pages. Per card on
+  // demand puts that cost where somebody asked a question, and nowhere else.
+  //
+  // **The answer is the server's and the rule is never rewritten here.** It comes from
+  // `p2p.NextContributor`, the same function `AdmitContribution` refuses with, which P07.S03a
+  // wrote in its question form for exactly this. A JS predicate over the roster would be a second
+  // derivation that agrees on the day it is written — the shape ADR-009 refuses.
+  if (c.state === 'ok') {
+    const next = document.createElement('div');
+    next.className = 'cernext';
+    const btn = document.createElement('button');
+    btn.className = 'cernextbtn';
+    btn.type = 'button';
+    btn.textContent = 'What happens next?';
+    btn.addEventListener('click', async () => {
+      btn.disabled = true;
+      next.textContent = '';
+      next.appendChild(await ceremonyNextLine(c.id));
+    });
+    next.appendChild(btn);
+    card.appendChild(next);
+  }
   return card;
 }
 
@@ -10352,4 +10377,55 @@ async function loadCeremonyPanel() {
     p.textContent = 'Nib could not read the ceremonies on this machine.';
     host.appendChild(p);
   }
+}
+
+// ceremonyNextLine asks the server whose turn it is and renders the sentence.
+//
+// **Every branch of the server's three states gets its own sentence**, because they want different
+// things from the user: `waiting` is somebody's turn, `complete` is finished, and `unavailable`
+// means Nib could not read enough to say — and folding the last two together would tell a user
+// whose ceremony finished that their document is damaged.
+async function ceremonyNextLine(id) {
+  const p = document.createElement('p');
+  p.className = 'cernextline';
+  let d;
+  try {
+    const res = await apiFetch(`/api/ceremony/next?ceremony=${encodeURIComponent(id)}`,
+      { unpinned: true });
+    if (!res.ok) throw new Error(String(res.status));
+    d = await res.json();
+  } catch (e) {
+    p.textContent = 'Nib could not work out what happens next for this ceremony.';
+    return p;
+  }
+  // **The echoed id is checked.** The panel can have several cards and each has its own button; a
+  // slow answer for one must never be rendered under another. The server echoes what it was asked
+  // about precisely so this comparison is possible.
+  if (d.ceremony && d.ceremony !== id) {
+    p.textContent = 'Nib could not work out what happens next for this ceremony.';
+    return p;
+  }
+  if (d.state === 'complete') {
+    p.textContent = 'Everyone has signed. This ceremony is finished.';
+    return p;
+  }
+  if (d.state !== 'waiting') {
+    p.textContent = d.reason || 'Nib cannot tell what happens next for this ceremony.';
+    return p;
+  }
+  const who = d.label || `party ${d.position}`;
+  const where = d.position && d.of ? ` (${d.position} of ${d.of} signing)` : '';
+  const cap = d.capacity ? `, ${d.capacity}` : '';
+  // **`meKnown` and `isMe` are different facts.** A machine that never recorded which party it is
+  // must not be told "it is not your turn" — that is an answer, and the honest one is that Nib
+  // does not know which of these parties the user is.
+  if (!d.meKnown) {
+    p.textContent = `Waiting for ${who}${cap}${where}. This copy of Nib cannot tell whether that is you.`;
+  } else if (d.isMe) {
+    p.textContent = `It is your turn to sign${cap}${where}.`;
+    p.classList.add('certurn');
+  } else {
+    p.textContent = `Waiting for ${who}${cap}${where}.`;
+  }
+  return p;
 }

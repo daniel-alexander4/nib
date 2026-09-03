@@ -306,6 +306,10 @@ func (s *Server) Handler() http.Handler {
 	// move than it was before it, which is the opposite of how "taking a route off the auth gate"
 	// reads.
 	mux.HandleFunc("GET /api/ceremonies", requirePublicLoopback(s.handleCeremonies))
+	// Whose turn is it, for ONE ceremony (P06.S03). Same footing as the listing above and for the
+	// same reasons: nothing here needs the vault, and `requirePublicLoopback` supplies the origin
+	// check `requireUnlocked` does not apply to GET. It is a pure read and must stay one.
+	mux.HandleFunc("GET /api/ceremony/next", requirePublicLoopback(s.handleCeremonyNext))
 	mux.HandleFunc("POST /api/ceremony/accept", s.requireUnlocked(s.handleCeremonyAccept))
 	mux.HandleFunc("POST /api/ceremony/deliver", s.requireUnlocked(s.handleCeremonyDeliver))
 	mux.HandleFunc("GET /api/attestations", s.requireUnlocked(s.handleAttestations))
