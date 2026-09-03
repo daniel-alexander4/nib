@@ -361,6 +361,19 @@ type Stored struct {
 	// object is indistinguishable from one still deciding, and this object cannot bind a convener
 	// — so no surface may render absence as "still running".
 	Ended string `json:"ended,omitempty"`
+	// Me is this machine's own fingerprint, when it was recorded — the ONE thing about a ceremony
+	// that a reader without a vault cannot work out for itself (P06.S02).
+	//
+	// **Empty means UNKNOWN, never "you are not a party."** A ceremony mirrored before the marker
+	// shipped has none, and its user is still a party; a panel reading the empty string as absence
+	// would tell every one of them they are looking at somebody else's proceeding. The two states
+	// a surface must keep apart are "we do not know which of these is you" and "you are not on
+	// this roster", and only the first is expressible here.
+	//
+	// It is a fingerprint rather than a roster index because everything else keys on the
+	// fingerprint, and because an index is a second derivation that goes wrong the moment a roster
+	// is read in a different order.
+	Me string `json:"me,omitempty"`
 	// The rest are populated only for LoadOK.
 	Intent  string    `json:"intent,omitempty"`
 	Expires time.Time `json:"expires,omitempty"`
@@ -428,6 +441,11 @@ func ReadStored(root, id string, now time.Time) Stored {
 			s.Ended = t.State
 		}
 	}
+	// **Read AFTER the record verifies, for the end state's reason and one more.** `Me` is a
+	// pointer INTO the roster, so it means nothing beside a roster that did not check out — and a
+	// panel that showed "you are party 3" against an unverifiable record would be reading a
+	// position out of a file it has just refused to trust.
+	s.Me = readMe(dir)
 	return s
 }
 

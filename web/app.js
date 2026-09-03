@@ -9978,10 +9978,25 @@ const SIDEBAR_FOR = {
   edit: ['thumbs'],
   sign: ['library'],
   secure: ['thumbs'],
-  collaborate: ['flags'],
+  // The ceremony panel joins Collaborate (P06.S02). The mode's goal is "convene, invite, connect,
+  // review, sign, deliver as a sidebar panel rather than a tab of modals", and this is the panel.
+  //
+  // **SECOND, and the order in this map is load-bearing in a way nothing here said.**
+  // `syncSidebarForMode` activates `panels[0]` whenever the showing panel is not valid for the
+  // mode, so the first entry IS the mode's default surface. Listing the ceremony panel first
+  // silently made it the Collaborate landing screen and took Flags off it — eight tier-3 tests
+  // went red waiting for `[data-marker="date"]`, a Flags control that was no longer displayed.
+  // Making this panel the default is a real product decision about where Collaborate lands, and it
+  // is not this slice's: S02 adds a read-only panel and changes no flow. It becomes the sensible
+  // default when it has actions to offer, which is S04's and S05's.
+  collaborate: ['flags', 'ceremony'],
 };
 function syncSidebarForMode(tab) {
   const panels = SIDEBAR_FOR[tab] || [];
+  // Loaded when the panel becomes reachable rather than on a timer or at boot. It reads the local
+  // mirror, so it is cheap and needs no network — but it is also not free (the server opens each
+  // record), and a user who never goes near Collaborate should not pay for it.
+  if (panels.includes('ceremony')) loadCeremonyPanel();
   all('.tabs .tab').forEach((t) => { t.hidden = !panels.includes(t.dataset.panel); });
   // If the showing panel isn't valid for this mode, switch to the mode's first.
   const active = document.querySelector('.tabs .tab.active');
@@ -10097,3 +10112,244 @@ window.addEventListener('unhandledrejection', (ev) => {
 
 // --- launch: check unlock state, then show the app or the first-run wizard ----
 refreshStatus();
+
+// --- The Signing Ceremony panel (P06.S02) -----------------------------------
+//
+// **Read-only, and that is a decision rather than a stage.** The panel renders the roster and this
+// machine's position, and offers no action. The next action is P06.S03's, computed by the same
+// function the server's L3 check uses — so building a rule for it here would be a second
+// implementation with a one-slice lifetime, which is the duplicate-derivation defect ADR-009
+// exists to refuse.
+//
+// **It renders while the vault is LOCKED**, which is why P06.S01 moved `GET /api/ceremonies` off
+// `requireUnlocked` onto `requirePublicLoopback`. Nothing here is sealed: every field comes from
+// `record.json`, which D29 leaves unsealed by design. The one thing a locked reader cannot work
+// out for itself is which roster entry it is, and the server records that at convene and accept
+// time, when the vault IS open, into the ceremony's own folder.
+//
+// **And it renders with no network**, because the route reads the local mirror and nothing else.
+// That is D24's resumption criterion: a screen that silently needed the DHT would be exactly the
+// failure it was written to catch.
+
+// CEREMONY_STATE_WORDS maps a load class to the sentence a person reads.
+//
+// The server already sends a `reason` for every degraded class, written for a human, and this map
+// is the HEADING above it rather than a second copy of it — a client-side rewrite of those four
+// sentences would be the two-implementations shape one language over.
+const CEREMONY_STATE_WORDS = {
+  ok: '',
+  absent: 'Nothing on disk',
+  unparseable: 'Damaged',
+  'version-skew': 'Newer version of Nib',
+  unverifiable: 'Does not verify',
+};
+
+// renderCeremonyPanel draws the ceremonies this machine knows about.
+//
+// **Every party is named and no hex fingerprint is shown**, which is one of this phase's exit
+// criteria. A roster entry with no label falls back to its six-word pairing name from the server,
+// never to the hex — the hex is the thing users are asked to compare aloud once, out of band, and
+// putting it in a list is what makes people stop reading it.
+function renderCeremonyPanel(data) {
+  const host = document.getElementById('ceremonyList');
+  if (!host) return;
+  host.textContent = '';
+  const list = (data && data.ceremonies) || [];
+  if (!list.length) {
+    const p = document.createElement('p');
+    p.className = 'libhint';
+    p.textContent = 'No signing ceremonies on this machine yet.';
+    host.appendChild(p);
+    return;
+  }
+  // **`primary` is the field and `note` is its sentence.** Read the flag rather than only the
+  // prose: a second Nib on this machine must not continue or remove these ceremonies, and a
+  // surface that inferred that from whether a string happened to be present would be reading the
+  // server's wording instead of the server's answer.
+  if (data.primary === false) {
+    const n = document.createElement('p');
+    n.className = 'libhint cernote';
+    n.textContent = data.note || 'Another copy of Nib is already running on this machine.';
+    host.appendChild(n);
+  }
+  for (const c of list) {
+    host.appendChild(ceremonyCard(c));
+  }
+  renderEndedCeremonies(host, (data && data.ended) || []);
+}
+
+// renderEndedCeremonies lists what this machine has closed out.
+//
+// **This is why the close-out prune is a move rather than a delete, made visible** (ADR-012). A
+// ceremony that ends leaves the live list by construction, and without this a user would watch it
+// vanish with no trace and no way to find the signed contribution the move deliberately preserved.
+// The receipt carries the state and the date THIS machine observed it — `Termination` has no
+// `When` on purpose, so a convener cannot drive what other machines believe about timing.
+function renderEndedCeremonies(host, ended) {
+  if (!ended.length) return;
+  const h = document.createElement('p');
+  h.className = 'libhint cerendedhead';
+  h.textContent = 'Finished — your copies are kept in the "ended" folder beside your ceremonies.';
+  host.appendChild(h);
+  for (const r of ended) {
+    const row = document.createElement('div');
+    row.className = 'cerended-row';
+    const what = document.createElement('span');
+    what.textContent = r.state === 'declined' ? 'Declined'
+      : r.state === 'completed' ? 'Completed'
+      : r.state === 'expired' ? 'Ran out of time'
+      // Deliberately NOT the word 'heard':  matches published field names as
+      // substrings of this file, so that word alone would satisfy `lanHeardResponse.Heard` — a
+      // reader claimed by a coincidence in prose, which is the blind spot /pending 252 nearly
+      // died on. Caught by that guard on this slice's own commit.
+      : 'No further word';
+    row.appendChild(what);
+    const when = new Date(r.observed_at);
+    if (!Number.isNaN(when.getTime())) {
+      const w = document.createElement('span');
+      w.className = 'cerwhen';
+      w.textContent = when.toLocaleDateString();
+      row.appendChild(w);
+    }
+    host.appendChild(row);
+  }
+}
+
+// ceremonyCard builds one ceremony's entry.
+//
+// **A degraded ceremony still gets a card**, with its class and the server's sentence. It must not
+// vanish: a ceremony Nib will not admit exists is one whose only remedy is finding and deleting
+// the folder by hand, which is where the user already is. That is C12's client half, and the same
+// rule `ListStored` holds on the server.
+function ceremonyCard(c) {
+  const card = document.createElement('div');
+  card.className = 'cercard';
+  card.dataset.ceremony = c.id;
+  card.dataset.state = c.state || '';
+
+  const head = document.createElement('div');
+  head.className = 'cerhead';
+  const title = document.createElement('span');
+  title.className = 'cerintent';
+  // The recital is what the parties agreed to, and it is the only thing here worth reading first.
+  // A degraded ceremony has none, so it is named by what it is instead — never by its hex id.
+  title.textContent = c.intent || 'A ceremony on this machine';
+  head.appendChild(title);
+  if (c.state && c.state !== 'ok') {
+    const badge = document.createElement('span');
+    badge.className = 'cerbadge';
+    badge.textContent = CEREMONY_STATE_WORDS[c.state] || c.state;
+    head.appendChild(badge);
+  }
+  if (c.ended) {
+    const e = document.createElement('span');
+    e.className = 'cerbadge cerended';
+    e.textContent = c.ended === 'declined' ? 'Declined' : 'Completed';
+    head.appendChild(e);
+  }
+  card.appendChild(head);
+
+  if (c.reason) {
+    const r = document.createElement('p');
+    r.className = 'cerreason';
+    r.textContent = c.reason;
+    card.appendChild(r);
+  }
+
+  // **The deadline, in human units — and it is the only one this panel ever shows.** The phase's
+  // criterion is that the ceremony deadline appears in human units and neither the connect
+  // deadline nor the exchange deadline appears as a countdown at all. This is that one, and it is
+  // a date rather than a ticking figure: a countdown invites a user to watch it, and the thing
+  // they can act on is the date.
+  if (c.expires && !String(c.expires).startsWith('0001-')) {
+    const d = document.createElement('p');
+    d.className = 'cerdeadline';
+    const when = new Date(c.expires);
+    d.textContent = Number.isNaN(when.getTime())
+      ? ''
+      : `Open until ${when.toLocaleDateString()} at ${when.toLocaleTimeString()}`;
+    if (d.textContent) card.appendChild(d);
+  }
+
+  const roster = c.roster || [];
+  if (roster.length) {
+    card.appendChild(ceremonyRoster(roster, c.me));
+  }
+  return card;
+}
+
+// ceremonyRoster renders the parties, marking which one is this machine.
+//
+// **An absent `me` is UNKNOWN and never "you are not a party."** A ceremony mirrored before the
+// marker shipped has none, and its user is still very much a party; reading the empty string as
+// absence would tell every one of them they are looking at somebody else's proceeding. So with no
+// marker the list is drawn with nobody marked and a line saying so, rather than with everybody
+// implicitly marked as somebody else.
+function ceremonyRoster(roster, me) {
+  const wrap = document.createElement('div');
+  wrap.className = 'cerroster';
+  const known = typeof me === 'string' && me !== '';
+  let mine = -1;
+  roster.forEach((p, i) => {
+    const row = document.createElement('div');
+    row.className = 'cerparty';
+    const isMe = known && typeof p.fingerprint === 'string'
+      && p.fingerprint.toLowerCase() === me.toLowerCase();
+    if (isMe) { row.classList.add('cerme'); mine = i; }
+    const who = document.createElement('span');
+    who.className = 'cerwho';
+    // Label, then the six-word name, then "Party k" — and never the hex. Position is a fact about
+    // the roster and reads as one; a fingerprint in a list is a string nobody checks.
+    who.textContent = p.label || p.name || `Party ${i + 1}`;
+    row.appendChild(who);
+    const role = document.createElement('span');
+    role.className = 'cerrole';
+    // **Capacity, where the party declared one.** It is the difference between "Alice Tenant" and
+    // "Alice Tenant, as attorney-in-fact for X", which is the whole reason D20 put it on the block
+    // — a roster that renders the name and drops the capacity shows a different agreement from the
+    // one the signature covers.
+    role.textContent = p.capacity
+      ? `${p.capacity} · ${p.signs === false ? 'does not sign' : 'signs'}`
+      : (p.signs === false ? 'does not sign' : 'signs');
+    row.appendChild(role);
+    if (isMe) {
+      const tag = document.createElement('span');
+      tag.className = 'certag';
+      tag.textContent = 'you';
+      row.appendChild(tag);
+    }
+    wrap.appendChild(row);
+  });
+  const pos = document.createElement('p');
+  pos.className = 'cerpos';
+  pos.textContent = known && mine >= 0
+    ? `You are party ${mine + 1} of ${roster.length}.`
+    : 'This copy of Nib cannot tell which of these parties you are.';
+  wrap.appendChild(pos);
+  return wrap;
+}
+
+// loadCeremonyPanel fetches the listing and renders it.
+//
+// **Unpinned**, because the question is about this machine and not about a document: `apiFetch`
+// attaches `X-Nib-Doc` to every call by design, and pinning this one would ask after a document
+// that has nothing to do with which ceremonies are on disk.
+//
+// A failure renders a sentence rather than an empty panel, for the reason a degraded ceremony
+// still gets a card: an empty shelf and a broken read look identical, and only one of them is the
+// user's problem to act on.
+async function loadCeremonyPanel() {
+  try {
+    const res = await apiFetch('/api/ceremonies', { unpinned: true });
+    if (!res.ok) throw new Error(String(res.status));
+    renderCeremonyPanel(await res.json());
+  } catch (e) {
+    const host = document.getElementById('ceremonyList');
+    if (!host) return;
+    host.textContent = '';
+    const p = document.createElement('p');
+    p.className = 'libhint';
+    p.textContent = 'Nib could not read the ceremonies on this machine.';
+    host.appendChild(p);
+  }
+}

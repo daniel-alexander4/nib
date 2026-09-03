@@ -1,11 +1,9 @@
-diff --git a/internal/server/accept.go b/internal/server/accept.go
-index deb207e..394c8d2 100644
 --- a/internal/server/accept.go
 +++ b/internal/server/accept.go
-@@ -144,7 +144,9 @@ func (s *Server) handleCeremonyAccept(w http.ResponseWriter, r *http.Request) {
- 	// the convener at one end, so this party can never be on a hop with anybody else; pinning
- 	// the rest of the roster would pin up to thirty peers it can never dial. See
- 	// pinCeremonyRoster.
+@@ -163,7 +163,9 @@
+ 		log.Printf("accepted ceremony %s: could not record which party this machine is: %v — the "+
+ 			"ceremony works, but the panel cannot show your position in it", inv.ID, merr)
+ 	}
 -	n, perr := pinCeremonyRoster(v, inv.ID, []ceremony.Party{convener}, me)
 +	n, perr := 0, error(nil)
 +	_ = convener

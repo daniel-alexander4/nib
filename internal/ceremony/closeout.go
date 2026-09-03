@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"time"
 
 	"nib/internal/atomicfile"
@@ -277,4 +278,57 @@ func ListEnded(root string) ([]Receipt, error) {
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].ObservedAt.After(out[j].ObservedAt) })
 	return out, nil
+}
+
+// Which party this machine is — the one thing about a ceremony the vault holds (P06.S02).
+//
+// **Everything else in a ceremony directory is answerable without the vault**, which is what let
+// P06.S01 take the listing off the lock: `ReadStored` reads `record.json` and nothing else. The one
+// question it cannot answer is *"which of these parties am I"*, because that needs this machine's
+// own fingerprint and `identity(v)` is sealed.
+//
+// **So it is recorded when it IS known.** Both write paths already hold the value at the moment
+// they write the mirror — `handleCeremonyAccept` computes `me` and passes it to
+// `pinCeremonyRoster`, and `handleCeremonyConvene` passes the convener's fingerprint for the same
+// parameter — and neither recorded it. This is one line at each of two sites that already have it.
+//
+// **It discloses nothing new.** `record.json`'s roster already carries this machine's fingerprint,
+// among the others, in the same directory, unsealed by D29's own design. `me` is a pointer into a
+// file that is already there, not a second copy of a secret — which is why this needs no new global
+// identity file and nothing appears on a machine that is party to no ceremony.
+
+// meFile names the marker inside a ceremony directory.
+const meFile = "me"
+
+// WriteMe records which roster entry this machine is, for a reader that has no vault.
+//
+// Best-effort at its call sites and deliberately so: a ceremony whose `me` failed to write is
+// readable, resumable and signable exactly as before — the panel simply cannot say "you are party 3
+// of 4" until the next write. Refusing an accept over it would trade a whole ceremony for a label.
+func WriteMe(root, id, fingerprint string) error {
+	dir, err := MirrorDir(root, id)
+	if err != nil {
+		return err
+	}
+	if fingerprint == "" {
+		return errors.New("a roster position needs a fingerprint to point at")
+	}
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return err
+	}
+	return atomicfile.WriteDurable(filepath.Join(dir, meFile),
+		[]byte(strings.ToLower(fingerprint)+"\n"), 0o600)
+}
+
+// readMe returns this machine's fingerprint for a ceremony, or "" when it was never recorded.
+//
+// **Absence is UNKNOWN and never "not a party."** A ceremony mirrored before this shipped has no
+// marker and its user is still very much a party; a panel that read the empty string as "you are
+// not in this" would tell every one of them they are looking at somebody else's proceeding.
+func readMe(dir string) string {
+	b, err := os.ReadFile(filepath.Join(dir, meFile))
+	if err != nil {
+		return ""
+	}
+	return strings.ToLower(strings.TrimSpace(string(b)))
 }
