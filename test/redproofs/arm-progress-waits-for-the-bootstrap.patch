@@ -1,0 +1,11 @@
+--- a/internal/server/session.go
++++ b/internal/server/session.go
+@@ -760,7 +760,7 @@
+ 	// and where a browse has answered that hold is `lanFirstBudget`, thirty seconds. D16's
+ 	// criterion is per-tier progress for the WHOLE connect deadline and never a blank spinner, so
+ 	// this is published while armed regardless of what the diagnosis can yet say.
+-	if cer != nil && !inSession {
++	if cer != nil && !inSession && cer.bootstrapDone.Load() {
+ 		st.Progress = cer.armProgressOf(time.Now())
+ 	}
+ 	return st

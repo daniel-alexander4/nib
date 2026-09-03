@@ -1,11 +1,9 @@
-diff --git a/web/app.js b/web/app.js
-index a5c1590..d9fb564 100644
 --- a/web/app.js
 +++ b/web/app.js
-@@ -1355,7 +1355,7 @@ async function pollRecv(token) {
-   if (token !== recvPoll) return;
+@@ -1357,7 +1357,7 @@
    reflectArmed(!!st.armed); // the server can disarm on its own (a timeout), and then so does this
    reflectNotice(st.notice);
+   reflectArmProgress(st.progress);
 -  reflectDiagnosis(st.diagnosis);
 +
    // `until` is when this arm gives up. Read here so the indicator says how long is left rather

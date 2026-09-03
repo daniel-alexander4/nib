@@ -753,6 +753,16 @@ func (se *session) status() sessionStatus {
 			st.Diagnosis = &diagnosisView{Cause: causeName(d.cause), Summary: d.summary, Detail: d.detail}
 		}
 	}
+	// **Live tier progress, and NOT behind the diagnosis's gate (P06.S05, D16).** The condition
+	// above is right for a verdict — a cause computed before the DHT has had its chance would
+	// accuse the wrong tier — and it is exactly why this screen has been blank for the longest
+	// stretch of an arm: under ADR-011 nothing bootstraps until the local link has had its window,
+	// and where a browse has answered that hold is `lanFirstBudget`, thirty seconds. D16's
+	// criterion is per-tier progress for the WHOLE connect deadline and never a blank spinner, so
+	// this is published while armed regardless of what the diagnosis can yet say.
+	if cer != nil && !inSession {
+		st.Progress = cer.armProgressOf(time.Now())
+	}
 	return st
 }
 
@@ -1620,6 +1630,13 @@ type sessionStatus struct {
 	Until *time.Time `json:"until,omitempty"`
 	// Notice is the last background failure, and it outlives the session — see session.notice.
 	Notice *noticeView `json:"notice,omitempty"`
+	// Progress is what each tier of the connection ladder is doing right now (P06.S05).
+	//
+	// **Beside `Diagnosis`, never instead of it**, and the two answer different questions: this is
+	// *what is happening*, that is *why nothing has*. They are also published under different
+	// conditions — the diagnosis waits for `bootstrapDone` so it cannot accuse the wrong tier, and
+	// this does not, because the wait is the thing a user most needs described.
+	Progress *armProgress `json:"progress,omitempty"`
 }
 
 // noticeView is something that went wrong where no response could carry it (P08.S08).

@@ -3499,3 +3499,32 @@ And one did not compile, which is `redproof.sh`'s red-for-the-wrong-reason arriv
 rather than in the harness.
 
 `recorded` 270 → 271.
+
+## P06.S04–S05 — the surfaces (v1.117.337–.338)
+
+| Defect reintroduced | Check that fired | What it said |
+| --- | --- | --- |
+| `arm-progress-waits-for-the-bootstrap` — the progress view put behind the diagnosis's gate | `TestTheStatusPublishesProgressBeforeTheBootstrap`, tier 1 | "the status carries NO progress while the bootstrap has not run … under ADR-011 the bootstrap waits for the local link — thirty seconds on a LAN by lanFirstBudget. D16 says that window must never be blank, and it is the window" |
+
+**One row, and it re-creates the state that shipped.** `sessionStatus` fills `Diagnosis` only once
+`bootstrapDone` is true, and that condition is *right* — a cause computed before the DHT has had its
+chance accuses the wrong tier. The defect is putting the live progress view behind the same
+condition, because it would then arrive at the moment the diagnosis could already speak, which is
+after the window it exists for.
+
+**Two harness defects were found by running, not by reading, and neither is in the product.** The
+new jsdom file hung the whole suite at its 900-second ceiling: `pollRecv` reschedules every 1.5 s
+while armed and node's runner waits for a quiet event loop, so a file that leaves an arm up holds
+the run open — and the file alone ran in ten seconds, which is what made it look like a suite
+problem. And the tick was 1400 ms against a 1500 ms poll, so a state change could render one poll
+late; measured when the `refused` case rendered the `silent` sentence. **A wait shorter than the
+thing it waits for is a flake that passes most of the time.**
+
+**And the published-observable scan collided with prose for the second time in one phase — this
+time with the comment explaining the first collision.** It claims a reader when a `.js` file
+contains `"."+field`, or mentions the json tag as a bare word. So the obvious word for the link
+tier's found-state claimed a field that is genuinely unread, and so did a comment that spelled the
+field out. Fixed at the wire value rather than the copy. **That a comment cannot name the field it
+is about is the tell**, and it is recorded in the slice's inventory rather than worked around.
+
+`recorded` 271 → 272.
