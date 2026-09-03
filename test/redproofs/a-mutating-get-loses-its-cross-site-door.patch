@@ -1,0 +1,13 @@
+diff --git a/internal/server/server.go b/internal/server/server.go
+index fb15a09..c281af8 100644
+--- a/internal/server/server.go
++++ b/internal/server/server.go
+@@ -305,7 +305,7 @@ func (s *Server) Handler() http.Handler {
+ 	// refuses `Sec-Fetch-Site: cross-site` outright. So this route ends up BETTER guarded after the
+ 	// move than it was before it, which is the opposite of how "taking a route off the auth gate"
+ 	// reads.
+-	mux.HandleFunc("GET /api/ceremonies", requirePublicLoopback(s.handleCeremonies))
++	mux.HandleFunc("GET /api/ceremonies", s.requireUnlocked(s.handleCeremonies))
+ 	// Whose turn is it, for ONE ceremony (P06.S03). Same footing as the listing above and for the
+ 	// same reasons: nothing here needs the vault, and `requirePublicLoopback` supplies the origin
+ 	// check `requireUnlocked` does not apply to GET. It is a pure read and must stay one.

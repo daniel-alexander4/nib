@@ -3556,3 +3556,32 @@ red-for-the-wrong-reason, arriving in a manual probe where no harness was watchi
 with a compiling mutation; the catch is real.
 
 `recorded` 272 → 273.
+
+## /pending 365 — a mutating GET keeps its cross-site door (v1.117.343)
+
+| Defect reintroduced | Check that fired | What it said |
+| --- | --- | --- |
+| `a-mutating-get-loses-its-cross-site-door` — `GET /api/ceremonies` put back behind `requireUnlocked` | `TestEveryMutatingGETIsBehindTheLoopbackDoor`, tier 1 | "handleCeremonies answers GET /api/ceremonies behind requireUnlocked and calls closeOutEnded" |
+
+**This is not a hypothetical defect — it is the one P06.S01 fixed, reintroduced verbatim.**
+P08.S06 hung the close-out sweep off `GET /api/ceremonies`, and `requireUnlocked` applies the CSRF
+check and the origin check to **non-GET methods only**. So a route that moves ceremony directories
+and drops vault pins was reachable from any page the user had open — an `<img src>` is enough, and
+the attacker never needs to read the response.
+
+**The guard checks the DOOR, not a list of names** (ADR-009). A `declared` map would need an entry
+for every legitimate mutating GET, and an entry is a claim somebody typed; `requirePublicLoopback`
+in the registration is a fact the code carries, so the exemption and the fix are the same edit.
+
+**Its predicate is a keyword set and cannot follow calls** — a write behind a helper is invisible,
+and matching the call graph is the accurate-and-much-more-machinery shape /pending 365 named and
+this deliberately is not. It catches the shape that actually occurred. It also carries **two setup
+assertions**, because a source scan is where the vacuous green lives: the glob must match at least
+twenty files and the parse must resolve at least fifteen GET registrations, so a scan that reads
+nothing fails rather than reporting a clean bill over an empty set.
+
+**A second mutation probed the other arm** — an `os.MkdirAll` typed into `handleRecent`, a GET
+behind `requireUnlocked` that has nothing to do with ceremonies. Red, by name: the guard is not
+special-cased to the one route that produced it.
+
+`recorded` 273 → 274.
