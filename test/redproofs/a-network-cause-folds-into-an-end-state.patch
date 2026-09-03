@@ -1,0 +1,11 @@
+--- a/internal/server/diagnosis.go
++++ b/internal/server/diagnosis.go
+@@ -240,7 +240,7 @@
+ 	// Cause 4 — the peer published, the classes do not explain it: filtering, a firewall, asymmetry.
+ 	return diagnosis{
+ 		cause:   causeOther,
+-		summary: "Couldn't establish a connection.",
++		summary: "Ran out of time",
+ 		detail: "The other side published an address but the connection didn't complete — most " +
+ 			"likely a firewall or filtering on one of the two networks. A VPN you both run is the " +
+ 			"reliable fallback.",

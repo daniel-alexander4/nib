@@ -3744,3 +3744,45 @@ what made it invisible there — **a lesson written down in the sibling harness 
 one carries.**
 
 `recorded` 280 → 284.
+
+## P06.S08 — twelve outcomes, and the two that said the same thing (v1.117.347)
+
+| Defect reintroduced | Check that fired | What it said |
+| --- | --- | --- |
+| `abandoned-borrows-the-unknown-sentence` — the `abandoned` arm removed | `outcomes.test.mjs`, tier 2 | "\"a-state-from-a-newer-nib\" and \"abandoned\" both render as \"No further word\"" |
+| `the-ended-list-hides-when-nothing-is-live` — the early return skips the ended list again | the same file, tier 2 | "setup: no ended row rendered for completed, so nothing is being compared" |
+| `a-network-cause-folds-into-an-end-state` — one D19 summary renamed to an end-state word | `TestEveryD19OutcomeSaysItsOwnThing`, tier 1 | "the end-state word \"Ran out of time\" is also the D19 summary for \"published, and it still did not connect\"" |
+
+**The third row is the criterion's own example of failure, reproduced.** *"A screen that folds
+'they declined' into 'couldn't establish a connection' fails this."*
+
+**The check had to move to Go, and that is the finding underneath it.** D28's end-state words are
+rendered by `renderEndedCeremonies` in `web/app.js`; D19's summaries are built by `classifyD19`. A
+jsdom test can compare five sentences it was handed, which is a fact about its own fixture — the
+vacuous green wearing a distinctness assertion. The Go test drives the classifier for every cause
+and reads the other side out of the file that owns it, so both halves are the product.
+
+**The count was wrong twice and is now enumerated rather than asserted.** The criterion says eight
+outcomes and *"D19's four network causes"*; the plan review of 2026-08-18 had already corrected D19
+to five, and this criterion kept the stale number. This slice's first pin then said nine, and
+driving `classifyD19` says **seven summaries across five causes** — `causePeerRecordUnusable` has
+two (a record refused, and a record with no address yet) and `causeMappingDependent` has two (with
+and without a directly reachable IPv6 endpoint). Plus five end-state words: twelve. A sixth cause
+added tomorrow joins the set without anybody bumping a literal.
+
+**Two live defects, both found by writing the driver rather than by reading.** `abandoned` had no
+arm of its own, so *"this proceeding ended in silence"* and *"this receipt was written by a newer
+Nib"* were the same sentence — different facts, and only one of them is about the ceremony. And
+`renderCeremonyPanel` returned early on an empty live list, so the ended list never rendered: a
+machine whose ONLY ceremonies were finished showed *"No signing ceremonies on this machine yet."*
+and nothing else. **ADR-012 moves a closed-out ceremony rather than deleting it precisely so the
+party's own signed contribution stays findable**, and the panel hid it in exactly the case that
+argument was written for.
+
+**And the scrape that reads those words was over-inclusive on its first cut** — an 800-byte window
+swept up the comment above the ternary and found eight "words" where there are five. It passed,
+because an over-inclusive scrape only makes the collision check stricter; a check that passes for
+the wrong reason is what this whole file is about. Bounded at the statement and filtered to the
+quoted strings that begin with a capital, it reads exactly five.
+
+`recorded` 284 → 287.
