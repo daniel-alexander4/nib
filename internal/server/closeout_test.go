@@ -583,3 +583,64 @@ func hasPin(v *vault.Vault, fp []byte) bool {
 	}
 	return false
 }
+
+// TestANonPrimaryNibDoesNotCloseOut is /pending 362.
+//
+// **The sentence was tested and the code that makes it true was not**, which is the wrong way
+// round. The listing route tells the user *"another copy of Nib is already running on this machine.
+// This one can show your ceremonies but must not continue or REMOVE them, because both would be
+// writing to the same folder"* — and `TestTheCeremonyListingSaysWhenThisNibMustNotAct` asserts that
+// prose while nothing drove the gate underneath it.
+//
+// The repo deliberately lets a second Nib run: P08.S03 killed the planned lock on
+// `~/nib/ceremonies/` because `instanceToken` already carries the signal. So the signal has to be
+// READ at every door that writes, and this door moves directories and drops vault pins.
+//
+// **Both arms, from one fixture.** A test that only checked the non-primary case passes against a
+// sweep that never closes anything out — which would be a different defect wearing the same green.
+func TestANonPrimaryNibDoesNotCloseOut(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	srv, v := unlockedServer(t)
+	rec, _, _ := ceremonyOnDisk(t)
+	root := defaultOutputDir()
+
+	// Make it closeable: a delivered document is C11's central case, so a primary sweep WILL move
+	// it. Without this the non-primary arm asserts that nothing happened to something nothing was
+	// going to happen to.
+	path := deliveredPathFor(rec)
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("the finished document"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	live, err := ceremony.MirrorDir(root, rec.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// ── The NON-PRIMARY arm: another Nib holds this machine's instance record.
+	srv.mu.Lock()
+	srv.instanceToken = ""
+	srv.mu.Unlock()
+	srv.closeOutEnded(v, time.Now())
+	if _, serr := os.Stat(live); serr != nil {
+		t.Fatalf("a NON-primary Nib closed out a ceremony (%v). The listing route tells the user "+
+			"this copy 'must not continue or remove them, because both would be writing to the "+
+			"same folder' — two processes moving one directory with no lock between them is "+
+			"exactly what P08.S03 declined to solve with a lock, on the grounds that "+
+			"instanceToken already carried the signal", serr)
+	}
+
+	// ── The PRIMARY arm, from the same fixture: it DOES close out. Without this the assertion
+	// above is satisfied by a sweep that never moves anything.
+	srv.mu.Lock()
+	srv.instanceToken = "this-one"
+	srv.mu.Unlock()
+	srv.closeOutEnded(v, time.Now())
+	if _, serr := os.Stat(live); !os.IsNotExist(serr) {
+		t.Errorf("the PRIMARY Nib did not close out a delivered ceremony (%v), so the arm above "+
+			"proves nothing: it would pass against a sweep that closes nothing at all", serr)
+	}
+}
