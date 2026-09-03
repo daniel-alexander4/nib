@@ -859,11 +859,31 @@ ceremony() { # transport port outfile from to [indoc] [want_sigs] [want_proceedi
   local watch_b=$!
 
   # B's consent, on its own watcher: /initiate blocks until B has accepted.
+  #
+  # **It QUOTES before responding, which is what a real client does and what this harness never
+  # did (P06.S06, /pending 317).** The responder's block is built by `/api/session/quote`, and
+  # until v1.117.339 that quote applied no `StampCommitment` — so the block a party read carried
+  # neither their capacity nor their position, while the signature underneath carried both. Posting
+  # a fixed `CONSENT_ANSWER` with no quote meant this tier could never see it.
+  #
+  # The quote's `lines` and `when` are saved for the clause below, and `when` is echoed so the
+  # signature carries the moment the party was ASKED rather than the moment the bytes were signed.
   (
     for _ in $(seq 1 240); do
       if [ -n "$(curl -fsS "$B/api/session/status" 2>/dev/null | jget pending.fingerprint)" ]; then
+        curl -fsS -X POST "$B/api/session/quote" -H 'Content-Type: application/json' \
+          -H "X-CSRF-Token: $CSRF_B" -d '{"intent":"I accept"}' \
+          -o "$WORK/quote.$transport.json" 2>/dev/null
+        answer="$(python3 -c "
+import json,sys
+try:
+    q=json.load(open('$WORK/quote.$transport.json'))
+except Exception:
+    q={}
+print(json.dumps({'accept':True,'intent':'I accept','when':q.get('when','')}))" 2>/dev/null)"
+        [ -n "$answer" ] || answer="$CONSENT_ANSWER"
         curl -fsS -X POST "$B/api/session/respond" -H 'Content-Type: application/json' \
-          -H "X-CSRF-Token: $CSRF_B" -d "$CONSENT_ANSWER" >/dev/null 2>&1
+          -H "X-CSRF-Token: $CSRF_B" -d "$answer" >/dev/null 2>&1
         exit 0
       fi
       sleep 0.25
@@ -1003,6 +1023,71 @@ for i, a in enumerate(ats):
 print(f"[{t}] the attestations route answers from the cached status: {len(ats)} valid, "
       f"cross-bound, proceeding claimed={wantproc}")
 PYATT
+
+  # ── P06.S06: the block the RESPONDER was shown is the block their key signed ──────────────
+  #
+  # **`/pending 317`, driven across a real hop.** `StampCommitment` overwrites six fields inside a
+  # ceremony — the roster hash and its version, the recital, the position, the roster size and the
+  # capacity — and until v1.117.339 it was called at both SIGNING points and at neither quote. So a
+  # party read a block at their consent screen and their key signed a different one. Tier 1 compares
+  # the two renderings line by line; this is the half that crosses two processes and a wire.
+  #
+  # **The evidence is the stamped fields on the signed attestation**, read back through
+  # `/api/attestations` on the party who now holds the finished document — `position` and
+  # `rosterSize` exist only if the stamp happened — **and the same position in the QUOTE's own
+  # lines**. Either alone proves half of it: the signature stamped and the quote not is exactly the
+  # shipped defect, and it is what a check of the signature alone would pass.
+  # **Gated on `wantproc`, and the gate is the point.** Outside a ceremony there is no roster, so
+  # `StampCommitment` returns before touching anything and the quote and the signature agree by
+  # both being unstamped — which is correct, and is why the manual two-party run (`-n 2`, the
+  # default) must not be graded here. Measured: this clause's first run failed on exactly that
+  # case, reporting "nothing was stamped at all" about a co-sign that has nothing to stamp.
+  if [ "$wantproc" = "1" ]; then
+  python3 - "$WORK/quote.$transport.json" "$WORK/atts.$transport.json" "$transport" <<'PYQUOTE' || exit 1
+import json, re, sys
+qf, af, t = sys.argv[1], sys.argv[2], sys.argv[3]
+try:
+    q = json.load(open(qf))
+except Exception as e:
+    print(f"FAIL: [{t}] the responder never quoted, so this clause has nothing to compare: {e}",
+          file=sys.stderr)
+    sys.exit(1)
+lines = q.get("lines") or []
+if not lines:
+    print(f"FAIL: [{t}] the quote returned no lines at all", file=sys.stderr); sys.exit(1)
+if not q.get("when"):
+    print(f"FAIL: [{t}] the quote pinned no time. The block a party consents to must be the block "
+          f"that is signed, and without a pinned time the signature carries the moment the bytes "
+          f"were signed rather than the moment they were asked.", file=sys.stderr)
+    sys.exit(1)
+d = json.load(open(af))
+ats = d.get("attestations") or []
+# **`rosterHash`, not `rosterSize`, and the difference is a measured fact about the wire.** The
+# signed tag is `[NibRoster:<version>:<hash>]` — version and hash, nothing else. The POSITION is
+# rendered into the visible block (`AppearanceLines`) and is not in the tag, because it is
+# derivable from the roster and the signer's fingerprint and putting a derived value on the wire
+# is a second source of truth. So the signature side proves the stamp with its hash and the quote
+# side proves it with its position; asking either for the other's evidence fails on a run where
+# everything is correct, which is what the first cut of this clause did.
+stamped = [a for a in ats if a.get("rosterHash")]
+if not stamped:
+    print(f"FAIL: [{t}] no signature on the finished document carries a roster commitment, so "
+          f"nothing was stamped at all and this clause cannot tell a fixed quote from a fixed "
+          f"signature. attestations={ats}", file=sys.stderr)
+    sys.exit(1)
+# The quote must name a position too — that is the half the shipped defect got wrong.
+if not any(re.search(r"Party\s+\d+\s+of\s+\d+", ln) for ln in lines):
+    print(f"FAIL: [{t}] the signed attestation carries a roster commitment and the QUOTE names no "
+          f"position: "
+          f"{lines!r}. That is /pending 317 exactly — the party read one block and signed another.",
+          file=sys.stderr)
+    sys.exit(1)
+print(f"[{t}] the responder's quoted block names its roster position and the signature carries "
+      f"the roster commitment \u2014 the block shown is the block signed")
+PYQUOTE
+  else
+    echo "[$transport] quote/signature agreement: not graded — no ceremony, so nothing to stamp"
+  fi
 
   # ── The receiver's own durable copy, on disk (/pending 343) ──────────────────
   #

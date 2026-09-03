@@ -544,8 +544,8 @@ type l3Confirmer struct {
 	intent string
 }
 
-func (c l3Confirmer) Confirm(SignerAttestation, []byte) (bool, string, []byte, error) {
-	return c.accept, c.intent, nil, nil
+func (c l3Confirmer) Confirm(SignerAttestation, []byte) (bool, string, []byte, time.Time, error) {
+	return c.accept, c.intent, nil, time.Time{}, nil
 }
 
 // TestTheRelayCeilingAtFourParties — where the N-party relay stopped BEFORE P07.S05, measured, and

@@ -4748,7 +4748,7 @@ Tasks:
 - **T04** — the DHT sentence beside it (D34, STANDARDS §9), and the deadline audit: the ceremony
   deadline in human units, and **no** countdown for the connect or exchange deadlines.
 
-#### P06.S06 — The quote routes build the attestation the signing path signs *(`/pending 317`; re-opens P07 C09, C15, C19)*
+#### P06.S06 — The quote routes build the attestation the signing path signs *(`/pending 317`; re-opens P07 C09, C15, C19)* *(**done** 2026-09-03, v1.117.339 — 5 clauses met; `/pending 317` CLOSED. **The deepdive corrected the item twice.** It said *five of six lines* and `StampCommitment` overwrites **six** fields plus the signer's label — a number nothing had measured, so the guard compares PER LINE and a regression names the field. And it implied both quotes were affected: the INITIATOR's is not, because `web/app.js` sends no invitation on that path, so `handleSessionInitiate` builds the zero Roster too and quote and signature **agree by both being unstamped**. The defect is the responder's block, which is what the item's own words said. **The receiving side was worse than recorded**: `handleSessionQuote` returned no `When` and `coSignExchange` took `time.Now()` at contribution, so the block differed by however long the party spent reading — `Confirmer.Confirm` carries the pinned time now. **And the fit check ran BEFORE the stamp**, which nothing had noticed: stamping adds a capacity line and a position line, so a ceremony block could pass the quote's height check and overflow at the signature — the silent-clamp case P07.S08 records. **Two harness defects, both found by running**: the tier-4 clause first asked the signature for a POSITION the wire does not carry (the tag is version and hash; the position is rendered and derivable), and it fired on the manual run which has nothing to stamp. Residue `/pending 367`. 1 red proof, floor 272 → 273.)*
 Scope: server-side, and placed BEFORE the consent screen because that screen renders what a quote
 returns. The block a party sees disagrees with the signature beneath it in five of six lines:
 `cosignAttestation` never calls `StampCommitment`, so a quote is structurally incapable of returning
@@ -4761,6 +4761,45 @@ Acceptance:
   cannot say which line moved.
 - P07's C09/C15/C19 are re-ledgered from `⚠ partly met` at the close.
 - Tier: 1 for the door and the per-line equality; 4 for a quote and a signature on the same hop.
+
+**Deepdive, 2026-09-03 — six fields, not five, and the receiving side is worse than the initiating one.**
+
+- **`StampCommitment` overwrites SIX fields on a ceremony**, not five: `RosterHash`,
+  `RosterVersion`, `Intent` (the recital, from the record — *"whatever the caller put here is
+  discarded"*), `Position`, `RosterSize`, `Capacity`, and the signer's label. It is called at
+  `cosign.go:358` and `p2p/session.go:1113` — **both signing points and neither quote**.
+  `cosignAttestation`'s own doc claims it *"builds the attestation both calls sign over … so the
+  rendered block and the signed /Reason always agree"*, and inside a ceremony that sentence is false.
+- **The two sides fail differently and only one was in the item's text.** On the INITIATING side the
+  client posts the quoted `when` back and `cosignAttestation` honours it within `maxWhenSkew`, so
+  the time already round-trips and only the stamped fields are missing. On the RECEIVING side
+  `handleSessionQuote` does not even echo `When`, and `coSignExchange` takes `time.Now()` at
+  contribution — so the block a party consented to differs from the block signed **in six fields and
+  the timestamp**.
+- **`Confirmer` is the carrier and the change is small.** `Confirm` returns
+  `(accept, intent, appearance, err)` and no time. **One production implementor**
+  (`sessionConfirmer`), **one call site** (`p2p/session.go:1071`), plus four test doubles.
+- **The fit check runs BEFORE the stamp, and stamping ADDS LINES.** `cosignAttestation` asks
+  `p2p.BlockFits(att)` on the unstamped attestation; a stamped one carries `Capacity` and
+  `Party k of n` and is taller. So a ceremony block can pass the quote's fit check and overflow the
+  page — which is `ErrBlockOffThePage`'s own case, and P07.S08 records that pdfcpu CLAMPS overflow
+  silently. **The fit must be asked of the attestation that will actually be signed.**
+- **The rect must NOT gain a roster, and that is a different rule.** `handleCosignQuote`'s own
+  comment says *"this route has no roster and must not have one — binding to the open document
+  would use the wrong page geometry"*, which is P07.S06's `NominalBlockRect` rule about PLACEMENT.
+  This slice changes the LINES only. Conflating the two would re-open the defect that comment
+  records.
+
+Tasks:
+- **T01** — `cosignAttestation` takes the roster and stamps, so both quote routes answer with the
+  attestation that will be signed. The rect stays `NominalBlockRect()` with no roster.
+- **T02** — the fit check moves after the stamp, so it is asked of the block that will exist.
+- **T03** — `Confirmer.Confirm` carries the pinned time back; `coSignExchange` uses it instead of
+  `time.Now()`, and the accept route bounds the client's value by `maxWhenSkew` exactly as the
+  initiating side already does — one rule, both paths.
+- **T04** — `handleSessionQuote` echoes `When`, which it never has.
+- **T05** — the guard: the quote's lines and the signed attestation's lines, compared **per line**,
+  inside a ceremony. The count is the finding and a whole-object comparison cannot say which moved.
 
 #### P06.S07 — The roster-shaped consent screen *(D27, D29)*
 Scope: the screen a party sees before signing.

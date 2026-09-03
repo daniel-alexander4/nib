@@ -3528,3 +3528,31 @@ field out. Fixed at the wire value rather than the copy. **That a comment cannot
 is about is the tell**, and it is recorded in the slice's inventory rather than worked around.
 
 `recorded` 271 → 272.
+
+## P06.S06 — the block shown is the block signed (v1.117.339)
+
+| Defect reintroduced | Check that fired | What it said |
+| --- | --- | --- |
+| `the-quote-does-not-stamp-the-ceremony` — `StampCommitment` removed from the quote door | `TestTheQuotedBlockIsTheBlockThatGetsSigned`, tier 1 | "setup: the roster changed nothing, so this fixture cannot tell a stamp from a no-op" |
+
+**It fails at its SETUP, and that is the design.** The fixture asserts the stamped and unstamped
+blocks DIFFER before it compares them line by line — so a stamp that has become a no-op fails as a
+setup failure rather than passing silently against two identical renderings. A comparison of a thing
+with itself is the vacuous green this whole row is about.
+
+**Tier 4 drives it across a real hop**, and its probe printed the shipped block verbatim:
+`Signer: Nib User`, `Intent: I accept` — the *typed* intent instead of the record's recital, no
+capacity, no position. That is `/pending 317` as a user would have seen it.
+
+**Both harness defects in that clause were found by running it, and neither was in the product.**
+Its first cut asked the signature for a roster POSITION, which the wire does not carry — the tag is
+`[NibRoster:<version>:<hash>]`, and the position is rendered into the visible block and is derivable
+from the roster, so putting it on the wire would be a second source of truth. It failed on a run
+where everything was correct. And it fired on the manual two-party run, which has no roster and
+correctly nothing to stamp; it is gated on `wantproc` now, with the reason at the line.
+
+**A hand probe also reported RED on a mutation that did not compile** — `redproof.sh`'s
+red-for-the-wrong-reason, arriving in a manual probe where no harness was watching for it. Re-probed
+with a compiling mutation; the catch is real.
+
+`recorded` 272 → 273.

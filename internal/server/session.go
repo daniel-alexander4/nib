@@ -216,6 +216,16 @@ type sessionDecision struct {
 	accept     bool
 	intent     string
 	appearance []byte
+	// when is the time the responder's quote pinned, carried through to the signature.
+	//
+	// **The block a party consents to must be the block that is signed (P06.S06, /pending 317).**
+	// `coSignExchange` took `time.Now()` at contribution, so the two differed by however long the
+	// party spent reading the document. The initiating side has always round-tripped its quote's
+	// `when` and bounded it by `maxWhenSkew`; this is the same rule on the other path.
+	//
+	// Zero means the client sent none, and `coSignExchange` falls back to its own clock — which is
+	// what every caller predating this did and what the manual path still does.
+	when time.Time
 }
 
 // armedLocked is "is anything armed", and it is ONE predicate (ADR-009). Callers hold se.mu.
@@ -673,6 +683,25 @@ func (se *session) pendingFingerprint() string {
 	return se.pending.view.Fingerprint
 }
 
+// pendingRoster is the ceremony roster of the arm holding the pending consent request.
+//
+// **The arm already knows, and nothing else does.** `handleSessionQuote` answers for the party
+// being asked to sign, and the roster that will stamp their attestation is the one their arm was
+// built from — the same `cer.l3Roster()` `p2p.Receive` was handed. Deriving it any other way would
+// be a second answer to a question the arm has already settled.
+//
+// The zero Roster for a manual co-sign, which has no ceremony, and for no pending request at all.
+func (se *session) pendingRoster() p2p.Roster {
+	se.mu.Lock()
+	defer se.mu.Unlock()
+	for _, a := range se.arms {
+		if a != nil && a.cer != nil {
+			return a.cer.l3Roster()
+		}
+	}
+	return p2p.Roster{}
+}
+
 // respondVerify resolves the spoken check. Returns false when nothing is waiting, so a
 // stray confirmation cannot be recorded against a session that has moved on.
 func (se *session) respondVerify(ok bool) bool {
@@ -794,7 +823,7 @@ type sessionConfirmer struct {
 	cer *ceremonyID
 }
 
-func (sc sessionConfirmer) Confirm(peer p2p.SignerAttestation, doc []byte) (bool, string, []byte, error) {
+func (sc sessionConfirmer) Confirm(peer p2p.SignerAttestation, doc []byte) (bool, string, []byte, time.Time, error) {
 	// **C17, and it runs BEFORE anything is put in front of the user (P07.S02b).**
 	//
 	// The order is the clause: a party reconciles the document against the invitation its arm
@@ -818,7 +847,7 @@ func (sc sessionConfirmer) Confirm(peer p2p.SignerAttestation, doc []byte) (bool
 			// the user on this machine sees nothing and goes on waiting for a proceeding their
 			// own build has just declared over.
 			sc.s.sess.noteArrivalRefusal(sc.anchor.kind, err)
-			return false, "", nil, err
+			return false, "", nil, time.Time{}, err
 		}
 	}
 	sc.saw.mark() // the consent request is about to go on screen
@@ -837,7 +866,7 @@ func (sc sessionConfirmer) Confirm(peer p2p.SignerAttestation, doc []byte) (bool
 	// is pending when it fires, which after a disarm-and-rearm is a LATER session's consent.
 	req := &pendingReq{view: view, doc: doc, resp: ch}
 	if !sc.s.sess.setPending(sc.anchor, req) {
-		return false, "", nil, errors.New("session not armed")
+		return false, "", nil, time.Time{}, errors.New("session not armed")
 	}
 	defer sc.s.sess.clearPendingIf(req)
 	select {
@@ -856,12 +885,12 @@ func (sc sessionConfirmer) Confirm(peer p2p.SignerAttestation, doc []byte) (bool
 			// stepping away from the desk revoke a relationship.
 			sc.s.declineCeremony(sc.cer)
 		}
-		return d.accept, d.intent, d.appearance, nil
+		return d.accept, d.intent, d.appearance, d.when, nil
 	case <-time.After(sessionConsentTimeout):
 		// **Not `(false, nil)`.** That is what a user who read the document and refused it
 		// returns, and collapsing the two here means the peer is told a person declined
 		// when nobody was at the machine. See p2p.ErrConsentTimedOut.
-		return false, "", nil, p2p.ErrConsentTimedOut
+		return false, "", nil, time.Time{}, p2p.ErrConsentTimedOut
 	}
 }
 
@@ -2045,6 +2074,9 @@ func (s *Server) handleSessionRespond(w http.ResponseWriter, r *http.Request) {
 		Accept     bool   `json:"accept"`
 		Intent     string `json:"intent"`
 		Appearance string `json:"appearance"` // base64 PNG, optional
+		// When is the time `/api/session/quote` pinned, echoed back so the signature carries the
+		// time the party saw (P06.S06). Optional: absent falls back to the signing clock.
+		When string `json:"when"`
 	}
 	if err := readJSON(r, &req); err != nil {
 		httpError(w, http.StatusBadRequest, "invalid request body")
@@ -2059,7 +2091,23 @@ func (s *Server) handleSessionRespond(w http.ResponseWriter, r *http.Request) {
 		}
 		appearance = b
 	}
-	if !s.sess.respond(sessionDecision{accept: req.Accept, intent: req.Intent, appearance: appearance}) {
+	// **Bounded exactly as the initiating side bounds its own (ADR-009: one rule, both paths).**
+	// `when` is signed into the attestation, so an unbounded value lets a caller mint a
+	// co-signature dated years back or forward and have Nib's key vouch for it —
+	// `cosignAttestation`'s own words, and `maxWhenSkew` is the same constant. Out of range is
+	// dropped rather than refused: the signature then carries the signing clock, which is the
+	// behaviour every build before this had.
+	var when time.Time
+	if req.When != "" {
+		if t, perr := time.Parse(time.RFC3339, req.When); perr == nil {
+			if d := time.Since(t); d > -maxWhenSkew && d < maxWhenSkew {
+				when = t
+			}
+		}
+	}
+	if !s.sess.respond(sessionDecision{
+		accept: req.Accept, intent: req.Intent, appearance: appearance, when: when,
+	}) {
 		httpError(w, http.StatusConflict, "no pending session request")
 		return
 	}
@@ -2091,11 +2139,27 @@ func (s *Server) handleSessionQuote(w http.ResponseWriter, r *http.Request) {
 	// cosignAttestation re-checks that and names "Nib User" as the signer, exactly
 	// as coSignExchange does on accept. The nominal rect comes from p2p's one door
 	// rather than being copied here — only its aspect is used, to size the PNG.
-	att, ok := s.cosignAttestation(w, v, cosignParams{Fingerprint: fp, Intent: req.Intent})
+	// **The roster from the PENDING ARM (P06.S06, /pending 317).** This is the responder's block
+	// and `coSignExchange` stamps it before signing, so a quote that did not would show the party
+	// a block disagreeing with the signature underneath in six fields. The arm already holds the
+	// ceremony it was built for; nothing has to be parsed or dialled to find it.
+	//
+	// **And the time is PINNED here and echoed**, which this route has never done. The initiating
+	// side has always minted `when` at its quote and posted it back within `maxWhenSkew`; the
+	// responder's side took `time.Now()` at contribution, so the block a party consented to and
+	// the block signed differed by however long they spent reading it.
+	when := time.Now().UTC()
+	att, ok := s.cosignAttestation(w, v,
+		cosignParams{Fingerprint: fp, Intent: req.Intent, When: when.Format(time.RFC3339)},
+		s.sess.pendingRoster())
 	if !ok {
 		return
 	}
-	writeJSON(w, cosignQuote{Lines: att.AppearanceLines(), Rect: p2p.NominalBlockRect()})
+	writeJSON(w, cosignQuote{
+		Lines: att.AppearanceLines(),
+		Rect:  p2p.NominalBlockRect(),
+		When:  att.When.UTC().Format(time.RFC3339),
+	})
 }
 
 // handleDoc returns metadata for the open document — name, path, save-ability, and
@@ -2152,7 +2216,9 @@ func (s *Server) handleSessionInitiate(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	att, ok := s.cosignAttestation(w, v, p)
+	// The initiating live path: the roster it will SIGN with comes from the invitation it was
+	// posted, and the same text reaches the quote so both name the same proceeding.
+	att, ok := s.cosignAttestation(w, v, p, invitationRoster(r.FormValue("invitation")))
 	if !ok {
 		return
 	}

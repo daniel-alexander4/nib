@@ -44,8 +44,8 @@ type confirmer struct {
 	err error
 }
 
-func (c confirmer) Confirm(SignerAttestation, []byte) (bool, string, []byte, error) {
-	return c.accept, c.intent, nil, c.err
+func (c confirmer) Confirm(SignerAttestation, []byte) (bool, string, []byte, time.Time, error) {
+	return c.accept, c.intent, nil, time.Time{}, c.err
 }
 
 // TestConfirmCoSignedRequiresBothSignatures proves the initiator-side check accepts

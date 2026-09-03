@@ -819,8 +819,8 @@ func attCount(t *testing.T, c *http.Client, url string) int {
 // autoConfirm is the peer's consent gate in tests: it always accepts.
 type autoConfirm struct{ intent string }
 
-func (a autoConfirm) Confirm(p2p.SignerAttestation, []byte) (bool, string, []byte, error) {
-	return true, a.intent, nil, nil
+func (a autoConfirm) Confirm(p2p.SignerAttestation, []byte) (bool, string, []byte, time.Time, error) {
+	return true, a.intent, nil, time.Time{}, nil
 }
 
 // initiateForm builds the multipart body /api/session/initiate expects.

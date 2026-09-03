@@ -211,7 +211,18 @@ func DeliveryLegBudget(g PeerGates) time.Duration {
 // for an invisible signature). The live UI (P2P 11) implements it; tests inject an
 // auto-confirmer.
 type Confirmer interface {
-	Confirm(peer SignerAttestation, doc []byte) (accept bool, intent string, appearance []byte, err error)
+	// Confirm asks the local user whether to co-sign, and returns WHEN they were asked.
+	//
+	// **The time is a return value because the block a party consents to must be the block that is
+	// signed (P06.S06, /pending 317).** Before it, `coSignExchange` took `time.Now()` at the
+	// moment of contribution, so the attestation the user read at their consent screen and the one
+	// their key signed differed by however long they spent reading the document — on top of the
+	// six fields `StampCommitment` overwrites, which the quote did not apply either.
+	//
+	// A zero `when` means the implementation has none to offer and the signing clock is used,
+	// which is what every implementation did before this and what a caller with no quote step
+	// still does.
+	Confirm(peer SignerAttestation, doc []byte) (accept bool, intent string, appearance []byte, when time.Time, err error)
 }
 
 // Initiate runs the dialing side of a session: it sends the document this user has
@@ -1068,7 +1079,7 @@ func coSignExchange(myCertPEM, myKeyPEM, peerFP []byte, peerLabel string, inboun
 		}
 	}
 
-	accept, intent, appearance, err := c.Confirm(peer, inbound)
+	accept, intent, appearance, when, err := c.Confirm(peer, inbound)
 	if err != nil {
 		return nil, err
 	}
@@ -1100,12 +1111,20 @@ func coSignExchange(myCertPEM, myKeyPEM, peerFP []byte, peerLabel string, inboun
 		myFPHex := hex.EncodeToString(myFP)
 		accepted = PredecessorOf(roster, myFPHex)
 	}
+	// **The time the party was ASKED, not the time the signature is made.** They differ by however
+	// long somebody spent reading the document, and the quote showed them the first — so signing
+	// the second puts a block on the page that is not the block they consented to. A confirmer
+	// with nothing to offer returns the zero time and the signing clock stands, which is what
+	// every path did before P06.S06 and what a caller with no quote step still does.
+	if when.IsZero() {
+		when = time.Now()
+	}
 	att := Attestation{
 		Signer:            idCert.Subject.CommonName,
 		AcceptedPeer:      accepted,
 		AcceptedPeerLabel: peerLabel,
 		Intent:            intent,
-		When:              time.Now(),
+		When:              when,
 	}
 	// This signature NAMES its ceremony (C19/C01) and this party (P07.S07a), through the one door
 	// both contribution paths use. A no-op outside a ceremony, where there is no proceeding to
