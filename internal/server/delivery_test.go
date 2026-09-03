@@ -1073,3 +1073,112 @@ func TestEveryArmWatchesTheLinkThroughOneDoor(t *testing.T) {
 			"arm is over — so the hold it exists to feed has already lapsed")
 	}
 }
+
+// TestARoundStopsWhenTheRequestThatStartedItGoesAway — /pending 355, the half that survived that
+// item's re-scope.
+//
+// **`deliverToParty`'s ctx governed nothing.** `raceWithRendezvous` built its deadline from
+// `context.Background()`, so the `r.Context()` that `handleCeremonyDeliver` threads down could not
+// stop anything: a client that disconnected mid-round left it running to `connectDeadline` — 300 s
+// per remaining party, up to about forty minutes at nine parties, for a response nobody would read.
+//
+// **The window is what makes this a real assertion and not a restatement of the loop guard.** The
+// context is alive when the round starts and dies during the first leg, so the short-circuit at the
+// top of the party loop cannot be what ends it — the leg is already inside the race. Before the fix
+// this test spends the full 300 s deadline and fails on its own ceiling; after it, the race's ctx
+// is cancelled and the leg returns.
+//
+// The sibling half of that item — whether a browser tab closing should abandon a ceremony HOP — is
+// deliberately NOT changed: `handleSessionInitiate` still passes `context.Background()`, and
+// `raceWithRendezvous` says why at the parameter.
+func TestARoundStopsWhenTheRequestThatStartedItGoesAway(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	s, v := unlockedServer(t)
+	cert, _, err := identity(v)
+	if err != nil {
+		t.Fatalf("setup: no identity, so this machine cannot be the convener: %v", err)
+	}
+	fp, err := sign.Fingerprint(cert)
+	if err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+	me := hex.EncodeToString(fp)
+	party := "7a" + strings.Repeat("8b", 31)
+	const id = "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+	rec := ceremony.Record{
+		ID:           id,
+		ConvenerCert: string(cert),
+		Roster: []ceremony.Party{
+			{Fingerprint: me, Label: "convener", Signs: false},
+			{Fingerprint: party, Label: "the unreachable party", Signs: true},
+		},
+	}
+	// SETUP: the leg must REACH the race. Without this secret `convenerInvitationFor` refuses
+	// first, and the round would return quickly for a reason that has nothing to do with the
+	// context — the vacuous green this whole test is about.
+	pfp, err := hex.DecodeString(party)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := v.AddCeremonySecret(id, pfp, []byte("0123456789abcdef0123456789abcdef")); err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+	if _, ierr := convenerInvitationFor(v, rec, rec.Roster[1]); ierr != nil {
+		t.Fatalf("setup: the round cannot mint this party's invitation (%v), so its leg stops "+
+			"before the race and this test would pass without the fix", ierr)
+	}
+
+	// STIMULUS: alive at the start, dead during the leg.
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	done := make(chan []deliveryOutcome, 1)
+	go func() {
+		out, rerr := s.runDeliveryRound(ctx, v, rec, []byte("%PDF-1.4\n"), nil)
+		if rerr != nil {
+			t.Errorf("the round refused outright: %v", rerr)
+		}
+		done <- out
+	}()
+
+	// The ceiling is far below `connectDeadline` (300 s) and far above the couple of seconds a
+	// cancelled race needs — a number that cannot be satisfied by the defect and cannot flake on a
+	// slow machine.
+	var out []deliveryOutcome
+	select {
+	case out = <-done:
+	case <-time.After(45 * time.Second):
+		t.Fatal("the round was still running 45 s after the context that started it was " +
+			"cancelled. It is walking to connectDeadline (300 s) per party for a response nobody " +
+			"will read — at nine parties that is about forty minutes of a machine dialling on " +
+			"behalf of a browser tab that closed.")
+	}
+	if len(out) != 1 {
+		t.Fatalf("the round reported %d outcomes for a roster of the convener plus one party, want 1", len(out))
+	}
+	if out[0].Delivered {
+		t.Error("the round reports a party it never reached as delivered")
+	}
+
+	// ── The loop's own short-circuit, which the case above cannot reach ──────────────────────
+	//
+	// Above, the context is alive when the loop is entered, so the guard at the top of the party
+	// loop never fires and only the race's cancellation ends the leg. **Deleting that guard leaves
+	// the case above green**, which is the uncovered branch this second call exists for: with a
+	// context that is already dead, the round must say so by name rather than mint an invitation
+	// and enter a race it knows is over. The two halves fail differently — one on the clock, one
+	// on the sentence — and that is why both are asserted.
+	dead, killed := context.WithCancel(context.Background())
+	killed()
+	out2, rerr2 := s.runDeliveryRound(dead, v, rec, []byte("%PDF-1.4\n"), nil)
+	if rerr2 != nil {
+		t.Fatalf("the round refused outright on a cancelled context: %v", rerr2)
+	}
+	if len(out2) != 1 {
+		t.Fatalf("the round reported %d outcomes on a cancelled context, want 1", len(out2))
+	}
+	if !strings.Contains(out2[0].Reason, "the request that started this round ended") {
+		t.Errorf("on an already-cancelled context the round reported %q. It walked into the leg "+
+			"anyway — minting an invitation and entering a race whose result nobody will read — "+
+			"instead of naming the one thing that actually stopped it.", out2[0].Reason)
+	}
+}

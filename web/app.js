@@ -1362,9 +1362,18 @@ async function pollRecv(token) {
   // than only that something is armed — which is what the field was added for (C05): a five-minute
   // manual bound and a thirty-day ceremony bound are indistinguishable from the OUTCOME and
   // trivially distinguishable from the figure.
+  //
+  // **It says what the figure is a bound ON, because a ceremony's arm bound is thirty days
+  // (/pending 366).** `until` is `ceremony.MaxCeremonyLife` for a ceremony arm — an invitation
+  // carries no deadline, which is `/pending 247` — so a user arming for a two-day proceeding was
+  // told they were "armed until" a date a month away. That is a true sentence about the arm and a
+  // misleading one about the ceremony, and on the old wording the two were indistinguishable. The
+  // proceeding's own deadline is the panel's "Open until", a few pixels away and correct; this
+  // pill is not a second place to read it.
   if (els.armedPill && st.armed && st.until) {
-    els.armedPill.title = 'A co-signing session is armed until ' +
-      new Date(st.until).toLocaleString() + ' — click to open it';
+    els.armedPill.title = 'This machine stays reachable for a co-signing session until ' +
+      new Date(st.until).toLocaleString() +
+      ' — that is this arm\u2019s own bound, not the ceremony deadline. Click to open it';
   }
   // The spoken check comes BEFORE the document, so it is checked before `pending`.
   if (st.verify) {

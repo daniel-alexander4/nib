@@ -2434,7 +2434,9 @@ func (s *Server) handleSessionInitiate(w http.ResponseWriter, r *http.Request) {
 			// the channel dropped with time left — reconnect and let the peer re-deliver
 		}
 	} else {
-		conn, cerr := s.raceWithRendezvous(cer, cands, cert, key, peerFP, peerLabel, peerLabel)
+		// `Background`, NOT the request's context, and see raceWithRendezvous for why: a tab
+		// closing must not abandon a hop the far party may already have signed.
+		conn, cerr := s.raceWithRendezvous(context.Background(), cer, cands, cert, key, peerFP, peerLabel, peerLabel)
 		if cerr != nil {
 			err = cerr
 		} else {

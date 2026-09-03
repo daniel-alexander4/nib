@@ -1,0 +1,14 @@
+--- a/web/app.js
++++ b/web/app.js
+@@ -1371,9 +1371,8 @@
+   // proceeding's own deadline is the panel's "Open until", a few pixels away and correct; this
+   // pill is not a second place to read it.
+   if (els.armedPill && st.armed && st.until) {
+-    els.armedPill.title = 'This machine stays reachable for a co-signing session until ' +
+-      new Date(st.until).toLocaleString() +
+-      ' — that is this arm\u2019s own bound, not the ceremony deadline. Click to open it';
++    els.armedPill.title = 'A co-signing session is armed until ' +
++      new Date(st.until).toLocaleString() + ' - click to open it';
+   }
+   // The spoken check comes BEFORE the document, so it is checked before `pending`.
+   if (st.verify) {

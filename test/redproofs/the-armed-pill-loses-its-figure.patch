@@ -1,0 +1,10 @@
+--- a/web/app.js
++++ b/web/app.js
+@@ -1372,7 +1372,6 @@
+   // pill is not a second place to read it.
+   if (els.armedPill && st.armed && st.until) {
+     els.armedPill.title = 'This machine stays reachable for a co-signing session until ' +
+-      new Date(st.until).toLocaleString() +
+       ' — that is this arm\u2019s own bound, not the ceremony deadline. Click to open it';
+   }
+   // The spoken check comes BEFORE the document, so it is checked before `pending`.

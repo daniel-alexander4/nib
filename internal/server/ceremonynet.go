@@ -481,12 +481,31 @@ func publishLoop(ctx context.Context, first, every time.Duration, publish func(c
 // waits on another tier's gathering" — and it is the first production use of the trickle path.
 // `dialAny` closes the channel it builds, so every caller until now handed the racer a fixed
 // set and the open-channel case existed only in tests.
-func (s *Server) raceWithRendezvous(cer *ceremonyID, cands []candidate, cert, key, peerFP []byte,
-	label, name string) (*p2p.Conn, error) {
+// **`parent` decides whether a client going away stops this, and the two callers answer
+// differently on purpose (/pending 355).**
+//
+// It used to be `context.Background()` for both, so the `r.Context()` that `handleCeremonyDeliver`
+// threads down governed nothing: a client that disconnected mid-round left it running to
+// `connectDeadline` per remaining party — 300 s each, up to ~40 minutes at nine parties.
+//
+//   - **The delivery round passes the request's context.** Nobody is waiting: the round is
+//     synchronous under the request, its result is a response the disconnected client will never
+//     read, and every party it did not reach is reached by the re-run, which is what `wasDelivered`
+//     exists for.
+//   - **A ceremony HOP passes `context.Background()`, unchanged.** A browser tab closing must not
+//     abandon a hop mid-flight, possibly after the far party has consented and signed. That party
+//     keeps its contribution and the re-delivery window, but "the user closed a tab" is not
+//     evidence they abandoned the proceeding, and the conservative reading is the one that does
+//     not throw away work somebody else has already done.
+//
+// Recorded here rather than at the two call sites because the difference between them IS this
+// parameter, and a reader at either site sees only their own half.
+func (s *Server) raceWithRendezvous(parent context.Context, cer *ceremonyID, cands []candidate,
+	cert, key, peerFP []byte, label, name string) (*p2p.Conn, error) {
 
 	// The caller owns the deadline and the cancel. Cancelling on return is what stops the
 	// feed goroutine — P05.S03's leak was this shape with the arm missing.
-	ctx, cancel := context.WithTimeout(context.Background(), connectDeadline)
+	ctx, cancel := context.WithTimeout(parent, connectDeadline)
 	defer cancel()
 
 	if cer == nil || cer.rz == nil {
