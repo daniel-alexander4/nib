@@ -58,8 +58,18 @@ KEEP=0
 
 PORT="${NIB_UI_PORT:-18531}"
 BASE="http://127.0.0.1:$PORT"
+# A SECOND nib, never enrolled, so one file can drive the app with the vault LOCKED (P06.S07).
+#
+# The vault has no lock route — it unlocks once per process and stays unlocked — so the locked
+# state is unreachable on the shared server, which enrols a key at startup precisely so every
+# other file sees past the auth overlay. Six of P06's criteria are about a surface that renders
+# while locked, and until this the tier that renders in a real browser could not reach any of them.
+# The cost is one extra process and no enrol; the binary is the same build.
+LOCKED_PORT="${NIB_UI_LOCKED_PORT:-$((PORT + 1))}"
+LOCKED_BASE="http://127.0.0.1:$LOCKED_PORT"
 WORK="$(mktemp -d)"
 SERVER_PID=""
+LOCKED_PID=""
 
 cleanup() {
   # --keep means BOTH halves survive: the work dir and the running server. Killing
@@ -71,6 +81,7 @@ cleanup() {
     return
   fi
   [ -n "$SERVER_PID" ] && kill "$SERVER_PID" >/dev/null 2>&1
+  [ -n "$LOCKED_PID" ] && kill "$LOCKED_PID" >/dev/null 2>&1
   rm -rf "$WORK"
 }
 trap cleanup EXIT INT TERM
@@ -134,7 +145,34 @@ curl -fsS -X POST "$BASE/api/ssh/enroll" -H 'Content-Type: application/json' \
   echo "FAIL: could not enroll a key" >&2; exit 1
 }
 
+# The locked server, started AFTER the enrol above so its own data dir is untouched by it.
+# Its ~/nib points at the unlocked server's, so a later locked test CAN read a ceremony the other
+# process wrote. `lockedpanel.test.mjs` does not use it — it routes the list — because what tier 3
+# is for here is geometry and stacking, and stubbing keeps the file independent of whatever its
+# siblings left on a shared directory. The target is created first: a dangling symlink is a thing
+# the next reader chases.
+mkdir -p "$WORK/home2" "$WORK/home/nib" "$WORK/config2"
+ln -s "$WORK/home/nib" "$WORK/home2/nib" 2>/dev/null || true
+HOME="$WORK/home2" XDG_CONFIG_HOME="$WORK/config2" \
+  NIB_NO_BROWSER=1 NIB_NO_UPDATE_CHECK=1 NIB_ADDR="127.0.0.1:$LOCKED_PORT" "$WORK/nib" \
+  >"$WORK/nib.locked.log" 2>&1 &
+LOCKED_PID=$!
+for _ in $(seq 1 60); do
+  curl -fsS -o /dev/null "$LOCKED_BASE/api/status" 2>/dev/null && break
+  sleep 0.25
+done
+# **It must be LOCKED, and the harness asserts that rather than assuming it.** A second server
+# that had somehow enrolled would make every assertion in lockedpanel.test.mjs pass against an
+# unlocked app — the vacuous green this tier keeps finding, arriving through the fixture.
+locked_state="$(curl -fsS "$LOCKED_BASE/api/status" 2>/dev/null | sed -n 's/.*"state":"\([a-z-]*\)".*/\1/p')"
+if [ "$locked_state" = "ready" ] || [ -z "$locked_state" ]; then
+  echo "FAIL: the locked server reports state=\"$locked_state\", want anything but ready — the" >&2
+  echo "      locked-view test would run against an unlocked app and pass for the wrong reason." >&2
+  exit 1
+fi
+
 export NIB_UI_BASE="$BASE" NIB_UI_BROWSER="$BROWSER" NIB_UI_WORK="$WORK"
+export NIB_UI_LOCKED_BASE="$LOCKED_BASE"
 # --test-concurrency=1: the files run SERIALLY, because they share one nib process.
 #
 # node --test runs files in parallel by default, and this tier hands every file the same
@@ -182,7 +220,15 @@ files="$(find test/ui -maxdepth 1 -name '*.test.mjs' | wc -l | tr -d ' ')"
 # both halves are about layout and a device pixel ratio, neither of which exists at
 # tier 2), gestures.test.mjs, save.test.mjs, pageops.test.mjs and finalize.test.mjs. The count said "three" while the literal below said
 # five, which is the sort of drift this guard exists to catch one level down.
-expect_files=19
+#
+# **It went stale the same day tier 2's did, and for the same six slices (P06.S07).** P06.S02 added
+# ceremonypanel.test.mjs and left this at 19 against a directory of 20, so THIS harness exited 1
+# from v1.117.335 through .342 — and every one of those slices reported both browser tiers green,
+# because the verdict is in the exit status and what was read was the TAP totals, which were true.
+# Two harnesses, one shape, one day. Tier 2's own comment has now recorded it four times; this is
+# the fifth instance and the first in this file, which is what made it invisible here: a lesson
+# written down in the sibling harness is not a lesson this one carries.
+expect_files=21
 if [ "$files" -ne "$expect_files" ]; then
   echo "FAIL: expected $expect_files browser UI test files, found $files — a test file was added or dropped." >&2
   echo "      If deliberate, update expect_files in this script." >&2

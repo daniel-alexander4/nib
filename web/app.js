@@ -151,6 +151,7 @@ const els = {
   authHint: $('authHint'), authPw: $('authPw'), authPwLabel: $('authPwLabel'), migrateRow: $('migrateRow'),
   keyChoice: $('keyChoice'), keySelect: $('keySelect'), keyPath: $('keyPath'),
   createPath: $('createPath'), authWarn: $('authWarn'), armedPill: $('armedPill'),
+  authCeremonies: $('authCeremonies'), authCerList: $('authCerList'),
   sessionNotice: $('sessionNotice'), sessionNoticeText: $('sessionNoticeText'),
   sessionNoticeDismiss: $('sessionNoticeDismiss'), sessionNoticeAction: $('sessionNoticeAction'),
   repointRow: $('repointRow'), repointPath: $('repointPath'),
@@ -387,6 +388,9 @@ els.keyChoice.addEventListener('change', syncKeyMode);
 // until the user clicks the backdrop (off the card).
 
 // applyStatus drives the UI from /api/status.
+// Guards the locked screen's ceremony load against re-entry — see the call site below.
+let lockedPanelInFlight = false;
+
 function applyStatus(st) {
   authState = st.state;
   gsAvailable = !!st.ghostscript;
@@ -456,6 +460,36 @@ function applyStatus(st) {
   csrf = null;
   els.authError.textContent = '';
   els.authOverlay.hidden = false;
+  // **The ceremonies on this machine, rendered while the vault is LOCKED (P06.S07, D29).**
+  //
+  // The criterion is *"the panel renders roster, position and next action with the vault locked,
+  // and asks for the password at the moment of signing rather than the moment of looking"*, and
+  // **S02 marked its looking half met while nothing had ever rendered the PANEL locked**: the jsdom
+  // boot defaults to `state: 'ready'` and the one file that overrides it asserts the overlay's own
+  // content, never anything behind it — and in a browser the line above puts an `aria-modal` dialog
+  // over the sidebar the panel lives in. The routes were never the obstacle — S01 and S03 put both
+  // of them on `requirePublicLoopback` — the modal was.
+  //
+  // Drawn INSIDE the overlay rather than revealed behind it. Making the overlay non-modal would
+  // mean auditing every control in the app for locked-safety, which is a far larger change than
+  // the criterion asks for; this surface needs the vault for nothing, checked rather than assumed:
+  // `ceremonyCard`'s only action reads `/api/ceremony/next`, which is public-loopback too.
+  //
+  // Best-effort and never in the way of unlocking: a failure leaves the box hidden and the unlock
+  // form is untouched, because a user who cannot see their ceremonies must still be able to get in.
+  //
+  // **The in-flight guard is not tidiness, it is a loop.** `apiFetch` answers a 401 by calling
+  // `refreshStatus()`, which lands back in this function — so if this route ever started refusing
+  // (it cannot today: S01 and S03 put it on `requirePublicLoopback`), a locked screen would fetch,
+  // 401, refresh, fetch again, without bound. "It cannot today" is the shape this repo keeps
+  // paying for, and one boolean closes it for every cause rather than for the one I can name.
+  if (els.authCeremonies && els.authCerList && !lockedPanelInFlight) {
+    lockedPanelInFlight = true;
+    loadCeremonyPanel(els.authCerList)
+      .then((n) => { els.authCeremonies.hidden = n === 0; })
+      .catch(() => { els.authCeremonies.hidden = true; })
+      .finally(() => { lockedPanelInFlight = false; });
+  }
   els.migrateRow.hidden = st.state !== 'migrate';
   els.authPwLabel.textContent = 'Current vault password';
 
@@ -1490,6 +1524,17 @@ async function loadPendingPreview(token) {
   catch { if (token === recvPoll) els.srvPreview.textContent = 'could not render the document'; return; }
   // This function is the doc's sole holder, so it destroys it on every exit —
   // otherwise each consent preview leaks a worker-side document.
+  //
+  // **A page that will not render SAYS SO, and it used to throw (P06.S07).** The `getDocument`
+  // path above already ends in a sentence — *"could not render the document"* — and the render
+  // loop below had a `finally` and no `catch`, so a failure inside it escaped this function
+  // entirely and became an unhandled rejection. Nothing showed; the user was left looking at a
+  // half-drawn preview, on the screen where they decide whether to add their signature to a
+  // document. The two failures are the same failure to a user and now read the same.
+  //
+  // The consent decision does not depend on the preview: the signer list, the reason and the
+  // roster are rendered by `showConsent` before this runs, so a preview that fails degrades this
+  // one box rather than the screen — STANDARDS §9, the rule P06's own criteria cite for the panel.
   try {
     for (let i = 1; i <= doc.numPages; i++) {
       if (token !== recvPoll) return; // modal closed mid-render
@@ -1503,6 +1548,8 @@ async function loadPendingPreview(token) {
       els.srvPreview.append(canvas);
       await page.render({ canvasContext: canvas.getContext('2d'), viewport: vp }).promise;
     }
+  } catch {
+    if (token === recvPoll) els.srvPreview.textContent = 'could not render the document';
   } finally {
     doc.loadingTask.destroy().catch(() => {});
   }
@@ -10170,8 +10217,8 @@ const CEREMONY_STATE_WORDS = {
 // criteria. A roster entry with no label falls back to its six-word pairing name from the server,
 // never to the hex — the hex is the thing users are asked to compare aloud once, out of band, and
 // putting it in a list is what makes people stop reading it.
-function renderCeremonyPanel(data) {
-  const host = document.getElementById('ceremonyList');
+function renderCeremonyPanel(data, host) {
+  host = host || document.getElementById('ceremonyList');
   if (!host) return;
   host.textContent = '';
   const list = (data && data.ceremonies) || [];
@@ -10384,19 +10431,32 @@ function ceremonyRoster(roster, me) {
 // A failure renders a sentence rather than an empty panel, for the reason a degraded ceremony
 // still gets a card: an empty shelf and a broken read look identical, and only one of them is the
 // user's problem to act on.
-async function loadCeremonyPanel() {
+// `host` names where to draw, because this panel has TWO homes since P06.S07: the sidebar, and
+// the lock screen. Both routes it reads answer with the vault locked (S01 and S03 put
+// `/api/ceremonies` and `/api/ceremony/next` on `requirePublicLoopback`), which is what makes the
+// second home possible at all — see applyStatus.
+// **It reports how much it had to say, and the count comes from the DATA rather than the DOM.**
+// The lock screen shows this box only when there is something in it, and `renderCeremonyPanel`
+// draws "No signing ceremonies on this machine yet." into an empty one — so counting elements
+// would make every machine with no ceremonies show a box saying it has none, under an unlock form.
+// A read FAILURE counts as something to say: that is the same sentence the sidebar would show and
+// the user needs it either way. Returns 0 for "nothing", non-zero otherwise.
+async function loadCeremonyPanel(host) {
+  host = host || document.getElementById('ceremonyList');
   try {
     const res = await apiFetch('/api/ceremonies', { unpinned: true });
     if (!res.ok) throw new Error(String(res.status));
-    renderCeremonyPanel(await res.json());
+    const data = await res.json();
+    renderCeremonyPanel(data, host);
+    return ((data && data.ceremonies) || []).length + ((data && data.ended) || []).length;
   } catch (e) {
-    const host = document.getElementById('ceremonyList');
     if (!host) return;
     host.textContent = '';
     const p = document.createElement('p');
     p.className = 'libhint';
     p.textContent = 'Nib could not read the ceremonies on this machine.';
     host.appendChild(p);
+    return -1; // a failure the user needs to see, not an empty machine
   }
 }
 

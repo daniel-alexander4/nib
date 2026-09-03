@@ -1,0 +1,18 @@
+--- a/web/index.html
++++ b/web/index.html
+@@ -517,6 +517,7 @@
+       <p id="authError" class="error"></p>
+     </form>
+ 
++  </div>
+     <!-- The ceremonies on this machine, rendered BEHIND the lock (P06.S07, D29).
+ 
+          The criterion is "the panel renders roster, position and next action with the vault
+@@ -535,7 +536,6 @@
+         one.</p>
+       <div id="authCerList"></div>
+     </div>
+-  </div>
+ 
+   <!-- Finalize & sign dialog -->
+   <div id="finalizeModal" hidden>

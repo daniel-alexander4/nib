@@ -7,6 +7,10 @@
 import { chromium } from 'playwright-core';
 
 export const BASE = process.env.NIB_UI_BASE;
+// The second, never-enrolled nib (P06.S07). The vault has no lock route, so the locked state is
+// unreachable on the shared server this tier enrols at startup; uirepro.sh starts a second process
+// for it and asserts it is not `ready` before any file runs.
+export const LOCKED_BASE = process.env.NIB_UI_LOCKED_BASE;
 export const WORK = process.env.NIB_UI_WORK;
 const EXECUTABLE = process.env.NIB_UI_BROWSER;
 
@@ -36,7 +40,10 @@ if (!BASE || !EXECUTABLE) {
 // A test that wants the overlay must also pass `waitFor`, because `#empty` is the
 // READY-state marker and waiting for it against a locked app would time out at 30 s
 // inside the harness rather than failing in the test.
-export async function launch({ routes = null, waitFor = '#empty' } = {}) {
+// `base` names which nib to drive. It defaults to the shared unlocked one; the locked-view file
+// passes LOCKED_BASE. `waitFor` moves with it — a locked app never reaches `#empty`, because
+// applyStatus returns at the overlay.
+export async function launch({ routes = null, waitFor = '#empty', base = BASE } = {}) {
   const browser = await chromium.launch({
     executablePath: EXECUTABLE,
     headless: process.env.NIB_UI_HEADED !== '1',
@@ -65,7 +72,7 @@ export async function launch({ routes = null, waitFor = '#empty' } = {}) {
     }
   }
 
-  await page.goto(BASE);
+  await page.goto(base);
   // The app boots asynchronously (status -> applyStatus -> the UI), so wait for a
   // marker of readiness rather than a fixed sleep.
   await page.waitForSelector(waitFor, { state: 'attached' });

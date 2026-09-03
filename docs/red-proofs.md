@@ -3696,3 +3696,51 @@ reverse.
 
 `recorded` 278 → 280.
 
+
+## P06.S07 — the panel behind the lock, and the roster on the consent screen (v1.117.346)
+
+| Defect reintroduced | Check that fired | What it said |
+| --- | --- | --- |
+| `the-locked-screen-never-shows-its-ceremonies` — `applyStatus` stops filling the box | `lockedpanel.test.mjs`, tier 2 | "the ceremonies box is hidden on a locked machine that HAS a ceremony" |
+| `the-locked-panel-sits-behind-the-modal` — the container moved back outside `#authOverlay` | `test/ui/lockedpanel.test.mjs`, tier 3 | "something else is on top of the locked ceremony panel at its own centre point" |
+| `the-consent-screen-names-one-party` — the signer list truncated to the connected peer | `consentroster.test.mjs`, tier 2 | "the consent screen drew 1 signer row(s) for a document carrying three signatures" |
+| `the-consent-screen-drops-an-invalid-signature` — the broken signature filtered out | the same file, tier 2 | "drew 2 signer row(s) for a document carrying three signatures" |
+
+**The tier-3 row is the one that justifies its tier, and it is the shipped defect exactly.**
+P06.S02 marked *"the panel renders roster, position and next action with the vault locked"* met.
+`element.hidden === false` is true of a node under an `aria-modal` dialog, so a tier-2 assertion
+passes over precisely the state that was wrong: the panel present, attached, and unreachable. The
+assertion is `document.elementFromPoint` at the panel's own centre — what a user hits when they
+click there — and the mutation moves the container back where it shipped.
+
+**The locked state needed a second nib, because the vault has no lock route.** It unlocks once per
+process and stays unlocked, and tier 3's shared server enrols a key at startup precisely so every
+other file sees past the overlay. So `uirepro.sh` starts a second, never-enrolled process and
+**refuses to run if its status says `ready`** — a locked-view file against an unlocked app passes
+for the wrong reason, which is the fixture-shaped vacuous green this tier keeps producing.
+
+**Clause 1's render shipped at v1.117.220 and nothing had ever driven it.** A named search over
+`test/` and `build/` for `srvSigners|renderConsentSigners` returned **one** hit, and it was
+`published.test.mjs` naming the function as the reader that lets `pending.signers` out of the
+exclusions — a field with a reader and the reader with no driver. Writing the driver found a live
+defect one function over: `loadPendingPreview`'s render loop had a `finally` and no `catch`, so a
+page that would not render escaped as an unhandled rejection. The `getDocument` path above it
+already ends in *"could not render the document"*; the render path ended in nothing, and the user
+was left looking at a half-drawn preview on the screen where they decide whether to sign.
+
+**And the commit gate refuted one of this slice's own lines, at five sites.** The deepdive wrote
+*"every jsdom boot uses `state: 'ready'`"*. `firstrun.test.mjs` overrides it — to `setup` and
+`key-missing` — and what that file asserts is the overlay's OWN content, never anything behind it.
+The true statement is narrower and still decisive: nothing had rendered the ceremony PANEL locked.
+Corrected in the plan, both test headers, the `applyStatus` comment and the red proof.
+
+**Both browser tiers had been RED for six slices, and this slice found the second one.** Tier 2's
+file count said 26 against 28 and tier 3's said 19 against 20 — `ceremonypanel.test.mjs` (P06.S02)
+and `armprogress.test.mjs` (P06.S05), both added on 2026-09-03, neither literal bumped. So
+v1.117.335 through .342 shipped with both harnesses exiting 1 while every slice reported them green,
+because the verdict is in the exit status and what was read was the TAP totals, which were true.
+Tier 2's own comment had recorded that shape three times; tier 3's had recorded it never, which is
+what made it invisible there — **a lesson written down in the sibling harness is not a lesson this
+one carries.**
+
+`recorded` 280 → 284.
