@@ -4699,7 +4699,7 @@ Tasks:
 - **T04** — the no-hex and no-address guards, driven at tier 2 and tier 3 against the real values in
   the fixture rather than against a shape.
 
-#### P06.S05 — The armed screen *(D15, D16 amendment, D34)*
+#### P06.S05 — The armed screen *(D15, D16 amendment, D34)* *(**done** 2026-09-03, v1.117.338 — 4 clauses met. **It was not a rendering slice and the deepdive established that**: `sessionStatus` publishes eight things and none of them is tier progress, a router mapping or the DHT. **The blank spinner was the SHIPPED state and its cause was a gate** — `Diagnosis` is filled only once `bootstrapDone` is true, which is right for a verdict and is exactly why the screen was silent for the longest stretch of an arm: under ADR-011 nothing bootstraps until the local link has had its window, and where a browse has answered that hold is `lanFirstBudget`, **thirty seconds**. So the progress view is published beside the diagnosis and NOT behind its gate. **It publishes; it does not track** — every field reads state that already exists for other reasons. The router tier keeps **four** states apart because D9's advice diverges: silence may mean no gateway, a refusal means the router is reachable and said no, and unroutable points at a VPN rather than a port-forward. **A prose collision on a published field name fired for the second time this phase**, and my own explanatory comment was itself the false reader — the matcher is `strings.Contains(src, "."+field)`, so spelling a field out claims it; fixed at the WIRE VALUE rather than the copy. **The new jsdom file hung the whole suite at its 900 s ceiling** because `pollRecv` reschedules while armed and node waits for a quiet loop; it disarms now and says why. And the jsdom tick was 1400 ms against a 1500 ms poll — measured, not reasoned: the `refused` case rendered the `silent` sentence. **The deadline audit found no countdown anywhere**, so the criterion is met — and found next door that `st.until` is the ARM's bound, thirty days for a ceremony: `/pending 366`. 1 red proof, floor 271 → 272.)*
 Scope: what a party sees while waiting.
 Acceptance:
 - **Per-tier progress for the whole connect deadline, never a blank spinner** (D16).
@@ -4710,6 +4710,43 @@ Acceptance:
   exchange deadline appears as a countdown (D16 amendment).
 - Tier: 2 and 3; the no-mapping arm needs a fixture where the mapper returns nothing, which is the
   arm most likely to ship unexercised.
+
+**Deepdive, 2026-09-03 — the facts this screen must show are not on the wire, and one of them
+cannot be by construction.**
+
+- **`sessionStatus` publishes eight things and none of them is tier progress, a router mapping or
+  the DHT.** `armed`, `address`, `verify`, `pending`, `received`, `diagnosis`, `until`, `notice`.
+  So this reads as a rendering slice and is not one: three facts have to be published before
+  anything can render them.
+- **The blank spinner is not hypothetical — it is the CURRENT state, and its cause is a gate.**
+  `Diagnosis` is filled only `if cer != nil && !inSession && cer.bootstrapDone.Load()`
+  (`session.go:751`). Under ADR-011 nothing bootstraps until the local link has had its window, and
+  where a browse has answered the hold is `lanFirstBudget` — **30 seconds**. So on the LAN case the
+  product is deliberately silent for the longest stretch of the arm, which is precisely the window
+  D16 says must never be a blank spinner. The gate is right for a *diagnosis* (a cause computed
+  before the DHT has had its chance would accuse the wrong tier); what is missing is a live
+  PROGRESS view that is not a diagnosis.
+- **Every fact needed already exists in memory — this publishes, it does not track.**
+  `linkWatchAt` and `linkSeenAt` (atomics, ADR-011's evidence hold), `bootstrapDone` (atomic),
+  `portMap` with its `have`/`current`/`refusedBy`, and `mapUnroutable`/`mapRefused` under `c.mu`.
+  The last two already feed `diagnose()`, so their meaning is settled and this slice does not
+  reinterpret them.
+- **D15's ABSENCE clause is the one most likely to ship unexercised**, and it is why the mapper's
+  three failure shapes are distinguished rather than folded: silence (no gateway answered),
+  `mapRefused` (a gateway answered and said no — *"the router is the user's, is reachable, and said
+  no"*), and `mapUnroutable` (an answer that could not be published — double-NAT, and D9's advice
+  diverges to a VPN rather than a port-forward). A screen saying only *"no mapping"* would collapse
+  three different next actions into one.
+
+Tasks:
+- **T01** — `armProgress` on `sessionStatus`: link, DHT, router and its port, published while armed
+  and **not** gated on `bootstrapDone`, which is the gate that makes the current screen blank.
+- **T02** — the panel renders it: one line per tier, plain language, with the technical detail
+  behind the disclosure D19's amendment already established.
+- **T03** — the router line names the port when there is one and says so when there is not,
+  distinguishing silence from refusal from unroutable.
+- **T04** — the DHT sentence beside it (D34, STANDARDS §9), and the deadline audit: the ceremony
+  deadline in human units, and **no** countdown for the connect or exchange deadlines.
 
 #### P06.S06 — The quote routes build the attestation the signing path signs *(`/pending 317`; re-opens P07 C09, C15, C19)*
 Scope: server-side, and placed BEFORE the consent screen because that screen renders what a quote

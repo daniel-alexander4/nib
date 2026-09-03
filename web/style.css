@@ -1365,3 +1365,8 @@ input.ovl-check { appearance: auto; accent-color: #1a7f37; background: transpare
 .cerinvite { display: flex; flex-direction: column; gap: 3px; margin: 0 0 10px; }
 .cerinvitetext { width: 100%; box-sizing: border-box; font-size: 10px; }
 .cercopy { align-self: flex-start; font-size: 11px; }
+
+/* Per-tier connection progress (P06.S05). */
+.waittiers { list-style: none; margin: 4px 0; padding: 0; }
+.waittier { font-size: 11px; color: var(--subtext1); padding: 1px 0; }
+.waittier::before { content: "· "; color: var(--surface1); }

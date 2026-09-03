@@ -1420,6 +1420,13 @@
              Summary visible, detail behind a disclosure — D19's presentation pin, stated at
              `diagnosisResponse`: "a plain-language summary first and a technical detail behind a
              disclosure". -->
+        <!-- Per-tier progress (P06.S05, D16 amendment). It sits ABOVE the diagnosis because it
+             answers the earlier question — what is happening — and because it is published while
+             the diagnosis deliberately still cannot say anything: that one waits for the DHT
+             bootstrap so it cannot accuse the wrong tier, and under ADR-011 the bootstrap waits
+             for the local link, which on a LAN is the longest part of the arm. This is what makes
+             that window not a blank spinner. -->
+        <ul id="srvWaitTiers" class="waittiers" role="status" aria-live="polite" hidden></ul>
         <p id="srvWaitWhy" class="libhint" role="status" aria-live="polite" hidden></p>
         <details id="srvWaitWhyMore" hidden>
           <summary class="libhint">Technical detail</summary>

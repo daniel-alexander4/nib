@@ -69,6 +69,9 @@ const PUBLISHED = [
   // beside `isMe` because a machine that does not know its position must not be told it is
   // somebody else's turn.
   { type: 'ceremonyNextResponse', readers: ['web/app.js'] },
+  // What each tier of the connection ladder is doing (P06.S05). Published while armed and NOT
+  // behind the diagnosis's bootstrap gate, which is the gate that made this screen blank.
+  { type: 'armProgress', readers: ['web/app.js'] },
   // Convene and accept (P06.S04), after four slices parked in EXCLUDED.
   { type: 'conveneResponse', readers: ['web/app.js'] },
   { type: 'conveneInvite', readers: ['web/app.js'] },

@@ -334,3 +334,21 @@ func (p *portMapper) close() {
 		_ = p.client.Unmap(ctx, pm)
 	}
 }
+
+// lease reports the mapping this mapper currently holds, for the armed screen (P06.S05).
+//
+// **A reader, and the third one this type has.** `refusal()` answers "did a gateway say no" and
+// `reportLease` answers "say it once, in a log"; neither answers "what is open right now, on what
+// port", which is what D15's criterion asks the screen to disclose while a ceremony is armed.
+//
+// Returns the external port and whether there is a mapping at all. Zero and false is the honest
+// answer for a mapper that never obtained one, and the caller distinguishes silence from refusal by
+// asking `refusal()` — two facts, because D9's advice diverges between them.
+func (p *portMapper) lease() (port uint16, have bool) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if !p.have {
+		return 0, false
+	}
+	return p.current.ExternalPort, true
+}

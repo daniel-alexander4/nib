@@ -139,6 +139,7 @@ const els = {
   srvSelfFp: $('srvSelfFp'), srvSelfName: $('srvSelfName'), srvSelfCopy: $('srvSelfCopy'),
   srvCancel: $('srvCancel'), srvArmGo: $('srvArmGo'),
   srvWaitAddr: $('srvWaitAddr'), srvWaitPeer: $('srvWaitPeer'), srvDisarm: $('srvDisarm'),
+  srvWaitTiers: $('srvWaitTiers'),
   srvWaitWhy: $('srvWaitWhy'), srvWaitWhyMore: $('srvWaitWhyMore'),
   srvWaitWhyDetail: $('srvWaitWhyDetail'),
   srvPeerLabel: $('srvPeerLabel'), srvPeerFp: $('srvPeerFp'), srvPeerCopy: $('srvPeerCopy'),
@@ -1355,6 +1356,7 @@ async function pollRecv(token) {
   if (token !== recvPoll) return;
   reflectArmed(!!st.armed); // the server can disarm on its own (a timeout), and then so does this
   reflectNotice(st.notice);
+  reflectArmProgress(st.progress);
   reflectDiagnosis(st.diagnosis);
   // `until` is when this arm gives up. Read here so the indicator says how long is left rather
   // than only that something is armed — which is what the field was added for (C05): a five-minute
@@ -10199,7 +10201,8 @@ function renderEndedCeremonies(host, ended) {
       : r.state === 'completed' ? 'Completed'
       : r.state === 'expired' ? 'Ran out of time'
       // Deliberately NOT the word 'heard':  matches published field names as
-      // substrings of this file, so that word alone would satisfy `lanHeardResponse.Heard` — a
+      // substrings of this file, so that word alone would satisfy the LAN-browse response's list
+      // field — a
       // reader claimed by a coincidence in prose, which is the blind spot /pending 252 nearly
       // died on. Caught by that guard on this slice's own commit.
       : 'No further word';
@@ -10719,3 +10722,77 @@ document.getElementById('ceremonyAcceptForm')?.addEventListener('submit', (ev) =
   ev.preventDefault();
   acceptFromPanel();
 });
+
+// reflectArmProgress is the READER for sessionStatus.progress (P06.S05, D16 amendment).
+//
+// **It is not the diagnosis and it renders above one.** `reflectDiagnosis` answers *why nothing has
+// connected*; this answers *what is happening*. They are published under different conditions on
+// purpose: the diagnosis waits for `bootstrapDone` so a cause cannot accuse a tier that has not had
+// its chance, and under ADR-011 the bootstrap itself waits for the local link — on a LAN, for
+// `lanFirstBudget`, thirty seconds. **That wait is exactly the window D16 says must never be a
+// blank spinner**, and it is the window the diagnosis structurally cannot speak in.
+//
+// # Every line is plain language and none of them is a countdown
+//
+// D16's amendment says only the ceremony deadline appears in human units; neither the connect
+// deadline nor the exchange deadline appears as a countdown. So the tiers report STATE, never
+// remaining time. A countdown here would also invite a user to watch it, and what they can act on
+// is the router line.
+const TIER_WORDS = {
+  'link:watching': 'Listening for the other party on your local network.',
+  // **Deliberately not the word 'heard'**, for the second time in this phase.
+  // `observables_test.go` matches published field names as substrings of this file, so that word
+  // alone satisfies the LAN-browse response's list field — which is genuinely unread and parked
+  // under
+  // `/pending 23`. Rewording is the honest move both times: a reader claimed by a coincidence in
+  // prose would silently un-park a field nothing shows.
+  'link:found': 'Found the other party on your local network.',
+  'dht:holding': 'Not using the internet yet \u2014 giving your local network its chance first.',
+  'dht:reaching': 'Looking for the other party through the public rendezvous.',
+  // The router tier's states, and they are separate because the next action differs. Silence may
+  // mean there is no gateway to ask; a refusal means the router is reachable and said no; an
+  // unroutable answer means a second layer of NAT and points at a VPN rather than a port-forward.
+  'router:silent': 'Asked your router for a temporary opening; it did not answer.',
+  'router:refused': 'Asked your router for a temporary opening; it answered and declined.',
+  'router:unroutable': 'Your router answered, but the address it gave cannot be reached from '
+    + 'outside \u2014 usually a second router in front of it. A private network such as Tailscale '
+    + 'or WireGuard is the way through.',
+};
+let tiersShownFor = '';
+function reflectArmProgress(p) {
+  const host = els.srvWaitTiers;
+  if (!host) return;
+  if (!p) {
+    host.hidden = true;
+    host.textContent = '';
+    tiersShownFor = '';
+    return;
+  }
+  // **The router line is built rather than looked up, because it names the PORT.** D15's criterion
+  // is that the screen discloses that a temporary router opening was requested and names the port,
+  // and says so when no mapping was obtained rather than staying silent \u2014 so the open case
+  // carries a number and each other case carries its own sentence.
+  const lines = [];
+  if (p.link) lines.push(TIER_WORDS['link:' + p.link] || '');
+  if (p.dht) lines.push(TIER_WORDS['dht:' + p.dht] || '');
+  if (p.router === 'open') {
+    lines.push('Your router opened a temporary opening on port ' + p.port
+      + '. It closes when this ceremony ends.');
+  } else if (p.router) {
+    lines.push(TIER_WORDS['router:' + p.router] || '');
+  }
+  const shown = lines.filter(Boolean);
+  // Keyed on the rendered text for `reflectDiagnosis`' reason: this polls every 1.5 s and an
+  // aria-live region would otherwise re-announce an unchanged ladder to a screen reader forever.
+  const key = shown.join(' ');
+  if (key === tiersShownFor) return;
+  tiersShownFor = key;
+  host.textContent = '';
+  for (const line of shown) {
+    const li = document.createElement('li');
+    li.className = 'waittier';
+    li.textContent = line;
+    host.appendChild(li);
+  }
+  host.hidden = shown.length === 0;
+}
