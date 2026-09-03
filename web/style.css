@@ -1341,3 +1341,27 @@ input.ovl-check { appearance: auto; accent-color: #1a7f37; background: transpare
 /* Your turn is the one line in this panel a user must act on, so it is the one line that is
    emphasised. Colour is not the only channel: the sentence itself says "It is your turn to sign". */
 .cernextline.certurn { color: var(--green); font-weight: 600; }
+
+/* Convene and accept (P06.S04). */
+.ceractions { display: flex; gap: 6px; padding: 6px 8px 0; }
+.cerform { padding: 8px; display: flex; flex-direction: column; gap: 4px; }
+.cerform label { font-size: 11px; color: var(--subtext1); }
+.cerform input[type="text"], .cerform input[type="datetime-local"], .cerform textarea {
+  width: 100%;
+  box-sizing: border-box;
+}
+.cercheck { display: flex; align-items: center; gap: 5px; }
+.cerpeerpick { max-height: 180px; overflow-y: auto; }
+.cerpeerrow { display: flex; align-items: center; gap: 6px; padding: 2px 0; font-size: 12px; }
+.cerpeername { flex: 0 0 auto; color: var(--text); }
+.cerpeercap { flex: 1 1 auto; min-width: 0; font-size: 11px; }
+.cerformbtns { display: flex; gap: 6px; margin-top: 6px; }
+.cererror { color: var(--red); font-size: 11px; margin: 4px 0 0; }
+.cerwarn { color: var(--peach); font-size: 11px; margin: 4px 0 0; }
+.cerok { color: var(--green); font-size: 12px; margin: 4px 0; }
+.cerresult { padding: 0 8px; }
+/* The invitation is a channel secret and the sentence saying so sits with it, not in help. */
+.cersecret { border-left: 2px solid var(--peach); padding-left: 6px; }
+.cerinvite { display: flex; flex-direction: column; gap: 3px; margin: 0 0 10px; }
+.cerinvitetext { width: 100%; box-sizing: border-box; font-size: 10px; }
+.cercopy { align-self: flex-start; font-size: 11px; }

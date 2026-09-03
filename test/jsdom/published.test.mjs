@@ -69,6 +69,11 @@ const PUBLISHED = [
   // beside `isMe` because a machine that does not know its position must not be told it is
   // somebody else's turn.
   { type: 'ceremonyNextResponse', readers: ['web/app.js'] },
+  // Convene and accept (P06.S04), after four slices parked in EXCLUDED.
+  { type: 'conveneResponse', readers: ['web/app.js'] },
+  { type: 'conveneInvite', readers: ['web/app.js'] },
+  { type: 'acceptResponse', readers: ['web/app.js'] },
+  { type: 'acceptedParty', readers: ['web/app.js'] },
   { type: 'peer', readers: ['web/app.js'] },
   { type: 'listDirResponse', readers: ['web/app.js'] },
   { type: 'dirEntry', readers: ['web/app.js'] },
@@ -192,15 +197,14 @@ const EXCLUDED = {
   // read would be this scan asserting coverage against a filename — the false green it exists
   // to prevent — and `historyEvicted` is what happens when a shape is simply left out.
   //
-  // Delete these four entries when P06.S04's panel renders the invitations. The Go-side twin of
-  // this parking is in observables_test.go for ceremony.Convened and vault.CeremonySecret.
-  conveneResponse: 'P07.S02a ships the route before P06 builds its panel; no client reader yet',
-  conveneInvite: 'P07.S02a ships the route before P06 builds its panel; no client reader yet',
-  // Same parking, same panel, one slice later (P07.S02b, v1.117.157). `/api/ceremony/accept`
-  // is the invitee's door and P06 builds the screen that shows a party who invited them, who
-  // else is on the roster, and in what capacity. Delete these two with the convene pair.
-  acceptResponse: 'P07.S02b ships the route before P06 builds its panel; no client reader yet',
-  acceptedParty: 'P07.S02b ships the route before P06 builds its panel; no client reader yet',
+  // **All four convene/accept entries are GONE (P06.S04, v1.117.337)**, joining `ceremoniesResponse`
+  // which left at S02. The panel convenes and accepts, so every one of them has a real reader.
+  //
+  // The parking used to say the Go-side twin was `ceremony.Convened` and `vault.CeremonySecret` in
+  // observables_test.go. **Checked rather than repeated: both are in that file's `published` table
+  // with readers already**, so there was no twin left to release — they were redeemed at some point
+  // between P07.S02a and now, by work that did not mention this note. A cross-reference is a claim
+  // about another file exactly as a doc comment is a claim about the code under it.
   // **`ceremoniesResponse` was here and is GONE (P06.S02, v1.117.335).** The ceremony panel reads
   // it — every field, which is what deleting an entry from this map costs: `primary` as well as
   // its `note`, and `expires` as the one deadline this phase shows in human units. It went alone;

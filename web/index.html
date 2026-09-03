@@ -355,6 +355,48 @@
            P06.S03's, computed by the one function the server's L3 check uses, so building a second
            rule here would be a duplicate with a one-slice lifetime. -->
       <div id="ceremony" class="panel">
+        <div class="ceractions">
+          <button id="ceremonyConveneBtn" type="button">Convene a ceremony…</button>
+          <button id="ceremonyAcceptBtn" type="button">Accept an invitation…</button>
+        </div>
+
+        <!-- Convene (P06.S04). The roster is PICKED from the peers this machine has already
+             pinned, never typed: the phase's criterion is that the primary flow contains no hex
+             fingerprint, and a fingerprint is hex. A party who is not pinned yet is pinned first,
+             through Identity & peers, which is where D21's read-it-aloud comparison already
+             happens and where the Copy buttons already are. -->
+        <form id="ceremonyConveneForm" class="cerform" hidden>
+          <label for="cerIntent">What is being agreed</label>
+          <input id="cerIntent" type="text" maxlength="200"
+                 placeholder="We agree to the lease of 14 Elm Row" />
+          <label for="cerExpires">Open until</label>
+          <input id="cerExpires" type="datetime-local" />
+          <label class="cercheck"><input id="cerISign" type="checkbox" checked /> I sign this too</label>
+          <p class="libhint">Who is signing — choose from the people you have already paired with.</p>
+          <div id="cerPeerPick" class="cerpeerpick"></div>
+          <p class="libhint cerhexnote">
+            Someone missing? Pair with them first under <b>Identity &amp; peers</b>, where you
+            compare fingerprints once, out loud, before anybody signs.
+          </p>
+          <div class="cerformbtns">
+            <button id="cerConveneGo" type="submit">Convene</button>
+            <button id="cerConveneCancel" type="button">Cancel</button>
+          </div>
+          <p id="cerConveneError" class="cererror" hidden></p>
+        </form>
+
+        <!-- Accept (P06.S04), the invitee's half. -->
+        <form id="ceremonyAcceptForm" class="cerform" hidden>
+          <label for="cerInviteText">Paste the invitation you were sent</label>
+          <textarea id="cerInviteText" rows="4" spellcheck="false"></textarea>
+          <div class="cerformbtns">
+            <button id="cerAcceptGo" type="submit">Accept</button>
+            <button id="cerAcceptCancel" type="button">Cancel</button>
+          </div>
+          <p id="cerAcceptError" class="cererror" hidden></p>
+        </form>
+
+        <div id="ceremonyResult" class="cerresult"></div>
         <div id="ceremonyList" class="ceremonylist"></div>
       </div>
       <div id="flags" class="panel">
