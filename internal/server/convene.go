@@ -238,6 +238,34 @@ func (s *Server) handleCeremonyConvene(w http.ResponseWriter, r *http.Request) {
 	}
 	committed = true
 
+	// **No `Seeds` on a FIRST-issued invitation either, and the silence is what produced
+	// `/pending 357` (recorded 2026-09-03).** The re-issue door below states the absence for its
+	// own case; this one said nothing, so a reader had to re-derive the whole situation.
+	//
+	// D6's second half — a bootstrap seed hint carried in the invitation, so a machine whose
+	// shipped list has rotted can still reach the DHT — was BUILT at P04.S06 (v1.115.0) and is
+	// wired to nothing on the real path. Named searches: `grep -rn 'SeedSample' --include=*.go .`
+	// and `grep -rn '\.Seed(' --include=*.go .` outside tests each return one production caller,
+	// and it is the same one — `internal/cli/rendezvous.go`, the `nib rendezvous` diagnostic. So
+	// the feature is a closed loop inside one CLI tool.
+	//
+	// **Wiring the producing half alone is INERT**, which is why setting `Seeds` here would be
+	// worse than leaving it: no server ever calls `rendezvous.Server.Seed()`, so the addresses
+	// would travel, be parsed and scope-checked by `validateSeeds`, and then be dropped. A field
+	// that crosses the wire and is discarded is the shape this repo's reader scans exist to refuse.
+	//
+	// **And wiring the consuming half ARMS something.** The P04.S06 slice wrote the chain out:
+	// hostile seeds → a routing table containing nothing else → every `probeTargets` entry
+	// attacker-chosen → `classify`'s majority satisfied → D33's punch budget aimed at a victim of
+	// the sender's choosing, from this user's IP. It is latent today precisely because the consume
+	// half is unwired, and it is bounded by `invSeedsOnly`, which admits invitation seeds only
+	// after a DEMONSTRATED bootstrap failure.
+	//
+	// So the open question is not this line: it is whether a recipient can be told, before they
+	// open an invitation, that doing so may cause outbound contact to addresses the sender chose,
+	// with their real IP and an exact timestamp. That is a different consent question from "Nib
+	// uses the DHT", and it is P06's. Until it has an answer, seeds stay off both halves — stated
+	// here so the next reader inherits the reasoning rather than the silence.
 	invites := make([]conveneInvite, 0, len(out.Invites))
 	for _, inv := range out.Invites {
 		fp, _ := hex.DecodeString(inv.Party.Fingerprint)
