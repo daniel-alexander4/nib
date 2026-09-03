@@ -43,8 +43,20 @@ const listing = {
   ended: [{ ceremony: '3'.repeat(32), state: 'declined', observed_at: '2026-09-01T09:00:00Z' }],
 };
 
+// The server's answer, stubbed per test. The DISAGREEMENT with the roster above is deliberate:
+// `/api/ceremonies` lists Bob first, and this says it is Alice's turn.
+const defaultNext = {
+  ceremony: '1'.repeat(32), state: 'waiting',
+  label: 'Alice Tenant', capacity: 'as attorney-in-fact',
+  position: 1, of: 1, isMe: true, meKnown: true,
+};
+let nextAnswer = defaultNext;
+
 const { document: doc, settle } = await boot({
-  routes: { '/api/ceremonies': () => listing },
+  routes: {
+    '/api/ceremonies': () => listing,
+    '/api/ceremony/next': () => nextAnswer,
+  },
 });
 
 async function showPanel() {
@@ -127,4 +139,61 @@ test('the finished ceremonies are listed with what happened and when', async () 
     'where it went has it preserved in secret');
   assert.match(host.textContent, /ended/,
     'nothing tells the user where their preserved copy is');
+});
+
+// ── P06.S03: the next action comes from the server, and the panel never computes it ──────────
+//
+// The criterion is that the panel's enabled action is *"computed from the record by the same
+// function the server's L3 check uses"*. Tier 1 proves the route answers from `p2p.NextContributor`
+// and that its answer agrees with the gate that refuses; this file's job is that the panel RENDERS
+// the server's answer and derives nothing of its own.
+//
+// **The fixture disagrees with the roster on purpose.** `/api/ceremonies` says party 1 is Bob and
+// party 2 is Alice; `/api/ceremony/next` says it is Alice's turn. A panel computing "the first
+// party who has not signed" would say Bob, which is what a JS reimplementation produces and what
+// this asserts against.
+test('the next action is the server\'s answer, not the roster order', async () => {
+  const host = await showPanel();
+  const btn = host.querySelector('.cernextbtn');
+  assert.ok(btn, 'a healthy ceremony offers no way to ask what happens next');
+  btn.click();
+  await settle();
+  const line = host.querySelector('.cernextline');
+  assert.ok(line, 'nothing was rendered for the next action');
+  assert.match(line.textContent, /your turn to sign/i,
+    `the panel rendered ${JSON.stringify(line.textContent)}. The server said it is this machine's ` +
+    'turn; a panel that answered from the roster would name the first party instead');
+  assert.doesNotMatch(line.textContent, /Bob Landlord/,
+    'the panel named the roster\'s first party — which is what computing the answer here, ' +
+    'rather than rendering the server\'s, produces');
+});
+
+test('a machine that does not know its position is not told it is somebody else\'s turn', async () => {
+  nextAnswer = { ceremony: '1'.repeat(32), state: 'waiting', label: 'Bob Landlord', position: 1, of: 2, isMe: false, meKnown: false };
+  try {
+    const host = await showPanel();
+    host.querySelector('.cernextbtn').click();
+    await settle();
+    const line = host.querySelector('.cernextline');
+    assert.match(line.textContent, /cannot tell whether that is you/,
+      '`meKnown: false` was rendered as somebody else\'s turn. A machine that never recorded ' +
+      'which party it is has not been told it is not their turn — that is an answer, and the ' +
+      'honest one is that Nib does not know');
+  } finally {
+    nextAnswer = defaultNext;
+  }
+});
+
+test('a finished ceremony says so rather than reporting a failure', async () => {
+  nextAnswer = { ceremony: '1'.repeat(32), state: 'complete' };
+  try {
+    const host = await showPanel();
+    host.querySelector('.cernextbtn').click();
+    await settle();
+    assert.match(host.querySelector('.cernextline').textContent, /Everyone has signed/,
+      'a complete ceremony is folded into the failure sentence, which tells a user whose ' +
+      'ceremony finished that their document could not be read');
+  } finally {
+    nextAnswer = defaultNext;
+  }
 });

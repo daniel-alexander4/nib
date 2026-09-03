@@ -4594,7 +4594,7 @@ Tasks:
   a real browser, and the published-shape exclusions in `published.test.mjs` **deleted** rather than
   amended, which is this slice's completion test.
 
-#### P06.S03 — The next action is computed by ONE function, shared with the server's L3 check *(D17 amendment, D23; ADR-009)*
+#### P06.S03 — The next action is computed by ONE function, shared with the server's L3 check *(D17 amendment, D23; ADR-009)* *(**done** 2026-09-03, v1.117.336 — 4 clauses met. **The slice was smaller than firmed and the deepdive is why**: `p2p.NextContributor` already existed and P07.S03a built it FOR this criterion, saying so in its own doc — *"a predicate that could only refuse would force that slice to retrofit a read-only query, which is two derivations of one rule"*. So there was no rule to write and no JS copy to refuse; the slice is the CROSSING. **The one real ADR-009 risk was the roster conversion**, which `l3Roster` held inline and this needed from a `Record` rather than an `Invitation` — extracted to `l3RosterFrom`, one door, two callers. **Its own route rather than a listing field**, because `NextContributor` needs the DOCUMENT and `ListStored` was designed never to open one: per user question on one ceremony, which RELIEVES `/pending 360` rather than adding to it. Three states, not two — folding `complete` into `unavailable` would tell a user whose ceremony finished that their document is damaged. `MeKnown` beside `IsMe`, because a machine that never recorded its position has not been told it is somebody else's turn. **Two mutations came back GREEN**: the `ReadStored` pre-check (kept — its value is the human SENTENCE, and the test now asserts that) and one that did not compile, which is `redproof.sh`'s red-for-the-wrong-reason. **A coverage hole the review found was built rather than filed**: every fixture was at hop 0, which an answer pinned to the first signing party passes, so the slice now signs a real hop and requires the answer to MOVE. 1 red proof, floor 270 → 271.)*
 Scope: the replacement for the struck role-conflict criterion, in its own words — *"no screen in the
 ceremony offers a role choice, and the panel's enabled action is computed from the record by the
 same function the server's L3 check uses — driven by a fixture whose UI position and record position
@@ -4612,6 +4612,46 @@ Acceptance:
   this repo's standing example of what it costs.
 - **The guard asserts routing through the door**, not the text each site prints (ADR-009).
 - Tier: 1 for the door, 2 for the rendering, and a red proof for the disagreement fixture.
+
+**Deepdive, 2026-09-03 — the door already exists, and the slice is the CROSSING.**
+
+- **`p2p.NextContributor` was built for this criterion and its own doc says so.** *"P06's own
+  criterion promises the panel computes its enabled action from 'the same function the server's L3
+  check uses'; a predicate that could only refuse would force that slice to retrofit a read-only
+  query, which is two derivations of one rule and the ADR-009 shape this gate exists to avoid."*
+  P07.S03a wrote the question form deliberately, one phase early, for this slice. It has three
+  production callers and `AdmitContribution` — the refusing form — is built on it, so it is already
+  the shared door rather than a second opinion.
+- **So there is no rule to write, and no JS copy to refuse.** The whole slice is getting that
+  function's answer to the client. The server computes and the client renders, which is the option
+  the firmed slice named first.
+- **The obstacle is a cost decision P08.S03 made deliberately.** `NextContributor(pdf, r)` needs the
+  DOCUMENT, and `ListStored` never opens one — measured at S03 as 10 / 69 / 195 ms for 100 / 500 /
+  1000 pages, superlinear, on text-only fixtures, with the whole listing designed around not paying
+  it. Putting the next action in `ceremoniesResponse` would pay that per ceremony per listing, which
+  is precisely what `/pending 360` is already about.
+- **So the answer is a route of its own, for ONE ceremony, fetched when a user opens that card.**
+  One document open per user action, never per render — the cost lands where a user asked a question
+  and nowhere else. This *relieves* `/pending 360`'s pressure rather than adding to it.
+- **It needs no vault**, which S02 is what makes true: `Stored.Me` records which party this machine
+  is, so *"is it my turn"* is answerable without `identity(v)`. The route is therefore lock-free on
+  the same footing as the listing (P06.S01) and for the same reason.
+
+**Blast radius checked and clean.** `NextContributor` is not modified — this slice adds a caller.
+`grep -rn "NextContributor(" --include=*.go .` outside tests returns three sites, all inside
+`internal/p2p`, and all three keep their behaviour.
+
+Tasks:
+- **T01** — `GET /api/ceremony/next`, one ceremony, answering `p2p.NextContributor` over the record
+  and document from this machine's mirror. Lock-free, `requirePublicLoopback`, and it **must not**
+  acquire a side effect (`/pending 365`'s class).
+- **T02** — the panel fetches it when a card is opened and renders the action: whose turn, in what
+  capacity, and whether that party is this machine.
+- **T03** — the disagreement fixture: a record whose signing order contradicts the order the panel
+  would otherwise show, driven at tier 1 and tier 2, **which must show the record's**. A fixture
+  where the two agree cannot tell a shared rule from two rules.
+- **T04** — the guard that the answer comes from the shared door: routing asserted, not the sentence
+  each site prints (ADR-009).
 
 #### P06.S04 — Convene and invite *(D21, D22; the no-address and no-fingerprint criteria)*
 Scope: the panel over P07.S02's convene route, and the invitation surface.

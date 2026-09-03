@@ -3467,3 +3467,35 @@ driven where the lock cannot mask it**, so it now uses an unlocked server. A row
 is a row that was never proving what it claimed.
 
 `recorded` 268 → 270.
+
+## P06.S01–S03 — the panel, and the door it does not rewrite (v1.117.334–.336)
+
+| Defect reintroduced | Check that fired | What it said |
+| --- | --- | --- |
+| `the-ceremonies-listing-goes-back-behind-the-vault` — `requirePublicLoopback` → `requireUnlocked` | `TestTheCeremoniesListingAnswersWithTheVaultLocked`, tier 1 | "GET /api/ceremonies returned 401, want 200" |
+| `the-listing-accepts-a-cross-site-read` — the same mutation, other half | `TestTheCeremoniesListingRefusesACrossSiteRead`, tier 1 | "a cross-site GET … returned 200, want 403 … it runs a close-out sweep, which moves ceremony directories and drops vault pins" |
+| `the-next-action-is-computed-from-the-roster-order` — the answer becomes the first roster entry | `TestTheNextActionComesFromTheRecordAndNotTheRosterOrder`, tier 1 | "the next action names \"The registrar\", which is the roster's FIRST entry — a non-signing convener who holds a position in the roster and none in the signing order (D22)" |
+
+**The third row is the phase's one novel shape and its fixture is the whole assertion.** P06's
+criterion asks that the panel's action be *"computed from the record by the same function the
+server's L3 check uses"*, and a fixture where the roster order and the signing order agree cannot
+tell a shared rule from two rules that happen to match — which is the entire failure ADR-009 exists
+for. So the fixture puts a **non-signing convener at roster position 1**: every naive answer, and
+every JS reimplementation over the roster, names the registrar; L3 names the first signing party.
+
+**And the rule was already written.** `p2p.NextContributor` exists because P07.S03a built the
+question form one phase early, for this criterion, recording why in its own doc: *"a predicate that
+could only refuse would force that slice to retrofit a read-only query, which is two derivations of
+one rule and the ADR-009 shape this gate exists to avoid."* The real risk was one level down — the
+roster CONVERSION, which `l3Roster` held inline and S03 needed from a `Record` rather than an
+`Invitation`. Seven copied lines would have agreed on the day they were written.
+
+**Five mutations across the three slices came back GREEN, and each said something different.** One
+removed a duplicate guard (S01's call-site nil check, which `closeOutEnded` already held). One
+exposed a fixture using a value the server cannot send (`me: ''`, where `omitempty` means the key is
+absent). One exposed a test driving one of `ReadStored`'s **two** `LoadUnparseable` arms. One kept
+its code and moved the assertion (`ReadStored`'s pre-check buys the human SENTENCE, not the state).
+And one did not compile, which is `redproof.sh`'s red-for-the-wrong-reason arriving in a hand probe
+rather than in the harness.
+
+`recorded` 270 → 271.

@@ -1,0 +1,16 @@
+--- a/internal/server/ceremonynext.go
++++ b/internal/server/ceremonynext.go
+@@ -106,7 +106,12 @@
+ 		return
+ 	}
+ 	roster := l3RosterFrom(rec.Roster, hex.EncodeToString(rh), rec.Intent)
+-	next, nerr := p2p.NextContributor(pdf, roster)
++	_ = pdf
++	var next p2p.RosterEntry
++	var nerr error
++	if len(roster.Entries) > 0 {
++		next = roster.Entries[0]
++	}
+ 	if nerr != nil {
+ 		out := ceremonyNextResponse{Ceremony: id, State: "unavailable", Reason: nerr.Error()}
+ 		if errors.Is(nerr, p2p.ErrCeremonyComplete) {

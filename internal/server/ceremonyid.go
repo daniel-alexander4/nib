@@ -788,10 +788,33 @@ func (c *ceremonyID) l3Roster() p2p.Roster {
 	// **`Intent` comes from the invitation and is safe to because `MatchesRecord` compares it
 	// against the record's (P07.S07b).** Without that comparison this would be an unsigned hint;
 	// with it, the invitation's copy is the record's copy or the hop was refused.
+	return l3RosterFrom(c.inv.Roster, c.inv.RosterHash, c.inv.Intent)
+}
+
+// l3RosterFrom is the ONE conversion from a roster of parties to the shape L3 takes (ADR-009).
+//
+// **Two callers with two sources, and that is exactly why it is one function.** `l3Roster` above
+// supplies the INVITATION's copy — the record the party verified at arm time, which is that gate's
+// stated requirement — and `handleCeremonyNext` (P06.S03) supplies the local mirror's `record.json`,
+// which is the same verified record written to disk at accept or convene time. Neither reads the
+// record carried by the DOCUMENT, for the reason `l3Roster` records: a gate reading the document's
+// own record answers its own question.
+//
+// It was inline in `l3Roster` until P06.S03 needed a second caller. Copying those seven lines would
+// have produced two derivations of "what L3 is handed" that agree on the day they are written,
+// which is the shape ADR-009 exists to refuse and the shape `NominalBlockRect` is this repo's
+// standing example of.
+func l3RosterFrom(parties []ceremony.Party, commitment, intent string) p2p.Roster {
+	// **The version travels with the commitment.** It is this build's record format version, not
+	// a field of the invitation, and that is the right value: the commitment is what THIS build
+	// computes and verifies the record under. Two parties on different formats digest the same
+	// roster to different hashes, their tokens differ, and D32's skew sentence — not an accusation
+	// — is what the reader sees. An invitation-carried version would only let a sender claim a
+	// format it is not using.
 	out := p2p.Roster{
-		Commitment:        c.inv.RosterHash,
+		Commitment:        commitment,
 		CommitmentVersion: ceremony.FormatVersion,
-		Intent:            c.inv.Intent,
+		Intent:            intent,
 	}
 	// **The WHOLE entry, and the fields that used to be dropped here are the point (P07.S07a).**
 	// `Label` and `Capacity` were left on the floor, so every block said `Signer: Nib User` while
@@ -799,7 +822,7 @@ func (c *ceremonyID) l3Roster() p2p.Roster {
 	// carry from the invitation for the reason `p2p.RosterEntry` records: `matchesRosterFields`
 	// compares the whole `ceremony.Party` struct against the signed record, and `checkArrival`
 	// runs it before consent.
-	for _, p := range c.inv.Roster {
+	for _, p := range parties {
 		out.Entries = append(out.Entries, p2p.RosterEntry{
 			Fingerprint: p.Fingerprint, Signs: p.Signs, Label: p.Label, Capacity: p.Capacity,
 		})
