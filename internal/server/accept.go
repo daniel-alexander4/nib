@@ -4,6 +4,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"io"
+	"log"
 	"net/http"
 	"strings"
 
@@ -152,6 +153,16 @@ func (s *Server) handleCeremonyAccept(w http.ResponseWriter, r *http.Request) {
 	// the convener at one end, so this party can never be on a hop with anybody else; pinning
 	// the rest of the roster would pin up to thirty peers it can never dial. See
 	// pinCeremonyRoster.
+	// **Which party this machine is, recorded while the vault is open (P06.S02).** `me` is right
+	// here and was thrown away; a reader without a vault cannot work it out, because it needs
+	// `identity(v)`. Best-effort on purpose: a ceremony whose marker failed to write is readable,
+	// resumable and signable exactly as before, and refusing an accept over a label would trade
+	// the whole ceremony for it. The panel says "we do not know which of these is you" until the
+	// next write, which is the honest sentence for an absent marker.
+	if merr := ceremony.WriteMe(defaultOutputDir(), inv.ID, me); merr != nil {
+		log.Printf("accepted ceremony %s: could not record which party this machine is: %v — the "+
+			"ceremony works, but the panel cannot show your position in it", inv.ID, merr)
+	}
 	n, perr := pinCeremonyRoster(v, inv.ID, []ceremony.Party{convener}, me)
 	if perr != nil {
 		httpError(w, http.StatusInternalServerError,

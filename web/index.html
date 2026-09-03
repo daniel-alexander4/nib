@@ -311,6 +311,7 @@
         <button class="tab" data-panel="outline">Outline</button>
         <button class="tab" data-panel="library">Library</button>
         <button class="tab" data-panel="flags">Flags</button>
+        <button class="tab" data-panel="ceremony">Ceremony</button>
       </nav>
       <div id="thumbs" class="panel active">
         <div class="thumbactions">
@@ -348,6 +349,13 @@
         <p class="libhint">Click an image to place it on the current page.</p>
         <div id="imageGrid"></div>
         <input id="addImageInput" type="file" accept="image/png,image/jpeg" hidden />
+      </div>
+      <!-- The Signing Ceremony panel (P06.S02). Read-only here: it renders the roster and this
+           machine's position from GET /api/ceremonies and offers no action — the next action is
+           P06.S03's, computed by the one function the server's L3 check uses, so building a second
+           rule here would be a duplicate with a one-slice lifetime. -->
+      <div id="ceremony" class="panel">
+        <div id="ceremonyList" class="ceremonylist"></div>
       </div>
       <div id="flags" class="panel">
         <p class="libhint">Get a <b>Sign</b> / <b>Date</b> / <b>Initial</b> flag onto every blank the other person must fill, then email them the file.</p>

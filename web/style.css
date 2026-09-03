@@ -1285,3 +1285,50 @@ input.ovl-check { appearance: auto; accent-color: #1a7f37; background: transpare
   background: none; border: none; padding: 0 2px; cursor: pointer;
   color: var(--text); font-size: 12px; line-height: 1;
 }
+
+/* The Signing Ceremony panel (P06.S02). Tokens only — both themes redefine them at :root, so
+   nothing here needs a second rule for light. */
+.ceremonylist { padding: 4px 8px 12px; }
+.cercard {
+  border: 1px solid var(--surface1);
+  border-radius: 6px;
+  padding: 8px 10px;
+  margin: 0 0 10px;
+}
+/* A degraded ceremony is marked and NOT dimmed. It is the entry a user most needs to read — it is
+   the one they have to act on — and dimming the thing that needs attention is the readability
+   trade this repo has already refused once. */
+.cercard[data-state]:not([data-state="ok"]) { border-color: var(--peach); }
+.cerhead { display: flex; align-items: baseline; gap: 6px; flex-wrap: wrap; }
+.cerintent { font-weight: 600; color: var(--text); }
+.cerbadge {
+  font-size: 10px;
+  padding: 1px 5px;
+  border-radius: 3px;
+  background: var(--surface1);
+  color: var(--text);
+}
+.cerended { background: transparent; border: 1px solid var(--surface1); }
+.cerreason { color: var(--peach); font-size: 11px; margin: 4px 0 0; }
+.cerdeadline { color: var(--subtext1); font-size: 11px; margin: 4px 0 0; }
+.cerroster { margin-top: 6px; }
+.cerparty { display: flex; align-items: baseline; gap: 6px; font-size: 12px; padding: 1px 0; }
+.cerparty.cerme .cerwho { font-weight: 600; color: var(--green); }
+.cerwho { color: var(--text); }
+.cerrole { color: var(--subtext1); font-size: 11px; }
+.certag {
+  font-size: 10px;
+  color: var(--green);
+  border: 1px solid var(--green);
+  border-radius: 3px;
+  padding: 0 4px;
+}
+.cerpos { color: var(--subtext1); font-size: 11px; margin: 6px 0 0; }
+.cerendedhead { margin-top: 12px; }
+.cerended-row {
+  display: flex;
+  justify-content: space-between;
+  font-size: 11px;
+  color: var(--subtext1);
+  padding: 1px 0;
+}

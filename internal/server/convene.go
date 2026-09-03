@@ -202,6 +202,12 @@ func (s *Server) handleCeremonyConvene(w http.ResponseWriter, r *http.Request) {
 			"the convened record does not name its own convener, so nothing was convened")
 		return
 	}
+	// The convener's own position, from the value this path already holds (P06.S02). Same
+	// best-effort footing as the accept side's, and for the same reason.
+	if merr := ceremony.WriteMe(root, out.Record.ID, convener.Fingerprint); merr != nil {
+		log.Printf("convened ceremony %s: could not record which party this machine is: %v — the "+
+			"ceremony works, but the panel cannot show your position in it", out.Record.ID, merr)
+	}
 	if _, perr := pinCeremonyRoster(v, out.Record.ID, out.Record.Roster, convener.Fingerprint); perr != nil {
 		httpError(w, http.StatusInternalServerError,
 			"the ceremony's parties could not be pinned, so nothing was convened: "+perr.Error())

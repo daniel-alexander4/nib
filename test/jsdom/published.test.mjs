@@ -62,6 +62,9 @@ const PUBLISHED = [
   { type: 'attestationView', readers: ['web/app.js'] },
   { type: 'keysResponse', readers: ['web/app.js'] },
   { type: 'peersResponse', readers: ['web/app.js'] },
+  // The ceremonies listing and its rows (P06.S02). It left EXCLUDED when the panel started reading
+  // it, which is what an exclusion is for: a promise that somebody will, redeemed.
+  { type: 'ceremoniesResponse', readers: ['web/app.js'] },
   { type: 'peer', readers: ['web/app.js'] },
   { type: 'listDirResponse', readers: ['web/app.js'] },
   { type: 'dirEntry', readers: ['web/app.js'] },
@@ -185,7 +188,7 @@ const EXCLUDED = {
   // read would be this scan asserting coverage against a filename — the false green it exists
   // to prevent — and `historyEvicted` is what happens when a shape is simply left out.
   //
-  // Delete these two entries when P06's panel renders the invitations. The Go-side twin of
+  // Delete these four entries when P06.S04's panel renders the invitations. The Go-side twin of
   // this parking is in observables_test.go for ceremony.Convened and vault.CeremonySecret.
   conveneResponse: 'P07.S02a ships the route before P06 builds its panel; no client reader yet',
   conveneInvite: 'P07.S02a ships the route before P06 builds its panel; no client reader yet',
@@ -194,15 +197,11 @@ const EXCLUDED = {
   // else is on the roster, and in what capacity. Delete these two with the convene pair.
   acceptResponse: 'P07.S02b ships the route before P06 builds its panel; no client reader yet',
   acceptedParty: 'P07.S02b ships the route before P06 builds its panel; no client reader yet',
-  // Same parking again, one phase later (P08.S03, v1.117.243). `GET /api/ceremonies` is the
-  // listing of ceremonies on this machine and its four degradation classes; the screen that
-  // renders them is P06's panel. Parked here rather than given `web/app.js` as a reader for the
-  // reason the convene pair states: naming a reader that does not read is the false green this
-  // scan exists to prevent. Delete it with the four above when P06 lands.
-  //
-  // It is ALSO the shape /pending 297 is about — a slice that shipped a published shape and no
-  // inventory row — so its entry here is currently the only record that anything owes it a reader.
-  ceremoniesResponse: 'P08.S03 ships the listing before P06 builds its panel; no client reader yet',
+  // **`ceremoniesResponse` was here and is GONE (P06.S02, v1.117.335).** The ceremony panel reads
+  // it — every field, which is what deleting an entry from this map costs: `primary` as well as
+  // its `note`, and `expires` as the one deadline this phase shows in human units. It went alone;
+  // the four convene/accept entries above are P06.S04's and stay until that panel lands. The
+  // parking said "delete it with the four above", and deleting one of five is the honest version.
 };
 
 // ── Published, and NOT read ──────────────────────────────────────────────────

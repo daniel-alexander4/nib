@@ -4537,7 +4537,7 @@ Tasks:
   close-out sweep does not run on a locked read, asserting the routing rather than the one caller.
 - **T04** — tier 6: the route answered by a real process whose vault is locked (C15).
 
-#### P06.S02 — The ceremony panel: roster, position and next action, read-only *(D24, D29; C12's client half)*
+#### P06.S02 — The ceremony panel: roster and position, read-only *(D24, D29; C12's client half)* *(**done** 2026-09-02, v1.117.335 — 4 clauses met. **The client's first ceremony reader**, and `ceremoniesResponse` leaves `published.test.mjs`'s EXCLUDED map after four slices of parking. **The scan made the slice bigger and was right twice**: deleting an exclusion means declaring a reader, and the reader must read EVERY field — which surfaced `Party.capacity` (a roster showing the name and not the capacity shows a different agreement from the one the signature covers) and the whole `ended` list P08.S09 added so a user could find the contribution ADR-012 preserves. Then it fired a THIRD time, on a coincidence: the sentence *"Nothing further was heard"* satisfied `lanHeardResponse.Heard` by substring, which is the blind spot `/pending 252` nearly died on. **`SIDEBAR_FOR`'s order is load-bearing and nothing said so** — the first entry is the mode's default surface, so listing the panel first silently took Flags off Collaborate and turned eight tier-3 tests red on a Flags control; making this panel the landing screen is a product decision and not this slice's. **Two mutations came back GREEN**: one because the test drove a `me: ''` the server cannot send (`omitempty` means the key is ABSENT), and one because the fixture reached only one of `ReadStored`'s two `LoadUnparseable` arms. The next action is deliberately NOT here: it is S03's, through the one door.)*
 Scope: the fifth sidebar panel, rendering from `GET /api/ceremonies` alone. No actions — this slice
 is the reading surface and the three criteria that are about reading. **The client has zero ceremony
 readers today**, so the parked exclusions in `test/jsdom/published.test.mjs` and
@@ -4554,6 +4554,45 @@ Acceptance:
   P08.S03's four classes and tier 6's CLAUSE 11; this is the client half of the same rule.
 - **No hex fingerprint appears** — parties are named, and an identity is shown as its six-word name.
 - Tier: 2 for the rendering and the degradation, 3 for the panel in a real browser.
+
+**Deepdive, 2026-09-02 — the marker is one line at two sites that already hold the value.**
+
+- **Both write paths already compute this machine's fingerprint and throw it away.**
+  `accept.go:117` is `me := hex.EncodeToString(myFP)` and it is passed straight into
+  `pinCeremonyRoster(v, inv.ID, …, me)`; `convene.go:205` passes `convener.Fingerprint` for the same
+  parameter, because on that path this machine IS the convener. So *"which of these parties am I"* is
+  not merely knowable at write time — it is already known, and nothing records it.
+- **The marker is the fingerprint, not the roster index.** Everything else keys on the fingerprint
+  (`strings.EqualFold` against roster entries), an index duplicates a derivation, and an index is
+  wrong the moment a roster is read in a different order. **And it adds no fact the directory does
+  not already hold**: `record.json`'s roster already carries this machine's fingerprint among N
+  others, so `me` is a pointer into a file that is already unsealed by D29's design, not a new
+  disclosure. That is the whole privacy argument and it is why no new global identity file is needed.
+- **`SIDEBAR_FOR` is the extension point** (`web/app.js:9976`): a map of mode → available sidebar
+  panels, with `collaborate: ['flags']` today. The panel is an entry in that map and a `<div
+  class="panel">` beside the four that exist.
+
+**The slice is AMENDED and its title changed with it: no next action in S02.** As firmed it read
+*"roster, position and next action"*, following the criterion's wording. Building the action here
+means writing a rule that S03 exists to replace with a shared door — a second implementation with a
+one-slice lifetime, which is the duplicate-derivation defect this repo has paid for repeatedly and
+the exact thing ADR-009 refuses. **S02 renders roster and position; S03 adds the action through the
+one door.** The criterion is met across the pair, and is ledgered that way rather than claimed here.
+
+Tasks:
+- **T01** — `ceremony.WriteMe` / the `me` file, and `Stored.Me`, filled by `ReadStored`. Absent is
+  the ordinary case (a machine that mirrored before this shipped, or one that is not a party) and
+  reads as *unknown*, never as "not a party".
+- **T02** — the two write sites record it: the accept path and the convene path, each from the
+  value it already holds.
+- **T03** — the ceremony panel: a fifth sidebar entry, rendering roster and this machine's position
+  from `GET /api/ceremonies` alone. **No hex fingerprint** — parties are named, an identity is its
+  six-word name.
+- **T04** — the degradation: a corrupt record degrades that one entry and leaves every other
+  ceremony and open document working (the client half of C12).
+- **T05** — the locked and offline clauses driven: tier 2 for the rendering, tier 3 for the panel in
+  a real browser, and the published-shape exclusions in `published.test.mjs` **deleted** rather than
+  amended, which is this slice's completion test.
 
 #### P06.S03 — The next action is computed by ONE function, shared with the server's L3 check *(D17 amendment, D23; ADR-009)*
 Scope: the replacement for the struck role-conflict criterion, in its own words — *"no screen in the
