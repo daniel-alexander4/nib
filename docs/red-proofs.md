@@ -3421,3 +3421,49 @@ told to expect the red. **A harness whose contract says it fails is a harness no
 output of.** ADR-011's own text records this exact shape one clause over: *"the only `--lan` run was
 the two-party one, so the run that existed to prove P03's criterion was the one shape that could not
 reach the defect."*
+
+## P06.S01 — the listing leaves the lock, and is better guarded for it (v1.117.334)
+
+| Defect reintroduced | Check that fired | What it said |
+| --- | --- | --- |
+| `the-ceremonies-listing-goes-back-behind-the-vault` — `requirePublicLoopback` → `requireUnlocked` | `TestTheCeremoniesListingAnswersWithTheVaultLocked`, tier 1 | "a locked read returned 0 ceremony/ies, want 1 — the panel would render an empty shelf to a user who has one" |
+| `the-listing-accepts-a-cross-site-read` — the same mutation, graded on the other half | `TestTheCeremoniesListingRefusesACrossSiteRead`, tier 1 | "a cross-site GET to /api/ceremonies returned 200, want 403 … it runs a close-out sweep, which moves ceremony directories and drops vault pins" |
+
+**One mutation, two rows, because it reintroduces two different defects** — and the second is the
+one worth reading. `requireUnlocked` applies the CSRF check and the loopback-origin check to
+**non-GET methods only**. That is not a discovery: `handleCeremonyInvites`' own doc comment says
+*"POST because `requireUnlocked` applies CSRF and the loopback-origin check only to non-GET methods.
+A GET here would be vault-gated and nothing else"* — the repo already knew, and used POST to route
+around it. So this listing sat behind an auth gate with **no origin check at all**, and since
+P08.S06 a GET to it runs a close-out sweep that moves ceremony directories and drops vault pins. A
+state-changing side effect on a GET, reachable from any page in the user's browser, shipped by me
+four commits earlier.
+
+**So "take the route off the authentication gate" is exactly backwards as a description.** It moves
+onto `requirePublicLoopback`, which is `originIsLoopback` and nothing else and which `/api/status`
+already wears, and the route ends up **better** guarded than before. The lock was protecting nothing
+here — the mirror is ordinary files by D29's design — while the guard that would have helped was
+absent.
+
+**And a third mutation came back GREEN, which is why the code changed.** `handleCeremonies` read the
+vault and skipped the sweep on nil, and `closeOutEnded` did the same at its own head. Removing the
+call-site guard left the whole suite green; removing both went red. Two guards for one rule is the
+shape ADR-009 was written after finding six of, so the call-site copy is gone and the door keeps it.
+
+**Tier 6 gained a genuinely locked instance** (CLAUSE 12), and its first cut did not work: copying
+A's `.config` into a fresh home left the vault *openable*, because `unwrapSlot` tries `slot.KeyPath`
+first and that is an absolute path recorded at enrol time, which reached back into A's live home.
+Measured, not reasoned — the clause failed its own setup assertion with `/api/peers` answering 200.
+The shape that works is to give the instance its own key and then take it away.
+
+**Both rows failed their first replay, and neither failure was in the test.** The first had an
+`EXPECT` written from the assertion I *meant* to trip rather than the one that trips first — the
+same slip as `the-grace-is-hand-copied-from-the-ceremony-ceiling` two slices earlier, and
+`redproof.sh` caught it both times with *"went red, but not for its own reason"*. The second was a
+real defect in the test: it drove the cross-site read against a LOCKED server, so under the mutation
+the same-origin read answered 401 as well and the test tripped its own setup before reaching the
+cross-site assertion. **The origin refusal is a property independent of the lock and has to be
+driven where the lock cannot mask it**, so it now uses an unlocked server. A row that cannot replay
+is a row that was never proving what it claimed.
+
+`recorded` 268 → 270.

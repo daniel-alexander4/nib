@@ -1,0 +1,11 @@
+--- a/internal/server/server.go
++++ b/internal/server/server.go
+@@ -305,7 +305,7 @@
+ 	// refuses `Sec-Fetch-Site: cross-site` outright. So this route ends up BETTER guarded after the
+ 	// move than it was before it, which is the opposite of how "taking a route off the auth gate"
+ 	// reads.
+-	mux.HandleFunc("GET /api/ceremonies", requirePublicLoopback(s.handleCeremonies))
++	mux.HandleFunc("GET /api/ceremonies", s.requireUnlocked(s.handleCeremonies))
+ 	mux.HandleFunc("POST /api/ceremony/accept", s.requireUnlocked(s.handleCeremonyAccept))
+ 	mux.HandleFunc("POST /api/ceremony/deliver", s.requireUnlocked(s.handleCeremonyDeliver))
+ 	mux.HandleFunc("GET /api/attestations", s.requireUnlocked(s.handleAttestations))

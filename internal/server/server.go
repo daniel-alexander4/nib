@@ -287,7 +287,25 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/cosign/sign", s.requireUnlocked(s.handleCosignSign))
 	mux.HandleFunc("POST /api/ceremony/convene", s.requireUnlocked(s.handleCeremonyConvene))
 	mux.HandleFunc("POST /api/ceremony/invites", s.requireUnlocked(s.handleCeremonyInvites))
-	mux.HandleFunc("GET /api/ceremonies", s.requireUnlocked(s.handleCeremonies))
+	// **The one ceremony route that is NOT behind the vault (P06.S01, D29, C12).**
+	//
+	// The plan has owed this since 2026-08-18 — *"the ceremonies listing moves off
+	// `requireUnlocked` and locked becomes a fifth degradation class, because the vault lock
+	// protects nothing there: the mirror is unsealed by D29's own design"* — and six of P06's exit
+	// criteria are about a panel that renders while locked. Nothing in the listing needs a vault:
+	// `ListStored` and `ReadStored` read `record.json` and nothing else, and the only vault use in
+	// the handler is the close-out sweep, which returns on a nil one.
+	//
+	// **`requirePublicLoopback` and not "no guard at all", and the difference is a live defect this
+	// closes rather than a precaution.** `requireUnlocked` skips BOTH the CSRF check and the origin
+	// check for GET (see its own body), so today any cross-site page can reach this route — it
+	// cannot read the response, but the request executes, and since P08.S06 that request runs a
+	// close-out sweep. That is a GET with a state-changing side effect, reachable cross-origin,
+	// with no origin check. `requirePublicLoopback` is `originIsLoopback` and nothing else, and it
+	// refuses `Sec-Fetch-Site: cross-site` outright. So this route ends up BETTER guarded after the
+	// move than it was before it, which is the opposite of how "taking a route off the auth gate"
+	// reads.
+	mux.HandleFunc("GET /api/ceremonies", requirePublicLoopback(s.handleCeremonies))
 	mux.HandleFunc("POST /api/ceremony/accept", s.requireUnlocked(s.handleCeremonyAccept))
 	mux.HandleFunc("POST /api/ceremony/deliver", s.requireUnlocked(s.handleCeremonyDeliver))
 	mux.HandleFunc("GET /api/attestations", s.requireUnlocked(s.handleAttestations))

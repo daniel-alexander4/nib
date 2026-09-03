@@ -459,6 +459,97 @@ PYC12
   fi
 fi
 
+# ── CLAUSE 12 — P06.S01/C12: the ceremonies listing answers with the vault LOCKED ────────────
+#
+# **Six of P06's exit criteria are about a panel that renders while locked**, and until v1.117.334
+# the route was behind `requireUnlocked`, so none of them was buildable. This drives the criterion
+# where it actually lives: a real process, a real vault it cannot open, and real ceremony
+# directories on disk beside it.
+#
+# **A locked instance is made by taking the KEY away, not by asking Nib to lock.** There is no idle
+# re-lock in this product — `grep -rn "s.vault = nil" internal/server/` finds no production site —
+# so "locked" means `vault.OpenSSH` failed, which is a cold start against a vault whose key is not
+# there. Copying A's `.config` (the vault) and A's `~/nib` (the unsealed mirror) into a fresh home
+# WITHOUT `id_ed25519` produces exactly that: `AutoSetup` no-ops because a vault exists, `OpenSSH`
+# fails because its key does not, and `s.vault` stays nil.
+#
+# **The sibling assertion is what makes it a lock and not a coincidence.** A route answering 200
+# proves nothing on its own — the instance might simply have unlocked. So `GET /api/peers`, which
+# is still behind the gate, must return 401 in the same breath. One 200 and one 401 from one
+# process is the whole clause.
+# **The locked instance gets its OWN key and then loses it**, which is the only shape that works.
+# The first cut copied A's `.config` into a fresh home and expected `OpenSSH` to fail — it did not,
+# because `unwrapSlot` tries `slot.KeyPath` first and that is an ABSOLUTE path recorded at enrol
+# time, so the copy happily reached back into A's home and opened A's key. Measured, not reasoned:
+# the clause failed on its own setup assertion with `/api/peers` answering 200.
+#
+# So: start L normally so it enrols a key of its own under its own home; give it A's ceremonies;
+# stop it; delete its key; start it again on the same home. Now `slot.KeyPath` names a file that no
+# longer exists, the `~/.ssh` sweep finds nothing because HOME is the sandbox, and the vault stays
+# shut.
+start L
+cp -a "$A_HOME/nib" "$L_HOME/nib" 2>/dev/null
+kill "$L_PID" 2>/dev/null; wait "$L_PID" 2>/dev/null
+rm -f "$L_HOME/id_ed25519" "$L_HOME/id_ed25519.pub"
+# STIMULUS, both halves: there is something to render, and the key is genuinely gone. Without the
+# first a 200 carrying an empty list would pass; without the second this is an unlocked instance.
+if [ ! -d "$L_HOME/nib/ceremonies" ] || [ -z "$(ls -A "$L_HOME/nib/ceremonies" 2>/dev/null)" ]; then
+  no "locked-read setup" "the locked instance's home holds no ceremony directories, so a 200 with an empty list would pass this clause"
+elif [ -e "$L_HOME/id_ed25519" ]; then
+  no "locked-read setup" "the signing key is still there, so the instance below will not be locked"
+else
+  LOCK_PORT=$((20000 + RANDOM % 20000))
+  HOME="$L_HOME" XDG_CONFIG_HOME="$L_HOME/.config" NIB_NO_BROWSER=1 NIB_NO_UPDATE_CHECK=1 \
+    NIB_ADDR="127.0.0.1:$LOCK_PORT" "$SP/nib" >"$SP/locked.log" 2>&1 &
+  LOCK_PID=$!
+  LOCK_BASE="http://127.0.0.1:$LOCK_PORT"
+  for _ in $(seq 1 150); do curl -sf "$LOCK_BASE/api/status" >/dev/null 2>&1 && break; sleep 0.1; done
+  peers_code="$(curl -s -o "$SP/locked.peers.json" -w '%{http_code}' "$LOCK_BASE/api/peers")"
+  cer_code="$(curl -s -o "$SP/locked.cer.json" -w '%{http_code}' "$LOCK_BASE/api/ceremonies")"
+  if [ "$peers_code" != "401" ]; then
+    no "locked-read setup" "GET /api/peers returned $peers_code, want 401 — this instance is NOT locked, so a 200 from the ceremonies route below would say nothing at all"
+  elif [ "$cer_code" != "200" ]; then
+    no "locked read" "GET /api/ceremonies returned $cer_code with the vault locked, want 200. Six of P06's criteria are about a panel that renders while locked, and nothing in this listing is sealed: the mirror is ordinary files by D29's design. $(head -c 200 "$SP/locked.cer.json")"
+  else
+    python3 - "$SP/locked.cer.json" <<'PYLOCK' && ok "the ceremonies listing answers with the vault LOCKED, while a vault-gated route refuses (P06.S01)" || no "locked read" "$(head -c 300 "$SP/locked.cer.json")"
+import json, sys
+d = json.load(open(sys.argv[1]))
+cers = d.get("ceremonies") or []
+if not cers:
+    print("FAIL: a locked read returned an EMPTY listing. The panel would render an empty shelf "
+          "to a user who has live ceremonies — which passes a status-code check and fails the "
+          "criterion.", file=sys.stderr)
+    sys.exit(1)
+# **Graded over the HEALTHY entries only, and that is not a softening.** CLAUSE 11 above
+# deliberately damages one of A's ceremonies to drive C12, and this clause reads a copy of A's
+# `~/nib` taken afterwards — so a degraded row here is the earlier clause working, and demanding
+# every row be whole would make the two clauses contradict each other.
+ok_rows = [c for c in cers if c.get("state") == "ok"]
+if not ok_rows:
+    print("FAIL: a locked read returned %d row(s) and NONE is healthy. The panel would show a "
+          "user nothing but damage for ceremonies that are fine." % len(cers), file=sys.stderr)
+    sys.exit(1)
+hollow = [c for c in ok_rows if not c.get("intent") or not c.get("roster")]
+if hollow:
+    print("FAIL: %d locked entry/ies classified 'ok' came back hollow (no intent or no roster): "
+          "%r. The criterion is that the panel RENDERS roster, position and next action while "
+          "locked; a row with an id and nothing else is not that."
+          % (len(hollow), hollow[0]), file=sys.stderr)
+    sys.exit(1)
+# And the degraded row still carries its sentence, locked — the lock must not cost the diagnosis.
+bad = [c for c in cers if c.get("state") != "ok" and not (c.get("reason") or "").strip()]
+if bad:
+    print("FAIL: a degraded row came back with no reason while locked: %r. The class is a word; "
+          "the sentence is what tells the user whether this is damage, a forgery, or a Nib that "
+          "is out of date." % bad[0], file=sys.stderr)
+    sys.exit(1)
+print("locked read: %d row(s), %d healthy and whole, %d degraded and each with its sentence"
+      % (len(cers), len(ok_rows), len(cers) - len(ok_rows)))
+PYLOCK
+  fi
+  kill "$LOCK_PID" 2>/dev/null; wait "$LOCK_PID" 2>/dev/null
+fi
+
 echo
 echo "PASS=$PASS FAIL=$FAIL"
 [ "$FAIL" -eq 0 ]

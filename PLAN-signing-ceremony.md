@@ -4467,7 +4467,7 @@ sketched as part of the panel and is a security change that must not ride inside
 
 **The sketch this replaces**, preserved because the criteria were written against it: the ceremony panel replacing the tab and its three modals; **the convene-and-invite PANEL, over P07.S02's route** *(re-pointed 2026-08-23 — the server-side convene is P07's; a pin two hundred lines below is not what a builder reading this list will see)*; the connect-and-confirm screen; the roster and position display; **the roster-shaped consent screen (D27); the end-state surfaces (D28); the document freeze and the attachments label (D29);** **the quote routes build the attestation the signing path signs (`/pending 317`, added 2026-09-01)** *(the block a party sees disagrees with the signature beneath it in five of six lines: `cosignAttestation` never calls `StampCommitment`, so a quote is structurally incapable of returning Capacity or `Party k of n`. Grilled three times to the same verdict — one door, the server builds the attestation once and the signing path uses that one, with `When` pinned at quote time, which needs `p2p.Confirmer` to carry the time back. It is P06's because the block only becomes user-reachable when P06 ships, and it re-opens P07's C09/C15/C19, corrected to `⚠ partly met` at v1.117.275)*; failure surfaces; docs and README.
 
-#### P06.S01 — The listing leaves the lock, and `locked` becomes a fifth load class *(D29, C12; precondition for six criteria)*
+#### P06.S01 — The listing leaves the lock, and `locked` becomes a fifth load class *(D29, C12; precondition for six criteria)* *(**done** 2026-09-02, v1.117.334 — 4 clauses met, 1 STRUCK. **The slice turned around at its deepdive**: this is not "off the authentication gate" but onto the right one, and it closes a live defect rather than relaxing anything. `requireUnlocked` applies CSRF and the loopback-origin check to **non-GET methods only** — `handleCeremonyInvites`' own doc comment says so, which is why that route is a POST — so this listing had **no origin check at all**, and since P08.S06 a GET to it ran a close-out sweep that moves ceremony directories and drops vault pins: a state-changing side effect on a GET, reachable from any page in the user's browser, shipped four commits earlier and mine. `requirePublicLoopback` refuses `Sec-Fetch-Site: cross-site` before the handler runs. **The fifth load class is STRUCK, not unbuilt**: nothing in the listing degrades when locked, because every field comes from `record.json`. What the vault holds is `identity(v)`, so what degrades is *which party am I* — position and next action — which is P06.S02's criterion and is left there with the shape recorded. **A third mutation came back GREEN** and moved the code: the call-site nil guard was a second implementation of a rule `closeOutEnded` already held, so it is gone (ADR-009). Tier 6 gains a genuinely locked instance, whose first cut failed its own setup assertion because `unwrapSlot` tries an ABSOLUTE `slot.KeyPath` and reached back into the live home. 2 red proofs, floor 268 → 270.)*
 Scope: `GET /api/ceremonies` comes off `requireUnlocked`. The plan has owed this since 2026-08-18
 — *"the ceremonies listing moves off `requireUnlocked` and locked becomes a fifth degradation class,
 because the vault lock protects nothing there: the mirror is unsealed by D29's own design"* — and
@@ -4492,6 +4492,50 @@ Acceptance:
   obvious place to assume the opposite.
 - Tier: 1 for the class and the field-by-field comparison; 6 for the route answered by a real
   process with a locked vault (C15).
+
+**Deepdive, 2026-09-02 — four findings, and two of them change the slice.**
+
+- **The move is nearly free, and the reason is P08.S03's own design.** `ListStored` and `ReadStored`
+  touch no vault at all — the mirror is ordinary files under `~/nib` by D29's design — and
+  `handleCeremonies` does not call `vaultFrom(r)`; its only vault use is the close-out sweep, added
+  at P08.S06, which already returns on a nil vault. So the handler is vault-independent today and
+  nobody noticed.
+- **It is not "off the gate", it is "onto the RIGHT gate", and that is a security IMPROVEMENT.**
+  `requireUnlocked` skips **both** the CSRF check and the origin check for GET (`auth.go:120`), so
+  today any cross-site page can reach `GET /api/ceremonies` — it cannot read the response, but the
+  request executes, **and since P08.S06 that request runs a close-out sweep**: a GET with a
+  state-changing side effect, reachable cross-origin, with no origin check. `requirePublicLoopback`
+  — which `/api/status` already wears — is `originIsLoopback` and nothing else, and it refuses
+  `Sec-Fetch-Site: cross-site` outright. The route ends up **better** guarded than it is now, not
+  worse. This is a live defect in shipped code and it is mine, from v1.117.330.
+- **`cmd/nib/main.go:94` refuses a non-loopback bind**, so an ungated route is still loopback-only at
+  the socket. That is the posture a lock-free route inherits and it is stronger than the slice
+  assumed.
+- **`LoadLocked` turns out NOT to be needed, and what IS needed is a different thing.** Nothing in
+  the listing degrades when locked: every field of `ceremony.Stored` is read from `record.json`.
+  What the vault holds is **`identity(v)` — this machine's own fingerprint** — and without it the
+  panel cannot answer *"which of these parties am I"*, so **position and next action** are what
+  degrade, not the listing. Confirmed absent:
+  `grep -n "Me\b\|MyPosition\|Position\|myFP" internal/ceremony/mirror.go internal/ceremony/record.go`
+  returns nothing, and no field of the mirror records it. **Left to P06.S02, where the criterion
+  lives**, with the shape found here recorded so it is not re-derived: the position is knowable at
+  `accept` and `convene` time, when the vault IS open, so it is written into the ceremony's own
+  folder then and read back without the vault — no new global identity file, and nothing newly
+  unsealed on a machine that has no ceremonies (one that does already carries its own fingerprint in
+  every `record.json`, by D29's design).
+
+**And there is no idle re-lock.** `grep -rn "s.vault = nil" internal/server/` finds no production
+site, and `ensureUnlocked` opens through `vault.OpenSSH` at first need. So "locked" means a cold
+start against a passphrase-protected key — which is exactly the case an in-memory fingerprint cache
+could not serve, and the reason S02's marker has to be on disk.
+
+Tasks:
+- **T01** — `GET /api/ceremonies` moves from `s.requireUnlocked` to `requirePublicLoopback`.
+- **T02** — a guard that the route answers with the vault locked, and that the response is
+  field-for-field what an unlocked reader gets, asserted per field rather than as a whole.
+- **T03** — a guard that a **cross-site** GET is refused, which it is not today; and one that the
+  close-out sweep does not run on a locked read, asserting the routing rather than the one caller.
+- **T04** — tier 6: the route answered by a real process whose vault is locked (C15).
 
 #### P06.S02 — The ceremony panel: roster, position and next action, read-only *(D24, D29; C12's client half)*
 Scope: the fifth sidebar panel, rendering from `GET /api/ceremonies` alone. No actions — this slice
