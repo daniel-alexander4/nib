@@ -1,0 +1,13 @@
+--- a/web/app.js
++++ b/web/app.js
+@@ -10516,9 +10516,7 @@
+           const secs = Math.round((p.elapsedMs || 0) / 1000);
+           const cap = Math.round((p.ceilingMs || 0) / 1000);
+           const who = p.label || 'the next party';
+-          line.textContent = cap
+-            ? `Reaching ${who} — ${p.index} of ${p.of}, ${secs}s of up to ${cap}s before Nib gives up on them.`
+-            : `Reaching ${who} — ${p.index} of ${p.of}, ${secs}s.`;
++          line.textContent = `Reaching ${who} - ${p.index} of ${p.of}.`;
+         }
+       }
+     } catch (e) {

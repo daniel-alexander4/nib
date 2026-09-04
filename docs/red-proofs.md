@@ -3935,3 +3935,33 @@ often than `reraceCap`, whatever the peer does. The unmeasured claim is now boun
 outstanding.
 
 `recorded` 300 → 304.
+
+
+## /pending 370 — a round in flight becomes observable (v1.117.354)
+
+| Defect reintroduced | Check that fired | What it said |
+| --- | --- | --- |
+| `the-delivery-leg-outlives-its-round` — the closure `beginLeg` returns does not clear | `TestTheRoundReportsTheLegItIsOn`, tier 1 | "the leg survives the round that published it" |
+| `the-round-watcher-shows-only-its-index` — elapsed and its ceiling dropped from the sentence | `ceremonydeliver.test.mjs`, tier 2 | "the elapsed time and its ceiling are not shown together" |
+| `the-round-watcher-never-stops` — the poll's stop leaves the `finally` | `ceremonydeliver.test.mjs`, tier 2 | "the watcher kept polling after the round returned (6 more asks)" |
+
+**The second row is the design, not a detail.** Inside one stalled leg the *index* does not move —
+a party who is not listening holds it for the whole 300 s connect deadline — so a surface reporting
+only "2 of 4" is silent for precisely the minutes the convener spends wondering whether the round
+has hung. The number that ticks is elapsed, and it means something only against a stated ceiling.
+
+**The harness could not express a slow route until this item, and that is why the mutation was
+possible to write.** `boot.mjs` did not `await` a route handler, so an async one was
+`JSON.stringify`'d as `{}` — silently, since the call still resolved 200. A progress surface can
+only be driven against a request held open, so the harness gained one line and every existing route
+is unaffected (awaiting a non-promise is a no-op).
+
+**A fourth row, and it is a SURVIVOR.** `the-leg-is-published-after-the-dial` — moving `beginLeg`
+to after `deliverToParty` — compiled and went green on its first attempt. The jsdom test stubs the
+progress route with a canned answer, so it never exercises the server's ordering, and the unit test
+drives `beginLeg` directly. A leg published after its dial names each party only once it has stopped
+being the one the convener is waiting on: a progress surface reporting exclusively the past.
+`TestTheLegIsPublishedBeforeItIsAttempted` is the guard the survivor earned, structural for the
+reason `rearm_test.go` guards this same class structurally.
+
+`recorded` 304 → 308.

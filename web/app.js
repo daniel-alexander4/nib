@@ -10493,6 +10493,44 @@ function ceremonyCard(c, mayAct) {
   return card;
 }
 
+// watchDeliveryRound polls the round's current leg and writes it into `line` (/pending 370).
+//
+// **What it reports is chosen by which number MOVES.** Inside one stalled leg the index does not
+// change — a party that is not listening holds it for the whole connect deadline — so "2 of 4" on
+// its own is as silent as no surface at all for exactly the minutes that matter. The elapsed time
+// against the stated ceiling is what ticks, and a number rising toward a bound the user has been
+// told is what separates a working round from a hung one.
+//
+// It returns its own stop, called from the round's `finally` on every path — a poll that outlived
+// its round would keep asking about a ceremony nobody is delivering.
+function watchDeliveryRound(id, line) {
+  let stopped = false;
+  let timer = null;
+  const tick = async () => {
+    if (stopped) return;
+    try {
+      const res = await apiFetch('/api/ceremony/delivery?ceremony=' + encodeURIComponent(id), { unpinned: true });
+      if (!stopped && res.ok) {
+        const p = await res.json();
+        if (p && p.running) {
+          const secs = Math.round((p.elapsedMs || 0) / 1000);
+          const cap = Math.round((p.ceilingMs || 0) / 1000);
+          const who = p.label || 'the next party';
+          line.textContent = cap
+            ? `Reaching ${who} — ${p.index} of ${p.of}, ${secs}s of up to ${cap}s before Nib gives up on them.`
+            : `Reaching ${who} — ${p.index} of ${p.of}, ${secs}s.`;
+        }
+      }
+    } catch (e) {
+      // A failed poll is not a failed round, and must never replace the round's own sentence:
+      // the POST is still running and its answer is the one that counts.
+    }
+    if (!stopped) timer = setTimeout(tick, 1500);
+  };
+  timer = setTimeout(tick, 1500);
+  return () => { stopped = true; if (timer) clearTimeout(timer); };
+}
+
 // ceremonyDeliver is the convener's "send everyone their copy" control and its result.
 //
 // **The round can take minutes and the button says so before it is pressed, not after.** A leg to
@@ -10520,6 +10558,11 @@ function ceremonyDeliver(c) {
     wait.className = 'libhint';
     wait.textContent = 'Reaching each party… this can take a few minutes if someone is offline.';
     out.appendChild(wait);
+    // **The round is watched while it runs (/pending 370).** It is synchronous and can take hours
+    // — one leg per unreached party, each up to the connect deadline — and until this it published
+    // nothing until it returned, so a convener could not tell it from a hung process. The poll
+    // stops in the `finally` below, on every path out.
+    const stopWatch = watchDeliveryRound(c.id, wait);
     try {
       const res = await apiFetch('/api/ceremony/deliver', {
         method: 'POST',
@@ -10551,6 +10594,8 @@ function ceremonyDeliver(c) {
       e.textContent = 'Nib could not run the delivery round.';
       out.appendChild(e);
       btn.disabled = false;
+    } finally {
+      stopWatch();
     }
   });
   wrap.appendChild(btn);

@@ -769,6 +769,25 @@ func (s *Server) runDeliveryRound(ctx context.Context, v *vault.Vault, rec cerem
 	// would read it back. The skip is therefore the right default and not a proof — and a party
 	// wrongly skipped loses nothing they can act on, since they are the one who refused.
 	ender := endedBy(rec.ID)
+	// **How many legs this round will ATTEMPT, for the watcher's "n of N" (/pending 370).** The
+	// roster length is the wrong figure: the convener is skipped, so is the party that ended the
+	// proceeding, and so is anyone an earlier run already reached. Counting those in would show a
+	// round stalling at "2 of 6" and finishing there, which reads as an abandoned round rather
+	// than a complete one.
+	walked := 0
+	for _, party := range rec.Roster {
+		if strings.EqualFold(party.Fingerprint, me) {
+			continue
+		}
+		if ender != "" && strings.EqualFold(party.Fingerprint, ender) {
+			continue
+		}
+		if wasDelivered(rec.ID, party.Fingerprint) {
+			continue
+		}
+		walked++
+	}
+	attempt := 0
 	out := make([]deliveryOutcome, 0, len(rec.Roster))
 	for _, party := range rec.Roster {
 		if strings.EqualFold(party.Fingerprint, me) {
@@ -811,8 +830,20 @@ func (s *Server) runDeliveryRound(ctx context.Context, v *vault.Vault, rec cerem
 			out = append(out, res)
 			continue
 		}
-		if err := s.deliverToParty(ctx, v, inv, party.Fingerprint, addrs[strings.ToLower(party.Fingerprint)], cert, key, myFP, payload); err != nil {
-			res.Reason = err.Error()
+		// **The leg goes on the record BEFORE it is attempted, not after (/pending 370).** This is
+		// the call that can burn `connectDeadline`, and publishing after it would name every leg
+		// exactly once it stopped being the interesting one. `endLeg` is deferred into the
+		// iteration by the closure `beginLeg` returns, so an early `continue` below cannot leave a
+		// ceremony reporting a leg that is no longer running.
+		// `attempt`, not `len(out)`: the outcome list already holds the skipped parties — the
+		// ender and anyone an earlier run reached — so counting it would number this leg against a
+		// denominator it is not drawn from and show "4 of 2".
+		attempt++
+		endLeg := s.beginLeg(rec.ID, party.Label, attempt, walked)
+		derr := s.deliverToParty(ctx, v, inv, party.Fingerprint, addrs[strings.ToLower(party.Fingerprint)], cert, key, myFP, payload)
+		endLeg()
+		if derr != nil {
+			res.Reason = derr.Error()
 			out = append(out, res)
 			continue // one party's failure does not end the round; the re-run reaches them
 		}
@@ -1233,4 +1264,90 @@ func (s *Server) tellEndState(cer *ceremonyID, t ceremony.Termination) {
 			"and the copy on your disk is still a valid record of what you signed. If these parties "+
 			"want to try again it starts from the ORIGINAL unsigned file, not from anything you "+
 			"hold now — a new proceeding, with a new record and a new set of signatures.")
+}
+
+// deliveryLeg is the round's current leg, for a watcher (/pending 370).
+//
+// `Started` is what makes this useful rather than decorative. Within one stalled leg the INDEX does
+// not move — that is the whole shape of the problem — so a surface reporting only "2 of 4" is as
+// silent as no surface at all for the five minutes that matter. Elapsed time against a known
+// ceiling is the thing that ticks, and it is what separates a round that is working from one that
+// is hung.
+type deliveryLeg struct {
+	Label   string
+	Index   int
+	Of      int
+	Started time.Time
+}
+
+// beginLeg publishes the leg about to be attempted, and returns the function that clears it.
+//
+// The clear is a RETURNED CLOSURE rather than a second exported call, so a caller cannot take the
+// publish and forget the clear: a round that returned early — or panicked into `safe.Recover` —
+// would otherwise leave a ceremony reporting a leg in flight forever, which is the stale-artifact
+// failure this was put in memory to avoid.
+func (s *Server) beginLeg(id, label string, index, of int) func() {
+	s.legMu.Lock()
+	if s.legs == nil {
+		s.legs = map[string]deliveryLeg{}
+	}
+	s.legs[id] = deliveryLeg{Label: label, Index: index, Of: of, Started: time.Now()}
+	s.legMu.Unlock()
+	return func() {
+		s.legMu.Lock()
+		delete(s.legs, id)
+		s.legMu.Unlock()
+	}
+}
+
+// currentLeg reports the leg in flight for a ceremony, if any.
+func (s *Server) currentLeg(id string) (deliveryLeg, bool) {
+	s.legMu.Lock()
+	defer s.legMu.Unlock()
+	l, ok := s.legs[id]
+	return l, ok
+}
+
+// deliveryProgressResponse is what a watcher polls while a round runs.
+type deliveryProgressResponse struct {
+	// Running is false between rounds. A watcher that polled a finished round and got a zero
+	// struct could not tell it from one that had not started.
+	Running bool `json:"running"`
+	// Label is the party being reached, by the name the roster gives them — never a fingerprint,
+	// which is the panel's standing rule.
+	Label string `json:"label,omitempty"`
+	// Index and Of place the leg in the round: "2 of 4".
+	Index int `json:"index,omitempty"`
+	Of    int `json:"of,omitempty"`
+	// ElapsedMs is how long this leg has been running, and CeilingMs is how long it may run before
+	// it gives up. The pair is the answer to "is this hung": one number rising against a stated
+	// bound is progress even when the index is still.
+	ElapsedMs int `json:"elapsedMs,omitempty"`
+	CeilingMs int `json:"ceilingMs,omitempty"`
+}
+
+// handleCeremonyDeliveryProgress reports the round's current leg (/pending 370).
+//
+// **A second route rather than a field on the listing.** `/api/ceremonies` is read on every panel
+// load and every lock-screen render; this is polled only while somebody is watching a round, so
+// the cost is paid by the watcher rather than charged to every reader of the listing.
+func (s *Server) handleCeremonyDeliveryProgress(w http.ResponseWriter, r *http.Request) {
+	id := r.URL.Query().Get("ceremony")
+	if id == "" {
+		httpError(w, http.StatusBadRequest, "this request names no ceremony")
+		return
+	}
+	l, ok := s.currentLeg(id)
+	if !ok {
+		writeJSON(w, deliveryProgressResponse{Running: false})
+		return
+	}
+	writeJSON(w, deliveryProgressResponse{
+		Running:   true,
+		Label:     l.Label,
+		Index:     l.Index,
+		Of:        l.Of,
+		ElapsedMs: int(time.Since(l.Started) / time.Millisecond),
+		CeilingMs: int(connectDeadline / time.Millisecond),
+	})
 }

@@ -94,13 +94,22 @@ const round = {
   ],
 };
 
+// The round's in-flight leg (/pending 370). `deliverHold` lets a test keep the POST open so the
+// watcher has something to watch — a round that returns instantly cannot exercise a surface whose
+// whole purpose is the minutes before it returns.
+let deliverHold = null;
+let progress = { running: false };
+let progressAsks = 0;
+
 const { document: doc, settle } = await boot({
   routes: {
     '/api/ceremonies': () => listing,
-    '/api/ceremony/deliver': (opts) => {
+    '/api/ceremony/deliver': async (opts) => {
       delivered = JSON.parse((opts && opts.body) || '{}');
+      if (deliverHold) await deliverHold;
       return round;
     },
+    '/api/ceremony/delivery': () => { progressAsks += 1; return progress; },
   },
 });
 
@@ -191,3 +200,69 @@ test('a round that reached three of four says so, and skipped means two differen
 // The lock-screen arm lives in `lockedpanel.test.mjs`, which boots with `/api/status` answering
 // `key-locked` — one boot per file, and that is the file whose boot renders this card behind the
 // lock. Named here so the condition is not assumed to be untested.
+
+// The round is watched while it runs (/pending 370).
+//
+// **It is synchronous and can take hours** — one leg per unreached party, each up to the connect
+// deadline, and `ceremony.MaxRoster` is 32 — and until this it published nothing until it returned.
+// A convener could not tell a working round from a hung process.
+//
+// **The elapsed number is the one that matters and the index is not.** Inside one stalled leg the
+// index does not move, so a surface reporting only "2 of 4" is silent for exactly the minutes the
+// item is about.
+test('a round in flight says which party it is on, and how long it has been trying', async () => {
+  let release;
+  deliverHold = new Promise((r) => { release = r; });
+  progress = { running: true, label: 'Bob Landlord', index: 2, of: 4, elapsedMs: 45000, ceilingMs: 300000 };
+  const before = progressAsks;
+
+  const host = await showPanel();
+  const card = cardFor(host, '1'.repeat(32));
+  card.querySelector('.cerdeliverbtn').click();
+  await settle();
+
+  // The watcher polls on the same 1500 ms cadence the arm screen uses.
+  await new Promise((r) => setTimeout(r, 1800));
+  await settle();
+
+  const during = card.textContent;
+
+  // Let the round finish before asserting, so a failure cannot leave the poll running — a file
+  // that leaves a repeating timer does not fail, it HANGS.
+  release();
+  await settle();
+  await new Promise((r) => setTimeout(r, 50));
+  await settle();
+
+  assert.ok(progressAsks > before,
+    'the round was never watched — nothing polled /api/ceremony/delivery while the POST was open, ' +
+    'so the surface cannot report anything about a round that takes minutes');
+  assert.match(during, /Bob Landlord/,
+    'the party currently being reached is not named. "Reaching each party…" is true of a round ' +
+    'that is working and of one that is hung.');
+  assert.match(during, /2 of 4/, 'the leg is not placed in the round');
+  assert.match(during, /45s of up to 300s/,
+    'the elapsed time and its ceiling are not shown together. Inside one stalled leg the INDEX ' +
+    'does not move, so elapsed is the only thing that ticks — and without the bound a rising ' +
+    'number is not progress, it is just a number going up.');
+});
+
+test('the watcher stops when the round does', async () => {
+  deliverHold = null;
+  progress = { running: false };
+  const host = await showPanel();
+  const card = cardFor(host, '1'.repeat(32));
+  card.querySelector('.cerdeliverbtn').click();
+  await settle();
+  await new Promise((r) => setTimeout(r, 100));
+  await settle();
+  const asksAfterRound = progressAsks;
+
+  // Well past two poll intervals: a watcher that outlived its round would keep asking about a
+  // ceremony nobody is delivering, forever, on a 1500 ms timer.
+  await new Promise((r) => setTimeout(r, 3400));
+  assert.equal(progressAsks, asksAfterRound,
+    `the watcher kept polling after the round returned (${progressAsks - asksAfterRound} more ` +
+    'asks). The stop is called from the round\'s `finally`, on every path out — a poll that ' +
+    'outlives its round is a timer nothing will ever clear.');
+});
