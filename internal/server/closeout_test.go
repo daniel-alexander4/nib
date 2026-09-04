@@ -219,6 +219,72 @@ func TestTheCloseOutDoorReachesEveryCeremonyScopedStore(t *testing.T) {
 	}
 }
 
+// TestTheCloseOutDropsThisCeremonysPunchBudgetsAndNoOthers — `/pending 312`.
+//
+// `punchBudgets` had no `delete` anywhere in the tree: one `*punchBudget` per hop the process ever
+// saw, surviving every disarm and living for the process lifetime. The close-out door is where it
+// goes, because it is the one place that knows a proceeding is over ON THIS MACHINE — and
+// `ceremonyID.close()`, the obvious door, is provably the wrong one, since two `ceremonyID`s share
+// a hop's budget and deleting on the first lets the second re-emit the full D33 figure.
+//
+// **Driven through `closeOutCeremony`, not through `dropPunchBudgets`.** ADR-009: the guard asserts
+// the rule is reached through the door. A test that called the helper directly would stay green if
+// the door stopped calling it, which is the only way this can actually regress.
+//
+// **TWO arms, and the second is the one that matters.** A `delete` that cleared the whole map
+// passes the first assertion perfectly — the budgets for this ceremony are indeed gone — while
+// destroying the packet ceiling of every other proceeding in flight. The surviving stranger is what
+// distinguishes a scoped drop from `punchBudgets = nil`. Both hops of the closed ceremony are
+// asserted for the same reason one level down: since P08.S05h the key is `(ceremony, hop)`, so a
+// drop that matched the whole key rather than its ceremony prefix would clear hop 1 and leave hop 2
+// behind, and a single-hop fixture could never see it.
+func TestTheCloseOutDropsThisCeremonysPunchBudgetsAndNoOthers(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	s, v := unlockedServer(t)
+	rec, _, _ := ceremonyOnDisk(t)
+	const stranger = "ffee0011223344556677889900aabbccddeeff00112233445566778899aabbcc"
+
+	s.punchBudgetFor(rec.ID, 1)
+	s.punchBudgetFor(rec.ID, 2)
+	s.punchBudgetFor(stranger, 1)
+
+	// SETUP: all three entries really exist. Without this the assertions below could each be one
+	// absence compared against another, and a `dropPunchBudgets` that did nothing would pass.
+	s.punchMu.Lock()
+	n := len(s.punchBudgets)
+	s.punchMu.Unlock()
+	if n != 3 {
+		t.Fatalf("setup: %d punch budget(s) before the close-out, want 3 — the fixture is not the "+
+			"state these assertions are about", n)
+	}
+
+	if err := s.closeOutCeremony(v, rec.ID, "completed", time.Now()); err != nil {
+		t.Fatalf("close-out: %v", err)
+	}
+
+	s.punchMu.Lock()
+	_, hop1 := s.punchBudgets[rec.ID+"#1"]
+	_, hop2 := s.punchBudgets[rec.ID+"#2"]
+	_, other := s.punchBudgets[stranger+"#1"]
+	left := len(s.punchBudgets)
+	s.punchMu.Unlock()
+
+	if hop1 || hop2 {
+		t.Errorf("a punch budget survived the close-out (hop1=%v hop2=%v) — the map has no other "+
+			"`delete`, so this entry would then live for the process lifetime", hop1, hop2)
+	}
+	if !other {
+		t.Error("closing out one ceremony dropped ANOTHER proceeding's punch budget — that " +
+			"resets a live D33 packet ceiling to zero and lets the same side emit the full " +
+			"figure again, which is the defect the map was lifted onto the Server to prevent")
+	}
+	if left != 1 {
+		t.Errorf("%d punch budget(s) left, want 1 (the stranger's)", left)
+	}
+}
+
 // TestAnUnreadableCeremonyIsNeverClosedOut.
 //
 // A record that does not parse or does not verify has no trustworthy `Expires`, and moving a

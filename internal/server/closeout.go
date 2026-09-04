@@ -99,6 +99,21 @@ func (s *Server) closeOutCeremony(v *vault.Vault, id, state string, now time.Tim
 		log.Printf("close-out %s: could not write the local receipt: %v — this machine now has "+
 			"no record of when it decided the ceremony had ended", id, err)
 	}
+	// **The fourth store, and it is in memory rather than on disk** (`/pending 312`).
+	//
+	// `closeOutStores` below takes the three that persist; `punchBudgets` is the one that does
+	// not, and it had no `delete` anywhere in the tree — a `*punchBudget` per hop, surviving every
+	// disarm and living for the process lifetime. It is dropped HERE, before that call and after
+	// the receipt, so it happens on every path that reaches "this machine considers the ceremony
+	// over": the receipt is what the sweep reads to know so, and a failing vault teardown must not
+	// leave the counters behind when the pins they belonged to are already gone.
+	//
+	// Logged only when something was dropped. Zero is the ordinary case — most ceremonies never
+	// punch at all — and a line per close-out saying "dropped 0" is the noise that gets a log
+	// ignored.
+	if n := s.dropPunchBudgets(id); n > 0 {
+		log.Printf("close-out %s: dropped %d punch budget(s)", id, n)
+	}
 	return closeOutStores(v, id, "close-out")
 }
 

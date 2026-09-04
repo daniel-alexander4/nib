@@ -5,6 +5,7 @@ import (
 	"net"
 	"net/netip"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -150,6 +151,50 @@ func (s *Server) punchBudgetFor(id string, hop int) *punchBudget {
 		s.punchBudgets[key] = b
 	}
 	return b
+}
+
+// dropPunchBudgets forgets every hop's budget for one ceremony, and returns how many it dropped.
+//
+// **The map had no `delete` at all until now** (`/pending 312`): one `*punchBudget` per hop the
+// process ever saw, surviving every disarm and living for the process lifetime. Since P08.S05h the
+// key is `(ceremony, hop)`, so a nine-party ceremony leaves eight entries plus one per delivery leg
+// rather than one — the leak grows per hop, not per proceeding.
+//
+// **`ceremonyID.close()` is the wrong door and this one is right, which is the whole finding.** A
+// machine holds TWO `ceremonyID`s for one hop — the armed one and the dialling one — and
+// `server.go`'s own comment records why the map was lifted onto the `Server` in the first place:
+// *"before this each built its own and a side emitted twice the law figure."* Deleting on the first
+// `close()` lets the second recreate a fresh budget at zero and re-emit the full D33 figure, which
+// is the exact defect the map exists to prevent. Refcounting the pair would be a second lifecycle
+// mechanism beside the one the close-out door already is.
+//
+// **Why it is safe HERE and nowhere earlier.** Its only caller is `closeOutCeremony`, which runs on
+// a proceeding the sweep has decided is over on this machine, and which drops that ceremony's
+// **pins** in the same breath. A budget reset can at worst let a later punch spend the figure
+// again; dropping the pins already makes that later punch impossible, so this is strictly the less
+// aggressive of the two things the door does.
+//
+// **Split on the FIRST separator, and `punchBudgetFor`'s own argument is what licenses it**: the
+// key is `id + "#" + strconv.Itoa(hop)`, and since `Itoa` emits only digits and `-`, a "#" in the
+// composed key can only be the separator. So the text before the first "#" is exactly the ceremony
+// id, whatever that id contains — no assumption that ids are hex, which `ParseInvitation` does not
+// guarantee.
+func (s *Server) dropPunchBudgets(id string) int {
+	if id == "" {
+		return 0 // the no-ceremony budget belongs to no proceeding and is nobody's to drop
+	}
+	s.punchMu.Lock()
+	defer s.punchMu.Unlock()
+	dropped := 0
+	for key := range s.punchBudgets {
+		sep := strings.IndexByte(key, '#')
+		if sep < 0 || key[:sep] != id {
+			continue
+		}
+		delete(s.punchBudgets, key)
+		dropped++
+	}
+	return dropped
 }
 
 // ipv4Target returns the candidate's address as a *net.UDPAddr if it is a punch target — an
