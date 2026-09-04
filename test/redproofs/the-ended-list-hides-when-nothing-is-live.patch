@@ -1,0 +1,10 @@
+--- a/web/app.js
++++ b/web/app.js
+@@ -10237,7 +10237,6 @@
+     // the moment they are all there is. ADR-012 moves a ceremony rather than deleting it precisely
+     // so the party's own signed contribution stays findable; a panel that shows the folder only
+     // while some other ceremony happens to be live undoes that for the case it was written for.
+-    renderEndedCeremonies(host, ended);
+     return;
+   }
+   // **`primary` is the field and `note` is its sentence.** Read the flag rather than only the

@@ -10222,11 +10222,22 @@ function renderCeremonyPanel(data, host) {
   if (!host) return;
   host.textContent = '';
   const list = (data && data.ceremonies) || [];
+  const ended = (data && data.ended) || [];
   if (!list.length) {
     const p = document.createElement('p');
     p.className = 'libhint';
-    p.textContent = 'No signing ceremonies on this machine yet.';
+    // **Two sentences, because "none yet" and "none LIVE" are different facts (P06.S08).**
+    p.textContent = ended.length
+      ? 'No ceremonies are running on this machine. The finished ones are below.'
+      : 'No signing ceremonies on this machine yet.';
     host.appendChild(p);
+    // **And the ended list still renders, which it did not (P06.S08).** The early return here
+    // skipped it entirely, so a machine whose ONLY ceremonies were finished showed "No signing
+    // ceremonies on this machine yet." and nothing else — hiding the closed-out ones at exactly
+    // the moment they are all there is. ADR-012 moves a ceremony rather than deleting it precisely
+    // so the party's own signed contribution stays findable; a panel that shows the folder only
+    // while some other ceremony happens to be live undoes that for the case it was written for.
+    renderEndedCeremonies(host, ended);
     return;
   }
   // **`primary` is the field and `note` is its sentence.** Read the flag rather than only the
@@ -10242,7 +10253,7 @@ function renderCeremonyPanel(data, host) {
   for (const c of list) {
     host.appendChild(ceremonyCard(c));
   }
-  renderEndedCeremonies(host, (data && data.ended) || []);
+  renderEndedCeremonies(host, ended);
 }
 
 // renderEndedCeremonies lists what this machine has closed out.
@@ -10262,15 +10273,23 @@ function renderEndedCeremonies(host, ended) {
     const row = document.createElement('div');
     row.className = 'cerended-row';
     const what = document.createElement('span');
+    // **Each of D28's four end states has its OWN arm, and an unknown state is its own case
+    // (P06.S08).** The criterion is that each produces its own message; until this slice
+    // `abandoned` had no arm and shared the fallback, so the sentence describing a proceeding
+    // nobody ever concluded was also the sentence for a state this build does not recognise. Those
+    // are different facts — one is a ceremony that ended in silence, the other is a receipt written
+    // by a newer Nib — and a user told the first about the second has been told something false.
+    //
+    // "No further word" for `abandoned` is deliberately NOT the word 'heard':
+    // `published.test.mjs` matches published field names as substrings of this file, so that word
+    // alone would satisfy the LAN-browse response's list field — a reader claimed by a coincidence
+    // in prose, which is the blind spot `/pending 252` nearly died on. Caught by that guard on
+    // P06.S02's own commit.
     what.textContent = r.state === 'declined' ? 'Declined'
       : r.state === 'completed' ? 'Completed'
       : r.state === 'expired' ? 'Ran out of time'
-      // Deliberately NOT the word 'heard':  matches published field names as
-      // substrings of this file, so that word alone would satisfy the LAN-browse response's list
-      // field — a
-      // reader claimed by a coincidence in prose, which is the blind spot /pending 252 nearly
-      // died on. Caught by that guard on this slice's own commit.
-      : 'No further word';
+      : r.state === 'abandoned' ? 'No further word'
+      : 'Ended in a way this version does not recognise';
     row.appendChild(what);
     const when = new Date(r.observed_at);
     if (!Number.isNaN(when.getTime())) {

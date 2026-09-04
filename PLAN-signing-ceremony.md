@@ -4846,8 +4846,44 @@ Acceptance:
   looking (D29) — the other half of S02's criterion.
 - Tier: 2 and 3, with the three-signature fixture; 4 for the consent gate reached over a real hop.
 
-#### P06.S08 — The end states and the failure surfaces *(D19, D28)*
-Scope: eight distinct outcomes.
+#### P06.S08 — The end states and the failure surfaces *(D19, D28)* *(**done** 2026-09-03, v1.117.347 — 2 clauses met. **Both halves already rendered and each was driven at exactly ONE value**, in two files that never meet — so a sentence shared BETWEEN the sets was invisible to both, which is the fold the criterion names as failure. **The count is enumerated now, not asserted, and it was wrong twice**: the criterion said eight, this slice's first pin said nine, and driving `classifyD19` says **seven summaries across five causes** plus five end-state words. **The cross-set check had to move to Go**, because D28's words are in `web/app.js` and D19's summaries are in `classifyD19` — a jsdom test can only compare sentences it was handed, which is a fact about its fixture. Two live defects found by writing the driver: `abandoned` had no arm of its own, so a proceeding that ended in silence and a receipt from a newer Nib read identically; and `renderCeremonyPanel` returned early on an empty live list, so a machine whose ONLY ceremonies were finished hid them — ADR-012 moves a ceremony rather than deleting it precisely so they stay findable. Three red proofs, one of them the criterion's own example.)*
+Scope: ~~eight~~ **twelve** distinct outcomes, enumerated rather than counted (see the pin below).
+
+**Deepdive, 2026-09-03, reading pass. Both halves are BUILT and each is driven at exactly one
+value, which is the one shape this criterion names as failing.**
+
+- **D28's four end states already render distinctly** — `renderEndedCeremonies` words `declined`,
+  `completed` and `expired` and falls through to *"No further word"*. `ceremonypanel.test.mjs`
+  drives **one** of them (`declined`).
+- **D19's causes already render** — `reflectDiagnosis` shipped at P06.S05 and carries the machine
+  tag onto the element. `waitdiagnosis.test.mjs` drives **one** (`peer-not-started`).
+- **Nothing anywhere asserts DISTINCTNESS**, and that is the criterion's actual demand: *"a screen
+  that folds 'they declined' into 'couldn't establish a connection' fails this."* Driving each value
+  once, in two files that never meet, cannot see a collision between them.
+- **And the fallback IS a collision.** `renderEndedCeremonies` has no `abandoned` arm: the word
+  *"No further word"* is what every unrecognised state renders as, so abandoned's own message is
+  also the message for a state this build does not know. The criterion says each produces **its
+  own**; a catch-all means one of the four has no message of its own at all.
+
+**PIN (2026-09-03, S08): the criterion says "D19's four network causes" and "eight distinct
+outcomes". Measured, it is TWELVE, and the count is enumerated rather than asserted.** The plan
+review of 2026-08-18 corrected D19 itself — *"D19 still said four causes while D35 and P05 said
+five"* — and this criterion, written the same day, kept the stale count. **This slice's own first
+pin then said nine and was also wrong**, which is why `TestEveryD19OutcomeSaysItsOwnThing` drives
+`classifyD19` and counts instead: `causePeerRecordUnusable` has two summaries (a record refused, and
+a record with no address yet) and `causeMappingDependent` has two (with and without a directly
+reachable IPv6 endpoint). **Seven summaries across five causes, plus five end-state words** — D28's
+four and the unrecognised state the fallback used to swallow. A sixth cause added tomorrow joins the
+set without anybody remembering to bump a literal; this slice is credited against what the code
+enumerates.
+
+Tasks:
+- **T01** — `abandoned` gets its own arm, and an unrecognised state its own honest sentence.
+- **T02** — tier 2: all four end states driven **separately**, plus the unknown state.
+- **T03** — tier 2: all five D19 causes driven separately.
+- **T04** — tier 2: the distinctness assertion over the whole set — no two of the nine outcomes
+  render the same sentence, which is the clause neither existing file can make.
+
 Acceptance:
 - **Each of D28's four end states produces its own message** — completed, declined, expired,
   abandoned — **distinct from each other and from D19's four network causes.** Eight, driven

@@ -1,0 +1,12 @@
+--- a/web/app.js
++++ b/web/app.js
+@@ -10288,8 +10288,7 @@
+     what.textContent = r.state === 'declined' ? 'Declined'
+       : r.state === 'completed' ? 'Completed'
+       : r.state === 'expired' ? 'Ran out of time'
+-      : r.state === 'abandoned' ? 'No further word'
+-      : 'Ended in a way this version does not recognise';
++      : 'No further word';
+     row.appendChild(what);
+     const when = new Date(r.observed_at);
+     if (!Number.isNaN(when.getTime())) {
