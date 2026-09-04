@@ -725,7 +725,10 @@ func (c *ceremonyID) checkArrival(pdf []byte, now time.Time) error {
 	// that the mechanism intended to replace it — byte prefix plus `AddedAfter == false` — *"was
 	// measured at this slice's grill to PASS on a document whose first page had been blacked out
 	// by the last signer"*. Nothing on the signing path reads `AddedAfter` at all. So from the
-	// first signature onward a party still has no content anchor, and `/pending 358` carries it.
+	// first signature onward a party still has no content anchor. **That is a decided limitation,
+	// not an open question: ADR-013.** The digest keeps its annots, so `DocHash` is a hop-1 anchor
+	// and the signatures are what bind a party to bytes afterwards; the signature-stable digest
+	// that would change it was refused on a measured price. (`/pending 358`, closed 2026-09-04.)
 	//
 	// **MEASURED, and it is why this is `DocumentHash` and not `CheckDocument`.** On a 4.4 MB
 	// document: `CheckDocument` 13.8 s, `DocumentHash` alone 8.7 s, `CheckRecord` alone 4.8 s — and

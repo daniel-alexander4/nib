@@ -671,9 +671,18 @@ test('every field of every published shape has a reader in the file that declare
 // can reach them. That is what makes `.detail` unlaunderable rather than luckily-caught. The
 // fields below are the ones a manual pass found already laundered; each names what its matches
 // actually belong to, so the list is an account rather than an excuse.
+//
+// **`pendingView.valid` and `pendingView.acceptedPeer` were here and the FIELDS are gone
+// (/pending 252, decided 2026-09-04).** Their entries said "Dan's call to render it or declare it
+// omitted", and the answer was neither: the consent card already reports the DOCUMENT's signature
+// list, which is the better answer to the same question, so two fields nobody read were deleted
+// rather than parked. Parking was tried and refused twice — this list already held them, so a
+// second park failed the doubleParked assertion by name; and the Go scan
+// (`TestEveryPublishedObservableHasANamedReader`) has no `pendingView` entry at all, so a park
+// here would have closed one scan's launder and left the other's open. `internal/server`'s
+// `TestTheConsentViewPublishesNoUnreadPeerFields` is what keeps them gone, because neither scan
+// can see them come back.
 const COINCIDENTAL = {
-  'pendingView.valid': 'the consent card does not show whether the peer\'s incoming signature validated — /pending 252, Dan\'s call to render it or declare it omitted. Its only matches are `s.valid` in openSigDetails, a sign.SignerInfo.',
-  'pendingView.acceptedPeer': 'same card, same decision (/pending 252). Its only match is `a.acceptedPeer` in augmentSigDetails, an attestationView.',
   'attestationView.signer': 'read in Go by the side that SETS it (internal/p2p), never at the far end; the client renders signer identity from sign.Status instead. Its only match is `pending.signer`, a pendingView.',
   'attestationView.fingerprint': 'as above. Every match is a peer / peersResponse / pendingView fingerprint; augmentSigDetails reads acceptedPeer, reason, matched, pinned, rosterHash and oneProceeding, not this.',
   'attestationView.when': 'as above. Matches are `q.when` (cosignQuote) and `s.when` (sign.SignerInfo).',

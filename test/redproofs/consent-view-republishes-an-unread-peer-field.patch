@@ -1,0 +1,10 @@
+--- a/internal/server/session.go
++++ b/internal/server/session.go
+@@ -1739,6 +1739,7 @@
+ 	Signer      string `json:"signer"`
+ 	Fingerprint string `json:"fingerprint"`
+ 	Reason      string `json:"reason"`
++	Valid       bool   `json:"valid"`
+ 	// Signers is every party who has ALREADY signed this document, in signature order
+ 	// (D27 item 3, C09; P07.S07c).
+ 	//

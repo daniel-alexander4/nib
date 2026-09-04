@@ -85,3 +85,9 @@ home today.
   abandoned ceremony has no delivery round to have carried it anywhere. The vault stores still go,
   through one door taking four of them; `RemoveMirror` stays the ROLLBACK's verb and keeps its one
   caller; nothing removes what was moved, which is a decision (`/pending 361`) and not an oversight
+- [ADR-013: `DocHash` is a hop-1 anchor](013-dochash-is-a-hop-one-anchor.md) — `ContentDigest`
+  covers each page's `/Annots` and a visible signature adds a widget annot, so from the first
+  signature onward `Record.DocHash` cannot be recomputed and the signatures, not `DocHash`, are
+  what bind a party to bytes. The signature-stable digest that would make it checkable is
+  REFUSED: it reopens sticky notes and form values in the one window with no signature to fall
+  back on, and it is a `ContentDigestVersion` bump with a skew story. `/pending 358` closed

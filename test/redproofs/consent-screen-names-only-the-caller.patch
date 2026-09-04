@@ -3,7 +3,7 @@ index 1fd2157..7bbadbd 100644
 --- a/internal/server/session.go
 +++ b/internal/server/session.go
 @@ -435,7 +435,7 @@ func (sc sessionConfirmer) Confirm(peer p2p.SignerAttestation, doc []byte) (bool
- 		Reason: peer.Reason, Valid: peer.Valid,
+ 		Signer: peer.Signer, Fingerprint: peer.Fingerprint, Reason: peer.Reason,
  		// Every party already on the document, not just the one on the other end of the socket
  		// (P07.S07c).
 -		Signers: signersSoFar(doc),
