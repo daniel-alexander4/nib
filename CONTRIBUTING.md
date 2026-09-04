@@ -49,8 +49,13 @@ hermetic tier can show that: two `anacrolix/dht` servers on loopback do set the 
 `ip` field, so a local test proves the plumbing and nothing about the network. It is
 deliberately out of the routine loop for the same reason tier 3 was made hermetic —
 a check that reaches the public internet imports every stranger's outage into your
-build. Run it when touching `internal/rendezvous`, the seed list, or NAT
-classification.
+build. Run it when touching `internal/rendezvous`, the seed list, NAT
+classification, or **the candidate path** — it also drives a sealed `CandidateRecord`
+the whole way: published to the public DHT, fetched by a second server, opened and
+checked by the real gate, and the surviving endpoint dialled by the production racer.
+That last clause cannot live in `internal/rendezvous`, because L1 forbids that package
+from importing `internal/ceremony`, so it is in `internal/server` and the harness names
+that package too.
 
 Setting `NIB_LIVE_SEEDS=ip:port[,ip:port...]` additionally drives the invitation-seed
 rescue path — a machine whose shipped list fails bootstrapping from addresses an
