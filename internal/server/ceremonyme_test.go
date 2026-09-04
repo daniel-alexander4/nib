@@ -200,3 +200,64 @@ func conveneThroughRoute(t *testing.T) string {
 	}
 	return out.Ceremony
 }
+
+// TestTheListingNamesWhoConvenedIt is /pending 353's missing published fact.
+//
+// **The delivery round is the convener's alone and nothing published said who that was.** `Me`
+// tells a reader which party it is; without a convener fingerprint beside it there is nothing to
+// compare against, so the panel could only offer the round to every party and let the server
+// refuse — and that refusal is *"Nib no longer holds the invitation secret"*, which is true, means
+// nothing to a non-convener, and reads identically to a ceremony whose secrets were cleaned up.
+//
+// **The two fields are asserted to be DIFFERENT things, not just present.** A `Convener` that
+// merely echoed `Me` would satisfy a presence check and tell the panel nothing: the fixture mirror
+// below is a ceremony this machine did NOT convene, so it must carry a convener and no position.
+// That pair is what makes the comparison in `ceremonyCard` meaningful.
+func TestTheListingNamesWhoConvenedIt(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	// A ceremony this machine convened: the two fingerprints are the same party.
+	convened := conveneThroughRoute(t)
+	got := ceremony.ReadStored(defaultOutputDir(), convened, time.Now())
+	if got.State != ceremony.LoadOK {
+		t.Fatalf("the convened ceremony does not load (%v: %s)", got.State, got.Reason)
+	}
+	if got.Convener == "" {
+		t.Fatal("the listing does not say who convened this ceremony. The record is signed by the " +
+			"convener and Record.Convener resolves them off the roster, so a panel deciding " +
+			"whether this machine may run a delivery round has nothing to compare Me against")
+	}
+	if !strings.EqualFold(got.Convener, got.Me) {
+		t.Errorf("this machine convened the ceremony and the listing disagrees: convener=%s me=%s.\n\n"+
+			"The convene route records both, and the delivery control is gated on them matching",
+			got.Convener, got.Me)
+	}
+	onRoster := false
+	for _, p := range got.Roster {
+		if strings.EqualFold(p.Fingerprint, got.Convener) {
+			onRoster = true
+		}
+	}
+	if !onRoster {
+		t.Errorf("the convener %s is not on the roster it convened", got.Convener)
+	}
+
+	// And a ceremony this machine did NOT convene: a convener, and no position. This is the arm
+	// that proves the field is read off the RECORD rather than echoed from the marker — an
+	// implementation that set Convener from Me would leave this one empty.
+	rec, _, _ := ceremonyOnDisk(t)
+	other := ceremony.ReadStored(defaultOutputDir(), rec.ID, time.Now())
+	if other.State != ceremony.LoadOK {
+		t.Fatalf("the fixture ceremony does not load (%v: %s)", other.State, other.Reason)
+	}
+	if other.Me != "" {
+		t.Fatalf("setup: the fixture recorded a position (%q), so this arm cannot tell a convener "+
+			"read from the record from one echoed off the marker", other.Me)
+	}
+	if other.Convener == "" {
+		t.Error("a ceremony this machine did not convene reports no convener at all. The record " +
+			"names one — it is signed by them — so this is read off Me rather than off the record, " +
+			"and every mirrored ceremony would offer its delivery control to nobody")
+	}
+}

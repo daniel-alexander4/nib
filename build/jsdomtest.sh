@@ -82,7 +82,7 @@ Nib_files="$(find test/jsdom -maxdepth 1 -name '*.test.mjs' | wc -l | tr -d ' ')
 # third, because it asserts on the exit status of the whole harness rather than on the lines it
 # printed — which is the only reading that could have caught any of them. The fourth was caught by
 # a person needing the number, which is luck, not a check.
-Nib_expect_files=33
+Nib_expect_files=34
 if [ "$Nib_files" -ne "$Nib_expect_files" ]; then
   echo "FAIL: expected $Nib_expect_files jsdom test files, found $Nib_files — a test file was added or dropped." >&2
   echo "      If deliberate, update Nib_expect_files in this script." >&2

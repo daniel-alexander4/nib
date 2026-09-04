@@ -3861,3 +3861,31 @@ change still reports green; the check that catches it before the commit is
 `git apply --check <patch>` against the working tree.
 
 `recorded` 292 → 293.
+
+
+## /pending 353 — the delivery round gets a convener, and a surviving mutation (v1.117.351)
+
+| Defect reintroduced | Check that fired | What it said |
+| --- | --- | --- |
+| `the-listing-echoes-the-convener-from-the-marker` — `ReadStored` sets `Convener = Me` instead of reading `Record.Convener` | `TestTheListingNamesWhoConvenedIt`, tier 1 | "a ceremony this machine did not convene reports no convener at all" |
+| `delivery-skipped-folds-into-one-meaning` — `renderDeliveryOutcomes` branches on `skipped` alone | `ceremonydeliver.test.mjs`, tier 2 | "the party that ENDED the proceeding is reported as though they simply have the document" |
+| `delivery-control-matches-two-unknowns` — the gate compares `(c.me \|\| '')` to `(c.convener \|\| '')` | `ceremonydeliver.test.mjs`, tier 2 | "a ceremony that knows NEITHER its position nor its convener offers the delivery round" |
+| `delivery-control-renders-behind-the-lock` — the `mayAct` gate dropped | `lockedpanel.test.mjs`, tier 2 | "the delivery control renders behind the lock… the button can only produce a 401" |
+
+**The third row is here because it SURVIVED first, and that is the whole value of the pass.** The
+fixture it was aimed at dropped only `me`, leaving `convener` known — so `'' === convener` was false
+for the wrong reason and the mutation passed. The assertion's *message* named the `'' === ''` bug;
+its *predicate* never reached it, which is the message-versus-predicate gap nothing in the toolchain
+compares. A fifth ceremony knowing neither marker is the fix, and the row is the proof it now bites.
+
+**A fifth and sixth mutation were proven red and not recorded**: dropping the `ended` gate, and
+rendering `skipped` without its reason. Both fail the same two tests above for the same reasons, and
+a row that duplicates another's diagnosis is a second expression of one check.
+
+**One existing row was staled by this change and re-recorded in the same commit.**
+`the-locked-screen-never-shows-its-ceremonies` carries the locked-panel call as context, and that
+line gained an argument. **`TestEveryRedProofStillApplies` caught it before the commit** — which is
+the difference between this and v1.117.350, where the same class of staleness had to be found by
+reading, because `redproof.sh` replays against HEAD and the change was not yet committed.
+
+`recorded` 293 → 297.

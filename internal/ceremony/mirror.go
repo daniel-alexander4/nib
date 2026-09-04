@@ -374,6 +374,23 @@ type Stored struct {
 	// fingerprint, and because an index is a second derivation that goes wrong the moment a roster
 	// is read in a different order.
 	Me string `json:"me,omitempty"`
+	// Convener is the fingerprint of the party that signed this record — the one fact a panel
+	// needs to know whether THIS machine may act on the ceremony as its convener (/pending 353).
+	//
+	// **It exists because a delivery round is convener-only and nothing published said who that
+	// was.** `Me` tells a reader which party it is; without this there is nothing to compare it
+	// to, so a panel could only offer the round to everybody and let the server refuse — and the
+	// server's refusal is *"Nib no longer holds the invitation secret"*, which is true, useless
+	// to a non-convener, and indistinguishable from a ceremony whose secrets were cleaned up.
+	//
+	// **Empty means UNKNOWN, never "you are not the convener"**, exactly as `Me` is unknown
+	// rather than absent — a record whose `ConvenerCert` will not parse, or whose signer is not
+	// on its own roster, yields no fingerprint here, and a surface must not read that as a
+	// negative answer about the reader.
+	//
+	// Read through `Record.Convener`, which is the one definition of who convened a ceremony
+	// (ADR-009); this is not a second derivation from `ConvenerCert`.
+	Convener string `json:"convener,omitempty"`
 	// The rest are populated only for LoadOK.
 	Intent  string    `json:"intent,omitempty"`
 	Expires time.Time `json:"expires,omitempty"`
@@ -427,6 +444,11 @@ func ReadStored(root, id string, now time.Time) Stored {
 		return s
 	}
 	s.Intent, s.Expires, s.Roster = r.Intent, r.Expires, r.Roster
+	// Who convened it, through the one door (ADR-009). A record whose convener is unreadable or
+	// off its own roster leaves this empty, which the field's doc defines as UNKNOWN.
+	if c, ok := r.Convener(); ok {
+		s.Convener = c.Fingerprint
+	}
 	// **The end state, read only after the record has verified** — `r` is the anchor, and it came
 	// from THIS directory's `record.json`, which is the weaker of the two anchors
 	// `ReadTermination`'s doc names. That is acceptable here and nowhere else: this is a listing,

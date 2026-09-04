@@ -1,0 +1,13 @@
+--- a/internal/ceremony/mirror.go
++++ b/internal/ceremony/mirror.go
+@@ -446,9 +446,7 @@
+ 	s.Intent, s.Expires, s.Roster = r.Intent, r.Expires, r.Roster
+ 	// Who convened it, through the one door (ADR-009). A record whose convener is unreadable or
+ 	// off its own roster leaves this empty, which the field's doc defines as UNKNOWN.
+-	if c, ok := r.Convener(); ok {
+-		s.Convener = c.Fingerprint
+-	}
++	s.Convener = s.Me
+ 	// **The end state, read only after the record has verified** — `r` is the anchor, and it came
+ 	// from THIS directory's `record.json`, which is the weaker of the two anchors
+ 	// `ReadTermination`'s doc names. That is acceptable here and nowhere else: this is a listing,

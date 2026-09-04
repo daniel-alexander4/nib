@@ -1323,6 +1323,12 @@ input.ovl-check { appearance: auto; accent-color: #1a7f37; background: transpare
   border-radius: 3px;
   padding: 0 4px;
 }
+.cerdeliver { margin-top: 8px; }
+.cerdeliverbtn { font-size: 11px; }
+.cerdeliverout { margin-top: 4px; }
+.cerdeliverlist { margin-top: 4px; }
+.cerdeliverwhy { color: var(--subtext1); font-size: 11px; margin: 2px 0 6px 8px; }
+.cerfail { color: var(--peach); }
 .cerpos { color: var(--subtext1); font-size: 11px; margin: 6px 0 0; }
 .cerendedhead { margin-top: 12px; }
 .cerended-row {

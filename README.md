@@ -494,8 +494,14 @@ the invitation named, and every signature is checked against the ceremony's own 
 before the next hop starts — including the document's own bytes, so a party cannot be handed
 a different document under the same proceeding.
 
-When the last signature lands, the convener runs a **delivery round**: every party gets the
-finished document, and the convener keeps trying until each one has it or the deadline passes.
+When the proceeding ends, the convener runs a **delivery round** from the Ceremony panel —
+*Send everyone their copy* — and every party gets the finished document. Nib reports each party
+separately, because a round that reached three of four is not a failure: you are told who has
+their copy, who already had it from an earlier run, and who could not be reached and why. Pressing
+it again retries only the ones still missing; a party who already acknowledged is skipped rather
+than sent a second copy. **The re-run is the remedy and it is yours to press** — Nib does not
+retry on its own, so a party who was offline stays listed as unreached until you run the round
+again. A leg to a party who is not listening can take a few minutes before it gives up.
 
 **Before you sign, Nib shows you everyone already on the document** — not just whoever handed it to
 you, who under a relayed ceremony may be a convener who signs nothing at all. A signature that does
