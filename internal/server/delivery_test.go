@@ -919,6 +919,74 @@ func TestTheDeclineBranchRecordsWhoEndedIt(t *testing.T) {
 // guards give: minting a convener-signed termination for a second proceeding needs a second
 // identity and a second record, which is tier 4's shape. What tier 1 can hold is that the gate
 // takes the invitation anchor at all — the property whose absence was the defect.
+// TestTheReArmDecidesAProceedingEndedOnTheInvitationNotTheListing — `/pending 354`.
+//
+// **The sibling guard below described this defect and did not guard it.** Its own doc says a false
+// `Ended` "makes `rearmDeliveries` skip the ceremony forever (`st.Ended != \"\"`), so the party
+// never receives its real copy" — written about the consequence at the OTHER gate, while the gate
+// that actually reads `st.Ended` had nothing on it. That is ADR-009's shape: one rule, two
+// implementations, and the guard sitting on the one that was already right.
+//
+// `LoadState`'s `Ended` comes from the `record.json` in the same directory as the termination, and
+// its own comment licenses that only for a listing: *"it renders a word to a user, and it
+// **authorises nothing**. A gate that REFUSES on a termination must anchor on the document or the
+// invitation instead, because a planted matching pair verifies against itself."* Deciding not to
+// arm IS an authorisation — a planted pair suppressed the arm and the party's real copy never came.
+//
+// **Structural, for the reason the sibling gives**: forging a convener-signed termination for a
+// second proceeding needs a second identity and a second record, which is tier 4's shape. What tier
+// 1 holds is that this gate takes the invitation anchor at all, and that it no longer consults the
+// listing field — the two halves whose absence was the defect.
+func TestTheReArmDecidesAProceedingEndedOnTheInvitationNotTheListing(t *testing.T) {
+	src, err := os.ReadFile("delivery.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	code := stripLineComments(string(src))
+	i := strings.Index(code, "func (s *Server) rearmDeliveries(")
+	if i < 0 {
+		t.Fatal("cannot find rearmDeliveries — this guard is reading the wrong thing")
+	}
+	body := funcBodyFrom(code, i)
+	if body == "" {
+		t.Fatal("could not brace-match rearmDeliveries' body")
+	}
+	// STIMULUS: both names really occur in this file with comments stripped, so a "not found"
+	// below is a fact about this function rather than about spelling or about the strip eating
+	// the whole file.
+	if !strings.Contains(code, "MatchesRecord(") || !strings.Contains(code, "ReadTermination(") {
+		t.Fatal("MatchesRecord or ReadTermination appears nowhere in the stripped source, so the " +
+			"scans below look for names that could not appear and their results mean nothing")
+	}
+
+	// ARM 1 — the listing field is not what authorises the skip.
+	if strings.Contains(body, "st.Ended") {
+		t.Error("rearmDeliveries still reads st.Ended. That field is computed from the record.json " +
+			"beside the termination, which LoadState permits only because a listing authorises " +
+			"nothing — and skipping the arm is an authorisation. A matching (record, termination) " +
+			"pair planted in ~/nib/ceremonies/<id>/ verifies against itself and the party then " +
+			"never receives its real copy.")
+	}
+
+	// ARM 2 — and it anchors on the invitation, BEFORE it trusts the end state.
+	//
+	// Arm 1 alone is satisfied by deleting the check outright, which would arm on every ceremony
+	// including genuinely ended ones. Arm 2 alone is satisfied while st.Ended still short-circuits
+	// above it. Neither half is the rule.
+	bind := strings.Index(body, "MatchesRecord(")
+	read := strings.Index(body, "ReadTermination(")
+	if bind < 0 || read < 0 {
+		t.Fatalf("rearmDeliveries no longer decides the end state on the invitation anchor "+
+			"(MatchesRecord at %d, ReadTermination at %d) — one rule, and both doors take it "+
+			"(ADR-009); its sibling checkDeliveredPayload was corrected to this shape at P08.S05h",
+			bind, read)
+	}
+	if bind > read {
+		t.Error("rearmDeliveries reads the end state BEFORE binding the record to the invitation, " +
+			"so the anchor is checked after the thing it anchors — which is no anchor at all")
+	}
+}
+
 func TestAnEndStateIsCheckedAgainstTheInvitationNotTheFileBesideIt(t *testing.T) {
 	src, err := os.ReadFile("delivery.go")
 	if err != nil {
