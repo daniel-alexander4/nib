@@ -67,7 +67,14 @@ echo "probing the public DHT (this leaves the machine)…"
 # was not named. The same vacuous-green-one-level-out the -run pattern guard above catches
 # WITHIN a package, one level further out again: a harness reports a pass for the packages it
 # happens to name. verify_test.go now checks this list against the tree.
-NIB_LIVE_DHT=1 go test ./internal/rendezvous/ ./internal/cli/ -run 'TestLive|TestTheBannerPrecedesTheSocket' -v -count=1 \
+#
+# **internal/server joined it for a reason worth keeping (/pending 2).** The candidate path's
+# live end — publish, fetch, GATE, dial — cannot be tested where the DHT lives: L1 forbids
+# internal/rendezvous from importing internal/ceremony, so that package can only ever publish
+# an opaque byte string. It cannot be tested from internal/cli either, because the racer is
+# unexported in internal/server. So the one package that can hold it is this one, and it was
+# added here only after verify_test.go went red demanding it — which is the guard working.
+NIB_LIVE_DHT=1 go test ./internal/rendezvous/ ./internal/cli/ ./internal/server/ -run 'TestLive|TestTheBannerPrecedesTheSocket' -v -count=1 \
   >"$OUT" 2>&1 || { cat "$OUT"; fail "the live probe did not pass — read the message above; it names which of no-network, dead-seeds and a broken probe it was"; }
 
 # THREE outcomes, not two, and collapsing the third into either of the others is the
@@ -115,6 +122,21 @@ else
   cat "$OUT"; fail "TestLivePublishAndFetch neither passed nor skipped — it failed"
 fi
 
+# The candidate path's live end, reported on its own line for the same reason (/pending 2).
+#
+# publish/fetch above proves BYTES survive the round trip; this proves a sealed
+# `CandidateRecord` does — opened at the peer's read salt, its author checked against the
+# roster, its endpoints screened, and the surviving one DIALLED by the production racer. They
+# are two different claims and a summary that folded them would let the second go silently
+# unverified on a run where only the first happened.
+if grep -q -- "--- PASS: TestLiveACandidateFetchedFromTheDHTIsDialled" "$OUT"; then
+  CANDDIAL="verified"
+elif grep -q -- "--- SKIP: TestLiveACandidateFetchedFromTheDHTIsDialled" "$OUT"; then
+  CANDDIAL="SKIPPED — no routable address, or the DHT did not answer; UNVERIFIED by this run"
+else
+  cat "$OUT"; fail "TestLiveACandidateFetchedFromTheDHTIsDialled neither passed nor skipped — it failed"
+fi
+
 # The invitation-seed rescue, reported separately for the same reason publish/fetch is —
 # with a THIRD outcome of its own, because this one has two ways of not running. Absent
 # NIB_LIVE_SEEDS the mechanism was never offered any seeds; present but with a working
@@ -143,4 +165,5 @@ sed -n 's/^[[:space:]]*[a-z_]*\.go:[0-9]*: //; /^\(LOCAL\|BOOTSTRAP\|OBSERVED\|P
 echo "PASS: a real DHT node reported this host's public endpoint, port included, and the"
 echo "      mapping classified — from a cold start with no cached nodes"
 echo "      publish/fetch round trip: $PUBFETCH"
+echo "      candidate fetched→dialled: $CANDDIAL"
 echo "      invitation-seed rescue:   $SEEDRESCUE"
