@@ -66,14 +66,17 @@ func TestAPathlessDocumentIsNamedByWhereItCameFrom(t *testing.T) {
 			t.Errorf("urlDocName(%q) = %q, want %q", tc.in, got, tc.want)
 		}
 	}
-	if got := arrivalDocName("Marta"); !strings.Contains(got, "Marta") || !strings.HasSuffix(got, ".pdf") {
+	// `nil` ceremony is the manual/two-party path, whose name P06.S09 deliberately left alone: an
+	// ordinary co-sign IS finished when it arrives. The ceremony cases are
+	// TestAnInProgressCopyIsNotNamedAsTheFinishedDocument.
+	if got := arrivalDocName("Marta", nil, nil); !strings.Contains(got, "Marta") || !strings.HasSuffix(got, ".pdf") {
 		t.Errorf("arrivalDocName(%q) = %q — an arrival's one identifying fact is who sent it", "Marta", got)
 	}
-	if got := arrivalDocName(""); got == "" || !strings.HasSuffix(got, ".pdf") {
+	if got := arrivalDocName("", nil, nil); got == "" || !strings.HasSuffix(got, ".pdf") {
 		t.Errorf("arrivalDocName(\"\") = %q — an unlabelled peer must still not produce an empty name", got)
 	}
 	// Neither may return the empty string, because the empty string is what renders "Untitled".
-	if urlDocName("https://example.org/") == "" || arrivalDocName("x") == "" {
+	if urlDocName("https://example.org/") == "" || arrivalDocName("x", nil, nil) == "" {
 		t.Fatal("a name producer returned \"\" — the exact value that renders as Untitled")
 	}
 }

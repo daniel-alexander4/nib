@@ -1,0 +1,11 @@
+--- a/internal/server/cosign.go
++++ b/internal/server/cosign.go
+@@ -390,7 +390,7 @@
+ 	//
+ 	// **Before `PrepareDocument` and before `Contribute`**, on the same reasoning every other gate
+ 	// in this function states: a signature cannot be taken back off a document.
+-	if len(roster.Entries) == 0 {
++	if false {
+ 		if _, cerr := ceremony.Extract(pdf); cerr == nil {
+ 			httpError(w, http.StatusConflict,
+ 				"this document is part of a signing ceremony, so it cannot be co-signed outside "+

@@ -1,0 +1,11 @@
+--- a/web/app.js
++++ b/web/app.js
+@@ -4632,7 +4632,7 @@
+     // the user's own attachment, and the one whose presence explains why every editing operation
+     // on this document is being refused. The flag is the SERVER's: matching the filename here
+     // would be a second copy of `pdfops.CeremonyRecordName` in another language.
+-    if (a.ceremony) {
++    if (false) {
+       const tag = document.createElement('div');
+       tag.className = 'scan-where';
+       tag.textContent = 'This is the signing ceremony\u2019s record. Nib put it here, and it is ' +

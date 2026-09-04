@@ -4436,7 +4436,7 @@ async function runSanitize(method, stepDown) {
   if (!owner.pdfDocument) return;
   if (!confirmSignatureLoss()) return;
   const res = await apiFetch('/api/sanitize?method=' + method, { method: 'POST', docId: opDoc && opDoc.id });
-  if (!res.ok) return toast('removal failed');
+  if (!res.ok) return toast(await errText(res, 'removal failed'));
   const out = await res.json();
   if (!out.ok) return toast('Could not cleanly remove it — try ' + stepDown + '.');
   await setDocumentFromServer(out, owner);
@@ -4627,6 +4627,18 @@ function renderAttachments(items) {
       desc.textContent = a.desc;
       meta.appendChild(desc);
     }
+    // **The ceremony record is named for what it is (P06.S09, D29).** Without this it sits in the
+    // list as an anonymous `nib-ceremony.json` — the one embedded file in the product that is not
+    // the user's own attachment, and the one whose presence explains why every editing operation
+    // on this document is being refused. The flag is the SERVER's: matching the filename here
+    // would be a second copy of `pdfops.CeremonyRecordName` in another language.
+    if (a.ceremony) {
+      const tag = document.createElement('div');
+      tag.className = 'scan-where';
+      tag.textContent = 'This is the signing ceremony\u2019s record. Nib put it here, and it is ' +
+        'why this document cannot be edited while the ceremony is live.';
+      meta.appendChild(tag);
+    }
     const btn = document.createElement('button');
     btn.textContent = 'Extract';
     btn.onclick = () => extractAttachment(a.name);
@@ -4659,7 +4671,10 @@ els.attachInput.onchange = async () => {
   form.append('file', file, file.name);
   form.append('name', file.name);
   const res = await apiFetch('/api/attachments/add', { method: 'POST', body: form, docId: opDoc && opDoc.id });
-  if (!res.ok) return toast('could not attach the file (a same-named attachment may already exist)');
+  // **The server's sentence, not a guess (P06.S09, D29).** A refusal from a mutating route may be
+  // `ceremonyFreeze`'s — which names the ceremony and says where the document is — and a generic
+  // fallback throws that away. The fallback stays for the case the server sends nothing.
+  if (!res.ok) return toast(await errText(res, 'could not attach the file (a same-named attachment may already exist)'));
   await setDocumentFromServer(await res.json(), owner);
   await loadAttachments();
   toast('File attached');
@@ -4959,7 +4974,8 @@ async function pageOp(op, extra = {}) {
   if (extra.n != null) form.append('n', String(extra.n));
   if (extra.border != null) form.append('border', extra.border ? '1' : '0');
   const res = await apiFetch('/api/pages', { method: 'POST', body: form, docId: opDoc && opDoc.id });
-  if (!res.ok) { toast('page operation failed'); return false; }
+  // The server's sentence — see the attachment-add door for why (P06.S09).
+  if (!res.ok) { toast(await errText(res, 'page operation failed')); return false; }
   await setDocumentFromServer(await res.json(), owner);
   return true;
 }
@@ -9271,7 +9287,7 @@ async function doUndo() {
   const doc = owner.docMeta;
   if (!owner.pdfDocument || !(doc && doc.canUndo)) return;
   const res = await apiFetch('/api/undo', { method: 'POST', docId: doc && doc.id });
-  if (!res.ok) { toast('undo failed'); return; }
+  if (!res.ok) { toast(await errText(res, 'undo failed')); return; }
   await setDocumentFromServer(await res.json(), owner);
 }
 async function doRedo() {
@@ -9279,7 +9295,7 @@ async function doRedo() {
   const doc = owner.docMeta;
   if (!owner.pdfDocument || !(doc && doc.canRedo)) return;
   const res = await apiFetch('/api/redo', { method: 'POST', docId: doc && doc.id });
-  if (!res.ok) { toast('redo failed'); return; }
+  if (!res.ok) { toast(await errText(res, 'redo failed')); return; }
   await setDocumentFromServer(await res.json(), owner);
 }
 if (els.undoBtn) els.undoBtn.onclick = undoAny;

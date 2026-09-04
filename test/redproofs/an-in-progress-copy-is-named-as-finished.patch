@@ -1,0 +1,13 @@
+--- a/internal/server/session.go
++++ b/internal/server/session.go
+@@ -1138,9 +1138,7 @@
+ 	if cer == nil {
+ 		return done
+ 	}
+-	if _, err := p2p.NextContributor(final, cer.l3Roster()); errors.Is(err, p2p.ErrCeremonyComplete) {
+-		return done
+-	}
++	return done
+ 	if peerLabel == "" {
+ 		return "in progress — co-signing.pdf"
+ 	}

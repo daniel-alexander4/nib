@@ -1,0 +1,11 @@
+--- a/internal/pdfops/attachments.go
++++ b/internal/pdfops/attachments.go
+@@ -65,7 +65,7 @@
+ 		if clean := attachmentName(name); clean != "" {
+ 			name = clean
+ 		}
+-		out = append(out, AttachmentInfo{Name: name, Desc: a.Desc, Ceremony: name == CeremonyRecordName})
++		out = append(out, AttachmentInfo{Name: name, Desc: a.Desc, Ceremony: false})
+ 	}
+ 	// The same RVO context that populated the name tree exposes the page tree, so
+ 	// no second read is needed (the eachPage/derefDict helpers Scan uses work on it).

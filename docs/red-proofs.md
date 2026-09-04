@@ -3786,3 +3786,47 @@ the wrong reason is what this whole file is about. Bounded at the statement and 
 quoted strings that begin with a capital, it reads exactly five.
 
 `recorded` 284 → 287.
+
+## P06.S09 — the freeze's surface, the record's label, and the name on the tab (v1.117.348)
+
+| Defect reintroduced | Check that fired | What it said |
+| --- | --- | --- |
+| `the-manual-cosign-signs-a-ceremony-document` — the refusal removed from `buildCoSigned` | `TestTheManualCoSignRefusesADocumentInACeremony`, tier 1 | "the manual co-sign path signed a document that carries a ceremony record" |
+| `the-ceremony-record-is-an-anonymous-attachment` — the flag never set | `TestTheCeremonyRecordIsLabelledInTheAttachmentsList`, tier 1 | "the ceremony record \"nib-ceremony.json\" is NOT marked" |
+| `an-in-progress-copy-is-named-as-finished` — `arrivalDocName` ignores the ceremony again | `TestAnInProgressCopyIsNotNamedAsTheFinishedDocument`, tier 1 | "a hop of a live ceremony is named \"co-signed with Bob Landlord.pdf\"" |
+| `a-refused-edit-says-nothing-about-the-ceremony` — `pageOp` back to its generic toast | `freezesurface.test.mjs`, tier 2 | "a refused edit said \"page operation failed\"" |
+| `the-attachments-panel-does-not-label-the-record` — the label removed from the panel | the same file, tier 2 | "the ceremony record is listed as an anonymous embedded file" |
+
+**The freeze was built and guarded, and nobody had asked whether it SAYS anything.** P07.S02a's
+`TestEveryMutatingRouteReachesTheCeremonyFreeze` asserts the routing for the whole mutating
+inventory — every route reaches the refusal. What no check asked is whether the refusal reaches the
+user, and at `pageOp` it did not: `toast('page operation failed')` discarded a sentence that names
+the ceremony and says where the document went. **A rule enforced at the server and swallowed at the
+client is a rule the user cannot obey.** Five doors now pass the server's own words through
+`errText`, which the file already had and half its call sites already used.
+
+**`/pending 368`'s refusal is its own, and deliberately not folded into `ceremonyFreeze`.** That
+guard is about mutating the document the server holds; an outbound co-sign mutates nothing — it
+sends a signed copy — so stretching it would make one rule cover edits and sending both, and the
+next reader would have to work out which half applied to them. Same footing, same sentence, its own
+door: `buildCoSigned`, which both co-sign routes take, because a check at one of two doors is the
+shape ADR-009 refuses.
+
+**"Cannot be removed while the ceremony is live" is met by something stronger than the clause
+says.** There is no attachment-removal route in the product — `add` and `extract` only — and the
+path that does remove one, `POST /api/sanitize`, goes through `commitMutation` and is refused
+outright. The clause is satisfied by the freeze rather than by a rule about attachments, and that is
+recorded rather than dressed up as a new guard.
+
+**And a latent tier-3 race surfaced, measured rather than guessed.** `ceremonypanel.test.mjs`
+asserted `#cerPeerPick` visible immediately after the click that opens the form — but
+`showCeremonyForm` calls `loadPeerPicker()` **without awaiting it**, so at that instant the div is
+cleared and not yet filled. Six unrelated lines in `web/app.js` were enough to lose a race the
+assertion had been winning: **2 runs red with the change against 3 green at the parent commit**, and
+an instrumented run printed `{"html":"","w":167,"h":0,"display":"block","formHidden":false}` —
+cleared, empty, still waiting. The product is right, and an un-awaited load is the correct shape for
+a panel that must not block its own dialog; the test waits for the row now. **Bisected to the one
+edit** by reverting `web/app.js` to HEAD and re-applying the label alone, rather than by reading the
+diff and picking a suspect.
+
+`recorded` 287 → 292.
