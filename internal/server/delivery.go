@@ -520,8 +520,8 @@ func (s *Server) rearmDeliveries(v *vault.Vault) {
 	}
 	me := hex.EncodeToString(myFP)
 	for _, st := range stored {
-		if st.State != ceremony.LoadOK || st.Ended != "" {
-			continue // unreadable, or a proceeding that has already ended
+		if st.State != ceremony.LoadOK {
+			continue // unreadable: nothing here can be trusted enough to act on
 		}
 		rec, _, rerr := ceremony.ReadMirror(defaultOutputDir(), st.ID, time.Now())
 		if rerr != nil || alreadyDelivered(rec) {
@@ -537,6 +537,32 @@ func (s *Server) rearmDeliveries(v *vault.Vault) {
 		}
 		if strings.EqualFold(me, inv.ConvenerFingerprint) {
 			continue // the convener DELIVERS; it does not wait to be delivered to
+		}
+		// **"Has this proceeding ended?" — asked HERE, and anchored on the invitation** (`/pending
+		// 354`). It used to be `st.Ended != ""` in the skip fifteen lines above, and that field is
+		// the one anchor this decision may not use.
+		//
+		// `LoadState` computes `Ended` from the `record.json` sitting in the same directory as the
+		// termination, and says in terms why that is acceptable there and nowhere else: *"this is a
+		// listing, it renders a word to a user, and it **authorises nothing**. A gate that REFUSES
+		// on a termination must anchor on the document or the invitation instead, because a planted
+		// matching pair verifies against itself."* Deciding **not to arm** is an authorisation, so a
+		// matching (record, termination) pair dropped into `~/nib/ceremonies/<id>/` suppressed the
+		// arm and the party never received its real copy.
+		//
+		// `inv` is the anchor a planted file cannot control, and this is the same shape
+		// `checkDeliveredPayload` was corrected to at P08.S05h — ADR-009: one rule, and both doors
+		// take it. It could not be asked before the loop because the invitation is only in hand
+		// eight lines up; moving the question down to meet it is the whole change.
+		//
+		// **Fails OPEN, toward arming.** If the record does not match the invitation, or the
+		// termination does not verify, this machine does NOT conclude the proceeding is over — it
+		// arms. Suppressing on unverifiable evidence is the defect; a needless arm costs one slot
+		// until the next unlock.
+		if merr := inv.MatchesRecord(rec); merr == nil {
+			if _, terr := ceremony.ReadTermination(defaultOutputDir(), rec); terr == nil {
+				continue // a verified end state, on an anchor a planted file cannot forge
+			}
 		}
 		if aerr := s.armForDelivery(context.Background(), inv, cert, key, me); aerr != nil {
 			s.sess.noteFailure(armDelivery, "delivery-arm-failed",
