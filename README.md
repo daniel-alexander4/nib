@@ -503,6 +503,13 @@ than sent a second copy. **The re-run is the remedy and it is yours to press** �
 retry on its own, so a party who was offline stays listed as unreached until you run the round
 again. A leg to a party who is not listening can take a few minutes before it gives up.
 
+**When nothing happens, Nib can test the network itself.** A ceremony that fails on a local
+network is silent by nature — a firewall, a VPN swallowing the group, a connection with no carrier
+— and until now the only way to tell those apart was `nib discover` at a terminal. The waiting
+screen has a **Check this network** button that announces and listens for three seconds and then
+says which it is: nothing left this machine, nothing came back to us, or everything works and
+nobody else is here. It shows the counts it drew that from, so you can quote them.
+
 **Before you sign, Nib shows you everyone already on the document** — not just whoever handed it to
 you, who under a relayed ceremony may be a convener who signs nothing at all. A signature that does
 not verify is listed and marked rather than quietly dropped.

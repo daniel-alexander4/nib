@@ -1,0 +1,11 @@
+--- a/web/app.js
++++ b/web/app.js
+@@ -1267,7 +1267,7 @@
+     out.textContent = text;
+     // Only a WORKING network is not a warning. "Nobody else is here" is an ordinary answer and
+     // still the reason a ceremony is not starting, so it is not styled as success.
+-    if (d.verdict && d.verdict !== 'working') out.classList.add('nettest-bad');
++    if (d.verdict === 'not-heard-back' || d.verdict === 'nothing-sent') out.classList.add('nettest-bad');
+   } catch (e) {
+     out.textContent = 'Nib could not check this network.';
+     out.classList.add('nettest-bad');

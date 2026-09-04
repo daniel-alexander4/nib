@@ -112,6 +112,11 @@ const PUBLISHED = [
   // notice for you, and that limit is real rather than hidden.
   { type: 'diagnosisResponse', readers: ['web/app.js'], deferredFields: ['cause', 'summary', 'detail'] },
   { type: 'diagnosisView', readers: ['web/app.js'], deferredFields: ['cause', 'summary', 'detail'] },
+  // The in-product network self-test (/pending 23). Every field is rendered by `runNetworkTest`:
+  // the summary is the sentence, and the window and three counters are the evidence beneath it —
+  // published so a user can quote what the verdict was drawn from rather than trust it. `verdict`
+  // selects the warning styling, and `note` carries the reason when the test could not run at all.
+  { type: 'networkTestResponse', readers: ['web/app.js'] },
   { type: 'externalSignerInfo', readers: ['web/app.js'] },
   // Moved out of EXCLUDED, whose reason for it was factually WRONG: it was excluded as "a p2p
   // envelope between two Nib processes, not a client response", and it is the body of

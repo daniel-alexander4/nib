@@ -3889,3 +3889,20 @@ the difference between this and v1.117.350, where the same class of staleness ha
 reading, because `redproof.sh` replays against HEAD and the change was not yet committed.
 
 `recorded` 293 → 297.
+
+
+## /pending 23 — the discovery counters get a surface that is not a terminal (v1.117.352)
+
+| Defect reintroduced | Check that fired | What it said |
+| --- | --- | --- |
+| `the-verdict-blames-the-firewall-first` — `Stats.Verdict()` tests `Own == 0` before `Sent == 0` | `TestTheVerdictSeparatesTheThreeWaysOfFindingNothing`, tier 1 | "Verdict() = 2, want 1" for a machine that sent nothing |
+| `network-test-rebuilds-the-sentence` — the client writes its own prose instead of rendering `summary` | `networktest.test.mjs`, tier 2 | "the server's own sentence is not rendered" |
+| `nobody-else-reads-as-success` — only the two hard failures are styled as warnings | `networktest.test.mjs`, tier 2 | "'nobody else is here' is styled as success" |
+
+**The ordering row is the one worth reading.** A machine that sent nothing also heard nothing of
+its own, so `Own == 0` is true there too — testing it first tells a user with no working network
+connection that *a firewall is dropping their multicast*. The two remedies are opposite, and the
+wrong one sends them into firewall settings for a cable that is not plugged in. The switch has
+looked like an arbitrary order since `nib discover` was written; it is a rule, and now it has a row.
+
+`recorded` 297 → 300.

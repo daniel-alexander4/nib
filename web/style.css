@@ -1323,6 +1323,9 @@ input.ovl-check { appearance: auto; accent-color: #1a7f37; background: transpare
   border-radius: 3px;
   padding: 0 4px;
 }
+.nettest { margin-top: 8px; }
+#srvNetTestGo { font-size: 11px; }
+#srvNetTestOut.nettest-bad { color: var(--peach); }
 .cerdeliver { margin-top: 8px; }
 .cerdeliverbtn { font-size: 11px; }
 .cerdeliverout { margin-top: 4px; }

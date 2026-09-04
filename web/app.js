@@ -142,6 +142,7 @@ const els = {
   srvWaitTiers: $('srvWaitTiers'),
   srvWaitWhy: $('srvWaitWhy'), srvWaitWhyMore: $('srvWaitWhyMore'),
   srvWaitWhyDetail: $('srvWaitWhyDetail'),
+  srvNetTestGo: $('srvNetTestGo'), srvNetTestOut: $('srvNetTestOut'),
   srvPeerLabel: $('srvPeerLabel'), srvPeerFp: $('srvPeerFp'), srvPeerCopy: $('srvPeerCopy'),
   srvReasonCap: $('srvReasonCap'), srvPeerReason: $('srvPeerReason'), srvPreview: $('srvPreview'),
   srvSigners: $('srvSigners'),
@@ -1220,6 +1221,61 @@ function reflectNotice(n) {
 // of a ceremony arm whose counterparty is still reading their email, and dressing it as a fault
 // teaches the user to ignore the line that will one day say the rendezvous is unreachable.
 let diagnosisShownFor = '';
+// runNetworkTest asks this machine whether local discovery works at all, and says so in a sentence
+// (/pending 23).
+//
+// **The counters existed and their only reader was a terminal.** `nib discover` has printed this
+// verdict since v1.117.18, and Nib's primary user is non-technical, on one machine, with no IT.
+// Worse, D19 cannot answer here: `diagnose()` returns `causeUndiagnosed` for a LAN or TCP ceremony
+// by construction, and the status path publishes nothing for an undiagnosed cause — so this is the
+// one failure the armed screen has never had a word for.
+//
+// It runs on a CLICK and never on the poll: the test announces on the link for three seconds, and
+// a diagnostic that emitted packets on a timer would be a background broadcaster nobody asked for.
+async function runNetworkTest() {
+  const btn = els.srvNetTestGo;
+  const out = els.srvNetTestOut;
+  if (!btn || !out) return;
+  btn.disabled = true;
+  out.hidden = false;
+  out.classList.remove('nettest-bad');
+  out.textContent = 'Checking this network…';
+  try {
+    const res = await apiFetch('/api/lan/test', { unpinned: true });
+    if (!res.ok) {
+      out.textContent = await errText(res, 'Nib could not check this network.');
+      out.classList.add('nettest-bad');
+      return;
+    }
+    const d = await res.json();
+    // The server's own sentence, never a word rebuilt from the verdict tag here — the rule that
+    // decides which of the four states obtains has ONE door and the wording travels with it.
+    let text = d.note ? `${d.summary} ${d.note}` : (d.summary || 'Nib could not say.');
+    // **The window and the counters, because a verdict without them cannot be checked.** "Nobody
+    // is there" and "nobody answered in three seconds" are different facts and the window is what
+    // separates them; the three counters are what a user can quote when reporting a problem, and
+    // they are the evidence the sentence above was drawn from rather than a restatement of it.
+    if (typeof d.windowMs === 'number' && d.windowMs > 0) {
+      const secs = Math.round(d.windowMs / 100) / 10;
+      text += ` Listened for ${secs} second${secs === 1 ? '' : 's'}`;
+      if (typeof d.sent === 'number') {
+        text += ` — sent ${d.sent}, heard itself ${d.own || 0}, heard others ${d.peers || 0}`;
+        if (typeof d.interfaces === 'number') text += `, on ${d.interfaces} network connection${d.interfaces === 1 ? '' : 's'}`;
+      }
+      text += '.';
+    }
+    out.textContent = text;
+    // Only a WORKING network is not a warning. "Nobody else is here" is an ordinary answer and
+    // still the reason a ceremony is not starting, so it is not styled as success.
+    if (d.verdict && d.verdict !== 'working') out.classList.add('nettest-bad');
+  } catch (e) {
+    out.textContent = 'Nib could not check this network.';
+    out.classList.add('nettest-bad');
+  } finally {
+    btn.disabled = false;
+  }
+}
+
 function reflectDiagnosis(d) {
   if (!els.srvWaitWhy) return;
   if (!d || !d.summary) {
@@ -1744,6 +1800,7 @@ els.sessionRecvBtn.onclick = () => openSessionRecv('cosign');
 els.sessionRecvDocBtn.onclick = () => openSessionRecv('receive');
 els.srvCancel.onclick = cancelRecv;
 els.srvDisarm.onclick = cancelRecv;
+if (els.srvNetTestGo) els.srvNetTestGo.onclick = runNetworkTest;
 els.srvArmGo.onclick = armRecv;
 els.srvAccept.onclick = acceptRecv;
 els.srvDecline.onclick = declineRecv;

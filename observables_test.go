@@ -113,6 +113,18 @@ var jsonShapeReaders = []string{
 // fields. A shape's reader is frequently NOT the client — `udpmux.Stats` is read by the CLI
 // and by tests, `ceremony.Record` by the code that parses it back.
 var published = map[string][]string{
+	// `/api/lan/heard`'s reader is the TIER-4 HARNESS, not the client — the route is a
+	// browse-level instrument built because /pending 300 could not be diagnosed without one, and
+	// `link_report` is what reads it (`build/pairrepro.sh:279-280` reads `windowMs` and `heard`
+	// by name). `published.test.mjs` has named that reader for `lanHeard` since it landed; this
+	// scan could not, because every `server.` shape fell through to one fixed reader list.
+	//
+	// **It was parked in `unreadKnown` against /pending 23 instead, and that was wrong twice**:
+	// the fields are read, and the item is about the discovery COUNTERS having no GUI surface,
+	// which is `/api/lan/test` and not this route. Closing 23 by deleting these parks would have
+	// been laundering — the sweep's own client prose happens to contain the words `heard` and
+	// `windowMs`, and a bare-name scan cannot tell that from a read.
+	"server.lanHeardResponse": {"build/pairrepro.sh"},
 	// Derived from the tree, not guessed: for each shape, the files that actually mention
 	// its fields with comments stripped. A first draft of this table was written from
 	// memory and named four wrong files — the scan reporting a false orphan is worse than
@@ -254,7 +266,6 @@ var unreadKnown = map[string]string{
 	"server.conveneRequest.ConvenerSigns":  "P06: no convene surface, so nothing SETS this request field",
 	"server.conveneResponse.Invites":       "P06: no convene surface",
 	"server.conveneResponse.Warnings":      "P06: no convene surface — and this is the one to wire FIRST when it lands: it carries the sitting warning P08.S05b computes, which is the only place a convener is told their deadline is tight",
-	"server.lanHeardResponse.WindowMs":     "/pending 23: the discovery counters have a reader and no user-facing surface shows them. Same gap, same item.",
 
 	// **Two were real, were filed rather than parked, and are now CLOSED** — /pending 349 (the D19
 	// diagnosis gained a reader) and /pending 350 (the field was deleted). Both entries are gone
@@ -275,7 +286,6 @@ var unreadKnown = map[string]string{
 	// police: the standalone route is not called from the client at all (`grep -c "api/diagnos"
 	// web/app.js` returns 0), while its own doc says "a client (and P06's ceremony panel) reads"
 	// it. That is P06's surface, and it is /pending 268's neighbourhood rather than a field defect.
-	"server.lanHeardResponse.Heard": "/pending 23: with WindowMs above — the discovery counters have a reader and no user-facing surface shows them",
 	// **`updateResponse.Managed` was parked here and the FIELD is gone (/pending 350,
 	// v1.117.309)** — consumed by `assetURL` inside its own handler before the response was
 	// written, and read by nothing at the far end. It is a local now, so there is nothing on the
@@ -462,7 +472,16 @@ func TestEveryPublishedObservableHasANamedReader(t *testing.T) {
 				// This stays within what the scan claims for itself one comment up: it proves a
 				// NAME is mentioned in a named file, and a green means "no field is obviously
 				// orphaned" rather than "correctly consumed".
-				if jt := sh.tag[f]; jt != "" && strings.HasSuffix(r, ".js") && mentionsWord(src, jt) {
+				//
+				// **A SHELL reader is matched the same way, for the same reason (/pending 23).**
+				// A harness consumes JSON by KEY — `d.get("note")`, `d["heard"]` — and never as
+				// `.note`, so the strict form reports every field of a harness-read shape unread
+				// while the harness prints all of them. `build/pairrepro.sh:279-281` reads
+				// `windowMs`, `heard` and `note` in exactly that idiom. The rule the comment above
+				// states is *what decides the idiom is the file doing the reading*, and a `.sh`
+				// reader is a second language with the same property; keying this on `.js` alone
+				// was the rule stated for one of its two cases.
+				if jt := sh.tag[f]; jt != "" && (strings.HasSuffix(r, ".js") || strings.HasSuffix(r, ".sh")) && mentionsWord(src, jt) {
 					found = true
 					break
 				}

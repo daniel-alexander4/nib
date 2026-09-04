@@ -421,3 +421,91 @@ func (s *Socket) Close() error {
 	s.closeOnce.Do(func() { err = s.pc.Close() })
 	return err
 }
+
+// Verdict is what a set of Stats says about this machine's link, as a value rather than as
+// printed prose.
+//
+// **It exists because the answer had exactly one caller and it was a terminal.** `nib discover`
+// classified these counters and printed a paragraph in the same function, so the only way to get
+// the diagnosis was to run a command — and Nib's primary user is non-technical, on one machine,
+// with no IT. A LAN ceremony that fails is silent by nature (a firewall, a VPN swallowing the
+// group, an interface with no carrier), and `/pending 353`'s neighbour `/pending 23` is that the
+// GUI could not say which. The rule now has ONE door and both callers walk through it (ADR-009);
+// what is deliberately NOT shared is the announce-and-listen loop, because the CLI prints each
+// sighting as it arrives and a route only wants the totals — that is mechanism, not rule.
+//
+// # The precondition, and it is not optional
+//
+// **A Verdict is only meaningful for a socket that has BOTH announced and read.** `Sent` counts
+// writes and `Own` counts our own announcements coming back, so a listen-only socket reports
+// `VerdictNothingSent` — "discovery cannot work from this machine" — on a perfectly healthy host,
+// and an announce-only socket reports `VerdictNotHeardBack` on the same one. Both mistakes were
+// available in this tree when this was written: `browsePeers` never announces and `lanAnnouncer`
+// never reads, so neither of the server's two existing sockets could produce this answer, and
+// wiring either to it would have been confidently wrong every time. Callers open a socket that
+// does both.
+type Verdict int
+
+const (
+	// VerdictWorking — peers were heard. Nothing to report.
+	VerdictWorking Verdict = iota
+	// VerdictNothingSent — no announcement left the machine. No interface accepted one.
+	VerdictNothingSent
+	// VerdictNotHeardBack — announcements left and none came back to us. Our own copy never
+	// leaves the host, so this is the one cause that can be pinned locally: something on this
+	// machine is dropping multicast, and peers will not hear us either.
+	VerdictNotHeardBack
+	// VerdictNobodyElse — sending and receiving both work and no other Nib announced.
+	VerdictNobodyElse
+)
+
+// Verdict classifies the counters. See the type's doc for the precondition.
+func (s Stats) Verdict() Verdict {
+	switch {
+	case s.Sent == 0:
+		return VerdictNothingSent
+	case s.Own == 0:
+		return VerdictNotHeardBack
+	case s.Peers == 0:
+		return VerdictNobodyElse
+	default:
+		return VerdictWorking
+	}
+}
+
+// Summary is the one-sentence answer for a person, written for someone who is not at a terminal
+// and did not ask a networking question — they armed a ceremony and nothing happened.
+//
+// The CLI keeps its own longer prose: it is talking to somebody who typed `nib discover` and can
+// act on a port number. This is the sentence a panel shows.
+func (v Verdict) Summary() string {
+	switch v {
+	case VerdictNothingSent:
+		return "Nib could not send anything on this network. No network connection on this " +
+			"machine accepted an announcement, so the other party cannot possibly hear you."
+	case VerdictNotHeardBack:
+		return "Nib sent announcements and did not hear its own come back. Something on this " +
+			"machine is blocking local network discovery — usually a firewall or a VPN. The " +
+			"other party will not hear you either."
+	case VerdictNobodyElse:
+		return "This machine's network is working — Nib heard itself — and no other Nib is " +
+			"announcing here. Either nobody else has armed a session yet, or they are on a " +
+			"different network."
+	default:
+		return "Working: another Nib was heard on this network."
+	}
+}
+
+// Name is the machine tag for a Verdict, for a client that branches rather than reads.
+func (v Verdict) Name() string {
+	switch v {
+	case VerdictNothingSent:
+		return "nothing-sent"
+	case VerdictNotHeardBack:
+		return "not-heard-back"
+	case VerdictNobodyElse:
+		return "nobody-else"
+	default:
+		return "working"
+	}
+}
