@@ -1,0 +1,11 @@
+--- a/web/app.js
++++ b/web/app.js
+@@ -10412,7 +10412,7 @@
+   //     test and never `!== 'running'`.
+   //   - `me` and `convener` both KNOWN and equal. Both are unknown-when-empty by their own
+   //     doctrine, so an absent marker must not read as a match — which `''  === ''` would.
+-  if (mayAct && c.state === 'ok' && c.ended
++  if (c.state === 'ok' && c.ended
+       && typeof c.me === 'string' && c.me !== ''
+       && typeof c.convener === 'string' && c.convener !== ''
+       && c.me.toLowerCase() === c.convener.toLowerCase()) {

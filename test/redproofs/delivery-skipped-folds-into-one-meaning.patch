@@ -1,0 +1,11 @@
+--- a/web/app.js
++++ b/web/app.js
+@@ -10537,7 +10537,7 @@
+     row.appendChild(who);
+     const what = document.createElement('span');
+     what.className = 'cerrole';
+-    if (party.delivered && party.skipped) {
++    if (party.skipped) {
+       what.textContent = 'already had it';
+     } else if (party.delivered) {
+       what.textContent = 'sent';

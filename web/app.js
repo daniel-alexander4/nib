@@ -485,7 +485,12 @@ function applyStatus(st) {
   // paying for, and one boolean closes it for every cause rather than for the one I can name.
   if (els.authCeremonies && els.authCerList && !lockedPanelInFlight) {
     lockedPanelInFlight = true;
-    loadCeremonyPanel(els.authCerList)
+    // `false` is the lock screen saying it may not ACT, and it is passed explicitly rather
+    // than inferred from the host element: the two routes this panel reads are both
+    // unlocked-safe (S01, S03), and a delivery round is not — it is `requireUnlocked` and it
+    // mutates. A surface that offered it here would put a button behind the lock that the
+    // server can only answer with 401.
+    loadCeremonyPanel(els.authCerList, false)
       .then((n) => { els.authCeremonies.hidden = n === 0; })
       .catch(() => { els.authCeremonies.hidden = true; })
       .finally(() => { lockedPanelInFlight = false; });
@@ -10233,7 +10238,7 @@ const CEREMONY_STATE_WORDS = {
 // criteria. A roster entry with no label falls back to its six-word pairing name from the server,
 // never to the hex — the hex is the thing users are asked to compare aloud once, out of band, and
 // putting it in a list is what makes people stop reading it.
-function renderCeremonyPanel(data, host) {
+function renderCeremonyPanel(data, host, canAct) {
   host = host || document.getElementById('ceremonyList');
   if (!host) return;
   host.textContent = '';
@@ -10266,8 +10271,13 @@ function renderCeremonyPanel(data, host) {
     n.textContent = data.note || 'Another copy of Nib is already running on this machine.';
     host.appendChild(n);
   }
+  // **`canAct` and `primary` are ANDed, and they are different facts.** The lock screen may
+  // show a ceremony and must never offer an action on it; a non-primary Nib is unlocked and
+  // must still not act, because two processes driving one mirror is two writers with no lock
+  // between them. Either one alone would leave the other's case armed.
+  const mayAct = canAct !== false && data.primary !== false;
   for (const c of list) {
-    host.appendChild(ceremonyCard(c));
+    host.appendChild(ceremonyCard(c, mayAct));
   }
   renderEndedCeremonies(host, ended);
 }
@@ -10324,7 +10334,7 @@ function renderEndedCeremonies(host, ended) {
 // vanish: a ceremony Nib will not admit exists is one whose only remedy is finding and deleting
 // the folder by hand, which is where the user already is. That is C12's client half, and the same
 // rule `ListStored` holds on the server.
-function ceremonyCard(c) {
+function ceremonyCard(c, mayAct) {
   const card = document.createElement('div');
   card.className = 'cercard';
   card.dataset.ceremony = c.id;
@@ -10388,6 +10398,26 @@ function ceremonyCard(c) {
   // `p2p.NextContributor`, the same function `AdmitContribution` refuses with, which P07.S03a
   // wrote in its question form for exactly this. A JS predicate over the roster would be a second
   // derivation that agrees on the day it is written — the shape ADR-009 refuses.
+  // **The delivery round's door, and it is the convener's alone (/pending 353).**
+  //
+  // The round was reachable from nothing: `POST /api/ceremony/deliver` had zero references in
+  // `web/app.js`, so a convener could finish a ceremony and had no way in the product to hand
+  // anyone their copy. Five conditions gate it, and each one is a different way the button would
+  // be wrong rather than a restatement of the others:
+  //
+  //   - `mayAct` — the lock screen and a non-primary Nib (see renderCeremonyPanel).
+  //   - `state === 'ok'` — a degraded record cannot be walked.
+  //   - `ended` — D29 orders the lifecycle **end state → delivery round → close-out**, so a
+  //     proceeding still running has nothing to deliver. Empty is UNKNOWN, so this is a positive
+  //     test and never `!== 'running'`.
+  //   - `me` and `convener` both KNOWN and equal. Both are unknown-when-empty by their own
+  //     doctrine, so an absent marker must not read as a match — which `''  === ''` would.
+  if (mayAct && c.state === 'ok' && c.ended
+      && typeof c.me === 'string' && c.me !== ''
+      && typeof c.convener === 'string' && c.convener !== ''
+      && c.me.toLowerCase() === c.convener.toLowerCase()) {
+    card.appendChild(ceremonyDeliver(c));
+  }
   if (c.state === 'ok') {
     const next = document.createElement('div');
     next.className = 'cernext';
@@ -10404,6 +10434,138 @@ function ceremonyCard(c) {
     card.appendChild(next);
   }
   return card;
+}
+
+// ceremonyDeliver is the convener's "send everyone their copy" control and its result.
+//
+// **The round can take minutes and the button says so before it is pressed, not after.** A leg to
+// a party that is not listening burns `connectDeadline` — measured at tier 4 as 300 s — and the
+// round walks one leg per party that has not already acknowledged. That is the case the outcome
+// list exists for, so it is the ordinary case here rather than the exception, and a control that
+// looked instant would read as hung.
+//
+// **There is no client-side timeout, deliberately.** `apiFetch` sets none, and adding one here
+// would abandon a round the server keeps running — the user would be told it failed while parties
+// were still being reached, which is the exact wrong answer this item was filed about.
+function ceremonyDeliver(c) {
+  const wrap = document.createElement('div');
+  wrap.className = 'cerdeliver';
+  const btn = document.createElement('button');
+  btn.className = 'cerdeliverbtn';
+  btn.type = 'button';
+  btn.textContent = 'Send everyone their copy';
+  const out = document.createElement('div');
+  out.className = 'cerdeliverout';
+  btn.addEventListener('click', async () => {
+    btn.disabled = true;
+    out.textContent = '';
+    const wait = document.createElement('p');
+    wait.className = 'libhint';
+    wait.textContent = 'Reaching each party… this can take a few minutes if someone is offline.';
+    out.appendChild(wait);
+    try {
+      const res = await apiFetch('/api/ceremony/deliver', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ceremony: c.id }),
+        unpinned: true,
+      });
+      if (!res.ok) {
+        out.textContent = '';
+        const e = document.createElement('p');
+        e.className = 'cererror';
+        e.textContent = await errText(res, 'Nib could not run the delivery round.');
+        out.appendChild(e);
+        btn.disabled = false;
+        return;
+      }
+      const d = await res.json();
+      out.textContent = '';
+      out.appendChild(renderDeliveryOutcomes((d && d.parties) || []));
+      // **Re-running is the documented remedy (C10), so the button comes back.** A round that
+      // reached three of four is re-run to reach the fourth, and parties that acknowledged are
+      // skipped rather than repeated.
+      btn.disabled = false;
+      btn.textContent = 'Try the ones that failed again';
+    } catch (err) {
+      out.textContent = '';
+      const e = document.createElement('p');
+      e.className = 'cererror';
+      e.textContent = 'Nib could not run the delivery round.';
+      out.appendChild(e);
+      btn.disabled = false;
+    }
+  });
+  wrap.appendChild(btn);
+  wrap.appendChild(out);
+  return wrap;
+}
+
+// renderDeliveryOutcomes draws one row per party, and it renders FOUR states from three fields.
+//
+// **`skipped` alone is ambiguous and rendering it as one thing tells a convener their decliner
+// already has the document.** The server's own doc says `delivered` is what tells the two apart:
+// skipped AND delivered is a party an earlier run already reached; skipped and NOT delivered is
+// the party that ENDED the proceeding, whose leg cannot succeed and which the round deliberately
+// does not attempt — and only that branch carries a `reason`.
+//
+// A failed leg is neither delivered nor skipped, and its `reason` is the one a convener acts on,
+// so it is never folded into a count.
+function renderDeliveryOutcomes(parties) {
+  const box = document.createElement('div');
+  box.className = 'cerdeliverlist';
+  const cap = document.createElement('div');
+  cap.className = 'cidlabel';
+  cap.textContent = 'Delivery';
+  box.appendChild(cap);
+  if (!parties.length) {
+    const p = document.createElement('p');
+    p.className = 'libhint';
+    // The round walks every party but the convener, so an empty list is a one-party roster
+    // rather than a round that did nothing — and those must not read the same.
+    p.textContent = 'Nobody to send to — this ceremony has no other parties.';
+    box.appendChild(p);
+    return box;
+  }
+  let failed = 0;
+  for (const party of parties) {
+    const row = document.createElement('div');
+    row.className = 'cerparty';
+    const who = document.createElement('span');
+    who.className = 'cerwho';
+    who.textContent = party.label || 'A party on this roster';
+    row.appendChild(who);
+    const what = document.createElement('span');
+    what.className = 'cerrole';
+    if (party.delivered && party.skipped) {
+      what.textContent = 'already had it';
+    } else if (party.delivered) {
+      what.textContent = 'sent';
+    } else if (party.skipped) {
+      what.textContent = 'not sent — they ended this proceeding';
+    } else {
+      failed += 1;
+      what.textContent = 'could not be reached';
+      what.classList.add('cerfail');
+    }
+    row.appendChild(what);
+    box.appendChild(row);
+    if (party.reason) {
+      const why = document.createElement('p');
+      why.className = 'cerdeliverwhy';
+      why.textContent = party.reason;
+      box.appendChild(why);
+    }
+  }
+  const sum = document.createElement('p');
+  sum.className = 'cerpos';
+  // **The sentence a convener reads first, and it is the item's whole point**: a round that
+  // reached three of four must not be reported as a failure.
+  sum.textContent = failed
+    ? `${parties.length - failed} of ${parties.length} have their copy. Try again for the rest.`
+    : 'Everyone has their copy.';
+  box.appendChild(sum);
+  return box;
 }
 
 // ceremonyRoster renders the parties, marking which one is this machine.
@@ -10476,13 +10638,13 @@ function ceremonyRoster(roster, me) {
 // would make every machine with no ceremonies show a box saying it has none, under an unlock form.
 // A read FAILURE counts as something to say: that is the same sentence the sidebar would show and
 // the user needs it either way. Returns 0 for "nothing", non-zero otherwise.
-async function loadCeremonyPanel(host) {
+async function loadCeremonyPanel(host, canAct) {
   host = host || document.getElementById('ceremonyList');
   try {
     const res = await apiFetch('/api/ceremonies', { unpinned: true });
     if (!res.ok) throw new Error(String(res.status));
     const data = await res.json();
-    renderCeremonyPanel(data, host);
+    renderCeremonyPanel(data, host, canAct);
     return ((data && data.ceremonies) || []).length + ((data && data.ended) || []).length;
   } catch (e) {
     if (!host) return;

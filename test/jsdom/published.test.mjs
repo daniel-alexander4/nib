@@ -144,9 +144,12 @@ const PUBLISHED = [
   // second time it was red across a slice close. Entered in PUBLISHED rather than EXCLUDED
   // because it IS published and it DOES have a reader.
   //
-  // It does not close `/pending 353`, which is about the round having no reader *in the product*:
-  // a harness assertion is evidence for this scan and not a surface a convener can look at.
-  { type: 'deliveryOutcome', readers: ['build/pairrepro.sh'] },
+  // **It has a SECOND reader since /pending 353 (v1.117.351), and that one is the product.** The
+  // harness reader above was always evidence for this scan rather than a surface a convener could
+  // look at; `renderDeliveryOutcomes` is the surface, and it reads all four states the three
+  // fields encode. Both readers are named because they check different things — the harness grades
+  // every field of a live round, the client renders what a person is told about one.
+  { type: 'deliveryOutcome', readers: ['build/pairrepro.sh', 'web/app.js'] },
 ];
 
 // ── The exclusions ───────────────────────────────────────────────────────────

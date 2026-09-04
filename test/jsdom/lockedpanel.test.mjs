@@ -33,6 +33,12 @@ const CEREMONIES = {
       { fingerprint: 'b'.repeat(64), label: 'Bo Tenant', signs: true },
     ],
     me: 'b'.repeat(64),
+    // **This ceremony qualifies for the delivery control in every respect but one: the lock.**
+    // It is ended, and this machine convened it — so the arm below is testing the lock and not
+    // some other gate silently doing the work. A fixture that failed any other condition would
+    // pass that assertion while the locked screen happily rendered the button.
+    convener: 'b'.repeat(64),
+    ended: 'completed',
   }],
   primary: true,
 };
@@ -88,4 +94,29 @@ test('the ceremony panel renders while the vault is locked', async () => {
   assert.match(doc.getElementById('authCerNote').textContent, /signing/,
     'the locked screen does not say why it is showing this, so a user reads the password prompt ' +
     'as the price of looking');
+});
+
+// The lock screen shows ceremonies and offers no ACTION on them (/pending 353).
+//
+// **Its two routes are unlocked-safe and a delivery round is not.** `/api/ceremonies` and
+// `/api/ceremony/next` sit on `requirePublicLoopback` — which is what makes this second home
+// possible at all — while `POST /api/ceremony/deliver` is `requireUnlocked` and mutates. A control
+// rendered here could only ever earn a 401, and it would offer an action to somebody who has not
+// yet proved they may act.
+//
+// **The fixture above is deliberately deliverable**, so this asserts the lock and nothing else.
+test('the locked panel offers no delivery control, however deliverable the ceremony', async () => {
+  await settle();
+  const list = doc.getElementById('authCerList');
+  assert.ok(list, 'there is no #authCerList in index.html');
+
+  // SETUP: the card is actually there. Without this the absence below is satisfied by an empty
+  // box on a screen that never rendered.
+  assert.ok(list.querySelector('.cercard'),
+    'setup: the locked screen drew no ceremony card, so nothing below is being tested');
+
+  assert.equal(list.querySelector('.cerdeliverbtn'), null,
+    'the delivery control renders behind the lock. This card is drawn from two unlocked-safe ' +
+    'routes; the round it would start is requireUnlocked and mutating, so the button can only ' +
+    'produce a 401 — and P06.S07 is that the panel renders here WITHOUT offering actions.');
 });
