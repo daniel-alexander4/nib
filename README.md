@@ -464,19 +464,28 @@ lease with a guarantor, a deed with witnesses, a resolution with a board — Nib
 a **ceremony**: one named proceeding, one roster, one document, passed from party to party
 in roster order until everyone has signed.
 
-> **The interface for this is not built yet.** The engine is finished and tested, and the
-> panel that will drive it is not. Today a ceremony is convened through Nib's local HTTP
-> API (`POST /api/ceremony/convene` on `127.0.0.1`), which is a developer's surface and not
-> a user's. Everything below describes what the software does; the buttons are still coming.
-> If you are here to sign a document with one other person, use **Co-sign with a peer**
-> above, which is complete and has an interface.
+**Where it lives.** *Collaborate → Ceremony*. The panel lists every ceremony on this machine with
+its roster, your position in it, and a *"what happens next"* control that asks Nib whose turn it is
+— the same question the software itself refuses out-of-order contributions with, rather than a
+second answer computed for the screen.
 
-**How it runs.** One party **convenes**: they choose the document, write a short recital of
-what is being agreed, list the roster by key fingerprint, and set a deadline. Nib produces
-one **invitation per party** — each different, each carrying that party's own secret — and
-the convener sends them out however they like. Each party **accepts** their invitation,
-which pins the convener's identity and nothing else: everyone talks to the convener, not to
-each other, so a nine-party ceremony is nine pinned relationships and not thirty-six.
+**It renders with the vault locked**, deliberately: you can open Nib, see that a proceeding exists
+and where it has got to, and be asked for your password at the moment you sign rather than at the
+moment you look. Finished ceremonies stay listed, because a close-out **moves** a ceremony's folder
+rather than deleting it — on every machine but the convener's, that folder holds the only copy of
+that party's own signature.
+
+**How it runs.** One party **convenes**: they choose the document, write a short recital of what is
+being agreed, tick the parties out of their own peer list — **no fingerprint is typed and none is
+shown**; a person is a name and, where it matters, a capacity like *as Director* — and set a
+deadline. Nib produces one **invitation per party** — each different, each carrying that party's own
+secret — and the convener sends them out however they like. Each party **accepts** their invitation
+by pasting it into the same panel, which pins the convener's identity and nothing else: everyone
+talks to the convener, not to each other, so a nine-party ceremony is nine pinned relationships and
+not thirty-six.
+
+**An invitation is a channel secret, not a signing credential.** Forwarding one lets somebody watch
+for that party's turn; it does not let them sign as them, because signing needs their key.
 
 Then the document travels. The convener passes it to the first signing party, who reviews
 it and signs; it comes back; it goes out to the second; and so on. **One instrument, in
@@ -486,8 +495,18 @@ before the next hop starts — including the document's own bytes, so a party ca
 a different document under the same proceeding.
 
 When the last signature lands, the convener runs a **delivery round**: every party gets the
-finished document, and the convener keeps trying until each one has it or the deadline
-passes.
+finished document, and the convener keeps trying until each one has it or the deadline passes.
+
+**Before you sign, Nib shows you everyone already on the document** — not just whoever handed it to
+you, who under a relayed ceremony may be a convener who signs nothing at all. A signature that does
+not verify is listed and marked rather than quietly dropped.
+
+**While a ceremony is live, its document is frozen.** Editing, redacting, sanitising or saving over
+it are refused, and the refusal says so and names the proceeding — because every other party was
+invited to sign *those bytes*, and changing them would break their copies rather than yours. The
+ceremony's record is listed in the attachments panel for what it is, so it is not a mysterious
+embedded file. And your copy of a proceeding that is still travelling is **named in progress**,
+never as the finished document.
 
 **Four ways a ceremony ends**, and Nib distinguishes them because they call for different
 actions:
