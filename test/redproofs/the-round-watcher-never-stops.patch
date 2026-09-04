@@ -1,0 +1,11 @@
+--- a/web/app.js
++++ b/web/app.js
+@@ -10594,8 +10594,6 @@
+       e.textContent = 'Nib could not run the delivery round.';
+       out.appendChild(e);
+       btn.disabled = false;
+-    } finally {
+-      stopWatch();
+     }
+   });
+   wrap.appendChild(btn);

@@ -1,0 +1,15 @@
+--- a/internal/server/delivery.go
++++ b/internal/server/delivery.go
+@@ -1293,11 +1293,7 @@
+ 	}
+ 	s.legs[id] = deliveryLeg{Label: label, Index: index, Of: of, Started: time.Now()}
+ 	s.legMu.Unlock()
+-	return func() {
+-		s.legMu.Lock()
+-		delete(s.legs, id)
+-		s.legMu.Unlock()
+-	}
++	return func() {}
+ }
+ 
+ // currentLeg reports the leg in flight for a ceremony, if any.

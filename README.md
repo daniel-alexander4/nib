@@ -503,6 +503,11 @@ than sent a second copy. **The re-run is the remedy and it is yours to press** �
 retry on its own, so a party who was offline stays listed as unreached until you run the round
 again. A leg to a party who is not listening can take a few minutes before it gives up.
 
+**While a delivery round runs, Nib says who it is reaching.** A round is one attempt per party and
+a party who is not listening can hold it for several minutes, so the panel names the party, its
+place in the round, and how long it has been trying against the point where Nib gives up on them —
+because a spinner that never changes cannot be told from one that has hung.
+
 **A peer that keeps dropping cannot make Nib spin.** Both of the waiting side's retry paths pace
 themselves — a small wait that grows to a two-second ceiling — so a party whose connection is
 flapping is retried steadily rather than as fast as the network can fail, for as long as the

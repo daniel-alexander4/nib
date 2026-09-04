@@ -170,6 +170,27 @@ type Server struct {
 	vault *vault.Vault // unlocked vault, nil until the SSH key unlocks it
 	csrf  string       // per-process CSRF token, issued when the vault unlocks
 
+	// legMu guards legs: the delivery round's in-flight leg, per ceremony (/pending 370).
+	//
+	// **A round is synchronous and can run for hours, and until this it published nothing until it
+	// returned.** `handleCeremonyDeliver` walks one leg per party that has not acknowledged, and a
+	// leg to a party that is not listening burns `connectDeadline` — 300 s, measured at tier 4. At
+	// `ceremony.MaxRoster` that is 31 legs, so the ceiling on one POST is over two hours of a
+	// spinner that could not be told from a hung process.
+	//
+	// **In memory rather than on disk, and the reason is the property being reported.** The
+	// durable `markDelivered` markers already record what SUCCEEDED, and a reader of those cannot
+	// close this gap: the marker only appears on success, so during the 300 s stall it is exactly
+	// what does not move. What a watcher needs is liveness, and an artifact is evidence something
+	// STARTED and never that it is still running (`~/.claude/CLAUDE.md`'s presence rule) — a
+	// crashed round would leave a stale "attempting" file claiming forever that it was working.
+	// This map dies with the process, which is the correct semantics for "a round is running".
+	//
+	// **Nothing does I/O under this lock.** `armWindowFor` once did 128 MiB-capable disk I/O under
+	// the mutex `status()` polls, and this is read by a poll on exactly that cadence.
+	legMu sync.Mutex
+	legs  map[string]deliveryLeg
+
 	// punchMu guards punchBudgets: D33's per-(hop, side) packet counters, keyed by
 	// **`(ceremony id, hop)`** (P07.S09b; re-keyed P08.S05h). Held here because a "side" is this
 	// MACHINE in a HOP, and the two `ceremonyID`s that punch for one hop — the armed one and the
@@ -315,6 +336,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/ceremony/next", requirePublicLoopback(s.handleCeremonyNext))
 	mux.HandleFunc("POST /api/ceremony/accept", s.requireUnlocked(s.handleCeremonyAccept))
 	mux.HandleFunc("POST /api/ceremony/deliver", s.requireUnlocked(s.handleCeremonyDeliver))
+	// The round's in-flight leg, polled while one runs (/pending 370). A GET and read-only, but
+	// `requireUnlocked` like its round: it names which party this machine is reaching.
+	mux.HandleFunc("GET /api/ceremony/delivery", s.requireUnlocked(s.handleCeremonyDeliveryProgress))
 	mux.HandleFunc("GET /api/attestations", s.requireUnlocked(s.handleAttestations))
 	mux.HandleFunc("POST /api/session/arm", s.requireUnlocked(s.handleSessionArm))
 	mux.HandleFunc("POST /api/session/disarm", s.requireUnlocked(s.handleSessionDisarm))

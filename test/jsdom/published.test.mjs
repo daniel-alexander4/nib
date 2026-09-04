@@ -116,6 +116,10 @@ const PUBLISHED = [
   // the summary is the sentence, and the window and three counters are the evidence beneath it —
   // published so a user can quote what the verdict was drawn from rather than trust it. `verdict`
   // selects the warning styling, and `note` carries the reason when the test could not run at all.
+  // The delivery round's in-flight leg (/pending 370). `watchDeliveryRound` reads every field:
+  // `running` gates the sentence, `label`/`index`/`of` place the leg, and `elapsedMs` against
+  // `ceilingMs` is the pair that answers "is this hung" while the index sits still.
+  { type: 'deliveryProgressResponse', readers: ['web/app.js'] },
   { type: 'networkTestResponse', readers: ['web/app.js'] },
   { type: 'externalSignerInfo', readers: ['web/app.js'] },
   // Moved out of EXCLUDED, whose reason for it was factually WRONG: it was excluded as "a p2p

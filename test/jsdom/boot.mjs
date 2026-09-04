@@ -139,7 +139,13 @@ export async function boot({ routes = {}, search = '' } = {}) {
         'Add it to BOOT_ROUTES (shaped like the Go handler) or pass it via routes.',
       );
     }
-    const body = typeof table[key] === 'function' ? table[key](opts) : table[key];
+    // **Awaited, so a route may be SLOW (/pending 370).** A handler returning a promise used to be
+    // JSON.stringify'd as `{}` — silently, since the call still resolved with a 200 — so nothing in
+    // this harness could hold a request open. That is exactly what a progress surface must be
+    // tested against: the whole point of one is the minutes before the response arrives, and a
+    // round that returns instantly cannot exercise it. Awaiting a non-promise is a no-op, so every
+    // existing route is unaffected.
+    const body = await (typeof table[key] === 'function' ? table[key](opts) : table[key]);
     // A route may hand back a whole Response when the STATUS is the thing under test —
     // a 409, say. Everything else keeps the 200-with-JSON default, so no existing route
     // has to say so. Added for P06.S03, whose all-tabs-stale case is entirely about what

@@ -1,0 +1,12 @@
+--- a/internal/server/delivery.go
++++ b/internal/server/delivery.go
+@@ -839,8 +839,8 @@
+ 		// ender and anyone an earlier run reached — so counting it would number this leg against a
+ 		// denominator it is not drawn from and show "4 of 2".
+ 		attempt++
+-		endLeg := s.beginLeg(rec.ID, party.Label, attempt, walked)
+ 		derr := s.deliverToParty(ctx, v, inv, party.Fingerprint, addrs[strings.ToLower(party.Fingerprint)], cert, key, myFP, payload)
++		endLeg := s.beginLeg(rec.ID, party.Label, attempt, walked)
+ 		endLeg()
+ 		if derr != nil {
+ 			res.Reason = derr.Error()
