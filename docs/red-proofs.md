@@ -3830,3 +3830,34 @@ edit** by reverting `web/app.js` to HEAD and re-applying the label alone, rather
 diff and picking a suspect.
 
 `recorded` 287 → 292.
+
+
+## /pending 252 — the consent view stops publishing what nothing reads (v1.117.350)
+
+| Defect reintroduced | Check that fired | What it said |
+| --- | --- | --- |
+| `consent-view-republishes-an-unread-peer-field` — the `Valid bool` field, json-tagged `valid`, back on `pendingView` | `TestTheConsentViewPublishesNoUnreadPeerFields`, tier 1 | "the consent view publishes 'valid' again: {"signer":"Alice",…,"valid":false,…}" |
+
+**The row exists because neither reader scan can catch this one.** Both scans match a published
+field against a bare property name in `web/app.js`. `.valid` is satisfied there by
+`renderConsentSigners`'s `s.valid` — a `pendingSigner`, a different shape — and `acceptedPeer` by
+`augmentSigDetails`'s `a.acceptedPeer`, an `attestationView`. `published.test.mjs` had both fields
+parked in `COINCIDENTAL` for exactly that reason; `observables_test.go` has no `pendingView` entry
+at all and was laundering them silently. So the two fields were **deleted** rather than parked, and
+this guard is what makes the deletion falsifiable: it asserts over the marshalled JSON, because the
+property is about what crosses the wire.
+
+**The park that was asked for is refused by the scan itself, and that was measured rather than
+argued.** `/pending 252` asked for `pendingView.valid` to go into `UNREAD_KNOWN`; adding it fails
+`published.test.mjs` by name — *"these fields are parked in BOTH UNREAD_KNOWN and COINCIDENTAL …
+They say different things … and a field cannot be both."* The item's remedy was written at P05's
+close, before the coincidence door existed.
+
+**One existing row was re-recorded in the same commit.** `consent-screen-names-only-the-caller`
+carried `Reason: peer.Reason, Valid: peer.Valid,` as a context line — the only one of 293 rows that
+did (`grep -ln "Valid: peer.Valid\|AcceptedPeer: peer.AcceptedPeer" test/redproofs/*.patch`). Note
+for the next deletion: **`redproof.sh` replays against HEAD**, so a patch staled by an uncommitted
+change still reports green; the check that catches it before the commit is
+`git apply --check <patch>` against the working tree.
+
+`recorded` 292 → 293.

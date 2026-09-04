@@ -155,3 +155,38 @@ func TestAnUnsignedDocumentSaysSoRatherThanListingNobody(t *testing.T) {
 			"server that never sent one", b)
 	}
 }
+
+// TestTheConsentViewPublishesNoUnreadPeerFields is /pending 252's decision, made enforceable.
+//
+// **The decision (2026-09-04): the connected peer's own signature validity is intentionally not
+// shown on the consent card, because the card already answers the question better.** It lists
+// every signature already on the document and marks an invalid one rather than dropping it
+// (`renderConsentSigners`), and it renders "Nobody yet — you would be the first to sign this
+// document." when there are none. That reports the DOCUMENT's state; `Valid` reported one boolean
+// about whoever dialled, and under a carry route the dialler is not a signer at all.
+//
+// **So the fields were deleted rather than parked, and this is the guard that keeps them gone.**
+// Parking them was tried and is wrong twice over: `published.test.mjs` already carries both in
+// `COINCIDENTAL` and refuses a second park by assertion, and the Go scan
+// (`TestEveryPublishedObservableHasANamedReader`) has no entry for `pendingView` at all — it
+// matches on a bare name, which `pendingSigner.Valid` and `attestationView.acceptedPeer` in
+// `web/app.js` satisfy. Both scans were laundering these two fields, and only deletion reaches
+// both.
+//
+// The assertion is over the marshalled JSON rather than the struct, because the property is about
+// what crosses the wire: a field re-added and left unread is exactly what neither scan can see.
+func TestTheConsentViewPublishesNoUnreadPeerFields(t *testing.T) {
+	b, err := json.Marshal(pendingView{Signer: "Alice", Fingerprint: "aa", Reason: "I agree"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, key := range []string{`"valid"`, `"acceptedPeer"`} {
+		if strings.Contains(string(b), key) {
+			t.Errorf("the consent view publishes %s again: %s\n\nNothing reads it — not `showConsent`, "+
+				"not any Go caller — and both reader scans launder it on a coincidental name match, so "+
+				"re-adding it re-opens /pending 252 silently. If the consent card should state the "+
+				"connected peer's own signature validity, render it and delete this guard; do not "+
+				"publish it unread.", key, b)
+		}
+	}
+}

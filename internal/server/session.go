@@ -856,8 +856,7 @@ func (sc sessionConfirmer) Confirm(peer p2p.SignerAttestation, doc []byte) (bool
 	// runSession. A declined or timed-out request leaves the open doc untouched.
 	ch := make(chan sessionDecision, 1)
 	view := pendingView{
-		Signer: peer.Signer, Fingerprint: peer.Fingerprint, AcceptedPeer: peer.AcceptedPeer,
-		Reason: peer.Reason, Valid: peer.Valid,
+		Signer: peer.Signer, Fingerprint: peer.Fingerprint, Reason: peer.Reason,
 		// Every party already on the document, not just the one on the other end of the socket
 		// (P07.S07c).
 		Signers: signersSoFar(doc),
@@ -1073,7 +1072,7 @@ type sessionAccepter struct {
 func (sa sessionAccepter) Accept(peerFP, doc []byte) (bool, error) {
 	sa.saw.mark() // the transfer consent is about to go on screen
 	ch := make(chan sessionDecision, 1)
-	view := pendingView{Signer: sa.label, Fingerprint: hex.EncodeToString(peerFP), Reason: transferReason(doc), Valid: true}
+	view := pendingView{Signer: sa.label, Fingerprint: hex.EncodeToString(peerFP), Reason: transferReason(doc)}
 	req := &pendingReq{view: view, doc: doc, resp: ch}
 	if !sa.s.sess.setPending(sa.anchor, req) {
 		return false, errors.New("session not armed")
@@ -1724,12 +1723,22 @@ type verifyView struct {
 	Words string `json:"words"`
 }
 
+// pendingView is what the consent screen is told about an arrival it is being asked to accept.
+//
+// **It carried `AcceptedPeer` and `Valid` — the connected peer's own attestation — and nothing
+// ever read either (/pending 252, decided 2026-09-04: intentionally omitted, then deleted).**
+// The screen answers the same question better through `Signers`: it reports the DOCUMENT's state
+// rather than one boolean about whoever dialled, and under a carry route the dialler is not a
+// signer at all. Two fields published and never consumed are the `historyEvicted` class, so they
+// are gone rather than parked — and both reader scans were laundering them on a coincidental
+// name match (`pendingSigner.Valid` and `attestationView.acceptedPeer` in `web/app.js`), which
+// a park entry would have closed in one scan and not the other.
+//
+// `TestTheConsentViewPublishesNoUnreadPeerFields` is what keeps them gone.
 type pendingView struct {
-	Signer       string `json:"signer"`
-	Fingerprint  string `json:"fingerprint"`
-	AcceptedPeer string `json:"acceptedPeer"`
-	Reason       string `json:"reason"`
-	Valid        bool   `json:"valid"`
+	Signer      string `json:"signer"`
+	Fingerprint string `json:"fingerprint"`
+	Reason      string `json:"reason"`
 	// Signers is every party who has ALREADY signed this document, in signature order
 	// (D27 item 3, C09; P07.S07c).
 	//

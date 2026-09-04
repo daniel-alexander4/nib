@@ -40,9 +40,7 @@ const h = await boot({
         pending: {
           signer: 'Ada Landlord',
           fingerprint: 'a'.repeat(64),
-          acceptedPeer: '',
           reason: 'I agree to co-sign the lease',
-          valid: true,
           signers: SIGNERS,
         },
       }
