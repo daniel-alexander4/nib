@@ -1,0 +1,17 @@
+--- a/internal/server/session.go
++++ b/internal/server/session.go
+@@ -2004,14 +2004,7 @@
+ 				// it.** A promote that fails fast loops straight back into Accept, so a peer that
+ 				// connects and fails to promote spins this arm until postSignDeadline. Bounded by
+ 				// the same door, against its own (shorter) window.
+-				d, ok := reraceWait(promotes, time.Now(), postSignDeadline)
+-				if !ok {
+-					return // the re-delivery window closed
+-				}
+ 				promotes++
+-				if !sleepOrDone(ctx, d) {
+-					return
+-				}
+ 				continue // a failed accept; try again within the window
+ 			}
+ 		} else {

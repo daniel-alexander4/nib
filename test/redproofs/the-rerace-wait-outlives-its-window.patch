@@ -1,0 +1,12 @@
+--- a/internal/server/clocks.go
++++ b/internal/server/clocks.go
+@@ -297,9 +297,6 @@
+ 	if d > reraceCap {
+ 		d = reraceCap
+ 	}
+-	if d > remaining {
+-		d = remaining
+-	}
+ 	return d, true
+ }
+ 

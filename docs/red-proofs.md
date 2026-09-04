@@ -3906,3 +3906,32 @@ wrong one sends them into firewall settings for a cable that is not plugged in. 
 looked like an arbitrary order since `nib discover` was written; it is a rule, and now it has a row.
 
 `recorded` 297 → 300.
+
+
+## /pending 369 — the re-race gets a ceiling, and the second arm nobody had named (v1.117.353)
+
+| Defect reintroduced | Check that fired | What it said |
+| --- | --- | --- |
+| `the-rerace-backoff-has-no-ceiling` — the doubling is uncapped | `TestTheReraceIsPacedAndBounded`, tier 1 | "after eleven attempts the wait is 3.2s, want the ceiling 2s" |
+| `the-rerace-wait-outlives-its-window` — the delay is not clamped to the time left | `TestTheReraceStopsAtItsDeadlineAndNeverSleepsPastIt`, tier 1 | "the wait is 2s against a window with 10ms left — it would wake after the arm it is pacing had already ended" |
+| `the-paced-arm-ignores-its-cancel` — `sleepOrDone` waits the timer unconditionally | `TestPacingIsAbandonedTheMomentTheArmIsCancelled`, tier 1 | "a cancelled arm completed its wait" |
+| `the-post-signing-arm-retries-unpaced` — the promote retry keeps its bare `continue` | `TestBothRetryArmsRouteThroughTheReraceDoor`, tier 1 | "runCeremonyReceive calls reraceWait 1 time(s), want 2" |
+
+**The fourth row is the one the item could not have asked for.** `/pending 369` named a single
+unbounded `continue`; there were two in the same loop, and the one it missed had no deadline test of
+its own at all. The guard therefore asserts **routing through the door** rather than either site's
+numbers (ADR-009) — a guard written against the site the item named would have been green over the
+site it did not.
+
+**A fifth mutation was rejected rather than recorded**: deleting the post-signing door outright
+leaves `promotes` unused and the package does not compile, and a patch that fails to build is not a
+red proof — `redproof.sh` names that as its own failure. Re-cut to keep the counter and drop only
+the pacing, which is the defect the row actually claims.
+
+**Why there is no rate measurement here.** The item's blocker was that nothing had measured how fast
+the loop spins, and the harness it wanted needs a counterpart that completes the p2p handshake and
+drops it repeatedly. The ceiling makes the question moot: once warmed the arm cannot re-enter more
+often than `reraceCap`, whatever the peer does. The unmeasured claim is now bounded rather than
+outstanding.
+
+`recorded` 300 → 304.

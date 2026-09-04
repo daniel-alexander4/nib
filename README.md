@@ -503,6 +503,11 @@ than sent a second copy. **The re-run is the remedy and it is yours to press** �
 retry on its own, so a party who was offline stays listed as unreached until you run the round
 again. A leg to a party who is not listening can take a few minutes before it gives up.
 
+**A peer that keeps dropping cannot make Nib spin.** Both of the waiting side's retry paths pace
+themselves — a small wait that grows to a two-second ceiling — so a party whose connection is
+flapping is retried steadily rather than as fast as the network can fail, for as long as the
+ceremony has left.
+
 **When nothing happens, Nib can test the network itself.** A ceremony that fails on a local
 network is silent by nature — a firewall, a VPN swallowing the group, a connection with no carrier
 — and until now the only way to tell those apart was `nib discover` at a terminal. The waiting

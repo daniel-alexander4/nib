@@ -1,0 +1,15 @@
+--- a/internal/server/clocks.go
++++ b/internal/server/clocks.go
+@@ -314,10 +314,6 @@
+ 	}
+ 	t := time.NewTimer(d)
+ 	defer t.Stop()
+-	select {
+-	case <-ctx.Done():
+-		return false
+-	case <-t.C:
+-		return true
+-	}
++	<-t.C
++	return true
+ }
