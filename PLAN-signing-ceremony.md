@@ -4365,7 +4365,7 @@ Tasks (firmed 2026-08-22):
   still works from the disclosure.
 
 
-### P06 — The Signing Ceremony surface **(built LAST, after P07 — Stage 2 grill, 2026-08-18)**
+### P06 — The Signing Ceremony surface **(built LAST, after P07 — Stage 2 grill, 2026-08-18)***(**done** 2026-09-03, v1.117.349 — ten slices, and the LAST phase of the plan. **Acceptance ledger: 26 clauses, 25 met, ONE named gap** — `ledgers/2026-09-03-p06-acceptance.md`. The gap is C09b, *"driven with the network down"*: neither panel route dials — `ListStored`/`ReadStored` read `~/nib` and `NextContributor` reads the document — but jsdom stubs every route, so its "no network" is a statement about the harness, and no tier drives the panel with the network actually removed. Structural, not driven as the clause words it, and recorded rather than credited. **Two criteria were credited at counts their own text got wrong**: C02 says "the four of D19" and there are five causes with seven summaries; C16 says "eight distinct outcomes" and there are twelve — both enumerated by tests now rather than asserted. **Graduation pass: 62 rows, 12 actionable, 0 hot-path**, and all 24 distinct cited readers resolved against the source with none missing — P08's equivalent pass found three that had never existed, so a clean result is a result. The scan the pass cannot make itself was run: `TestEveryPublishedObservableHasANamedReader` (92 observables, 11 packages) and `published.test.mjs`, both green. **Required-run gates, enumerated because a ledger over criteria cannot see them**: tier 0 ✓, tier 1 ✓, `-race` on server ✓, tier 2 ✓ (167 pass, exit 0), tier 3 ✓ (68 pass, exit 0), tier 6 ✓ (19/19), tier 4 `--lan -n 4` ✓ (`3 arm(s) waiting … 6 off-link packet(s), budget 12`, and the run-wide zero untouched). **That is the FIFTH measurement of the same total and it split the other way** — `interrupted_hop` 6 / `decoy_document` 0, against 0/6 on the three before it — which is exactly the timing-dependence `/pending 363`'s pair-level budget was built on, confirmed by a run nobody set up to confirm it. **Closure sweep: three items named P06 and none was what its entry said** — 268 was satisfied by S05 with no commit ever mentioning it (closed); 353 and 23 were waiting on this phase to build them and it closed without either, re-filed Finding, each checked at the code. **What the phase found that no criterion asked for**: a live cross-origin GET side effect at S01; both browser tiers exiting 1 since v1.117.335 while every slice reported them green; a locked-panel criterion that was FALSE in a browser rather than merely undriven; and a latent tier-3 race. Review: `code-reviews/v1.117.349-p06-phaseclose-2026-09-03.md`.)*
 Goal: the Collaborate tab becomes the Signing Ceremony, restructured around ~~name-in, connect, confirm, sign~~ **convene, invite, connect, review, sign, deliver — as a sidebar panel rather than a tab of modals (amended 2026-08-18, D13 pin, D24)**.
 **Built roster-shaped from the start (2026-08-18):** a roster of two is a roster, so P06 renders the record's roster and position even while only two-party ceremonies exist. This is deliberate — building a two-party screen here and replacing it in P07 would be the rebuild the phase order exists to avoid.
 Exit criteria:
@@ -4936,8 +4936,26 @@ Acceptance:
 - **A party's in-progress copy is labelled in-progress and never as the finished document** (D28).
 - Tier: 2 and 3 for the refusal through a real edit; 1 for the attachment rule at its door.
 
-#### P06.S10 — Docs, README, and the phase close *(docs-parity; the phase's own close)*
+#### P06.S10 — Docs, README, and the phase close *(docs-parity; the phase's own close)* *(**done** 2026-09-03, v1.117.349 — 3 clauses met. The "not built yet" block is gone and the README describes the panel, the locked view, the consent screen, the freeze and the in-progress name. **Two stale claims in the surviving prose were corrected rather than left**: it said a convener lists the roster "by key fingerprint", which is what the phase's own no-hex criterion forbids, and it never said an invitation is a channel secret — a sentence the SCREEN carries and the README did not. Docs-parity is the README alone: a named search over `docs/*.md` finds the ceremony only in `red-proofs.md`, which is a record of proofs rather than a description of the feature.)*
 Scope: the phase close.
+
+**Deepdive: did NOT fire.** This slice authors prose and runs the phase's close-out passes; it
+touches no seam, no wire format, no on-disk layout. Recorded rather than skipped silently.
+
+**Survey, 2026-09-03.** The paragraph P08.S09 wrote so this slice would have something to delete is
+`README.md:467-472` and says *"The interface for this is not built yet … the buttons are still
+coming."* Every clause of it is now false: the panel is a sidebar surface, convene and accept are
+its forms, the consent screen names every prior signer, and the whole thing renders with the vault
+locked. **No other doc mentions the ceremony** — a named search over `docs/*.md` returns only
+`red-proofs.md`, which is a record of proofs rather than a description of the feature — so
+docs-parity here is the README and the ADR index, not a documentation set.
+
+Tasks:
+- **T01** — the "not built yet" block goes, and the README gains the flow as a user meets it.
+- **T02** — the phase close: full-repo review, acceptance ledger over every P06 criterion split on
+  `and`, graduation pass over `instruments/ceremony.md`'s P06 rows, the required-run gates
+  enumerated from `CONTRIBUTING.md`, and the closure sweep over `/pending`.
+
 Acceptance:
 - **The README's ceremony section loses its *"the interface for this is not built yet"* paragraph**,
   which P08.S09 wrote so that this slice would have something to delete — and gains the flow as it
