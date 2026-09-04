@@ -1,0 +1,11 @@
+--- a/web/app.js
++++ b/web/app.js
+@@ -1250,7 +1250,7 @@
+     const d = await res.json();
+     // The server's own sentence, never a word rebuilt from the verdict tag here — the rule that
+     // decides which of the four states obtains has ONE door and the wording travels with it.
+-    let text = d.note ? `${d.summary} ${d.note}` : (d.summary || 'Nib could not say.');
++    let text = d.verdict === 'working' ? 'Network OK.' : 'Network problem.';
+     // **The window and the counters, because a verdict without them cannot be checked.** "Nobody
+     // is there" and "nobody answered in three seconds" are different facts and the window is what
+     // separates them; the three counters are what a user can quote when reporting a problem, and

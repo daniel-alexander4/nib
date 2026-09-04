@@ -277,6 +277,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/vault/export", s.requireUnlocked(s.handleVaultExport))
 	mux.HandleFunc("POST /api/vault/import", s.requireUnlocked(s.handleVaultImport))
 	mux.HandleFunc("GET /api/lan/heard", s.requireUnlocked(s.handleLANHeard))
+	// The in-product form of `nib discover` (/pending 23). `requireUnlocked` like its
+	// neighbour: it announces on the link, which is an action, not a read.
+	mux.HandleFunc("GET /api/lan/test", s.requireUnlocked(s.handleNetworkTest))
 	mux.HandleFunc("GET /api/ssh/keys", s.requireUnlocked(s.handleKeysList))
 	mux.HandleFunc("POST /api/ssh/keys", s.requireUnlocked(s.handleKeysAdd))
 	mux.HandleFunc("POST /api/ssh/keys/remove", s.requireUnlocked(s.handleKeysRemove))

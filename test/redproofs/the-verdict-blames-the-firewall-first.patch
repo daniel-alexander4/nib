@@ -1,0 +1,15 @@
+--- a/internal/discovery/mcast.go
++++ b/internal/discovery/mcast.go
+@@ -462,10 +462,10 @@
+ // Verdict classifies the counters. See the type's doc for the precondition.
+ func (s Stats) Verdict() Verdict {
+ 	switch {
+-	case s.Sent == 0:
+-		return VerdictNothingSent
+ 	case s.Own == 0:
+ 		return VerdictNotHeardBack
++	case s.Sent == 0:
++		return VerdictNothingSent
+ 	case s.Peers == 0:
+ 		return VerdictNobodyElse
+ 	default:

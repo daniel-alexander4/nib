@@ -251,21 +251,26 @@ func printSummary(out io.Writer, st discovery.Stats, listen time.Duration) {
 // of that state, and reaching it first would tell a user "a local firewall is dropping
 // multicast" about a machine where no announcement was ever attempted. That is the same
 // confident-wrong-diagnosis failure the `--seconds` guard above exists to prevent.
+// printVerdict prints the CLI's own prose for a verdict, and the CLASSIFICATION is not its own.
+//
+// **The switch that decided which of the four states obtained used to live here**, which made a
+// terminal the only place the answer existed — see `discovery.Verdict`. It now routes through
+// `Stats.Verdict()` (ADR-009: one door, and this is a caller of it), and what stays here is the
+// wording for somebody who typed the command and can act on a port number. The panel shows
+// `Verdict.Summary()` instead, which is the same rule said to a different reader.
 func printVerdict(out io.Writer, st discovery.Stats) int {
-	// The verdict, and it is the whole reason the counters are separated. "Found
-	// nothing" has three causes and a user can act differently on each.
-	switch {
-	case st.Sent == 0:
+	switch st.Verdict() {
+	case discovery.VerdictNothingSent:
 		fmt.Fprintln(out, "VERDICT: nothing was sent. Discovery cannot work from this machine —\n"+
 			"         no interface accepted an announcement.")
 		return 1
-	case st.Own == 0:
+	case discovery.VerdictNotHeardBack:
 		fmt.Fprintf(out, "VERDICT: %d announcements left this machine and NOT ONE came back to us.\n"+
 			"         A local firewall is dropping multicast on port %d — that is the one\n"+
 			"         cause this test can distinguish, because our own copy never leaves\n"+
 			"         the host. Peers will not hear us either.\n", st.Sent, discovery.Port)
 		return 1
-	case st.Peers == 0:
+	case discovery.VerdictNobodyElse:
 		fmt.Fprintln(out, "VERDICT: sending and receiving both work — we heard ourselves — but no\n"+
 			"         other Nib announced. Either nobody has armed a session on this\n"+
 			"         network, or they are on a different one.")

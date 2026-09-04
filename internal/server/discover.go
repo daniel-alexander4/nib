@@ -2,6 +2,7 @@ package server
 
 import (
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
 	"net"
@@ -12,6 +13,7 @@ import (
 	"nib/internal/discovery"
 	"nib/internal/p2p"
 	"nib/internal/pairing"
+	"nib/internal/safe"
 	"nib/internal/vault"
 )
 
@@ -417,5 +419,136 @@ func (s *Server) handleLANHeard(w http.ResponseWriter, r *http.Request) {
 			Transport:   c.Transport,
 		})
 	}
+	writeJSON(w, out)
+}
+
+// networkTestWindow is how long handleNetworkTest announces and listens.
+//
+// **Deliberately its own constant, and deliberately longer than `browseWindow`.** A browse is a
+// race against a peer who is already announcing, and 2 s is D16's figure for that. This is a
+// SELF-test, and its failure mode is the opposite: too short a window means too few announce
+// ticks, `Own` stays 0, and the verdict becomes "something on this machine is blocking local
+// network discovery" — a confident, wrong, and alarming diagnosis on a healthy host. `nib
+// discover` names that same trap in its own flag check, where a non-positive window "would print
+// VERDICT: nothing was sent … about a machine where nothing was attempted."
+//
+// At `announceEvery` (500 ms) this is six announce ticks, so the first has long since looped back
+// before the window closes. It is a user-initiated check with a spinner, not a hot path.
+const networkTestWindow = 3 * time.Second
+
+// networkTestResponse is what the panel shows when a user asks why nothing is happening
+// (/pending 23).
+//
+// **The counters existed, had a reader, and the reader was a terminal.** `discovery.Socket.Stats()`
+// counts sent, heard-ourselves and heard-peers at the same moments, and `nib discover` printed a
+// verdict off them — but Nib's primary user is non-technical, on one machine, with no IT, and a
+// LAN ceremony that fails is silent by nature. Worse, D19's diagnosis cannot help here: `diagnose()`
+// returns `causeUndiagnosed` for a LAN or TCP ceremony by construction (`c.rz == nil || c.gate ==
+// nil`), and the status path publishes nothing for an undiagnosed cause — so the armed screen has
+// no sentence at all for exactly this failure.
+type networkTestResponse struct {
+	// Verdict is the machine tag — "working", "nobody-else", "not-heard-back", "nothing-sent".
+	Verdict string `json:"verdict"`
+	// Summary is the sentence for a person, from the one door that decides it.
+	Summary string `json:"summary"`
+	// Sent, Own and Peers are the three counters the verdict is derived from, published so the
+	// answer can be checked rather than trusted — a user reporting a problem can quote them, and
+	// they are what tells "quiet link" from "nothing left this machine".
+	Sent  uint64 `json:"sent"`
+	Own   uint64 `json:"own"`
+	Peers uint64 `json:"peers"`
+	// Interfaces is how many network connections accepted the join. Zero is its own failure and
+	// it is the one that arrives without any counters at all.
+	Interfaces int `json:"interfaces"`
+	// WindowMs is how long it listened, so "nobody is there" is distinguishable from "nobody
+	// answered in two seconds" — the same reason lanHeardResponse carries it.
+	WindowMs int `json:"windowMs"`
+	// Note carries the reason when the test could not run at all. Empty on every real answer.
+	Note string `json:"note,omitempty"`
+}
+
+// handleNetworkTest announces and listens on ONE socket for a window, then classifies what
+// happened. It is the in-product form of `nib discover`.
+//
+// **One socket that does both, and that is the whole design constraint.** `Stats.Verdict()`'s
+// precondition is that the socket has announced AND read: `browsePeers` never announces, so its
+// socket always reports "nothing was sent", and `lanAnnouncer` never reads, so its socket always
+// reports "nothing came back". Neither of the server's two existing sockets could answer this
+// question, and wiring either one to the verdict would have been confidently wrong on every
+// healthy machine.
+//
+// **The identity is a throwaway**, exactly as `nib discover`'s is: a name derived from the random
+// nonce, matching nobody's pin. A diagnostic must not put the user's real pairing identity on the
+// wire, and it does not need to — the test is whether packets move, not who is sending them.
+//
+// **On-link only.** These are link-local multicast announcements on the discovery port; nothing
+// here touches the DHT, so ADR-011's rule about the local link getting its window first is not
+// engaged. It is the same traffic an armed session already emits.
+func (s *Server) handleNetworkTest(w http.ResponseWriter, r *http.Request) {
+	out := networkTestResponse{WindowMs: int(networkTestWindow / time.Millisecond)}
+	var nonce [8]byte
+	if _, err := rand.Read(nonce[:]); err != nil {
+		httpError(w, http.StatusInternalServerError, "could not start a network test")
+		return
+	}
+	sock, err := discovery.Open(nonce)
+	if err != nil {
+		// Not a 500: a host with no usable interface is precisely the case this route is asked
+		// about, and an error status would hide the answer behind a fault. The same reasoning
+		// handleLANHeard states for its own open failure.
+		out.Verdict = discovery.VerdictNothingSent.Name()
+		out.Summary = discovery.VerdictNothingSent.Summary()
+		out.Note = "Nib could not listen on this network at all: " + err.Error()
+		writeJSON(w, out)
+		return
+	}
+	defer sock.Close()
+	out.Interfaces = len(sock.Interfaces())
+
+	fpr := sha256.Sum256(nonce[:])
+	name, err := pairing.Name(fpr[:])
+	if err != nil {
+		httpError(w, http.StatusInternalServerError, "could not derive a test name")
+		return
+	}
+	ann := discovery.Announcement{Name: name, Port: 8443, Nonce: nonce}
+
+	deadline := time.Now().Add(networkTestWindow)
+	stop := make(chan struct{})
+	done := make(chan struct{})
+	// Stopped and JOINED before the socket closes, the same ordering `runDiscover` states: without
+	// the join the goroutine can wake past the deadline and announce on a closed socket.
+	defer func() { close(stop); <-done }()
+	go func() {
+		defer safe.Recover("network test announcer")
+		defer close(done)
+		t := time.NewTicker(announceEvery)
+		defer t.Stop()
+		for {
+			_, _ = sock.Announce(ann)
+			select {
+			case <-stop:
+				return
+			case <-t.C:
+				if !time.Now().Before(deadline) {
+					return
+				}
+			}
+		}
+	}()
+	for time.Now().Before(deadline) {
+		if _, rerr := sock.Read(deadline); rerr != nil {
+			// Every error here is ordinary — a timeout ends the window, and our own
+			// announcements and foreign traffic are expected on a shared link. The socket
+			// counts them; this loop only has to stay until the window closes.
+			if time.Now().After(deadline) {
+				break
+			}
+		}
+	}
+	st := sock.Stats()
+	v := st.Verdict()
+	out.Verdict, out.Summary = v.Name(), v.Summary()
+	out.Sent, out.Own, out.Peers = st.Sent, st.Own, st.Peers
 	writeJSON(w, out)
 }
