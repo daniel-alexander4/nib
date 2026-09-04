@@ -1983,6 +1983,9 @@ func (s *Server) runCeremonyReceive(ctx context.Context, cer *ceremonyID, hl *p2
 	overallDeadline := time.Now().Add(armWindowFor(armInteractive, cer))
 	var postSignDeadline time.Time
 	opened := false // the co-signed document opens once, not per re-delivery
+	// The two retry counters, one per arm, because they pace against different deadlines and a
+	// shared count would let a busy pre-signing phase throttle the re-delivery window it precedes.
+	reraces, promotes := 0, 0
 	for {
 		var conn *p2p.Conn
 		var cerr error
@@ -1997,6 +2000,18 @@ func (s *Server) runCeremonyReceive(ctx context.Context, cer *ceremonyID, hl *p2
 			conn, cerr = hc.Promote(actx, false) // receiver: the initiator opens the stream
 			acancel()
 			if cerr != nil {
+				// **The second unbounded continue, and the item that found the first did not name
+				// it.** A promote that fails fast loops straight back into Accept, so a peer that
+				// connects and fails to promote spins this arm until postSignDeadline. Bounded by
+				// the same door, against its own (shorter) window.
+				d, ok := reraceWait(promotes, time.Now(), postSignDeadline)
+				if !ok {
+					return // the re-delivery window closed
+				}
+				promotes++
+				if !sleepOrDone(ctx, d) {
+					return
+				}
 				continue // a failed accept; try again within the window
 			}
 		} else {
@@ -2009,7 +2024,19 @@ func (s *Server) runCeremonyReceive(ctx context.Context, cer *ceremonyID, hl *p2
 				// surfaces as a connect error; re-race it while the ceremony window has time. The
 				// deadline itself is a net.Error too, but by then Before(overallDeadline) is false, so
 				// it falls through to disarm rather than spinning.
-				if isTransportLoss(cerr) && time.Now().Before(overallDeadline) {
+				if isTransportLoss(cerr) {
+					// Paced and bounded through the one door (/pending 369, ADR-009). This was a
+					// bare `continue` with the deadline tested inline: a peer that completes the
+					// handshake and drops it can be re-raced as fast as the dial fails, for the
+					// whole ceremony window — up to MaxCeremonyLife.
+					d, ok := reraceWait(reraces, time.Now(), overallDeadline)
+					if !ok {
+						return // the ceremony deadline passed while we were losing channels
+					}
+					reraces++
+					if !sleepOrDone(ctx, d) {
+						return // the arm was cancelled while pacing
+					}
 					continue
 				}
 				return // the baton never arrived, or the ceremony deadline passed

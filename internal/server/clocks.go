@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"time"
 
 	"nib/internal/ceremony"
@@ -246,4 +247,77 @@ func ceremonyHopBudget() time.Duration {
 // worst case rather than merely exceeding it.
 func ceremonyDeliveryLegBudget() time.Duration {
 	return bootstrapBudget + connectDeadline + p2p.DeliveryLegBudget(p2p.PeerGatesUnattended)
+}
+
+// The re-race pacing (/pending 369). `runCeremonyReceive`'s pre-signing arm re-races on a
+// transport loss and its post-signing arm retries a failed promote, and until v1.117.353 both were
+// a bare `continue` — no delay, no attempt count, no bound on how many times either could go round.
+//
+// **The item that filed this asked for the RATE to be measured first, and a bound removes the
+// question instead.** The measurement it wanted needs a counterpart that completes the p2p
+// handshake and drops it repeatedly, which is a tier-4 harness this repo does not have; meanwhile
+// the loop's continue condition is a REMOTE peer failing, so how fast it spins was never ours to
+// know. A cap answers it by construction: once warmed, the arm cannot attempt more often than
+// `reraceCap`, whatever the peer does. That is the same shape as `maxRaceCandidates` one level out
+// — D16's pin says "the backoff bounds how fast the race emits and nothing bounded how much", and
+// nothing bounded how often the race is RE-ENTERED.
+const (
+	// reraceBase is the first wait, and it is deliberately small enough to be free for the
+	// honest case: a peer that dropped mid-handshake needs longer than this to come back, so a
+	// legitimate re-race is not slowed by it in any way a person could perceive.
+	reraceBase = 50 * time.Millisecond
+	// reraceCap is the ceiling. Two seconds bounds a flapping peer to half an attempt per second
+	// for the rest of the ceremony's life — which under `ceremony.MaxCeremonyLife` is up to
+	// thirty days, and is the reason a ceiling and not merely a delay.
+	reraceCap = 2 * time.Second
+)
+
+// reraceWait decides whether a lost channel is re-raced, and how long to wait first.
+//
+// **One door for both arms (ADR-009), and it carries the DEADLINE check as well as the delay.**
+// Those two were separate before — the pre-signing site tested `time.Now().Before(deadline)` inline
+// and the post-signing site tested nothing at all — and splitting them is how one site gets a bound
+// the other does not. A caller asks one question and gets one answer.
+//
+// `attempt` is how many re-races have already happened on this arm, so the first is 0.
+//
+// The wait never overshoots the deadline: a delay that outlived the window it is pacing would turn
+// a bounded arm into one that sleeps past its own end and wakes to discover it. Where the remaining
+// time is shorter than the backoff, the caller gets what is left; where nothing is left, it gets
+// `false` and stops.
+func reraceWait(attempt int, now, deadline time.Time) (time.Duration, bool) {
+	remaining := deadline.Sub(now)
+	if remaining <= 0 {
+		return 0, false
+	}
+	d := reraceBase
+	for i := 0; i < attempt && d < reraceCap; i++ {
+		d *= 2
+	}
+	if d > reraceCap {
+		d = reraceCap
+	}
+	if d > remaining {
+		d = remaining
+	}
+	return d, true
+}
+
+// sleepOrDone waits d, or returns false the moment ctx is done.
+//
+// **A bare `time.Sleep` in a retry loop is a cancel the arm does not honour**: a disarmed or
+// shut-down session would keep the goroutine alive for the rest of the wait, and under `reraceCap`
+// that is two seconds per attempt at teardown. The timer is stopped either way.
+func sleepOrDone(ctx context.Context, d time.Duration) bool {
+	if d <= 0 {
+		return ctx.Err() == nil
+	}
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-ctx.Done():
+		return false
+	case <-t.C:
+		return true
+	}
 }
