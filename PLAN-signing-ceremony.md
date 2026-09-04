@@ -4892,8 +4892,41 @@ Acceptance:
 - Tier: 2 for the eight, driven one at a time; 4 for the declined state arriving over the wire, which
   P08 already delivers.
 
-#### P06.S09 — The freeze, the attachments label, and the in-progress label *(D28, D29)*
+#### P06.S09 — The freeze, the attachments label, and the in-progress label *(D28, D29)* *(**done** 2026-09-03, v1.117.348 — 3 clauses met, `/pending 368` closed. **The freeze itself was built at P07.S02a and guarded for ROUTING; nothing had asked whether the user ever READS the refusal, and they did not** — `pageOp` answered a refused edit with "page operation failed" and threw away the sentence that names the ceremony, which is the half D29 actually requires. Five client doors now surface the server's own words. **"Cannot be removed" was met by a stronger fact than the clause states**: there is no attachment-removal route at all, and the removal path that exists goes through `commitMutation` and is refused outright. **The in-progress label was worse than absent** — every arrival was "co-signed with <peer>.pdf", so hop 3 of nine read as finished, named after one peer, with six signatures still to come; the question is asked of `NextContributor`, the same door `AdmitContribution` refuses with. **368's refusal is its OWN, not folded into `ceremonyFreeze`**: an outbound co-sign mutates nothing, and stretching a rule about edits to cover sending would leave the next reader working out which half applied. **A latent tier-3 race surfaced and was measured, not guessed**: `showCeremonyForm` does not await `loadPeerPicker`, and six unrelated lines in `web/app.js` lost a race the assertion had been winning — 2 red against 3 green at the parent commit, with an instrumented run printing `{"html":"","w":167,"h":0}`. The product is right; the test now waits. Five red proofs.)*
 Scope: the three things a document says about itself while a ceremony is live.
+
+**Deepdive, 2026-09-03, reading pass. Each of the three clauses is in a different state and only
+one of them is what the bullet says.**
+
+- **The freeze itself is BUILT and guarded**, at P07.S02a, where the pin above moved it.
+  `ceremonyFreeze` has three call sites — both commit doors plus `handleSave`, which reached
+  neither — and `TestEveryMutatingRouteReachesTheCeremonyFreeze` asserts the ROUTING for the whole
+  mutating inventory rather than the two doors. So this slice owes the SURFACE and the driver,
+  which is what the bullet already says.
+- **"Cannot be removed while the ceremony is live" is met by a stronger fact than the clause
+  states.** There is no attachment-removal route at all — `add` and `extract` only — and the
+  removal path that exists is `POST /api/sanitize`, which goes through `commitMutation` and is
+  therefore refused outright. The clause is satisfied by the freeze rather than by a rule about
+  attachments; what is owed is the DRIVER through that path, and the label.
+- **The label is not there.** `renderAttachments` draws `a.name` and `a.desc` and nothing else, so
+  `nib-ceremony.json` sits in the list as an anonymous embedded file.
+- **The in-progress label is not there, and it is worse than absent.** `arrivalDocName` returns
+  `"co-signed with <peer>.pdf"` for every arrival — so at hop 3 of a nine-party ceremony a party's
+  in-progress copy is named as the FINISHED document, and named after one peer, while six
+  signatures are still to come. That is the exact sentence D28's clause forbids.
+- **`/pending 368` lands here**, and the deepdive answers its open question: the manual co-sign path
+  builds a zero Roster and never looks at the document, so a convened document is signed outside its
+  proceeding and refused at the far end on a prefix mismatch. An outbound co-sign is not a mutation
+  of the open document, so `ceremonyFreeze` does not cover it and should not be stretched to —
+  **it needs its own refusal on the same footing, saying the same sentence.**
+
+Tasks:
+- **T01** — `arrivalDocName` names an in-progress ceremony copy as in-progress.
+- **T02** — the attachments panel labels the ceremony record for what it is.
+- **T03** — the manual co-sign path refuses a document carrying a ceremony record (`/pending 368`).
+- **T04** — tier 2: a real edit refused and the sentence surfaced; the removal path refused.
+- **T05** — tier 1: the refusals driven at their doors, each probed.
+
 Acceptance:
 - **A document under a live ceremony refuses mutating operations and names the ceremony**, driven
   **through a real edit and not asserted on a flag** (D29). The server-side freeze exists at three

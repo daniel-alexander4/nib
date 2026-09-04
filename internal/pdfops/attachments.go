@@ -23,6 +23,18 @@ import (
 type AttachmentInfo struct {
 	Name string `json:"name"`
 	Desc string `json:"desc"`
+	// Ceremony marks the one embedded file that is a signing ceremony's record (P06.S09, D29).
+	//
+	// **The test is the NAME, and it is made here rather than in the client.** `CeremonyRecordName`
+	// is this package's constant and the client would otherwise carry a second copy of it in
+	// another language, drifting the first time it changes — the shape ADR-009 refuses. The panel
+	// renders a label off this flag and never matches on the string.
+	//
+	// It is a LABEL and not a permission: what stops the record being removed is `ceremonyFreeze`,
+	// which refuses every mutating route on a document carrying one, so `POST /api/sanitize` — the
+	// only path in the product that removes an attachment — never runs. This field exists so the
+	// user can see what the file is before they wonder why.
+	Ceremony bool `json:"ceremony,omitempty"`
 }
 
 // Attachments lists the document's embedded files: the catalog name tree plus any
@@ -53,7 +65,7 @@ func Attachments(pdf []byte) ([]AttachmentInfo, error) {
 		if clean := attachmentName(name); clean != "" {
 			name = clean
 		}
-		out = append(out, AttachmentInfo{Name: name, Desc: a.Desc})
+		out = append(out, AttachmentInfo{Name: name, Desc: a.Desc, Ceremony: name == CeremonyRecordName})
 	}
 	// The same RVO context that populated the name tree exposes the page tree, so
 	// no second read is needed (the eachPage/derefDict helpers Scan uses work on it).

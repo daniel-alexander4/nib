@@ -1114,11 +1114,37 @@ func (sa sessionAccepter) Accept(peerFP, doc []byte) (bool, error) {
 
 // arrivalDocName names a co-signed document by who it came from, which is the one fact about
 // it the user cannot see on the page.
-func arrivalDocName(peerLabel string) string {
-	if peerLabel == "" {
-		return "co-signed.pdf"
+// **A party's in-progress copy is named in-progress, never as the finished document (P06.S09,
+// D28).** Every arrival used to be `"co-signed with <peer>.pdf"`, so at hop 3 of a nine-party
+// ceremony a user's copy was named as though the proceeding were over — and named after the one
+// peer who happened to hand it to them, with six signatures still to collect. That is the sentence
+// the criterion forbids, in the one place a user reads a document's name most often: the tab.
+//
+// **`cer == nil` is unchanged and that is the point.** An ordinary two-party co-sign IS finished
+// when it arrives — there is no roster and nobody else to wait for — so the old name is correct
+// there and only there.
+//
+// The question "is this proceeding finished" is asked of `NextContributor`, the same function
+// `AdmitContribution` refuses with and `/api/ceremony/next` answers from. A second predicate over
+// the roster would be a third derivation of L3, which is the shape ADR-009 refuses. An error that
+// is NOT `ErrCeremonyComplete` means Nib could not tell — a damaged roster, an unreadable
+// document — and that names the copy in-progress, because "we could not check" must never render
+// as "finished".
+func arrivalDocName(peerLabel string, cer *ceremonyID, final []byte) string {
+	done := "co-signed.pdf"
+	if peerLabel != "" {
+		done = "co-signed with " + peerLabel + ".pdf"
 	}
-	return "co-signed with " + peerLabel + ".pdf"
+	if cer == nil {
+		return done
+	}
+	if _, err := p2p.NextContributor(final, cer.l3Roster()); errors.Is(err, p2p.ErrCeremonyComplete) {
+		return done
+	}
+	if peerLabel == "" {
+		return "in progress — co-signing.pdf"
+	}
+	return "in progress — co-signing with " + peerLabel + ".pdf"
 }
 
 // runSession accepts one pinned peer and, depending on the armed mode, either
@@ -1260,7 +1286,7 @@ func (s *Server) runSession(ln p2p.Listener, cer *ceremonyID, cert, key []byte, 
 		timer.Stop()
 		served, final, _ := s.serveOneSession(consentAnchor{ln: ln, kind: armInteractive}, cer, conn, cert, key, label, mode, myFP)
 		if final != nil && !opened {
-			s.openArrival(label, final) // once: a re-delivery re-sends the SAME idempotent result
+			s.openArrival(label, cer, final) // once: a re-delivery re-sends the SAME idempotent result
 			opened = true
 		}
 		if served {
@@ -1446,7 +1472,10 @@ func (s *Server) serveOneSession(anchor consentAnchor, cer *ceremonyID, conn *p2
 
 // openArrival opens a co-signed document alongside whatever the user already had (D10) — an arrival
 // opens, never replaces. Named so a reload does not show it as "Untitled".
-func (s *Server) openArrival(label string, final []byte) {
+// `cer` is the ceremony this arrival belongs to, or nil for the manual/LAN path — threaded in for
+// arrivalDocName, which cannot tell a finished two-party co-sign from a hop of a live proceeding
+// without it (P06.S09, D28).
+func (s *Server) openArrival(label string, cer *ceremonyID, final []byte) {
 	// **The mirror write is NOT here any more (P08.S02).** It used to be, and that was the defect:
 	// `openArrival` runs after `p2p.Receive` has already put the document on the wire, so the bytes
 	// reached the peer first and the disk second, best-effort, with a log line on failure. D24 asks
@@ -1470,7 +1499,7 @@ func (s *Server) openArrival(label string, final []byte) {
 	// is a deliberate arm plus a deliberate consent, which is more work than opening a file, not
 	// less. The residual — count is unbounded through this door for a user who never closes a tab
 	// — is accepted and written out at `addDocCapped`.
-	s.addDoc(&document{name: arrivalDocName(label), data: final, sig: sign.Verify(final)})
+	s.addDoc(&document{name: arrivalDocName(label, cer, final), data: final, sig: sign.Verify(final)})
 }
 
 // saveReceived writes an accepted one-way transfer under ~/nib, routed by what the
@@ -1979,7 +2008,7 @@ func (s *Server) runCeremonyReceive(ctx context.Context, cer *ceremonyID, hl *p2
 		}
 		_, final, xerr := s.serveOneSession(consentAnchor{cer: cer, kind: armInteractive}, cer, conn, cert, key, label, mode, myFP)
 		if final != nil && !opened {
-			s.openArrival(label, final) // once: a re-delivery re-sends the SAME idempotent result
+			s.openArrival(label, cer, final) // once: a re-delivery re-sends the SAME idempotent result
 			opened = true
 		}
 		if postSignDeadline.IsZero() && cer.hasSigned() {
@@ -2515,7 +2544,7 @@ func (s *Server) handleSessionInitiate(w http.ResponseWriter, r *http.Request) {
 	// opened a new document, so a nine-party ceremony left the convener holding nine copies
 	// against a count cap of eight. `installCeremonyResult` replaces by ceremony id and states
 	// why it is a fourth commit door rather than one of the three.
-	installed, ierr := s.installCeremonyResult(ceremonyIDOf(cer), arrivalDocName(peerLabel), final)
+	installed, ierr := s.installCeremonyResult(ceremonyIDOf(cer), arrivalDocName(peerLabel, cer, final), final)
 	if wroteCommitFailure(w, ierr) {
 		return
 	}

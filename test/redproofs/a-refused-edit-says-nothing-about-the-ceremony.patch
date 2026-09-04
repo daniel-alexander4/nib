@@ -1,0 +1,11 @@
+--- a/web/app.js
++++ b/web/app.js
+@@ -4975,7 +4975,7 @@
+   if (extra.border != null) form.append('border', extra.border ? '1' : '0');
+   const res = await apiFetch('/api/pages', { method: 'POST', body: form, docId: opDoc && opDoc.id });
+   // The server's sentence — see the attachment-add door for why (P06.S09).
+-  if (!res.ok) { toast(await errText(res, 'page operation failed')); return false; }
++  if (!res.ok) { toast('page operation failed'); return false; }
+   await setDocumentFromServer(await res.json(), owner);
+   return true;
+ }

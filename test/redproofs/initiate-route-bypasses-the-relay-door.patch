@@ -1,13 +1,11 @@
-diff --git a/internal/server/session.go b/internal/server/session.go
-index c50efad..155f716 100644
 --- a/internal/server/session.go
 +++ b/internal/server/session.go
-@@ -1530,7 +1530,7 @@ func (s *Server) handleSessionInitiate(w http.ResponseWriter, r *http.Request) {
+@@ -2544,7 +2544,7 @@
  	// opened a new document, so a nine-party ceremony left the convener holding nine copies
  	// against a count cap of eight. `installCeremonyResult` replaces by ceremony id and states
  	// why it is a fourth commit door rather than one of the three.
--	installed, ierr := s.installCeremonyResult(ceremonyIDOf(cer), arrivalDocName(peerLabel), final)
-+	installed, ierr := s.addDoc(&document{name: arrivalDocName(peerLabel), data: final, sig: sign.Verify(final)}), error(nil)
+-	installed, ierr := s.installCeremonyResult(ceremonyIDOf(cer), arrivalDocName(peerLabel, cer, final), final)
++	installed, ierr := s.addDoc(&document{name: arrivalDocName(peerLabel, cer, final), data: final, sig: sign.Verify(final)}), error(nil)
  	if wroteCommitFailure(w, ierr) {
  		return
  	}

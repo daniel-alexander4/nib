@@ -372,6 +372,33 @@ func (s *Server) buildCoSigned(w http.ResponseWriter, pdf, cert, key []byte, att
 		httpError(w, http.StatusInternalServerError, "could not read your own fingerprint")
 		return nil, false
 	}
+	// **A document already in a proceeding is not co-signed OUTSIDE it (/pending 368, D29).**
+	//
+	// With no invitation supplied, `cer` is nil, `l3Roster()` returns the zero Roster, and until
+	// this check nothing on this path looked at the document at all — so a convened document, held
+	// open mid-proceeding, was signed through the ordinary co-sign controls with no roster, no L3
+	// gate and no `checkArrival`. The far end then refused it on a prefix mismatch, which is a true
+	// sentence about a document nobody should have been able to produce, arriving after the user
+	// had already spent a signature.
+	//
+	// **It is NOT `ceremonyFreeze` and must not be folded into it.** That guard is about mutating
+	// the document the server holds; this operation mutates nothing — it sends a signed copy — so
+	// stretching the freeze to cover it would make a rule about edits also a rule about sending,
+	// and the next reader would have to work out which half applied to them. Its own refusal, on
+	// the same footing and saying the same thing: 409, because this is about the STATE of a
+	// proceeding rather than a malformed request.
+	//
+	// **Before `PrepareDocument` and before `Contribute`**, on the same reasoning every other gate
+	// in this function states: a signature cannot be taken back off a document.
+	if len(roster.Entries) == 0 {
+		if _, cerr := ceremony.Extract(pdf); cerr == nil {
+			httpError(w, http.StatusConflict,
+				"this document is part of a signing ceremony, so it cannot be co-signed outside "+
+					"it — the other parties check every signature against that proceeding's "+
+					"roster and would refuse this one. Use the ceremony to sign it.")
+			return nil, false
+		}
+	}
 	if len(roster.Entries) > 0 {
 		if err := p2p.AdmitContribution(pdf, roster, hex.EncodeToString(myFP)); err != nil {
 			httpError(w, http.StatusConflict, err.Error())
