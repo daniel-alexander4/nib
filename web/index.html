@@ -516,6 +516,25 @@
       <button type="submit" id="authSubmit">Enable</button>
       <p id="authError" class="error"></p>
     </form>
+
+    <!-- The ceremonies on this machine, rendered BEHIND the lock (P06.S07, D29).
+
+         The criterion is "the panel renders roster, position and next action with the vault
+         locked, and asks for the password at the moment of signing rather than the moment of
+         looking". Both routes it needs answer while locked — S01 and S03 put /api/ceremonies and
+         /api/ceremony/next on requirePublicLoopback — and `ceremonyCard`'s only action reads
+         through the second, so nothing on this surface needs the vault at all.
+
+         It sits INSIDE the overlay rather than behind it, because the overlay is aria-modal and a
+         panel a screen reader cannot reach is not rendered in any sense a user would accept.
+         Hidden until there is something to show: an empty box under an unlock form is a surface
+         that asks a question about nothing. -->
+    <div id="authCeremonies" hidden>
+      <p class="libhint" id="authCerNote">Your password is for <strong>signing</strong>, not for
+        looking. These are the ceremonies on this machine; unlock Nib when you want to act on
+        one.</p>
+      <div id="authCerList"></div>
+    </div>
   </div>
 
   <!-- Finalize & sign dialog -->

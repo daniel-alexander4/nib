@@ -4801,8 +4801,44 @@ Tasks:
 - **T05** — the guard: the quote's lines and the signed attestation's lines, compared **per line**,
   inside a ceremony. The count is the finding and a whole-object comparison cannot say which moved.
 
-#### P06.S07 — The roster-shaped consent screen *(D27, D29)*
+#### P06.S07 — The roster-shaped consent screen *(D27, D29)* *(**done** 2026-09-03, v1.117.346 — 3 clauses met. **The deepdive re-cut the slice and the commit gate refuted one of its own lines.** S02 had marked the D29 criterion's looking half met and nothing had rendered the panel locked; in a browser `#authOverlay` is `aria-modal` and covers the sidebar it lives in, so the clause was not merely undriven but false. The panel is now drawn INSIDE the lock screen — both its routes were already public-loopback (S01, S03) and `ceremonyCard`'s only action reads the second, so the surface needs the vault for nothing. **Tier 3 gained a second, never-enrolled nib**, because the vault has no lock route and the shared server enrols at startup; the harness refuses to run if that server reports `ready`. Its assertion is `elementFromPoint` at the panel's own centre, which is the reading `hidden === false` cannot make — probed by moving the div back outside the overlay, the shipped defect exactly. **Clause 1 was BUILT and driven by nothing**: `renderConsentSigners` shipped at v1.117.220 and a named search over `test/` and `build/` returned one hit, the observable scan naming it as a reader — so this slice's content there was the three-signature driver the criterion asks for. Writing it found a live defect: `loadPendingPreview`'s render loop had a `finally` and no `catch`, so a page that would not render became an unhandled rejection and the user got a half-drawn preview with no sentence, on the screen where they decide whether to sign. **And BOTH browser tiers had been red for six slices** — tier 2's file count said 26 against 28 and tier 3's said 19 against 20, both left by P06.S02/S05 on 2026-09-03 — every one of those slices reporting green off the TAP totals. Four red proofs.)*
 Scope: the screen a party sees before signing.
+
+**Deepdive, 2026-09-03, run as a reading pass rather than an agent team — and it re-cut the slice.**
+Three things checked at the line, none visible from the slice as planned:
+
+- **S02's "renders with the vault locked" is met by NOTHING and is false in a browser.**
+  `applyStatus` shows `#authOverlay` — `role="dialog" aria-modal="true"` — for every state but
+  `ready` (`web/app.js:458`). **The first cut of this line said "every jsdom boot uses
+  `state: 'ready'`" and the commit gate refuted it**: `boot.mjs:58` is the default and
+  `firstrun.test.mjs:45` overrides it, to `setup` and `key-missing`. What that file asserts is the
+  overlay's OWN content — the warning sentence, the key choice — and never anything behind it. So
+  the true statement is narrower and still decisive: **no test at any tier had rendered the ceremony
+  panel with the vault locked.** The routes
+  answer while locked (S01, S03 put both on `requirePublicLoopback`) and the panel behind them is
+  covered by a modal. S02 marked the clause met; what it built was the panel, not the locked view.
+- **So the signing half cannot be built on top of it.** *"asks for the password at the moment of
+  signing rather than the moment of looking"* only means something once a user can be looking while
+  locked. T01 is therefore the looking half, arriving one slice late.
+- **The consent screen's roster is already BUILT and driven by nothing.** `renderConsentSigners`
+  shipped at v1.117.220 (P07.S07c) and renders every signer, marks an invalid one, and separates
+  "nobody yet" from "we did not look". Named search: `srvSigners|renderConsentSigners` across
+  `test/` and `build/` returns **one** hit, and it is `published.test.mjs` naming it as a reader.
+  So this clause's content is the three-signature DRIVER, not the render — which is what the
+  criterion's own words ask for and what nobody has done.
+- **And the card is already locked-safe**, checked rather than assumed: `ceremonyCard`'s only
+  action is "What happens next?" → `/api/ceremony/next`, which S03 put on `requirePublicLoopback`.
+  Nothing on it 401s while locked, so the locked view needs no read-only variant.
+
+Tasks:
+- **T01** — `renderCeremonyPanel`/`loadCeremonyPanel` take a host; the auth overlay gains a
+  container and `applyStatus` fills it while the vault is not `ready`.
+- **T02** — the locked screen says why it is showing this: the password is for signing, not for
+  looking.
+- **T03** — tier 2, the panel rendered with the vault LOCKED, which nothing has ever driven.
+- **T04** — tier 2, the consent screen with a THREE-signature document.
+- **T05** — tier 3, the locked panel in a real browser, which is the tier the modal defeats.
+
 Acceptance:
 - **Every party who has already signed is shown, not one** (D27) — driven with a
   three-signature document, because a two-party fixture cannot tell a roster from a single peer.

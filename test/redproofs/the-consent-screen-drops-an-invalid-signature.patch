@@ -1,0 +1,11 @@
+--- a/web/app.js
++++ b/web/app.js
+@@ -1456,7 +1456,7 @@
+   els.srvPeerLabel.textContent = pending.signer || recvArmedLabel || 'your pinned peer';
+   els.srvPeerFp.textContent = groupFingerprint(recvPeerFp);
+   els.srvPeerReason.textContent = pending.reason || '(none given)';
+-  renderConsentSigners(pending.signers || []);
++  renderConsentSigners((pending.signers || []).filter((x) => x.valid));
+   showRecvView('srvConsent');
+   loadPendingPreview(recvPoll);
+ }

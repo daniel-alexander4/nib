@@ -1,0 +1,17 @@
+--- a/web/app.js
++++ b/web/app.js
+@@ -482,13 +482,7 @@
+   // (it cannot today: S01 and S03 put it on `requirePublicLoopback`), a locked screen would fetch,
+   // 401, refresh, fetch again, without bound. "It cannot today" is the shape this repo keeps
+   // paying for, and one boolean closes it for every cause rather than for the one I can name.
+-  if (els.authCeremonies && els.authCerList && !lockedPanelInFlight) {
+-    lockedPanelInFlight = true;
+-    loadCeremonyPanel(els.authCerList)
+-      .then((n) => { els.authCeremonies.hidden = n === 0; })
+-      .catch(() => { els.authCeremonies.hidden = true; })
+-      .finally(() => { lockedPanelInFlight = false; });
+-  }
++  if (els.authCeremonies) els.authCeremonies.hidden = true;
+   els.migrateRow.hidden = st.state !== 'migrate';
+   els.authPwLabel.textContent = 'Current vault password';
+ 
