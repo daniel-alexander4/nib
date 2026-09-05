@@ -37,47 +37,60 @@ function rewriteOnDisk() {
   return updated;
 }
 
-test('a file rewritten under an open document is reported, and a browser reload does not clear it', async () => {
+// rewriteWithPages replaces the file with a DIFFERENT PAGE COUNT. That is the stimulus a
+// content-identical append cannot be: an appended comment changes the bytes and nothing on
+// screen, so a test using it can only ever assert that the server noticed. The page count
+// is a fact the RENDER carries, so this is the one assertion that says the pixels moved —
+// which is the whole reason this tier exists.
+function rewriteWithPages(n) {
+  writeFixture('diskchanged.pdf', { pages: n, label: 'reloaded page' });
+  return fs.readFileSync(DOC);
+}
+
+const pageCount = () => page.evaluate(() => {
+  const el = document.querySelector('.viewerContainer:not([hidden])')
+    ? document.querySelector('.pageCount') : null;
+  return el ? el.textContent.trim() : null;
+});
+
+test('a clean document whose file changed is reloaded on return-to-foreground', async () => {
   await h.openDocument(DOC, 2);
   assert.equal(await bannerText(), null,
     'setup: a banner is already up before anything changed, so nothing below is about a disk change');
+  assert.match(await pageCount(), /\/\s*2$/,
+    'setup: the open document is not the 2-page fixture, so a change to 5 below proves nothing');
 
-  const external = rewriteOnDisk();
+  const external = rewriteWithPages(5);
+  const tabsBefore = await page.evaluate(() => document.querySelectorAll('.viewerContainer').length);
 
-  // The stimulus is complete; now the user comes back to the window. This is the real
-  // sequence — the rewrite happens while Nib is in the background, because the user is
-  // in a terminal or another application when they do it.
+  // The real sequence: the rewrite happens while Nib is in the background, because the
+  // user is in a terminal or another application when they do it.
   await page.evaluate(() => window.dispatchEvent(new Event('focus')));
   await page.waitForFunction(
-    () => { const b = document.getElementById('staleBanner'); return b && !b.hidden; },
-    null, { timeout: 15000 },
-  ).catch(() => {});
-
-  const text = await bannerText();
-  assert.ok(text && /changed on disk/i.test(text),
-    `the file was rewritten under the open document and the app says nothing (banner: ${JSON.stringify(text)}). This is /pending 333 exactly: the bytes on screen are the ones read at open, and nothing tells the user they are looking at a copy`);
-
-  // **The second half of the report, and the reason a fix that only reported was not
-  // enough.** A browser reload re-fetches from the same in-memory copy, so it cannot
-  // clear this and must not appear to: after a full reload the banner is still up,
-  // because the file is still different.
-  await page.reload({ waitUntil: 'load' });
-  await page.waitForFunction(
-    () => { const b = document.getElementById('staleBanner'); return b && !b.hidden; },
+    () => /\/\s*5$/.test(document.querySelector('.pageCount')?.textContent ?? ''),
     null, { timeout: 20000 },
   ).catch(() => {});
-  assert.ok(/changed on disk/i.test(await bannerText() ?? ''),
-    'after a full browser reload the warning is gone while the file is still different — the reload re-fetched the same in-memory bytes and cleared the one thing that said so, which is worse than the original bug');
 
-  // And the file is untouched by all of this: reporting must not write.
-  assert.ok(fs.readFileSync(DOC).equals(external),
-    'the file on disk changed while the app was merely reporting on it');
+  assert.match(await pageCount(), /\/\s*5$/,
+    'the user came back to a document with no unsaved work whose file had changed, and the pages on screen are still the ones read at open — the reload either never fired or never reached the render');
+  assert.equal(await bannerText(), null,
+    'the document was reloaded and the banner is still up, describing a state that no longer exists');
+
+  // The old Reload went through /api/open, so it built a SECOND view on the same path and
+  // closed the first — which reported sameFileOpen every time and moved the user's document
+  // to the end of the tab strip. Doing that silently, on a focus event, is the thing this
+  // assertion exists to stop coming back.
+  assert.equal(await page.evaluate(() => document.querySelectorAll('.viewerContainer').length), tabsBefore,
+    'the automatic reload changed the number of open views — it opened a second copy rather than re-reading in place');
+
 });
 
 test('Save will not silently overwrite the changed file', async () => {
-  // Runs against the state the test above left: DOC rewritten, document still open and
-  // holding the bytes from before the rewrite.
-  const external = fs.readFileSync(DOC);
+  // Its own stimulus, and deliberately WITHOUT a focus event: the automatic reload fires on
+  // return-to-foreground, so a test that raised one would refresh the document and find the
+  // refusal below unreachable. This is the user who changed the file and went straight back
+  // to Nib's Save button without the window ever losing focus.
+  const external = rewriteOnDisk();
 
   // Setup, and it separates the two ways this can fail: if the server no longer thinks
   // the file changed, the refusal was never reachable and the assertion below would be

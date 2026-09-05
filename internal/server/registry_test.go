@@ -102,8 +102,15 @@ func TestEveryDocumentResolutionIsHandled(t *testing.T) {
 	// matters more here than elsewhere: convene is multi-second, and docFor's fallback to the
 	// active document would let the record land in whichever tab the user switched to while
 	// it ran.
-	if resolveSites != 23 {
-		t.Errorf("expected 23 resolveDoc sites, found %d — update this deliberately if intended", resolveSites)
+	// 24, not 23: handleReload (/pending 333's remedy half). It re-reads the file under an
+	// open document and commits those bytes into the SAME document, so it resolves like
+	// every other mutating route rather than reading whichever document is active. That
+	// matters here for the reason convene's entry above gives and then some: this route is
+	// the one the client fires WITHOUT the user asking, on return-to-foreground, so
+	// docFor's fallback to the active document would reload the file underneath whichever
+	// tab the user happened to switch to.
+	if resolveSites != 24 {
+		t.Errorf("expected 24 resolveDoc sites, found %d — update this deliberately if intended", resolveSites)
 	}
 	// 8, not 7: P06.S02's handleCloseView resolves with docFor rather than resolveDoc,
 	// because its not-found branch is a 409 ("that document is no longer open") and

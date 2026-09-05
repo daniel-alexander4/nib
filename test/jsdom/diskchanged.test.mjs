@@ -39,6 +39,10 @@ const h = await boot({
     // Undo reloads the view that asked, which is the only ordinary path that puts a
     // fresh render onto a view that already holds a document. See the precedence test.
     '/api/undo': () => openReply,
+    // The remedy. The server has re-read the file, so its answer is the same document
+    // with the flag DOWN — which is what lets these tests tell a reload that happened
+    // from one that was merely attempted.
+    '/api/reload': () => ({ ...openReply, diskChanged: false }),
   },
 });
 const { document: doc, settle } = h;
@@ -128,20 +132,97 @@ test('a render failure outranks a disk change, and takes its own button back', a
 // terminal, or another application — so nothing reloads the document and the banner
 // would otherwise wait for her next operation. In the case /pending 333 was filed for,
 // her next operation would have been the Save that overwrote the newer file.
-test('coming back to the window re-asks, and the banner appears with no document reload', async () => {
-  openReply = { ...openReply, diskChanged: false, canUndo: false };
+test('coming back to the window reloads a clean document by itself', async () => {
+  // A fresh id per test, and it is not decoration. installOpened finds the view it just
+  // filled with `views.find(x => x.docMeta.id === meta.id)`, so with one id reused across
+  // tests the dirty-clear lands on the FIRST view still holding it and the new view keeps
+  // the `dirty` that every arrival sets — which would make this test assert that the
+  // automatic path declines, for a reason that cannot occur in production. Document ids
+  // are monotonic and never reused there (ADR-001).
+  openReply = { ...openReply, id: 'd-auto', diskChanged: false, canUndo: false };
   await openDocument();
   assert.equal(banner().hidden, true, 'precondition: nothing is wrong yet');
 
   // The file changes while the window is in the background. No open, no undo, no
   // operation of any kind — only the server's answer to /api/doc changes.
   openReply = { ...openReply, diskChanged: true };
+  setNextDocument({ numPages: 2, outline: null }); // the reload has to have something to render
+  const from = h.calls.length;
   h.window.dispatchEvent(new h.window.Event('focus'));
   await settle();
 
+  const reloads = h.calls.slice(from).filter((c) => c.url.startsWith('/api/reload'));
+  assert.equal(reloads.length, 1,
+    'the user came back to a document with no unsaved work whose file had changed, and Nib left her looking at the stale copy with a banner to read — the remedy is safe here and taking it is the whole feature');
+  assert.equal(reloads[0].method, 'POST', 'the reload was not a POST');
+  // The route the client fires WITHOUT the user asking is the one that must never fall
+  // back to "whichever document is active" (ADR-004): she may have switched tabs.
+  assert.ok(reloads[0].headers['X-Nib-Doc'],
+    'the automatic reload went out unpinned, so the server would reload the file underneath whichever document happened to be active');
+  assert.equal(banner().hidden, true,
+    'the document was reloaded and the banner is still up — it now describes a state that no longer exists');
+});
+
+test('a document with unsaved work is never reloaded by itself', async () => {
+  // canUndo at open is what openedDirty reads, so this is a view with work in it.
+  openReply = { ...openReply, id: 'd-dirty', diskChanged: false, canUndo: true };
+  await openDocument();
+
+  openReply = { ...openReply, diskChanged: true };
+  const from = h.calls.length;
+  h.window.dispatchEvent(new h.window.Event('focus'));
+  await settle();
+
+  assert.equal(h.calls.slice(from).filter((c) => c.url.startsWith('/api/reload')).length, 0,
+    'Nib reloaded a document with unsaved work without being asked — a reload replaces the bytes, so this destroys exactly what the banner exists to protect');
   assert.equal(banner().hidden, false,
-    'the user came back to the window and was told nothing — the check only runs when a document loads, so a file rewritten in the background stays invisible until an operation, which is exactly the Save that loses the data');
-  assert.equal(reload().hidden, false, 'the banner appeared without offering the reload');
+    'the automatic path correctly declined and then said nothing — this user is the one who most needs the banner');
+  assert.equal(reload().hidden, false,
+    'the banner is up without the button, so the user who was denied the automatic reload has no way to ask for it');
+});
+
+test('the reload button re-reads in place instead of opening a second copy', async () => {
+  openReply = { ...openReply, id: 'd-button', diskChanged: true, canUndo: false };
+  await openDocument();
+  assert.equal(reload().hidden, false, 'precondition: the reload button is offered');
+
+  setNextDocument({ numPages: 2, outline: null });
+  const from = h.calls.length;
+  reload().click();
+  await settle();
+
+  const after = h.calls.slice(from);
+  assert.equal(after.filter((c) => c.url.startsWith('/api/reload')).length, 1,
+    'the button did not reload');
+  // The old button went through /api/open, which built a second view on the same path and
+  // closed the first. That reported sameFileOpen on every press — "your file is open in
+  // another tab as two separate copies" about a tab closed a line later — and moved the
+  // user's document to the end of the strip.
+  assert.equal(after.filter((c) => c.url.startsWith('/api/open')).length, 0,
+    'Reload from disk opened the file as a SECOND document — the user is told her file is open twice, and her tab moves to the end of the strip');
+});
+
+test('a document reloaded by itself is not left looking unsaved', async () => {
+  // The reload makes the open copy MATCH the file, so there is nothing unsaved left to
+  // lose. Every arrival through setDocumentFromServer sets `dirty` — right for the twenty
+  // operations that reach it, wrong here — so without the clear the user is asked to
+  // confirm discarding work that a reload she never requested appeared to create.
+  openReply = { ...openReply, id: 'd-clean', diskChanged: false, canUndo: false };
+  await openDocument();
+
+  openReply = { ...openReply, diskChanged: true };
+  setNextDocument({ numPages: 2, outline: null });
+  const from = h.calls.length;
+  h.window.dispatchEvent(new h.window.Event('focus'));
+  await settle();
+  assert.equal(h.calls.slice(from).filter((c) => c.url.startsWith('/api/reload')).length, 1,
+    'precondition: no reload happened, so the close below is not testing what this test is named for');
+
+  const asked = h.confirms.length;
+  doc.getElementById('closeBtn').click();
+  await settle();
+  assert.equal(h.confirms.length, asked,
+    'closing a document that Nib had just reloaded from disk prompted about unsaved changes — the reload left it marked dirty, so the user is asked to discard work that only the reload appeared to create');
 });
 
 test('the banner is announced to a screen reader', () => {
