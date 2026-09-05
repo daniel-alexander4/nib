@@ -60,6 +60,16 @@ test('a clean document whose file changed is reloaded on return-to-foreground', 
   assert.match(await pageCount(), /\/\s*2$/,
     'setup: the open document is not the 2-page fixture, so a change to 5 below proves nothing');
 
+  // Move off page 1 before the change. Until /pending 372 every in-place reload — the twenty
+  // page operations, undo, redo, OCR, and this one — returned the reader to the top: measured
+  // scrollTop 1363 before a reload and 25 after.
+  await page.click('#nextBtn');
+  await page.waitForFunction(
+    () => (document.querySelector('.viewerContainer:not([hidden])')?.scrollTop ?? 0) > 100,
+    null, { timeout: 10000 });
+  const scrolledTo = await page.evaluate(() =>
+    Math.round(document.querySelector('.viewerContainer:not([hidden])').scrollTop));
+
   const external = rewriteWithPages(5);
   const tabsBefore = await page.evaluate(() => document.querySelectorAll('.viewerContainer').length);
 
@@ -82,6 +92,19 @@ test('a clean document whose file changed is reloaded on return-to-foreground', 
   // assertion exists to stop coming back.
   assert.equal(await page.evaluate(() => document.querySelectorAll('.viewerContainer').length), tabsBefore,
     'the automatic reload changed the number of open views — it opened a second copy rather than re-reading in place');
+
+  // She is still where she was reading. The page NUMBER, not the offset: the document grew
+  // from two pages to five, so the same scroll position is a different place in it.
+  assert.equal(await page.evaluate(() => document.querySelector('.pageNum')?.value), '2',
+    'the automatic reload put the reader back on page 1 of a document she was reading at page 2');
+  // Waited for, not sampled once: the restore is deliberately asynchronous — it runs on
+  // `pagesloaded`, after the width fit — so an immediate read races the render. It still fails
+  // if the restore never happens, which is the case this assertion is for.
+  await page.waitForFunction(
+    () => (document.querySelector('.viewerContainer:not([hidden])')?.scrollTop ?? 0) > 100,
+    null, { timeout: 10000 }).catch(() => {});
+  assert.ok(await page.evaluate(() => (document.querySelector('.viewerContainer:not([hidden])')?.scrollTop ?? 0) > 100),
+    `the counter says page 2 but the view is at the top (it was scrolled to ${scrolledTo} before the reload) — the number was updated without the scroll, which is what a restore that never reached pdf.js looks like`);
 
 });
 

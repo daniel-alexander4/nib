@@ -2738,14 +2738,6 @@ async function recheckDisk() {
 async function reloadFromDisk(target, auto = false) {
   const d = target.docMeta;
   if (!d || !d.id) return false;
-  // **The reading position is NOT preserved, and that is stated rather than attempted.**
-  // Three versions of a restore were written here and every one was inert — measured, not
-  // reasoned: scrollTop 1363 before the reload and 25 after, identically with the line
-  // present and deleted, whether it ran straight after the load, after `pagesPromise`, or
-  // in a `pagesloaded` hook registered to land after the fit. Nothing in this view survives
-  // pdf.js re-laying the document out. It is also not this route's defect to carry: all
-  // fifteen in-place callers of setDocumentFromServer land at the top the same way, so a
-  // fix belongs to that sink and to all of them at once (/pending 372).
   let res;
   try {
     res = await apiFetch('/api/reload', { method: 'POST', docId: d.id });
@@ -2770,6 +2762,21 @@ async function reloadFromDisk(target, auto = false) {
   // sink and sets it again, which is then correct.
   target.dirty = false;
   return true;
+}
+
+// restorePageAfterLoad puts the reader back on the page they were on, once the incoming
+// document has laid its pages out and the width fit has run.
+//
+// One-shot, and it removes itself: every load registers one, and a listener left behind would
+// fire on the NEXT load of that view and drag the reader to a stale page. `gen` is the load's
+// own docGen, so a load superseded while this one was still rendering restores nothing.
+function restorePageAfterLoad(target, page, gen) {
+  const restore = () => {
+    target.eventBus.off('pagesloaded', restore);
+    if (target.docGen !== gen || !target.pdfDocument) return; // superseded, or the load failed
+    target.viewer.currentPageNumber = Math.min(page, target.pdfDocument.numPages);
+  };
+  target.eventBus.on('pagesloaded', restore);
 }
 
 async function setDocumentFromServer(meta, target = view) {
@@ -2810,6 +2817,14 @@ async function setDocumentFromServer(meta, target = view) {
   // false; clearing it unconditionally here is what made it false, and the refine that
   // follows every load then had nothing stopping it. Rotating a page should not reset your
   // zoom either, so this is the right behaviour on its own merits and not only for the test.
+  // **The page the user was on, captured before docMeta is replaced** (/pending 372).
+  //
+  // Only for a reload of the SAME document — the twenty page operations, undo, redo, OCR,
+  // sanitize, decrypt, flatten, the co-sign install and /api/reload. A DIFFERENT document
+  // starts at page 1, which is why this reads the same id test below rather than duplicating
+  // its own. Every one of those callers used to return the user to the top: rotate a page
+  // while reading page 40 and you were back at page 1.
+  const wasOn = target.docMeta && target.docMeta.id === meta.id ? target.viewer.currentPageNumber : 0;
   if (!target.docMeta || target.docMeta.id !== meta.id) {
     setUserScale(target, false, 'load:' + (target.docMeta && target.docMeta.id ? 'newdoc' : 'firstdoc'));
   }
@@ -2862,6 +2877,20 @@ async function setDocumentFromServer(meta, target = view) {
   // actually changed, so editing an existing field's text counts while a no-op write
   // does not. Re-installed per document because the storage belongs to the document.
   if (doc.annotationStorage) doc.annotationStorage.onSetModified = () => { target.dirty = true; };
+  // **Registered while this function is still running** — that is what matters, and it is
+  // narrower than it first looks. Moving this line to just after `setDocument` also works
+  // (probed: the suite stays green), so "before setDocument" is not the property. What fails is
+  // registering after `setDocumentFromServer` has RESOLVED, which is what /pending 372's third
+  // recorded attempt did: `pagesloaded` has fired by then and the handler never runs.
+  //
+  // pdf.js was never refusing the scroll, which is what that item assumed. `currentPageNumber`
+  // calls `_setCurrentPageNumber(val, true)` → `#resetCurrentPageView()` → `#scrollIntoView`
+  // (pdf_viewer.mjs). It simply cannot act before the pages exist, and returns false silently
+  // while `pagesCount` is 0.
+  //
+  // Registered here rather than in newView so it lands AFTER the per-view `pagesloaded` handler
+  // that fits the width — the fit scrolls, and a restore before it would be undone.
+  if (wasOn > 1) restorePageAfterLoad(target, wasOn, gen);
   target.viewer.setDocument(target.pdfDocument);
   target.linkService.setDocument(target.pdfDocument, null);
   // Free the superseded document's worker-side resources once the viewer and
