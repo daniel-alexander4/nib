@@ -64,6 +64,25 @@ const geometry = () => page.evaluate(() => {
   };
 });
 
+test('the empty state holds its shape too, at every width', async () => {
+  // **The launch view, and it was unmeasured.** Every other test in this file opens a document
+  // first, so the whole suite spoke only for the populated state — a population bias in the
+  // guard rather than in the code. The status cluster is a different width before a document
+  // arrives (the signature badge and the version pill settle asynchronously), and during that
+  // window the menubar can wrap at widths where it later fits.
+  for (const w of WIDTHS) {
+    await page.setViewportSize({ width: w, height: 768 });
+    await page.waitForTimeout(250);
+    const g = await geometry();
+    assert.ok(g.menubarH <= 50,
+      `with nothing open, at ${w}px the menubar is ${g.menubarH}px — it has wrapped to a second row on the first screen a user ever sees`);
+    assert.equal(g.pageScrollsSideways, false,
+      `with nothing open, at ${w}px the page scrolls sideways`);
+    assert.deepEqual(g.offscreen, [],
+      `with nothing open, at ${w}px these menubar items are past the right edge: ${g.offscreen.join(', ')}`);
+  }
+});
+
 test('the chrome never takes a third of the window, at any width', async () => {
   await h.openDocument(DOC, 3);
   for (const w of WIDTHS) {

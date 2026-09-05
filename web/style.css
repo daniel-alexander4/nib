@@ -167,18 +167,18 @@ body { display: flex; flex-direction: column; }
 #toolbar .tbtab.active { display: flex; }
 /* Flat toolbar controls (direct children of a tab or a role group). The >
    combinator keeps dropdown items out, so they keep their .dropdown styling. */
-#toolbar .tbtab > button, #toolbar .tbtab > .tbgroup > button, #toolbar .roletools > button {
+#toolbar .tbtab > button, #toolbar .tbtab > .tbgroup > button, #toolbar .tbglobal > button, #toolbar .roletools > button {
   background: transparent; border: 1px solid transparent; border-radius: 6px;
   padding: 5px 9px; color: var(--subtext0); font: inherit; cursor: pointer;
 }
-#toolbar .tbtab > button:hover, #toolbar .tbtab > .tbgroup > button:hover, #toolbar .roletools > button:hover { background: var(--surface0); color: var(--text); }
-#toolbar .tbtab > button:disabled, #toolbar .tbtab > .tbgroup > button:disabled, #toolbar .roletools > button:disabled { opacity: 0.5; cursor: not-allowed; background: transparent; }
+#toolbar .tbtab > button:hover, #toolbar .tbtab > .tbgroup > button:hover, #toolbar .tbglobal > button:hover, #toolbar .roletools > button:hover { background: var(--surface0); color: var(--text); }
+#toolbar .tbtab > button:disabled, #toolbar .tbtab > .tbgroup > button:disabled, #toolbar .tbglobal > button:disabled, #toolbar .roletools > button:disabled { opacity: 0.5; cursor: not-allowed; background: transparent; }
 /* The active tab's label is --text, not --blue. --blue on --surface1 is 4.33:1 in the dark
    theme and 2.79:1 in the light one — under AA in BOTH, and this is a label people read,
    not an accent. The blue stays as the underline, which is what actually signals "active"
    and does so without asking anyone to distinguish two greys-on-blue. Colour as the
    indicator, text as the message — the same rule .stampwarn and #staleBanner follow. */
-#toolbar .tbtab > button.active, #toolbar .tbtab > .tbgroup > button.active, #toolbar .roletools > button.active { color: var(--text); background: var(--surface1); box-shadow: inset 0 -2px 0 var(--blue); }
+#toolbar .tbtab > button.active, #toolbar .tbtab > .tbgroup > button.active, #toolbar .tbglobal > button.active, #toolbar .roletools > button.active { color: var(--text); background: var(--surface1); box-shadow: inset 0 -2px 0 var(--blue); }
 #toolbar #saveBtn { color: var(--blue); font-weight: 600; }
 /* Dropdown triggers in the toolbar (Recent / Save as / Export under View). */
 #toolbar .menutop {
@@ -1428,14 +1428,18 @@ input.ovl-check { appearance: auto; accent-color: #1a7f37; background: transpare
   #menubar #themeToggle { display: none; }
   #menubar .foldedonly { display: block; }
 }
-/* 694px, and the number is measured rather than chosen: with the labels "Mark Up" and
-   "Signing Ceremony" the five tabs are 409px, and below 690 they compress and the nav wraps
-   the menubar to two rows (45px → 64px, measured at 5px steps). Folding them to a dropdown
-   just above that point is what keeps the menubar one row at every width. A label change is
-   what moves this number — test/ui/responsive.test.mjs asserts the one-row property so a
-   future rename cannot quietly reintroduce the wrap. */
-@media (max-width: 694px) {
+/* 719px, measured rather than chosen, and the number is set by the EMPTY state.
+   The v1.120.0 re-cut narrowed the strip to 392px (File · Mark Up · Document · Secure ·
+   Ceremony), which by itself would allow a lower threshold than the 694 it replaced. But with
+   no document open `#sigBadge` reads "no document" instead of "Unsigned" (index.html:98) —
+   23px wider — and the menubar wraps at 700 where it fits at 720. That state is the first
+   screen a user ever sees, and the suite only measured the populated one until a test was
+   added for it. A label change moves this number, in either list. */
+@media (max-width: 719px) {
   #menubar .modetabs { display: none; }
   #menubar .modemenu { display: block; }
 }
 .modemenu { display: none; }
+
+/* Undo/Redo, outside the panes because they are global. */
+.tbglobal { display: flex; align-items: center; gap: 4px; }

@@ -90,7 +90,7 @@ test('autofill from the saved profile visibly updates the rendered form', async 
   assert.deepEqual(before, ['typed into the form and saved'],
     `setup: the field holds ${JSON.stringify(before)}, so autofill has nothing to visibly change`);
 
-  await h.mode('edit');
+  await h.mode('markup'); // Detect/Autofill moved to Mark Up with the re-cut
   await page.click('#editProfileBtn');
   await page.fill('#profileText', `fill1 = ${AUTO}`);
   await page.click('#profileSave');
