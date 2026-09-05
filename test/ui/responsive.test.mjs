@@ -57,6 +57,7 @@ const geometry = () => page.evaluate(() => {
     .filter((e) => { const r = e.getBoundingClientRect(); return r.width > 0 && r.right > vw + 1; })
     .map((e) => (e.textContent || e.id || e.tagName).trim().slice(0, 20));
   return {
+    menubarH: Math.round(mb?.height ?? 0),
     chromePct: Math.round((chrome / vh) * 1000) / 10,
     pageScrollsSideways: document.documentElement.scrollWidth > vw + 1,
     offscreen,
@@ -84,7 +85,13 @@ test('the page never scrolls sideways, and nothing leaves the menubar', async ()
     assert.equal(g.pageScrollsSideways, false,
       `at ${w}px the page scrolls sideways. #menubar had a hard minimum content width of 611px — brand + five mode tabs + the status cluster — and it alone caused this`);
     assert.deepEqual(g.offscreen, [],
-      `at ${w}px these menubar items sit past the right edge: ${g.offscreen.join(', ')}. At 360 the Collaborate tab, the theme toggle and the settings gear were all unreachable without scrolling the window sideways`);
+      `at ${w}px these menubar items sit past the right edge: ${g.offscreen.join(', ')}. At 360 the Signing Ceremony tab, the theme toggle and the settings gear were all unreachable without scrolling the window sideways`);
+    // The menubar is one row at every width, and the mode-tab fold threshold is what keeps
+    // it so. Renaming a tab is what breaks this: "Collaborate" → "Signing Ceremony" widened
+    // the five tabs to 409px and made the nav wrap below 690, silently adding 21px of chrome
+    // at every width in between. The threshold was moved to 694 on that measurement.
+    assert.ok(g.menubarH <= 50,
+      `at ${w}px the menubar is ${g.menubarH}px — it has wrapped to a second row. A mode-tab label grew past what fits, and the fold threshold in style.css needs to move above the width where the nav starts wrapping`);
   }
 });
 
