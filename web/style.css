@@ -1428,7 +1428,13 @@ input.ovl-check { appearance: auto; accent-color: #1a7f37; background: transpare
   #menubar #themeToggle { display: none; }
   #menubar .foldedonly { display: block; }
 }
-@media (max-width: 575px) {
+/* 694px, and the number is measured rather than chosen: with the labels "Mark Up" and
+   "Signing Ceremony" the five tabs are 409px, and below 690 they compress and the nav wraps
+   the menubar to two rows (45px → 64px, measured at 5px steps). Folding them to a dropdown
+   just above that point is what keeps the menubar one row at every width. A label change is
+   what moves this number — test/ui/responsive.test.mjs asserts the one-row property so a
+   future rename cannot quietly reintroduce the wrap. */
+@media (max-width: 694px) {
   #menubar .modetabs { display: none; }
   #menubar .modemenu { display: block; }
 }
