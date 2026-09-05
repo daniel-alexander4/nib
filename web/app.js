@@ -7736,7 +7736,7 @@ const EDITING_TOOLS = [
 function setEditingEnabled(on) {
   for (const id of EDITING_TOOLS) {
     const b = $(id); if (b) b.disabled = !on;
-    all(`#toolbar [data-forward="${id}"]`).forEach((t) => { t.disabled = !on; });
+    all(`#toolbar [data-forward="${id}"], #menubar [data-forward="${id}"]`).forEach((t) => { t.disabled = !on; });
   }
   all('#toolbar [data-mode]').forEach((t) => { t.disabled = !on; }); // Text/Highlight/Draw twins
 }
@@ -8332,6 +8332,11 @@ function showMenu(menu) {
 // its author remembering. There were zero `aria-haspopup` and zero `aria-expanded` in the
 // front end, so a screen-reader user was told neither that a control opens a menu nor
 // whether it is currently open.
+// Built HERE, before the stamp below, so the generated ⋯ More trigger is covered by the
+// existing rule rather than by a second copy of it. The comment above says menu five is
+// covered "by existing, not by its author remembering" — a menu created after this loop
+// would not have been, and the jsdom guard caught exactly that.
+buildOverflowMenus();
 for (const t of document.querySelectorAll('.menu > .menutop')) {
   t.setAttribute('aria-haspopup', 'true');
   t.setAttribute('aria-expanded', String(t.parentElement.classList.contains('open')));
@@ -9260,7 +9265,7 @@ function collectNotes(owner = view) {
 
 // The toolbar mirrors the menus. Mode tools wire themselves via [data-mode]
 // above; every other toolbar control forwards to its menu twin by id.
-all('#toolbar [data-forward]').forEach((b) => { b.onclick = () => $(b.dataset.forward).click(); });
+all('#toolbar [data-forward], #menubar [data-forward]').forEach((b) => { b.onclick = () => $(b.dataset.forward).click(); });
 
 // Controls that act on the open document. Disabled (in both the menu and the
 // toolbar twin) until one loads, so they read as "unavailable" rather than
@@ -9291,7 +9296,7 @@ const DOC_REQUIRED = [
 function setDocControls(enabled) {
   for (const id of DOC_REQUIRED) {
     const b = $(id); if (b) b.disabled = !enabled;
-    all(`#toolbar [data-forward="${id}"]`).forEach((t) => { t.disabled = !enabled; });
+    all(`#toolbar [data-forward="${id}"], #menubar [data-forward="${id}"]`).forEach((t) => { t.disabled = !enabled; });
   }
   // The toolbar's Text/Highlight/Draw twins wire by data-mode, not data-forward.
   all('#toolbar [data-mode]').forEach((t) => { t.disabled = !enabled; });
@@ -10203,8 +10208,14 @@ function syncSidebarForMode(tab) {
     document.querySelector(`.tabs .tab[data-panel="${panels[0]}"]`)?.click();
   }
 }
+function syncModeMenu(tab) {
+  const top = $('modeMenuTop');
+  const src = document.querySelector(`.modetab[data-tab="${tab}"]`);
+  if (top && src) top.textContent = src.textContent;
+}
 function setMode(tab) {
   document.body.dataset.tab = tab;
+  syncModeMenu(tab);
   all('.modetab').forEach((b) => b.classList.toggle('active', b.dataset.tab === tab));
   all('#toolbar .tbtab').forEach((g) => g.classList.toggle('active', g.dataset.tab === tab));
   syncSidebarForMode(tab);
@@ -10223,11 +10234,106 @@ all('.roleopt').forEach((b) => { b.onclick = () => setRole(b.dataset.role); });
 setRole('originate');
 setMode('file');
 
+// ── Small screens: fold whole groups into a per-pane ⋯ More menu ──────────────
+//
+// Until v1.119.0 the only small-screen behaviour was `#toolbar { flex-wrap: wrap }`,
+// which grew the Edit palette from 3 rows at 1920 to **12 rows at 360 — 63% of the
+// viewport** while the document was left 14.4%. Measured in Chromium against the real
+// binary, not estimated.
+//
+// **Groups MOVE; they are never duplicated.** A data-forward twin — this file's usual
+// answer to one action in two places — cannot represent a <select>, and the first group
+// to fold (OCR) has two. Moving also means there is no second list to drift out of step
+// with the first: a control added to a pane is folded automatically because folding reads
+// the DOM rather than a hand-kept inventory.
+//
+// **The destination is the pane's OWN menu**, which is what makes moving safe. Mode
+// gating is `#toolbar .tbtab.active` (style.css) — a descendant selector — so a group
+// moved into a .tbmore inside the same .tbtab is still gated by its mode. Moving a
+// control OUT of its .tbtab would silently show it in all five modes; nothing here does
+// that. Cached `els` references survive a move, because reparenting keeps the node.
+//
+// The order is fixed at every width on purpose: a command that changed places depending
+// on how wide the window happened to be could never be learned.
+const foldThresholds = { 1: 949, 2: 899, 3: 849, 4: 749, 5: 699, 6: 649, 7: 599 };
+
+function buildOverflowMenus() {
+  all('#toolbar .tbtab').forEach((pane) => {
+    const foldable = [...pane.querySelectorAll('.tbgroup[data-fold]')].filter((g) => g.dataset.fold !== '0');
+    if (!foldable.length) return;
+    // Where each group goes back to. Captured before anything moves, as a NEXT-SIBLING
+    // reference rather than an index: indices shift as siblings leave and return.
+    foldable.forEach((g) => {
+      g._home = pane;
+      g._homeNext = g.nextElementSibling;
+      const cap = document.createElement('div');
+      cap.className = 'menucap';
+      cap.textContent = g.dataset.label || '';
+      g.prepend(cap); // hidden in the bar, shown inside the menu (style.css)
+    });
+    const menu = document.createElement('div');
+    menu.className = 'menu tbmore';
+    menu.innerHTML = '<button class="menutop" title="More commands">⋯ More</button><div class="dropdown"></div>';
+    pane.append(menu);
+    pane._more = menu.querySelector('.dropdown');
+  });
+}
+
+// applyFold is idempotent and runs on every breakpoint crossing. It reads the width once
+// and moves each group to the side it belongs on, so a crossing that skips several
+// thresholds at once (a maximise, a snap) lands in the same state as stepping through.
+function applyFold() {
+  const w = window.innerWidth;
+  all('#toolbar .tbtab').forEach((pane) => {
+    if (!pane._more) return;
+    let folded = 0;
+    // One query: the ⋯ More menu is INSIDE the pane, so this finds groups on both sides.
+    [...pane.querySelectorAll('.tbgroup[data-fold]')].forEach((g) => {
+      if (g._home !== pane) return;
+      if (w <= foldThresholds[g.dataset.fold]) {
+        if (g.parentElement !== pane._more) pane._more.append(g);
+        folded++;
+      } else if (g.parentElement !== pane) {
+        // Back to its own slot. The anchor may itself be folded away, in which case
+        // append is the honest answer rather than a guessed index.
+        if (g._homeNext && g._homeNext.parentElement === pane) pane.insertBefore(g, g._homeNext);
+        else pane.insertBefore(g, pane._more.parentElement);
+      }
+    });
+    // The ⋯ More trigger is shown only when it holds something. A menu that opens onto
+    // nothing is worse than no menu: it reads as a command that did not work.
+    pane._more.parentElement.classList.toggle('hasfolded', folded > 0);
+  });
+}
+
+// ── The mode dropdown, for widths where five tabs do not fit ──────────────────
+// .modetabs and .modemenu are never both displayed (style.css); both call setMode, so
+// this is a presentation swap rather than a second navigation model.
+all('[data-modejump]').forEach((b) => { b.onclick = () => setMode(b.dataset.modejump); });
+
+// ── Width-driven chrome ───────────────────────────────────────────────────────
+// One matchMedia listener per threshold, firing only at crossings — the idiom this file
+// already uses for devicePixelRatio. No resize handler and nothing to debounce.
+const sidebarNarrow = matchMedia('(max-width: 899px)');
+applyFold();
+Object.values(foldThresholds).forEach((px) => {
+  matchMedia(`(max-width: ${px}px)`).addEventListener('change', applyFold);
+});
+sidebarNarrow.addEventListener('change', () => setSidebarCollapsed(sidebarNarrow.matches));
+// The sidebar is a fixed 200px that never yielded: 55.6% of a 360px window, with the
+// document down to 14.4%. Collapsing it below 900 buys the document 15-19 points, measured.
+// A pure function of width — an explicit toggle wins until the next crossing, which is why
+// this is a crossing listener and not a resize handler.
+setSidebarCollapsed(sidebarNarrow.matches);
+
 // sidebar collapse
+function setSidebarCollapsed(collapsed) {
+  $('sidebar').classList.toggle('collapsed', collapsed);
+  $('toggleSidebarBtn').title = collapsed ? 'Show sidebar' : 'Hide sidebar';
+}
 function toggleSidebar() {
-  const hidden = $('sidebar').classList.toggle('collapsed');
-  // Icon-only button — reflect the state in the tooltip.
-  $('toggleSidebarBtn').title = hidden ? 'Show sidebar' : 'Hide sidebar';
+  // Through the one setter, so the tooltip cannot drift from the state (ADR-009).
+  setSidebarCollapsed(!$('sidebar').classList.contains('collapsed'));
 }
 $('toggleSidebarBtn').onclick = toggleSidebar;
 

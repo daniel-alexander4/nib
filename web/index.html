@@ -30,6 +30,20 @@
       <button class="modetab" data-tab="collaborate">Collaborate</button>
     </nav>
 
+    <!-- The same five modes as one dropdown, for widths where the tabs no longer fit.
+         Only one of .modetabs / .modemenu is ever displayed (style.css), so this is a
+         presentation swap rather than a second navigation model: both drive setMode. -->
+    <div class="menu modemenu">
+      <button class="menutop" id="modeMenuTop" aria-label="Current mode">File</button>
+      <div class="dropdown">
+        <button data-modejump="file">File</button>
+        <button data-modejump="edit">Edit</button>
+        <button data-modejump="sign">Sign</button>
+        <button data-modejump="secure">Secure</button>
+        <button data-modejump="collaborate">Collaborate</button>
+      </div>
+    </div>
+
     <!-- Always-on chrome: settings/identity gear, update pill, signature badge.
          Pinned to the right edge of the menubar (margin-left:auto). -->
     <div id="statusCluster">
@@ -52,6 +66,8 @@
           <div class="sep"></div>
           <label class="menuitem"><input id="autoUpdateChk" type="checkbox" /> Check for updates on startup</label>
           <div class="sep"></div>
+          <div class="menucap foldedonly">Appearance</div>
+          <button class="foldedonly" data-forward="themeToggle">Switch theme</button>
           <button id="aboutBtn">About Nib…</button>
         </div>
       </div>
@@ -99,18 +115,17 @@
     <span class="tbsep"></span>
 
     <div class="tbtab" data-tab="file">
-      <button id="openMenuItem">Open…</button>
+      <div class="tbgroup" data-label="Open" data-fold="0">
+<button id="openMenuItem">Open…</button>
       <div class="menu">
         <button class="menutop">Recent</button>
         <div class="dropdown"><div class="recentSlot"></div></div>
       </div>
       <button id="officeOpenBtn" title="Open a Markdown or Word/Excel/PowerPoint/OpenDocument file by converting it to PDF (office formats require LibreOffice)">Open &amp; convert to PDF…</button>
       <input id="officeInput" type="file" accept=".md,.markdown,.doc,.docx,.odt,.rtf,.txt,.xls,.xlsx,.ods,.csv,.ppt,.pptx,.odp" hidden />
-      <button id="combineBtn" title="Combine several PDFs into one new document">Combine PDFs…</button>
-      <button id="compareBtn" title="Compare this document with another PDF — text diff, side by side, or a visual difference map">Compare…</button>
-      <button id="fillCsvBtn" title="Mail-merge a spreadsheet onto this form — one filled PDF per row, as a ZIP">Fill from spreadsheet…</button>
-      <button id="importXfdfBtn" title="Fill this form from an XFDF data file (the Acrobat/Foxit interchange format)">Import form data (XFDF)…</button>
-      <button id="saveBtn" title="Save (overwrites the original)" disabled>Save</button>
+            </div>
+      <div class="tbgroup" data-label="Save" data-fold="0">
+<button id="saveBtn" title="Save (overwrites the original)" disabled>Save</button>
       <div class="menu">
         <button class="menutop">Save as</button>
         <div class="dropdown">
@@ -140,28 +155,43 @@
         </div>
       </div>
       <button id="printBtn" title="Print (opens your browser's print dialog)" disabled>Print…</button>
-      <button id="closeBtn" title="Close this document and return to the empty state (Nib keeps running)" disabled>Close</button>
+            </div>
+      <div class="tbgroup" data-label="Page" data-fold="0">
+<button id="prevBtn" title="Previous page (PageUp · Home for first)">Previous</button>
+      <span class="tbpage"><input class="pageNum" type="number" min="1" value="1" /><span class="pageCount">/ 0</span></span>
+      <button id="nextBtn" title="Next page (PageDown · End for last)">Next</button>
+            </div>
+      <div class="tbgroup" data-label="Find" data-fold="0">
+<span class="tbfind"><input class="searchInput" type="search" placeholder="Find in document… (Ctrl+F)" /><button id="findPrevBtn" title="Previous match (Shift+Enter)" disabled>‹</button><button id="findNextBtn" title="Next match (Enter)" disabled>›</button><span id="findCount" class="findcount"></span></span>
+          </div>
+      <div class="tbgroup" data-label="Close" data-fold="1">
+<button id="closeBtn" title="Close this document and return to the empty state (Nib keeps running)" disabled>Close</button>
       <!-- Appears at two open documents, matching the tab strip's own rule, because with
            one document open Close view and Close all are the same act and offering both
            would be two buttons for one outcome. syncTabs toggles it. -->
       <button id="closeAllBtn" title="Close every open document and return to the empty state" hidden>Close all</button>
-      <span class="tbsep"></span>
-      <button id="prevBtn" title="Previous page (PageUp · Home for first)">Previous</button>
-      <span class="tbpage"><input class="pageNum" type="number" min="1" value="1" /><span class="pageCount">/ 0</span></span>
-      <button id="nextBtn" title="Next page (PageDown · End for last)">Next</button>
-      <span class="tbsep"></span>
-      <button id="zoomOutBtn" title="Zoom out (Ctrl+-)">Zoom out</button>
+            </div>
+      <div class="tbgroup" data-label="Form data" data-fold="2">
+<button id="fillCsvBtn" title="Mail-merge a spreadsheet onto this form — one filled PDF per row, as a ZIP">Fill from spreadsheet…</button>
+      <button id="importXfdfBtn" title="Fill this form from an XFDF data file (the Acrobat/Foxit interchange format)">Import form data (XFDF)…</button>
+            </div>
+      <div class="tbgroup" data-label="Multiple documents" data-fold="3">
+<button id="combineBtn" title="Combine several PDFs into one new document">Combine PDFs…</button>
+      <button id="compareBtn" title="Compare this document with another PDF — text diff, side by side, or a visual difference map">Compare…</button>
+            </div>
+      <div class="tbgroup" data-label="Zoom" data-fold="4">
+<button id="zoomOutBtn" title="Zoom out (Ctrl+-)">Zoom out</button>
       <button id="fitBtn" title="Fit width (Ctrl+0)">Fit width</button>
       <button id="zoomInBtn" title="Zoom in (Ctrl++)">Zoom in</button>
-      <span class="tbsep"></span>
-      <span class="tbfind"><input class="searchInput" type="search" placeholder="Find in document… (Ctrl+F)" /><button id="findPrevBtn" title="Previous match (Shift+Enter)" disabled>‹</button><button id="findNextBtn" title="Next match (Enter)" disabled>›</button><span id="findCount" class="findcount"></span></span>
+            </div>
     </div>
-
     <div class="tbtab" data-tab="edit">
-      <button id="undoBtn" title="Undo the last page operation (Ctrl+Z)" disabled>↶ Undo</button>
+      <div class="tbgroup" data-label="History" data-fold="0">
+<button id="undoBtn" title="Undo the last page operation (Ctrl+Z)" disabled>↶ Undo</button>
       <button id="redoBtn" title="Redo (Ctrl+Shift+Z)" disabled>↷ Redo</button>
-      <span class="tbsep"></span>
-      <button id="textToolBtn" data-mode="FREETEXT" title="Add a text box (click on the page)">Text</button>
+            </div>
+      <div class="tbgroup" data-label="Annotate" data-fold="0">
+<button id="textToolBtn" data-mode="FREETEXT" title="Add a text box (click on the page)">Text</button>
       <button id="highlightToolBtn" data-mode="HIGHLIGHT" title="Highlight text">Highlight</button>
       <span id="hlColors" class="hlcolors" hidden>
         <span id="hlSwatches" class="hlswatches"></span>
@@ -183,14 +213,18 @@
         <button type="button" class="shapetype" data-shape="ellipse" title="Ellipse">◯</button>
         <label class="check" title="Fill rectangle / ellipse"><input id="shapeFill" type="checkbox" /> Fill</label>
       </span>
-      <span class="tbsep"></span>
-      <button id="detectBtn" title="Detect blank lines to fill">Detect fields</button>
+            </div>
+      <div class="tbgroup" data-label="Forms" data-fold="7">
+<button id="detectBtn" title="Detect blank lines to fill">Detect fields</button>
       <button id="autofillBtn">Autofill from profile</button>
       <button id="editProfileBtn">Edit autofill profile…</button>
-      <span class="tbsep"></span>
-      <button id="editTextBtn" title="Drag a box over text to cover and replace it">Edit text</button>
+            </div>
+      <div class="tbgroup" data-label="Text" data-fold="5">
+<button id="editTextBtn" title="Drag a box over text to cover and replace it">Edit text</button>
       <button id="removeOriginalsBtn" title="Flatten edited pages so the original text is removed for good">Remove originals</button>
-      <button id="ocrBtn" title="Make a scanned PDF searchable — add an invisible text layer (OCR, runs on your machine)">OCR</button>
+            </div>
+      <div class="tbgroup" data-label="OCR" data-fold="1">
+<button id="ocrBtn" title="Make a scanned PDF searchable — add an invisible text layer (OCR, runs on your machine)">OCR</button>
       <select id="ocrLang" title="Language of the scanned text (for best OCR accuracy)">
         <option value="eng" selected>English</option>
         <option value="fra">French</option>
@@ -238,50 +272,57 @@
         <option value="200" selected>Fast — 200 DPI</option>
         <option value="300">Best — 300 DPI</option>
       </select>
-      <span class="tbsep"></span>
-      <button id="splitBtn" title="Split an imposed page (2-up, 4-up…) into separate pages">Split page…</button>
+            </div>
+      <div class="tbgroup" data-label="Split" data-fold="2">
+<button id="splitBtn" title="Split an imposed page (2-up, 4-up…) into separate pages">Split page…</button>
       <button id="splitBoxBtn" title="Draw regions to split this page into (the page is replaced by the pieces you draw)">Split by box</button>
       <button id="applyBoxSplitBtn" title="Replace this page with the regions you drew, each as its own page">Apply box split</button>
-      <span class="tbsep"></span>
-      <button id="extractBtn" title="Save a range of pages as a new PDF">Extract pages…</button>
+            </div>
+      <div class="tbgroup" data-label="Pages" data-fold="4">
+<button id="extractBtn" title="Save a range of pages as a new PDF">Extract pages…</button>
       <button id="insertBlankBtn" title="Insert a blank page after the current page">Insert blank page</button>
       <button id="duplicatePageBtn" title="Duplicate the current page (a copy is inserted right after it)">Duplicate page</button>
       <button id="insertPdfBtn" title="Insert another PDF before the current page (use + Append PDF for the end)">Insert PDF…</button>
       <input id="insertPdfInput" type="file" accept="application/pdf" hidden />
-      <button id="pageNumBtn" title="Stamp running page numbers (or Bates numbers) onto every page">Page numbers…</button>
+            </div>
+      <div class="tbgroup" data-label="Page setup" data-fold="3">
+<button id="pageNumBtn" title="Stamp running page numbers (or Bates numbers) onto every page">Page numbers…</button>
       <button id="pageLabelsBtn" title="Set the logical page numbers a viewer shows (front matter i, ii, iii then body 1, 2, 3)">Page labels…</button>
       <button id="nupBtn" title="Combine several pages onto each sheet (2-up, 4-up…) for printing">N-up…</button>
       <button id="normalizeBtn" title="Resize every page to the document's most common size — make a mixed-size document uniform">Normalize sizes</button>
       <button id="cropBtn" title="Draw a box to crop every page (or just this one) down to that area">Crop…</button>
-      <span class="tbsep"></span>
-      <button id="rotateLeftBtn" title="Rotate every page 90° counter-clockwise">Rotate all ↺</button>
+            </div>
+      <div class="tbgroup" data-label="Rotate" data-fold="6">
+<button id="rotateLeftBtn" title="Rotate every page 90° counter-clockwise">Rotate all ↺</button>
       <button id="rotateRightBtn" title="Rotate every page 90° clockwise">Rotate all ↻</button>
+          </div>
     </div>
-
     <div class="tbtab" data-tab="sign">
-      <button id="finalizeBtn" title="Add a cryptographic signature (with an optional watermark)">Finalize &amp; sign…</button>
+      <div class="tbgroup" data-label="Sign" data-fold="0">
+<button id="finalizeBtn" title="Add a cryptographic signature (with an optional watermark)">Finalize &amp; sign…</button>
       <button data-forward="exportCertBtn">Signing certificate</button>
+          </div>
     </div>
-
     <div class="tbtab" data-tab="secure">
-      <button id="redactBtn" title="Draw redaction boxes">Redact</button>
+      <div class="tbgroup" data-label="Redact" data-fold="0">
+<button id="redactBtn" title="Draw redaction boxes">Redact</button>
       <button id="redactTextBtn" title="Find a word or pattern (SSN, email, phone, card) and mark every occurrence for redaction">Redact text…</button>
       <button id="applyRedactBtn" title="Permanently redact marked pages">Apply redactions</button>
-      <span class="tbsep"></span>
-      <button id="scanBtn" title="Find and remove hidden code &amp; content">Scan for hidden content…</button>
+            </div>
+      <div class="tbgroup" data-label="Sign" data-fold="0">
+<button data-forward="finalizeBtn">Finalize &amp; sign…</button>
+          </div>
+      <div class="tbgroup" data-label="Timestamp" data-fold="1">
+<button id="timestampBtn">Timestamp (OpenTimestamps)…</button>
+      <button id="timestampVerifyBtn">Verify a timestamp…</button>
+            </div>
+      <div class="tbgroup" data-label="Protect" data-fold="2">
+<button id="scanBtn" title="Find and remove hidden code &amp; content">Scan for hidden content…</button>
       <button id="attachBtn" title="View, extract, or add embedded file attachments">Attachments…</button>
       <button id="encryptBtn" title="Save a password-protected copy of this document (AES-256)">Add password protection…</button>
       <button id="decryptBtn" title="Remove an open password or owner restrictions from a PDF you can open">Remove password protection…</button>
-      <span class="tbsep"></span>
-      <button id="timestampBtn">Timestamp (OpenTimestamps)…</button>
-      <button id="timestampVerifyBtn">Verify a timestamp…</button>
-      <span class="tbsep"></span>
-      <button data-forward="finalizeBtn">Finalize &amp; sign…</button>
+            </div>
     </div>
-
-    <!-- Collaborate: pick your role first. Originate = you own the document
-         (prepare, send, await its return); Receive = you sign what arrives and
-         send it back. The toggle swaps the role-specific tool set. -->
     <div class="tbtab" data-tab="collaborate">
       <span class="roletoggle">
         <button class="roleopt" data-role="originate" title="You own the document: prepare it, send it, await its return">Originate</button>

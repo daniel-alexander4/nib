@@ -167,18 +167,18 @@ body { display: flex; flex-direction: column; }
 #toolbar .tbtab.active { display: flex; }
 /* Flat toolbar controls (direct children of a tab or a role group). The >
    combinator keeps dropdown items out, so they keep their .dropdown styling. */
-#toolbar .tbtab > button, #toolbar .roletools > button {
+#toolbar .tbtab > button, #toolbar .tbtab > .tbgroup > button, #toolbar .roletools > button {
   background: transparent; border: 1px solid transparent; border-radius: 6px;
   padding: 5px 9px; color: var(--subtext0); font: inherit; cursor: pointer;
 }
-#toolbar .tbtab > button:hover, #toolbar .roletools > button:hover { background: var(--surface0); color: var(--text); }
-#toolbar .tbtab > button:disabled, #toolbar .roletools > button:disabled { opacity: 0.5; cursor: not-allowed; background: transparent; }
+#toolbar .tbtab > button:hover, #toolbar .tbtab > .tbgroup > button:hover, #toolbar .roletools > button:hover { background: var(--surface0); color: var(--text); }
+#toolbar .tbtab > button:disabled, #toolbar .tbtab > .tbgroup > button:disabled, #toolbar .roletools > button:disabled { opacity: 0.5; cursor: not-allowed; background: transparent; }
 /* The active tab's label is --text, not --blue. --blue on --surface1 is 4.33:1 in the dark
    theme and 2.79:1 in the light one — under AA in BOTH, and this is a label people read,
    not an accent. The blue stays as the underline, which is what actually signals "active"
    and does so without asking anyone to distinguish two greys-on-blue. Colour as the
    indicator, text as the message — the same rule .stampwarn and #staleBanner follow. */
-#toolbar .tbtab > button.active, #toolbar .roletools > button.active { color: var(--text); background: var(--surface1); box-shadow: inset 0 -2px 0 var(--blue); }
+#toolbar .tbtab > button.active, #toolbar .tbtab > .tbgroup > button.active, #toolbar .roletools > button.active { color: var(--text); background: var(--surface1); box-shadow: inset 0 -2px 0 var(--blue); }
 #toolbar #saveBtn { color: var(--blue); font-weight: 600; }
 /* Dropdown triggers in the toolbar (Recent / Save as / Export under View). */
 #toolbar .menutop {
@@ -1379,3 +1379,57 @@ input.ovl-check { appearance: auto; accent-color: #1a7f37; background: transpare
 .waittiers { list-style: none; margin: 4px 0; padding: 0; }
 .waittier { font-size: 11px; color: var(--subtext1); padding: 1px 0; }
 .waittier::before { content: "· "; color: var(--surface1); }
+
+/* ── Small screens: the toolbar folds, it does not wrap ────────────────────────
+   Until v1.119.0 this stylesheet had no @media rule at all, and the entire
+   small-screen behaviour was `#toolbar { flex-wrap: wrap }`. Measured, that grew
+   the Edit palette from 3 rows at 1920 to 12 rows at 360 — 63% of the viewport —
+   while the document was left 14.4%. Groups now fold WHOLE, in a fixed order, into
+   a per-pane `⋯ More` menu built by buildOverflowMenus().
+
+   The order is fixed at every width on purpose: a command that moved between the
+   bar and the menu depending on how wide the window happened to be could never be
+   learned. data-fold="0" means "never folds". */
+/* A group reads as a run because a divider precedes it, which is what .tbsep did
+   before — one hairline between groups, none before the first. */
+.tbtab > .tbgroup + .tbgroup::before {
+  content: ""; align-self: stretch; width: 1px; margin: 3px 4px;
+  background: var(--surface1); flex: none;
+}
+.tbgroup { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }
+
+/* The ⋯ More trigger and the folded groups inside it. */
+#toolbar .tbmore { display: none; }
+#toolbar .tbmore.hasfolded { display: flex; }
+#toolbar .tbmore .tbgroup { flex-direction: column; align-items: stretch; gap: 0; }
+#toolbar .tbmore .tbgroup::before { display: none; }
+#toolbar .tbmore .dropdown { max-height: 70vh; overflow-y: auto; }
+
+/* Export is 14 items and 500px tall; it overflowed a 620px viewport before this. */
+#toolbar .menu .dropdown { max-height: 70vh; overflow-y: auto; }
+
+/* The fold ladder lives in app.js (foldThresholds / applyFold): a group is MOVED into
+   its own pane's ⋯ More menu rather than duplicated, because a data-forward twin cannot
+   represent the two <select>s in the OCR group, and a moved node stays inside .tbtab so
+   its mode gating (#toolbar .tbtab.active) is untouched. */
+#toolbar .tbtab > .tbgroup > .menucap { display: none; }
+#toolbar .tbmore .tbgroup > .menucap { display: block; }
+
+/* ── The menubar, which is the whole of the horizontal-overflow defect ─────────
+   Measured: #menubar had a hard minimum content width of 611px — brand 26 +
+   .modetabs 344 + #statusCluster 205 — constant at 600, 414 and 360, and it alone
+   is what made the page scroll sideways and pushed the settings gear and the
+   Collaborate tab off the right edge. The sidebar and viewer never contributed. */
+.foldedonly { display: none; }
+@media (max-width: 639px) {
+  /* The theme toggle is a setting and belongs in ⚙ anyway. The signature badge
+     stays: it is document STATE, and burying state in a menu is worse than
+     burying a command. */
+  #menubar #themeToggle { display: none; }
+  #menubar .foldedonly { display: block; }
+}
+@media (max-width: 575px) {
+  #menubar .modetabs { display: none; }
+  #menubar .modemenu { display: block; }
+}
+.modemenu { display: none; }

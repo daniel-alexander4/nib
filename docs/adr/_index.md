@@ -101,3 +101,13 @@ home today.
   `sameFileOpen`. The automatic half runs only on a document that is clean and not in a ceremony,
   event-driven on focus, never a poll. The reading position is NOT preserved and the record says
   so — three restores measured inert, and it is the shared sink's problem (`/pending 372`)
+- [ADR-015: The toolbar folds whole groups, within their own pane](015-the-toolbar-folds-within-its-pane.md)
+  — every control lives in a `.tbgroup` with a label and a fold rank, and groups MOVE into a `⋯ More`
+  menu built inside their own `.tbtab`. The destination is the point: mode gating is
+  `#toolbar .tbtab.active`, a descendant selector with no `body[data-tab]` rule anywhere, so a group
+  folded outside its pane shows in all five modes and nothing looks wrong until you change mode.
+  Moving rather than duplicating because a `data-forward` twin cannot represent a `<select>` and OCR
+  has two — and because a second list drifts. Before this the stylesheet had NO `@media` rule: Edit
+  chrome ran 19.6% at 1920 to **63% at 360** over 12 rows, now 28.6% flat. The sideways scroll was
+  never the toolbar — `#menubar` had a constant 611px minimum, and the planned `min-width: 0` on the
+  viewer would have changed nothing
