@@ -147,7 +147,7 @@ export async function launch({ routes = null, waitFor = '#empty', base = BASE } 
 
     // placeMarker arms a signing flag and drops it on page 1. The flags live in
     // the sidebar's Flags panel, which belongs to COLLABORATE mode, not Sign —
-    // SIDEBAR_FOR.sign is ['library'] (app.js). Discovered by driving it; nothing
+    // SIDEBAR_FOR.markup is ['library'] (app.js). Discovered by driving it; nothing
     // in the UI's naming suggests it.
     // **Scrolls the target page into view first**, and that is a fix rather than a
     // flourish. This clicked the box of `.page` FIRST unconditionally, so on any

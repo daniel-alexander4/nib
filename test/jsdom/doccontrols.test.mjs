@@ -32,26 +32,67 @@ function listNamed(name) {
   return [...m[1].matchAll(/'([A-Za-z][A-Za-z0-9]*)'/g)].map((x) => x[1]);
 }
 
-// The Edit tab's own button ids, discovered from the markup.
-function editRowButtons() {
-  const i = HTML.indexOf('<div class="tbtab" data-tab="edit">');
-  assert.notEqual(i, -1, 'the Edit toolbar tab is not in web/index.html — this scan is reading nothing');
-  const j = HTML.indexOf('<div class="tbtab"', i + 10);
-  const seg = HTML.slice(i, j === -1 ? undefined : j);
-  return [...seg.matchAll(/<button[^>]*id="([^"]+)"/g)].map((m) => m[1]);
+// Every toolbar pane's button ids, discovered from the markup.
+//
+// **This scanned only the Edit pane until the v1.120.0 mode re-cut, and that was a guard that
+// could be weakened without failing.** Moving a control out of Edit simply removed it from the
+// scan — silently — and the re-cut moved most of Edit to Mark Up and Secure. Reading every pane
+// means a control cannot escape the rule by changing tabs.
+function toolbarButtons() {
+  const panes = [...HTML.matchAll(/<div class="tbtab" data-tab="([a-z]+)">/g)];
+  assert.ok(panes.length >= 5, `only ${panes.length} toolbar panes in web/index.html — this scan is reading nothing`);
+  const out = [];
+  for (const p of panes) {
+    // Bounded by the pane's OWN matching close tag, walked by depth. Slicing to the next
+    // pane (or, for the last one, to end of file) is what the Edit-only version did, and it
+    // swept every modal dialog in the document into the last pane's segment — 140 ids that
+    // have nothing to do with the toolbar. It never bit before only because Edit was never
+    // the last pane.
+    let depth = 0, i = p.index;
+    for (;;) {
+      const open = HTML.indexOf('<div', i), close = HTML.indexOf('</div>', i);
+      assert.notEqual(close, -1, `pane ${p[1]} is unbalanced in web/index.html`);
+      if (open !== -1 && open < close) { depth++; i = open + 4; continue; }
+      depth--; i = close + 6;
+      if (depth === 0) break;
+    }
+    for (const m of HTML.slice(p.index, i).matchAll(/<button[^>]*id="([^"]+)"/g)) out.push(m[1]);
+  }
+  return out;
 }
 
 // Undo/Redo are gated by reflectUndoControls off canUndo/canRedo, not by the open/closed
 // state — enabling them for an open document with no history would be wrong. Edit profile
 // is a preferences control and acts on no document. Both are exemptions NAMED at the
 // site, which is what ADR-009 asks for in place of a silent omission.
-const EXEMPT = new Set(['undoBtn', 'redoBtn', 'editProfileBtn']);
+const EXEMPT = new Set([
+  // Gated by canUndo/canRedo, not by open/closed — enabling them for an open document with
+  // no history would be wrong. They are global controls since v1.120.0.
+  'undoBtn', 'redoBtn',
+  // A preferences control; acts on no document.
+  'editProfileBtn',
+  // ── The rest became visible when this scan widened from the Edit pane to every pane.
+  // Each is document-INDEPENDENT by design, which is why none was ever a defect.
+  // They get up-front reasons rather than a blanket skip, per ADR-009.
+  //
+  // These CREATE or receive a document, so requiring one would be circular:
+  'openMenuItem', 'officeOpenBtn', 'combineBtn', 'sessionRecvDocBtn', 'sessionRecvBtn',
+  // Gated by their own state, not by the registry: saveBtn follows canSave, the find
+  // buttons follow the search results, and closeAllBtn is hidden below two documents.
+  'saveBtn', 'findPrevBtn', 'findNextBtn', 'closeAllBtn',
+  // These act on the VIEWER, not on the document. With nothing open the viewer is empty
+  // and they are inert; disabling them would be a behaviour change, not a fix.
+  'prevBtn', 'nextBtn', 'zoomOutBtn', 'fitBtn', 'zoomInBtn',
+  // These act on something OTHER than the open document — your signing certificate, and a
+  // file the user picks in the dialog.
+  'exportCertBtn', 'timestampVerifyBtn',
+]);
 
-test('every Edit-tab control needs a document, or is a named exemption', () => {
+test('every toolbar control needs a document, or is a named exemption', () => {
   const required = new Set(listNamed('DOC_REQUIRED'));
-  const missing = editRowButtons().filter((id) => !EXEMPT.has(id) && !required.has(id));
+  const missing = toolbarButtons().filter((id) => !EXEMPT.has(id) && !required.has(id));
   assert.deepEqual(missing, [],
-    `${missing.join(', ')} sit in the Edit tab and are not in DOC_REQUIRED, so they are clickable with nothing open. Add them, or add a named exemption with the reason`);
+    `${missing.join(', ')} sit in a toolbar pane and are not in DOC_REQUIRED, so they are clickable with nothing open. Add them, or add a named exemption with the reason`);
 });
 
 test('every drawing tool is switched off by signing mode', () => {

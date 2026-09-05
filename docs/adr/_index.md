@@ -111,3 +111,13 @@ home today.
   chrome ran 19.6% at 1920 to **63% at 360** over 12 rows, now 28.6% flat. The sideways scroll was
   never the toolbar — `#menubar` had a constant 611px minimum, and the planned `min-width: 0` on the
   viewer would have changed nothing
+- [ADR-016: The modes are cut by what you do](016-modes-are-cut-by-what-you-do.md) — five modes, each
+  a kind of thing you do to the document: File (in and out), Mark Up (put things ON the page, incl.
+  form filling), Document (change its pages and content), Secure (remove, protect, Certify), Ceremony.
+  Undo/Redo belong to none and move to the toolbar's fixed area — they were Edit-only while nine
+  server files commit undoable operations. "Edit" had held four unrelated jobs, which no product in
+  the category files together, and ADR-015's grouping could not fix it because group labels are
+  deliberately absent from the bar. FIVE not six, measured: 408px before, 476 at six tabs, **392**
+  at five once "Signing Ceremony" was trimmed to "Ceremony". A "Pages" tab was killed by a collision
+  with File's "Page" group. Two lists fail SILENTLY when a mode changes — `SIDEBAR_FOR` and
+  `[data-modejump]` — and `test/jsdom/modes.test.mjs` now covers all four

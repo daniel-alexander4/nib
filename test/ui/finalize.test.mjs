@@ -33,7 +33,7 @@ test('finalize signs the open document and writes it where you choose', async ()
   assert.match(before, /Unsigned/,
     `setup: the badge already reads "${before}" before anything was signed, so a signature afterwards is not this test's doing`);
 
-  await h.mode('sign');
+  await h.mode('secure'); // Finalize & sign moved to Secure's Certify group
   await page.click('#finalizeBtn');
   await page.waitForFunction(() => !document.getElementById('finalizeModal').hidden);
   await page.click('#fzGo');

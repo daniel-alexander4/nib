@@ -9279,6 +9279,10 @@ const DOC_REQUIRED = [
   'saveFlatBtn', 'saveEditableBtn', 'saveFillableBtn', 'printBtn',
   'exportZipBtn', 'exportPngBtn', 'exportFormJsonBtn', 'exportFormCsvBtn', 'exportFormXfdfBtn', 'exportTableXlsxBtn', 'exportTableCsvBtn', 'exportTableOdsBtn', 'exportBookmarkSplitBtn',
   'exportPageSplitBtn', 'pdfaBtn',
+  // Found by widening doccontrols' scan from the Edit pane to every pane (v1.120.0): all
+  // three act on the open document and none was gated, so they were clickable with nothing
+  // open — the same defect the drawing-row comment below records for Border/Note/Shapes.
+  'reduceBtn', 'exportImagesBtn', 'exportTextBtn',
   // The whole drawing row, not the first three of it (/pending 331). Border, Note,
   // Dropdown, Radio and Shapes sit beside Text/Highlight/Draw in the Edit tab and were
   // never added here, so they stayed clickable on a clean vault with nothing open —
@@ -10180,7 +10184,7 @@ document.querySelectorAll('.tab').forEach((tab) => {
 const SIDEBAR_FOR = {
   file: ['thumbs', 'outline'],
   edit: ['thumbs'],
-  sign: ['library'],
+  markup: ['library', 'thumbs'],
   secure: ['thumbs'],
   // The ceremony panel joins Collaborate (P06.S02). The mode's goal is "convene, invite, connect,
   // review, sign, deliver as a sidebar panel rather than a tab of modals", and this is the panel.
