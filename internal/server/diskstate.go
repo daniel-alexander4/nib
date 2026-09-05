@@ -2,6 +2,7 @@ package server
 
 import (
 	"crypto/sha256"
+	"net/http"
 	"os"
 
 	"nib/internal/sign"
@@ -47,18 +48,32 @@ type diskState struct {
 // the moment the user first saves it — a warning that is armed forever, that no other
 // test would catch, and that would teach the user to ignore the banner.
 func recordDisk(d *document) {
-	if d.path == "" {
-		d.disk = nil
-		return
+	d.disk = stampFor(d.path, d.data)
+}
+
+// stampFor builds the baseline for `path` holding `data`. It is the ONE place that says
+// what a baseline IS (ADR-009); recordDisk assigns it for a caller that already holds the
+// lock, and handleReload calls it BEFORE taking the lock.
+//
+// That split exists for a measured reason rather than a stylistic one: the sha256 here
+// runs at roughly 0.7 GB/s, so a 200 MiB document — the maxPDFBytes ceiling — is ~0.3 s
+// of hashing, and doing it under s.mu would serialize every other route behind it. The
+// same argument docResponse makes about its own stat, and the mistake armWindowFor
+// shipped. handleSave keeps calling recordDisk under the lock because it is re-stamping
+// bytes it has just written and nothing else is contending for that document.
+//
+// nil means "nothing to compare against later": a path-less document, or a file that
+// cannot be stat'd. diskChanged answers false on a nil baseline and says nothing, rather
+// than warning about a file it could not read.
+func stampFor(path string, data []byte) *diskState {
+	if path == "" {
+		return nil
 	}
-	info, err := os.Stat(d.path)
+	info, err := os.Stat(path)
 	if err != nil {
-		// Nothing to compare against later; diskChanged answers false and says nothing
-		// rather than warning about a file it could not read.
-		d.disk = nil
-		return
+		return nil
 	}
-	d.disk = &diskState{info: info, sum: sha256.Sum256(d.data)}
+	return &diskState{info: info, sum: sha256.Sum256(data)}
 }
 
 // newPathDoc builds a document for a file read from disk, with its baseline stamped.
@@ -140,4 +155,77 @@ func diskChanged(path string, rec *diskState) bool {
 		return false
 	}
 	return sha256.Sum256(onDisk) != rec.sum
+}
+
+// handleReload re-reads the file under an open document and installs those bytes into the
+// SAME document (POST /api/reload). It is the remedy half of /pending 333, whose detection
+// half shipped without one: the banner could say the file had moved and the only way to act
+// on it was to close the tab and open the file again.
+//
+// **Same id, and that reverses what the Reload button used to do.** The button went through
+// /api/open — a NEW document in a NEW tab, then a close of the old one — and argued the new
+// id was honest because the bytes differ. The tree says otherwise: six sites replace
+// doc.data under a stable id (handleUndo, handleRedo, handleSave, both commit doors, and
+// installCeremonyResult), so "different bytes under one id" is already what this package
+// means by an edit. Keeping the id is also what lets the client repaint the view it has
+// instead of building a second one, which is the difference between a reload the user asked
+// for and one that fires by itself and moves her furniture. The old route also reported
+// sameFileOpen on every reload — true for the instant both documents were registered, and a
+// false sentence by the time the user read it.
+//
+// **It commits through commitMutation rather than assigning doc.data, and that is the whole
+// design** (ADR-009). That door already enforces ADR-008's byte cap, runs D29's ceremony
+// freeze against the SERVER's bytes, re-tests registration under the write's own lock, and
+// pushes the outgoing bytes onto the undo ring. So a convened document refuses a reload with
+// no new predicate written for it, and a reload is undoable — which is the safety net an
+// action the user did not ask for owes her.
+func (s *Server) handleReload(w http.ResponseWriter, r *http.Request) {
+	doc, ok := s.resolveDoc(w, r)
+	if !ok {
+		return
+	}
+	// Read unlocked, and `path` is the one document field that may be read that way: it is
+	// written once before registerLocked publishes the document and never again. `disk`
+	// next to it must not be (diskOf), and the two sitting together is how that gets done
+	// by accident.
+	path := doc.path
+	if path == "" {
+		httpError(w, http.StatusBadRequest,
+			"that document was not opened from a file, so there is nothing to reload")
+		return
+	}
+	// Up to maxPDFBytes of file I/O, deliberately outside s.mu — a syscall under the global
+	// server mutex serializes every route behind it, and on a network mount a hung read
+	// becomes a hung process.
+	data, ref := readInstallablePDF(path)
+	if ref != nil {
+		httpError(w, ref.status, ref.msg)
+		return
+	}
+	// The baseline is stamped from the bytes this reload just read, and stamped BEFORE the
+	// commit rather than after it. Doing it afterwards would hash doc.data a second time
+	// under the lock for the same answer; doing it before means a file rewritten again in
+	// the window pairs a fresh stat with bytes it does not describe, so diskChanged reports
+	// true and the banner re-arms. That direction is the safe one — it re-asks a question
+	// already answered, where the reverse would go quiet over a file that had moved.
+	stamp := stampFor(path, data)
+	// The state the undo entry records, read ONCE. Unlike the operation routes this one
+	// does not consume the document's bytes at all — the new content comes from the file —
+	// so there is no second read that could disagree with it and record an undo target the
+	// document never held.
+	before := s.docBytes(doc)
+	if err := s.commitMutation(doc, before, data); wroteCommitFailure(w, err) {
+		return
+	}
+	s.mu.Lock()
+	// Only onto a document the registry still holds. commitMutation made that test under
+	// its own hold and released it; a close landing in the gap must not leave a baseline on
+	// a dropped document. **Not optional either way**: without the re-stamp the document
+	// reports diskChanged from the moment it is reloaded, so the banner is armed forever
+	// and the user learns to ignore it — the trap handleSave names at its own re-stamp.
+	if s.isRegisteredLocked(doc) {
+		doc.disk = stamp
+	}
+	s.mu.Unlock()
+	writeJSON(w, s.docResponse(doc))
 }

@@ -130,7 +130,7 @@ type document struct {
 	//
 	// flagsFor is the exact slice `flags` was computed from, and identity is the
 	// staleness test: doc.data is always REPLACED wholesale and never mutated in place
-	// (all five writers assign a fresh slice), so a different backing array means
+	// (all six writers assign a fresh slice), so a different backing array means
 	// different bytes. That is the same invariant docResponse's unlocked read already
 	// rests on — this cache adds no new assumption, and breaking that invariant breaks
 	// both at once.
@@ -361,6 +361,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/close", s.requireUnlocked(s.handleClose))
 	mux.HandleFunc("POST /api/close-view", s.requireUnlocked(s.handleCloseView))
 	mux.HandleFunc("POST /api/save", s.requireUnlocked(s.handleSave))
+	mux.HandleFunc("POST /api/reload", s.requireUnlocked(s.handleReload))
 	mux.HandleFunc("GET /api/listdir", s.requireUnlocked(s.handleListDir))
 	mux.HandleFunc("POST /api/write", s.requireUnlocked(s.handleWriteFile))
 	mux.HandleFunc("POST /api/bake", s.requireUnlocked(s.handleBake))
@@ -551,6 +552,63 @@ type docResponse struct {
 	InCeremony bool `json:"inCeremony,omitempty"`
 }
 
+// refusalKind names WHICH install check refused a path. Doors keep their own wording and
+// share the checks — ADR-009's rule is that a rule holding at more than one call site is
+// written once, and its guard asserts routing through the door rather than comparing the
+// sentences each site prints.
+type refusalKind int
+
+const (
+	refuseUnopenable refusalKind = iota // missing, or a directory
+	refuseTooLarge
+	refuseUnreadable
+	refuseNotPDF
+)
+
+// pathRefusal is readInstallablePDF's typed refusal. `status` and `msg` are the HTTP
+// door's, because that is the caller that answers HTTP directly; openHandedOff switches
+// on `kind` and says it in its own voice.
+type pathRefusal struct {
+	kind   refusalKind
+	status int
+	msg    string
+}
+
+func (r *pathRefusal) Error() string { return r.msg }
+
+// readInstallablePDF is THE door onto "this file may become a document" (ADR-009).
+//
+// Three sites need this sequence — handleOpen, openHandedOff and handleReload — and it
+// was written twice before the third arrived, which is exactly the shape ADR-009 was
+// adopted for: copies drift silently, because each one passes its own tests.
+// openHandedOff's own comment already names what a self-contained version produces —
+// "no LooksLikePDF (so any readable file becomes the open document with canSave true,
+// and Save clobbers it), no size cap".
+//
+// **The size check reads the STAT, never the bytes.** A 4 GiB file must be refused
+// without being read into memory first, so the order here is load-bearing rather than
+// stylistic — reversing it turns the cap from a guard into an OOM.
+func readInstallablePDF(path string) ([]byte, *pathRefusal) {
+	info, err := os.Stat(path)
+	if err != nil || info.IsDir() {
+		return nil, &pathRefusal{refuseUnopenable, http.StatusNotFound, "file not found"}
+	}
+	if info.Size() > maxPDFBytes {
+		return nil, &pathRefusal{refuseTooLarge, http.StatusRequestEntityTooLarge, "PDF exceeds size limit"}
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, &pathRefusal{refuseUnreadable, http.StatusInternalServerError, "could not read file"}
+	}
+	// A path-opened document reports canSave, so a non-PDF installed here would be
+	// overwritten with PDF bytes by the next Save — the one open surface where getting
+	// this wrong destroys the file.
+	if !pdfops.LooksLikePDF(data) {
+		return nil, &pathRefusal{refuseNotPDF, http.StatusUnsupportedMediaType, "that file isn't a PDF"}
+	}
+	return data, nil
+}
+
 // handleOpen loads a PDF from a server-side path. Opening by path is what makes
 // in-place Save possible (the browser file-picker can't reveal a real path).
 func (s *Server) handleOpen(w http.ResponseWriter, r *http.Request) {
@@ -560,25 +618,9 @@ func (s *Server) handleOpen(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	path := filepath.Clean(req.Path)
-	info, err := os.Stat(path)
-	if err != nil || info.IsDir() {
-		httpError(w, http.StatusNotFound, "file not found")
-		return
-	}
-	if info.Size() > maxPDFBytes {
-		httpError(w, http.StatusRequestEntityTooLarge, "PDF exceeds size limit")
-		return
-	}
-	data, err := os.ReadFile(path)
-	if err != nil {
-		httpError(w, http.StatusInternalServerError, "could not read file")
-		return
-	}
-	// A path-opened document reports canSave, so a non-PDF opened here would be
-	// overwritten with PDF bytes by the next Save — the one open surface where
-	// getting this wrong destroys the file.
-	if !pdfops.LooksLikePDF(data) {
-		httpError(w, http.StatusUnsupportedMediaType, "that file isn't a PDF")
+	data, ref := readInstallablePDF(path)
+	if ref != nil {
+		httpError(w, ref.status, ref.msg)
 		return
 	}
 	// Adds rather than replaces (P06.S01): opening a second file leaves the first
@@ -1422,7 +1464,7 @@ func (s *Server) docResponse(doc *document) docResponse {
 	// The bytes are read AFTER the lock is released, deliberately: FlagsJSON parses
 	// the PDF, and holding the server mutex across a parse would serialize every
 	// request behind it. Copying the slice header here is sufficient, because
-	// doc.data is always REPLACED wholesale and never mutated in place (all five
+	// doc.data is always REPLACED wholesale and never mutated in place (all six
 	// writers assign a fresh slice) — so the array this header points at cannot
 	// change under the parse. That invariant is what makes the unlocked read safe;
 	// mutating doc.data in place would silently reintroduce the race.

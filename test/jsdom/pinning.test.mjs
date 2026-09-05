@@ -61,6 +61,14 @@ const MUTATING = [
   // falls back to the ACTIVE document when no X-Nib-Doc is present, so an unpinned convene
   // would commit a ceremony record into whichever tab the user switched to while it ran.
   '/api/ceremony/convene',
+  // /pending 333's remedy half. It commits the file's bytes into the open document
+  // through commitMutation, so it is a mutating route by the rule above.
+  //
+  // **It is also the only entry here that fires without the user doing anything** — the
+  // return-to-foreground check reloads a clean document by itself — so docFor's fallback
+  // to the ACTIVE document is not a theoretical mis-address for this route: an unpinned
+  // call would reload the file underneath whichever tab the user had switched to.
+  '/api/reload',
   // **`/api/ceremony/accept` is deliberately NOT here (P07.S02b).** The membership rule is
   // "commits into or destroys a document", and accept does neither: it parses an invitation and
   // writes a vault pin, carries no X-Nib-Doc, and cannot touch any document's bytes. Listing it

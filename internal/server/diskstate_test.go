@@ -3,8 +3,10 @@ package server
 import (
 	"bytes"
 	"encoding/json"
+	"io"
 	"mime/multipart"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"testing"
 	"time"
@@ -311,5 +313,193 @@ func TestBothInstallDoorsRecordABaseline(t *testing.T) {
 	// The literal both doors used to build, which must not come back at either of them.
 	if bytes.Contains([]byte(all), []byte("&document{path: path")) {
 		t.Error("a document is being built from a path outside newPathDoc — that door records no baseline, so its documents are silently exempt from the whole check")
+	}
+}
+
+// --- the remedy half: reloading the file into the open document ------------------
+
+// reloadDoc asks the server to re-read the file under a document. Pinned, because the
+// route is the one the client fires WITHOUT the user asking and docFor falls back to the
+// active document when no header arrives (ADR-004).
+func reloadDoc(t *testing.T, ts *httptest.Server, c *http.Client, csrf, docID string) *http.Response {
+	t.Helper()
+	req, err := http.NewRequest(http.MethodPost, ts.URL+"/api/reload", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("X-CSRF-Token", csrf)
+	req.Header.Set("X-Nib-Doc", docID)
+	resp, err := c.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return resp
+}
+
+// pdfOf fetches the bytes the server is serving for a document, which is the only
+// statement that matters here: docResponse could report anything it liked while /api/pdf
+// went on serving the copy read at open, and that is precisely the defect being fixed.
+func pdfOf(t *testing.T, ts *httptest.Server, c *http.Client, docID string) []byte {
+	t.Helper()
+	req, err := http.NewRequest(http.MethodGet, ts.URL+"/api/pdf?doc="+docID, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp, err := c.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("GET /api/pdf status = %d, want 200", resp.StatusCode)
+	}
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return body
+}
+
+// TestReloadInstallsTheFileIntoTheSameDocument is the remedy, and the id is half of it.
+//
+// The old Reload went through /api/open, so it produced a NEW document and the client had
+// to build a second view and close the first. Asserting the id is unchanged is what stops
+// that regressing: a reload that returns a new id would still show the right bytes, and
+// would silently take back the in-place repaint the whole feature rests on.
+func TestReloadInstallsTheFileIntoTheSameDocument(t *testing.T) {
+	ts, path := startServer(t)
+	c, csrf := authedClient(t, ts)
+
+	dr := openByPath(t, ts.URL, c, csrf, path)
+	updated := rewriteFile(t, path)
+	if !docByID(t, ts, c, dr.ID).DiskChanged {
+		t.Fatal("the rewrite did not register as a disk change — every assertion below would pass for the wrong reason")
+	}
+
+	resp := reloadDoc(t, ts, c, csrf, dr.ID)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("reload status = %d, want 200", resp.StatusCode)
+	}
+	var after docResponse
+	if err := json.NewDecoder(resp.Body).Decode(&after); err != nil {
+		t.Fatal(err)
+	}
+	if after.ID != dr.ID {
+		t.Errorf("reload returned document id %q, want %q — a reload that renames the document forces the client to build a second view and close the first, which is the behaviour this route replaced", after.ID, dr.ID)
+	}
+	if !bytes.Equal(pdfOf(t, ts, c, dr.ID), updated) {
+		t.Error("after a reload /api/pdf still serves the bytes read at open — the user pressed Reload and is still looking at the stale copy")
+	}
+	if after.DiskChanged {
+		t.Error("the document reports diskChanged immediately after reloading FROM that file — the baseline is not re-stamped across the reload, so the banner is armed forever and the user learns to ignore it")
+	}
+}
+
+// TestReloadIsUndoable is the safety net for an action the user did not ask for.
+//
+// The reload fires by itself on return-to-foreground. If it turns out to have been
+// unwanted — the other program was mid-write, the user preferred what she had — Undo has
+// to be able to put it back, and that is a property of routing the reload through
+// commitMutation rather than assigning doc.data.
+func TestReloadIsUndoable(t *testing.T) {
+	ts, path := startServer(t)
+	c, csrf := authedClient(t, ts)
+
+	dr := openByPath(t, ts.URL, c, csrf, path)
+	original := pdfOf(t, ts, c, dr.ID)
+	rewriteFile(t, path)
+
+	resp := reloadDoc(t, ts, c, csrf, dr.ID)
+	defer resp.Body.Close()
+	var after docResponse
+	if err := json.NewDecoder(resp.Body).Decode(&after); err != nil {
+		t.Fatal(err)
+	}
+	if !after.CanUndo {
+		t.Fatal("a reload leaves canUndo false — the bytes the user was looking at are gone with no way back, and an automatic reload owes her one")
+	}
+
+	undo := writeDoc(t, c, csrf, ts.URL+"/api/undo", dr.ID, nil)
+	defer undo.Body.Close()
+	if undo.StatusCode != http.StatusOK {
+		t.Fatalf("undo status = %d, want 200", undo.StatusCode)
+	}
+	if !bytes.Equal(pdfOf(t, ts, c, dr.ID), original) {
+		t.Error("undoing a reload did not restore the bytes the document held before it — the undo entry recorded something other than the pre-reload state")
+	}
+}
+
+// TestReloadRefusesADocumentWithNoFile — an upload has no path, so there is no file to
+// re-read. The refusal is a 400 rather than a 409 deliberately: the document is still very
+// much open, and 409 is the client's signal to drop the tab.
+func TestReloadRefusesADocumentWithNoFile(t *testing.T) {
+	ts, _ := startServer(t)
+	c, csrf := authedClient(t, ts)
+
+	blank, err := testpdf.Form()
+	if err != nil {
+		t.Fatal(err)
+	}
+	dr := uploadPDF(t, ts.URL, c, csrf, "nopath.pdf", blank)
+	resp := reloadDoc(t, ts, c, csrf, dr.ID)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("reload of a path-less document: status = %d, want 400", resp.StatusCode)
+	}
+	if resp.StatusCode == http.StatusConflict {
+		t.Error("a path-less document answered 409, which the client reads as \"that document is gone\" and acts on by dropping the tab — the document is open and has simply never had a file")
+	}
+}
+
+// TestReloadRefusesWhatIsNoLongerAPDF, and leaves the document it refused intact.
+//
+// The file under an open document can be replaced by anything, including a half-written
+// file caught mid-copy. The status matters less than the second assertion: a door that
+// refuses AFTER replacing doc.data has destroyed the user's document to tell her it could
+// not read the new one.
+func TestReloadRefusesWhatIsNoLongerAPDF(t *testing.T) {
+	ts, path := startServer(t)
+	c, csrf := authedClient(t, ts)
+
+	dr := openByPath(t, ts.URL, c, csrf, path)
+	original := pdfOf(t, ts, c, dr.ID)
+	if err := os.WriteFile(path, []byte("this is not a PDF any more"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	resp := reloadDoc(t, ts, c, csrf, dr.ID)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusUnsupportedMediaType {
+		t.Errorf("reload of a file that is no longer a PDF: status = %d, want 415", resp.StatusCode)
+	}
+	if !bytes.Equal(pdfOf(t, ts, c, dr.ID), original) {
+		t.Error("a refused reload changed the document anyway — the user's open copy was destroyed by a door that then said it could not read the replacement")
+	}
+}
+
+// TestReloadIsRefusedOnAConvenedDocument — D29's freeze, reached without this route
+// writing a predicate of its own.
+//
+// This is the whole argument for committing through commitMutation. Nothing in
+// handleReload mentions ceremonies; the rule is enforced because the reload goes through
+// the door that enforces it, which is what ADR-009 asks for and what a hand-rolled
+// `doc.data = data` would have quietly skipped.
+func TestReloadIsRefusedOnAConvenedDocument(t *testing.T) {
+	ts, _ := startServer(t)
+	c, csrf := authedClient(t, ts)
+
+	pdf, _, _ := convenedDocument(t)
+	path := t.TempDir() + "/convened.pdf"
+	if err := os.WriteFile(path, pdf, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	dr := openByPath(t, ts.URL, c, csrf, path)
+	rewriteFile(t, path)
+
+	resp := reloadDoc(t, ts, c, csrf, dr.ID)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusConflict {
+		t.Errorf("reload of a convened document: status = %d, want 409 — the ceremony freeze must refuse it, and a reload that replaced the bytes would drop the embedded record every other party has signed against", resp.StatusCode)
 	}
 }

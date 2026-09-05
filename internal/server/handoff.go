@@ -5,11 +5,9 @@ import (
 	"io"
 	"log"
 	"net/http"
-	"os"
 	"path/filepath"
 
 	"nib/internal/instance"
-	"nib/internal/pdfops"
 )
 
 // handoffRequest is what a second launch sends: a path, and nothing else (D20's third
@@ -111,19 +109,22 @@ func (s *Server) handleHandoff(w http.ResponseWriter, r *http.Request) {
 // the open document with canSave true, and Save clobbers it), no size cap, no document
 // cap.
 func (s *Server) openHandedOff(path string) error {
-	info, err := os.Stat(path)
-	if err != nil || info.IsDir() {
-		return errHandoff("that file could not be opened")
-	}
-	if info.Size() > maxPDFBytes {
-		return errHandoff("that PDF is too large")
-	}
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return errHandoff("that file could not be read")
-	}
-	if !pdfops.LooksLikePDF(data) {
-		return errHandoff("that file isn't a PDF")
+	data, ref := readInstallablePDF(path)
+	if ref != nil {
+		// Its own wording, kept deliberately. This door is the OS handing Nib a file the
+		// user double-clicked, not a path anyone typed, so "file not found" would read as
+		// a bug report rather than an answer. ADR-009 unifies the CHECKS; it explicitly
+		// does not require every site to print the same sentence.
+		switch ref.kind {
+		case refuseTooLarge:
+			return errHandoff("that PDF is too large")
+		case refuseUnreadable:
+			return errHandoff("that file could not be read")
+		case refuseNotPDF:
+			return errHandoff("that file isn't a PDF")
+		default:
+			return errHandoff("that file could not be opened")
+		}
 	}
 	if _, err := s.addDocCapped(newPathDoc(path, data)); err != nil {
 		return err

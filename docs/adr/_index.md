@@ -91,3 +91,13 @@ home today.
   what bind a party to bytes. The signature-stable digest that would make it checkable is
   REFUSED: it reopens sticky notes and form values in the one window with no signature to fall
   back on, and it is a `ContentDigestVersion` bump with a skew story. `/pending 358` closed
+- [ADR-014: A reload is a mutation of the same document](014-a-reload-is-a-mutation-of-the-same-document.md)
+  — re-reading a changed file replaces `doc.data` under the EXISTING id and commits through
+  `commitMutation`, so it inherits the byte cap, the ceremony freeze, the registration re-test and
+  the undo ring, and is therefore undoable — which an action fired without the user asking owes
+  her. This REVERSES the open-then-close button `/pending 333` shipped: six sites already replace
+  bytes under a stable id, so "a new id is honest" was refuted by the tree, and because
+  `handleOpen` counts duplicates BEFORE installing, every press of that button falsely reported
+  `sameFileOpen`. The automatic half runs only on a document that is clean and not in a ceremony,
+  event-driven on focus, never a poll. The reading position is NOT preserved and the record says
+  so — three restores measured inert, and it is the shared sink's problem (`/pending 372`)

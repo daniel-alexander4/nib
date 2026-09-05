@@ -2701,6 +2701,75 @@ async function recheckDisk() {
   if (target.docMeta !== d) return;
   target.diskChanged = !!meta.diskChanged;
   if (target === view) paintStale();
+  // The remedy, taken without asking — but only where taking it can cost nothing. The
+  // three conditions are the whole safety argument:
+  //
+  //   - `diskChanged`, or there is nothing to do.
+  //   - NOT dirty. A reload replaces the bytes, so on a document with unsaved work it
+  //     would destroy exactly what the banner exists to protect. Those users keep the
+  //     banner and the button, which asks first.
+  //   - NOT in a ceremony. The server refuses this anyway (commitMutation runs D29's
+  //     freeze), so this is the client declining to make a request it knows the answer
+  //     to rather than a second copy of the rule.
+  if (target.diskChanged && !hasUnsavedWork(target) && !target.inCeremony) {
+    if (await reloadFromDisk(target, true) && target === view) {
+      toast('Reloaded ' + (d.name || 'this document') + ' — the file had changed on disk');
+    }
+  }
+}
+
+// reloadFromDisk re-reads the file under `target` and repaints the view in place.
+//
+// **In place, under the SAME document id** — this replaced an earlier version that went
+// through /api/open, which produced a new id in a new tab and closed the old one. That was
+// survivable for a button the user had just pressed and wrong for something that fires by
+// itself: it moved the tab to the end of the strip, reset the page, failed outright at the
+// eight-document cap, and reported `sameFileOpen` on every single reload — because the old
+// view still held the path when the new open counted duplicates, so the user was told her
+// file was "open in another tab as two separate copies" about a tab that was closed a line
+// later.
+//
+// `auto` is the difference between the two callers, and it governs exactly one thing: who
+// is owed a sentence. A reload the user asked for owes her the reason it failed. One she
+// did not ask for owes her silence — the banner is still up, the manual button is still
+// there, and a toast about a refusal she did not provoke is noise she cannot act on. The
+// console line stays either way, because a failure nobody can see is the thing that is
+// impossible to diagnose later.
+async function reloadFromDisk(target, auto = false) {
+  const d = target.docMeta;
+  if (!d || !d.id) return false;
+  // **The reading position is NOT preserved, and that is stated rather than attempted.**
+  // Three versions of a restore were written here and every one was inert — measured, not
+  // reasoned: scrollTop 1363 before the reload and 25 after, identically with the line
+  // present and deleted, whether it ran straight after the load, after `pagesPromise`, or
+  // in a `pagesloaded` hook registered to land after the fit. Nothing in this view survives
+  // pdf.js re-laying the document out. It is also not this route's defect to carry: all
+  // fifteen in-place callers of setDocumentFromServer land at the top the same way, so a
+  // fix belongs to that sink and to all of them at once (/pending 372).
+  let res;
+  try {
+    res = await apiFetch('/api/reload', { method: 'POST', docId: d.id });
+  } catch {
+    console.warn('reload from disk: the server was unreachable');
+    return false;
+  }
+  if (!res.ok) {
+    console.warn('reload from disk refused, status', res.status);
+    if (!auto) toast(await errText(res, 'could not reload from disk'));
+    return false;
+  }
+  // The view may have been switched, closed or reloaded while the request was in flight.
+  // Applying then would paint one document's bytes into another — the pinning rule the
+  // operation paths follow (ADR-001), which a request nobody asked for needs most.
+  if (target.docMeta !== d) return false;
+  await setDocumentFromServer(await res.json(), target);
+  if (!target.pdfDocument) return false; // the load refused; it has already said so
+  // Every arrival through that sink sets `dirty`, which is right for the twenty operations
+  // that reach it and wrong here: the bytes now MATCH the file, so there is nothing unsaved
+  // to lose and a close must not prompt. An undo of this reload goes back through the same
+  // sink and sets it again, which is then correct.
+  target.dirty = false;
+  return true;
 }
 
 async function setDocumentFromServer(meta, target = view) {
@@ -9867,32 +9936,17 @@ els.staleRetry.onclick = () => { if (view.docMeta) setDocumentFromServer(view.do
 // own words were "a hard reload didn't update it", and it could not, because a browser
 // reload re-fetches from the same in-memory copy the server has held since open.
 //
-// It goes through /api/open rather than a new reload route, deliberately. That path
-// already re-reads the file, and already carries the size cap, the LooksLikePDF gate
-// and the document cap — a refresh route would be a second, less-checked way to install
-// a document, which is the mistake openHandedOff's own comment names. The cost is that
-// the document gets a NEW id, which is honest: the bytes are different, so it is a
-// different document, and pinning it as the same one would be the lie.
-//
-// Open BEFORE close, never the other way round. If the open is refused — the document
-// cap is the reachable case — the user keeps the tab she has instead of losing it to a
-// failure, and the toast tells her why.
+// The confirm is the only thing this door adds to reloadFromDisk, and it is the reason the
+// button still exists once the reload became automatic: the automatic path deliberately
+// declines to run on a document with unsaved work, so pressing this is how a user who HAS
+// unsaved work chooses to discard it. The wording names the reload rather than a close,
+// because that is the act she is agreeing to.
 els.staleReload.onclick = async () => {
   const target = view;
   const d = target.docMeta;
   if (!d || !d.path) return;
   if (hasUnsavedWork(target) && !confirm('Reload ' + (d.name || 'this document') + ' from disk? Your unsaved changes to it will be lost.')) return;
-  const before = views.length;
-  await openPath(d.path);
-  // Only close the stale view if a new one actually arrived. openPath toasts its own
-  // refusal, so a failed reload needs nothing further said about it here.
-  if (views.length <= before) return;
-  // closeView asks about unsaved work too, and the question above already asked it — in
-  // wording that names the reload rather than a close. Cleared HERE rather than before
-  // the open, so a REFUSED reload leaves the document still marked unsaved and its next
-  // close still warns.
-  target.dirty = false;
-  closeView(target);
+  if (await reloadFromDisk(target, false)) toast('Reloaded from disk');
 };
 
 // The file changes while Nib is in the background, so the answer is re-asked when the
