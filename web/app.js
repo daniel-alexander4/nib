@@ -10570,6 +10570,28 @@ function isTypingTarget(el) {
   return /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName);
 }
 
+// ── Who owns Ctrl+Z ──────────────────────────────────────────────────────────
+//
+// A text field owns its own undo — but only once it HAS an undo of its own. Placing a note
+// focuses an empty `textarea.note-text`, so `isTypingTarget` handed the keystroke to a field
+// with an empty native stack and the note survived: measured in Chromium, a placed note still
+// there after Ctrl+Z, and the SAME keystroke removing it the moment the note was blurred. The
+// undo button was enabled throughout, so nothing anywhere said the shortcut had been swallowed.
+//
+// "Has an undo of its own" is not the same as "is non-empty", and the difference is the case
+// this must not break: type into a note, select all, delete, Ctrl+Z. The field is empty and its
+// native undo is exactly what the user wants, so the field is marked the first time it receives
+// input and keeps the keystroke from then on.
+document.addEventListener('input', (e) => {
+  if (isTypingTarget(e.target)) e.target.dataset.nibTyped = '1';
+}, true);
+
+function ownsUndo(el) {
+  if (!isTypingTarget(el)) return false;
+  if (el.isContentEditable) return true;   // pdf.js's FreeText editor; its own manager handles it
+  return el.value !== '' || el.dataset.nibTyped === '1';
+}
+
 // keyboard shortcuts. Ctrl/Cmd combos: S save, B sidebar, O open, F find,
 // +/-/0 zoom in/out/fit. Plain keys (PageUp/Down, Home/End) page-navigate — but
 // only when not typing and no modal is up. Every dialog is a `*Modal` div hidden
@@ -10592,7 +10614,13 @@ window.addEventListener('keydown', (e) => {
       // annotation editor is active (its own Ctrl+Z handles FreeText/Ink/
       // Highlight), or with a modal open. Otherwise drain the client overlay-edit
       // stack first, then fall through to the server document-op undo.
-      if (isTypingTarget(e.target) || view.activeTool ||
+      // `ownsUndo` rather than `isTypingTarget`: an empty, never-typed field has no undo of
+      // its own to yield to, and yielding to it lost the placement of the note that focused it.
+      // `view.activeTool` is UNCHANGED and stays a whole yield — pdf.js's editor manager owns
+      // undo for FreeText/Ink/Highlight, and no synthetic pointer sequence here could produce
+      // an ink stroke to test a narrower rule against, so it was left alone rather than
+      // narrowed on an argument.
+      if (ownsUndo(e.target) || view.activeTool ||
           document.querySelector('div[id$="Modal"]:not([hidden])')) return;
       e.preventDefault();
       if (e.key === 'y' || e.shiftKey) redoAny(); else undoAny();

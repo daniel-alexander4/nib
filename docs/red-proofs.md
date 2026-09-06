@@ -4022,3 +4022,31 @@ became headers at ADR-018, and `.tab { border-radius: 0 }` — written for a tab
 longer is — beat it. Two kinds of card in one column, one rounded and one square.
 
 `recorded` 312 → 314.
+
+
+## Ctrl+Z reaches the document again (v1.123.3)
+
+| Defect reintroduced | Check that fired | What it said |
+| --- | --- | --- |
+| `undo-yields-to-an-empty-field` — the guard back to `isTypingTarget` | `lifecycle.test.mjs`, tier 3 | "Ctrl+Z did nothing to a note that was just placed" |
+| `a-typed-field-loses-its-own-undo` — `ownsUndo` yields to no field at all | `lifecycle.test.mjs`, tier 3 | "Ctrl+Z removed a note the user had typed into" |
+
+**The history was never missing, which is what made this hard to see from the outside.** Measured
+before any change: three rotations then three Ctrl+Z, back to the starting aspect exactly; and a
+single rotation undone by the same keystroke. What was broken was OWNERSHIP — placing a note
+focuses its own empty `textarea.note-text`, the handler yielded to any typing target, and a field
+with an empty native stack swallowed the keystroke and did nothing with it. The Undo button stayed
+enabled throughout, so no surface said the shortcut had been taken.
+
+**The two rows are the two directions of one rule**, and the second is why "is the field empty" was
+not enough: type into a note, select all, delete, Ctrl+Z — the field is empty and its native undo
+is exactly what is wanted. So a field is marked the first time it receives input and keeps the
+keystroke from then on, and the second row is what stops that being simplified back.
+
+**`view.activeTool` was deliberately left alone.** pdf.js's editor manager owns undo for
+FreeText/Ink/Highlight and the handler still yields to it whole. A narrower rule was considered —
+yield only for events inside `.annotationEditorLayer` — and NOT written, because no synthetic
+pointer sequence in this harness could produce an ink stroke to test it against, and narrowing a
+guard on an argument is what this ledger exists to stop.
+
+`recorded` 314 → 316.

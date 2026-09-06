@@ -1,0 +1,11 @@
+--- a/web/app.js
++++ b/web/app.js
+@@ -10589,7 +10589,7 @@
+ function ownsUndo(el) {
+   if (!isTypingTarget(el)) return false;
+   if (el.isContentEditable) return true;   // pdf.js's FreeText editor; its own manager handles it
+-  return el.value !== '' || el.dataset.nibTyped === '1';
++  return false;
+ }
+ 
+ // keyboard shortcuts. Ctrl/Cmd combos: S save, B sidebar, O open, F find,

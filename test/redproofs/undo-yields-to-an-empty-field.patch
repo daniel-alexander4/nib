@@ -1,0 +1,11 @@
+--- a/web/app.js
++++ b/web/app.js
+@@ -10620,7 +10620,7 @@
+       // undo for FreeText/Ink/Highlight, and no synthetic pointer sequence here could produce
+       // an ink stroke to test a narrower rule against, so it was left alone rather than
+       // narrowed on an argument.
+-      if (ownsUndo(e.target) || view.activeTool ||
++      if (isTypingTarget(e.target) || view.activeTool ||
+           document.querySelector('div[id$="Modal"]:not([hidden])')) return;
+       e.preventDefault();
+       if (e.key === 'y' || e.shiftKey) redoAny(); else undoAny();
