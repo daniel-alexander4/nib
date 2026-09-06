@@ -35,8 +35,12 @@ const lists = () => [...doc.querySelectorAll('[role="tablist"]')].filter((l) => 
 
 test('every tab-like surface is wired as a tablist', () => {
   const found = lists();
-  assert.ok(found.length >= 3,
-    `only ${found.length} populated tablists found — three static surfaces were expected, so this guard is reading nothing`);
+  // **Two, not three, since v1.122.0.** The sidebar's tab strip became an accordion: its
+  // buttons are disclosure headers carrying aria-expanded, sitting above the panel each one
+  // opens, which is a different widget from a tab strip and must not announce itself as one.
+  // The remaining static surfaces are the mode tabs and the Collaborate role toggle.
+  assert.ok(found.length >= 2,
+    `only ${found.length} populated tablists found — two static surfaces were expected, so this guard is reading nothing`);
 });
 
 test('every tablist reports which tab is selected', () => {

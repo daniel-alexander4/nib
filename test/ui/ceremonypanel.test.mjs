@@ -57,7 +57,7 @@ test('the ceremony panel is reachable from Collaborate and renders the roster', 
   // **The tab is DISPLAYED, not merely present.** `syncSidebarForMode` hides the tabs that do not
   // belong to a mode, so a panel added to the wrong mode would still be in the DOM and would fail
   // exactly here rather than silently never being seen.
-  const tab = page.locator('.tabs .tab[data-panel="ceremony"]');
+  const tab = page.locator('.sbhead[data-panel="ceremony"]');
   assert.equal(await tab.isVisible(), true,
     'the Ceremony tab is not shown in Collaborate — the panel is in the document and out of reach');
 
@@ -84,7 +84,7 @@ test('the ceremony panel is reachable from Collaborate and renders the roster', 
 
 test('the row for this machine is visibly distinguished, not just classed', async () => {
   await page.click('.modetab[data-tab="collaborate"]');
-  await page.click('.tabs .tab[data-panel="ceremony"]');
+  await page.click('.sbhead[data-panel="ceremony"]');
 
   // **The COMPUTED colour, because a class with no rule behind it is the failure this tier is for.**
   // Tier 2 asserts `.cerme` is applied and cannot see whether anything renders it; a stylesheet that
@@ -113,7 +113,7 @@ test('the panel logged no console errors', async () => {
 // green.
 test('the convene form opens from the panel and offers a pinned peer to choose', async () => {
   await page.click('.modetab[data-tab="collaborate"]');
-  await page.click('.tabs .tab[data-panel="ceremony"]');
+  await page.click('.sbhead[data-panel="ceremony"]');
 
   // SETUP: the form starts hidden, or "it is visible after the click" is true of a form that is
   // always visible and the click proves nothing.

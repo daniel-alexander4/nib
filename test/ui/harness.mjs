@@ -93,11 +93,22 @@ export async function launch({ routes = null, waitFor = '#empty', base = BASE } 
     // own commands are a sidebar panel and switching mode lands on it — so a test that wants
     // the thumbnails, or a control the mode does not land on, has to say so.
     async panel(name) {
-      await page.click(`.tabs .tab[data-panel="${name}"]`);
+      await page.click(`.sbhead[data-panel="${name}"]`);
       await page.waitForFunction((n) => {
         const el = document.getElementById(n);
         return el && el.classList.contains('active');
       }, name);
+    },
+
+    // group(label) opens one command card in the sidebar. Since v1.122.0 the sidebar is an
+    // accordion — one card expanded at a time — so a control in a group other than the mode's
+    // first is behind a header until someone clicks it, exactly as it is for a user.
+    async group(label) {
+      await page.click(`.sbhead.groupcard:text-is("${label}")`);
+      await page.waitForFunction((l) => {
+        const h = [...document.querySelectorAll('.sbhead.groupcard')].find((x) => x.textContent.trim() === l);
+        return h && h.getAttribute('aria-expanded') === 'true';
+      }, label);
     },
 
     async mode(tab) {
