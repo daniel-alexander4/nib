@@ -66,7 +66,14 @@
           <div class="sep"></div>
           <label class="menuitem"><input id="autoUpdateChk" type="checkbox" /> Check for updates on startup</label>
           <div class="sep"></div>
-          <div class="menucap foldedonly">Appearance</div>
+          <div class="menucap">Appearance</div>
+          <!-- Four Catppuccin flavours. `light` is Latte and `dark` is Mocha: those two values
+               are already saved in people's vaults, so they keep their names rather than being
+               renamed and silently resetting everyone's theme. -->
+          <label class="menuitem"><input type="radio" name="themechoice" value="light" /> Latte (light)</label>
+          <label class="menuitem"><input type="radio" name="themechoice" value="frappe" /> Frappé</label>
+          <label class="menuitem"><input type="radio" name="themechoice" value="macchiato" /> Macchiato</label>
+          <label class="menuitem"><input type="radio" name="themechoice" value="dark" /> Mocha (dark)</label>
           <button class="foldedonly" data-forward="themeToggle">Switch theme</button>
           <button id="aboutBtn">About Nib…</button>
         </div>

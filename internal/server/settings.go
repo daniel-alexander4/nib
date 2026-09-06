@@ -54,7 +54,9 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 	cur := v.Settings()
 	if req.Appearance != nil {
 		switch *req.Appearance {
-		case "dark", "light":
+		// Four Catppuccin flavours. "dark" is Mocha and "light" is Latte — the two original
+		// values, kept so a vault written before v1.123.0 still validates.
+		case "dark", "light", "frappe", "macchiato":
 			cur.Appearance = *req.Appearance
 		default:
 			httpError(w, http.StatusBadRequest, "invalid appearance")

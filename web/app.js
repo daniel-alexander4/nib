@@ -8600,15 +8600,32 @@ els.autoUpdateChk.onchange = () => saveSettings({ checkUpdatesOnStartup: els.aut
 // Appearance: dark (default) or light. Drives a data attribute on <html> (not
 // body, where the layout attr lives) so the palette override reaches html's own
 // background; the saved value is applied in applyStatus and persisted on toggle.
+// The four flavours, in the order the picker offers them: lightest to darkest. `light` is Latte
+// and `dark` is Mocha — those two values are already in people's vaults, so they keep their names.
+const THEME_CHOICES = [
+  { value: 'light', label: 'Latte (light)' },
+  { value: 'frappe', label: 'Frappé' },
+  { value: 'macchiato', label: 'Macchiato' },
+  { value: 'dark', label: 'Mocha (dark)' },
+];
+let lastDarkAppearance = 'dark'; // so the toggle returns you to the dark flavour you chose
+
 function applyAppearance(mode) {
   document.documentElement.dataset.appearance = mode;
+  if (mode !== 'light') lastDarkAppearance = mode;
   els.themeToggle.title = mode === 'light' ? 'Switch to dark theme' : 'Switch to light theme';
+  for (const r of all('input[name="themechoice"]')) r.checked = r.value === mode;
 }
 els.themeToggle.onclick = () => {
-  const next = document.documentElement.dataset.appearance === 'light' ? 'dark' : 'light';
+  // Three of the four values are dark, so the toggle is "light or not light" — and it returns
+  // to the dark flavour you actually picked rather than always to Mocha.
+  const next = document.documentElement.dataset.appearance === 'light' ? lastDarkAppearance : 'light';
   applyAppearance(next);
   saveSettings({ appearance: next });
 };
+all('input[name="themechoice"]').forEach((r) => {
+  r.onchange = () => { applyAppearance(r.value); saveSettings({ appearance: r.value }); };
+});
 
 async function refreshRecent() {
   const res = await apiFetch('/api/recent');
@@ -10395,11 +10412,30 @@ setSidebarCollapsed(sidebarNarrow.matches);
 // The existing `.tab` buttons BECOME the headers rather than being replaced, so their click
 // wiring, their roving-tabindex and `SIDEBAR_FOR` all keep working; they move next to the panel
 // they open and gain `.sbhead`.
+// The six accents every Catppuccin flavour defines, walked in ORDER so no two cards in a column
+// are ever the same hue and neighbours are never close ones.
+//
+// A hash of the label was tried first — it survives a group being added, which an index does not —
+// and it was rejected on looking at it: Compose and Page setup came out adjacent pinks. With at
+// most six groups in a pane the rotation gives every card its own hue, and that is the property
+// worth having.
+//
+// The list lives INSIDE the function deliberately: buildSidebarAccordion runs early — before the
+// aria stamper, so the ⋯ More trigger it builds is covered by the existing rule — and a
+// module-scope `const` declared further down the file is in its temporal dead zone at that point.
+// A hoisted function is not.
+function accentAt(i) {
+  const accents = ['blue', 'mauve', 'green', 'peach', 'red', 'yellow'];
+  return accents[i % accents.length];
+}
+
 function buildSidebarAccordion() {
+  let panelIndex = 0;
   for (const t of all('#sidebar .tabs .tab')) {
     const panel = $(t.dataset.panel);
     if (!panel) continue;
     t.classList.add('sbhead');
+    t.dataset.accent = accentAt(panelIndex++);
     t.removeAttribute('role');
     t.removeAttribute('aria-selected');
     panel.parentElement.insertBefore(t, panel);
@@ -10407,11 +10443,16 @@ function buildSidebarAccordion() {
   document.querySelector('#sidebar .tabs')?.remove();
   // Each command group gets its own header, made from the label it already carries. The group
   // stays inside its `.tbtab` pane, so mode gating still reaches it (ADR-017).
+  const seen = new Map();
   for (const g of all('#commands .tbgroup')) {
+    const pane = g.closest('.tbtab');
+    const n = seen.get(pane) || 0;
+    seen.set(pane, n + 1);
     const head = document.createElement('button');
     head.className = 'sbhead groupcard';
     head.type = 'button';
     head.textContent = g.dataset.label || '';
+    head.dataset.accent = accentAt(n);
     head.setAttribute('aria-expanded', 'false');
     g.parentElement.insertBefore(head, g);
     head.onclick = () => openCard(g, head);
@@ -10422,6 +10463,13 @@ function buildSidebarAccordion() {
 // openCard expands one card and collapses every other, of either kind. Panels keep using
 // `.active` because the tab wiring and `h.panel()` already speak it; groups use `.open`.
 function openCard(target, head) {
+  // A click on the OPEN card closes it. Without this branch the header responded to every
+  // click and only ever opened, so an expanded card could not be put away.
+  if (target && target.classList.contains('open')) {
+    target.classList.remove('open');
+    if (target._head) target._head.setAttribute('aria-expanded', 'false');
+    return;
+  }
   for (const g of all('#commands .tbgroup')) {
     const on = g === target;
     g.classList.toggle('open', on);

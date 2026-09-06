@@ -16,6 +16,7 @@
   --yellow: #f9e2af;
   --peach: #fab387;
   --mauve: #cba6f7;
+  --card-tint: 28%;
 }
 
 /* Light theme — Catppuccin Latte, the official light counterpart. The toggle
@@ -76,6 +77,28 @@
   --yellow: #df8e1d;
   --peach: #fe640b;
   --mauve: #8839ef;
+  --card-tint: 22%;
+}
+
+/* Catppuccin Frappé and Macchiato — the two flavours between Latte and Mocha, added so the
+   theme choice is a choice rather than a switch. `dark` stays Mocha and `light` stays Latte:
+   those two values are already persisted in people's vaults and renaming them would silently
+   reset everyone's theme. */
+:root[data-appearance="frappe"] {
+  --base: #303446; --mantle: #292c3c; --crust: #232634;
+  --surface0: #414559; --surface1: #51576d; --surface2: #626880; --overlay0: #737994;
+  --text: #c6d0f5; --subtext0: #a5adce; --subtext1: #b5bfe2;
+  --blue: #8caaee; --green: #a6d189; --red: #e78284;
+  --yellow: #e5c890; --peach: #ef9f76; --mauve: #ca9ee6;
+  --card-tint: 22%;
+}
+:root[data-appearance="macchiato"] {
+  --base: #24273a; --mantle: #1e2030; --crust: #181926;
+  --surface0: #363a4f; --surface1: #494d64; --surface2: #5b6078; --overlay0: #6e738d;
+  --text: #cad3f5; --subtext0: #a5adcb; --subtext1: #b8c0e0;
+  --blue: #8aadf4; --green: #a6da95; --red: #ed8796;
+  --yellow: #eed49f; --peach: #f5a97f; --mauve: #c6a0f7;
+  --card-tint: 26%;
 }
 
 * { box-sizing: border-box; }
@@ -1517,3 +1540,24 @@ input.ovl-check { appearance: auto; accent-color: #1a7f37; background: transpare
 /* A header is its own height. As flex children of the column they stretched to fill the free
    space — measured 203px each, which is what put a dead gap above every content card. */
 #sidebar > .sbhead { flex: 0 0 auto; }
+
+/* ── Card colour ──────────────────────────────────────────────────────────────
+   Each card takes one of the six accents, keyed by its LABEL so adding a group
+   cannot shuffle everyone's colour.
+
+   The accent is a 20% tint over `--base`, not the text and not a rail, and the
+   number is measured. Accent-coloured TEXT passes in dark (5.43-9.89:1) and fails
+   all six accents in light (1.70-3.52) — Latte's accents are accents on light, not
+   text, and `--text` is already its darkest token. A rail needs 3:1 and only three
+   of six clear it on light `--surface0`. A tint over `--surface0` fails too (light
+   red 3.92 at 18%). Over `--base` at 20% the worst pair is dark 6.49, light 5.04;
+   at 26% light red is 4.52, which passes by 0.02 and is not a margin. */
+.sbhead[data-accent="blue"]   { background: color-mix(in srgb, var(--blue) var(--card-tint), var(--base)); }
+.sbhead[data-accent="green"]  { background: color-mix(in srgb, var(--green) var(--card-tint), var(--base)); }
+.sbhead[data-accent="red"]    { background: color-mix(in srgb, var(--red) var(--card-tint), var(--base)); }
+.sbhead[data-accent="yellow"] { background: color-mix(in srgb, var(--yellow) var(--card-tint), var(--base)); }
+.sbhead[data-accent="peach"]  { background: color-mix(in srgb, var(--peach) var(--card-tint), var(--base)); }
+.sbhead[data-accent="mauve"]  { background: color-mix(in srgb, var(--mauve) var(--card-tint), var(--base)); }
+.sbhead[data-accent] { color: var(--text); }
+.sbhead[data-accent]:hover { filter: brightness(1.12); }
+.sbhead[data-accent][aria-expanded="true"], .sbhead[data-accent].active { box-shadow: inset 3px 0 0 var(--text); }

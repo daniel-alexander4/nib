@@ -139,3 +139,12 @@ home today.
   the group became **Compose**. The sidebar stops being a tablist (aria-expanded, not role=tab), and
   three layout defects were each found by measuring the DOM: headers travelling into the toolbar
   (33.5% at 800px), the pass-through claiming the column, and every header stretching to 203px
+- [ADR-019: A theme lives in four places](019-a-theme-lives-in-four-places.md) — four Catppuccin
+  flavours picked from ⚙, with `light`/`dark` keeping their names so saved vaults survive. A theme
+  exists in the stylesheet, the Go whitelist, the picker and `THEMES`, and each disagreement fails
+  silently: an unguarded palette, a choice gone after a restart, a flavour nobody can pick, a
+  palette no test reads — so the four lists are now compared. Card colour is an accent at
+  `--card-tint` over `--base`, **per theme**: accent TEXT fails all six accents in Latte
+  (1.70–3.52), a rail clears 3:1 for only three, and a tint over `--surface0` leaves light red at
+  3.92. Levels computed to hold the worst pair ≥4.8 — Mocha 28, Macchiato 26, Frappé 22, Latte 22.
+  Frappé is the constraint and a single 30% put its green at 4.16, caught by the guard

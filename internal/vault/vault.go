@@ -150,7 +150,7 @@ type PinnedPeer struct {
 // switch was validated here and in the settings route and was never built in the
 // client, so no vault holds a value a user chose.
 type Settings struct {
-	Appearance            string   `json:"appearance,omitempty"`            // "dark" (default) | "light"
+	Appearance            string   `json:"appearance,omitempty"`            // "dark" (Mocha, default) | "light" (Latte) | "frappe" | "macchiato"
 	DisableAutoUpdate     bool     `json:"disableAutoUpdate,omitempty"`     // skip the startup update check
 	RecentHighlightColors []string `json:"recentHighlightColors,omitempty"` // last-used highlight colors, newest first (#rrggbb)
 }
