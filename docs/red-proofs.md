@@ -3965,3 +3965,34 @@ being the one the convener is waiting on: a progress surface reporting exclusive
 reason `rearm_test.go` guards this same class structurally.
 
 `recorded` 304 → 308.
+
+
+## ADR-020 — a card header toggles, and its label names the action (v1.123.1)
+
+| Defect reintroduced | Check that fired | What it said |
+| --- | --- | --- |
+| `panel-card-only-ever-opens` — the panel cards lose their close branch | `tablist.test.mjs`, tier 2 | "these card headers stayed open when their own header was clicked a second time: Arrange Pages, Jump to Section, …" |
+| `group-card-only-ever-opens` — `openCard` loses its close branch | `tablist.test.mjs`, tier 2 | the same sentence, naming all thirteen command groups |
+| `showpanel-toggles-instead-of-showing` — `showPanel` becomes a bare `.click()` | `tablist.test.mjs`, tier 2 | "entering a mode that is already showing its landing panel CLOSED it" |
+| `mode-entry-bypasses-the-show-door` — `syncSidebarForMode` clicks the header itself | `tablist.test.mjs`, tier 2 | the same sentence, reached through the second site |
+
+**The first two rows are one guard read twice, deliberately.** The defect was that ONE of the
+sidebar's two kinds of card toggled: group cards had the close branch, panel cards did not, and half
+the pills answered a second click by doing nothing. A guard that walked only the working kind would
+have been green through the whole of it — so the pair is what says it walks both, and the count
+assertion in the test names the two kinds separately for the same reason.
+
+**The third row was a SURVIVOR before it was a row.** With the toggle guard written and green,
+deleting `showPanel`'s is-it-already-open guard left all 188 tier-2 tests passing. That is a proven
+hole rather than a hypothetical one: the door's own property — *show*, never *toggle* — had no
+coverage, and with the header now a real toggle a bare click closes the panel a mode is landing on.
+The re-entry test was written against the survivor, and the fourth row then asks the ADR-009
+question the third does not: whether a **second site** can reintroduce it by going around the door.
+
+**What tier 2 cannot see here, and it is the whole visual claim.** jsdom has no layout, so these
+rows read `.active` and `aria-expanded`. A card whose state flips while CSS keeps its body on screen
+would be green in every one of them. The rendering was measured in Chromium instead — every pill in
+all five modes, opened and closed, plus `scrollWidth` against `clientWidth` for the longer labels —
+and that measurement is recorded in ADR-020, not here.
+
+`recorded` 308 → 312.

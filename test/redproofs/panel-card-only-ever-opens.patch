@@ -1,0 +1,14 @@
+--- a/web/app.js
++++ b/web/app.js
+@@ -10222,11 +10222,6 @@
+     // Form data and Multiple documents toggled on a second click, Pages and Outline re-opened
+     // and could not be put away, so half the sidebar's pills answered a second click by doing
+     // nothing. Code that wants a panel SHOWN rather than toggled goes through showPanel().
+-    if (tab.classList.contains('active')) {
+-      tab.classList.remove('active');
+-      $(tab.dataset.panel)?.classList.remove('active');
+-      return;
+-    }
+     document.querySelectorAll('.tab').forEach((t) => t.classList.remove('active'));
+     document.querySelectorAll('.panel').forEach((p) => p.classList.remove('active'));
+     tab.classList.add('active');

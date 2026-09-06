@@ -24,7 +24,9 @@
 // One boot per file — see boot.mjs.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { boot } from './boot.mjs';
+import fs from 'node:fs';
+import path from 'node:path';
+import { boot, REPO } from './boot.mjs';
 
 const h = await boot({});
 const { document: doc } = h;
@@ -102,4 +104,74 @@ test('arrows do not ACTIVATE, only move focus', () => {
   const after = tabs.findIndex((t) => t.getAttribute('aria-selected') === 'true');
   assert.equal(after, before,
     'moving focus with an arrow key also changed the selection — on the document strip that rebuilds the strip under the user mid-keystroke');
+});
+
+// ── The other widget: the sidebar's disclosure headers ───────────────────────
+// The sidebar stopped being a tablist in v1.122.0 and became an accordion, so its buttons are
+// the widget this file's four tests deliberately do NOT cover — and the half of the contract a
+// disclosure carries that a tab does not is that it CLOSES again.
+//
+// It reached one of the two kinds. Group cards got the close branch in `openCard`; panel cards
+// kept the tab wiring, which only ever ADDED `.active`, so *Pages* and *Outline* re-opened on
+// every click and could not be put away (measured in Chromium at v1.123.0, 2 of File mode's 4
+// pills). ADR-020.
+//
+// Discovered through the door, like the tablists above: every `.sbhead` found must toggle, so a
+// third kind of card added without one fails here rather than being absent from a list.
+//
+// **What this tier cannot reach:** whether the body actually stops RENDERING. jsdom has no
+// layout, so this reads `.active` / `aria-expanded`, and a card whose state flips while its CSS
+// keeps it on screen would be green here. `test/ui/responsive.test.mjs` drives the real browser.
+//
+// **`#commands` is exempt, and the exemption is checked rather than asserted.** It is a
+// pass-through, not a card: it has no body of its own — its GROUPS are the cards — and its
+// header is `display: none` in the stylesheet, so nothing can click it and its `.active` is
+// meaningless. `openCard` leaves it active on purpose while clearing every other panel head,
+// which is the state split this guard would otherwise report as a stuck card. The stylesheet
+// rule is read below, so making it a real card again fails here instead of silently dropping
+// it from the set.
+const CSS = fs.readFileSync(path.join(REPO, 'web', 'style.css'), 'utf8');
+const cards = () => [...doc.querySelectorAll('#sidebar .sbhead')].filter((c) => c.dataset.panel !== 'commands');
+const isOpen = (c) => (c.dataset.panel
+  ? !!doc.getElementById(c.dataset.panel)?.classList.contains('active')
+  : c.getAttribute('aria-expanded') === 'true');
+
+test('every sidebar card header toggles — a click on the open card closes it', () => {
+  assert.match(CSS, /\.sbhead\[data-panel="commands"\]\s*\{[^}]*display:\s*none/,
+    'the #commands header is no longer hidden by the stylesheet, so it is a real card now and this guard is skipping it — drop the exemption above');
+
+  const all = cards();
+  const panels = all.filter((c) => c.dataset.panel);
+  const groups = all.filter((c) => c.classList.contains('groupcard'));
+  // BOTH kinds, counted separately: the defect was one kind toggling and the other not, so a
+  // guard that happened to read only the working kind would have been green through all of it.
+  assert.ok(panels.length >= 2 && groups.length >= 2,
+    `found ${panels.length} panel cards and ${groups.length} group cards — the sidebar has both kinds and this guard must read both`);
+
+  const wontOpen = [];
+  const wontClose = [];
+  for (const c of all) {
+    const name = c.textContent.trim() || c.dataset.panel;
+    if (!isOpen(c)) c.click();
+    if (!isOpen(c)) { wontOpen.push(name); continue; }
+    c.click();
+    if (isOpen(c)) wontClose.push(name);
+  }
+  assert.deepEqual(wontOpen, [],
+    `these card headers did not open on a click: ${wontOpen.join(', ')} — reported separately from the close, because a card that never opens would make the close assertion vacuously true`);
+  assert.deepEqual(wontClose, [],
+    `these card headers stayed open when their own header was clicked a second time: ${wontClose.join(', ')}. A disclosure that only opens leaves the user no way to put it away, which is what half the sidebar did before ADR-020`);
+});
+
+// The door's own property, and it was a proven hole: with the toggle in place, deleting
+// showPanel's is-it-already-open guard left all 188 tests green. Re-entering a mode then CLOSES
+// the surface it is supposed to land on, because "show me this panel" had become "toggle it".
+test('re-entering a mode lands on its panel rather than closing it', () => {
+  const enter = () => doc.querySelector('.modetab[data-tab="collaborate"]').click();
+  enter();
+  assert.equal(doc.getElementById('flags').classList.contains('active'), true,
+    'setup: Collaborate did not land on Flags, so the second entry below proves nothing');
+  enter();
+  assert.equal(doc.getElementById('flags').classList.contains('active'), true,
+    'entering a mode that is already showing its landing panel CLOSED it. syncSidebarForMode means "show", not "toggle" — that is what showPanel() is for, and a bare .click() on the header now does the opposite');
 });

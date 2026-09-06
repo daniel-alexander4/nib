@@ -186,9 +186,9 @@ and a **checkmark**. Drop one on, drag to place, resize to fit.
 
 ### Signing flags — sign, date, initial, name, title, company
 Filling a form with the same fields on every page? Run **Detect** to find the
-blanks, then in the **Flags** tab pick **Sign**, **Date**, **Initial**, **Name**,
-**Title**, or **Company** and click a blank to flag it — the flag snaps to that
-line (or click anywhere to place one freehand).
+blanks, then in the sidebar's **Place Signing Flags** card pick **Sign**,
+**Date**, **Initial**, **Name**, **Title**, or **Company** and click a blank to
+flag it — the flag snaps to that line (or click anywhere to place one freehand).
 Then click each flag to fill it and Nib **jumps to the next** one: a date flag
 stamps today's date; a sign/initial flag drops your signature or initials, picked
 from the Library once and reused; and a name/title/company flag fills from your
@@ -646,9 +646,10 @@ highlights, ink) those keep pdf.js's own Ctrl+Z; typing in a field uses your
 browser's normal undo.
 
 Rotate, delete, **append**, and reorder pages — **drag a page's thumbnail** in the
-sidebar to move it where you want. Rotate every page at once with **Rotate all ↺ / ↻**
-on the **Edit** tab, or hover a thumbnail to rotate (either direction) or delete a
-single page. **Shift- or Ctrl/Cmd-click thumbnails** to select several at once, then
+sidebar's **Arrange Pages** card to move it where you want. Rotate every page at
+once with **Rotate all ↺ / ↻** in **Rotate All Pages** on the **Document** tab, or
+hover a thumbnail to rotate (either direction) or delete a single page.
+**Shift- or Ctrl/Cmd-click thumbnails** to select several at once, then
 rotate, delete, or **move the whole selection to the front or back** (⤒ / ⤓) from the
 bar above the thumbnails — or **drag a selected thumbnail** to slide the whole group to
 any spot, keeping its order. **Extract pages…** saves a range (type `1-3, 5`) as a new PDF without
@@ -688,7 +689,7 @@ page. The new pages all come out the **same size** (the largest region's, smalle
 ones centred and padded), so the output is uniform. It's a re-crop, not a
 re-render, so every piece keeps its original quality.
 
-**Edit the outline** — the **Outline** panel (sidebar, File tab) lists a PDF's
+**Edit the outline** — the **Jump to Section** card (sidebar, File tab) lists a PDF's
 bookmarks; **Edit outline…** opens an editor to author them: add a bookmark for any
 page, rename, delete, and indent to nest (chapters → sections). Bookmarks stay in
 page order and jump to the top of their page; saving replaces the document's outline.

@@ -148,3 +148,12 @@ home today.
   (1.70–3.52), a rail clears 3:1 for only three, and a tint over `--surface0` leaves light red at
   3.92. Levels computed to hold the worst pair ≥4.8 — Mocha 28, Macchiato 26, Frappé 22, Latte 22.
   Frappé is the constraint and a single 30% put its green at 4.16, caught by the guard
+- [ADR-020: A card header toggles, and its label names the action](020-a-card-toggles-and-its-label-names-the-action.md)
+  — a click on the open card closes it, for **both** kinds: ADR-018 gave the sidebar group cards and
+  panel cards and only the group half ever grew the close branch, so 2 of 4 pills in File mode could
+  not be put away. Amends ADR-018 to **at most** one card expanded. Showing a panel is a different
+  act from toggling one and gets one door, `showPanel()` — with the header a real toggle, a bare
+  `.click()` closes what it meant to open, which is true of the tier-3 harness too. Labels become
+  verb-led (*Pages* → **Arrange Pages**, *Certify* → **Sign & Timestamp**): a collapsed card's label
+  is all a user has to go on, and the nouns were inherited from a toolbar where the buttons supplied
+  the verb. Retires ADR-018's *Pages*/*Pages* collision — neither is one word now

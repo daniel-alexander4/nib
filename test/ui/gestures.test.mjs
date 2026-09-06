@@ -87,7 +87,7 @@ test('a drag in flight when the user switches documents neither moves the flag n
   // reaches the tool. Then the Sign flag tool, then a click on the page: the tool arms
   // `markerMode` and the next page click drops a flag there.
   await h.mode('collaborate');
-  await page.click('.tab[data-panel="flags"]');
+  await h.panel('flags');
   await page.click('.markers button[data-marker="sign"]');
   const pageBox = await page.$eval('.viewerContainer:not([hidden]) .page',
     (el) => { const r = el.getBoundingClientRect(); return { x: r.x, y: r.y, w: r.width, h: r.height }; });

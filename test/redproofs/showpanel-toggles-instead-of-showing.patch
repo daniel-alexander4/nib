@@ -1,0 +1,11 @@
+--- a/web/app.js
++++ b/web/app.js
+@@ -10243,7 +10243,7 @@
+ // is-it-active guard written out at each site.
+ function showPanel(name) {
+   const head = document.querySelector(`.tab[data-panel="${name}"]`);
+-  if (head && !head.classList.contains('active')) head.click();
++  if (head) head.click();
+ }
+ 
+ // --- mode tabs (View / Edit / Sign / Secure / Collaborate) -------------------

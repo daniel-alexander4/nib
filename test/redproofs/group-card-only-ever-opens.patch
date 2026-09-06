@@ -1,0 +1,14 @@
+--- a/web/app.js
++++ b/web/app.js
+@@ -10482,11 +10482,6 @@
+ function openCard(target, head) {
+   // A click on the OPEN card closes it. Without this branch the header responded to every
+   // click and only ever opened, so an expanded card could not be put away.
+-  if (target && target.classList.contains('open')) {
+-    target.classList.remove('open');
+-    if (target._head) target._head.setAttribute('aria-expanded', 'false');
+-    return;
+-  }
+   for (const g of all('#commands .tbgroup')) {
+     const on = g === target;
+     g.classList.toggle('open', on);
