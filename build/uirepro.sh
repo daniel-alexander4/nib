@@ -228,7 +228,7 @@ files="$(find test/ui -maxdepth 1 -name '*.test.mjs' | wc -l | tr -d ' ')"
 # Two harnesses, one shape, one day. Tier 2's own comment has now recorded it four times; this is
 # the fifth instance and the first in this file, which is what made it invisible here: a lesson
 # written down in the sibling harness is not a lesson this one carries.
-expect_files=21
+expect_files=22
 if [ "$files" -ne "$expect_files" ]; then
   echo "FAIL: expected $expect_files browser UI test files, found $files — a test file was added or dropped." >&2
   echo "      If deliberate, update expect_files in this script." >&2

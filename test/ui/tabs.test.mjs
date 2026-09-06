@@ -425,7 +425,7 @@ test('an armed annotation tool belongs to its document, not to the toolbar', asy
   const onA = await page.$eval('.pageCount', (el) => el.textContent);
 
   await h.mode('markup'); // the annotation tools moved to Mark Up with the re-cut
-  await h.group('Annotate');
+  await h.group('Annotate & Draw');
   await page.click('#highlightToolBtn');
   await page.waitForFunction(() => document.getElementById('highlightToolBtn').classList.contains('active'));
   // The colour swatches are the tool's own chrome and are revealed by arming it, so they

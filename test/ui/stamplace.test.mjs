@@ -106,7 +106,7 @@ test('a stamp bakes where it was placed, not mirrored up the page', async () => 
     `setup: the fixture already carries ${before.n} red pixels before anything was stamped — the ink this test measures is not its own`);
 
   await h.mode('markup');
-  await page.click('.sbhead[data-panel="library"]');
+  await h.panel('library');
   await page.click('.quickstamps button[data-stamp="approved"]');
   await page.waitForSelector('.viewerContainer:not([hidden]) .ovl-stamp');
 

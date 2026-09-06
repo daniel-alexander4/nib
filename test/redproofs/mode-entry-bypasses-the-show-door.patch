@@ -1,0 +1,11 @@
+--- a/web/app.js
++++ b/web/app.js
+@@ -10287,7 +10287,7 @@
+   // is no longer valid — left `thumbs` showing across a mode change, because thumbs is valid
+   // for most modes: you picked Secure and got thumbnails, with its commands one unmarked click
+   // away. Seventeen tier-3 tests reached a control that was behind that click.
+-  if (panels.length) showPanel(panels[0]);
++  if (panels.length) document.querySelector(`.tab[data-panel="${panels[0]}"]`)?.click();
+   // Then open this mode's first command group, so the mode's own commands are what you see.
+   // `commands` first in SIDEBAR_FOR made the panel active above; the card inside it still has
+   // to be expanded, and picking the first is the same rule the panel list follows.

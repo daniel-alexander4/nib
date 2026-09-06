@@ -7969,7 +7969,7 @@ async function fillMarker(f) {
   // Library click resolves this target (resolveFillTarget) and is remembered.
   view.fillTarget = f;
   setActiveMarker(f);
-  document.querySelector('.tab[data-panel="library"]')?.click();
+  showPanel('library');
   toast('Pick your ' + (f.tagType === 'sign' ? 'signature' : 'initials') + ' in the Library — it fills this marker and any others.');
 }
 
@@ -10217,6 +10217,16 @@ function renderFindCount(matchesCount) {
 // sidebar tabs
 document.querySelectorAll('.tab').forEach((tab) => {
   tab.onclick = () => {
+    // A click on the OPEN card closes it — the branch openCard() has carried for GROUP cards
+    // since v1.122.0, and the panel cards never had. Measured in a real browser before the fix:
+    // Form data and Multiple documents toggled on a second click, Pages and Outline re-opened
+    // and could not be put away, so half the sidebar's pills answered a second click by doing
+    // nothing. Code that wants a panel SHOWN rather than toggled goes through showPanel().
+    if (tab.classList.contains('active')) {
+      tab.classList.remove('active');
+      $(tab.dataset.panel)?.classList.remove('active');
+      return;
+    }
     document.querySelectorAll('.tab').forEach((t) => t.classList.remove('active'));
     document.querySelectorAll('.panel').forEach((p) => p.classList.remove('active'));
     tab.classList.add('active');
@@ -10225,6 +10235,16 @@ document.querySelectorAll('.tab').forEach((tab) => {
     if (tab.dataset.panel === 'library') loadImages();
   };
 });
+
+// showPanel(name) SHOWS a sidebar panel; clicking its header TOGGLES one. Two callers want the
+// first — the marker fill path sending the user to the Library, and syncSidebarForMode landing a
+// mode on its own surface — and a bare .click() now closes the card when it is already open,
+// which is the exact opposite of what both mean. One door, per ADR-009, rather than the
+// is-it-active guard written out at each site.
+function showPanel(name) {
+  const head = document.querySelector(`.tab[data-panel="${name}"]`);
+  if (head && !head.classList.contains('active')) head.click();
+}
 
 // --- mode tabs (View / Edit / Sign / Secure / Collaborate) -------------------
 // The single navigation model: each tab is a workspace. Selecting one swaps the
@@ -10267,10 +10287,7 @@ function syncSidebarForMode(tab) {
   // is no longer valid — left `thumbs` showing across a mode change, because thumbs is valid
   // for most modes: you picked Secure and got thumbnails, with its commands one unmarked click
   // away. Seventeen tier-3 tests reached a control that was behind that click.
-  if (panels.length) {
-    const want = document.querySelector(`.sbhead[data-panel="${panels[0]}"]`);
-    if (want && !want.classList.contains('active')) want.click();
-  }
+  if (panels.length) showPanel(panels[0]);
   // Then open this mode's first command group, so the mode's own commands are what you see.
   // `commands` first in SIDEBAR_FOR made the panel active above; the card inside it still has
   // to be expanded, and picking the first is the same rule the panel list follows.
