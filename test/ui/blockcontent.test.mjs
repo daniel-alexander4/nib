@@ -92,6 +92,7 @@ await h.openDocument(SRC, 1);
 // The Co-sign button lives on the Collaborate tab under the ORIGINATE role — the role
 // toggle swaps the tool set, so selecting the tab is not enough to reach it.
 await h.mode('collaborate');
+await h.panel('commands'); // Collaborate lands on Flags; its commands are a sibling panel
 await page.click('.roleopt[data-role="originate"]');
 await page.click('#cosignBtn');
 await page.waitForFunction(() => !document.getElementById('cosignModal').hidden);

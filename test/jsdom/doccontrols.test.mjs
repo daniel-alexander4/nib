@@ -39,8 +39,12 @@ function listNamed(name) {
 // scan — silently — and the re-cut moved most of Edit to Mark Up and Secure. Reading every pane
 // means a control cannot escape the rule by changing tabs.
 function toolbarButtons() {
-  const panes = [...HTML.matchAll(/<div class="tbtab" data-tab="([a-z]+)">/g)];
-  assert.ok(panes.length >= 5, `only ${panes.length} toolbar panes in web/index.html — this scan is reading nothing`);
+  // **Every command host, not every PANE.** v1.121.0 moved the mode-independent commands into
+  // a `.tbfixed` bar outside any pane, and they left this scan without failing it — the same
+  // silent narrowing that widening it from the Edit pane fixed one commit earlier, arriving
+  // through the new surface. The inventory for /pending 373 predicted this as G1.
+  const panes = [...HTML.matchAll(/<div class="tbtab" data-tab="[a-z]+">|<div class="tbfixed">/g)];
+  assert.ok(panes.length >= 6, `only ${panes.length} command hosts in web/index.html — this scan is reading nothing`);
   const out = [];
   for (const p of panes) {
     // Bounded by the pane's OWN matching close tag, walked by depth. Slicing to the next

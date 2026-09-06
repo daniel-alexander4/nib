@@ -84,6 +84,10 @@ test('the empty state holds its shape too, at every width', async () => {
 });
 
 test('the chrome never takes a third of the window, at any width', async () => {
+  // Widen first. The sweep above ends at 360, and since v1.121.0 `Open` is a foldable group in
+  // the fixed bar — at 360 it is inside ⋯ More, so opening a document from there is a click on
+  // something that is not on screen.
+  await page.setViewportSize({ width: 1366, height: 768 });
   await h.openDocument(DOC, 3);
   for (const w of WIDTHS) {
     await page.setViewportSize({ width: w, height: 768 });
@@ -115,13 +119,14 @@ test('the page never scrolls sideways, and nothing leaves the menubar', async ()
 });
 
 test('a folded command still runs, from inside the ⋯ More menu', async () => {
-  // The proof that folding MOVED a control rather than orphaning it. Zoom is fold rank 4 in
-  // the File palette, so at 360 it is in the menu; clicking it must still change the render.
+  // The proof that folding MOVED a control rather than orphaning it. Zoom is fold rank 2 in
+  // the FIXED bar since v1.121.0 — the bar that does not change with the mode still folds with
+  // the width — so at 360 it is inside that bar's ⋯ More; clicking it must still change the render.
   await page.setViewportSize({ width: 360, height: 768 });
   await setMode('file');
 
   const more = await page.evaluate(() => {
-    const m = document.querySelector('#toolbar .tbtab.active .tbmore');
+    const m = document.querySelector('#toolbar .tbfixed .tbmore');
     return m ? { shown: m.classList.contains('hasfolded'), label: m.querySelector('.menutop')?.textContent.trim() } : null;
   });
   assert.ok(more && more.shown, 'no ⋯ More menu is offered at 360px, so every folded command is simply gone');
@@ -131,15 +136,15 @@ test('a folded command still runs, from inside the ⋯ More menu', async () => {
   const before = await widthOfPage();
   assert.ok(before > 0, 'setup: no page is rendered, so a zoom change would be unobservable');
 
-  await page.click('#toolbar .tbtab.active .tbmore .menutop');
+  await page.click('#toolbar .tbfixed .tbmore .menutop');
   await page.waitForTimeout(150);
   const labels = await page.evaluate(() =>
-    [...document.querySelectorAll('#toolbar .tbtab.active .tbmore .menucap')].map((e) => e.textContent.trim()));
+    [...document.querySelectorAll('#toolbar .tbfixed .tbmore .menucap')].map((e) => e.textContent.trim()));
   assert.ok(labels.includes('Zoom'),
     `the ⋯ More menu offers no labelled Zoom group — it holds ${JSON.stringify(labels)}. A fold with no group heading is a second flat list one click further away`);
 
   await page.evaluate(() => {
-    const b = [...document.querySelectorAll('#toolbar .tbtab.active .tbmore button')]
+    const b = [...document.querySelectorAll('#toolbar .tbfixed .tbmore button')]
       .find((x) => x.textContent.trim() === 'Zoom in');
     b.click();
   });

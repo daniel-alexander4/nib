@@ -2588,7 +2588,7 @@ function repaintForActiveView() {
   reflectRedact(); reflectEdit(); reflectSplitBox(); reflectCrop();
   reflectBorder(); reflectDropdown(); reflectRadio(); reflectShape(); reflectNote();
   all('.markers button').forEach((b) => b.classList.toggle('active', b.dataset.marker === view.markerMode));
-  all('#toolbar [data-mode]:not(.cmmode)').forEach((t) => t.classList.toggle('active', t.dataset.mode === view.activeTool));
+  all('[data-mode]:not(.cmmode)').forEach((t) => t.classList.toggle('active', t.dataset.mode === view.activeTool));
   reflectAnnoControls();
   els.viewerWrap.style.cursor = anyToolArmed() ? 'crosshair' : '';
 }
@@ -7765,9 +7765,9 @@ const EDITING_TOOLS = [
 function setEditingEnabled(on) {
   for (const id of EDITING_TOOLS) {
     const b = $(id); if (b) b.disabled = !on;
-    all(`#toolbar [data-forward="${id}"], #menubar [data-forward="${id}"]`).forEach((t) => { t.disabled = !on; });
+    all(`[data-forward="${id}"]`).forEach((t) => { t.disabled = !on; });
   }
-  all('#toolbar [data-mode]').forEach((t) => { t.disabled = !on; }); // Text/Highlight/Draw twins
+  all('[data-mode]').forEach((t) => { t.disabled = !on; }); // Text/Highlight/Draw twins
 }
 
 function setSignLocked(locked) {
@@ -9294,7 +9294,7 @@ function collectNotes(owner = view) {
 
 // The toolbar mirrors the menus. Mode tools wire themselves via [data-mode]
 // above; every other toolbar control forwards to its menu twin by id.
-all('#toolbar [data-forward], #menubar [data-forward]').forEach((b) => { b.onclick = () => $(b.dataset.forward).click(); });
+all('[data-forward]').forEach((b) => { b.onclick = () => $(b.dataset.forward).click(); });
 
 // Controls that act on the open document. Disabled (in both the menu and the
 // toolbar twin) until one loads, so they read as "unavailable" rather than
@@ -9329,10 +9329,10 @@ const DOC_REQUIRED = [
 function setDocControls(enabled) {
   for (const id of DOC_REQUIRED) {
     const b = $(id); if (b) b.disabled = !enabled;
-    all(`#toolbar [data-forward="${id}"], #menubar [data-forward="${id}"]`).forEach((t) => { t.disabled = !enabled; });
+    all(`[data-forward="${id}"]`).forEach((t) => { t.disabled = !enabled; });
   }
   // The toolbar's Text/Highlight/Draw twins wire by data-mode, not data-forward.
-  all('#toolbar [data-mode]').forEach((t) => { t.disabled = !enabled; });
+  all('[data-mode]').forEach((t) => { t.disabled = !enabled; });
   reflectSignControls(); // keep the Flags-panel controls in step with open/closed
   reflectUndoControls(enabled);
 }
@@ -10211,10 +10211,10 @@ document.querySelectorAll('.tab').forEach((tab) => {
 // The single navigation model: each tab is a workspace. Selecting one swaps the
 // contextual toolbar (#toolbar .tbtab) and which sidebar panels are available.
 const SIDEBAR_FOR = {
-  file: ['thumbs', 'outline'],
-  edit: ['thumbs'],
-  markup: ['library', 'thumbs'],
-  secure: ['thumbs'],
+  file: ['commands', 'thumbs', 'outline'],
+  edit: ['commands', 'thumbs'],
+  markup: ['commands', 'library', 'thumbs'],
+  secure: ['commands', 'thumbs'],
   // The ceremony panel joins Collaborate (P06.S02). The mode's goal is "convene, invite, connect,
   // review, sign, deliver as a sidebar panel rather than a tab of modals", and this is the panel.
   //
@@ -10226,7 +10226,7 @@ const SIDEBAR_FOR = {
   // Making this panel the default is a real product decision about where Collaborate lands, and it
   // is not this slice's: S02 adds a read-only panel and changes no flow. It becomes the sensible
   // default when it has actions to offer, which is S04's and S05's.
-  collaborate: ['flags', 'ceremony'],
+  collaborate: ['flags', 'commands', 'ceremony'],
 };
 function syncSidebarForMode(tab) {
   const panels = SIDEBAR_FOR[tab] || [];
@@ -10235,10 +10235,15 @@ function syncSidebarForMode(tab) {
   // record), and a user who never goes near Collaborate should not pay for it.
   if (panels.includes('ceremony')) loadCeremonyPanel();
   all('.tabs .tab').forEach((t) => { t.hidden = !panels.includes(t.dataset.panel); });
-  // If the showing panel isn't valid for this mode, switch to the mode's first.
-  const active = document.querySelector('.tabs .tab.active');
-  if ((!active || active.hidden) && panels.length) {
-    document.querySelector(`.tabs .tab[data-panel="${panels[0]}"]`)?.click();
+  // **Always land on the mode's first panel, not only when the showing one became invalid.**
+  // Since v1.121.0 a mode's own commands are a sidebar panel, so "switch mode" and "show me
+  // what I can do here" are the same act. The old rule — change panel only if the current one
+  // is no longer valid — left `thumbs` showing across a mode change, because thumbs is valid
+  // for most modes: you picked Secure and got thumbnails, with its commands one unmarked click
+  // away. Seventeen tier-3 tests reached a control that was behind that click.
+  if (panels.length) {
+    const want = document.querySelector(`.tabs .tab[data-panel="${panels[0]}"]`);
+    if (want && !want.classList.contains('active')) want.click();
   }
 }
 function syncModeMenu(tab) {
@@ -10250,7 +10255,7 @@ function setMode(tab) {
   document.body.dataset.tab = tab;
   syncModeMenu(tab);
   all('.modetab').forEach((b) => b.classList.toggle('active', b.dataset.tab === tab));
-  all('#toolbar .tbtab').forEach((g) => g.classList.toggle('active', g.dataset.tab === tab));
+  all('.tbtab').forEach((g) => g.classList.toggle('active', g.dataset.tab === tab));
   syncSidebarForMode(tab);
 }
 all('.modetab').forEach((b) => { b.onclick = () => setMode(b.dataset.tab); });
@@ -10291,8 +10296,11 @@ setMode('file');
 const foldThresholds = { 1: 949, 2: 899, 3: 849, 4: 749, 5: 699, 6: 649, 7: 599 };
 
 function buildOverflowMenus() {
-  all('#toolbar .tbtab').forEach((pane) => {
-    const foldable = [...pane.querySelectorAll('.tbgroup[data-fold]')].filter((g) => g.dataset.fold !== '0');
+  [...all('.tbtab'), ...all('#toolbar .tbfixed')].forEach((pane) => {
+    // Every group, rank 0 included: rank governs the WIDTH ladder, and the sidebar-closed
+    // state folds regardless of rank. A rank-0 group left unregistered would have no home to
+    // return to and would sit in the bar when the sidebar is shut.
+    const foldable = [...pane.querySelectorAll('.tbgroup[data-fold]')];
     if (!foldable.length) return;
     // Where each group goes back to. Captured before anything moves, as a NEXT-SIBLING
     // reference rather than an index: indices shift as siblings leave and return.
@@ -10317,7 +10325,7 @@ function buildOverflowMenus() {
 // thresholds at once (a maximise, a snap) lands in the same state as stepping through.
 function applyFold() {
   const w = window.innerWidth;
-  all('#toolbar .tbtab').forEach((pane) => {
+  all('#toolbar .tbfixed').forEach((pane) => {
     if (!pane._more) return;
     let folded = 0;
     // One query: the ⋯ More menu is INSIDE the pane, so this finds groups on both sides.
@@ -10359,10 +10367,63 @@ sidebarNarrow.addEventListener('change', () => setSidebarCollapsed(sidebarNarrow
 // this is a crossing listener and not a resize handler.
 setSidebarCollapsed(sidebarNarrow.matches);
 
+// ── The commands have two homes, and the sidebar decides which ───────────────
+//
+// Open sidebar: the mode's pane renders in #commands — vertical, captioned, with the whole
+// 200x580px column to use. Closed sidebar: it goes back into #toolbar and behaves exactly as
+// it did before v1.121.0, folding by width into its own ⋯ More. That is what keeps every
+// command reachable below 900px, where the sidebar auto-collapses and the panel with it.
+//
+// The SAME nodes move. Mode gating follows them because `.tbtab.active` is unrooted, cached
+// `els` references survive reparenting, and nothing is duplicated — so no id is ever ambiguous
+// and no second list can drift.
+function moveCommandsHome() {
+  const inSidebar = !$('sidebar').classList.contains('collapsed');
+  const host = inSidebar ? $('commands') : $('toolbar');
+  if (!host) return;
+  for (const pane of all('.tbtab')) {
+    if (pane.parentElement === host) continue;
+    host.append(pane);
+  }
+  // Folding is a horizontal-bar problem. In the column everything is visible and scrolls, so
+  // put every folded group back before the panes go there.
+  if (inSidebar) {
+    for (const pane of all('.tbtab')) {
+      if (!pane._more) continue;
+      for (const g of [...pane._more.querySelectorAll('.tbgroup[data-fold]')]) pane.insertBefore(g, pane._more.parentElement);
+      pane._more.parentElement.classList.remove('hasfolded');
+    }
+  } else {
+    // **Every group folds when the sidebar is closed, whatever the width.** The simplification
+    // this replaces put the whole pane back in the bar beside the fixed groups, and measured
+    // 34.8% of the viewport at 800px against a 33% ceiling — worse than before the change, and
+    // the opposite of the brief. With the sidebar shut the toolbar shows the fixed commands and
+    // one ⋯ More; the mode's own commands are inside it, one click away, exactly as planned.
+    foldAll();
+  }
+}
+
+// foldAll puts every foldable group into its pane's ⋯ More, ignoring the width ladder. It is
+// what the sidebar-closed state uses; applyFold's ladder still governs nothing else, because
+// the panes are only ever in the bar in this state.
+function foldAll() {
+  all('.tbtab').forEach((pane) => {
+    if (!pane._more) return;
+    let folded = 0;
+    for (const g of [...pane.querySelectorAll('.tbgroup[data-fold]')]) {
+      if (g._home !== pane) continue;
+      if (g.parentElement !== pane._more) pane._more.append(g);
+      folded++;
+    }
+    pane._more.parentElement.classList.toggle('hasfolded', folded > 0);
+  });
+}
+
 // sidebar collapse
 function setSidebarCollapsed(collapsed) {
   $('sidebar').classList.toggle('collapsed', collapsed);
   $('toggleSidebarBtn').title = collapsed ? 'Show sidebar' : 'Hide sidebar';
+  moveCommandsHome();
 }
 function toggleSidebar() {
   // Through the one setter, so the tooltip cannot drift from the state (ADR-009).

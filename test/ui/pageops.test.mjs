@@ -29,6 +29,7 @@ const thumbBtn = (n, title) => `.thumbgrid:not([hidden]) .thumbwrap:nth-child(${
 
 test('rotating one page from its thumbnail turns that page', async () => {
   await h.openDocument(DOC, 3);
+  await h.panel('thumbs'); // the mode lands on its Commands panel since v1.121.0
   await page.waitForFunction(() => document.querySelector('.thumbgrid:not([hidden])')?.children.length === 3);
 
   const before = await firstPage();
@@ -116,6 +117,7 @@ test('a render that fails after the metadata changed says so, and can be retried
   await page.click('#pnCancel');
   await page.waitForFunction(() => document.getElementById('pageNumModal').hidden);
   await h.mode('edit');
+  await h.panel('thumbs'); // switching mode lands on that mode's Commands panel since v1.121.0
   const before = await pageCount();
   assert.equal(before, '/ 2', `setup: ${before} pages open, want 2 from the delete above`);
   await page.waitForFunction(() => document.getElementById('staleBanner').hidden === true);

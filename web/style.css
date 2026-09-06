@@ -163,22 +163,22 @@ body { display: flex; flex-direction: column; }
 #toolbar .tbtoggle svg { width: 18px; height: 18px; display: block; }
 
 /* One workspace's controls per .tbtab; setMode shows only the active one. */
-#toolbar .tbtab { display: none; align-items: center; flex-wrap: wrap; gap: 4px; row-gap: 3px; }
-#toolbar .tbtab.active { display: flex; }
+.tbtab { display: none; align-items: center; flex-wrap: wrap; gap: 4px; row-gap: 3px; }
+.tbtab.active { display: flex; }
 /* Flat toolbar controls (direct children of a tab or a role group). The >
    combinator keeps dropdown items out, so they keep their .dropdown styling. */
-#toolbar .tbtab > button, #toolbar .tbtab > .tbgroup > button, #toolbar .tbglobal > button, #toolbar .roletools > button {
+.tbtab > button, .tbtab > .tbgroup > button, #toolbar .tbfixed > .tbgroup > button, #toolbar .tbglobal > button, .roletools > button {
   background: transparent; border: 1px solid transparent; border-radius: 6px;
   padding: 5px 9px; color: var(--subtext0); font: inherit; cursor: pointer;
 }
-#toolbar .tbtab > button:hover, #toolbar .tbtab > .tbgroup > button:hover, #toolbar .tbglobal > button:hover, #toolbar .roletools > button:hover { background: var(--surface0); color: var(--text); }
-#toolbar .tbtab > button:disabled, #toolbar .tbtab > .tbgroup > button:disabled, #toolbar .tbglobal > button:disabled, #toolbar .roletools > button:disabled { opacity: 0.5; cursor: not-allowed; background: transparent; }
+.tbtab > button:hover, .tbtab > .tbgroup > button:hover, #toolbar .tbfixed > .tbgroup > button:hover, #toolbar .tbglobal > button:hover, .roletools > button:hover { background: var(--surface0); color: var(--text); }
+.tbtab > button:disabled, .tbtab > .tbgroup > button:disabled, #toolbar .tbfixed > .tbgroup > button:disabled, #toolbar .tbglobal > button:disabled, .roletools > button:disabled { opacity: 0.5; cursor: not-allowed; background: transparent; }
 /* The active tab's label is --text, not --blue. --blue on --surface1 is 4.33:1 in the dark
    theme and 2.79:1 in the light one — under AA in BOTH, and this is a label people read,
    not an accent. The blue stays as the underline, which is what actually signals "active"
    and does so without asking anyone to distinguish two greys-on-blue. Colour as the
    indicator, text as the message — the same rule .stampwarn and #staleBanner follow. */
-#toolbar .tbtab > button.active, #toolbar .tbtab > .tbgroup > button.active, #toolbar .tbglobal > button.active, #toolbar .roletools > button.active { color: var(--text); background: var(--surface1); box-shadow: inset 0 -2px 0 var(--blue); }
+.tbtab > button.active, .tbtab > .tbgroup > button.active, #toolbar .tbfixed > .tbgroup > button.active, #toolbar .tbglobal > button.active, .roletools > button.active { color: var(--text); background: var(--surface1); box-shadow: inset 0 -2px 0 var(--blue); }
 #toolbar #saveBtn { color: var(--blue); font-weight: 600; }
 /* Dropdown triggers in the toolbar (Recent / Save as / Export under View). */
 #toolbar .menutop {
@@ -1392,7 +1392,7 @@ input.ovl-check { appearance: auto; accent-color: #1a7f37; background: transpare
    learned. data-fold="0" means "never folds". */
 /* A group reads as a run because a divider precedes it, which is what .tbsep did
    before — one hairline between groups, none before the first. */
-.tbtab > .tbgroup + .tbgroup::before {
+.tbtab > .tbgroup + .tbgroup::before, .tbfixed > .tbgroup + .tbgroup::before {
   content: ""; align-self: stretch; width: 1px; margin: 3px 4px;
   background: var(--surface1); flex: none;
 }
@@ -1413,6 +1413,7 @@ input.ovl-check { appearance: auto; accent-color: #1a7f37; background: transpare
    represent the two <select>s in the OCR group, and a moved node stays inside .tbtab so
    its mode gating (#toolbar .tbtab.active) is untouched. */
 #toolbar .tbtab > .tbgroup > .menucap { display: none; }
+#toolbar .tbfixed > .tbgroup > .menucap { display: none; }
 #toolbar .tbmore .tbgroup > .menucap { display: block; }
 
 /* ── The menubar, which is the whole of the horizontal-overflow defect ─────────
@@ -1443,3 +1444,28 @@ input.ovl-check { appearance: auto; accent-color: #1a7f37; background: transpare
 
 /* Undo/Redo, outside the panes because they are global. */
 .tbglobal { display: flex; align-items: center; gap: 4px; }
+
+/* ── The fixed bar, and the commands panel ────────────────────────────────────
+   The toolbar stopped being contextual in v1.121.0: it holds only what is true in
+   every mode. The mode's own commands live in the sidebar, vertical and captioned,
+   because a 200x580px column can afford headings that a horizontal bar cannot —
+   measured, captions in the bar cost 50-118px of height. */
+.tbfixed { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }
+
+/* In the sidebar the panes stack: one group per block, its label above it. */
+#commands .tbtab { flex-direction: column; align-items: stretch; gap: 10px; }
+#commands .tbgroup { flex-direction: column; align-items: stretch; gap: 3px; }
+#commands .tbgroup + .tbgroup::before { display: none; }
+#commands .tbgroup > .menucap { display: block; padding: 2px 0 0; }
+#commands .tbtab > .tbgroup > button,
+#commands .roletools > button { width: 100%; text-align: left; }
+#commands .tbmore { display: none; }          /* nothing folds in a scrolling column */
+#commands .roletoggle { display: flex; }
+#commands select, #commands input[type="search"] { width: 100%; }
+/* The two OCR selects have never been themed — the toolbar had no select rule either, so they
+   have always rendered with the browser's own chrome. In a 200px panel with a dark ground that
+   reads as a hole, so they get the treatment .outlinerow select already establishes. */
+#commands select {
+  background: var(--surface0); border: 1px solid var(--surface1); border-radius: 4px;
+  color: var(--text); padding: 3px 5px; font: inherit;
+}
