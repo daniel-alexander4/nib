@@ -130,3 +130,12 @@ home today.
   those measured 34.8% of the viewport at 800px against a 33% ceiling. The win is legibility, not
   space: a 200×580px column fits every mode's whole set (Mark Up 318px is the largest) and can
   afford headings the bar cannot. Cost four corrections and 39 tier-3 failures, all recorded
+- [ADR-018: The sidebar is an accordion of cards](018-the-sidebar-is-an-accordion.md) — one card per
+  command group and per content panel, exactly one expanded; the existing `.tab` buttons BECAME the
+  headers, so their wiring and `SIDEBAR_FOR` still work. **Supersedes** ADR-017's single tabbed
+  `#commands` panel. One-word tabs were asked for first and cannot be done: Document has a command
+  group called "Pages" and the sidebar already has a "Pages" tab — two tabs, one word, two meanings
+  — and seven tabs across 200px is 28px each. The collision was real rather than a tab artefact, so
+  the group became **Compose**. The sidebar stops being a tablist (aria-expanded, not role=tab), and
+  three layout defects were each found by measuring the DOM: headers travelling into the toolbar
+  (33.5% at 800px), the pass-through claiming the column, and every header stretching to 203px

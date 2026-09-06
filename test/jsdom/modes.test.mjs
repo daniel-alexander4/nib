@@ -68,7 +68,9 @@ test('every mode has a sidebar panel list, and every panel it names exists', () 
   assert.deepEqual(stray, [],
     `SIDEBAR_FOR names ${stray.join(', ')}, which is not a mode. A stale key is dead configuration that reads as coverage.`);
 
-  const panels = new Set([...doc.querySelectorAll('.tabs .tab')].map((t) => t.dataset.panel));
+  // The sidebar's tab row became an accordion in v1.122.0: its buttons are disclosure
+  // headers next to the panel they open, not a tab strip.
+  const panels = new Set([...doc.querySelectorAll('.sbhead[data-panel]')].map((t) => t.dataset.panel));
   const m = APP.match(/const SIDEBAR_FOR = \{([\s\S]*?)\n\};/);
   const named = [...m[1].matchAll(/'([a-z]+)'/g)].map((x) => x[1]);
   const unknown = [...new Set(named)].filter((p) => !panels.has(p));

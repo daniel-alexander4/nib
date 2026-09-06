@@ -1469,3 +1469,51 @@ input.ovl-check { appearance: auto; accent-color: #1a7f37; background: transpare
   background: var(--surface0); border: 1px solid var(--surface1); border-radius: 4px;
   color: var(--text); padding: 3px 5px; font: inherit;
 }
+
+/* ── The sidebar accordion (v1.122.0) ─────────────────────────────────────────
+   One card per command group and per content panel; exactly one expanded, so the
+   open card gets the column's remaining height and nothing scrolls inside
+   something else that scrolls. Tabs could not carry this: Document has a command
+   group called "Pages" and the sidebar already has a "Pages" tab, and seven tabs
+   across 200px is 28px each against a label needing about 40. */
+#sidebar .tabs { display: none; }            /* the buttons moved out; the row is empty */
+#sidebar { overflow-y: auto; }
+
+.sbhead {
+  display: block; width: 100%; text-align: left;
+  background: var(--surface0); color: var(--subtext1);
+  border: 0; border-top: 1px solid var(--crust);
+  padding: 7px 10px; font-size: 12px; font-weight: 600;
+  letter-spacing: .3px; cursor: pointer;
+}
+.sbhead:hover { background: var(--surface1); color: var(--text); }
+.sbhead[aria-expanded="true"], .sbhead.active {
+  color: var(--text); box-shadow: inset 3px 0 0 var(--mauve);
+}
+.sbhead::after { content: "▸"; float: right; opacity: .5; font-size: 10px; }
+.sbhead[aria-expanded="true"]::after, .sbhead.active::after { content: "▾"; }
+
+/* A group is a card body: hidden until its header is expanded. */
+#commands .tbtab > .tbgroup { display: none; padding: 6px 8px 10px; }
+#commands .tbtab > .tbgroup.open { display: flex; }
+#commands .tbgroup > .menucap { display: none; }   /* the header carries the name now */
+#commands .tbgroup + .tbgroup::before { display: none; }
+#commands { padding: 0; overflow: visible; }
+#commands.panel { display: block; }                /* a pass-through, never a card of its own */
+.sbhead[data-panel="commands"] { display: none; }  /* its groups are the cards */
+.panel { padding: 8px; }
+/* A card header belongs to the sidebar. When the sidebar is shut the panes move into the
+   toolbar (ADR-017) and their headers went with them, adding rows to the bar — measured 33.5%
+   of the viewport at 800px against a 33% ceiling. */
+#toolbar .sbhead { display: none; }
+/* Cards stack tight: only the expanded one takes the remaining height. Without this the
+   commands container held `flex: 1` and pushed the content-panel headers to the bottom of
+   the column with a dead gap above them. */
+#sidebar > .panel, #commands { flex: 0 0 auto; }
+/* #commands is a pass-through — its CARDS are the items, so it sizes to content and
+   only a real content panel claims the leftover height. */
+#sidebar > .panel.active:not(#commands) { flex: 1 1 auto; min-height: 0; }
+#commands .tbtab > .tbgroup.open { max-height: 60vh; overflow-y: auto; }
+/* A header is its own height. As flex children of the column they stretched to fill the free
+   space — measured 203px each, which is what put a dead gap above every content card. */
+#sidebar > .sbhead { flex: 0 0 auto; }

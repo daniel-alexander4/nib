@@ -87,6 +87,7 @@ test('a document that already carries a stamp says so before you add another', a
   // itself is what knows — pdfcpu files every watermark it writes into an optional-content
   // group — and /api/stamps is where the dialog asks.
   await h.mode('edit');
+  await h.group('Page setup'); // one card open at a time; Text is the mode's first
   await page.click('#pageNumBtn');
   await page.waitForFunction(() => !document.getElementById('pageNumModal').hidden);
 

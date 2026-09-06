@@ -8366,6 +8366,7 @@ function showMenu(menu) {
 // covered "by existing, not by its author remembering" — a menu created after this loop
 // would not have been, and the jsdom guard caught exactly that.
 buildOverflowMenus();
+buildSidebarAccordion();
 for (const t of document.querySelectorAll('.menu > .menutop')) {
   t.setAttribute('aria-haspopup', 'true');
   t.setAttribute('aria-expanded', String(t.parentElement.classList.contains('open')));
@@ -10203,6 +10204,7 @@ document.querySelectorAll('.tab').forEach((tab) => {
     document.querySelectorAll('.panel').forEach((p) => p.classList.remove('active'));
     tab.classList.add('active');
     $(tab.dataset.panel).classList.add('active');
+    collapseGroupCards(); // one card open at a time, of either kind
     if (tab.dataset.panel === 'library') loadImages();
   };
 });
@@ -10228,13 +10230,20 @@ const SIDEBAR_FOR = {
   // default when it has actions to offer, which is S04's and S05's.
   collaborate: ['flags', 'commands', 'ceremony'],
 };
+function collapseGroupCards() {
+  for (const g of all('#commands .tbgroup')) {
+    g.classList.remove('open');
+    if (g._head) g._head.setAttribute('aria-expanded', 'false');
+  }
+}
+
 function syncSidebarForMode(tab) {
   const panels = SIDEBAR_FOR[tab] || [];
   // Loaded when the panel becomes reachable rather than on a timer or at boot. It reads the local
   // mirror, so it is cheap and needs no network — but it is also not free (the server opens each
   // record), and a user who never goes near Collaborate should not pay for it.
   if (panels.includes('ceremony')) loadCeremonyPanel();
-  all('.tabs .tab').forEach((t) => { t.hidden = !panels.includes(t.dataset.panel); });
+  all('.sbhead[data-panel]').forEach((t) => { t.hidden = !panels.includes(t.dataset.panel); });
   // **Always land on the mode's first panel, not only when the showing one became invalid.**
   // Since v1.121.0 a mode's own commands are a sidebar panel, so "switch mode" and "show me
   // what I can do here" are the same act. The old rule — change panel only if the current one
@@ -10242,9 +10251,14 @@ function syncSidebarForMode(tab) {
   // for most modes: you picked Secure and got thumbnails, with its commands one unmarked click
   // away. Seventeen tier-3 tests reached a control that was behind that click.
   if (panels.length) {
-    const want = document.querySelector(`.tabs .tab[data-panel="${panels[0]}"]`);
+    const want = document.querySelector(`.sbhead[data-panel="${panels[0]}"]`);
     if (want && !want.classList.contains('active')) want.click();
   }
+  // Then open this mode's first command group, so the mode's own commands are what you see.
+  // `commands` first in SIDEBAR_FOR made the panel active above; the card inside it still has
+  // to be expanded, and picking the first is the same rule the panel list follows.
+  const first = document.querySelector('.tbtab.active > .tbgroup');
+  if (first) openCard(first, first._head);
 }
 function syncModeMenu(tab) {
   const top = $('modeMenuTop');
@@ -10366,6 +10380,57 @@ sidebarNarrow.addEventListener('change', () => setSidebarCollapsed(sidebarNarrow
 // A pure function of width — an explicit toggle wins until the next crossing, which is why
 // this is a crossing listener and not a resize handler.
 setSidebarCollapsed(sidebarNarrow.matches);
+
+// ── The sidebar is an accordion of cards ─────────────────────────────────────
+//
+// One card per COMMAND GROUP of the active mode, and one per content panel the mode allows.
+// Exactly one is expanded, so the open one gets the column's remaining height and nothing
+// scrolls inside something else that scrolls.
+//
+// **Tabs were tried and cannot carry this.** Document mode has a command group called "Pages"
+// and the sidebar already has a "Pages" tab for thumbnails — two tabs, one word, two meanings.
+// Width finishes the argument: Document would need seven tabs across 200px, 28px each, against
+// a one-word label that needs about 40 at 12px.
+//
+// The existing `.tab` buttons BECOME the headers rather than being replaced, so their click
+// wiring, their roving-tabindex and `SIDEBAR_FOR` all keep working; they move next to the panel
+// they open and gain `.sbhead`.
+function buildSidebarAccordion() {
+  for (const t of all('#sidebar .tabs .tab')) {
+    const panel = $(t.dataset.panel);
+    if (!panel) continue;
+    t.classList.add('sbhead');
+    t.removeAttribute('role');
+    t.removeAttribute('aria-selected');
+    panel.parentElement.insertBefore(t, panel);
+  }
+  document.querySelector('#sidebar .tabs')?.remove();
+  // Each command group gets its own header, made from the label it already carries. The group
+  // stays inside its `.tbtab` pane, so mode gating still reaches it (ADR-017).
+  for (const g of all('#commands .tbgroup')) {
+    const head = document.createElement('button');
+    head.className = 'sbhead groupcard';
+    head.type = 'button';
+    head.textContent = g.dataset.label || '';
+    head.setAttribute('aria-expanded', 'false');
+    g.parentElement.insertBefore(head, g);
+    head.onclick = () => openCard(g, head);
+    g._head = head;
+  }
+}
+
+// openCard expands one card and collapses every other, of either kind. Panels keep using
+// `.active` because the tab wiring and `h.panel()` already speak it; groups use `.open`.
+function openCard(target, head) {
+  for (const g of all('#commands .tbgroup')) {
+    const on = g === target;
+    g.classList.toggle('open', on);
+    if (g._head) g._head.setAttribute('aria-expanded', String(on));
+  }
+  if (head) all('.sbhead[data-panel]').forEach((t) => t.classList.remove('active'));
+  if (target && target.classList.contains('panel')) return; // the tab wiring handles panels
+  all('.panel').forEach((p) => { if (p.id !== 'commands') p.classList.remove('active'); });
+}
 
 // ── The commands have two homes, and the sidebar decides which ───────────────
 //

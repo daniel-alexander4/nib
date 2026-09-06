@@ -40,7 +40,9 @@ test('every toolbar control sits inside a group', () => {
     // screen there and it stays inside the height ceiling at 360px without folding at all.
     // Wrapping them in fold groups would add a layer that changes nothing.
     const loose = [...pane.children].filter((el) =>
-      !el.classList.contains('roletoggle') && !el.classList.contains('roletools')
+      // `.sbhead` is a card header, not a control — it opens the group it sits above.
+      !el.classList.contains('sbhead')
+      && !el.classList.contains('roletoggle') && !el.classList.contains('roletools')
       && (/^(BUTTON|SELECT|INPUT)$/.test(el.tagName)
           || (el.tagName === 'SPAN' && el.querySelector('button, input'))));
     assert.deepEqual(loose.map((e) => e.id || e.textContent.trim().slice(0, 20)), [],
