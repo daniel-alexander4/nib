@@ -209,7 +209,7 @@ const els = {
   aboutMain: $('aboutMain'), aboutDocText: $('aboutDocText'), aboutVersion: $('aboutVersion'),
   aboutLicenseBtn: $('aboutLicenseBtn'), aboutNoticesBtn: $('aboutNoticesBtn'),
   aboutBackBtn: $('aboutBackBtn'), aboutClose: $('aboutClose'),
-  undoBtn: $('undoBtn'), redoBtn: $('redoBtn'),
+  undoBtn: $('undoBtn'), redoBtn: $('redoBtn'), reloadBtn: $('reloadBtn'),
   rotateLeftBtn: $('rotateLeftBtn'), rotateRightBtn: $('rotateRightBtn'),
   extractBtn: $('extractBtn'), insertBlankBtn: $('insertBlankBtn'),
   duplicatePageBtn: $('duplicatePageBtn'),
@@ -9335,7 +9335,7 @@ const DOC_REQUIRED = [
   'splitBoxBtn', 'applyBoxSplitBtn', 'rotateLeftBtn', 'rotateRightBtn',
   'extractBtn', 'insertBlankBtn', 'duplicatePageBtn', 'insertPdfBtn', 'pageNumBtn', 'pageLabelsBtn', 'nupBtn', 'normalizeBtn', 'cropBtn',
   'redactBtn', 'redactTextBtn', 'applyRedactBtn', 'scanBtn', 'attachBtn', 'encryptBtn', 'decryptBtn', 'compareBtn', 'fillCsvBtn', 'importXfdfBtn',
-  'closeBtn',
+  'closeBtn', 'reloadBtn',
   'finalizeBtn', 'timestampBtn', 'cosignBtn', 'sessionInitBtn', 'sessionSendBtn',
 ];
 function setDocControls(enabled) {
@@ -9991,13 +9991,24 @@ els.staleRetry.onclick = () => { if (view.docMeta) setDocumentFromServer(view.do
 // declines to run on a document with unsaved work, so pressing this is how a user who HAS
 // unsaved work chooses to discard it. The wording names the reload rather than a close,
 // because that is the act she is agreeing to.
-els.staleReload.onclick = async () => {
+//
+// **One door, two callers** (ADR-009): the stale-file banner's button and the toolbar's reload
+// icon are the same act — re-read the file, discard what is in memory — and the confirm is part
+// of the act rather than part of either button. The banner's asks because the file changed under
+// you; the toolbar's asks because you may not have meant to throw work away. Same sentence, and
+// it names the reload rather than a close, because that is what is being agreed to.
+//
+// A path-less document has no file to go back to and both callers are disabled for it — the
+// toolbar icon by `setDocControls`, the banner by never appearing.
+async function reloadDiscarding() {
   const target = view;
   const d = target.docMeta;
   if (!d || !d.path) return;
   if (hasUnsavedWork(target) && !confirm('Reload ' + (d.name || 'this document') + ' from disk? Your unsaved changes to it will be lost.')) return;
   if (await reloadFromDisk(target, false)) toast('Reloaded from disk');
-};
+}
+els.staleReload.onclick = reloadDiscarding;
+els.reloadBtn.onclick = reloadDiscarding;
 
 // The file changes while Nib is in the background, so the answer is re-asked when the
 // user comes back to it. See recheckDisk.

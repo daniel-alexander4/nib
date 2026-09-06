@@ -22,6 +22,11 @@ const { page } = h;
 after(() => h.browser.close());
 
 const DOC = writeFixture('diskchanged.pdf', { pages: 2, label: 'disk page' });
+// The reload-icon test gets its OWN file. `DOC` is rewritten on disk by the tests above —
+// `rewriteWithPages(5)` among them — so by the end of this file it is neither two pages nor the
+// bytes `writeFixture` wrote, and a later test opening it would be opening something it did not
+// describe.
+const RELOAD_DOC = writeFixture('reloadicon.pdf', { pages: 2, label: 'reload page' });
 
 const bannerText = () => page.evaluate(() => {
   const b = document.getElementById('staleBanner');
@@ -152,6 +157,86 @@ test('Save will not silently overwrite the changed file', async () => {
     null, { timeout: 15000 });
   assert.ok(!fs.readFileSync(DOC).equals(external),
     'the user accepted the overwrite and the file on disk is unchanged — the override is inert, so the refusal is a wall rather than a default');
+});
+
+// ── The toolbar's reload icon ────────────────────────────────────────────────
+//
+// The banner's Reload button only exists when the file has CHANGED underneath you. The icon
+// beside Undo/Redo is the same act with no precondition: throw away what is in memory and
+// re-read the file. Both go through `reloadDiscarding`, so this exercises the door rather than
+// a second copy of it — and the icon is the caller the banner cannot cover, because reaching
+// the banner requires an external rewrite and reaching the icon requires only unsaved work.
+//
+// Tier 3 for the same reason as everything else in this file: the assertion is that the bytes
+// the SERVER holds went back to the file's, which needs a real server, a real file and a real
+// re-render.
+test('the reload icon discards unsaved work, and asks first', async () => {
+  // The test above leaves its document OPEN, and re-opening a path Nib already holds is not a
+  // fresh open — it is reported as the same file in another tab, so `openDocument` would wait
+  // for a `has-doc` transition that never comes. Found exactly that way.
+  if (await page.evaluate(() => document.getElementById('viewerWrap').className === 'has-doc')) {
+    h.answerDialogs(true);
+    await h.closeDocument();
+  }
+  await h.openDocument(RELOAD_DOC, 2);
+  const aspect = () => page.evaluate(() => {
+    const r = document.querySelector('.viewerContainer:not([hidden]) .page').getBoundingClientRect();
+    return +(r.width / r.height).toFixed(3);
+  });
+  const onDisk = await aspect();
+
+  // A real unsaved change, made through the app: every page rotated.
+  await h.mode('edit');
+  await h.group('Rotate All Pages');
+  await page.click('#rotateRightBtn');
+  // Null-guarded: a rotate tears the pages down and rebuilds them, so this predicate polls
+  // across a window where `.page` does not exist. Without the guard it throws inside the poll
+  // and the wait fails as a TypeError rather than as a timeout.
+  await page.waitForFunction((was) => {
+    const el = document.querySelector('.viewerContainer:not([hidden]) .page');
+    if (!el) return false;
+    const r = el.getBoundingClientRect();
+    return +(r.width / r.height).toFixed(3) !== was;
+  }, onDisk);
+  const rotated = await aspect();
+  assert.notEqual(rotated, onDisk, 'setup: nothing was changed, so there is nothing for a reload to discard');
+
+  // CANCEL first — a discard the user did not agree to must not happen.
+  h.dialogs.length = 0;
+  h.answerDialogs(false);
+  await page.click('#reloadBtn');
+  await page.waitForTimeout(800);
+  assert.equal(h.dialogs.length, 1,
+    'the reload icon threw away unsaved work without asking. It is one click beside Undo, and the whole point of the confirm is that the click is easy to make by accident');
+  assert.match(h.dialogs[0], /unsaved changes/);
+  assert.equal(await aspect(), rotated, 'cancelling the confirm still reloaded — the answer is not being read');
+
+  // Then accept, and the document goes back to what the file says.
+  h.answerDialogs(true);
+  await page.click('#reloadBtn');
+  await page.waitForFunction((want) => {
+    const el = document.querySelector('.viewerContainer:not([hidden]) .page');
+    if (!el) return false;
+    const r = el.getBoundingClientRect();
+    return +(r.width / r.height).toFixed(3) === want;
+  }, onDisk);
+  assert.equal(await aspect(), onDisk, 'the reload did not restore the file on disk');
+
+  // And the reload leaves nothing unsaved behind: the bytes now MATCH the file, so a close
+  // must not prompt. This is the half `reloadFromDisk` clears `dirty` for, and it is asserted
+  // here rather than assumed — a reload that left the document dirty would prompt on close
+  // about work that no longer exists.
+  h.dialogs.length = 0;
+  h.answerDialogs(true);
+  await h.closeDocument();
+  assert.deepEqual(h.dialogs, [],
+    'closing after a reload prompted about unsaved work. The reload replaced the bytes with the file\'s own, so there is nothing unsaved to lose');
+
+  // Re-opened, because the close above is an ASSERTION and the file's last test is a cleanup
+  // that closes what is open — it clicks #closeBtn, which is disabled with nothing open, and a
+  // disabled button is a 30-second Playwright timeout rather than a failed assertion. Leaving
+  // the server as this file's convention expects is part of the test, not tidiness.
+  await h.openDocument(RELOAD_DOC, 2);
 });
 
 test('this file leaves the shared server as it found it', async () => {

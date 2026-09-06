@@ -127,6 +127,15 @@
     <div class="tbglobal">
 <button id="undoBtn" title="Undo the last page operation (Ctrl+Z)" disabled>↶ Undo</button>
       <button id="redoBtn" title="Redo (Ctrl+Shift+Z)" disabled>↷ Redo</button>
+      <!-- Reload from disk: throw away what is in memory and re-read the file. It sits here
+           rather than in a mode's pane for the same reason Undo and Redo do — it is about the
+           document rather than about what you are doing to it — and beside them because it is
+           the other end of the same idea: Undo steps back one operation, this abandons all of
+           them. Confirms first when there is unsaved work; the stale-file banner's own Reload
+           button is the same door (reloadDiscarding). -->
+      <button id="reloadBtn" class="tbicon" title="Reload from disk, discarding unsaved changes" aria-label="Reload from disk" disabled>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3v6h-6"/></svg>
+      </button>
     </div>
     <span class="tbsep"></span>
 
