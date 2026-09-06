@@ -44,9 +44,14 @@ function palette(selector) {
   return out;
 }
 
+// Four flavours since v1.123.0. **Every assertion below iterates this list**, so a palette in
+// the stylesheet but missing here is checked by none of them — which is why the agreement test
+// at the bottom exists rather than trusting whoever adds the next one to remember.
 const THEMES = [
-  { name: 'dark', selector: ':root {' },
-  { name: 'light', selector: ':root[data-appearance="light"] {' },
+  { name: 'dark', selector: ':root {' },                                 // Mocha
+  { name: 'light', selector: ':root[data-appearance="light"] {' },       // Latte
+  { name: 'frappe', selector: ':root[data-appearance="frappe"] {' },
+  { name: 'macchiato', selector: ':root[data-appearance="macchiato"] {' },
 ];
 
 test('both palettes define the tokens this file reasons about', () => {
@@ -248,4 +253,65 @@ test('nothing puts text in --overlay0, on any ground', () => {
     .filter(([, line]) => /color:\s*var\(--overlay0\)/.test(line));
   assert.deepEqual(offenders, [],
     `--overlay0 carries text at style.css:${offenders.map(([n]) => n).join(', ')} — it measures below AA on every ground this file checks, so text in it is unreadable in at least one theme`);
+});
+
+
+// ── The four lists that describe one fact ────────────────────────────────────
+// A theme exists in four places: the stylesheet's token block, the Go whitelist that decides
+// whether the choice can be SAVED, the picker that offers it, and the THEMES list above that
+// decides whether it is contrast-checked at all. Nothing compared them, and each disagreement
+// fails silently in its own way — an unguarded palette, a choice that applies and is gone after
+// a restart, a flavour nobody can pick, a palette no test reads.
+test('the stylesheet, the server, the picker and this file name the same themes', () => {
+  const inCss = new Set(['dark']); // the bare :root block IS dark
+  for (const m of CSS.matchAll(/:root\[data-appearance="([a-z]+)"\] \{/g)) inCss.add(m[1]);
+
+  const go = fs.readFileSync(path.join(REPO, 'internal', 'server', 'settings.go'), 'utf8');
+  const caseLine = go.match(/case ((?:"[a-z]+"(?:, )?)+):\n\s*cur\.Appearance/);
+  assert.ok(caseLine, 'the appearance whitelist is not in settings.go in the shape this scan reads');
+  const inGo = new Set([...caseLine[1].matchAll(/"([a-z]+)"/g)].map((m) => m[1]));
+
+  const html = fs.readFileSync(path.join(REPO, 'web', 'index.html'), 'utf8');
+  const inPicker = new Set([...html.matchAll(/name="themechoice" value="([a-z]+)"/g)].map((m) => m[1]));
+
+  const inThemes = new Set(THEMES.map((t) => t.name));
+  const show = (s) => [...s].sort().join(', ');
+  assert.equal(show(inGo), show(inCss),
+    `the server accepts {${show(inGo)}} and the stylesheet defines {${show(inCss)}} — a theme the server rejects applies for the session and is gone after a restart, with nothing said`);
+  assert.equal(show(inPicker), show(inCss),
+    `the picker offers {${show(inPicker)}} and the stylesheet defines {${show(inCss)}}`);
+  assert.equal(show(inThemes), show(inCss),
+    `THEMES covers {${show(inThemes)}} and the stylesheet defines {${show(inCss)}} — every contrast assertion in this file iterates THEMES, so a palette missing from it is checked by none of them`);
+});
+
+// ── The sidebar cards ────────────────────────────────────────────────────────
+// A card header is one of the six accents at 20% over --base, with --text on top. The level is
+// measured rather than chosen: accent-coloured TEXT fails all six accents in Latte (1.70-3.52),
+// a rail clears 3:1 for only three of them, and a tint over --surface0 leaves light red at 3.92.
+// This recomputes the blend the CSS does with color-mix(), which no arithmetic guard can read.
+test('every card header keeps its text readable, in every theme', () => {
+  const ACCENTS = ['blue', 'green', 'red', 'yellow', 'peach', 'mauve'];
+  // The tint level is a per-theme token: the dark flavours carry more of the accent than Latte
+  // can, because Latte's --text is its darkest token and the margin runs out sooner.
+  const tintOf = (selector) => {
+    const at = CSS.indexOf(selector);
+    const body = CSS.slice(at, CSS.indexOf('}', at));
+    const m = body.match(/--card-tint:\s*(\d+)%/);
+    assert.ok(m, `${selector} defines no --card-tint, so its card colour is unmeasurable`);
+    return Number(m[1]) / 100;
+  };
+  const mix = (fg, bg, a) => {
+    const h = (c) => [1, 3, 5].map((i) => parseInt(c.slice(i, i + 2), 16));
+    const [f, b] = [h(fg), h(bg)];
+    return '#' + f.map((v, i) => Math.round(a * v + (1 - a) * b[i]).toString(16).padStart(2, '0')).join('');
+  };
+  for (const t of THEMES) {
+    const p = palette(t.selector);
+    for (const a of ACCENTS) {
+      assert.ok(p[a] && p.base && p.text, `${t.name} is missing --${a}, --base or --text`);
+      const ratio = contrast(p.text, mix(p[a], p.base, tintOf(t.selector)));
+      assert.ok(ratio >= 4.5,
+        `${t.name}: a ${a} card header is ${ratio.toFixed(2)}:1 against its own text (needs 4.5). The tint level is 20% over --base and was measured against every theme; a new palette whose accent is too close to its base breaks it`);
+    }
+  }
 });
