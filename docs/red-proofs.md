@@ -4069,3 +4069,31 @@ by eye in Chromium when the pills were made flush, and `responsive.test.mjs` is 
 must paint gets read.
 
 `recorded` 316 → 317.
+
+
+## The reload icon — start over, from the file (v1.123.5)
+
+| Defect reintroduced | Check that fired | What it said |
+| --- | --- | --- |
+| `the-reload-icon-does-not-ask` — `reloadDiscarding` stops confirming | `diskchanged.test.mjs`, tier 3 | "the reload icon threw away unsaved work without asking" |
+| `a-reload-leaves-the-document-dirty` — `reloadFromDisk` stops clearing `dirty` | `diskchanged.test.mjs`, tier 3 | "closing after a reload prompted about unsaved work" |
+
+**Nothing new was built for the reload itself.** `reloadFromDisk` has existed since /pending 333 —
+in place, under the same document id — and the stale-file banner's Reload button already wrapped it
+in a confirm. The icon is a second caller of one door (`reloadDiscarding`), which is why the first
+patch removes the confirm from BOTH buttons with a single edit: that is ADR-009 working rather than
+a second defect.
+
+**The second row is the half with no visible symptom.** Every arrival through
+`setDocumentFromServer` marks the document dirty, which is right for the twenty operations that
+reach that sink and wrong for a reload — the bytes now match the file. Left unfixed, the document
+renders correctly and the failure appears only at close, as a prompt about work that no longer
+exists. It is asserted through the close for exactly that reason.
+
+**Two things this test found about the harness rather than the app**, both recorded because each
+cost a run: re-opening a path Nib already holds is not a fresh open (it is reported as the same
+file in another tab, so the `has-doc` wait never fires), and a poll reading
+`.viewerContainer .page` must be null-guarded — a rotate tears the pages down and rebuilds them,
+so the predicate runs across a window where the element does not exist and throws inside the poll.
+
+`recorded` 317 → 319.

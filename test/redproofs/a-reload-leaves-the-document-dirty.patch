@@ -1,0 +1,10 @@
+--- a/web/app.js
++++ b/web/app.js
+@@ -2760,7 +2760,6 @@
+   // that reach it and wrong here: the bytes now MATCH the file, so there is nothing unsaved
+   // to lose and a close must not prompt. An undo of this reload goes back through the same
+   // sink and sets it again, which is then correct.
+-  target.dirty = false;
+   return true;
+ }
+ 

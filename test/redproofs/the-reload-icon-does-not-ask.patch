@@ -1,0 +1,11 @@
+--- a/web/app.js
++++ b/web/app.js
+@@ -10004,7 +10004,7 @@
+   const target = view;
+   const d = target.docMeta;
+   if (!d || !d.path) return;
+-  if (hasUnsavedWork(target) && !confirm('Reload ' + (d.name || 'this document') + ' from disk? Your unsaved changes to it will be lost.')) return;
++  if (hasUnsavedWork(target)) { /* mutation: discard without asking */ }
+   if (await reloadFromDisk(target, false)) toast('Reloaded from disk');
+ }
+ els.staleReload.onclick = reloadDiscarding;

@@ -397,6 +397,10 @@ opened — so if the file changes on disk afterwards (another program, or `nib �
 -w` in a terminal), Nib says so in a banner and offers to reload it, and Save
 asks before replacing the changed file with what you have open.
 
+**Start over** — the **↻ reload** button beside Undo/Redo throws away everything you
+have done since opening and re-reads the file from disk. It asks first when there is
+unsaved work. Undo steps back one operation at a time; this abandons all of them.
+
 ### Timestamp with OpenTimestamps — prove *when*
 **Timestamp (OpenTimestamps)** creates a small `.ots` proof that anchors your
 document's hash to the Bitcoin blockchain, so anyone can later confirm the exact
