@@ -80,27 +80,6 @@
   --card-tint: 22%;
 }
 
-/* Catppuccin Frappé and Macchiato — the two flavours between Latte and Mocha, added so the
-   theme choice is a choice rather than a switch. `dark` stays Mocha and `light` stays Latte:
-   those two values are already persisted in people's vaults and renaming them would silently
-   reset everyone's theme. */
-:root[data-appearance="frappe"] {
-  --base: #303446; --mantle: #292c3c; --crust: #232634;
-  --surface0: #414559; --surface1: #51576d; --surface2: #626880; --overlay0: #737994;
-  --text: #c6d0f5; --subtext0: #a5adce; --subtext1: #b5bfe2;
-  --blue: #8caaee; --green: #a6d189; --red: #e78284;
-  --yellow: #e5c890; --peach: #ef9f76; --mauve: #ca9ee6;
-  --card-tint: 22%;
-}
-:root[data-appearance="macchiato"] {
-  --base: #24273a; --mantle: #1e2030; --crust: #181926;
-  --surface0: #363a4f; --surface1: #494d64; --surface2: #5b6078; --overlay0: #6e738d;
-  --text: #cad3f5; --subtext0: #a5adcb; --subtext1: #b8c0e0;
-  --blue: #8aadf4; --green: #a6da95; --red: #ed8796;
-  --yellow: #eed49f; --peach: #f5a97f; --mauve: #c6a0f7;
-  --card-tint: 26%;
-}
-
 * { box-sizing: border-box; }
 
 /* The hidden attribute must win over id-based display rules on modals/overlays. */

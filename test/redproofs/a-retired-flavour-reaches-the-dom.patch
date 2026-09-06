@@ -1,0 +1,11 @@
+--- a/web/app.js
++++ b/web/app.js
+@@ -8611,7 +8611,7 @@
+ // tokens — the same pixels by luck, and a `data-appearance="frappe"` on <html> that no rule
+ // anywhere claims. The vault keeps its old string until the next toggle rewrites it.
+ function applyAppearance(mode) {
+-  const theme = mode === 'light' ? 'light' : 'dark';
++  const theme = mode;
+   document.documentElement.dataset.appearance = theme;
+   els.themeToggle.title = theme === 'light' ? 'Switch to dark theme' : 'Switch to light theme';
+ }

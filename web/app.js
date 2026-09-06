@@ -8597,35 +8597,29 @@ async function saveSettings(body) {
 }
 els.autoUpdateChk.onchange = () => saveSettings({ checkUpdatesOnStartup: els.autoUpdateChk.checked });
 
-// Appearance: dark (default) or light. Drives a data attribute on <html> (not
-// body, where the layout attr lives) so the palette override reaches html's own
-// background; the saved value is applied in applyStatus and persisted on toggle.
-// The four flavours, in the order the picker offers them: lightest to darkest. `light` is Latte
-// and `dark` is Mocha — those two values are already in people's vaults, so they keep their names.
-const THEME_CHOICES = [
-  { value: 'light', label: 'Latte (light)' },
-  { value: 'frappe', label: 'Frappé' },
-  { value: 'macchiato', label: 'Macchiato' },
-  { value: 'dark', label: 'Mocha (dark)' },
-];
-let lastDarkAppearance = 'dark'; // so the toggle returns you to the dark flavour you chose
-
+// Appearance: dark (Mocha, default) or light (Latte). Drives a data attribute on <html> (not
+// body, where the layout attr lives) so the palette override reaches html's own background; the
+// saved value is applied in applyStatus and persisted on toggle.
+//
+// **Two flavours and no picker.** Frappé and Macchiato were offered here and are gone; the
+// sun/moon toggle is the whole control. `light` and `dark` keep their names because those are
+// the values already in people's vaults.
+//
+// `frappe` and `macchiato` are still IN some of those vaults, and this is the one door that
+// decides what such a value means: anything that is not `light` renders as dark. Without the
+// normalisation the stylesheet would find no matching block and fall through to the `:root`
+// tokens — the same pixels by luck, and a `data-appearance="frappe"` on <html> that no rule
+// anywhere claims. The vault keeps its old string until the next toggle rewrites it.
 function applyAppearance(mode) {
-  document.documentElement.dataset.appearance = mode;
-  if (mode !== 'light') lastDarkAppearance = mode;
-  els.themeToggle.title = mode === 'light' ? 'Switch to dark theme' : 'Switch to light theme';
-  for (const r of all('input[name="themechoice"]')) r.checked = r.value === mode;
+  const theme = mode === 'light' ? 'light' : 'dark';
+  document.documentElement.dataset.appearance = theme;
+  els.themeToggle.title = theme === 'light' ? 'Switch to dark theme' : 'Switch to light theme';
 }
 els.themeToggle.onclick = () => {
-  // Three of the four values are dark, so the toggle is "light or not light" — and it returns
-  // to the dark flavour you actually picked rather than always to Mocha.
-  const next = document.documentElement.dataset.appearance === 'light' ? lastDarkAppearance : 'light';
+  const next = document.documentElement.dataset.appearance === 'light' ? 'dark' : 'light';
   applyAppearance(next);
   saveSettings({ appearance: next });
 };
-all('input[name="themechoice"]').forEach((r) => {
-  r.onchange = () => { applyAppearance(r.value); saveSettings({ appearance: r.value }); };
-});
 
 async function refreshRecent() {
   const res = await apiFetch('/api/recent');
