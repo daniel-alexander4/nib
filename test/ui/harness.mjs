@@ -89,6 +89,17 @@ export async function launch({ routes = null, waitFor = '#empty', base = BASE } 
     // signing flag and then reached for Close would be clicking a hidden button —
     // Playwright refuses, correctly, and that refusal is the UI's own rule
     // showing through rather than a harness quirk.
+    // panel(name) shows one of the sidebar's panels. Needed since v1.121.0, because a mode's
+    // own commands are a sidebar panel and switching mode lands on it — so a test that wants
+    // the thumbnails, or a control the mode does not land on, has to say so.
+    async panel(name) {
+      await page.click(`.tabs .tab[data-panel="${name}"]`);
+      await page.waitForFunction((n) => {
+        const el = document.getElementById(n);
+        return el && el.classList.contains('active');
+      }, name);
+    },
+
     async mode(tab) {
       await page.click(`[data-tab="${tab}"]`);
       await page.waitForFunction((t) => document.body.dataset.tab === t, tab);

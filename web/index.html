@@ -124,8 +124,12 @@
     </div>
     <span class="tbsep"></span>
 
-    <div class="tbtab" data-tab="file">
-      <div class="tbgroup" data-label="Open" data-fold="0">
+    <!-- The FIXED bar. These commands are not about a mode — you navigate, zoom, find, open
+         and save in every one of them — so they never swap out. Before v1.121.0 the toolbar
+         held five mutually exclusive palettes and nothing else; that is the finding the
+         2026-08-30 menu-surface walk named first, and a bar that never changes retires it. -->
+    <div class="tbfixed">
+<div class="tbgroup" data-label="Open" data-fold="0">
 <button id="openMenuItem">Open…</button>
       <div class="menu">
         <button class="menutop">Recent</button>
@@ -133,8 +137,7 @@
       </div>
       <button id="officeOpenBtn" title="Open a Markdown or Word/Excel/PowerPoint/OpenDocument file by converting it to PDF (office formats require LibreOffice)">Open &amp; convert to PDF…</button>
       <input id="officeInput" type="file" accept=".md,.markdown,.doc,.docx,.odt,.rtf,.txt,.xls,.xlsx,.ods,.csv,.ppt,.pptx,.odp" hidden />
-            </div>
-      <div class="tbgroup" data-label="Save" data-fold="0">
+            </div><div class="tbgroup" data-label="Save" data-fold="0">
 <button id="saveBtn" title="Save (overwrites the original)" disabled>Save</button>
       <div class="menu">
         <button class="menutop">Save as</button>
@@ -165,37 +168,95 @@
         </div>
       </div>
       <button id="printBtn" title="Print (opens your browser's print dialog)" disabled>Print…</button>
-            </div>
-      <div class="tbgroup" data-label="Page" data-fold="0">
+            </div><div class="tbgroup" data-label="Page" data-fold="0">
 <button id="prevBtn" title="Previous page (PageUp · Home for first)">Previous</button>
       <span class="tbpage"><input class="pageNum" type="number" min="1" value="1" /><span class="pageCount">/ 0</span></span>
       <button id="nextBtn" title="Next page (PageDown · End for last)">Next</button>
-            </div>
-      <div class="tbgroup" data-label="Find" data-fold="0">
+            </div><div class="tbgroup" data-label="Zoom" data-fold="2">
+<button id="zoomOutBtn" title="Zoom out (Ctrl+-)">Zoom out</button>
+      <button id="fitBtn" title="Fit width (Ctrl+0)">Fit width</button>
+      <button id="zoomInBtn" title="Zoom in (Ctrl++)">Zoom in</button>
+            </div><div class="tbgroup" data-label="Find" data-fold="3">
 <span class="tbfind"><input class="searchInput" type="search" placeholder="Find in document… (Ctrl+F)" /><button id="findPrevBtn" title="Previous match (Shift+Enter)" disabled>‹</button><button id="findNextBtn" title="Next match (Enter)" disabled>›</button><span id="findCount" class="findcount"></span></span>
-          </div>
-      <div class="tbgroup" data-label="Close" data-fold="1">
+          </div>    <div class="tbgroup" data-label="Close" data-fold="1">
 <button id="closeBtn" title="Close this document and return to the empty state (Nib keeps running)" disabled>Close</button>
       <!-- Appears at two open documents, matching the tab strip's own rule, because with
            one document open Close view and Close all are the same act and offering both
            would be two buttons for one outcome. syncTabs toggles it. -->
       <button id="closeAllBtn" title="Close every open document and return to the empty state" hidden>Close all</button>
-            </div>
-      <div class="tbgroup" data-label="Form data" data-fold="2">
+            </div></div>
+    <span class="tbsep"></span>
+
+    
+    
+    
+    
+    
+
+  </div>
+
+  <main id="main">
+    <aside id="sidebar">
+      <nav class="tabs">
+        <button class="tab active" data-panel="thumbs">Pages</button>
+        <button class="tab" data-panel="outline">Outline</button>
+        <button class="tab" data-panel="library">Library</button>
+        <button class="tab" data-panel="flags">Flags</button>
+        <button class="tab" data-panel="ceremony">Ceremony</button>
+        <button class="tab" data-panel="commands">Commands</button>
+      </nav>
+
+      <!-- The mode's own commands, vertical and captioned. A 200x580px column can afford the
+           group headings a horizontal bar cannot: ADR-015 keeps labels out of the toolbar
+           because a caption there costs height at exactly the widths that are already tight.
+           The panes MOVE here when the sidebar is open and back to #toolbar when it is closed,
+           so no command is ever unreachable — see moveCommandsHome(). -->
+      <div id="commands" class="panel">
+<div class="tbtab" data-tab="file">
+      
+      
+      
+      
+      
+      <div class="tbgroup" data-label="Form data" data-fold="1">
 <button id="fillCsvBtn" title="Mail-merge a spreadsheet onto this form — one filled PDF per row, as a ZIP">Fill from spreadsheet…</button>
       <button id="importXfdfBtn" title="Fill this form from an XFDF data file (the Acrobat/Foxit interchange format)">Import form data (XFDF)…</button>
             </div>
-      <div class="tbgroup" data-label="Multiple documents" data-fold="3">
+      <div class="tbgroup" data-label="Multiple documents" data-fold="2">
 <button id="combineBtn" title="Combine several PDFs into one new document">Combine PDFs…</button>
       <button id="compareBtn" title="Compare this document with another PDF — text diff, side by side, or a visual difference map">Compare…</button>
             </div>
-      <div class="tbgroup" data-label="Zoom" data-fold="4">
-<button id="zoomOutBtn" title="Zoom out (Ctrl+-)">Zoom out</button>
-      <button id="fitBtn" title="Fit width (Ctrl+0)">Fit width</button>
-      <button id="zoomInBtn" title="Zoom in (Ctrl++)">Zoom in</button>
-            </div>
-    </div>
-    <div class="tbtab" data-tab="edit">
+      
+    </div><div class="tbtab" data-tab="markup">
+<div class="tbgroup" data-label="Forms" data-fold="0">
+<button id="detectBtn" title="Detect blank lines to fill">Detect fields</button>
+      <button id="autofillBtn">Autofill from profile</button>
+      <button id="editProfileBtn">Edit autofill profile…</button>
+            </div><div class="tbgroup" data-label="Annotate" data-fold="0">
+<button id="textToolBtn" data-mode="FREETEXT" title="Add a text box (click on the page)">Text</button>
+      <button id="highlightToolBtn" data-mode="HIGHLIGHT" title="Highlight text">Highlight</button>
+      <span id="hlColors" class="hlcolors" hidden>
+        <span id="hlSwatches" class="hlswatches"></span>
+        <label class="hlcustom" title="Pick any highlight color"><input id="hlCustom" type="color" value="#fff066" /></label>
+      </span>
+      <button id="drawToolBtn" data-mode="INK" title="Freehand draw">Draw</button>
+      <button id="borderBtn" title="Draw a colored outline box — a border with no fill">Border</button>
+      <span id="borderWidth" class="borderwidth" hidden>
+        <label title="Border thickness, in points">Thickness <input id="borderWidthInput" type="number" min="1" max="10" step="0.5" value="2" /> pt</label>
+      </span>
+      <button id="noteBtn" title="Drop a comment — a sticky note you can read on click">Note</button>
+      <button id="dropdownBtn" title="Draw a dropdown field, type its options — becomes a real fillable choice field in Save as fillable form…">Dropdown</button>
+      <button id="radioBtn" title="Draw a radio-button group, type its choices — becomes a real fillable choice field in Save as fillable form…">Radio</button>
+      <button id="shapeBtn" title="Draw a line, arrow, rectangle, or ellipse">Shapes</button>
+      <span id="shapeOpts" class="shapeopts" hidden>
+        <button type="button" class="shapetype active" data-shape="line" title="Line">╱</button>
+        <button type="button" class="shapetype" data-shape="arrow" title="Arrow">↗</button>
+        <button type="button" class="shapetype" data-shape="rect" title="Rectangle">▭</button>
+        <button type="button" class="shapetype" data-shape="ellipse" title="Ellipse">◯</button>
+        <label class="check" title="Fill rectangle / ellipse"><input id="shapeFill" type="checkbox" /> Fill</label>
+      </span>
+            </div>      
+    </div><div class="tbtab" data-tab="edit">
       
       
       
@@ -276,38 +337,7 @@
 <button id="rotateLeftBtn" title="Rotate every page 90° counter-clockwise">Rotate all ↺</button>
       <button id="rotateRightBtn" title="Rotate every page 90° clockwise">Rotate all ↻</button>
           </div>
-    </div>
-    <div class="tbtab" data-tab="markup">
-<div class="tbgroup" data-label="Forms" data-fold="0">
-<button id="detectBtn" title="Detect blank lines to fill">Detect fields</button>
-      <button id="autofillBtn">Autofill from profile</button>
-      <button id="editProfileBtn">Edit autofill profile…</button>
-            </div><div class="tbgroup" data-label="Annotate" data-fold="0">
-<button id="textToolBtn" data-mode="FREETEXT" title="Add a text box (click on the page)">Text</button>
-      <button id="highlightToolBtn" data-mode="HIGHLIGHT" title="Highlight text">Highlight</button>
-      <span id="hlColors" class="hlcolors" hidden>
-        <span id="hlSwatches" class="hlswatches"></span>
-        <label class="hlcustom" title="Pick any highlight color"><input id="hlCustom" type="color" value="#fff066" /></label>
-      </span>
-      <button id="drawToolBtn" data-mode="INK" title="Freehand draw">Draw</button>
-      <button id="borderBtn" title="Draw a colored outline box — a border with no fill">Border</button>
-      <span id="borderWidth" class="borderwidth" hidden>
-        <label title="Border thickness, in points">Thickness <input id="borderWidthInput" type="number" min="1" max="10" step="0.5" value="2" /> pt</label>
-      </span>
-      <button id="noteBtn" title="Drop a comment — a sticky note you can read on click">Note</button>
-      <button id="dropdownBtn" title="Draw a dropdown field, type its options — becomes a real fillable choice field in Save as fillable form…">Dropdown</button>
-      <button id="radioBtn" title="Draw a radio-button group, type its choices — becomes a real fillable choice field in Save as fillable form…">Radio</button>
-      <button id="shapeBtn" title="Draw a line, arrow, rectangle, or ellipse">Shapes</button>
-      <span id="shapeOpts" class="shapeopts" hidden>
-        <button type="button" class="shapetype active" data-shape="line" title="Line">╱</button>
-        <button type="button" class="shapetype" data-shape="arrow" title="Arrow">↗</button>
-        <button type="button" class="shapetype" data-shape="rect" title="Rectangle">▭</button>
-        <button type="button" class="shapetype" data-shape="ellipse" title="Ellipse">◯</button>
-        <label class="check" title="Fill rectangle / ellipse"><input id="shapeFill" type="checkbox" /> Fill</label>
-      </span>
-            </div>      
-    </div>
-    <div class="tbtab" data-tab="secure">
+    </div><div class="tbtab" data-tab="secure">
       <div class="tbgroup" data-label="Redact" data-fold="0">
 <button id="redactBtn" title="Draw redaction boxes">Redact</button>
       <button id="redactTextBtn" title="Find a word or pattern (SSN, email, phone, card) and mark every occurrence for redaction">Redact text…</button>
@@ -327,8 +357,7 @@
       <button id="encryptBtn" title="Save a password-protected copy of this document (AES-256)">Add password protection…</button>
       <button id="decryptBtn" title="Remove an open password or owner restrictions from a PDF you can open">Remove password protection…</button>
             </div>
-    </div>
-    <div class="tbtab" data-tab="collaborate">
+    </div><div class="tbtab" data-tab="collaborate">
       <span class="roletoggle">
         <button class="roleopt" data-role="originate" title="You own the document: prepare it, send it, await its return">Originate</button>
         <button class="roleopt" data-role="receive" title="You receive a document, sign it, and send it back">Receive</button>
@@ -346,19 +375,7 @@
         <button id="sessionRecvBtn">Receive a live co-signature…</button>
         <button data-forward="managePeersBtn">Identity &amp; peers…</button>
       </span>
-    </div>
-
-  </div>
-
-  <main id="main">
-    <aside id="sidebar">
-      <nav class="tabs">
-        <button class="tab active" data-panel="thumbs">Pages</button>
-        <button class="tab" data-panel="outline">Outline</button>
-        <button class="tab" data-panel="library">Library</button>
-        <button class="tab" data-panel="flags">Flags</button>
-        <button class="tab" data-panel="ceremony">Ceremony</button>
-      </nav>
+    </div>      </div>
       <div id="thumbs" class="panel active">
         <div class="thumbactions">
           <button id="appendBtn" title="Append another PDF">+ Append PDF</button>

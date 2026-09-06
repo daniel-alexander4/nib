@@ -24,10 +24,12 @@ const doc = h.document;
 // The fold ranks app.js declares. 0 means "never folds"; the rest are the ladder.
 const RANKS = ['0', '1', '2', '3', '4', '5', '6', '7'];
 
-const panes = () => [...doc.querySelectorAll('#toolbar .tbtab')];
+const panes = () => [...doc.querySelectorAll('.tbtab')];
 
 test('every toolbar control sits inside a group', () => {
-  const ps = panes();
+  // The fixed bar is a group host too since v1.121.0 — the mode-independent commands (open,
+  // save, page, zoom, find) live there and must be grouped and labelled like any other.
+  const ps = [...panes(), ...doc.querySelectorAll('#toolbar .tbfixed')];
   assert.ok(ps.length >= 5, `only ${ps.length} toolbar panes found — this guard is reading nothing`);
   for (const pane of ps) {
     // Direct-child controls. The ⋯ More menu is itself a direct child and is not a control,
@@ -47,7 +49,7 @@ test('every toolbar control sits inside a group', () => {
 });
 
 test('every group declares a label and a fold rank', () => {
-  const groups = [...doc.querySelectorAll('#toolbar .tbgroup')];
+  const groups = [...doc.querySelectorAll('.tbgroup')];
   assert.ok(groups.length >= 15, `only ${groups.length} groups found — this guard is reading nothing`);
   for (const g of groups) {
     const label = g.dataset.label;
@@ -59,7 +61,7 @@ test('every group declares a label and a fold rank', () => {
 });
 
 test('a foldable group is never left empty, and never holds a dropdown', () => {
-  for (const g of doc.querySelectorAll('#toolbar .tbgroup[data-fold]')) {
+  for (const g of doc.querySelectorAll('.tbgroup[data-fold]')) {
     if (g.dataset.fold === '0') continue;
     const controls = g.querySelectorAll('button, select, input');
     assert.ok(controls.length > 0,
@@ -76,10 +78,13 @@ test('the ⋯ More menu is built inside its own pane, not beside it', () => {
   // This is what makes moving safe. Mode gating is `#toolbar .tbtab.active` — a descendant
   // selector — so a group moved into a .tbmore inside the same pane stays gated by its mode.
   // A ⋯ More built as a sibling of the panes would show every folded group in all five modes.
-  const mores = [...doc.querySelectorAll('#toolbar .tbmore')];
-  assert.ok(mores.length >= 3, `only ${mores.length} ⋯ More menus were built — expected one per pane with foldable groups`);
+  const mores = [...doc.querySelectorAll('.tbmore')];
+  assert.ok(mores.length >= 3, `only ${mores.length} ⋯ More menus were built — expected one per host with foldable groups`);
   for (const m of mores) {
-    assert.ok(m.closest('.tbtab'),
-      'a ⋯ More menu was built outside a .tbtab, so the groups it holds would appear in every mode');
+    // `.tbfixed` is the deliberate exemption (ADR-017): it holds the mode-INDEPENDENT commands,
+    // so there is no mode gating for its ⋯ More to preserve. Every other menu must sit inside
+    // its own pane, or the groups it holds would show in all five modes.
+    assert.ok(m.closest('.tbtab') || m.closest('.tbfixed'),
+      'a ⋯ More menu was built outside both a .tbtab and the fixed bar, so the groups it holds would appear in every mode');
   }
 });

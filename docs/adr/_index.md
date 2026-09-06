@@ -121,3 +121,12 @@ home today.
   at five once "Signing Ceremony" was trimmed to "Ceremony". A "Pages" tab was killed by a collision
   with File's "Page" group. Two lists fail SILENTLY when a mode changes — `SIDEBAR_FOR` and
   `[data-modejump]` — and `test/jsdom/modes.test.mjs` now covers all four
+- [ADR-017: The sidebar carries the commands](017-the-sidebar-carries-the-commands.md) — a mode's
+  commands live in a `#commands` sidebar panel, vertical and captioned; the toolbar holds only what
+  is true in every mode (Open, Save, Page, Zoom, Find, Close, Undo/Redo). **Supersedes** ADR-015's
+  "⋯ More inside its own `.tbtab`" and ADR-016's "gating is `#toolbar .tbtab.active`" — a pane now
+  lives in the sidebar while it is open and the toolbar while it is shut, so gating is unrooted.
+  "Fixed" means it does not change with the MODE; it still folds with the WIDTH, and conflating
+  those measured 34.8% of the viewport at 800px against a 33% ceiling. The win is legibility, not
+  space: a 200×580px column fits every mode's whole set (Mark Up 318px is the largest) and can
+  afford headings the bar cannot. Cost four corrections and 39 tier-3 failures, all recorded

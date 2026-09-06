@@ -35,6 +35,7 @@ after(async () => {
 test('the co-sign dialog keeps the address field behind the Advanced disclosure', async () => {
   await h.openDocument(writeFixture('deed.pdf', { pages: 1 }), 1);
   await h.mode('collaborate');
+  await h.panel('commands'); // Collaborate lands on Flags; its commands are a sibling panel
   await page.click('#sessionInitBtn');
   await page.waitForSelector('#sessionInitModal:not([hidden])');
 

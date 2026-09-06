@@ -45,7 +45,10 @@ function sidebarForKeys() {
 test('every mode has a tab, a dropdown entry and a toolbar pane', () => {
   const tabs = idsOf('.modetab', 'data-tab');
   const jumps = idsOf('[data-modejump]', 'data-modejump');
-  const panes = idsOf('#toolbar .tbtab', 'data-tab');
+  // Unrooted since v1.121.0: a pane lives in the sidebar's #commands panel while the
+  // sidebar is open and in #toolbar while it is closed, so rooting this at either one would
+  // pass or fail on which state the boot happened to be in.
+  const panes = idsOf('.tbtab', 'data-tab');
   assert.ok(tabs.length >= 5, `only ${tabs.length} mode tabs found — this guard is reading nothing`);
 
   assert.deepEqual(jumps, tabs,
