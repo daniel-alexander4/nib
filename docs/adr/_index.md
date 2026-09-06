@@ -157,3 +157,12 @@ home today.
   verb-led (*Pages* → **Arrange Pages**, *Certify* → **Sign & Timestamp**): a collapsed card's label
   is all a user has to go on, and the nouns were inherited from a toolbar where the buttons supplied
   the verb. Retires ADR-018's *Pages*/*Pages* collision — neither is one word now
+- [ADR-021: Two flavours, and the toggle is the whole control](021-two-flavours-and-the-toggle-is-the-control.md)
+  — Latte and Mocha; Frappé and Macchiato removed from the stylesheet, the server whitelist, the
+  contrast guard and the settings menu, and the radio picker goes with them. **Supersedes**
+  ADR-019's four-flavour half; its card-tint reasoning stands and the pills keep their six accents
+  in both themes. A retired flavour normalises at the point of USE (`applyAppearance`), not by
+  migrating vaults: nothing rewrites a preference on a machine where nothing went wrong, and
+  without it `<html>` carries a `data-appearance` no rule claims while rendering Mocha by luck. The
+  agreement guard now asserts the picker's ABSENCE, because silently no longer comparing a list is
+  how the next picker gets added with a value nothing defines

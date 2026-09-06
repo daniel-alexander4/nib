@@ -4050,3 +4050,22 @@ pointer sequence in this harness could produce an ink stroke to test it against,
 guard on an argument is what this ledger exists to stop.
 
 `recorded` 314 → 316.
+
+
+## ADR-021 — two flavours, and a retired one still renders (v1.123.4)
+
+| Defect reintroduced | Check that fired | What it said |
+| --- | --- | --- |
+| `a-retired-flavour-reaches-the-dom` — `applyAppearance` stops normalising | `themefallback.test.mjs`, tier 2 | "a vault holding \"frappe\" left data-appearance=\"frappe\" on <html>" |
+
+**The row exists because the defect has no symptom.** With the flavour's palette deleted, an
+un-normalised `frappe` renders as Mocha anyway — the stylesheet finds no matching block and falls
+through to `:root`. The pixels are right, by luck, under an attribute naming a theme nothing
+defines; the cost lands on whoever next writes a rule keyed on `data-appearance`, or reads it.
+
+**What is NOT guarded, stated rather than implied:** that a normalised dark actually paints Mocha.
+That is computed style over a real stylesheet, which jsdom does not have. Both themes were checked
+by eye in Chromium when the pills were made flush, and `responsive.test.mjs` is where colour that
+must paint gets read.
+
+`recorded` 316 → 317.

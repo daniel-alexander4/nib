@@ -54,9 +54,11 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 	cur := v.Settings()
 	if req.Appearance != nil {
 		switch *req.Appearance {
-		// Four Catppuccin flavours. "dark" is Mocha and "light" is Latte — the two original
-		// values, kept so a vault written before v1.123.0 still validates.
-		case "dark", "light", "frappe", "macchiato":
+		// Two Catppuccin flavours: "dark" is Mocha and "light" is Latte. Frappé and Macchiato
+		// were accepted here between v1.123.0 and v1.123.4 and are not any more — a vault may
+		// still HOLD one, and the client normalises it to dark on the way in (applyAppearance),
+		// so what is rejected here is only a new save of a flavour that no longer has a palette.
+		case "dark", "light":
 			cur.Appearance = *req.Appearance
 		default:
 			httpError(w, http.StatusBadRequest, "invalid appearance")

@@ -44,14 +44,13 @@ function palette(selector) {
   return out;
 }
 
-// Four flavours since v1.123.0. **Every assertion below iterates this list**, so a palette in
-// the stylesheet but missing here is checked by none of them — which is why the agreement test
-// at the bottom exists rather than trusting whoever adds the next one to remember.
+// Two flavours: Latte and Mocha. Frappé and Macchiato were here between v1.123.0 and v1.123.4.
+// **Every assertion below iterates this list**, so a palette in the stylesheet but missing here
+// is checked by none of them — which is why the agreement test at the bottom exists rather than
+// trusting whoever adds the next one to remember.
 const THEMES = [
   { name: 'dark', selector: ':root {' },                                 // Mocha
   { name: 'light', selector: ':root[data-appearance="light"] {' },       // Latte
-  { name: 'frappe', selector: ':root[data-appearance="frappe"] {' },
-  { name: 'macchiato', selector: ':root[data-appearance="macchiato"] {' },
 ];
 
 test('both palettes define the tokens this file reasons about', () => {
@@ -256,13 +255,17 @@ test('nothing puts text in --overlay0, on any ground', () => {
 });
 
 
-// ── The four lists that describe one fact ────────────────────────────────────
-// A theme exists in four places: the stylesheet's token block, the Go whitelist that decides
-// whether the choice can be SAVED, the picker that offers it, and the THEMES list above that
-// decides whether it is contrast-checked at all. Nothing compared them, and each disagreement
-// fails silently in its own way — an unguarded palette, a choice that applies and is gone after
-// a restart, a flavour nobody can pick, a palette no test reads.
-test('the stylesheet, the server, the picker and this file name the same themes', () => {
+// ── The lists that describe one fact ─────────────────────────────────────────
+// A theme exists in the stylesheet's token block, in the Go whitelist that decides whether the
+// choice can be SAVED, and in the THEMES list above that decides whether it is contrast-checked
+// at all. Nothing compared them, and each disagreement fails silently in its own way — an
+// unguarded palette, a choice that applies and is gone after a restart, a palette no test reads.
+//
+// **The fourth list was the picker, and it is asserted GONE rather than dropped from the
+// comparison.** Two flavours do not need a radio list; the sun/moon toggle is the whole control.
+// Silently no longer comparing it would make re-adding a picker — with a value the stylesheet
+// and the server have never heard of — invisible here, which is the class of defect this test is.
+test('the stylesheet, the server and this file name the same themes, and no picker offers more', () => {
   const inCss = new Set(['dark']); // the bare :root block IS dark
   for (const m of CSS.matchAll(/:root\[data-appearance="([a-z]+)"\] \{/g)) inCss.add(m[1]);
 
@@ -272,14 +275,14 @@ test('the stylesheet, the server, the picker and this file name the same themes'
   const inGo = new Set([...caseLine[1].matchAll(/"([a-z]+)"/g)].map((m) => m[1]));
 
   const html = fs.readFileSync(path.join(REPO, 'web', 'index.html'), 'utf8');
-  const inPicker = new Set([...html.matchAll(/name="themechoice" value="([a-z]+)"/g)].map((m) => m[1]));
+  const inPicker = [...html.matchAll(/name="themechoice" value="([a-z]+)"/g)].map((m) => m[1]);
 
   const inThemes = new Set(THEMES.map((t) => t.name));
   const show = (s) => [...s].sort().join(', ');
   assert.equal(show(inGo), show(inCss),
     `the server accepts {${show(inGo)}} and the stylesheet defines {${show(inCss)}} — a theme the server rejects applies for the session and is gone after a restart, with nothing said`);
-  assert.equal(show(inPicker), show(inCss),
-    `the picker offers {${show(inPicker)}} and the stylesheet defines {${show(inCss)}}`);
+  assert.deepEqual(inPicker, [],
+    `the settings menu offers a theme picker again (${inPicker.join(', ')}). The toggle is the whole control since v1.123.4 — if a picker is coming back, this guard has to compare its values against the stylesheet and the server again, which it stopped doing when the list went`);
   assert.equal(show(inThemes), show(inCss),
     `THEMES covers {${show(inThemes)}} and the stylesheet defines {${show(inCss)}} — every contrast assertion in this file iterates THEMES, so a palette missing from it is checked by none of them`);
 });
