@@ -200,6 +200,64 @@ test('the sidebar yields to the document on a narrow window, and comes back', as
     'the sidebar did not come back when the window widened — auto-collapse is a function of width, not a one-way trip');
 });
 
+// The accordion's geometry, and it is here because the same defect class has now hit this
+// sidebar four times: a rule written for the horizontal TOOLBAR travelling into the column with
+// the panes ADR-017 moves. Three are recorded in ADR-018 (headers into the bar, the pass-through
+// claiming the column, every header stretching to 203px); the fourth was `.tbtab`'s own
+// `gap: 10px`, which separates groups sitting side by side in the bar and became a 10px band of
+// `--mantle` between every stacked card — measured, a card head ending at y=192 with its body
+// beginning at 202.
+//
+// **jsdom cannot hold any of this.** A gap between two cards and a border-radius that resolves
+// are both computed style over real layout; tier 2 sees `0×0` rects and would pass at any value.
+test('the sidebar cards stack flush, and every one is a rounded pill', async () => {
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.waitForTimeout(200);
+
+  const found = await page.evaluate(() => {
+    const vis = (e) => e.getBoundingClientRect().height > 0;
+    const out = { modes: 0, cards: 0, gaps: [], square: [] };
+    // Every mode, because the cards are per-mode and a rule can reach one pane and not another.
+    for (const t of document.querySelectorAll('.modetab')) {
+      t.click();
+      out.modes++;
+      // The open card's BODY is in the walk deliberately: it sits between two heads, so a gap
+      // above or below it is exactly as visible as one between two heads, and skipping it would
+      // have missed both halves of the defect this test was written for.
+      const items = [...document.querySelectorAll('#sidebar .sbhead, #commands .tbgroup.open')].filter(vis);
+      const rows = items.map((e) => {
+        const r = e.getBoundingClientRect();
+        return {
+          body: e.classList.contains('tbgroup'),
+          label: e.textContent.trim().slice(0, 28),
+          top: Math.round(r.top),
+          bottom: Math.round(r.bottom),
+          radius: parseFloat(getComputedStyle(e).borderTopLeftRadius),
+        };
+      });
+      for (const r of rows) {
+        if (r.body) continue;
+        out.cards++;
+        if (!(r.radius > 0)) out.square.push(`${t.dataset.tab}: ${r.label}`);
+      }
+      for (let i = 1; i < rows.length; i++) {
+        const d = rows[i].top - rows[i - 1].bottom;
+        if (d !== 0) out.gaps.push(`${t.dataset.tab}: ${rows[i - 1].label} -> ${rows[i].label} = ${d}px`);
+      }
+    }
+    return out;
+  });
+
+  assert.ok(found.modes >= 5 && found.cards >= 15,
+    `walked ${found.modes} modes and ${found.cards} cards — this guard is reading nothing`);
+  assert.deepEqual(found.gaps, [],
+    `these sidebar cards do not touch their neighbour:\n  ${found.gaps.join('\n  ')}\nA gap is a band of the sidebar's own ground showing between two pills, which is what a toolbar rule reaching the column looks like`);
+  assert.deepEqual(found.square, [],
+    `these sidebar cards have square corners: ${found.square.join(', ')}. Every pill is rounded — the panel cards keep their .tab class, whose border-radius: 0 is for a tab strip the sidebar no longer is`);
+
+  await h.mode('file'); // the cleanup below closes from File, and this test ends in the last mode
+});
+
 test('this file leaves the shared server as it found it', async () => {
   await page.setViewportSize({ width: 1280, height: 900 });
   const openPages = (await h.counts()).pages;

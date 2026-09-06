@@ -3996,3 +3996,29 @@ all five modes, opened and closed, plus `scrollWidth` against `clientWidth` for 
 and that measurement is recorded in ADR-020, not here.
 
 `recorded` 308 → 312.
+
+
+## The sidebar pills stack flush and every one is rounded (v1.123.2)
+
+| Defect reintroduced | Check that fired | What it said |
+| --- | --- | --- |
+| `sidebar-cards-inherit-the-toolbar-gap` — `#commands .tbtab` back to `gap: 10px` | `responsive.test.mjs`, tier 3 | "these sidebar cards do not touch their neighbour" |
+| `panel-pills-keep-the-tab-strips-square-corners` — `.sbhead`'s radius deleted | `responsive.test.mjs`, tier 3 | "these sidebar cards have square corners: file: Arrange Pages, …" |
+
+**Both rows are tier 3 because neither can be seen anywhere else.** A gap between two cards and a
+resolved `border-radius` are computed style over real layout; jsdom reports `0×0` for every rect at
+every viewport, so a tier-2 copy would pass at any value — the vacuous green arriving through the
+wrong tier, which this file's own header warns about.
+
+**The first is the fourth instance of one class**, and ADR-018 records the other three: a rule
+written for the horizontal toolbar travelling into the sidebar with the panes ADR-017 moves.
+`.tbtab`'s gap separates groups sitting side by side in the bar; stacked as cards it became a 10px
+band of `--mantle` between every pill. Nothing functional failed under it for four versions — every
+card opened, closed and gated by mode — which is why only a screenshot found it.
+
+**The second row's failure names only the PANEL cards, and that is the shape of the bug.** Group
+heads carry no `.tab` class and took the button default of 6px; panel heads kept `.tab` when they
+became headers at ADR-018, and `.tab { border-radius: 0 }` — written for a tab strip the sidebar no
+longer is — beat it. Two kinds of card in one column, one rounded and one square.
+
+`recorded` 312 → 314.

@@ -1475,8 +1475,15 @@ input.ovl-check { appearance: auto; accent-color: #1a7f37; background: transpare
    measured, captions in the bar cost 50-118px of height. */
 .tbfixed { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }
 
-/* In the sidebar the panes stack: one group per block, its label above it. */
-#commands .tbtab { flex-direction: column; align-items: stretch; gap: 10px; }
+/* In the sidebar the panes stack: one group per block, its label above it.
+   **`gap: 0`, and the 10px it replaces was a horizontal-bar rule that followed the panes
+   into the column.** `.tbgroup`'s own gap separates GROUPS in the toolbar, where they sit
+   side by side and need the air; ADR-017 moves the same panes into the sidebar, where the
+   groups became stacked cards and that gap turned into a 10px band of `--mantle` between
+   every pill — visible as a gap in the accordion and in nothing else. Measured: card head
+   ended at y=192, its body began at 202. Cards stack flush now, which is also what makes the
+   rounded corners below read as a stack rather than as floating chips. */
+#commands .tbtab { flex-direction: column; align-items: stretch; gap: 0; }
 #commands .tbgroup { flex-direction: column; align-items: stretch; gap: 3px; }
 #commands .tbgroup + .tbgroup::before { display: none; }
 #commands .tbgroup > .menucap { display: block; padding: 2px 0 0; }
@@ -1509,6 +1516,13 @@ input.ovl-check { appearance: auto; accent-color: #1a7f37; background: transpare
   padding: 7px 10px; font-size: 12px; font-weight: 600;
   letter-spacing: .3px; cursor: pointer;
 }
+/* Every pill is rounded, including the PANEL ones. They kept their `.tab` class when they
+   became headers (ADR-018), and `.tab` sets `border-radius: 0` for the tab strip it no longer
+   is — so the group cards took the button default of 6px and the panel cards below them were
+   square. Measured, not read: `getComputedStyle` said 6px on a group head and 0px on a panel
+   head in the same column. Declared here rather than by editing `.tab`, which still styles the
+   document strip. */
+.sbhead { border-radius: 6px; }
 .sbhead:hover { background: var(--surface1); color: var(--text); }
 .sbhead[aria-expanded="true"], .sbhead.active {
   color: var(--text); box-shadow: inset 3px 0 0 var(--mauve);

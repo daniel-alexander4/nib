@@ -1,0 +1,10 @@
+--- a/web/style.css
++++ b/web/style.css
+@@ -1522,7 +1522,6 @@
+    square. Measured, not read: `getComputedStyle` said 6px on a group head and 0px on a panel
+    head in the same column. Declared here rather than by editing `.tab`, which still styles the
+    document strip. */
+-.sbhead { border-radius: 6px; }
+ .sbhead:hover { background: var(--surface1); color: var(--text); }
+ .sbhead[aria-expanded="true"], .sbhead.active {
+   color: var(--text); box-shadow: inset 3px 0 0 var(--mauve);

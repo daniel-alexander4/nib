@@ -1,0 +1,11 @@
+--- a/web/style.css
++++ b/web/style.css
+@@ -1483,7 +1483,7 @@
+    every pill — visible as a gap in the accordion and in nothing else. Measured: card head
+    ended at y=192, its body began at 202. Cards stack flush now, which is also what makes the
+    rounded corners below read as a stack rather than as floating chips. */
+-#commands .tbtab { flex-direction: column; align-items: stretch; gap: 0; }
++#commands .tbtab { flex-direction: column; align-items: stretch; gap: 10px; }
+ #commands .tbgroup { flex-direction: column; align-items: stretch; gap: 3px; }
+ #commands .tbgroup + .tbgroup::before { display: none; }
+ #commands .tbgroup > .menucap { display: block; padding: 2px 0 0; }
