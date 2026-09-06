@@ -266,3 +266,64 @@ test('a zoom set while the document is still loading is not thrown away', async 
 
   await closeDoc();
 });
+
+// ── Who owns Ctrl+Z ─────────────────────────────────────────────────────────
+//
+// Placing a note focuses its `textarea.note-text`, and the shortcut handler yielded to any
+// typing target — so the keystroke went to a field with an EMPTY native undo stack and the note
+// survived it. Measured in Chromium before the fix: 1 overlay before Ctrl+Z, 1 after, and the
+// same keystroke removing it the instant the note was blurred. The Undo button was enabled the
+// whole time, so nothing in the UI said the shortcut had been swallowed.
+//
+// **The second half is the regression this must not cause**, and it is why the rule is "has an
+// undo of its own" rather than "is empty": type into a note, clear it, and Ctrl+Z must still be
+// the field's, not the document's. A field is marked the first time it receives input.
+//
+// Tier 3 because every step needs layout: a note is placed by clicking a rendered page, and what
+// is asserted is which element has FOCUS when a real key event arrives.
+test('Ctrl+Z removes a just-placed note, and leaves a typed one to the field', async () => {
+  await h.openDocument(DOC, 3);
+  await h.topOfDocument();
+  await h.mode('markup');
+  await h.group('Annotate & Draw');
+
+  const armNote = async () => {
+    const armed = await page.evaluate(() => document.getElementById('noteBtn').classList.contains('active'));
+    if (!armed) await page.click('#noteBtn');
+    await page.waitForFunction(() => document.getElementById('noteBtn').classList.contains('active'));
+  };
+  const placeNote = async (fx, fy) => {
+    await armNote();
+    const box = await page.locator('.viewerContainer:not([hidden]) .page').first().boundingBox();
+    await page.mouse.click(box.x + box.width * fx, box.y + box.height * fy);
+    await page.waitForSelector('.viewerContainer:not([hidden]) .ovl-note');
+  };
+  const notes = () => page.evaluate(() => document.querySelectorAll('.viewerContainer:not([hidden]) .ovl-note').length);
+
+  await placeNote(0.4, 0.3);
+  assert.equal(await notes(), 1, 'setup: no note was placed, so nothing below is being measured');
+  // The defect lived in this precondition: the field must actually hold focus, or the yield
+  // being tested never happens and the assertion after it passes for the wrong reason.
+  assert.equal(await page.evaluate(() => document.activeElement?.className), 'note-text',
+    'setup: placing a note no longer focuses its textarea — this test exercises the yield to a focused field and there is none');
+
+  await page.keyboard.press('Control+z');
+  await page.waitForTimeout(600);
+  assert.equal(await notes(), 0,
+    'Ctrl+Z did nothing to a note that was just placed. Focus is in the note\'s own empty textarea, whose native undo stack has nothing in it — so yielding the keystroke there loses it entirely');
+
+  // Now the other direction, on a note that HAS been typed into.
+  await placeNote(0.55, 0.5);
+  await page.keyboard.type('hello');
+  await page.waitForFunction(() => document.activeElement?.value === 'hello');
+  assert.equal(await page.evaluate(() => document.activeElement?.dataset?.nibTyped), '1',
+    'setup: typing did not mark the field, so the branch below is not the one under test');
+
+  await page.keyboard.press('Control+z');
+  await page.waitForTimeout(600);
+  assert.equal(await notes(), 1,
+    'Ctrl+Z removed a note the user had typed into. A field that has received input owns its own undo, and taking it means the keystroke deletes the note instead of the last word');
+
+  h.answerDialogs(true);
+  await closeDoc();
+});
