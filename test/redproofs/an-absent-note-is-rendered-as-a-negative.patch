@@ -1,0 +1,19 @@
+--- a/web/app.js
++++ b/web/app.js
+@@ -11448,12 +11448,13 @@ function ceremonyCard(c, mayAct) {
+   // negative: no note means an older build, a failed write, or a ceremony whose hop has not
+   // happened — never "the modal did not appear". So the row is drawn only when there IS a note,
+   // and `presented === false` is the positively-recorded case that the words reached nobody.
+-  if (c.verification) {
++  if (true) {
++    const seen = c.verification || { presented: false, confirmed: false };
+     const v = document.createElement('div');
+     v.className = 'cerverify';
+-    v.textContent = c.verification.presented === false
++    v.textContent = seen.presented === false
+       ? 'The spoken check did not appear on this machine.'
+-      : c.verification.confirmed
++      : seen.confirmed
+         ? 'You confirmed the spoken words on this machine.'
+         : 'The spoken check appeared here and was not confirmed.';
+     card.appendChild(v);

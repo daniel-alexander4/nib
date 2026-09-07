@@ -1,0 +1,11 @@
+--- a/internal/server/session.go
++++ b/internal/server/session.go
+@@ -1134,7 +1134,7 @@ func (sv sessionVerifier) ConfirmVerification(words string) (bool, error) {
+ 	case ok := <-ch:
+ 		// Presented either way: the user saw the words and said whether they matched. A refusal and
+ 		// a confirmation are both answers, and only one of them leads to a signature.
+-		sv.noteVerification(true, ok)
++		sv.noteVerification(true, true)
+ 		return ok, nil
+ 	case <-time.After(sessionConsentTimeout):
+ 		// **Presented and NOT confirmed, which is the third state and half the reason this note

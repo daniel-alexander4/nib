@@ -1,0 +1,11 @@
+--- a/web/app.js
++++ b/web/app.js
+@@ -11452,7 +11452,7 @@ function ceremonyCard(c, mayAct) {
+     const v = document.createElement('div');
+     v.className = 'cerverify';
+     v.textContent = c.verification.presented === false
+-      ? 'The spoken check did not appear on this machine.'
++      ? 'The spoken check appeared here and was not confirmed.'
+       : c.verification.confirmed
+         ? 'You confirmed the spoken words on this machine.'
+         : 'The spoken check appeared here and was not confirmed.';

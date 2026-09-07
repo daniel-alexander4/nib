@@ -1,0 +1,10 @@
+--- a/internal/server/session.go
++++ b/internal/server/session.go
+@@ -1114,7 +1114,6 @@ func (sv sessionVerifier) ConfirmVerification(words string) (bool, error) {
+ 		// so** (D5, P02.S04). Everything else in this function ends with the gate having been on
+ 		// screen; here `setVerify` refused the slot and `sv.saw.mark()` below has not run, which
+ 		// its own comment states in as many words: *"Nothing was put in front of anyone."*
+-		sv.noteVerification(false, false)
+ 		return false, errVerifyBusy
+ 	}
+ 	// **`mark` goes AFTER the slot is won, and the order is the whole of it (P08.S05c).** It used

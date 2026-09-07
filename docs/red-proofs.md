@@ -4466,3 +4466,44 @@ not anything was sent — measured on this repo at `/pending 333`, where a test 
 overwrite was accepting it.
 
 `recorded` 348 → 356.
+
+## The spoken check records that it was presented (v1.128.12)
+
+P02.S04, D5, and P02's last slice. Nothing recorded whether the four words ever reached a human;
+`autoVerifier` confirms without one and `ConfirmVerification` can refuse before anything reaches the
+screen, and both leave a machine that looks afterwards exactly like one whose user said yes.
+
+| Row | Reader | Token |
+|---|---|---|
+| `the-unshown-spoken-check-records-nothing` | `TestEveryExitOfTheSpokenCheck…`, tier 1 | "exit(s) and" |
+| `a-refused-spoken-check-is-recorded-as-confirmed` | `TestTheAnswerRecordedIsTheAnswerGiven`, tier 1 | "the note records confirmed" |
+| `the-spoken-check-note-is-never-read` | `TestTheSpokenCheckRecordsAllThreeOutcomes`, tier 1 | "no note was recorded" |
+| `the-spoken-check-note-is-read-too-late` | `TestTheNoteSurvivesAnUnreadableRecord`, tier 1 | "carries no spoken-check note" |
+| `an-absent-note-is-rendered-as-a-negative` | `spokencheck.test.mjs`, tier 2 | "Absence is UNKNOWN" |
+| `the-two-presented-states-read-alike` | the same file | "both read as" |
+
+**Two of these mutations survived their first probe, and both survivals were the TESTS' fault.**
+
+`a-refused-spoken-check-is-recorded-as-confirmed` — recording every presented check as *confirmed*,
+including a refusal — passed the entire slice. Every Go test called `noteVerification` with its own
+arguments, and the exit-population scan counts **calls**, not what is passed to them. So a build
+that asserted *"you confirmed the spoken words"* about a user who said they did **not** match would
+have shipped green. Only a test that drives `ConfirmVerification` itself and answers it through
+`respondVerify` can see the call site.
+
+`an-absent-note-is-rendered-as-a-negative` survived because the first mutation **threw**. Reading
+`c.verification.presented` with no note is a TypeError, the card render unwound, and the absence
+assertion passed for the wrong reason. The defect anyone would actually ship is a *default*
+(`c.verification || {presented: false}`), not a crash — and only that shape reaches the assertion.
+
+**That is four instances of one class in four slices** — P02.S02's M5 (a guard no fixture could make
+the deciding refusal), P02.S03's M7 (a one-page document that made a page match always true),
+P05.S01's fixture (a missing invitation that let an unrelated branch answer), and these two. Stated
+once as a rule rather than logged a fourth time:
+
+> **A test that cannot reach the code it names, and a mutation that goes red for a reason other than
+> its own assertion, are both indistinguishable from a passing test.** The exit code cannot tell
+> them apart; only the assertion's own message can, which is what `redproof.sh`'s EXPECT token is
+> for and why it refuses a bare non-zero exit.
+
+`recorded` 356 → 362.
