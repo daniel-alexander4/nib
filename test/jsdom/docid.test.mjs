@@ -179,6 +179,14 @@ test('nothing bypasses apiFetch to reach a document route', () => {
     '/api/pdf', '/api/session/pending-pdf',
     // An <img> src, not a fetch, and the image library is not document-scoped.
     '/api/images/',
+    // The window's own liveness stream (P01.S01). Not a document route: it says "a
+    // window exists", which is true of the process and of no document — a window with
+    // nothing open still holds it, and so does one sitting on the unlock screen, which
+    // is why it is public-loopback (D3). It also *could not* be pinned if we wanted it
+    // to be: EventSource cannot set request headers at all, so neither X-Nib-Doc nor a
+    // CSRF token can ride on it. Structural, like the pdf.js pair above, rather than an
+    // omission.
+    '/api/window',
   ]);
 
   // The stimulus: an empty result would read as "no bypasses" forever, including

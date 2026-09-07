@@ -10880,6 +10880,35 @@ window.addEventListener('unhandledrejection', (ev) => {
 // --- launch: check unlock state, then show the app or the first-run wizard ----
 refreshStatus();
 
+// --- this window declares itself, and holds the declaration open ------------
+//
+// One connection, opened at launch and never closed by us. Nib counts the windows
+// holding it; P01.S04 will read that count to decide the process has no reason to
+// keep running. Closing this window drops the socket, which is the whole signal.
+//
+// **Not a heartbeat, and the difference is the feature** (PLAN-window-lifetime.md,
+// D1). A timer here would be throttled to roughly once a minute once this window is
+// in the background, and can be frozen outright — so a server reading timestamps
+// could not tell a MINIMISED window from a CLOSED one, and would eventually quit
+// under someone who had merely looked away. A socket is held by the page existing,
+// not by the page getting scheduled.
+//
+// Opened here rather than after the vault unlocks: a window sitting on the unlock
+// screen is a real window, and the route is public-loopback (D3) so it answers one.
+//
+// EventSource for its reconnect, not for its messages — nothing is ever sent on this
+// stream. A transient drop reconnects on its own, which is what keeps a blip from
+// reading as a closed window once a grace period exists. It is deliberately never
+// closed and never assigned: nothing in the app may end it, because ending it means
+// telling nib this window is gone.
+try {
+  new EventSource('/api/window');
+} catch (e) {
+  // A window that cannot declare itself still works; it only fails to keep nib
+  // alive, which is the safe direction to fail in.
+  console.error('window stream', e);
+}
+
 // --- The Signing Ceremony panel (P06.S02) -----------------------------------
 //
 // **Read-only, and that is a decision rather than a stage.** The panel renders the roster and this

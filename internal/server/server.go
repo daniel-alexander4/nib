@@ -166,6 +166,9 @@ type Server struct {
 
 	setupMu sync.Mutex // serializes first-run vault setup so AutoSetup runs once
 
+	// windows counts the windows currently holding a stream open; see window.go.
+	windows liveWindows
+
 	mu    sync.Mutex
 	vault *vault.Vault // unlocked vault, nil until the SSH key unlocks it
 	csrf  string       // per-process CSRF token, issued when the vault unlocks
@@ -287,6 +290,10 @@ func (s *Server) Handler() http.Handler {
 	// the user had open trigger first-run vault creation with a plain cross-site request.
 	mux.HandleFunc("GET /api/status", requirePublicLoopback(s.handleStatus))
 	mux.HandleFunc("GET /api/instance", s.handleInstance)
+	// A window declares itself and holds the stream for as long as it exists; the count is
+	// what P01.S04 will read to decide the process is done. Public, not requireUnlocked (D3):
+	// a window on the unlock screen is a real window.
+	mux.HandleFunc("GET /api/window", requirePublicLoopback(s.handleWindow))
 	mux.HandleFunc("POST /api/handoff", requirePublicLoopback(s.handleHandoff))
 	mux.HandleFunc("GET /api/update/check", s.handleUpdateCheck)
 	mux.HandleFunc("POST /api/ssh/enroll", requirePublicLoopback(s.handleEnroll))
