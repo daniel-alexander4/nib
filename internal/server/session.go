@@ -869,6 +869,50 @@ type sessionConfirmer struct {
 	// on purpose** — the anchor carries a ceremony only on the QUIC coordinator path, so a gate
 	// reading it would be blind on every TCP ceremony hop. See serveOneSession.
 	cer *ceremonyID
+	// me is this machine's own fingerprint, so `blockFor` can answer "where does MY block go"
+	// without re-opening the vault on the consent path. `serveOneSession` already holds it — it
+	// is the same value `coSignExchange` stamps with — so taking it here is one value travelling
+	// rather than a second derivation of it.
+	me []byte
+}
+
+// pendingBlock is a placement as the consent surface renders it.
+type pendingBlock struct {
+	Page int        `json:"page"` // 1-based
+	Rect [4]float64 `json:"rect"` // llx, lly, urx, ury in PDF points
+}
+
+// blockFor is where this party's attestation will land on the document they are being shown.
+//
+// **It is the SAME DOOR ON THE SAME INPUTS as the stamp, which is what makes "the block shown is
+// the block stamped" a fact rather than a comparison.** `p2p.PlacementFor` is already ADR-009's one
+// door for this question. Its stamp-side call is `PlacementFor(inbound, roster, me)` at
+// `p2p/session.go:1097`, eight lines after `c.Confirm(peer, inbound)` — and `Confirm` is handed
+// `doc []byte`, which *is* `inbound`. The roster is the same object too, not a second derivation:
+// `p2p.Receive(` has one production call site and `sessionConfirmer{` one construction, and they
+// are the same line, built with `cer: cer` against a roster argument of `cer.l3Roster()`.
+//
+// Two implementations checked for agreement is the shape ADR-009 refuses in its own words — "eight
+// copies checked for agreement say nothing about a ninth site added without one". This is one
+// implementation reached twice.
+//
+// **No branch for the manual co-sign**: `PlacementFor` already answers `NextPlacement` when there
+// is no roster, so a plain two-party co-sign gets a real placement from the same call.
+//
+// **Best-effort, and its failure is silence rather than a refusal.** The consent decision does not
+// depend on it — `loadPendingPreview`'s own comment makes the same argument for the preview, citing
+// STANDARDS §9 — and refusing to show a party a document because Nib could not work out where a
+// rectangle goes would trade the review for the annotation on it.
+func (sc sessionConfirmer) blockFor(doc []byte, me []byte) *pendingBlock {
+	var roster p2p.Roster
+	if sc.cer != nil {
+		roster = sc.cer.l3Roster()
+	}
+	place, err := p2p.PlacementFor(doc, roster, hex.EncodeToString(me))
+	if err != nil {
+		return nil
+	}
+	return &pendingBlock{Page: place.Page, Rect: place.Rect}
 }
 
 func (sc sessionConfirmer) Confirm(peer p2p.SignerAttestation, doc []byte) (bool, string, []byte, time.Time, error) {
@@ -912,6 +956,9 @@ func (sc sessionConfirmer) Confirm(peer p2p.SignerAttestation, doc []byte) (bool
 	// Inside a ceremony the recital travels with the consent request; outside one there is no
 	// ceremony to have a recital and the field stays empty, which is what the client branches on.
 	view.Recital = recitalFor(sc.cer)
+	// The signer's own block, from the bytes this function was handed — see blockFor. Read from
+	// the identity rather than from the peer's attestation: the question is where MY block goes.
+	view.Block = sc.blockFor(doc, sc.me)
 	// The request is held so the defer can name it: an unconditional clear drops whatever
 	// is pending when it fires, which after a disarm-and-rearm is a LATER session's consent.
 	req := &pendingReq{view: view, doc: doc, resp: ch}
@@ -1483,7 +1530,7 @@ func (s *Server) serveOneSession(anchor consentAnchor, cer *ceremonyID, conn *p2
 		// different block.
 		rd = cer
 	}
-	final, rerr := p2p.Receive(ch, cert, key, label, sessionConfirmer{s: s, saw: &saw, anchor: anchor, cer: cer}, sessionVerifier{s, &saw}, rd, cer.l3Roster())
+	final, rerr := p2p.Receive(ch, cert, key, label, sessionConfirmer{s: s, saw: &saw, anchor: anchor, cer: cer, me: myFP}, sessionVerifier{s, &saw}, rd, cer.l3Roster())
 	// **"Signed but not saved" is an outcome with a document, not a failure (P08.S02, D24 as
 	// amended).** The peer has the signature; this machine could not keep a copy. So the error is
 	// reported to the user and the document is still returned, opened and treated as arrived —
@@ -1817,6 +1864,20 @@ type pendingView struct {
 	// screen states rather than a list it omits: "nobody has signed this yet" and "we did not
 	// look" must not render the same.
 	Signers []pendingSigner `json:"signers"`
+	// Block is where this party's own visible attestation will land on the document being
+	// reviewed — the page and the rect, in PDF points.
+	//
+	// **It exists because the signer could not see it, and the code said so at both ends.**
+	// `handleSessionQuote` answers with `p2p.NominalBlockRect()`, whose own doc calls that *"a
+	// size template, not a placement — the caller wants a rect of the right shape and must not
+	// care where it says it is"*, and the client consumes only its width and height. The real
+	// placement was computed server-side AFTER consent, so a party decided and only then did
+	// anything work out where their signature would go.
+	//
+	// **Absent, not zeroed, when it cannot be computed**, because a rect of `[0,0,0,0]` on page 0
+	// is a location and this is the absence of one. The consent screen draws nothing rather than
+	// a box in the corner of the first page.
+	Block *pendingBlock `json:"block,omitempty"`
 }
 
 // pendingSigner is one already-present signature, for the consent screen.

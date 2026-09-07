@@ -58,14 +58,26 @@ export const Util = {
 // thumbnail COUNT is a tier-3 assertion, because only one page ever renders here — but
 // "the grid is empty" was a false premise, and an emptiness assertion written against it
 // would have passed for the wrong reason.
-function makePage(n) {
+// `renders` makes render() RESOLVE instead of rejecting, and it is opt-in for the same reason
+// `fail` above is: every existing caller depends on the rejection, which is what makes the
+// "exactly one .thumbwrap lands" measurement true.
+//
+// **It does not pretend jsdom can draw.** Nothing is painted and no pixel is readable; what it
+// buys is the code AFTER the await running, which is otherwise reachable only at tier 3. P02.S03
+// needs it because a consent preview's failure path replaces the whole column with "could not
+// render the document" — so with the default stub, geometry appended before the await is wiped
+// before a test can read it, and the flip between PDF points (origin bottom-left) and CSS pixels
+// (origin top-left) would have no reader below tier 3.
+function makePage(n, renders) {
   return {
     pageNumber: n,
     getViewport({ scale = 1 } = {}) {
       return { width: 612 * scale, height: 792 * scale, scale, rotation: 0 };
     },
     render() {
-      return { promise: Promise.reject(new Error('jsdom has no canvas — rendering is tier 3')) };
+      return renders
+        ? { promise: Promise.resolve() }
+        : { promise: Promise.reject(new Error('jsdom has no canvas — rendering is tier 3')) };
     },
     getTextContent: async () => ({ items: [] }),
     getAnnotations: async () => [],
@@ -122,7 +134,7 @@ export function getDocument() {
       }
       resetModified() { this.#modified = false; }
     })(),
-    getPage: async (n) => makePage(n),
+    getPage: async (n) => makePage(n, cfg.renders === true),
     getOutline: async () => cfg.outline,
     getData: async () => new Uint8Array(),
     saveDocument: async () => new Uint8Array(),

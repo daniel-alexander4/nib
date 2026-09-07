@@ -1710,3 +1710,29 @@ input.ovl-check { appearance: auto; accent-color: #1a7f37; background: transpare
 .signstep[data-state="done"] { color: var(--text); }
 .signstep[data-state="done"] .signstep-mark { color: var(--green); }
 .signstep[data-state="untracked"] .signstep-mark { opacity: .5; }
+
+/* The consent preview's page wrapper and the signer's own block outline (P02.S03).
+   `position: relative` is what the outline is measured against — without it the box would be
+   placed against the scrolling preview column and would slide off its page on the first scroll. */
+.srvpage { position: relative; display: block; }
+.srvblock {
+  position: absolute;
+  box-sizing: border-box;
+  border: 2px dashed var(--blue);
+  background: color-mix(in srgb, var(--blue) 12%, transparent);
+  pointer-events: none;
+}
+.srvblock span {
+  position: absolute;
+  left: 0;
+  bottom: 100%;
+  font-size: 11px;
+  line-height: 1.4;
+  padding: 0 4px;
+  white-space: nowrap;
+  /* `--base` against `--blue` in BOTH themes, which is the pair the rest of the sheet uses for a
+     filled accent. The tokens flip together at the light-theme block above, so this is one rule
+     rather than a colour that only reads on one ground. */
+  color: var(--base);
+  background: var(--blue);
+}

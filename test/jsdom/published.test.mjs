@@ -95,6 +95,10 @@ const PUBLISHED = [
   // surface rather than a label over an unrescuable state.
   { type: 'noticeView', readers: ['web/app.js'] },
   { type: 'pendingView', readers: ['web/app.js'] },
+  // The signer's own attestation block, sent so the consent screen can show WHERE the
+  // signature lands before the signer decides (P02.S03). Both fields are read by
+  // `loadPendingPreview`/`markBlock`.
+  { type: 'pendingBlock', readers: ['web/app.js'] },
   // Who has already signed the arriving document (P07.S07c, D27 item 3). Rendered by
   // `renderConsentSigners`, which draws a row per signer and marks an invalid one rather than
   // dropping it — so all three fields have a reader on the consent screen.
