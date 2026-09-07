@@ -578,7 +578,7 @@ Refs: D16.
 Acceptance: a termination verifies against an invitation exactly where it verifies against the
 record, and is refused on a mismatched roster commitment or a non-convener signer.
 
-#### P05.S03 — the declined end state reaches a party who never signed
+#### P05.S03 — the declined end state reaches a party who never signed *(done 2026-09-07, v1.128.19)*
 Scope: the receiving half — a pre-hop party is reachable by the round that already walks them, and
 acts on what it verifies. Refs: D16.
 Acceptance: a declined ceremony delivered to a party holding no record closes their arm; a planted

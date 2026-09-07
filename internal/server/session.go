@@ -431,9 +431,25 @@ func deliveryGrace() time.Duration { return ceremonyHopBudget() }
 // conservative direction and it is deliberate: the alternative — defaulting to
 // `MaxCeremonyLife` — would hold the listener open for thirty days on exactly the input that
 // tells us least.
+//
+// # The premise changed at P05.S03, and the floor is now wrong for one of the two cases
+//
+// The paragraph above rests on *"a delivery arm exists only after this party has signed, so a
+// missing record there is anomalous"*. Since D16 a party who has **accepted and not signed** also
+// arms this slot — to receive the convener's end state, which is the one thing nothing local can
+// tell them. For them a missing record is the ORDINARY state, not an anomaly, and the five-minute
+// floor would close the arm before any convener could reach it.
+//
+// So the two cases are separated by `ReadStored`'s classifier, exactly as `checkDeliveredPayload`
+// separates them: **absent** is the pre-hop party and takes `hopWindowFor`'s answer, which is the
+// same bound their hop arm already runs on; **damaged or unverifiable** keeps the floor, because
+// that input still tells us least and is still the case the original argument was written about.
 func deliveryWindowFor(cer *ceremonyID) time.Duration {
 	if cer == nil {
 		return sessionAcceptTimeout
+	}
+	if st := ceremony.ReadStored(defaultOutputDir(), cer.inv.ID, time.Now()); st.State == ceremony.LoadAbsent {
+		return hopWindowFor(cer)
 	}
 	rec, _, err := ceremony.ReadMirror(defaultOutputDir(), cer.inv.ID, time.Now())
 	if err != nil {
