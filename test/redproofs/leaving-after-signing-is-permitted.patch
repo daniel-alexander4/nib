@@ -1,0 +1,11 @@
+--- a/internal/server/leave.go
++++ b/internal/server/leave.go
+@@ -63,7 +63,7 @@ func (s *Server) handleCeremonyLeave(w http.ResponseWriter, r *http.Request) {
+ 	// arrives. It is a strictly self-harming action with no upside, and the honest response is to
+ 	// say so rather than to perform it.
+ 	st := ceremony.ReadStored(defaultOutputDir(), id, time.Now())
+-	if st.State == ceremony.LoadOK {
++	if false && st.State == ceremony.LoadOK {
+ 		httpError(w, http.StatusConflict,
+ 			"you have already signed this document, so there is nothing left to withdraw — your "+
+ 				"signature is on it and the other parties are relying on it. Leaving now would "+

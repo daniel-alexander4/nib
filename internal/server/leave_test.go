@@ -161,11 +161,28 @@ func TestLeavingIsRefusedWhereItWouldOnlyCostTheUser(t *testing.T) {
 	})
 
 	t.Run("a ceremony this machine has already signed", func(t *testing.T) {
-		ts, _ := startServerWith(t)
+		ts, srv2 := startServerWith(t)
 		c, csrf := authedClient(t, ts)
 		me := myFingerprint(t, c, ts.URL)
 		inv, rec, doc := convenedCeremony(t, 6*time.Hour, me)
 		if _, err := ceremony.WriteMirror(defaultOutputDir(), rec, doc); err != nil {
+			t.Fatal(err)
+		}
+		// **The invitation is stored, and without it this case was latently vacuous** — found by
+		// the red proof, which is the only thing that could have found it. With no invitation in
+		// the vault, disabling the already-signed guard let the request fall through to the
+		// *no-invitation* refusal, which is also a 409: the status assertion passed against a
+		// branch that has nothing to do with signing, and only the sentence assertion noticed.
+		// Storing it removes that branch, so the guard under test is the only one left that can
+		// refuse and its removal shows up as a leave that SUCCEEDS.
+		text, eerr := inv.Encode()
+		if eerr != nil {
+			t.Fatal(eerr)
+		}
+		srv2.mu.Lock()
+		v2 := srv2.vault
+		srv2.mu.Unlock()
+		if err := v2.AddCeremonyInvitation(inv.ID, text); err != nil {
 			t.Fatal(err)
 		}
 		// SETUP: the record reads as OK, which is the discriminator the refusal uses. Without

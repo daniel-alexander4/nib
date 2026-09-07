@@ -1,0 +1,11 @@
+--- a/web/app.js
++++ b/web/app.js
+@@ -11539,7 +11539,7 @@ function ceremonyLeave(c) {
+       + 'This machine will stop listening for it and will forget the invitation.\n\n'
+       + 'Nobody is told. This is not the same as declining, which the convener would see.\n\n'
+       + 'You cannot rejoin without a fresh invitation.');
+-    if (!ok) return;
++    if (!ok) { /* proceed anyway */ }
+     btn.disabled = true;
+     out.textContent = '';
+     try {

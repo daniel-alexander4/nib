@@ -4423,3 +4423,46 @@ can read it. It does not pretend jsdom can draw — nothing is painted and no pi
 it buys is the code after the await running.
 
 `recorded` 341 → 348.
+
+## A party can leave a ceremony (v1.128.10)
+
+P05.S01, D17, decided with Dan via `/discuss` from `/pending 378`. Since D14 accepting an invitation
+ARMS and the arm is renewed at every unlock, so the only lever a party had was quitting Nib — and
+quitting is a pause, not a decision.
+
+| Row | Reader | Token |
+|---|---|---|
+| `leaving-a-ceremony-prunes-nothing` — the route answers 200 and removes nothing | `TestLeavingStopsTheArmAndKeepsItStopped`, tier 1 | "armed for a ceremony this machine had left" |
+| `leaving-is-recorded-as-a-decline` — a local act written as an attested refusal | `TestLeavingWritesNoTermination`, tier 1 | "leaving recorded the end state" |
+| `a-convener-can-leave-and-strand-the-roster` | `TestLeavingIsRefused…/convened`, tier 1 | "a convener leaving their own ceremony returned" |
+| `leaving-after-signing-is-permitted` | `TestLeavingIsRefused…/already_signed`, tier 1 | "leaving after signing returned" |
+| `there-is-no-way-to-leave-a-ceremony` | `ceremonyleave.test.mjs`, tier 2 | "offers no way to leave" |
+| `leaving-is-offered-after-signing` — an offer the app cannot keep | the same file | "the control is offered on a ceremony this machine has signed" |
+| `a-declined-confirmation-leaves-anyway` | the same file | "still left the ceremony" |
+| `a-left-ceremony-reads-as-damage` | the same file | "does not say so" |
+
+**The last row was a real defect, not a manufactured mutation.** The receipt renderer's ternary
+chain ends in a fallback, so a `left` receipt read as *"Ended in a way this version does not
+recognise"* — a sentence about a damaged file, shown for the thing the user did on purpose a moment
+earlier. Adding the word then staled `abandoned-borrows-the-unknown-sentence`, which patches the
+same chain; `TestEveryRedProofStillApplies` caught that in the same run and it was re-recorded.
+
+**`leaving-after-signing-is-permitted` found a latently vacuous fixture, and this is the third
+instance of that class in three slices.** The case wrote a mirror record but stored no invitation,
+so disabling the already-signed guard let the request fall through to the *no-invitation* refusal —
+also a 409. The status assertion passed against a branch with nothing to do with signing, and only
+the sentence assertion noticed, which is why `redproof.sh` refused the row rather than accepting a
+red. With the invitation stored, that branch is gone and removing the guard shows up as a leave
+that **succeeds** — 200 where 409 was wanted, which is the informative direction.
+
+Taken with P02.S02's M5 (a guard no fixture could make the deciding refusal) and P02.S03's M7 (a
+one-page document that made a page match always true), the pattern is worth stating once: **an
+assertion that cannot reach the branch it names reads exactly like one that passes, and only a
+mutation tells them apart.** All three were found by the red proof and none by the test passing.
+
+**`a-declined-confirmation-leaves-anyway` asserts the REQUEST and deliberately not the DOM**, because
+a harness that answers dialogs on the user's behalf makes "the card is still there" true whether or
+not anything was sent — measured on this repo at `/pending 333`, where a test meant to decline an
+overwrite was accepting it.
+
+`recorded` 348 → 356.

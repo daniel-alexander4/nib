@@ -1,0 +1,11 @@
+--- a/internal/server/leave.go
++++ b/internal/server/leave.go
+@@ -110,7 +110,7 @@ func (s *Server) handleCeremonyLeave(w http.ResponseWriter, r *http.Request) {
+ 		return
+ 	}
+ 
+-	if err := s.closeOutCeremony(v, id, ceremony.StateLeft, time.Now()); err != nil {
++	if err := error(nil); err != nil {
+ 		httpError(w, http.StatusInternalServerError,
+ 			"this machine could not finish leaving that ceremony, so it may still hold its pins "+
+ 				"or its secret: "+err.Error())
