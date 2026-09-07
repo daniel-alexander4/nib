@@ -278,13 +278,55 @@ the user to continue it. Expiry **is** computed elsewhere — `closeout.go:217` 
 now with a grace — so the fact exists and the answer does not carry it. **Ordered before S02
 deliberately**: making a wrong action more prominent is worse than leaving it a sentence.
 
-### P02 — The signer's surface
+### P02 — The signer's surface *(done 2026-09-07, v1.128.14)*
 **Goal.** One review surface — the document, the block where it will land, the roster — and a
 recital that agrees with the record.
 
 **Exit criteria.** The signature carries the ceremony's recital by default; review is one surface
 rather than three screens; accepting arms; the spoken check is presented and its presentation is
 recorded.
+
+**Acceptance ledger — five clauses, split on every `;` and `and`.**
+
+1. **"The signature carries the ceremony's recital by default"** — ⚠ **met at a lower tier.** The
+   record's `Intent` reaches `pendingView.Recital` and defaults the signer's box, and the submit
+   path is untouched, so what is signed is what is in the box. Proven at tiers 1 and 2. **No run
+   shows a signature carrying a record's recital**: `pairrepro.sh` prints *"quote/signature
+   agreement: not graded — no ceremony, so nothing to stamp"*, because its two-party run has no
+   Record. Filed as `/pending 379`.
+2. **"review is one surface rather than three screens"** — ✅ **met.** The document, the block and
+   the roster render together; the block is drawn on the page it lands on, at the right scale, with
+   the PDF→CSS origin flip asserted (`consentblock.test.mjs`). Two thirds of this clause were
+   already true before the phase and the deepdive said so rather than claiming them.
+3. **"accepting arms"** — ✅ **met and driven live.** Tier 6's *"after accepting, B arms with no
+   manual pin anywhere (D21)"* passes, and `/api/session/status` reports armed within the wait.
+4. **"the spoken check is presented"** — ✅ **met**, and not newly built: `runVerification` refuses a
+   nil `Verifier` and `sessionVerifier` parks the gate. Driven live at tier 4, which prints a
+   distinct verification string per transport.
+5. **"and its presentation is recorded"** — ⚠ **met at a lower tier.** Three states, written
+   positively, seven mutations red. A real hop at tier 4 writes a note; **nothing reads it back
+   after a live hop**, so it is asserted where it is written and not where it lands. Same
+   instrument as clause 1 — `/pending 379`.
+
+**Required-run gates, discharged at v1.128.13 and enumerated from `CONTRIBUTING.md` rather than
+from memory.** Tier 0 ✅ · tier 1 ✅ · tier 2 215/215 ✅ · tier 3 93/93 ✅ · tier 4
+`pairrepro.sh` ✅ (both transports, 2 s of hops) · tier 6 `ceremonyrepro.sh` **19/19 ✅ — and it
+was 18/1 before the fix below.** `go test -race ./internal/server/` ✅ over the arm, ceremony,
+spoken-check and verification tests. Tier 4b/4c/4d and tier 5 not run: this phase touches no
+discovery, transport or off-link path.
+
+**The phase close earned its keep.** Tier 6 caught a regression nothing below it could see: **D14
+inverted D21's observable invariant.** Accepting an invitation now arms, so the arm a party makes
+afterwards was refused `409 a session is already armed` — the step D21 removed came back as a
+conflict. Fixed by `arm.byPolicy` + `displacePolicyArm`: an explicit request displaces **this
+machine's own accept-time arm and nothing else**, never a user's own arm and never one with a
+consent request or a spoken check on screen. An idempotent 200 was refused as a silent downgrade —
+the sweep arms QUIC on `0.0.0.0:0` and the caller asked for TCP on a bound address. Three guards,
+three mutations, three red, and the third was written only because a probe showed the in-flight
+condition decided nothing.
+
+**Closure sweep over `/pending`: population EMPTY.** The Phase section holds no items, so no entry
+was waiting on a P02 coordinate and nothing was falsified by the close.
 
 **Slices firmed 2026-09-07 at phase-open**, against the code as it now stands.
 

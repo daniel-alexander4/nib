@@ -183,6 +183,19 @@ type arm struct {
 	// seconds. A five-minute manual bound and a thirty-day ceremony bound are indistinguishable
 	// from the outcome; they are trivially distinguishable from the figure.
 	until time.Time
+	// byPolicy marks an arm this MACHINE raised on its own — the accept-time sweep (D14) — rather
+	// than one a user asked for through `/api/session/arm`.
+	//
+	// **It exists because D14 inverted D21's observable invariant.** Accepting an invitation used
+	// to make an arm possible, and the tier-6 harness asserts exactly that: *"after accepting, B
+	// arms with no manual pin anywhere"*. Once accepting ARMS, that arm is refused `409 a session
+	// is already armed` — so the step D21 removed came back as a conflict, and a party pressing
+	// Arm is told their machine is busy with something it will not name.
+	//
+	// An idempotent 200 was the obvious alternative and is refused: the sweep arms QUIC on
+	// `0.0.0.0:0`, a caller may ask for TCP on a bound address, and answering success to a request
+	// this machine did not honour is the silent downgrade `checkTransport` exists to refuse.
+	byPolicy bool
 }
 
 // pendingVerify is the spoken verification string waiting on the user (D4, L2).
@@ -439,6 +452,45 @@ func deliveryWindowFor(cer *ceremonyID) time.Duration {
 // shared endpoint's address, reported in status; cancel stops the connect goroutine at disarm.
 func (se *session) armCeremony(cer *ceremonyID, addr string, cancel context.CancelFunc) bool {
 	return se.armIn(&arm{kind: armInteractive, cer: cer, addr: addr, cerCancel: cancel})
+}
+
+// armCeremonyByPolicy is the accept-time sweep's door (D14). Same slot, same window, marked so an
+// explicit request can displace it — see `arm.byPolicy` and `displacePolicyArm`.
+func (se *session) armCeremonyByPolicy(cer *ceremonyID, addr string, cancel context.CancelFunc) bool {
+	return se.armIn(&arm{kind: armInteractive, cer: cer, addr: addr, cerCancel: cancel, byPolicy: true})
+}
+
+// displacePolicyArm tears down a policy-raised interactive arm so an explicit request can take the
+// slot, and reports whether it did.
+//
+// **Three conditions, and each is a different way displacing would be wrong.** The incumbent must
+// be `byPolicy` — a user's own arm is never displaced by another request, which is the rule
+// `setVerify` already keeps for gates and for the same reason: the incumbent wins. It must carry
+// the SAME ceremony, because taking the slot from a different proceeding is the tripwire D22
+// protects, not a courtesy. And nothing may be in flight on it: a consent request or a spoken check
+// on screen means a peer is mid-exchange, and tearing that down answers on the user's behalf —
+// which is the failure `disarmIf` records for the arm-window timer.
+//
+// The cancel runs OUTSIDE the lock, on `disarmCeremony`'s stated footing: it stops a goroutine that
+// may itself take `se.mu`.
+func (se *session) displacePolicyArm(id string) bool {
+	se.mu.Lock()
+	a := se.arms[armInteractive]
+	if a == nil || !a.byPolicy || a.cer == nil || a.cer.inv.ID != id ||
+		se.pending != nil || se.verify != nil {
+		se.mu.Unlock()
+		return false
+	}
+	cancel, ln := a.cerCancel, a.ln
+	se.arms[armInteractive] = nil
+	se.mu.Unlock()
+	if cancel != nil {
+		cancel()
+	}
+	if ln != nil {
+		ln.Close()
+	}
+	return true
 }
 
 // noteFailure records something that went wrong where no response could carry it (P08.S08).
@@ -2003,6 +2055,29 @@ func (s *Server) handleSessionArm(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// **An explicit request displaces this machine's own accept-time arm, and only that**
+	// (phase-close finding, found by tier 6).
+	//
+	// D21's invariant is that accepting an invitation removes the manual PINNING step, and
+	// `ceremonyrepro.sh` observes it the only way it can — by arming afterwards and requiring 200.
+	// D14 made accepting ARM, so that observation became `409 a session is already armed`: the step
+	// D21 removed came back as a conflict, and a party pressing Arm is told their machine is busy
+	// with something the message does not name.
+	//
+	// **An idempotent 200 was the obvious alternative and is refused.** The sweep arms QUIC on
+	// `0.0.0.0:0`; a caller may ask for TCP on a bound address, as that harness does. Reporting
+	// success for a request this machine did not honour is the silent downgrade `checkTransport`
+	// spends sixteen lines refusing.
+	//
+	// **Here rather than inside either transport branch, because the rule is one rule** (ADR-009).
+	// The QUIC arm and the plain listener below are two doors onto the same slot, and a
+	// displacement written at one of them holds for half the requests — which is the shape this
+	// repo keeps finding. It runs before either opens a socket, so a displaced arm is never
+	// replaced by one that then fails to bind.
+	if cer != nil {
+		s.sess.displacePolicyArm(cer.inv.ID)
+	}
+
 	// P05.S09: a QUIC ceremony arm both LISTENS and DIALS over the one shared endpoint, joined by
 	// the glare — so a peer we reach by dialing is co-signed here, not only one that dials us. The
 	// coordinator owns the single handshaked listener (a transport permits one), so this path does
@@ -2027,7 +2102,7 @@ func (s *Server) handleSessionArm(w http.ResponseWriter, r *http.Request) {
 		// answered with before, matched on the sentinels the door returns — the messages are
 		// produced there and reach the user unchanged.
 		if aerr := s.armCeremonyHop(context.Background(), cer, cert, key, peerFP, armCands,
-			bind, label, req.Mode); aerr != nil {
+			bind, label, req.Mode, false); aerr != nil {
 			switch {
 			case errors.Is(aerr, errCeremonyAccept):
 				httpError(w, http.StatusInternalServerError, aerr.Error())
