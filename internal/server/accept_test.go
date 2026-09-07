@@ -139,10 +139,25 @@ func TestAcceptRefusesEachThingByName(t *testing.T) {
 	// An invitation for somebody else entirely.
 	notMine, _ := inviteFor(t, strings.Repeat("aa", 32))
 
+	// **The damage has to be guaranteed to damage.** An invitation ends with an 8-character hex
+	// checksum (`invitation.go:382`), so the fixed literal this used — `good[:len-2] + "00"` —
+	// is a NO-OP once in 256 runs: when `good` already ends in "00" the "damaged" invitation IS
+	// the good one, accept correctly succeeds, and this test fails with `got 200, want 400`.
+	// Observed 2026-09-07. The replacement is chosen against the byte it replaces, and asserted
+	// different, so a negative fixture cannot silently stop being negative.
+	damagedTail := "00"
+	if strings.HasSuffix(good, damagedTail) {
+		damagedTail = "11"
+	}
+	damaged := good[:len(good)-2] + damagedTail
+	if damaged == good {
+		t.Fatal("the damaged invitation is identical to the good one, so this case proves nothing")
+	}
+
 	seen := map[string]string{}
 	for _, tc := range []struct{ name, invitation, want string }{
 		{"not an invitation", "hello", "not a Nib invitation"},
-		{"damaged", good[:len(good)-2] + "00", "damaged"},
+		{"damaged", damaged, "damaged"},
 		{"not one of its parties", notMine, "does not name you as one of its parties"},
 	} {
 		code, body := postForCode(t, c, csrf, ts.URL+"/api/ceremony/accept",
