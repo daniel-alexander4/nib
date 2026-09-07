@@ -861,6 +861,9 @@ func (sc sessionConfirmer) Confirm(peer p2p.SignerAttestation, doc []byte) (bool
 		// (P07.S07c).
 		Signers: signersSoFar(doc),
 	}
+	// Inside a ceremony the recital travels with the consent request; outside one there is no
+	// ceremony to have a recital and the field stays empty, which is what the client branches on.
+	view.Recital = recitalFor(sc.cer)
 	// The request is held so the defer can name it: an unconditional clear drops whatever
 	// is pending when it fires, which after a disarm-and-rearm is a LATER session's consent.
 	req := &pendingReq{view: view, doc: doc, resp: ch}
@@ -1739,6 +1742,19 @@ type pendingView struct {
 	Signer      string `json:"signer"`
 	Fingerprint string `json:"fingerprint"`
 	Reason      string `json:"reason"`
+	// Recital is the ceremony's own statement of what the parties are agreeing to, sent so the
+	// signer's box can default to it. Empty outside a ceremony.
+	//
+	// **It exists because the signature was carrying a different sentence from the record.**
+	// `convene.go` says the record's `Intent` is *"the recital every party agrees to"* and that
+	// D20 makes it *"the only home for it"* — while the consent screen defaulted to a hardcoded
+	// "I agree to sign this document." and signed THAT. Two statements of one agreement, and the
+	// one with the signature under it was the generic one.
+	//
+	// Read from the arm's invitation (`ceremonyID.inv.Intent`), which is the same source
+	// `l3RosterFrom` uses one call over — not re-read from disk, and not a second opinion about
+	// what this ceremony is for.
+	Recital string `json:"recital,omitempty"`
 	// Signers is every party who has ALREADY signed this document, in signature order
 	// (D27 item 3, C09; P07.S07c).
 	//
@@ -2094,6 +2110,22 @@ func (s *Server) handleSessionDisarm(w http.ResponseWriter, r *http.Request) {
 	// The INTERACTIVE slot only: this is Cancel, not shutdown. See disarmKind.
 	s.sess.disarmKind(armInteractive)
 	writeJSON(w, s.sess.status())
+}
+
+// recitalFor returns the ceremony's own statement of what the parties are agreeing to, for the
+// consent view — or "" outside a ceremony, where there is no record to have one.
+//
+// **A named function rather than two lines at the call site, so the rule can be tested.** Reaching
+// the call site behaviourally needs a live ceremony session with a consent request in flight; the
+// rule itself is a pure function of the arm, and this is the whole of it.
+//
+// It reads the ARM's invitation, the same source `l3RosterFrom` uses one call over — not a fresh
+// read of the record from disk, which would be a second opinion about what this ceremony is for.
+func recitalFor(cer *ceremonyID) string {
+	if cer == nil {
+		return ""
+	}
+	return cer.inv.Intent
 }
 
 func (s *Server) handleSessionStatus(w http.ResponseWriter, r *http.Request) {

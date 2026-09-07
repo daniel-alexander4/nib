@@ -1527,6 +1527,16 @@ function showConsent(pending) {
   els.srvPeerLabel.textContent = pending.signer || recvArmedLabel || 'your pinned peer';
   els.srvPeerFp.textContent = groupFingerprint(recvPeerFp);
   els.srvPeerReason.textContent = pending.reason || '(none given)';
+  // **Inside a ceremony the recital is the record's, not a sentence this file made up.**
+  // `convene.go` calls the record's intent "the recital every party agrees to" and says D20
+  // makes it the only home for it — and until this, the box below defaulted to a hardcoded
+  // "I agree to sign this document." which is the string the SIGNATURE then carried. Two
+  // statements of one agreement, and the signed one was the generic one.
+  //
+  // Set here rather than at arm time because that is when it is known: the recital travels with
+  // the consent request. Outside a ceremony there is no record and the field is absent, so the
+  // original default stands — the branch is on the field's presence, never on a mode flag.
+  if (pending.recital) els.srvIntent.value = pending.recital;
   renderConsentSigners(pending.signers || []);
   showRecvView('srvConsent');
   loadPendingPreview(recvPoll);
