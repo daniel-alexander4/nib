@@ -337,10 +337,49 @@ Tasks:
 - T05 — tests, each probed red: accepting arms; an unenabled `Server` does not; the window is the
   record's where a record exists; the convener is not armed for; an ended ceremony is not armed for.
 
-#### P02.S03 — one review surface
+#### P02.S03 — one review surface *(done 2026-09-07, v1.128.8)*
 Scope: the document, the block where it will land, and the roster on one surface instead of three
 consecutive screens. Refs: D3, D15.
 Acceptance: a signer sees all three without navigating; the block shown is the block stamped.
+
+**(deepdive, 2026-09-07 — `deepdives/2026-09-07-p02s03-one-review-surface.md`.)**
+
+**(scope pin — two thirds of this slice is already built, and the premise is stale rather than
+wrong.)** `showConsent` already renders the peer, the recital, `renderConsentSigners`' roster with
+invalid signatures marked, and `loadPendingPreview` over **every page** of the received document,
+all on one screen. `showRecvView`'s three views are the arm, the wait and the consent — a sequence
+in time, not three screens a reviewer navigates between. The slice reduces to **the block**, which
+is the one of the three that is genuinely absent.
+
+**(build pin — the client has never been told where its block goes, and the code says so at both
+ends.)** `handleSessionQuote` returns `p2p.NominalBlockRect()`, whose own doc calls it *"a size
+template, not a placement — the caller wants a rect of the right shape and must not care where it
+says it is"*, and `app.js:956` consumes only its width and height. The real placement is computed
+server-side after consent.
+
+**(build pin — the acceptance clause is met by ONE DOOR ON ONE INPUT, not by agreement.)**
+`p2p.PlacementFor` is already ADR-009's single door for this question. Its stamp-side call is
+`PlacementFor(inbound, roster, me)` at `p2p/session.go:1097`, eight lines after
+`c.Confirm(peer, inbound)` — and `Confirm` is handed `doc []byte`, which **is** `inbound`. Named
+search: `p2p.Receive(` has one production call site and `sessionConfirmer{` one construction, and
+they are the same line, built with `cer: cer` against a roster argument of `cer.l3Roster()`. So the
+confirmer can call the same door with the same bytes and the same roster object. Two computations
+checked for agreement is the shape ADR-009 refuses; this is not that.
+
+**(build pin — no branch for the manual co-sign.)** `PlacementFor` already answers `NextPlacement`
+when there is no roster, so a plain two-party co-sign gets a real placement from the same call.
+
+**(build pin — the quote's pinned `when` is NOT moved.)** The placement is a fact about the
+document and is computed independently; the quote stays minted at Accept. Moving it to consent time
+would put the pinned time at the mercy of how long the user reads, which is the defect P06.S06
+fixed.
+
+Tasks:
+- T01 — `sessionConfirmer.Confirm` computes the placement from the bytes it is already handed, and
+  it reaches the pending view.
+- T02 — the consent preview draws the block over the page it will land on.
+- T03 — tests, each probed red: the placement reported is the one stamped; a document whose
+  placement cannot be computed still shows the rest of the surface; the box lands on the right page.
 
 #### P02.S04 — the spoken check records that it was presented
 Scope: the record notes whether the verification modal was shown, so a later reader can tell a

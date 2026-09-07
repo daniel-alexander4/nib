@@ -1539,7 +1539,7 @@ function showConsent(pending) {
   if (pending.recital) els.srvIntent.value = pending.recital;
   renderConsentSigners(pending.signers || []);
   showRecvView('srvConsent');
-  loadPendingPreview(recvPoll);
+  loadPendingPreview(recvPoll, pending.block || null);
 }
 
 // renderConsentSigners lists everyone already on the document the user is being asked to join
@@ -1596,7 +1596,32 @@ function renderConsentSigners(signers) {
 // loadPendingPreview renders the received document in its own pdf.js instance,
 // entirely apart from the main viewer, so reviewing (and declining) a peer's
 // document never disturbs the open document or its unsaved edits.
-async function loadPendingPreview(token) {
+// markBlock draws the outline of this party's own attestation block over a rendered page.
+//
+// **The rect is in PDF points with the origin at the BOTTOM left, and a canvas measures from the
+// TOP left**, so the two y values are flipped against the page height rather than scaled directly.
+// Getting that wrong does not fail — it draws a box, in the wrong half of the page, on the screen
+// where a signer decides where their signature goes — which is why the flip is done from the
+// viewport's own height rather than from a remembered page size.
+//
+// `vp.height` is the page as rendered at this scale, so `scale` converts points to those pixels;
+// the container is `position: relative` and the box `position: absolute`, so the two cannot drift
+// apart when the preview scrolls.
+function markBlock(wrap, vp, rect, scale) {
+  const box = document.createElement('div');
+  box.className = 'srvblock';
+  const [llx, lly, urx, ury] = rect;
+  box.style.left = (llx * scale) + 'px';
+  box.style.top = (vp.height - ury * scale) + 'px';
+  box.style.width = ((urx - llx) * scale) + 'px';
+  box.style.height = ((ury - lly) * scale) + 'px';
+  const tag = document.createElement('span');
+  tag.textContent = 'your signature goes here';
+  box.appendChild(tag);
+  wrap.appendChild(box);
+}
+
+async function loadPendingPreview(token, block) {
   els.srvPreview.innerHTML = '';
   const loading = emptyNote(els.srvPreview, 'Loading the document…');
   let doc;
@@ -1625,7 +1650,20 @@ async function loadPendingPreview(token) {
       canvas.width = Math.ceil(vp.width);
       canvas.height = Math.ceil(vp.height);
       loading.remove(); // no-op after the first page; the note is gone once anything renders
-      els.srvPreview.append(canvas);
+      // The wrapper exists so the block outline can be positioned against the page rather than
+      // against the scrolling preview column. One per page, whether or not this page carries the
+      // block, so the markup does not change shape depending on where the block lands.
+      const wrap = document.createElement('div');
+      wrap.className = 'srvpage';
+      wrap.append(canvas);
+      els.srvPreview.append(wrap);
+      // **The scale is read back from the viewport rather than recomputed.** `vp` was built from
+      // `Math.min(1.2, 380 / base.width)` above, and a second copy of that expression here is a
+      // second answer to "how big is this page on screen" — the box and the page it sits on have
+      // to come from one.
+      if (block && block.page === i && Array.isArray(block.rect)) {
+        markBlock(wrap, vp, block.rect, vp.width / base.width);
+      }
       await page.render({ canvasContext: canvas.getContext('2d'), viewport: vp }).promise;
     }
   } catch {
