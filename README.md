@@ -493,7 +493,7 @@ lease with a guarantor, a deed with witnesses, a resolution with a board — Nib
 a **ceremony**: one named proceeding, one roster, one document, passed from party to party
 in roster order until everyone has signed.
 
-**Where it lives.** *Collaborate → Ceremony*. The panel lists every ceremony on this machine with
+**Where it lives.** *Signing → Signing Ceremonies*. The panel lists every ceremony on this machine with
 its roster, your position in it, and a *"what happens next"* control that asks Nib whose turn it is
 — the same question the software itself refuses out-of-order contributions with, rather than a
 second answer computed for the screen.
