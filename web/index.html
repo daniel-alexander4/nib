@@ -392,10 +392,12 @@
      A tick that is not backed by a signal is worse than no tick, because the whole point of the
      list is to answer "what is left". -->
 <div id="signSteps" class="signsteps"></div>
-<!-- `.menucap` would have been the obvious class and is `display: none` inside #commands — the
-     card header carries the name there (ADR-018), so a caption inside one silently renders
-     nothing. This is its own class. -->
-<div class="signsteps-or">Or let Nib carry the file for you:</div>
+            </div>
+      <!-- Nib's own peer transport, in its own card. It left Simple Sign at v1.127.1: those are
+           the steps of signing a document, and moving the file is the part that flow deliberately
+           leaves to the user. Still here, because it is a real way to exchange the file — just
+           not a step in the list. -->
+      <div class="tbgroup" data-label="Send &amp; Receive" data-fold="2">
 <button id="sessionSendBtn">Send a document to a peer…</button>
       <button id="sessionRecvDocBtn">Receive a document…</button>
       <button id="sessionInitBtn">Co-sign live with a peer…</button>

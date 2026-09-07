@@ -1702,8 +1702,3 @@ input.ovl-check { appearance: auto; accent-color: #1a7f37; background: transpare
 .signstep[data-state="done"] { color: var(--text); }
 .signstep[data-state="done"] .signstep-mark { color: var(--green); }
 .signstep[data-state="untracked"] .signstep-mark { opacity: .5; }
-/* The seam between the checklist and Nib's own transport commands. */
-.signsteps-or {
-  margin: 8px 0 4px; padding-top: 8px; border-top: 1px solid var(--surface1);
-  font-size: 11px; color: var(--subtext1);
-}

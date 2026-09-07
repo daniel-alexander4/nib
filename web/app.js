@@ -10772,12 +10772,21 @@ const SIGN_STEPS = [
   { label: 'Save or export the signed file', need: 'required', hint: null,
     done: null, go: () => goCard('file', 'Save a Copy') },
   { label: 'Verify a signature or timestamp', need: 'optional', hint: 'What the person receiving it will do',
-    done: null, go: () => goCard('collaborate', 'Simple Sign') },
+    done: null, go: () => goCard('collaborate', 'Send & Receive') },
 ];
 
 // Two counts the list needs, scoped to the VISIBLE view — overlays belong to a document, and a
 // hidden view's stamps are not this document's progress.
-function stampCount() { return document.querySelectorAll('.viewerContainer:not([hidden]) .ovl-stamp').length; }
+//
+// **A signature is a stamp from the LIBRARY, not any stamp.** `.ovl-stamp` covers the quick stamps
+// too — a date, a checkmark, an "approved" — and counting those ticked "Place your signature or
+// initials" for someone who had stamped today's date. A library mark carries `/api/images/<id>` in
+// its src; a quick stamp is a `data:` URL built on the spot. That is the whole difference, and it
+// is the difference between the step being done and it not being.
+function stampCount() {
+  return [...document.querySelectorAll('.viewerContainer:not([hidden]) .ovl-stamp img')]
+    .filter((img) => /\/api\/images\//.test(img.getAttribute('src') || '')).length;
+}
 function markerCount() { return document.querySelectorAll('.viewerContainer:not([hidden]) .ovl-marker').length; }
 
 // The profile is the one signal that costs a request, so it is read once and refreshed when the
