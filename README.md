@@ -410,6 +410,10 @@ unsaved work. Undo steps back one operation at a time; this abandons all of them
 page number lives here), and **Functions** is everything else: the current tab's command
 cards and the other panels.
 
+**The version pill** (top right) always shows the version you are running. It is yellow
+until a check runs, green when you are on the latest release, and red when a newer one
+exists — hover it to see which, and click to download.
+
 **Where the file commands live** — the toolbar keeps what you reach for while reading:
 the document's name with a dot showing whether it needs saving, find, and — at the right
 edge — zoom, reload and Save. Opening, saving a copy, exporting, printing and
