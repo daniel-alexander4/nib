@@ -520,29 +520,25 @@ func (s *Server) rearmDeliveries(v *vault.Vault) {
 	}
 	me := hex.EncodeToString(myFP)
 	for _, st := range stored {
-		// **Three classes now, where there were two** (P05.S03, D16).
+		// **This sweep still admits only `LoadOK`, and P05.S03 tried to widen it and BACKED OUT.**
 		//
-		// `LoadOK` is a party who has signed and is waiting for their finished copy — the original
-		// population. **`LoadAbsent` is a party who has ACCEPTED and not yet signed**, and they are
-		// the ones a convener's end-state round is most trying to reach: nothing local can tell
-		// them a proceeding was declined, because every anchor that would needs the record they do
-		// not have. Anything else is damaged or unverifiable and is still skipped, because nothing
-		// there can be trusted enough to act on.
+		// Admitting `LoadAbsent` — a party who has accepted and not yet signed — is what makes the
+		// convener's end-state round reachable for them, and it caused a deterministic tier-4d
+		// failure at four parties: *"a party is not reported delivered after the recovery run"*,
+		// twice, passing with the admission reverted. Three hypotheses were tried and none held
+		// (ordering the signed class first; checking the slot before opening an endpoint; the
+		// endpoint teardown itself). The measured evidence and the dead ends are in `/pending 380`
+		// so the next attempt does not repeat them.
 		//
-		// **The record-only work is skipped with it.** `ReadMirror` and `alreadyDelivered` both
-		// take a record; a pre-hop party has neither a record nor a delivered copy, so both
-		// questions are answered by the absence itself.
-		if st.State != ceremony.LoadOK && st.State != ceremony.LoadAbsent {
+		// **The receiving half of that slice DID ship** — `checkDeliveredPayload` verifies an end
+		// state on the invitation for a machine holding no record. What is missing is the arm that
+		// would let one arrive.
+		if st.State != ceremony.LoadOK {
 			continue // unreadable: nothing here can be trusted enough to act on
 		}
-		var rec ceremony.Record
-		preHop := st.State == ceremony.LoadAbsent
-		if !preHop {
-			var rerr error
-			rec, _, rerr = ceremony.ReadMirror(defaultOutputDir(), st.ID, time.Now())
-			if rerr != nil || alreadyDelivered(rec) {
-				continue
-			}
+		rec, _, rerr := ceremony.ReadMirror(defaultOutputDir(), st.ID, time.Now())
+		if rerr != nil || alreadyDelivered(rec) {
+			continue
 		}
 		text, ok := v.CeremonyInvitationFor(st.ID)
 		if !ok {
@@ -576,18 +572,9 @@ func (s *Server) rearmDeliveries(v *vault.Vault) {
 		// termination does not verify, this machine does NOT conclude the proceeding is over — it
 		// arms. Suppressing on unverifiable evidence is the defect; a needless arm costs one slot
 		// until the next unlock.
-		//
-		// **Skipped entirely for a pre-hop party, and the reason is the slice's own point.** Both
-		// halves need the record: `MatchesRecord` takes one and `ReadTermination` takes one. A
-		// party before their hop has neither, so there is nothing here that could conclude the
-		// proceeding has ended — which is exactly why they are being armed. They cannot skip a
-		// ceremony for having ended, because learning that it ended is the thing they are waiting
-		// for.
-		if !preHop {
-			if merr := inv.MatchesRecord(rec); merr == nil {
-				if _, terr := ceremony.ReadTermination(defaultOutputDir(), rec); terr == nil {
-					continue // a verified end state, on an anchor a planted file cannot forge
-				}
+		if merr := inv.MatchesRecord(rec); merr == nil {
+			if _, terr := ceremony.ReadTermination(defaultOutputDir(), rec); terr == nil {
+				continue // a verified end state, on an anchor a planted file cannot forge
 			}
 		}
 		if aerr := s.armForDelivery(context.Background(), inv, cert, key, me); aerr != nil {

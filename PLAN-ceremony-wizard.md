@@ -560,8 +560,18 @@ before the first hop.
 out the proceeding ended, and can decide to stop taking part.
 
 **Exit criteria.** A declined ceremony reaches a party who never signed, and is refused when its
-anchor does not match; leaving stops the arm and survives a restart; neither path can mint or
-consume an attestation.
+anchor does not match; leaving stops the arm and survives a restart; ~~neither path can mint or
+consume an attestation~~ → **leaving neither mints nor consumes an attestation, and the end-state
+path consumes only one it has verified.**
+
+**(pin, 2026-09-07 — the fourth clause was falsified by this phase's own approved design, and it is
+corrected rather than quietly credited.)** *"Neither path can mint or consume an attestation"* was
+written at phase-firming, before the deepdive established that the end state **is** a `Termination`
+the convener already mints and delivers. S03 exists to CONSUME one. The clause's real content was
+always about leaving — that a local act must not mint an attestation, and must not act on somebody
+else's — and that half is intact and tested. The corrected form keeps both protections and names the
+verification the end-state path owes. **Flagged for Dan to reverse**: this is a criterion I wrote,
+corrected by me, and the correction is at rung 2 rather than rung 1.
 
 **Sequenced AFTER P04 rather than before it**, because P04 is the rail at a full roster and this
 phase changes what the rail has to say. Its slices are sketches until phase-open.
@@ -578,7 +588,22 @@ Refs: D16.
 Acceptance: a termination verifies against an invitation exactly where it verifies against the
 record, and is refused on a mismatched roster commitment or a non-convener signer.
 
-#### P05.S03 — the declined end state reaches a party who never signed *(done 2026-09-07, v1.128.19)*
+#### P05.S03 — the declined end state reaches a party who never signed *(PARTLY done 2026-09-07, v1.128.19; the arm BACKED OUT at v1.128.20 — `/pending 380`)*
+
+**(reality-drift pin, 2026-09-07, and it corrects a marker I wrote.)** This slice was marked done at
+v1.128.19 having passed tiers 0–3 and 6. **Tier 4d had not been run, and it is a required-run gate**
+— `CONTRIBUTING.md` says *"run them all after a change"*. Run at the phase close, it failed
+deterministically: *"[quic] a party is not reported delivered after the recovery run"*, twice, and
+passed with the sweep admission reverted.
+
+**What shipped and stands:** `checkDeliveredPayload` verifies a convener's end state against the
+**invitation** for a machine holding no record — P05.S02's door, its first caller, four mutations
+red. **What was backed out:** the `rearmDeliveries` admission that would let such a machine be
+armed to receive one. Three hypotheses were tried and none held; the evidence and the dead ends are
+in `/pending 380`, and a guard fails if the admission reappears without `-n 4` being re-run.
+
+**So the receiving half is built and the arriving half is not**, and this marker says so rather than
+claiming a slice that is two thirds of itself.
 Scope: the receiving half — a pre-hop party is reachable by the round that already walks them, and
 acts on what it verifies. Refs: D16.
 Acceptance: a declined ceremony delivered to a party holding no record closes their arm; a planted
