@@ -1,0 +1,11 @@
+--- a/web/style.css
++++ b/web/style.css
+@@ -170,7 +170,7 @@
+    comes from the group rule above; what was missing is only the icon's box — the same three
+    properties `.tbtoggle` has carried all along. */
+ #toolbar .tbicon { display: inline-flex; align-items: center; justify-content: center; padding: 5px 7px; }
+-#toolbar .tbicon svg { width: 16px; height: 16px; display: block; }
++
+ 
+ /* One workspace's controls per .tbtab; setMode shows only the active one. */
+ .tbtab { display: none; align-items: center; flex-wrap: wrap; gap: 4px; row-gap: 3px; }

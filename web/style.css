@@ -164,6 +164,14 @@ body { display: flex; flex-direction: column; }
 #toolbar .tbtoggle:hover { background: var(--surface0); color: var(--text); }
 #toolbar .tbtoggle svg { width: 18px; height: 18px; display: block; }
 
+/* Icon-only buttons INSIDE the bar's groups (find, reload). `.tbicon` was introduced with the
+   reload button and never had a rule of its own, so its `<svg>` had no size: the button rendered
+   as 20px of padding around nothing, and the two controls read as blank gaps. The button styling
+   comes from the group rule above; what was missing is only the icon's box — the same three
+   properties `.tbtoggle` has carried all along. */
+#toolbar .tbicon { display: inline-flex; align-items: center; justify-content: center; padding: 5px 7px; }
+#toolbar .tbicon svg { width: 16px; height: 16px; display: block; }
+
 /* One workspace's controls per .tbtab; setMode shows only the active one. */
 .tbtab { display: none; align-items: center; flex-wrap: wrap; gap: 4px; row-gap: 3px; }
 .tbtab.active { display: flex; }

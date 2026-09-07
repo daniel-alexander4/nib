@@ -258,6 +258,40 @@ test('the sidebar cards stack flush, and every one is a rounded pill', async () 
   await h.mode('file'); // the cleanup below closes from File, and this test ends in the last mode
 });
 
+// ── An icon button must actually show an icon ────────────────────────────────
+//
+// `.tbicon` was introduced with the reload button and never given a rule of its own, so its
+// `<svg>` had no width or height: the button rendered as padding around nothing and Find and
+// Reload read as blank gaps in the bar. It shipped that way and was reported by Dan, not caught
+// here — the structural tier sees the `<svg>` in the DOM and calls it present, and I looked at a
+// screenshot where the icons were missing and called them "subtle".
+//
+// So the assertion is on the RENDERED box, which is the only thing that can tell an icon from an
+// element that exists. It is written over every icon-carrying button in the bar rather than over
+// the two that were broken, because the next one will be a third.
+test('every icon button in the toolbar renders its icon', async () => {
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.waitForTimeout(150);
+
+  const icons = await page.evaluate(() => {
+    const out = [];
+    for (const b of document.querySelectorAll('#toolbar button')) {
+      const svg = b.querySelector('svg');
+      if (!svg) continue;                       // a labelled button; not this test's subject
+      if (b.offsetParent === null) continue;    // folded away or in a hidden pane
+      const r = svg.getBoundingClientRect();
+      out.push({ id: b.id || b.className, w: Math.round(r.width), h: Math.round(r.height) });
+    }
+    return out;
+  });
+
+  assert.ok(icons.length >= 3,
+    `only ${icons.length} icon buttons found in the toolbar — this guard is reading nothing`);
+  const blank = icons.filter((i) => i.w < 8 || i.h < 8);
+  assert.deepEqual(blank, [],
+    `these toolbar buttons carry an <svg> that renders at no usable size: ${blank.map((b) => `${b.id} (${b.w}x${b.h})`).join(', ')}. The element is in the DOM, so every structural check passes and the control still reads as an empty gap.`);
+});
+
 test('this file leaves the shared server as it found it', async () => {
   await page.setViewportSize({ width: 1280, height: 900 });
   const openPages = (await h.counts()).pages;
