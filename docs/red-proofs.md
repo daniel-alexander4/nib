@@ -4236,3 +4236,25 @@ headers stayed pinned. Nested in two flex containers it clipped rather than scro
 box against 505px of children, `scrollTop` refusing to move. One scroller, and the pane is it.
 
 `recorded` 325 → 327.
+
+
+## ADR-025 — Settings as a mode, and one-hue cards (v1.126.0)
+
+| Defect reintroduced | Check that fired | What it said |
+| --- | --- | --- |
+| `the-hue-ladder-goes-past-its-measured-tint` — the darkest rung pushed to 1.6x | `theme.test.mjs`, tier 2 | "past the level every contrast figure in this file was computed at" |
+| `a-chosen-hue-never-reaches-the-cards` — the paint rule deleted | `cardhue.test.mjs`, tier 3 | "picking a hue changed nothing on screen" |
+
+**The second row is the shape this feature fails in.** Delete the one rule that paints a card from
+the chosen hue and every other part still reports success: the picker stores the choice, the vault
+returns it, `<html>` carries `data-cardhue`, the radio comes back checked after a reload — and the
+sidebar keeps its old colours. Only the rendered colour can tell, which is why the row is tier 3;
+`color-mix()` over a per-theme token is the browser's arithmetic and no source scan reaches it.
+
+**One thing the tier-3 test found about itself.** Its setup asserted "the sidebar shows five or
+more distinct card colours" to establish the rotation — and a single-hue LADDER also has six
+distinct shades, so a server whose vault already held a hue passed that check and then failed the
+real assertion for an unrelated reason. It now asserts the cards do not all lean the same channel,
+which is what actually distinguishes a rotation from a ladder.
+
+`recorded` 327 → 329.

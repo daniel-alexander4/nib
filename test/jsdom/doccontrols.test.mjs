@@ -86,7 +86,13 @@ const EXEMPT = new Set([
   'saveBtn', 'findPrevBtn', 'findNextBtn', 'closeAllBtn',
   // These act on the VIEWER, not on the document. With nothing open the viewer is empty
   // and they are inert; disabling them would be a behaviour change, not a fix.
-  'prevBtn', 'nextBtn', 'zoomOutBtn', 'fitBtn', 'zoomInBtn',
+  // (`prevBtn`/`nextBtn` were here until v1.125.0 and are gone from the product — a name in an
+  // exemption list that matches nothing is a claim about a control that does not exist.)
+  'zoomOutBtn', 'fitBtn', 'zoomInBtn',
+  // The Settings pane (v1.126.0). None of it acts on the open document — they are the machine's
+  // identity, its vault, its update preference and its About box — so requiring a document would
+  // make Settings unreachable on a fresh install, which is exactly when it is needed.
+  'managePeersBtn', 'manageKeysBtn', 'backupBtn', 'aboutBtn',
   // These act on something OTHER than the open document — your signing certificate, and a
   // file the user picks in the dialog.
   'exportCertBtn', 'timestampVerifyBtn',

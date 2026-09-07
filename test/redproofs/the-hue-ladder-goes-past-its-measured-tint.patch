@@ -1,0 +1,11 @@
+--- a/web/style.css
++++ b/web/style.css
+@@ -1610,7 +1610,7 @@
+ .sbhead[data-step="2"] { --card-step: calc(var(--card-tint) * 0.64); }
+ .sbhead[data-step="3"] { --card-step: calc(var(--card-tint) * 0.76); }
+ .sbhead[data-step="4"] { --card-step: calc(var(--card-tint) * 0.88); }
+-.sbhead[data-step="5"] { --card-step: calc(var(--card-tint) * 1.00); }
++.sbhead[data-step="5"] { --card-step: calc(var(--card-tint) * 1.60); }
+ /* Wins over the per-accent rules above on specificity (id-less, but two attribute
+    selectors and an ancestor), so `all` needs no rule of its own: it is the absence
+    of `data-cardhue`, which is also what a vault written before this reads as. */

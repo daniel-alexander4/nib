@@ -151,6 +151,7 @@ type PinnedPeer struct {
 // client, so no vault holds a value a user chose.
 type Settings struct {
 	Appearance            string   `json:"appearance,omitempty"`            // "dark" (Mocha, default) | "light" (Latte); an older vault may hold "frappe"/"macchiato", read as dark
+	CardHue               string   `json:"cardHue,omitempty"`               // "" / "all" (the six-accent rotation) | one of blue|mauve|green|peach|red|yellow, that hue at stepped tints
 	DisableAutoUpdate     bool     `json:"disableAutoUpdate,omitempty"`     // skip the startup update check
 	RecentHighlightColors []string `json:"recentHighlightColors,omitempty"` // last-used highlight colors, newest first (#rrggbb)
 }

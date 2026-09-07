@@ -12,6 +12,7 @@ import (
 // the UI can save one toggle without resending the others.
 type settingsRequest struct {
 	Appearance            *string   `json:"appearance"`
+	CardHue               *string   `json:"cardHue"`
 	CheckUpdatesOnStartup *bool     `json:"checkUpdatesOnStartup"`
 	RecentHighlightColors *[]string `json:"recentHighlightColors"` // whole-list replace, newest first
 }
@@ -62,6 +63,19 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 			cur.Appearance = *req.Appearance
 		default:
 			httpError(w, http.StatusBadRequest, "invalid appearance")
+			return
+		}
+	}
+	if req.CardHue != nil {
+		switch *req.CardHue {
+		// The six accents the stylesheet defines, plus "all" for the rotation. Kept in step with
+		// web/style.css's `:root[data-cardhue=…]` blocks and with CARD_HUES in web/app.js —
+		// test/jsdom/theme.test.mjs compares the three lists, for the same reason it compares the
+		// theme ones: each disagreement fails silently and differently.
+		case "all", "blue", "mauve", "green", "peach", "red", "yellow":
+			cur.CardHue = *req.CardHue
+		default:
+			httpError(w, http.StatusBadRequest, "invalid cardHue")
 			return
 		}
 	}

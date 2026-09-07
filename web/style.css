@@ -1585,6 +1585,38 @@ input.ovl-check { appearance: auto; accent-color: #1a7f37; background: transpare
 .sbhead[data-accent="mauve"]  { background: color-mix(in srgb, var(--mauve) var(--card-tint), var(--base)); }
 .sbhead[data-accent] { color: var(--text); }
 .sbhead[data-accent]:hover { filter: brightness(1.12); }
+
+/* ── One hue, stepped ─────────────────────────────────────────────────────────
+   Settings → Colours can swap the six-accent rotation for a SINGLE hue at stepped
+   tints, so the sidebar reads as one colour rather than six.
+
+   **The darkest step IS the tint measured above** — `--card-tint`, per theme — and
+   every other step is a fraction of it, so the whole ladder is bounded by a number
+   whose contrast was already computed rather than by a new guess. Lighter means
+   closer to `--base`, which can only make the text MORE readable; the constraint
+   that needed checking is the other end, and the other end is unchanged.
+
+   Six evenly spaced steps from 40% to 100% of that tint: adjacent cards differ by
+   12% of it, which is what makes them read as separate cards instead of a gradient.
+   `theme.test.mjs` recomputes every step in both themes. */
+:root[data-cardhue="blue"]   { --card-hue: var(--blue); }
+:root[data-cardhue="green"]  { --card-hue: var(--green); }
+:root[data-cardhue="red"]    { --card-hue: var(--red); }
+:root[data-cardhue="yellow"] { --card-hue: var(--yellow); }
+:root[data-cardhue="peach"]  { --card-hue: var(--peach); }
+:root[data-cardhue="mauve"]  { --card-hue: var(--mauve); }
+.sbhead[data-step="0"] { --card-step: calc(var(--card-tint) * 0.40); }
+.sbhead[data-step="1"] { --card-step: calc(var(--card-tint) * 0.52); }
+.sbhead[data-step="2"] { --card-step: calc(var(--card-tint) * 0.64); }
+.sbhead[data-step="3"] { --card-step: calc(var(--card-tint) * 0.76); }
+.sbhead[data-step="4"] { --card-step: calc(var(--card-tint) * 0.88); }
+.sbhead[data-step="5"] { --card-step: calc(var(--card-tint) * 1.00); }
+/* Wins over the per-accent rules above on specificity (id-less, but two attribute
+   selectors and an ancestor), so `all` needs no rule of its own: it is the absence
+   of `data-cardhue`, which is also what a vault written before this reads as. */
+:root[data-cardhue] .sbhead[data-accent][data-step] {
+  background: color-mix(in srgb, var(--card-hue) var(--card-step), var(--base));
+}
 .sbhead[data-accent][aria-expanded="true"], .sbhead[data-accent].active { box-shadow: inset 3px 0 0 var(--text); }
 
 

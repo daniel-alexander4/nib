@@ -410,6 +410,11 @@ unsaved work. Undo steps back one operation at a time; this abandons all of them
 page number lives here), and **Functions** is everything else: the current tab's command
 cards and the other panels.
 
+**Settings** is its own tab. Identity & peers, authorized keys, vault backup/restore, the
+update preference, the theme toggle, About — and **Colours**, which sets the sidebar's card
+colours: leave it on *All colours* for the six-accent rotation, or pick one hue and the cards
+become that colour in six steps.
+
 **The version pill** (top right) always shows the version you are running. It is yellow
 until a check runs, green when you are on the latest release, and red when a newer one
 exists — hover it to see which, and click to download.

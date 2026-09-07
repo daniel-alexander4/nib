@@ -318,3 +318,79 @@ test('every card header keeps its text readable, in every theme', () => {
     }
   }
 });
+
+// ── One hue, stepped (Settings → Colours) ────────────────────────────────────
+//
+// A single-hue sidebar is that hue at six tints, each a fraction of `--card-tint` — the level the
+// test above measures. The ladder is BOUNDED BY that level rather than by a new one, so the
+// darkest step is exactly today's card and every lighter step sits closer to `--base`, which can
+// only raise the contrast with `--text`. That is the argument; this recomputes it rather than
+// trusting it, because "lighter is safer" is an argument and not a measurement.
+const STEPS = (() => {
+  const out = [];
+  for (const m of CSS.matchAll(/\.sbhead\[data-step="(\d)"\]\s*\{\s*--card-step:\s*calc\(var\(--card-tint\)\s*\*\s*([\d.]+)\)/g)) {
+    out.push({ step: Number(m[1]), factor: Number(m[2]) });
+  }
+  return out.sort((a, b) => a.step - b.step);
+})();
+
+test('the stepped ladder is six rungs, ordered, and none exceeds the measured tint', () => {
+  assert.equal(STEPS.length, 6,
+    `found ${STEPS.length} card steps in the stylesheet, not six — the accent rotation cycles every six cards and the ladder has to match it, or a single-hue sidebar repeats a shade before the rotation would`);
+  for (let i = 1; i < STEPS.length; i++) {
+    assert.ok(STEPS[i].factor > STEPS[i - 1].factor,
+      `step ${STEPS[i].step} is not darker than step ${STEPS[i - 1].step} (${STEPS[i].factor} vs ${STEPS[i - 1].factor}) — the ladder must climb, or two adjacent cards read as one`);
+  }
+  assert.ok(STEPS[STEPS.length - 1].factor <= 1,
+    `the darkest step is ${STEPS[STEPS.length - 1].factor}x the measured tint. Above 1 it is past the level every contrast figure in this file was computed at, and nothing here has measured it`);
+});
+
+test('every rung of the single-hue ladder keeps its text readable, in every theme', () => {
+  const HUES = ['blue', 'green', 'red', 'yellow', 'peach', 'mauve'];
+  const tintOf = (selector) => {
+    const at = CSS.indexOf(selector);
+    const m = CSS.slice(at, CSS.indexOf('}', at)).match(/--card-tint:\s*(\d+)%/);
+    return Number(m[1]) / 100;
+  };
+  const mix = (fg, bg, a) => {
+    const h = (c) => [1, 3, 5].map((i) => parseInt(c.slice(i, i + 2), 16));
+    const [f, b] = [h(fg), h(bg)];
+    return '#' + f.map((v, i) => Math.round(a * v + (1 - a) * b[i]).toString(16).padStart(2, '0')).join('');
+  };
+  for (const t of THEMES) {
+    const p = palette(t.selector);
+    for (const hue of HUES) {
+      for (const s of STEPS) {
+        const ratio = contrast(p.text, mix(p[hue], p.base, tintOf(t.selector) * s.factor));
+        assert.ok(ratio >= 4.5,
+          `${t.name}: a ${hue} card at step ${s.step} (${s.factor}x the tint) is ${ratio.toFixed(2)}:1 against its own text, below AA's 4.5`);
+      }
+    }
+  }
+});
+
+// ── The lists that describe one hue set ──────────────────────────────────────
+// Same shape as the theme agreement above, and the same reason: the stylesheet decides what a
+// value RENDERS as, the Go whitelist decides whether it can be SAVED, and the picker decides
+// whether anyone can choose it. A hue in two of the three fails silently and differently — a
+// choice that applies and is gone after a restart, or one nobody can reach.
+test('the stylesheet, the server and the picker name the same card hues', () => {
+  const inCss = new Set([...CSS.matchAll(/:root\[data-cardhue="([a-z]+)"\]\s*\{\s*--card-hue/g)].map((m) => m[1]));
+
+  const go = fs.readFileSync(path.join(REPO, 'internal', 'server', 'settings.go'), 'utf8');
+  const caseLine = go.match(/case ((?:"[a-z]+"(?:, )?)+):\n\s*cur\.CardHue/);
+  assert.ok(caseLine, 'the cardHue whitelist is not in settings.go in the shape this scan reads');
+  const inGo = new Set([...caseLine[1].matchAll(/"([a-z]+)"/g)].map((m) => m[1]));
+  inGo.delete('all'); // the rotation is the ABSENCE of a hue, so it has no stylesheet block
+
+  const html = fs.readFileSync(path.join(REPO, 'web', 'index.html'), 'utf8');
+  const inPicker = new Set([...html.matchAll(/name="cardhue" value="([a-z]+)"/g)].map((m) => m[1]));
+  assert.ok(inPicker.has('all'), 'the picker offers no "all" option, so the six-accent rotation cannot be chosen back');
+  inPicker.delete('all');
+
+  const show = (s) => [...s].sort().join(', ');
+  assert.equal(show(inGo), show(inCss),
+    `the server accepts {${show(inGo)}} and the stylesheet renders {${show(inCss)}} — a hue the server rejects applies for the session and is gone after a restart`);
+  assert.equal(show(inPicker), show(inCss),
+    `the picker offers {${show(inPicker)}} and the stylesheet renders {${show(inCss)}}`);
+});
