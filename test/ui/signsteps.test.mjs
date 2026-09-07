@@ -75,3 +75,32 @@ test('a step link goes where it says', async () => {
   assert.equal(cardOpen, true,
     'the Finalize row switched mode but did not open the card holding the command — the link lands in the right room and leaves you looking for the door');
 });
+
+// A quick stamp is not a signature.
+//
+// The probe behind "Place your signature or initials" counted `.ovl-stamp`, which covers the quick
+// stamps too — a date, a checkmark, an "approved" — so stamping today's date ticked the step as
+// though you had signed. Reported by Dan in as many words: the tick should appear once the item
+// has been completed.
+//
+// A signature or initials comes from the Library and carries `/api/images/<id>` in its src; a quick
+// stamp is a `data:` URL built on the spot. That is the whole difference between the step being
+// done and not, and it is only visible in a rendered overlay — no source scan reaches it.
+test('a date stamp does not tick the signature step', async () => {
+  await h.openDocument(DOC, 2);
+  const sig = async () => (await steps()).find((r) => r.label === 'Place your signature or initials')?.state;
+  assert.equal(await sig(), 'todo', 'setup: the signature step is already ticked before anything was placed');
+
+  await h.mode('markup');
+  await h.panel('library');
+  await page.click('.quickstamps button[data-stamp="date"]');
+  await page.waitForSelector('.viewerContainer:not([hidden]) .ovl-stamp');
+
+  const stamps = await page.evaluate(() => document.querySelectorAll('.viewerContainer:not([hidden]) .ovl-stamp').length);
+  assert.ok(stamps > 0, 'setup: no stamp was placed, so the assertion below is about nothing');
+  assert.equal(await sig(), 'todo',
+    'stamping a DATE ticked "Place your signature or initials". Any stamp is being counted as a signature, so the checklist reports a step done that the user has not done');
+
+  h.answerDialogs(true);
+  await h.closeDocument();
+});

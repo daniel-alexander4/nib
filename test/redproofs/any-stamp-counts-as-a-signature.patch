@@ -1,0 +1,14 @@
+--- a/web/app.js
++++ b/web/app.js
+@@ -10783,10 +10783,7 @@
+ // initials" for someone who had stamped today's date. A library mark carries `/api/images/<id>` in
+ // its src; a quick stamp is a `data:` URL built on the spot. That is the whole difference, and it
+ // is the difference between the step being done and it not being.
+-function stampCount() {
+-  return [...document.querySelectorAll('.viewerContainer:not([hidden]) .ovl-stamp img')]
+-    .filter((img) => /\/api\/images\//.test(img.getAttribute('src') || '')).length;
+-}
++function stampCount() { return document.querySelectorAll('.viewerContainer:not([hidden]) .ovl-stamp').length; }
+ function markerCount() { return document.querySelectorAll('.viewerContainer:not([hidden]) .ovl-marker').length; }
+ 
+ // The profile is the one signal that costs a request, so it is read once and refreshed when the

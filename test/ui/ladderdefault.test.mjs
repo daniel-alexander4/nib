@@ -35,9 +35,10 @@ after(async () => {
 test('the co-sign dialog keeps the address field behind the Advanced disclosure', async () => {
   await h.openDocument(writeFixture('deed.pdf', { pages: 1 }), 1);
   await h.mode('collaborate');
-  // `Simple Sign` replaced the Originate/Receive halves at v1.126.1, and Collaborate lands on the
-// Flags PANEL rather than on a card — so the card is opened explicitly.
-await h.card('Simple Sign');
+  // Co-sign live is in `Send & Receive` — Nib's own peer transport, which left Simple Sign at
+// v1.127.1 when that card became the signing checklist. Signing lands on the Flags PANEL rather
+// than on a card, so the card is opened explicitly.
+await h.card('Send & Receive');
 await page.click('#sessionInitBtn');
   await page.waitForSelector('#sessionInitModal:not([hidden])');
 

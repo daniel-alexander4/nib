@@ -4282,3 +4282,27 @@ wrong moment and both rows would still pass. The tier-3 test pins two of them by
 change; the other five are asserted only to be observable, not to be correct.
 
 `recorded` 329 → 331.
+
+
+## A tick that was nearly right (v1.127.1)
+
+| Defect reintroduced | Check that fired | What it said |
+| --- | --- | --- |
+| `any-stamp-counts-as-a-signature` — the probe counts every `.ovl-stamp` | `signsteps.test.mjs`, tier 3 | "stamping a DATE ticked \"Place your signature or initials\"" |
+
+**This one shipped, one release after the checklist was added, and it is the shape the whole
+feature fails in.** Not a missing tick or a broken render — a probe that is NEARLY right. `.ovl-stamp`
+covers the quick stamps as well as library marks, so stamping today's date reported the signature
+step as done. The row is green, the list looks complete, and the single question it exists to
+answer — what is left before I sign — is answered wrongly.
+
+**The previous release's own ledger entry predicted it in general terms** and did not catch it:
+"neither red proof can tell whether the seven real probes are wired to the RIGHT signal… five are
+asserted to be observable, not to be correct." This was one of the five. Naming a gap is not
+closing it.
+
+A signature or initials comes from the Library and carries `/api/images/<id>` in its src; a quick
+stamp is a `data:` URL built on the spot. Only a rendered overlay shows the difference, which is
+why the row is tier 3.
+
+`recorded` 331 → 332.
