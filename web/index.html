@@ -144,45 +144,8 @@
          held five mutually exclusive palettes and nothing else; that is the finding the
          2026-08-30 menu-surface walk named first, and a bar that never changes retires it. -->
     <div class="tbfixed">
-<div class="tbgroup" data-label="Open" data-fold="0">
-<button id="openMenuItem">Open…</button>
-      <div class="menu">
-        <button class="menutop">Recent</button>
-        <div class="dropdown"><div class="recentSlot"></div></div>
-      </div>
-      <button id="officeOpenBtn" title="Open a Markdown or Word/Excel/PowerPoint/OpenDocument file by converting it to PDF (office formats require LibreOffice)">Open &amp; convert to PDF…</button>
-      <input id="officeInput" type="file" accept=".md,.markdown,.doc,.docx,.odt,.rtf,.txt,.xls,.xlsx,.ods,.csv,.ppt,.pptx,.odp" hidden />
-            </div><div class="tbgroup" data-label="Save" data-fold="0">
+<div class="tbgroup" data-label="Save" data-fold="0">
 <button id="saveBtn" title="Save (overwrites the original)" disabled>Save</button>
-      <div class="menu">
-        <button class="menutop">Save as</button>
-        <div class="dropdown">
-          <button id="saveFlatBtn">Save flattened PDF</button>
-          <button id="saveEditableBtn">Save editable copy</button>
-          <button id="saveFillableBtn" title="Turn detected text/checkbox fields into a real fillable AcroForm PDF">Save as fillable form…</button>
-          <button id="reduceBtn">Reduce file size…</button>
-        </div>
-      </div>
-      <div class="menu">
-        <button class="menutop">Export</button>
-        <div class="dropdown">
-          <button id="exportZipBtn">Pages as images (ZIP)</button>
-          <button id="exportPngBtn">Current page (PNG)</button>
-          <button id="exportImagesBtn">Embedded images (ZIP)</button>
-          <button id="exportBookmarkSplitBtn">Split by bookmarks (to a folder)…</button>
-          <button id="exportPageSplitBtn">Split into files by page range (to a folder)…</button>
-          <button id="exportTextBtn">Document text (.txt)</button>
-          <button id="exportTableXlsxBtn" title="Extract this page's table to a spreadsheet (best-effort on grid tables — review the result)">This page's table (XLSX)</button>
-          <button id="exportTableCsvBtn" title="Extract this page's table to CSV (best-effort on grid tables — review the result)">This page's table (CSV)</button>
-          <button id="exportTableOdsBtn" title="Extract this page's table to an OpenDocument spreadsheet (best-effort on grid tables — review the result)">This page's table (ODS)</button>
-          <button id="pdfaBtn" title="Convert to a PDF/A-2b archival candidate (verify the result with veraPDF)">Archival PDF (PDF/A-2b)…</button>
-          <button id="exportFormJsonBtn">Form data (JSON)</button>
-          <button id="exportFormCsvBtn">Form data (CSV)</button>
-          <button id="exportFormXfdfBtn" title="Export this form's data as XFDF — the interchange format Acrobat and Foxit read">Form data (XFDF)</button>
-          <button id="exportCertBtn">Signing certificate</button>
-        </div>
-      </div>
-      <button id="printBtn" title="Print (opens your browser's print dialog)" disabled>Print…</button>
             </div><div class="tbgroup" data-label="Page" data-fold="0">
 <button id="prevBtn" title="Previous page (PageUp · Home for first)">Previous</button>
       <span class="tbpage"><input class="pageNum" type="number" min="1" value="1" /><span class="pageCount">/ 0</span></span>
@@ -192,14 +155,15 @@
       <button id="fitBtn" title="Fit width (Ctrl+0)">Fit width</button>
       <button id="zoomInBtn" title="Zoom in (Ctrl++)">Zoom in</button>
             </div><div class="tbgroup" data-label="Find" data-fold="3">
-<span class="tbfind"><input class="searchInput" type="search" placeholder="Find in document… (Ctrl+F)" /><button id="findPrevBtn" title="Previous match (Shift+Enter)" disabled>‹</button><button id="findNextBtn" title="Next match (Enter)" disabled>›</button><span id="findCount" class="findcount"></span></span>
-          </div>    <div class="tbgroup" data-label="Close" data-fold="1">
-<button id="closeBtn" title="Close this document and return to the empty state (Nib keeps running)" disabled>Close</button>
-      <!-- Appears at two open documents, matching the tab strip's own rule, because with
-           one document open Close view and Close all are the same act and offering both
-           would be two buttons for one outcome. syncTabs toggles it. -->
-      <button id="closeAllBtn" title="Close every open document and return to the empty state" hidden>Close all</button>
-            </div></div>
+<!-- Find collapses to a magnifier: three controls and a text field, in a bar, for something
+     that is opened deliberately and closed again. Ctrl+F opens and focuses it, Escape closes
+     it — the shortcut was already the way most people reach it, and the field kept its place
+     in the bar whether or not anyone was searching. -->
+<button id="findToggle" class="tbicon" title="Find in document (Ctrl+F)" aria-label="Find in document" aria-expanded="false">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+      </button>
+      <span class="tbfind" hidden><input class="searchInput" type="search" placeholder="Find in document… (Ctrl+F)" /><button id="findPrevBtn" title="Previous match (Shift+Enter)" disabled>‹</button><button id="findNextBtn" title="Next match (Enter)" disabled>›</button><span id="findCount" class="findcount"></span></span>
+          </div>    </div>
     <span class="tbsep"></span>
 
     
@@ -228,20 +192,53 @@
            so no command is ever unreachable — see moveCommandsHome(). -->
       <div id="commands" class="panel">
 <div class="tbtab" data-tab="file">
-      
-      
-      
-      
-      
-      <div class="tbgroup" data-label="Fill Forms from Data" data-fold="1">
-<button id="fillCsvBtn" title="Mail-merge a spreadsheet onto this form — one filled PDF per row, as a ZIP">Fill from spreadsheet…</button>
-      <button id="importXfdfBtn" title="Fill this form from an XFDF data file (the Acrobat/Foxit interchange format)">Import form data (XFDF)…</button>
+      <!-- The file lifecycle, as cards. It lived in the toolbar's fixed bar until v1.124.0,
+           where it cost three rows: these are once-per-document acts, and a bar is for what you
+           reach for continuously. What stayed there is `Save` — the one file command with a
+           per-minute rhythm and a state to show — plus page, zoom and find.
+
+           **The dropdowns are FLATTENED, deliberately.** Recent, Save as and Export were
+           `.menu` popups, and no `.menu` has ever rendered inside `#commands` (checked: zero in
+           the mode panes, and no CSS covers the case). In a column the CARD is the disclosure,
+           so a dropdown inside a collapsed card would be a second disclosure for the same
+           items — the pattern the accordion replaced. -->
+      <div class="tbgroup" data-label="Open a Document" data-fold="1">
+      <button id="openMenuItem">Open…</button>
+      <button id="officeOpenBtn" title="Open a Markdown or Word/Excel/PowerPoint/OpenDocument file by converting it to PDF (office formats require LibreOffice)">Open &amp; convert to PDF…</button>
+      <input id="officeInput" type="file" accept=".md,.markdown,.doc,.docx,.odt,.rtf,.txt,.xls,.xlsx,.ods,.csv,.ppt,.pptx,.odp" hidden />
+      <!-- The recent list, inline. It was a dropdown; here the card holds it. -->
+      <div class="recentSlot"></div>
             </div>
-      <div class="tbgroup" data-label="Combine &amp; Compare" data-fold="2">
-<button id="combineBtn" title="Combine several PDFs into one new document">Combine PDFs…</button>
-      <button id="compareBtn" title="Compare this document with another PDF — text diff, side by side, or a visual difference map">Compare…</button>
+      <div class="tbgroup" data-label="Save a Copy" data-fold="2">
+      <button id="saveFlatBtn">Save flattened PDF</button>
+      <button id="saveEditableBtn">Save editable copy</button>
+      <button id="saveFillableBtn" title="Turn detected text/checkbox fields into a real fillable AcroForm PDF">Save as fillable form…</button>
+      <button id="reduceBtn">Reduce file size…</button>
             </div>
-      
+      <div class="tbgroup" data-label="Export &amp; Print" data-fold="3">
+      <button id="exportZipBtn">Pages as images (ZIP)</button>
+      <button id="exportPngBtn">Current page (PNG)</button>
+      <button id="exportImagesBtn">Embedded images (ZIP)</button>
+      <button id="exportBookmarkSplitBtn">Split by bookmarks (to a folder)…</button>
+      <button id="exportPageSplitBtn">Split into files by page range (to a folder)…</button>
+      <button id="exportTextBtn">Document text (.txt)</button>
+      <button id="exportTableXlsxBtn" title="Extract this page's table to a spreadsheet (best-effort on grid tables — review the result)">This page's table (XLSX)</button>
+      <button id="exportTableCsvBtn" title="Extract this page's table to CSV (best-effort on grid tables — review the result)">This page's table (CSV)</button>
+      <button id="exportTableOdsBtn" title="Extract this page's table to an OpenDocument spreadsheet (best-effort on grid tables — review the result)">This page's table (ODS)</button>
+      <button id="pdfaBtn" title="Convert to a PDF/A-2b archival candidate (verify the result with veraPDF)">Archival PDF (PDF/A-2b)…</button>
+      <button id="exportFormJsonBtn">Form data (JSON)</button>
+      <button id="exportFormCsvBtn">Form data (CSV)</button>
+      <button id="exportFormXfdfBtn" title="Export this form's data as XFDF — the interchange format Acrobat and Foxit read">Form data (XFDF)</button>
+      <button id="exportCertBtn">Signing certificate</button>
+      <button id="printBtn" title="Print (opens your browser's print dialog)" disabled>Print…</button>
+            </div>
+      <div class="tbgroup" data-label="Close Document" data-fold="4">
+      <button id="closeBtn" title="Close this document and return to the empty state (Nib keeps running)" disabled>Close</button>
+      <!-- Appears at two open documents, matching the tab strip's own rule, because with
+      one document open Close view and Close all are the same act and offering both
+      would be two buttons for one outcome. syncTabs toggles it. -->
+      <button id="closeAllBtn" title="Close every open document and return to the empty state" hidden>Close all</button>
+            </div>
     </div><div class="tbtab" data-tab="markup">
 <div class="tbgroup" data-label="Detect &amp; Fill Fields" data-fold="0">
 <button id="detectBtn" title="Detect blank lines to fill">Detect fields</button>
@@ -271,6 +268,10 @@
         <label class="check" title="Fill rectangle / ellipse"><input id="shapeFill" type="checkbox" /> Fill</label>
       </span>
             </div>      
+          <div class="tbgroup" data-label="Fill Forms from Data" data-fold="1">
+<button id="fillCsvBtn" title="Mail-merge a spreadsheet onto this form — one filled PDF per row, as a ZIP">Fill from spreadsheet…</button>
+      <button id="importXfdfBtn" title="Fill this form from an XFDF data file (the Acrobat/Foxit interchange format)">Import form data (XFDF)…</button>
+            </div>
     </div><div class="tbtab" data-tab="edit">
       
       
@@ -352,6 +353,10 @@
 <button id="rotateLeftBtn" title="Rotate every page 90° counter-clockwise">Rotate all ↺</button>
       <button id="rotateRightBtn" title="Rotate every page 90° clockwise">Rotate all ↻</button>
           </div>
+          <div class="tbgroup" data-label="Combine &amp; Compare" data-fold="2">
+<button id="combineBtn" title="Combine several PDFs into one new document">Combine PDFs…</button>
+      <button id="compareBtn" title="Compare this document with another PDF — text diff, side by side, or a visual difference map">Compare…</button>
+            </div>
     </div><div class="tbtab" data-tab="secure">
       <div class="tbgroup" data-label="Redact Content" data-fold="0">
 <button id="redactBtn" title="Draw redaction boxes">Redact</button>

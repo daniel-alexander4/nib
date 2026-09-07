@@ -4097,3 +4097,26 @@ file in another tab, so the `has-doc` wait never fires), and a poll reading
 so the predicate runs across a window where the element does not exist and throws inside the poll.
 
 `recorded` 317 → 319.
+
+
+## ADR-022 — the bar holds what you reach for continuously (v1.124.0)
+
+| Defect reintroduced | Check that fired | What it said |
+| --- | --- | --- |
+| `the-lifecycle-creeps-back-into-the-bar` — Close Document moved back to `.tbfixed` | `toolbargroups.test.mjs`, tier 2 | "these once-per-document controls are back in the fixed bar: closeBtn, closeAllBtn" |
+
+**One row, because the decay has one shape.** Every control that comes back to the bar arrives as a
+one-line-looking diff with a locally reasonable argument behind it ("Close is important"), and each
+one costs a toolbar row at every width — ADR-017 measured a pane put back in the bar at 34.8% of
+the viewport at 800px against a 33% ceiling. The guard reads the DOM rather than a list of labels,
+because the control that comes back will be whichever one somebody argues for.
+
+**The paired assertion is the other direction and is not the same claim**: a bar emptied of
+everything would satisfy the first one. Save, page, zoom and find are asserted to have STAYED,
+because putting a control used repeatedly behind a card charges a click for every use.
+
+**What tier 2 cannot see here:** the row count itself, which is the whole point of the change.
+jsdom has no layout. Measured in Chromium instead — three rows to one, chrome 9.1% of a 1400×900
+viewport — and `responsive.test.mjs` owns the standing 33% ceiling.
+
+`recorded` 319 → 320.

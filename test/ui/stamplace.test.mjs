@@ -141,11 +141,11 @@ test('a stamp bakes where it was placed, not mirrored up the page', async () => 
   // assertion below is about a file this test can name. It is also the path that puts
   // the overlay through `collectStamps` → `/api/bake` → `pdfops.StampImages`, which is
   // the seam under test; the flattened path rasterises the page instead and would prove
-  // something else. The item lives in a dropdown that only exists while its menu is
-  // open, so the menu is clicked first — Playwright refuses a display:none target, which
-  // is the UI's own rule showing through.
+  // something else.
   await h.mode('file');
-  await page.click('.menu:has(#saveEditableBtn) .menutop');
+  // Save as was a dropdown in the toolbar and is a CARD since v1.124.0 (ADR-022) — the card is
+  // the disclosure, so there is no menu to open first, only a header to expand.
+  await h.card('Save a Copy');
   await page.click('#saveEditableBtn');
   await page.waitForFunction(() => !document.getElementById('saveAsModal').hidden, null, { timeout: 30000 });
   await page.fill('#saveAsName', 'stamped.pdf');
