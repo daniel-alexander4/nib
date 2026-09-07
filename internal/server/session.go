@@ -283,6 +283,10 @@ func (se *session) armIn(a *arm) bool {
 	// mirrored `document.pdf`, which can be the 128 MiB ceiling. Under `se.mu` that would block
 	// every `status()` poll — the client polls it — on a disk read whose size the user chose.
 	// Computing it first costs nothing and keeps the lock's hold constant-time.
+	//
+	// **Both bounds read disk since P02.S02, not just the delivery one.** The hop bound goes
+	// through `ReadStored`, which verifies a record without opening the document, so it is the
+	// cheaper of the two — but it is still I/O, and it is still outside the lock for this reason.
 	a.until = time.Now().Add(armWindowFor(a.kind, a.cer))
 	se.mu.Lock()
 	defer se.mu.Unlock()
@@ -321,9 +325,10 @@ func (se *session) armDeliveryForCeremony(cer *ceremonyID, addr string, cancel c
 // stamps `until` from it, so the figure the status reports and the figure the timer fires on
 // cannot drift.
 //
-// **The interactive bound is a constant and D16's amendment asks for the record's `Expires`.** Not
-// available on that path: an interactive arm holds an INVITATION, and an invitation carries no
-// deadline (`/pending 247`). `MaxCeremonyLife` is the ceiling until it does.
+// **The interactive bound stopped being a constant at P02.S02** — it is now the record's `Expires`
+// wherever this machine holds a record, and `MaxCeremonyLife` where it does not. The argument for
+// which way round that falls, and why it is the reverse of the delivery arm's, is at
+// `hopWindowFor`; the invitation still carries no deadline (`/pending 247`).
 //
 // # The delivery arm's bound, decided here (P08.S05c)
 //
@@ -350,9 +355,52 @@ func armWindowFor(kind armKind, cer *ceremonyID) time.Duration {
 		return deliveryWindowFor(cer)
 	}
 	if cer != nil {
-		return ceremony.MaxCeremonyLife
+		return hopWindowFor(cer)
 	}
 	return sessionAcceptTimeout
+}
+
+// hopWindowFor is a ceremony hop arm's bound: the record's own deadline where this machine holds a
+// record, and `MaxCeremonyLife` where it does not (P02.S02, D14 as amended).
+//
+// **The paragraph above said this figure "is a constant" and that the record was "not available on
+// that path". Half of that was right and the half that was wrong was costing thirty days.** What
+// an interactive arm certainly holds is an INVITATION, and an invitation carries no deadline —
+// that is `/pending 247`, still deferred behind an undischarged G2. But holding no invitation
+// deadline is not the same as holding no record: a party re-arming after their document has
+// arrived, and a convener, both have one on disk, and for them the 30-day ceiling was a bound in
+// name only.
+//
+// **`ReadStored`, not `ReadMirror`, and the difference is a document read.** `deliveryWindowFor`
+// takes the mirror because it wants the record itself; this wants one field, and `ReadStored`'s
+// own doc says it "does NOT read the document" — which matters because `armIn` computes this on
+// every arm, and the mirrored document can be the 128 MiB ceiling. It verifies before returning,
+// so an unverifiable record yields no deadline rather than a forged one.
+//
+// **The fallback is the OPPOSITE direction from `deliveryWindowFor`'s, and the asymmetry is the
+// point rather than an inconsistency.** A delivery arm exists only after this party has signed, so
+// a missing record there is anomalous and a short floor is the safe direction. A hop arm exists
+// *before* the document has arrived, so a missing record is the ordinary state of a party who has
+// accepted and is waiting — flooring it short would take that signer off the network minutes after
+// they accepted, which is the failure D14 exists to remove. The real bound before the document
+// arrives is the process lifetime, which is what "renewed while Nib runs" already says.
+func hopWindowFor(cer *ceremonyID) time.Duration {
+	st := ceremony.ReadStored(defaultOutputDir(), cer.inv.ID, time.Now())
+	if st.State != ceremony.LoadOK || st.Expires.IsZero() {
+		return ceremony.MaxCeremonyLife
+	}
+	d := time.Until(st.Expires)
+	if d < sessionAcceptTimeout {
+		// A deadline already passed, or nearly. Not zero and not negative: `armIn` stamps
+		// `until` from this and a non-positive window would arm and expire in the same breath,
+		// which reads to the user as an arm that failed silently. The close-out is what ends an
+		// expired ceremony, and it has its own grace.
+		return sessionAcceptTimeout
+	}
+	if d > ceremony.MaxCeremonyLife {
+		return ceremony.MaxCeremonyLife
+	}
+	return d
 }
 
 // deliveryGrace is how long past a ceremony's own `Expires` a delivery arm stays open.
@@ -1871,26 +1919,24 @@ func (s *Server) handleSessionArm(w http.ResponseWriter, r *http.Request) {
 				return // peerAddresses wrote the error
 			}
 		}
-		if serr := cer.setupSharedEndpoint(bind, s.configDir); serr != nil {
-			cer.close()
-			httpError(w, http.StatusBadRequest, "could not open the ceremony endpoint: "+serr.Error())
+		// **The body of this arm now lives in `armCeremonyHop`, and this route is its first
+		// caller (P02.S02).** It was extracted rather than copied because a sweep needs the same
+		// arm without a request to hang it on, and two implementations of one arm is the ADR-009
+		// shape this repo keeps finding. The three status codes below are the three the branch
+		// answered with before, matched on the sentinels the door returns — the messages are
+		// produced there and reach the user unchanged.
+		if aerr := s.armCeremonyHop(context.Background(), cer, cert, key, peerFP, armCands,
+			bind, label, req.Mode); aerr != nil {
+			switch {
+			case errors.Is(aerr, errCeremonyAccept):
+				httpError(w, http.StatusInternalServerError, aerr.Error())
+			case errors.Is(aerr, errSessionArmed):
+				httpError(w, http.StatusConflict, aerr.Error())
+			default:
+				httpError(w, http.StatusBadRequest, aerr.Error())
+			}
 			return
 		}
-		hl, herr := p2p.QUICListenHandshakeOn(cer.end, cert, key, peerFP)
-		if herr != nil {
-			cer.close()
-			httpError(w, http.StatusInternalServerError, "could not arm the racing accept: "+herr.Error())
-			return
-		}
-		armCtx, cancel := context.WithCancel(context.Background())
-		if !s.sess.armCeremony(cer, cer.end.LocalAddr().String(), cancel) {
-			cancel()
-			hl.Close()
-			cer.close()
-			httpError(w, http.StatusConflict, "a session is already armed")
-			return
-		}
-		go s.runCeremonyReceive(armCtx, cer, hl, armCands, cert, key, label, req.Mode, peerFP)
 		writeJSON(w, s.sess.status())
 		return
 	}

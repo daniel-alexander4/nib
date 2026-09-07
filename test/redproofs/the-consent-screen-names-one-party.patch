@@ -1,9 +1,9 @@
 --- a/web/app.js
 +++ b/web/app.js
-@@ -1456,7 +1456,7 @@
-   els.srvPeerLabel.textContent = pending.signer || recvArmedLabel || 'your pinned peer';
-   els.srvPeerFp.textContent = groupFingerprint(recvPeerFp);
-   els.srvPeerReason.textContent = pending.reason || '(none given)';
+@@ -1537,7 +1537,7 @@ function showConsent(pending) {
+   // the consent request. Outside a ceremony there is no record and the field is absent, so the
+   // original default stands — the branch is on the field's presence, never on a mode flag.
+   if (pending.recital) els.srvIntent.value = pending.recital;
 -  renderConsentSigners(pending.signers || []);
 +  renderConsentSigners((pending.signers || []).slice(0, 1));
    showRecvView('srvConsent');

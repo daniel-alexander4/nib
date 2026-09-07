@@ -1,0 +1,280 @@
+package server
+
+import (
+	"encoding/hex"
+	"net/http"
+	"strings"
+	"testing"
+	"time"
+
+	"nib/internal/ceremony"
+	"nib/internal/sign"
+	"nib/internal/testpdf"
+)
+
+// P02.S02 — accepting arms the listener (D14).
+//
+// # The defect these drive, stated once
+//
+// A signer who accepts an invitation and never arms is, from the convener's side, exactly a signer
+// who ignored it: the convener dials, nothing answers, and the proceeding stalls on a party who
+// believes they have done their part. **Measured before the slice, with a probe against HEAD:** a
+// successful `POST /api/ceremony/accept` left `/api/session/status` answering `{armed: false}`, and
+// the only way on was for the user to find the Receive modal, pick the convener out of a peer list
+// and press Arm — the second user action D14 removes.
+
+// convenedCeremony convenes a real ceremony and hands back the parts a test needs to put a
+// verifiable record on this machine's disk.
+//
+// **A real `Convene` and not a hand-built `Record`**, because `ReadStored` verifies before it
+// returns anything and a fabricated record classifies as `LoadUnparseable` — a test built on one
+// would assert the fallback while believing it asserted the deadline.
+func convenedCeremony(t *testing.T, life time.Duration, otherFP string) (ceremony.Invitation, ceremony.Record, []byte) {
+	t.Helper()
+	cert, key, err := sign.GenerateIdentity("Convener")
+	if err != nil {
+		t.Fatal(err)
+	}
+	fpb, err := sign.Fingerprint(cert)
+	if err != nil {
+		t.Fatal(err)
+	}
+	base, err := testpdf.Text("the lease")
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := ceremony.Convene(base, ceremony.ConveneRequest{
+		Roster: []ceremony.Party{
+			{Fingerprint: hex.EncodeToString(fpb), Label: "Convener", Signs: true},
+			{Fingerprint: otherFP, Label: "The other party", Signs: true},
+		},
+		Intent:         "We agree to co-sign the lease",
+		Expires:        time.Now().Add(life),
+		HopBudget:      ceremonyHopBudget(),
+		DeliveryBudget: ceremonyDeliveryLegBudget(),
+		ConvenerSigns:  true,
+	}, cert, key, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var text string
+	for _, inv := range out.Invites {
+		if strings.EqualFold(inv.Party.Fingerprint, otherFP) {
+			text = inv.Text
+		}
+	}
+	if text == "" {
+		t.Fatal("setup: convene issued no invitation for the counterparty")
+	}
+	parsed, err := ceremony.ParseInvitation(text)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return parsed, out.Record, out.Document
+}
+
+// armedWithin polls the session status until something is armed, and reports whether it happened.
+//
+// The arm is raised on a detached goroutine — deliberately, so it cannot delay or fail the accept
+// — so a single read after the response is a race the test would lose on a slow machine.
+func armedWithin(s *Server, d time.Duration) bool {
+	deadline := time.Now().Add(d)
+	for time.Now().Before(deadline) {
+		if s.sess.status().Armed {
+			return true
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	return s.sess.status().Armed
+}
+
+// TestAcceptingArmsTheListenerAndOnlyInARealNibProcess drives clauses 1 and 3 of the slice
+// together, in one table, and the pairing is what makes either one mean anything.
+//
+// **The two cases are each other's control.** "Armed after accepting" alone could be an arm this
+// test's own setup raised; "not armed without the gate" alone could be an arm that was merely
+// slower than the wait. Run against one wait and one accept, with the gate as the only difference,
+// each case is the other's stimulus — which is the shape a same-wait assertion needs, because the
+// negative case is asserting an ABSENCE and an absence has to be timed against something.
+func TestAcceptingArmsTheListenerAndOnlyInARealNibProcess(t *testing.T) {
+	// **The window is generous on purpose and it is not the figure under test.** What is under
+	// test is a difference between two runs of one path; a wait long enough that the positive case
+	// is not flaky makes the negative case stronger, not weaker.
+	const wait = 3 * time.Second
+
+	for _, tc := range []struct {
+		name      string
+		realNib   bool
+		wantArmed bool
+	}{
+		{"a real Nib process arms on accepting", true, true},
+		{"a harness does not arm", false, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ts, srv := startServerWith(t)
+			if tc.realNib {
+				srv.EnableDeliveryRearm()
+			}
+			c, csrf := authedClient(t, ts)
+			me := myFingerprint(t, c, ts.URL)
+			invitation, _ := inviteFor(t, me)
+
+			// SETUP: nothing is armed before the accept. Without this the positive case is
+			// satisfied by any arm at all, including one an earlier unlock raised.
+			if srv.sess.status().Armed {
+				t.Fatal("something was already armed before the invitation was accepted, so " +
+					"this test cannot attribute an arm to accepting")
+			}
+
+			code, body := postForCode(t, c, csrf, ts.URL+"/api/ceremony/accept",
+				acceptRequest{Invitation: invitation})
+			if code != http.StatusOK {
+				t.Fatalf("setup: accept returned %d: %s", code, body)
+			}
+
+			got := armedWithin(srv, wait)
+			if tc.realNib {
+				defer postForCode(t, c, csrf, ts.URL+"/api/session/disarm", struct{}{})
+			}
+			if got != tc.wantArmed {
+				if tc.wantArmed {
+					t.Errorf("accepting an invitation left this machine unarmed after %s — the "+
+						"convener will dial and nothing will answer, which from their side is "+
+						"indistinguishable from a party who ignored the invitation (D14)", wait)
+				} else {
+					t.Errorf("accepting an invitation opened a listener on a Server that never " +
+						"called EnableDeliveryRearm — a test constructs one of these dozens of " +
+						"times, and arming a network socket is something a Nib process does, not " +
+						"something constructing a Server does")
+				}
+			}
+		})
+	}
+}
+
+// TestTheHopArmsWindowIsTheRecordsDeadlineWhereThisMachineHoldsARecord is D14's second clause, as
+// amended: the bound is read from the record where one exists rather than defaulted to the ceiling.
+//
+// **The first assertion is the stimulus and it is the one that keeps this honest.** `hopWindowFor`
+// returning the deadline could be a function that returns the deadline it was handed regardless of
+// whether it read anything, so the ceiling case is asserted FIRST, on the same ceremony, with only
+// the record's presence on disk changing between the two reads.
+func TestTheHopArmsWindowIsTheRecordsDeadlineWhereThisMachineHoldsARecord(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	const life = 6 * time.Hour
+	inv, rec, doc := convenedCeremony(t, life, strings.Repeat("ab", 32))
+	cer := &ceremonyID{inv: inv}
+
+	// SETUP: with no record on this machine — the ordinary state of a party who has just
+	// accepted — the window is the ceiling, because there is nothing else it could honestly be.
+	if got := hopWindowFor(cer); got != ceremony.MaxCeremonyLife {
+		t.Fatalf("with no record on disk the hop window is %s, want the %s ceiling — a party who "+
+			"has accepted and is waiting holds no record, and flooring them short would take "+
+			"them off the network minutes after they accepted", got, ceremony.MaxCeremonyLife)
+	}
+
+	if _, err := ceremony.WriteMirror(defaultOutputDir(), rec, doc); err != nil {
+		t.Fatal(err)
+	}
+
+	got := hopWindowFor(cer)
+	if got > life || got < life-time.Minute {
+		t.Errorf("with the record on disk the hop window is %s, want about %s — the arm holds "+
+			"this machine's one network-reachable surface open, and a 30-day bound on a "+
+			"proceeding that ends in six hours is a bound in name only", got, life)
+	}
+}
+
+// TestTheHopSweepLeavesTheConvenerAlone — the convener DIALS; it does not wait to be dialled.
+//
+// A convener that armed for its own ceremony would hold the interactive slot against the arm it
+// actually needs when it reaches out, and `hopBetween` puts it at one end of every hop, so the
+// mistake is not visible as a wrong peer — it is visible as a slot that is never free.
+func TestTheHopSweepLeavesTheConvenerAlone(t *testing.T) {
+	ts, srv := startServerWith(t)
+	srv.EnableDeliveryRearm()
+	c, csrf := authedClient(t, ts)
+	me := myFingerprint(t, c, ts.URL)
+
+	// An invitation this machine convened. `inviteForConvener` builds exactly that case, which is
+	// also the one `handleCeremonyAccept` refuses at the door — so the sweep is driven directly,
+	// through the same vault the route would have handed it.
+	invitation, _ := inviteForConvener(t, me)
+	inv, err := ceremony.ParseInvitation(invitation)
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv.mu.Lock()
+	v := srv.vault
+	srv.mu.Unlock()
+	if v == nil {
+		t.Fatal("setup: the vault is not open, so the sweep would return before reaching any rule")
+	}
+	if err := v.AddCeremonyInvitation(inv.ID, invitation); err != nil {
+		t.Fatal(err)
+	}
+	if err := ceremony.WriteMe(defaultOutputDir(), inv.ID, me); err != nil {
+		t.Fatal(err)
+	}
+
+	// SETUP: the sweep can see this ceremony at all. Without it a green result is a sweep that
+	// found nothing, which proves nothing about the convener rule.
+	stored, err := ceremony.ListStored(defaultOutputDir(), time.Now())
+	if err != nil || len(stored) != 1 || stored[0].ID != inv.ID {
+		t.Fatalf("setup: the sweep's own listing does not contain this ceremony: %v %v", stored, err)
+	}
+
+	srv.rearmCeremonies(v)
+	if srv.sess.status().Armed {
+		defer postForCode(t, c, csrf, ts.URL+"/api/session/disarm", struct{}{})
+		t.Error("the sweep armed for a ceremony this machine convened — the convener carries the " +
+			"baton to each party in turn, so an arm it holds for itself is the interactive slot " +
+			"missing at the moment it reaches out")
+	}
+}
+
+// TestASecondCeremonyArmIsRefusedAsAConflict covers the status mapping the extraction created, and
+// it is here because nothing covered it before.
+//
+// **`armCeremonyHop` returns sentinels and `handleSessionArm` turns them into codes.** That mapping
+// is new — the codes used to be written at the three points that produced them — and a named search
+// over `internal/server/*_test.go` for `a session is already armed` and for either of the other two
+// messages returned **nothing**, so the QUIC ceremony arm's refusals were asserted nowhere at all.
+// An extraction that swapped two of the three would have been invisible.
+//
+// The 409 is the one of the three a test can reach: the other two need a socket that will not open.
+// Those are recorded as `not exercised` rather than counted, in the slice's seam inventory.
+func TestASecondCeremonyArmIsRefusedAsAConflict(t *testing.T) {
+	ts, _ := startServerWith(t)
+	c, csrf := authedClient(t, ts)
+	me := myFingerprint(t, c, ts.URL)
+	invitation, convenerFP := inviteFor(t, me)
+
+	if code, body := postForCode(t, c, csrf, ts.URL+"/api/ceremony/accept",
+		acceptRequest{Invitation: invitation}); code != http.StatusOK {
+		t.Fatalf("setup: accept returned %d: %s", code, body)
+	}
+	arm := armRequest{
+		Fingerprint: convenerFP, Bind: "127.0.0.1:0",
+		Transport: transportQUIC, Invitation: invitation,
+	}
+	// SETUP: the first arm succeeds, so the refusal below is a SECOND arm being refused and not
+	// this build failing to arm at all — which would produce the same non-200 with a different
+	// meaning.
+	if code, body := postForCode(t, c, csrf, ts.URL+"/api/session/arm", arm); code != http.StatusOK {
+		t.Fatalf("setup: the first QUIC ceremony arm returned %d: %s", code, body)
+	}
+	defer postForCode(t, c, csrf, ts.URL+"/api/session/disarm", struct{}{})
+
+	code, body := postForCode(t, c, csrf, ts.URL+"/api/session/arm", arm)
+	if code != http.StatusConflict {
+		t.Errorf("a second ceremony arm returned %d, want %d — the door reports the slot is taken "+
+			"through a sentinel now, and a route that maps it to any other code tells the user "+
+			"their request was malformed or that Nib broke: %d %s",
+			code, http.StatusConflict, code, body)
+	}
+	if !strings.Contains(body, "a session is already armed") {
+		t.Errorf("the conflict body is %q, and it no longer carries the sentence the branch "+
+			"answered with before the extraction", body)
+	}
+}
