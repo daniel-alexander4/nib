@@ -37,10 +37,11 @@ const lists = () => [...doc.querySelectorAll('[role="tablist"]')].filter((l) => 
 
 test('every tab-like surface is wired as a tablist', () => {
   const found = lists();
-  // **Two, not three, since v1.122.0.** The sidebar's tab strip became an accordion: its
-  // buttons are disclosure headers carrying aria-expanded, sitting above the panel each one
-  // opens, which is a different widget from a tab strip and must not announce itself as one.
-  // The remaining static surfaces are the mode tabs and the Collaborate role toggle.
+  // **Two static surfaces.** The sidebar's tab strip became an accordion at v1.122.0 — its
+  // buttons are disclosure headers carrying aria-expanded, a different widget that must not
+  // announce itself as a tablist — and Collaborate's Originate/Receive toggle went at v1.126.1
+  // when that pane became one card. What remains is the mode tabs and the sidebar's own two
+  // sections (ADR-024), which IS a real tablist and satisfies the whole contract below.
   assert.ok(found.length >= 2,
     `only ${found.length} populated tablists found — two static surfaces were expected, so this guard is reading nothing`);
 });

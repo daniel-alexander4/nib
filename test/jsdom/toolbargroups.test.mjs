@@ -34,15 +34,13 @@ test('every toolbar control sits inside a group', () => {
   for (const pane of ps) {
     // Direct-child controls. The ⋯ More menu is itself a direct child and is not a control,
     // so it is excluded by tag rather than by name.
-    // **Named exemption (ADR-009): the Collaborate pane's role containers.** `.roletoggle`
-    // and `.roletools` are that palette's own grouping device, gated on a second axis —
-    // `.roletools.active` follows the chosen role, so at most seven controls are ever on
-    // screen there and it stays inside the height ceiling at 360px without folding at all.
-    // Wrapping them in fold groups would add a layer that changes nothing.
+    // The Collaborate pane's `.roletoggle` / `.roletools` exemption was here until v1.126.1 and
+    // is gone with them: those two containers held the Originate/Receive split, and that pane is
+    // one `Simple Sign` card now. An exemption naming classes the markup no longer contains is a
+    // claim about a shape that does not exist.
     const loose = [...pane.children].filter((el) =>
       // `.sbhead` is a card header, not a control — it opens the group it sits above.
       !el.classList.contains('sbhead')
-      && !el.classList.contains('roletoggle') && !el.classList.contains('roletools')
       && (/^(BUTTON|SELECT|INPUT)$/.test(el.tagName)
           || (el.tagName === 'SPAN' && el.querySelector('button, input'))));
     assert.deepEqual(loose.map((e) => e.id || e.textContent.trim().slice(0, 20)), [],

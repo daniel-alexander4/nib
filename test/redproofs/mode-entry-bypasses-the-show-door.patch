@@ -1,11 +1,11 @@
 --- a/web/app.js
 +++ b/web/app.js
-@@ -10392,7 +10392,7 @@
+@@ -10463,7 +10463,7 @@
    // the same reasoning that made a mode land on its own commands in v1.121.0. Pages stays a
    // deliberate choice she makes and keeps until the next mode change.
    selectSidebarTab('functions');
 -  if (panels.length) showPanel(panels[0]);
 +  if (panels.length) document.querySelector(`.tab[data-panel="${panels[0]}"]`)?.click();
-   // Then open this mode's first command group, so the mode's own commands are what you see.
-   // `commands` first in SIDEBAR_FOR made the panel active above; the card inside it still has
-   // to be expanded, and picking the first is the same rule the panel list follows.
+   // Then open this mode's first command group — but ONLY for a mode that lands on its commands.
+   //
+   // `openCard` deactivates every content panel (one card open at a time, of either kind), so on a

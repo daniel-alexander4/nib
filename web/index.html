@@ -158,6 +158,22 @@
         <button class="tab" data-panel="commands">Commands</button>
       </nav>
 
+<div id="flags" class="panel">
+        <p class="libhint">Get a <b>Sign</b> / <b>Date</b> / <b>Initial</b> flag onto every blank the other person must fill, then email them the file.</p>
+        <p class="libhint">Run <b>Detect</b> first, pick a flag, then click a blank to flag it (or click anywhere to place one freehand). Sign/initial flags pull your image from the <b>Library</b>; date fills automatically; name/title/company fill from your <b>autofill profile</b>.</p>
+        <p class="libhint">When every flag is placed, click <b>Signing marks completed</b> to lock the document for signing — editing switches off and the flags freeze (toggle <b>Edit marks again</b> to change them). The file you email opens locked on the other side: they fill, but can't edit.</p>
+        <div class="markers">
+          <button data-marker="sign" title="Plant a sign-here flag">✍ Sign</button>
+          <button data-marker="date" title="Plant a date flag">Date</button>
+          <button data-marker="initial" title="Plant an initial flag">Initial</button>
+          <button data-marker="name" title="Plant a name flag (fills from your profile)">Name</button>
+          <button data-marker="title" title="Plant a title flag (fills from your profile)">Title</button>
+          <button data-marker="company" title="Plant a company flag (fills from your profile)">Company</button>
+        </div>
+        <button id="signCompleteBtn" hidden title="Lock the document for signing — no more editing or flag changes until you choose to edit again">Signing marks completed</button>
+        <button id="saveForSigningBtn" title="Embed the flags and save a single file to email">Save for signing…</button>
+      </div>
+
       <!-- The two sections' containers. Declared here rather than created in script so every id
            app.js reaches for is visible in this file (test/jsdom/ids.test.mjs); they start empty
            and `buildSidebarTabs` moves the panels into them once the accordion has placed each
@@ -358,23 +374,23 @@
       <button id="decryptBtn" title="Remove an open password or owner restrictions from a PDF you can open">Remove password protection…</button>
             </div>
     </div><div class="tbtab" data-tab="collaborate">
-      <span class="roletoggle">
-        <button class="roleopt" data-role="originate" title="You own the document: prepare it, send it, await its return">Originate</button>
-        <button class="roleopt" data-role="receive" title="You receive a document, sign it, and send it back">Receive</button>
-      </span>
-      <span class="tbsep"></span>
-      <span class="roletools" data-role="originate">
-        <button id="sessionSendBtn">Send a document to a peer…</button>
-        <button id="sessionInitBtn">Co-sign live with a peer…</button>
-        <button id="cosignBtn">Co-sign with a peer…</button>
-        <button data-forward="timestampVerifyBtn">Verify a timestamp…</button>
-        <button data-forward="managePeersBtn">Identity &amp; peers…</button>
-      </span>
-      <span class="roletools" data-role="receive">
-        <button id="sessionRecvDocBtn">Receive a document…</button>
-        <button id="sessionRecvBtn">Receive a live co-signature…</button>
-        <button data-forward="managePeersBtn">Identity &amp; peers…</button>
-      </span>
+      <!-- One card, not two role sets. The Originate/Receive toggle split these same buttons in
+           half, so reaching a command meant first answering which half you were in — for seven
+           buttons. Sending and receiving are the two ends of one act and sit together here; the
+           role distinction belongs to a CEREMONY, where a proceeding has sides, and is the
+           Signing Ceremonies panel's to make.
+
+           `Identity & peers…` was in BOTH role sets and appears once — a duplicate that only
+           looked like two commands because you could never see both at the same time. -->
+      <div class="tbgroup" data-label="Simple Sign" data-fold="1">
+<button id="sessionSendBtn">Send a document to a peer…</button>
+      <button id="sessionRecvDocBtn">Receive a document…</button>
+      <button id="sessionInitBtn">Co-sign live with a peer…</button>
+      <button id="sessionRecvBtn">Receive a live co-signature…</button>
+      <button id="cosignBtn">Co-sign with a peer…</button>
+      <button data-forward="timestampVerifyBtn">Verify a timestamp…</button>
+      <button data-forward="managePeersBtn">Identity &amp; peers…</button>
+            </div>
     </div><div class="tbtab" data-tab="settings">
       <!-- Settings is a MODE, not a dropdown behind a gear (v1.126.0). Its items are the same
            ones the ⚙ menu held; they are cards here for the same reason every other palette is,
@@ -507,21 +523,7 @@
         <div id="ceremonyResult" class="cerresult"></div>
         <div id="ceremonyList" class="ceremonylist"></div>
       </div>
-      <div id="flags" class="panel">
-        <p class="libhint">Get a <b>Sign</b> / <b>Date</b> / <b>Initial</b> flag onto every blank the other person must fill, then email them the file.</p>
-        <p class="libhint">Run <b>Detect</b> first, pick a flag, then click a blank to flag it (or click anywhere to place one freehand). Sign/initial flags pull your image from the <b>Library</b>; date fills automatically; name/title/company fill from your <b>autofill profile</b>.</p>
-        <p class="libhint">When every flag is placed, click <b>Signing marks completed</b> to lock the document for signing — editing switches off and the flags freeze (toggle <b>Edit marks again</b> to change them). The file you email opens locked on the other side: they fill, but can't edit.</p>
-        <div class="markers">
-          <button data-marker="sign" title="Plant a sign-here flag">✍ Sign</button>
-          <button data-marker="date" title="Plant a date flag">Date</button>
-          <button data-marker="initial" title="Plant an initial flag">Initial</button>
-          <button data-marker="name" title="Plant a name flag (fills from your profile)">Name</button>
-          <button data-marker="title" title="Plant a title flag (fills from your profile)">Title</button>
-          <button data-marker="company" title="Plant a company flag (fills from your profile)">Company</button>
-        </div>
-        <button id="signCompleteBtn" hidden title="Lock the document for signing — no more editing or flag changes until you choose to edit again">Signing marks completed</button>
-        <button id="saveForSigningBtn" title="Embed the flags and save a single file to email">Save for signing…</button>
-      </div>
+
     </aside>
 
     <!-- The viewer column: the document switcher stacked above the viewer itself.

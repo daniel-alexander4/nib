@@ -8511,7 +8511,6 @@ function wireTablist(container, tabSelector) {
 
 wireTablist(document.querySelector('.modetabs'), '.modetab');
 wireTablist(document.querySelector('.sidebar .tabs') || document.querySelector('nav.tabs'), '.tab');
-wireTablist(document.querySelector('.roletoggle'), '.roleopt');
 wireTablist(document.getElementById('tabstrip'), '.tab');
 
 // --- dialog semantics and focus -----------------------------------------------
@@ -10465,11 +10464,18 @@ function syncSidebarForMode(tab) {
   // deliberate choice she makes and keeps until the next mode change.
   selectSidebarTab('functions');
   if (panels.length) showPanel(panels[0]);
-  // Then open this mode's first command group, so the mode's own commands are what you see.
-  // `commands` first in SIDEBAR_FOR made the panel active above; the card inside it still has
-  // to be expanded, and picking the first is the same rule the panel list follows.
-  const first = document.querySelector('.tbtab.active > .tbgroup');
-  if (first) openCard(first, first._head);
+  // Then open this mode's first command group — but ONLY for a mode that lands on its commands.
+  //
+  // `openCard` deactivates every content panel (one card open at a time, of either kind), so on a
+  // mode whose landing surface is a PANEL this line would close what the line above just opened.
+  // It was harmless while Collaborate had no `.tbgroup` at all — its palette was the
+  // Originate/Receive containers — and became live the moment that pane became one `Simple Sign`
+  // card: Collaborate stopped landing on Flags, which is a decision ADR-ranked comments in
+  // SIDEBAR_FOR call out by name. Caught by tablist.test.mjs, not by looking at it.
+  if (panels[0] === 'commands') {
+    const first = document.querySelector('.tbtab.active > .tbgroup');
+    if (first) openCard(first, first._head);
+  }
 }
 function syncModeMenu(tab) {
   const top = $('modeMenuTop');
@@ -10485,16 +10491,11 @@ function setMode(tab) {
 }
 all('.modetab').forEach((b) => { b.onclick = () => setMode(b.dataset.tab); });
 
-// Collaborate sub-mode: originate (own the document — prepare it, send it, await
-// its return) vs receive (sign what arrives and send it back). Swaps the tools.
-function setRole(role) {
-  document.body.dataset.role = role;
-  all('.roleopt').forEach((b) => b.classList.toggle('active', b.dataset.role === role));
-  all('.roletools').forEach((g) => g.classList.toggle('active', g.dataset.role === role));
-}
-all('.roleopt').forEach((b) => { b.onclick = () => setRole(b.dataset.role); });
+// Collaborate's Originate/Receive toggle is gone (v1.126.1): its two tool sets were the two ends
+// of one act, split so that reaching a command meant first answering which half you were in — for
+// seven buttons. They are one `Simple Sign` card now. The role distinction belongs to a CEREMONY,
+// where a proceeding has sides, and lives in the Signing Ceremonies panel.
 
-setRole('originate');
 setMode('file');
 
 // ── Small screens: fold whole groups into a per-pane ⋯ More menu ──────────────

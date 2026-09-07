@@ -206,3 +206,11 @@ home today.
   all thirty-six regardless). `all` is the absence of the attribute, which makes the rotation the
   default and an unknown value harmless without a migration. The hue set lives in three places and
   they are compared
+- [ADR-026: Simple Sign is one card, and role belongs to the ceremony](026-simple-sign-is-one-card.md)
+  — Collaborate's Originate/Receive toggle goes; its seven buttons become one `Simple Sign` card
+  (with `Identity & peers…` deduplicated, having been in both halves). Role is a CEREMONY's
+  concept — a proceeding has sides, a command list does not. Place Signing Flags leads the column.
+  Moving a panel to the front exposed that a mode landing on a PANEL must not auto-open a card
+  (`openCard` deactivates panels, so Collaborate stopped landing on Flags), and that two geometry
+  guards had encoded "content panels are always last" — one read the Flags panel as a 684px gap,
+  the other as a pill with square corners
