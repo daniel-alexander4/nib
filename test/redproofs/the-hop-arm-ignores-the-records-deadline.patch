@@ -1,0 +1,12 @@
+--- a/internal/server/session.go
++++ b/internal/server/session.go
+@@ -385,7 +385,8 @@ func armWindowFor(kind armKind, cer *ceremonyID) time.Duration {
+ // they accepted, which is the failure D14 exists to remove. The real bound before the document
+ // arrives is the process lifetime, which is what "renewed while Nib runs" already says.
+ func hopWindowFor(cer *ceremonyID) time.Duration {
+-	st := ceremony.ReadStored(defaultOutputDir(), cer.inv.ID, time.Now())
++	st := ceremony.Stored{}
++	_ = cer
+ 	if st.State != ceremony.LoadOK || st.Expires.IsZero() {
+ 		return ceremony.MaxCeremonyLife
+ 	}

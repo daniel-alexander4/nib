@@ -1,0 +1,12 @@
+--- a/internal/server/ceremonyarm.go
++++ b/internal/server/ceremonyarm.go
+@@ -207,9 +207,6 @@ func (s *Server) rearmCeremonies(v *vault.Vault) {
+ // `~/nib/ceremonies` on that path would put the network between the user and their answer, and a
+ // failure there is not a failure to accept.
+ func (s *Server) rearmCeremoniesAsync(v *vault.Vault) {
+-	if !s.deliveryRearm.Load() {
+-		return // not a real Nib process: see EnableDeliveryRearm
+-	}
+ 	go func() {
+ 		defer safe.Recover("ceremony re-arm")
+ 		s.rearmCeremonies(v)

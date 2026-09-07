@@ -1,0 +1,11 @@
+--- a/internal/server/session.go
++++ b/internal/server/session.go
+@@ -387,7 +387,7 @@ func armWindowFor(kind armKind, cer *ceremonyID) time.Duration {
+ func hopWindowFor(cer *ceremonyID) time.Duration {
+ 	st := ceremony.ReadStored(defaultOutputDir(), cer.inv.ID, time.Now())
+ 	if st.State != ceremony.LoadOK || st.Expires.IsZero() {
+-		return ceremony.MaxCeremonyLife
++		return sessionAcceptTimeout
+ 	}
+ 	d := time.Until(st.Expires)
+ 	if d < sessionAcceptTimeout {
