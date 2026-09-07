@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"nib/internal/ceremony"
 	"nib/internal/p2p"
 	"nib/internal/pdfops"
 	"nib/internal/sign"
@@ -188,5 +189,67 @@ func TestTheConsentViewPublishesNoUnreadPeerFields(t *testing.T) {
 				"connected peer's own signature validity, render it and delete this guard; do not "+
 				"publish it unread.", key, b)
 		}
+	}
+}
+
+// --- P02.S01: the consent view carries the ceremony's recital ---------------
+
+// TestTheConsentViewOmitsTheRecitalOutsideACeremony pins the shape, because the client branches on
+// the field's PRESENCE. A plain two-party co-sign has no record and therefore no recital, and a
+// `recital: ""` on the wire would make the client set the agreement box to an empty string — worse
+// than the generic sentence it replaced.
+func TestTheConsentViewOmitsTheRecitalOutsideACeremony(t *testing.T) {
+	b, err := json.Marshal(pendingView{Signer: "Alice", Fingerprint: "aa", Reason: "I agree"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(b), "recital") {
+		t.Errorf("pendingView carries `recital` with no ceremony: %s\n\nThe consent screen branches "+
+			"on the field being absent; an empty one blanks the signer's agreement statement.", b)
+	}
+	// The stimulus: the field must appear when it HAS a value, or the assertion above is satisfied
+	// by a field that was never serialised at all.
+	b2, err := json.Marshal(pendingView{Signer: "Alice", Recital: "We agree to the lease"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(b2), "We agree to the lease") {
+		t.Errorf("pendingView drops a recital it was given: %s", b2)
+	}
+}
+
+// TestTheRecitalComesFromTheArmsCeremony drives the rule itself, which is a pure function of the
+// arm — no session, no socket, no disk.
+//
+// **It replaced a source scan.** The rule was two lines at a call site reachable only with a live
+// ceremony session in flight, so the only instrument available was a grep over the file. Extracting
+// `recitalFor` turned it into something a test can call, which is strictly better: a scan proves a
+// line exists, and this proves the line is right.
+func TestTheRecitalComesFromTheArmsCeremony(t *testing.T) {
+	// Outside a ceremony there is nothing to take a recital from, and the field must stay empty —
+	// the client branches on its absence, and an empty string would blank the signer's box.
+	if got := recitalFor(nil); got != "" {
+		t.Errorf("recitalFor(nil) = %q, want \"\" — a plain co-sign has no ceremony", got)
+	}
+	// The stimulus: with a ceremony it must actually return the recital, or the assertion above is
+	// satisfied by a function that always returns "".
+	cer := &ceremonyID{inv: ceremony.Invitation{Intent: "We agree to the Fitzroy Street lease"}}
+	if got := recitalFor(cer); got != "We agree to the Fitzroy Street lease" {
+		t.Errorf("recitalFor(ceremony) = %q, want the record's recital — the signature carries "+
+			"whatever this returns", got)
+	}
+}
+
+// TestTheConsentViewCallsTheRecitalRule pins the WIRING that the rule test cannot see: a correct
+// `recitalFor` that nothing calls leaves the field empty in every ceremony, and marshals exactly
+// like one that works. Kept as a scan because the call site needs a live session to reach.
+func TestTheConsentViewCallsTheRecitalRule(t *testing.T) {
+	src, err := os.ReadFile("session.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(src), "view.Recital = recitalFor(sc.cer)") {
+		t.Error("the consent view does not call recitalFor — the field is published, the client " +
+			"reads it, and it would be empty in every ceremony")
 	}
 }

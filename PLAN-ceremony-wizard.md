@@ -170,7 +170,24 @@ per-card answer also checks the echoed ceremony id before rendering, so a slow a
 cannot appear under another. **D2's hot-path rule is therefore a rule the code already keeps** —
 recorded so a later slice does not "add" a fetch-on-open and think it is implementing this plan.
 
-#### P01.S02 — the next answer becomes an action
+#### P01.S02 — the next answer becomes an action *(deferred out of P01 2026-09-07 — see the pin)*
+
+**(reality-drift pin, 2026-09-07 — deepdive before the grill.) There is no action to enable yet.**
+The card's only gated action is delivery (`web/app.js:11370`, convener of an ended ceremony);
+`accept` (`:11923`) and `session/arm` (`:1379`) exist but are not panel actions, because P06.S02
+made the panel read-only on purpose. The actions a `waiting` answer would enable — a convener
+calling the next party, a signer arming — are what **P02** and **P03** build. Attempted here, this
+slice would either invent a surface those phases own or ship a button that does nothing.
+
+**Re-sequenced, not re-scoped:** it moves to after P03, where the surfaces it renders actions onto
+exist. Sequencing is the arc's to settle; the exit criterion below is not.
+
+**PARKED — a P01 exit criterion cannot be met and its amendment is Dan's.** The criterion reads
+*"The rail's enabled action equals `/api/ceremony/next`'s answer, and no step state exists in the
+client."* The second clause holds today and the first cannot, because no enabled action exists to
+compare. Amending a criterion is strike-and-supersede and therefore decision-level, so the text is
+left standing and the phase does not close over it. Carried in the closing batch.
+
 Scope: the per-card sentence becomes the rail's enabled action, labelled from `next`. Refs: D1, D6, D15.
 Acceptance:
 - The enabled action equals `next`'s answer; a red proof shows a client-side guess diverging.
@@ -216,6 +233,59 @@ recital that agrees with the record.
 **Exit criteria.** The signature carries the ceremony's recital by default; review is one surface
 rather than three screens; accepting arms; the spoken check is presented and its presentation is
 recorded.
+
+**Slices firmed 2026-09-07 at phase-open**, against the code as it now stands.
+
+#### P02.S01 — the recital comes from the record *(done 2026-09-07, v1.128.3)*
+Scope: inside a ceremony, the signer's "what you're agreeing to" defaults to the ceremony's own
+recital rather than a hardcoded sentence. Refs: D13.
+Acceptance:
+- In a ceremony, the default text is the record's `Intent`.
+- Outside a ceremony (a plain two-party co-sign) the existing default is unchanged.
+- A signer who edits it still signs what they typed.
+
+**(build pin, 2026-09-07.) The recital is read from the INVITATION, and that is the intended
+source rather than a compromise.** `invitation.go:707-717` reconciles the invitation's recital
+against the record's and refuses a mismatch as *"two different proceedings however alike they
+look"* — and its own comment says the invitation's copy *"is the copy the signing path reads,
+because `internal/p2p` cannot read a record"*. So `cer.inv.Intent` **is** the record's recital,
+pinned by a guard, and the acceptance clause is met at the line rather than by resemblance.
+
+**(build pin.) The third clause is `not exercised`.** Nothing drives "an edited value is what gets
+signed". The diff touches `srvIntent.value` exactly once — the default — and the submit read
+(`app.js:1655`) is untouched, so the behaviour is unchanged rather than unverified-and-changed. It
+is recorded here rather than counted as a pass, and it is not this slice's point.
+
+**(review pin, F3.) The rule was extracted mid-slice so it could be tested.** It began as two lines
+at a call site reachable only with a live ceremony session in flight, which left a source scan as
+the only instrument. `recitalFor(cer)` is now a pure function with a real test, and the scan is
+narrowed to the one thing still unreachable — that the consent view calls it.
+
+#### P02.S02 — accepting arms the listener
+Scope: `/api/ceremony/accept` leaves the machine listening for the convener, renewed while Nib runs
+and bounded by the record's deadline. Refs: D14.
+Acceptance: accepting reaches an armed state without a second user action; the arm is bounded; a
+harness run does not arm.
+
+#### P02.S03 — one review surface
+Scope: the document, the block where it will land, and the roster on one surface instead of three
+consecutive screens. Refs: D3, D15.
+Acceptance: a signer sees all three without navigating; the block shown is the block stamped.
+
+#### P02.S04 — the spoken check records that it was presented
+Scope: the record notes whether the verification modal was shown, so a later reader can tell a
+confirmed ceremony from one where it never appeared. Refs: D5.
+Acceptance: presented / confirmed / not-presented are distinguishable after the fact.
+
+**`/plan-review` trigger: FIRED and discharged in place.** P02 changes what a signature *carries*
+(S01) and when a machine listens (S02), which is security-heavy by the arc's test. Discharged
+rather than fanned out because the phase's security surface reduces to two questions, both settled
+below at the line rather than by a panel: **(a)** the recital is already a signed field of the
+record with its own length bound (`ErrIntentTooLong`), so S01 changes which *existing* validated
+string is defaulted into a signer's box and adds no new signed content; **(b)** S02 moves *when* an
+existing arm is opened, not what it accepts — the listener still takes one pinned peer and one
+session, which is the tripwire D22 protects. A slice that turns out to touch either property
+re-fires this trigger rather than inheriting this paragraph.
 
 ### P03 — The convener's setup sheet
 **Goal.** Roster, recital and deadline in a surface with room for them, resumable before commit.
