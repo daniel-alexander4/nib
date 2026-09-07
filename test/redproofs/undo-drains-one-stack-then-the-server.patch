@@ -1,0 +1,17 @@
+--- a/web/app.js
++++ b/web/app.js
+@@ -9519,13 +9519,7 @@
+ // holds for the field mutation; the two marker commands also call reflectSignControls(),
+ // which repaints shared chrome from the active view — correct here only because a drain
+ // implies the owner is active.
+-function undoAny() {
+-  const kind = view.clientHistory.undo.pop();
+-  if (!kind) return doUndo(); // no client edits left; the server's own ring is older than all of them
+-  view.clientHistory.redo.push(kind);
+-  if (kind === 'editor') return undoEditorEdit();
+-  return undoOverlayEdit();
+-}
++function undoAny() { if (view.overlayHistory.undo.length) undoOverlayEdit(); else doUndo(); }
+ function redoAny() {
+   const kind = view.clientHistory.redo.pop();
+   if (!kind) return doRedo();

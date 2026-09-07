@@ -2075,6 +2075,12 @@ function newView() {
     // counted bindings with many references, and this one has few — which is why it took a
     // deepdive of a different slice to find it.
     overlayHistory: { undo: [], redo: [] },
+    // The ORDER those client edits were made in, across both client stacks — nib's overlay
+    // commands and pdf.js's annotation-editor commands. Entries are 'overlay' | 'editor'.
+    // Server operations are deliberately NOT in here: every one of them reloads through
+    // setDocumentFromServer -> clearOverlays, which drops both client stacks, so "client
+    // edits, then server ops" is already the true chronology and needs no bookkeeping.
+    clientHistory: { undo: [], redo: [] },
 
     // dirty — has this document changed since it was opened or last SAVED. The four
     // signals it replaces (annotationStorage.size, overlayFields.length, the overlay
@@ -2264,6 +2270,10 @@ function newView() {
     if (v !== view) return;
     all('.pageNum').forEach((i) => { i.value = e.pageNumber; }); // shared chrome, still gated
   });
+  // The editor UI manager is created with the first editor layer, not with the viewer, so the
+  // history hook is armed from here. Idempotent — this fires per page — and it must be per
+  // VIEW, because each open document has its own viewer and therefore its own manager.
+  v.eventBus.on('annotationeditorlayerrendered', () => armEditorHistoryHook(v));
   v.eventBus.on('pagerendered', () => relayoutRedactMarks(v));
   v.eventBus.on('scalechanging', () => relayoutRedactMarks(v));
   v.eventBus.on('scalechanging', () => relayoutOverlays(v));
@@ -9357,8 +9367,10 @@ setDocControls(false); // nothing open yet
 // canRedo, refreshed on every load); both off when no document is open.
 function reflectUndoControls(enabled) {
   const m = view.docMeta || {};
-  if (els.undoBtn) els.undoBtn.disabled = !(enabled && (m.canUndo || view.overlayHistory.undo.length));
-  if (els.redoBtn) els.redoBtn.disabled = !(enabled && (m.canRedo || view.overlayHistory.redo.length));
+  // `clientHistory` rather than `overlayHistory`: it counts BOTH client stacks, and the editor
+  // one was invisible here — two drawings on screen and the Undo button read as disabled.
+  if (els.undoBtn) els.undoBtn.disabled = !(enabled && (m.canUndo || view.clientHistory.undo.length));
+  if (els.redoBtn) els.redoBtn.disabled = !(enabled && (m.canRedo || view.clientHistory.redo.length));
 
   // Eviction is observable or it is not eviction (ADR-003). The server has always
   // reported historyEvicted when it dropped a document's history whole to keep the
@@ -9396,9 +9408,59 @@ function recordOverlayEdit(cmd, owner = view) {
   owner.dirty = true; // the single funnel for every recorded overlay add, delete and move
   owner.overlayHistory.undo.push(cmd);
   owner.overlayHistory.redo = [];
+  recordClientEdit('overlay', owner);
+}
+
+// ── One undo order for one document ──────────────────────────────────────────
+//
+// There are two CLIENT stacks — nib's overlay commands (shapes, notes, stamps, markers,
+// cover-edits) and pdf.js's annotation-editor commands (Draw, Text, Highlight) — and each knows
+// only its own changes. Ctrl+Z used to drain nib's stack first and then fall through to the
+// server, so pdf.js's stack was reachable only while one of ITS tools happened to be armed.
+// Measured: draw two strokes, arm Shapes, press Ctrl+Z four times — nothing happened at all,
+// with both strokes on screen and the Undo button disabled.
+//
+// So the two stacks get an order. This records which one each change went to; `undoAny` pops
+// the LAST one and asks that stack to undo it. It is a list of tokens rather than of commands
+// because each stack still owns its own commands — this decides only whose turn it is.
+function recordClientEdit(kind, owner = view) {
+  owner.clientHistory.undo.push(kind);
+  owner.clientHistory.redo = [];
+  if (kind === 'editor') owner.dirty = true; // overlays set it in recordOverlayEdit
   reflectUndoControls(!!view.pdfDocument);
 }
-function clearOverlayHistory(owner = view) { owner.overlayHistory.undo = []; owner.overlayHistory.redo = []; }
+function clearOverlayHistory(owner = view) {
+  owner.overlayHistory.undo = []; owner.overlayHistory.redo = [];
+  owner.clientHistory.undo = []; owner.clientHistory.redo = [];
+}
+
+// pdf.js keeps its editor commands in an AnnotationEditorUIManager and dispatches no event when
+// one is added — `editingstateschanged` carries booleans, so two strokes in a row raise nothing
+// after the first. `addCommands` IS the moment a command is committed, and the name survives
+// minification because it is part of pdf.js's own API, so it is the honest hook.
+//
+// The manager does not exist until an editor layer has been rendered, which is why this is armed
+// from that event rather than at construction. It shouts rather than degrading: a hook that
+// silently failed to install would put Ctrl+Z back to not reaching drawings at all, which is the
+// defect being fixed and is invisible until someone draws something.
+function armEditorHistoryHook(owner) {
+  const mgr = owner.viewer && owner.viewer._layerProperties
+    && owner.viewer._layerProperties.annotationEditorUIManager;
+  if (!mgr) {
+    console.warn('nib: no annotationEditorUIManager after an editor layer rendered — Ctrl+Z will not reach drawings');
+    return false;
+  }
+  if (mgr._nibHistoryHook) return true;
+  const addCommands = mgr.addCommands.bind(mgr);
+  mgr.addCommands = (params) => { addCommands(params); recordClientEdit('editor', owner); };
+  mgr._nibHistoryHook = true;
+  return true;
+}
+
+// Undoing an editor command goes through pdf.js's own action event rather than the manager, so
+// the manager stays pdf.js's to own: the same door its built-in shortcut uses.
+function undoEditorEdit(owner = view) { owner.eventBus.dispatch('editingaction', { name: 'undo' }); }
+function redoEditorEdit(owner = view) { owner.eventBus.dispatch('editingaction', { name: 'redo' }); }
 // detachField/reattachField toggle a field's presence without rebuilding it — the
 // DOM element survives in the command closure, so add/delete undo is just a
 // re-attach or detach. layoutFieldNow repositions a still-attached field (moves).
@@ -9457,8 +9519,20 @@ function redoOverlayEdit() {
 // holds for the field mutation; the two marker commands also call reflectSignControls(),
 // which repaints shared chrome from the active view — correct here only because a drain
 // implies the owner is active.
-function undoAny() { if (view.overlayHistory.undo.length) undoOverlayEdit(); else doUndo(); }
-function redoAny() { if (view.overlayHistory.redo.length) redoOverlayEdit(); else doRedo(); }
+function undoAny() {
+  const kind = view.clientHistory.undo.pop();
+  if (!kind) return doUndo(); // no client edits left; the server's own ring is older than all of them
+  view.clientHistory.redo.push(kind);
+  if (kind === 'editor') return undoEditorEdit();
+  return undoOverlayEdit();
+}
+function redoAny() {
+  const kind = view.clientHistory.redo.pop();
+  if (!kind) return doRedo();
+  view.clientHistory.undo.push(kind);
+  if (kind === 'editor') return redoEditorEdit();
+  return redoOverlayEdit();
+}
 
 // doUndo/doRedo revert or re-apply the last server-side document operation (page
 // ops, outline, sanitize, attachments). The server returns fresh doc metadata and
@@ -10619,6 +10693,26 @@ function ownsUndo(el) {
   return el.value !== '' || el.dataset.nibTyped === '1';
 }
 
+// ── Ctrl+Z belongs to the document, and is taken in the CAPTURE phase ────────
+//
+// pdf.js binds its own Ctrl+Z inside the annotation-editor layer. In the bubble phase that
+// listener runs FIRST, which is why this used to yield whenever one of its tools was armed —
+// and why a drawing was unreachable the moment the armed tool was one of nib's own. Capture
+// runs window-inwards, so this sees the key before the editor layer does and can stop it: one
+// handler decides, and `undoAny` routes to whichever stack made the last change.
+//
+// Two things still keep the key. A text field that has an undo of its own — `ownsUndo`, which
+// includes pdf.js's contenteditable FreeText body, so undoing WHILE typing in a text annotation
+// still undoes the typing. And an open modal, where the shortcut has never applied.
+window.addEventListener('keydown', (e) => {
+  if (!(e.ctrlKey || e.metaKey)) return;
+  if (e.key !== 'z' && e.key !== 'Z' && e.key !== 'y') return;
+  if (ownsUndo(e.target) || document.querySelector('div[id$="Modal"]:not([hidden])')) return;
+  e.preventDefault();
+  e.stopPropagation(); // pdf.js's editor shortcut must not also fire; one press, one undo
+  if (e.key === 'y' || e.shiftKey) redoAny(); else undoAny();
+}, true);
+
 // keyboard shortcuts. Ctrl/Cmd combos: S save, B sidebar, O open, F find,
 // +/-/0 zoom in/out/fit. Plain keys (PageUp/Down, Home/End) page-navigate — but
 // only when not typing and no modal is up. Every dialog is a `*Modal` div hidden
@@ -10637,22 +10731,6 @@ window.addEventListener('keydown', (e) => {
     } else if (e.key === '=' || e.key === '+') { e.preventDefault(); zoomIn(); }
     else if (e.key === '-') { e.preventDefault(); zoomOut(); }
     else if (e.key === '0') { e.preventDefault(); fitWidth(); }
-    else if (e.key === 'z' || e.key === 'Z' || e.key === 'y') {
-      // Undo/redo. Yield (no preventDefault) while typing, while a pdf.js
-      // annotation editor is active (its own Ctrl+Z handles FreeText/Ink/
-      // Highlight), or with a modal open. Otherwise drain the client overlay-edit
-      // stack first, then fall through to the server document-op undo.
-      // `ownsUndo` rather than `isTypingTarget`: an empty, never-typed field has no undo of
-      // its own to yield to, and yielding to it lost the placement of the note that focused it.
-      // `view.activeTool` is UNCHANGED and stays a whole yield — pdf.js's editor manager owns
-      // undo for FreeText/Ink/Highlight, and no synthetic pointer sequence here could produce
-      // an ink stroke to test a narrower rule against, so it was left alone rather than
-      // narrowed on an argument.
-      if (ownsUndo(e.target) || view.activeTool ||
-          document.querySelector('div[id$="Modal"]:not([hidden])')) return;
-      e.preventDefault();
-      if (e.key === 'y' || e.shiftKey) redoAny(); else undoAny();
-    }
     return;
   }
   if (!view.pdfDocument || isTypingTarget(e.target)) return;

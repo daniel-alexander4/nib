@@ -397,6 +397,10 @@ opened — so if the file changes on disk afterwards (another program, or `nib �
 -w` in a terminal), Nib says so in a banner and offers to reload it, and Save
 asks before replacing the changed file with what you have open.
 
+**Undo is one list** — **Ctrl+Z** steps back through everything you have done to the
+document, newest first, whether it was a drawing, a stamp, a note, or a page operation.
+Drawing some lines and then some shapes leaves one history, not two.
+
 **Start over** — the **↻ reload** button beside Undo/Redo throws away everything you
 have done since opening and re-reads the file from disk. It asks first when there is
 unsaved work. Undo steps back one operation at a time; this abandons all of them.
