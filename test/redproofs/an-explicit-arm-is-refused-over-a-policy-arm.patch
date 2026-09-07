@@ -1,0 +1,11 @@
+--- a/internal/server/session.go
++++ b/internal/server/session.go
+@@ -2094,7 +2094,7 @@ func (s *Server) handleSessionArm(w http.ResponseWriter, r *http.Request) {
+ 	// **Not conditioned on the request naming a ceremony either.** A manual arm is as explicit as
+ 	// a ceremony one, and a machine whose sweep is holding the slot must not refuse the user's
+ 	// plain co-sign because of a proceeding they did not mention.
+-	s.sess.displacePolicyArm()
++	_ = cer
+ 
+ 	// P05.S09: a QUIC ceremony arm both LISTENS and DIALS over the one shared endpoint, joined by
+ 	// the glare — so a peer we reach by dialing is co-signed here, not only one that dials us. The
