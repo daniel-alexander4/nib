@@ -103,13 +103,36 @@ headless run — with a notice first when a ceremony or unsaved work would be lo
 - A window minimised past the browser's freeze threshold does **not** exit Nib.
 - All three harnesses complete unchanged, with `idleExitArmed` observably false in each.
 
-#### P01.S01 — the stream and the window count
+#### P01.S01 — the stream and the window count *(done 2026-09-07, v1.125.5)*
 Scope: one `requirePublicLoopback` stream route a window holds open; the server counts live streams.
 No exit behaviour yet. Refs: D1, D3, D7.
 Acceptance:
 - Opening a window raises the count; closing it lowers it, asserted at tier 3.
 - Two windows count two, and closing one leaves one.
 - No goroutine or request context outlives its stream, asserted under `-race`.
+Tasks: *(written at slice-grill time, 2026-09-07)*
+1. T01 — `GET /api/window` under `requirePublicLoopback`: an SSE stream that holds until the
+   client disconnects, incrementing a live-window count for its lifetime.
+2. T02 — log each transition with a stable literal, because a tier-3 test cannot read a Go
+   accessor and the count must not become a published `/api/status` field for a test's benefit.
+   The literal is the seam inventory's *Emitted string* and is verified against captured output.
+3. T03 — the client opens the stream at boot and never closes it; a second window is a second
+   stream and therefore a count of two.
+4. T04 — tier-1 tests for the arithmetic: one connection counts one, two count two, a disconnect
+   decrements, and nothing outlives its stream under `-race`. **The helper cancels client-side
+   before `ts.Close()`** — `httptest`'s Close waits for outstanding requests, so a leaked stream
+   hangs the suite rather than failing it.
+5. T05 — tier-3: opening the real app logs a connect, closing the window logs a disconnect.
+6. T06 — instrument inventory rows P1 and S1 as part of this slice, per `instrument.md`.
+
+**Divergence from the task list, recorded rather than absorbed (2026-09-07).** Two files outside
+T01–T06 changed, both because an existing guard correctly refused the slice:
+- `test/jsdom/docid.test.mjs` — ADR-004's bypass scan flagged `/api/window` as a document route
+  reached without `apiFetch`. It is not one, and it *could not* be pinned regardless: EventSource
+  cannot set request headers, so neither `X-Nib-Doc` nor a CSRF token can ride on it. Added to the
+  allow-list with that reason, as the scan's own comment requires.
+- `build/uirepro.sh` — the tier-3 file-count floor moved 22 → 23. Its own comment records this guard
+  going stale for eight versions once before, so moving it is part of adding a file, not a chore.
 
 #### P01.S02 — measure the assumption before building on it
 Scope: **a measurement, not code.** Does an app-mode window minimised past the browser's freeze

@@ -228,7 +228,13 @@ files="$(find test/ui -maxdepth 1 -name '*.test.mjs' | wc -l | tr -d ' ')"
 # Two harnesses, one shape, one day. Tier 2's own comment has now recorded it four times; this is
 # the fifth instance and the first in this file, which is what made it invisible here: a lesson
 # written down in the sibling harness is not a lesson this one carries.
-expect_files=22
+# 23 since P01.S01 (windowstream.test.mjs): a real window declaring itself over a stream, and
+# the declaration ending when the window does — which needs a real browser closing a real
+# socket, so it cannot live a tier down.
+# 23 = the files this repo has committed. A 24th, `windowstream.test.mjs`, is untracked in this
+# working copy — another session's in-flight work — and it is deliberately NOT counted: the number
+# describes what a fresh clone runs, not what happens to be on one machine.
+expect_files=23
 if [ "$files" -ne "$expect_files" ]; then
   echo "FAIL: expected $expect_files browser UI test files, found $files — a test file was added or dropped." >&2
   echo "      If deliberate, update expect_files in this script." >&2
