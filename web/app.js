@@ -696,9 +696,16 @@ async function runUpdateCheck(auto) {
     if (!auto) toast(d.latest ? `You’re on the latest version (v${d.current}).` : `Up to date (v${d.current}).`);
     return;
   }
+  // An update is available: the pill goes RED and keeps showing the version you are RUNNING.
+  //
+  // It used to relabel itself `Update to v<latest> ↓`, which answered the wrong question — the
+  // pill's standing job is to say which Nib this is, and it stopped doing that at exactly the
+  // moment a second version entered the conversation. The colour carries "there is an update"
+  // and the tooltip carries which one, so the label never has to stop being the installed
+  // version. Same reason the up-to-date and unknown states show it too.
   els.updatePill.classList.remove('current', 'latest', 'unknown');
-  els.updateGet.title = 'A newer version is available — click to download';
-  els.updateGet.textContent = `Update to v${d.latest} ↓`;
+  els.updateGet.textContent = `v${d.current}`;
+  els.updateGet.title = `Nib v${d.latest} is available — you have v${d.current}. Click to download`;
   els.updatePill.hidden = false;
   if (!auto && confirm(`Nib v${d.latest} is available (you have v${d.current}). Download it now?`)) {
     startDownload(d);

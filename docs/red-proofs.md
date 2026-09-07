@@ -4164,3 +4164,22 @@ that cannot fail is worse than no row. What it protected is now unprotected by a
 there is no surface reporting undoability at all; that cost is named in ADR-024.
 
 `recorded` 322 → 321 (retirement) → 323.
+
+
+## The version pill keeps naming the version you are running (v1.125.1)
+
+| Defect reintroduced | Check that fired | What it said |
+| --- | --- | --- |
+| `the-pill-stops-naming-the-installed-version` — the pill relabels to `Update to v<latest> ↓` | `updatepill.test.mjs`, tier 2 | "It must still name the version you are RUNNING" |
+
+**The pill had no coverage at all before this** — three states (unknown, latest, update available),
+each with its own colour and label, and nothing asserted any of them. The new file drives all three
+through the real `/api/update/check` round trip and the real click handler.
+
+**Red is asserted as the ABSENCE of the three status classes**, not as the presence of a "red" one,
+because the base is red and a class that does not exist would satisfy a presence check silently.
+
+**What tier 2 cannot see:** that red is red, and that the label is legible on it. The palette is
+scanned from source in `theme.test.mjs`; rendered contrast on this pill is not asserted anywhere.
+
+`recorded` 323 → 324.
