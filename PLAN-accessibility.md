@@ -1,0 +1,324 @@
+# PLAN — structure tagging and accessibility, to Acrobat parity
+
+**Dateline.** Seeded 2026-09-06 from `/grill "coming to feature parity with Adobe Acrobat for
+structure tagging and accessibility"`, whose measured findings are this plan's factual base and
+whose scoped counter-proposal Dan **overruled in favour of full parity** (option B, 2026-09-06).
+
+**Where this plan and the original brief differ, the plan wins.** Where this plan and a memory
+entry differ, the plan wins — `/pending 29`'s body predates every measurement below and three of
+its claims are corrected here.
+
+**Status: unbuilt.** No slice has started. `/createcode` drives it from P01.
+
+---
+
+## What this is
+
+Adobe Acrobat's accessibility suite is four products in a trench coat: a **heuristic autotagger**
+for documents it did not create, a **structure editor** (Tags panel, Reading Order tool), an
+**in-app conformance checker** with a remediation report, and a **batch action** that runs the
+first three over a folder. Parity means all four, plus the tagged output itself, plus an
+application a keyboard-only user can actually operate.
+
+**There is no P00.** PLANNING.md reserves it for the bootstrap commit; nib is eleven hundred
+commits old and needs no scaffolding. Product work starts at P01.
+
+## The measured starting point
+
+Every number here was produced by running something on 2026-09-06, not by reading code. They are
+restated in the plan because a decision that cites a measurement should carry it.
+
+- **veraPDF 1.30.2** is installed, supports flavours `ua1` and `ua2`, and costs **2.32 s** per
+  file. It is Java; nib is cgo-free. It can be a test oracle and can never be the in-app checker.
+- A document nib authored end to end (`nib office` on markdown → its own `mdpdf` emitter →
+  `nib pagenum`) fails PDF/UA-1 on **9 distinct rules, 33 checks**. Only two rules are the
+  structural half; the rest is catalog plumbing (`/MarkInfo`, `/Metadata`, `DisplayDocTitle`, two
+  optional-content rules), `/Lang`, and font embedding.
+- **Nib destroys tagging that arrives in the door.** `pages`, `split`, `redact`, flatten, and
+  `merge`-when-the-tagged-file-is-not-first drop `/StructTreeRoot` and `/MarkInfo` outright.
+- **`nup` is worse than a strip: it lies.** It keeps the tree, `/ParentTree`, `/RoleMap` and
+  `/MarkInfo /Marked true` while destroying every `/StructParents`, BDC/EMC pair and MCID, leaves
+  struct elements pointing at pages that no longer exist, and still validates under pdfcpu.
+  veraPDF reports clause 7.1 t3 as a **new** failure the same file passed before `nup` touched it.
+- **`/Lang` reaches one door.** `pdfops.SetLang` has exactly one production caller —
+  `internal/server/ocr.go:86` — so only OCR'd documents carry a language. That is rule 7.2 t34 and
+  8 of the 33 failures. `lang_test.go` guards that the page primitive *preserves* `/Lang`, not that
+  documents *receive* one.
+- **Nib hand-emits zero PDF content-stream operators.** Every text path — OCR layer, watermark,
+  page numbers, form fields, `mdpdf` — goes through `pdfcpu/pkg/api`. Emitting marked content is a
+  new capability, not an extension of one.
+- **pdfcpu v0.13.0 round-trips a hand-built tag tree byte-identically** (187 → 187 bytes, no MCID
+  renumber) and has no tagging builder: its only `StructTreeRoot` code is validation, one
+  write-out, and two deletions.
+- **The structure nib needs already exists in two places and is thrown away.** `mdpdf` walks a real
+  AST (`ast.Heading` with a level, `ast.Paragraph`, lists — `mdpdf/mdpdf.go:171-180`). The vendored
+  tesseract.js 5.1.1 returns `block`, `paragraph` and `line` references on every word in reading
+  order; `web/app.js:6334` copies out the text and box and drops the rest.
+- **Nib's own UI fails WCAG 2.1 AA at SC 2.1.1 today.** Every annotation creation path is
+  `pointerdown`-only and there is no arrow-key nudge (`grep ArrowUp web/app.js` → 0). `aria-pressed`
+  appears nowhere in first-party code while ~15 tools signal armed state with a CSS class alone.
+
+## Repo laws this plan establishes
+
+These bind every slice below and every change made after this plan retires. Each becomes an ADR.
+
+1. **Nothing claims tagging it does not have.** No output may carry `/MarkInfo /Marked true`, a
+   `/StructTreeRoot`, or a conformance assertion over content that is neither tagged nor marked as
+   an artifact. A visible loss is honest; a false claim is not, and it is worse than no tagging at
+   all because it defeats the reader's own check.
+2. **Every operation declares its tag fate.** `carried` / `refused` / `dropped-with-notice` — one
+   verdict per operation, in one table, and the guard asserts that every operation *has* one. This
+   is ADR-009's shape: the guard checks the door, not the eight sites that happen to be right.
+3. **Inferred structure is a proposal, never an assertion.** Structure nib *observed* (its own AST,
+   its own form fields, tesseract's blocks) may be written silently. Structure nib *guessed* from an
+   arbitrary PDF is presented for review before it is written, the way **Detect** already proposes
+   form fields. A wrong tag tree misleads a screen reader with more authority than no tag tree.
+4. **The checker never reports a pass it did not perform.** Three verdicts — pass, fail, and
+   *cannot check, and why* — and the third never collapses into the first.
+5. **The oracle validates the checker.** nib's pure-Go checker is itself checked against veraPDF
+   over a golden corpus. A checker nothing checks is the fatal-bug category of this whole plan.
+
+---
+
+## Decisions
+
+### D1 — The target is PDF/UA-1, and veraPDF `ua1` is the test oracle *(settled 2026-09-06 via /grill)*
+ISO 14289-1 is what procurement asks for and what the installed oracle validates. UA-2 is out of
+scope for this plan and gets its own item when a real requirement appears. The oracle enters the
+tree as one word changed in the existing PDF/A helper — `requireVeraPDFCompliant(t, pdf, "ua1")` —
+and skips cleanly when veraPDF is absent, recorded as `not exercised`, never credited as a pass.
+
+### D2 — Preservation precedes authoring *(settled 2026-09-06 via /grill)*
+No phase adds tagging while an operation silently destroys it. This inverts the order the brief
+implied and is the plan's single most load-bearing sequencing decision: tagging authored on top of
+a pipeline that eats tagging produces documents that are accessible until the user rotates a page.
+
+### D3 — Emission wraps, it never re-emits *(settled 2026-09-06 via /grill)*
+Marked content is produced by **wrapping** what pdfcpu already emits — `BDC` before, `EMC` after,
+around an existing text run or an existing Form XObject `Do` — never by hand-emitting `Tj` and
+re-encoding glyphs. This is why the CID work `/pending 29` budgeted for does not appear in this
+plan: the OCR path already makes one Form XObject per word, and wrapping a `Do` touches no font
+encoding at all. Confirmed by probe: pdfcpu passes content-stream bytes through verbatim, so a
+wrap survives the write path.
+
+### D4 — Structure has three sources, ranked by fidelity, and the rank is visible to the user *(settled 2026-09-06 via /grill)*
+**Observed-exact** (`mdpdf`'s AST, the form fields nib itself placed) → written silently.
+**Observed-approximate** (tesseract's block/paragraph/line) → written silently, marked in the tag
+tree as OCR-derived. **Inferred** (the autotagger over an arbitrary PDF) → proposed for review per
+law 3. The user is told which of the three produced the tree they are looking at.
+
+### D5 — The autotagger follows Detect's interaction model *(settled 2026-09-06 via /grill)*
+Nib already has a heuristic proposer whose output the user edits before it becomes real: **Detect**
+for form fields. The autotagger is the same shape — propose, show, let the user move/retype/ignore,
+then commit — and reusing that model is worth more than any tagging-specific UI invention.
+
+### D6 — Nib ships its own pure-Go checker; veraPDF stays behind the test line *(settled 2026-09-06 via /grill)*
+Measured: veraPDF is a 2.32 s JVM invocation, and nib is a single cgo-free binary with no runtime
+dependencies. An in-app checker must therefore be nib's own code. It does not need to implement all
+of PDF/UA — it needs to implement what it can verify and to say plainly what it cannot (law 4),
+with agreement against veraPDF asserted over a corpus (law 5).
+
+### D7 — Authored text embeds its fonts *(settled 2026-09-06 via /grill)*
+Rule 7.21.4.1 fails on nib's own output because `mdpdf` draws in Base-14 core fonts
+(`mdpdf/mdpdf.go:37-40`) and `coreFont()` falls back to Helvetica. `markdownFallbackFonts()` already
+supplies embeddable faces and pdfcpu's user-font path subsets and writes `/ToUnicode`, so the
+machinery exists. Authored output embeds; core-font *metrics* stay for layout. Where a document
+nib did not author carries non-embedded fonts, the existing `nonEmbeddedFonts()` sweep becomes a UA
+blocker and the export **refuses**, mirroring `pdfaBlockers`' refuse-rather-than-mislabel idiom.
+
+### D8 — The tag tree is a typed Go model, not dictionary manipulation at call sites *(settled 2026-09-06 via /grill)*
+pdfcpu has no builder, so nib gets one: a typed tree that parses an existing `/StructTreeRoot`,
+mutates it, and writes it back, with `/ParentTree`, `/StructParents` and MCIDs maintained as
+invariants of the model rather than by each caller. Every operation in law 2 that reports `carried`
+routes through this one model.
+
+### D9 — The page-subset remap is a measured prerequisite, not an assumption *(open — first task of P01)*
+`Collect`, `RemovePages` and `SplitBySpans` drop the tree today. Carrying it means remapping
+`/ParentTree` and `/StructParents` for a kept subset and pruning orphaned elements. The grill
+measured **preservation in place** and explicitly did **not** measure a remap. P01.S02 measures it
+before anything is planned on top of it; if it proves impractical against pdfcpu v0.13.0, those
+operations fall back to `dropped-with-notice` under law 2 and this decision is superseded in place.
+
+### D10 — The editing surface lives in the Document tab *(settled 2026-09-06 via /grill)*
+Per ADR-016, a mode is a kind of thing you do to the document. A tag tree changes the document
+itself rather than adding something on top of the page, so the Tags panel and Reading Order view
+are **Document**, not Mark Up. The panel is a sidebar accordion card per ADR-018 and ADR-020.
+
+### D11 — The application's own accessibility is in scope and is not last *(settled 2026-09-06 via /grill)*
+Acrobat's accessibility story includes an operable application. Nib's fails SC 2.1.1 today: no
+annotation can be created without a pointer. Parity that ships PDF/UA output from an application a
+keyboard-only user cannot draw in is not parity, so P02 sits early rather than at the end.
+
+### D12 — The corpus is guard-test law *(settled 2026-09-06 via /grill)*
+This plan's fatal-bug category is *"claims accessible, is not"*. Its correctness oracle is a golden
+corpus: tagged and untagged fixtures, one per structure kind and one per known-destructive
+operation, with expected verdicts. PLANNING.md's failure mode 6 — the fatal-bug category with no
+oracle — is the reason this is a decision and not a test-plan footnote.
+
+---
+
+## Build order
+
+### P01 — Preservation and honesty
+**Goal.** Stop nib degrading documents that arrive tagged, and stop it claiming tagging it does not
+have. Nothing in this phase authors any structure; it is the floor D2 requires, and it is
+independently worth shipping even if the plan went no further.
+
+**Exit criteria.**
+- No operation emits a tagging claim over unmarked content; `nup`'s output no longer regresses
+  veraPDF clause 7.1 t3 against a tagged input.
+- Every operation that touches a document has a declared tag verdict, and a guard fails when a new
+  one has none.
+- The tag-fate table and its law ship as an ADR.
+
+#### P01.S01 — `nup` stops lying
+Scope: `nup` either drops `/StructTreeRoot` and `/MarkInfo` with the content it voids, or tags its
+composed page; it may not keep the claim. Refs: law 1, D2.
+Acceptance:
+- A tagged input through `nup` produces no veraPDF failure the input did not already have.
+- The output carries no struct element whose `/Pg` points at a page that is not in the document.
+- A red proof: reinstating the claim without the content turns the guard red.
+
+#### P01.S02 — measure the page-subset remap
+Scope: probe whether `/ParentTree` + `/StructParents` can be correctly remapped for a kept page
+subset against pdfcpu v0.13.0. Outcome, not code, is the deliverable; it settles D9. Refs: D9.
+Acceptance:
+- A recorded measurement, not an argument, for `Collect`, `RemovePages` and `SplitBySpans`.
+- D9 is superseded in place with the answer, and P01.S04's scope is set by it.
+
+#### P01.S03 — the tag-fate table and its guard
+Scope: every document-touching operation declares `carried` / `refused` / `dropped-with-notice` in
+one table; a table-driven tier-1 guard over a tagged fixture asserts each verdict and fails when an
+operation has no entry. Refs: law 2, D12.
+Acceptance:
+- The guard enumerates operations from the code, not from a hand-written list.
+- Adding an operation with no verdict turns it red (proved by adding one).
+- The fixture corpus lands under D12's corpus, not as an inline literal.
+
+#### P01.S04 — carry the tree where it can be carried
+Scope: implement carrying for the operations S02 found practical; the rest become
+`dropped-with-notice` with a user-visible sentence. Includes `merge`'s argument-order defect —
+tagging survives only when the tagged file is first. Refs: D8, D9, law 2.
+Acceptance:
+- `merge` preserves tagging in both argument orders, asserted per order.
+- Every `dropped-with-notice` operation actually emits its notice, asserted at the door.
+- `redact` is explicitly dispositioned — it destroys page content by design, so its verdict is a
+  decision, not an oversight.
+
+#### P01.S05 — the ADR and the corpus
+Scope: ADR for laws 1 and 2; the golden corpus per D12 with its expected verdicts. Refs: D12.
+Acceptance: the ADR names the operations, the corpus is loaded by S03's guard, and the ADR is cited
+from the tag-fate table.
+
+### P02 — The application's own WCAG 2.1 AA
+**Goal.** Make nib operable without a pointer and legible to a screen reader. This is a live
+conformance failure in shipped code (D11), and it is independent of every PDF concern below.
+
+**Exit criteria.**
+- Every annotation tool can create, move and resize a mark by keyboard alone, asserted at tier 3.
+- Toggle state is exposed programmatically, not by colour alone, across every armed tool.
+- A keyboard-only pass over the primary flows — open, mark up, save — completes with no trap and no
+  stranded focus.
+
+Sketched slices: keyboard creation and arrow-nudge for every tool · `aria-pressed` across the
+armed-tool set and `aria-expanded` on panel accordion cards · the toast live region announcing its
+first message · accessible names for the 21 icon-only buttons currently named by `title` alone ·
+`prefers-reduced-motion` and a non-text contrast guard (SC 1.4.11) · a 200%-zoom reflow assertion.
+
+### P03 — The catalog floor
+**Goal.** Clear the seven PDF/UA rules that need no structure at all, and fix the `/Lang` one-door
+defect. Measured: this is the largest share of the current failure for the least work.
+
+**Exit criteria.**
+- `/MarkInfo`, an XMP `/Metadata` stream, and `ViewerPreferences /DisplayDocTitle` on authored output.
+- `/Lang` present from every authoring and export door, enumerated from the router rather than a
+  hand-maintained list, with a guard that fails when a new door ships without one.
+- The `ua1` oracle runs in tier 1 and its skip is recorded, never credited.
+
+### P04 — Embedded fonts for authored text
+**Goal.** Clear rule 7.21.4.1 for everything nib writes, and refuse honestly for everything it does
+not. Refs D7.
+
+**Exit criteria.** Authored output embeds every font it draws with; a document carrying
+non-embedded fonts is refused for UA export with the reason named; `mdpdf` output passes the font
+rule under veraPDF.
+
+### P05 — The tag tree core
+**Goal.** The typed model of D8 plus the wrapping emitter of D3 — parse, mutate, write back, with
+`/ParentTree`, `/StructParents` and MCIDs as model invariants. This is the new capability the whole
+plan rests on and the first place nib emits content-stream operators of its own.
+
+**Exit criteria.** Round-trip of an existing tagged document is lossless; a tree built by the model
+validates under veraPDF `ua1`; wrapping is proved not to disturb the wrapped content's bytes.
+
+### P06 — Tagging what nib authors
+**Goal.** Exact structure first (D4): `mdpdf` from its AST, then authored form fields with `/TU`
+names and `/Tabs`, then OCR from tesseract's block/paragraph/line refs recovered across the wire.
+
+**Exit criteria.** A markdown document, an authored form, and an OCR'd scan each pass veraPDF `ua1`;
+each tree records which of D4's three sources produced it.
+
+### P07 — The pure-Go conformance checker
+**Goal.** Nib's own PDF/UA checker (D6) and the remediation report, with law 4's three verdicts and
+law 5's agreement guard against veraPDF over the corpus.
+
+**Exit criteria.** The checker agrees with veraPDF on every corpus fixture or names the rule it
+cannot evaluate; no rule is reported as passing that the checker did not actually run; the report
+is reachable from the UI and from the CLI.
+
+### P08 — The autotagger
+**Goal.** Heuristic structure inference for arbitrary PDFs — the research-grade half, and the one
+Acrobat is actually judged on. Proposes; never asserts (law 3, D5).
+
+**Exit criteria.** Over the corpus, proposed trees are measurably better than no tree on a stated
+metric; every proposal is reviewable and editable before it is written; nothing is written silently.
+
+**Standing caveat.** This phase carries the plan's real risk. Layout analysis is a research problem,
+its quality is unbounded above, and "parity" here is a direction rather than a finish line. It is
+sequenced last on purpose: everything before it ships value without it.
+
+### P09 — The structure editor
+**Goal.** The Tags panel and Reading Order view in the Document tab (D10) — inspect, reorder,
+retype, set alt text, mark artifacts, and author table header scope.
+
+**Exit criteria.** A tree can be corrected end to end in the UI without leaving nib; every edit is
+undoable through the existing history; the panel itself meets P02's keyboard bar.
+
+### P10 — Batch, CLI and the parity ledger
+**Goal.** `nib tag` and `nib a11y-check` as headless commands composing over stdin/stdout like the
+other 26, folder batch via `nib watch`, docs, and an honest written comparison of what nib does and
+does not do against Acrobat feature by feature.
+
+**Exit criteria.** The CLI covers what the UI can do; the ledger names every parity gap that
+remains, with no gap silently omitted.
+
+---
+
+## Out of scope
+
+- **PDF/UA-2** (D1) and **PDF/A-2a** — the archival path targets 2b, which is explicitly untagged.
+- **True text reflow editing** — that is `/pending 44`, a different feature with its own declined
+  prerequisites, and nothing here depends on it.
+- **OCR accuracy work.** Tagging consumes tesseract's output; improving it is a separate concern.
+- **Remediating documents nib did not author, silently** — forbidden by law 3, not deferred.
+- **Screen-reader certification claims.** Nib may state what it conforms to and what it checked; it
+  may not claim an assistive-technology endorsement it has not obtained.
+
+## Standing caveats
+
+- **The autotagger's ceiling is unknown** (P08). Every other phase has a measurable exit criterion;
+  that one has a direction and a corpus.
+- **D9 is unmeasured** at the time of writing and is the first task of P01 for that reason.
+- **veraPDF is an external Java tool.** Every gate that depends on it skips cleanly when it is
+  absent, and a skip is recorded as `not exercised` — a green run over an absent oracle verifies
+  nothing.
+- **`/pending 29` is superseded by this plan.** Three of its claims are corrected here: the `/Lang`
+  slice did not ship at every door, structure is not OCR-only, and the CID/`UsedGIDs` work it
+  budgeted for is not needed under D3.
+
+## Seam inventory
+
+`~/.claude/projects/-home-dan-repos-nib/memory/instruments/accessibility.md` — 24 rows (7 paths,
+9 seams, 8 gap-downs), written against this plan's shape before any code. Its two hot-path rows
+concern `/Lang` presence at the export doors; its two `diagnostic, no standing reader` rows are
+pdfcpu's silent per-rune drop and `SetLang`'s best-effort failure branch.
