@@ -65,7 +65,10 @@ test('a step link goes where it says', async () => {
   const rows = await steps();
   const i = rows.findIndex((r) => r.label === 'Finalize & sign');
   assert.ok(i >= 0, 'the Finalize step is missing from the checklist');
-  await page.evaluate((n) => document.getElementById('signSteps').children[n].click(), i);
+  // The LABEL is the link; the marker beside it is the tick. They became separate buttons at
+  // v1.128.0 so that ticking a step off and going to do it are different targets — clicking the
+  // row itself now does nothing, which is what this line used to do.
+  await page.evaluate((n) => document.getElementById('signSteps').children[n].querySelector('.signstep-label').click(), i);
   await page.waitForFunction(() => document.body.dataset.tab === 'secure');
   const cardOpen = await page.evaluate(() => {
     const head = [...document.querySelectorAll('#commands .sbhead.groupcard')]
@@ -103,4 +106,39 @@ test('a date stamp does not tick the signature step', async () => {
 
   h.answerDialogs(true);
   await h.closeDocument();
+});
+
+// A step can be ticked by hand, and the tick says whose claim it is.
+//
+// The probes answer "has this happened"; a person also needs to say "I have dealt with this" — for
+// the eight steps Nib cannot observe at all, and for the ones where her judgement differs from the
+// probe's. What must NOT happen is the two becoming indistinguishable: a manual tick is her claim,
+// an observed one is evidence, and a checklist that blurs them is back to decoration.
+test('any step can be ticked by hand, and it is marked as the user\'s claim', async () => {
+  const row = async (label) => (await page.evaluate((l) => {
+    const r = [...document.getElementById('signSteps').children]
+      .find((x) => x.querySelector('.signstep-label').textContent === l);
+    return r ? { state: r.dataset.state, by: r.dataset.by } : null;
+  }, label));
+  const clickMark = (label) => page.evaluate((l) => {
+    [...document.getElementById('signSteps').children]
+      .find((x) => x.querySelector('.signstep-label').textContent === l)
+      .querySelector('.signstep-mark').click();
+  }, label);
+
+  await steps();
+  const LABEL = 'Scan for hidden content';   // one Nib genuinely cannot observe
+  const before = await row(LABEL);
+  assert.equal(before.state, 'untracked',
+    'setup: the step this test ticks is not the untracked one it was written against');
+
+  await clickMark(LABEL);
+  const after = await row(LABEL);
+  assert.equal(after.state, 'done', 'clicking the marker did not tick the step — an optional step cannot be checked off at all');
+  assert.equal(after.by, 'hand',
+    'a hand-made tick is recorded as an observation. The list distinguishes what Nib saw from what you told it, and losing that makes every tick mean the weaker of the two');
+
+  // And it clears again: a tick you cannot undo is a trap on a list you are using to think.
+  await clickMark(LABEL);
+  assert.equal((await row(LABEL)).state, 'untracked', 'a hand-made tick cannot be cleared');
 });

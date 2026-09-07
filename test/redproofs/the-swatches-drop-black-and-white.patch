@@ -1,0 +1,11 @@
+--- a/web/app.js
++++ b/web/app.js
+@@ -8747,7 +8747,7 @@
+ 
+ function renderHlSwatches() {
+   els.hlSwatches.replaceChildren();
+-  for (const c of [...recentHlColors, ...FIXED_COLORS]) {
++  for (const c of recentHlColors) {
+     const b = document.createElement('button');
+     b.className = 'hlswatch';
+     b.style.background = c;

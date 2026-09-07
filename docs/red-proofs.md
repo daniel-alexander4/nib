@@ -4306,3 +4306,30 @@ stamp is a `data:` URL built on the spot. Only a rendered overlay shows the diff
 why the row is tier 3.
 
 `recorded` 331 → 332.
+
+
+## Four asks in one release (v1.128.0)
+
+| Defect reintroduced | Check that fired | What it said |
+| --- | --- | --- |
+| `a-step-cannot-be-ticked-by-hand` — the checklist markers stop responding | `signsteps.test.mjs`, tier 3 | "an optional step cannot be checked off at all" |
+| `the-checkbox-tool-places-nothing` — the placement call is dead | `stamplace.test.mjs`, tier 3 | "placed 0 checkboxes, not one" |
+| `the-swatches-drop-black-and-white` — the swatches fall back to the MRU alone | `stamplace.test.mjs`, tier 3 | "no black" |
+
+**The manual tick is what makes the list finishable.** Eight of the fifteen steps are untracked by
+design — Nib cannot know whether you ran a hidden-content scan or emailed the file — so without a
+hand tick those rows are permanent dashes and the checklist can never read as done. The tick is
+recorded as the USER's claim (`data-by="hand"`), because her judgement and Nib's observation are
+different kinds of evidence and the list is worth less if they look identical.
+
+**The checkbox tool is thin on purpose**, so there is exactly one thing to guard: `makeField('check', …)`
+is the widget Detect already produces, and `pdfops/form.go` already writes `"check"` into the
+AcroForm. The tool adds the placement and nothing else, so the proof is that a click lands one.
+
+**The third row cost a rewrite of its own test.** It was first recorded against a `waitForFunction`,
+which fails as a bare `TimeoutError` and prints no sentence of its own — so the only token available
+to match was the test's NAME, and a name appears in the output whether it passed or failed. That is
+the "red for the wrong reason" hazard `redproof.sh` was built to close, arrived at from the test
+side. The wait is an assertion with a message now.
+
+`recorded` 332 → 335.
