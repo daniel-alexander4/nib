@@ -224,11 +224,21 @@ test('the sidebar cards stack flush, and every one is a rounded pill', async () 
       // The open card's BODY is in the walk deliberately: it sits between two heads, so a gap
       // above or below it is exactly as visible as one between two heads, and skipping it would
       // have missed both halves of the defect this test was written for.
-      const items = [...document.querySelectorAll('#sidebar .sbhead, #commands .tbgroup.open')].filter(vis);
+      // `.panel.active` is in the walk as well as `.tbgroup.open`: a content panel is an open body
+      // too, and one sitting BETWEEN two headers is exactly as much a gap as a card's is. The
+      // omission was safe while every content panel was the last thing in the column — nothing
+      // followed it, so nothing could be pushed away from it. Flags leads the column since
+      // v1.126.1 and Simple Sign follows it, which is what surfaced it: a 684px "gap" that was
+      // the Flags panel doing its job.
+      const items = [...document.querySelectorAll('#sidebar .sbhead, #commands .tbgroup.open, #sidebar .panel.active:not(#commands)')].filter(vis);
       const rows = items.map((e) => {
         const r = e.getBoundingClientRect();
         return {
-          body: e.classList.contains('tbgroup'),
+          // A body is anything that is not a HEADER — a card's `.tbgroup` or a content `.panel`.
+          // Only headers are pills, so only headers are asked about corners; a panel has none and
+          // never should. Classifying by "is it a tbgroup" reported the Flags panel as a pill with
+          // square corners the moment a panel stopped being last in the column.
+          body: !e.classList.contains('sbhead'),
           label: e.textContent.trim().slice(0, 28),
           top: Math.round(r.top),
           bottom: Math.round(r.bottom),

@@ -35,7 +35,10 @@ after(async () => {
 test('the co-sign dialog keeps the address field behind the Advanced disclosure', async () => {
   await h.openDocument(writeFixture('deed.pdf', { pages: 1 }), 1);
   await h.mode('collaborate');
-  await page.click('#sessionInitBtn');
+  // `Simple Sign` replaced the Originate/Receive halves at v1.126.1, and Collaborate lands on the
+// Flags PANEL rather than on a card — so the card is opened explicitly.
+await h.card('Simple Sign');
+await page.click('#sessionInitBtn');
   await page.waitForSelector('#sessionInitModal:not([hidden])');
 
   // The default surface: no address field visible. This is the layout fact tier 2

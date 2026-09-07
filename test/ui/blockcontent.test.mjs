@@ -89,10 +89,10 @@ await page.evaluate(async (fp) => {
 await h.openDocument(SRC, 1);
 
 // ── The real flow: Co-sign… → pick the peer → Co-sign & save… → Save ────────
-// The Co-sign button lives on the Collaborate tab under the ORIGINATE role — the role
-// toggle swaps the tool set, so selecting the tab is not enough to reach it.
+// The Co-sign button lives on the Ceremony tab, in the `Simple Sign` card. It was behind the
+// ORIGINATE half of a role toggle until v1.126.1; the card is what has to be opened now.
 await h.mode('collaborate');
-await page.click('.roleopt[data-role="originate"]');
+await h.card('Simple Sign');
 await page.click('#cosignBtn');
 await page.waitForFunction(() => !document.getElementById('cosignModal').hidden);
 await page.selectOption('#cosignPeer', PEER_FP);
