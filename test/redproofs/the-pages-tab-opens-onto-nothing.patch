@@ -1,0 +1,11 @@
+--- a/web/app.js
++++ b/web/app.js
+@@ -10641,7 +10641,7 @@
+   // list of ids, so a panel added later lands in Functions without this function being edited.
+   for (const el of [...sb.children]) {
+     if (el === strip || el === pages || el === functions) continue;
+-    (el.id === 'thumbs' ? pages : functions).append(el);
++    functions.append(el);
+   }
+   for (const t of all('.sbtab')) t.onclick = () => selectSidebarTab(t.dataset.sbtab);
+   wireTablist(strip, '.sbtab');

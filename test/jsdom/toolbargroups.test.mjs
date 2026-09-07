@@ -125,8 +125,51 @@ test('what stayed in the bar is what you reach for continuously', () => {
   // The other direction, and it is not the same assertion: a bar emptied of everything would
   // pass the test above. Save is the one file command with a per-minute rhythm and a state to
   // show, and page/zoom/find are used while reading rather than once per document.
-  for (const id of ['saveBtn', 'prevBtn', 'nextBtn', 'zoomInBtn', 'zoomOutBtn', 'fitBtn', 'findToggle']) {
+  // `prevBtn`/`nextBtn` were here until v1.125.0 and are not merely moved — the buttons are gone,
+  // and paging is PageUp/PageDown/Home/End plus the thumbnail grid. The page NUMBER readout went
+  // to the Pages tab, which is why `.pageCount` is still asserted elsewhere in this tier.
+  for (const id of ['saveBtn', 'zoomInBtn', 'zoomOutBtn', 'fitBtn', 'findToggle', 'reloadBtn']) {
     assert.ok(doc.getElementById(id)?.closest('.tbfixed'),
       `${id} has left the fixed bar. It is used repeatedly while reading one document, so putting it behind a card charges a click for every use`);
   }
+});
+
+// ── The sidebar's two sections, and the title in the bar (v1.125.0) ──────────
+//
+// Pages is the thumbnail grid alone; Functions holds everything else. The split is asserted
+// STRUCTURALLY because the way it decays is a panel being appended to the sidebar and landing
+// nowhere — `buildSidebarTabs` moves whatever it finds, so a new surface joins Functions by
+// default and only a mistake puts it outside both.
+test('the sidebar is two sections, with the thumbnails in Pages and the rest in Functions', () => {
+  const tabs = [...doc.querySelectorAll('.sbtab')].map((t) => t.dataset.sbtab);
+  assert.deepEqual(tabs, ['pages', 'functions'],
+    `the sidebar offers ${JSON.stringify(tabs)} — this guard is written against exactly two sections`);
+
+  const pages = doc.getElementById('sbPages');
+  const functions = doc.getElementById('sbFunctions');
+  assert.ok(pages && functions, 'one of the two section containers is missing from index.html');
+
+  assert.ok(pages.contains(doc.getElementById('thumbs')),
+    'the thumbnail panel is not inside the Pages section, so the Pages tab opens onto nothing');
+  // The page-number readout came with the thumbnails when Previous/[n]/Next left the toolbar.
+  assert.ok(pages.querySelector('.pageNum') && pages.querySelector('.pageCount'),
+    'the page readout is not in the Pages section — it left the toolbar in v1.125.0 and this is where it went');
+
+  const stray = [...doc.querySelectorAll('#sidebar .panel')]
+    .filter((p) => !pages.contains(p) && !functions.contains(p))
+    .map((p) => p.id);
+  assert.deepEqual(stray, [],
+    `these sidebar panels are in neither section: ${stray.join(', ')} — they are in the DOM and unreachable, which looks identical to not existing`);
+});
+
+test('the document title is in the bar and cannot fold away', () => {
+  const title = doc.getElementById('docTitle');
+  assert.ok(title, 'the document title is not in the toolbar');
+  assert.ok(title.closest('.tbfixed'), 'the document title has left the fixed bar');
+  // NOT inside a .tbgroup, deliberately: groups fold into ⋯ More at narrow widths, and a bar
+  // that hides WHICH FILE you are editing is worse on a small window than on a large one.
+  assert.equal(title.closest('.tbgroup'), null,
+    'the document title is inside a fold group, so at a narrow width it disappears into ⋯ More — the one place the name matters most');
+  assert.ok(doc.getElementById('docDirty'),
+    'the save-state indicator is gone, so the title says which file is open and not whether it is saved');
 });

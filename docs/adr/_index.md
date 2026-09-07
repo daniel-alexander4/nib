@@ -187,3 +187,13 @@ home today.
   keeps it. Server ops stay outside: a reload already drops both client stacks, so their order is
   true without bookkeeping. Ink strokes cannot be synthesised in this harness — FreeText stands in
   at the same door, and that gap is named
+- [ADR-024: The sidebar has two sections, and the bar names the document](024-the-sidebar-has-two-sections.md)
+  — Pages (the thumbnail grid) and Functions (the accordion and the rest); ADR-018's width objection
+  to one-word tabs does not reach a TWO-tab strip at 100px each, and it is a real tablist. The bar
+  loses Undo/Redo (Ctrl+Z is the route, ADR-023) and Previous/[n]/Next (the keyboard pages; the
+  READOUT moved to Pages), gains the document name at the left edge with a save-state dot, and
+  pushes Zoom/Reload/Save right. The unsaved flag gets one door — ten sites wrote it directly and a
+  freshly opened document read "Unsaved changes", because the sink marks every arrival dirty and
+  `installOpened` corrects it a line later. Costs named: undo has NO visible control now, its
+  eviction hint went with the tooltip (the toast remains), and a red proof was retired because it
+  asserted a control that no longer exists

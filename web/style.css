@@ -1525,14 +1525,14 @@ input.ovl-check { appearance: auto; accent-color: #1a7f37; background: transpare
 /* Cards stack tight: only the expanded one takes the remaining height. Without this the
    commands container held `flex: 1` and pushed the content-panel headers to the bottom of
    the column with a dead gap above them. */
-#sidebar > .panel, #commands { flex: 0 0 auto; }
+.sbpane > .panel, #commands { flex: 0 0 auto; }
 /* #commands is a pass-through — its CARDS are the items, so it sizes to content and
    only a real content panel claims the leftover height. */
-#sidebar > .panel.active:not(#commands) { flex: 1 1 auto; min-height: 0; }
+.sbpane > .panel.active:not(#commands) { flex: 1 1 auto; min-height: 0; }
 #commands .tbtab > .tbgroup.open { max-height: 60vh; overflow-y: auto; }
 /* A header is its own height. As flex children of the column they stretched to fill the free
    space — measured 203px each, which is what put a dead gap above every content card. */
-#sidebar > .sbhead { flex: 0 0 auto; }
+.sbpane > .sbhead { flex: 0 0 auto; }
 
 /* ── Card colour ──────────────────────────────────────────────────────────────
    Each card takes one of the six accents, keyed by its LABEL so adding a group
@@ -1554,3 +1554,71 @@ input.ovl-check { appearance: auto; accent-color: #1a7f37; background: transpare
 .sbhead[data-accent] { color: var(--text); }
 .sbhead[data-accent]:hover { filter: brightness(1.12); }
 .sbhead[data-accent][aria-expanded="true"], .sbhead[data-accent].active { box-shadow: inset 3px 0 0 var(--text); }
+
+
+/* ── The sidebar's two sections (v1.125.0) ────────────────────────────────────
+   Pages is the thumbnail grid alone; Functions holds the accordion and the other
+   content panels. ADR-018 refused one-word tabs for all seven surfaces because
+   seven across 200px is 28px each against a label needing about 40; two is 100px
+   each, so that objection does not reach this strip. The accordion is unchanged
+   and simply lives inside a tab now. */
+.sbtabs { display: flex; border-bottom: 1px solid var(--crust); flex: 0 0 auto; }
+.sbtab {
+  flex: 1; border: 0; border-radius: 0; background: transparent;
+  color: var(--subtext0); padding: 8px 4px; font-size: 12px; font-weight: 600;
+  letter-spacing: .3px; cursor: pointer; border-bottom: 2px solid transparent;
+}
+.sbtab:hover { background: var(--surface0); color: var(--text); }
+/* Active is a colour AND an underline: colour alone is WCAG 1.4.1, which is the
+   finding that put roles on the other three tab-like surfaces (/pending 329). */
+.sbtab.active { color: var(--text); border-bottom-color: var(--mauve); }
+
+/* A pane is the scrolling column the sidebar used to be. `#sidebar` itself stops
+   scrolling, or the inactive pane's height would still count. */
+.sbpane { display: none; flex: 1 1 auto; min-height: 0; overflow-y: auto; }
+.sbpane.active { display: flex; flex-direction: column; }
+#sidebar { overflow: hidden; }
+/* The thumbnail grid is the whole of its pane, so it is always displayed there — the `.active`
+   class that gates every other `.panel` is the accordion's, and thumbs left the accordion when it
+   became a tab. Same shape as `#commands.panel { display: block }`: a panel whose visibility is
+   decided by something other than the panel machinery says so here. Measured: without this the
+   Pages tab opened onto an empty column, because `showPanel` had taken `.active` off it. */
+#sbPages > #thumbs.panel { display: block; flex: 1 1 auto; min-height: 0; }
+
+/* The page readout that used to be Previous/[n]/Next in the toolbar. */
+.pagejump {
+  display: flex; align-items: center; gap: 6px;
+  padding: 6px 2px 8px; font-size: 12px; color: var(--subtext1);
+}
+.pagejump .tbpage { display: inline-flex; align-items: center; gap: 4px; }
+
+/* ── The bar's right-hand cluster ─────────────────────────────────────────────
+   Find sits at the left edge beside the sidebar toggle; Zoom, Reload and Save are
+   pushed right. `margin-left: auto` on the FIRST of them takes the free space, so
+   the three stay a run rather than spreading. */
+/* `.tbfixed` has to TAKE the row before anything inside it can be pushed to the right edge:
+   as a shrink-to-fit flex item it had no free space, so `margin-left: auto` moved nothing.
+   Measured that way — Zoom sat at x=80 of a 1401px bar. */
+#toolbar .tbfixed { flex: 1 1 auto; }
+#toolbar .tbfixed > .tbgroup.tbright { margin-left: auto; }
+/* The divider that marks a group as a run would draw between the left edge and the
+   pushed cluster, which reads as a separator for empty space. */
+#toolbar .tbfixed > .tbgroup.tbright::before { display: none; }
+
+
+/* ── The document title in the bar (v1.125.0) ─────────────────────────────────
+   Left edge, and it TRUNCATES: a long filename must not push Zoom/Reload/Save off
+   the row, which is what `min-width: 0` on a flex child is for. */
+.doctitle {
+  display: inline-flex; align-items: center; gap: 6px;
+  min-width: 0; max-width: 38ch; margin-right: 8px;
+  font-size: 12px; color: var(--text);
+}
+.doctitle-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* The save state. Hollow ring when saved, filled amber when not — a difference in
+   FILL as well as in colour, so it does not rely on hue alone. */
+.docdirty {
+  flex: 0 0 auto; width: 8px; height: 8px; border-radius: 50%;
+  border: 1.5px solid var(--overlay0); background: transparent;
+}
+.docdirty.unsaved { border-color: var(--peach); background: var(--peach); }

@@ -4142,3 +4142,25 @@ uses a FreeText annotation, which enters the same manager through the same `addC
 ordering is what these rows are about and it is fully driven; ink's own path to that door is not.
 
 `recorded` 320 → 322.
+
+
+## ADR-024 — two sections, and a bar that names the document (v1.125.0)
+
+| Defect reintroduced | Check that fired | What it said |
+| --- | --- | --- |
+| `the-title-stops-following-the-save-flag` — `setDirty` stops repainting | `lifecycle.test.mjs`, tier 3 | "a freshly opened document reads as having unsaved changes" |
+| `the-pages-tab-opens-onto-nothing` — every panel goes to Functions | `toolbargroups.test.mjs`, tier 2 | "the thumbnail panel is not inside the Pages section" |
+
+**The first row's failure is not the one you would predict.** Removing the repaint does not make the
+dot go stale after an edit — it makes a **freshly opened** document read "Unsaved changes", because
+the universal document sink marks every arrival dirty and `installOpened` corrects it a line later.
+That is what the one-door `setDirty` exists for, and it is why the row's EXPECT token is about the
+open rather than about the edit.
+
+**One row was RETIRED in this change**, and it is recorded here rather than quietly dropped:
+`the-undo-button-cannot-see-drawings` asserted that the Undo button reflected pdf.js's editor
+stack. The button left the toolbar, so the row asserted a control the product no longer has — a row
+that cannot fail is worse than no row. What it protected is now unprotected by anything, because
+there is no surface reporting undoability at all; that cost is named in ADR-024.
+
+`recorded` 322 → 321 (retirement) → 323.

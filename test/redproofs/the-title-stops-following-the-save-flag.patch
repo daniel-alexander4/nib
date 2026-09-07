@@ -1,0 +1,10 @@
+--- a/web/app.js
++++ b/web/app.js
+@@ -3062,7 +3062,6 @@
+ // already happened. Measured that way. Assign through here and the two can't disagree.
+ function setDirty(owner, value) {
+   owner.dirty = value;
+-  reflectDocTitle();
+ }
+ 
+ // editedViews is what the confirm has to ask, because Close is CLOSE ALL:

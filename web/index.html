@@ -120,41 +120,18 @@
     </button>
     <span class="tbsep"></span>
 
-    <!-- Undo/Redo sit OUTSIDE the .tbtab panes, beside the sidebar toggle, because they are
-         global: undoable operations are committed by redact, scan, attachments, OCR, page ops,
-         outline, assemble, convene and reload. They used to live only in the Edit pane, so
-         undoing a redaction meant switching tabs to reach the button. -->
-    <div class="tbglobal">
-<button id="undoBtn" title="Undo the last page operation (Ctrl+Z)" disabled>↶ Undo</button>
-      <button id="redoBtn" title="Redo (Ctrl+Shift+Z)" disabled>↷ Redo</button>
-      <!-- Reload from disk: throw away what is in memory and re-read the file. It sits here
-           rather than in a mode's pane for the same reason Undo and Redo do — it is about the
-           document rather than about what you are doing to it — and beside them because it is
-           the other end of the same idea: Undo steps back one operation, this abandons all of
-           them. Confirms first when there is unsaved work; the stale-file banner's own Reload
-           button is the same door (reloadDiscarding). -->
-      <button id="reloadBtn" class="tbicon" title="Reload from disk, discarding unsaved changes" aria-label="Reload from disk" disabled>
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3v6h-6"/></svg>
-      </button>
-    </div>
-    <span class="tbsep"></span>
-
-    <!-- The FIXED bar. These commands are not about a mode — you navigate, zoom, find, open
-         and save in every one of them — so they never swap out. Before v1.121.0 the toolbar
-         held five mutually exclusive palettes and nothing else; that is the finding the
-         2026-08-30 menu-surface walk named first, and a bar that never changes retires it. -->
+    <!-- The FIXED bar, and it is now a bar of two halves. Find sits at the left edge beside the
+         sidebar toggle; Zoom, Reload and Save are pushed to the right. Undo/Redo left it in
+         v1.125.0 — Ctrl+Z is the route, and ADR-023 made that route reach every change in the
+         document — and the Previous/Next/page-number group went to the Pages tab, which is where
+         a reader who is thinking about pages already is. -->
     <div class="tbfixed">
-<div class="tbgroup" data-label="Save" data-fold="0">
-<button id="saveBtn" title="Save (overwrites the original)" disabled>Save</button>
-            </div><div class="tbgroup" data-label="Page" data-fold="0">
-<button id="prevBtn" title="Previous page (PageUp · Home for first)">Previous</button>
-      <span class="tbpage"><input class="pageNum" type="number" min="1" value="1" /><span class="pageCount">/ 0</span></span>
-      <button id="nextBtn" title="Next page (PageDown · End for last)">Next</button>
-            </div><div class="tbgroup" data-label="Zoom" data-fold="2">
-<button id="zoomOutBtn" title="Zoom out (Ctrl+-)">Zoom out</button>
-      <button id="fitBtn" title="Fit width (Ctrl+0)">Fit width</button>
-      <button id="zoomInBtn" title="Zoom in (Ctrl++)">Zoom in</button>
-            </div><div class="tbgroup" data-label="Find" data-fold="3">
+<!-- The open document's name, at the left edge. Not inside a .tbgroup: it is not a control and
+     must never fold away into ⋯ More — a bar that hides which file you are editing is worse on a
+     narrow window than on a wide one. The dot beside it is the save state, and it carries the
+     word as well as the colour (role="img" + aria-label), because colour alone is WCAG 1.4.1. -->
+<span id="docTitle" class="doctitle" hidden><span id="docTitleName" class="doctitle-name"></span><span id="docDirty" class="docdirty" role="img" aria-label="Saved"></span></span>
+<div class="tbgroup" data-label="Find" data-fold="3">
 <!-- Find collapses to a magnifier: three controls and a text field, in a bar, for something
      that is opened deliberately and closed again. Ctrl+F opens and focuses it, Escape closes
      it — the shortcut was already the way most people reach it, and the field kept its place
@@ -163,7 +140,18 @@
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
       </button>
       <span class="tbfind" hidden><input class="searchInput" type="search" placeholder="Find in document… (Ctrl+F)" /><button id="findPrevBtn" title="Previous match (Shift+Enter)" disabled>‹</button><button id="findNextBtn" title="Next match (Enter)" disabled>›</button><span id="findCount" class="findcount"></span></span>
-          </div>    </div>
+          </div><div class="tbgroup tbright" data-label="Zoom" data-fold="2">
+
+<button id="zoomOutBtn" title="Zoom out (Ctrl+-)">Zoom out</button>
+      <button id="fitBtn" title="Fit width (Ctrl+0)">Fit width</button>
+      <button id="zoomInBtn" title="Zoom in (Ctrl++)">Zoom in</button>
+            </div><div class="tbgroup" data-label="Reload" data-fold="0">
+      <button id="reloadBtn" class="tbicon" title="Reload from disk, discarding unsaved changes" aria-label="Reload from disk" disabled>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3v6h-6"/></svg>
+      </button>
+            </div><div class="tbgroup" data-label="Save" data-fold="0">
+<button id="saveBtn" title="Save (overwrites the original)" disabled>Save</button>
+            </div>    </div>
     <span class="tbsep"></span>
 
     
@@ -176,14 +164,28 @@
 
   <main id="main">
     <aside id="sidebar">
+      <!-- Two sections. Pages is the thumbnail grid on its own; Functions holds the accordion of
+           command cards and the other content panels. ADR-018 refused ONE-WORD tabs for all seven
+           surfaces on width — seven across 200px is 28px each — and two is 100px each, so the
+           objection does not reach this. The accordion is unchanged; it now lives inside a tab. -->
+      <nav class="sbtabs" role="tablist" aria-label="Sidebar sections">
+        <button class="sbtab" role="tab" data-sbtab="pages" aria-selected="false" aria-controls="sbPages">Pages</button>
+        <button class="sbtab active" role="tab" data-sbtab="functions" aria-selected="true" aria-controls="sbFunctions">Functions</button>
+      </nav>
       <nav class="tabs">
-        <button class="tab active" data-panel="thumbs">Arrange Pages</button>
-        <button class="tab" data-panel="outline">Jump to Section</button>
+        <button class="tab active" data-panel="outline">Jump to Section</button>
         <button class="tab" data-panel="library">Place Signatures &amp; Stamps</button>
         <button class="tab" data-panel="flags">Place Signing Flags</button>
         <button class="tab" data-panel="ceremony">Signing Ceremonies</button>
         <button class="tab" data-panel="commands">Commands</button>
       </nav>
+
+      <!-- The two sections' containers. Declared here rather than created in script so every id
+           app.js reaches for is visible in this file (test/jsdom/ids.test.mjs); they start empty
+           and `buildSidebarTabs` moves the panels into them once the accordion has placed each
+           header beside the panel it opens. -->
+      <div id="sbPages" class="sbpane"></div>
+      <div id="sbFunctions" class="sbpane active"></div>
 
       <!-- The mode's own commands, vertical and captioned. A 200x580px column can afford the
            group headings a horizontal bar cannot: ADR-015 keeps labels out of the toolbar
@@ -397,6 +399,11 @@
       </span>
     </div>      </div>
       <div id="thumbs" class="panel active">
+        <!-- The page number and count. They were Previous/[n]/Next in the toolbar until
+             v1.125.0; the buttons are gone (PageUp/PageDown/Home/End still page, and the
+             thumbnails are a better target than a Next button) and the readout came here,
+             which is where a reader thinking about pages already is. -->
+        <div class="pagejump">Page <span class="tbpage"><input class="pageNum" type="number" min="1" value="1" /><span class="pageCount">/ 0</span></span></div>
         <div class="thumbactions">
           <button id="appendBtn" title="Append another PDF">+ Append PDF</button>
           <input id="appendInput" type="file" accept="application/pdf" hidden />

@@ -177,9 +177,7 @@ test('switching tabs preserves the page you were on', async () => {
 
   // Move A to its last page, and assert it moved — otherwise "the page was preserved"
   // is satisfied by never having left page 1.
-  await page.fill('.pageNum', '3');
-  await page.press('.pageNum', 'Enter');
-  await page.waitForFunction(() => Number(document.querySelector('.pageNum').value) === 3);
+  await h.gotoPage(3);
   const leftOn = await activeTabName();
 
   await page.click(tabSel(last));
@@ -207,9 +205,7 @@ test('closing one document leaves the others open, on the page they were left on
   // page it had to be PUT on — page 1 would be true of a document that was reloaded.
   await page.click(tabSel(1));
   await switched(3);
-  await page.fill('.pageNum', '2');
-  await page.press('.pageNum', 'Enter');
-  await page.waitForFunction(() => Number(document.querySelector('.pageNum').value) === 2);
+  await h.gotoPage(2);
 
   // Go to C, then close B — a BACKGROUND tab, which is the case that distinguishes a
   // close from a switch-then-close.

@@ -360,7 +360,6 @@ test('Ctrl+Z walks the whole document in the order the changes were made', async
     return {
       drawings: layer ? layer.children.length : -1,
       notes: document.querySelectorAll('.viewerContainer:not([hidden]) .ovl-note').length,
-      undoDisabled: document.getElementById('undoBtn').disabled,
     };
   });
   const arm = async (id) => {
@@ -387,10 +386,9 @@ test('Ctrl+Z walks the whole document in the order the changes were made', async
   await page.waitForFunction(() => !document.getElementById('textToolBtn').classList.contains('active'));
   const afterDrawing = await counts();
   assert.equal(afterDrawing.drawings, 1, 'setup: no annotation-editor change was made, so there is no second stack in this test');
-  // The button is part of the claim: it read `disabled` with drawings on screen, because it
-  // counted only nib's own stack.
-  assert.equal(afterDrawing.undoDisabled, false,
-    'the Undo button is disabled with a drawing on screen — it is counting only nib\'s overlay stack, so the editor stack is invisible to the user as well as to Ctrl+Z');
+  // This used to also assert the Undo BUTTON had noticed the drawing. The button left the toolbar
+  // in v1.125.0, so there is no longer a surface that reports undoability — the keystroke is the
+  // whole interface, and the ordering below is the whole claim.
 
   // SECOND change: a note, which lives in nib's overlay stack.
   await arm('noteBtn');
@@ -423,4 +421,52 @@ test('Ctrl+Z walks the whole document in the order the changes were made', async
 
   h.answerDialogs(true);
   await closeDoc();
+});
+
+// ── The title in the bar, and whether it needs saving ───────────────────────
+//
+// The bar answers "which file am I editing, and have I saved it" without being asked. The save
+// dot reads `hasUnsavedWork` — the same flag the close prompt asks — so the two cannot disagree,
+// which they did on the first attempt: the universal document sink marks every arrival dirty and
+// `installOpened` corrects it a line later, so a freshly opened document showed "Unsaved changes"
+// until the flag was given one door (`setDirty`).
+//
+// Tier 3 because the claim is a rendered chrome element following real state through a real open,
+// a real server operation and a real save.
+test('the toolbar names the open document and says whether it is saved', async () => {
+  const state = () => page.evaluate(() => {
+    const t = document.getElementById('docTitle');
+    return {
+      hidden: t.hidden,
+      name: document.getElementById('docTitleName').textContent,
+      save: document.getElementById('docDirty').getAttribute('aria-label'),
+    };
+  });
+
+  const before = await state();
+  assert.equal(before.hidden, true,
+    'setup: the title is showing with no document open, so "it appears on open" proves nothing');
+
+  await h.openDocument(DOC, 3);
+  const opened = await state();
+  assert.equal(opened.hidden, false, 'no document title appears in the toolbar after opening one');
+  assert.match(opened.name, /\.pdf$/, `the toolbar names "${opened.name}" rather than the file that was opened`);
+  assert.equal(opened.save, 'Saved',
+    'a freshly opened document reads as having unsaved changes. Nothing has been edited — the flag is set by the sink every arrival goes through and corrected a line later, so a display painted at the wrong moment says the opposite of what the close prompt would');
+
+  await h.mode('edit');
+  await h.group('Rotate All Pages');
+  await page.click('#rotateRightBtn');
+  await page.waitForFunction(() => document.getElementById('docDirty').getAttribute('aria-label') === 'Unsaved changes',
+    null, { timeout: 20000 });
+
+  await page.click('#saveBtn');
+  await page.waitForFunction(() => document.getElementById('toast')?.textContent === 'Saved', null, { timeout: 20000 });
+  await page.waitForFunction(() => document.getElementById('docDirty').getAttribute('aria-label') === 'Saved',
+    null, { timeout: 20000 });
+
+  h.answerDialogs(true);
+  await closeDoc();
+  assert.equal((await state()).hidden, true,
+    'the title survives the document being closed, naming a file that is no longer open');
 });
