@@ -1,6 +1,6 @@
 --- a/internal/server/session.go
 +++ b/internal/server/session.go
-@@ -1240,9 +1240,6 @@
+@@ -1240,9 +1240,6 @@ func (sa sessionAccepter) Accept(peerFP, doc []byte) (bool, error) {
  		// `incoming/alice-20260831-110425.pdf`. So `ackOK` attests that THESE bytes reached the
  		// disk, and not that an earlier document still exists. P08.S05d's deterministic filename
  		// is what closes it.
@@ -10,14 +10,16 @@
  		return true, nil
  	case <-time.After(sessionConsentTimeout):
  		return false, p2p.ErrConsentTimedOut // see sessionConfirmer.Confirm
-@@ -1554,7 +1554,9 @@
+@@ -1554,9 +1551,11 @@ func (s *Server) serveOneSession(anchor consentAnchor, cer *ceremonyID, conn *p2
  		// receipt meant "a human clicked accept" and never "the bytes are on disk". It now runs
  		// inside `sessionAccepter.Accept`, the last thing before the frame — see that method, and
  		// `TestTheReceivedWriteHasOneDoor` for the guard that keeps it the only site.
 -		if _, derr := p2p.ReceiveDocument(ch, sessionAccepter{s: s, label: label, saw: &saw, anchor: anchor}, myFP, sessionVerifier{s: s, saw: &saw, cer: cer}); derr != nil {
-+		doc, derr := p2p.ReceiveDocument(ch, sessionAccepter{s: s, label: label, saw: &saw, anchor: anchor}, myFP, sessionVerifier{s: s, saw: &saw, cer: cer}); derr != nil
++		doc, derr := p2p.ReceiveDocument(ch, sessionAccepter{s: s, label: label, saw: &saw, anchor: anchor}, myFP, sessionVerifier{s: s, saw: &saw, cer: cer})
 +		if derr != nil {
  			return saw.v.Load(), nil, derr
  		}
 +		_ = s.saveReceived(anchor.kind, doc, ch.PeerFP, label)
  		return true, nil, nil // a transfer saves itself; no co-signed document to open
+ 	}
+ 	var rd p2p.ReDeliverer

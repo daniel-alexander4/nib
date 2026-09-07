@@ -1,0 +1,10 @@
+--- a/internal/ceremony/mirror.go
++++ b/internal/ceremony/mirror.go
+@@ -419,7 +419,6 @@ func ReadStored(root, id string, now time.Time) Stored {
+ 	// reader most wants it for, a party who has accepted and not yet signed, is precisely one of
+ 	// the branches that returns early. Placing it after them would have made it invisible for
+ 	// every ceremony whose document has not arrived.
+-	s.Verification = readVerification(dir)
+ 	b, err := os.ReadFile(filepath.Join(dir, "record.json"))
+ 	if err != nil {
+ 		// **An unreadable record is NOT an absent one (/pending 320).** Every read error used to
