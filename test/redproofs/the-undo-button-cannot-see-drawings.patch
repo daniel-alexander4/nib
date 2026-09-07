@@ -1,0 +1,11 @@
+--- a/web/app.js
++++ b/web/app.js
+@@ -9369,7 +9369,7 @@
+   const m = view.docMeta || {};
+   // `clientHistory` rather than `overlayHistory`: it counts BOTH client stacks, and the editor
+   // one was invisible here — two drawings on screen and the Undo button read as disabled.
+-  if (els.undoBtn) els.undoBtn.disabled = !(enabled && (m.canUndo || view.clientHistory.undo.length));
++  if (els.undoBtn) els.undoBtn.disabled = !(enabled && (m.canUndo || view.overlayHistory.undo.length));
+   if (els.redoBtn) els.redoBtn.disabled = !(enabled && (m.canRedo || view.clientHistory.redo.length));
+ 
+   // Eviction is observable or it is not eviction (ADR-003). The server has always

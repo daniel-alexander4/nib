@@ -4120,3 +4120,25 @@ jsdom has no layout. Measured in Chromium instead — three rows to one, chrome 
 viewport — and `responsive.test.mjs` owns the standing 33% ceiling.
 
 `recorded` 319 → 320.
+
+
+## ADR-023 — one undo order for one document (v1.124.1)
+
+| Defect reintroduced | Check that fired | What it said |
+| --- | --- | --- |
+| `undo-drains-one-stack-then-the-server` — `undoAny` back to overlay-then-server | `lifecycle.test.mjs`, tier 3 | "the second Ctrl+Z did not reach the DRAWING" |
+| `the-undo-button-cannot-see-drawings` — the button counts only nib's stack | `lifecycle.test.mjs`, tier 3 | "the Undo button is disabled with a drawing on screen" |
+
+**Two rows because there were two failures, and the second is why the first looked like something
+else.** The routing decided whether the keystroke reached the change; the button decided whether
+anything on screen admitted the change was undoable. With both wrong, the symptom reads as "there
+is no history" rather than as "the history is not being walked" — which is how it was reported and
+is not what it was.
+
+**What is NOT exercised, and it is named in the ADR too:** a real ink stroke. No synthetic pointer
+sequence in this harness produces one — attempted as a Playwright drag and as hand-dispatched
+`PointerEvent`s, with the editor layer confirmed topmost and accepting pointer events. The test
+uses a FreeText annotation, which enters the same manager through the same `addCommands` door. The
+ordering is what these rows are about and it is fully driven; ink's own path to that door is not.
+
+`recorded` 320 → 322.

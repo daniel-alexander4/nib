@@ -488,9 +488,14 @@ test('the three field helpers act on the view that owns the field', () => {
 
 test('the undo stack is drained from the active view, and cleared for the owner', () => {
   // Draining the ACTIVE view is correct — the keystroke aims at what is on screen.
-  assert.match(CODE, /function undoAny\(\) \{ if \(view\.overlayHistory\.undo\.length\)/,
+  //
+  // Matched on `view.` rather than on the whole one-line body it used to have: ADR-023 gave the
+  // two client stacks a shared order, so undoAny is no longer a single expression. The property
+  // asserted has not changed — it is which VIEW the stack is read from — and pinning the old
+  // shape made the test fail for a change that could not violate it.
+  assert.match(CODE, /function undoAny\(\)[\s\S]{0,240}?view\.clientHistory\.undo\.pop\(\)/,
     'undoAny does not drain the active view stack');
-  assert.match(CODE, /function redoAny\(\) \{ if \(view\.overlayHistory\.redo\.length\)/,
+  assert.match(CODE, /function redoAny\(\)[\s\S]{0,240}?view\.clientHistory\.redo\.pop\(\)/,
     'redoAny does not drain the active view stack');
 
   // But clearing is per-view DATA and must happen above clearOverlays' shared-chrome return,

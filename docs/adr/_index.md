@@ -177,3 +177,13 @@ home today.
   inside a collapsed card is a second disclosure onto the same items, and no `.menu` has ever
   rendered inside `#commands`. The cost is named rather than hidden: Open… is now one header click
   away, and the fix if that proves wrong is to put Open back beside Save, not to unwind the rest
+- [ADR-023: One undo order for one document](023-one-undo-order-for-one-document.md) — Ctrl+Z walks
+  the document's changes newest-first across BOTH client stacks (nib's overlay commands and pdf.js's
+  annotation-editor commands), which each knew only their own: draw, then arm a nib tool, and the
+  drawing was beyond reach — four presses, nothing undone, Undo reading disabled. `clientHistory`
+  records whose turn it is; the commit point is pdf.js's `addCommands`, because
+  `editingstateschanged` carries booleans and a second stroke raises no event. The key is taken in
+  the CAPTURE phase so pdf.js's own binding cannot fire first, while a field with its own undo still
+  keeps it. Server ops stay outside: a reload already drops both client stacks, so their order is
+  true without bookkeeping. Ink strokes cannot be synthesised in this harness — FreeText stands in
+  at the same door, and that gap is named

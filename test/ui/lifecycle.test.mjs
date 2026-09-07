@@ -327,3 +327,100 @@ test('Ctrl+Z removes a just-placed note, and leaves a typed one to the field', a
   h.answerDialogs(true);
   await closeDoc();
 });
+
+// ── One undo order for one document ─────────────────────────────────────────
+//
+// Dan: *"ctrl-z works on drawing lines and it works on drawing shapes, but if I draw lines and
+// then draw shapes, ctrl-z will not undo the previous set of lines."*
+//
+// Two client stacks: nib's overlay commands and pdf.js's annotation-editor commands. Ctrl+Z
+// drained nib's first and then fell through to the SERVER ring, so the editor stack was reachable
+// only while one of pdf.js's own tools happened to be armed — arm a nib tool instead and the
+// drawings became unreachable. Measured before the fix: two editor changes on screen, four Ctrl+Z
+// presses, nothing undone, and the Undo button reading as disabled throughout.
+//
+// The property is chronological: the LAST change made is the first undone, whichever stack made
+// it. Server operations are deliberately outside this — each one reloads through
+// setDocumentFromServer -> clearOverlays, which drops both client stacks, so "client edits, then
+// server ops" is already true without bookkeeping.
+//
+// **A FreeText annotation stands in for the drawn line, and that is a real limitation.** No
+// synthetic pointer sequence in this harness produces an ink stroke — tried as a Playwright drag
+// and as hand-dispatched PointerEvents, both on the editor layer with it topmost and accepting
+// events. FreeText goes through the SAME `addCommands` door on the same manager, which is what
+// this test is about; what goes unexercised is ink's own path to that door.
+test('Ctrl+Z walks the whole document in the order the changes were made', async () => {
+  await h.openDocument(DOC, 3);
+  await h.topOfDocument();
+  await h.mode('markup');
+  await h.group('Annotate & Draw');
+
+  const counts = () => page.evaluate(() => {
+    const layer = document.querySelector('.viewerContainer:not([hidden]) .annotationEditorLayer');
+    return {
+      drawings: layer ? layer.children.length : -1,
+      notes: document.querySelectorAll('.viewerContainer:not([hidden]) .ovl-note').length,
+      undoDisabled: document.getElementById('undoBtn').disabled,
+    };
+  });
+  const arm = async (id) => {
+    for (let i = 0; i < 3; i++) {
+      if (await page.evaluate((b) => document.getElementById(b).classList.contains('active'), id)) return;
+      await page.click(`#${id}`);
+      await page.waitForTimeout(250);
+    }
+    throw new Error(`${id} would not arm, so the change it makes is not being made`);
+  };
+
+  // FIRST change: a text annotation, which lives in pdf.js's editor stack.
+  await arm('textToolBtn');
+  const layer = await page.evaluate(() => {
+    const b = document.querySelector('.viewerContainer:not([hidden]) .annotationEditorLayer').getBoundingClientRect();
+    return { x: b.x, y: b.y };
+  });
+  await page.mouse.click(layer.x + 150, layer.y + 120);
+  await page.waitForTimeout(400);
+  await page.keyboard.type('drawn first');
+  await page.mouse.click(layer.x + 430, layer.y + 420);   // commit by clicking away
+  await page.waitForTimeout(500);
+  await page.click('#textToolBtn');                        // disarm
+  await page.waitForFunction(() => !document.getElementById('textToolBtn').classList.contains('active'));
+  const afterDrawing = await counts();
+  assert.equal(afterDrawing.drawings, 1, 'setup: no annotation-editor change was made, so there is no second stack in this test');
+  // The button is part of the claim: it read `disabled` with drawings on screen, because it
+  // counted only nib's own stack.
+  assert.equal(afterDrawing.undoDisabled, false,
+    'the Undo button is disabled with a drawing on screen — it is counting only nib\'s overlay stack, so the editor stack is invisible to the user as well as to Ctrl+Z');
+
+  // SECOND change: a note, which lives in nib's overlay stack.
+  await arm('noteBtn');
+  const pt = await page.evaluate(() => {
+    const b = document.querySelector('.viewerContainer:not([hidden]) .page').getBoundingClientRect();
+    // Clamped into the viewport: the page is taller than the window, and a click below the fold
+    // lands nowhere and silently places nothing.
+    return { x: Math.round(b.x + b.width * 0.6), y: Math.round(Math.min(b.y + b.height * 0.3, window.innerHeight - 120)) };
+  });
+  await page.mouse.click(pt.x, pt.y);
+  await page.waitForSelector('.viewerContainer:not([hidden]) .ovl-note');
+  await page.evaluate(() => document.activeElement && document.activeElement.blur());
+  const afterNote = await counts();
+  assert.deepEqual([afterNote.drawings, afterNote.notes], [1, 1],
+    'setup: the two changes are not both present, so their ORDER cannot be what is measured below');
+
+  // Newest first: the note, then the drawing.
+  await page.evaluate(() => document.body.focus());
+  await page.keyboard.press('Control+z');
+  await page.waitForTimeout(600);
+  const first = await counts();
+  assert.deepEqual([first.drawings, first.notes], [1, 0],
+    `the first Ctrl+Z did not undo the NOTE, which was the last change made — it left ${first.drawings} drawing(s) and ${first.notes} note(s)`);
+
+  await page.keyboard.press('Control+z');
+  await page.waitForTimeout(600);
+  const second = await counts();
+  assert.deepEqual([second.drawings, second.notes], [0, 0],
+    `the second Ctrl+Z did not reach the DRAWING. That is the reported defect: each stack undoes its own changes and the older stack is never reached, so a document holds edits no keystroke can take back — ${second.drawings} drawing(s) left`);
+
+  h.answerDialogs(true);
+  await closeDoc();
+});
