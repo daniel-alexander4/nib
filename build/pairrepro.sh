@@ -922,7 +922,12 @@ ceremony() { # transport port outfile from to [indoc] [want_sigs] [want_proceedi
   # signature carries the moment the party was ASKED rather than the moment the bytes were signed.
   (
     for _ in $(seq 1 240); do
-      if [ -n "$(curl -fsS "$B/api/session/status" 2>/dev/null | jget pending.fingerprint)" ]; then
+      # **The whole pending view is saved, not just the field the loop branches on** (/pending 379).
+      # The recital the server offers a signer is only observable while a consent request is
+      # pending — it is gone the moment the hop completes — so it is captured here and graded after
+      # the hop, beside the mirror. A second status fetch would race the responder's own answer.
+      curl -fsS "$B/api/session/status" -o "$WORK/pending.$transport.json" 2>/dev/null
+      if [ -n "$(jget pending.fingerprint < "$WORK/pending.$transport.json" 2>/dev/null)" ]; then
         curl -fsS -X POST "$B/api/session/quote" -H 'Content-Type: application/json' \
           -H "X-CSRF-Token: $CSRF_B" -d '{"intent":"I accept"}' \
           -o "$WORK/quote.$transport.json" 2>/dev/null
@@ -1156,9 +1161,10 @@ PYQUOTE
   # homes, so instance $ti holds one ceremony directory per transport run by design — a count would
   # be right on the first run and wrong on the second, which is the shape this file keeps refusing.
   if [ "$wantproc" = "1" ]; then
-    python3 - "${HOMES[$((ti-1))]}/home/nib/ceremonies" "$out" "$transport" "$ti" <<'PYMIRROR' || exit 1
-import hashlib, os, sys
+    python3 - "${HOMES[$((ti-1))]}/home/nib/ceremonies" "$out" "$transport" "$ti" "$WORK/pending.$transport.json" <<'PYMIRROR' || exit 1
+import hashlib, json, os, sys
 root, out, t, ti = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
+pendingf = sys.argv[5] if len(sys.argv) > 5 else ""
 want = open(out, "rb").read()
 if not os.path.isdir(root):
     print(f"FAIL: [{t}] instance {ti} signed a ceremony hop and has no {root} at all. The only "
@@ -1176,10 +1182,81 @@ if not found:
           f"(subdirectories: {sorted(os.listdir(root))})", file=sys.stderr)
     sys.exit(1)
 for d, b in found:
-    if b == want:
-        print(f"[{t}] instance {ti} kept its own copy: {d}/document.pdf, "
-              f"{len(b)} bytes, identical to the document it produced")
-        sys.exit(0)
+    if b != want:
+        continue
+    print(f"[{t}] instance {ti} kept its own copy: {d}/document.pdf, "
+          f"{len(b)} bytes, identical to the document it produced")
+
+    # ── /pending 379, both halves, on the ceremony this hop actually produced ──────────────
+    #
+    # **Graded HERE rather than in clauses of their own, because this loop is what identifies
+    # the directory.** It matches by document CONTENT, so `d` is this hop's ceremony and not
+    # whichever one the other transport left behind — and a second matcher would be a second
+    # answer to a question this one has already settled.
+    rec = os.path.join(root, d, "record.json")
+    try:
+        intent = (json.load(open(rec)) or {}).get("intent") or ""
+    except Exception as e:
+        print(f"FAIL: [{t}] instance {ti} mirrored this hop and its record.json will not read "
+              f"({e}), so what the parties agreed to cannot be compared with what they were "
+              f"shown.", file=sys.stderr)
+        sys.exit(1)
+
+    # HALF 1 — the recital the SERVER offered the signer is the record's own.
+    #
+    # This is the server half of P02's first exit clause. The client half — that the box
+    # defaults to it — is tier 2's (`consentrecital.test.mjs`), and it cannot be observed from
+    # here at all: this harness speaks raw HTTP and posts its own `intent`, so a client default
+    # is not in the loop. Asserting the two halves where each is visible is the honest split;
+    # asserting "the signature carries the recital" from a harness that types the intent itself
+    # would grade its own input.
+    recital = ""
+    if pendingf:
+        try:
+            recital = ((json.load(open(pendingf)) or {}).get("pending") or {}).get("recital") or ""
+        except Exception:
+            recital = ""
+    if not recital:
+        print(f"FAIL: [{t}] instance {ti} was asked to sign a ceremony hop and the consent "
+              f"request carried NO recital. The signer's agreement statement then defaults to a "
+              f"sentence this app made up, and that is the string the signature carries "
+              f"(P02.S01, D13).", file=sys.stderr)
+        sys.exit(1)
+    if recital != intent:
+        print(f"FAIL: [{t}] instance {ti} was shown the recital {recital!r} and the record it "
+              f"signed says {intent!r}. Two statements of one agreement, and the one with a "
+              f"signature under it is not the one the party read.", file=sys.stderr)
+        sys.exit(1)
+    print(f"[{t}] instance {ti} was shown this ceremony's own recital ({recital!r}), which is "
+          f"the record's")
+
+    # HALF 2 — the spoken check left a note, and it says a human confirmed.
+    #
+    # P02's last exit clause. Every party on this relay answered a real gate (`watch_verify`
+    # posts the confirmation), so `presented` and `confirmed` must BOTH be true here — an
+    # absence is UNKNOWN by `ceremony.Verification`'s own doctrine, and on this run that
+    # reading would be false.
+    vf = os.path.join(root, d, "verification.json")
+    if not os.path.isfile(vf):
+        print(f"FAIL: [{t}] instance {ti} answered the spoken check and left no note in "
+              f"{d}/verification.json. Absence means UNKNOWN, so afterwards this machine is "
+              f"indistinguishable from one where the four words never appeared (P02.S04, D5).",
+              file=sys.stderr)
+        sys.exit(1)
+    try:
+        v = json.load(open(vf)) or {}
+    except Exception as e:
+        print(f"FAIL: [{t}] instance {ti}'s verification.json will not read: {e}",
+              file=sys.stderr)
+        sys.exit(1)
+    if not v.get("presented") or not v.get("confirmed"):
+        print(f"FAIL: [{t}] instance {ti} answered the spoken check and its note reads "
+              f"presented={v.get('presented')!r} confirmed={v.get('confirmed')!r}. A party who "
+              f"read the words and said they matched is recorded as one who did not.",
+              file=sys.stderr)
+        sys.exit(1)
+    print(f"[{t}] instance {ti} recorded that it was shown the spoken check and confirmed it")
+    sys.exit(0)
 print(f"FAIL: [{t}] instance {ti} holds {len(found)} mirrored ceremony document(s) and NONE is "
       f"the {len(want)}-byte document this hop produced "
       f"(sha256 {hashlib.sha256(want).hexdigest()[:16]}); on disk: "

@@ -336,12 +336,13 @@ recorded.
 
 **Acceptance ledger — five clauses, split on every `;` and `and`.**
 
-1. **"The signature carries the ceremony's recital by default"** — ⚠ **met at a lower tier.** The
-   record's `Intent` reaches `pendingView.Recital` and defaults the signer's box, and the submit
-   path is untouched, so what is signed is what is in the box. Proven at tiers 1 and 2. **No run
-   shows a signature carrying a record's recital**: `pairrepro.sh` prints *"quote/signature
-   agreement: not graded — no ceremony, so nothing to stamp"*, because its two-party run has no
-   Record. Filed as `/pending 379`.
+1. **"The signature carries the ceremony's recital by default"** — ✅ **met, upgraded from ⚠ at
+   v1.128.16.** The record's `Intent` reaches `pendingView.Recital` and defaults the signer's box,
+   and the submit path is untouched, so what is signed is what is in the box (tiers 1 and 2).
+   `/pending 379` then built the missing half at **tier 4d**: on every hop of an `-n 3` relay — 4 of
+   4, both transports — what the server offered the signer is compared against that party's own
+   `record.json`. The client half stays tier 2's, because `pairrepro.sh` posts its own `intent` and
+   asserting a client default from there would grade the harness's own input.
 2. **"review is one surface rather than three screens"** — ✅ **met.** The document, the block and
    the roster render together; the block is drawn on the page it lands on, at the right scale, with
    the PDF→CSS origin flip asserted (`consentblock.test.mjs`). Two thirds of this clause were
@@ -351,10 +352,11 @@ recorded.
 4. **"the spoken check is presented"** — ✅ **met**, and not newly built: `runVerification` refuses a
    nil `Verifier` and `sessionVerifier` parks the gate. Driven live at tier 4, which prints a
    distinct verification string per transport.
-5. **"and its presentation is recorded"** — ⚠ **met at a lower tier.** Three states, written
-   positively, seven mutations red. A real hop at tier 4 writes a note; **nothing reads it back
-   after a live hop**, so it is asserted where it is written and not where it lands. Same
-   instrument as clause 1 — `/pending 379`.
+5. **"and its presentation is recorded"** — ✅ **met, upgraded from ⚠ at v1.128.16.** Three
+   states, written positively, seven mutations red — and `/pending 379` now reads
+   `verification.json` back off each responder's home after a live hop, requiring `presented` AND
+   `confirmed`, 4 of 4 across both transports. Asserted where it lands, not only where it is
+   written.
 
 **Required-run gates, discharged at v1.128.13 and enumerated from `CONTRIBUTING.md` rather than
 from memory.** Tier 0 ✅ · tier 1 ✅ · tier 2 215/215 ✅ · tier 3 93/93 ✅ · tier 4
@@ -375,6 +377,17 @@ condition decided nothing.
 
 **Closure sweep over `/pending`: population EMPTY.** The Phase section holds no items, so no entry
 was waiting on a P02 coordinate and nothing was falsified by the close.
+
+**(pin, 2026-09-07 at v1.128.16 — tier 4d found a SECOND D14 defect after this phase was marked
+done, and the marker says so rather than being quietly rewritten.)** The ledger above correctly did
+not claim 4d: it was recorded as not run, because this phase touches no discovery or off-link path.
+Running it for `/pending 379` failed at *"[quic] instance 3 could not arm before hop 1 (HTTP 409): a
+session is already armed"*. A machine holding more than one accepted-and-unsigned ceremony auto-armed
+for whichever id sorted first, and the explicit arm for the right one was refused by the
+same-ceremony condition in this phase's own close-out fix. That condition is now gone — D22's
+tripwire is what an armed listener ACCEPTS, not which of this machine's own guesses holds the slot a
+moment earlier. **Two phase closes, two regressions from D14, both found by a tier that needs more
+than one process** — which is the argument for running 4 and 6 at a close and not only 0–3.
 
 **Slices firmed 2026-09-07 at phase-open**, against the code as it now stands.
 

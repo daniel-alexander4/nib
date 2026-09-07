@@ -2,6 +2,7 @@ package server
 
 import (
 	"encoding/hex"
+	"encoding/json"
 	"net/http"
 	"os"
 	"strings"
@@ -268,7 +269,12 @@ func TestTheHopSweepLeavesTheConvenerAlone(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	body := funcBodyFrom(string(src), strings.Index(string(src), "func (s *Server) rearmCeremonies("))
+	// **`rearmCeremoniesPreferring`, not `rearmCeremonies` — and the scan caught the rename
+	// itself.** Splitting the sweep into a wrapper and a body left this scan reading the wrapper's
+	// one line, and it went red naming the rule as missing. That is the correct behaviour for a
+	// scan whose subject moved, and it is the reason the anchor is the function that HOLDS the
+	// rule rather than the one that shares its name.
+	body := funcBodyFrom(string(src), strings.Index(string(src), "func (s *Server) rearmCeremoniesPreferring("))
 	if !strings.Contains(body, "strings.EqualFold(me, inv.ConvenerFingerprint)") {
 		t.Error("rearmCeremonies no longer compares this machine against the invitation's " +
 			"convener. The outcome above is unchanged — hopBetween refuses a self-pair either " +
@@ -437,5 +443,121 @@ func TestAPolicyArmWithSomethingOnScreenIsNotDisplaced(t *testing.T) {
 		t.Errorf("an arm request displaced a policy arm with the spoken check on screen — it "+
 			"returned %d, want %d. A peer is mid-exchange and a person is looking at four words; "+
 			"tearing that down answers for them: %s", code, http.StatusConflict, body)
+	}
+}
+
+// TestTheSweepPrefersTheCeremonyItWasGiven — tier 4d's finding, pulled down to tier 1.
+//
+// `ListStored` sorts by id, so a sweep with no preference arms for whichever accepted-and-unsigned
+// ceremony sorts FIRST — arbitrary from the user's point of view, and it leaves the one they just
+// joined unarmed. The accept trigger passes the id it just took on.
+//
+// **It is driven directly, against a FREE slot, and that is the honest scope of the guarantee.**
+// Two accepts in quick succession each start a sweep; making the trigger displace so the second
+// could win was tried and backed out, because both then displace and whichever goroutine runs last
+// decides. With one interactive slot something must lose when a machine holds two live ceremonies —
+// that is `/pending 378`'s recorded residual doubt, not something this sweep can settle. What this
+// row asserts is the part that IS settled: given a free slot and a named preference, the sweep arms
+// for the named one.
+func TestTheSweepPrefersTheCeremonyItWasGiven(t *testing.T) {
+	ts, srv := startServerWith(t)
+	// Deliberately NOT EnableDeliveryRearm: the accepts below must not arm, so the sweep below
+	// runs against a free slot and the preference is the only thing deciding.
+	c, csrf := authedClient(t, ts)
+	me := myFingerprint(t, c, ts.URL)
+
+	accept := func(invitation string) string {
+		t.Helper()
+		code, body := postForCode(t, c, csrf, ts.URL+"/api/ceremony/accept",
+			acceptRequest{Invitation: invitation})
+		if code != http.StatusOK {
+			t.Fatalf("setup: accept returned %d: %s", code, body)
+		}
+		var ar acceptResponse
+		if err := json.Unmarshal([]byte(body), &ar); err != nil {
+			t.Fatal(err)
+		}
+		return ar.Ceremony
+	}
+
+	// Two ceremonies, and the PREFERRED one must sort second — otherwise listing order already
+	// picks it and a build ignoring the preference passes.
+	var low, high string
+	for i := 0; i < 40 && high == ""; i++ {
+		invA, _ := inviteFor(t, me)
+		invB, _ := inviteFor(t, me)
+		a, err := ceremony.ParseInvitation(invA)
+		if err != nil {
+			t.Fatal(err)
+		}
+		b, err := ceremony.ParseInvitation(invB)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if a.ID < b.ID {
+			low, high = accept(invA), accept(invB)
+		}
+	}
+	if high == "" {
+		t.Skip("could not draw two ceremony ids in the needed order in 40 tries")
+	}
+	if !(low < high) {
+		t.Fatalf("setup: %q does not sort before %q, so listing order and the preference agree "+
+			"and this test cannot tell them apart", low, high)
+	}
+	if srv.sess.status().Armed {
+		t.Fatal("setup: something is armed, so the slot is not free and the preference is not " +
+			"what decides below")
+	}
+
+	srv.mu.Lock()
+	v := srv.vault
+	srv.mu.Unlock()
+	srv.rearmCeremoniesPreferring(v, high)
+	defer postForCode(t, c, csrf, ts.URL+"/api/session/disarm", struct{}{})
+
+	srv.sess.mu.Lock()
+	a := srv.sess.arms[armInteractive]
+	var armedFor string
+	if a != nil && a.cer != nil {
+		armedFor = a.cer.inv.ID
+	}
+	srv.sess.mu.Unlock()
+
+	if armedFor != high {
+		t.Errorf("the sweep was given %q and armed for %q. Without the preference it takes "+
+			"`ListStored`'s order, so the ceremony a user just accepted is left unarmed whenever "+
+			"an older one sorts before it — which is arbitrary to them and is what tier 4d hit",
+			high, armedFor)
+	}
+}
+
+// TestTheAcceptTriggerNamesWhatItAccepted is a source scan, and it is one on purpose.
+//
+// **A probe showed nothing else can see this.** Replacing `s.rearmCeremoniesAsync(v, inv.ID)` with
+// `s.rearmCeremoniesAsync(v, "")` left the package green: with ONE ceremony the preference and the
+// listing order pick the same one, and with two the slot is already held by the first accept's
+// sweep — so the second accept's preference cannot decide anything, and making it decide is the
+// racing displacement that was tried and backed out (see `rearmCeremoniesPreferring`).
+//
+// So the argument is unobservable from behaviour, and the scan is what is left. It proves the id is
+// passed; `TestTheSweepPrefersTheCeremonyItWasGiven` proves the sweep honours one when it gets one.
+// Neither proves the pair matters on a machine holding two live ceremonies — nothing can, because
+// with one interactive slot that outcome is `/pending 378`'s residual doubt rather than a rule.
+func TestTheAcceptTriggerNamesWhatItAccepted(t *testing.T) {
+	src, err := os.ReadFile("accept.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	code := stripLineComments(string(src))
+	body := funcBodyFrom(code, strings.Index(code, "func (s *Server) handleCeremonyAccept("))
+	if body == "" {
+		t.Fatal("cannot find handleCeremonyAccept — this guard is reading the wrong thing")
+	}
+	if !strings.Contains(body, "rearmCeremoniesAsync(v, inv.ID)") {
+		t.Error("the accept trigger no longer names the ceremony it just accepted. The sweep then " +
+			"takes `ListStored`'s order, so on a machine holding an older accepted ceremony the " +
+			"one the user just joined is left unarmed — which is what tier 4d hit as `instance 3 " +
+			"could not arm before hop 1`")
 	}
 }
