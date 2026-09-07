@@ -71,10 +71,10 @@ const flagBox = () => page.evaluate(() => {
   return el ? { left: el.style.left, top: el.style.top, present: true } : { present: false };
 });
 
-// The active document's undo button. reflectUndoControls reads the ACTIVE view's
-// overlayHistory, so an undo command recorded onto the wrong document shows up here as
-// a button that became enabled without the user editing that document.
-const undoEnabled = () => page.$eval('#undoBtn', (b) => !b.disabled);
+// Undo left the toolbar in v1.125.0, so there is no button whose enabled-ness can stand in for
+// "a command was recorded onto this document". The property is asserted by its CONSEQUENCE
+// instead — which is what the assertion message always named: press Ctrl+Z on the document that
+// was switched TO, and nothing on the other document may move.
 
 test('a drag in flight when the user switches documents neither moves the flag nor records onto the new document', async () => {
   await h.openDocument(A, 2);
@@ -117,8 +117,6 @@ test('a drag in flight when the user switches documents neither moves the flag n
   // than through the mouse, which is busy holding the capture.
   await page.$eval(tabSel(1), (el) => el.click());
   await switched(2);
-  assert.equal(await undoEnabled(), false,
-    'setup: the newly activated document already has an enabled undo button, so the assertion below cannot distinguish a stray command from the starting state');
   const atSwitch = await flagBox();
 
   // The continuation: pointer still captured by a flag that now belongs to a hidden
@@ -132,6 +130,13 @@ test('a drag in flight when the user switches documents neither moves the flag n
   assert.equal(afterMove.top, atSwitch.top,
     `the flag moved vertically from ${atSwitch.top} to ${afterMove.top} after the switch — same cause as the horizontal check above.`);
 
-  assert.equal(await undoEnabled(), false,
-    'the document switched TO has an enabled undo button after a drag that happened on a different document. The gesture\'s pointerup called recordMove with no owner, so the move command landed on whichever view was active at release — Ctrl+Z on this document would now undo an edit made to another one.');
+  // Ctrl+Z on the document that was switched TO. If the drag's pointerup recorded its move
+  // command onto whichever view was active at release, this keystroke undoes an edit made to a
+  // DIFFERENT document — and the flag, which belongs to that other one, moves.
+  await page.evaluate(() => document.body.focus());
+  await page.keyboard.press('Control+z');
+  await page.waitForTimeout(500);
+  const afterUndo = await flagBox();
+  assert.deepEqual([afterUndo.left, afterUndo.top], [afterMove.left, afterMove.top],
+    `Ctrl+Z on the document that was switched TO moved a flag belonging to another one, from ${afterMove.left},${afterMove.top} to ${afterUndo.left},${afterUndo.top}. The gesture's pointerup called recordMove with no owner, so the move command landed on whichever view was active at release.`);
 });

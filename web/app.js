@@ -79,7 +79,6 @@ const els = {
   dropdownBtn: $('dropdownBtn'), radioBtn: $('radioBtn'),
   shapeBtn: $('shapeBtn'), shapeOpts: $('shapeOpts'), shapeFill: $('shapeFill'),
   noteBtn: $('noteBtn'),
-  prevBtn: $('prevBtn'), nextBtn: $('nextBtn'),
   findPrevBtn: $('findPrevBtn'), findNextBtn: $('findNextBtn'), findCount: $('findCount'),
   findToggle: $('findToggle'),
   zoomInBtn: $('zoomInBtn'), zoomOutBtn: $('zoomOutBtn'), fitBtn: $('fitBtn'),
@@ -210,7 +209,8 @@ const els = {
   aboutMain: $('aboutMain'), aboutDocText: $('aboutDocText'), aboutVersion: $('aboutVersion'),
   aboutLicenseBtn: $('aboutLicenseBtn'), aboutNoticesBtn: $('aboutNoticesBtn'),
   aboutBackBtn: $('aboutBackBtn'), aboutClose: $('aboutClose'),
-  undoBtn: $('undoBtn'), redoBtn: $('redoBtn'), reloadBtn: $('reloadBtn'),
+  reloadBtn: $('reloadBtn'), // Undo/Redo left the toolbar in v1.125.0; Ctrl+Z is the route (ADR-023)
+  docTitle: $('docTitle'), docTitleName: $('docTitleName'), docDirty: $('docDirty'),
   rotateLeftBtn: $('rotateLeftBtn'), rotateRightBtn: $('rotateRightBtn'),
   extractBtn: $('extractBtn'), insertBlankBtn: $('insertBlankBtn'),
   duplicatePageBtn: $('duplicatePageBtn'),
@@ -2574,6 +2574,7 @@ function repaintForActiveView() {
     : 'Save (overwrites the original)';
   all('.pageCount').forEach((s) => { s.textContent = '/ ' + (open ? view.pdfDocument.numPages : 0); });
   all('.pageNum').forEach((i) => { i.value = open ? view.viewer.currentPageNumber : 1; });
+  reflectDocTitle();
   updateBadge(view.lastSig, view.inCeremony); // idempotent re-assignment; NEVER updateBadge(null) here
 
   // The sidebars are NOT rebuilt. P05.S05 gave each view its own grid and outline list, so
@@ -2771,7 +2772,7 @@ async function reloadFromDisk(target, auto = false) {
   // that reach it and wrong here: the bytes now MATCH the file, so there is nothing unsaved
   // to lose and a close must not prompt. An undo of this reload goes back through the same
   // sink and sets it again, which is then correct.
-  target.dirty = false;
+  setDirty(target, false);
   return true;
 }
 
@@ -2815,7 +2816,7 @@ async function setDocumentFromServer(meta, target = view) {
   // user's work silently; a missed *clear* only prompts when nothing would be lost.
   // The fresh-open path clears it again in installOpened, which is the single funnel
   // for open / open-url / upload / combine / office and the boot restore.
-  target.dirty = true;
+  setDirty(target, true);
   // A different document in the same view needs its own fit: page sizes differ, so the
   // outgoing document's scale is not this one's.
   target.hasScale = false;
@@ -2887,7 +2888,7 @@ async function setDocumentFromServer(meta, target = view) {
   // AnnotationStorage.setValue compares each property and fires this only when a value
   // actually changed, so editing an existing field's text counts while a no-op write
   // does not. Re-installed per document because the storage belongs to the document.
-  if (doc.annotationStorage) doc.annotationStorage.onSetModified = () => { target.dirty = true; };
+  if (doc.annotationStorage) doc.annotationStorage.onSetModified = () => setDirty(target, true);
   // **Registered while this function is still running** — that is what matters, and it is
   // narrower than it first looks. Moving this line to just after `setDocument` also works
   // (probed: the suite stays green), so "before setDocument" is not the property. What fails is
@@ -3054,6 +3055,16 @@ function closeDocument() {
 // so that close still prompts.
 function hasUnsavedWork(v = view) { return !!v.dirty; }
 
+// setDirty is the ONE door onto the unsaved flag, because the toolbar now displays it and a
+// display that is repainted at some of the assignments and not others is worse than none: the
+// dot said "Unsaved changes" on a freshly opened document, because the universal document sink
+// sets `dirty` for every arrival and `installOpened` corrects it a line later — the paint had
+// already happened. Measured that way. Assign through here and the two can't disagree.
+function setDirty(owner, value) {
+  owner.dirty = value;
+  reflectDocTitle();
+}
+
 // editedViews is what the confirm has to ask, because Close is CLOSE ALL:
 // closeDocument tears down every entry in `views`, while the prompt used to inspect
 // only the active one. With a second document open — which a co-signature arrival
@@ -3219,13 +3230,13 @@ async function installOpened(meta) {
     // except where someone judged it unnecessary, and the guard that enforces it
     // cannot read a condition three lines up.
     await setDocumentFromServer(meta, view);
-    view.dirty = openedDirty(meta);
+    setDirty(view, openedDirty(meta));
     return !!view.pdfDocument;
   }
   const opened = await openInNewView(meta);
   if (opened) {
     const v = views.find((x) => x.docMeta && meta.id && x.docMeta.id === meta.id);
-    if (v) v.dirty = openedDirty(meta);
+    if (v) setDirty(v, openedDirty(meta));
   }
   return opened;
 }
@@ -4214,7 +4225,7 @@ async function save() {
     // Ordering it the other way round would clear the flag and then immediately dirty
     // the document again — the exact shape of bug this whole item is about.
     if (view.overlayFields.length) await setDocumentFromServer(meta, owner);
-    owner.dirty = false;
+    setDirty(owner, false);
   } catch (err) {
     toast('save failed: ' + err.message);
   } finally {
@@ -7865,7 +7876,7 @@ function convertFieldToFlag(field, type) {
   const fh = MARKER_SIZES[type][1];
   const top = Math.max(0, Math.min(fy0, fy1 - fh));
   removeField(field, false); // internal transform — not its own undo step
-  view.dirty = true;         // …and therefore not caught by the funnel either
+  setDirty(view, true);      // …and therefore not caught by the funnel either
   const f = buildMarker(type, [fx0, top, fx1, fy1], field.page, false);
   const pv = view.viewer.getPageView(field.page - 1);
   if (pv?.div) { pv.div.appendChild(f.el); layoutField(f, pv); }
@@ -8378,6 +8389,7 @@ function showMenu(menu) {
 // would not have been, and the jsdom guard caught exactly that.
 buildOverflowMenus();
 buildSidebarAccordion();
+buildSidebarTabs();
 for (const t of document.querySelectorAll('.menu > .menutop')) {
   t.setAttribute('aria-haspopup', 'true');
   t.setAttribute('aria-expanded', String(t.parentElement.classList.contains('open')));
@@ -9363,6 +9375,31 @@ function setDocControls(enabled) {
 }
 setDocControls(false); // nothing open yet
 
+// ── The open document's name, and whether it needs saving ────────────────────
+//
+// Shown in the toolbar because "which file am I editing, and have I saved it" is the question a
+// bar should answer without being asked. The dot is the save state and says so in words as well
+// as colour — colour alone is WCAG 1.4.1, the finding that put roles on the tab-like surfaces.
+//
+// `dirty` is the app's own unsaved flag (`hasUnsavedWork`), set through the overlay funnel, the
+// client-history funnel, the annotation-storage hook and the server-op sink, and cleared by a
+// save and by a reload. This reads it rather than tracking its own, so there is one answer to
+// the question and the dot cannot disagree with the close prompt.
+function reflectDocTitle() {
+  if (!els.docTitle) return;
+  const open = !!view.pdfDocument;
+  els.docTitle.hidden = !open;
+  if (!open) return;
+  const name = view.docMeta && view.docMeta.name;
+  els.docTitleName.textContent = name || 'Untitled';
+  els.docTitleName.title = (view.docMeta && view.docMeta.path) || name || '';
+  const unsaved = hasUnsavedWork(view);
+  els.docDirty.classList.toggle('unsaved', unsaved);
+  const state = unsaved ? 'Unsaved changes' : 'Saved';
+  els.docDirty.setAttribute('aria-label', state);
+  els.docDirty.title = state;
+}
+
 // Undo/Redo enable from the server's per-document history flags (view.docMeta.canUndo/
 // canRedo, refreshed on every load); both off when no document is open.
 function reflectUndoControls(enabled) {
@@ -9371,6 +9408,7 @@ function reflectUndoControls(enabled) {
   // one was invisible here — two drawings on screen and the Undo button read as disabled.
   if (els.undoBtn) els.undoBtn.disabled = !(enabled && (m.canUndo || view.clientHistory.undo.length));
   if (els.redoBtn) els.redoBtn.disabled = !(enabled && (m.canRedo || view.clientHistory.redo.length));
+  reflectDocTitle();
 
   // Eviction is observable or it is not eviction (ADR-003). The server has always
   // reported historyEvicted when it dropped a document's history whole to keep the
@@ -9405,7 +9443,7 @@ function reflectUndoControls(enabled) {
 // stack too), it only ever holds the newest run of un-baked edits, so "client
 // edits first, then server ops" is the correct chronological order for free.
 function recordOverlayEdit(cmd, owner = view) {
-  owner.dirty = true; // the single funnel for every recorded overlay add, delete and move
+  setDirty(owner, true); // the single funnel for every recorded overlay add, delete and move
   owner.overlayHistory.undo.push(cmd);
   owner.overlayHistory.redo = [];
   recordClientEdit('overlay', owner);
@@ -9426,7 +9464,7 @@ function recordOverlayEdit(cmd, owner = view) {
 function recordClientEdit(kind, owner = view) {
   owner.clientHistory.undo.push(kind);
   owner.clientHistory.redo = [];
-  if (kind === 'editor') owner.dirty = true; // overlays set it in recordOverlayEdit
+  if (kind === 'editor') setDirty(owner, true); // overlays set it in recordOverlayEdit
   reflectUndoControls(!!view.pdfDocument);
 }
 function clearOverlayHistory(owner = view) {
@@ -9994,7 +10032,7 @@ function makeField(kind, frac, opts, pv, owner = view) {
     f.el.type = 'text';
     f.el.className = 'ovl ovl-text';
   }
-  owner.dirty = true; // detected blanks record no undo command, so the funnel misses them
+  setDirty(owner, true); // detected blanks record no undo command, so the funnel misses them
   owner.overlayFields.push(f);
   layoutField(f, pv);
   pv.div.appendChild(f.el);
@@ -10170,8 +10208,8 @@ function fitWidestWidth(owner, fitReason = 'fit') {
     owner.hasScale = true; // it applied; activateView need not rescue this view
   }
 }
-els.prevBtn.onclick = prevPage;
-els.nextBtn.onclick = nextPage;
+// Previous/Next left the toolbar in v1.125.0. `prevPage`/`nextPage` stay — PageUp/PageDown and
+// Home/End call them, and they are the bounds logic the page-number input relies on.
 all('.pageNum').forEach((input) => input.addEventListener('change', () => {
   const n = Number(input.value);
   if (view.pdfDocument && n >= 1 && n <= view.pdfDocument.numPages) view.viewer.currentPageNumber = n;
@@ -10351,10 +10389,10 @@ function showPanel(name) {
 // The single navigation model: each tab is a workspace. Selecting one swaps the
 // contextual toolbar (#toolbar .tbtab) and which sidebar panels are available.
 const SIDEBAR_FOR = {
-  file: ['commands', 'thumbs', 'outline'],
-  edit: ['commands', 'thumbs'],
-  markup: ['commands', 'library', 'thumbs'],
-  secure: ['commands', 'thumbs'],
+  file: ['commands', 'outline'],
+  edit: ['commands'],
+  markup: ['commands', 'library'],
+  secure: ['commands'],
   // The ceremony panel joins Collaborate (P06.S02). The mode's goal is "convene, invite, connect,
   // review, sign, deliver as a sidebar panel rather than a tab of modals", and this is the panel.
   //
@@ -10388,6 +10426,10 @@ function syncSidebarForMode(tab) {
   // is no longer valid — left `thumbs` showing across a mode change, because thumbs is valid
   // for most modes: you picked Secure and got thumbnails, with its commands one unmarked click
   // away. Seventeen tier-3 tests reached a control that was behind that click.
+  // A mode change is the user saying what she wants to do, and the answer is in Functions —
+  // the same reasoning that made a mode land on its own commands in v1.121.0. Pages stays a
+  // deliberate choice she makes and keeps until the next mode change.
+  selectSidebarTab('functions');
   if (panels.length) showPanel(panels[0]);
   // Then open this mode's first command group, so the mode's own commands are what you see.
   // `commands` first in SIDEBAR_FOR made the panel active above; the card inside it still has
@@ -10576,6 +10618,47 @@ function buildSidebarAccordion() {
     head.onclick = () => openCard(g, head);
     g._head = head;
   }
+}
+
+// ── Two sections: Pages, and everything else ─────────────────────────────────
+//
+// The thumbnail grid is its own tab. It is the one surface a reader uses WHILE reading rather
+// than to act on the document, it is the tallest thing in the column, and as an accordion card it
+// competed for height with every command group. Everything else — the mode's command cards and the
+// remaining content panels — lives under Functions with the accordion unchanged inside it.
+//
+// Built here rather than in the markup because `buildSidebarAccordion` has just moved every header
+// next to the panel it opens; the panes are wrapped around the result, so neither piece has to know
+// about the other's DOM surgery.
+function buildSidebarTabs() {
+  const sb = $('sidebar');
+  const pages = $('sbPages');
+  const functions = $('sbFunctions');
+  if (!sb || !pages || !functions) return;
+  const strip = sb.querySelector('.sbtabs');
+  // Everything the accordion left as a direct child of the sidebar, in order, EXCEPT the strip
+  // itself: the thumbnails go to Pages and the rest to Functions. Reading the DOM rather than a
+  // list of ids, so a panel added later lands in Functions without this function being edited.
+  for (const el of [...sb.children]) {
+    if (el === strip || el === pages || el === functions) continue;
+    (el.id === 'thumbs' ? pages : functions).append(el);
+  }
+  for (const t of all('.sbtab')) t.onclick = () => selectSidebarTab(t.dataset.sbtab);
+  wireTablist(strip, '.sbtab');
+}
+
+// selectSidebarTab shows one section. `active` on the button and `aria-selected` move together —
+// the tablist guard asserts the pair, and a strip that looked selected without saying so is the
+// colour-alone failure that guard exists for.
+function selectSidebarTab(name) {
+  for (const t of all('.sbtab')) {
+    const on = t.dataset.sbtab === name;
+    t.classList.toggle('active', on);
+    t.setAttribute('aria-selected', String(on));
+  }
+  const pages = $('sbPages'); const functions = $('sbFunctions');
+  if (pages) pages.classList.toggle('active', name === 'pages');
+  if (functions) functions.classList.toggle('active', name === 'functions');
 }
 
 // openCard expands one card and collapses every other, of either kind. Panels keep using

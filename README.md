@@ -399,14 +399,20 @@ asks before replacing the changed file with what you have open.
 
 **Undo is one list** — **Ctrl+Z** steps back through everything you have done to the
 document, newest first, whether it was a drawing, a stamp, a note, or a page operation.
-Drawing some lines and then some shapes leaves one history, not two.
+Drawing some lines and then some shapes leaves one history, not two. There is no Undo
+button: the keyboard is the whole interface for it.
 
 **Start over** — the **↻ reload** button beside Undo/Redo throws away everything you
 have done since opening and re-reads the file from disk. It asks first when there is
 unsaved work. Undo steps back one operation at a time; this abandons all of them.
 
+**The sidebar has two tabs** — **Pages** is the thumbnail grid (drag to reorder, and the
+page number lives here), and **Functions** is everything else: the current tab's command
+cards and the other panels.
+
 **Where the file commands live** — the toolbar keeps what you reach for while reading:
-Save, page, zoom, and a find button. Opening, saving a copy, exporting, printing and
+the document's name with a dot showing whether it needs saving, find, and — at the right
+edge — zoom, reload and Save. Opening, saving a copy, exporting, printing and
 closing are once-per-document acts, so they are cards in the **File** tab's sidebar —
 *Open a Document*, *Save a Copy*, *Export & Print*, *Close Document*. **Ctrl+O** opens,
 **Ctrl+S** saves and **Ctrl+F** opens find without going near either.

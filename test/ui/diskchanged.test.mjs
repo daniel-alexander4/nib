@@ -68,7 +68,10 @@ test('a clean document whose file changed is reloaded on return-to-foreground', 
   // Move off page 1 before the change. Until /pending 372 every in-place reload — the twenty
   // page operations, undo, redo, OCR, and this one — returned the reader to the top: measured
   // scrollTop 1363 before a reload and 25 after.
-  await page.click('#nextBtn');
+  // PageDown rather than a Next button: Previous/Next left the toolbar in v1.125.0 and the
+  // keyboard is the route that remains (prevPage/nextPage are still the bounds logic behind it).
+  await page.evaluate(() => document.body.focus());
+  await page.keyboard.press('PageDown');
   await page.waitForFunction(
     () => (document.querySelector('.viewerContainer:not([hidden])')?.scrollTop ?? 0) > 100,
     null, { timeout: 10000 });

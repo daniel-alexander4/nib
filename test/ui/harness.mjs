@@ -96,6 +96,21 @@ export async function launch({ routes = null, waitFor = '#empty', base = BASE } 
     // and a mode lands on its own first panel, which is exactly the case a test hits. This
     // helper means "show me that panel", so it clicks only when the panel is not already open.
     async panel(name) {
+      // Since v1.125.0 the thumbnails are the sidebar's Pages TAB rather than one of the
+      // accordion's panels, so "show me the thumbnails" is a tab click. Routed here rather than
+      // rewritten at each call site: the callers are asking for a surface, not for a mechanism.
+      //
+      // **It waits on VISIBILITY, not on the class**, and that distinction cost a run. A class is
+      // set whether or not the sidebar is on screen, so with the sidebar collapsed this helper
+      // returned happily and the caller's next hover timed out thirty seconds later against an
+      // element inside a hidden column. The old selector could not fail that way — Playwright
+      // refuses a hidden click target — so the silent success arrived with the tab.
+      await this.showSidebar();
+      if (name === 'thumbs') {
+        await page.click('.sbtab[data-sbtab="pages"]');
+        await page.waitForSelector('#sbPages.active #thumbs', { state: 'visible' });
+        return;
+      }
       const open = await page.$eval(`.sbhead[data-panel="${name}"]`, (el) => el.classList.contains('active'));
       if (!open) await page.click(`.sbhead[data-panel="${name}"]`);
       await page.waitForFunction((n) => {
@@ -114,11 +129,34 @@ export async function launch({ routes = null, waitFor = '#empty', base = BASE } 
     // element. An explicit toggle wins until the next width crossing, which is why this opens the
     // sidebar rather than resizing the window: a helper that changed the viewport would silently
     // rewrite the state of whichever responsive test called it.
-    async card(label) {
+    // showSidebar opens the column when it is shut. Below 900px it auto-collapses and the panes
+    // move into the toolbar, where the card headers are `display: none` — so anything reaching for
+    // a card or a panel needs this first. It toggles rather than resizing the window: a helper that
+    // changed the viewport would silently rewrite the state of whichever responsive test called it.
+    async showSidebar() {
       const shut = await page.evaluate(() => document.getElementById('sidebar').classList.contains('collapsed'));
-      if (shut) {
-        await page.click('#toggleSidebarBtn');
-        await page.waitForFunction(() => !document.getElementById('sidebar').classList.contains('collapsed'));
+      if (!shut) return;
+      await page.click('#toggleSidebarBtn');
+      await page.waitForFunction(() => !document.getElementById('sidebar').classList.contains('collapsed'));
+    },
+
+    // gotoPage(n) types a page number into the box that used to be in the toolbar and has been
+    // the Pages tab's since v1.125.0. One door, because every caller wants the SAME thing and
+    // the box moving again should cost one edit rather than seven.
+    async gotoPage(n) {
+      await this.panel('thumbs');
+      await page.fill('.pageNum', String(n));
+      await page.press('.pageNum', 'Enter');
+      await page.waitForFunction((want) => Number(document.querySelector('.pageNum').value) === want, n);
+    },
+
+    async card(label) {
+      await this.showSidebar();
+      // …and on the Functions tab, which is where every card lives since v1.125.0.
+      const onFunctions = await page.evaluate(() => document.getElementById('sbFunctions')?.classList.contains('active'));
+      if (!onFunctions) {
+        await page.click('.sbtab[data-sbtab="functions"]');
+        await page.waitForFunction(() => document.getElementById('sbFunctions')?.classList.contains('active'));
       }
       await this.group(label);
     },

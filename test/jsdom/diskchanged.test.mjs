@@ -110,14 +110,20 @@ test('a render failure outranks a disk change, and takes its own button back', a
   openReply = { ...openReply, diskChanged: true, canUndo: true };
   await openDocument();
   assert.equal(reload().hidden, false, 'precondition: the disk-change banner is up');
-  assert.equal(doc.getElementById('undoBtn').disabled, false,
-    'precondition: undo is available, otherwise the click below does nothing and every assertion after it passes for the wrong reason');
-
   // Fail the reload with the document still reporting diskChanged. A document that
   // cannot be displayed at all is the more urgent fact and owns the retry.
+  //
+  // Driven by the KEYSTROKE since v1.125.0: Undo left the toolbar, so there is no button to
+  // click and Ctrl+Z is the route. The precondition that used to read the button's `disabled`
+  // is replaced by asserting the request actually went — same job, done on the wire rather than
+  // on a control that no longer exists, so "the stimulus did nothing" still cannot pass as
+  // "the behaviour under test".
   setNextDocument({ fail: true });
-  doc.getElementById('undoBtn').click();
+  const beforeUndo = h.calls.length;
+  doc.defaultView.dispatchEvent(new doc.defaultView.KeyboardEvent('keydown', { key: 'z', ctrlKey: true, bubbles: true, cancelable: true }));
   await settle();
+  assert.ok(h.calls.slice(beforeUndo).some((c) => c.url.startsWith('/api/undo')),
+    'Ctrl+Z issued no undo request, so nothing below is about a reload that was actually attempted');
 
   assert.equal(banner().hidden, false, 'the render failed and no banner is up');
   assert.match(msg(), /could not be displayed/i,

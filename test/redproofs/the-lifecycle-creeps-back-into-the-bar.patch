@@ -1,21 +1,19 @@
 --- a/web/index.html
 +++ b/web/index.html
-@@ -144,7 +144,13 @@
-          held five mutually exclusive palettes and nothing else; that is the finding the
-          2026-08-30 menu-surface walk named first, and a bar that never changes retires it. -->
-     <div class="tbfixed">
--<div class="tbgroup" data-label="Save" data-fold="0">
-+<div class="tbgroup" data-label="Close Document" data-fold="4">
+@@ -144,6 +144,12 @@
+       <button id="reloadBtn" class="tbicon" title="Reload from disk, discarding unsaved changes" aria-label="Reload from disk" disabled>
+         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3v6h-6"/></svg>
+       </button>
++            </div><div class="tbgroup" data-label="Close Document" data-fold="4">
 +      <button id="closeBtn" title="Close this document and return to the empty state (Nib keeps running)" disabled>Close</button>
 +      <!-- Appears at two open documents, matching the tab strip's own rule, because with
 +      one document open Close view and Close all are the same act and offering both
 +      would be two buttons for one outcome. syncTabs toggles it. -->
 +      <button id="closeAllBtn" title="Close every open document and return to the empty state" hidden>Close all</button>
-+            </div><div class="tbgroup" data-label="Save" data-fold="0">
+             </div><div class="tbgroup" data-label="Save" data-fold="0">
  <button id="saveBtn" title="Save (overwrites the original)" disabled>Save</button>
-             </div><div class="tbgroup" data-label="Page" data-fold="0">
- <button id="prevBtn" title="Previous page (PageUp · Home for first)">Previous</button>
-@@ -232,13 +238,7 @@
+             </div>    </div>
+@@ -229,13 +235,7 @@
        <button id="exportCertBtn">Signing certificate</button>
        <button id="printBtn" title="Print (opens your browser's print dialog)" disabled>Print…</button>
              </div>
