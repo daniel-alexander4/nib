@@ -10711,7 +10711,21 @@ function moveCommandsHome() {
   if (inSidebar) {
     for (const pane of all('.tbtab')) {
       if (!pane._more) continue;
-      for (const g of [...pane._more.querySelectorAll('.tbgroup[data-fold]')]) pane.insertBefore(g, pane._more.parentElement);
+      // **Back to its own HEADER, not to the end of the pane.** `insertBefore(g, more)` put every
+      // unfolded group in front of the ⋯ More wrapper — which is after every header — so one
+      // collapse-and-reopen of the sidebar left all the card bodies bunched below all the pills,
+      // and an expanded card's content appeared at the bottom of the column instead of under its
+      // own header. Reported by Dan, and invisible until the sidebar has been shut once: opening
+      // and closing cards never moves them.
+      //
+      // `g._head` is the header buildSidebarAccordion created for this group and inserted above
+      // it; putting the group back after it restores the pairing the accordion is made of. The
+      // end-of-pane fallback is for a group with no header, which is not a shape that exists
+      // today and is not worth a silent misplacement if it ever does.
+      for (const g of [...pane._more.querySelectorAll('.tbgroup[data-fold]')]) {
+        if (g._head && g._head.parentElement === pane) g._head.after(g);
+        else pane.insertBefore(g, pane._more.parentElement);
+      }
       pane._more.parentElement.classList.remove('hasfolded');
     }
   } else {

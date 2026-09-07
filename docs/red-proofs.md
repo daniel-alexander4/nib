@@ -4206,3 +4206,33 @@ The guard is written over every icon-carrying button in the toolbar rather than 
 because the next one will be a third.
 
 `recorded` 324 → 325.
+
+
+## An expanded card sits under its own header (v1.125.4)
+
+| Defect reintroduced | Check that fired | What it said |
+| --- | --- | --- |
+| `an-unfolded-card-lands-at-the-end-of-the-pane` — `moveCommandsHome` restores groups before ⋯ More | `responsive.test.mjs`, tier 3 | "the open card's content starts 245px below its own header rather than directly under it" |
+| `a-tall-card-clips-its-own-items` — the body back to `max-height: 60vh; overflow-y: auto` | `responsive.test.mjs`, tier 3 | "the last item of the open card cannot be brought into view" |
+
+**The first row is the reported defect and it needed a state, not a click.** Collapsing the sidebar
+folds the mode's cards into ⋯ More (ADR-017); reopening restored each group with
+`insertBefore(g, more)` — in front of the ⋯ More wrapper, which sits after every header — so all
+the card bodies bunched below all the pills. Opening and closing cards never moves anything, which
+is why an afternoon of clicking pills could not reproduce it and the guard had to drive a collapse.
+
+**The second row is a defect the first fix would otherwise have left behind**, and it is a lesson
+about observables. A flex column with a capped height CLIPS its children without establishing any
+scroll extent: measured at 420px, `clientHeight` 223 against 505px of items and `scrollHeight` also
+223. The items past the cap were unreachable and every DOM property said the box was merely full.
+
+**Two cheaper checks were written and both survived the mutation** before the third caught it:
+`scrollHeight > clientHeight` (lies, above) and the last item's own bounding rect (a clipped
+element still has a position, and scrolling the pane moves that position into the pane's box while
+the item stays invisible). Hit-testing the item's centre is what accounts for the clip.
+
+**And a design was tried and reverted between them**: making the body claim the leftover height so
+headers stayed pinned. Nested in two flex containers it clipped rather than scrolled — 146px of
+box against 505px of children, `scrollTop` refusing to move. One scroller, and the pane is it.
+
+`recorded` 325 → 327.
