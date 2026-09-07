@@ -85,7 +85,7 @@ Nib_files="$(find test/jsdom -maxdepth 1 -name '*.test.mjs' | wc -l | tr -d ' ')
 # 40 since P02.S01 (consentrecital.test.mjs): the signer's agreement statement defaults to the
 # ceremony's recital, and outside a ceremony to the original sentence — two cases, because a
 # change that read an absent field would leave the box empty.
-Nib_expect_files=41
+Nib_expect_files=42
 if [ "$Nib_files" -ne "$Nib_expect_files" ]; then
   echo "FAIL: expected $Nib_expect_files jsdom test files, found $Nib_files — a test file was added or dropped." >&2
   echo "      If deliberate, update Nib_expect_files in this script." >&2

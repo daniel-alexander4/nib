@@ -147,6 +147,49 @@ what "renewed while Nib runs" already says.
 Verifying order, saving the signature, closing out and receiving the finished document are things
 the software does. They appear as state, never as a step the user is asked to perform.
 
+### D16 — A party who has not signed yet learns the proceeding ended, on the invitation as anchor *(settled 2026-09-07 via /discuss — Dan's call)*
+D14 leaves a party who accepted holding an arm nothing local can close: every anchor that would say
+the proceeding ended needs the record they do not have (`/pending 378`). The end state reaches them,
+and it is verified against the **invitation**.
+
+**No new object, and this was established by reading rather than assumed.** The convener already
+mints a signed `Termination` on a decline and `runDeliveryRound` already carries it in place of the
+document; it walks `rec.Roster` — every party but itself, the ender, and anyone already delivered —
+so **a pre-hop party is already a target of the round**. And `Termination.Verify(rec)` uses the
+record for exactly two values, `rec.RosterHash()` and `rec.Convener().Fingerprint`, both of which the
+invitation carries directly. Its own doc already names the invitation as a legitimate anchor: *"`rec`
+must come from the document or the invitation, never from the `record.json` sitting beside the
+termination."*
+
+**So the gap is two-sided and narrow.** The pre-hop party listens on the **hop** rendezvous that D14
+arms, while the convener dials the **delivery** rendezvous at `deliveryHop`'s index — they never
+meet — and no verification path exists for a machine holding no record.
+
+**The anchor is extracted, not duplicated (ADR-009).** Both callers pass the same two values; a
+second `Verify` that reimplemented the checks against an invitation would be the shape that ADR
+refuses, and this is a signature check where two implementations disagreeing is a security bug
+rather than an inconsistency.
+
+**What this does NOT reach, stated so it is not read as more:** a ceremony that EXPIRES or is
+ABANDONED mints no termination, because nobody can sign *"nothing happened"* — which is why those
+two states are derived and `Termination`'s set is closed at two. Those parties still learn nothing,
+and `/pending 247` cannot help: the deadline would need the record's `Version`, `DocHash` and
+`DigestVersion` in the invitation to be verifiable at arm time, which is shipping the record inside
+the invitation. **An end state can be made trustworthy to a pre-hop party with no format change; a
+deadline cannot.** 247 is superseded on that asymmetry.
+
+### D17 — A party can leave a ceremony, and leaving is local *(settled 2026-09-07 via /discuss — Dan's call)*
+Today a party who wants out of a proceeding has no lever short of quitting Nib: D14's arm is raised
+by a sweep and renewed at every unlock. Leaving prunes this machine's stored invitation, which is
+what the sweep already keys on — `rearmCeremonies` skips a ceremony it holds no invitation for — so
+the arm stops on the next sweep and never returns.
+
+**It is not a decline and must not read as one.** A decline is an attested refusal the convener
+learns about and the roster is entitled to; leaving is this machine saying it will no longer
+participate, and it reaches nobody. Conflating them would either mint an attestation the user did
+not intend or leave a decline nobody can see, and D28's end states are closed at two for reasons
+that do not bend for a local action.
+
 ---
 
 ## Build order
@@ -409,6 +452,35 @@ re-fires this trigger rather than inheriting this paragraph.
 either side of it; invitations can be reissued from the rail; the no-correction rule is stated
 before the first hop.
 
+### P05 — The pre-hop party learns, and can leave
+**Goal.** Close the two ends D14 left open: a party who has accepted and not yet signed can find
+out the proceeding ended, and can decide to stop taking part.
+
+**Exit criteria.** A declined ceremony reaches a party who never signed, and is refused when its
+anchor does not match; leaving stops the arm and survives a restart; neither path can mint or
+consume an attestation.
+
+**Sequenced AFTER P04 rather than before it**, because P04 is the rail at a full roster and this
+phase changes what the rail has to say. Its slices are sketches until phase-open.
+
+#### P05.S01 — leaving a ceremony *(done 2026-09-07, v1.128.10)*
+Scope: a control that prunes this machine's stored invitation for one ceremony, so the sweep stops
+arming for it. Refs: D17.
+Acceptance: after leaving, a sweep does not arm for that ceremony and does not after a restart;
+nothing is sent and no termination is written.
+
+#### P05.S02 — the end state is verifiable on the invitation
+Scope: extract `Termination.Verify`'s anchor so an invitation can supply it, through one door.
+Refs: D16.
+Acceptance: a termination verifies against an invitation exactly where it verifies against the
+record, and is refused on a mismatched roster commitment or a non-convener signer.
+
+#### P05.S03 — the declined end state reaches a party who never signed
+Scope: the receiving half — a pre-hop party is reachable by the round that already walks them, and
+acts on what it verifies. Refs: D16.
+Acceptance: a declined ceremony delivered to a party holding no record closes their arm; a planted
+or mismatched object does not.
+
 ---
 
 ## Out of scope
@@ -424,6 +496,11 @@ before the first hop.
   can only report pass. It is chosen from rendering at several roster sizes, not guessed.
 - **Whether a correction path is genuinely needed is unmeasured.** The inventory's row 19 is the
   only evidence that would settle it, and it has no reader today.
+- **P05.S03's reachability is the one thing in that phase not settled by reading.** The convener
+  dials the delivery rendezvous and D14's arm listens on the hop rendezvous; whether the right fix
+  is to arm the delivery slot for a pre-hop party or to carry the end state on the hop rendezvous
+  is a question about the tier ladder, and it should be dived at phase-open rather than decided
+  here.
 - **The setup draft is a new persisted artifact this plan did not author.** Where it lives, whether
   it needs the vault, and how it interacts with the mirror `convene` later writes should be dived
   before P03 rather than decided inside it.
