@@ -391,6 +391,15 @@ type Stored struct {
 	// Read through `Record.Convener`, which is the one definition of who convened a ceremony
 	// (ADR-009); this is not a second derivation from `ConvenerCert`.
 	Convener string `json:"convener,omitempty"`
+	// Verification is what this machine observed about the spoken check on this ceremony's hop
+	// (D5, P02.S04). Nil when this machine has no note — which is UNKNOWN and never "the modal
+	// never appeared"; see `Verification`'s own doc for why absence may not carry that meaning.
+	//
+	// **Populated regardless of `LoadState`, unlike the three below.** A party who has accepted and
+	// not yet signed has no record at all, and they are exactly the population whose spoken check a
+	// reader wants to ask about — gating this on `LoadOK` would hide it for every hop that has not
+	// completed, which is most of the ones anybody is asking about.
+	Verification *Verification `json:"verification,omitempty"`
 	// The rest are populated only for LoadOK.
 	Intent  string    `json:"intent,omitempty"`
 	Expires time.Time `json:"expires,omitempty"`
@@ -405,6 +414,12 @@ func ReadStored(root, id string, now time.Time) Stored {
 		s.State, s.Reason = LoadUnparseable, "that is not a ceremony id"
 		return s
 	}
+	// **Read here, before any of the `LoadState` branches below can return.** The note is about
+	// what this machine showed its user, not about whether the record parses — and the state a
+	// reader most wants it for, a party who has accepted and not yet signed, is precisely one of
+	// the branches that returns early. Placing it after them would have made it invisible for
+	// every ceremony whose document has not arrived.
+	s.Verification = readVerification(dir)
 	b, err := os.ReadFile(filepath.Join(dir, "record.json"))
 	if err != nil {
 		// **An unreadable record is NOT an absent one (/pending 320).** Every read error used to

@@ -11442,6 +11442,22 @@ function ceremonyCard(c, mayAct) {
   if (mayAct && c.state !== 'ok' && !c.ended) {
     card.appendChild(ceremonyLeave(c));
   }
+  // **The spoken check, as this machine observed it (D5, P02.S04).**
+  //
+  // Three states and an absence, and the absence is the one that must not be rendered as a
+  // negative: no note means an older build, a failed write, or a ceremony whose hop has not
+  // happened — never "the modal did not appear". So the row is drawn only when there IS a note,
+  // and `presented === false` is the positively-recorded case that the words reached nobody.
+  if (c.verification) {
+    const v = document.createElement('div');
+    v.className = 'cerverify';
+    v.textContent = c.verification.presented === false
+      ? 'The spoken check did not appear on this machine.'
+      : c.verification.confirmed
+        ? 'You confirmed the spoken words on this machine.'
+        : 'The spoken check appeared here and was not confirmed.';
+    card.appendChild(v);
+  }
   if (c.state === 'ok') {
     const next = document.createElement('div');
     next.className = 'cernext';
