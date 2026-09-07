@@ -194,14 +194,62 @@ that do not bend for a local action.
 
 ## Build order
 
-### P01 — The rail
+### P01 — The rail *(done 2026-09-07, v1.128.15)*
 **Goal.** A convener or signer opens a ceremony and is told, correctly and without asking anyone,
 what happens next — including when the answer is "nothing, and here is why".
 
 **Exit criteria.**
-- The rail's enabled action equals `/api/ceremony/next`'s answer, and no step state exists in the client.
+- ~~The rail's enabled action equals `/api/ceremony/next`'s answer, and no step state exists in the
+  client.~~ **STRUCK and superseded 2026-09-07 on Dan's instruction (`/discuss`).** → **The rail
+  RENDERS `/api/ceremony/next`'s answer and derives no second opinion from it, including the states
+  it has no sentence of its own for; no step state exists in the client.**
 - `next` is fetched on open and on hop completion only, proved by a fetch count over a minute of idling.
 - A declined or expired ceremony names its state and offers no action.
+
+**Why the first clause was struck.** It required an *enabled action* gated on `next`, and P01.S02's
+reality-drift pin established there is no such action to gate: the card's only actions belong to
+phases P01 does not own. Held to its original words the criterion could never be met by this phase,
+and a criterion whose only enforcement point is a phase close that cannot fire is not a criterion.
+**The superseding clause is what P01 actually built** and what D1 states — *"the wizard's enabled
+action is a rendering of that answer"* — with the rendering half kept and the enabling half moved to
+whichever phase ships an action. The parked question reached Dan three times before it was answered;
+recorded so the next reader can see the criterion changed and by whose call.
+
+**(pin, 2026-09-07 — the third clause's literal words are wider than its intent, and this records
+the difference rather than quietly reading past it.)** *"Offers no action"* was written before any
+close-out action existed. Two now do: the convener's delivery round, which **requires** an ended
+ceremony because that is what it delivers, and *"Leave this ceremony"* (D17), which is the tidy-up
+for a proceeding whose deadline passed. Neither advances the proceeding — nothing offers *sign* or
+*continue* on a terminal ceremony, which is what the clause exists to forbid. Credited on that
+reading, and the wider reading is named so a later slice cannot use it to add a continuation.
+
+**Acceptance ledger — four clauses, split on every `and`.**
+
+1. **"The rail renders `next`'s answer, deriving no second opinion"** — ✅ **met.**
+   `ceremonyNextLine` branches on `state` and renders `d.reason` **verbatim** for every state it has
+   no sentence of its own for, which is how P01.S03's `ended` reaches a person at all. The route's
+   own header forbids restating the rule and this client does not.
+2. **"no step state exists in the client"** — ✅ **met, by a named search.**
+   `grep -nE "cerStep|ceremonyStep|wizardStep|currentStep|step *=|stepIndex" web/app.js` returns
+   four hits, all of them compare-alignment or a panel colour index; none is a ceremony.
+3. **"`next` is fetched on open and on hop completion only"** — ✅ **met by a stronger mechanism
+   than the clause asks for**, which S04's pin records: it is fetched at exactly **one** call site
+   (`app.js:11817`), behind a per-card button, so it is not merely un-polled — it is not fetched on
+   open either. The fetch-count-over-a-minute proof the clause names is therefore vacuous by
+   construction rather than owed: with no timer and no open-fetch there is nothing to count.
+4. **"A declined or expired ceremony names its state and offers no action"** — ✅ **met**, on the
+   pin above. `endedReason` produces the person-facing sentence and the rail renders it;
+   `TestAnExpiredCeremonyIsNotSomebodysTurn` and `TestEndedReasonNamesTheStateThatEndedIt` are the
+   readers.
+
+**Required-run gates, discharged at v1.128.14.** Tier 0 ✅ · tier 1 ✅ · tier 2 215/215 ✅ ·
+tier 3 93/93 ✅ · tier 4 ✅ · tier 6 19/19 ✅ · `-race` ✅. **No separate full-repo review was run
+for this phase, and that is stated rather than skipped silently:** P01's three slices are two
+no-code closures and one server change (v1.128.2), and P02's close reviewed the same tree hours
+later — including the live pass that found the D14/D21 regression. A second agent-driven read of an
+unchanged tree would have re-read P02's work, not P01's.
+
+**Closure sweep over `/pending`: population EMPTY** — the Phase section holds no items.
 
 #### P01.S01 — the ceremony list is the front door *(done 2026-09-07 — already built, no code)*
 Scope: the sidebar card lists ceremonies from `/api/ceremonies` and opens one. Refs: D1, D2.
