@@ -1,0 +1,11 @@
+--- a/internal/server/session.go
++++ b/internal/server/session.go
+@@ -958,7 +958,7 @@ func (sc sessionConfirmer) Confirm(peer p2p.SignerAttestation, doc []byte) (bool
+ 	view.Recital = recitalFor(sc.cer)
+ 	// The signer's own block, from the bytes this function was handed — see blockFor. Read from
+ 	// the identity rather than from the peer's attestation: the question is where MY block goes.
+-	view.Block = sc.blockFor(doc, sc.me)
++	_ = doc
+ 	// The request is held so the defer can name it: an unconditional clear drops whatever
+ 	// is pending when it fires, which after a disarm-and-rearm is a LATER session's consent.
+ 	req := &pendingReq{view: view, doc: doc, resp: ch}

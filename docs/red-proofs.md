@@ -4380,3 +4380,46 @@ and `the-consent-screen-names-one-party`. Two of the four were first re-recorded
 they are targeted hunks now. All four replay red.
 
 `recorded` 335 → 341.
+
+## The signer sees where their signature lands (v1.128.8)
+
+P02.S03 of the ceremony wizard, D3 and D15. The consent screen already showed the peer, the recital,
+the roster and every page of the received document; what it never showed was the block. Both ends
+said so at the line — `handleSessionQuote` answers with `p2p.NominalBlockRect()`, *"a size template,
+not a placement"*, and app.js consumed only its width and height.
+
+| Row | Reader | Token |
+|---|---|---|
+| `the-consent-view-drops-the-signers-block` — the rule reaches nobody | `TestTheConsentViewSendsTheBlock`, tier 1 | "no longer carries the signer's own block" |
+| `the-consent-block-is-the-nominal-size-template` — the placeholder is sent as a placement | `TestTheBlockShownIsTheBlockStamped`, tier 1 | "and the signature is stamped at page" |
+| `an-uncomputable-block-is-sent-as-zeroes` — absence rendered as a location | `TestAnUncomputableBlockLeaves…`, tier 1 | "is a LOCATION" |
+| `the-block-outline-is-not-flipped` — PDF points read as CSS pixels | `consentblock.test.mjs`, tier 2 | "which is the upper half" |
+| `the-block-outline-is-positioned-against-the-column` — the box slides off on scroll | the same file | "the block was drawn on the wrong page" |
+| `the-block-outline-ignores-the-preview-scale` — drawn at scale 1 | the same file | "the block's top is" |
+| `the-block-outline-lands-on-every-page` — the page match dropped | the same file | "the block was drawn on the wrong page" |
+
+**The fourth row is why this slice has a tier-2 test at all.** A PDF rect measures from the bottom
+left and a canvas from the top left. Dropping the flip does not throw, does not fail a Go test, and
+produces a box of exactly the right SIZE — in the wrong half of the page, on the screen where a
+signer is being told where their signature goes. The Go rows prove the numbers are the ones that
+will be stamped; nothing at tier 1 can see what those numbers become on screen.
+
+**The last row was GREEN when first probed, and the fixture was the reason.** The test used a
+one-page document with the block on page 1, so `block.page === i` was always true and removing it
+changed nothing — the file stayed green against a branch it could not reach. Two pages with the
+block on page 2 now. This is the same class as P02.S02's M5 one release earlier, and it is worth
+naming as a class: **an assertion that cannot reach the branch it names reads exactly like one that
+passes**, and only a mutation tells them apart.
+
+**`published.test.mjs` refused the change until the new shape declared its readers**, which is that
+guard doing precisely the job it was written for — `pendingBlock` was neither in `PUBLISHED` nor in
+`EXCLUDED`, and the failure names `historyEvicted` as the field that shipped read by nothing.
+
+**The tier-2 stub gained an opt-in `renders: true`**, exactly as its existing `fail: true` is
+opt-in. Its pages have always had `render()` reject, which is what makes its documented "exactly one
+`.thumbwrap` lands" measurement true; the consent preview's failure path replaces the whole column
+with *"could not render the document"*, so geometry appended before the await is wiped before a test
+can read it. It does not pretend jsdom can draw — nothing is painted and no pixel is readable; what
+it buys is the code after the await running.
+
+`recorded` 341 → 348.

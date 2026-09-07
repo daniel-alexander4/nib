@@ -1,0 +1,12 @@
+--- a/internal/server/session.go
++++ b/internal/server/session.go
+@@ -912,7 +912,8 @@ func (sc sessionConfirmer) blockFor(doc []byte, me []byte) *pendingBlock {
+ 	if err != nil {
+ 		return nil
+ 	}
+-	return &pendingBlock{Page: place.Page, Rect: place.Rect}
++	_ = place
++	return &pendingBlock{Page: 0, Rect: p2p.NominalBlockRect()}
+ }
+ 
+ func (sc sessionConfirmer) Confirm(peer p2p.SignerAttestation, doc []byte) (bool, string, []byte, time.Time, error) {

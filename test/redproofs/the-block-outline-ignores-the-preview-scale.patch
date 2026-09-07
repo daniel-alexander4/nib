@@ -1,0 +1,11 @@
+--- a/web/app.js
++++ b/web/app.js
+@@ -1662,7 +1662,7 @@ async function loadPendingPreview(token, block) {
+       // second answer to "how big is this page on screen" — the box and the page it sits on have
+       // to come from one.
+       if (block && block.page === i && Array.isArray(block.rect)) {
+-        markBlock(wrap, vp, block.rect, vp.width / base.width);
++        markBlock(wrap, vp, block.rect, 1);
+       }
+       await page.render({ canvasContext: canvas.getContext('2d'), viewport: vp }).promise;
+     }
