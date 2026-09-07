@@ -1,0 +1,11 @@
+--- a/web/app.js
++++ b/web/app.js
+@@ -1612,7 +1612,7 @@ function markBlock(wrap, vp, rect, scale) {
+   box.className = 'srvblock';
+   const [llx, lly, urx, ury] = rect;
+   box.style.left = (llx * scale) + 'px';
+-  box.style.top = (vp.height - ury * scale) + 'px';
++  box.style.top = (lly * scale) + 'px';
+   box.style.width = ((urx - llx) * scale) + 'px';
+   box.style.height = ((ury - lly) * scale) + 'px';
+   const tag = document.createElement('span');

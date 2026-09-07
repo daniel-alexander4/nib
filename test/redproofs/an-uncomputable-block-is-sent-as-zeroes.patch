@@ -1,0 +1,11 @@
+--- a/internal/server/session.go
++++ b/internal/server/session.go
+@@ -910,7 +910,7 @@ func (sc sessionConfirmer) blockFor(doc []byte, me []byte) *pendingBlock {
+ 	}
+ 	place, err := p2p.PlacementFor(doc, roster, hex.EncodeToString(me))
+ 	if err != nil {
+-		return nil
++		return &pendingBlock{}
+ 	}
+ 	return &pendingBlock{Page: place.Page, Rect: place.Rect}
+ }
