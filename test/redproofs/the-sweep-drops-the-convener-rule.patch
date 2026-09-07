@@ -1,0 +1,11 @@
+--- a/internal/server/ceremonyarm.go
++++ b/internal/server/ceremonyarm.go
+@@ -173,7 +173,7 @@
+ 		// about the topology rather than a side effect of one. What it is not is a rule with a
+ 		// behavioural test: nothing can make it the deciding branch, and `TestTheHopSweepLeaves-
+ 		// TheConvenerAlone` says which half it proves.
+-		if strings.EqualFold(me, inv.ConvenerFingerprint) {
++		if strings.EqualFold(me, "never-a-fingerprint") {
+ 			continue
+ 		}
+ 		peerFP, derr := hex.DecodeString(inv.ConvenerFingerprint)

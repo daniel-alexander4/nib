@@ -1,0 +1,11 @@
+--- a/internal/server/session.go
++++ b/internal/server/session.go
+@@ -1930,8 +1930,6 @@ func (s *Server) handleSessionArm(w http.ResponseWriter, r *http.Request) {
+ 			switch {
+ 			case errors.Is(aerr, errCeremonyAccept):
+ 				httpError(w, http.StatusInternalServerError, aerr.Error())
+-			case errors.Is(aerr, errSessionArmed):
+-				httpError(w, http.StatusConflict, aerr.Error())
+ 			default:
+ 				httpError(w, http.StatusBadRequest, aerr.Error())
+ 			}

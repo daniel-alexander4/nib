@@ -163,8 +163,18 @@ func (s *Server) rearmCeremonies(v *vault.Vault) {
 		if ierr != nil {
 			continue
 		}
+		// **The convener dials; it does not wait to be dialled.** Kept as DEFENCE IN DEPTH and
+		// labelled as such, because a red proof showed it is never the refusal that fires: with
+		// this branch disabled the sweep still does not arm, because `ceremonyFor` reaches
+		// `hopBetween`, which refuses `a == b` with *"was given as both ends"* — the convener's
+		// only possible counterparty under D22's hub is itself. It is here anyway because it
+		// refuses on a fact this loop already holds, before a hex decode, a vault read and a
+		// ceremony construction, and because the *reason* the convener is skipped is a statement
+		// about the topology rather than a side effect of one. What it is not is a rule with a
+		// behavioural test: nothing can make it the deciding branch, and `TestTheHopSweepLeaves-
+		// TheConvenerAlone` says which half it proves.
 		if strings.EqualFold(me, inv.ConvenerFingerprint) {
-			continue // the convener dials; it does not wait to be dialled
+			continue
 		}
 		peerFP, derr := hex.DecodeString(inv.ConvenerFingerprint)
 		if derr != nil || len(peerFP) != sha256.Size {

@@ -4333,3 +4333,50 @@ the "red for the wrong reason" hazard `redproof.sh` was built to close, arrived 
 side. The wait is an assertion with a message now.
 
 `recorded` 332 → 335.
+
+## Accepting arms the listener (v1.128.6–.7)
+
+P02.S02 of the ceremony wizard, D14. A signer who accepted and never armed was, from the convener's
+side, exactly a signer who ignored the invitation. Measured against the tree before the slice: a
+successful accept left `/api/session/status` answering `{armed: false}`.
+
+| Row | Reader | Token |
+|---|---|---|
+| `accepting-an-invitation-arms-nothing` — the accept tail no longer sweeps | `TestAcceptingArmsTheListenerAndOnlyInARealNibProcess`, tier 1 | "left this machine unarmed after" |
+| `a-harness-opens-a-socket-on-accepting` — the process gate is removed | the same test's second case | "opened a listener on a Server that never" |
+| `the-hop-arm-ignores-the-records-deadline` — the window reads nothing | `TestTheHopArmsWindow…`, tier 1 | "with the record on disk the hop window is" |
+| `a-waiting-party-is-disarmed-in-minutes` — the no-record fallback floors short | the same test's setup assertion | "with no record on disk the hop window is" |
+| `the-sweep-drops-the-convener-rule` — the topology comparison goes | `TestTheHopSweepLeavesTheConvenerAlone`, tier 1 | "no longer compares this machine against the invitation's convener" |
+| `a-taken-session-slot-reads-as-a-bad-request` — the 409 arm leaves the switch | `TestASecondCeremonyArmIsRefusedAsAConflict`, tier 1 | "a second ceremony arm returned" |
+
+**The fifth row is here because the fifth mutation overturned the claim it was testing**, and it did
+so in two stages that are each worth keeping.
+
+*The first red was a build failure.* Deleting the convener branch left `strings` and `me` unused, so
+the package did not compile — and a hand-run `grep FAIL` scored that as a pass. `redproof.sh`
+refuses it in as many words: *"A non-zero exit alone is also what a DELETED or uncompilable check
+produces."* This is the same shape as trusting a wrapper's exit code, arrived at from the mutation
+side rather than the harness side.
+
+*With a compiling mutation the check came back green — twice.* First because the sweep's
+`pinnedLabel` check refused before the convener branch could matter (a machine does not pin itself),
+so the test had been vacuous from the moment it was written. Pinning self removed that guard and it
+came back green **again**: `ceremonyFor` reaches `hopBetween`, which refuses `a == b` with *"was
+given as both ends"* — under D22's hub the convener's only possible counterparty is itself.
+
+So the branch is **defence in depth and nothing can make it the deciding refusal.** It is kept, for
+two reasons that are not "it might fire": it refuses on a fact the loop already holds, ahead of a
+hex decode, a vault read and a ceremony construction; and it states the topology rather than
+inheriting it from a side effect three calls down. What changed is that the code comment, the test
+header and this row all say so, and the row is named for what it actually catches — a rule going
+silently missing while every behavioural assertion stays green.
+
+**Four older rows were re-recorded in the same pass**, all four staled by this session's own
+commits: `quic-arm-window-is-the-manual-bound` (today's `armWindowFor` change) and three staled by
+`cc40851`, which shipped without the root package being run —
+`consent-view-republishes-an-unread-peer-field`, `the-consent-screen-drops-an-invalid-signature`
+and `the-consent-screen-names-one-party`. Two of the four were first re-recorded with a bare
+`git diff`, which swept the whole uncommitted slice into the patch and produced a four-hunk "defect";
+they are targeted hunks now. All four replay red.
+
+`recorded` 335 → 341.

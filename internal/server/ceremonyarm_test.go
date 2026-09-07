@@ -3,6 +3,7 @@ package server
 import (
 	"encoding/hex"
 	"net/http"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -185,11 +186,22 @@ func TestTheHopArmsWindowIsTheRecordsDeadlineWhereThisMachineHoldsARecord(t *tes
 	}
 }
 
-// TestTheHopSweepLeavesTheConvenerAlone — the convener DIALS; it does not wait to be dialled.
+// TestTheHopSweepLeavesTheConvenerAlone proves the OUTCOME, and says plainly that it cannot prove
+// the rule.
 //
-// A convener that armed for its own ceremony would hold the interactive slot against the arm it
-// actually needs when it reaches out, and `hopBetween` puts it at one end of every hop, so the
-// mistake is not visible as a wrong peer — it is visible as a slot that is never free.
+// **What it proves:** the sweep does not arm for a ceremony this machine convened, with every
+// later guard removed from its path — the ceremony is listed, its invitation is in the vault, and
+// the convener is pinned, so the pin check that silently refused the first cut of this test cannot
+// refuse it now.
+//
+// **What it cannot prove, found by the red proof and recorded rather than papered over:** that the
+// convener BRANCH is what refuses. Disabling that branch with a mutation that compiles leaves this
+// test green, because `ceremonyFor` then reaches `hopBetween`, which refuses `a == b` with *"was
+// given as both ends"* — under D22's hub the convener's only possible counterparty is itself. No
+// fixture can make the branch the deciding one, so no red proof for it exists and the corpus has
+// none; the second half below is a source scan, which is the only instrument left, and it is
+// narrow on purpose. A scan proves a line is present; nothing here proves it is load-bearing,
+// because it is not.
 func TestTheHopSweepLeavesTheConvenerAlone(t *testing.T) {
 	ts, srv := startServerWith(t)
 	srv.EnableDeliveryRearm()
@@ -216,6 +228,24 @@ func TestTheHopSweepLeavesTheConvenerAlone(t *testing.T) {
 	if err := ceremony.WriteMe(defaultOutputDir(), inv.ID, me); err != nil {
 		t.Fatal(err)
 	}
+	// **The self-pin is what makes this test about the convener rule at all**, and it was missing
+	// in the first cut. A machine does not pin itself, so the sweep's `pinnedLabel` check refused
+	// this ceremony one step later — the assertion below passed, and passed just as well with the
+	// convener rule disabled. The red proof caught it: the mutation went red by failing to
+	// COMPILE, which is exactly the outcome `redproof.sh` refuses to accept as a proof, and with a
+	// compiling mutation the check came back GREEN. Pinning here removes the later guard so this
+	// one is the only thing that can still refuse.
+	meFP, derr := hex.DecodeString(me)
+	if derr != nil {
+		t.Fatal(derr)
+	}
+	if err := v.AddCeremonyPeer(meFP, "me", inv.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, pinned := pinnedLabel(v, meFP); !pinned {
+		t.Fatal("setup: the self-pin did not take, so the sweep would refuse at the pin check " +
+			"and this test would prove nothing about the convener rule")
+	}
 
 	// SETUP: the sweep can see this ceremony at all. Without it a green result is a sweep that
 	// found nothing, which proves nothing about the convener rule.
@@ -230,6 +260,19 @@ func TestTheHopSweepLeavesTheConvenerAlone(t *testing.T) {
 		t.Error("the sweep armed for a ceremony this machine convened — the convener carries the " +
 			"baton to each party in turn, so an arm it holds for itself is the interactive slot " +
 			"missing at the moment it reaches out")
+	}
+
+	// The scan half. It asserts the branch EXISTS in the sweep's own body, which is all that is
+	// available: see the header for why nothing can assert it fires.
+	src, err := os.ReadFile("ceremonyarm.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := funcBodyFrom(string(src), strings.Index(string(src), "func (s *Server) rearmCeremonies("))
+	if !strings.Contains(body, "strings.EqualFold(me, inv.ConvenerFingerprint)") {
+		t.Error("rearmCeremonies no longer compares this machine against the invitation's " +
+			"convener. The outcome above is unchanged — hopBetween refuses a self-pair either " +
+			"way — so this scan is the only thing that can tell you the topology rule went away")
 	}
 }
 
