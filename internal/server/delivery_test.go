@@ -9,6 +9,7 @@ import (
 	"go/token"
 	"io/fs"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -192,16 +193,67 @@ func TestTheDeliveryArmsWindowIsEnforcedAndNotJustReported(t *testing.T) {
 	// for a nil ceremony BEFORE it ever reads a mirror, so a mutation making the read's failure
 	// path return `MaxCeremonyLife` left this test green. Found by the mutation pass, which is
 	// what it is for. A real ceremonyID with no mirror on disk is what exercises the branch.
-	unreadable := &ceremonyID{inv: ceremony.Invitation{ID: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}
-	got := armWindowFor(armDelivery, unreadable)
+	// **This case's POPULATION narrowed at P05.S03, and the narrowing is argued rather than
+	// assumed, because it relaxes a bound.**
+	//
+	// The fixture below used to be a ceremony with no mirror at all, which is `LoadAbsent` — and
+	// before D16 that state meant exactly one thing on the delivery slot: a party who had SIGNED
+	// and lost their record. Anomalous, so the floor. Since D16 a party who has **accepted and not
+	// signed** also arms this slot, to receive the convener's end state, and for them a missing
+	// record is the ordinary state rather than an anomaly — the five-minute floor would close the
+	// arm before any convener could reach it.
+	//
+	// **Matching it to the hop window does not extend how long this machine is reachable.** That
+	// party's HOP arm is already open on `hopWindowFor` for the same ceremony and the same
+	// invitation; this adds a second rendezvous inside a window that is already held, and both end
+	// with the process.
+	//
+	// **The floor's own argument survives untouched for the case it was written about** — a record
+	// that is PRESENT and cannot be trusted. That is what this case is now, and it is a stronger
+	// fixture than the old one: a damaged `record.json` exercises the `ReadMirror` failure path
+	// with something actually on disk, where an absent one now takes a different branch entirely.
+	damagedID := "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	ddir, derr := ceremony.MirrorDir(defaultOutputDir(), damagedID)
+	if derr != nil {
+		t.Fatal(derr)
+	}
+	if err := os.MkdirAll(ddir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(ddir, "record.json"), []byte("{not a record"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	damaged := &ceremonyID{inv: ceremony.Invitation{ID: damagedID}}
+	// SETUP: it really is the damaged class and not the absent one, or this asserts the wrong
+	// branch and would pass on a build that never reads a record at all.
+	if st := ceremony.ReadStored(defaultOutputDir(), damagedID, time.Now()); st.State == ceremony.LoadAbsent {
+		t.Fatalf("setup: the fixture reads as %q, so this case is exercising the pre-hop branch "+
+			"rather than the untrustworthy-record one it is about", st.State)
+	}
+	got := armWindowFor(armDelivery, damaged)
 	if got != sessionAcceptTimeout {
-		t.Errorf("a delivery arm whose record cannot be read got a %s window, want the "+
-			"interactive floor %s. Defaulting LONG on the input that tells us least holds this "+
-			"machine's one network-reachable surface open for a proceeding nothing can confirm "+
-			"is live.", got, sessionAcceptTimeout)
+		t.Errorf("a delivery arm whose record is present and cannot be read got a %s window, want "+
+			"the interactive floor %s. Defaulting LONG on the input that tells us least holds "+
+			"this machine's one network-reachable surface open for a proceeding nothing can "+
+			"confirm is live.", got, sessionAcceptTimeout)
 	}
 	if got >= ceremony.MaxCeremonyLife {
-		t.Errorf("an unreadable record yielded %s, at or beyond MaxCeremonyLife", got)
+		t.Errorf("an untrustworthy record yielded %s, at or beyond MaxCeremonyLife", got)
+	}
+
+	// ── The PRE-HOP branch (P05.S03, D16) ────────────────────────────────────────────────────
+	//
+	// A party who accepted and has not signed holds no record at all, and their delivery arm has
+	// to outlast the proceeding rather than five minutes of it.
+	preHop := &ceremonyID{inv: ceremony.Invitation{ID: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}}
+	if st := ceremony.ReadStored(defaultOutputDir(), "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", time.Now()); st.State != ceremony.LoadAbsent {
+		t.Fatalf("setup: the pre-hop fixture reads as %q, not absent", st.State)
+	}
+	if w := armWindowFor(armDelivery, preHop); w == sessionAcceptTimeout {
+		t.Errorf("a party who has accepted and not signed got the %s floor on their delivery arm. "+
+			"That arm is how the convener's end state reaches them, and nothing local can tell "+
+			"them a proceeding was declined — so closing it five minutes after it opens means "+
+			"they never find out", sessionAcceptTimeout)
 	}
 
 	// And the source is one door: the arm goroutine must take its expiry from `armWindowFor`

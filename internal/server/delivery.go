@@ -520,12 +520,29 @@ func (s *Server) rearmDeliveries(v *vault.Vault) {
 	}
 	me := hex.EncodeToString(myFP)
 	for _, st := range stored {
-		if st.State != ceremony.LoadOK {
+		// **Three classes now, where there were two** (P05.S03, D16).
+		//
+		// `LoadOK` is a party who has signed and is waiting for their finished copy — the original
+		// population. **`LoadAbsent` is a party who has ACCEPTED and not yet signed**, and they are
+		// the ones a convener's end-state round is most trying to reach: nothing local can tell
+		// them a proceeding was declined, because every anchor that would needs the record they do
+		// not have. Anything else is damaged or unverifiable and is still skipped, because nothing
+		// there can be trusted enough to act on.
+		//
+		// **The record-only work is skipped with it.** `ReadMirror` and `alreadyDelivered` both
+		// take a record; a pre-hop party has neither a record nor a delivered copy, so both
+		// questions are answered by the absence itself.
+		if st.State != ceremony.LoadOK && st.State != ceremony.LoadAbsent {
 			continue // unreadable: nothing here can be trusted enough to act on
 		}
-		rec, _, rerr := ceremony.ReadMirror(defaultOutputDir(), st.ID, time.Now())
-		if rerr != nil || alreadyDelivered(rec) {
-			continue
+		var rec ceremony.Record
+		preHop := st.State == ceremony.LoadAbsent
+		if !preHop {
+			var rerr error
+			rec, _, rerr = ceremony.ReadMirror(defaultOutputDir(), st.ID, time.Now())
+			if rerr != nil || alreadyDelivered(rec) {
+				continue
+			}
 		}
 		text, ok := v.CeremonyInvitationFor(st.ID)
 		if !ok {
@@ -559,9 +576,18 @@ func (s *Server) rearmDeliveries(v *vault.Vault) {
 		// termination does not verify, this machine does NOT conclude the proceeding is over — it
 		// arms. Suppressing on unverifiable evidence is the defect; a needless arm costs one slot
 		// until the next unlock.
-		if merr := inv.MatchesRecord(rec); merr == nil {
-			if _, terr := ceremony.ReadTermination(defaultOutputDir(), rec); terr == nil {
-				continue // a verified end state, on an anchor a planted file cannot forge
+		//
+		// **Skipped entirely for a pre-hop party, and the reason is the slice's own point.** Both
+		// halves need the record: `MatchesRecord` takes one and `ReadTermination` takes one. A
+		// party before their hop has neither, so there is nothing here that could conclude the
+		// proceeding has ended — which is exactly why they are being armed. They cannot skip a
+		// ceremony for having ended, because learning that it ended is the thing they are waiting
+		// for.
+		if !preHop {
+			if merr := inv.MatchesRecord(rec); merr == nil {
+				if _, terr := ceremony.ReadTermination(defaultOutputDir(), rec); terr == nil {
+					continue // a verified end state, on an anchor a planted file cannot forge
+				}
 			}
 		}
 		if aerr := s.armForDelivery(context.Background(), inv, cert, key, me); aerr != nil {
@@ -1212,6 +1238,33 @@ func (s *Server) checkDeliveredPayload(cer *ceremonyID, d []byte) error {
 	}
 	if cer == nil {
 		return errors.New("an end-state attestation arrived for no ceremony")
+	}
+	// **A party who has not signed yet holds NO record, and they are the ones this object is most
+	// for** (P05.S03, D16). Until this, they were refused here — *"this machine cannot check that
+	// end state against its own record"* — so the parties who could not tell a live proceeding from
+	// a dead one were exactly the parties the convener was trying to tell.
+	//
+	// **The invitation anchors it directly, which is what this gate's own argument below already
+	// requires.** That paragraph quotes `ReadTermination`'s rule — *"`rec` must come from the
+	// document or the invitation, never from the `record.json` beside it"* — and the invitation is
+	// the anchor a planted file cannot control. With no record there is nothing to plant and
+	// nothing to reconcile: `cer.inv.Anchor()` supplies the same two values `t.Verify(rec)` would
+	// have derived, through the one door P05.S02 extracted for it.
+	//
+	// **`LoadAbsent` and not "ReadMirror failed", because those are different facts.** A damaged or
+	// unverifiable record is not an absent one — `ReadStored` draws that distinction for exactly
+	// this reason — and falling back to the invitation on damage would let a corrupted record be
+	// stepped around silently. Absence is the ordinary state of a party before their hop; damage is
+	// something they should be told about, and it keeps the refusal below.
+	if st := ceremony.ReadStored(defaultOutputDir(), cer.inv.ID, time.Now()); st.State == ceremony.LoadAbsent {
+		anchor, aerr := cer.inv.Anchor()
+		if aerr != nil {
+			return fmt.Errorf("this machine cannot check that end state: %w", aerr)
+		}
+		if verr := t.VerifyAgainst(anchor); verr != nil {
+			return fmt.Errorf("that end state does not verify against this ceremony: %w", verr)
+		}
+		return nil
 	}
 	rec, _, err := ceremony.ReadMirror(defaultOutputDir(), cer.inv.ID, time.Now())
 	if err != nil {
