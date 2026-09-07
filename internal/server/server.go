@@ -342,6 +342,7 @@ func (s *Server) Handler() http.Handler {
 	// check `requireUnlocked` does not apply to GET. It is a pure read and must stay one.
 	mux.HandleFunc("GET /api/ceremony/next", requirePublicLoopback(s.handleCeremonyNext))
 	mux.HandleFunc("POST /api/ceremony/accept", s.requireUnlocked(s.handleCeremonyAccept))
+	mux.HandleFunc("POST /api/ceremony/leave", s.requireUnlocked(s.handleCeremonyLeave))
 	mux.HandleFunc("POST /api/ceremony/deliver", s.requireUnlocked(s.handleCeremonyDeliver))
 	// The round's in-flight leg, polled while one runs (/pending 370). A GET and read-only, but
 	// `requireUnlocked` like its round: it names which party this machine is reaching.

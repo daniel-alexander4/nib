@@ -1736,3 +1736,18 @@ input.ovl-check { appearance: auto; accent-color: #1a7f37; background: transpare
   color: var(--base);
   background: var(--blue);
 }
+
+/* The "leave this ceremony" control (P05.S01). Quiet by default — it is a way out, not an action
+   the card is inviting — and it takes `--red` only on hover, where the user is already committing. */
+.cerleave { margin-top: 6px; }
+.cerleavebtn {
+  background: none;
+  border: 1px solid var(--surface1);
+  color: var(--subtext1);
+  border-radius: 4px;
+  padding: 2px 8px;
+  font-size: 12px;
+  cursor: pointer;
+}
+.cerleavebtn:hover:not(:disabled) { border-color: var(--red); color: var(--red); }
+.cerleavebtn:disabled { opacity: 0.6; cursor: default; }

@@ -11318,6 +11318,12 @@ function renderEndedCeremonies(host, ended) {
       : r.state === 'completed' ? 'Completed'
       : r.state === 'expired' ? 'Ran out of time'
       : r.state === 'abandoned' ? 'No further word'
+      // **`left` is this machine's own action and reads as one** (D17). Without this line it fell
+      // to the fallback below — "Ended in a way this version does not recognise" — which is a
+      // sentence about a damaged file, shown to a user for the thing they did on purpose a moment
+      // earlier. It is phrased as the user's act rather than the ceremony's end, because it says
+      // nothing about whether the proceeding is still running for everybody else.
+      : r.state === 'left' ? 'You left'
       : 'Ended in a way this version does not recognise';
     row.appendChild(what);
     const when = new Date(r.observed_at);
@@ -11421,6 +11427,21 @@ function ceremonyCard(c, mayAct) {
       && c.me.toLowerCase() === c.convener.toLowerCase()) {
     card.appendChild(ceremonyDeliver(c));
   }
+  // **Leaving (D17), and its population is the exact complement of the delivery button's.**
+  //
+  //   - `mayAct` — the lock screen and a non-primary Nib, as above.
+  //   - `state !== 'ok'` — a record on disk means this party's hop has happened, and the server
+  //     refuses leaving there because it withdraws nothing and only stops this party's own copy
+  //     arriving. Offering a button the server is known to refuse is an offer the app cannot keep.
+  //   - `!c.ended` — a proceeding that is already over has nothing to leave.
+  //
+  // The convener case is deliberately NOT tested here and is left to the server. For a party
+  // before their hop there is no record, so `c.convener` is empty — unknown, not "not me" — and a
+  // client-side check would have to read absence as a negative answer, which is the exact mistake
+  // `Stored.Convener`'s own doc names. The server has the invitation and can answer properly.
+  if (mayAct && c.state !== 'ok' && !c.ended) {
+    card.appendChild(ceremonyLeave(c));
+  }
   if (c.state === 'ok') {
     const next = document.createElement('div');
     next.className = 'cernext';
@@ -11488,6 +11509,67 @@ function watchDeliveryRound(id, line) {
 // **There is no client-side timeout, deliberately.** `apiFetch` sets none, and adding one here
 // would abandon a round the server keeps running — the user would be told it failed while parties
 // were still being reached, which is the exact wrong answer this item was filed about.
+// ceremonyLeave is the "stop taking part" control (P05.S01, D17).
+//
+// **It is deliberately not next to anything that signs, and it confirms.** Leaving and declining
+// are one keystroke apart in a user's head and completely different in the record: a decline is an
+// attested refusal the convener acts on, and this reaches nobody. The confirmation says which one
+// this is, in the words a person would use, rather than asking them to remember.
+//
+// **The button's population is what the SERVER will accept**, not everything on screen: a ceremony
+// whose record has arrived is one this machine has signed, and leaving is refused there because it
+// withdraws nothing and only stops this party's own copy. Showing it and having the server say no
+// would be an offer the app knew it could not keep.
+function ceremonyLeave(c) {
+  const wrap = document.createElement('div');
+  wrap.className = 'cerleave';
+  const btn = document.createElement('button');
+  btn.className = 'cerleavebtn';
+  btn.type = 'button';
+  btn.textContent = 'Leave this ceremony';
+  const out = document.createElement('div');
+  out.className = 'cerleaveout';
+  btn.addEventListener('click', async () => {
+    // `confirm()` is what this file already uses for a destructive choice
+    // (`confirmSignatureLoss`), so this is the app's own pattern rather than a second one.
+    // **The wording carries the distinction, because nothing else can**: leaving and declining are
+    // one keystroke apart in a user's head and completely different in the record.
+    const ok = confirm(
+      'Leave this ceremony?\n\n'
+      + 'This machine will stop listening for it and will forget the invitation.\n\n'
+      + 'Nobody is told. This is not the same as declining, which the convener would see.\n\n'
+      + 'You cannot rejoin without a fresh invitation.');
+    if (!ok) return;
+    btn.disabled = true;
+    out.textContent = '';
+    try {
+      const res = await apiFetch('/api/ceremony/leave', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ceremony: c.id }),
+        unpinned: true,
+      });
+      if (!res.ok) {
+        const e = document.createElement('p');
+        e.className = 'cererror';
+        e.textContent = await errText(res, 'Nib could not leave that ceremony.');
+        out.appendChild(e);
+        btn.disabled = false;
+        return;
+      }
+      loadCeremonyPanel();
+    } catch (err) {
+      const e = document.createElement('p');
+      e.className = 'cererror';
+      e.textContent = 'Nib could not leave that ceremony.';
+      out.appendChild(e);
+      btn.disabled = false;
+    }
+  });
+  wrap.append(btn, out);
+  return wrap;
+}
+
 function ceremonyDeliver(c) {
   const wrap = document.createElement('div');
   wrap.className = 'cerdeliver';

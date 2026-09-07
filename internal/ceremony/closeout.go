@@ -167,6 +167,19 @@ const (
 	// StateAbandoned is a proceeding that ended without reaching this machine at all — the
 	// deadline and the grace both passed and nothing ever said what happened.
 	StateAbandoned = "abandoned"
+	// StateLeft is this machine deciding it is no longer taking part (D17, `/pending 378`).
+	//
+	// **The third derived state, and it belongs here for a reason the other two do not share.**
+	// Expired and abandoned are derived because nobody CAN attest them. This one is derived
+	// because nobody SHOULD: leaving is a local decision that reaches no other party, and an
+	// attested "left" would be a withdrawal the roster is entitled to act on — which is a decline,
+	// and a decline is a different thing the user did not choose. `Termination`'s set stays closed
+	// at two.
+	//
+	// **It is not a decline, and the distinction is the whole of D17.** A decline is an attested
+	// refusal the convener learns about; leaving is this machine stopping. Conflating them would
+	// either mint an attestation the user did not intend or leave a decline nobody can see.
+	StateLeft = "left"
 )
 
 // WriteReceipt records the end state in the closed-out directory, after the move.

@@ -1,0 +1,188 @@
+package server
+
+import (
+	"encoding/json"
+	"net/http"
+	"strings"
+	"testing"
+	"time"
+
+	"nib/internal/ceremony"
+)
+
+// P05.S01 — leaving a ceremony (D17).
+//
+// # The defect these drive
+//
+// Since D14 (v1.128.6) accepting an invitation ARMS, and `rearmCeremonies` renews that arm at every
+// unlock. A party who changed their mind had no lever at all short of quitting Nib — and quitting
+// is a pause, not a decision: the next unlock arms again.
+
+// leave posts the request and returns the code and body.
+func leave(t *testing.T, c *http.Client, csrf, base, id string) (int, string) {
+	t.Helper()
+	return postForCode(t, c, csrf, base+"/api/ceremony/leave", leaveRequest{Ceremony: id})
+}
+
+// TestLeavingStopsTheArmAndKeepsItStopped is the slice's whole acceptance clause.
+//
+// **The second sweep is the assertion, not the first.** A prune that stopped the arm once and let
+// the next unlock raise it again would pass any check made immediately after leaving — and the
+// next unlock is exactly what D14 added. So the arm is driven, left, and the sweep is run AGAIN,
+// which is the operation a restart performs.
+func TestLeavingStopsTheArmAndKeepsItStopped(t *testing.T) {
+	ts, srv := startServerWith(t)
+	srv.EnableDeliveryRearm()
+	c, csrf := authedClient(t, ts)
+	me := myFingerprint(t, c, ts.URL)
+	invitation, _ := inviteFor(t, me)
+
+	code, body := postForCode(t, c, csrf, ts.URL+"/api/ceremony/accept",
+		acceptRequest{Invitation: invitation})
+	if code != http.StatusOK {
+		t.Fatalf("setup: accept returned %d: %s", code, body)
+	}
+	var ar acceptResponse
+	if err := json.Unmarshal([]byte(body), &ar); err != nil {
+		t.Fatal(err)
+	}
+
+	// SETUP: the arm actually came up. Without this, "not armed after leaving" is satisfied by a
+	// machine that never armed at all, which is what this test would look like if D14 regressed.
+	if !armedWithin(srv, 3*time.Second) {
+		t.Fatal("setup: accepting did not arm, so this test cannot show that leaving stops an arm")
+	}
+	if code, body := postForCode(t, c, csrf, ts.URL+"/api/session/disarm", struct{}{}); code != http.StatusOK {
+		t.Fatalf("setup: disarm returned %d: %s", code, body)
+	}
+
+	if code, body := leave(t, c, csrf, ts.URL, ar.Ceremony); code != http.StatusOK {
+		t.Fatalf("leaving returned %d: %s", code, body)
+	}
+
+	// THE ASSERTION: the sweep a restart would run finds nothing to arm for.
+	srv.mu.Lock()
+	v := srv.vault
+	srv.mu.Unlock()
+	srv.rearmCeremonies(v)
+	if srv.sess.status().Armed {
+		postForCode(t, c, csrf, ts.URL+"/api/session/disarm", struct{}{})
+		t.Error("the sweep armed for a ceremony this machine had left — leaving is supposed to " +
+			"remove the stored invitation the sweep keys on, so an arm here means the next " +
+			"unlock brings it straight back and leaving is a gesture rather than a decision")
+	}
+}
+
+// TestLeavingWritesNoTermination — D17's other half, and the one a user cannot see going wrong.
+//
+// Leaving reaches nobody. A termination is an ATTESTED refusal the convener learns about and the
+// roster is entitled to act on, which is a decline — a different thing, one keystroke away, that
+// this user did not choose.
+func TestLeavingWritesNoTermination(t *testing.T) {
+	ts, srv := startServerWith(t)
+	c, csrf := authedClient(t, ts)
+	me := myFingerprint(t, c, ts.URL)
+	invitation, _ := inviteFor(t, me)
+
+	code, body := postForCode(t, c, csrf, ts.URL+"/api/ceremony/accept",
+		acceptRequest{Invitation: invitation})
+	if code != http.StatusOK {
+		t.Fatalf("setup: accept returned %d: %s", code, body)
+	}
+	var ar acceptResponse
+	if err := json.Unmarshal([]byte(body), &ar); err != nil {
+		t.Fatal(err)
+	}
+	if code, body := leave(t, c, csrf, ts.URL, ar.Ceremony); code != http.StatusOK {
+		t.Fatalf("leaving returned %d: %s", code, body)
+	}
+	_ = srv
+
+	// The receipt records what THIS machine did, and it must say `left` rather than `declined` —
+	// they are different facts and only the receipt can keep them apart locally.
+	res, err := c.Get(ts.URL + "/api/ceremonies")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer res.Body.Close()
+	var listing ceremoniesResponse
+	if err := json.NewDecoder(res.Body).Decode(&listing); err != nil {
+		t.Fatal(err)
+	}
+	var states []string
+	for _, r := range listing.Ended {
+		if r.Ceremony == ar.Ceremony {
+			states = append(states, r.State)
+		}
+	}
+	if len(states) != 1 {
+		t.Fatalf("the listing carries %d receipt(s) for the ceremony this machine left, want 1: %v",
+			len(states), states)
+	}
+	if states[0] != ceremony.StateLeft {
+		t.Errorf("leaving recorded the end state %q — %q is an attested refusal the convener acts "+
+			"on, and this user chose to stop taking part, which reaches nobody",
+			states[0], ceremony.StateDeclined)
+	}
+}
+
+// TestLeavingIsRefusedWhereItWouldOnlyCostTheUser covers both refusals, and each names a different
+// harm.
+func TestLeavingIsRefusedWhereItWouldOnlyCostTheUser(t *testing.T) {
+	t.Run("a ceremony this machine convened", func(t *testing.T) {
+		ts, srv := startServerWith(t)
+		c, csrf := authedClient(t, ts)
+		me := myFingerprint(t, c, ts.URL)
+		invitation, _ := inviteForConvener(t, me)
+		inv, err := ceremony.ParseInvitation(invitation)
+		if err != nil {
+			t.Fatal(err)
+		}
+		srv.mu.Lock()
+		v := srv.vault
+		srv.mu.Unlock()
+		if err := v.AddCeremonyInvitation(inv.ID, invitation); err != nil {
+			t.Fatal(err)
+		}
+		// SETUP: the invitation is genuinely readable, so the refusal below is the convener rule
+		// and not the unparseable-invitation arm one branch above it.
+		if _, ok := v.CeremonyInvitationFor(inv.ID); !ok {
+			t.Fatal("setup: the invitation did not store, so no branch below can be attributed")
+		}
+		code, body := leave(t, c, csrf, ts.URL, inv.ID)
+		if code != http.StatusConflict {
+			t.Fatalf("a convener leaving their own ceremony returned %d, want %d: %s",
+				code, http.StatusConflict, body)
+		}
+		if !strings.Contains(body, "convened this ceremony") {
+			t.Errorf("the refusal is %q, and it does not tell the convener that the parties are "+
+				"waiting on them — which is the only reason this is refused", body)
+		}
+	})
+
+	t.Run("a ceremony this machine has already signed", func(t *testing.T) {
+		ts, _ := startServerWith(t)
+		c, csrf := authedClient(t, ts)
+		me := myFingerprint(t, c, ts.URL)
+		inv, rec, doc := convenedCeremony(t, 6*time.Hour, me)
+		if _, err := ceremony.WriteMirror(defaultOutputDir(), rec, doc); err != nil {
+			t.Fatal(err)
+		}
+		// SETUP: the record reads as OK, which is the discriminator the refusal uses. Without
+		// this the refusal below could be the no-invitation arm instead.
+		if st := ceremony.ReadStored(defaultOutputDir(), inv.ID, time.Now()); st.State != ceremony.LoadOK {
+			t.Fatalf("setup: the mirrored record reads as %q, so the signed-already branch is "+
+				"not the one this case reaches", st.State)
+		}
+		code, body := leave(t, c, csrf, ts.URL, inv.ID)
+		if code != http.StatusConflict {
+			t.Fatalf("leaving after signing returned %d, want %d: %s",
+				code, http.StatusConflict, body)
+		}
+		if !strings.Contains(body, "already signed") {
+			t.Errorf("the refusal is %q — it must say the signature is already on the document, "+
+				"because the only effect of leaving now is that this party's own copy never "+
+				"arrives", body)
+		}
+	})
+}
