@@ -107,8 +107,33 @@ export async function launch({ routes = null, waitFor = '#empty', base = BASE } 
     // group(label) opens one command card in the sidebar. Since v1.122.0 the sidebar is an
     // accordion — one card expanded at a time — so a control in a group other than the mode's
     // first is behind a header until someone clicks it, exactly as it is for a user.
+    // card(label) is group(label) with the sidebar guaranteed open.
+    //
+    // Below 900px the sidebar auto-collapses and the mode's panes move into the toolbar, where
+    // the card headers are `display: none` (ADR-017) — so `group()` would be clicking a hidden
+    // element. An explicit toggle wins until the next width crossing, which is why this opens the
+    // sidebar rather than resizing the window: a helper that changed the viewport would silently
+    // rewrite the state of whichever responsive test called it.
+    async card(label) {
+      const shut = await page.evaluate(() => document.getElementById('sidebar').classList.contains('collapsed'));
+      if (shut) {
+        await page.click('#toggleSidebarBtn');
+        await page.waitForFunction(() => !document.getElementById('sidebar').classList.contains('collapsed'));
+      }
+      await this.group(label);
+    },
+
+    // **Idempotent, and that is not a nicety.** A card header TOGGLES (ADR-020), and a mode
+    // lands on its own first card already expanded — so clicking one that is open CLOSES it and
+    // the wait below then never fires. That is a 30-second Playwright timeout per call, in every
+    // file, since `openDocument` reaches for File mode's FIRST card. Measured: a tier-3 run that
+    // normally takes ~2 minutes was still going at 26. The same fix `panel()` already carried.
     async group(label) {
-      await page.click(`.sbhead.groupcard:text-is("${label}")`);
+      const open = await page.evaluate((l) => {
+        const h = [...document.querySelectorAll('.sbhead.groupcard')].find((x) => x.textContent.trim() === l);
+        return !!h && h.getAttribute('aria-expanded') === 'true';
+      }, label);
+      if (!open) await page.click(`.sbhead.groupcard:text-is("${label}")`);
       await page.waitForFunction((l) => {
         const h = [...document.querySelectorAll('.sbhead.groupcard')].find((x) => x.textContent.trim() === l);
         return h && h.getAttribute('aria-expanded') === 'true';
@@ -131,6 +156,10 @@ export async function launch({ routes = null, waitFor = '#empty', base = BASE } 
     // phase keeps turning on, and this helper got it wrong first time.
     async openDocument(file, pages) {
       await this.mode('file');
+      // Since v1.124.0 the file lifecycle is a set of sidebar CARDS rather than toolbar groups,
+      // so Open… is behind a header exactly as it is for a user. `card()` also handles the
+      // sidebar being shut, which it is below 900px.
+      await this.card('Open a Document');
       await page.click('#openMenuItem');
       await page.fill('#pathInput', file);
       await page.click('#openGo');
@@ -256,6 +285,7 @@ export async function launch({ routes = null, waitFor = '#empty', base = BASE } 
     // closeDocument clicks Close — from File mode, for the reason above.
     async closeDocument() {
       await this.mode('file');
+      await this.card('Close Document');
       await page.click('#closeBtn');
       await page.waitForTimeout(400); // the confirm + the round-trip + the teardown
     },

@@ -166,3 +166,14 @@ home today.
   without it `<html>` carries a `data-appearance` no rule claims while rendering Mocha by luck. The
   agreement guard now asserts the picker's ABSENCE, because silently no longer comparing a list is
   how the next picker gets added with a value nothing defines
+- [ADR-022: The bar holds what you reach for continuously](022-the-bar-holds-what-you-reach-for-continuously.md)
+  — the fixed toolbar is divided by RHYTHM, not by mode: Save, page, zoom and find are used
+  repeatedly while reading one document and stay; Open, Save a Copy, Export & Print and Close are
+  once-per-document acts and become File-mode cards. Measured: three toolbar rows down to one, and
+  chrome from ~19.6% of the viewport to 9.1%. **Extends** ADR-017/018. Two groups left File mode
+  in the same change because neither was a file operation (*Fill Forms from Data* → Mark Up,
+  *Combine & Compare* → Document), each appended at the END of its pane so the mode keeps the card
+  it lands on. Recent, Save as and Export are FLATTENED rather than moved as dropdowns — a popup
+  inside a collapsed card is a second disclosure onto the same items, and no `.menu` has ever
+  rendered inside `#commands`. The cost is named rather than hidden: Open… is now one header click
+  away, and the fix if that proves wrong is to put Open back beside Save, not to unwind the rest

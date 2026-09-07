@@ -81,6 +81,7 @@ const els = {
   noteBtn: $('noteBtn'),
   prevBtn: $('prevBtn'), nextBtn: $('nextBtn'),
   findPrevBtn: $('findPrevBtn'), findNextBtn: $('findNextBtn'), findCount: $('findCount'),
+  findToggle: $('findToggle'),
   zoomInBtn: $('zoomInBtn'), zoomOutBtn: $('zoomOutBtn'), fitBtn: $('fitBtn'),
   sigBadge: $('sigBadge'), saveBtn: $('saveBtn'), statusCluster: $('statusCluster'),
   themeToggle: $('themeToggle'),
@@ -8624,7 +8625,7 @@ els.themeToggle.onclick = () => {
 async function refreshRecent() {
   const res = await apiFetch('/api/recent');
   const recent = (res.ok ? await res.json() : []) || []; // tolerate a null body
-  for (const slot of all('.recentSlot')) { // a slot in the File menu and one in the toolbar
+  for (const slot of all('.recentSlot')) { // one slot: the File mode card's (the File menu is long gone)
     slot.innerHTML = '';
     if (!recent.length) {
       const empty = document.createElement('div');
@@ -9336,6 +9337,8 @@ const DOC_REQUIRED = [
   'extractBtn', 'insertBlankBtn', 'duplicatePageBtn', 'insertPdfBtn', 'pageNumBtn', 'pageLabelsBtn', 'nupBtn', 'normalizeBtn', 'cropBtn',
   'redactBtn', 'redactTextBtn', 'applyRedactBtn', 'scanBtn', 'attachBtn', 'encryptBtn', 'decryptBtn', 'compareBtn', 'fillCsvBtn', 'importXfdfBtn',
   'closeBtn', 'reloadBtn',
+  // Find opens onto the open document; with nothing open there is nothing to search.
+  'findToggle',
   'finalizeBtn', 'timestampBtn', 'cosignBtn', 'sessionInitBtn', 'sessionSendBtn',
 ];
 function setDocControls(enabled) {
@@ -10207,6 +10210,25 @@ all('.searchInput').forEach((input) => {
 els.findPrevBtn.onclick = () => stepFind(true);
 els.findNextBtn.onclick = () => stepFind(false);
 
+// ── Opening and closing the find box ──────────────────────────────────────────
+//
+// One door for the icon, Ctrl+F and Escape. Closing CLEARS the query and re-runs the search
+// with an empty one, because pdf.js keeps its highlights until it is told otherwise: a box that
+// merely hid would leave every match painted on the page with no visible control to clear them.
+function setFindOpen(open) {
+  const box = document.querySelector('.tbfind');
+  if (!box) return;
+  box.hidden = !open;
+  els.findToggle?.setAttribute('aria-expanded', String(open));
+  const input = findInput();
+  if (open) { input?.focus(); input?.select(); return; }
+  if (input && input.value) { input.value = ''; runFind(); }
+}
+els.findToggle.onclick = () => setFindOpen(document.querySelector('.tbfind')?.hidden);
+findInput()?.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') { e.preventDefault(); setFindOpen(false); els.findToggle?.focus(); }
+});
+
 // "N of M" readout + prev/next enablement. updatefindcontrolstate is the ONLY event
 // the controller fires on an 'again' step (it carries the updated current match), so
 // it's the source of truth here; updatefindmatchescount only keeps the total ticking
@@ -10608,9 +10630,10 @@ window.addEventListener('keydown', (e) => {
     else if (e.key === 'o') { e.preventDefault(); openOpenDialog(); }
     else if (e.key === 'f') {
       e.preventDefault();
-      // The find box lives in the File tab's toolbar — switch there, then focus it.
-      setMode('file');
-      document.querySelector('.searchInput')?.focus();
+      // The find box is in the FIXED bar, so there is no mode to switch to — this used to call
+      // setMode('file') and that has been stale since v1.121.0, when the bar stopped swapping
+      // per mode. Since v1.124.0 it is also collapsed until asked for, so opening it is the act.
+      setFindOpen(true);
     } else if (e.key === '=' || e.key === '+') { e.preventDefault(); zoomIn(); }
     else if (e.key === '-') { e.preventDefault(); zoomOut(); }
     else if (e.key === '0') { e.preventDefault(); fitWidth(); }

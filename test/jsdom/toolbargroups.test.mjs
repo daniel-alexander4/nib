@@ -90,3 +90,43 @@ test('the ⋯ More menu is built inside its own pane, not beside it', () => {
       'a ⋯ More menu was built outside both a .tbtab and the fixed bar, so the groups it holds would appear in every mode');
   }
 });
+
+// ── ADR-022: the bar holds what you reach for continuously ───────────────────
+//
+// The division is by RHYTHM, not by mode: Save, page, zoom and find are used repeatedly while
+// reading one document; opening, exporting, printing and closing happen once per document and
+// are File-mode cards. Before v1.124.0 all of it sat in the fixed bar, three rows deep.
+//
+// **Structural, and checked from the DOM rather than from a list of labels**, because the way
+// this decays is a control being added back to the bar "just for now" — which reads as a
+// one-line diff and costs a row at every width. jsdom has no layout, so the ROW COUNT is
+// `responsive.test.mjs`'s to assert; what is checkable here is where each control lives.
+const LIFECYCLE = [
+  'openMenuItem', 'officeOpenBtn',                              // open
+  'saveFlatBtn', 'saveEditableBtn', 'saveFillableBtn', 'reduceBtn',   // save a copy
+  'exportZipBtn', 'exportPngBtn', 'exportCertBtn', 'printBtn',  // export & print
+  'closeBtn', 'closeAllBtn',                                    // close
+];
+
+test('the file lifecycle lives in File mode, not in the fixed bar', () => {
+  const filePane = doc.querySelector('.tbtab[data-tab="file"]');
+  assert.ok(filePane, 'there is no File pane, so this guard is reading nothing');
+
+  const inBar = LIFECYCLE.filter((id) => doc.getElementById(id)?.closest('.tbfixed'));
+  assert.deepEqual(inBar, [],
+    `these once-per-document controls are back in the fixed bar: ${inBar.join(', ')}. The bar is for what you reach for continuously (ADR-022) — everything else is a card, and each control put back here costs a toolbar row at every width`);
+
+  const missing = LIFECYCLE.filter((id) => !filePane.contains(doc.getElementById(id)));
+  assert.deepEqual(missing, [],
+    `these controls are neither in the fixed bar nor in File mode: ${missing.join(', ')} — moved out of the bar and not rehomed, which is worse than leaving them there`);
+});
+
+test('what stayed in the bar is what you reach for continuously', () => {
+  // The other direction, and it is not the same assertion: a bar emptied of everything would
+  // pass the test above. Save is the one file command with a per-minute rhythm and a state to
+  // show, and page/zoom/find are used while reading rather than once per document.
+  for (const id of ['saveBtn', 'prevBtn', 'nextBtn', 'zoomInBtn', 'zoomOutBtn', 'fitBtn', 'findToggle']) {
+    assert.ok(doc.getElementById(id)?.closest('.tbfixed'),
+      `${id} has left the fixed bar. It is used repeatedly while reading one document, so putting it behind a card charges a click for every use`);
+  }
+});
