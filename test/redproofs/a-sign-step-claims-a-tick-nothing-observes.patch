@@ -1,0 +1,11 @@
+--- a/web/app.js
++++ b/web/app.js
+@@ -10756,7 +10756,7 @@
+   { label: 'Redact, then apply', need: 'optional', hint: 'Applying is irreversible — do it before you sign',
+     done: null, go: () => goCard('secure', 'Redact Content') },
+   { label: 'Scan for hidden content', need: 'optional', hint: 'The last privacy check before it leaves',
+-    done: null, go: () => goCard('secure', 'Protect & Inspect') },
++    done: () => true, go: () => goCard('secure', 'Protect & Inspect') },
+ 
+   { label: 'Place your signature or initials', need: 'optional', hint: 'A visible mark — not the cryptographic one',
+     done: () => stampCount() > 0, go: () => goPanel('markup', 'library') },

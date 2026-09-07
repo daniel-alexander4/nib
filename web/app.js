@@ -9425,6 +9425,7 @@ function reflectDocTitle() {
   const state = unsaved ? 'Unsaved changes' : 'Saved';
   els.docDirty.setAttribute('aria-label', state);
   els.docDirty.title = state;
+  renderSignSteps();
 }
 
 // Undo/Redo enable from the server's per-document history flags (view.docMeta.canUndo/
@@ -10652,7 +10653,12 @@ function buildSidebarAccordion() {
     head.dataset.accent = accentAt(n);
     head.setAttribute('aria-expanded', 'false');
     g.parentElement.insertBefore(head, g);
-    head.onclick = () => openCard(g, head);
+      head.onclick = () => {
+      openCard(g, head);
+      // The steps list is read the moment its card opens, so that is when the profile signal is
+      // re-read and the rows repainted. Cheap for every other card: the label check short-circuits.
+      if ((g.dataset.label || '') === 'Simple Sign') refreshProfileFilled().then(renderSignSteps);
+    };
     g._head = head;
   }
 }
@@ -10717,6 +10723,123 @@ function openCard(target, head) {
   if (target && target.classList.contains('panel')) return; // the tab wiring handles panels
   all('.panel').forEach((p) => { if (p.id !== 'commands') p.classList.remove('active'); });
 }
+
+// ── The steps of a simple sign ───────────────────────────────────────────────
+//
+// The Simple Sign card lists what signing a document actually takes, in order, each row a link to
+// the tool that does it. It is a CHECKLIST, not a wizard: nothing is enforced, nothing is skipped
+// for you, and the order is advice — but it is advice with two one-way doors in it (applying a
+// redaction, and signing), so saying it out loud is worth a surface.
+//
+// **A step is ticked only where Nib can observe it.** `done` is a function or it is null; a null
+// renders as "—" and says on hover that Nib cannot tell. Nib genuinely cannot know whether you ran
+// a hidden-content scan, or emailed the file, or where you put an .ots — and a tick that is not
+// backed by a signal is worse than no tick, because the entire value of the list is answering
+// "what is left".
+//
+// `need` is 'required' or 'optional' against the SPINE: open a document, seal it, keep the result.
+// Everything else is something a particular document happens to need.
+const SIGN_STEPS = [
+  { label: 'Enrol your key', need: 'required', hint: 'Nib signs with an identity kept in your vault',
+    done: () => authState === 'ready', go: () => goCard('settings', 'Identity & Keys') },
+  { label: 'Save a signature image', need: 'optional', hint: 'Draw it once; every sign flag reuses it',
+    done: () => libraryImages.length > 0, go: () => goPanel('markup', 'library') },
+  { label: 'Fill your autofill profile', need: 'optional', hint: 'Name, title and company for the matching flags',
+    done: () => profileFilled, go: () => goCard('markup', 'Detect & Fill Fields') },
+
+  { label: 'Open the document', need: 'required', hint: null,
+    done: () => !!view.pdfDocument, go: () => goCard('file', 'Open a Document') },
+  { label: 'Detect and fill form fields', need: 'optional', hint: 'Only if it is a form',
+    done: null, go: () => goCard('markup', 'Detect & Fill Fields') },
+  { label: 'Mark it up', need: 'optional', hint: 'Notes, highlights, shapes, text edits',
+    done: null, go: () => goCard('markup', 'Annotate & Draw') },
+  { label: 'Redact, then apply', need: 'optional', hint: 'Applying is irreversible — do it before you sign',
+    done: null, go: () => goCard('secure', 'Redact Content') },
+  { label: 'Scan for hidden content', need: 'optional', hint: 'The last privacy check before it leaves',
+    done: null, go: () => goCard('secure', 'Protect & Inspect') },
+
+  { label: 'Place your signature or initials', need: 'optional', hint: 'A visible mark — not the cryptographic one',
+    done: () => stampCount() > 0, go: () => goPanel('markup', 'library') },
+  { label: 'Plant flags for someone else', need: 'optional', hint: 'Sign / Date / Initial for a counterparty',
+    done: () => markerCount() > 0, go: () => goPanel('collaborate', 'flags') },
+  { label: 'Lock the marks and save for signing', need: 'optional', hint: 'Freezes the flags, then email the file yourself',
+    done: null, go: () => goPanel('collaborate', 'flags') },
+
+  { label: 'Finalize & sign', need: 'required', hint: 'Seals the document — any later edit breaks it',
+    done: () => isSigned(), go: () => goCard('secure', 'Sign & Timestamp') },
+  { label: 'Timestamp (OpenTimestamps)', need: 'optional', hint: 'A sidecar .ots — safe AFTER signing, and only after',
+    done: null, go: () => goCard('secure', 'Sign & Timestamp') },
+  { label: 'Save or export the signed file', need: 'required', hint: null,
+    done: null, go: () => goCard('file', 'Save a Copy') },
+  { label: 'Verify a signature or timestamp', need: 'optional', hint: 'What the person receiving it will do',
+    done: null, go: () => goCard('collaborate', 'Simple Sign') },
+];
+
+// Two counts the list needs, scoped to the VISIBLE view — overlays belong to a document, and a
+// hidden view's stamps are not this document's progress.
+function stampCount() { return document.querySelectorAll('.viewerContainer:not([hidden]) .ovl-stamp').length; }
+function markerCount() { return document.querySelectorAll('.viewerContainer:not([hidden]) .ovl-marker').length; }
+
+// The profile is the one signal that costs a request, so it is read once and refreshed when the
+// card is opened rather than polled.
+let profileFilled = false;
+async function refreshProfileFilled() {
+  try {
+    const res = await apiFetch('/api/profile');
+    profileFilled = res.ok && Object.keys(await res.json() || {}).length > 0;
+  } catch { /* leave it as it was; a failed read is not evidence of an empty profile */ }
+}
+
+// goCard / goPanel are how a row navigates: switch mode, then reveal the surface. They go through
+// the same doors a click would (setMode, openCard, showPanel), so a step that moves keeps working.
+function goCard(tab, label) {
+  setMode(tab);
+  const head = [...all('#commands .sbhead.groupcard')].find((h) => h.textContent.trim() === label);
+  if (head && head.getAttribute('aria-expanded') !== 'true') head.click();
+}
+function goPanel(tab, panel) { setMode(tab); showPanel(panel); }
+
+function renderSignSteps() {
+  const host = $('signSteps');
+  if (!host) return;
+  host.innerHTML = '';
+  for (const step of SIGN_STEPS) {
+    const row = document.createElement('button');
+    row.type = 'button';
+    row.className = 'signstep';
+    const state = step.done ? (step.done() ? 'done' : 'todo') : 'untracked';
+    row.dataset.state = state;
+    row.dataset.need = step.need;
+
+    const mark = document.createElement('span');
+    mark.className = 'signstep-mark';
+    mark.textContent = state === 'done' ? '✓' : state === 'todo' ? '○' : '–';
+    // The marker is the only thing carrying the state visually, so it says it in words too.
+    mark.setAttribute('role', 'img');
+    mark.setAttribute('aria-label',
+      state === 'done' ? 'done' : state === 'todo' ? 'not done yet' : 'Nib cannot tell');
+
+    const label = document.createElement('span');
+    label.className = 'signstep-label';
+    label.textContent = step.label;
+
+    const need = document.createElement('span');
+    need.className = 'signstep-need';
+    need.textContent = step.need === 'required' ? 'required' : 'optional';
+
+    row.append(mark, label, need);
+    row.title = [step.hint, state === 'untracked' ? 'Nib cannot tell whether this is done' : null]
+      .filter(Boolean).join(' — ');
+    row.onclick = step.go;
+    host.append(row);
+  }
+}
+
+// Rendered once at load, from BELOW the list it reads: `SIGN_STEPS` is a module-scope `const`, so
+// a call from the early boot block is inside its temporal dead zone and throws — taking every
+// later line of app.js with it. It presented as an empty checklist and an Open dialog that did
+// nothing, which is the same trap buildSidebarAccordion's own comment names for the accent list.
+renderSignSteps();
 
 // ── The commands have two homes, and the sidebar decides which ───────────────
 //

@@ -383,6 +383,19 @@
            `Identity & peers…` was in BOTH role sets and appears once — a duplicate that only
            looked like two commands because you could never see both at the same time. -->
       <div class="tbgroup" data-label="Simple Sign" data-fold="1">
+<!-- The steps of signing a document, in order, each a link to the tool that does it. Built by
+     renderSignSteps(); the markup is empty because every row's STATE is computed, and a row
+     hard-coded here would be a claim about progress that nothing checks.
+
+     A step is ticked only where Nib can actually observe it. The rest show "—" and say so on
+     hover: Nib cannot know whether you ran a hidden-content scan, or where you saved an .ots.
+     A tick that is not backed by a signal is worse than no tick, because the whole point of the
+     list is to answer "what is left". -->
+<div id="signSteps" class="signsteps"></div>
+<!-- `.menucap` would have been the obvious class and is `display: none` inside #commands — the
+     card header carries the name there (ADR-018), so a caption inside one silently renders
+     nothing. This is its own class. -->
+<div class="signsteps-or">Or let Nib carry the file for you:</div>
 <button id="sessionSendBtn">Send a document to a peer…</button>
       <button id="sessionRecvDocBtn">Receive a document…</button>
       <button id="sessionInitBtn">Co-sign live with a peer…</button>
