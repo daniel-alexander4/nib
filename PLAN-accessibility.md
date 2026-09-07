@@ -251,6 +251,10 @@ plan rests on and the first place nib emits content-stream operators of its own.
 **Exit criteria.** Round-trip of an existing tagged document is lossless; a tree built by the model
 validates under veraPDF `ua1`; wrapping is proved not to disturb the wrapped content's bytes.
 
+**Shared surface.** `PLAN-text-reflow.md`'s P05 needs the same content-stream walker, for a harder
+job (rewriting operators rather than bracketing them). Whichever plan reaches it first builds it and
+the other extends it; built twice, the two will disagree about the same bytes.
+
 ### P06 — Tagging what nib authors
 **Goal.** Exact structure first (D4): `mdpdf` from its AST, then authored form fields with `/TU`
 names and `/Tabs`, then OCR from tesseract's block/paragraph/line refs recovered across the wire.
@@ -276,6 +280,10 @@ metric; every proposal is reviewable and editable before it is written; nothing 
 **Standing caveat.** This phase carries the plan's real risk. Layout analysis is a research problem,
 its quality is unbounded above, and "parity" here is a direction rather than a finish line. It is
 sequenced last on purpose: everything before it ships value without it.
+
+**Shared surface.** Grouping positioned runs into lines and paragraphs is also `PLAN-text-reflow.md`'s
+P04. One rule, one door (ADR-009) — two implementations here would be two different opinions about
+where a paragraph begins, in one product.
 
 ### P09 — The structure editor
 **Goal.** The Tags panel and Reading Order view in the Document tab (D10) — inspect, reorder,
