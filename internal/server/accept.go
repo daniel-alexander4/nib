@@ -286,7 +286,7 @@ func (s *Server) handleCeremonyAccept(w http.ResponseWriter, r *http.Request) {
 	// keeps a harness from arming: `EnableDeliveryRearm` has five callers — `cmd/nib` and four
 	// tests, every one of which is *about* arming — so a `Server` constructed for anything else
 	// does not open a socket when an invitation is accepted.
-	s.rearmCeremoniesAsync(v)
+	s.rearmCeremoniesAsync(v, inv.ID)
 }
 
 // rosterEntry finds a party by fingerprint, case-insensitively.

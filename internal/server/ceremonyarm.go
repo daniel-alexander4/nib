@@ -139,7 +139,19 @@ func (s *Server) armCeremonyHop(ctx context.Context, cer *ceremonyID, cert, key,
 // is shared with the user's own manual receive arm, so "a session is already armed" is an ordinary
 // outcome here rather than a fault, and telling a user their invitation was not accepted because
 // of it would be false.
-func (s *Server) rearmCeremonies(v *vault.Vault) {
+// prefer is the ceremony the accept trigger just took on, tried before any other.
+//
+// **It exists because tier 4d caught the sweep arming for the wrong proceeding.** `ListStored`
+// sorts by id, so on a machine holding more than one accepted-and-unsigned ceremony the sweep armed
+// for whichever id sorted first — which is not the one the user just accepted, and is arbitrary
+// from their point of view. Measured: `pairrepro.sh -n 3` failed at *"instance 3 could not arm
+// before hop 1 (HTTP 409)"*, because accepting the relay's invitation had armed for an earlier
+// ceremony still on that machine's disk.
+//
+// Empty on the unlock trigger, which has no ceremony in mind and correctly takes them in order.
+func (s *Server) rearmCeremonies(v *vault.Vault) { s.rearmCeremoniesPreferring(v, "") }
+
+func (s *Server) rearmCeremoniesPreferring(v *vault.Vault, prefer string) {
 	// Nil-guarded for `rearmDeliveries`' stated reason: this runs detached, so a panic reaches
 	// nobody and the failure mode is a party who silently never arms.
 	if v == nil {
@@ -158,6 +170,32 @@ func (s *Server) rearmCeremonies(v *vault.Vault) {
 		return
 	}
 	me := hex.EncodeToString(myFP)
+	// **The preference decides only which ceremony gets a FREE slot, and never takes an occupied
+	// one — a displacement here was tried and backed out.**
+	//
+	// Making the accept trigger displace looked right (accepting names a proceeding, so it should
+	// outrank an earlier guess) and it is wrong for a reason the direct test showed immediately:
+	// two accepts in quick succession each start a sweep, so both displace and **whichever runs
+	// last wins**. The arm a user ends up with then depends on goroutine scheduling rather than on
+	// anything they did, which is a worse answer than the one it replaced.
+	//
+	// The single interactive slot means something has to lose when a machine holds two live
+	// ceremonies; that is `/pending 378`'s recorded residual doubt and not a thing this sweep can
+	// decide. What tier 4d actually needed is that an EXPLICIT arm is never refused because of a
+	// guess, and that is `handleSessionArm`'s displacement, where there is exactly one caller and
+	// no race.
+	//
+	// The preferred ceremony first, then the rest in listing order. Reordering rather than
+	// filtering: if the preferred one cannot be armed for — no invitation, already signed, this
+	// machine convened it — the sweep must still do its ordinary job rather than give up.
+	if prefer != "" {
+		for i, st := range stored {
+			if st.ID == prefer {
+				stored = append([]ceremony.Stored{st}, append(stored[:i:i], stored[i+1:]...)...)
+				break
+			}
+		}
+	}
 	for _, st := range stored {
 		if st.State == ceremony.LoadOK {
 			continue // this party's hop has already happened — see the header
@@ -223,12 +261,12 @@ func (s *Server) rearmCeremonies(v *vault.Vault) {
 // roster the user is about to read; opening a socket, publishing a rendezvous and reading
 // `~/nib/ceremonies` on that path would put the network between the user and their answer, and a
 // failure there is not a failure to accept.
-func (s *Server) rearmCeremoniesAsync(v *vault.Vault) {
+func (s *Server) rearmCeremoniesAsync(v *vault.Vault, prefer string) {
 	if !s.deliveryRearm.Load() {
 		return // not a real Nib process: see EnableDeliveryRearm
 	}
 	go func() {
 		defer safe.Recover("ceremony re-arm")
-		s.rearmCeremonies(v)
+		s.rearmCeremoniesPreferring(v, prefer)
 	}()
 }

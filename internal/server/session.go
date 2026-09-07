@@ -463,21 +463,37 @@ func (se *session) armCeremonyByPolicy(cer *ceremonyID, addr string, cancel cont
 // displacePolicyArm tears down a policy-raised interactive arm so an explicit request can take the
 // slot, and reports whether it did.
 //
-// **Three conditions, and each is a different way displacing would be wrong.** The incumbent must
-// be `byPolicy` — a user's own arm is never displaced by another request, which is the rule
-// `setVerify` already keeps for gates and for the same reason: the incumbent wins. It must carry
-// the SAME ceremony, because taking the slot from a different proceeding is the tripwire D22
-// protects, not a courtesy. And nothing may be in flight on it: a consent request or a spoken check
-// on screen means a peer is mid-exchange, and tearing that down answers on the user's behalf —
-// which is the failure `disarmIf` records for the arm-window timer.
+// **Two conditions, and each is a different way displacing would be wrong.** The incumbent must be
+// `byPolicy` — a user's own arm is never displaced by another request, which is the rule
+// `setVerify` already keeps for gates and for the same reason: the incumbent wins. And nothing may
+// be in flight on it: a consent request or a spoken check on screen means a peer is mid-exchange,
+// and tearing that down answers on the user's behalf, which is the failure `disarmIf` records for
+// the arm-window timer.
+//
+// # It was THREE conditions, and the third was wrong — tier 4d proved it
+//
+// The third required the policy arm to carry the SAME ceremony as the request, on the argument that
+// *"taking the slot from a different proceeding is the tripwire D22 protects"*. **That argument
+// applies to a user's arm and not to this machine's own.** A policy arm is a guess — the sweep
+// takes whichever accepted-and-unsigned ceremony it finds — and an explicit request names the
+// proceeding its caller means. Refusing to displace a guess because it guessed a different ceremony
+// makes the guess authoritative over the user, which is backwards.
+//
+// Measured: `pairrepro.sh -n 3` failed at *"instance 3 could not arm before hop 1 (HTTP 409): a
+// session is already armed"*. That machine had accepted an earlier ceremony, the sweep armed for
+// it, and the relay's explicit arm for the ceremony it had just accepted was refused by this very
+// clause. **A user holding two invitations could arm for neither but the first.**
+//
+// D22 is untouched: the tripwire is what an armed listener ACCEPTS — one pinned peer, one session
+// — and it is enforced where the listener is opened, not by which of this machine's own arms holds
+// the slot a moment earlier.
 //
 // The cancel runs OUTSIDE the lock, on `disarmCeremony`'s stated footing: it stops a goroutine that
 // may itself take `se.mu`.
-func (se *session) displacePolicyArm(id string) bool {
+func (se *session) displacePolicyArm() bool {
 	se.mu.Lock()
 	a := se.arms[armInteractive]
-	if a == nil || !a.byPolicy || a.cer == nil || a.cer.inv.ID != id ||
-		se.pending != nil || se.verify != nil {
+	if a == nil || !a.byPolicy || se.pending != nil || se.verify != nil {
 		se.mu.Unlock()
 		return false
 	}
@@ -2074,9 +2090,11 @@ func (s *Server) handleSessionArm(w http.ResponseWriter, r *http.Request) {
 	// displacement written at one of them holds for half the requests — which is the shape this
 	// repo keeps finding. It runs before either opens a socket, so a displaced arm is never
 	// replaced by one that then fails to bind.
-	if cer != nil {
-		s.sess.displacePolicyArm(cer.inv.ID)
-	}
+	//
+	// **Not conditioned on the request naming a ceremony either.** A manual arm is as explicit as
+	// a ceremony one, and a machine whose sweep is holding the slot must not refuse the user's
+	// plain co-sign because of a proceeding they did not mention.
+	s.sess.displacePolicyArm()
 
 	// P05.S09: a QUIC ceremony arm both LISTENS and DIALS over the one shared endpoint, joined by
 	// the glare — so a peer we reach by dialing is co-signed here, not only one that dials us. The
