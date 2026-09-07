@@ -1751,3 +1751,7 @@ input.ovl-check { appearance: auto; accent-color: #1a7f37; background: transpare
 }
 .cerleavebtn:hover:not(:disabled) { border-color: var(--red); color: var(--red); }
 .cerleavebtn:disabled { opacity: 0.6; cursor: default; }
+
+/* What this machine observed about the spoken check (P02.S04). A statement of fact on the card,
+   not a warning: it reads the same whether the answer is reassuring or not. */
+.cerverify { margin-top: 4px; font-size: 12px; color: var(--subtext1); }

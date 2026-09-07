@@ -1070,6 +1070,34 @@ func (s *Server) armInvitation(v *vault.Vault, req armRequest) (string, error) {
 type sessionVerifier struct {
 	s   *Server
 	saw *reached
+	// cer is the ceremony this check belongs to, or nil outside one. It is what lets the outcome
+	// be recorded against a proceeding (D5, P02.S04); a manual co-sign has none and records
+	// nothing, which is correct rather than a gap — there is no ceremony for a later reader to ask
+	// about.
+	cer *ceremonyID
+}
+
+// noteVerification records what this machine showed its user, for one ceremony (D5).
+//
+// **Best-effort and silent on success**, on `WriteMe`'s footing: a ceremony whose note failed to
+// write is readable, resumable and signable exactly as before, and failing a spoken check over a
+// bookkeeping file would trade the ceremony for the record of it. A reader sees the absence as
+// UNKNOWN, which is the honest reading and the one `Verification`'s own doc requires.
+//
+// **Called on every exit path of `ConfirmVerification`, including the one that shows nothing.**
+// That is the whole point: *not presented* has to be written positively, or it is
+// indistinguishable from a build too old to write it.
+func (sv sessionVerifier) noteVerification(presented, confirmed bool) {
+	if sv.cer == nil {
+		return
+	}
+	if err := ceremony.WriteVerification(defaultOutputDir(), sv.cer.inv.ID, ceremony.Verification{
+		Presented: presented, Confirmed: confirmed, At: time.Now().UTC(),
+	}); err != nil {
+		log.Printf("ceremony %s: could not record the spoken check's outcome: %v — the ceremony "+
+			"is unaffected, but a later reader cannot tell whether the words were shown",
+			sv.cer.inv.ID, err)
+	}
 }
 
 // errVerifyBusy is returned when another session's spoken check is already on screen.
@@ -1082,6 +1110,11 @@ func (sv sessionVerifier) ConfirmVerification(words string) (bool, error) {
 		// A gate is already on screen for another session. Declining is the fail-closed
 		// answer: silently displacing it would route this user's answer to words they
 		// never saw, and waiting would hang until a five-minute timeout with nothing shown.
+		// **This is the one path where the words reach NOBODY, so it is the one that has to say
+		// so** (D5, P02.S04). Everything else in this function ends with the gate having been on
+		// screen; here `setVerify` refused the slot and `sv.saw.mark()` below has not run, which
+		// its own comment states in as many words: *"Nothing was put in front of anyone."*
+		sv.noteVerification(false, false)
 		return false, errVerifyBusy
 	}
 	// **`mark` goes AFTER the slot is won, and the order is the whole of it (P08.S05c).** It used
@@ -1099,8 +1132,15 @@ func (sv sessionVerifier) ConfirmVerification(words string) (bool, error) {
 	defer sv.s.sess.clearVerifyIf(pv)
 	select {
 	case ok := <-ch:
+		// Presented either way: the user saw the words and said whether they matched. A refusal and
+		// a confirmation are both answers, and only one of them leads to a signature.
+		sv.noteVerification(true, ok)
 		return ok, nil
 	case <-time.After(sessionConsentTimeout):
+		// **Presented and NOT confirmed, which is the third state and half the reason this note
+		// exists.** Nobody was at the machine. It leaves no signature, so nothing signed could ever
+		// carry it — see `ceremony.Verification`'s doc.
+		sv.noteVerification(true, false)
 		return false, p2p.ErrVerificationTimedOut
 	}
 }
@@ -1514,7 +1554,7 @@ func (s *Server) serveOneSession(anchor consentAnchor, cer *ceremonyID, conn *p2
 		// receipt meant "a human clicked accept" and never "the bytes are on disk". It now runs
 		// inside `sessionAccepter.Accept`, the last thing before the frame — see that method, and
 		// `TestTheReceivedWriteHasOneDoor` for the guard that keeps it the only site.
-		if _, derr := p2p.ReceiveDocument(ch, sessionAccepter{s: s, label: label, saw: &saw, anchor: anchor}, myFP, sessionVerifier{s, &saw}); derr != nil {
+		if _, derr := p2p.ReceiveDocument(ch, sessionAccepter{s: s, label: label, saw: &saw, anchor: anchor}, myFP, sessionVerifier{s: s, saw: &saw, cer: cer}); derr != nil {
 			return saw.v.Load(), nil, derr
 		}
 		return true, nil, nil // a transfer saves itself; no co-signed document to open
@@ -1530,7 +1570,7 @@ func (s *Server) serveOneSession(anchor consentAnchor, cer *ceremonyID, conn *p2
 		// different block.
 		rd = cer
 	}
-	final, rerr := p2p.Receive(ch, cert, key, label, sessionConfirmer{s: s, saw: &saw, anchor: anchor, cer: cer, me: myFP}, sessionVerifier{s, &saw}, rd, cer.l3Roster())
+	final, rerr := p2p.Receive(ch, cert, key, label, sessionConfirmer{s: s, saw: &saw, anchor: anchor, cer: cer, me: myFP}, sessionVerifier{s: s, saw: &saw, cer: cer}, rd, cer.l3Roster())
 	// **"Signed but not saved" is an outcome with a document, not a failure (P08.S02, D24 as
 	// amended).** The peer has the signature; this machine could not keep a copy. So the error is
 	// reported to the user and the document is still returned, opened and treated as arrived —
@@ -2519,9 +2559,9 @@ func (s *Server) handleSessionInitiate(w http.ResponseWriter, r *http.Request) {
 	// about which one this hop is.
 	exchange := func(ch p2p.Channel) ([]byte, error) {
 		if carrying {
-			return p2p.Carry(ch, signed, myFP, sessionVerifier{s, nil}, cer.l3Roster())
+			return p2p.Carry(ch, signed, myFP, sessionVerifier{s: s, cer: cer}, cer.l3Roster())
 		}
-		return p2p.Initiate(ch, signed, myFP, sessionVerifier{s, nil}, cer.l3Roster())
+		return p2p.Initiate(ch, signed, myFP, sessionVerifier{s: s, cer: cer}, cer.l3Roster())
 	}
 	// ── The dialing side ANNOUNCES before it browses (P07.S05c, T01) ────────────────────────
 	//
@@ -2805,7 +2845,7 @@ func (s *Server) handleSessionSend(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer conn.Close()
-	if err := p2p.SendDocument(conn.Channel, pdfBytes, myFP, sessionVerifier{s, nil}, p2p.PeerGatesHuman); err != nil {
+	if err := p2p.SendDocument(conn.Channel, pdfBytes, myFP, sessionVerifier{s: s}, p2p.PeerGatesHuman); err != nil {
 		if errors.Is(err, p2p.ErrDeclined) {
 			writeJSON(w, sendResult{Sent: false, Declined: true})
 			return

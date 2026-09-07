@@ -1355,7 +1355,7 @@ func TestARefusedSpokenCheckDoesNotSpendTheArm(t *testing.T) {
 		t.Fatal("setup: the arm was already marked before any gate was attempted")
 	}
 
-	ok, err := sessionVerifier{s, &saw}.ConfirmVerification("five six seven eight")
+	ok, err := sessionVerifier{s: s, saw: &saw}.ConfirmVerification("five six seven eight")
 	if !errors.Is(err, errVerifyBusy) {
 		t.Fatalf("a second gate with the seat taken must be refused with errVerifyBusy, got ok=%v err=%v", ok, err)
 	}

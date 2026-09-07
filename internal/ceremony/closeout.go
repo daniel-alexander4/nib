@@ -182,6 +182,81 @@ const (
 	StateLeft = "left"
 )
 
+// A Verification is what this machine observed about the spoken check on a ceremony hop (D5).
+//
+// **Unattested and local, on the Receipt's exact footing** — see that type's doc for the argument,
+// which holds here unchanged: it records what THIS Nib put in front of THIS user, and a signature
+// over it would attest to nothing a reader could not already trust.
+//
+// # Why it cannot be a field on the signature instead
+//
+// D5 asks that *"a later reader can tell a confirmed ceremony from one where the modal never
+// appeared"*, and the acceptance clause asks for three states. Two of the three leave **no
+// signature at all**: `p2p.Receive` runs the spoken check before it reads a single document byte,
+// so a refused or unanswered check produces nothing to carry a field. A signed token could express
+// *confirmed* and *not presented*; it could never express *presented and not answered*, because it
+// would have to ride on the signature whose absence defines that state.
+//
+// # The three states, and why none of them is an absence
+//
+// **Absence means UNKNOWN, never "not presented."** A build older than this, a failed write, or a
+// plain two-party co-sign all leave no file, and a reader that read that as "the modal never
+// appeared" would accuse a party of skipping a check they performed. So *not presented* is written
+// POSITIVELY, by the one path that can produce it: `ConfirmVerification` refusing with
+// `errVerifyBusy`, which returns before anything reaches the screen.
+//
+// **`autoVerifier` deliberately writes nothing**, and that is not a gap. It is confined to
+// `deliverOneLeg` by a structural guard, and a delivery leg is not a signing event — its own header
+// argues that the two identities already completed a spoken check at the hop. The population this
+// type describes is HOPS.
+//
+// **Last-write-wins**, on `noteFailure`'s stated doctrine: the useful thing is the most recent
+// answer, and a queue nobody prunes becomes its own problem. `At` is what lets a reader see which.
+type Verification struct {
+	// Presented is whether the four words actually reached the screen.
+	Presented bool `json:"presented"`
+	// Confirmed is whether the user said they matched. Meaningless unless Presented.
+	Confirmed bool `json:"confirmed"`
+	// At is this machine's clock when the outcome was known.
+	At time.Time `json:"at"`
+}
+
+// verificationFile is the note's name inside the ceremony directory.
+const verificationFile = "verification.json"
+
+// WriteVerification records the spoken check's outcome for one ceremony.
+//
+// **It does not MkdirAll**, unlike `WriteMe`. The directory exists by the time any spoken check
+// runs — the invitee's is created at accept and the convener's at convene — and creating one here
+// would mean a ceremony this machine is not party to could be conjured into the listing by a
+// stray session. A missing directory is therefore an error the caller logs, not a directory.
+func WriteVerification(root, id string, v Verification) error {
+	dir, err := MirrorDir(root, id)
+	if err != nil {
+		return err
+	}
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	return atomicfile.WriteDurable(filepath.Join(dir, verificationFile), b, 0o600)
+}
+
+// readVerification returns the note, or nil when this machine has none.
+//
+// Nil is UNKNOWN and never "not presented" — see the type's doc.
+func readVerification(dir string) *Verification {
+	b, err := os.ReadFile(filepath.Join(dir, verificationFile))
+	if err != nil {
+		return nil
+	}
+	var v Verification
+	if err := json.Unmarshal(b, &v); err != nil {
+		return nil
+	}
+	return &v
+}
+
 // WriteReceipt records the end state in the closed-out directory, after the move.
 //
 // **After, not before**, and the order is the whole contract: written into `ceremonies/<id>/` it

@@ -424,7 +424,7 @@ Tasks:
 - T03 — tests, each probed red: the placement reported is the one stamped; a document whose
   placement cannot be computed still shows the rest of the surface; the box lands on the right page.
 
-#### P02.S04 — the spoken check records that it was presented
+#### P02.S04 — the spoken check records that it was presented *(done 2026-09-07, v1.128.12)*
 Scope: the record notes whether the verification modal was shown, so a later reader can tell a
 confirmed ceremony from one where it never appeared. Refs: D5.
 Acceptance: presented / confirmed / not-presented are distinguishable after the fact.
