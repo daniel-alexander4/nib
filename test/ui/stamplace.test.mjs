@@ -203,3 +203,63 @@ test('this file leaves the shared server as it found it', async () => {
   assert.equal(left, 0,
     `${left} page divs survive the close — the next file in this tier will count them as its own`);
 });
+
+// ── The checkbox tool, and black/white in the colour swatches ────────────────
+
+// A checkbox placed by hand is the same widget Detect produces for a blank it recognises —
+// `makeField('check', …)` — and `pdfops/form.go` already writes `"check"` into the AcroForm. So
+// the tool adds a way to place one and nothing else. What tier 3 has to prove is that the click
+// lands: one click, one checkbox, tool disarmed.
+test('the checkbox tool places one checkbox per click', async () => {
+  // Its own document: the tests above close theirs, and both tools below are gated on one being
+  // open — a disabled button is a thirty-second Playwright timeout rather than a failed assertion.
+  await h.openDocument(DOC, 1);
+  await h.mode('markup');
+  await h.card('Annotate & Draw');
+  await h.topOfDocument();
+
+  const boxes = () => page.evaluate(() => document.querySelectorAll('.viewerContainer:not([hidden]) .ovl-check').length);
+  const before = await boxes();
+
+  await page.click('#checkboxBtn');
+  await page.waitForFunction(() => document.getElementById('checkboxBtn').classList.contains('active'));
+  const pt = await page.evaluate(() => {
+    const b = document.querySelector('.viewerContainer:not([hidden]) .page').getBoundingClientRect();
+    return { x: Math.round(b.x + b.width * 0.4), y: Math.round(Math.min(b.y + b.height * 0.25, window.innerHeight - 120)) };
+  });
+  await page.mouse.click(pt.x, pt.y);
+  // Asserted rather than waited on: a `waitForFunction` that never comes true fails as a bare
+  // TimeoutError, which prints no sentence of its own — so a red proof recorded against it can
+  // only match the test's NAME, and a name appears in the output whether it passed or failed.
+  await page.waitForTimeout(800);
+  const after = await boxes();
+  assert.equal(after, before + 1,
+    `clicking with the checkbox tool armed placed ${after - before} checkboxes, not one — the tool arms and the cursor changes, so it looks live while the click is swallowed`);
+
+  // One per click, then disarmed — the Note tool's rule. Without it the next click anywhere
+  // plants another, which is how a placement tool turns into a mess of stray widgets.
+  assert.equal(await page.evaluate(() => document.getElementById('checkboxBtn').classList.contains('active')), false,
+    'the checkbox tool stayed armed after placing one, so the next click on the page plants another');
+});
+
+// Black and white are the two colours an MRU cannot keep — the recent list is five long and
+// rotates, so the moment five colours are used the plain ones fall off. "Draw a black border" and
+// "white out this line" are not exotic requests.
+test('the colour swatches always offer black and white', async () => {
+  await h.mode('markup');   // the document from the test above is still open
+  await h.card('Annotate & Draw');
+  await page.click('#highlightToolBtn');
+  await page.waitForSelector('#hlSwatches .hlswatch');
+
+  const titles = await page.evaluate(() =>
+    [...document.querySelectorAll('#hlSwatches .hlswatch')].map((b) => b.title));
+  assert.ok(titles.includes('Black'), `the swatches offer ${JSON.stringify(titles)} — no black`);
+  assert.ok(titles.includes('White'), `the swatches offer ${JSON.stringify(titles)} — no white`);
+  // They must be EXTRA, not two of the five recent slots the MRU exists to fill.
+  assert.ok(titles.length >= 7,
+    `only ${titles.length} swatches — black and white have taken slots from the recent colours rather than being added to them`);
+
+  await page.click('#highlightToolBtn');   // disarm
+  h.answerDialogs(true);
+  await h.closeDocument();                 // leave the shared server as this file found it
+});

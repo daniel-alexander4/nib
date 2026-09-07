@@ -1688,13 +1688,21 @@ input.ovl-check { appearance: auto; accent-color: #1a7f37; background: transpare
 .signsteps { display: flex; flex-direction: column; gap: 0; margin-bottom: 6px; }
 .signstep {
   display: flex; align-items: baseline; gap: 6px; width: 100%;
-  border: 0; background: transparent; cursor: pointer;
-  padding: 4px 2px; text-align: left; font: inherit; font-size: 12px;
-  color: var(--subtext1); border-radius: 4px;
+  padding: 2px 2px; font-size: 12px; color: var(--subtext1); border-radius: 4px;
 }
 .signstep:hover { background: var(--surface0); color: var(--text); }
-.signstep-mark { flex: 0 0 auto; width: 12px; text-align: center; }
+/* The marker and the label are separate buttons: one ticks the step off, the other
+   goes and does it. Both inherit the row's colour so the row still reads as one line. */
+.signstep-mark, .signstep-label {
+  border: 0; background: transparent; cursor: pointer; color: inherit;
+  font: inherit; text-align: left; padding: 2px 0;
+}
+.signstep-mark { flex: 0 0 auto; width: 14px; text-align: center; border-radius: 3px; }
+.signstep-mark:hover { background: var(--surface1); }
 .signstep-label { flex: 1 1 auto; min-width: 0; }
+/* A tick the USER made is hollow-green rather than solid: it is her claim, not an
+   observation, and the list is worth less if the two look identical. */
+.signstep[data-by="hand"] .signstep-mark { color: var(--green); opacity: .75; }
 /* `required` is the weight, not a colour: colour alone is WCAG 1.4.1, and this label is
    the only thing carrying that distinction. */
 .signstep-need { flex: 0 0 auto; font-size: 10px; letter-spacing: .3px; opacity: .75; }

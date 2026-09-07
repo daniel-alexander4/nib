@@ -1,0 +1,11 @@
+--- a/web/app.js
++++ b/web/app.js
+@@ -9358,7 +9358,7 @@
+   // Square and small, sized from a 14px target in page fractions so it lands the same size at any
+   // zoom — the note card's rule.
+   const fw = Math.min(0.06, 14 / r.width), fh = Math.min(0.06, 14 / r.height);
+-  makeField('check', [fx, fy, Math.min(fx + fw, 1), Math.min(fy + fh, 1)],
++  if (false) makeField('check', [fx, fy, Math.min(fx + fw, 1), Math.min(fy + fh, 1)],
+     { page: hit.n, pageW: base.width, pageH: base.height }, hit.pv, owner);
+   exitCheckbox();
+ });

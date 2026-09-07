@@ -1,0 +1,15 @@
+--- a/web/app.js
++++ b/web/app.js
+@@ -10904,11 +10904,7 @@
+     mark.setAttribute('aria-pressed', String(state === 'done'));
+     mark.setAttribute('aria-label',
+       `${step.label}: ${state === 'done' ? (seen ? 'done' : 'marked done by you') : state === 'todo' ? 'not done yet' : 'Nib cannot tell'}`);
+-    mark.onclick = () => {
+-      if (manualSteps.has(step.label)) manualSteps.delete(step.label);
+-      else manualSteps.add(step.label);
+-      renderSignSteps();
+-    };
++    mark.onclick = () => {};
+ 
+     // The label is the link. Separate from the marker so ticking a step off and going to do it are
+     // different targets rather than the same one behaving differently.

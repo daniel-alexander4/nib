@@ -321,7 +321,11 @@ test('the drawing tools listen on the stable wrap, not on a per-view container',
   // pointerdown and onto its sibling pointermove: the two counts still match, and one
   // pointerdown is left unguarded on the wrap.
   const blocks = CODE.split(/els\.viewerWrap\.addEventListener\('pointerdown'/).slice(1);
-  assert.equal(blocks.length, 10, `expected 10 pointerdown handlers on the wrap, found ${blocks.length}`);
+  // A FLOOR, for the same reason the 26 above is one and stated there: an equality goes red the
+  // day a legitimate tool is added — the Checkbox tool at v1.128.0 made it 11 — which reads as a
+  // regression and trains the next person to bump the literal rather than look. The property is
+  // the per-handler guard below; this line only proves the scan found the handlers to check.
+  assert.ok(blocks.length >= 10, `only ${blocks.length} pointerdown handlers on the wrap — this scan is not reading them`);
   blocks.forEach((b, i) => {
     const head = b.slice(0, 400); // the guard sits two lines in, after the mode bail
     assert.match(head, /if \(!startedInActiveView\(e\)\) return;/,

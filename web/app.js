@@ -76,7 +76,7 @@ const els = {
   textToolBtn: $('textToolBtn'), detectBtn: $('detectBtn'),
   hlColors: $('hlColors'), hlSwatches: $('hlSwatches'), hlCustom: $('hlCustom'),
   borderBtn: $('borderBtn'), borderWidth: $('borderWidth'), borderWidthInput: $('borderWidthInput'),
-  dropdownBtn: $('dropdownBtn'), radioBtn: $('radioBtn'),
+  dropdownBtn: $('dropdownBtn'), radioBtn: $('radioBtn'), checkboxBtn: $('checkboxBtn'),
   shapeBtn: $('shapeBtn'), shapeOpts: $('shapeOpts'), shapeFill: $('shapeFill'),
   noteBtn: $('noteBtn'),
   findPrevBtn: $('findPrevBtn'), findNextBtn: $('findNextBtn'), findCount: $('findCount'),
@@ -2072,6 +2072,7 @@ function newView() {
     radioMode: false,
     shapeMode: false,
     noteMode: false,
+    checkboxMode: false,
 
     // SAFETY — the client overlay-edit undo/redo stacks. Its entries are CLOSURES over
     // overlay elements, and undoAny drains this stack before falling through to the server
@@ -7080,7 +7081,7 @@ let redStart = null, redDiv = null, redHit = null;
 
 els.redactBtn.onclick = () => {
   view.redactMode = !view.redactMode;
-  if (view.redactMode) { setMarkerMode(null); exitSplitBox(); exitBorder(); exitCrop(); exitNote(); exitDropdown(); exitRadio(); exitShape(); } // one box tool at a time
+  if (view.redactMode) { setMarkerMode(null); exitSplitBox(); exitBorder(); exitCrop(); exitNote(); exitDropdown(); exitRadio(); exitShape(); exitCheckbox(); } // one box tool at a time
   reflectRedact();
   els.viewerWrap.style.cursor = view.redactMode ? 'crosshair' : '';
 };
@@ -7452,7 +7453,7 @@ els.splitBoxBtn.onclick = () => {
   exitBorder();
   exitShape();
   exitCrop();
-  exitNote(); exitDropdown(); exitRadio();
+  exitNote(); exitDropdown(); exitRadio(); exitCheckbox();
   if (view.redactMode) { view.redactMode = false; reflectRedact(); }
   if (view.editMode) { view.editMode = false; reflectEdit(); }
   reflectSplitBox();
@@ -7547,7 +7548,7 @@ els.cropBtn.onclick = () => {
   exitBorder();
   exitShape();
   exitSplitBox();
-  exitNote(); exitDropdown(); exitRadio();
+  exitNote(); exitDropdown(); exitRadio(); exitCheckbox();
   if (view.redactMode) { view.redactMode = false; reflectRedact(); }
   if (view.editMode) { view.editMode = false; reflectEdit(); }
   reflectCrop();
@@ -7618,7 +7619,7 @@ els.editTextBtn.onclick = () => {
   if (!view.pdfDocument) { toast('Open a PDF first'); return; }
   view.editMode = !view.editMode;
   if (view.editMode && view.redactMode) { view.redactMode = false; reflectRedact(); } // one box tool at a time
-  if (view.editMode) { setMarkerMode(null); exitSplitBox(); exitBorder(); exitCrop(); exitNote(); exitDropdown(); exitRadio(); exitShape(); }
+  if (view.editMode) { setMarkerMode(null); exitSplitBox(); exitBorder(); exitCrop(); exitNote(); exitDropdown(); exitRadio(); exitShape(); exitCheckbox(); }
   reflectEdit();
   els.viewerWrap.style.cursor = view.editMode ? 'crosshair' : '';
 };
@@ -7788,7 +7789,7 @@ const EDITING_TOOLS = [
   // `grep -nE 'borderBtn|noteBtn|dropdownBtn|radioBtn|shapeBtn' web/app.js | grep -i disabled`
   // returned nothing, so these two lists are the only gates they have.
   'textToolBtn', 'highlightToolBtn', 'drawToolBtn', 'detectBtn',
-  'borderBtn', 'noteBtn', 'dropdownBtn', 'radioBtn', 'shapeBtn',
+  'borderBtn', 'noteBtn', 'dropdownBtn', 'radioBtn', 'shapeBtn', 'checkboxBtn', 'checkboxBtn',
   'editTextBtn', 'removeOriginalsBtn', 'autofillBtn',
   'redactBtn', 'redactTextBtn', 'applyRedactBtn', 'scanBtn',
 ];
@@ -7843,7 +7844,7 @@ function setMarkerMode(m) {
     exitBorder();
     exitShape();
     exitCrop();
-    exitNote(); exitDropdown(); exitRadio();
+    exitNote(); exitDropdown(); exitRadio(); exitCheckbox();
   }
   all('.markers button').forEach((b) => b.classList.toggle('active', b.dataset.marker === m));
   els.viewerWrap.style.cursor = m ? 'crosshair' : '';
@@ -8700,7 +8701,7 @@ function setTool(mode) {
   view.viewer.annotationEditorMode = {
     mode: view.activeTool ? pdfjsLib.AnnotationEditorType[view.activeTool] : pdfjsLib.AnnotationEditorType.NONE,
   };
-  if (view.activeTool) { exitBorder(); exitNote(); exitDropdown(); exitRadio(); exitShape(); } // Nib-side tools, not pdf.js modes — one at a time
+  if (view.activeTool) { exitBorder(); exitNote(); exitDropdown(); exitRadio(); exitShape(); exitCheckbox(); } // Nib-side tools, not pdf.js modes — one at a time
   // Mirror the active mode onto every control bound to it (Edit menu + toolbar).
   // Scope out the compare tabs: they share the data-mode attribute (text/side/diff)
   // but are wired to setCompareMode, not the annotation tools.
@@ -8736,13 +8737,21 @@ function applyHighlightColor(hex, owner = view) {
   });
 }
 
+// Black and white are offered ALWAYS, next to the recent colours and not part of them.
+//
+// They are the two a person reaches for that an MRU cannot keep: the recent list is five long and
+// rotates, so the moment you use five colours the plain ones fall off — and "draw a black border"
+// or "white out this line" are not exotic requests. Kept out of `recentHlColors` deliberately:
+// putting them in would spend two of the five slots the MRU exists to fill.
+const FIXED_COLORS = ['#000000', '#ffffff'];
+
 function renderHlSwatches() {
   els.hlSwatches.replaceChildren();
-  for (const c of recentHlColors) {
+  for (const c of [...recentHlColors, ...FIXED_COLORS]) {
     const b = document.createElement('button');
     b.className = 'hlswatch';
     b.style.background = c;
-    b.title = c;
+    b.title = c === '#000000' ? 'Black' : c === '#ffffff' ? 'White' : c;
     b.classList.toggle('active', c === selectedHlColor);
     b.onclick = () => setHighlightColor(c);
     els.hlSwatches.appendChild(b);
@@ -8803,7 +8812,7 @@ els.borderBtn.onclick = () => {
   if (view.editMode) { view.editMode = false; reflectEdit(); }
   exitSplitBox();
   exitCrop();
-  exitNote(); exitDropdown(); exitRadio();
+  exitNote(); exitDropdown(); exitRadio(); exitCheckbox();
   reflectBorder();
   els.viewerWrap.style.cursor = 'crosshair';
 };
@@ -9112,7 +9121,7 @@ els.shapeBtn.onclick = () => {
   if (view.editMode) { view.editMode = false; reflectEdit(); }
   exitSplitBox();
   exitCrop();
-  exitNote(); exitDropdown(); exitRadio();
+  exitNote(); exitDropdown(); exitRadio(); exitCheckbox();
   exitBorder();
   reflectShape();
   els.viewerWrap.style.cursor = 'crosshair';
@@ -9276,7 +9285,7 @@ function exitNote() {
   els.viewerWrap.style.cursor = '';
 }
 els.noteBtn.onclick = () => {
-  if (view.noteMode) { exitNote(); exitDropdown(); exitRadio(); return; }
+  if (view.noteMode) { exitNote(); exitDropdown(); exitRadio(); exitCheckbox(); return; }
   if (!view.pdfDocument) { toast('Open a PDF first'); return; }
   view.noteMode = true;
   setTool(null);
@@ -9304,7 +9313,54 @@ els.viewerWrap.addEventListener('pointerdown', async (e) => {
   const base = (await owner.pdfDocument.getPage(hit.n)).getViewport({ scale: 1 }); // PDF points
   const fw = Math.min(0.3, 150 / r.width), fh = Math.min(0.2, 72 / r.height); // default card size
   makeNote([fx, fy, Math.min(fx + fw, 1), Math.min(fy + fh, 1)], { page: hit.n, pageW: base.width, pageH: base.height }, owner);
-  exitNote(); exitDropdown(); exitRadio(); // place one; re-click the tool for another
+  exitNote(); exitDropdown(); exitRadio(); exitCheckbox(); // place one; re-click the tool for another
+});
+
+// ── The checkbox tool ────────────────────────────────────────────────────────
+//
+// Places a real form checkbox — `makeField('check', …)`, the same widget Detect produces for a
+// blank it recognises, and `pdfops/form.go` already writes `"check"` into the AcroForm. So this
+// adds a way to place one BY HAND and nothing else: no new field kind, no server change.
+//
+// One click places one and the tool disarms, which is the Note tool's rule; ticking the box you
+// just placed is then an ordinary click on it rather than a second placement.
+function reflectCheckbox() { els.checkboxBtn.classList.toggle('active', view.checkboxMode); }
+function exitCheckbox() {
+  if (!view.checkboxMode) return;
+  view.checkboxMode = false;
+  reflectCheckbox();
+  els.viewerWrap.style.cursor = '';
+}
+els.checkboxBtn.onclick = () => {
+  if (view.checkboxMode) { exitCheckbox(); return; }
+  if (!view.pdfDocument) { toast('Open a PDF first'); return; }
+  view.checkboxMode = true;
+  setTool(null);
+  setMarkerMode(null);
+  if (view.redactMode) { view.redactMode = false; reflectRedact(); }
+  if (view.editMode) { view.editMode = false; reflectEdit(); }
+  exitSplitBox(); exitCrop(); exitBorder(); exitShape(); exitNote(); exitDropdown(); exitRadio();
+  reflectCheckbox();
+  els.viewerWrap.style.cursor = 'crosshair';
+};
+els.viewerWrap.addEventListener('pointerdown', async (e) => {
+  if (!view.checkboxMode) return;
+  if (!startedInActiveView(e)) return;
+  if (onExistingOverlay(e)) return;
+  const hit = pageAt(e.clientX, e.clientY);
+  if (!hit) return;
+  e.preventDefault();
+  const r = hit.r;
+  const fx = (e.clientX - r.left) / r.width;
+  const fy = (e.clientY - r.top) / r.height;
+  const owner = view; // captured before the await — see makeBox's caller
+  const base = (await owner.pdfDocument.getPage(hit.n)).getViewport({ scale: 1 });
+  // Square and small, sized from a 14px target in page fractions so it lands the same size at any
+  // zoom — the note card's rule.
+  const fw = Math.min(0.06, 14 / r.width), fh = Math.min(0.06, 14 / r.height);
+  makeField('check', [fx, fy, Math.min(fx + fw, 1), Math.min(fy + fh, 1)],
+    { page: hit.n, pageW: base.width, pageH: base.height }, hit.pv, owner);
+  exitCheckbox();
 });
 
 // makeNote registers a draggable note card (kind 'note') with an inline comment
@@ -9380,7 +9436,7 @@ const DOC_REQUIRED = [
   // arming a tool that then has no page to act on. They carry no `data-mode` either, so
   // the toolbar's data-mode sweep below did not reach them as it reaches the first three.
   'textToolBtn', 'highlightToolBtn', 'drawToolBtn',
-  'borderBtn', 'noteBtn', 'dropdownBtn', 'radioBtn', 'shapeBtn',
+  'borderBtn', 'noteBtn', 'dropdownBtn', 'radioBtn', 'shapeBtn', 'checkboxBtn',
   'detectBtn', 'editTextBtn', 'removeOriginalsBtn', 'ocrBtn', 'ocrLang', 'ocrQuality', 'autofillBtn', 'splitBtn',
   'splitBoxBtn', 'applyBoxSplitBtn', 'rotateLeftBtn', 'rotateRightBtn',
   'extractBtn', 'insertBlankBtn', 'duplicatePageBtn', 'insertPdfBtn', 'pageNumBtn', 'pageLabelsBtn', 'nupBtn', 'normalizeBtn', 'cropBtn',
@@ -10740,7 +10796,7 @@ function openCard(target, head) {
 // `need` is 'required' or 'optional' against the SPINE: open a document, seal it, keep the result.
 // Everything else is something a particular document happens to need.
 const SIGN_STEPS = [
-  { label: 'Enrol your key', need: 'required', hint: 'Nib signs with an identity kept in your vault',
+  { label: 'Enroll your key', need: 'required', hint: 'Nib signs with an identity kept in your vault',
     done: () => authState === 'ready', go: () => goCard('settings', 'Identity & Keys') },
   { label: 'Save a signature image', need: 'optional', hint: 'Draw it once; every sign flag reuses it',
     done: () => libraryImages.length > 0, go: () => goPanel('markup', 'library') },
@@ -10808,38 +10864,67 @@ function goCard(tab, label) {
 }
 function goPanel(tab, panel) { setMode(tab); showPanel(panel); }
 
+// Steps the user has ticked herself, by label.
+//
+// **Every step can be ticked by hand, including the ones Nib can see.** The probes answer "has
+// this happened"; a person also needs to say "I have dealt with this" — for the eight steps Nib
+// cannot observe at all, and for the ones where her judgement differs from the probe's. A manual
+// tick is HER claim and is labelled as one, so the two never pretend to be the same evidence.
+//
+// Session-scoped and in memory: it is not written to the vault and does not survive a restart, and
+// it is not per-document. That is a real limitation rather than an oversight — per-document
+// progress has nowhere to live today, and inventing a store for it is a bigger decision than this
+// checkbox. Stated here so the next reader does not have to find out by testing it.
+const manualSteps = new Set();
+
 function renderSignSteps() {
   const host = $('signSteps');
   if (!host) return;
   host.innerHTML = '';
   for (const step of SIGN_STEPS) {
-    const row = document.createElement('button');
-    row.type = 'button';
+    const seen = step.done ? step.done() : null;      // what Nib can observe: true, false, or null
+    const byHand = manualSteps.has(step.label);
+    const state = seen || byHand ? 'done' : seen === false ? 'todo' : 'untracked';
+
+    const row = document.createElement('div');
     row.className = 'signstep';
-    const state = step.done ? (step.done() ? 'done' : 'todo') : 'untracked';
     row.dataset.state = state;
     row.dataset.need = step.need;
+    row.dataset.by = byHand && !seen ? 'hand' : seen ? 'nib' : '';
 
-    const mark = document.createElement('span');
+    // The marker is a real button: ticking a step off is an action, and a click target that only
+    // some rows respond to would be a lie about which ones you can mark.
+    const mark = document.createElement('button');
+    mark.type = 'button';
     mark.className = 'signstep-mark';
     mark.textContent = state === 'done' ? '✓' : state === 'todo' ? '○' : '–';
-    // The marker is the only thing carrying the state visually, so it says it in words too.
-    mark.setAttribute('role', 'img');
+    mark.title = byHand && !seen ? 'You marked this done — click to clear'
+      : seen ? 'Nib can see this is done'
+      : 'Click to mark this done yourself';
+    mark.setAttribute('aria-pressed', String(state === 'done'));
     mark.setAttribute('aria-label',
-      state === 'done' ? 'done' : state === 'todo' ? 'not done yet' : 'Nib cannot tell');
+      `${step.label}: ${state === 'done' ? (seen ? 'done' : 'marked done by you') : state === 'todo' ? 'not done yet' : 'Nib cannot tell'}`);
+    mark.onclick = () => {
+      if (manualSteps.has(step.label)) manualSteps.delete(step.label);
+      else manualSteps.add(step.label);
+      renderSignSteps();
+    };
 
-    const label = document.createElement('span');
+    // The label is the link. Separate from the marker so ticking a step off and going to do it are
+    // different targets rather than the same one behaving differently.
+    const label = document.createElement('button');
+    label.type = 'button';
     label.className = 'signstep-label';
     label.textContent = step.label;
+    label.title = [step.hint, state === 'untracked' && !byHand ? 'Nib cannot tell whether this is done' : null]
+      .filter(Boolean).join(' — ');
+    label.onclick = step.go;
 
     const need = document.createElement('span');
     need.className = 'signstep-need';
     need.textContent = step.need === 'required' ? 'required' : 'optional';
 
     row.append(mark, label, need);
-    row.title = [step.hint, state === 'untracked' ? 'Nib cannot tell whether this is done' : null]
-      .filter(Boolean).join(' — ');
-    row.onclick = step.go;
     host.append(row);
   }
 }
