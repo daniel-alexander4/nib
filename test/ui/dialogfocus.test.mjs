@@ -21,10 +21,12 @@ const { page } = h;
 after(() => h.browser.close());
 
 test('closing a dialog opened from a menu leaves focus somewhere real', async () => {
-  // Open About the way a user does — through the settings menu, so the opener IS a
-  // dropdown item and the dropdown collapses behind it. Playwright refuses a
-  // display:none target, which is the same fact that makes restoring to it a no-op.
-  await page.click('.menu.settings > .menutop');
+  // Open About the way a user does. Settings is a MODE with sidebar cards since v1.126.0 — the
+  // ⚙ dropdown is gone — so the opener is a card item, and the card is what has to be expanded
+  // first. The property under test is unchanged: focus must not be restored to an opener that is
+  // no longer on screen.
+  await h.mode('settings');
+  await h.card('About');
   await page.waitForSelector('#aboutBtn', { state: 'visible' });
   await page.click('#aboutBtn');
   await page.waitForSelector('#aboutModal:not([hidden])');

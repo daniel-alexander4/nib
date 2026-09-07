@@ -28,6 +28,7 @@
       <button class="modetab" data-tab="edit">Document</button>
       <button class="modetab" data-tab="secure">Secure</button>
       <button class="modetab" data-tab="collaborate">Ceremony</button>
+      <button class="modetab" data-tab="settings">Settings</button>
     </nav>
 
     <!-- The same five modes as one dropdown, for widths where the tabs no longer fit.
@@ -41,6 +42,7 @@
         <button data-modejump="edit">Document</button>
         <button data-modejump="secure">Secure</button>
         <button data-modejump="collaborate">Ceremony</button>
+        <button data-modejump="settings">Settings</button>
       </div>
     </div>
 
@@ -53,30 +55,6 @@
         <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>
         <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
       </button>
-      <div class="menu settings">
-        <button class="menutop" title="Settings &amp; Help">⚙</button>
-        <div class="dropdown dropdown-right">
-          <div class="menucap">Identity</div>
-          <button id="managePeersBtn">Identity &amp; peers…</button>
-          <button id="manageKeysBtn">Manage authorized keys…</button>
-          <div class="menucap">Vault</div>
-          <button id="backupBtn">Back up vault</button>
-          <label class="menuitem">Restore vault…
-            <input id="restoreInput" type="file" accept=".nib" hidden /></label>
-          <div class="sep"></div>
-          <label class="menuitem"><input id="autoUpdateChk" type="checkbox" /> Check for updates on startup</label>
-          <div class="sep"></div>
-          <!-- No theme PICKER: two flavours, Latte and Mocha, and the sun/moon toggle in the
-               status cluster is the whole control. A four-way radio list existed here and is
-               gone; the two values keep their `light` / `dark` names, which is what lets a vault
-               written before this still validate. `frappe` and `macchiato` normalize to dark on
-               the way in (applyAppearance), so an older vault picks up Mocha rather than an
-               undefined palette. This button is the same toggle for the widths where the status
-               cluster has folded away. -->
-          <button class="foldedonly" data-forward="themeToggle">Switch theme</button>
-          <button id="aboutBtn">About Nib…</button>
-        </div>
-      </div>
       <span id="updatePill" hidden>
         <button id="updateGet" type="button" title="Download the latest version for your system"></button>
         <button id="updateDismiss" type="button" title="Dismiss">✕</button>
@@ -397,8 +375,48 @@
         <button id="sessionRecvBtn">Receive a live co-signature…</button>
         <button data-forward="managePeersBtn">Identity &amp; peers…</button>
       </span>
-    </div>      </div>
-      <div id="thumbs" class="panel active">
+    </div><div class="tbtab" data-tab="settings">
+      <!-- Settings is a MODE, not a dropdown behind a gear (v1.126.0). Its items are the same
+           ones the ⚙ menu held; they are cards here for the same reason every other palette is,
+           and the gear is gone rather than duplicated — two routes to one surface is the drift
+           ADR-009 exists to stop. Nothing here acts on the open document, which is why none of
+           it is in DOC_REQUIRED and each id is a named exemption in doccontrols. -->
+      <div class="tbgroup" data-label="Identity &amp; Keys" data-fold="1">
+<button id="managePeersBtn">Identity &amp; peers…</button>
+      <button id="manageKeysBtn">Manage authorized keys…</button>
+            </div>
+      <div class="tbgroup" data-label="Vault" data-fold="2">
+<button id="backupBtn">Back up vault</button>
+      <label class="menuitem">Restore vault…
+        <input id="restoreInput" type="file" accept=".nib" hidden /></label>
+            </div>
+      <div class="tbgroup" data-label="Updates" data-fold="3">
+<label class="menuitem"><input id="autoUpdateChk" type="checkbox" /> Check for updates on startup</label>
+            </div>
+      <div class="tbgroup" data-label="Appearance" data-fold="4">
+<!-- The same sun/moon toggle that lives in the status cluster (ADR-021), forwarded. In the
+     dropdown this was `.foldedonly` — shown only where the cluster had folded away — and here it
+     is always shown, because a Settings surface that omits the theme is a surface people will
+     look at and not find it on. -->
+<button data-forward="themeToggle">Switch theme</button>
+            </div>
+      <div class="tbgroup" data-label="Colours" data-fold="6">
+<!-- The sidebar's card colours. `all` is the six-accent rotation ADR-019 measured; the six
+     single hues are that same hue at stepped tints, darkest step equal to the measured one.
+     A radio list rather than the toggle pattern: seven options is a choice, not a switch —
+     which is the distinction ADR-021 drew when it removed the four-flavour picker. -->
+<label class="menuitem"><input type="radio" name="cardhue" value="all" /> All colours</label>
+      <label class="menuitem"><input type="radio" name="cardhue" value="blue" /> Blue</label>
+      <label class="menuitem"><input type="radio" name="cardhue" value="mauve" /> Mauve</label>
+      <label class="menuitem"><input type="radio" name="cardhue" value="green" /> Green</label>
+      <label class="menuitem"><input type="radio" name="cardhue" value="peach" /> Peach</label>
+      <label class="menuitem"><input type="radio" name="cardhue" value="red" /> Red</label>
+      <label class="menuitem"><input type="radio" name="cardhue" value="yellow" /> Yellow</label>
+            </div>
+      <div class="tbgroup" data-label="About" data-fold="5">
+<button id="aboutBtn">About Nib…</button>
+            </div>
+    </div>      </div>      <div id="thumbs" class="panel active">
         <!-- The page number and count. They were Previous/[n]/Next in the toolbar until
              v1.125.0; the buttons are gone (PageUp/PageDown/Home/End still page, and the
              thumbnails are a better target than a Next button) and the readout came here,

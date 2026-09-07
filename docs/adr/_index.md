@@ -197,3 +197,12 @@ home today.
   `installOpened` corrects it a line later. Costs named: undo has NO visible control now, its
   eviction hint went with the tooltip (the toast remains), and a red proof was retired because it
   asserted a control that no longer exists
+- [ADR-025: Settings is a mode, and the cards can take one hue](025-settings-is-a-mode-and-the-cards-take-one-hue.md)
+  — the ⚙ dropdown becomes the sixth mode with its items as cards (and the gear goes, rather than
+  staying as a second route); Settings → Colours swaps the six-accent rotation for ONE hue at six
+  stepped tints. **Supersedes** ADR-021's no-picker rule for the colour axis only — light/dark is
+  still the toggle. The ladder is bounded by ADR-019's measured `--card-tint`: the darkest rung IS
+  today's card and the rest are lighter, so the ceiling needs no new figure (the guard recomputes
+  all thirty-six regardless). `all` is the absence of the attribute, which makes the rotation the
+  default and an unknown value harmless without a migration. The hue set lives in three places and
+  they are compared

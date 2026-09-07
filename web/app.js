@@ -409,6 +409,7 @@ function applyStatus(st) {
     loadImages();
     // Apply saved preferences: theme and the auto-update toggle.
     applyAppearance(st.appearance || 'dark');
+    applyCardHue(st.cardHue || 'all');
     // Saved highlight palette (most-recently-used colors); fall back to defaults.
     recentHlColors = (st.recentHighlightColors && st.recentHighlightColors.length)
       ? st.recentHighlightColors.slice(0, 5) : DEFAULT_HL_COLORS.slice();
@@ -8645,6 +8646,26 @@ function applyAppearance(mode) {
   document.documentElement.dataset.appearance = theme;
   els.themeToggle.title = theme === 'light' ? 'Switch to dark theme' : 'Switch to light theme';
 }
+// ── The sidebar's card colours ───────────────────────────────────────────────
+//
+// `all` is the six-accent rotation; a hue name is that hue at stepped tints. The value lives on
+// <html> beside `data-appearance`, so the stylesheet decides and nothing recomputes a colour in
+// script — the tints are per THEME (ADR-019), and a value computed here would have to know which
+// theme is on and would go stale the moment the toggle is pressed.
+//
+// Anything unrecognised — including a vault written before this existed — reads as `all`, the
+// same normalise-where-it-is-read rule ADR-021 applies to a retired flavour.
+const CARD_HUES = ['all', 'blue', 'mauve', 'green', 'peach', 'red', 'yellow'];
+function applyCardHue(hue) {
+  const v = CARD_HUES.includes(hue) ? hue : 'all';
+  if (v === 'all') delete document.documentElement.dataset.cardhue;
+  else document.documentElement.dataset.cardhue = v;
+  for (const r of all('input[name="cardhue"]')) r.checked = r.value === v;
+}
+all('input[name="cardhue"]').forEach((r) => {
+  r.onchange = () => { applyCardHue(r.value); saveSettings({ cardHue: r.value }); };
+});
+
 els.themeToggle.onclick = () => {
   const next = document.documentElement.dataset.appearance === 'light' ? 'dark' : 'light';
   applyAppearance(next);
@@ -10412,6 +10433,12 @@ const SIDEBAR_FOR = {
   // is not this slice's: S02 adds a read-only panel and changes no flow. It becomes the sensible
   // default when it has actions to offer, which is S04's and S05's.
   collaborate: ['flags', 'commands', 'ceremony'],
+  // Settings has no content panel of its own — it is entirely command cards, so `commands` is the
+  // whole list. Without an entry `syncSidebarForMode` falls back to `[]`, which hides every panel
+  // header and skips its own re-activate branch, leaving the PREVIOUS mode's panel on screen with
+  // nothing above it. Nothing looks wrong while `#commands` is the only surface, which is why this
+  // was missing for several browser checks and was caught by modes.test.mjs rather than by eye.
+  settings: ['commands'],
 };
 function collapseGroupCards() {
   for (const g of all('#commands .tbgroup')) {
@@ -10602,6 +10629,7 @@ function buildSidebarAccordion() {
     const panel = $(t.dataset.panel);
     if (!panel) continue;
     t.classList.add('sbhead');
+    t.dataset.step = String(panelIndex % 6);
     t.dataset.accent = accentAt(panelIndex++);
     t.removeAttribute('role');
     t.removeAttribute('aria-selected');
@@ -10619,6 +10647,7 @@ function buildSidebarAccordion() {
     head.className = 'sbhead groupcard';
     head.type = 'button';
     head.textContent = g.dataset.label || '';
+    head.dataset.step = String(n % 6);
     head.dataset.accent = accentAt(n);
     head.setAttribute('aria-expanded', 'false');
     g.parentElement.insertBefore(head, g);

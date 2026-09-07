@@ -27,10 +27,10 @@ after(() => h.browser.close());
 const GROUPED = /(?:\b[0-9a-f]{4}\b[ \t]+){8,}/i;
 
 test('the identity panel shows a name, and hex only after you open the disclosure', async () => {
-  // The button lives in the settings dropdown, which only exists while its menu is open —
-  // Playwright refuses a display:none target, which is the UI's own rule showing through
-  // rather than a harness quirk. Same shape as the Save-as menu in stamplace.
-  await page.click('.menu.settings > .menutop');
+  // The button lives in Settings, which is a MODE with sidebar cards since v1.126.0 rather than
+  // a ⚙ dropdown — so the card is expanded first. Same shape as Save a Copy in stamplace.
+  await h.mode('settings');
+  await h.card('Identity & Keys');
   await page.click('#managePeersBtn');
   await page.waitForFunction(() => !document.getElementById('peersModal').hidden);
 

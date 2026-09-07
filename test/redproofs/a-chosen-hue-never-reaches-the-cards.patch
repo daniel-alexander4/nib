@@ -1,0 +1,13 @@
+--- a/web/style.css
++++ b/web/style.css
+@@ -1614,9 +1614,7 @@
+ /* Wins over the per-accent rules above on specificity (id-less, but two attribute
+    selectors and an ancestor), so `all` needs no rule of its own: it is the absence
+    of `data-cardhue`, which is also what a vault written before this reads as. */
+-:root[data-cardhue] .sbhead[data-accent][data-step] {
+-  background: color-mix(in srgb, var(--card-hue) var(--card-step), var(--base));
+-}
++
+ .sbhead[data-accent][aria-expanded="true"], .sbhead[data-accent].active { box-shadow: inset 3px 0 0 var(--text); }
+ 
+ 
