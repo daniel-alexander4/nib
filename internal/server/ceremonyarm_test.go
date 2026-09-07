@@ -321,3 +321,121 @@ func TestASecondCeremonyArmIsRefusedAsAConflict(t *testing.T) {
 			"answered with before the extraction", body)
 	}
 }
+
+// TestAnExplicitArmDisplacesTheAcceptTimeArm is a phase-close regression, found by tier 6.
+//
+// **D14 inverted D21's observable invariant and nothing below tier 6 noticed.** D21's rule is that
+// accepting an invitation removes the manual PINNING step, and `ceremonyrepro.sh` observes it the
+// only way it can — accept, then arm, and require 200. Once accepting ARMS, that arm came back
+// `409 a session is already armed`: the step D21 removed returned as a conflict, and a party
+// pressing Arm was told their machine was busy with something the message does not name.
+//
+// It is pulled down to tier 1 because tier 6 needs two processes and real HTTP, and a regression
+// that only a two-process harness can see is one that comes back between runs of it.
+func TestAnExplicitArmDisplacesTheAcceptTimeArm(t *testing.T) {
+	ts, srv := startServerWith(t)
+	srv.EnableDeliveryRearm()
+	c, csrf := authedClient(t, ts)
+	me := myFingerprint(t, c, ts.URL)
+	invitation, convenerFP := inviteFor(t, me)
+
+	if code, body := postForCode(t, c, csrf, ts.URL+"/api/ceremony/accept",
+		acceptRequest{Invitation: invitation}); code != http.StatusOK {
+		t.Fatalf("setup: accept returned %d: %s", code, body)
+	}
+	// SETUP: the accept-time arm is actually up. Without it this test passes on a build where D14
+	// never fired, which is the one build the assertion below cannot be about.
+	if !armedWithin(srv, 3*time.Second) {
+		t.Fatal("setup: accepting did not arm, so there is no policy arm for an explicit request " +
+			"to displace and this test proves nothing")
+	}
+
+	// The request the harness makes: a transport and a bind of the caller's choosing, which is why
+	// an idempotent 200 would be wrong — the sweep armed QUIC on 0.0.0.0:0.
+	code, body := postForCode(t, c, csrf, ts.URL+"/api/session/arm", armRequest{
+		Fingerprint: convenerFP, Bind: "127.0.0.1:0", Transport: transportTCP,
+		Invitation: invitation,
+	})
+	defer postForCode(t, c, csrf, ts.URL+"/api/session/disarm", struct{}{})
+	if code != http.StatusOK {
+		t.Fatalf("arming after accepting returned %d, want 200: %s\n"+
+			"D21's whole point is that accepting removes the manual step. A party who accepts and "+
+			"then presses Arm must not be told their own machine is already busy — that is the "+
+			"step D21 removed, returning as a conflict.", code, body)
+	}
+}
+
+// TestAUsersOwnArmIsNeverDisplaced — the other half, and the one that keeps the fix from becoming a
+// way for any request to take a live session's slot.
+//
+// `displacePolicyArm` yields only a `byPolicy` arm. An arm a user asked for is the incumbent and
+// wins, which is the rule `setVerify` already keeps for gates and for the same reason.
+func TestAUsersOwnArmIsNeverDisplaced(t *testing.T) {
+	ts, _ := startServerWith(t)
+	c, csrf := authedClient(t, ts)
+	me := myFingerprint(t, c, ts.URL)
+	invitation, convenerFP := inviteFor(t, me)
+
+	if code, body := postForCode(t, c, csrf, ts.URL+"/api/ceremony/accept",
+		acceptRequest{Invitation: invitation}); code != http.StatusOK {
+		t.Fatalf("setup: accept returned %d: %s", code, body)
+	}
+	// No EnableDeliveryRearm, so nothing armed by policy: the first arm below is the USER's.
+	arm := armRequest{Fingerprint: convenerFP, Bind: "127.0.0.1:0", Transport: transportTCP,
+		Invitation: invitation}
+	if code, body := postForCode(t, c, csrf, ts.URL+"/api/session/arm", arm); code != http.StatusOK {
+		t.Fatalf("setup: the user's own arm returned %d: %s", code, body)
+	}
+	defer postForCode(t, c, csrf, ts.URL+"/api/session/disarm", struct{}{})
+
+	code, body := postForCode(t, c, csrf, ts.URL+"/api/session/arm", arm)
+	if code != http.StatusConflict {
+		t.Errorf("a second arm over a live USER arm returned %d, want %d — displacement is for "+
+			"this machine's own accept-time arm and nothing else. A request that can take a live "+
+			"session's slot is the tripwire D22 protects, not a courtesy: %s",
+			code, http.StatusConflict, body)
+	}
+}
+
+// TestAPolicyArmWithSomethingOnScreenIsNotDisplaced — the third of `displacePolicyArm`'s three
+// conditions, and the one a mutation showed was untested.
+//
+// **Found by a probe, not by review.** Removing the `se.pending != nil || se.verify != nil` guard
+// left every other test in this file green: the two above drive a policy arm with nothing in
+// flight, so the condition never decided anything. A build without it tears down an arm whose peer
+// is mid-exchange — the spoken check on screen, or a consent request waiting — which answers on the
+// user's behalf, the failure `disarmIf` records for the arm-window timer.
+func TestAPolicyArmWithSomethingOnScreenIsNotDisplaced(t *testing.T) {
+	ts, srv := startServerWith(t)
+	srv.EnableDeliveryRearm()
+	c, csrf := authedClient(t, ts)
+	me := myFingerprint(t, c, ts.URL)
+	invitation, convenerFP := inviteFor(t, me)
+
+	if code, body := postForCode(t, c, csrf, ts.URL+"/api/ceremony/accept",
+		acceptRequest{Invitation: invitation}); code != http.StatusOK {
+		t.Fatalf("setup: accept returned %d: %s", code, body)
+	}
+	if !armedWithin(srv, 3*time.Second) {
+		t.Fatal("setup: accepting did not arm, so there is no policy arm to protect")
+	}
+	defer postForCode(t, c, csrf, ts.URL+"/api/session/disarm", struct{}{})
+
+	// Something on screen: the spoken check. Parked directly, because reaching it through a real
+	// session needs a peer mid-handshake and this is the state under test, not the route to it.
+	pv := &pendingVerify{words: "one two three four", resp: make(chan bool, 1)}
+	if !srv.sess.setVerify(pv) {
+		t.Fatal("setup: the spoken check would not park, so nothing is in flight to protect")
+	}
+	defer srv.sess.clearVerifyIf(pv)
+
+	code, body := postForCode(t, c, csrf, ts.URL+"/api/session/arm", armRequest{
+		Fingerprint: convenerFP, Bind: "127.0.0.1:0", Transport: transportTCP,
+		Invitation: invitation,
+	})
+	if code != http.StatusConflict {
+		t.Errorf("an arm request displaced a policy arm with the spoken check on screen — it "+
+			"returned %d, want %d. A peer is mid-exchange and a person is looking at four words; "+
+			"tearing that down answers for them: %s", code, http.StatusConflict, body)
+	}
+}

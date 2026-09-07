@@ -63,7 +63,7 @@ var (
 // a parameter because resolving it needs the response writer (`peerAddresses` writes its own
 // error), so it is the one thing the route must still do for itself.
 func (s *Server) armCeremonyHop(ctx context.Context, cer *ceremonyID, cert, key, peerFP []byte,
-	cands []candidate, bind, label, mode string) error {
+	cands []candidate, bind, label, mode string, byPolicy bool) error {
 	if serr := cer.setupSharedEndpoint(bind, s.configDir); serr != nil {
 		cer.close()
 		return fmt.Errorf("%w: %v", errCeremonyEndpoint, serr)
@@ -74,7 +74,14 @@ func (s *Server) armCeremonyHop(ctx context.Context, cer *ceremonyID, cert, key,
 		return fmt.Errorf("%w: %v", errCeremonyAccept, herr)
 	}
 	armCtx, cancel := context.WithCancel(ctx)
-	if !s.sess.armCeremony(cer, cer.end.LocalAddr().String(), cancel) {
+	// **The door serves both callers and the flag is which one.** The route's arm is the user's and
+	// is never displaced; the sweep's is this machine's own policy and yields to an explicit
+	// request — see `arm.byPolicy`.
+	armed := s.sess.armCeremony
+	if byPolicy {
+		armed = s.sess.armCeremonyByPolicy
+	}
+	if !armed(cer, cer.end.LocalAddr().String(), cancel) {
 		cancel()
 		hl.Close()
 		cer.close()
@@ -196,7 +203,7 @@ func (s *Server) rearmCeremonies(v *vault.Vault) {
 		// at the branch — because it has no rendezvous to publish through. An arm nobody off-link
 		// can locate is not the arm D14 asks for.
 		if aerr := s.armCeremonyHop(context.Background(), cer, cert, key, peerFP, nil,
-			"0.0.0.0:0", label, sessionModeCoSign); aerr != nil {
+			"0.0.0.0:0", label, sessionModeCoSign, true); aerr != nil {
 			if errors.Is(aerr, errSessionArmed) {
 				return // the user has the slot; this is not a fault and needs no notice
 			}
