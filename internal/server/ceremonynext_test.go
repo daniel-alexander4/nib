@@ -407,3 +407,113 @@ func conveneTwoSigners(t *testing.T) (id string, cert, key []byte) {
 	}
 	return out.Record.ID, cert, key
 }
+
+// --- P01.S03: a ceremony that has ended stops being somebody's turn ---------
+//
+// The route reported three states and looked at neither the deadline nor a decline, so a ceremony
+// that was over still answered `waiting` and the panel invited the user to continue it. These
+// drive `endedReason` directly rather than through the route, because the route's own path needs a
+// convened ceremony on disk and the rule under test is a pure function of the stored state — the
+// route wiring is pinned by TestTheRouteAsksWhetherItEndedBeforeOpeningTheDocument below.
+
+// TestEndedReasonNamesTheStateThatEndedIt is the whole rule at tier 1.
+func TestEndedReasonNamesTheStateThatEndedIt(t *testing.T) {
+	now := time.Date(2026, 9, 7, 12, 0, 0, 0, time.UTC)
+	future := now.Add(time.Hour)
+	past := now.Add(-time.Hour)
+
+	cases := []struct {
+		name  string
+		st    ceremony.Stored
+		want  string // "" means not ended
+		match string // a substring the sentence must carry, when ended
+	}{
+		// The stimulus: a live ceremony with a future deadline must NOT be reported ended, or
+		// every assertion below would pass against a function that always says "ended".
+		{"live, deadline ahead", ceremony.Stored{Expires: future}, "", ""},
+		{"live, no deadline at all", ceremony.Stored{}, "", ""},
+		{"deadline passed", ceremony.Stored{Expires: past}, "ended", "deadline"},
+		{"declined", ceremony.Stored{Ended: ceremony.StateDeclined, Expires: future}, "ended", "declined"},
+		// Completed keeps its own state, reached further down the handler through
+		// ErrCeremonyComplete. Rerouting it here would change an answer that is already correct.
+		{"completed is not handled here", ceremony.Stored{Ended: ceremony.StateCompleted, Expires: future}, "", ""},
+		// A decline outranks a deadline that has not passed AND one that has: the attested end
+		// state is what happened, the derived one is only what the clock says.
+		{"declined and expired", ceremony.Stored{Ended: ceremony.StateDeclined, Expires: past}, "ended", "declined"},
+	}
+	for _, c := range cases {
+		got := endedReason(c.st, now)
+		if c.want == "" {
+			if got != "" {
+				t.Errorf("%s: endedReason = %q, want \"\" (this ceremony has not ended)", c.name, got)
+			}
+			continue
+		}
+		if got == "" {
+			t.Errorf("%s: endedReason = \"\", want a sentence saying it ended", c.name)
+			continue
+		}
+		if !strings.Contains(got, c.match) {
+			t.Errorf("%s: endedReason = %q, want it to name %q", c.name, got, c.match)
+		}
+	}
+}
+
+// TestAnExpiredCeremonyIsNotSomebodysTurn pins the defect this slice fixes, in the words of the
+// symptom rather than the implementation: the answer a user acts on must not be "waiting".
+func TestAnExpiredCeremonyIsNotSomebodysTurn(t *testing.T) {
+	now := time.Date(2026, 9, 7, 12, 0, 0, 0, time.UTC)
+	live := ceremony.Stored{Expires: now.Add(time.Hour)}
+	if endedReason(live, now) != "" {
+		t.Fatal("precondition: a live ceremony reports ended, so the expiry assertion proves nothing")
+	}
+	expired := ceremony.Stored{Expires: now.Add(-time.Second)}
+	if endedReason(expired, now) == "" {
+		t.Error("a ceremony one second past its deadline is still reported as somebody's turn")
+	}
+}
+
+// TestTheRouteAsksWhetherItEndedBeforeOpeningTheDocument pins the WIRING, which the tests above
+// cannot see.
+//
+// **It exists because a mutation survived them.** Replacing the handler's `endedReason(st, now)`
+// call with a constant left every assertion above green: the rule was tested and nothing asserted
+// that the route ran it — a rule with no caller, which is the shape this repo keeps paying for.
+//
+// **A source scan, and that is the honest instrument rather than a lazy one.** The route reads a
+// SIGNED `record.json`, so a test cannot hand it an expired or declined ceremony: rewriting the
+// deadline on disk makes the record unverifiable and the route then answers `unavailable`, proving
+// nothing. Scanning the source is the same idiom `docid.test.mjs` uses over `app.js` and
+// `browser_test.go` uses over `uirepro.sh`.
+//
+// It pins the ORDER too, which is a property in its own right: answering costs a document read
+// this route's own header measures as superlinear in page count, and a ceremony that has ended has
+// no next contributor to compute.
+func TestTheRouteAsksWhetherItEndedBeforeOpeningTheDocument(t *testing.T) {
+	src, err := os.ReadFile("ceremonynext.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := string(src)
+	start := strings.Index(body, "func (s *Server) handleCeremonyNext(")
+	if start < 0 {
+		t.Fatal("handleCeremonyNext is not in ceremonynext.go — this scan is reading the wrong thing")
+	}
+	body = body[start:]
+
+	call := strings.Index(body, "endedReason(st, now)")
+	if call < 0 {
+		t.Fatal("handleCeremonyNext does not call endedReason — a ceremony that has ended is " +
+			"still answered as somebody's turn")
+	}
+	open := strings.Index(body, "ceremony.ReadMirror(")
+	if open < 0 {
+		t.Fatal("handleCeremonyNext no longer calls ReadMirror — this scan's landmark is gone " +
+			"and the ordering assertion below means nothing")
+	}
+	if call > open {
+		t.Errorf("handleCeremonyNext opens the document (offset %d) before asking whether the "+
+			"ceremony has ended (offset %d) — an ended ceremony pays a superlinear document read "+
+			"to compute a contributor it does not have", open, call)
+	}
+}

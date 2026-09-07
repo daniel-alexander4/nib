@@ -151,25 +151,63 @@ what happens next — including when the answer is "nothing, and here is why".
 - `next` is fetched on open and on hop completion only, proved by a fetch count over a minute of idling.
 - A declined or expired ceremony names its state and offers no action.
 
-#### P01.S01 — the ceremony list is the front door
+#### P01.S01 — the ceremony list is the front door *(done 2026-09-07 — already built, no code)*
 Scope: the sidebar card lists ceremonies from `/api/ceremonies` and opens one. Refs: D1, D2.
-Acceptance: several ceremonies list; opening one fetches `next` exactly once; listing fetches it
-none, because the listing route deliberately never opens a document.
 
-#### P01.S02 — the rail renders the next action
-Scope: one enabled action, labelled from `next`. Refs: D1, D15.
-Acceptance: the rendered action equals the server's answer, asserted; a red proof shows a
-client-side guess diverging; machine steps appear as state and are not clickable.
+**(reality-drift pin, 2026-09-07 — deepdive before the grill.)** This was already shipped.
+`loadCeremonyPanel` (`web/app.js:11641`) fetches `/api/ceremonies` unpinned, renders the cards
+through `renderCeremonyPanel`, returns the live+ended count, and renders a distinct sentence on
+failure rather than an empty machine. It has four call sites, including the **locked** screen
+(`app.js:496`). Nothing was owed and nothing was written.
 
-#### P01.S03 — terminal states and the honest wait
-Scope: declined and expired name themselves; waiting renders `TIER_WORDS` where a diagnosis exists
-and a plain sentence where none does. Refs: D9, D10.
-Acceptance: a terminal ceremony offers no action; a waiting rail never shows a bare spinner.
+#### P01.S04 — the fetch discipline *(done 2026-09-07 — already satisfied, no code)*
+Scope: fetch `next` on open and hop completion; never a timer. Refs: D2.
 
-#### P01.S04 — the fetch discipline
-Scope: fetch on open and hop completion; never a timer. Refs: D2.
-Acceptance: idling for a minute produces zero further fetches, asserted rather than observed;
-`nextFetchMs` is recorded per open.
+**(reality-drift pin, 2026-09-07.)** Already true, and by a stronger mechanism than D2 asked for:
+`next` is fetched only when the user presses a per-card **"What happens next?"** button
+(`web/app.js:11379-11387`), so it is not merely un-polled, it is not even fetched on open. The
+per-card answer also checks the echoed ceremony id before rendering, so a slow answer for one card
+cannot appear under another. **D2's hot-path rule is therefore a rule the code already keeps** —
+recorded so a later slice does not "add" a fetch-on-open and think it is implementing this plan.
+
+#### P01.S02 — the next answer becomes an action
+Scope: the per-card sentence becomes the rail's enabled action, labelled from `next`. Refs: D1, D6, D15.
+Acceptance:
+- The enabled action equals `next`'s answer; a red proof shows a client-side guess diverging.
+- Machine steps render as state and are not clickable.
+- Below the worklist threshold there is exactly one enabled action per ceremony.
+
+#### P01.S03 — `next` learns the terminal states *(done 2026-09-07, v1.128.2)*
+Scope: `/api/ceremony/next` reports a ceremony that has been declined or has passed its deadline,
+and the panel names the state and offers nothing. Refs: D10, D9.
+Acceptance:
+- A ceremony past its deadline no longer answers `waiting`.
+- A declined ceremony no longer answers `waiting`.
+- The panel names the state and renders no action for it.
+- The existing three states are unchanged for every non-terminal ceremony.
+
+**(divergence pin, 2026-09-07.) The client needed no change, and the slice implied it would.**
+The acceptance says *"the panel names the state"*; `ceremonyNextLine` already branches
+`if (d.state !== 'waiting')` and renders `d.reason`, so a new state is named by the sentence the
+server writes without a line of client code. Recorded rather than absorbed: a later reader
+comparing the slice to the diff would otherwise look for the UI half and not find it.
+
+**(build pin, 2026-09-07 — a mutation survived and the fix is a source scan.)** Removing the
+route's call to `endedReason` left every behavioural test green: the rule was tested and nothing
+asserted the route ran it. It cannot be tested behaviourally — the route reads a **signed**
+`record.json`, so an expired ceremony cannot be staged on disk without making the record
+unverifiable, at which point the route answers `unavailable` and proves nothing. Pinned instead by
+a source scan over `handleCeremonyNext`, the idiom `docid.test.mjs` already uses over `app.js`;
+it also pins that the check runs BEFORE the document read.
+
+**(reality-drift pin, 2026-09-07 — this slice grew, and it grew server-side.)** It was planned as
+UI. It is not: `internal/server/ceremonynext.go` contains **zero** occurrences of `Expires` or
+`declin`, and its response type declares exactly three states — `waiting`, `complete`,
+`unavailable` (`:42-48`). The route cannot report a terminal state it has no vocabulary for and
+never looks for, so a ceremony past its deadline answers *somebody's turn* and the panel invites
+the user to continue it. Expiry **is** computed elsewhere — `closeout.go:217` compares `Expires` to
+now with a grace — so the fact exists and the answer does not carry it. **Ordered before S02
+deliberately**: making a wrong action more prominent is worse than leaving it a sentence.
 
 ### P02 — The signer's surface
 **Goal.** One review surface — the document, the block where it will land, the roster — and a

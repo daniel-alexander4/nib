@@ -63,6 +63,28 @@ type ceremonyNextResponse struct {
 	Reason string `json:"reason,omitempty"`
 }
 
+// endedReason returns the person-facing sentence for a ceremony that has ended, or "" when it has
+// not. It reads only the stored state, so it costs nothing and can run before the document is
+// opened.
+//
+// **Two sources, and only one of them is attested.** `Stored.Ended` carries a termination a party
+// signed — `declined` is the one that matters here. Expiry is *derived*: nobody can sign "the
+// deadline passed", which is why `ceremony.StateExpired` lives with the close-out's derived states
+// and deliberately not in `Termination`'s set. Both end the proceeding; only one has an author.
+func endedReason(st ceremony.Stored, now time.Time) string {
+	if st.Ended != "" && st.Ended != ceremony.StateCompleted {
+		if st.Ended == ceremony.StateDeclined {
+			return "a party declined, so this ceremony has ended"
+		}
+		return "this ceremony has ended: " + st.Ended
+	}
+	// Zero means the record carries no deadline, which is not an expiry.
+	if !st.Expires.IsZero() && now.After(st.Expires) {
+		return "this ceremony's deadline has passed"
+	}
+	return ""
+}
+
 // handleCeremonyNext answers whose turn it is for one ceremony.
 func (s *Server) handleCeremonyNext(w http.ResponseWriter, r *http.Request) {
 	id := r.URL.Query().Get("ceremony")
@@ -79,6 +101,31 @@ func (s *Server) handleCeremonyNext(w http.ResponseWriter, r *http.Request) {
 	st := ceremony.ReadStored(root, id, now)
 	if st.State != ceremony.LoadOK {
 		writeJSON(w, ceremonyNextResponse{Ceremony: id, State: "unavailable", Reason: st.Reason})
+		return
+	}
+
+	// **A proceeding that has ENDED is answered here, before the document is opened.**
+	//
+	// Until this, the three states were `waiting`, `complete` and `unavailable`, and this file
+	// contained no occurrence of `Expires` or of a decline — so a ceremony whose deadline had
+	// passed, or whose party had refused, still answered *somebody's turn* and the panel invited
+	// the user to carry on with a proceeding that was over.
+	//
+	// **Before `ReadMirror`, and that placement is not tidiness.** Answering costs a document read
+	// this route's own header measures at 10 / 69 / 195 ms for 100 / 500 / 1000 pages,
+	// superlinear — and a ceremony that has ended has no next contributor to compute. The cheap
+	// answer is also the correct one.
+	//
+	// **Not the close-out's predicate, and they are different questions rather than one rule with
+	// two implementations.** `closeOutReason` waits for `Expires` plus `closeOutGrace` because it
+	// decides whether to ARCHIVE a directory, and a late round must be allowed to finish first.
+	// This decides what to tell a person to do *now*, and that turns the moment the deadline
+	// passes. Unifying them would make the panel offer a call for the whole grace window.
+	//
+	// `completed` is deliberately NOT handled here: it already has its own state, reached below
+	// through `p2p.ErrCeremonyComplete`, and rerouting it would change an answer that is correct.
+	if reason := endedReason(st, now); reason != "" {
+		writeJSON(w, ceremonyNextResponse{Ceremony: id, State: "ended", Reason: reason})
 		return
 	}
 	rec, pdf, err := ceremony.ReadMirror(root, id, now)
