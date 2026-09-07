@@ -136,6 +136,15 @@ func (s *Server) adoptVault(v *vault.Vault) {
 				// read `~/nib/ceremonies`, which a `Server` built in a test does not isolate.
 				s.closeOutEnded(v, time.Now())
 				s.rearmDeliveries(v)
+				// **And the ceremony hop re-arm (P02.S02, D14).** The same fact for a third
+				// queue, and it runs LAST for the reason the two above are sequenced: the
+				// close-out moves ended ceremonies out of the listing both sweeps read, and the
+				// delivery sweep is the one whose ceremonies are further along. The two take
+				// different slots and are disjoint by construction — a ceremony with a record
+				// belongs to the delivery sweep, one without belongs to this — so the order
+				// between them is not load-bearing, and it is stated so the next reader does
+				// not have to work that out.
+				s.rearmCeremonies(v)
 			}()
 		}
 	}

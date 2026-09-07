@@ -264,6 +264,29 @@ func (s *Server) handleCeremonyAccept(w http.ResponseWriter, r *http.Request) {
 		Pinned:   n,
 		Signing:  signing,
 	})
+
+	// **Accepting arms (P02.S02, D14), and it happens AFTER the response and off this goroutine.**
+	//
+	// A signer who accepts and never arms is, from the convener's side, exactly a signer who
+	// ignored the invitation: the convener dials, nothing answers, and the proceeding stalls on a
+	// party who believes they have done their part. Measured before this: a successful accept left
+	// `/api/session/status` answering `{armed: false}`.
+	//
+	// **It does not fail the accept and it is not in the response, which the header above is the
+	// argument for.** That header refuses to fold the accept into the arm because it would put a
+	// vault write on the arm path; this is the mirror, and the mirror needs the same care. The
+	// interactive slot is shared with the user's own manual receive arm, so "already armed" is an
+	// ordinary outcome — telling a user their invitation was not accepted over it would be false,
+	// and the pin and the stored invitation, which are what accepting *means*, are already durable
+	// above.
+	//
+	// **`rearmCeremoniesAsync` and not a direct arm**, so this trigger and the unlock trigger are
+	// one function: D14's "renewed while Nib runs" is the same rule at a second moment, and a
+	// second copy is what `rearmDeliveries` warns about one queue over. Its gate is also what
+	// keeps a harness from arming: `EnableDeliveryRearm` has five callers — `cmd/nib` and four
+	// tests, every one of which is *about* arming — so a `Server` constructed for anything else
+	// does not open a socket when an invitation is accepted.
+	s.rearmCeremoniesAsync(v)
 }
 
 // rosterEntry finds a party by fingerprint, case-insensitively.

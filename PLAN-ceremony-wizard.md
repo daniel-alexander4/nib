@@ -134,6 +134,15 @@ A signer who accepts and never arms is indistinguishable, from the convener's si
 ignored the invitation. Accepting arms the listener, renewed while Nib runs and bounded by the
 record's deadline.
 
+**Amended 2026-09-07 at P02.S02's deepdive — "the record's deadline" is not available at accept
+time and cannot be made so within this plan.** An invitee holds no record until the document
+reaches its hop, and the invitation carries no deadline: giving it one is `/pending 247`, deferred
+behind an undischarged security gate. The bound is read from the record wherever this machine holds
+one and is `ceremony.MaxCeremonyLife` where it does not — so the clause is met from the moment a
+record exists and is honestly unmet before that, rather than being reported as met against a field
+nothing populates. The real bound before the document arrives is the process lifetime, which is
+what "renewed while Nib runs" already says.
+
 ### D15 — Machine steps are not screens *(settled 2026-09-07 via /grill)*
 Verifying order, saving the signature, closing out and receiving the finished document are things
 the software does. They appear as state, never as a step the user is asked to perform.
@@ -261,11 +270,72 @@ at a call site reachable only with a live ceremony session in flight, which left
 the only instrument. `recitalFor(cer)` is now a pure function with a real test, and the scan is
 narrowed to the one thing still unreachable — that the consent view calls it.
 
-#### P02.S02 — accepting arms the listener
+#### P02.S02 — accepting arms the listener *(done 2026-09-07, v1.128.6)*
 Scope: `/api/ceremony/accept` leaves the machine listening for the convener, renewed while Nib runs
 and bounded by the record's deadline. Refs: D14.
 Acceptance: accepting reaches an armed state without a second user action; the arm is bounded; a
 harness run does not arm.
+
+**(deepdive, 2026-09-07 — `deepdives/2026-09-07-p02s02-accepting-arms-the-listener.md`.)** Ran
+because the slice moves *when* an existing arm opens. Both halves of D14's premise were measured
+rather than argued: after a successful accept, `/api/session/status` reports `{armed: false}` and
+`/api/ceremony/next` reports `unavailable`.
+
+**(build pin — D14's second clause names a source that does not exist on this path, and D14 is
+amended rather than met.)** An invitee holds **no record** until the document reaches its hop
+(`accept.go:40` says exactly that), `Stored.Expires` is populated only from `record.json`, and the
+invitation carries no deadline — that is **`/pending 247`, deferred behind an undischarged G2** (a
+shortened `Expires` is consumed at arm time and `MatchesRecord` cannot run until the document
+arrives, so the mismatch is never seen). `armWindowFor` already states this and cites 247 by
+number. **The bound is therefore read where it exists and not invented where it does not:** the
+interactive ceremony window becomes the record's remaining life when this machine holds a record,
+and stays `ceremony.MaxCeremonyLife` when it does not. The fallback is deliberately the *opposite*
+direction from `deliveryWindowFor`'s, and the asymmetry is the reason: a delivery arm exists only
+after this party has signed, so a missing record there is anomalous and a short floor is safe; an
+interactive arm exists *before* the document arrives, so a missing record is the ordinary case and
+a short floor would take the signer off the network minutes after they accepted.
+
+**(build pin — the mechanism exists one slot over, so this is a sibling sweep and not an
+invention.)** `rearmDeliveries` + `EnableDeliveryRearm` + the `adoptVault` hook is already
+"re-established at every unlock, best-effort per ceremony, anchored on the invitation rather than
+on `Stored.Ended`, failing open toward arming". **Its process gate is the whole of the third
+acceptance clause** — `EnableDeliveryRearm`'s own doc records the measured failure an ungated
+sweep caused (`TempDir RemoveAll cleanup: directory not empty` across five unrelated tests). A
+harness run does not arm because it does not call the enabling method, not because of anything new.
+
+**(build pin — the hop arm has to be EXTRACTED, and that is this slice's risk.)** Unlike the
+delivery arm, the hop arm exists only inside `handleSessionArm`'s QUIC branch and is reachable
+only from an HTTP request. A sweep that reimplemented it would be two implementations of one rule,
+which is the ADR-009 shape this repo keeps finding. T01 extracts the door and makes the route its
+first caller, with no behaviour change; everything after that is wiring.
+
+**(build pin — the auto-arm is QUIC, and the reason is a defect in the manual path.)** `armRecv`
+sends no `transport`, and `ceremonyTransport` defaults anything that is not `"quic"` to TCP — so
+**every browser-driven ceremony arm today is TCP**, the path whose own comment says it *"can be
+REACHED but never FOUND"*. Filed rather than fixed here; it settles this slice's transport, which
+matches `armForDelivery`'s.
+
+**(scope pin.)** The rail's sentence for a just-accepted invitee is false — it blames a removed
+folder. Measured, and **filed as `/pending 377`** rather than folded in: its cause is
+`ReadStored` having no state for "a party, and nothing has arrived yet", and it belongs where the
+rail lives.
+
+**(build pin — one interactive slot, so the arm is best-effort.)** `armInteractive` is shared with
+the user's manual receive arm and `armIn` refuses a collision. The sweep therefore never fails an
+accept over a slot; a machine in two live ceremonies arms exactly one, chosen by `ListStored`'s
+sort. Recorded as this slice's residual doubt.
+
+Tasks:
+- T01 — extract the ceremony hop arm from `handleSessionArm` into one door; the route becomes its
+  first caller, byte-for-byte in behaviour.
+- T02 — `armWindowFor(armInteractive, cer)` reads the mirror where one exists, falling back to
+  `MaxCeremonyLife` where it does not.
+- T03 — `rearmCeremonies`, the sibling sweep: the invitation as anchor, the convener skipped, an
+  ended or completed proceeding skipped, best-effort per ceremony.
+- T04 — two triggers behind the existing process gate: the `adoptVault` hook, and the tail of
+  `handleCeremonyAccept` on a detached goroutine.
+- T05 — tests, each probed red: accepting arms; an unenabled `Server` does not; the window is the
+  record's where a record exists; the convener is not armed for; an ended ceremony is not armed for.
 
 #### P02.S03 — one review surface
 Scope: the document, the block where it will land, and the roster on one surface instead of three
