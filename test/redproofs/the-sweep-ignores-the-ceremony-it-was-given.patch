@@ -1,0 +1,11 @@
+--- a/internal/server/ceremonyarm.go
++++ b/internal/server/ceremonyarm.go
+@@ -188,7 +188,7 @@ func (s *Server) rearmCeremoniesPreferring(v *vault.Vault, prefer string) {
+ 	// The preferred ceremony first, then the rest in listing order. Reordering rather than
+ 	// filtering: if the preferred one cannot be armed for — no invitation, already signed, this
+ 	// machine convened it — the sweep must still do its ordinary job rather than give up.
+-	if prefer != "" {
++	if false && prefer != "" {
+ 		for i, st := range stored {
+ 			if st.ID == prefer {
+ 				stored = append([]ceremony.Stored{st}, append(stored[:i:i], stored[i+1:]...)...)

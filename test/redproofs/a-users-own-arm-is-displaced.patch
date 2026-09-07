@@ -1,0 +1,11 @@
+--- a/internal/server/session.go
++++ b/internal/server/session.go
+@@ -493,7 +493,7 @@ func (se *session) armCeremonyByPolicy(cer *ceremonyID, addr string, cancel cont
+ func (se *session) displacePolicyArm() bool {
+ 	se.mu.Lock()
+ 	a := se.arms[armInteractive]
+-	if a == nil || !a.byPolicy || se.pending != nil || se.verify != nil {
++	if a == nil || se.pending != nil || se.verify != nil {
+ 		se.mu.Unlock()
+ 		return false
+ 	}

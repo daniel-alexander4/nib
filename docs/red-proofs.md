@@ -4507,3 +4507,44 @@ once as a rule rather than logged a fourth time:
 > for and why it refuses a bare non-zero exit.
 
 `recorded` 356 → 362.
+
+## The arm displacement, and what tier 4 and tier 6 found after the close (v1.128.14 / .16)
+
+D14 made accepting an invitation ARM. That inverted D21's observable invariant twice over, and
+**neither instance was visible below a tier that runs more than one process.**
+
+| Row | Reader | Token |
+|---|---|---|
+| `an-explicit-arm-is-refused-over-a-policy-arm` | `TestAnExplicitArmDisplacesTheAcceptTimeArm`, tier 1 | "arming after accepting returned" |
+| `a-users-own-arm-is-displaced` | `TestAUsersOwnArmIsNeverDisplaced`, tier 1 | "a second arm over a live USER arm returned" |
+| `an-arm-is-torn-down-mid-session` | `TestAPolicyArmWithSomethingOnScreenIsNotDisplaced`, tier 1 | "displaced a policy arm with the spoken check on screen" |
+| `the-sweep-ignores-the-ceremony-it-was-given` | `TestTheSweepPrefersTheCeremonyItWasGiven`, tier 1 | "the sweep was given" |
+| `the-accept-trigger-names-no-ceremony` | `TestTheAcceptTriggerNamesWhatItAccepted`, tier 1 | "no longer names the ceremony it just accepted" |
+
+**Tier 6 found the first**: accept, then arm, `409 a session is already armed` — the manual step D21
+removed, returning as a conflict. **Tier 4d found the second**: a machine holding more than one
+accepted-and-unsigned ceremony armed for whichever id sorted first, and the explicit arm for the
+right one was refused by the *same-ceremony* condition in the first fix. That condition was wrong —
+D22's tripwire governs what an armed listener ACCEPTS, not which of this machine's own guesses holds
+the slot a moment earlier.
+
+**An idempotent 200 was refused as a silent downgrade**: the sweep arms QUIC on `0.0.0.0:0` and a
+caller may ask for TCP on a bound address, which is exactly what that harness does. Reporting
+success for a request this machine did not honour is what `checkTransport` spends sixteen lines
+refusing.
+
+**Two rows record work that was BACKED OUT or that nothing can see, and both are the useful half.**
+
+`an-arm-is-torn-down-mid-session` exists because a probe showed the in-flight condition decided
+nothing: both tests written alongside the fix drive a policy arm with nothing in flight, so removing
+the guard left them green.
+
+`the-accept-trigger-names-no-ceremony` is a source scan, labelled as one, because the argument is
+genuinely unobservable: with one ceremony the preference and listing order agree, and with two the
+slot is already taken. Making the second accept win it was tried and **backed out** — two accepts
+start two sweeps, both displace, and whichever is scheduled last decides, so the arm a user ends up
+with would depend on goroutine ordering. With one interactive slot something must lose when a
+machine holds two live ceremonies; that is `/pending 378`'s residual doubt, not a rule a sweep can
+settle, and a row asserting otherwise would be asserting a race.
+
+`recorded` 362 → 367.
