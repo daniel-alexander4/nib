@@ -1,0 +1,10 @@
+--- a/web/app.js
++++ b/web/app.js
+@@ -11323,7 +11323,6 @@ function renderEndedCeremonies(host, ended) {
+       // sentence about a damaged file, shown to a user for the thing they did on purpose a moment
+       // earlier. It is phrased as the user's act rather than the ceremony's end, because it says
+       // nothing about whether the proceeding is still running for everybody else.
+-      : r.state === 'left' ? 'You left'
+       : 'Ended in a way this version does not recognise';
+     row.appendChild(what);
+     const when = new Date(r.observed_at);

@@ -1,0 +1,11 @@
+--- a/web/app.js
++++ b/web/app.js
+@@ -11439,7 +11439,7 @@ function ceremonyCard(c, mayAct) {
+   // before their hop there is no record, so `c.convener` is empty — unknown, not "not me" — and a
+   // client-side check would have to read absence as a negative answer, which is the exact mistake
+   // `Stored.Convener`'s own doc names. The server has the invitation and can answer properly.
+-  if (mayAct && c.state !== 'ok' && !c.ended) {
++  if (false && mayAct && c.state !== 'ok' && !c.ended) {
+     card.appendChild(ceremonyLeave(c));
+   }
+   if (c.state === 'ok') {

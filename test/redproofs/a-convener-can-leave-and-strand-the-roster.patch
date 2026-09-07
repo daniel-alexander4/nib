@@ -1,0 +1,11 @@
+--- a/internal/server/leave.go
++++ b/internal/server/leave.go
+@@ -102,7 +102,7 @@ func (s *Server) handleCeremonyLeave(w http.ResponseWriter, r *http.Request) {
+ 	// the document; their leaving would strand every other party mid-proceeding with no way to
+ 	// finish and nothing to tell them why. Tearing down a ceremony you convened is `unconvene`,
+ 	// which exists and takes the four stores this one does.
+-	if strings.EqualFold(hex.EncodeToString(myFP), inv.ConvenerFingerprint) {
++	if false && strings.EqualFold(hex.EncodeToString(myFP), inv.ConvenerFingerprint) {
+ 		httpError(w, http.StatusConflict,
+ 			"you convened this ceremony, so leaving it is not the thing you want — every other "+
+ 				"party is waiting on you, and walking away would leave them with no way to "+
