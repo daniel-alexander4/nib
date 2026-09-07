@@ -4183,3 +4183,26 @@ because the base is red and a class that does not exist would satisfy a presence
 scanned from source in `theme.test.mjs`; rendered contrast on this pill is not asserted anywhere.
 
 `recorded` 323 → 324.
+
+
+## An icon button that showed no icon (v1.125.2)
+
+| Defect reintroduced | Check that fired | What it said |
+| --- | --- | --- |
+| `an-icon-button-shows-no-icon` — `.tbicon svg` loses its size | `responsive.test.mjs`, tier 3 | "these toolbar buttons carry an `<svg>` that renders at no usable size: findToggle (0x0), reloadBtn (0x0)" |
+
+**This one shipped, and the interesting part is how it got past everything.** `.tbicon` was invented
+for the reload button in v1.125.0's predecessor and never given a rule; the `<svg>` inside had no
+width or height and rendered at 0x0. Every structural check passed — the element IS in the DOM —
+and jsdom has no layout to measure it with. The sibling `.tbtoggle` has carried
+`svg { width; height; display }` all along, which is why the sidebar toggle looked fine beside two
+blank gaps.
+
+**It was reported by Dan, not caught here**, and it had been LOOKED at: a screenshot in this
+session showed the bar with both icons missing and the missing icons were called "subtle" rather
+than measured. The measurement takes one `getBoundingClientRect` and settles it — 0x0.
+
+The guard is written over every icon-carrying button in the toolbar rather than the two that broke,
+because the next one will be a third.
+
+`recorded` 324 → 325.
