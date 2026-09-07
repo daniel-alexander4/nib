@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 
 	"nib/internal/sign"
 )
@@ -154,6 +155,73 @@ func SignTermination(rec Record, state string, certPEM, keyPEM []byte) (Terminat
 	return t, nil
 }
 
+// An Anchor is what a Termination is checked AGAINST: the commitment it must match, and the
+// identity that must have signed it.
+//
+// **It exists because a party who has not signed yet holds no record** (D16, `/pending 378`). The
+// end state of a proceeding has to reach them, and until this the only way to check one was
+// `Verify(rec)` — so the parties who most need to know a ceremony has ended were the ones who could
+// not be told. An invitation carries both of these values directly (`RosterHash` and
+// `ConvenerFingerprint`), and this type is what lets it supply them without a second copy of the
+// checks.
+//
+// **Two values and not the whole record, because those are the only two `Verify` ever used.** Read
+// at the line before this was written: `rec.RosterHash()` and `rec.Convener().Fingerprint`, and
+// nothing else. A door taking a `Record` where two fields will do is a door an invitation cannot
+// use, which is the whole of the problem.
+//
+// **It does not weaken what an anchor asserts.** `Record.Convener()` resolves the signer's
+// certificate against the ROSTER and fails when it is not a member; `Invitation.Anchor` performs
+// the same membership check, so neither source can produce an anchor naming a convener the roster
+// does not contain.
+type Anchor struct {
+	// RosterHash is the record's commitment, raw bytes.
+	RosterHash []byte
+	// Convener is the hex fingerprint of the key entitled to end this proceeding.
+	Convener string
+}
+
+// Anchor derives the checking values from a record.
+func (r Record) Anchor() (Anchor, error) {
+	h, err := r.RosterHash()
+	if err != nil {
+		return Anchor{}, err
+	}
+	conv, ok := r.Convener()
+	if !ok {
+		return Anchor{}, fmt.Errorf("%w: this record names no convener to compare against",
+			ErrBadTermination)
+	}
+	return Anchor{RosterHash: h, Convener: conv.Fingerprint}, nil
+}
+
+// Anchor derives the same checking values from an invitation, for a party who holds no record.
+//
+// **The membership check is not optional and is why this is not two field reads.**
+// `ConvenerFingerprint` is a bare field that `ParseInvitation` does not normalise or check against
+// the roster — `rosterEntry`'s own doc says so, and `handleCeremonyAccept` refuses an invitation
+// naming a non-member convener at its door for exactly this reason. Without the check here an
+// anchor could name a convener this ceremony does not have, and the resulting `Verify` would refuse
+// every honest termination while accepting one signed by whoever the field named.
+func (i Invitation) Anchor() (Anchor, error) {
+	if i.RosterHash == "" {
+		return Anchor{}, fmt.Errorf("%w: this invitation carries no commitment, so nothing can be "+
+			"bound to it", ErrBadTermination)
+	}
+	h, err := hex.DecodeString(i.RosterHash)
+	if err != nil {
+		return Anchor{}, fmt.Errorf("%w: this invitation's commitment is not hex", ErrBadTermination)
+	}
+	want := strings.ToLower(i.ConvenerFingerprint)
+	for _, p := range i.Roster {
+		if strings.EqualFold(p.Fingerprint, want) {
+			return Anchor{RosterHash: h, Convener: strings.ToLower(p.Fingerprint)}, nil
+		}
+	}
+	return Anchor{}, fmt.Errorf("%w: this invitation names a convener who is not one of its "+
+		"parties, so it describes a ceremony with nobody entitled to end it", ErrBadTermination)
+}
+
 // Verify checks the object against the record it claims to end.
 //
 // **`rec` must come from the document or the invitation, never from the `record.json` sitting
@@ -162,7 +230,21 @@ func SignTermination(rec Record, state string, certPEM, keyPEM []byte) (Terminat
 // signature is valid and the roster hashes agree. Only an anchor the attacker does not control
 // refuses it, and that is the caller's responsibility because this function cannot tell where its
 // argument came from.
+//
+// **It is `VerifyAgainst` with the record's anchor and nothing else** (ADR-009). A second
+// implementation for the invitation would be two versions of a SIGNATURE check, where the two
+// disagreeing is a security bug rather than an inconsistency.
 func (t Termination) Verify(rec Record) error {
+	a, err := rec.Anchor()
+	if err != nil {
+		return err
+	}
+	return t.VerifyAgainst(a)
+}
+
+// VerifyAgainst is the one door: every check, against values either a record or an invitation can
+// supply.
+func (t Termination) VerifyAgainst(anchor Anchor) error {
 	if t.Version != terminationVersion {
 		return fmt.Errorf("%w: it is version %d and this build writes %d", ErrBadTermination,
 			t.Version, terminationVersion)
@@ -170,10 +252,7 @@ func (t Termination) Verify(rec Record) error {
 	if t.State != StateDeclined && t.State != StateCompleted {
 		return fmt.Errorf("%w: %q is not an end state this build knows", ErrBadTermination, t.State)
 	}
-	want, err := rec.RosterHash()
-	if err != nil {
-		return err
-	}
+	want := anchor.RosterHash
 	got, err := hex.DecodeString(t.RosterHash)
 	if err != nil {
 		return fmt.Errorf("%w: its roster hash is not hex", ErrBadTermination)
@@ -197,11 +276,7 @@ func (t Termination) Verify(rec Record) error {
 	}
 	// **And the signer must be the CONVENER**, not merely someone with a valid signature. Without
 	// this any roster member could end a proceeding they are only a party to.
-	conv, ok := rec.Convener()
-	if !ok {
-		return fmt.Errorf("%w: this record names no convener to compare against", ErrBadTermination)
-	}
-	if convenerFingerprint(t.ConvenerCert) != conv.Fingerprint {
+	if !strings.EqualFold(convenerFingerprint(t.ConvenerCert), anchor.Convener) {
 		return fmt.Errorf("%w: it was signed by a party who is not this ceremony's convener",
 			ErrBadTermination)
 	}

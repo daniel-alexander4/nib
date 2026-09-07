@@ -572,7 +572,7 @@ arming for it. Refs: D17.
 Acceptance: after leaving, a sweep does not arm for that ceremony and does not after a restart;
 nothing is sent and no termination is written.
 
-#### P05.S02 — the end state is verifiable on the invitation
+#### P05.S02 — the end state is verifiable on the invitation *(done 2026-09-07, v1.128.18)*
 Scope: extract `Termination.Verify`'s anchor so an invitation can supply it, through one door.
 Refs: D16.
 Acceptance: a termination verifies against an invitation exactly where it verifies against the

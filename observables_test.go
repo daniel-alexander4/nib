@@ -205,6 +205,18 @@ var published = map[string][]string{
 	// The honest fix was a reader and not an exclusion: the receipt exists so a user can find the
 	// contribution the prune preserved, and a receipt no surface shows preserves it in secret.
 	"ceremony.Receipt": {"internal/ceremony/closeout.go", "internal/server/convene.go"},
+	// **`ceremony.Anchor` is what a `Termination` is checked AGAINST** (P05.S02, D16): the roster
+	// commitment and the convener's fingerprint, and nothing else — those are the only two values
+	// `Verify` ever read out of a record. It exists so an INVITATION can supply them, because a
+	// party who has accepted and not yet signed holds no record and was therefore the one party a
+	// signed end state could never be shown to.
+	//
+	// **Its reader today is in-package and that is stated rather than dressed up.** `VerifyAgainst`
+	// consumes it; `Record.Anchor` and `Invitation.Anchor` produce it. The external caller is
+	// P05.S03, which arms a pre-hop party to receive the object — so this is a door built one
+	// slice before its user, which the plan says in as many words and which this line records so
+	// the gap reads as scheduled rather than as `CheckDocument`'s defect returning.
+	"ceremony.Anchor": {"internal/ceremony/termination.go"},
 	// **`ceremony.Termination` is the convener's signed end state (P08.S04b), and its reader is
 	// `ReadStored`** — which folds it into `Stored.Ended` for the listing route. The object itself
 	// is deliberately NOT rendered anywhere: a surface that showed the signature would invite a
