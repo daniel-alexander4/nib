@@ -1,0 +1,14 @@
+--- a/web/app.js
++++ b/web/app.js
+@@ -10722,10 +10722,7 @@
+       // it; putting the group back after it restores the pairing the accordion is made of. The
+       // end-of-pane fallback is for a group with no header, which is not a shape that exists
+       // today and is not worth a silent misplacement if it ever does.
+-      for (const g of [...pane._more.querySelectorAll('.tbgroup[data-fold]')]) {
+-        if (g._head && g._head.parentElement === pane) g._head.after(g);
+-        else pane.insertBefore(g, pane._more.parentElement);
+-      }
++      for (const g of [...pane._more.querySelectorAll('.tbgroup[data-fold]')]) pane.insertBefore(g, pane._more.parentElement);
+       pane._more.parentElement.classList.remove('hasfolded');
+     }
+   } else {

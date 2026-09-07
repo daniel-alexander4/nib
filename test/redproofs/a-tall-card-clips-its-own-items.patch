@@ -1,0 +1,11 @@
+--- a/web/style.css
++++ b/web/style.css
+@@ -1561,7 +1561,7 @@
+    body clipped instead of scrolling — measured at a 420px window, `clientHeight` 146
+    against 505px of children, with `scrollTop` refusing to move. Every item past the
+    fold was unreachable, which is worse than the layout it was fixing. One scroller. */
+-#commands .tbtab > .tbgroup.open { overflow: visible; }
++#commands .tbtab > .tbgroup.open { max-height: 60vh; overflow-y: auto; }
+ /* A header is its own height. As flex children of the column they stretched to fill the free
+    space — measured 203px each, which is what put a dead gap above every content card. */
+ .sbpane > .sbhead { flex: 0 0 auto; }

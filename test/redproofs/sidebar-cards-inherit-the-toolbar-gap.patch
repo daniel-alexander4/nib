@@ -1,11 +1,11 @@
 --- a/web/style.css
 +++ b/web/style.css
-@@ -1483,7 +1483,7 @@
-    every pill — visible as a gap in the accordion and in nothing else. Measured: card head
-    ended at y=192, its body began at 202. Cards stack flush now, which is also what makes the
-    rounded corners below read as a stack rather than as floating chips. */
--#commands .tbtab { flex-direction: column; align-items: stretch; gap: 0; }
-+#commands .tbtab { flex-direction: column; align-items: stretch; gap: 10px; }
+@@ -1476,7 +1476,7 @@
+    window — the headers, the open body and the tail all reported `top: 117` in three overlapping
+    200px columns, rendering as an empty grey band with the last header simply gone. Turned off
+    rather than left as a trap for the next rule that constrains a height. */
+-#commands .tbtab { flex-direction: column; flex-wrap: nowrap; align-items: stretch; gap: 0; }
++#commands .tbtab { flex-direction: column; flex-wrap: nowrap; align-items: stretch; gap: 10px; }
  #commands .tbgroup { flex-direction: column; align-items: stretch; gap: 3px; }
  #commands .tbgroup + .tbgroup::before { display: none; }
  #commands .tbgroup > .menucap { display: block; padding: 2px 0 0; }

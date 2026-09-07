@@ -292,6 +292,95 @@ test('every icon button in the toolbar renders its icon', async () => {
     `these toolbar buttons carry an <svg> that renders at no usable size: ${blank.map((b) => `${b.id} (${b.w}x${b.h})`).join(', ')}. The element is in the DOM, so every structural check passes and the control still reads as an empty gap.`);
 });
 
+// ── An open card reads as part of the list it is in ─────────────────────────
+//
+// Reported: "the content for an expanded pill shows below all of the pills and not directly under
+// the header." The card's body was capped at `60vh` with `overflow-y: auto`, which made it a
+// SCROLLER INSIDE A SCROLLER: Export & Print's fifteen items ran 505px, so the body became a
+// fixed 540px island and the pills after it were pushed to the bottom of the column — at 900px
+// tall they landed at y=724 of an 818px pane, and on a shorter window off the fold entirely.
+//
+// The property is that the accordion behaves like a list: the content sits directly under its own
+// header, the next header comes after the content, and there is ONE scroller — the pane. A nested
+// scroller is what turns a long card into a box the surrounding list appears to flow around.
+//
+// **A version that made the body claim the leftover height instead was tried and reverted**, and
+// the measurement is why: nested in two flex containers it CLIPPED rather than scrolled —
+// `clientHeight` 146 against 505px of children, `scrollTop` refusing to move, every item past the
+// fold unreachable. Worse than what it fixed.
+test('an expanded card sits under its own header, with one scroller', async () => {
+  await page.setViewportSize({ width: 1280, height: 900 });
+  // Reuses the document the tests above opened rather than opening a second one — this file's
+  // cleanup closes ONE, so an extra open leaves page divs behind and fails it instead of this.
+  await h.mode('file');
+  await h.card('Export & Print');   // the tallest card in the app
+
+  const read = () => page.evaluate(() => {
+    const pane = document.getElementById('sbFunctions');
+    const body = document.querySelector('#sbFunctions .tbgroup.open');
+    // The header immediately above THIS body. Searching for `aria-expanded="true"` finds the
+    // first one in document order, and cards in the other modes' panes keep their expanded state
+    // while hidden — so that search returned a card from a pane nobody is looking at, and the
+    // measured gap was one header's height.
+    const head = body.previousElementSibling;
+    const next = body.nextElementSibling;
+    const r = (e) => e.getBoundingClientRect();
+    return {
+      items: [...body.children].filter((e) => r(e).height > 0).length,
+      gapFromHeader: Math.round(r(body).top) - Math.round(r(head).bottom),
+      nextHeaderOffset: next ? Math.round(r(next).top) - Math.round(r(body).bottom) : null,
+      paneScrolls: pane.scrollHeight > pane.clientHeight + 1,
+      // Can the LAST item actually be SEEN after scrolling? Two cheaper observables were tried
+      // and both lie about this:
+      //   * `scrollHeight` — with the old cap the body reported 223 = 223 while holding 505px of
+      //     items, because a flex column with a capped height clips its children without
+      //     establishing any scroll extent;
+      //   * the item's own rect — a clipped element still HAS a position, and scrolling the pane
+      //     moves that position into the pane's box while the item stays invisible behind the
+      //     clip.
+      // Hit-testing is the one that accounts for the clip: ask the document what is painted at
+      // the item's own centre.
+      lastItemReachable: (() => {
+        const kids = [...body.children].filter((e) => r(e).height > 0);
+        const last = kids[kids.length - 1];
+        pane.scrollTop = pane.scrollHeight;
+        const lr = r(last);
+        const hit = document.elementFromPoint(Math.round(lr.left + lr.width / 2), Math.round(lr.top + lr.height / 2));
+        const ok = !!hit && (hit === last || last.contains(hit));
+        pane.scrollTop = 0;
+        return ok;
+      })(),
+    };
+  });
+
+  const wide = await read();
+  assert.ok(wide.items >= 10,
+    `the open card shows ${wide.items} items — this guard wants the tall card, and a short one cannot demonstrate the defect`);
+  assert.equal(wide.gapFromHeader, 0,
+    `the open card's content starts ${wide.gapFromHeader}px below its own header rather than directly under it`);
+  assert.equal(wide.nextHeaderOffset, 0,
+    `the next pill sits ${wide.nextHeaderOffset}px after the content instead of directly after it — the card is not reading as part of the list`);
+  assert.equal(wide.lastItemReachable, true,
+    'the last item of the open card cannot be brought into view. A capped, flex-column body clips its children WITHOUT reporting any overflow — so the items past the cap are simply unreachable and nothing says so');
+
+  // And on a window short enough that the column cannot hold it, the same three hold — the pane
+  // takes over the scrolling rather than the card growing its own.
+  await page.setViewportSize({ width: 1280, height: 420 });
+  await page.waitForTimeout(300);
+  const short = await read();
+  assert.equal(short.gapFromHeader, 0, 'on a short window the content parted company with its header');
+  assert.equal(short.paneScrolls, true,
+    'nothing scrolls on a window too short to hold the open card, so its items past the fold cannot be reached at all');
+  assert.equal(short.lastItemReachable, true,
+    'on a short window the open card\'s last item cannot be reached by scrolling the sidebar');
+
+  // Left OPEN: this file's last test is a cleanup that closes what is open, and #closeBtn is
+  // disabled with nothing there — a disabled button is a 30-second timeout rather than a failed
+  // assertion. Restoring the viewport matters for the same reason.
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.waitForTimeout(200);
+});
+
 test('this file leaves the shared server as it found it', async () => {
   await page.setViewportSize({ width: 1280, height: 900 });
   const openPages = (await h.counts()).pages;

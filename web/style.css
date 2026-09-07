@@ -1470,7 +1470,13 @@ input.ovl-check { appearance: auto; accent-color: #1a7f37; background: transpare
    every pill — visible as a gap in the accordion and in nothing else. Measured: card head
    ended at y=192, its body began at 202. Cards stack flush now, which is also what makes the
    rounded corners below read as a stack rather than as floating chips. */
-#commands .tbtab { flex-direction: column; align-items: stretch; gap: 0; }
+/* `flex-wrap: nowrap`, because `.tbtab` wraps in the TOOLBAR where it is a row, and a column flex
+   container that is ever given a definite height wraps into COLUMNS instead. It was harmless only
+   because nothing here had a definite height; the moment something did — measured at a 620px
+   window — the headers, the open body and the tail all reported `top: 117` in three overlapping
+   200px columns, rendering as an empty grey band with the last header simply gone. Turned off
+   rather than left as a trap for the next rule that constrains a height. */
+#commands .tbtab { flex-direction: column; flex-wrap: nowrap; align-items: stretch; gap: 0; }
 #commands .tbgroup { flex-direction: column; align-items: stretch; gap: 3px; }
 #commands .tbgroup + .tbgroup::before { display: none; }
 #commands .tbgroup > .menucap { display: block; padding: 2px 0 0; }
@@ -1537,7 +1543,25 @@ input.ovl-check { appearance: auto; accent-color: #1a7f37; background: transpare
 /* #commands is a pass-through — its CARDS are the items, so it sizes to content and
    only a real content panel claims the leftover height. */
 .sbpane > .panel.active:not(#commands) { flex: 1 1 auto; min-height: 0; }
-#commands .tbtab > .tbgroup.open { max-height: 60vh; overflow-y: auto; }
+/* ── An open card's content flows under its own header ───────────────────────
+   No cap and no scroller of its own: the body is as tall as its items and the PANE
+   is the one thing that scrolls. That is the ordinary accordion, and it is what
+   "directly under the header" means — the pills below sit under the content, where
+   they belong, instead of the content becoming a scrollable island inside a
+   scrollable column.
+
+   It used to be `max-height: 60vh; overflow-y: auto`, which made a tall card its own
+   scroller: Export & Print's fifteen items ran 505px, so the card became a fixed
+   island and the remaining pills were pushed to the bottom of the column — off the
+   fold on a short window, which is what read as the content showing below all of the
+   pills.
+
+   **A version of this that grew the body to fill the leftover height was tried and
+   REVERTED**, and the reason is worth keeping: nested inside two flex containers the
+   body clipped instead of scrolling — measured at a 420px window, `clientHeight` 146
+   against 505px of children, with `scrollTop` refusing to move. Every item past the
+   fold was unreachable, which is worse than the layout it was fixing. One scroller. */
+#commands .tbtab > .tbgroup.open { overflow: visible; }
 /* A header is its own height. As flex children of the column they stretched to fill the free
    space — measured 203px each, which is what put a dead gap above every content card. */
 .sbpane > .sbhead { flex: 0 0 auto; }
@@ -1583,7 +1607,7 @@ input.ovl-check { appearance: auto; accent-color: #1a7f37; background: transpare
 
 /* A pane is the scrolling column the sidebar used to be. `#sidebar` itself stops
    scrolling, or the inactive pane's height would still count. */
-.sbpane { display: none; flex: 1 1 auto; min-height: 0; overflow-y: auto; }
+.sbpane { display: none; flex: 1 1 auto; min-height: 0; overflow-y: auto; overflow-x: hidden; }
 .sbpane.active { display: flex; flex-direction: column; }
 #sidebar { overflow: hidden; }
 /* The thumbnail grid is the whole of its pane, so it is always displayed there — the `.active`
