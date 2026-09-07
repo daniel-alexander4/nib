@@ -1678,3 +1678,32 @@ input.ovl-check { appearance: auto; accent-color: #1a7f37; background: transpare
   border: 1.5px solid var(--overlay0); background: transparent;
 }
 .docdirty.unsaved { border-color: var(--peach); background: var(--peach); }
+
+
+/* ── The Simple Sign checklist (v1.127.0) ─────────────────────────────────────
+   A row is a link to the tool that does that step, with its state on the left and
+   whether it is required on the right. Three states, and the third is the honest
+   one: `untracked` is a step Nib cannot observe, and it renders as a dash rather
+   than as an empty circle so it does not read as "not done yet". */
+.signsteps { display: flex; flex-direction: column; gap: 0; margin-bottom: 6px; }
+.signstep {
+  display: flex; align-items: baseline; gap: 6px; width: 100%;
+  border: 0; background: transparent; cursor: pointer;
+  padding: 4px 2px; text-align: left; font: inherit; font-size: 12px;
+  color: var(--subtext1); border-radius: 4px;
+}
+.signstep:hover { background: var(--surface0); color: var(--text); }
+.signstep-mark { flex: 0 0 auto; width: 12px; text-align: center; }
+.signstep-label { flex: 1 1 auto; min-width: 0; }
+/* `required` is the weight, not a colour: colour alone is WCAG 1.4.1, and this label is
+   the only thing carrying that distinction. */
+.signstep-need { flex: 0 0 auto; font-size: 10px; letter-spacing: .3px; opacity: .75; }
+.signstep[data-need="required"] .signstep-need { font-weight: 700; opacity: 1; }
+.signstep[data-state="done"] { color: var(--text); }
+.signstep[data-state="done"] .signstep-mark { color: var(--green); }
+.signstep[data-state="untracked"] .signstep-mark { opacity: .5; }
+/* The seam between the checklist and Nib's own transport commands. */
+.signsteps-or {
+  margin: 8px 0 4px; padding-top: 8px; border-top: 1px solid var(--surface1);
+  font-size: 11px; color: var(--subtext1);
+}

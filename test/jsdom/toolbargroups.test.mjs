@@ -16,10 +16,15 @@
 // One boot per file — see boot.mjs.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { boot } from './boot.mjs';
+import fs from 'node:fs';
+import path from 'node:path';
+import { boot, REPO } from './boot.mjs';
 
 const h = await boot({});
 const doc = h.document;
+// SIGN_STEPS is module-scope in app.js and not exposed, so it is read from the source the same
+// way doccontrols reads DOC_REQUIRED and modes reads SIDEBAR_FOR.
+const APP_SRC = fs.readFileSync(path.join(REPO, 'web', 'app.js'), 'utf8');
 
 // The fold ranks app.js declares. 0 means "never folds"; the rest are the ladder.
 const RANKS = ['0', '1', '2', '3', '4', '5', '6', '7'];
@@ -170,4 +175,47 @@ test('the document title is in the bar and cannot fold away', () => {
     'the document title is inside a fold group, so at a narrow width it disappears into ⋯ More — the one place the name matters most');
   assert.ok(doc.getElementById('docDirty'),
     'the save-state indicator is gone, so the title says which file is open and not whether it is saved');
+});
+
+// ── The Simple Sign checklist (v1.127.0) ─────────────────────────────────────
+//
+// The list is DECLARED in app.js and rendered; the markup holds only an empty container, because
+// a row written into index.html would be a claim about progress that nothing checks.
+//
+// What this tier can hold is the declaration's shape: every step names itself, says whether it is
+// required, and goes somewhere. What it cannot hold is whether a tick is TRUE — that needs a real
+// document in a real browser, and `test/ui/signsteps.test.mjs` drives it.
+const STEP_SRC = (() => {
+  const at = APP_SRC.indexOf('const SIGN_STEPS = [');
+  assert.notEqual(at, -1, 'SIGN_STEPS is not in web/app.js — this scan is reading nothing');
+  return APP_SRC.slice(at, APP_SRC.indexOf('\n];', at));
+})();
+
+test('every sign step declares a label, a need, and somewhere to go', () => {
+  const steps = [...STEP_SRC.matchAll(/\{\s*label: '([^']+)'[\s\S]*?need: '([a-z]+)'/g)]
+    .map((m) => ({ label: m[1], need: m[2] }));
+  assert.ok(steps.length >= 10,
+    `found ${steps.length} steps in SIGN_STEPS — the list is the whole feature, so this guard must be reading it`);
+  const badNeed = steps.filter((s) => s.need !== 'required' && s.need !== 'optional');
+  assert.deepEqual(badNeed, [],
+    `these steps declare a need that is neither required nor optional: ${badNeed.map((s) => s.label).join(', ')}`);
+  // A step with nowhere to go is a line of text pretending to be a link.
+  const gos = [...STEP_SRC.matchAll(/go: \(\) =>/g)].length;
+  assert.equal(gos, steps.length,
+    `${steps.length} steps declare a label but only ${gos} declare a go — a row with no destination is text wearing a link's clothes`);
+  assert.ok(steps.some((s) => s.need === 'required') && steps.some((s) => s.need === 'optional'),
+    'every step carries the same need, so the distinction the list exists to draw is not being drawn');
+});
+
+test('a step is ticked only where something can observe it', () => {
+  // `done` is a probe or it is literally `null`. The null is the honest half of this feature —
+  // Nib cannot know whether you ran a hidden-content scan or where you saved an .ots — and a
+  // `done` that always returns true would be a permanent tick nothing backs.
+  const dones = [...STEP_SRC.matchAll(/done: (null|\(\) => [^,]+),/g)].map((m) => m[1]);
+  assert.ok(dones.length >= 10, `only ${dones.length} steps declare a done — the scan is not reading them`);
+  const alwaysTrue = dones.filter((d) => /^\(\) => (true|1)$/.test(d.trim()));
+  assert.deepEqual(alwaysTrue, [],
+    'a step declares `done: () => true`, which is a tick that nothing observes. Use null — the list says "Nib cannot tell" and means it');
+  assert.ok(dones.includes('null'),
+    'no step is declared untracked. Some of these Nib genuinely cannot see, and claiming otherwise is what this guard exists to stop');
 });

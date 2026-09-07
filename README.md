@@ -410,6 +410,13 @@ unsaved work. Undo steps back one operation at a time; this abandons all of them
 page number lives here), and **Functions** is everything else: the current tab's command
 cards and the other panels.
 
+**The Simple Sign checklist** — the *Signing* tab's first card lists the steps of signing a
+document in order, each one a link to the tool that does it, marked **required** or *optional*
+and ticked when Nib can see it is done. Steps Nib can't observe — whether you ran a
+hidden-content scan, where you saved an `.ots` — show a dash rather than a tick it can't back.
+It's a checklist, not a wizard: nothing is enforced, but two of the steps (applying a redaction,
+and signing) are one-way doors, and the order says so.
+
 **Settings** is its own tab. Identity & peers, authorized keys, vault backup/restore, the
 update preference, the theme toggle, About — and **Colours**, which sets the sidebar's card
 colours: leave it on *All colours* for the six-accent rotation, or pick one hue and the cards

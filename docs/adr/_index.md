@@ -214,3 +214,11 @@ home today.
   (`openCard` deactivates panels, so Collaborate stopped landing on Flags), and that two geometry
   guards had encoded "content panels are always last" — one read the Flags panel as a 684px gap,
   the other as a pill with square corners
+- [ADR-027: The sign checklist ticks only what it can see](027-the-sign-checklist-ticks-only-what-it-can-see.md)
+  — Simple Sign lists the steps of signing in order, each row a link to the tool, each marked
+  required/optional and done / not done / **not tracked**. A step is ticked only where Nib can
+  observe it (seven can be; eight honestly cannot) — `done` is a probe or `null`, because a tick
+  nothing backs is worse than no tick when the list exists to answer "what is left". A checklist,
+  not a wizard: nothing is enforced, but the order contains two one-way doors and says so. Cost: a
+  TDZ trap (the boot call sat above the `const` it reads and took the rest of app.js with it) and
+  a caption written as `.menucap`, which is display:none inside #commands

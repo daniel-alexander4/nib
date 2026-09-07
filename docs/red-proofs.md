@@ -4258,3 +4258,27 @@ real assertion for an unrelated reason. It now asserts the cards do not all lean
 which is what actually distinguishes a rotation from a ladder.
 
 `recorded` 327 → 329.
+
+
+## ADR-027 — the sign checklist (v1.127.0)
+
+| Defect reintroduced | Check that fired | What it said |
+| --- | --- | --- |
+| `the-sign-checklist-stops-reading-live-state` — the render leaves the funnel | `signsteps.test.mjs`, tier 3 | "a document is open and the checklist still shows that step as outstanding" |
+| `a-sign-step-claims-a-tick-nothing-observes` — an untracked step declares `done: () => true` | `toolbargroups.test.mjs`, tier 2 | "a tick that nothing observes" |
+
+**The first still LOOKS right**, which is why it needs a row: the rows render, the required badges
+render, and the ticks drawn at boot are correct *for boot*. It goes wrong only as you work — you
+open a document and the list still says you have not. Decoration that looks like state.
+
+**The second is the failure this feature is permanently one edit away from.** Every untracked row
+is a dash somebody will eventually want to be a tick; the tick is trivial to write and impossible
+to notice, because it is green from the first render and always wrong. The guard reads the
+declaration and refuses `done: () => true`.
+
+**What neither can see:** whether the seven real probes are probing the right thing. `isSigned()`
+and a stamp count are read from live state, so a probe wired to the wrong signal would tick at the
+wrong moment and both rows would still pass. The tier-3 test pins two of them by driving the actual
+change; the other five are asserted only to be observable, not to be correct.
+
+`recorded` 329 → 331.
