@@ -25,7 +25,7 @@ func TestTheRoundReportsTheLegItIsOn(t *testing.T) {
 		t.Fatalf("a server with no round reports a leg in flight: %+v", l)
 	}
 
-	end := s.beginLeg(id, "Bob Landlord", 2, 4)
+	end := s.beginLeg(id, "BOB00FF", "Bob Landlord", 2, 4)
 	got, ok := s.currentLeg(id)
 	if !ok {
 		t.Fatal("a round in flight reports no leg, which is the whole of /pending 370")
@@ -90,7 +90,7 @@ func TestTheDeliveryProgressRouteSeparatesRunningFromQuiet(t *testing.T) {
 		t.Error("a ceremony with no round running reports one")
 	}
 
-	end := srv.beginLeg(id, "Cy Witness", 1, 3)
+	end := srv.beginLeg(id, "CY00FF", "Cy Witness", 1, 3)
 	defer end()
 	run := get()
 	if !run.Running {
@@ -164,5 +164,105 @@ func TestTheLegIsPublishedBeforeItIsAttempted(t *testing.T) {
 			"that can burn the connect deadline, so publishing after it names each party only " +
 			"once it has stopped being the one the convener is waiting on — a progress surface " +
 			"reporting exclusively the past")
+	}
+}
+
+// TestTwoLegsOfOneCeremonyDoNotSharaOneRecord — the leg map was keyed on the ceremony id alone.
+//
+// # The defect, and why the serial walk hides it completely
+//
+// `s.legs` held one entry per CEREMONY. That is unique only because `runDeliveryRound` walks one
+// party at a time — a property of today's walk, not of a leg. Under `/pending 376`'s W concurrent
+// legs every leg of one ceremony writes the same entry, and the FIRST to finish deletes the record
+// the others are still represented by: the watcher then reports a quiet ceremony while W-1 legs
+// are still burning `connectDeadline`, which is the exact silence /pending 370 built this surface
+// to end.
+//
+// Found by this session's `/deepdive` while tracing the delivery round's concurrency seams. It is
+// filed and fixed independently of 376 because the key is wrong whether or not 376 ever lands —
+// the serial walk is what makes it *harmless*, not what makes it right.
+//
+// # Why this test drives beginLeg directly
+//
+// There is no slow counterpart in-process to make a real round overlap its own legs (the same
+// reason `TestTheLegIsPublishedBeforeItIsAttempted` is structural). Driving the two publishes by
+// hand is what the round would do under W>1, and it is the only shape that can go red here.
+func TestTwoLegsOfOneCeremonyDoNotShareOneRecord(t *testing.T) {
+	s := &Server{}
+	const id = "ceremony-1"
+
+	// Two legs of ONE ceremony, as a concurrent round would have. Distinct start times so the
+	// oldest is unambiguous — the tie-break is asserted separately below.
+	endBob := s.beginLeg(id, "BB00", "Bob Landlord", 1, 3)
+	time.Sleep(2 * time.Millisecond)
+	endCy := s.beginLeg(id, "CC00", "Cy Witness", 2, 3)
+
+	// The OLDEST is reported: the surface exists to show a stall, and the leg nearest its ceiling
+	// is the one a convener is actually waiting on. Reporting the newest would reset the clock
+	// every time a sibling started.
+	got, ok := s.currentLeg(id)
+	if !ok {
+		t.Fatal("two legs are in flight and the ceremony reports none")
+	}
+	if got.Label != "Bob Landlord" {
+		t.Errorf("with two legs live the round reports %q; want the OLDEST, \"Bob Landlord\". "+
+			"Reporting the newest resets the elapsed clock whenever a sibling starts, which is a "+
+			"progress surface that cannot show the stall it exists for", got.Label)
+	}
+
+	// **The defect itself.** Ending one leg must leave the other reported. Under the old key both
+	// legs were one entry, so this delete emptied it and the ceremony went quiet with a leg still
+	// running.
+	endBob()
+	got, ok = s.currentLeg(id)
+	if !ok {
+		t.Fatal("ending one leg cleared the other: the map is keyed so that two legs of one " +
+			"ceremony share a record, so the first leg to finish makes a running round look " +
+			"finished. That is the key this test exists for (`legKey` carries the party)")
+	}
+	if got.Label != "Cy Witness" {
+		t.Errorf("after the first leg ended the round reports %q, want the surviving leg "+
+			"\"Cy Witness\"", got.Label)
+	}
+
+	endCy()
+	if l, ok := s.currentLeg(id); ok {
+		t.Errorf("both legs ended and the ceremony still reports one: %+v", l)
+	}
+}
+
+// The tie-break, asserted on its own because a map range without one is the same class of defect
+// as the key it was fixed beside: an answer that varies run to run for no reason a reader can see.
+func TestSimultaneousLegsAreOrderedDeterministically(t *testing.T) {
+	const id = "ceremony-2"
+	// Legs whose Started is identical — ordinary on a coarse clock. Written straight into the map
+	// so the times really are equal; `beginLeg` takes its own `time.Now()` and could not produce
+	// this reliably.
+	at := time.Now()
+	first := ""
+	for i := 0; i < 12; i++ {
+		s := &Server{legs: map[legKey]deliveryLeg{
+			{ceremony: id, party: "cc00"}: {Label: "Cy Witness", Index: 3, Of: 3, Started: at},
+			{ceremony: id, party: "aa00"}: {Label: "Ann Signer", Index: 2, Of: 3, Started: at},
+			{ceremony: id, party: "bb00"}: {Label: "Bob Landlord", Index: 2, Of: 3, Started: at},
+		}}
+		got, ok := s.currentLeg(id)
+		if !ok {
+			t.Fatal("three legs in the map and the ceremony reports none")
+		}
+		if first == "" {
+			first = got.Label
+		}
+		if got.Label != first {
+			t.Fatalf("the same three simultaneous legs reported %q and then %q — the reader is "+
+				"ranging the map without a tie-break, so the watcher's answer changes for reasons "+
+				"nothing in the round did", first, got.Label)
+		}
+	}
+	// Lowest Index wins the tie, then the party, so the answer is also the RIGHT one rather than
+	// merely stable: Ann is index 2 and sorts before Bob's identical index.
+	if first != "Ann Signer" {
+		t.Errorf("simultaneous legs resolved to %q; want \"Ann Signer\" — lowest index first, then "+
+			"party, so a stable answer is also an explicable one", first)
 	}
 }

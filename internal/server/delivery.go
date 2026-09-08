@@ -938,7 +938,7 @@ func (s *Server) runDeliveryRound(ctx context.Context, v *vault.Vault, rec cerem
 		// ender and anyone an earlier run reached — so counting it would number this leg against a
 		// denominator it is not drawn from and show "4 of 2".
 		attempt++
-		endLeg := s.beginLeg(rec.ID, party.Label, attempt, walked)
+		endLeg := s.beginLeg(rec.ID, party.Fingerprint, party.Label, attempt, walked)
 		derr := s.deliverToParty(ctx, v, inv, party.Fingerprint, addrs[strings.ToLower(party.Fingerprint)], cert, key, myFP, payload, shared)
 		endLeg()
 		if derr != nil {
@@ -1413,32 +1413,79 @@ type deliveryLeg struct {
 	Started time.Time
 }
 
+// legKey identifies ONE leg: a ceremony and the party that leg is reaching.
+//
+// **The party half is what makes it a leg key**, and it was missing. Keyed on the ceremony alone
+// the map is correct only while the round is serial, which is a property of today's walk rather
+// than of a leg — so the key silently encoded an assumption that `/pending 376` exists to remove.
+// A struct rather than a joined string: there is no separator to choose, no case convention to
+// forget at one of two sites, and the type itself refuses the one-field key.
+type legKey struct {
+	ceremony string
+	party    string // lower-cased fingerprint; see beginLeg
+}
+
 // beginLeg publishes the leg about to be attempted, and returns the function that clears it.
 //
 // The clear is a RETURNED CLOSURE rather than a second exported call, so a caller cannot take the
 // publish and forget the clear: a round that returned early — or panicked into `safe.Recover` —
 // would otherwise leave a ceremony reporting a leg in flight forever, which is the stale-artifact
-// failure this was put in memory to avoid.
-func (s *Server) beginLeg(id, label string, index, of int) func() {
+// failure this was put in memory to avoid. The closure captures the whole key, so a leg can only
+// ever clear ITSELF — under concurrent legs a clear keyed on the ceremony would tear down a
+// sibling that is still running.
+//
+// The fingerprint is lower-cased here rather than at the call site, because a party spelled two
+// ways would otherwise open two entries for one leg — the same normalisation `runDeliveryRound`
+// already applies when it looks a party's address up.
+func (s *Server) beginLeg(id, partyFP, label string, index, of int) func() {
+	k := legKey{ceremony: id, party: strings.ToLower(partyFP)}
 	s.legMu.Lock()
 	if s.legs == nil {
-		s.legs = map[string]deliveryLeg{}
+		s.legs = map[legKey]deliveryLeg{}
 	}
-	s.legs[id] = deliveryLeg{Label: label, Index: index, Of: of, Started: time.Now()}
+	s.legs[k] = deliveryLeg{Label: label, Index: index, Of: of, Started: time.Now()}
 	s.legMu.Unlock()
 	return func() {
 		s.legMu.Lock()
-		delete(s.legs, id)
+		delete(s.legs, k)
 		s.legMu.Unlock()
 	}
 }
 
 // currentLeg reports the leg in flight for a ceremony, if any.
+//
+// # With more than one leg live it reports the OLDEST, and that is not an arbitrary pick
+//
+// The surface exists to separate a round that is working from one that is hung, and its own doc
+// says elapsed time against a known ceiling is the thing that ticks. The oldest live leg is
+// therefore the only useful answer: it is the one nearest its ceiling, and it is what a convener
+// watching a stalled round needs named. Reporting the newest would reset the clock every time a
+// sibling started, which is a progress bar that cannot show a stall.
+//
+// **Ties are broken deterministically rather than left to the map.** Two legs begun inside one
+// clock tick is ordinary on a coarse clock, and ranging a map without a tiebreak makes the answer
+// vary run to run — the same class of defect as the key this function was fixed alongside.
 func (s *Server) currentLeg(id string) (deliveryLeg, bool) {
 	s.legMu.Lock()
 	defer s.legMu.Unlock()
-	l, ok := s.legs[id]
-	return l, ok
+	var best deliveryLeg
+	var bestParty string
+	found := false
+	for k, l := range s.legs {
+		if k.ceremony != id {
+			continue
+		}
+		switch {
+		case !found:
+		case l.Started.Before(best.Started):
+		case l.Started.Equal(best.Started) && l.Index < best.Index:
+		case l.Started.Equal(best.Started) && l.Index == best.Index && k.party < bestParty:
+		default:
+			continue
+		}
+		best, bestParty, found = l, k.party, true
+	}
+	return best, found
 }
 
 // deliveryProgressResponse is what a watcher polls while a round runs.
