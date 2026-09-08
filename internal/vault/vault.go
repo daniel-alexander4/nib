@@ -256,6 +256,19 @@ type Contents struct {
 	// party. The convener's side is `CeremonySecrets`, which is keyed by party because a convener
 	// mints one per invitee.
 	CeremonyInvitations []CeremonyInvitation `json:"ceremonyInvitations,omitempty"`
+	// CeremonyDraft is the convener's unfinished setup — roster, recital and deadline — before
+	// `convene` writes anything signed (D4, P03.S02).
+	//
+	// **A single slot, because a draft has no ceremony id yet.** Every other store here is keyed
+	// by one, which is what lets it be pruned by name; a draft is what exists *before* there is a
+	// name, so it is one value and its clear is unconditional.
+	//
+	// **In the vault rather than under `~/nib/`, and the reason is residue.** An abandoned draft
+	// records who the user was about to transact with and what they were about to agree. Beside
+	// the documents that is plaintext; here it is encrypted at rest with everything else. It is
+	// NOT key material, and D29 does not say the vault is only for that — this file already holds
+	// the appearance and the recent highlight colours.
+	CeremonyDraft string `json:"ceremonyDraft,omitempty"`
 }
 
 // contentsVersion is what this build writes into Contents, and the highest it will open.
@@ -1435,6 +1448,42 @@ func (v *Vault) AddCeremonyInvitation(ceremony, invitation string) error {
 	}
 	v.contents.CeremonyInvitations = append(v.contents.CeremonyInvitations,
 		CeremonyInvitation{Ceremony: ceremony, Invitation: invitation})
+	return v.save()
+}
+
+// SetCeremonyDraft stores the convener's unfinished setup, replacing any previous one.
+//
+// **An empty draft CLEARS rather than storing an empty string**, which is what makes "the user
+// emptied the form" and "there is nothing to restore" the same state. Storing `""` would leave a
+// row that every reader has to special-case, and `omitempty` would drop it from the file anyway —
+// so the two spellings would disagree about what a saved-empty draft is.
+func (v *Vault) SetCeremonyDraft(draft string) error {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	v.contents.CeremonyDraft = draft
+	return v.save()
+}
+
+// CeremonyDraft returns the stored setup draft, or "" and false when there is none.
+//
+// Absence and an empty draft are the same answer here BY CONSTRUCTION — see SetCeremonyDraft —
+// which is why this returns a bool rather than leaving callers to compare against "".
+func (v *Vault) CeremonyDraft() (string, bool) {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	return v.contents.CeremonyDraft, v.contents.CeremonyDraft != ""
+}
+
+// ClearCeremonyDraft removes the stored draft. It is the door `convene` consumes through (P03.S03),
+// and it is idempotent: clearing a draft that is not there is not an error, because the caller's
+// question is "is it gone" and not "did I remove it".
+func (v *Vault) ClearCeremonyDraft() error {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	if v.contents.CeremonyDraft == "" {
+		return nil
+	}
+	v.contents.CeremonyDraft = ""
 	return v.save()
 }
 

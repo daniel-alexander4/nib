@@ -71,6 +71,51 @@ func startServer(t *testing.T) (*httptest.Server, string) {
 	return ts, pdfPath
 }
 
+// startServerOverSameHome starts a SECOND server against the vault the calling test already has.
+//
+// **That is what "closing and reopening Nib" is**, and it is the only shape that can fail a
+// survives-a-restart clause: anything held in memory, in a page, or keyed to the running process
+// passes every check made without one. `startServer`/`startServerWith` each call
+// `t.Setenv("HOME", t.TempDir())`, so calling either again tests a fresh install instead.
+//
+// **It takes the first server's `configDir`, and getting that wrong is what this comment used to
+// say.** The first draft handed over a fresh `t.TempDir()` on the reasoning that `configDir` "is not
+// `$HOME`" — but `Server.configDir`'s own doc says *"where the vault lives
+// (os.UserConfigDir()/nib)"*, so a fresh one is a fresh VAULT and the restart tested a new install.
+// The test caught it by failing for exactly the reason it exists to catch.
+func startServerOverSameHome(t *testing.T, configDir string) (*httptest.Server, *Server) {
+	t.Helper()
+	srv := New(os.DirFS("."), os.DirFS("."), configDir, "test")
+	ts := httptest.NewServer(srv.Handler())
+	t.Cleanup(ts.Close)
+	return ts, srv
+}
+
+// reopenedClient is `authedClient` for a server restarted over an existing vault.
+//
+// **It reads `/api/status` rather than enrolling**, because enrolling twice is a 409: the key is
+// already there. A reopened server auto-unlocks from the key `$HOME/.ssh` already holds — measured,
+// it reports `state:"ready"` with a CSRF before anything asks it to — which is what happens when a
+// user reopens Nib, and is why this is a restart rather than a second install.
+func reopenedClient(t *testing.T, ts *httptest.Server) (*http.Client, string) {
+	t.Helper()
+	c := newClient(t)
+	res, err := c.Get(ts.URL + "/api/status")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer res.Body.Close()
+	var st statusResponse
+	if err := json.NewDecoder(res.Body).Decode(&st); err != nil {
+		t.Fatal(err)
+	}
+	if st.State != "ready" || st.CSRF == "" {
+		t.Fatalf("a reopened server reports state=%q csrf-present=%v, want a ready vault — without "+
+			"one this is a fresh install and not a restart", st.State, st.CSRF != "")
+	}
+	return c, st.CSRF
+}
+
 func newClient(t *testing.T) *http.Client {
 	t.Helper()
 	return &http.Client{}
