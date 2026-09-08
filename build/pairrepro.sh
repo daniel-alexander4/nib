@@ -545,15 +545,86 @@ for kind, sk in (("tcp", socket.SOCK_STREAM), ("udp", socket.SOCK_DGRAM)):
 print(",".join(held))
 PYBIND
 }
-held=""
-for p in "${ALL_PORTS[@]}"; do
-  h="$(port_holder "$p" "$PROBE_HOST")"
-  [ -n "$h" ] && held="$held $p($h)"
-done
+# who_holds names the process sitting on a port, because the guess this used to print sent
+# the reader after something that was not there (/pending 386).
+#
+# The old message was "a leftover --keep run? Stop it, or set NIB_PAIR_PORT_BASE." — a
+# hypothesis, printed as though it were a finding. Measured 2026-09-08: what actually held
+# 18542 was a terminal emulator's connection to its own backend, which the kernel had handed
+# that port as an EPHEMERAL SOURCE port. `ss -ltnp` showed no listener at all, so a reader
+# following the message looks for a Nib, finds none, and has nothing left to try.
+who_holds() { # port
+  local p="$1" out
+  out="$(ss -tanp 2>/dev/null | awk -v p=":$p\$" '$4 ~ p {print $1, $NF; exit}')"
+  [ -z "$out" ] && out="$(ss -uanp 2>/dev/null | awk -v p=":$p\$" '$4 ~ p {print $1, $NF; exit}')"
+  [ -n "$out" ] && printf '%s' "$out" || printf 'unknown (no socket listed — it may be a raw bind)'
+}
+
+# probe_block reports which of a candidate block's ports are held, or nothing at all.
+probe_block() {
+  local held="" p h
+  for p in "${ALL_PORTS[@]}"; do
+    h="$(port_holder "$p" "$PROBE_HOST")"
+    [ -n "$h" ] && held="$held $p($h)"
+  done
+  printf '%s' "$held"
+}
+
+# rebuild_ports moves the whole block to a new base — **and everything DERIVED from it.**
+#
+# **The first version rebuilt only the port arrays and the run then failed with "asked for 2
+# instances and 0 answered".** `URLS`, `SESSION_PORT`, `SESSION_PORT_QUIC`, `A` and `B` are all
+# computed from `API_PORTS`/`SESSION_PORTS` about a hundred lines ABOVE the pre-flight probe, so
+# moving the ports underneath them left every instance launched on the new block and every request
+# addressed to the old one. Caught by the harness's own instance count on the first real run of
+# this change, which is the check that exists for exactly this.
+rebuild_ports() { # base
+  local base="$1" i
+  API_PORTS=(); for i in $(seq 1 "$N"); do API_PORTS+=( "$((base + i - 1))" ); done
+  SESSION_BASE="${NIB_PAIR_SESSION_BASE:-$((base + N))}"
+  SESSION_PORTS=(); for i in $(seq 1 $(( (N - 1) * 2 )) ); do SESSION_PORTS+=( "$((SESSION_BASE + i - 1))" ); done
+  ALL_PORTS=( "${API_PORTS[@]}" "${SESSION_PORTS[@]}" )
+  URLS=(); for i in $(seq 1 "$N"); do URLS+=( "http://127.0.0.1:${API_PORTS[$((i-1))]}" ); done
+  SESSION_PORT="${SESSION_PORTS[0]}"
+  SESSION_PORT_QUIC="${SESSION_PORTS[1]}"
+  A="${URLS[0]}"
+  B="${URLS[1]}"
+}
+
+held="$(probe_block)"
+
+# **A default base RETRIES; an explicit one refuses.** The block only has to be internally
+# consistent for one run — `git grep 18541` finds no caller outside this file and no red-proof
+# row uses one — so moving it costs nothing. What it buys is a harness that does not fail for a
+# reason that has nothing to do with the code under test.
+#
+# **The default sits INSIDE this machine's ephemeral range and that is not a local quirk to
+# shrug at.** `/proc/sys/net/ipv4/ip_local_port_range` reads `10000 65535` here, and 18541 is
+# squarely in it, so the kernel can hand any process this block at any moment. Linux's stock
+# range starts at 32768, which is why a stock box never sees this — and why the next person to
+# hit it will also be told to go looking for a leftover Nib.
+#
+# An operator who NAMED a base is telling the harness where to run; silently moving it would
+# answer a different question than the one they asked.
+if [ -n "$held" ] && [ -z "${NIB_PAIR_PORT_BASE:-}" ]; then
+  for step in 1000 2000 3000 4000 5000; do
+    rebuild_ports "$(( 18541 + step ))"
+    held="$(probe_block)"
+    if [ -z "$held" ]; then
+      echo "pre-flight: the default port block was busy; moved to ${API_PORTS[0]}" >&2
+      break
+    fi
+  done
+fi
+
 if [ -n "$held" ]; then
   echo "FAIL: ports already held:$held" >&2
   echo "      the run wanted this whole block: ${ALL_PORTS[*]}" >&2
-  echo "      a leftover --keep run? Stop it, or set NIB_PAIR_PORT_BASE." >&2
+  for p in "${ALL_PORTS[@]}"; do
+    h="$(port_holder "$p" "$PROBE_HOST")"
+    [ -n "$h" ] && echo "      $p is held by: $(who_holds "$p")" >&2
+  done
+  echo "      Set NIB_PAIR_PORT_BASE to a free block if that holder is not yours to stop." >&2
   exit 1
 fi
 
