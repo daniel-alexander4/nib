@@ -1,0 +1,12 @@
+diff --git a/internal/ceremony/termination.go b/internal/ceremony/termination.go
+index f4e52b4..b5aeb04 100644
+--- a/internal/ceremony/termination.go
++++ b/internal/ceremony/termination.go
+@@ -331,7 +331,6 @@ const endStateAADDomain = "nib-end-state-record-v1"
+ func terminationAAD(salt []byte) []byte {
+ 	var p preimageBuilder
+ 	p.addString(endStateAADDomain)
+-	p.add(salt)
+ 	return p.bytes()
+ }
+ 

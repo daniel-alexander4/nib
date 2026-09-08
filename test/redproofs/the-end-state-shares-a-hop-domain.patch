@@ -1,0 +1,13 @@
+diff --git a/internal/ceremony/invitation.go b/internal/ceremony/invitation.go
+index 7fa0998..63cf940 100644
+--- a/internal/ceremony/invitation.go
++++ b/internal/ceremony/invitation.go
+@@ -568,7 +568,7 @@ func (i Invitation) RecordKey(hop int) ([]byte, error) {
+ 
+ // EndStateSeed is the BEP-44 keypair seed for the end-state target.
+ func (i Invitation) EndStateSeed() ([]byte, error) {
+-	return i.derive("nib-bep44-seed-v1/end-state", 32)
++	return i.derive("nib-bep44-seed-v1/hop-0", 32)
+ }
+ 
+ // EndStateSalt is the end-state target's salt.

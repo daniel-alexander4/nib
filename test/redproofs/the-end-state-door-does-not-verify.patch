@@ -1,0 +1,13 @@
+diff --git a/internal/ceremony/termination.go b/internal/ceremony/termination.go
+index f4e52b4..2940ba4 100644
+--- a/internal/ceremony/termination.go
++++ b/internal/ceremony/termination.go
+@@ -406,8 +406,5 @@ func OpenEndState(key, salt, sealed []byte, anchor Anchor) (Termination, error)
+ 	if err := json.Unmarshal(plain, &t); err != nil {
+ 		return Termination{}, fmt.Errorf("%w: %v", ErrBadTermination, err)
+ 	}
+-	if err := t.VerifyAgainst(anchor); err != nil {
+-		return Termination{}, err
+-	}
+ 	return t, nil
+ }
