@@ -740,17 +740,31 @@ watch_verify() { # url csrf outfile
   # was really a cost. A budget that is a function of document size is the wrong shape; a ceiling
   # far above any honest hop is the right one, and a timeout here still fails loudly.
   local url="$1" tok="$2" out="$3"
+  local started
+  started="$(date +%s)"
   for _ in $(seq 1 240); do
     local w
     w="$(curl -fsS "$url/api/session/status" 2>/dev/null | jget verify.words)"
     if [ -n "$w" ]; then
       printf '%s' "$w" > "$out"
+      echo "verify: $url showed its words after $(( $(date +%s) - started ))s" >&2
       curl -fsS -X POST "$url/api/session/verify" -H 'Content-Type: application/json' \
         -H "X-CSRF-Token: $tok" -d '{"confirmed":true}' >/dev/null 2>&1
       return 0
     fi
     sleep 0.25
   done
+  # **A watcher that gives up SAYS SO, and until it did the run could not be diagnosed
+  # (/pending 385).** Every caller joins these with `wait "$w1" 2>/dev/null`, which discards the
+  # exit code — so a watcher that polled for its whole budget and saw nothing was indistinguishable
+  # from one that answered instantly. The failure that shape hides is the one measured: the words go
+  # up AFTER the watcher has exited, the gate then sits unanswered for `sessionConsentTimeout`
+  # (300 s, `session.go:92`), and the run fails saying the words "went unconfirmed" — which is true,
+  # and says nothing about the budget being the cause. This line plus the server's own
+  # "spoken check ON SCREEN" log make the two timestamps comparable.
+  echo "verify: $url NEVER showed its words — gave up after $(( $(date +%s) - started ))s. If the
+      server log shows a spoken check going on screen AFTER that, this budget is the failure and
+      not the product." >&2
   return 1
 }
 

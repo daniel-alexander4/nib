@@ -66,6 +66,22 @@ type ceremonyID struct {
 	// only. See the TCP-ceremony limit stated at that route's plain-listener door.
 	end *p2p.SharedEndpoint
 	rz  *rendezvous.Server
+	// borrowedEndpoint marks `end` and `rz` as somebody else's, so `close()` leaves them alone
+	// (/pending 376).
+	//
+	// **It exists because the endpoint is an ARTIFACT of where it was created, not a property of a
+	// ceremony.** `deliveryCeremony` builds this struct out of identity alone — the invitation, the
+	// hop, the gate, the two fingerprints and the keys — and `setupSharedEndpoint` bolts a socket
+	// on afterwards. A delivery round that called it per leg therefore opened one UDP socket, one
+	// QUIC transport and one whole DHT server PER PARTY, each with its own
+	// `rate.NewLimiter(250, 64)` — so W legs meant W×250/s of DHT send budget leaving one host with
+	// nothing bounding the total. The limiter is per server by construction (`dht.go`), and its own
+	// comment records what draining a shared burst did the last time.
+	//
+	// `Publish`/`Fetch` take their seed and salt per CALL, so one rendezvous server already serves
+	// many targets, and one QUIC transport dials many peers. Nothing about a round needs more than
+	// one of either.
+	borrowedEndpoint bool
 	// mu guards every field a background goroutine writes and another goroutine reads:
 	// `punch`, `portMap`, `closed`, `reDelivery`, `self`, `mapUnroutable` and `mapRefused`.
 	//
@@ -602,6 +618,14 @@ func (c *ceremonyID) close() {
 	// gateway (portmap.Client.Unmap dials fresh) on a FRESH context (grill C2), so it neither
 	// needs c.end nor rides any ctx this function cancels; it joins the refresh goroutine first so
 	// nothing re-creates the mapping after the delete (grill C3).
+	// **A borrowed endpoint is not torn down here, and the ordering below is why this is a flag
+	// rather than a nil check.** This function's own doc says three of the six plausible orderings
+	// panic the process — any that closes the mux while the DHT server is still reading it — so an
+	// endpoint with two potential closers is a panic waiting for a schedule. Ownership is recorded
+	// once, at the point it is lent, and only the owner closes.
+	if c.borrowedEndpoint {
+		return
+	}
 	if mapper != nil {
 		mapper.close()
 	}
@@ -611,6 +635,18 @@ func (c *ceremonyID) close() {
 	if c.end != nil {
 		c.end.Close()
 	}
+}
+
+// borrowEndpoint lends this ceremony an endpoint somebody else owns and will close (/pending 376).
+//
+// **The lender must outlive every borrower.** A round holds one endpoint for the whole walk and
+// each leg borrows it; the round's `defer` is the single teardown. Nothing here can enforce that
+// lifetime, so the rule is stated where it can be read: borrow only from a scope that closes after
+// you do.
+func (c *ceremonyID) borrowEndpoint(end *p2p.SharedEndpoint, rz *rendezvous.Server) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.end, c.rz, c.borrowedEndpoint = end, rz, true
 }
 
 // checkArrival is C17: the party reconciles the document it was handed against the invitation
@@ -1002,4 +1038,37 @@ func ceremonyFor(text string, myCertPEM, myKeyPEM []byte, peerFP []byte) (*cerem
 		return nil, err
 	}
 	return &ceremonyID{inv: inv, hop: hop, gate: gate, me: me, peer: peer, certPEM: myCertPEM, keyPEM: myKeyPEM}, nil
+}
+
+// sharedRendezvous is one endpoint and its DHT server, owned by a round and lent to its legs
+// (/pending 376).
+//
+// **The type exists so the lifetime is expressible.** `borrowEndpoint` states the rule — borrow
+// only from a scope that closes after you do — and a bare pair of pointers gives a caller nowhere
+// to put the `defer` that makes it true. This does: `openSharedRendezvous` returns it with its
+// closer, and the round holds both.
+type sharedRendezvous struct {
+	end *p2p.SharedEndpoint
+	rz  *rendezvous.Server
+}
+
+// openSharedRendezvous opens the one endpoint a round lends to every leg.
+//
+// It returns the round's teardown, in `ceremonyID.close()`'s order — rendezvous first, then the
+// socket — because that ordering is the whole of it: three of the six plausible orderings panic the
+// process, on a goroutine nothing here can recover.
+func openSharedRendezvous(bind, configDir string) (*sharedRendezvous, func(), error) {
+	end, err := p2p.NewSharedEndpoint(bind)
+	if err != nil {
+		return nil, nil, err
+	}
+	rz, err := rendezvous.Open(end.DHT(), nodeCacheDir(configDir))
+	if err != nil {
+		end.Close()
+		return nil, nil, err
+	}
+	return &sharedRendezvous{end: end, rz: rz}, func() {
+		rz.Close()
+		end.Close()
+	}, nil
 }

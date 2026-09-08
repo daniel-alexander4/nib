@@ -1,11 +1,13 @@
+diff --git a/internal/server/session.go b/internal/server/session.go
+index ad0a7a0..b4d2b0b 100644
 --- a/internal/server/session.go
 +++ b/internal/server/session.go
-@@ -1134,7 +1134,7 @@ func (sv sessionVerifier) ConfirmVerification(words string) (bool, error) {
- 	case ok := <-ch:
- 		// Presented either way: the user saw the words and said whether they matched. A refusal and
+@@ -1304,7 +1304,7 @@ func (sv sessionVerifier) ConfirmVerification(words string) (bool, error) {
  		// a confirmation are both answers, and only one of them leads to a signature.
+ 		log.Printf("ceremony %s: spoken check answered after %s (matched=%t)",
+ 			who, time.Since(started).Round(time.Millisecond), ok)
 -		sv.noteVerification(true, ok)
 +		sv.noteVerification(true, true)
  		return ok, nil
  	case <-time.After(sessionConsentTimeout):
- 		// **Presented and NOT confirmed, which is the third state and half the reason this note
+ 		// **The elapsed time is logged even though it is the timeout by construction**, because the
