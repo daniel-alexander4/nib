@@ -2906,6 +2906,30 @@ PYFAIL
       -o "$WORK/deliver3.$transport.json" -w '%{http_code}')"
     [ "$dcode" = "200" ] || fail "[$transport] the recovery re-run returned HTTP $dcode: $(head -c 300 "$WORK/deliver3.$transport.json")"
 
+    # ── What the RECIPIENT refused, printed (/pending 380, /pending 381) ─────────────────────
+    #
+    # **A delivery the far side refuses reaches this harness as `await receipt: EOF`**, which says
+    # the leg connected and says nothing about why it was turned away — measured on a real run, and
+    # it cost three wrong hypotheses and three six-minute re-runs before anybody could see past it.
+    # The recipient now records its own refusal (`noteFailure`, `delivery-refused`), and this reads
+    # it back off every party so a failing round explains itself in the run that failed rather than
+    # in the next one.
+    #
+    # **Printed and never asserted.** A round where nobody refused anything is the healthy case and
+    # prints nothing; a clause here would be asserting the absence of a diagnosis rather than the
+    # presence of a fault, and the fault is what the clauses below already grade.
+    for _pi in $(seq 2 "$N"); do
+      _note="$(curl -fsS "${URLS[$((_pi-1))]}/api/session/status" 2>/dev/null         | python3 -c 'import json,sys
+try:
+    d = json.load(sys.stdin) or {}
+except Exception:
+    sys.exit()
+n = d.get("notice") or {}
+if n.get("what") == "delivery-refused":
+    print((n.get("detail") or n.get("summary") or "").strip())' 2>/dev/null)"
+      [ -n "$_note" ] && echo "[$transport] instance $_pi REFUSED a delivered document: $_note"
+    done
+
     python3 - "$WORK/deliver3.$transport.json" "$transport" "$vfp" <<'PYONE' || exit 1
 import json, sys
 path, t, victim = sys.argv[1], sys.argv[2], sys.argv[3]

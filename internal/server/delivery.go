@@ -110,7 +110,29 @@ func (s *Server) deliverOneLeg(ch p2p.Channel, cer *ceremonyID, myFP []byte, pdf
 	}
 	var kept []byte
 	doc, err := p2p.ReceiveDocument(ch, autoAccepter{
-		verify: func(d []byte) error { return s.checkDeliveredPayload(cer, d) },
+		verify: func(d []byte) error {
+			err := s.checkDeliveredPayload(cer, d)
+			if err == nil {
+				return nil
+			}
+			// **A refusal here reached NOBODY, and that is `/pending 315`'s class on a path
+			// nothing had looked at** (`/pending 381`). `autoAccepter.Accept` returns this error
+			// and the far side sees a bare EOF — measured as
+			// `{"delivered":false,"reason":"await receipt: EOF"}` in a real round — so the sender
+			// is told the connection died and the recipient is told nothing at all. Every other
+			// failure in this file reports through `noteFailure`; this one did not, which is a
+			// gap rather than a house style.
+			//
+			// **Reported before it is returned, so the ordering cannot lose it.** The return
+			// tears the leg down; a report after that is a report from a goroutine the channel
+			// has already closed under.
+			s.sess.noteFailure(armDelivery, "delivery-refused",
+				"Nib refused a document a party tried to deliver to you.",
+				"Somebody delivered something for a ceremony you are part of and this machine "+
+					"would not accept it. Nothing was saved and your own copies are unchanged. "+
+					"Reason: "+err.Error())
+			return err
+		},
 		save: func(d []byte) error {
 			// A termination is TOLD rather than left in `~/nib` as a document — there is none —
 			// but the attestation itself IS persisted, in the same breath and for the same reason
@@ -351,6 +373,21 @@ func alreadyDelivered(rec ceremony.Record) bool {
 // slice this could only have run by displacing the interactive arm, which is why the round and the
 // second slot were split apart in the first place.
 func (s *Server) armForDelivery(ctx context.Context, inv ceremony.Invitation, cert, key []byte, me string) error {
+	// **Ask for the slot BEFORE opening a socket** (`/pending 381`). Everything below sets up a
+	// shared endpoint and a listener and only then tries the slot, tearing both down again if it
+	// was taken — so a collision costs a UDP endpoint and a QUIC listener opened and closed for
+	// nothing. Both callers can reach that: a party arms for delivery the moment it signs, and the
+	// unlock sweep runs over the same ceremonies afterwards.
+	//
+	// **No demonstrated harm, and that is recorded rather than dressed up.** This was tried as the
+	// fix for `/pending 380` and the run disproved it. It is here because opening a socket to
+	// discover a slot is taken is wrong on its face, not because it is known to break anything.
+	//
+	// It is a check and not a lock: the slot can still be taken between here and `armIn`, which is
+	// why that door keeps its own refusal. This removes the ordinary case, not the race.
+	if s.sess.slotTaken(armDelivery) {
+		return errors.New("a delivery arm is already open on this machine")
+	}
 	peerFP, err := hex.DecodeString(inv.ConvenerFingerprint)
 	if err != nil || len(peerFP) != sha256.Size {
 		return errors.New("this ceremony's convener fingerprint is not a fingerprint")
