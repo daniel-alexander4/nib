@@ -1,12 +1,12 @@
 --- a/internal/server/delivery.go
 +++ b/internal/server/delivery.go
-@@ -1293,11 +1293,7 @@
+@@ -1445,11 +1445,7 @@
  	}
- 	s.legs[id] = deliveryLeg{Label: label, Index: index, Of: of, Started: time.Now()}
+ 	s.legs[k] = deliveryLeg{Label: label, Index: index, Of: of, Started: time.Now()}
  	s.legMu.Unlock()
 -	return func() {
 -		s.legMu.Lock()
--		delete(s.legs, id)
+-		delete(s.legs, k)
 -		s.legMu.Unlock()
 -	}
 +	return func() {}

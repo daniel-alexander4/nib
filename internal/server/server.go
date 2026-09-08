@@ -191,8 +191,16 @@ type Server struct {
 	//
 	// **Nothing does I/O under this lock.** `armWindowFor` once did 128 MiB-capable disk I/O under
 	// the mutex `status()` polls, and this is read by a poll on exactly that cadence.
+	// **Keyed by `(ceremony id, party)`, and the key is a TYPE rather than a convention**
+	// (/pending 387's sibling, found by the same deepdive). It was keyed on the ceremony id
+	// alone, which is unique only because the round walks one leg at a time — an accident of the
+	// walk, not a property of a leg. Under `/pending 376`'s W concurrent legs every leg of one
+	// ceremony collides on one entry, and the FIRST to finish deletes the record the others are
+	// still represented by, so the watcher reports a quiet ceremony while W-1 legs are running.
+	// A struct key makes keying on the ceremony alone unrepresentable, which is what a guard
+	// would otherwise have to assert.
 	legMu sync.Mutex
-	legs  map[string]deliveryLeg
+	legs  map[legKey]deliveryLeg
 
 	// punchMu guards punchBudgets: D33's per-(hop, side) packet counters, keyed by
 	// **`(ceremony id, hop)`** (P07.S09b; re-keyed P08.S05h). Held here because a "side" is this
